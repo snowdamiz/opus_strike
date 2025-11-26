@@ -113,7 +113,22 @@ export function MainLobby() {
     <div className="w-full h-full relative overflow-hidden bg-strike-bg">
       {/* Cinematic Background */}
       <div className="absolute inset-0">
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a12] via-[#0f0f1a] to-[#08080c]" />
+        {/* Background Image - blurred for depth */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat blur-[2px] scale-105"
+          style={{ backgroundImage: 'url(/bg.jpg)' }}
+        />
+        
+        {/* Dark overlay gradient for readability - stronger to let heroes pop */}
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a12]/80 via-[#0f0f1a]/75 to-[#08080c]/90" />
+        
+        {/* Center darkening for hero contrast */}
+        <div 
+          className="absolute inset-0"
+          style={{ 
+            background: 'radial-gradient(ellipse 60% 70% at 50% 45%, rgba(10,10,18,0.5) 0%, transparent 70%)'
+          }}
+        />
         
         {/* Subtle color spots */}
         <div className="absolute inset-0 opacity-30">
@@ -121,9 +136,17 @@ export function MainLobby() {
           <div className="absolute bottom-1/3 right-1/3 w-80 h-80 rounded-full bg-gradient-radial from-cyan-900/20 to-transparent blur-3xl" />
         </div>
 
-        <div className="absolute inset-0 pattern-grid opacity-20" />
-        <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-[#0a0a12]/80 to-transparent" />
+        <div className="absolute inset-0 pattern-grid opacity-10" />
+        <div className="absolute bottom-0 left-0 right-0 h-2/5 bg-gradient-to-t from-[#0a0a12] to-transparent" />
         <div className="absolute inset-0 vignette-pulse" />
+        
+        {/* Extra vignette for edges */}
+        <div 
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            boxShadow: 'inset 0 0 200px 80px rgba(0,0,0,0.7)'
+          }}
+        />
 
         {/* Floating particles */}
         {[...Array(15)].map((_, i) => (
