@@ -1,23 +1,10 @@
 import { useState, useEffect } from 'react';
 import { HERO_DEFINITIONS, ALL_HERO_IDS, ABILITY_DEFINITIONS } from '@voxel-strike/shared';
-import type { HeroId, Team } from '@voxel-strike/shared';
+import type { HeroId } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
-
-// Back button component
-function BackButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-2 px-3 py-2 rounded bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition-all"
-    >
-      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-      </svg>
-      <span className="font-display text-sm">LEAVE</span>
-    </button>
-  );
-}
+import { HeroSVG } from './HeroSVG';
+import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
 
 // Hero colors
 const HERO_COLORS: Record<HeroId, string> = {
@@ -31,21 +18,36 @@ const HERO_COLORS: Record<HeroId, string> = {
 
 export function HeroSelect() {
   const { localPlayer, phaseEndTime } = useGameStore();
-  const { selectHero, selectTeam, setReady, leaveGame } = useNetwork();
-  const [selectedHero, setSelectedHero] = useState<HeroId | null>(localPlayer?.heroId ?? null);
+  const { selectHero, setReady, leaveGame } = useNetwork();
+  const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
   const [hoveredHero, setHoveredHero] = useState<HeroId | null>(null);
-  const [timeRemaining, setTimeRemaining] = useState(30);
+  const [timeRemaining, setTimeRemaining] = useState(60);
   const [isLockedIn, setIsLockedIn] = useState(false);
+
+  // Preselect Phantom on mount
+  useEffect(() => {
+    if (!localPlayer?.heroId) {
+      selectHero('phantom');
+    } else {
+      setSelectedHero(localPlayer.heroId);
+    }
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
       if (phaseEndTime) {
         const remaining = Math.ceil((phaseEndTime - Date.now()) / 1000);
         setTimeRemaining(Math.max(0, remaining));
+        
+        // Auto lock-in when timer reaches 0
+        if (remaining <= 0 && !isLockedIn && selectedHero) {
+          setIsLockedIn(true);
+          setReady(true);
+        }
       }
     }, 100);
     return () => clearInterval(interval);
-  }, [phaseEndTime]);
+  }, [phaseEndTime, isLockedIn, selectedHero, setReady]);
 
   const displayHero = hoveredHero ?? selectedHero;
   const heroInfo = displayHero ? HERO_DEFINITIONS[displayHero] : null;
@@ -63,37 +65,69 @@ export function HeroSelect() {
     setReady(true);
   };
 
-  const handleTeamSelect = (team: Team) => {
-    if (isLockedIn) return;
-    selectTeam(team);
-  };
-
   return (
-    <div className="absolute inset-0 bg-[#08080c] flex flex-col">
+    <div className="absolute inset-0 bg-[#06060a] flex flex-col overflow-hidden">
+      {/* Animated background */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div 
+          className="absolute inset-0 transition-all duration-700"
+          style={{
+            background: displayHero 
+              ? `radial-gradient(ellipse at 70% 50%, ${accentColor}15, transparent 50%)`
+              : 'none',
+          }}
+        />
+        <div className="absolute inset-0 pattern-grid opacity-10" />
+      </div>
+
       {/* Top Bar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
-        <div className="flex items-center gap-4">
-          <BackButton onClick={leaveGame} />
-          <div className="w-px h-6 bg-white/10" />
-          <h1 className="font-display text-2xl text-white">
-            CHOOSE YOUR <span style={{ color: accentColor }}>HERO</span>
-          </h1>
+      <div className="relative z-10 flex items-center justify-between px-8 py-5 border-b border-white/5 bg-[#08080c]/80 backdrop-blur-sm">
+        <div className="flex items-center gap-6">
+          <button
+            onClick={leaveGame}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            <span className="font-display text-sm">LEAVE</span>
+          </button>
+          
+          <div className="w-px h-8 bg-white/10" />
+          
+          <div>
+            <h1 className="font-display text-3xl text-white tracking-wide">
+              CHOOSE YOUR <span style={{ color: accentColor }} className="transition-colors duration-300">HERO</span>
+            </h1>
+            <p className="text-white/30 text-xs font-body mt-0.5">Select a hero and lock in to begin</p>
+          </div>
         </div>
         
         {/* Timer */}
-        <div className={`flex items-center gap-3 px-4 py-2 rounded ${timeRemaining < 10 ? 'bg-red-500/20' : 'bg-white/5'}`}>
-          <span className="text-xs text-white/50 font-body uppercase">Time</span>
-          <span className={`font-mono text-xl font-bold ${timeRemaining < 10 ? 'text-red-400' : 'text-white'}`}>
-            {timeRemaining}
-          </span>
+        <div 
+          className={`flex items-center gap-4 px-5 py-3 rounded-xl border transition-all ${
+            timeRemaining < 10 
+              ? 'bg-red-500/20 border-red-500/30' 
+              : 'bg-white/5 border-white/10'
+          }`}
+        >
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-white/40 font-body uppercase tracking-wider">Time Remaining</span>
+            <span className={`font-mono text-3xl font-bold tracking-tight ${timeRemaining < 10 ? 'text-red-400' : 'text-white'}`}>
+              {timeRemaining.toString().padStart(2, '0')}
+            </span>
+          </div>
+          {timeRemaining < 10 && (
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          )}
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="relative z-10 flex-1 flex overflow-hidden">
         {/* Hero Grid - Left Side */}
-        <div className="w-1/2 p-6 overflow-y-auto">
-          <div className="grid grid-cols-3 gap-3">
+        <div className="w-[58%] p-6 overflow-y-auto flex items-center justify-center">
+          <div className="grid grid-cols-3 gap-5" style={{ width: '720px' }}>
             {ALL_HERO_IDS.map((heroId) => {
               const hero = HERO_DEFINITIONS[heroId];
               const color = HERO_COLORS[heroId];
@@ -108,77 +142,104 @@ export function HeroSelect() {
                   onMouseLeave={() => setHoveredHero(null)}
                   disabled={isLockedIn}
                   className={`
-                    relative aspect-[4/5] rounded-lg overflow-hidden transition-all duration-150
-                    ${isLockedIn && !isSelected ? 'opacity-30' : ''}
+                    relative w-full aspect-[3/4] rounded-2xl overflow-hidden transition-all duration-200
+                    ${isLockedIn && !isSelected ? 'opacity-30 scale-95' : ''}
+                    ${isSelected ? 'scale-[1.02]' : 'hover:scale-[1.01]'}
                     group
                   `}
                   style={{
                     background: isSelected 
-                      ? `linear-gradient(135deg, ${color}30, ${color}10)` 
-                      : 'linear-gradient(135deg, #151520, #0c0c12)',
-                    boxShadow: isSelected ? `0 0 30px ${color}30, inset 0 0 60px ${color}10` : 'none',
+                      ? `linear-gradient(160deg, ${color}25, ${color}08 50%, #0a0a10)` 
+                      : 'linear-gradient(160deg, #14141c, #0a0a10)',
+                    boxShadow: isSelected 
+                      ? `0 0 50px ${color}30, 0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 ${color}30` 
+                      : '0 10px 30px rgba(0,0,0,0.3)',
                   }}
                 >
-                  {/* Border */}
+                  {/* Border glow */}
                   <div 
-                    className="absolute inset-0 rounded-lg transition-all duration-150"
+                    className="absolute inset-0 rounded-2xl transition-all duration-200"
                     style={{ 
-                      border: isSelected ? `2px solid ${color}` : isHovered ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(255,255,255,0.05)',
+                      border: isSelected 
+                        ? `2px solid ${color}` 
+                        : isHovered 
+                          ? `1px solid ${color}50` 
+                          : '1px solid rgba(255,255,255,0.06)',
+                      boxShadow: isSelected ? `inset 0 0 30px ${color}20` : 'none',
                     }}
                   />
 
-                  {/* Hero Initial - Large Background */}
+                  {/* Background glow for selected/hovered */}
                   <div 
-                    className="absolute inset-0 flex items-center justify-center opacity-10 font-display text-[120px] select-none"
-                    style={{ color }}
+                    className="absolute inset-0 transition-opacity duration-300"
+                    style={{ 
+                      background: `radial-gradient(ellipse at center 30%, ${color}30, transparent 60%)`,
+                      opacity: isSelected ? 0.6 : isHovered ? 0.3 : 0,
+                    }}
+                  />
+
+                  {/* Hero SVG - Large and centered */}
+                  <div 
+                    className="absolute inset-0 flex items-center justify-center transition-all duration-300"
+                    style={{ 
+                      filter: isSelected ? `drop-shadow(0 0 30px ${color}60)` : isHovered ? `drop-shadow(0 0 15px ${color}40)` : 'none',
+                      transform: isSelected ? 'scale(1.05)' : isHovered ? 'scale(1.02)' : 'scale(1)',
+                    }}
                   >
-                    {hero.name.charAt(0)}
+                    <HeroSVG heroId={heroId} size={220} />
                   </div>
 
-                  {/* Content */}
-                  <div className="relative h-full flex flex-col justify-end p-4">
-                    {/* Role Badge */}
-                    <div 
-                      className="absolute top-3 left-3 px-2 py-1 rounded text-[10px] font-body uppercase tracking-wider"
-                      style={{ 
-                        background: `${color}20`,
-                        color: color,
-                      }}
-                    >
-                      {hero.role}
+                  {/* Bottom gradient overlay */}
+                  <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#08080c] via-[#08080c]/80 to-transparent" />
+
+                  {/* Content overlay */}
+                  <div className="absolute inset-0 flex flex-col justify-between p-4">
+                    {/* Top row */}
+                    <div className="flex items-start justify-between">
+                      {/* Role Badge */}
+                      <div 
+                        className="px-3 py-1.5 rounded-lg text-[10px] font-display uppercase tracking-wider backdrop-blur-sm"
+                        style={{ 
+                          background: `${color}25`,
+                          color: color,
+                          border: `1px solid ${color}30`,
+                        }}
+                      >
+                        {hero.role}
+                      </div>
+
+                      {/* Selected Check */}
+                      {isSelected && (
+                        <div 
+                          className="w-8 h-8 rounded-lg flex items-center justify-center"
+                          style={{ 
+                            background: `linear-gradient(135deg, ${color}, ${color}cc)`,
+                            boxShadow: `0 4px 15px ${color}50`,
+                          }}
+                        >
+                          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
                     </div>
 
-                    {/* Selected Check */}
-                    {isSelected && (
-                      <div 
-                        className="absolute top-3 right-3 w-6 h-6 rounded flex items-center justify-center"
-                        style={{ background: color }}
+                    {/* Bottom row - Hero info */}
+                    <div>
+                      <h3 
+                        className="font-display text-2xl transition-colors duration-200"
+                        style={{ 
+                          color: isSelected ? 'white' : color,
+                          textShadow: isSelected ? `0 0 20px ${color}80` : 'none',
+                        }}
                       >
-                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </div>
-                    )}
-
-                    {/* Hero Name */}
-                    <h3 
-                      className="font-display text-xl"
-                      style={{ color: isSelected ? 'white' : color }}
-                    >
-                      {hero.name.toUpperCase()}
-                    </h3>
-                    <p className="text-white/40 text-xs font-body mt-1">
-                      {hero.movementFocus}
-                    </p>
+                        {hero.name.toUpperCase()}
+                      </h3>
+                      <p className="text-white/40 text-xs font-body mt-1 capitalize">
+                        {hero.movementFocus} specialist
+                      </p>
+                    </div>
                   </div>
-
-                  {/* Hover Glow */}
-                  {isHovered && !isSelected && (
-                    <div 
-                      className="absolute inset-0 opacity-20 transition-opacity"
-                      style={{ background: `radial-gradient(circle at center, ${color}, transparent 70%)` }}
-                    />
-                  )}
                 </button>
               );
             })}
@@ -186,85 +247,114 @@ export function HeroSelect() {
         </div>
 
         {/* Hero Details - Right Side */}
-        <div className="w-1/2 border-l border-white/5 flex flex-col">
+        <div className="w-[42%] border-l border-white/5 flex flex-col bg-[#08080c]/50 backdrop-blur-sm">
           {heroInfo ? (
-            <div className="flex-1 flex flex-col animate-fade-in">
-              {/* Hero Header */}
+            <div className="flex-1 flex flex-col">
+              {/* Hero Header with large display */}
               <div 
-                className="p-6 border-b border-white/5"
-                style={{ background: `linear-gradient(135deg, ${accentColor}15, transparent)` }}
+                className="relative p-8 border-b border-white/5 overflow-hidden"
+                style={{ background: `linear-gradient(135deg, ${accentColor}12, transparent 60%)` }}
               >
-                <div className="flex items-start gap-4">
-                  <div 
-                    className="w-14 h-14 rounded-lg flex items-center justify-center font-display text-2xl text-white"
-                    style={{ background: accentColor }}
-                  >
-                    {heroInfo.name.charAt(0)}
-                  </div>
-                  <div className="flex-1">
-                    <h2 className="font-display text-3xl text-white">
-                      {heroInfo.name.toUpperCase()}
-                    </h2>
-                    <p className="text-white/50 font-body text-sm mt-1">
-                      {heroInfo.role} • {heroInfo.movementFocus}
-                    </p>
-                  </div>
+                {/* Background hero silhouette */}
+                <div className="absolute -right-10 -top-10 opacity-10">
+                  <HeroSVG heroId={displayHero!} size={250} />
                 </div>
-                <p className="mt-4 text-white/60 font-body text-sm leading-relaxed">
-                  {heroInfo.description}
-                </p>
+                
+                <div className="relative z-10">
+                  <div className="flex items-center gap-5">
+                    <div 
+                      className="w-16 h-16 rounded-xl flex items-center justify-center"
+                      style={{ 
+                        background: `linear-gradient(135deg, ${accentColor}, ${accentColor}bb)`,
+                        boxShadow: `0 8px 25px ${accentColor}40`,
+                      }}
+                    >
+                      <HeroIcon heroId={displayHero!} size={36} color="#ffffff" />
+                    </div>
+                    <div className="flex-1">
+                      <h2 
+                        className="font-display text-4xl text-white tracking-wide"
+                        style={{ textShadow: `0 0 30px ${accentColor}50` }}
+                      >
+                        {heroInfo.name.toUpperCase()}
+                      </h2>
+                      <div className="flex items-center gap-3 mt-2">
+                        <span 
+                          className="px-3 py-1 rounded-lg text-xs font-display uppercase"
+                          style={{ 
+                            background: `${accentColor}25`,
+                            color: accentColor,
+                            border: `1px solid ${accentColor}30`,
+                          }}
+                        >
+                          {heroInfo.role}
+                        </span>
+                        <span className="text-white/30">•</span>
+                        <span className="text-white/50 font-body text-sm capitalize">{heroInfo.movementFocus}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-5 text-white/60 font-body text-sm leading-relaxed max-w-md">
+                    {heroInfo.description}
+                  </p>
+                </div>
               </div>
 
               {/* Stats */}
               <div className="p-6 border-b border-white/5">
-                <div className="grid grid-cols-3 gap-4">
-                  <StatBar label="Health" value={heroInfo.stats.maxHealth} max={400} color={accentColor} />
-                  <StatBar label="Speed" value={heroInfo.stats.moveSpeed} max={15} color={accentColor} />
-                  <StatBar label="Jump" value={heroInfo.stats.jumpForce} max={15} color={accentColor} />
+                <h3 className="text-[10px] text-white/40 font-display uppercase tracking-widest mb-4">Combat Stats</h3>
+                <div className="grid grid-cols-3 gap-5">
+                  <StatCard label="Health" value={heroInfo.stats.maxHealth} icon="❤️" color={accentColor} />
+                  <StatCard label="Speed" value={heroInfo.stats.moveSpeed} icon="⚡" color={accentColor} />
+                  <StatCard label="Jump" value={heroInfo.stats.jumpForce} icon="🦘" color={accentColor} />
                 </div>
               </div>
 
               {/* Abilities */}
-              <div className="flex-1 p-6 overflow-y-auto space-y-3">
-                <h3 className="text-[10px] text-white/40 font-body uppercase tracking-wider mb-3">Abilities</h3>
+              <div className="flex-1 p-6 overflow-y-auto">
+                <h3 className="text-[10px] text-white/40 font-display uppercase tracking-widest mb-4">Abilities</h3>
                 
-                {/* Passive */}
-                <div className="p-3 rounded-lg bg-white/5 border border-white/5">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50 font-mono">PASSIVE</span>
-                    <span className="font-display text-white text-sm">{heroInfo.passive.name}</span>
-                  </div>
-                  <p className="text-white/40 text-xs font-body">{heroInfo.passive.description}</p>
+                <div className="space-y-3">
+                  {/* Passive */}
+                  <AbilityCard 
+                    name={heroInfo.passive.name}
+                    description={heroInfo.passive.description}
+                    color={accentColor}
+                    isPassive
+                  />
+                  
+                  <AbilityCard 
+                    ability={ABILITY_DEFINITIONS[heroInfo.ability1.abilityId]} 
+                    abilityId={heroInfo.ability1.abilityId}
+                    color={accentColor}
+                    keybind="E"
+                  />
+                  <AbilityCard 
+                    ability={ABILITY_DEFINITIONS[heroInfo.ability2.abilityId]} 
+                    abilityId={heroInfo.ability2.abilityId}
+                    color={accentColor}
+                    keybind="Q"
+                  />
+                  <AbilityCard 
+                    ability={ABILITY_DEFINITIONS[heroInfo.ultimate.abilityId]} 
+                    abilityId={heroInfo.ultimate.abilityId}
+                    color={accentColor}
+                    keybind="F"
+                    isUltimate
+                  />
                 </div>
-
-                <AbilityCard 
-                  ability={ABILITY_DEFINITIONS[heroInfo.ability1.abilityId]} 
-                  keybind="E"
-                  color={accentColor}
-                />
-                <AbilityCard 
-                  ability={ABILITY_DEFINITIONS[heroInfo.ability2.abilityId]} 
-                  keybind="Q"
-                  color={accentColor}
-                />
-                <AbilityCard 
-                  ability={ABILITY_DEFINITIONS[heroInfo.ultimate.abilityId]} 
-                  keybind="F"
-                  color={accentColor}
-                  isUltimate
-                />
               </div>
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-lg bg-white/5 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                  <svg className="w-10 h-10 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19l-7-7 7-7" />
                   </svg>
                 </div>
-                <p className="font-display text-white/30 text-lg">SELECT A HERO</p>
-                <p className="text-white/20 text-sm font-body mt-1">Click to view details</p>
+                <p className="font-display text-white/40 text-2xl">SELECT A HERO</p>
+                <p className="text-white/20 text-sm font-body mt-2">Click on a hero to view details</p>
               </div>
             </div>
           )}
@@ -272,100 +362,159 @@ export function HeroSelect() {
       </div>
 
       {/* Bottom Bar */}
-      <div className="flex items-center justify-between px-6 py-4 border-t border-white/5 bg-[#0a0a0e]">
-        {/* Team Selection */}
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-white/40 font-body uppercase">Team:</span>
-          <button
-            onClick={() => handleTeamSelect('red')}
-            disabled={isLockedIn}
-            className={`px-5 py-2 rounded font-display transition-all ${
-              localPlayer?.team === 'red' 
-                ? 'bg-red-500 text-white' 
-                : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
-            } ${isLockedIn ? 'opacity-50' : ''}`}
-          >
-            RED
-          </button>
-          <button
-            onClick={() => handleTeamSelect('blue')}
-            disabled={isLockedIn}
-            className={`px-5 py-2 rounded font-display transition-all ${
-              localPlayer?.team === 'blue' 
-                ? 'bg-blue-500 text-white' 
-                : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
-            } ${isLockedIn ? 'opacity-50' : ''}`}
-          >
-            BLUE
-          </button>
-        </div>
-
-        {/* Lock In */}
+      <div className="relative z-10 flex items-center justify-end px-8 py-5 border-t border-white/5 bg-[#08080c]/90 backdrop-blur-sm">
+        {/* Lock In Button */}
         <button
           onClick={handleLockIn}
           disabled={!selectedHero || isLockedIn}
-          className={`px-8 py-3 rounded-lg font-display text-lg transition-all ${
+          className={`relative px-10 py-4 rounded-xl font-display text-xl transition-all overflow-hidden ${
             isLockedIn 
-              ? 'bg-green-500/20 border border-green-500/30 text-green-400' 
+              ? 'bg-green-500/20 border-2 border-green-500/50 text-green-400' 
               : selectedHero 
-                ? 'text-white hover:brightness-110'
-                : 'bg-white/5 text-white/30 cursor-not-allowed'
+                ? 'text-white hover:scale-105 hover:shadow-2xl'
+                : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'
           }`}
-          style={!isLockedIn && selectedHero ? { background: accentColor } : {}}
+          style={!isLockedIn && selectedHero ? { 
+            background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)`,
+            boxShadow: `0 10px 40px ${accentColor}40`,
+          } : {}}
         >
-          {isLockedIn ? '✓ LOCKED IN' : 'LOCK IN'}
+          {/* Button shimmer */}
+          {!isLockedIn && selectedHero && (
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-shimmer" />
+          )}
+          <span className="relative flex items-center gap-3">
+            {isLockedIn ? (
+              <>
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+                LOCKED IN
+              </>
+            ) : (
+              'LOCK IN'
+            )}
+          </span>
         </button>
       </div>
     </div>
   );
 }
 
-function StatBar({ label, value, max, color }: { label: string; value: number; max: number; color: string }) {
-  const percent = (value / max) * 100;
-  
+// Stat Card Component
+function StatCard({ label, value, icon, color }: { label: string; value: number; icon: string; color: string }) {
   return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
+    <div 
+      className="p-4 rounded-xl border border-white/5 bg-white/[0.02]"
+      style={{ background: `linear-gradient(135deg, ${color}08, transparent)` }}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-lg">{icon}</span>
         <span className="text-[10px] text-white/40 font-body uppercase">{label}</span>
-        <span className="font-mono text-white text-sm">{value}</span>
       </div>
-      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-        <div 
-          className="h-full rounded-full transition-all duration-300"
-          style={{ width: `${percent}%`, background: color }}
-        />
-      </div>
+      <span 
+        className="font-display text-3xl text-white"
+        style={{ textShadow: `0 0 20px ${color}40` }}
+      >
+        {value}
+      </span>
     </div>
   );
 }
 
-function AbilityCard({ ability, keybind, color, isUltimate }: { 
-  ability: { name: string; description: string; cooldown: number } | undefined;
-  keybind: string;
+// Ability Card Component
+function AbilityCard({ 
+  ability, 
+  abilityId, 
+  name,
+  description,
+  color, 
+  keybind,
+  isPassive,
+  isUltimate 
+}: { 
+  ability?: { name: string; description: string; cooldown: number };
+  abilityId?: string;
+  name?: string;
+  description?: string;
   color: string;
+  keybind?: string;
+  isPassive?: boolean;
   isUltimate?: boolean;
 }) {
-  if (!ability) return null;
+  const abilityName = ability?.name ?? name ?? '';
+  const abilityDesc = ability?.description ?? description ?? '';
+  const iconType = isPassive ? 'passive' : (abilityId ? getAbilityIconType(abilityId) : 'passive');
 
   return (
     <div 
-      className={`p-3 rounded-lg border ${isUltimate ? 'border-amber-500/30 bg-amber-500/10' : 'border-white/5 bg-white/[0.02]'}`}
+      className={`p-4 rounded-xl border transition-all hover:scale-[1.01] ${
+        isUltimate 
+          ? 'border-amber-500/30 bg-gradient-to-r from-amber-500/15 to-amber-500/5' 
+          : isPassive
+            ? 'border-white/10 bg-white/[0.03]'
+            : 'border-white/5 bg-white/[0.02]'
+      }`}
+      style={!isUltimate && !isPassive ? { 
+        background: `linear-gradient(135deg, ${color}08, transparent)`,
+        borderColor: `${color}20`,
+      } : {}}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-4">
         <div 
-          className="w-9 h-9 rounded flex items-center justify-center font-mono text-sm font-bold text-white"
-          style={{ background: isUltimate ? '#f59e0b' : color }}
+          className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+          style={{ 
+            background: isUltimate 
+              ? 'linear-gradient(135deg, #f59e0b, #d97706)' 
+              : isPassive 
+                ? 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))'
+                : `linear-gradient(135deg, ${color}, ${color}bb)`,
+            boxShadow: isUltimate 
+              ? '0 4px 20px rgba(245, 158, 11, 0.4)' 
+              : isPassive 
+                ? 'none'
+                : `0 4px 20px ${color}30`,
+          }}
         >
-          {keybind}
+          <AbilityIcon type={iconType} size={24} color="#ffffff" />
         </div>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-display text-white text-sm">{ability.name}</span>
-            {isUltimate && <span className="text-amber-400 text-[10px]">★ ULTIMATE</span>}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-display text-white text-base">{abilityName}</span>
+            {keybind && !isPassive && (
+              <span 
+                className="text-[10px] px-2 py-0.5 rounded font-mono font-bold"
+                style={{ 
+                  background: isUltimate ? 'rgba(245, 158, 11, 0.3)' : `${color}30`,
+                  color: isUltimate ? '#fbbf24' : color,
+                }}
+              >
+                {keybind}
+              </span>
+            )}
+            {isPassive && (
+              <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 text-white/50 font-body">
+                PASSIVE
+              </span>
+            )}
+            {isUltimate && (
+              <span className="text-amber-400 text-xs">★ ULTIMATE</span>
+            )}
           </div>
-          <span className="text-[10px] text-white/40 font-body">
-            {ability.cooldown > 0 ? `${ability.cooldown}s cooldown` : 'No cooldown'}
-          </span>
+          <p className="text-white/50 text-xs font-body leading-relaxed">{abilityDesc}</p>
+          {ability && ability.cooldown > 0 && (
+            <div className="mt-2">
+              <span 
+                className="text-[10px] font-mono px-2 py-1 rounded"
+                style={{ 
+                  background: isUltimate ? 'rgba(245, 158, 11, 0.2)' : `${color}15`,
+                  color: isUltimate ? '#fbbf24' : `${color}cc`,
+                }}
+              >
+                ⏱ {ability.cooldown}s
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>

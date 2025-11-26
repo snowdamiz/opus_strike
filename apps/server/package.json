@@ -4,10 +4,14 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio"
   },
   "dependencies": {
     "colyseus": "^0.15.55",
@@ -17,11 +21,17 @@
     "@voxel-strike/shared": "workspace:*",
     "@voxel-strike/physics": "workspace:*",
     "@voxel-strike/game-logic": "workspace:*",
-    "express": "^4.21.1"
+    "express": "^4.21.1",
+    "@prisma/client": "^5.22.0",
+    "@solana/web3.js": "^1.95.4",
+    "bs58": "^6.0.0",
+    "tweetnacl": "^1.0.3",
+    "dotenv": "^16.4.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.8.4",
+    "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }

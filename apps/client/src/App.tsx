@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useGameStore } from './store/gameStore';
 import { MainMenu } from './components/ui/MainMenu';
-import { LobbyBrowser } from './components/ui/LobbyBrowser';
+import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { GameCanvas } from './components/game/GameCanvas';
 import { HUD } from './components/ui/HUD';
@@ -77,7 +77,7 @@ export function App() {
   }
 
   if (appPhase === 'browsing_lobbies') {
-    return <LobbyBrowser />;
+    return <MainLobby />;
   }
 
   if (appPhase === 'in_lobby') {

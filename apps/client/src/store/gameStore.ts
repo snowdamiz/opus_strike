@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { 
   GamePhase, 
   Player, 
@@ -25,9 +26,22 @@ export interface LobbyPlayer {
   team: string;
 }
 
+export interface UserStats {
+  totalGames: number;
+  totalWins: number;
+  totalKills: number;
+  totalDeaths: number;
+  totalCaptures: number;
+}
+
 export type AppPhase = 'menu' | 'browsing_lobbies' | 'in_lobby' | 'in_game';
 
 interface GameStore {
+  // Wallet/Auth state
+  walletAddress: string | null;
+  userId: string | null;
+  userStats: UserStats | null;
+  
   // Connection state
   isConnected: boolean;
   isLoading: boolean;
@@ -69,6 +83,8 @@ interface GameStore {
   lastProcessedTick: number;
   
   // Actions
+  setWalletAddress: (address: string | null) => void;
+  setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
   setConnected: (connected: boolean) => void;
   setLoading: (loading: boolean) => void;
   setRoomId: (roomId: string | null) => void;
@@ -99,6 +115,9 @@ interface GameStore {
 }
 
 const initialState = {
+  walletAddress: null as string | null,
+  userId: null as string | null,
+  userStats: null as UserStats | null,
   isConnected: false,
   isLoading: false,
   roomId: null,
@@ -128,6 +147,8 @@ const initialState = {
 export const useGameStore = create<GameStore>((set, get) => ({
   ...initialState,
 
+  setWalletAddress: (address) => set({ walletAddress: address }),
+  setUser: (userId, name, stats) => set({ userId, playerName: name, userStats: stats }),
   setConnected: (connected) => set({ isConnected: connected }),
   setLoading: (loading) => set({ isLoading: loading }),
   setRoomId: (roomId) => set({ roomId }),

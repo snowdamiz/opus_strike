@@ -1,9 +1,9 @@
+/* Premium fonts - Bebas Neue for headlines, Exo 2 for body */
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Exo+2:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* Premium fonts - Bebas Neue for headlines, Exo 2 for body */
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Exo+2:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 /* ===== CSS VARIABLES ===== */
 :root {
@@ -330,6 +330,97 @@ html, body, #root {
 .z-modal { z-index: 150; }
 .z-tooltip { z-index: 200; }
 
+/* ===== PULSING VIGNETTE ===== */
+@keyframes vignette-pulse {
+  0%, 100% {
+    box-shadow: inset 0 0 150px 60px rgba(0, 0, 0, 0.8);
+  }
+  50% {
+    box-shadow: inset 0 0 180px 80px rgba(0, 0, 0, 0.85);
+  }
+}
+
+.vignette-pulse {
+  animation: vignette-pulse 4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Additional subtle vignette corners */
+.vignette-pulse::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.6) 100%);
+  pointer-events: none;
+}
+
+/* ===== SCAN LINE ANIMATION ===== */
+@keyframes scanline {
+  0% {
+    transform: translateY(-100vh);
+  }
+  100% {
+    transform: translateY(100vh);
+  }
+}
+
+.animate-scan {
+  animation: scanline 8s linear infinite;
+}
+
+/* ===== GRADIENT BACKGROUNDS ===== */
+.bg-map-overview {
+  background: 
+    radial-gradient(ellipse at 30% 20%, rgba(249, 115, 22, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(6, 182, 212, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(99, 102, 241, 0.04) 0%, transparent 70%),
+    linear-gradient(180deg, #0a0a12 0%, #0f0f1a 50%, #08080c 100%);
+}
+
+/* ===== SLIDER STYLES ===== */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f97316;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #f97316;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
+}
+
+input[type="range"]:focus {
+  outline: none;
+}
+
+/* ===== COLOR PICKER ===== */
+input[type="color"] {
+  -webkit-appearance: none;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 1280px) {
   .hud-scale {
@@ -342,4 +433,676 @@ html, body, #root {
   .hud-scale {
     transform: scale(0.8);
   }
+}
+
+/* ===== HERO SVG ANIMATIONS ===== */
+
+/* Base hero SVG styles */
+.hero-svg {
+  filter: drop-shadow(0 0 30px var(--hero-glow, rgba(255,255,255,0.3)));
+  transition: transform 0.5s ease, filter 0.5s ease;
+}
+
+.hero-svg:hover {
+  transform: scale(1.02);
+}
+
+/* === PHANTOM ANIMATIONS === */
+.hero-svg-phantom {
+  --hero-glow: rgba(168, 85, 247, 0.4);
+}
+
+/* Blink ring expansion */
+@keyframes phantom-blink {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.6;
+  }
+}
+
+.phantom-blink-ring {
+  animation: phantom-blink 2s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Eyes flicker */
+@keyframes phantom-eye-flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+  52% { opacity: 1; }
+  54% { opacity: 0.5; }
+  56% { opacity: 1; }
+}
+
+.phantom-eyes {
+  animation: phantom-eye-flicker 3s ease-in-out infinite;
+}
+
+/* Trails phase in/out */
+@keyframes phantom-trail {
+  0%, 100% {
+    stroke-dasharray: 200;
+    stroke-dashoffset: 400;
+    opacity: 0.2;
+  }
+  50% {
+    stroke-dasharray: 200;
+    stroke-dashoffset: 0;
+    opacity: 0.6;
+  }
+}
+
+.phantom-trail-1 {
+  animation: phantom-trail 4s ease-in-out infinite;
+}
+
+.phantom-trail-2 {
+  animation: phantom-trail 4s ease-in-out infinite;
+  animation-delay: 0.5s;
+}
+
+/* Body fade/phase */
+@keyframes phantom-phase {
+  0%, 100% { opacity: 1; }
+  25% { opacity: 0.85; }
+  50% { opacity: 0.7; }
+  75% { opacity: 0.85; }
+}
+
+.phantom-main-body {
+  animation: phantom-phase 3s ease-in-out infinite;
+}
+
+/* Leg phasing effect */
+@keyframes phantom-leg-phase {
+  0%, 100% {
+    opacity: 0.85;
+    stroke-dasharray: none;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.phantom-leg-left {
+  animation: phantom-leg-phase 2.5s ease-in-out infinite;
+}
+
+.phantom-leg-right {
+  animation: phantom-leg-phase 2.5s ease-in-out infinite;
+  animation-delay: 0.3s;
+}
+
+/* Foot fade */
+@keyframes phantom-foot-fade {
+  0%, 100% { opacity: 0.6; transform: translateY(0); }
+  50% { opacity: 0.3; transform: translateY(3px); }
+}
+
+.phantom-foot-left,
+.phantom-foot-right {
+  animation: phantom-foot-fade 2s ease-in-out infinite;
+}
+
+.phantom-foot-right {
+  animation-delay: 0.4s;
+}
+
+/* Wisp float */
+@keyframes phantom-wisp {
+  0%, 100% {
+    opacity: 0.5;
+    stroke-dashoffset: 0;
+  }
+  50% {
+    opacity: 0.3;
+    stroke-dashoffset: 20;
+  }
+}
+
+.phantom-wisps .wisp-left,
+.phantom-wisps .wisp-right {
+  stroke-dasharray: 15, 10;
+  animation: phantom-wisp 3s ease-in-out infinite;
+}
+
+.phantom-wisps .wisp-right {
+  animation-delay: 0.5s;
+}
+
+/* Float particles */
+@keyframes phantom-float {
+  0%, 100% {
+    transform: translateY(0) translateX(0);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateY(-15px) translateX(5px);
+    opacity: 0.8;
+  }
+}
+
+.phantom-float-particles .float-particle {
+  animation: phantom-float 3s ease-in-out infinite;
+}
+
+/* Energy swirl rotation */
+@keyframes phantom-swirl {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.phantom-energy {
+  animation: phantom-swirl 20s linear infinite;
+  transform-origin: 100px 150px;
+}
+
+/* === HOOKSHOT ANIMATIONS === */
+.hero-svg-hookshot {
+  --hero-glow: rgba(6, 182, 212, 0.4);
+}
+
+/* Swing motion */
+@keyframes hookshot-swing {
+  0%, 100% {
+    transform: rotate(-5deg);
+  }
+  50% {
+    transform: rotate(5deg);
+  }
+}
+
+.hookshot-body {
+  animation: hookshot-swing 2s ease-in-out infinite;
+  transform-origin: 30px 20px;
+}
+
+/* Cable pulse */
+@keyframes hookshot-cable-pulse {
+  0%, 100% {
+    stroke-dashoffset: 0;
+  }
+  50% {
+    stroke-dashoffset: 24;
+  }
+}
+
+.cable-main {
+  animation: hookshot-cable-pulse 1s linear infinite;
+}
+
+/* Speed lines fade */
+@keyframes hookshot-speed {
+  0%, 100% {
+    opacity: 0.2;
+    transform: translateX(0);
+  }
+  50% {
+    opacity: 0.6;
+    transform: translateX(-10px);
+  }
+}
+
+.hookshot-speed-lines .speed-line {
+  animation: hookshot-speed 0.8s ease-in-out infinite;
+}
+
+/* Motion blur */
+@keyframes hookshot-motion {
+  0%, 100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.hookshot-motion-blur .motion-line {
+  animation: hookshot-motion 0.5s ease-in-out infinite;
+}
+
+/* Arc trail dash */
+@keyframes hookshot-arc {
+  0% { stroke-dashoffset: 30; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.swing-arc {
+  animation: hookshot-arc 2s linear infinite;
+}
+
+/* === BLAZE ANIMATIONS === */
+.hero-svg-blaze {
+  --hero-glow: rgba(249, 115, 22, 0.5);
+}
+
+/* Hover bob */
+@keyframes blaze-hover {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+.blaze-body {
+  animation: blaze-hover 2s ease-in-out infinite;
+}
+
+/* Flame flicker */
+@keyframes blaze-flame {
+  0%, 100% {
+    transform: scaleY(1) scaleX(1);
+    opacity: 0.9;
+  }
+  25% {
+    transform: scaleY(1.1) scaleX(0.95);
+    opacity: 1;
+  }
+  50% {
+    transform: scaleY(0.95) scaleX(1.05);
+    opacity: 0.85;
+  }
+  75% {
+    transform: scaleY(1.08) scaleX(0.98);
+    opacity: 1;
+  }
+}
+
+.blaze-flames .flame-main {
+  animation: blaze-flame 0.4s ease-in-out infinite;
+  transform-origin: center bottom;
+}
+
+/* Sparks rise */
+@keyframes blaze-spark {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.3);
+  }
+}
+
+.blaze-sparks .spark {
+  animation: blaze-spark 1.5s ease-out infinite;
+}
+
+/* Heat wave expansion */
+@keyframes blaze-heat {
+  0% {
+    transform: scaleX(1);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scaleX(1.5);
+    opacity: 0;
+  }
+}
+
+.blaze-heat-waves .heat-wave {
+  animation: blaze-heat 2s ease-out infinite;
+}
+
+/* Hover ring pulse */
+@keyframes blaze-ring {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+.hover-ring {
+  animation: blaze-ring 1.5s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* === GLACIER ANIMATIONS === */
+.hero-svg-glacier {
+  --hero-glow: rgba(59, 130, 246, 0.4);
+}
+
+/* Frost particle float */
+@keyframes glacier-frost {
+  0%, 100% {
+    opacity: 0.3;
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translateY(-10px) rotate(45deg);
+  }
+}
+
+.glacier-frost-particles .frost-particle {
+  animation: glacier-frost 4s ease-in-out infinite;
+}
+
+/* Crystal shimmer */
+@keyframes glacier-crystal {
+  0%, 100% {
+    opacity: 0.6;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.3);
+  }
+}
+
+.glacier-crystals polygon {
+  animation: glacier-crystal 3s ease-in-out infinite;
+}
+
+.crystal-2 { animation-delay: 0.5s; }
+.crystal-3 { animation-delay: 1s; }
+.crystal-4 { animation-delay: 1.5s; }
+
+/* Body subtle sway */
+@keyframes glacier-stance {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.glacier-body {
+  animation: glacier-stance 4s ease-in-out infinite;
+}
+
+/* Cold aura rotation */
+@keyframes glacier-aura {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 20;
+  }
+}
+
+.cold-aura {
+  animation: glacier-aura 3s linear infinite;
+}
+
+/* Breath cloud */
+@keyframes glacier-breath {
+  0%, 100% {
+    transform: translateX(0) scale(1);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateX(5px) scale(1.2);
+    opacity: 0.5;
+  }
+}
+
+.glacier-breath .breath-cloud {
+  animation: glacier-breath 4s ease-in-out infinite;
+}
+
+/* === PULSE ANIMATIONS === */
+.hero-svg-pulse {
+  --hero-glow: rgba(34, 197, 94, 0.4);
+}
+
+/* Running motion */
+@keyframes pulse-run {
+  0%, 100% {
+    transform: translateX(0) translateY(0);
+  }
+  25% {
+    transform: translateX(3px) translateY(-2px);
+  }
+  50% {
+    transform: translateX(0) translateY(0);
+  }
+  75% {
+    transform: translateX(-3px) translateY(-2px);
+  }
+}
+
+.pulse-body {
+  animation: pulse-run 0.6s ease-in-out infinite;
+}
+
+/* Speed lines streak */
+@keyframes pulse-speed {
+  0% {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+}
+
+.pulse-speed-lines .speed-line {
+  animation: pulse-speed 0.6s ease-out infinite;
+}
+
+/* Energy rings expand */
+@keyframes pulse-ring-expand {
+  0% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.pulse-rings .ring-1 {
+  animation: pulse-ring-expand 2s ease-out infinite;
+  transform-origin: center;
+}
+
+.pulse-rings .ring-2 {
+  animation: pulse-ring-expand 2s ease-out infinite;
+  animation-delay: 0.5s;
+  transform-origin: center;
+}
+
+.pulse-rings .ring-3 {
+  animation: pulse-ring-expand 2s ease-out infinite;
+  animation-delay: 1s;
+  transform-origin: center;
+}
+
+/* Core pulse */
+@keyframes pulse-core {
+  0%, 100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.5);
+  }
+}
+
+.energy-core {
+  animation: pulse-core 0.5s ease-in-out infinite;
+}
+
+/* Dash particles trail */
+@keyframes pulse-dash {
+  0% {
+    opacity: 0.8;
+    transform: translateX(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+}
+
+.pulse-particles .dash-particle {
+  animation: pulse-dash 0.8s ease-out infinite;
+}
+
+/* Ground speed dash */
+@keyframes pulse-ground {
+  0% { stroke-dashoffset: 50; }
+  100% { stroke-dashoffset: 0; }
+}
+
+.ground-speed {
+  animation: pulse-ground 0.5s linear infinite;
+}
+
+/* === SENTINEL ANIMATIONS === */
+.hero-svg-sentinel {
+  --hero-glow: rgba(234, 179, 8, 0.4);
+}
+
+/* Solid stance - minimal movement */
+@keyframes sentinel-stance {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+.sentinel-body {
+  animation: sentinel-stance 3s ease-in-out infinite;
+}
+
+/* Shield energy pulse */
+@keyframes sentinel-shield-pulse {
+  0%, 100% {
+    filter: brightness(1) drop-shadow(0 0 10px rgba(234, 179, 8, 0.3));
+  }
+  50% {
+    filter: brightness(1.2) drop-shadow(0 0 20px rgba(234, 179, 8, 0.6));
+  }
+}
+
+.sentinel-shield .shield-main {
+  animation: sentinel-shield-pulse 2s ease-in-out infinite;
+}
+
+/* Shield ripple effect */
+@keyframes sentinel-ripple {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.5;
+  }
+}
+
+.shield-ripple-1 {
+  animation: sentinel-ripple 3s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.shield-ripple-2 {
+  animation: sentinel-ripple 3s ease-in-out infinite;
+  animation-delay: 0.5s;
+  transform-origin: center;
+}
+
+/* Hex aura pattern */
+@keyframes sentinel-hex {
+  0%, 100% {
+    opacity: 0.2;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.02);
+  }
+}
+
+.sentinel-aura .hex-ring {
+  animation: sentinel-hex 4s ease-in-out infinite;
+}
+
+/* Fortify pillars rise */
+@keyframes sentinel-pillar {
+  0%, 100% {
+    height: 15px;
+    opacity: 0.4;
+  }
+  50% {
+    height: 25px;
+    opacity: 0.8;
+  }
+}
+
+.sentinel-fortify .pillar-1,
+.sentinel-fortify .pillar-2,
+.sentinel-fortify .pillar-3,
+.sentinel-fortify .pillar-4 {
+  animation: sentinel-pillar 2s ease-in-out infinite;
+}
+
+.pillar-2 { animation-delay: 0.3s; }
+.pillar-3 { animation-delay: 0.6s; }
+.pillar-4 { animation-delay: 0.9s; }
+
+/* Dome outline rotation */
+@keyframes sentinel-dome {
+  0% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 40; }
+}
+
+.dome-outline {
+  animation: sentinel-dome 5s linear infinite;
+}
+
+/* ===== HERO SHOWCASE ENTRANCE ===== */
+@keyframes hero-entrance {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.hero-svg-enter {
+  animation: hero-entrance 0.5s ease-out forwards;
+}
+
+/* Hero switch transition */
+@keyframes hero-switch {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.hero-svg-switch {
+  animation: hero-switch 0.6s ease-in-out;
 }

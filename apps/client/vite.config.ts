@@ -18,6 +18,16 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['@dimforge/rapier3d-compat'],
+    esbuildOptions: {
+      // Node.js global to browser globalThis for Solana libraries
+      define: {
+        global: 'globalThis',
+      },
+    },
+  },
+  define: {
+    'process.env': {},
+    global: 'globalThis',
   },
 });
 

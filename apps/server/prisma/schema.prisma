@@ -1,0 +1,29 @@
+// Prisma schema for Voxel Strike
+// PostgreSQL database for user persistence
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  walletAddress String   @unique
+  name          String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Player stats (optional - can expand later)
+  totalGames    Int      @default(0)
+  totalWins     Int      @default(0)
+  totalKills    Int      @default(0)
+  totalDeaths   Int      @default(0)
+  totalCaptures Int      @default(0)
+
+  @@index([walletAddress])
+}
+

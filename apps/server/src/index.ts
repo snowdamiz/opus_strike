@@ -1,9 +1,11 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
+import authRoutes from './auth/routes';
 
 const app = express();
 const httpServer = createServer(app);
@@ -34,6 +36,12 @@ app.use((_req, res, next) => {
   }
   next();
 });
+
+// JSON body parser
+app.use(express.json());
+
+// Auth routes
+app.use('/auth', authRoutes);
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
