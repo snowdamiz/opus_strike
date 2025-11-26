@@ -5,13 +5,11 @@ import { useNetwork } from '../../contexts/NetworkContext';
 export function LobbyBrowser() {
   const { playerName, availableLobbies, isLoading, setAppPhase } = useGameStore();
   const { fetchLobbies, createLobby, joinLobby } = useNetwork();
-  const [isCreating, setIsCreating] = useState(false);
   const [lobbyName, setLobbyName] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Fetch lobbies on mount and periodically
   useEffect(() => {
     fetchLobbies();
     const interval = setInterval(fetchLobbies, 5000);
@@ -21,7 +19,7 @@ export function LobbyBrowser() {
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await fetchLobbies();
-    setIsRefreshing(false);
+    setTimeout(() => setIsRefreshing(false), 400);
   };
 
   const handleCreateLobby = async () => {
@@ -42,231 +40,256 @@ export function LobbyBrowser() {
     }
   };
 
-  const handleBack = () => {
-    setAppPhase('menu');
-  };
+  const handleBack = () => setAppPhase('menu');
 
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden">
+    <div className="w-full h-full flex items-center justify-center relative overflow-hidden bg-strike-bg">
       {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-br from-voxel-darker via-voxel-dark to-voxel-darker">
-        <div className="absolute inset-0 opacity-10">
-          <div 
-            className="absolute w-full h-full"
-            style={{
-              backgroundImage: `
-                linear-gradient(rgba(0, 255, 136, 0.15) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 255, 136, 0.15) 1px, transparent 1px)
-              `,
-              backgroundSize: '40px 40px',
-            }}
-          />
+      <div className="absolute inset-0">
+        <div className="absolute inset-0 bg-gradient-radial from-orange-500/5 via-transparent to-transparent" />
+        <div className="absolute bottom-0 right-0 w-2/3 h-2/3 bg-gradient-radial from-cyan-500/5 via-transparent to-transparent" />
+        <div className="absolute inset-0 pattern-grid opacity-30" />
+      </div>
+
+      {/* Content */}
+      <div className="relative z-10 w-full max-w-5xl mx-auto px-6">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="font-display text-5xl text-white">
+            FIND <span className="text-orange-500">MATCH</span>
+          </h1>
+          <p className="mt-2 text-white/40 font-body">Join a game or create your own</p>
         </div>
-      </div>
 
-      {/* Header */}
-      <div className="relative z-10 mb-8 text-center">
-        <h1 
-          className="font-display text-5xl font-black tracking-tight text-voxel-primary"
-          style={{ textShadow: '0 0 40px rgba(0, 255, 136, 0.4)' }}
-        >
-          GAME LOBBIES
-        </h1>
-        <p className="font-body text-lg text-gray-400 mt-2">
-          Create or join a lobby to start playing
-        </p>
-      </div>
-
-      {/* Main content */}
-      <div className="relative z-10 w-full max-w-4xl px-8">
-        <div className="grid grid-cols-5 gap-6">
-          {/* Lobby list */}
-          <div className="col-span-3 bg-voxel-surface/80 backdrop-blur-lg border border-voxel-border rounded-lg overflow-hidden">
-            <div className="p-4 border-b border-voxel-border flex items-center justify-between">
-              <h2 className="font-display text-xl text-white">Available Lobbies</h2>
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                className="px-3 py-1.5 bg-voxel-dark border border-voxel-border rounded
-                         font-display text-sm text-gray-400
-                         hover:border-voxel-primary hover:text-voxel-primary
-                         disabled:opacity-50 transition-all duration-200"
-              >
-                {isRefreshing ? (
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        {/* Main Grid */}
+        <div className="grid grid-cols-12 gap-6">
+          {/* Lobby List */}
+          <div className="col-span-8">
+            <div className="card overflow-hidden">
+              {/* Header */}
+              <div className="px-5 py-3 border-b border-strike-border flex items-center justify-between bg-strike-elevated/50">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
+                  <h2 className="font-display text-lg text-white">ACTIVE GAMES</h2>
+                  <span className="px-2 py-0.5 bg-orange-500/10 text-orange-400 text-xs font-mono rounded">
+                    {availableLobbies.length}
+                  </span>
+                </div>
+                <button
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded text-white/60 text-sm font-body hover:bg-white/10 hover:text-white transition-all"
+                >
+                  <svg 
+                    className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} 
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
-                ) : (
-                  'REFRESH'
-                )}
-              </button>
-            </div>
-            
-            <div className="max-h-96 overflow-y-auto">
-              {availableLobbies.length === 0 ? (
-                <div className="p-8 text-center">
-                  <div className="w-16 h-16 mx-auto mb-4 bg-voxel-dark rounded-lg flex items-center justify-center">
-                    <svg className="w-8 h-8 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                    </svg>
+                  Refresh
+                </button>
+              </div>
+
+              {/* List */}
+              <div className="max-h-[360px] overflow-y-auto">
+                {availableLobbies.length === 0 ? (
+                  <div className="py-16 text-center">
+                    <div className="w-14 h-14 mx-auto mb-4 rounded-lg bg-white/5 flex items-center justify-center">
+                      <svg className="w-7 h-7 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                    <p className="font-display text-white/40">NO GAMES FOUND</p>
+                    <p className="mt-1 text-white/20 text-sm font-body">Create one to get started</p>
                   </div>
-                  <p className="font-body text-gray-500">No lobbies available</p>
-                  <p className="font-body text-sm text-gray-600 mt-1">Create one to get started!</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-voxel-border">
-                  {availableLobbies.map((lobby) => (
-                    <LobbyListItem 
-                      key={lobby.roomId} 
-                      lobby={lobby} 
-                      onJoin={() => handleJoinLobby(lobby.roomId)}
-                      disabled={isLoading}
-                    />
-                  ))}
-                </div>
-              )}
+                ) : (
+                  <div className="p-2 space-y-1">
+                    {availableLobbies.map((lobby) => (
+                      <LobbyRow 
+                        key={lobby.roomId} 
+                        lobby={lobby} 
+                        onJoin={() => handleJoinLobby(lobby.roomId)}
+                        disabled={isLoading}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Create lobby panel */}
-          <div className="col-span-2 space-y-4">
-            <div className="bg-voxel-surface/80 backdrop-blur-lg border border-voxel-border rounded-lg p-6">
-              <h2 className="font-display text-xl text-white mb-4">Create Lobby</h2>
-              
+          {/* Create Lobby */}
+          <div className="col-span-4 space-y-4">
+            <div className="card p-5">
+              <div className="flex items-center gap-2 mb-5">
+                <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                </div>
+                <h2 className="font-display text-lg text-white">CREATE GAME</h2>
+              </div>
+
               <div className="space-y-4">
                 <div>
-                  <label className="block font-display text-sm text-gray-400 mb-2 tracking-wider">
-                    LOBBY NAME
+                  <label className="block text-xs text-white/40 font-body uppercase tracking-wider mb-2">
+                    Game Name
                   </label>
                   <input
                     type="text"
                     value={lobbyName}
                     onChange={(e) => setLobbyName(e.target.value)}
                     placeholder={`${playerName}'s Lobby`}
-                    maxLength={30}
-                    className="w-full px-4 py-3 bg-voxel-dark border border-voxel-border rounded
-                             font-body text-white placeholder-gray-500
-                             focus:outline-none focus:border-voxel-primary focus:ring-1 focus:ring-voxel-primary
-                             transition-all duration-200"
+                    maxLength={24}
+                    className="input w-full px-3 py-2.5"
                   />
                 </div>
 
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={isPrivate}
-                    onChange={(e) => setIsPrivate(e.target.checked)}
-                    className="w-5 h-5 rounded border-2 border-voxel-border bg-voxel-dark
-                             checked:bg-voxel-primary checked:border-voxel-primary
-                             focus:ring-1 focus:ring-voxel-primary focus:ring-offset-0
-                             transition-all duration-200"
-                  />
-                  <span className="font-body text-gray-400 group-hover:text-gray-300 transition-colors">
-                    Private Lobby
-                  </span>
+                <label className="flex items-center gap-3 p-3 bg-black/20 border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors">
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      checked={isPrivate}
+                      onChange={(e) => setIsPrivate(e.target.checked)}
+                      className="sr-only"
+                    />
+                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                      isPrivate ? 'bg-orange-500 border-orange-400' : 'bg-transparent border-white/30'
+                    }`}>
+                      {isPrivate && (
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-body text-sm text-white/70">Private Game</p>
+                    <p className="text-xs text-white/30">Invite only</p>
+                  </div>
+                  <svg className={`w-4 h-4 ${isPrivate ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
                 </label>
 
                 {error && (
-                  <div className="p-3 bg-red-500/20 border border-red-500/50 rounded">
-                    <p className="font-body text-red-400 text-sm">{error}</p>
+                  <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                    <p className="text-red-400 text-sm font-body">{error}</p>
                   </div>
                 )}
 
                 <button
                   onClick={handleCreateLobby}
                   disabled={isLoading}
-                  className="w-full py-3 bg-voxel-primary text-voxel-dark font-display text-lg font-bold
-                           rounded transition-all duration-200
-                           hover:bg-voxel-primary/90 hover:shadow-lg hover:shadow-voxel-primary/30
-                           disabled:opacity-50 disabled:cursor-not-allowed
-                           active:scale-[0.98]"
+                  className="btn btn-primary w-full py-3 rounded-lg text-lg clip-corner-sm"
                 >
-                  {isLoading ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                      </svg>
-                      CREATING...
-                    </span>
-                  ) : (
-                    'CREATE LOBBY'
-                  )}
+                  {isLoading ? 'CREATING...' : 'CREATE'}
                 </button>
               </div>
             </div>
 
-            {/* Back button */}
             <button
               onClick={handleBack}
-              className="w-full py-3 bg-voxel-dark border border-voxel-border rounded
-                       font-display text-gray-400
-                       hover:border-voxel-primary hover:text-voxel-primary
-                       transition-all duration-200"
+              className="btn btn-secondary w-full py-3 rounded-lg flex items-center justify-center gap-2"
             >
-              ← BACK TO MENU
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              BACK
             </button>
           </div>
         </div>
       </div>
 
-      {/* Player info */}
+      {/* Player Card */}
       <div className="absolute bottom-4 left-4 z-10">
-        <div className="px-4 py-2 bg-voxel-surface/60 backdrop-blur border border-voxel-border rounded">
-          <span className="font-body text-gray-400 text-sm">Playing as </span>
-          <span className="font-display text-voxel-primary">{playerName}</span>
+        <div className="flex items-center gap-3 px-4 py-2 bg-strike-surface border border-strike-border rounded-lg">
+          <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center">
+            <span className="font-display text-orange-400">{playerName.charAt(0).toUpperCase()}</span>
+          </div>
+          <div>
+            <p className="text-xs text-white/40 font-body">Playing as</p>
+            <p className="font-display text-orange-400 text-sm">{playerName}</p>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-interface LobbyListItemProps {
+interface LobbyRowProps {
   lobby: LobbyInfo;
   onJoin: () => void;
   disabled?: boolean;
 }
 
-function LobbyListItem({ lobby, onJoin, disabled }: LobbyListItemProps) {
+function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
   const isFull = lobby.playerCount >= lobby.maxPlayers;
   const isInGame = lobby.status === 'in_game' || lobby.status === 'starting';
+  const canJoin = !isFull && !isInGame;
 
   return (
-    <div className="p-4 hover:bg-voxel-dark/50 transition-colors">
-      <div className="flex items-center justify-between">
-        <div className="flex-1 min-w-0">
-          <h3 className="font-display text-lg text-white truncate">{lobby.name}</h3>
-          <div className="flex items-center gap-4 mt-1">
-            <span className="font-mono text-sm text-gray-400">
-              {lobby.playerCount}/{lobby.maxPlayers} players
+    <div className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+      {/* Icon */}
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+        canJoin ? 'bg-orange-500/10' : 'bg-white/5'
+      }`}>
+        {isInGame ? (
+          <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ) : (
+          <svg className={`w-5 h-5 ${canJoin ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        )}
+      </div>
+
+      {/* Info */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <h3 className="font-display text-white truncate">{lobby.name}</h3>
+          {isInGame && (
+            <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-display rounded animate-pulse">
+              IN GAME
             </span>
-            {isInGame && (
-              <span className="px-2 py-0.5 bg-orange-500/20 border border-orange-500/50 rounded text-orange-400 text-xs font-display">
-                IN GAME
-              </span>
-            )}
-            {!isInGame && isFull && (
-              <span className="px-2 py-0.5 bg-red-500/20 border border-red-500/50 rounded text-red-400 text-xs font-display">
-                FULL
-              </span>
-            )}
-          </div>
+          )}
+          {!isInGame && isFull && (
+            <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-display rounded">
+              FULL
+            </span>
+          )}
         </div>
         
-        <button
-          onClick={onJoin}
-          disabled={disabled || isFull || isInGame}
-          className="ml-4 px-6 py-2 bg-voxel-primary/10 border border-voxel-primary/50 rounded
-                   font-display text-voxel-primary
-                   hover:bg-voxel-primary hover:text-voxel-dark
-                   disabled:opacity-30 disabled:cursor-not-allowed
-                   transition-all duration-200"
-        >
-          JOIN
-        </button>
+        {/* Progress */}
+        <div className="flex items-center gap-2 mt-1.5">
+          <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+            <div 
+              className={`h-full rounded-full ${
+                isFull ? 'bg-red-500' : isInGame ? 'bg-amber-500' : 'bg-orange-500'
+              }`}
+              style={{ width: `${(lobby.playerCount / lobby.maxPlayers) * 100}%` }}
+            />
+          </div>
+          <span className="text-xs text-white/40 font-mono">
+            {lobby.playerCount}/{lobby.maxPlayers}
+          </span>
+        </div>
       </div>
+
+      {/* Join */}
+      <button
+        onClick={onJoin}
+        disabled={disabled || !canJoin}
+        className={`px-4 py-2 rounded font-display text-sm transition-all ${
+          canJoin 
+            ? 'bg-orange-500 text-white hover:bg-orange-400' 
+            : 'bg-white/5 text-white/30 cursor-not-allowed'
+        }`}
+      >
+        {isInGame ? 'LIVE' : isFull ? 'FULL' : 'JOIN'}
+      </button>
     </div>
   );
 }
-

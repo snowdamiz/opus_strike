@@ -1,4 +1,5 @@
 import { useGameStore } from '../../store/gameStore';
+import { HERO_DEFINITIONS, ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 
 export function HUD() {
   const { localPlayer, redScore, blueScore, roundTimeRemaining } = useGameStore();
@@ -8,6 +9,8 @@ export function HUD() {
   const healthPercent = (localPlayer.health / localPlayer.maxHealth) * 100;
   const isLowHealth = healthPercent < 30;
   const ultimatePercent = localPlayer.ultimateCharge;
+  const isUltReady = ultimatePercent >= 100;
+  const heroInfo = localPlayer.heroId ? HERO_DEFINITIONS[localPlayer.heroId] : null;
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -16,72 +19,105 @@ export function HUD() {
   };
 
   return (
-    <div className="absolute inset-0 pointer-events-none">
+    <div className="absolute inset-0 pointer-events-none select-none">
+      {/* Low health vignette */}
+      {isLowHealth && (
+        <div 
+          className="absolute inset-0 pointer-events-none animate-pulse-soft"
+          style={{
+            background: 'radial-gradient(ellipse at center, transparent 40%, rgba(239, 68, 68, 0.2) 100%)',
+          }}
+        />
+      )}
+
       {/* Crosshair */}
-      <Crosshair />
+      <div className="crosshair">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="1.5" fill="white" fillOpacity="0.9" />
+          <line x1="10" y1="3" x2="10" y2="7" stroke="white" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
+          <line x1="10" y1="13" x2="10" y2="17" stroke="white" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
+          <line x1="3" y1="10" x2="7" y2="10" stroke="white" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
+          <line x1="13" y1="10" x2="17" y2="10" stroke="white" strokeWidth="1.5" strokeLinecap="round" opacity="0.8" />
+        </svg>
+      </div>
 
-      {/* Top bar - Score and time */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-4">
-        {/* Red team score */}
-        <div className="flex items-center gap-2 px-4 py-2 bg-team-red/20 border border-team-red/50 rounded">
-          <span className="font-display text-2xl text-team-red font-bold">{redScore}</span>
-          <span className="font-body text-sm text-team-red/80">RED</span>
-        </div>
+      {/* Top - Score Panel */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2">
+        <div className="flex items-stretch">
+          {/* Red Score */}
+          <div className="flex items-center gap-2 px-5 py-2 bg-red-500/20 border-b-2 border-red-500 clip-corner-sm">
+            <span className="font-display text-2xl text-white tabular-nums">{redScore}</span>
+            <span className="text-[10px] font-body text-red-300 uppercase">Red</span>
+          </div>
 
-        {/* Timer */}
-        <div className="px-6 py-2 bg-voxel-surface/80 border border-voxel-border rounded">
-          <span className="font-mono text-2xl text-white">{formatTime(roundTimeRemaining)}</span>
-        </div>
+          {/* Timer */}
+          <div className="px-6 py-2 bg-black/50 backdrop-blur-sm">
+            <span className={`font-mono text-xl tabular-nums ${roundTimeRemaining < 30 ? 'text-amber-400' : 'text-white'}`}>
+              {formatTime(roundTimeRemaining)}
+            </span>
+          </div>
 
-        {/* Blue team score */}
-        <div className="flex items-center gap-2 px-4 py-2 bg-team-blue/20 border border-team-blue/50 rounded">
-          <span className="font-body text-sm text-team-blue/80">BLUE</span>
-          <span className="font-display text-2xl text-team-blue font-bold">{blueScore}</span>
+          {/* Blue Score */}
+          <div className="flex items-center gap-2 px-5 py-2 bg-blue-500/20 border-b-2 border-blue-500 clip-corner-sm" style={{ clipPath: 'polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 calc(100% - 12px))' }}>
+            <span className="text-[10px] font-body text-blue-300 uppercase">Blue</span>
+            <span className="font-display text-2xl text-white tabular-nums">{blueScore}</span>
+          </div>
         </div>
       </div>
 
-      {/* Bottom left - Health and abilities */}
-      <div className="absolute bottom-4 left-4 flex items-end gap-4">
-        {/* Hero portrait */}
-        <div className="w-20 h-20 bg-voxel-surface border border-voxel-border rounded-lg overflow-hidden">
-          <div className="w-full h-full bg-gradient-to-br from-voxel-primary/20 to-voxel-accent/20 flex items-center justify-center">
-            <span className="font-display text-2xl text-white/80">
+      {/* Bottom Left - Health & Hero */}
+      <div className="absolute bottom-5 left-5">
+        <div className="flex items-end gap-3">
+          {/* Hero Icon */}
+          <div className="w-12 h-12 rounded bg-strike-surface/90 border border-strike-border flex items-center justify-center backdrop-blur-sm">
+            <span className="font-display text-lg text-white/70">
               {localPlayer.heroId?.charAt(0).toUpperCase()}
             </span>
           </div>
-        </div>
 
-        {/* Health bar */}
-        <div className="flex flex-col gap-2">
-          <div className="w-48 h-6 bg-voxel-dark rounded overflow-hidden relative">
-            <div 
-              className={`h-full transition-all duration-200 ${isLowHealth ? 'health-bar-low' : 'health-bar'}`}
-              style={{ width: `${healthPercent}%` }}
-            />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-display text-sm text-white drop-shadow-lg">
-                {Math.ceil(localPlayer.health)} / {localPlayer.maxHealth}
+          {/* Bars */}
+          <div className="space-y-1">
+            {/* Hero Name + Flag */}
+            <div className="flex items-center gap-2 mb-1">
+              <span className="font-body text-[10px] text-white/50 uppercase tracking-wider">
+                {heroInfo?.name}
+              </span>
+              {localPlayer.hasFlag && (
+                <span className="px-1.5 py-0.5 bg-amber-500/30 text-amber-300 text-[9px] font-display rounded">
+                  FLAG
+                </span>
+              )}
+            </div>
+
+            {/* Health Bar */}
+            <div className="w-40 h-4 bg-black/60 rounded overflow-hidden relative backdrop-blur-sm">
+              <div 
+                className={`h-full transition-all duration-100 ${isLowHealth ? 'health-bar-low' : 'health-bar'}`}
+                style={{ width: `${healthPercent}%` }}
+              />
+              <span className="absolute inset-0 flex items-center justify-center font-mono text-[11px] text-white text-shadow-sm">
+                {Math.ceil(localPlayer.health)}
               </span>
             </div>
-          </div>
 
-          {/* Ultimate charge */}
-          <div className="w-48 h-3 bg-voxel-dark rounded overflow-hidden relative">
-            <div 
-              className="h-full bg-gradient-to-r from-voxel-accent to-voxel-secondary transition-all duration-200"
-              style={{ width: `${ultimatePercent}%` }}
-            />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className="font-mono text-[10px] text-white/80">
-                {ultimatePercent >= 100 ? 'READY' : `${Math.floor(ultimatePercent)}%`}
-              </span>
+            {/* Ultimate Bar */}
+            <div className={`w-40 h-2 rounded overflow-hidden relative ${isUltReady ? 'bg-amber-500/30' : 'bg-black/60'}`}>
+              <div 
+                className={`h-full transition-all duration-150 ${isUltReady ? 'bg-amber-400' : 'bg-violet-500'}`}
+                style={{ width: `${Math.min(100, ultimatePercent)}%` }}
+              />
+              {isUltReady && (
+                <span className="absolute inset-0 flex items-center justify-center text-[8px] font-display text-amber-200 tracking-wider animate-pulse-soft">
+                  ULTIMATE READY
+                </span>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Bottom center - Abilities */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+      {/* Bottom Center - Abilities */}
+      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex gap-1">
         {Object.entries(localPlayer.abilities).map(([id, ability]) => (
           <AbilityIcon 
             key={id} 
@@ -89,154 +125,117 @@ export function HUD() {
             cooldown={ability.cooldownRemaining}
             charges={ability.charges}
             isActive={ability.isActive}
+            heroId={localPlayer.heroId}
           />
         ))}
       </div>
 
-      {/* Bottom right - Movement state indicators */}
-      <div className="absolute bottom-4 right-4 flex flex-col items-end gap-1">
-        {localPlayer.movement.isWallRunning && (
-          <MovementIndicator label="WALL RUN" color="voxel-primary" />
-        )}
-        {localPlayer.movement.isSliding && (
-          <MovementIndicator label="SLIDE" color="voxel-accent" />
-        )}
-        {localPlayer.movement.isGrappling && (
-          <MovementIndicator label="GRAPPLE" color="voxel-secondary" />
-        )}
-        {localPlayer.movement.isJetpacking && (
-          <MovementIndicator label="JETPACK" color="voxel-secondary" />
-        )}
-        {localPlayer.movement.isGliding && (
-          <MovementIndicator label="GLIDE" color="team-blue" />
-        )}
-        {localPlayer.hasFlag && (
-          <MovementIndicator label="FLAG CARRIER" color="yellow-400" pulse />
+      {/* Bottom Right - Movement Status */}
+      <div className="absolute bottom-5 right-5 flex flex-col items-end gap-1">
+        {localPlayer.movement.isWallRunning && <MovementTag label="WALL RUN" />}
+        {localPlayer.movement.isSliding && <MovementTag label="SLIDE" />}
+        {localPlayer.movement.isGrappling && <MovementTag label="GRAPPLE" />}
+        {localPlayer.movement.isJetpacking && <MovementTag label="JETPACK" />}
+        {localPlayer.movement.isGliding && <MovementTag label="GLIDE" />}
+        
+        {/* Jetpack Fuel */}
+        {localPlayer.heroId === 'blaze' && (
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[9px] font-body text-white/30 uppercase">Fuel</span>
+            <div className="w-14 h-1 bg-white/10 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-orange-400 transition-all duration-100"
+                style={{ width: `${localPlayer.movement.jetpackFuel}%` }}
+              />
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Jetpack fuel bar (if applicable) */}
-      {localPlayer.heroId === 'blaze' && (
-        <div className="absolute bottom-20 right-4">
-          <JetpackFuelBar fuel={localPlayer.movement.jetpackFuel} />
+      {/* Flag Carrier Alert */}
+      {localPlayer.hasFlag && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 animate-fade-in">
+          <div className="px-4 py-2 bg-amber-500/20 border border-amber-500/30 rounded backdrop-blur-sm">
+            <span className="font-display text-sm text-amber-300 tracking-wider">
+              RETURN TO BASE →
+            </span>
+          </div>
         </div>
       )}
-
-      {/* Kill feed would go here */}
-      <div className="absolute top-20 right-4 w-64">
-        {/* Kill feed entries */}
-      </div>
     </div>
   );
 }
 
-function Crosshair() {
-  return (
-    <div className="crosshair">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-        {/* Center dot */}
-        <circle cx="12" cy="12" r="2" fill="white" fillOpacity="0.9" />
-        {/* Lines */}
-        <line x1="12" y1="4" x2="12" y2="9" stroke="white" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.8" />
-        <line x1="12" y1="15" x2="12" y2="20" stroke="white" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.8" />
-        <line x1="4" y1="12" x2="9" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.8" />
-        <line x1="15" y1="12" x2="20" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" strokeOpacity="0.8" />
-      </svg>
-    </div>
-  );
-}
-
-interface AbilityIconProps {
+function AbilityIcon({ abilityId, cooldown, charges, isActive, heroId }: {
   abilityId: string;
   cooldown: number;
   charges: number;
   isActive: boolean;
-}
-
-function AbilityIcon({ abilityId, cooldown, charges, isActive }: AbilityIconProps) {
+  heroId: string | null;
+}) {
   const onCooldown = cooldown > 0;
-  const cooldownPercent = onCooldown ? Math.min(100, (cooldown / 10) * 100) : 0;
+  const abilityInfo = ABILITY_DEFINITIONS[abilityId];
+  
+  const heroInfo = heroId ? HERO_DEFINITIONS[heroId as keyof typeof HERO_DEFINITIONS] : null;
+  let keybind = '';
+  if (heroInfo) {
+    if (heroInfo.ability1.abilityId === abilityId) keybind = 'E';
+    else if (heroInfo.ability2.abilityId === abilityId) keybind = 'Q';
+    else if (heroInfo.ultimate.abilityId === abilityId) keybind = 'F';
+  }
+  const isUltimate = keybind === 'F';
 
   return (
-    <div 
-      className={`
-        w-14 h-14 relative rounded-lg overflow-hidden border-2 transition-all duration-200
-        ${isActive ? 'border-voxel-primary shadow-lg shadow-voxel-primary/50 scale-110' : 'border-voxel-border'}
-        ${onCooldown ? 'opacity-60' : ''}
-      `}
-    >
-      <div className="w-full h-full bg-voxel-surface flex items-center justify-center">
-        <span className="font-display text-lg text-white/60">
-          {abilityId.split('_')[1]?.charAt(0).toUpperCase()}
+    <div className={`
+      relative w-11 h-11 rounded transition-all duration-100
+      ${isActive 
+        ? 'bg-cyan-500/30 border border-cyan-400' 
+        : isUltimate 
+          ? 'bg-amber-500/20 border border-amber-500/40'
+          : 'bg-strike-surface/90 border border-strike-border'
+      }
+      backdrop-blur-sm
+    `}>
+      {/* Keybind */}
+      <span className={`absolute top-0.5 left-1 text-[9px] font-mono ${
+        isUltimate ? 'text-amber-400' : 'text-white/40'
+      }`}>
+        {keybind}
+      </span>
+
+      {/* Icon */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="font-display text-sm text-white/50">
+          {abilityInfo?.name?.charAt(0)}
         </span>
       </div>
 
-      {/* Cooldown overlay */}
+      {/* Cooldown Overlay */}
       {onCooldown && (
-        <div 
-          className="absolute inset-0 bg-black/60"
-          style={{ 
-            clipPath: `inset(${100 - cooldownPercent}% 0 0 0)` 
-          }}
-        />
-      )}
-
-      {/* Cooldown text */}
-      {onCooldown && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="font-mono text-sm text-white font-bold">
+        <>
+          <div className="absolute inset-0 bg-black/70 rounded" />
+          <span className="absolute inset-0 flex items-center justify-center font-mono text-sm text-white font-bold">
             {Math.ceil(cooldown)}
           </span>
-        </div>
+        </>
       )}
 
       {/* Charges */}
-      {charges > 1 && (
-        <div className="absolute bottom-0.5 right-0.5 px-1 bg-voxel-primary rounded text-[10px] font-bold text-voxel-dark">
-          {charges}
+      {charges > 1 && !onCooldown && (
+        <div className="absolute bottom-0.5 right-0.5 flex gap-0.5">
+          {[...Array(charges)].map((_, i) => (
+            <div key={i} className="w-1 h-1 bg-cyan-400 rounded-full" />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-interface MovementIndicatorProps {
-  label: string;
-  color: string;
-  pulse?: boolean;
-}
-
-function MovementIndicator({ label, color, pulse }: MovementIndicatorProps) {
+function MovementTag({ label }: { label: string }) {
   return (
-    <div 
-      className={`
-        px-2 py-1 rounded text-xs font-display tracking-wider
-        bg-${color}/20 text-${color} border border-${color}/50
-        ${pulse ? 'animate-pulse' : ''}
-      `}
-    >
-      {label}
+    <div className="px-2 py-1 bg-cyan-500/20 border border-cyan-500/30 rounded backdrop-blur-sm">
+      <span className="text-[9px] font-display text-cyan-300 tracking-wider">{label}</span>
     </div>
   );
 }
-
-interface JetpackFuelBarProps {
-  fuel: number;
-}
-
-function JetpackFuelBar({ fuel }: JetpackFuelBarProps) {
-  const fuelPercent = (fuel / 100) * 100;
-  
-  return (
-    <div className="flex flex-col items-end gap-1">
-      <span className="font-mono text-xs text-voxel-secondary">FUEL</span>
-      <div className="w-24 h-2 bg-voxel-dark rounded overflow-hidden">
-        <div 
-          className="h-full bg-gradient-to-r from-voxel-secondary to-yellow-400 transition-all duration-100"
-          style={{ width: `${fuelPercent}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-

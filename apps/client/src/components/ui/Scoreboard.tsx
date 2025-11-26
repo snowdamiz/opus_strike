@@ -8,23 +8,23 @@ export function Scoreboard() {
   const bluePlayers = Array.from(players.values()).filter(p => p.team === 'blue');
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm z-40 pointer-events-none">
-      <div className="w-full max-w-4xl mx-8 bg-voxel-surface/95 border border-voxel-border rounded-lg overflow-hidden">
+    <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-sm z-40 pointer-events-none">
+      <div className="w-full max-w-3xl mx-8 card overflow-hidden animate-scale-in">
         {/* Header with scores */}
-        <div className="flex items-center justify-between p-4 bg-voxel-dark border-b border-voxel-border">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-team-red/20 border-2 border-team-red rounded flex items-center justify-center">
-              <span className="font-display text-2xl text-team-red font-bold">{redScore}</span>
+        <div className="flex items-center justify-between p-4 bg-strike-elevated/50 border-b border-strike-border">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-red-500/20 border border-red-500/50 rounded flex items-center justify-center">
+              <span className="font-display text-xl text-red-400">{redScore}</span>
             </div>
-            <span className="font-display text-xl text-team-red">RED TEAM</span>
+            <span className="font-display text-lg text-red-400">RED</span>
           </div>
 
-          <span className="font-display text-2xl text-gray-500">VS</span>
+          <span className="font-display text-xl text-white/30">VS</span>
 
-          <div className="flex items-center gap-4">
-            <span className="font-display text-xl text-team-blue">BLUE TEAM</span>
-            <div className="w-12 h-12 bg-team-blue/20 border-2 border-team-blue rounded flex items-center justify-center">
-              <span className="font-display text-2xl text-team-blue font-bold">{blueScore}</span>
+          <div className="flex items-center gap-3">
+            <span className="font-display text-lg text-blue-400">BLUE</span>
+            <div className="w-10 h-10 bg-blue-500/20 border border-blue-500/50 rounded flex items-center justify-center">
+              <span className="font-display text-xl text-blue-400">{blueScore}</span>
             </div>
           </div>
         </div>
@@ -32,18 +32,19 @@ export function Scoreboard() {
         {/* Player lists */}
         <div className="flex">
           {/* Red team */}
-          <div className="flex-1 border-r border-voxel-border">
+          <div className="flex-1 border-r border-strike-border">
             <TeamHeader team="red" />
-            <div className="divide-y divide-voxel-border/50">
+            <div className="divide-y divide-white/5">
               {redPlayers.map(player => (
                 <PlayerRow 
                   key={player.id} 
                   player={player} 
                   isLocal={player.id === localPlayer?.id}
+                  team="red"
                 />
               ))}
               {redPlayers.length === 0 && (
-                <div className="p-4 text-center text-gray-500 font-body">No players</div>
+                <div className="p-4 text-center text-white/30 font-body text-sm">No players</div>
               )}
             </div>
           </div>
@@ -51,25 +52,26 @@ export function Scoreboard() {
           {/* Blue team */}
           <div className="flex-1">
             <TeamHeader team="blue" />
-            <div className="divide-y divide-voxel-border/50">
+            <div className="divide-y divide-white/5">
               {bluePlayers.map(player => (
                 <PlayerRow 
                   key={player.id} 
                   player={player}
                   isLocal={player.id === localPlayer?.id}
+                  team="blue"
                 />
               ))}
               {bluePlayers.length === 0 && (
-                <div className="p-4 text-center text-gray-500 font-body">No players</div>
+                <div className="p-4 text-center text-white/30 font-body text-sm">No players</div>
               )}
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="p-3 bg-voxel-dark border-t border-voxel-border text-center">
-          <span className="font-body text-sm text-gray-500">
-            Press <span className="text-voxel-primary">TAB</span> to close
+        <div className="p-3 bg-strike-elevated/30 border-t border-strike-border text-center">
+          <span className="font-body text-xs text-white/30">
+            Press <span className="text-white/50">TAB</span> to close
           </span>
         </div>
       </div>
@@ -85,12 +87,12 @@ function TeamHeader({ team }: TeamHeaderProps) {
   const isRed = team === 'red';
 
   return (
-    <div className={`grid grid-cols-6 gap-2 px-4 py-2 text-xs font-display tracking-wider ${isRed ? 'bg-team-red/10' : 'bg-team-blue/10'}`}>
-      <span className={`col-span-2 ${isRed ? 'text-team-red' : 'text-team-blue'}`}>PLAYER</span>
-      <span className="text-gray-500 text-center">K</span>
-      <span className="text-gray-500 text-center">D</span>
-      <span className="text-gray-500 text-center">A</span>
-      <span className="text-gray-500 text-center">FLAGS</span>
+    <div className={`grid grid-cols-6 gap-2 px-4 py-2 text-[10px] font-body uppercase tracking-wider ${isRed ? 'bg-red-500/10' : 'bg-blue-500/10'}`}>
+      <span className={`col-span-2 ${isRed ? 'text-red-400' : 'text-blue-400'}`}>Player</span>
+      <span className="text-white/30 text-center">K</span>
+      <span className="text-white/30 text-center">D</span>
+      <span className="text-white/30 text-center">A</span>
+      <span className="text-white/30 text-center">Flags</span>
     </div>
   );
 }
@@ -98,37 +100,38 @@ function TeamHeader({ team }: TeamHeaderProps) {
 interface PlayerRowProps {
   player: Player;
   isLocal: boolean;
+  team: Team;
 }
 
-function PlayerRow({ player, isLocal }: PlayerRowProps) {
+function PlayerRow({ player, isLocal, team }: PlayerRowProps) {
   const stats = player.stats ?? { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 };
+  const isRed = team === 'red';
   
   return (
-    <div className={`grid grid-cols-6 gap-2 px-4 py-3 items-center ${isLocal ? 'bg-voxel-primary/10' : ''}`}>
+    <div className={`grid grid-cols-6 gap-2 px-4 py-2.5 items-center ${isLocal ? 'bg-white/5' : ''}`}>
       <div className="col-span-2 flex items-center gap-2">
-        {/* Hero icon placeholder */}
-        <div className="w-8 h-8 bg-voxel-dark rounded flex items-center justify-center">
-          <span className="font-display text-sm text-gray-500">
+        {/* Hero icon */}
+        <div className={`w-7 h-7 rounded flex items-center justify-center ${isRed ? 'bg-red-500/20' : 'bg-blue-500/20'}`}>
+          <span className={`font-display text-sm ${isRed ? 'text-red-300' : 'text-blue-300'}`}>
             {player.heroId?.charAt(0).toUpperCase() ?? '?'}
           </span>
         </div>
-        <div>
-          <span className={`font-body ${isLocal ? 'text-voxel-primary' : 'text-white'}`}>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className={`font-body text-sm truncate ${isLocal ? 'text-white' : 'text-white/70'}`}>
             {player.name}
-            {isLocal && <span className="text-voxel-primary/60 ml-1">(you)</span>}
           </span>
+          {isLocal && (
+            <span className="px-1 py-0.5 bg-orange-500/20 text-orange-400 text-[9px] font-display rounded shrink-0">YOU</span>
+          )}
           {player.hasFlag && (
-            <span className="ml-2 px-1 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] font-display rounded">
-              FLAG
-            </span>
+            <span className="px-1 py-0.5 bg-amber-500/20 text-amber-300 text-[9px] font-display rounded shrink-0">FLAG</span>
           )}
         </div>
       </div>
-      <span className="font-mono text-center text-gray-300">{stats.kills}</span>
-      <span className="font-mono text-center text-gray-300">{stats.deaths}</span>
-      <span className="font-mono text-center text-gray-300">{stats.assists}</span>
-      <span className="font-mono text-center text-voxel-primary">{stats.flagCaptures}</span>
+      <span className="font-mono text-xs text-center text-white/60">{stats.kills}</span>
+      <span className="font-mono text-xs text-center text-white/60">{stats.deaths}</span>
+      <span className="font-mono text-xs text-center text-white/60">{stats.assists}</span>
+      <span className="font-mono text-xs text-center text-orange-400">{stats.flagCaptures}</span>
     </div>
   );
 }
-
