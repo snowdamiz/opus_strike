@@ -5,8 +5,8 @@ import { useGameStore } from '../../store/gameStore';
 import { useInput } from '../../hooks/useInput';
 import { 
   usePhysics, 
-  checkGroundWithNormal, 
-  moveWithCollision,
+  checkGroundWithNormal,
+  checkWallCollision,
   isPhysicsReady, 
   getColliderCount,
   type GroundInfo 
@@ -28,7 +28,7 @@ import {
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.4;
 const GROUND_SNAP_DISTANCE = 0.3; // How close to ground to snap
-const STEP_HEIGHT = 0.3; // Max height player can step up
+const STEP_HEIGHT = 0.8; // Max height to auto-step up (handles most stair steps)
 
 // Debug flag
 let lastDebugTime = 0;
@@ -143,9 +143,6 @@ export function PlayerController() {
     velocity.x += (moveDirection.x * speed - velocity.x) * control * 10 * dt;
     velocity.z += (moveDirection.z * speed - velocity.z) * control * 10 * dt;
 
-    // Apply gravity
-    velocity.y += GRAVITY * dt;
-
     // Current position
     const position = new THREE.Vector3(
       localPlayer.position.x,
@@ -156,11 +153,10 @@ export function PlayerController() {
     const physicsOk = isPhysicsReady();
 
     // Ground check with slope detection
-    isGroundedRef.current = false;
     let groundInfo: GroundInfo | null = null;
 
     if (physicsOk) {
-      // Check for ground below player (from player center)
+      // Check for ground below player
       groundInfo = checkGroundWithNormal(position.x, position.y + 0.5, position.z, 50);
 
       // Debug logging (throttled)
@@ -169,91 +165,156 @@ export function PlayerController() {
         lastDebugTime = now;
         const colliders = getColliderCount();
         const walkable = groundInfo ? (groundInfo.isWalkable ? 'yes' : 'STEEP') : 'n/a';
-        console.log('[Player] Y:', position.y.toFixed(1), '| Ground:', groundInfo ? groundInfo.groundY.toFixed(1) : 'none', '| Walkable:', walkable);
+        console.log('[Player] Y:', position.y.toFixed(1), '| Ground:', groundInfo ? groundInfo.groundY.toFixed(1) : 'none', '| Walkable:', walkable, '| Grounded:', isGroundedRef.current);
       }
     }
 
-    // Apply gravity
-    velocity.y += GRAVITY * dt;
-
-    // Wall collision for horizontal movement
-    if (physicsOk && (Math.abs(velocity.x) > 0.01 || Math.abs(velocity.z) > 0.01)) {
-      const moveResult = moveWithCollision(
-        position.x, position.y, position.z,
-        velocity.x, velocity.z,
-        dt,
-        PLAYER_RADIUS
-      );
-      position.x = moveResult.newX;
-      position.z = moveResult.newZ;
-      velocity.x = moveResult.velX;
-      velocity.z = moveResult.velZ;
-    } else {
-      // No physics, just move
-      position.x += velocity.x * dt;
-      position.z += velocity.z * dt;
-    }
-
-    // Update Y position
-    position.y += velocity.y * dt;
-
-    // Ground collision with slope handling
+    // Ground collision FIRST - determine if grounded before applying physics
     if (groundInfo !== null) {
+      const targetY = groundInfo.groundY + PLAYER_HEIGHT / 2;
       const playerFeetY = position.y - PLAYER_HEIGHT / 2;
-      const distanceToGround = playerFeetY - groundInfo.groundY;
+      const distToGround = playerFeetY - groundInfo.groundY;
       
-      // If close to ground and falling
-      if (distanceToGround <= GROUND_SNAP_DISTANCE && velocity.y <= 0) {
+      // Close to or below ground
+      if (distToGround <= 0.15 && velocity.y <= 0) {
         if (groundInfo.isWalkable) {
-          // Walkable slope - snap to ground
-          position.y = groundInfo.groundY + PLAYER_HEIGHT / 2;
+          position.y = targetY;
           velocity.y = 0;
           isGroundedRef.current = true;
           canJumpRef.current = true;
         } else {
-          // Too steep - slide down
-          // Push player away from steep surface based on normal
+          // Too steep - slide
           const slideForce = 15 * dt;
           velocity.x += groundInfo.normal.x * slideForce;
           velocity.z += groundInfo.normal.z * slideForce;
-          // Still snap to surface but not grounded (can't jump)
-          if (distanceToGround < 0.1) {
-            position.y = groundInfo.groundY + PLAYER_HEIGHT / 2;
-            velocity.y = 0;
-          }
+          position.y = targetY;
+          velocity.y = 0;
           isGroundedRef.current = false;
           canJumpRef.current = false;
         }
+      } else {
+        isGroundedRef.current = false;
       }
-      // Step-up: if we're slightly below a walkable surface, step up
-      else if (distanceToGround < 0 && distanceToGround > -STEP_HEIGHT && groundInfo.isWalkable && velocity.y <= 0) {
-        position.y = groundInfo.groundY + PLAYER_HEIGHT / 2;
-        velocity.y = 0;
-        isGroundedRef.current = true;
-        canJumpRef.current = true;
-      }
+    } else {
+      isGroundedRef.current = false;
     }
 
-    // Fallback ground collision at y=-49 (safety net)
-    const minY = -49 + PLAYER_HEIGHT / 2;
-    if (position.y <= minY) {
-      position.y = minY;
-      velocity.y = 0;
-      isGroundedRef.current = true;
-      canJumpRef.current = true;
-      console.log('[Player] Hit safety net floor');
-    }
-
-    // Jump
+    // Jump - check AFTER ground detection
     if (inputState.jump && canJumpRef.current && isGroundedRef.current) {
       velocity.y = BASE_JUMP_FORCE;
       canJumpRef.current = false;
       isGroundedRef.current = false;
     }
 
-    // Prevent falling through the world - respawn if too low
+    // Apply gravity (only once!)
+    velocity.y += GRAVITY * dt;
+
+    // Horizontal movement with step-up for stairs
+    const moveX = velocity.x * dt;
+    const moveZ = velocity.z * dt;
+    let didStepUp = false;
+    
+    if (physicsOk && (Math.abs(moveX) > 0.001 || Math.abs(moveZ) > 0.001)) {
+      const targetX = position.x + moveX;
+      const targetZ = position.z + moveZ;
+      
+      // STEP-UP LOGIC: Check ground at target position and ahead
+      // This handles stairs without relying on wall detection
+      if (isGroundedRef.current) {
+        // Check ground further ahead for stairs (not just at target position)
+        const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
+        const lookAheadDist = Math.max(moveDist * 3, 0.5); // Look ahead more
+        const aheadX = position.x + (moveX / moveDist) * lookAheadDist;
+        const aheadZ = position.z + (moveZ / moveDist) * lookAheadDist;
+        
+        const groundAhead = checkGroundWithNormal(aheadX, position.y + STEP_HEIGHT + 1, aheadZ, STEP_HEIGHT + 3);
+        
+        if (groundAhead && groundAhead.isWalkable) {
+          const currentFeetY = position.y - PLAYER_HEIGHT / 2;
+          const targetGroundY = groundAhead.groundY;
+          const heightDiff = targetGroundY - currentFeetY;
+          
+          // Debug logging for step-up
+          const now = Date.now();
+          if (now - lastDebugTime > 500 && heightDiff > 0.05) {
+            console.log('[StepUp] HeightDiff:', heightDiff.toFixed(2), '| Current:', currentFeetY.toFixed(2), '| Target:', targetGroundY.toFixed(2));
+          }
+          
+          // If target ground is higher (but within step height), step up
+          if (heightDiff > 0.1 && heightDiff <= STEP_HEIGHT) {
+            // Check ceiling clearance
+            const ceilingCheck = checkGroundWithNormal(aheadX, targetGroundY + PLAYER_HEIGHT + 0.5, aheadZ, 1);
+            const hasCeiling = ceilingCheck && ceilingCheck.groundY < targetGroundY + PLAYER_HEIGHT;
+            
+            if (!hasCeiling) {
+              // Step up! Move to a point between current and ahead
+              const stepX = position.x + moveX * 2;
+              const stepZ = position.z + moveZ * 2;
+              position.x = stepX;
+              position.z = stepZ;
+              position.y = targetGroundY + PLAYER_HEIGHT / 2;
+              velocity.y = 0;
+              didStepUp = true;
+              isGroundedRef.current = true;
+              canJumpRef.current = true;
+              console.log('[StepUp] SUCCESS! New Y:', position.y.toFixed(2));
+            }
+          }
+        }
+      }
+      
+      // If didn't step up, do normal movement with wall collision
+      if (!didStepUp) {
+        // Check walls
+        const moveDirX = Math.abs(moveX) > 0.001 ? Math.sign(moveX) : 0;
+        const moveDirZ = Math.abs(moveZ) > 0.001 ? Math.sign(moveZ) : 0;
+        
+        let blockedX = false;
+        let blockedZ = false;
+        
+        if (Math.abs(moveX) > 0.001) {
+          const wallX = checkWallCollision(position.x, position.y, position.z, moveDirX, 0, PLAYER_RADIUS);
+          blockedX = wallX.hit && wallX.distance < PLAYER_RADIUS + Math.abs(moveX) + 0.05;
+        }
+        
+        if (Math.abs(moveZ) > 0.001) {
+          const wallZ = checkWallCollision(position.x, position.y, position.z, 0, moveDirZ, PLAYER_RADIUS);
+          blockedZ = wallZ.hit && wallZ.distance < PLAYER_RADIUS + Math.abs(moveZ) + 0.05;
+        }
+        
+        if (blockedX) {
+          velocity.x = 0;
+        } else {
+          position.x += moveX;
+        }
+        
+        if (blockedZ) {
+          velocity.z = 0;
+        } else {
+          position.z += moveZ;
+        }
+      }
+    } else {
+      position.x += moveX;
+      position.z += moveZ;
+    }
+    
+    // Apply vertical movement (skip if we just stepped up)
+    if (!didStepUp) {
+      position.y += velocity.y * dt;
+    }
+
+    // Safety net floor
+    const minY = -49 + PLAYER_HEIGHT / 2;
+    if (position.y <= minY) {
+      position.y = minY;
+      velocity.y = 0;
+      isGroundedRef.current = true;
+      canJumpRef.current = true;
+    }
+
+    // Respawn if fell too far
     if (position.y < -100) {
-      console.log('[Player] Fell off map, respawning');
       position.set(0, 60, 0);
       velocity.set(0, 0, 0);
     }

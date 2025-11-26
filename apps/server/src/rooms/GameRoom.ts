@@ -620,8 +620,8 @@ export class GameRoom extends Room<GameState> {
       player.velocity.x = moveX * speed;
       player.velocity.z = moveZ * speed;
 
-      // Apply gravity
-      player.velocity.y -= 30 * dt;
+      // Apply gravity (reduced for floatier feel)
+      player.velocity.y -= 20 * dt;
 
       // Update position
       player.position.x += player.velocity.x * dt;

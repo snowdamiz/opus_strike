@@ -41,7 +41,7 @@ export function usePhysics(): PhysicsContext {
         if (!mounted) return;
 
         // Create physics world with gravity
-        const gravity = { x: 0, y: -30, z: 0 };
+        const gravity = { x: 0, y: -20, z: 0 }; // Reduced for floatier feel
         worldRef.current = new RAPIER.World(gravity);
         worldInstance = worldRef.current;
         console.log('[Physics] World created');
@@ -430,54 +430,104 @@ export function checkWallCollision(
   return { hit: false, distance: Infinity, normal: { x: 0, y: 0, z: 0 }, pushBack: { x: 0, z: 0 } };
 }
 
-// Move with collision - handles wall sliding
+// Step height for climbing stairs/small obstacles
+const STEP_UP_HEIGHT = 1.2; // Max height player can step up (tall stairs)
+
+// Move with collision - handles wall sliding and step-up
+// Uses "lift and move" approach for stairs
 export function moveWithCollision(
   x: number, y: number, z: number,
   velX: number, velZ: number,
   dt: number,
-  playerRadius: number = 0.4
-): { newX: number; newZ: number; velX: number; velZ: number } {
+  playerRadius: number = 0.4,
+  isGrounded: boolean = true
+): { newX: number; newZ: number; newY: number; velX: number; velZ: number; stepped: boolean } {
   if (!rapierInstance || !worldInstance) {
-    return { newX: x + velX * dt, newZ: z + velZ * dt, velX, velZ };
+    return { newX: x + velX * dt, newZ: z + velZ * dt, newY: y, velX, velZ, stepped: false };
   }
   
   let newX = x;
   let newZ = z;
+  let newY = y;
   let newVelX = velX;
   let newVelZ = velZ;
+  let stepped = false;
   
-  // Try to move in X direction
+  const moveX = velX * dt;
+  const moveZ = velZ * dt;
+  
+  const hasHorizontalMovement = Math.abs(velX) > 0.01 || Math.abs(velZ) > 0.01;
+  
+  if (!hasHorizontalMovement) {
+    return { newX, newZ, newY, velX, velZ, stepped };
+  }
+
+  // Target position
+  const targetX = x + moveX;
+  const targetZ = z + moveZ;
+  
+  // Check if we can move directly to target at current height
+  const dirX = moveX !== 0 ? Math.sign(moveX) : 0;
+  const dirZ = moveZ !== 0 ? Math.sign(moveZ) : 0;
+  
+  // Check for blocking at current position
+  const blocked = checkWallCollision(x, y, z, dirX, dirZ, playerRadius);
+  const isBlocked = blocked.hit && blocked.distance < playerRadius + Math.max(Math.abs(moveX), Math.abs(moveZ)) + 0.1;
+  
+  if (isBlocked && isGrounded) {
+    // We're blocked - try step-up approach
+    // Lift player up, try to move forward, then find ground
+    
+    const liftedY = y + STEP_UP_HEIGHT;
+    
+    // Check if we can move at the lifted height
+    const liftedBlocked = checkWallCollision(x, liftedY, z, dirX, dirZ, playerRadius);
+    const canMoveLifted = !liftedBlocked.hit || liftedBlocked.distance > playerRadius + Math.max(Math.abs(moveX), Math.abs(moveZ));
+    
+    if (canMoveLifted) {
+      // We can move when lifted - check if there's ground at the target
+      const groundAtTarget = checkGroundWithNormal(targetX, liftedY + 0.5, targetZ, STEP_UP_HEIGHT + 1);
+      
+      if (groundAtTarget && groundAtTarget.isWalkable) {
+        // There's walkable ground! Step up to it
+        const newGroundY = groundAtTarget.groundY;
+        const stepHeight = newGroundY - (y - 0.9); // How much we're stepping up
+        
+        if (stepHeight > 0 && stepHeight <= STEP_UP_HEIGHT) {
+          newX = targetX;
+          newZ = targetZ;
+          newY = newGroundY + 0.9; // Player center = ground + half player height
+          stepped = true;
+          return { newX, newZ, newY, velX, velZ, stepped };
+        }
+      }
+    }
+  }
+  
+  // Normal movement with wall collision (no step-up)
+  // Try X movement
   if (Math.abs(velX) > 0.01) {
     const wallCheck = checkWallCollision(newX, y, newZ, velX > 0 ? 1 : -1, 0, playerRadius);
-    if (wallCheck.hit && wallCheck.distance < playerRadius + Math.abs(velX * dt)) {
-      // Hit wall in X - stop X velocity and apply push-back
+    if (wallCheck.hit && wallCheck.distance < playerRadius + Math.abs(moveX) + 0.05) {
       newVelX = 0;
       newX += wallCheck.pushBack.x;
     } else {
-      newX += velX * dt;
+      newX += moveX;
     }
   }
   
-  // Try to move in Z direction
+  // Try Z movement
   if (Math.abs(velZ) > 0.01) {
     const wallCheck = checkWallCollision(newX, y, newZ, 0, velZ > 0 ? 1 : -1, playerRadius);
-    if (wallCheck.hit && wallCheck.distance < playerRadius + Math.abs(velZ * dt)) {
-      // Hit wall in Z - stop Z velocity and apply push-back
+    if (wallCheck.hit && wallCheck.distance < playerRadius + Math.abs(moveZ) + 0.05) {
       newVelZ = 0;
       newZ += wallCheck.pushBack.z;
     } else {
-      newZ += velZ * dt;
+      newZ += moveZ;
     }
   }
   
-  // Final diagonal check to prevent corner cutting
-  const diagCheck = checkWallCollision(newX, y, newZ, newX - x, newZ - z, playerRadius);
-  if (diagCheck.hit && diagCheck.distance < playerRadius * 0.8) {
-    newX = x + diagCheck.pushBack.x;
-    newZ = z + diagCheck.pushBack.z;
-  }
-  
-  return { newX, newZ, velX: newVelX, velZ: newVelZ };
+  return { newX, newZ, newY, velX: newVelX, velZ: newVelZ, stepped };
 }
 
 // Debug function to count colliders

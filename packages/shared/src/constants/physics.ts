@@ -1,5 +1,5 @@
 // World settings
-export const GRAVITY = -30;
+export const GRAVITY = -20; // Reduced from -30 for floatier feel
 export const AIR_RESISTANCE = 0.01;
 export const GROUND_FRICTION = 0.9;
 
@@ -8,7 +8,7 @@ export const BASE_MOVE_SPEED = 12;
 export const SPRINT_MULTIPLIER = 1.4;
 export const CROUCH_MULTIPLIER = 0.5;
 export const AIR_CONTROL = 0.3;
-export const BASE_JUMP_FORCE = 12;
+export const BASE_JUMP_FORCE = 16; // Increased from 12 for higher jumps
 export const MAX_JUMPS = 1;
 
 // Look sensitivity
