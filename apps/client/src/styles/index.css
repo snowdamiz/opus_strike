@@ -1071,6 +1071,23 @@ input[type="color"]::-webkit-color-swatch {
   animation: sentinel-dome 5s linear infinite;
 }
 
+/* ===== BACKGROUND PAN ANIMATION ===== */
+@keyframes bg-pan {
+  0% {
+    transform: scale(1.2) translateX(-2%);
+  }
+  50% {
+    transform: scale(1.2) translateX(2%);
+  }
+  100% {
+    transform: scale(1.2) translateX(-2%);
+  }
+}
+
+.animate-bg-pan {
+  animation: bg-pan 22s ease-in-out infinite;
+}
+
 /* ===== HERO SHOWCASE ENTRANCE ===== */
 @keyframes hero-entrance {
   0% {

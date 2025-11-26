@@ -113,9 +113,9 @@ export function MainLobby() {
     <div className="w-full h-full relative overflow-hidden bg-strike-bg">
       {/* Cinematic Background */}
       <div className="absolute inset-0">
-        {/* Background Image - blurred for depth */}
+        {/* Background Image - blurred with slow pan for depth */}
         <div 
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat blur-[2px] scale-105"
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat blur-[2px] animate-bg-pan"
           style={{ backgroundImage: 'url(/bg.jpg)' }}
         />
         
@@ -170,12 +170,88 @@ export function MainLobby() {
           {/* Logo & Tabs */}
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center">
-                <span className="font-display text-white text-xl">VS</span>
+              {/* Logo Icon - Stylized voxel with energy bolt */}
+              <div className="w-12 h-12 relative flex items-center justify-center">
+                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full drop-shadow-lg">
+                  <defs>
+                    {/* Cube face gradients */}
+                    <linearGradient id="frontFace" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#f97316" />
+                      <stop offset="100%" stopColor="#dc2626" />
+                    </linearGradient>
+                    <linearGradient id="sideFace" x1="100%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="#b91c1c" />
+                      <stop offset="100%" stopColor="#7f1d1d" />
+                    </linearGradient>
+                    <linearGradient id="topFace" x1="0%" y1="100%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#fb923c" />
+                      <stop offset="100%" stopColor="#fbbf24" />
+                    </linearGradient>
+                    {/* Bolt gradient */}
+                    <linearGradient id="boltMain" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="#fef3c7" />
+                      <stop offset="50%" stopColor="#fde047" />
+                      <stop offset="100%" stopColor="#f59e0b" />
+                    </linearGradient>
+                    {/* Glow filter */}
+                    <filter id="boltGlow" x="-50%" y="-50%" width="200%" height="200%">
+                      <feGaussianBlur stdDeviation="2" result="blur"/>
+                      <feFlood floodColor="#fbbf24" floodOpacity="0.8"/>
+                      <feComposite in2="blur" operator="in"/>
+                      <feMerge>
+                        <feMergeNode/>
+                        <feMergeNode in="SourceGraphic"/>
+                      </feMerge>
+                    </filter>
+                    {/* Drop shadow for cube */}
+                    <filter id="cubeShadow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#000" floodOpacity="0.4"/>
+                    </filter>
+                  </defs>
+                  
+                  {/* Isometric Cube - clean geometry */}
+                  <g filter="url(#cubeShadow)">
+                    {/* Left face (darker) */}
+                    <path d="M24 22 L10 14 L10 30 L24 38 Z" fill="url(#sideFace)" />
+                    {/* Right face (medium) */}
+                    <path d="M24 22 L38 14 L38 30 L24 38 Z" fill="url(#frontFace)" />
+                    {/* Top face (brightest) */}
+                    <path d="M24 6 L38 14 L24 22 L10 14 Z" fill="url(#topFace)" />
+                  </g>
+                  
+                  {/* Edge highlights */}
+                  <path d="M24 22 L24 38" stroke="rgba(0,0,0,0.3)" strokeWidth="0.5" />
+                  <path d="M24 6 L24 22" stroke="rgba(255,255,255,0.4)" strokeWidth="0.75" />
+                  <path d="M10 14 L24 22 L38 14" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5" fill="none" />
+                  
+                  {/* Lightning bolt - sharp & dynamic */}
+                  <g filter="url(#boltGlow)">
+                    <path 
+                      d="M28 2 L20 19 L26 19 L18 40 L22 40 L30 21 L24 21 L30 2 Z" 
+                      fill="url(#boltMain)"
+                      stroke="#fff"
+                      strokeWidth="0.5"
+                      strokeLinejoin="round"
+                    />
+                    {/* Inner highlight */}
+                    <path 
+                      d="M27 6 L22 17 L25 17 L21 32" 
+                      stroke="rgba(255,255,255,0.9)"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      fill="none"
+                    />
+                  </g>
+                  
+                  {/* Subtle sparkle accents */}
+                  <circle cx="15" cy="10" r="0.8" fill="#fef3c7" opacity="0.7" />
+                  <circle cx="33" cy="8" r="0.6" fill="#fef3c7" opacity="0.5" />
+                </svg>
               </div>
               <div>
-                <h1 className="font-display text-xl text-white tracking-wider">VOXEL STRIKE</h1>
-                <p className="text-[10px] text-white/30 font-body uppercase tracking-widest">Season 1</p>
+                <h1 className="font-display text-xl text-white tracking-wider drop-shadow-lg">VOXEL STRIKE</h1>
+                <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
               </div>
             </div>
 
@@ -201,9 +277,9 @@ export function MainLobby() {
           <div className="flex items-center gap-4">
             <button
               onClick={() => setShowSettings(true)}
-              className="w-10 h-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all"
+              className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white transition-all"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
