@@ -1,8 +1,9 @@
 import express from 'express';
 import { createServer } from 'http';
-import { Server } from 'colyseus';
+import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
+import { LobbyRoom } from './rooms/LobbyRoom';
 
 const app = express();
 const httpServer = createServer(app);
@@ -16,20 +17,47 @@ const gameServer = new Server({
   }),
 });
 
-// Register game room
+// Register rooms
 gameServer.define('game_room', GameRoom);
+gameServer.define('lobby_room', LobbyRoom).enableRealtimeListing();
+
+// CORS for development - MUST be before routes
+app.use((_req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  
+  // Handle preflight requests
+  if (_req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-// CORS for development
-app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  next();
+// List available lobbies
+app.get('/lobbies', async (_req, res) => {
+  try {
+    const rooms = await matchMaker.query({ name: 'lobby_room' });
+    const lobbies = rooms
+      .filter((room: any) => room.metadata?.isPublic !== false)
+      .map((room: any) => ({
+        roomId: room.roomId,
+        name: room.metadata?.name || `Lobby ${room.roomId.slice(0, 6)}`,
+        playerCount: room.clients,
+        maxPlayers: room.maxClients,
+        status: room.metadata?.status || 'waiting',
+      }));
+    res.json({ lobbies });
+  } catch (error) {
+    console.error('Failed to list lobbies:', error);
+    res.status(500).json({ error: 'Failed to list lobbies' });
+  }
 });
 
 const PORT = parseInt(process.env.PORT || '2567', 10);

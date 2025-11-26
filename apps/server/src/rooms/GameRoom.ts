@@ -14,6 +14,11 @@ import type {
   PlayerInput,
 } from '@voxel-strike/shared';
 
+interface CreateOptions {
+  lobbyId?: string;
+  lobbyName?: string;
+}
+
 interface JoinOptions {
   playerName?: string;
   preferredTeam?: Team;
@@ -22,9 +27,13 @@ interface JoinOptions {
 export class GameRoom extends Room<GameState> {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private readonly config = DEFAULT_GAME_CONFIG;
+  private lobbyId: string | null = null;
+  private lobbyName: string | null = null;
 
-  onCreate() {
-    console.log('Game room created:', this.roomId);
+  onCreate(options: CreateOptions) {
+    this.lobbyId = options.lobbyId || null;
+    this.lobbyName = options.lobbyName || null;
+    console.log('Game room created:', this.roomId, 'from lobby:', this.lobbyId || 'direct');
 
     // Initialize state
     this.setState(new GameState());
@@ -237,7 +246,7 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private handleInput(client: Client, input: PlayerInput) {
+  private handleInput(client: Client, input: PlayerInput & { position?: { x: number; y: number; z: number }; velocity?: { x: number; y: number; z: number } }) {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive') return;
 
@@ -247,6 +256,20 @@ export class GameRoom extends Room<GameState> {
     // Update look direction immediately
     player.lookYaw = input.lookYaw;
     player.lookPitch = input.lookPitch;
+
+    // Use client-reported position for now (trust client for smoother sync)
+    // In a production game, you'd validate this against server physics
+    if (input.position) {
+      // Basic validation: clamp to bounds
+      player.position.x = Math.max(-48, Math.min(48, input.position.x));
+      player.position.y = Math.max(0, Math.min(50, input.position.y));
+      player.position.z = Math.max(-48, Math.min(48, input.position.z));
+    }
+    if (input.velocity) {
+      player.velocity.x = input.velocity.x;
+      player.velocity.y = input.velocity.y;
+      player.velocity.z = input.velocity.z;
+    }
   }
 
   private handleHeroSelect(client: Client, heroId: HeroId) {

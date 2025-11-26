@@ -1,10 +1,23 @@
 import { createContext, useContext, useRef, useCallback, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, LobbyPlayer, LobbyInfo } from '../store/gameStore';
+import { config } from '../config/environment';
 import type { HeroId, Team, PlayerInput, Player } from '@voxel-strike/shared';
 
 interface NetworkContextType {
-  connect: (serverUrl: string, playerName: string) => Promise<void>;
+  // Lobby operations
+  fetchLobbies: () => Promise<LobbyInfo[]>;
+  createLobby: (playerName: string, lobbyName?: string, isPrivate?: boolean) => Promise<void>;
+  joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
+  leaveLobby: () => void;
+  setLobbyReady: (ready: boolean) => void;
+  setLobbyTeam: (team: string) => void;
+  startGame: () => void;
+  kickPlayer: (playerId: string) => void;
+  
+  // Game operations
+  joinGameRoom: (gameRoomId: string, playerName: string, team?: string) => Promise<void>;
+  leaveGame: () => void;
   disconnect: () => void;
   sendInput: (input: PlayerInput) => void;
   selectHero: (heroId: HeroId) => void;
@@ -16,103 +29,301 @@ const NetworkContext = createContext<NetworkContextType | null>(null);
 
 export function NetworkProvider({ children }: { children: ReactNode }) {
   const clientRef = useRef<Client | null>(null);
-  const roomRef = useRef<Room | null>(null);
+  const lobbyRoomRef = useRef<Room | null>(null);
+  const gameRoomRef = useRef<Room | null>(null);
 
   const {
     setConnected,
     setLoading,
     setRoomId,
     setPlayerId,
+    setAppPhase,
     setGamePhase,
     setPhaseEndTime,
     setLocalPlayer,
     updatePlayer,
     removePlayer,
+    setAvailableLobbies,
+    setCurrentLobby,
+    setLobbyPlayers,
+    updateLobbyPlayer,
+    removeLobbyPlayer,
+    setIsLobbyHost,
     reset,
+    resetLobby,
   } = useGameStore();
 
-  const connect = useCallback(async (serverUrl: string, playerName: string) => {
+  // Initialize client
+  const getClient = useCallback(() => {
+    if (!clientRef.current) {
+      clientRef.current = new Client(config.serverUrl);
+    }
+    return clientRef.current;
+  }, []);
+
+  // Fetch available lobbies
+  const fetchLobbies = useCallback(async (): Promise<LobbyInfo[]> => {
+    try {
+      const httpUrl = config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+      const response = await fetch(`${httpUrl}/lobbies`);
+      const data = await response.json();
+      const lobbies = data.lobbies || [];
+      setAvailableLobbies(lobbies);
+      return lobbies;
+    } catch (error) {
+      console.error('Failed to fetch lobbies:', error);
+      return [];
+    }
+  }, [setAvailableLobbies]);
+
+  // Create a new lobby
+  const createLobby = useCallback(async (playerName: string, lobbyName?: string, isPrivate?: boolean) => {
     setLoading(true);
 
     try {
-      clientRef.current = new Client(serverUrl);
+      const client = getClient();
+      
+      lobbyRoomRef.current = await client.create('lobby_room', {
+        playerName,
+        lobbyName: lobbyName || `${playerName}'s Lobby`,
+        isPrivate: isPrivate || false,
+      });
 
-      roomRef.current = await clientRef.current.joinOrCreate('game_room', {
+      setupLobbyListeners(lobbyRoomRef.current, playerName);
+      
+      setPlayerId(lobbyRoomRef.current.sessionId);
+      setCurrentLobby(lobbyRoomRef.current.id, lobbyName || `${playerName}'s Lobby`);
+      setIsLobbyHost(true);
+      setAppPhase('in_lobby');
+      setConnected(true);
+      setLoading(false);
+
+      console.log('Created lobby:', lobbyRoomRef.current.id);
+
+    } catch (error) {
+      console.error('Failed to create lobby:', error);
+      setLoading(false);
+      throw error;
+    }
+  }, [getClient, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected]);
+
+  // Join an existing lobby
+  const joinLobby = useCallback(async (playerName: string, lobbyId: string) => {
+    setLoading(true);
+
+    try {
+      const client = getClient();
+      
+      lobbyRoomRef.current = await client.joinById(lobbyId, {
         playerName,
       });
 
-      const room = roomRef.current;
-      const sessionId = room.sessionId;
+      setupLobbyListeners(lobbyRoomRef.current, playerName);
+      
+      setPlayerId(lobbyRoomRef.current.sessionId);
+      setAppPhase('in_lobby');
+      setConnected(true);
+      setLoading(false);
 
-      console.log('Connected to room:', room.id, 'as', sessionId);
+      console.log('Joined lobby:', lobbyRoomRef.current.id);
 
-      setRoomId(room.id);
-      setPlayerId(sessionId);
+    } catch (error) {
+      console.error('Failed to join lobby:', error);
+      setLoading(false);
+      throw error;
+    }
+  }, [getClient, setLoading, setPlayerId, setAppPhase, setConnected]);
 
-      // Helper to create player from schema data
-      const createPlayerData = (schemaPlayer: any, id: string): Player => {
-        return {
-          id,
-          name: schemaPlayer.name || 'Unknown',
-          team: (schemaPlayer.team || 'red') as Team,
-          heroId: (schemaPlayer.heroId || null) as HeroId | null,
-          state: (schemaPlayer.state || 'alive') as any,
-          isReady: schemaPlayer.isReady || false,
-          position: { 
-            x: schemaPlayer.position?.x ?? 0, 
-            y: schemaPlayer.position?.y ?? 1, 
-            z: schemaPlayer.position?.z ?? 0 
-          },
-          velocity: { 
-            x: schemaPlayer.velocity?.x ?? 0, 
-            y: schemaPlayer.velocity?.y ?? 0, 
-            z: schemaPlayer.velocity?.z ?? 0 
-          },
-          lookYaw: schemaPlayer.lookYaw ?? 0,
-          lookPitch: schemaPlayer.lookPitch ?? 0,
-          health: schemaPlayer.health ?? 100,
-          maxHealth: schemaPlayer.maxHealth ?? 100,
-          ultimateCharge: schemaPlayer.ultimateCharge ?? 0,
-          movement: {
-            isGrounded: true,
-            isSliding: false,
-            isWallRunning: false,
-            wallRunSide: null,
-            isGrappling: false,
-            grapplePoint: null,
-            isJetpacking: false,
-            jetpackFuel: 100,
-            isGliding: false,
-          },
-          abilities: {},
-          hasFlag: schemaPlayer.hasFlag || false,
-          respawnTime: null,
-          spawnProtectionUntil: null,
-          stats: { 
-            kills: 0, 
-            deaths: 0, 
-            assists: 0, 
-            flagCaptures: 0, 
-            flagReturns: 0 
-          },
-        };
-      };
+  // Setup lobby room listeners
+  const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
+    room.onMessage('lobbyState', (data: { lobbyId: string; name: string; hostId: string; status: string; players: any[] }) => {
+      console.log('Received lobby state:', data);
+      setCurrentLobby(data.lobbyId, data.name);
+      setIsLobbyHost(data.hostId === room.sessionId);
+      
+      const playersMap = new Map<string, LobbyPlayer>();
+      for (const p of data.players) {
+        playersMap.set(p.id, {
+          id: p.id,
+          name: p.name,
+          isHost: p.isHost,
+          isReady: p.isReady,
+          team: p.team,
+        });
+      }
+      setLobbyPlayers(playersMap);
+    });
 
-      // Create default local player immediately so movement works
-      const defaultPlayer: Player = {
-        id: sessionId,
-        name: playerName,
-        team: 'red',
-        heroId: null,
-        state: 'alive',
+    room.onMessage('playerJoined', (data: { playerId: string; playerName: string; isHost: boolean }) => {
+      console.log('Player joined lobby:', data.playerName);
+      updateLobbyPlayer(data.playerId, {
+        id: data.playerId,
+        name: data.playerName,
+        isHost: data.isHost,
         isReady: false,
-        position: { x: 0, y: 1, z: 0 },
-        velocity: { x: 0, y: 0, z: 0 },
-        lookYaw: 0,
-        lookPitch: 0,
-        health: 100,
-        maxHealth: 100,
-        ultimateCharge: 0,
+        team: '',
+      });
+    });
+
+    room.onMessage('playerLeft', (data: { playerId: string }) => {
+      console.log('Player left lobby:', data.playerId);
+      removeLobbyPlayer(data.playerId);
+    });
+
+    room.onMessage('playerReady', (data: { playerId: string; ready: boolean }) => {
+      const store = useGameStore.getState();
+      const player = store.lobbyPlayers.get(data.playerId);
+      if (player) {
+        updateLobbyPlayer(data.playerId, { ...player, isReady: data.ready });
+      }
+    });
+
+    room.onMessage('playerTeamChanged', (data: { playerId: string; team: string }) => {
+      const store = useGameStore.getState();
+      const player = store.lobbyPlayers.get(data.playerId);
+      if (player) {
+        updateLobbyPlayer(data.playerId, { ...player, team: data.team });
+      }
+    });
+
+    room.onMessage('hostChanged', (data: { newHostId: string; newHostName: string }) => {
+      console.log('Host changed to:', data.newHostName);
+      setIsLobbyHost(data.newHostId === room.sessionId);
+      
+      // Update all players' isHost status
+      const store = useGameStore.getState();
+      const updatedPlayers = new Map<string, LobbyPlayer>();
+      store.lobbyPlayers.forEach((p, id) => {
+        updatedPlayers.set(id, { ...p, isHost: id === data.newHostId });
+      });
+      setLobbyPlayers(updatedPlayers);
+    });
+
+    room.onMessage('gameStarting', async (data: { gameRoomId: string; players: { playerId: string; playerName: string; team: string }[] }) => {
+      console.log('Game starting! Room:', data.gameRoomId);
+      
+      // Find our assigned team
+      const myAssignment = data.players.find(p => p.playerId === room.sessionId);
+      const myTeam = myAssignment?.team || 'red';
+      
+      // Join the game room
+      try {
+        await joinGameRoom(data.gameRoomId, playerName, myTeam);
+      } catch (error) {
+        console.error('Failed to join game room:', error);
+      }
+    });
+
+    room.onMessage('kicked', (data: { reason: string }) => {
+      console.log('Kicked from lobby:', data.reason);
+      leaveLobby();
+    });
+
+    room.onMessage('error', (data: { message: string }) => {
+      console.error('Lobby error:', data.message);
+    });
+
+    room.onError((code, message) => {
+      console.error('Lobby room error:', code, message);
+    });
+
+    room.onLeave((code) => {
+      console.log('Left lobby room:', code);
+      resetLobby();
+    });
+  }, [setCurrentLobby, setIsLobbyHost, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, resetLobby]);
+
+  // Leave lobby
+  const leaveLobby = useCallback(() => {
+    if (lobbyRoomRef.current) {
+      lobbyRoomRef.current.leave();
+      lobbyRoomRef.current = null;
+    }
+    resetLobby();
+    setAppPhase('browsing_lobbies');
+    setConnected(false);
+  }, [resetLobby, setAppPhase, setConnected]);
+
+  // Lobby actions
+  const setLobbyReady = useCallback((ready: boolean) => {
+    if (lobbyRoomRef.current) {
+      lobbyRoomRef.current.send('ready', { ready });
+    }
+  }, []);
+
+  const setLobbyTeam = useCallback((team: string) => {
+    if (lobbyRoomRef.current) {
+      lobbyRoomRef.current.send('setTeam', { team });
+    }
+  }, []);
+
+  const startGame = useCallback(() => {
+    if (lobbyRoomRef.current) {
+      lobbyRoomRef.current.send('startGame');
+    }
+  }, []);
+
+  const kickPlayer = useCallback((playerId: string) => {
+    if (lobbyRoomRef.current) {
+      lobbyRoomRef.current.send('kick', { playerId });
+    }
+  }, []);
+
+  // Join game room (called when game starts from lobby)
+  const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string) => {
+    setLoading(true);
+
+    try {
+      const client = getClient();
+      
+      gameRoomRef.current = await client.joinById(gameRoomId, {
+        playerName,
+        preferredTeam: team,
+      });
+
+      setupGameListeners(gameRoomRef.current, playerName);
+      
+      setRoomId(gameRoomRef.current.id);
+      setAppPhase('in_game');
+      setLoading(false);
+
+      console.log('Joined game room:', gameRoomRef.current.id);
+
+    } catch (error) {
+      console.error('Failed to join game room:', error);
+      setLoading(false);
+      throw error;
+    }
+  }, [getClient, setLoading, setRoomId, setAppPhase]);
+
+  // Setup game room listeners (extracted from original connect function)
+  const setupGameListeners = useCallback((room: Room, playerName: string) => {
+    const sessionId = room.sessionId;
+
+    // Helper to create player from schema data
+    const createPlayerData = (schemaPlayer: any, id: string): Player => {
+      return {
+        id,
+        name: schemaPlayer.name || 'Unknown',
+        team: (schemaPlayer.team || 'red') as Team,
+        heroId: (schemaPlayer.heroId || null) as HeroId | null,
+        state: (schemaPlayer.state || 'alive') as any,
+        isReady: schemaPlayer.isReady || false,
+        position: { 
+          x: schemaPlayer.position?.x ?? 0, 
+          y: schemaPlayer.position?.y ?? 1, 
+          z: schemaPlayer.position?.z ?? 0 
+        },
+        velocity: { 
+          x: schemaPlayer.velocity?.x ?? 0, 
+          y: schemaPlayer.velocity?.y ?? 0, 
+          z: schemaPlayer.velocity?.z ?? 0 
+        },
+        lookYaw: schemaPlayer.lookYaw ?? 0,
+        lookPitch: schemaPlayer.lookPitch ?? 0,
+        health: schemaPlayer.health ?? 100,
+        maxHealth: schemaPlayer.maxHealth ?? 100,
+        ultimateCharge: schemaPlayer.ultimateCharge ?? 0,
         movement: {
           isGrounded: true,
           isSliding: false,
@@ -125,287 +336,289 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           isGliding: false,
         },
         abilities: {},
-        hasFlag: false,
+        hasFlag: schemaPlayer.hasFlag || false,
         respawnTime: null,
         spawnProtectionUntil: null,
-        stats: { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 },
+        stats: { 
+          kills: 0, 
+          deaths: 0, 
+          assists: 0, 
+          flagCaptures: 0, 
+          flagReturns: 0 
+        },
       };
-      setLocalPlayer(defaultPlayer);
+    };
 
-      // Debug: Log initial state structure
-      console.log('Room state available:', !!room.state);
-      if (room.state) {
-        const playersMap = room.state.players as any;
-        console.log('Initial state structure:', {
-          phase: room.state.phase,
-          hasPlayers: !!room.state.players,
-          playersType: typeof room.state.players,
-          playersConstructor: room.state.players?.constructor?.name,
-          hasOnAdd: typeof playersMap?.onAdd === 'function',
-          hasForEach: typeof playersMap?.forEach === 'function',
-        });
-        
-        // Try to get the full state as JSON
-        try {
-          const stateJson = (room.state as any).toJSON?.() ?? JSON.stringify(room.state);
-          console.log('Full room state JSON:', stateJson);
-        } catch (e) {
-          console.log('Could not serialize state:', e);
+    // Create default local player immediately so movement works
+    const defaultPlayer: Player = {
+      id: sessionId,
+      name: playerName,
+      team: 'red',
+      heroId: null,
+      state: 'alive',
+      isReady: false,
+      position: { x: 0, y: 1, z: 0 },
+      velocity: { x: 0, y: 0, z: 0 },
+      lookYaw: 0,
+      lookPitch: 0,
+      health: 100,
+      maxHealth: 100,
+      ultimateCharge: 0,
+      movement: {
+        isGrounded: true,
+        isSliding: false,
+        isWallRunning: false,
+        wallRunSide: null,
+        isGrappling: false,
+        grapplePoint: null,
+        isJetpacking: false,
+        jetpackFuel: 100,
+        isGliding: false,
+      },
+      abilities: {},
+      hasFlag: false,
+      respawnTime: null,
+      spawnProtectionUntil: null,
+      stats: { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 },
+    };
+    setLocalPlayer(defaultPlayer);
+
+    // Helper function to sync a player from schema to store
+    const syncPlayerFromSchema = (schemaPlayer: any, id: string) => {
+      if (id === sessionId) {
+        // Our own player - update local player with server data
+        const store = useGameStore.getState();
+        if (store.localPlayer) {
+          const updated = {
+            ...store.localPlayer,
+            heroId: schemaPlayer.heroId || store.localPlayer.heroId,
+            team: schemaPlayer.team || store.localPlayer.team,
+            health: schemaPlayer.health ?? store.localPlayer.health,
+            maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
+            state: schemaPlayer.state || store.localPlayer.state,
+          };
+          setLocalPlayer(updated);
         }
-      }
-
-      // Helper function to sync a player from schema to store
-      const syncPlayerFromSchema = (schemaPlayer: any, id: string) => {
-        if (id === sessionId) {
-          // Our own player - update local player with server data
-          const store = useGameStore.getState();
-          if (store.localPlayer) {
-            const updated = {
-              ...store.localPlayer,
-              heroId: schemaPlayer.heroId || store.localPlayer.heroId,
-              team: schemaPlayer.team || store.localPlayer.team,
-              health: schemaPlayer.health ?? store.localPlayer.health,
-              maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
-              state: schemaPlayer.state || store.localPlayer.state,
-            };
-            setLocalPlayer(updated);
-          }
-        } else {
-          // Other player - add/update in store
-          const playerData = createPlayerData(schemaPlayer, id);
-          updatePlayer(id, playerData);
-        }
-      };
-
-      // Debug: Inspect the players MapSchema structure
-      const playersMap = room.state.players as any;
-      console.log('Players map inspection:', {
-        size: playersMap.size,
-        '$items': playersMap.$items,
-        '$items size': playersMap.$items?.size,
-        'keys from $items': playersMap.$items ? Array.from(playersMap.$items.keys()) : 'N/A',
-        'toJSON': typeof playersMap.toJSON === 'function' ? playersMap.toJSON() : 'N/A',
-        'prototype': Object.getPrototypeOf(playersMap)?.constructor?.name,
-      });
-      
-      // Try to access internal $items Map directly (Colyseus MapSchema v2 internal storage)
-      const getPlayersFromMap = (): Map<string, any> => {
-        if (playersMap.$items && playersMap.$items instanceof Map) {
-          return playersMap.$items;
-        }
-        // Fallback: try to convert to regular iteration
-        const result = new Map<string, any>();
-        try {
-          if (typeof playersMap.forEach === 'function') {
-            playersMap.forEach((v: any, k: string) => result.set(k, v));
-          }
-        } catch (e) {
-          console.error('Failed to iterate playersMap:', e);
-        }
-        return result;
-      };
-
-      // Set up MapSchema callbacks
-      if (playersMap && typeof playersMap.onAdd === 'function') {
-        console.log('Setting up MapSchema onAdd/onRemove callbacks');
-        
-        // Process existing players from $items
-        console.log('Checking for existing players...');
-        const existingPlayers = getPlayersFromMap();
-        console.log('Found', existingPlayers.size, 'existing players in $items');
-        existingPlayers.forEach((schemaPlayer, id) => {
-          console.log('Processing existing player:', id, schemaPlayer?.name);
-          syncPlayerFromSchema(schemaPlayer, id);
-        });
-        
-        // Set up callbacks for future additions
-        playersMap.onAdd((schemaPlayer: any, id: string) => {
-          console.log('Player added via onAdd:', id, schemaPlayer?.name);
-          syncPlayerFromSchema(schemaPlayer, id);
-
-          if (typeof schemaPlayer?.onChange === 'function') {
-            schemaPlayer.onChange(() => {
-              syncPlayerFromSchema(schemaPlayer, id);
-            });
-          }
-        });
-
-        playersMap.onRemove((schemaPlayer: any, id: string) => {
-          console.log('Player removed via onRemove:', id);
-          if (id !== sessionId) {
-            removePlayer(id);
-          }
-        });
       } else {
-        console.warn('MapSchema callbacks not available');
+        // Other player - add/update in store
+        const playerData = createPlayerData(schemaPlayer, id);
+        updatePlayer(id, playerData);
+      }
+    };
+
+    // Set up MapSchema callbacks
+    const playersMap = room.state.players as any;
+    if (playersMap && typeof playersMap.onAdd === 'function') {
+      playersMap.onAdd((schemaPlayer: any, id: string) => {
+        console.log('Player added via onAdd:', id, schemaPlayer?.name);
+        syncPlayerFromSchema(schemaPlayer, id);
+
+        if (typeof schemaPlayer?.onChange === 'function') {
+          schemaPlayer.onChange(() => {
+            syncPlayerFromSchema(schemaPlayer, id);
+          });
+        }
+      });
+
+      playersMap.onRemove((schemaPlayer: any, id: string) => {
+        console.log('Player removed via onRemove:', id);
+        if (id !== sessionId) {
+          removePlayer(id);
+        }
+      });
+    }
+
+    // Polling for state sync
+    let lastLoggedPlayerCount = -1;
+    let pollCount = 0;
+    const syncInterval = setInterval(() => {
+      if (!room.state) return;
+      pollCount++;
+
+      // Sync phase
+      if (room.state.phase) {
+        const store = useGameStore.getState();
+        if (room.state.phase !== store.gamePhase) {
+          console.log('Phase synced:', room.state.phase);
+          setGamePhase(room.state.phase as any);
+        }
       }
 
-      // Polling for state sync - this ensures players get synced even if callbacks fail
-      let lastLoggedPlayerCount = -1;
-      let pollCount = 0;
-      const syncInterval = setInterval(() => {
-        if (!room.state) return;
-        pollCount++;
-
-        // Sync phase
-        if (room.state.phase) {
-          const store = useGameStore.getState();
-          if (room.state.phase !== store.gamePhase) {
-            console.log('Phase synced:', room.state.phase);
-            setGamePhase(room.state.phase as any);
-          }
+      // Sync all players
+      if (room.state.players) {
+        const playersMap = room.state.players as any;
+        const currentStore = useGameStore.getState();
+        
+        let serverPlayerCount = 0;
+        const serverPlayerIds: string[] = [];
+        
+        if (playersMap.$items instanceof Map) {
+          playersMap.$items.forEach((schemaPlayer: any, id: string) => {
+            serverPlayerCount++;
+            serverPlayerIds.push(id);
+            processPlayer(schemaPlayer, id, currentStore);
+          });
         }
-
-        // Sync all players
-        if (room.state.players) {
-          const playersMap = room.state.players as any;
-          const currentStore = useGameStore.getState();
-          
-          // Try multiple methods to get players
-          let serverPlayerCount = 0;
-          const serverPlayerIds: string[] = [];
-          
-          // Method 1: Try $items (internal MapSchema storage)
-          if (playersMap.$items instanceof Map) {
-            playersMap.$items.forEach((schemaPlayer: any, id: string) => {
+        else if (typeof playersMap.forEach === 'function') {
+          try {
+            playersMap.forEach((schemaPlayer: any, id: string) => {
               serverPlayerCount++;
               serverPlayerIds.push(id);
               processPlayer(schemaPlayer, id, currentStore);
             });
+          } catch (e) {
+            // Silent fail
           }
-          // Method 2: Try forEach 
-          else if (typeof playersMap.forEach === 'function') {
-            try {
-              playersMap.forEach((schemaPlayer: any, id: string) => {
-                serverPlayerCount++;
-                serverPlayerIds.push(id);
-                processPlayer(schemaPlayer, id, currentStore);
-              });
-            } catch (e) {
-              // Silent fail, try next method
-            }
-          }
-          // Method 3: Try iterating own properties
-          if (serverPlayerCount === 0) {
-            for (const key of Object.keys(playersMap)) {
-              if (key.startsWith('$') || key.startsWith('_') || typeof playersMap[key] !== 'object') continue;
-              const schemaPlayer = playersMap[key];
-              if (schemaPlayer && typeof schemaPlayer === 'object' && 'name' in schemaPlayer) {
-                serverPlayerCount++;
-                serverPlayerIds.push(key);
-                processPlayer(schemaPlayer, key, currentStore);
-              }
-            }
-          }
-          
-          // Log periodically or when count changes
-          if (serverPlayerCount !== lastLoggedPlayerCount || pollCount % 100 === 1) {
-            console.log(`POLL #${pollCount}: Server=${serverPlayerCount} players [${serverPlayerIds.join(',')}], Store=${currentStore.players.size} players`);
-            if (pollCount === 1) {
-              console.log('PlayersMap structure:', {
-                keys: Object.keys(playersMap),
-                hasItems: !!playersMap.$items,
-                itemsType: playersMap.$items?.constructor?.name,
-                size: playersMap.size,
-              });
-            }
-            lastLoggedPlayerCount = serverPlayerCount;
-          }
-          
-          function processPlayer(schemaPlayer: any, id: string, store: any) {
-            if (id === sessionId) {
-              if (store.localPlayer) {
-                const updated = {
-                  ...store.localPlayer,
-                  heroId: schemaPlayer.heroId || store.localPlayer.heroId,
-                  team: schemaPlayer.team || store.localPlayer.team,
-                  health: schemaPlayer.health ?? store.localPlayer.health,
-                  maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
-                  state: schemaPlayer.state || store.localPlayer.state,
-                };
-                setLocalPlayer(updated);
-              }
-              return;
-            }
-
-            const existingPlayer = store.players.get(id);
-            if (!existingPlayer) {
-              const playerData = createPlayerData(schemaPlayer, id);
-              console.log('POLL: Adding new player:', id, playerData.name);
-              updatePlayer(id, playerData);
-            } else {
-              const positionUpdated = {
-                ...existingPlayer,
-                position: {
-                  x: schemaPlayer.position?.x ?? existingPlayer.position.x,
-                  y: schemaPlayer.position?.y ?? existingPlayer.position.y,
-                  z: schemaPlayer.position?.z ?? existingPlayer.position.z,
-                },
-                velocity: {
-                  x: schemaPlayer.velocity?.x ?? existingPlayer.velocity.x,
-                  y: schemaPlayer.velocity?.y ?? existingPlayer.velocity.y,
-                  z: schemaPlayer.velocity?.z ?? existingPlayer.velocity.z,
-                },
-                lookYaw: schemaPlayer.lookYaw ?? existingPlayer.lookYaw,
-                lookPitch: schemaPlayer.lookPitch ?? existingPlayer.lookPitch,
-                state: schemaPlayer.state || existingPlayer.state,
-                heroId: schemaPlayer.heroId || existingPlayer.heroId,
-                team: schemaPlayer.team || existingPlayer.team,
+        }
+        
+        if (serverPlayerCount !== lastLoggedPlayerCount || pollCount % 100 === 1) {
+          console.log(`POLL #${pollCount}: Server=${serverPlayerCount} players`);
+          lastLoggedPlayerCount = serverPlayerCount;
+        }
+        
+        function processPlayer(schemaPlayer: any, id: string, store: any) {
+          if (id === sessionId) {
+            if (store.localPlayer) {
+              const updated = {
+                ...store.localPlayer,
+                heroId: schemaPlayer.heroId || store.localPlayer.heroId,
+                team: schemaPlayer.team || store.localPlayer.team,
+                health: schemaPlayer.health ?? store.localPlayer.health,
+                maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
+                state: schemaPlayer.state || store.localPlayer.state,
               };
-              updatePlayer(id, positionUpdated);
+              setLocalPlayer(updated);
             }
+            return;
+          }
+
+          const existingPlayer = store.players.get(id);
+          if (!existingPlayer) {
+            const playerData = createPlayerData(schemaPlayer, id);
+            updatePlayer(id, playerData);
+          } else {
+            const positionUpdated = {
+              ...existingPlayer,
+              position: {
+                x: schemaPlayer.position?.x ?? existingPlayer.position.x,
+                y: schemaPlayer.position?.y ?? existingPlayer.position.y,
+                z: schemaPlayer.position?.z ?? existingPlayer.position.z,
+              },
+              velocity: {
+                x: schemaPlayer.velocity?.x ?? existingPlayer.velocity.x,
+                y: schemaPlayer.velocity?.y ?? existingPlayer.velocity.y,
+                z: schemaPlayer.velocity?.z ?? existingPlayer.velocity.z,
+              },
+              lookYaw: schemaPlayer.lookYaw ?? existingPlayer.lookYaw,
+              lookPitch: schemaPlayer.lookPitch ?? existingPlayer.lookPitch,
+              state: schemaPlayer.state || existingPlayer.state,
+              heroId: schemaPlayer.heroId || existingPlayer.heroId,
+              team: schemaPlayer.team || existingPlayer.team,
+            };
+            updatePlayer(id, positionUpdated);
           }
         }
-      }, 50); // 20 times per second
+      }
+    }, 50);
 
-      // Listen for state changes to catch when players are added
-      room.onStateChange.once((state) => {
-        console.log('First state change received!');
-        const pm = state.players as any;
-        console.log('State after first change:', {
-          phase: state.phase,
-          playersSize: pm?.size,
-          '$itemsSize': pm?.$items?.size,
-        });
-        
-        // Try to get players from the state now
-        if (pm?.$items instanceof Map && pm.$items.size > 0) {
-          console.log('Found players in $items after state change!');
-          pm.$items.forEach((player: any, id: string) => {
-            console.log('Player from $items:', id, player?.name);
-            syncPlayerFromSchema(player, id);
-          });
-        }
-      });
+    // Handle explicit messages
+    room.onMessage('phaseChange', (data: { phase: string; endTime: number }) => {
+      console.log('Phase change message:', data.phase);
+      setGamePhase(data.phase as any);
+      setPhaseEndTime(data.endTime);
+    });
+
+    room.onMessage('playerJoined', (data: { playerId: string; playerName: string; team?: string; heroId?: string; position?: { x: number; y: number; z: number } }) => {
+      console.log(`Player joined message: ${data.playerName} (${data.playerId})`);
       
-      // Handle explicit messages
-      room.onMessage('phaseChange', (data: { phase: string; endTime: number }) => {
-        console.log('Phase change message:', data.phase);
-        setGamePhase(data.phase as any);
-        setPhaseEndTime(data.endTime);
-      });
+      if (data.playerId !== sessionId) {
+        const currentStore = useGameStore.getState();
+        if (!currentStore.players.has(data.playerId)) {
+          const newPlayer: Player = {
+            id: data.playerId,
+            name: data.playerName,
+            team: (data.team || 'red') as Team,
+            heroId: (data.heroId || null) as HeroId | null,
+            state: 'selecting',
+            isReady: false,
+            position: data.position || { x: 0, y: 1, z: 0 },
+            velocity: { x: 0, y: 0, z: 0 },
+            lookYaw: 0,
+            lookPitch: 0,
+            health: 100,
+            maxHealth: 100,
+            ultimateCharge: 0,
+            movement: {
+              isGrounded: true,
+              isSliding: false,
+              isWallRunning: false,
+              wallRunSide: null,
+              isGrappling: false,
+              grapplePoint: null,
+              isJetpacking: false,
+              jetpackFuel: 100,
+              isGliding: false,
+            },
+            abilities: {},
+            hasFlag: false,
+            respawnTime: null,
+            spawnProtectionUntil: null,
+            stats: { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 },
+          };
+          updatePlayer(data.playerId, newPlayer);
+        }
+      }
+    });
 
-      room.onMessage('playerJoined', (data: { playerId: string; playerName: string; team?: string; heroId?: string; position?: { x: number; y: number; z: number } }) => {
-        console.log(`Player joined message: ${data.playerName} (${data.playerId})`);
-        
-        // If this is another player, create them in the store
-        if (data.playerId !== sessionId) {
-          const currentStore = useGameStore.getState();
-          if (!currentStore.players.has(data.playerId)) {
-            console.log('Creating player from playerJoined message:', data.playerId, data);
+    room.onMessage('playerStates', (data: { players: any[] }) => {
+      const currentStore = useGameStore.getState();
+      
+      for (const serverPlayer of data.players) {
+        if (serverPlayer.id === sessionId) {
+          if (currentStore.localPlayer) {
+            const updated = {
+              ...currentStore.localPlayer,
+              health: serverPlayer.health ?? currentStore.localPlayer.health,
+              maxHealth: serverPlayer.maxHealth ?? currentStore.localPlayer.maxHealth,
+              state: serverPlayer.state || currentStore.localPlayer.state,
+              heroId: serverPlayer.heroId || currentStore.localPlayer.heroId,
+              team: serverPlayer.team || currentStore.localPlayer.team,
+              hasFlag: serverPlayer.hasFlag ?? currentStore.localPlayer.hasFlag,
+            };
+            setLocalPlayer(updated);
+          }
+        } else {
+          const existingPlayer = currentStore.players.get(serverPlayer.id);
+          if (existingPlayer) {
+            const updatedPlayer: Player = {
+              ...existingPlayer,
+              name: serverPlayer.name || existingPlayer.name,
+              team: (serverPlayer.team || existingPlayer.team) as Team,
+              heroId: (serverPlayer.heroId || existingPlayer.heroId) as HeroId | null,
+              state: serverPlayer.state || existingPlayer.state,
+              position: serverPlayer.position || existingPlayer.position,
+              velocity: serverPlayer.velocity || existingPlayer.velocity,
+              lookYaw: serverPlayer.lookYaw ?? existingPlayer.lookYaw,
+              lookPitch: serverPlayer.lookPitch ?? existingPlayer.lookPitch,
+              health: serverPlayer.health ?? existingPlayer.health,
+              maxHealth: serverPlayer.maxHealth ?? existingPlayer.maxHealth,
+              hasFlag: serverPlayer.hasFlag ?? existingPlayer.hasFlag,
+            };
+            updatePlayer(serverPlayer.id, updatedPlayer);
+          } else {
             const newPlayer: Player = {
-              id: data.playerId,
-              name: data.playerName,
-              team: (data.team || 'red') as Team,
-              heroId: (data.heroId || null) as HeroId | null,
-              state: 'selecting',
+              id: serverPlayer.id,
+              name: serverPlayer.name || 'Unknown',
+              team: (serverPlayer.team || 'red') as Team,
+              heroId: (serverPlayer.heroId || null) as HeroId | null,
+              state: serverPlayer.state || 'alive',
               isReady: false,
-              position: data.position || { x: 0, y: 1, z: 0 },
-              velocity: { x: 0, y: 0, z: 0 },
-              lookYaw: 0,
-              lookPitch: 0,
-              health: 100,
-              maxHealth: 100,
+              position: serverPlayer.position || { x: 0, y: 1, z: 0 },
+              velocity: serverPlayer.velocity || { x: 0, y: 0, z: 0 },
+              lookYaw: serverPlayer.lookYaw ?? 0,
+              lookPitch: serverPlayer.lookPitch ?? 0,
+              health: serverPlayer.health ?? 100,
+              maxHealth: serverPlayer.maxHealth ?? 100,
               ultimateCharge: 0,
               movement: {
                 isGrounded: true,
@@ -419,128 +632,66 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
                 isGliding: false,
               },
               abilities: {},
-              hasFlag: false,
+              hasFlag: serverPlayer.hasFlag ?? false,
               respawnTime: null,
               spawnProtectionUntil: null,
               stats: { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 },
             };
-            updatePlayer(data.playerId, newPlayer);
+            updatePlayer(serverPlayer.id, newPlayer);
           }
         }
-      });
+      }
+    });
 
-      // Handle player state updates (positions, etc.) via message
-      room.onMessage('playerStates', (data: { players: any[] }) => {
-        // Log occasionally to confirm we're receiving updates
-        if (Math.random() < 0.02) { // ~2% of messages
-          console.log('Received playerStates:', data.players.length, 'players');
-        }
-        const currentStore = useGameStore.getState();
-        
-        for (const serverPlayer of data.players) {
-          if (serverPlayer.id === sessionId) {
-            // Update local player's server-authoritative state (health, etc.)
-            if (currentStore.localPlayer) {
-              const updated = {
-                ...currentStore.localPlayer,
-                health: serverPlayer.health ?? currentStore.localPlayer.health,
-                maxHealth: serverPlayer.maxHealth ?? currentStore.localPlayer.maxHealth,
-                state: serverPlayer.state || currentStore.localPlayer.state,
-                heroId: serverPlayer.heroId || currentStore.localPlayer.heroId,
-                team: serverPlayer.team || currentStore.localPlayer.team,
-                hasFlag: serverPlayer.hasFlag ?? currentStore.localPlayer.hasFlag,
-              };
-              setLocalPlayer(updated);
-            }
-          } else {
-            // Update other player's full state including position
-            const existingPlayer = currentStore.players.get(serverPlayer.id);
-            if (existingPlayer) {
-              const updatedPlayer: Player = {
-                ...existingPlayer,
-                name: serverPlayer.name || existingPlayer.name,
-                team: (serverPlayer.team || existingPlayer.team) as Team,
-                heroId: (serverPlayer.heroId || existingPlayer.heroId) as HeroId | null,
-                state: serverPlayer.state || existingPlayer.state,
-                position: serverPlayer.position || existingPlayer.position,
-                velocity: serverPlayer.velocity || existingPlayer.velocity,
-                lookYaw: serverPlayer.lookYaw ?? existingPlayer.lookYaw,
-                lookPitch: serverPlayer.lookPitch ?? existingPlayer.lookPitch,
-                health: serverPlayer.health ?? existingPlayer.health,
-                maxHealth: serverPlayer.maxHealth ?? existingPlayer.maxHealth,
-                hasFlag: serverPlayer.hasFlag ?? existingPlayer.hasFlag,
-              };
-              updatePlayer(serverPlayer.id, updatedPlayer);
-            } else {
-              // Player not in store yet - create them
-              console.log('Creating player from playerStates:', serverPlayer.id, serverPlayer.name);
-              const newPlayer: Player = {
-                id: serverPlayer.id,
-                name: serverPlayer.name || 'Unknown',
-                team: (serverPlayer.team || 'red') as Team,
-                heroId: (serverPlayer.heroId || null) as HeroId | null,
-                state: serverPlayer.state || 'alive',
-                isReady: false,
-                position: serverPlayer.position || { x: 0, y: 1, z: 0 },
-                velocity: serverPlayer.velocity || { x: 0, y: 0, z: 0 },
-                lookYaw: serverPlayer.lookYaw ?? 0,
-                lookPitch: serverPlayer.lookPitch ?? 0,
-                health: serverPlayer.health ?? 100,
-                maxHealth: serverPlayer.maxHealth ?? 100,
-                ultimateCharge: 0,
-                movement: {
-                  isGrounded: true,
-                  isSliding: false,
-                  isWallRunning: false,
-                  wallRunSide: null,
-                  isGrappling: false,
-                  grapplePoint: null,
-                  isJetpacking: false,
-                  jetpackFuel: 100,
-                  isGliding: false,
-                },
-                abilities: {},
-                hasFlag: serverPlayer.hasFlag ?? false,
-                respawnTime: null,
-                spawnProtectionUntil: null,
-                stats: { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 },
-              };
-              updatePlayer(serverPlayer.id, newPlayer);
-            }
-          }
-        }
-      });
+    room.onMessage('playerLeft', (data: { playerId: string }) => {
+      console.log(`Player left: ${data.playerId}`);
+      removePlayer(data.playerId);
+    });
 
-      room.onMessage('playerLeft', (data: { playerId: string }) => {
-        console.log(`Player left: ${data.playerId}`);
-        removePlayer(data.playerId);
-      });
+    room.onError((code, message) => {
+      console.error('Room error:', code, message);
+    });
 
-      room.onError((code, message) => {
-        console.error('Room error:', code, message);
-      });
+    room.onLeave((code) => {
+      console.log('Left room:', code);
+      clearInterval(syncInterval);
+      // Don't call reset() - just clean up game state but preserve player name
+      setConnected(false);
+      setRoomId(null);
+      setGamePhase('waiting' as any);
+      resetLobby();
+      setAppPhase('browsing_lobbies');
+    });
 
-      room.onLeave((code) => {
-        console.log('Left room:', code);
-        clearInterval(syncInterval);
-        setConnected(false);
-        reset();
-      });
+    setConnected(true);
+  }, [setConnected, setGamePhase, setPhaseEndTime, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby]);
 
-      setConnected(true);
-      setLoading(false);
-
-    } catch (error) {
-      console.error('Failed to connect:', error);
-      setLoading(false);
-      throw error;
+  // Leave the current game and return to lobby browser (keeps player name)
+  const leaveGame = useCallback(() => {
+    if (gameRoomRef.current) {
+      gameRoomRef.current.leave();
+      gameRoomRef.current = null;
     }
-  }, [setConnected, setLoading, setRoomId, setPlayerId, setGamePhase, setPhaseEndTime, setLocalPlayer, updatePlayer, removePlayer, reset]);
+    if (lobbyRoomRef.current) {
+      lobbyRoomRef.current.leave();
+      lobbyRoomRef.current = null;
+    }
+    // Reset game state but keep player name
+    setRoomId(null);
+    setConnected(false);
+    resetLobby();
+    setGamePhase('waiting' as any);
+    setAppPhase('browsing_lobbies');
+  }, [setRoomId, setConnected, resetLobby, setGamePhase, setAppPhase]);
 
   const disconnect = useCallback(() => {
-    if (roomRef.current) {
-      roomRef.current.leave();
-      roomRef.current = null;
+    if (gameRoomRef.current) {
+      gameRoomRef.current.leave();
+      gameRoomRef.current = null;
+    }
+    if (lobbyRoomRef.current) {
+      lobbyRoomRef.current.leave();
+      lobbyRoomRef.current = null;
     }
     if (clientRef.current) {
       clientRef.current = null;
@@ -549,35 +700,44 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [reset]);
 
   const sendInput = useCallback((input: PlayerInput) => {
-    if (roomRef.current) {
-      roomRef.current.send('input', input);
+    if (gameRoomRef.current) {
+      gameRoomRef.current.send('input', input);
     }
   }, []);
 
   const selectHero = useCallback((heroId: HeroId) => {
     console.log('Sending selectHero:', heroId);
-    if (roomRef.current) {
-      roomRef.current.send('selectHero', { heroId });
+    if (gameRoomRef.current) {
+      gameRoomRef.current.send('selectHero', { heroId });
     }
   }, []);
 
   const selectTeam = useCallback((team: Team) => {
     console.log('Sending selectTeam:', team);
-    if (roomRef.current) {
-      roomRef.current.send('selectTeam', { team });
+    if (gameRoomRef.current) {
+      gameRoomRef.current.send('selectTeam', { team });
     }
   }, []);
 
   const setReady = useCallback((ready: boolean) => {
     console.log('Sending ready:', ready);
-    if (roomRef.current) {
-      roomRef.current.send('ready', { ready });
+    if (gameRoomRef.current) {
+      gameRoomRef.current.send('ready', { ready });
     }
   }, []);
 
   return (
     <NetworkContext.Provider value={{
-      connect,
+      fetchLobbies,
+      createLobby,
+      joinLobby,
+      leaveLobby,
+      setLobbyReady,
+      setLobbyTeam,
+      startGame,
+      kickPlayer,
+      joinGameRoom,
+      leaveGame,
       disconnect,
       sendInput,
       selectHero,

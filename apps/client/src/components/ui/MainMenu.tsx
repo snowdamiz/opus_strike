@@ -1,34 +1,20 @@
 import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { useNetwork } from '../../contexts/NetworkContext';
 
 export function MainMenu() {
   const [playerName, setPlayerName] = useState('');
-  const [serverUrl, setServerUrl] = useState('ws://localhost:2567');
-  const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  const { setLoading } = useGameStore();
-  const { connect } = useNetwork();
+  const { setPlayerName: storeSetPlayerName, setAppPhase } = useGameStore();
 
-  const handleJoin = async () => {
+  const handlePlay = () => {
     if (!playerName.trim()) {
       setError('Please enter a player name');
       return;
     }
 
-    setIsJoining(true);
-    setError(null);
-    setLoading(true);
-
-    try {
-      await connect(serverUrl, playerName.trim());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to connect');
-      setLoading(false);
-    } finally {
-      setIsJoining(false);
-    }
+    storeSetPlayerName(playerName.trim());
+    setAppPhase('browsing_lobbies');
   };
 
   return (
@@ -93,30 +79,17 @@ export function MainMenu() {
             <input
               type="text"
               value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
+              onChange={(e) => {
+                setPlayerName(e.target.value);
+                setError(null);
+              }}
               placeholder="Enter your name"
               maxLength={20}
               className="w-full px-4 py-3 bg-voxel-dark border border-voxel-border rounded
                        font-body text-white placeholder-gray-500
                        focus:outline-none focus:border-voxel-primary focus:ring-1 focus:ring-voxel-primary
                        transition-all duration-200"
-              onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
-            />
-          </div>
-
-          {/* Server URL input */}
-          <div>
-            <label className="block font-display text-sm text-gray-400 mb-2 tracking-wider">
-              SERVER
-            </label>
-            <input
-              type="text"
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              className="w-full px-4 py-3 bg-voxel-dark border border-voxel-border rounded
-                       font-mono text-sm text-gray-300
-                       focus:outline-none focus:border-voxel-primary focus:ring-1 focus:ring-voxel-primary
-                       transition-all duration-200"
+              onKeyDown={(e) => e.key === 'Enter' && handlePlay()}
             />
           </div>
 
@@ -127,27 +100,15 @@ export function MainMenu() {
             </div>
           )}
 
-          {/* Join button */}
+          {/* Play button */}
           <button
-            onClick={handleJoin}
-            disabled={isJoining}
+            onClick={handlePlay}
             className="w-full py-4 bg-voxel-primary text-voxel-dark font-display text-xl font-bold
                      rounded transition-all duration-200
                      hover:bg-voxel-primary/90 hover:shadow-lg hover:shadow-voxel-primary/30
-                     disabled:opacity-50 disabled:cursor-not-allowed
                      active:scale-[0.98]"
           >
-            {isJoining ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                CONNECTING...
-              </span>
-            ) : (
-              'JOIN GAME'
-            )}
+            PLAY
           </button>
 
           {/* Quick actions */}
@@ -189,4 +150,3 @@ export function MainMenu() {
     </div>
   );
 }
-

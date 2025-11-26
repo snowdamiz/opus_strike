@@ -193,6 +193,9 @@ export function PlayerController() {
         lookYaw: yawRef.current,
         lookPitch: pitchRef.current,
         timestamp: now,
+        // Include client position for sync (server-authoritative games would validate this)
+        position: { x: position.x, y: position.y, z: position.z },
+        velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
       });
     }
   });

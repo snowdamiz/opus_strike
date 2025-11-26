@@ -9,12 +9,41 @@ import type {
   GameStateSync,
 } from '@voxel-strike/shared';
 
+export interface LobbyInfo {
+  roomId: string;
+  name: string;
+  playerCount: number;
+  maxPlayers: number;
+  status: string;
+}
+
+export interface LobbyPlayer {
+  id: string;
+  name: string;
+  isHost: boolean;
+  isReady: boolean;
+  team: string;
+}
+
+export type AppPhase = 'menu' | 'browsing_lobbies' | 'in_lobby' | 'in_game';
+
 interface GameStore {
   // Connection state
   isConnected: boolean;
   isLoading: boolean;
   roomId: string | null;
   playerId: string | null;
+  playerName: string;
+  
+  // App phase (different from game phase)
+  appPhase: AppPhase;
+  
+  // Lobby state
+  availableLobbies: LobbyInfo[];
+  currentLobbyId: string | null;
+  currentLobbyName: string | null;
+  lobbyPlayers: Map<string, LobbyPlayer>;
+  isLobbyHost: boolean;
   
   // Game state
   gamePhase: GamePhase;
@@ -44,6 +73,8 @@ interface GameStore {
   setLoading: (loading: boolean) => void;
   setRoomId: (roomId: string | null) => void;
   setPlayerId: (playerId: string | null) => void;
+  setPlayerName: (name: string) => void;
+  setAppPhase: (phase: AppPhase) => void;
   setGamePhase: (phase: GamePhase) => void;
   setPhaseEndTime: (time: number | null) => void;
   updateGameState: (state: GameStateSync) => void;
@@ -54,7 +85,17 @@ interface GameStore {
   removePlayer: (playerId: string) => void;
   addPendingInput: (input: PlayerInput) => void;
   clearProcessedInputs: (tick: number) => void;
+  
+  // Lobby actions
+  setAvailableLobbies: (lobbies: LobbyInfo[]) => void;
+  setCurrentLobby: (lobbyId: string | null, lobbyName: string | null) => void;
+  setLobbyPlayers: (players: Map<string, LobbyPlayer>) => void;
+  updateLobbyPlayer: (playerId: string, player: LobbyPlayer) => void;
+  removeLobbyPlayer: (playerId: string) => void;
+  setIsLobbyHost: (isHost: boolean) => void;
+  
   reset: () => void;
+  resetLobby: () => void;
 }
 
 const initialState = {
@@ -62,6 +103,13 @@ const initialState = {
   isLoading: false,
   roomId: null,
   playerId: null,
+  playerName: '',
+  appPhase: 'menu' as AppPhase,
+  availableLobbies: [] as LobbyInfo[],
+  currentLobbyId: null as string | null,
+  currentLobbyName: null as string | null,
+  lobbyPlayers: new Map<string, LobbyPlayer>(),
+  isLobbyHost: false,
   gamePhase: 'waiting' as GamePhase,
   tick: 0,
   serverTime: 0,
@@ -84,6 +132,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setLoading: (loading) => set({ isLoading: loading }),
   setRoomId: (roomId) => set({ roomId }),
   setPlayerId: (playerId) => set({ playerId }),
+  setPlayerName: (name) => set({ playerName: name }),
+  setAppPhase: (phase) => set({ appPhase: phase }),
   setGamePhase: (phase) => set({ gamePhase: phase }),
   setPhaseEndTime: (time) => set({ phaseEndTime: time }),
 
@@ -192,6 +242,39 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }));
   },
 
+  // Lobby actions
+  setAvailableLobbies: (lobbies) => set({ availableLobbies: lobbies }),
+  
+  setCurrentLobby: (lobbyId, lobbyName) => set({ 
+    currentLobbyId: lobbyId, 
+    currentLobbyName: lobbyName,
+  }),
+  
+  setLobbyPlayers: (players) => set({ lobbyPlayers: players }),
+  
+  updateLobbyPlayer: (playerId, player) => {
+    const { lobbyPlayers } = get();
+    const updated = new Map(lobbyPlayers);
+    updated.set(playerId, player);
+    set({ lobbyPlayers: updated });
+  },
+  
+  removeLobbyPlayer: (playerId) => {
+    const { lobbyPlayers } = get();
+    const updated = new Map(lobbyPlayers);
+    updated.delete(playerId);
+    set({ lobbyPlayers: updated });
+  },
+  
+  setIsLobbyHost: (isHost) => set({ isLobbyHost: isHost }),
+
   reset: () => set(initialState),
+  
+  resetLobby: () => set({
+    currentLobbyId: null,
+    currentLobbyName: null,
+    lobbyPlayers: new Map(),
+    isLobbyHost: false,
+  }),
 }));
 
