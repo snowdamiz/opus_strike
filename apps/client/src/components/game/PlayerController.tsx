@@ -3,7 +3,14 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { useInput } from '../../hooks/useInput';
-import { usePhysics } from '../../hooks/usePhysics';
+import { 
+  usePhysics, 
+  checkGroundWithNormal, 
+  moveWithCollision,
+  isPhysicsReady, 
+  getColliderCount,
+  type GroundInfo 
+} from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { 
   MOUSE_SENSITIVITY, 
@@ -16,6 +23,15 @@ import {
   BASE_JUMP_FORCE,
   TICK_RATE,
 } from '@voxel-strike/shared';
+
+// Player collision constants
+const PLAYER_HEIGHT = 1.8;
+const PLAYER_RADIUS = 0.4;
+const GROUND_SNAP_DISTANCE = 0.3; // How close to ground to snap
+const STEP_HEIGHT = 0.3; // Max height player can step up
+
+// Debug flag
+let lastDebugTime = 0;
 
 export function PlayerController() {
   const { camera } = useThree();
@@ -33,13 +49,24 @@ export function PlayerController() {
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
 
-  // Initialize camera position
+  // Initialize camera position - also check if we need to spawn higher
   useEffect(() => {
     if (localPlayer && !initializedRef.current) {
-      camera.position.set(localPlayer.position.x, localPlayer.position.y + 0.6, localPlayer.position.z);
+      // If spawning too low (under terrain), start high and fall down
+      const startY = localPlayer.position.y < 20 ? 60 : localPlayer.position.y;
+      camera.position.set(localPlayer.position.x, startY + 0.6, localPlayer.position.z);
+      
+      // Also update the player position in store
+      if (localPlayer.position.y < 20) {
+        updateLocalPlayer({
+          position: { x: localPlayer.position.x, y: startY, z: localPlayer.position.z }
+        });
+        console.log('[Player] Spawning high at y=60 to fall onto terrain');
+      }
+      
       initializedRef.current = true;
     }
-  }, [localPlayer, camera]);
+  }, [localPlayer, camera, updateLocalPlayer]);
 
   // Handle pointer lock on click
   const handleClick = useCallback(() => {
@@ -119,21 +146,102 @@ export function PlayerController() {
     // Apply gravity
     velocity.y += GRAVITY * dt;
 
-    // Ground check (simple for now)
+    // Current position
     const position = new THREE.Vector3(
       localPlayer.position.x,
       localPlayer.position.y,
       localPlayer.position.z
     );
 
-    // Simple ground collision at y=0
-    if (position.y + velocity.y * dt < 0.9) {
-      position.y = 0.9;
+    const physicsOk = isPhysicsReady();
+
+    // Ground check with slope detection
+    isGroundedRef.current = false;
+    let groundInfo: GroundInfo | null = null;
+
+    if (physicsOk) {
+      // Check for ground below player (from player center)
+      groundInfo = checkGroundWithNormal(position.x, position.y + 0.5, position.z, 50);
+
+      // Debug logging (throttled)
+      const now = Date.now();
+      if (now - lastDebugTime > 2000) {
+        lastDebugTime = now;
+        const colliders = getColliderCount();
+        const walkable = groundInfo ? (groundInfo.isWalkable ? 'yes' : 'STEEP') : 'n/a';
+        console.log('[Player] Y:', position.y.toFixed(1), '| Ground:', groundInfo ? groundInfo.groundY.toFixed(1) : 'none', '| Walkable:', walkable);
+      }
+    }
+
+    // Apply gravity
+    velocity.y += GRAVITY * dt;
+
+    // Wall collision for horizontal movement
+    if (physicsOk && (Math.abs(velocity.x) > 0.01 || Math.abs(velocity.z) > 0.01)) {
+      const moveResult = moveWithCollision(
+        position.x, position.y, position.z,
+        velocity.x, velocity.z,
+        dt,
+        PLAYER_RADIUS
+      );
+      position.x = moveResult.newX;
+      position.z = moveResult.newZ;
+      velocity.x = moveResult.velX;
+      velocity.z = moveResult.velZ;
+    } else {
+      // No physics, just move
+      position.x += velocity.x * dt;
+      position.z += velocity.z * dt;
+    }
+
+    // Update Y position
+    position.y += velocity.y * dt;
+
+    // Ground collision with slope handling
+    if (groundInfo !== null) {
+      const playerFeetY = position.y - PLAYER_HEIGHT / 2;
+      const distanceToGround = playerFeetY - groundInfo.groundY;
+      
+      // If close to ground and falling
+      if (distanceToGround <= GROUND_SNAP_DISTANCE && velocity.y <= 0) {
+        if (groundInfo.isWalkable) {
+          // Walkable slope - snap to ground
+          position.y = groundInfo.groundY + PLAYER_HEIGHT / 2;
+          velocity.y = 0;
+          isGroundedRef.current = true;
+          canJumpRef.current = true;
+        } else {
+          // Too steep - slide down
+          // Push player away from steep surface based on normal
+          const slideForce = 15 * dt;
+          velocity.x += groundInfo.normal.x * slideForce;
+          velocity.z += groundInfo.normal.z * slideForce;
+          // Still snap to surface but not grounded (can't jump)
+          if (distanceToGround < 0.1) {
+            position.y = groundInfo.groundY + PLAYER_HEIGHT / 2;
+            velocity.y = 0;
+          }
+          isGroundedRef.current = false;
+          canJumpRef.current = false;
+        }
+      }
+      // Step-up: if we're slightly below a walkable surface, step up
+      else if (distanceToGround < 0 && distanceToGround > -STEP_HEIGHT && groundInfo.isWalkable && velocity.y <= 0) {
+        position.y = groundInfo.groundY + PLAYER_HEIGHT / 2;
+        velocity.y = 0;
+        isGroundedRef.current = true;
+        canJumpRef.current = true;
+      }
+    }
+
+    // Fallback ground collision at y=-49 (safety net)
+    const minY = -49 + PLAYER_HEIGHT / 2;
+    if (position.y <= minY) {
+      position.y = minY;
       velocity.y = 0;
       isGroundedRef.current = true;
       canJumpRef.current = true;
-    } else {
-      isGroundedRef.current = false;
+      console.log('[Player] Hit safety net floor');
     }
 
     // Jump
@@ -143,14 +251,16 @@ export function PlayerController() {
       isGroundedRef.current = false;
     }
 
-    // Update position
-    position.x += velocity.x * dt;
-    position.y += velocity.y * dt;
-    position.z += velocity.z * dt;
+    // Prevent falling through the world - respawn if too low
+    if (position.y < -100) {
+      console.log('[Player] Fell off map, respawning');
+      position.set(0, 60, 0);
+      velocity.set(0, 0, 0);
+    }
 
-    // Clamp to bounds
-    position.x = Math.max(-48, Math.min(48, position.x));
-    position.z = Math.max(-48, Math.min(48, position.z));
+    // Clamp to map bounds
+    position.x = Math.max(-95, Math.min(95, position.x));
+    position.z = Math.max(-95, Math.min(95, position.z));
 
     // Update camera (add eye height offset)
     camera.position.set(position.x, position.y + 0.6, position.z);

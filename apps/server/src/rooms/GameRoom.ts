@@ -260,10 +260,10 @@ export class GameRoom extends Room<GameState> {
     // Use client-reported position for now (trust client for smoother sync)
     // In a production game, you'd validate this against server physics
     if (input.position) {
-      // Basic validation: clamp to bounds
-      player.position.x = Math.max(-48, Math.min(48, input.position.x));
-      player.position.y = Math.max(0, Math.min(50, input.position.y));
-      player.position.z = Math.max(-48, Math.min(48, input.position.z));
+      // Basic validation: clamp to larger bounds for new map
+      player.position.x = Math.max(-95, Math.min(95, input.position.x));
+      player.position.y = Math.max(-10, Math.min(100, input.position.y));
+      player.position.z = Math.max(-95, Math.min(95, input.position.z));
     }
     if (input.velocity) {
       player.velocity.x = input.velocity.x;
@@ -503,25 +503,25 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetFlags() {
-    // Red flag at red base
-    this.state.redTeam.flag.position.x = -40;
-    this.state.redTeam.flag.position.y = 1;
+    // Red flag at red base - adjusted for new map
+    this.state.redTeam.flag.position.x = -20;
+    this.state.redTeam.flag.position.y = 10;
     this.state.redTeam.flag.position.z = 0;
     this.state.redTeam.flag.isAtBase = true;
     this.state.redTeam.flag.carrierId = '';
 
-    this.state.redTeam.flag.basePosition.x = -40;
-    this.state.redTeam.flag.basePosition.y = 1;
+    this.state.redTeam.flag.basePosition.x = -20;
+    this.state.redTeam.flag.basePosition.y = 10;
     this.state.redTeam.flag.basePosition.z = 0;
 
-    // Blue flag at blue base
-    this.state.blueTeam.flag.position.x = 40;
-    this.state.blueTeam.flag.position.y = 1;
+    // Blue flag at blue base - adjusted for new map
+    this.state.blueTeam.flag.position.x = 20;
+    this.state.blueTeam.flag.position.y = 10;
     this.state.blueTeam.flag.position.z = 0;
     this.state.blueTeam.flag.isAtBase = true;
     this.state.blueTeam.flag.carrierId = '';
-    this.state.blueTeam.flag.basePosition.x = 40;
-    this.state.blueTeam.flag.basePosition.y = 1;
+    this.state.blueTeam.flag.basePosition.x = 20;
+    this.state.blueTeam.flag.basePosition.y = 10;
     this.state.blueTeam.flag.basePosition.z = 0;
   }
 
@@ -628,24 +628,20 @@ export class GameRoom extends Room<GameState> {
       player.position.y += player.velocity.y * dt;
       player.position.z += player.velocity.z * dt;
 
-      // Ground collision
-      if (player.position.y < 0.9) {
-        player.position.y = 0.9;
+      // Ground collision - basic fallback (client handles proper terrain collision)
+      // Just prevent falling through the absolute floor
+      if (player.position.y < -10) {
+        // Respawn if fallen off the map
+        const spawn = this.getSpawnPosition(player.team as Team);
+        player.position.x = spawn.x;
+        player.position.y = spawn.y;
+        player.position.z = spawn.z;
         player.velocity.y = 0;
-        player.movement.isGrounded = true;
-
-        // Jump
-        if (input.jump) {
-          player.velocity.y = heroDef?.stats.jumpForce ?? 12;
-          player.movement.isGrounded = false;
-        }
-      } else {
-        player.movement.isGrounded = false;
       }
 
-      // Clamp to bounds
-      player.position.x = Math.max(-48, Math.min(48, player.position.x));
-      player.position.z = Math.max(-48, Math.min(48, player.position.z));
+      // Clamp to larger bounds for new map
+      player.position.x = Math.max(-95, Math.min(95, player.position.x));
+      player.position.z = Math.max(-95, Math.min(95, player.position.z));
     });
   }
 
@@ -675,12 +671,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getSpawnPosition(team: Team): { x: number; y: number; z: number } {
-    const baseX = team === 'red' ? -40 : 40;
+    // Spawn positions for the new GLB map
+    // Players spawn high and fall down to avoid spawning inside geometry
+    const baseX = team === 'red' ? -20 : 20;
     const offsets = [
-      { x: -4, z: -4 },
-      { x: -4, z: 4 },
-      { x: 4, z: -4 },
-      { x: 4, z: 4 },
+      { x: -3, z: -3 },
+      { x: -3, z: 3 },
+      { x: 3, z: -3 },
+      { x: 3, z: 3 },
       { x: 0, z: 0 },
     ];
     
@@ -688,7 +686,7 @@ export class GameRoom extends Room<GameState> {
     
     return {
       x: baseX + offset.x,
-      y: 1,
+      y: 50, // Spawn high above the map, player will fall down
       z: offset.z,
     };
   }
