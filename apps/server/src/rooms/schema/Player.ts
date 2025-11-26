@@ -1,0 +1,72 @@
+import { Schema, MapSchema, defineTypes } from '@colyseus/schema';
+import type { PlayerInput } from '@voxel-strike/shared';
+import { Vec3Schema, MovementState, AbilityStateSchema } from './Components';
+
+export class Player extends Schema {
+  id: string = '';
+  name: string = '';
+  team: string = 'red';
+  heroId: string = '';
+  state: string = 'spectating';
+  isReady: boolean = false;
+
+  // Transform
+  position: Vec3Schema = new Vec3Schema();
+  velocity: Vec3Schema = new Vec3Schema();
+  lookYaw: number = 0;
+  lookPitch: number = 0;
+
+  // Stats
+  health: number = 100;
+  maxHealth: number = 100;
+  ultimateCharge: number = 0;
+
+  // Movement state
+  movement: MovementState = new MovementState();
+
+  // Abilities
+  abilities = new MapSchema<AbilityStateSchema>();
+
+  // CTF
+  hasFlag: boolean = false;
+
+  // Respawn
+  respawnTime: number = 0;
+  spawnProtectionUntil: number = 0;
+
+  // Match stats
+  kills: number = 0;
+  deaths: number = 0;
+  assists: number = 0;
+  flagCaptures: number = 0;
+  flagReturns: number = 0;
+
+  // Input (not synced)
+  lastInput: PlayerInput | null = null;
+}
+
+defineTypes(Player, {
+  id: 'string',
+  name: 'string',
+  team: 'string',
+  heroId: 'string',
+  state: 'string',
+  isReady: 'boolean',
+  position: Vec3Schema,
+  velocity: Vec3Schema,
+  lookYaw: 'number',
+  lookPitch: 'number',
+  health: 'number',
+  maxHealth: 'number',
+  ultimateCharge: 'number',
+  movement: MovementState,
+  abilities: { map: AbilityStateSchema },
+  hasFlag: 'boolean',
+  respawnTime: 'number',
+  spawnProtectionUntil: 'number',
+  kills: 'number',
+  deaths: 'number',
+  assists: 'number',
+  flagCaptures: 'number',
+  flagReturns: 'number',
+});

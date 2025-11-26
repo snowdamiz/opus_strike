@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="voxelGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00ff88;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#7c3aed;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ff6b35;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Voxel cube shape -->
+  <g transform="translate(50,50)">
+    <!-- Top face -->
+    <polygon points="0,-35 30,-18 0,-1 -30,-18" fill="#00ff88" opacity="0.9"/>
+    <!-- Left face -->
+    <polygon points="-30,-18 0,-1 0,35 -30,18" fill="#00cc6a" opacity="0.9"/>
+    <!-- Right face -->
+    <polygon points="30,-18 0,-1 0,35 30,18" fill="#009955" opacity="0.9"/>
+    <!-- Glow effect -->
+    <polygon points="0,-35 30,-18 0,-1 -30,-18" fill="url(#voxelGrad)" opacity="0.3"/>
+  </g>
+  <!-- Strike mark -->
+  <path d="M55 25 L70 45 L60 45 L75 75 L50 50 L60 50 Z" fill="#ff6b35" opacity="0.9"/>
+</svg>
+

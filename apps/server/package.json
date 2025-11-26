@@ -1,0 +1,29 @@
+{
+  "name": "@voxel-strike/server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "colyseus": "^0.15.55",
+    "@colyseus/ws-transport": "^0.15.0",
+    "@colyseus/schema": "^2.0.0",
+    "@dimforge/rapier3d-compat": "^0.14.0",
+    "@voxel-strike/shared": "workspace:*",
+    "@voxel-strike/physics": "workspace:*",
+    "@voxel-strike/game-logic": "workspace:*",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.8.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
+
