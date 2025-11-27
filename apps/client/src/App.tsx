@@ -13,6 +13,7 @@ import { GameConsole } from './components/ui/GameConsole';
 import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
+import { SlideEffects } from './components/ui/SlideEffects';
 
 export function App() {
   const { appPhase, gamePhase, isLoading, localPlayer } = useGameStore();
@@ -108,6 +109,7 @@ export function App() {
             <ShadowStepOverlay />
             <TeleportEffects />
             <UltimateEffects />
+            <SlideEffects />
             {showScoreboard && <Scoreboard />}
           </>
         )}

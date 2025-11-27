@@ -30,6 +30,8 @@ export const SLIDE_INITIAL_BOOST = 1.6; // Initial speed boost when entering sli
 export const CROUCH_TRANSITION_SPEED = 12; // How fast to transition camera height
 export const CROUCH_HEIGHT_OFFSET = -0.4; // How much to lower the camera when crouching
 export const SLIDE_CAMERA_PITCH_OFFSET = 0.12; // Slight upward camera tilt during slide (radians, ~7 degrees)
+export const SLIDE_FOV_BOOST = 15; // Extra FOV degrees during slide
+export const SLIDE_CAMERA_ROLL = 0.08; // Camera roll during slide (radians, ~4.5 degrees)
 
 // Wall running
 export const WALL_RUN_MIN_SPEED = 8;

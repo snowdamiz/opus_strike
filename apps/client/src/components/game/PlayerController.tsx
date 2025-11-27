@@ -28,6 +28,8 @@ import {
   CROUCH_TRANSITION_SPEED,
   CROUCH_HEIGHT_OFFSET,
   SLIDE_CAMERA_PITCH_OFFSET,
+  SLIDE_FOV_BOOST,
+  SLIDE_CAMERA_ROLL,
   getHeroStats,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
@@ -87,6 +89,9 @@ export function PlayerController() {
   const slideDirectionRef = useRef(new THREE.Vector3());
   const crouchHeightRef = useRef(0); // Current crouch camera offset (interpolated)
   const slidePitchRef = useRef(0); // Current slide camera pitch offset (interpolated)
+  const slideFovRef = useRef(0); // Current slide FOV boost (interpolated)
+  const slideRollRef = useRef(0); // Current slide camera roll (interpolated)
+  const slideIntensityRef = useRef(0); // 0-1 intensity for visual effects
   const wasSprintingBeforeSlide = useRef(false); // Track if player was sprinting before slide
 
   // Ability state tracking
@@ -1271,18 +1276,32 @@ export function PlayerController() {
     const targetCrouchOffset = (isCrouchingRef.current || isSliding.current) ? CROUCH_HEIGHT_OFFSET : 0;
     crouchHeightRef.current += (targetCrouchOffset - crouchHeightRef.current) * Math.min(CROUCH_TRANSITION_SPEED * dt, 1);
     
-    // Interpolate slide camera pitch (tilt up slightly during slide)
-    const targetSlidePitch = isSliding.current ? SLIDE_CAMERA_PITCH_OFFSET : 0; // Positive = look up
-    slidePitchRef.current += (targetSlidePitch - slidePitchRef.current) * Math.min(CROUCH_TRANSITION_SPEED * dt, 1);
+    // Interpolate slide camera effects
+    const targetSlidePitch = isSliding.current ? SLIDE_CAMERA_PITCH_OFFSET : 0;
+    const targetSlideFov = isSliding.current ? SLIDE_FOV_BOOST : 0;
+    const targetSlideRoll = isSliding.current ? SLIDE_CAMERA_ROLL : 0;
+    const targetSlideIntensity = isSliding.current ? 1 : 0;
+    
+    const slideTransitionSpeed = CROUCH_TRANSITION_SPEED * dt;
+    slidePitchRef.current += (targetSlidePitch - slidePitchRef.current) * Math.min(slideTransitionSpeed, 1);
+    slideFovRef.current += (targetSlideFov - slideFovRef.current) * Math.min(slideTransitionSpeed, 1);
+    slideRollRef.current += (targetSlideRoll - slideRollRef.current) * Math.min(slideTransitionSpeed, 1);
+    slideIntensityRef.current += (targetSlideIntensity - slideIntensityRef.current) * Math.min(slideTransitionSpeed * 1.5, 1);
+    
+    // Apply FOV change
+    const baseFov = 75;
+    camera.fov = baseFov + slideFovRef.current;
+    camera.updateProjectionMatrix();
     
     // Update camera (add eye height offset + crouch offset)
     const eyeHeight = 0.6 + crouchHeightRef.current;
     camera.position.set(position.x, position.y + eyeHeight, position.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = yawRef.current;
-    camera.rotation.x = pitchRef.current + slidePitchRef.current; // Add slide pitch offset
+    camera.rotation.x = pitchRef.current + slidePitchRef.current;
+    camera.rotation.z = slideRollRef.current; // Add roll for dynamic feel
 
-    // Update store
+    // Update store (including slide intensity for visual effects)
     updateLocalPlayer({
       position: { x: position.x, y: position.y, z: position.z },
       velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
@@ -1297,6 +1316,9 @@ export function PlayerController() {
         slideTimeRemaining: slideTimeRef.current,
       },
     });
+    
+    // Update slide intensity in store for UI effects
+    useGameStore.getState().setSlideIntensity(slideIntensityRef.current);
 
     // Send input to server at tick rate
     tickRef.current++;

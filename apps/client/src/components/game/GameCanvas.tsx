@@ -6,6 +6,7 @@ import { PlayerController } from './PlayerController';
 import { OtherPlayers } from './OtherPlayers';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
+import { SlideSpeedLines } from './SlideSpeedLines';
 import { useGameStore } from '../../store/gameStore';
 
 export function GameCanvas() {
@@ -83,6 +84,7 @@ export function GameCanvas() {
           <>
             <Flags />
             <Effects />
+            <SlideSpeedLines />
           </>
         )}
 

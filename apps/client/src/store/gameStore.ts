@@ -95,6 +95,9 @@ interface GameStore {
   clientCooldowns: Record<string, number>; // abilityId -> cooldown end timestamp
   clientCharges: Record<string, number>; // abilityId -> current charges
   
+  // Slide visual effects
+  slideIntensity: number; // 0-1 intensity for slide visual effects
+  
   // Actions
   setWalletAddress: (address: string | null) => void;
   setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
@@ -129,6 +132,7 @@ interface GameStore {
   setClientCooldown: (abilityId: string, endTime: number) => void;
   setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
+  setSlideIntensity: (intensity: number) => void;
   
   reset: () => void;
   resetLobby: () => void;
@@ -169,6 +173,7 @@ const initialState = {
   ultimateEffectEndTime: 0,
   clientCooldowns: {} as Record<string, number>,
   clientCharges: {} as Record<string, number>,
+  slideIntensity: 0,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -336,6 +341,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   })),
   
   clearClientCooldowns: () => set({ clientCooldowns: {}, clientCharges: {} }),
+  
+  setSlideIntensity: (intensity) => set({ slideIntensity: intensity }),
 
   reset: () => set(initialState),
   
