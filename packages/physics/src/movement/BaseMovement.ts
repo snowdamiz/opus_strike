@@ -2,10 +2,17 @@ import type { Vec3, InputState, PlayerMovementState, HeroStats } from '@voxel-st
 import { 
   SPRINT_MULTIPLIER,
   CROUCH_MULTIPLIER,
-  AIR_CONTROL,
   GRAVITY,
-  GROUND_FRICTION,
   DEFAULT_HERO_STATS,
+  // CS-style bunny hop constants
+  BHOP_GROUND_ACCEL,
+  BHOP_AIR_ACCEL,
+  BHOP_AIR_SPEED_CAP,
+  BHOP_MAX_VELOCITY,
+  BHOP_GROUND_FRICTION,
+  BHOP_STOP_SPEED,
+  BHOP_TIMING_WINDOW,
+  BHOP_LANDING_SPEED_RETENTION,
 } from '@voxel-strike/shared';
 import { vec3Length, createVec3 } from '@voxel-strike/shared';
 import type { PhysicsWorld } from '../PhysicsWorld.js';
@@ -27,6 +34,15 @@ export interface BaseMovementResult {
   isGrounded: boolean;
 }
 
+/**
+ * CS-Style Movement Controller
+ * 
+ * Implements Quake/Source engine style movement physics:
+ * - Air strafing: gain speed by moving mouse + holding strafe keys
+ * - Bunny hopping: preserve momentum by jumping immediately on landing
+ * - Ground friction: slows you down when grounded
+ * - Air acceleration: responsive air control with speed gain mechanics
+ */
 export class BaseMovement {
   private world: PhysicsWorld;
   private playerId: string;
@@ -34,8 +50,13 @@ export class BaseMovement {
   private moveSpeed: number = DEFAULT_HERO_STATS.moveSpeed;
   private jumpForce: number = DEFAULT_HERO_STATS.jumpForce;
   
+  // Coyote time and jump buffering for responsive feel
   private coyoteTime: number = 0;
   private jumpBuffer: number = 0;
+  
+  // Bunny hop tracking
+  private timeSinceLanding: number = 0;
+  private wasGroundedLastFrame: boolean = false;
   
   private readonly COYOTE_TIME_MAX = 0.15;
   private readonly JUMP_BUFFER_MAX = 0.1;
@@ -54,11 +75,30 @@ export class BaseMovement {
     const { position, velocity, input: playerInput, forward, right, deltaTime, movementState } = input;
     
     const newPosition = { ...position };
-    const newVelocity = { ...velocity };
+    let newVelocity = { ...velocity };
 
     // Check ground
     const groundInfo = checkGround(this.world, position, this.playerId);
     let isGrounded = groundInfo.isGrounded;
+
+    // Track landing for bunny hop timing
+    if (isGrounded && !this.wasGroundedLastFrame) {
+      // Just landed
+      this.timeSinceLanding = 0;
+      
+      // Apply landing speed retention
+      const horizontalSpeed = Math.sqrt(newVelocity.x * newVelocity.x + newVelocity.z * newVelocity.z);
+      if (horizontalSpeed > 0) {
+        const retainedSpeed = horizontalSpeed * BHOP_LANDING_SPEED_RETENTION;
+        const ratio = retainedSpeed / horizontalSpeed;
+        newVelocity.x *= ratio;
+        newVelocity.z *= ratio;
+      }
+    } else if (isGrounded) {
+      this.timeSinceLanding += deltaTime;
+    }
+    
+    this.wasGroundedLastFrame = isGrounded;
 
     // Coyote time - allow jumping briefly after leaving ground
     if (isGrounded) {
@@ -74,62 +114,52 @@ export class BaseMovement {
       this.jumpBuffer = Math.max(0, this.jumpBuffer - deltaTime);
     }
 
-    // Calculate movement direction
-    const moveDir = createVec3();
+    // Calculate wish direction (the direction player wants to move)
+    const wishDir = createVec3();
     
     if (playerInput.moveForward) {
-      moveDir.x += forward.x;
-      moveDir.z += forward.z;
+      wishDir.x += forward.x;
+      wishDir.z += forward.z;
     }
     if (playerInput.moveBackward) {
-      moveDir.x -= forward.x;
-      moveDir.z -= forward.z;
+      wishDir.x -= forward.x;
+      wishDir.z -= forward.z;
     }
     if (playerInput.moveLeft) {
-      moveDir.x -= right.x;
-      moveDir.z -= right.z;
+      wishDir.x -= right.x;
+      wishDir.z -= right.z;
     }
     if (playerInput.moveRight) {
-      moveDir.x += right.x;
-      moveDir.z += right.z;
+      wishDir.x += right.x;
+      wishDir.z += right.z;
     }
 
-    // Normalize movement direction
-    const moveDirLen = vec3Length(moveDir);
-    if (moveDirLen > 0) {
-      moveDir.x /= moveDirLen;
-      moveDir.z /= moveDirLen;
+    // Normalize wish direction
+    const wishDirLen = vec3Length(wishDir);
+    if (wishDirLen > 0) {
+      wishDir.x /= wishDirLen;
+      wishDir.z /= wishDirLen;
     }
 
-    // Calculate target speed
-    let targetSpeed = this.moveSpeed;
+    // Calculate target speed (wish speed)
+    let wishSpeed = this.moveSpeed;
     if (playerInput.sprint && !playerInput.crouch) {
-      targetSpeed *= SPRINT_MULTIPLIER;
+      wishSpeed *= SPRINT_MULTIPLIER;
     }
     if (playerInput.crouch) {
-      targetSpeed *= CROUCH_MULTIPLIER;
+      wishSpeed *= CROUCH_MULTIPLIER;
     }
 
     // Apply movement based on grounded state
-    const control = isGrounded || this.coyoteTime > 0 ? 1.0 : AIR_CONTROL;
-    const accel = isGrounded ? 15 : 8;
-
-    // Target velocity
-    const targetVelX = moveDir.x * targetSpeed;
-    const targetVelZ = moveDir.z * targetSpeed;
-
-    // Accelerate toward target
-    newVelocity.x += (targetVelX - newVelocity.x) * accel * control * deltaTime;
-    newVelocity.z += (targetVelZ - newVelocity.z) * accel * control * deltaTime;
-
-    // Apply friction when grounded and not moving
-    if (isGrounded && moveDirLen === 0) {
-      const friction = Math.pow(GROUND_FRICTION, deltaTime * 60);
-      newVelocity.x *= friction;
-      newVelocity.z *= friction;
+    if (isGrounded || this.coyoteTime > 0) {
+      // Ground movement with friction
+      newVelocity = this.applyGroundMovement(newVelocity, wishDir, wishSpeed, deltaTime);
+    } else {
+      // Air movement with strafe acceleration
+      newVelocity = this.applyAirMovement(newVelocity, wishDir, wishSpeed, deltaTime);
     }
 
-    // Apply gravity
+    // Apply gravity when not grounded
     if (!isGrounded && !movementState.isWallRunning && !movementState.isGrappling) {
       newVelocity.y += GRAVITY * deltaTime;
     }
@@ -151,12 +181,20 @@ export class BaseMovement {
         : position.y;
     }
 
+    // Clamp maximum horizontal velocity
+    const horizontalSpeed = Math.sqrt(newVelocity.x * newVelocity.x + newVelocity.z * newVelocity.z);
+    if (horizontalSpeed > BHOP_MAX_VELOCITY) {
+      const scale = BHOP_MAX_VELOCITY / horizontalSpeed;
+      newVelocity.x *= scale;
+      newVelocity.z *= scale;
+    }
+
     // Update position
     newPosition.x += newVelocity.x * deltaTime;
     newPosition.y += newVelocity.y * deltaTime;
     newPosition.z += newVelocity.z * deltaTime;
 
-    // Clamp vertical position
+    // Clamp vertical position (safety net)
     if (newPosition.y < 0.9) {
       newPosition.y = 0.9;
       newVelocity.y = 0;
@@ -169,5 +207,116 @@ export class BaseMovement {
       isGrounded,
     };
   }
-}
 
+  /**
+   * Ground movement with friction
+   * Uses Source engine style ground acceleration
+   */
+  private applyGroundMovement(velocity: Vec3, wishDir: Vec3, wishSpeed: number, dt: number): Vec3 {
+    const newVelocity = { ...velocity };
+    
+    // Apply friction first
+    const speed = Math.sqrt(newVelocity.x * newVelocity.x + newVelocity.z * newVelocity.z);
+    
+    if (speed > 0) {
+      // Calculate friction drop
+      const control = speed < BHOP_STOP_SPEED ? BHOP_STOP_SPEED : speed;
+      const drop = control * BHOP_GROUND_FRICTION * dt;
+      
+      // Scale velocity by friction
+      let newSpeed = speed - drop;
+      if (newSpeed < 0) newSpeed = 0;
+      
+      if (newSpeed !== speed) {
+        const ratio = newSpeed / speed;
+        newVelocity.x *= ratio;
+        newVelocity.z *= ratio;
+      }
+    }
+    
+    // Then accelerate if there's input
+    if (wishDir.x !== 0 || wishDir.z !== 0) {
+      return this.accelerate(newVelocity, wishDir, wishSpeed, BHOP_GROUND_ACCEL, dt);
+    }
+    
+    return newVelocity;
+  }
+
+  /**
+   * Air movement with strafe acceleration
+   * This is the core of CS-style bunny hopping!
+   * 
+   * Key insight: Air acceleration uses a capped wish speed, but the actual
+   * velocity can exceed this cap through proper strafing (perpendicular movement).
+   */
+  private applyAirMovement(velocity: Vec3, wishDir: Vec3, wishSpeed: number, dt: number): Vec3 {
+    // Cap the wish speed for air movement
+    // This is what creates the strafe acceleration effect
+    const airWishSpeed = Math.min(wishSpeed, BHOP_AIR_SPEED_CAP);
+    
+    return this.accelerate(velocity, wishDir, airWishSpeed, BHOP_AIR_ACCEL, dt);
+  }
+
+  /**
+   * Quake/Source engine acceleration function
+   * This is the magic that makes bunny hopping work!
+   * 
+   * The key insight: acceleration is based on the component of velocity
+   * that's NOT in the wish direction. So if you're moving perpendicular
+   * to your wish direction (strafing), you get full acceleration.
+   * 
+   * @param velocity Current velocity
+   * @param wishDir Normalized direction player wants to move
+   * @param wishSpeed Speed player wants to reach
+   * @param accel Acceleration rate
+   * @param dt Delta time
+   */
+  private accelerate(velocity: Vec3, wishDir: Vec3, wishSpeed: number, accel: number, dt: number): Vec3 {
+    const newVelocity = { ...velocity };
+    
+    // No input = no acceleration
+    if (wishDir.x === 0 && wishDir.z === 0) {
+      return newVelocity;
+    }
+    
+    // Current speed in the wish direction
+    const currentSpeed = newVelocity.x * wishDir.x + newVelocity.z * wishDir.z;
+    
+    // How much speed we want to add
+    const addSpeed = wishSpeed - currentSpeed;
+    
+    // Can't accelerate if already going faster than wish speed in that direction
+    if (addSpeed <= 0) {
+      return newVelocity;
+    }
+    
+    // Calculate acceleration amount
+    let accelSpeed = accel * dt * wishSpeed;
+    
+    // Cap acceleration to not overshoot
+    if (accelSpeed > addSpeed) {
+      accelSpeed = addSpeed;
+    }
+    
+    // Apply acceleration in wish direction
+    newVelocity.x += accelSpeed * wishDir.x;
+    newVelocity.z += accelSpeed * wishDir.z;
+    
+    return newVelocity;
+  }
+
+  /**
+   * Check if player is in bunny hop timing window
+   * Used for effects and feedback
+   */
+  isInBhopWindow(): boolean {
+    return this.timeSinceLanding < BHOP_TIMING_WINDOW;
+  }
+
+  /**
+   * Get current horizontal speed for UI feedback
+   */
+  getHorizontalSpeed(velocity: Vec3): number {
+    return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+  }
+}

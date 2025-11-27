@@ -25,7 +25,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'blink',
     stats: {
       maxHealth: 175,
-      moveSpeed: 10,
+      moveSpeed: 7, // Reduced 20% from 10 for better balance
       jumpForce: 8.5,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },

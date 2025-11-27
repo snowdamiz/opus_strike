@@ -9,6 +9,34 @@ export const CROUCH_MULTIPLIER = 0.5;
 export const AIR_CONTROL = 0.3;
 export const MAX_JUMPS = 1;
 
+// ============================================
+// CS-STYLE BUNNY HOP / STRAFE JUMP PHYSICS
+// Based on Quake/Source engine movement
+// Tuned for balanced gameplay (not pure bhop servers)
+// ============================================
+
+// Ground acceleration - how quickly you reach max speed on ground
+export const BHOP_GROUND_ACCEL = 10;
+// Air acceleration - controls how responsive air strafing feels
+export const BHOP_AIR_ACCEL = 15;
+// Air speed cap - the "wish speed" when airborne
+// This MUST be low to create the strafe acceleration effect
+// When this is low, you can only accelerate by strafing perpendicular to velocity
+export const BHOP_AIR_SPEED_CAP = 2;
+// Maximum velocity the player can achieve through bunny hopping
+// About 1.5x sprint speed - rewarding skilled movement
+export const BHOP_MAX_VELOCITY = 20;
+// Ground friction - how quickly you slow down on ground
+export const BHOP_GROUND_FRICTION = 6;
+// Stop speed - below this speed, friction applies more strongly
+export const BHOP_STOP_SPEED = 1.5;
+// Speed boost when landing a bhop with good timing
+export const BHOP_TIMING_WINDOW = 0.1; // seconds
+// How much horizontal velocity is preserved on landing
+export const BHOP_LANDING_SPEED_RETENTION = 0.94;
+// Minimum speed to maintain bunny hop chain
+export const BHOP_MIN_CHAIN_SPEED = 5;
+
 // Look sensitivity
 export const MOUSE_SENSITIVITY = 0.002;
 export const PITCH_LIMIT = Math.PI / 2 - 0.1;
@@ -20,11 +48,11 @@ export const STEP_HEIGHT = 0.5;
 
 // Slide
 export const SLIDE_SPEED_BOOST = 1.8; // Speed multiplier during slide
-export const SLIDE_DURATION = 0.5; // Duration of slide in seconds (shorter, snappier)
+export const SLIDE_DURATION = 0.6; // Duration of slide in seconds
 export const SLIDE_COOLDOWN = 0.8; // Cooldown before next slide
-export const SLIDE_FRICTION = 0.94; // Friction applied during slide (higher = more slowdown)
-export const MIN_SLIDE_SPEED = 6; // Minimum speed to initiate slide
-export const SLIDE_INITIAL_BOOST = 1.6; // Initial speed boost when entering slide (faster burst)
+export const SLIDE_FRICTION = 0.96; // Friction applied during slide (higher = less slowdown)
+export const MIN_SLIDE_SPEED = 5; // Minimum speed to initiate slide
+export const SLIDE_INITIAL_BOOST = 1.8; // Initial speed boost when entering slide (ensures faster than sprint)
 
 // Crouch
 export const CROUCH_TRANSITION_SPEED = 12; // How fast to transition camera height

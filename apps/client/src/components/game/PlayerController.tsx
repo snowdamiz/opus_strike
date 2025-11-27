@@ -18,7 +18,6 @@ import {
   PITCH_LIMIT,
   SPRINT_MULTIPLIER,
   CROUCH_MULTIPLIER,
-  AIR_CONTROL,
   GRAVITY,
   TICK_RATE,
   SLIDE_DURATION,
@@ -30,6 +29,14 @@ import {
   SLIDE_CAMERA_PITCH_OFFSET,
   SLIDE_FOV_BOOST,
   SLIDE_CAMERA_ROLL,
+  // CS-style bunny hop constants
+  BHOP_GROUND_ACCEL,
+  BHOP_AIR_ACCEL,
+  BHOP_AIR_SPEED_CAP,
+  BHOP_MAX_VELOCITY,
+  BHOP_GROUND_FRICTION,
+  BHOP_STOP_SPEED,
+  BHOP_LANDING_SPEED_RETENTION,
   getHeroStats,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
@@ -53,6 +60,56 @@ const SMOOTH_SPEED_LARGE = 20; // Smoothing speed for larger steps (higher = sna
 // Debug flag
 let lastDebugTime = 0;
 
+/**
+ * Quake/Source engine acceleration function
+ * This is the magic that makes bunny hopping work!
+ * 
+ * The key insight: acceleration is based on the component of velocity
+ * that's NOT in the wish direction. So if you're moving perpendicular
+ * to your wish direction (strafing), you get full acceleration.
+ * 
+ * @param velocity Current velocity (mutated in place)
+ * @param wishDir Normalized direction player wants to move { x, z }
+ * @param wishSpeed Speed player wants to reach
+ * @param accel Acceleration rate
+ * @param dt Delta time
+ */
+function quakeAccelerate(
+  velocity: THREE.Vector3,
+  wishDir: { x: number; z: number },
+  wishSpeed: number,
+  accel: number,
+  dt: number
+): void {
+  // No input = no acceleration
+  if (wishDir.x === 0 && wishDir.z === 0) {
+    return;
+  }
+  
+  // Current speed in the wish direction (dot product)
+  const currentSpeed = velocity.x * wishDir.x + velocity.z * wishDir.z;
+  
+  // How much speed we want to add
+  const addSpeed = wishSpeed - currentSpeed;
+  
+  // Can't accelerate if already going faster than wish speed in that direction
+  if (addSpeed <= 0) {
+    return;
+  }
+  
+  // Calculate acceleration amount
+  let accelSpeed = accel * dt * wishSpeed;
+  
+  // Cap acceleration to not overshoot
+  if (accelSpeed > addSpeed) {
+    accelSpeed = addSpeed;
+  }
+  
+  // Apply acceleration in wish direction
+  velocity.x += accelSpeed * wishDir.x;
+  velocity.z += accelSpeed * wishDir.z;
+}
+
 export function PlayerController() {
   const { camera } = useThree();
   // Get functions from store (these don't change)
@@ -74,6 +131,7 @@ export function PlayerController() {
   const yawRef = useRef(0);
   const pitchRef = useRef(0);
   const isGroundedRef = useRef(true);
+  const wasGroundedRef = useRef(true); // For landing detection (bhop)
   const canJumpRef = useRef(true);
   const initializedRef = useRef(false);
   const tickRef = useRef(0);
@@ -1036,9 +1094,8 @@ export function PlayerController() {
       if (abilityId === 'glacier_iceslide') speed *= 1.5;
     }
 
-    // Apply movement
+    // ===== CS-STYLE BUNNY HOP / STRAFE MOVEMENT =====
     const velocity = velocityRef.current;
-    const control = isGroundedRef.current ? 1 : AIR_CONTROL;
 
     // When sliding, only apply slight steering - don't overwrite slide velocity
     if (isSliding.current) {
@@ -1047,9 +1104,59 @@ export function PlayerController() {
       velocity.x += moveDirection.x * speed * steerForce;
       velocity.z += moveDirection.z * speed * steerForce;
     } else {
-      // Normal movement - interpolate velocity toward target
-      velocity.x += (moveDirection.x * speed - velocity.x) * control * 10 * dt;
-      velocity.z += (moveDirection.z * speed - velocity.z) * control * 10 * dt;
+      // Calculate wish direction (the direction player wants to move)
+      const wishDirLen = Math.sqrt(moveDirection.x * moveDirection.x + moveDirection.z * moveDirection.z);
+      const wishDir = wishDirLen > 0 ? {
+        x: moveDirection.x / wishDirLen,
+        z: moveDirection.z / wishDirLen,
+      } : { x: 0, z: 0 };
+      
+      // Wish speed is the target speed
+      const wishSpeed = speed;
+      
+      if (isGroundedRef.current) {
+        // === GROUND MOVEMENT WITH FRICTION ===
+        // Apply friction first (like Source engine)
+        const currentSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+        
+        if (currentSpeed > 0) {
+          // Calculate friction drop
+          const control = currentSpeed < BHOP_STOP_SPEED ? BHOP_STOP_SPEED : currentSpeed;
+          const drop = control * BHOP_GROUND_FRICTION * dt;
+          
+          // Scale velocity by friction
+          let newSpeed = currentSpeed - drop;
+          if (newSpeed < 0) newSpeed = 0;
+          
+          if (newSpeed !== currentSpeed) {
+            const ratio = newSpeed / currentSpeed;
+            velocity.x *= ratio;
+            velocity.z *= ratio;
+          }
+        }
+        
+        // Then accelerate if there's input
+        if (wishDir.x !== 0 || wishDir.z !== 0) {
+          quakeAccelerate(velocity, wishDir, wishSpeed, BHOP_GROUND_ACCEL, dt);
+        }
+      } else {
+        // === AIR MOVEMENT WITH STRAFE ACCELERATION ===
+        // This is the core of CS-style bunny hopping!
+        // Air acceleration uses a capped wish speed, but actual velocity can exceed this
+        const airWishSpeed = Math.min(wishSpeed, BHOP_AIR_SPEED_CAP);
+        
+        if (wishDir.x !== 0 || wishDir.z !== 0) {
+          quakeAccelerate(velocity, wishDir, airWishSpeed, BHOP_AIR_ACCEL, dt);
+        }
+      }
+      
+      // Clamp maximum horizontal velocity
+      const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+      if (horizontalSpeed > BHOP_MAX_VELOCITY) {
+        const scale = BHOP_MAX_VELOCITY / horizontalSpeed;
+        velocity.x *= scale;
+        velocity.z *= scale;
+      }
     }
 
     // Current position
@@ -1122,6 +1229,18 @@ export function PlayerController() {
       // Close to or below ground
       if (distToGround <= 0.15 && velocity.y <= 0) {
         if (groundInfo.isWalkable) {
+          // BHOP: Apply landing speed retention when transitioning from air to ground
+          if (!wasGroundedRef.current) {
+            // Just landed! Apply speed retention for bunny hop chaining
+            const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+            if (horizontalSpeed > 0) {
+              const retainedSpeed = horizontalSpeed * BHOP_LANDING_SPEED_RETENTION;
+              const ratio = retainedSpeed / horizontalSpeed;
+              velocity.x *= ratio;
+              velocity.z *= ratio;
+            }
+          }
+          
           // Calculate height change from current smoothed position
           const currentY = smoothedYRef.current ?? position.y;
           const heightChange = Math.abs(targetY - currentY);
@@ -1330,6 +1449,9 @@ export function PlayerController() {
         slideTimeRemaining: slideTimeRef.current,
       },
     });
+    
+    // Track grounded state for landing detection (bunny hop)
+    wasGroundedRef.current = isGroundedRef.current;
     
     // Update slide intensity in store for UI effects
     useGameStore.getState().setSlideIntensity(slideIntensityRef.current);

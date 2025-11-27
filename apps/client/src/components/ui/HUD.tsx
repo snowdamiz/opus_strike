@@ -258,6 +258,9 @@ export function HUD() {
 
       {/* ===== BOTTOM RIGHT - Movement Status ===== */}
       <div className="absolute bottom-6 right-6 flex flex-col items-end gap-1.5">
+        {/* Speed Display - Essential for bhop */}
+        <SpeedDisplay velocity={localPlayer.velocity} />
+        
         {localPlayer.movement?.isWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" />}
         {localPlayer.movement?.isSliding && <MovementIndicator label="SLIDING" color="#22c55e" />}
         {localPlayer.movement?.isGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" />}
@@ -521,6 +524,59 @@ function MovementIndicator({ label, color }: { label: string; color: string }) {
       >
         {label}
       </span>
+    </div>
+  );
+}
+
+// ===== SPEED DISPLAY (CS BHOP STYLE) =====
+function SpeedDisplay({ velocity }: { velocity?: { x: number; y: number; z: number } }) {
+  if (!velocity) return null;
+  
+  // Calculate horizontal speed (units per second)
+  const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+  const speed = Math.round(horizontalSpeed * 10) / 10; // Round to 1 decimal
+  
+  // Color coding based on speed thresholds
+  // Normal walk ~9, sprint ~12.6, bhop can reach 20-32
+  let color = '#ffffff'; // Default white
+  let glowColor = 'rgba(255, 255, 255, 0.2)';
+  
+  if (speed >= 25) {
+    // Extreme speed - gold/yellow (like CS bhop servers)
+    color = '#fbbf24';
+    glowColor = 'rgba(251, 191, 36, 0.4)';
+  } else if (speed >= 18) {
+    // High speed - cyan
+    color = '#22d3ee';
+    glowColor = 'rgba(34, 211, 238, 0.4)';
+  } else if (speed >= 12) {
+    // Above walk speed - green
+    color = '#4ade80';
+    glowColor = 'rgba(74, 222, 128, 0.3)';
+  }
+  
+  return (
+    <div 
+      className="flex flex-col items-end mb-2 px-3 py-2 rounded-lg backdrop-blur-sm"
+      style={{ 
+        background: 'rgba(0, 0, 0, 0.4)',
+        border: '1px solid rgba(255, 255, 255, 0.1)',
+        boxShadow: `0 0 15px ${glowColor}`,
+      }}
+    >
+      <span className="text-[9px] font-display text-white/50 tracking-wider">SPEED</span>
+      <div className="flex items-baseline gap-1">
+        <span 
+          className="font-mono text-2xl font-bold tabular-nums transition-colors duration-150"
+          style={{ 
+            color,
+            textShadow: `0 0 10px ${glowColor}`,
+          }}
+        >
+          {speed.toFixed(1)}
+        </span>
+        <span className="text-[10px] text-white/40 font-mono">u/s</span>
+      </div>
     </div>
   );
 }
