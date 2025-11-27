@@ -15,7 +15,7 @@ const HERO_COLORS: Record<string, { primary: string; glow: string; bg: string }>
 };
 
 export function HUD() {
-  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns } = useGameStore();
+  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges } = useGameStore();
   
   // Force re-render every 100ms for smooth cooldown updates
   const [, setTick] = useState(0);
@@ -225,6 +225,7 @@ export function HUD() {
               keybind="E"
               abilityState={localPlayer.abilities?.[heroInfo.ability1.abilityId]}
               clientCooldownEnd={clientCooldowns[heroInfo.ability1.abilityId]}
+              clientCharges={clientCharges[heroInfo.ability1.abilityId]}
               isUltimate={false}
               heroColor={heroColors.primary}
               ultimateCharge={ultimatePercent}
@@ -309,6 +310,7 @@ function AbilitySlotApex({
   keybind, 
   abilityState,
   clientCooldownEnd,
+  clientCharges,
   isUltimate,
   heroColor,
   ultimateCharge,
@@ -317,6 +319,7 @@ function AbilitySlotApex({
   keybind: string;
   abilityState?: AbilityState;
   clientCooldownEnd?: number;
+  clientCharges?: number;
   isUltimate: boolean;
   heroColor: string;
   ultimateCharge: number;
@@ -325,6 +328,9 @@ function AbilitySlotApex({
   if (!abilityDef) return null;
 
   const iconType = getAbilityIconType(abilityId);
+  const maxCharges = abilityDef.charges || 1;
+  // Force 10s cooldown for blink (shared package might have old cached value)
+  const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef.cooldown || 10);
   
   // Calculate client-side cooldown remaining (for immediate UI feedback)
   const now = Date.now();
@@ -335,10 +341,17 @@ function AbilitySlotApex({
   // Use client cooldown if available (more responsive), fall back to server state
   const serverCooldown = abilityState?.cooldownRemaining ?? 0;
   const cooldown = clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown;
-  const charges = abilityState?.charges ?? (abilityDef.charges || 1);
+  
+  // Use client charges if available, fall back to server state, then default to max
+  const serverCharges = abilityState?.charges ?? maxCharges;
+  let charges = clientCharges !== undefined ? clientCharges : serverCharges;
+  
+  // If cooldown just ended and charges are 0, show full charges (they'll reset on next use)
+  if (maxCharges > 1 && clientCooldownEnd && now >= clientCooldownEnd && charges === 0) {
+    charges = maxCharges;
+  }
+  
   const isActive = abilityState?.isActive ?? false;
-  const maxCharges = abilityDef.charges || 1;
-  const maxCooldown = abilityDef.cooldown || 10;
   
   const onCooldown = cooldown > 0;
   const isUltReady = isUltimate && ultimateCharge >= 100;

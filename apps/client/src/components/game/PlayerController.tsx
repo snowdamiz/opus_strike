@@ -27,6 +27,7 @@ import {
 } from '@voxel-strike/shared';
 import { isInsideBoundary, constrainToBoundary } from '../../config/mapBoundaries';
 import { ShadowStepIndicator } from './ShadowStepIndicator';
+import { triggerTeleportEffect } from '../ui/TeleportEffects';
 
 // Player collision constants
 const PLAYER_HEIGHT = 1.8;
@@ -48,6 +49,7 @@ export function PlayerController() {
   const updateLocalPlayer = useGameStore(state => state.updateLocalPlayer);
   const setShadowStepTargeting = useGameStore(state => state.setShadowStepTargeting);
   const setClientCooldown = useGameStore(state => state.setClientCooldown);
+  const setClientCharges = useGameStore(state => state.setClientCharges);
   // Get reactive state for React rendering
   const gamePhase = useGameStore(state => state.gamePhase);
   const shadowStepTargeting = useGameStore(state => state.shadowStepTargeting);
@@ -71,6 +73,7 @@ export function PlayerController() {
   // Ability state tracking
   const abilityPressedRef = useRef({ ability1: false, ability2: false, ultimate: false });
   const clientCooldownsRef = useRef<Record<string, number>>({}); // Client-side cooldown end times
+  const clientChargesRef = useRef<Record<string, number>>({}); // Client-side charge tracking
   const abilityActiveRef = useRef<Record<string, { active: boolean; startTime: number }>>({});
   const teleportInProgressRef = useRef(false); // Prevent multiple teleports
 
@@ -97,7 +100,78 @@ export function PlayerController() {
     }
   }, [localPlayerForInit, camera, updateLocalPlayer]);
 
-  // Start a client-side cooldown for an ability
+  // Get current charges for an ability (initializes to max if not set)
+  const getClientCharges = useCallback((abilityId: string): number => {
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    if (!abilityDef) return 1;
+    
+    const maxCharges = abilityDef.charges || 1;
+    
+    // Initialize charges if not set
+    if (clientChargesRef.current[abilityId] === undefined) {
+      clientChargesRef.current[abilityId] = maxCharges;
+      setClientCharges(abilityId, maxCharges);
+    }
+    
+    return clientChargesRef.current[abilityId];
+  }, [setClientCharges]);
+
+  // Use a charge of an ability (returns true if successful)
+  const useAbilityCharge = useCallback((abilityId: string): boolean => {
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    if (!abilityDef) return false;
+    
+    const maxCharges = abilityDef.charges || 1;
+    // Force 10s cooldown for blink (shared package might have old cached value)
+    const cooldownSeconds = abilityId === 'phantom_blink' ? 10 : (abilityDef.cooldown || 10);
+    
+    // Check if on cooldown (charges depleted)
+    const cooldownEnd = clientCooldownsRef.current[abilityId];
+    if (cooldownEnd && Date.now() < cooldownEnd) {
+      console.log(`[Ability] ${abilityDef.name}: Still on cooldown`);
+      return false;
+    }
+    
+    // Get current charges (if cooldown just ended, charges might need reset)
+    let currentCharges = clientChargesRef.current[abilityId];
+    
+    // If charges undefined or cooldown just ended, reset to max
+    if (currentCharges === undefined || (cooldownEnd && Date.now() >= cooldownEnd && currentCharges === 0)) {
+      currentCharges = maxCharges;
+      clientChargesRef.current[abilityId] = maxCharges;
+      setClientCharges(abilityId, maxCharges);
+      // Clear the cooldown
+      clientCooldownsRef.current[abilityId] = 0;
+      setClientCooldown(abilityId, 0);
+      console.log(`[Ability] ${abilityDef.name}: Charges reset to ${maxCharges}`);
+    }
+    
+    if (currentCharges <= 0) {
+      console.log(`[Ability] ${abilityDef.name}: No charges available`);
+      return false;
+    }
+    
+    // Consume a charge
+    const newCharges = currentCharges - 1;
+    clientChargesRef.current[abilityId] = newCharges;
+    setClientCharges(abilityId, newCharges);
+    
+    console.log(`[Ability] ${abilityDef.name}: Used charge, ${newCharges}/${maxCharges} remaining`);
+    
+    // If no charges left, start cooldown to restore ALL charges
+    if (newCharges === 0) {
+      const cooldownMs = cooldownSeconds * 1000;
+      const endTime = Date.now() + cooldownMs;
+      clientCooldownsRef.current[abilityId] = endTime;
+      setClientCooldown(abilityId, endTime);
+      
+      console.log(`[Ability] ${abilityDef.name}: All charges used, ${cooldownSeconds}s cooldown started`);
+    }
+    
+    return true;
+  }, [setClientCharges, setClientCooldown]);
+
+  // Start a client-side cooldown for an ability (for non-charge abilities)
   const startClientCooldown = useCallback((abilityId: string) => {
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
     if (abilityDef) {
@@ -160,6 +234,9 @@ export function PlayerController() {
     console.log(`[Ability] Shadow Step executing:`);
     console.log(`  From: (${currentPos?.x.toFixed(1)}, ${currentPos?.y.toFixed(1)}, ${currentPos?.z.toFixed(1)})`);
     console.log(`  To: (${target.x.toFixed(1)}, ${teleportY.toFixed(1)}, ${target.z.toFixed(1)})`);
+    
+    // Trigger visual effect
+    triggerTeleportEffect('shadowstep');
     
     // EXIT TARGETING MODE FIRST (before any async operations)
     // Call directly from store to ensure we get the current action
@@ -293,14 +370,26 @@ export function PlayerController() {
 
     console.log(`[Ability] Executing ${abilityDef.name}!`);
     
-    // Start cooldown for all abilities (except shadow step which has special handling)
-    if (abilityId !== 'phantom_shadowstep') {
+    // Start cooldown for abilities without special handling
+    // - phantom_shadowstep: cooldown starts after teleport completes
+    // - phantom_blink: uses charge system
+    const hasSpecialHandling = ['phantom_shadowstep', 'phantom_blink'].includes(abilityId);
+    if (!hasSpecialHandling) {
       startClientCooldown(abilityId);
     }
 
     switch (abilityId) {
       // ===== PHANTOM ABILITIES =====
       case 'phantom_blink': {
+        // Use a charge (handles cooldown when charges depleted)
+        if (!useAbilityCharge(abilityId)) {
+          console.log('[Ability] Blink - no charges available');
+          return;
+        }
+        
+        // Trigger visual effect
+        triggerTeleportEffect('blink');
+        
         // Instant teleport in look direction
         const distance = 8;
         const yaw = yawRef.current;
@@ -468,22 +557,50 @@ export function PlayerController() {
     // Don't allow using abilities while Shadow Step targeting is active
     if (shadowStepTargeting && abilityId !== 'phantom_shadowstep') return false;
 
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    const maxCharges = abilityDef?.charges || 1;
+    const hasCharges = maxCharges > 1;
+
     // Check client-side cooldown first (for immediate feedback)
     const clientCooldownEnd = clientCooldownsRef.current[abilityId];
-    if (clientCooldownEnd && Date.now() < clientCooldownEnd) {
+    const now = Date.now();
+    
+    // If on cooldown, can't use
+    if (clientCooldownEnd && clientCooldownEnd > 0 && now < clientCooldownEnd) {
       return false;
     }
 
-    // Check server-synced ability state
+    // For multi-charge abilities, use CLIENT-SIDE charge tracking (more responsive)
+    if (hasCharges) {
+      const clientCharges = clientChargesRef.current[abilityId];
+      
+      // If cooldown ended (or cleared), ability is available
+      // Charges will reset when useAbilityCharge is called
+      if (clientCooldownEnd === 0 || (clientCooldownEnd && now >= clientCooldownEnd)) {
+        // If we had 0 charges but cooldown ended, we can use (charges will reset)
+        if (clientCharges === 0) {
+          return true;
+        }
+      }
+      
+      // If client charges are tracked
+      if (clientCharges !== undefined) {
+        // If we have charges, can use
+        if (clientCharges > 0) {
+          return true;
+        }
+        // If no charges and still on cooldown, can't use
+        return false;
+      }
+      
+      // If not tracked yet, allow (will initialize)
+      return true;
+    }
+
+    // For non-charge abilities, check server state as fallback
     const abilityState = localPlayer.abilities?.[abilityId];
     if (abilityState) {
       if (abilityState.cooldownRemaining > 0) return false;
-      
-      // Check charges for multi-charge abilities
-      const abilityDef = ABILITY_DEFINITIONS[abilityId];
-      if (abilityDef?.charges && abilityDef.charges > 1) {
-        if (abilityState.charges <= 0) return false;
-      }
     }
 
     // Check ultimate charge

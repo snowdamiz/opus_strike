@@ -152,10 +152,10 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Blink',
     type: 'movement',
     targeting: 'direction',
-    cooldown: 4,
+    cooldown: 10,
     charges: 2,
-    chargeRegenTime: 4,
-    description: 'Instantly teleport a short distance in your movement direction.',
+    chargeRegenTime: 10, // Both charges reset after 10 seconds
+    description: 'Instantly teleport a short distance in your movement direction. 2 charges.',
   },
   phantom_shadowstep: {
     id: 'phantom_shadowstep',

@@ -88,6 +88,7 @@ interface GameStore {
   
   // Client-side cooldowns (for instant UI feedback)
   clientCooldowns: Record<string, number>; // abilityId -> cooldown end timestamp
+  clientCharges: Record<string, number>; // abilityId -> current charges
   
   // Actions
   setWalletAddress: (address: string | null) => void;
@@ -120,6 +121,7 @@ interface GameStore {
   // UI Actions
   setShadowStepTargeting: (targeting: boolean, valid?: boolean) => void;
   setClientCooldown: (abilityId: string, endTime: number) => void;
+  setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
   
   reset: () => void;
@@ -157,6 +159,7 @@ const initialState = {
   shadowStepTargeting: false,
   shadowStepValid: false,
   clientCooldowns: {} as Record<string, number>,
+  clientCharges: {} as Record<string, number>,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -313,7 +316,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     clientCooldowns: { ...state.clientCooldowns, [abilityId]: endTime }
   })),
   
-  clearClientCooldowns: () => set({ clientCooldowns: {} }),
+  setClientCharges: (abilityId, charges) => set((state) => ({
+    clientCharges: { ...state.clientCharges, [abilityId]: charges }
+  })),
+  
+  clearClientCooldowns: () => set({ clientCooldowns: {}, clientCharges: {} }),
 
   reset: () => set(initialState),
   
