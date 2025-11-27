@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useGameStore } from './store/gameStore';
-import { MainMenu } from './components/ui/MainMenu';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { GameCanvas } from './components/game/GameCanvas';
@@ -77,11 +76,8 @@ export function App() {
   }
 
   // Show appropriate screen based on app phase
-  if (appPhase === 'menu') {
-    return <MainMenu />;
-  }
-
-  if (appPhase === 'browsing_lobbies') {
+  // Authentication is now handled within MainLobby
+  if (appPhase === 'menu' || appPhase === 'browsing_lobbies') {
     return <MainLobby />;
   }
 
@@ -139,8 +135,8 @@ export function App() {
     );
   }
 
-  // Fallback to main menu
-  return <MainMenu />;
+  // Fallback to main lobby
+  return <MainLobby />;
 }
 
 function CountdownOverlay() {

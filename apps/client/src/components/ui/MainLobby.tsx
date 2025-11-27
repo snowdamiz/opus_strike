@@ -1,11 +1,43 @@
 import { useState, useEffect } from 'react';
 import { useGameStore, LobbyInfo } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
 import { SettingsModal } from './SettingsModal';
 import { HeroSVG } from './HeroSVG';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
+
+// Phantom wallet icon component
+function PhantomIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="64" cy="64" r="64" fill="url(#phantom-gradient)" />
+      <path
+        d="M110.584 64.9142H99.142C99.142 41.7651 80.173 23 56.7724 23C33.6612 23 14.8716 41.3057 14.4169 64.0583C13.9504 87.4446 33.2917 108 56.7724 108H62.5765C84.1057 108 110.584 88.7974 110.584 64.9142Z"
+        fill="url(#phantom-gradient-2)"
+      />
+      <path
+        d="M77.3711 59.9142C77.3711 63.6499 74.3292 66.6799 70.5787 66.6799C66.8283 66.6799 63.7864 63.6499 63.7864 59.9142C63.7864 56.1785 66.8283 53.1485 70.5787 53.1485C74.3292 53.1485 77.3711 56.1785 77.3711 59.9142Z"
+        fill="#FFF"
+      />
+      <path
+        d="M52.3711 59.9142C52.3711 63.6499 49.3292 66.6799 45.5787 66.6799C41.8283 66.6799 38.7864 63.6499 38.7864 59.9142C38.7864 56.1785 41.8283 53.1485 45.5787 53.1485C49.3292 53.1485 52.3711 56.1785 52.3711 59.9142Z"
+        fill="#FFF"
+      />
+      <defs>
+        <linearGradient id="phantom-gradient" x1="64" y1="0" x2="64" y2="128" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#534BB1" />
+          <stop offset="1" stopColor="#551BF9" />
+        </linearGradient>
+        <linearGradient id="phantom-gradient-2" x1="62.5" y1="23" x2="62.5" y2="108" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#FFF" />
+          <stop offset="1" stopColor="#FFF" stopOpacity="0.82" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
 
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'loadout';
@@ -21,8 +53,24 @@ const HERO_COLORS: Record<HeroId, string> = {
 };
 
 export function MainLobby() {
-  const { playerName, availableLobbies, isLoading, setAppPhase } = useGameStore();
+  const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
   const { fetchLobbies, createLobby, joinLobby } = useNetwork();
+  const {
+    isPhantomInstalled,
+    isConnected,
+    isConnecting,
+    walletAddress,
+    isAuthenticated,
+    isNewUser,
+    user,
+    connect,
+    disconnect,
+    authenticate,
+    registerUser,
+    error: walletError,
+    clearError,
+  } = useWallet();
+  
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -30,6 +78,108 @@ export function MainLobby() {
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showBrowseGames, setShowBrowseGames] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
+  
+  // Authentication states
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [showNameInput, setShowNameInput] = useState(false);
+  const [newPlayerName, setNewPlayerName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [isRegistering, setIsRegistering] = useState(false);
+
+  // Handle authentication after wallet connection
+  useEffect(() => {
+    if (isConnected && !isAuthenticated && !isAuthenticating && showAuthModal) {
+      handleAuthenticate();
+    }
+  }, [isConnected, showAuthModal]);
+
+  // Handle user authenticated - close modal and set user info
+  useEffect(() => {
+    if (isAuthenticated && user && !isNewUser) {
+      storeSetPlayerName(user.name);
+      setUser(user.id, user.name, user.stats);
+      setWalletAddress(user.walletAddress);
+      setShowAuthModal(false);
+      setShowNameInput(false);
+    }
+  }, [isAuthenticated, user, isNewUser]);
+
+  // Show name input for new users
+  useEffect(() => {
+    if (isAuthenticated && isNewUser) {
+      setShowNameInput(true);
+    }
+  }, [isAuthenticated, isNewUser]);
+
+  const handleConnect = async () => {
+    clearError();
+    await connect();
+  };
+
+  const handleAuthenticate = async () => {
+    if (isAuthenticating) return;
+    setIsAuthenticating(true);
+    try {
+      await authenticate();
+    } catch (err) {
+      console.error('Authentication failed:', err);
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!newPlayerName.trim()) {
+      setNameError('Please enter a player name');
+      return;
+    }
+
+    if (newPlayerName.trim().length < 2) {
+      setNameError('Name must be at least 2 characters');
+      return;
+    }
+
+    if (newPlayerName.trim().length > 16) {
+      setNameError('Name must be 16 characters or less');
+      return;
+    }
+
+    setIsRegistering(true);
+    setNameError(null);
+
+    try {
+      const registeredUser = await registerUser(newPlayerName.trim());
+      storeSetPlayerName(registeredUser.name);
+      setUser(registeredUser.id, registeredUser.name, registeredUser.stats);
+      setWalletAddress(registeredUser.walletAddress);
+      setShowAuthModal(false);
+      setShowNameInput(false);
+      setNewPlayerName('');
+    } catch (err: any) {
+      setNameError(err.message || 'Registration failed');
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleDisconnect = () => {
+    disconnect();
+    setShowNameInput(false);
+    setNewPlayerName('');
+    setNameError(null);
+    setShowAuthModal(false);
+  };
+
+  const handleSignInClick = () => {
+    clearError();
+    setShowAuthModal(true);
+  };
+
+  // Format wallet address for display
+  const formatAddress = (address: string) => {
+    return `${address.slice(0, 4)}...${address.slice(-4)}`;
+  };
 
   // Cycle featured hero for visual interest (auto-rotate)
   useEffect(() => {
@@ -285,18 +435,65 @@ export function MainLobby() {
               </svg>
             </button>
 
-            <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-strike-surface/80 border border-white/5">
-              <div 
-                className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-white"
-                style={{ background: heroColor }}
+            {/* Conditional: Show sign-in button or profile card */}
+            {isAuthenticated && user ? (
+              <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-strike-surface/80 border border-white/5 group relative">
+                <div 
+                  className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-white"
+                  style={{ background: heroColor }}
+                >
+                  {playerName.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <p className="font-display text-white text-sm">{playerName}</p>
+                  <p className="text-[10px] text-white/40 font-body">Level 1</p>
+                </div>
+                {/* Disconnect button on hover */}
+                <button
+                  onClick={handleDisconnect}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10"
+                  title="Disconnect wallet"
+                >
+                  <svg className="w-4 h-4 text-white/40 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleSignInClick}
+                disabled={isConnecting}
+                className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl font-display text-sm text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
+                style={{
+                  background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
+                  boxShadow: '0 0 30px rgba(153, 69, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)',
+                }}
               >
-                {playerName.charAt(0).toUpperCase()}
-              </div>
-              <div>
-                <p className="font-display text-white text-sm">{playerName}</p>
-                <p className="text-[10px] text-white/40 font-body">Level 1</p>
-              </div>
-            </div>
+                {/* Button shimmer */}
+                <div 
+                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+                  style={{
+                    background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
+                  }}
+                />
+                <span className="relative flex items-center gap-2">
+                  {isConnecting ? (
+                    <>
+                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      CONNECTING...
+                    </>
+                  ) : (
+                    <>
+                      <PhantomIcon className="w-5 h-5" />
+                      SIGN IN
+                    </>
+                  )}
+                </span>
+              </button>
+            )}
           </div>
         </div>
       </nav>
@@ -311,8 +508,9 @@ export function MainLobby() {
             heroInfo={heroInfo}
             heroColor={heroColor}
             lobbyCount={availableLobbies.length}
-            onQuickPlay={handleQuickPlay}
-            onOpenCreateLobby={() => setShowCreateLobby(true)}
+            isAuthenticated={isAuthenticated}
+            onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
+            onOpenCreateLobby={isAuthenticated ? () => setShowCreateLobby(true) : handleSignInClick}
             onOpenBrowseGames={() => setShowBrowseGames(true)}
             onPrevHero={handlePrevHero}
             onNextHero={handleNextHero}
@@ -356,6 +554,31 @@ export function MainLobby() {
           onClose={() => setShowBrowseGames(false)}
         />
       )}
+      
+      {/* Authentication Modal */}
+      {showAuthModal && (
+        <AuthModal
+          isPhantomInstalled={isPhantomInstalled}
+          isConnected={isConnected}
+          isConnecting={isConnecting}
+          walletAddress={walletAddress}
+          isAuthenticating={isAuthenticating}
+          isAuthenticated={isAuthenticated}
+          showNameInput={showNameInput}
+          newPlayerName={newPlayerName}
+          nameError={nameError}
+          walletError={walletError}
+          isRegistering={isRegistering}
+          onConnect={handleConnect}
+          onAuthenticate={handleAuthenticate}
+          onDisconnect={handleDisconnect}
+          onRegister={handleRegister}
+          onNameChange={setNewPlayerName}
+          onNameErrorClear={() => setNameError(null)}
+          onClose={() => setShowAuthModal(false)}
+          formatAddress={formatAddress}
+        />
+      )}
     </div>
   );
 }
@@ -368,6 +591,7 @@ interface PlayTabProps {
   heroInfo: (typeof HERO_DEFINITIONS)[HeroId];
   heroColor: string;
   lobbyCount: number;
+  isAuthenticated: boolean;
   onQuickPlay: () => void;
   onOpenCreateLobby: () => void;
   onOpenBrowseGames: () => void;
@@ -383,6 +607,7 @@ function PlayTab({
   heroInfo,
   heroColor,
   lobbyCount,
+  isAuthenticated,
   onQuickPlay,
   onOpenCreateLobby,
   onOpenBrowseGames,
@@ -526,8 +751,12 @@ function PlayTab({
             disabled={isLoading}
             className="w-full py-5 rounded-xl font-display text-2xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
             style={{ 
-              background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
-              boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
+              background: isAuthenticated 
+                ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
+                : 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
+              boxShadow: isAuthenticated
+                ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
+                : '0 0 60px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
             }}
           >
             {/* Button shimmer effect */}
@@ -538,10 +767,19 @@ function PlayTab({
               }}
             />
             <span className="relative flex items-center justify-center gap-3">
-              <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-              {isLoading ? 'STARTING...' : 'QUICK PLAY'}
+              {isAuthenticated ? (
+                <>
+                  <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  {isLoading ? 'STARTING...' : 'QUICK PLAY'}
+                </>
+              ) : (
+                <>
+                  <PhantomIcon className="w-7 h-7" />
+                  SIGN IN TO PLAY
+                </>
+              )}
             </span>
           </button>
 
@@ -551,10 +789,21 @@ function PlayTab({
               disabled={isLoading}
               className="py-4 rounded-xl font-display text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-              </svg>
-              CREATE GAME
+              {isAuthenticated ? (
+                <>
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  CREATE GAME
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  SIGN IN
+                </>
+              )}
             </button>
 
             <button
@@ -870,6 +1119,284 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
       >
         {isInGame ? 'LIVE' : isFull ? 'FULL' : 'JOIN'}
       </button>
+    </div>
+  );
+}
+
+// Authentication Modal
+interface AuthModalProps {
+  isPhantomInstalled: boolean;
+  isConnected: boolean;
+  isConnecting: boolean;
+  walletAddress: string | null;
+  isAuthenticating: boolean;
+  isAuthenticated: boolean;
+  showNameInput: boolean;
+  newPlayerName: string;
+  nameError: string | null;
+  walletError: string | null;
+  isRegistering: boolean;
+  onConnect: () => void;
+  onAuthenticate: () => void;
+  onDisconnect: () => void;
+  onRegister: () => void;
+  onNameChange: (name: string) => void;
+  onNameErrorClear: () => void;
+  onClose: () => void;
+  formatAddress: (address: string) => string;
+}
+
+function AuthModal({
+  isPhantomInstalled,
+  isConnected,
+  isConnecting,
+  walletAddress,
+  isAuthenticating,
+  isAuthenticated,
+  showNameInput,
+  newPlayerName,
+  nameError,
+  walletError,
+  isRegistering,
+  onConnect,
+  onAuthenticate,
+  onDisconnect,
+  onRegister,
+  onNameChange,
+  onNameErrorClear,
+  onClose,
+  formatAddress,
+}: AuthModalProps) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal */}
+      <div className="relative w-full max-w-sm mx-4 bg-strike-surface border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
+        {/* Header */}
+        <div className="text-center p-6 pb-4">
+          <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/20 flex items-center justify-center">
+            <PhantomIcon className="w-8 h-8" />
+          </div>
+          <h2 className="font-display text-2xl text-white">
+            {showNameInput ? 'CREATE PROFILE' : 'CONNECT WALLET'}
+          </h2>
+          <p className="text-white/40 text-sm mt-1 font-body">
+            {showNameInput 
+              ? 'Choose your callsign to continue' 
+              : 'Sign in with your Phantom wallet'}
+          </p>
+        </div>
+
+        {/* Content */}
+        <div className="px-6 pb-6 space-y-4">
+          {/* Name input for new users */}
+          {showNameInput ? (
+            <>
+              {/* Connected wallet display */}
+              <div className="flex items-center justify-between p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                <div className="flex items-center gap-3">
+                  <PhantomIcon className="w-6 h-6" />
+                  <div>
+                    <p className="text-white/60 text-xs font-body">Connected</p>
+                    <p className="text-white font-mono text-sm">{walletAddress && formatAddress(walletAddress)}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={onDisconnect}
+                  className="text-white/40 hover:text-white/80 transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Player name input */}
+              <div>
+                <label className="block text-xs font-body text-white/50 uppercase tracking-wider mb-2">
+                  Player Name
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={newPlayerName}
+                    onChange={(e) => {
+                      onNameChange(e.target.value);
+                      onNameErrorClear();
+                    }}
+                    placeholder="Enter your name"
+                    maxLength={16}
+                    className="input w-full px-4 py-3 text-lg"
+                    onKeyDown={(e) => e.key === 'Enter' && onRegister()}
+                    autoFocus
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/30 font-mono">
+                    {newPlayerName.length}/16
+                  </div>
+                </div>
+              </div>
+
+              {/* Error message */}
+              {nameError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg animate-fade-in">
+                  <p className="text-red-400 text-sm font-body">{nameError}</p>
+                </div>
+              )}
+
+              {/* Register button */}
+              <button
+                onClick={onRegister}
+                disabled={isRegistering}
+                className="btn btn-primary w-full py-4 rounded-lg text-xl clip-corner"
+              >
+                <span className="flex items-center justify-center gap-2">
+                  {isRegistering ? (
+                    <>
+                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      CREATING...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                      START PLAYING
+                    </>
+                  )}
+                </span>
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Wallet connection state */}
+              {isConnected && walletAddress ? (
+                <div className="space-y-3">
+                  {/* Connected wallet */}
+                  <div className="flex items-center justify-between p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                      <div>
+                        <p className="text-green-400/80 text-xs font-body">Connected</p>
+                        <p className="text-white font-mono text-sm">{formatAddress(walletAddress)}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={onDisconnect}
+                      className="text-white/40 hover:text-white/80 transition-colors"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Authenticating state */}
+                  {isAuthenticating && (
+                    <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                      <div className="flex items-center justify-center gap-3">
+                        <svg className="w-5 h-5 animate-spin text-purple-400" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <span className="text-white/70 font-body">Sign message to authenticate...</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Retry authentication button */}
+                  {!isAuthenticating && !isAuthenticated && (
+                    <button
+                      onClick={onAuthenticate}
+                      className="btn btn-primary w-full py-4 rounded-lg text-lg"
+                    >
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                        </svg>
+                        SIGN TO AUTHENTICATE
+                      </span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  {/* Connect wallet button */}
+                  <button
+                    onClick={onConnect}
+                    disabled={isConnecting}
+                    className="w-full py-4 rounded-xl font-display text-xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
+                    style={{
+                      background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
+                      boxShadow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+                    }}
+                  >
+                    {/* Button shimmer */}
+                    <div 
+                      className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+                      style={{
+                        background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
+                      }}
+                    />
+                    <span className="relative flex items-center justify-center gap-3">
+                      {isConnecting ? (
+                        <>
+                          <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                          CONNECTING...
+                        </>
+                      ) : (
+                        <>
+                          <PhantomIcon className="w-6 h-6" />
+                          CONNECT PHANTOM
+                        </>
+                      )}
+                    </span>
+                  </button>
+
+                  {/* Phantom not installed message */}
+                  {!isPhantomInstalled && (
+                    <div className="text-center">
+                      <p className="text-white/40 text-xs font-body">
+                        Don't have Phantom?{' '}
+                        <a 
+                          href="https://phantom.app/" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-purple-400 hover:text-purple-300 transition-colors"
+                        >
+                          Download here
+                        </a>
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Error message */}
+              {walletError && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg animate-fade-in">
+                  <p className="text-red-400 text-sm font-body">{walletError}</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Cancel button */}
+          <button
+            onClick={onClose}
+            className="w-full py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white transition-all"
+          >
+            CANCEL
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
