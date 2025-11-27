@@ -23,6 +23,12 @@ interface NetworkContextType {
   selectHero: (heroId: HeroId) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
+  
+  // NPC/Bot operations (for testing)
+  spawnNpc: (heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => void;
+  damageNpc: (npcId: string, damage: number) => void;
+  killNpc: (npcId: string) => void;
+  killAllNpcs: () => void;
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
@@ -772,6 +778,34 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // NPC/Bot operations
+  const spawnNpc = useCallback((heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => {
+    if (gameRoomRef.current) {
+      // Only include team if specified, otherwise server will pick opposite team
+      const data: any = { heroId, position, name };
+      if (team) data.team = team;
+      gameRoomRef.current.send('spawnNpc', data);
+    }
+  }, []);
+
+  const damageNpc = useCallback((npcId: string, damage: number) => {
+    if (gameRoomRef.current) {
+      gameRoomRef.current.send('damageNpc', { npcId, damage });
+    }
+  }, []);
+
+  const killNpc = useCallback((npcId: string) => {
+    if (gameRoomRef.current) {
+      gameRoomRef.current.send('killNpc', { npcId });
+    }
+  }, []);
+
+  const killAllNpcs = useCallback(() => {
+    if (gameRoomRef.current) {
+      gameRoomRef.current.send('killAllNpcs', {});
+    }
+  }, []);
+
   return (
     <NetworkContext.Provider value={{
       fetchLobbies,
@@ -789,6 +823,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       selectHero,
       selectTeam,
       setReady,
+      spawnNpc,
+      damageNpc,
+      killNpc,
+      killAllNpcs,
     }}>
       {children}
     </NetworkContext.Provider>

@@ -53,11 +53,11 @@ export function UltimateEffects() {
         {/* Monochrome filter overlay */}
         <div className="phantom-veil-mono" />
         
-        {/* Blurred edge vignette */}
+        {/* Strong blur effect at edges */}
         <div className="phantom-veil-blur" />
         
-        {/* Subtle purple tint at edges */}
-        <div className="phantom-veil-tint" />
+        {/* Additional inner blur layer for smooth transition */}
+        <div className="phantom-veil-blur-inner" />
         
         {/* Timer display */}
         <div className="phantom-veil-timer">
@@ -99,34 +99,43 @@ export function UltimateEffects() {
           .phantom-veil-blur {
             position: absolute;
             inset: 0;
-            /* Radial blur effect - clear center, blurred edges */
+            /* Strong blur effect at edges - clear center, heavily blurred edges */
             mask-image: radial-gradient(
-              ellipse 70% 70% at center,
-              transparent 30%,
+              ellipse 60% 60% at center,
+              transparent 20%,
+              black 80%
+            );
+            -webkit-mask-image: radial-gradient(
+              ellipse 60% 60% at center,
+              transparent 20%,
+              black 80%
+            );
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+          }
+          
+          .phantom-veil-blur-inner {
+            position: absolute;
+            inset: 0;
+            /* Softer inner blur for smooth transition */
+            mask-image: radial-gradient(
+              ellipse 80% 80% at center,
+              transparent 40%,
+              rgba(0, 0, 0, 0.5) 70%,
               black 100%
             );
             -webkit-mask-image: radial-gradient(
-              ellipse 70% 70% at center,
-              transparent 30%,
-              black 100%
-            );
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-          }
-          
-          .phantom-veil-tint {
-            position: absolute;
-            inset: 0;
-            background: radial-gradient(
               ellipse 80% 80% at center,
               transparent 40%,
-              rgba(138, 43, 226, 0.15) 70%,
-              rgba(75, 0, 130, 0.25) 100%
+              rgba(0, 0, 0, 0.5) 70%,
+              black 100%
             );
-            animation: veil-pulse 2s ease-in-out infinite;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            animation: blur-pulse 2s ease-in-out infinite;
           }
           
-          @keyframes veil-pulse {
+          @keyframes blur-pulse {
             0%, 100% { opacity: 0.8; }
             50% { opacity: 1; }
           }
@@ -147,7 +156,7 @@ export function UltimateEffects() {
             font-size: 28px;
             font-weight: bold;
             color: #e0e0e0;
-            text-shadow: 0 0 10px rgba(138, 43, 226, 0.8), 0 0 20px rgba(138, 43, 226, 0.5);
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.6), 0 0 20px rgba(200, 200, 200, 0.4);
           }
           
           .timer-label {
@@ -155,7 +164,7 @@ export function UltimateEffects() {
             font-size: 14px;
             font-weight: 600;
             letter-spacing: 3px;
-            color: rgba(200, 180, 255, 0.8);
+            color: rgba(220, 220, 220, 0.8);
             text-transform: uppercase;
           }
           
@@ -169,10 +178,10 @@ export function UltimateEffects() {
             position: absolute;
             width: 3px;
             height: 3px;
-            background: rgba(200, 180, 255, 0.6);
+            background: rgba(255, 255, 255, 0.5);
             border-radius: 50%;
             animation: phantom-float 3s ease-in-out infinite;
-            box-shadow: 0 0 6px rgba(138, 43, 226, 0.8);
+            box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
           }
           
           @keyframes phantom-float {

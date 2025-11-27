@@ -2,6 +2,7 @@ import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { damageNpc } from '../ui/GameConsole';
 
 interface VoidZoneProps {
   position: { x: number; y: number; z: number };
@@ -70,19 +71,22 @@ if (typeof window !== 'undefined') {
 }
 
 const PARTICLE_COUNT = 20; // Reduced from 50 for performance
+const VOID_ZONE_DAMAGE = 15; // Damage per tick
+const VOID_ZONE_DAMAGE_INTERVAL = 500; // ms between damage ticks
 
 /**
  * VoidZone - A black hole-like damage zone that appears on the ground
  * Visual style: Purple/void themed, swirling dark vortex effect
  * PERFORMANCE: Shared shader, reduced particles, no point lights
  */
-export function VoidZone({ position, radius, duration, startTime }: VoidZoneProps) {
+export function VoidZone({ position, radius, duration, startTime, ownerId }: VoidZoneProps) {
   const groupRef = useRef<THREE.Group>(null);
   const innerRingRef = useRef<THREE.Mesh>(null);
   const outerRingRef = useRef<THREE.Mesh>(null);
   const vortexRef = useRef<THREE.Mesh>(null);
   const particlesRef = useRef<THREE.Points>(null);
   const lastParticleUpdateRef = useRef(0);
+  const lastDamageTickRef = useRef<Map<string, number>>(new Map());
   
   // Calculate remaining time for fade out effect
   const getProgress = () => {
@@ -157,8 +161,43 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
       (outerRingRef.current.material as THREE.MeshBasicMaterial).opacity = currentOpacity * 0.5;
     }
 
-    // PERFORMANCE: Throttle particle animation to every 100ms
+    // Check for enemy damage (NPCs and players)
     const now = Date.now();
+    const { players, localPlayer } = useGameStore.getState();
+    
+    for (const [playerId, player] of players) {
+      // Skip self
+      if (playerId === localPlayer?.id) continue;
+      
+      // Skip dead players
+      if (player.state !== 'alive') continue;
+      
+      // Skip same team
+      if (localPlayer && player.team === localPlayer.team) continue;
+      
+      // Check if player is in the zone
+      const dx = player.position.x - position.x;
+      const dz = player.position.z - position.z;
+      const distSq = dx * dx + dz * dz;
+      
+      if (distSq <= radius * radius) {
+        // Check damage interval
+        const lastDamage = lastDamageTickRef.current.get(playerId) || 0;
+        if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
+          lastDamageTickRef.current.set(playerId, now);
+          
+          // Only damage NPCs client-side (real players handled by server)
+          if (playerId.startsWith('npc_')) {
+            const result = damageNpc(playerId, VOID_ZONE_DAMAGE);
+            if (result) {
+              console.log(`[VoidZone] Hit ${result.npcName} for ${VOID_ZONE_DAMAGE} damage${result.killed ? ' - ELIMINATED!' : ''}`);
+            }
+          }
+        }
+      }
+    }
+
+    // PERFORMANCE: Throttle particle animation to every 100ms
     if (particlesRef.current && now - lastParticleUpdateRef.current > 100) {
       lastParticleUpdateRef.current = now;
       const positions = particlesRef.current.geometry.attributes.position;

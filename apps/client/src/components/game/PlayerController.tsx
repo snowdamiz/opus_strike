@@ -13,6 +13,7 @@ import {
   type GroundInfo 
 } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { useAbilitySounds } from '../../hooks/useAudio';
 import { 
   MOUSE_SENSITIVITY, 
   PITCH_LIMIT,
@@ -126,6 +127,7 @@ export function PlayerController() {
   const { inputState, isPointerLocked, requestPointerLock } = useInput();
   const { world, playerBody } = usePhysics();
   const { sendInput } = useNetwork();
+  const { playPhantomBlink, playPhantomShadowStep, playPhantomVeil } = useAbilitySounds();
 
   const velocityRef = useRef(new THREE.Vector3());
   const yawRef = useRef(0);
@@ -173,7 +175,7 @@ export function PlayerController() {
   
   // Primary fire state (dire balls)
   const lastFireTimeRef = useRef(0);
-  const FIRE_RATE = 3; // Fires per second
+  const FIRE_RATE = 4; // Fires per second
   const FIRE_INTERVAL = 1000 / FIRE_RATE; // ms between shots
   const direBallIdRef = useRef(0);
 
@@ -435,6 +437,9 @@ export function PlayerController() {
     // Trigger visual effect
     triggerTeleportEffect('shadowstep');
     
+    // Play Shadow Step sound effect
+    playPhantomShadowStep();
+    
     // EXIT TARGETING MODE FIRST (before any async operations)
     // Call directly from store to ensure we get the current action
     useGameStore.getState().setShadowStepTargeting(false, false);
@@ -475,7 +480,7 @@ export function PlayerController() {
     }, 100);
     
     console.log(`[Ability] Shadow Step complete!`);
-  }, [updateLocalPlayer, camera, startClientCooldown, sendInput]);
+  }, [updateLocalPlayer, camera, startClientCooldown, sendInput, playPhantomShadowStep]);
 
   // Handle pointer lock on click
   const handleClick = useCallback(() => {
@@ -693,6 +698,9 @@ export function PlayerController() {
           return;
         }
         
+        // Play blink sound effect FIRST for immediate audio feedback
+        playPhantomBlink();
+        
         // Trigger visual effect
         triggerTeleportEffect('blink');
         
@@ -726,6 +734,7 @@ export function PlayerController() {
       case 'phantom_shadowstep': {
         // Enter targeting mode instead of instant teleport
         setShadowStepTargeting(true);
+        // Sound will play when teleport actually happens (in shadow step execution below)
         console.log('[Ability] Shadow Step targeting mode activated - aim and click to teleport');
         break;
       }
@@ -740,6 +749,9 @@ export function PlayerController() {
         
         // Activate visual effect
         useGameStore.getState().setUltimateEffect(true, 'phantom_veil', Date.now() + duration * 1000);
+        
+        // Play ultimate sound effect
+        playPhantomVeil();
         
         console.log(`[Ability] Phantom Veil activated! (30% speed boost for ${duration}s)`);
         break;
@@ -1240,12 +1252,13 @@ export function PlayerController() {
             const pitch = pitchRef.current;
             
             // Direction vector from look angles
+            // Note: pitch is negative when looking down, so sin(pitch) gives correct sign
             const dirX = -Math.sin(yaw) * Math.cos(pitch);
-            const dirY = -Math.sin(pitch);
+            const dirY = Math.sin(pitch);
             const dirZ = -Math.cos(yaw) * Math.cos(pitch);
             
-            // Projectile speed
-            const PROJECTILE_SPEED = 35;
+            // Projectile speed (increased from original 35)
+            const PROJECTILE_SPEED = 70;
             
             // Spawn position slightly in front of player
             const spawnOffset = 0.8; // How far in front of player to spawn

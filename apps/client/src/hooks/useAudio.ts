@@ -15,6 +15,12 @@ const DEFAULT_CONFIG: AudioConfig = {
   muted: false,
 };
 
+// SINGLETON: Shared audio state across all hook instances
+let sharedAudioContext: AudioContext | null = null;
+const sharedConfig: AudioConfig = { ...DEFAULT_CONFIG };
+const sharedSounds = new Map<string, SoundEffect>();
+const sharedLoops = new Map<string, { source: AudioBufferSourceNode; gain: GainNode }>();
+
 // Sound effect definitions
 const SOUND_EFFECTS = {
   // Movement
@@ -24,11 +30,16 @@ const SOUND_EFFECTS = {
   slide: { path: '/sounds/slide.mp3', volume: 0.5 },
   wallRun: { path: '/sounds/wall_run.mp3', volume: 0.4 },
   
-  // Abilities
+  // Abilities - Generic
   dash: { path: '/sounds/dash.mp3', volume: 0.6 },
   blink: { path: '/sounds/blink.mp3', volume: 0.6 },
   grapple: { path: '/sounds/grapple.mp3', volume: 0.5 },
   jetpack: { path: '/sounds/jetpack.mp3', volume: 0.4 },
+  
+  // Phantom Abilities (using shortened clips)
+  phantomBlink: { path: '/sounds/blink_short.mp3', volume: 0.7 },
+  phantomShadowStep: { path: '/sounds/shadow_step_short.mp3', volume: 0.7 },
+  phantomVeil: { path: '/sounds/phantom_veil_short.mp3', volume: 0.8 },
   
   // Combat
   hit: { path: '/sounds/hit.mp3', volume: 0.6 },
@@ -54,49 +65,63 @@ const SOUND_EFFECTS = {
 type SoundName = keyof typeof SOUND_EFFECTS;
 
 export function useAudio() {
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const configRef = useRef<AudioConfig>(DEFAULT_CONFIG);
-  const soundsRef = useRef<Map<SoundName, SoundEffect>>(new Map());
-  const loopingRef = useRef<Map<string, { source: AudioBufferSourceNode; gain: GainNode }>>(new Map());
-
   // Initialize audio context on first interaction
   const initAudio = useCallback(() => {
-    if (audioContextRef.current) return;
+    if (sharedAudioContext) {
+      // Resume if suspended (browser autoplay policy)
+      if (sharedAudioContext.state === 'suspended') {
+        sharedAudioContext.resume();
+      }
+      return;
+    }
 
-    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    
-    // Preload sounds (in production, load only essential sounds initially)
-    // For now, we'll load on demand
+    sharedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    console.log('[Audio] AudioContext created, state:', sharedAudioContext.state);
   }, []);
 
   // Load a sound effect
   const loadSound = useCallback(async (name: SoundName): Promise<SoundEffect | null> => {
-    if (!audioContextRef.current) {
+    if (!sharedAudioContext) {
       initAudio();
     }
 
-    const ctx = audioContextRef.current;
-    if (!ctx) return null;
+    const ctx = sharedAudioContext;
+    if (!ctx) {
+      console.warn('[Audio] No AudioContext available');
+      return null;
+    }
 
-    const existing = soundsRef.current.get(name);
+    // Resume if suspended
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+
+    const existing = sharedSounds.get(name);
     if (existing?.buffer) return existing;
 
     const soundDef = SOUND_EFFECTS[name];
     
     try {
-      // In production, fetch from actual sound files
-      // For now, create placeholder silent buffer
-      const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.1, ctx.sampleRate);
+      // Fetch and decode the actual audio file
+      const response = await fetch(soundDef.path);
+      if (!response.ok) {
+        console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
+        return null;
+      }
+      
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = await ctx.decodeAudioData(arrayBuffer);
       
       const effect: SoundEffect = {
         buffer,
         volume: soundDef.volume,
       };
       
-      soundsRef.current.set(name, effect);
+      sharedSounds.set(name, effect);
+      console.log(`[Audio] Loaded sound: ${name}`);
       return effect;
     } catch (error) {
-      console.warn(`Failed to load sound: ${name}`, error);
+      console.warn(`[Audio] Failed to load sound: ${name}`, error);
       return null;
     }
   }, [initAudio]);
@@ -106,13 +131,30 @@ export function useAudio() {
     name: SoundName, 
     options?: { volume?: number; pitch?: number; position?: { x: number; y: number; z: number } }
   ) => {
-    if (configRef.current.muted) return;
+    if (sharedConfig.muted) return;
+
+    // Ensure audio context exists and is running
+    if (!sharedAudioContext) {
+      initAudio();
+    }
+    
+    const ctx = sharedAudioContext;
+    if (!ctx) {
+      console.warn('[Audio] Cannot play sound - no AudioContext');
+      return;
+    }
+
+    // Resume if suspended (browser autoplay policy)
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
 
     const sound = await loadSound(name);
-    if (!sound?.buffer || !audioContextRef.current) return;
+    if (!sound?.buffer) {
+      console.warn(`[Audio] Cannot play ${name} - no buffer`);
+      return;
+    }
 
-    const ctx = audioContextRef.current;
-    
     // Create source
     const source = ctx.createBufferSource();
     source.buffer = sound.buffer;
@@ -124,7 +166,7 @@ export function useAudio() {
 
     // Create gain node
     const gainNode = ctx.createGain();
-    gainNode.gain.value = (options?.volume ?? 1) * sound.volume * configRef.current.volume;
+    gainNode.gain.value = (options?.volume ?? 1) * sound.volume * sharedConfig.volume;
 
     // Connect nodes
     source.connect(gainNode);
@@ -140,7 +182,8 @@ export function useAudio() {
     }
 
     source.start();
-  }, [loadSound]);
+    console.log(`[Audio] Playing: ${name}`);
+  }, [loadSound, initAudio]);
 
   // Play looping sound
   const playLoop = useCallback(async (
@@ -148,14 +191,23 @@ export function useAudio() {
     name: SoundName, 
     options?: { volume?: number; fadeIn?: number }
   ) => {
-    if (configRef.current.muted) return;
-    if (loopingRef.current.has(id)) return; // Already playing
+    if (sharedConfig.muted) return;
+    if (sharedLoops.has(id)) return; // Already playing
+
+    if (!sharedAudioContext) {
+      initAudio();
+    }
+
+    const ctx = sharedAudioContext;
+    if (!ctx) return;
+
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
 
     const sound = await loadSound(name);
-    if (!sound?.buffer || !audioContextRef.current) return;
+    if (!sound?.buffer) return;
 
-    const ctx = audioContextRef.current;
-    
     const source = ctx.createBufferSource();
     source.buffer = sound.buffer;
     source.loop = true;
@@ -165,73 +217,72 @@ export function useAudio() {
     if (options?.fadeIn) {
       gainNode.gain.value = 0;
       gainNode.gain.linearRampToValueAtTime(
-        (options.volume ?? 1) * sound.volume * configRef.current.volume,
+        (options.volume ?? 1) * sound.volume * sharedConfig.volume,
         ctx.currentTime + options.fadeIn
       );
     } else {
-      gainNode.gain.value = (options?.volume ?? 1) * sound.volume * configRef.current.volume;
+      gainNode.gain.value = (options?.volume ?? 1) * sound.volume * sharedConfig.volume;
     }
 
     source.connect(gainNode);
     gainNode.connect(ctx.destination);
     source.start();
 
-    loopingRef.current.set(id, { source, gain: gainNode });
-  }, [loadSound]);
+    sharedLoops.set(id, { source, gain: gainNode });
+  }, [loadSound, initAudio]);
 
   // Stop looping sound
   const stopLoop = useCallback((id: string, fadeOut?: number) => {
-    const loop = loopingRef.current.get(id);
-    if (!loop || !audioContextRef.current) return;
+    const loop = sharedLoops.get(id);
+    if (!loop || !sharedAudioContext) return;
 
     if (fadeOut) {
-      const ctx = audioContextRef.current;
+      const ctx = sharedAudioContext;
       loop.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeOut);
       setTimeout(() => {
         loop.source.stop();
-        loopingRef.current.delete(id);
+        sharedLoops.delete(id);
       }, fadeOut * 1000);
     } else {
       loop.source.stop();
-      loopingRef.current.delete(id);
+      sharedLoops.delete(id);
     }
   }, []);
 
   // Set master volume
   const setVolume = useCallback((volume: number) => {
-    configRef.current.volume = Math.max(0, Math.min(1, volume));
+    sharedConfig.volume = Math.max(0, Math.min(1, volume));
     
     // Update all looping sounds
-    for (const loop of loopingRef.current.values()) {
-      loop.gain.gain.value *= configRef.current.volume;
+    for (const loop of sharedLoops.values()) {
+      loop.gain.gain.value *= sharedConfig.volume;
     }
   }, []);
 
   // Toggle mute
   const toggleMute = useCallback(() => {
-    configRef.current.muted = !configRef.current.muted;
+    sharedConfig.muted = !sharedConfig.muted;
     
     // Stop all loops when muted
-    if (configRef.current.muted) {
-      for (const [id] of loopingRef.current) {
+    if (sharedConfig.muted) {
+      for (const [id] of sharedLoops) {
         stopLoop(id);
       }
     }
   }, [stopLoop]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      for (const loop of loopingRef.current.values()) {
-        loop.source.stop();
-      }
-      loopingRef.current.clear();
-      
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    };
-  }, []);
+  // Preload multiple sounds (for abilities that need instant playback)
+  const preloadSounds = useCallback(async (names: SoundName[]) => {
+    if (!sharedAudioContext) {
+      initAudio();
+    }
+    
+    console.log(`[Audio] Preloading ${names.length} sounds...`);
+    await Promise.all(names.map(name => loadSound(name)));
+    console.log(`[Audio] Preload complete`);
+  }, [initAudio, loadSound]);
+
+  // No cleanup on unmount - audio context is shared/singleton
 
   return {
     initAudio,
@@ -240,8 +291,9 @@ export function useAudio() {
     stopLoop,
     setVolume,
     toggleMute,
-    isMuted: () => configRef.current.muted,
-    getVolume: () => configRef.current.volume,
+    preloadSounds,
+    isMuted: () => sharedConfig.muted,
+    getVolume: () => sharedConfig.volume,
   };
 }
 
@@ -286,6 +338,31 @@ export function useMovementSounds() {
     stopSlide,
     startWallRun,
     stopWallRun,
+  };
+}
+
+// Ability sound effects hook
+export function useAbilitySounds() {
+  const { playSound } = useAudio();
+
+  // Phantom abilities - sounds are loaded on first play, then cached
+  const playPhantomBlink = useCallback(() => {
+    playSound('phantomBlink');
+  }, [playSound]);
+
+  const playPhantomShadowStep = useCallback(() => {
+    playSound('phantomShadowStep');
+  }, [playSound]);
+
+  const playPhantomVeil = useCallback(() => {
+    playSound('phantomVeil');
+  }, [playSound]);
+
+  return {
+    // Phantom
+    playPhantomBlink,
+    playPhantomShadowStep,
+    playPhantomVeil,
   };
 }
 

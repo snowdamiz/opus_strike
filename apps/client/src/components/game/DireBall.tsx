@@ -2,6 +2,8 @@ import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { getPhysicsWorld, isPhysicsReady, raycast } from '../../hooks/usePhysics';
+import { damageNpc } from '../ui/GameConsole';
 
 interface DireBallProps {
   id: string;
@@ -128,23 +130,38 @@ if (typeof window !== 'undefined') {
 }
 
 const LIFETIME = 3;
-const BALL_RADIUS = 0.3;
+const BALL_RADIUS = 0.21; // Reduced 30% from 0.3 for better gameplay feel
 const PARTICLE_COUNT = 15; // Reduced from 30 for performance
+const PROJECTILE_DAMAGE = 35; // Damage dealt to NPCs on hit
+const NPC_HIT_RADIUS = 1.2; // Radius for NPC collision detection (accounts for player hitbox)
 
 /**
  * DireBall - A dark magic fireball projectile
  * Visual style: Purple/black flaming sphere with swirling dark energy
  * PERFORMANCE: Uses shared materials, no point lights, reduced particles
  */
-export function DireBall({ position, velocity, startTime }: DireBallProps) {
+export function DireBall({ id, position, velocity, startTime, ownerId }: DireBallProps) {
   const groupRef = useRef<THREE.Group>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const outerGlowRef = useRef<THREE.Mesh>(null);
   const particlesRef = useRef<THREE.Points>(null);
+  const hasCollided = useRef(false);
+  const hasLoggedOnce = useRef(false);
   
   // Current position (updated each frame based on velocity)
   const currentPos = useRef({ x: position.x, y: position.y, z: position.z });
   const timeRef = useRef(0);
+  
+  // Get removeDireBall action from store
+  const removeDireBall = useGameStore(state => state.removeDireBall);
+  
+  // Debug: Log when DireBall is created
+  useEffect(() => {
+    console.log(`[DireBall] Created: ${id} at (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)})`);
+    return () => {
+      console.log(`[DireBall] Destroyed: ${id}`);
+    };
+  }, [id, position.x, position.y, position.z]);
   
   // Get shared materials (no shader compilation on spawn)
   const coreMaterial = getSharedCoreMaterial();
@@ -177,6 +194,12 @@ export function DireBall({ position, velocity, startTime }: DireBallProps) {
   useFrame((_, delta) => {
     if (!groupRef.current) return;
     
+    // If already collided, hide and skip processing
+    if (hasCollided.current) {
+      groupRef.current.visible = false;
+      return;
+    }
+    
     const elapsed = (Date.now() - startTime) / 1000;
     
     // Hide when expired (early exit for performance)
@@ -196,10 +219,92 @@ export function DireBall({ position, velocity, startTime }: DireBallProps) {
       glowMaterial.uniforms.time.value = timeRef.current;
     }
     
+    // Calculate movement for this frame
+    const moveX = velocity.x * delta;
+    const moveY = velocity.y * delta;
+    const moveZ = velocity.z * delta;
+    const moveDistance = Math.sqrt(moveX * moveX + moveY * moveY + moveZ * moveZ);
+    
+    // Check for collision with terrain before moving
+    if (isPhysicsReady() && moveDistance > 0.001) {
+      const world = getPhysicsWorld();
+      if (world) {
+        // Normalize velocity for ray direction
+        const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
+        const direction = {
+          x: velocity.x / speed,
+          y: velocity.y / speed,
+          z: velocity.z / speed
+        };
+        
+        // Raycast from current position in direction of travel
+        const hit = raycast(world, currentPos.current, direction, moveDistance + BALL_RADIUS);
+        
+        if (hit && hit.distance <= moveDistance + BALL_RADIUS) {
+          // Hit terrain - mark as collided and remove from store
+          hasCollided.current = true;
+          groupRef.current.visible = false;
+          removeDireBall(id);
+          return;
+        }
+      }
+    }
+    
+    // Check for NPC/enemy player collision
+    const { players, localPlayer } = useGameStore.getState();
+    
+    // Debug log once per ball to show what we're checking
+    if (!hasLoggedOnce.current) {
+      hasLoggedOnce.current = true;
+      const otherPlayers = Array.from(players.entries()).filter(([pid]) => pid !== localPlayer?.id);
+      console.log(`[DireBall] Checking ${otherPlayers.length} other players. Local team: ${localPlayer?.team}`);
+      otherPlayers.forEach(([pid, p]) => {
+        console.log(`  - ${p.name} (${pid.slice(0,8)}): team=${p.team}, state=${p.state}`);
+      });
+    }
+    
+    // Check all players for collision (NPCs and real players)
+    for (const [playerId, player] of players) {
+      // Skip self
+      if (playerId === localPlayer?.id) continue;
+      
+      // Skip dead players
+      if (player.state !== 'alive') continue;
+      
+      // Skip same team (friendly fire off)
+      if (localPlayer && player.team === localPlayer.team) {
+        continue; // Same team, skip
+      }
+      
+      // Calculate distance to player
+      const dx = player.position.x - currentPos.current.x;
+      const dy = (player.position.y + 0.9) - currentPos.current.y; // Aim at chest height
+      const dz = player.position.z - currentPos.current.z;
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      
+      if (distance <= NPC_HIT_RADIUS) {
+        console.log(`[DireBall] HIT! ${player.name} at distance ${distance.toFixed(2)}m`);
+        
+        // Apply damage - NPCs use damageNpc, real players would use server damage
+        if (playerId.startsWith('npc_')) {
+          const result = damageNpc(playerId, PROJECTILE_DAMAGE);
+          if (result) {
+            console.log(`[DireBall] Dealt ${PROJECTILE_DAMAGE} damage to ${result.npcName}${result.killed ? ' - ELIMINATED!' : ''}`);
+          }
+        }
+        
+        // Mark as collided and remove
+        hasCollided.current = true;
+        groupRef.current.visible = false;
+        removeDireBall(id);
+        return;
+      }
+    }
+    
     // Move the projectile
-    currentPos.current.x += velocity.x * delta;
-    currentPos.current.y += velocity.y * delta;
-    currentPos.current.z += velocity.z * delta;
+    currentPos.current.x += moveX;
+    currentPos.current.y += moveY;
+    currentPos.current.z += moveZ;
     
     // Update group position
     groupRef.current.position.set(

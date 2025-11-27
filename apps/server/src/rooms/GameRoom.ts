@@ -54,6 +54,8 @@ export class GameRoom extends Room<GameState> {
   private lobbyName: string | null = null;
   private voidZones: VoidZone[] = [];
   private voidZoneIdCounter: number = 0;
+  private npcIdCounter: number = 0;
+  private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
 
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
@@ -87,6 +89,23 @@ export class GameRoom extends Room<GameState> {
 
     this.onMessage('chat', (client, data: { message: string; teamOnly: boolean }) => {
       this.handleChat(client, data.message, data.teamOnly);
+    });
+
+    // NPC/Bot commands for testing
+    this.onMessage('spawnNpc', (client, data: { heroId: HeroId; team: Team; position?: { x: number; y: number; z: number }; name?: string }) => {
+      this.handleSpawnNpc(client, data);
+    });
+
+    this.onMessage('damageNpc', (client, data: { npcId: string; damage: number }) => {
+      this.handleDamageNpc(client, data);
+    });
+
+    this.onMessage('killNpc', (client, data: { npcId: string }) => {
+      this.handleKillNpc(client, data);
+    });
+
+    this.onMessage('killAllNpcs', (client) => {
+      this.handleKillAllNpcs(client);
     });
   }
 
@@ -1216,5 +1235,246 @@ export class GameRoom extends Room<GameState> {
       y: 50, // Spawn high above the map, player will fall down
       z: offset.z,
     };
+  }
+
+  // ===== NPC/BOT HANDLING =====
+  
+  private handleSpawnNpc(client: Client, data: { heroId: HeroId; team?: Team; position?: { x: number; y: number; z: number }; name?: string }) {
+    const { heroId, position, name } = data;
+    let { team } = data;
+    
+    // Validate hero
+    const heroDef = HERO_DEFINITIONS[heroId];
+    if (!heroDef) {
+      client.send('npcError', { message: `Invalid hero: ${heroId}` });
+      return;
+    }
+
+    // If no team specified, spawn on OPPOSITE team of the requesting player
+    // This ensures NPCs can be damaged by the spawner
+    if (!team) {
+      const requestingPlayer = this.state.players.get(client.sessionId);
+      if (requestingPlayer) {
+        team = requestingPlayer.team === 'red' ? 'blue' : 'red';
+        console.log(`NPC team defaulted to ${team} (opposite of ${requestingPlayer.name}'s team)`);
+      } else {
+        team = 'blue'; // fallback
+      }
+    }
+
+    // Generate NPC ID and name
+    const npcId = `npc_${this.npcIdCounter++}`;
+    const npcName = name || `${heroDef.name}_${this.npcIdCounter}`;
+
+    // Create NPC player entity
+    const npc = new Player();
+    npc.id = npcId;
+    npc.name = npcName;
+    npc.team = team;
+    npc.heroId = heroId;
+    npc.state = 'alive';
+    npc.isReady = true;
+    
+    // Set position - use provided position or spawn near requesting player
+    if (position) {
+      npc.position.x = position.x;
+      npc.position.y = position.y;
+      npc.position.z = position.z;
+    } else {
+      // Spawn near the requesting player
+      const requestingPlayer = this.state.players.get(client.sessionId);
+      if (requestingPlayer) {
+        const angle = requestingPlayer.lookYaw + (Math.random() - 0.5) * 0.5;
+        const distance = 5 + Math.random() * 5;
+        npc.position.x = requestingPlayer.position.x + Math.sin(angle) * distance;
+        npc.position.y = requestingPlayer.position.y;
+        npc.position.z = requestingPlayer.position.z + Math.cos(angle) * distance;
+      } else {
+        // Default spawn
+        npc.position.x = 0;
+        npc.position.y = 5;
+        npc.position.z = 0;
+      }
+    }
+    
+    // Set health based on hero
+    npc.maxHealth = heroDef.stats.maxHealth;
+    npc.health = npc.maxHealth;
+    npc.ultimateCharge = 0;
+    
+    // Random look direction
+    npc.lookYaw = Math.random() * Math.PI * 2;
+    npc.lookPitch = 0;
+
+    // Initialize abilities for this NPC
+    this.initializePlayerAbilities(npc, heroId);
+
+    // Add to game state
+    this.state.players.set(npcId, npc);
+    this.spawnedNpcs.add(npcId);
+
+    console.log(`NPC spawned: ${npcName} (${heroId}) on ${team} team at (${npc.position.x.toFixed(1)}, ${npc.position.y.toFixed(1)}, ${npc.position.z.toFixed(1)})`);
+
+    // Broadcast NPC spawn to all clients
+    this.broadcast('playerJoined', {
+      playerId: npcId,
+      playerName: npcName,
+      team: team,
+      heroId: heroId,
+      isNpc: true,
+      position: {
+        x: npc.position.x,
+        y: npc.position.y,
+        z: npc.position.z,
+      },
+    });
+
+    // Send confirmation to requesting client
+    client.send('npcSpawned', {
+      npcId,
+      name: npcName,
+      heroId,
+      team,
+      position: { x: npc.position.x, y: npc.position.y, z: npc.position.z },
+    });
+  }
+
+  private handleDamageNpc(client: Client, data: { npcId: string; damage: number }) {
+    const { npcId, damage } = data;
+    
+    // Find NPC (support partial matching)
+    let targetId = npcId;
+    if (!this.spawnedNpcs.has(npcId)) {
+      for (const id of this.spawnedNpcs) {
+        if (id.includes(npcId)) {
+          targetId = id;
+          break;
+        }
+      }
+    }
+
+    if (!this.spawnedNpcs.has(targetId)) {
+      client.send('npcError', { message: `NPC not found: ${npcId}` });
+      return;
+    }
+
+    const npc = this.state.players.get(targetId);
+    if (!npc) {
+      this.spawnedNpcs.delete(targetId);
+      client.send('npcError', { message: `NPC data not found: ${targetId}` });
+      return;
+    }
+
+    // Apply damage
+    const oldHealth = npc.health;
+    npc.health = Math.max(0, npc.health - damage);
+
+    // Broadcast damage event
+    this.broadcast('playerDamaged', {
+      targetId: targetId,
+      damage: damage,
+      sourceId: client.sessionId,
+      damageType: 'console',
+      newHealth: npc.health,
+    });
+
+    console.log(`NPC ${npc.name} took ${damage} damage: ${oldHealth} -> ${npc.health}`);
+
+    // Check for death
+    if (npc.health <= 0) {
+      this.handleNpcDeath(npc, client.sessionId);
+    }
+
+    // Send confirmation
+    client.send('npcDamaged', {
+      npcId: targetId,
+      name: npc.name,
+      damage,
+      health: npc.health,
+      maxHealth: npc.maxHealth,
+      killed: npc.health <= 0,
+    });
+  }
+
+  private handleKillNpc(client: Client, data: { npcId: string }) {
+    const { npcId } = data;
+    
+    // Find NPC (support partial matching)
+    let targetId = npcId;
+    if (!this.spawnedNpcs.has(npcId)) {
+      for (const id of this.spawnedNpcs) {
+        if (id.includes(npcId)) {
+          targetId = id;
+          break;
+        }
+      }
+    }
+
+    if (!this.spawnedNpcs.has(targetId)) {
+      client.send('npcError', { message: `NPC not found: ${npcId}` });
+      return;
+    }
+
+    const npc = this.state.players.get(targetId);
+    if (!npc) {
+      this.spawnedNpcs.delete(targetId);
+      return;
+    }
+
+    const npcName = npc.name;
+    this.handleNpcDeath(npc, client.sessionId);
+
+    client.send('npcKilled', {
+      npcId: targetId,
+      name: npcName,
+    });
+  }
+
+  private handleKillAllNpcs(client: Client) {
+    const count = this.spawnedNpcs.size;
+    
+    for (const npcId of this.spawnedNpcs) {
+      const npc = this.state.players.get(npcId);
+      if (npc) {
+        this.handleNpcDeath(npc, client.sessionId);
+      }
+    }
+
+    client.send('allNpcsKilled', { count });
+  }
+
+  private handleNpcDeath(npc: Player, killerId: string) {
+    const killer = this.state.players.get(killerId);
+    
+    // Broadcast kill event
+    this.broadcast('playerKilled', {
+      victimId: npc.id,
+      killerId,
+      position: { x: npc.position.x, y: npc.position.y, z: npc.position.z },
+      isNpc: true,
+    });
+
+    // Give killer credit
+    if (killer && !this.spawnedNpcs.has(killerId)) {
+      killer.kills++;
+      killer.ultimateCharge = Math.min(100, killer.ultimateCharge + 20);
+    }
+
+    console.log(`NPC ${npc.name} eliminated by ${killer?.name || killerId}`);
+
+    // Remove NPC from game
+    this.state.players.delete(npc.id);
+    this.spawnedNpcs.delete(npc.id);
+
+    // Broadcast player left
+    this.broadcast('playerLeft', {
+      playerId: npc.id,
+      isNpc: true,
+    });
+  }
+
+  // Check if a player ID is an NPC
+  isNpc(playerId: string): boolean {
+    return this.spawnedNpcs.has(playerId);
   }
 }
