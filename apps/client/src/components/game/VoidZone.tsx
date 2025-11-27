@@ -11,32 +11,18 @@ interface VoidZoneProps {
   ownerId: string;
 }
 
-/**
- * VoidZone - A black hole-like damage zone that appears on the ground
- * Visual style: Purple/void themed, swirling dark vortex effect
- */
-export function VoidZone({ position, radius, duration, startTime }: VoidZoneProps) {
-  const groupRef = useRef<THREE.Group>(null);
-  const innerRingRef = useRef<THREE.Mesh>(null);
-  const outerRingRef = useRef<THREE.Mesh>(null);
-  const vortexRef = useRef<THREE.Mesh>(null);
-  const particlesRef = useRef<THREE.Points>(null);
-  
-  // Calculate remaining time for fade out effect
-  const getProgress = () => {
-    const elapsed = (Date.now() - startTime) / 1000;
-    return Math.min(1, elapsed / duration);
-  };
+// PERFORMANCE: Shared vortex shader material (compiled once)
+let sharedVortexMaterial: THREE.ShaderMaterial | null = null;
 
-  // Shader material for the vortex effect
-  const vortexMaterial = useMemo(() => {
-    return new THREE.ShaderMaterial({
+function getSharedVortexMaterial(): THREE.ShaderMaterial {
+  if (!sharedVortexMaterial) {
+    sharedVortexMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
         opacity: { value: 1 },
-        color1: { value: new THREE.Color(0x1a0033) }, // Deep purple/black
-        color2: { value: new THREE.Color(0x7c3aed) }, // Vibrant purple
-        color3: { value: new THREE.Color(0x0f0f23) }, // Almost black
+        color1: { value: new THREE.Color(0x1a0033) },
+        color2: { value: new THREE.Color(0x7c3aed) },
+        color3: { value: new THREE.Color(0x0f0f23) },
       },
       vertexShader: `
         varying vec2 vUv;
@@ -52,35 +38,21 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
         uniform vec3 color2;
         uniform vec3 color3;
         varying vec2 vUv;
-        
         void main() {
           vec2 center = vec2(0.5, 0.5);
           vec2 uv = vUv - center;
           float dist = length(uv);
           float angle = atan(uv.y, uv.x);
-          
-          // Create swirling effect
           float swirl = sin(angle * 8.0 + time * 3.0 - dist * 15.0) * 0.5 + 0.5;
           float swirl2 = sin(angle * 5.0 - time * 2.0 + dist * 10.0) * 0.5 + 0.5;
-          
-          // Radial gradient - darker in center
           float radialGrad = smoothstep(0.0, 0.5, dist);
-          
-          // Mix colors based on swirl and distance
           vec3 color = mix(color3, color1, radialGrad);
           color = mix(color, color2, swirl * swirl2 * (1.0 - dist * 1.5));
-          
-          // Add bright edge ring
           float edgeRing = smoothstep(0.45, 0.48, dist) * smoothstep(0.52, 0.48, dist);
           color += color2 * edgeRing * 2.0;
-          
-          // Fade at edges
           float alpha = smoothstep(0.5, 0.3, dist) * opacity;
-          
-          // Add pulsing glow
           float pulse = sin(time * 4.0) * 0.15 + 0.85;
           alpha *= pulse;
-          
           gl_FragColor = vec4(color, alpha);
         }
       `,
@@ -88,16 +60,46 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-  }, []);
+  }
+  return sharedVortexMaterial;
+}
 
-  // Create particle geometry for floating debris
+// Pre-compile shader on module load
+if (typeof window !== 'undefined') {
+  requestAnimationFrame(() => getSharedVortexMaterial());
+}
+
+const PARTICLE_COUNT = 20; // Reduced from 50 for performance
+
+/**
+ * VoidZone - A black hole-like damage zone that appears on the ground
+ * Visual style: Purple/void themed, swirling dark vortex effect
+ * PERFORMANCE: Shared shader, reduced particles, no point lights
+ */
+export function VoidZone({ position, radius, duration, startTime }: VoidZoneProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const innerRingRef = useRef<THREE.Mesh>(null);
+  const outerRingRef = useRef<THREE.Mesh>(null);
+  const vortexRef = useRef<THREE.Mesh>(null);
+  const particlesRef = useRef<THREE.Points>(null);
+  const lastParticleUpdateRef = useRef(0);
+  
+  // Calculate remaining time for fade out effect
+  const getProgress = () => {
+    const elapsed = (Date.now() - startTime) / 1000;
+    return Math.min(1, elapsed / duration);
+  };
+
+  // Get shared material
+  const vortexMaterial = getSharedVortexMaterial();
+
+  // Create particle geometry for floating debris - reduced count
   const particleGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
-    const particleCount = 50;
-    const positions = new Float32Array(particleCount * 3);
-    const sizes = new Float32Array(particleCount);
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const sizes = new Float32Array(PARTICLE_COUNT);
     
-    for (let i = 0; i < particleCount; i++) {
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
       const angle = Math.random() * Math.PI * 2;
       const r = Math.random() * radius * 0.9;
       positions[i * 3] = Math.cos(angle) * r;
@@ -126,8 +128,15 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
     if (!groupRef.current) return;
 
     const progress = getProgress();
+    
+    // Hide when duration expired (early exit)
+    if (progress >= 1) {
+      groupRef.current.visible = false;
+      return;
+    }
+    
     const fadeOut = progress > 0.7 ? 1 - ((progress - 0.7) / 0.3) : 1;
-    const fadeIn = Math.min(1, progress * 5); // Quick fade in
+    const fadeIn = Math.min(1, progress * 5);
     const currentOpacity = fadeIn * fadeOut;
 
     // Update vortex shader
@@ -148,10 +157,13 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
       (outerRingRef.current.material as THREE.MeshBasicMaterial).opacity = currentOpacity * 0.5;
     }
 
-    // Animate particles - spiral inward
-    if (particlesRef.current) {
+    // PERFORMANCE: Throttle particle animation to every 100ms
+    const now = Date.now();
+    if (particlesRef.current && now - lastParticleUpdateRef.current > 100) {
+      lastParticleUpdateRef.current = now;
       const positions = particlesRef.current.geometry.attributes.position;
-      const time = Date.now() * 0.001;
+      const time = now * 0.001;
+      const fixedDelta = 0.1; // Fixed timestep for consistency
       
       for (let i = 0; i < positions.count; i++) {
         const x = positions.getX(i);
@@ -159,9 +171,8 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
         const dist = Math.sqrt(x * x + z * z);
         const angle = Math.atan2(z, x);
         
-        // Spiral inward and upward
-        const newAngle = angle + delta * (2 + (1 - dist / radius) * 3);
-        const newDist = dist - delta * 0.3;
+        const newAngle = angle + fixedDelta * (2 + (1 - dist / radius) * 3);
+        const newDist = dist - fixedDelta * 0.3;
         const finalDist = newDist < 0.1 ? radius * 0.8 + Math.random() * radius * 0.2 : newDist;
         
         positions.setX(i, Math.cos(newAngle) * finalDist);
@@ -170,11 +181,6 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
       }
       positions.needsUpdate = true;
       particleMaterial.opacity = currentOpacity * 0.8;
-    }
-
-    // Hide when duration expired
-    if (progress >= 1) {
-      groupRef.current.visible = false;
     }
   });
 
@@ -225,9 +231,9 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
         <primitive object={particleMaterial} />
       </points>
 
-      {/* Center dark void */}
+      {/* Center dark void - reduced geometry */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.04}>
-        <circleGeometry args={[radius * 0.15, 32]} />
+        <circleGeometry args={[radius * 0.15, 16]} />
         <meshBasicMaterial 
           color={0x0a0015} 
           transparent 
@@ -235,14 +241,7 @@ export function VoidZone({ position, radius, duration, startTime }: VoidZoneProp
         />
       </mesh>
 
-      {/* Point light for ambient glow */}
-      <pointLight 
-        color={0x7c3aed} 
-        intensity={2} 
-        distance={radius * 3} 
-        decay={2}
-        position={[0, 0.5, 0]}
-      />
+      {/* PERFORMANCE: Removed point light - the shader provides enough glow effect */}
     </group>
   );
 }

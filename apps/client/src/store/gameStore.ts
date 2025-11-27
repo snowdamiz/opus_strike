@@ -46,6 +46,14 @@ export interface VoidZoneData {
   ownerTeam: 'red' | 'blue';
 }
 
+export interface DireBallData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+}
+
 interface GameStore {
   // Wallet/Auth state
   walletAddress: string | null;
@@ -111,6 +119,9 @@ interface GameStore {
   // Void zones (from phantom blink)
   voidZones: VoidZoneData[];
   
+  // Dire balls (phantom primary fire projectiles)
+  direBalls: DireBallData[];
+  
   // Actions
   setWalletAddress: (address: string | null) => void;
   setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
@@ -151,6 +162,11 @@ interface GameStore {
   addVoidZone: (zone: VoidZoneData) => void;
   removeVoidZone: (id: string) => void;
   clearExpiredVoidZones: () => void;
+  
+  // Dire ball actions
+  addDireBall: (ball: DireBallData) => void;
+  removeDireBall: (id: string) => void;
+  clearExpiredDireBalls: () => void;
   
   reset: () => void;
   resetLobby: () => void;
@@ -193,6 +209,7 @@ const initialState = {
   clientCharges: {} as Record<string, number>,
   slideIntensity: 0,
   voidZones: [] as VoidZoneData[],
+  direBalls: [] as DireBallData[],
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -375,6 +392,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const now = Date.now();
     return {
       voidZones: state.voidZones.filter(z => (now - z.startTime) / 1000 < z.duration)
+    };
+  }),
+
+  addDireBall: (ball) => set((state) => ({
+    direBalls: [...state.direBalls, ball]
+  })),
+  
+  removeDireBall: (id) => set((state) => ({
+    direBalls: state.direBalls.filter(b => b.id !== id)
+  })),
+  
+  clearExpiredDireBalls: () => set((state) => {
+    const now = Date.now();
+    const LIFETIME = 3000; // 3 seconds in ms
+    return {
+      direBalls: state.direBalls.filter(b => now - b.startTime < LIFETIME)
     };
   }),
 

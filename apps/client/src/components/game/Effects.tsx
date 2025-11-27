@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -26,16 +26,26 @@ export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
 
 export function Effects() {
   const [activeEffects, setActiveEffects] = useState<Effect[]>([]);
+  const lastEffectCountRef = useRef(0);
+  const lastCleanupRef = useRef(0);
 
   useFrame(() => {
     const now = Date.now();
+    
+    // Only clean up every 100ms to avoid excessive processing
+    if (now - lastCleanupRef.current < 100) return;
+    lastCleanupRef.current = now;
     
     // Clean up expired effects
     const currentEffects = effects.filter(e => now - e.startTime < e.duration);
     effects.length = 0;
     effects.push(...currentEffects);
     
-    setActiveEffects([...currentEffects]);
+    // PERFORMANCE FIX: Only trigger re-render if effect count changed
+    if (currentEffects.length !== lastEffectCountRef.current) {
+      lastEffectCountRef.current = currentEffects.length;
+      setActiveEffects([...currentEffects]);
+    }
   });
 
   return (

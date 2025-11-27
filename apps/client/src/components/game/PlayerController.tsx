@@ -137,6 +137,18 @@ export function PlayerController() {
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
   const smoothedYRef = useRef<number | null>(null); // For smooth camera over bumps
+  
+  // PERFORMANCE: Pre-allocated objects to avoid GC pressure in useFrame
+  const moveDirectionRef = useRef(new THREE.Vector3());
+  const eulerRef = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
+  const positionRef = useRef(new THREE.Vector3());
+  const slideEulerRef = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
+  
+  // PERFORMANCE: Cache hero stats to avoid lookup every frame
+  const cachedHeroStatsRef = useRef<{ heroId: string | null; stats: ReturnType<typeof getHeroStats> | null }>({
+    heroId: null,
+    stats: null,
+  });
 
   // Sprint, crouch, and slide state
   const isSprintingRef = useRef(false);
@@ -158,6 +170,12 @@ export function PlayerController() {
   const clientChargesRef = useRef<Record<string, number>>({}); // Client-side charge tracking
   const abilityActiveRef = useRef<Record<string, { active: boolean; startTime: number }>>({});
   const teleportInProgressRef = useRef(false); // Prevent multiple teleports
+  
+  // Primary fire state (dire balls)
+  const lastFireTimeRef = useRef(0);
+  const FIRE_RATE = 3; // Fires per second
+  const FIRE_INTERVAL = 1000 / FIRE_RATE; // ms between shots
+  const direBallIdRef = useRef(0);
 
   // Shadow Step targeting state
   const shadowStepTargetRef = useRef<THREE.Vector3 | null>(null);
@@ -933,8 +951,9 @@ export function PlayerController() {
     // Clamp delta to prevent huge jumps
     const dt = Math.min(delta, 0.1);
 
-    // Get movement direction from input
-    const moveDirection = new THREE.Vector3();
+    // PERFORMANCE: Reuse pre-allocated Vector3 instead of creating new one
+    const moveDirection = moveDirectionRef.current;
+    moveDirection.set(0, 0, 0);
     
     // Reduce movement speed while in Shadow Step targeting mode
     const movementMultiplier = shadowStepTargeting ? 0.3 : 1;
@@ -946,12 +965,18 @@ export function PlayerController() {
     
     moveDirection.normalize();
 
-    // Apply rotation to movement direction
-    const euler = new THREE.Euler(0, yawRef.current, 0, 'YXZ');
+    // PERFORMANCE: Reuse pre-allocated Euler instead of creating new one
+    const euler = eulerRef.current;
+    euler.set(0, yawRef.current, 0);
     moveDirection.applyEuler(euler);
 
-    // Calculate speed from hero stats
-    const heroStats = getHeroStats(localPlayer.heroId as HeroId);
+    // PERFORMANCE: Cache hero stats lookup - only recalculate when hero changes
+    const heroId = localPlayer.heroId as HeroId;
+    if (cachedHeroStatsRef.current.heroId !== heroId) {
+      cachedHeroStatsRef.current.heroId = heroId;
+      cachedHeroStatsRef.current.stats = getHeroStats(heroId);
+    }
+    const heroStats = cachedHeroStatsRef.current.stats!;
     let speed = heroStats.moveSpeed * movementMultiplier;
     
     // Update slide cooldown
@@ -1001,7 +1026,9 @@ export function PlayerController() {
       isSprintingRef.current = false; // Stop sprinting when sliding
       
       // Calculate slide direction from look direction and movement input
-      const slideDir = new THREE.Vector3();
+      // PERFORMANCE: Reuse pre-allocated objects
+      const slideDir = moveDirectionRef.current;
+      slideDir.set(0, 0, 0);
       if (inputState.moveForward) slideDir.z -= 1;
       if (inputState.moveBackward) slideDir.z += 1;
       if (inputState.moveLeft) slideDir.x -= 1;
@@ -1009,8 +1036,9 @@ export function PlayerController() {
       slideDir.normalize();
       
       // Apply rotation to get world-space slide direction
-      const euler = new THREE.Euler(0, yawRef.current, 0, 'YXZ');
-      slideDir.applyEuler(euler);
+      const slideEuler = slideEulerRef.current;
+      slideEuler.set(0, yawRef.current, 0);
+      slideDir.applyEuler(slideEuler);
       slideDirectionRef.current.copy(slideDir);
       
       // Set initial slide velocity (sprint speed with boost)
@@ -1159,15 +1187,16 @@ export function PlayerController() {
       }
     }
 
-    // Current position
-    const position = new THREE.Vector3(
+    // PERFORMANCE: Reuse pre-allocated Vector3 for position
+    const position = positionRef.current;
+    position.set(
       localPlayer.position.x,
       localPlayer.position.y,
       localPlayer.position.z
     );
 
     // ===== ABILITY INPUT HANDLING =====
-    const heroId = localPlayer.heroId as HeroId;
+    // heroId already declared above for hero stats caching
     if (heroId) {
       const heroDef = HERO_DEFINITIONS[heroId];
       if (heroDef) {
@@ -1199,6 +1228,48 @@ export function PlayerController() {
           }
         }
         abilityPressedRef.current.ultimate = inputState.ultimate;
+        
+        // Primary Fire (Left Click) - Phantom fires dire balls
+        if (heroId === 'phantom' && inputState.primaryFire && !shadowStepTargeting) {
+          const now = Date.now();
+          if (now - lastFireTimeRef.current >= FIRE_INTERVAL) {
+            lastFireTimeRef.current = now;
+            
+            // Calculate fire direction from look direction
+            const yaw = yawRef.current;
+            const pitch = pitchRef.current;
+            
+            // Direction vector from look angles
+            const dirX = -Math.sin(yaw) * Math.cos(pitch);
+            const dirY = -Math.sin(pitch);
+            const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+            
+            // Projectile speed
+            const PROJECTILE_SPEED = 35;
+            
+            // Spawn position slightly in front of player
+            const spawnOffset = 0.8; // How far in front of player to spawn
+            const spawnX = position.x + dirX * spawnOffset;
+            const spawnY = position.y + 0.5 + dirY * spawnOffset; // Slightly above center
+            const spawnZ = position.z + dirZ * spawnOffset;
+            
+            // Create dire ball
+            direBallIdRef.current++;
+            const ballId = `dire_${localPlayer.id}_${direBallIdRef.current}`;
+            
+            useGameStore.getState().addDireBall({
+              id: ballId,
+              position: { x: spawnX, y: spawnY, z: spawnZ },
+              velocity: { 
+                x: dirX * PROJECTILE_SPEED, 
+                y: dirY * PROJECTILE_SPEED, 
+                z: dirZ * PROJECTILE_SPEED 
+              },
+              startTime: now,
+              ownerId: localPlayer.id,
+            });
+          }
+        }
       }
     }
 
