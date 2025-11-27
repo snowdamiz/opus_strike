@@ -23,12 +23,18 @@ import {
   BASE_JUMP_FORCE,
   TICK_RATE,
 } from '@voxel-strike/shared';
+import { isInsideBoundary, constrainToBoundary } from '../../config/mapBoundaries';
 
 // Player collision constants
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.4;
 const GROUND_SNAP_DISTANCE = 0.3; // How close to ground to snap
 const STEP_HEIGHT = 0.8; // Max height to auto-step up (handles most stair steps)
+
+// Smoothing constants
+const SMALL_BUMP_THRESHOLD = 0.15; // Height changes below this are "small bumps"
+const SMOOTH_SPEED_SMALL = 8; // Smoothing speed for small bumps (lower = smoother)
+const SMOOTH_SPEED_LARGE = 20; // Smoothing speed for larger steps (higher = snappier)
 
 // Debug flag
 let lastDebugTime = 0;
@@ -48,6 +54,7 @@ export function PlayerController() {
   const initializedRef = useRef(false);
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
+  const smoothedYRef = useRef<number | null>(null); // For smooth camera over bumps
 
   // Initialize camera position - also check if we need to spawn higher
   useEffect(() => {
@@ -178,7 +185,22 @@ export function PlayerController() {
       // Close to or below ground
       if (distToGround <= 0.15 && velocity.y <= 0) {
         if (groundInfo.isWalkable) {
-          position.y = targetY;
+          // Calculate height change from current smoothed position
+          const currentY = smoothedYRef.current ?? position.y;
+          const heightChange = Math.abs(targetY - currentY);
+          
+          // Use smoothing for small bumps, snap for larger changes
+          if (heightChange < SMALL_BUMP_THRESHOLD && isGroundedRef.current) {
+            // Small bump - smooth over it
+            const smoothSpeed = SMOOTH_SPEED_SMALL * dt;
+            position.y = currentY + (targetY - currentY) * Math.min(smoothSpeed, 1);
+          } else {
+            // Larger step or first contact - snap or use faster smoothing
+            const smoothSpeed = SMOOTH_SPEED_LARGE * dt;
+            position.y = currentY + (targetY - currentY) * Math.min(smoothSpeed, 1);
+          }
+          
+          smoothedYRef.current = position.y;
           velocity.y = 0;
           isGroundedRef.current = true;
           canJumpRef.current = true;
@@ -188,15 +210,18 @@ export function PlayerController() {
           velocity.x += groundInfo.normal.x * slideForce;
           velocity.z += groundInfo.normal.z * slideForce;
           position.y = targetY;
+          smoothedYRef.current = position.y;
           velocity.y = 0;
           isGroundedRef.current = false;
           canJumpRef.current = false;
         }
       } else {
         isGroundedRef.current = false;
+        smoothedYRef.current = null; // Reset smoothing when airborne
       }
     } else {
       isGroundedRef.current = false;
+      smoothedYRef.current = null;
     }
 
     // Jump - check AFTER ground detection
@@ -234,12 +259,6 @@ export function PlayerController() {
           const targetGroundY = groundAhead.groundY;
           const heightDiff = targetGroundY - currentFeetY;
           
-          // Debug logging for step-up
-          const now = Date.now();
-          if (now - lastDebugTime > 500 && heightDiff > 0.05) {
-            console.log('[StepUp] HeightDiff:', heightDiff.toFixed(2), '| Current:', currentFeetY.toFixed(2), '| Target:', targetGroundY.toFixed(2));
-          }
-          
           // If target ground is higher (but within step height), step up
           if (heightDiff > 0.1 && heightDiff <= STEP_HEIGHT) {
             // Check ceiling clearance
@@ -253,11 +272,11 @@ export function PlayerController() {
               position.x = stepX;
               position.z = stepZ;
               position.y = targetGroundY + PLAYER_HEIGHT / 2;
+              smoothedYRef.current = position.y; // Update smoothed Y for stairs
               velocity.y = 0;
               didStepUp = true;
               isGroundedRef.current = true;
               canJumpRef.current = true;
-              console.log('[StepUp] SUCCESS! New Y:', position.y.toFixed(2));
             }
           }
         }
@@ -304,24 +323,31 @@ export function PlayerController() {
       position.y += velocity.y * dt;
     }
 
-    // Safety net floor
-    const minY = -49 + PLAYER_HEIGHT / 2;
-    if (position.y <= minY) {
-      position.y = minY;
-      velocity.y = 0;
-      isGroundedRef.current = true;
-      canJumpRef.current = true;
+    // Out of bounds detection - respawn if player falls below main terrain level
+    const OUT_OF_BOUNDS_Y = 5;
+    if (position.y < OUT_OF_BOUNDS_Y && isGroundedRef.current) {
+      console.log('[Player] Out of bounds! Respawning...');
+      position.set(-30, 60, -20); // Spawn in center of playable area
+      velocity.set(0, 0, 0);
+      smoothedYRef.current = null;
+      isGroundedRef.current = false;
     }
 
-    // Respawn if fell too far
-    if (position.y < -100) {
+    // Safety net - respawn if fell too far
+    if (position.y < -50) {
       position.set(0, 60, 0);
       velocity.set(0, 0, 0);
+      smoothedYRef.current = null;
     }
 
-    // Clamp to map bounds
-    position.x = Math.max(-95, Math.min(95, position.x));
-    position.z = Math.max(-95, Math.min(95, position.z));
+    // Constrain to polygon map boundary (slide along edges instead of pushing)
+    const prevX = localPlayer.position.x;
+    const prevZ = localPlayer.position.z;
+    if (!isInsideBoundary(position.x, position.z)) {
+      const constrained = constrainToBoundary(prevX, prevZ, position.x, position.z);
+      position.x = constrained.x;
+      position.z = constrained.z;
+    }
 
     // Update camera (add eye height offset)
     camera.position.set(position.x, position.y + 0.6, position.z);

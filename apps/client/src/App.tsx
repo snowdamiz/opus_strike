@@ -9,6 +9,7 @@ import { HeroSelect } from './components/ui/HeroSelect';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { Scoreboard } from './components/ui/Scoreboard';
 import { InGameMenu } from './components/ui/InGameMenu';
+import { GameConsole } from './components/ui/GameConsole';
 
 export function App() {
   const { appPhase, gamePhase, isLoading, localPlayer } = useGameStore();
@@ -123,6 +124,9 @@ export function App() {
 
         {/* In-game menu (ESC) */}
         {showInGameMenu && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
+
+        {/* Developer console (backtick key) */}
+        <GameConsole />
       </div>
     );
   }

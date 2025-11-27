@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { createEmptyInputState, DEFAULT_KEYBINDINGS } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
+import { isGameConsoleOpen } from '../components/ui/GameConsole';
 
 interface UseInputReturn {
   inputState: InputState;
@@ -29,6 +30,11 @@ export function useInput(): UseInputReturn {
   // Handle key down
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore game controls when console is open
+      if (isGameConsoleOpen()) {
+        return;
+      }
+
       // Prevent default for game keys
       if (keyToAction.current.has(e.code)) {
         e.preventDefault();
@@ -45,6 +51,7 @@ export function useInput(): UseInputReturn {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      // Always handle key up to prevent stuck keys
       const action = keyToAction.current.get(e.code);
       if (action && inputStateRef.current[action]) {
         inputStateRef.current = {

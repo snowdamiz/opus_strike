@@ -110,14 +110,15 @@ export function usePhysics(): PhysicsContext {
 
 function createBoundaryColliders(world: RAPIER.World, rapier: typeof RAPIER) {
   const boundaryHeight = 100;
-  const mapSize = 200;
+  // Outer safety boundary - polygon boundary handles actual gameplay limits
+  const mapSize = 120;
 
   // Invisible boundary walls - use fixed rigid bodies
   const walls = [
-    { pos: [0, boundaryHeight / 2, -mapSize / 2], size: [mapSize / 2, boundaryHeight / 2, 1] },
-    { pos: [0, boundaryHeight / 2, mapSize / 2], size: [mapSize / 2, boundaryHeight / 2, 1] },
-    { pos: [-mapSize / 2, boundaryHeight / 2, 0], size: [1, boundaryHeight / 2, mapSize / 2] },
-    { pos: [mapSize / 2, boundaryHeight / 2, 0], size: [1, boundaryHeight / 2, mapSize / 2] },
+    { pos: [0, boundaryHeight / 2, -mapSize / 2], size: [mapSize / 2, boundaryHeight / 2, 2] },
+    { pos: [0, boundaryHeight / 2, mapSize / 2], size: [mapSize / 2, boundaryHeight / 2, 2] },
+    { pos: [-mapSize / 2, boundaryHeight / 2, 0], size: [2, boundaryHeight / 2, mapSize / 2] },
+    { pos: [mapSize / 2, boundaryHeight / 2, 0], size: [2, boundaryHeight / 2, mapSize / 2] },
   ];
 
   for (const wall of walls) {

@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { useGLTF } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';1
 import * as THREE from 'three';
 
 // Map configuration - switch between maps here
@@ -75,26 +75,28 @@ function Ground() {
 }
 
 function ArenaBoundaries() {
-  const boundaryHeight = 50;
-  const mapSize = 200; // Larger boundaries for the new map
+  // Note: These are visual only - physics boundaries are in usePhysics.ts
+  // Outer safety boundary - polygon boundary in mapBoundaries.ts handles gameplay
+  const boundaryHeight = 100;
+  const mapSize = 120;
   
   return (
     <group>
-      {/* Invisible collision walls */}
+      {/* Invisible boundary walls - visual markers only */}
       <mesh position={[0, boundaryHeight / 2, -mapSize / 2]} visible={false}>
-        <boxGeometry args={[mapSize, boundaryHeight, 1]} />
+        <boxGeometry args={[mapSize, boundaryHeight, 2]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
       <mesh position={[0, boundaryHeight / 2, mapSize / 2]} visible={false}>
-        <boxGeometry args={[mapSize, boundaryHeight, 1]} />
+        <boxGeometry args={[mapSize, boundaryHeight, 2]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
       <mesh position={[-mapSize / 2, boundaryHeight / 2, 0]} visible={false}>
-        <boxGeometry args={[1, boundaryHeight, mapSize]} />
+        <boxGeometry args={[2, boundaryHeight, mapSize]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
       <mesh position={[mapSize / 2, boundaryHeight / 2, 0]} visible={false}>
-        <boxGeometry args={[1, boundaryHeight, mapSize]} />
+        <boxGeometry args={[2, boundaryHeight, mapSize]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
     </group>
