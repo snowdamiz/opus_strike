@@ -669,6 +669,31 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       console.log(`Ability used: ${data.abilityId} by ${data.playerId}, success: ${data.success}`);
     });
 
+    // Handle void zone events (from phantom blink)
+    room.onMessage('voidZoneCreated', (data: { id: string; position: { x: number; y: number; z: number }; radius: number; duration: number; startTime: number; ownerId: string; ownerTeam: 'red' | 'blue' }) => {
+      // Skip if this is our own void zone (we already created it client-side for instant feedback)
+      const store = useGameStore.getState();
+      if (data.ownerId === sessionId) {
+        console.log(`Void zone from server (our own, skipping duplicate)`);
+        return;
+      }
+      console.log(`Void zone created by ${data.ownerId} at (${data.position.x.toFixed(1)}, ${data.position.y.toFixed(1)}, ${data.position.z.toFixed(1)})`);
+      store.addVoidZone(data);
+    });
+
+    room.onMessage('voidZoneExpired', (data: { id: string }) => {
+      console.log(`Void zone expired: ${data.id}`);
+      useGameStore.getState().removeVoidZone(data.id);
+    });
+
+    room.onMessage('playerDamaged', (data: { targetId: string; damage: number; sourceId: string; damageType: string }) => {
+      console.log(`Player ${data.targetId} took ${data.damage} damage from ${data.damageType}`);
+    });
+
+    room.onMessage('playerKilled', (data: { victimId: string; killerId: string; position: { x: number; y: number; z: number } }) => {
+      console.log(`Player ${data.victimId} killed by ${data.killerId}`);
+    });
+
     room.onError((code, message) => {
       console.error('Room error:', code, message);
     });

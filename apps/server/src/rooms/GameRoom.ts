@@ -29,11 +29,31 @@ interface JoinOptions {
 // Track last ability press state to detect key press (not hold)
 const playerAbilityPressState = new Map<string, { ability1: boolean; ability2: boolean; ultimate: boolean }>();
 
+// Void zone tracking (from phantom blink ability)
+interface VoidZone {
+  id: string;
+  position: { x: number; y: number; z: number };
+  radius: number;
+  damage: number;
+  duration: number;
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  lastDamageTick: Map<string, number>; // Track last damage tick per player
+}
+
+const VOID_ZONE_RADIUS = 3;
+const VOID_ZONE_DAMAGE = 15;
+const VOID_ZONE_DURATION = 4; // seconds
+const VOID_ZONE_DAMAGE_INTERVAL = 500; // ms between damage ticks
+
 export class GameRoom extends Room<GameState> {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private readonly config = DEFAULT_GAME_CONFIG;
   private lobbyId: string | null = null;
   private lobbyName: string | null = null;
+  private voidZones: VoidZone[] = [];
+  private voidZoneIdCounter: number = 0;
 
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
@@ -220,6 +240,9 @@ export class GameRoom extends Room<GameState> {
 
     // Check flag returns
     this.checkFlagReturns();
+
+    // Update void zones (damage enemies inside)
+    this.updateVoidZones(now);
 
     // Update physics simulation (simplified)
     this.updatePhysics();
@@ -437,12 +460,22 @@ export class GameRoom extends Room<GameState> {
         const dx = -Math.sin(yaw);
         const dz = -Math.cos(yaw);
         
-        player.position.x += dx * distance;
-        player.position.z += dz * distance;
-        // Small upward boost if looking up
-        if (pitch < -0.3) {
-          player.position.y += 2;
-        }
+        // Calculate destination position
+        const destX = player.position.x + dx * distance;
+        const destZ = player.position.z + dz * distance;
+        const destY = player.position.y + (pitch < -0.3 ? 2 : 0);
+        
+        // Update position
+        player.position.x = destX;
+        player.position.z = destZ;
+        player.position.y = destY;
+        
+        // Create void zone at the DESTINATION (where player lands)
+        this.createVoidZone(
+          { x: destX, y: destY - 0.9, z: destZ }, // Ground level
+          player.id,
+          player.team as 'red' | 'blue'
+        );
         break;
       }
 
@@ -884,6 +917,115 @@ export class GameRoom extends Room<GameState> {
     this.state.blueTeam.flag.basePosition.x = 20;
     this.state.blueTeam.flag.basePosition.y = 10;
     this.state.blueTeam.flag.basePosition.z = 0;
+  }
+
+  private updateVoidZones(now: number) {
+    // Remove expired void zones
+    this.voidZones = this.voidZones.filter(zone => {
+      const elapsed = (now - zone.startTime) / 1000;
+      if (elapsed >= zone.duration) {
+        // Broadcast zone expired
+        this.broadcast('voidZoneExpired', { id: zone.id });
+        return false;
+      }
+      return true;
+    });
+
+    // Apply damage to players in active void zones
+    for (const zone of this.voidZones) {
+      this.state.players.forEach((player) => {
+        // Skip dead players, same team, and the zone owner
+        if (player.state !== 'alive') return;
+        if (player.team === zone.ownerTeam) return;
+        if (player.id === zone.ownerId) return;
+
+        // Check spawn protection
+        if (player.spawnProtectionUntil && now < player.spawnProtectionUntil) return;
+
+        // Check if player is in the zone
+        const dx = player.position.x - zone.position.x;
+        const dz = player.position.z - zone.position.z;
+        const distSq = dx * dx + dz * dz;
+        
+        if (distSq <= zone.radius * zone.radius) {
+          // Check damage interval
+          const lastDamage = zone.lastDamageTick.get(player.id) || 0;
+          if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
+            // Apply damage
+            player.health -= zone.damage;
+            zone.lastDamageTick.set(player.id, now);
+
+            // Broadcast damage event
+            this.broadcast('playerDamaged', {
+              targetId: player.id,
+              damage: zone.damage,
+              sourceId: zone.ownerId,
+              damageType: 'void_zone',
+            });
+
+            // Check for kill
+            if (player.health <= 0) {
+              this.handlePlayerDeath(player, zone.ownerId);
+            }
+          }
+        }
+      });
+    }
+  }
+
+  private handlePlayerDeath(player: Player, killerId: string) {
+    const killer = this.state.players.get(killerId);
+    
+    player.state = 'dead';
+    player.health = 0;
+    player.deaths++;
+    player.respawnTime = Date.now() + this.config.respawnTimeSeconds * 1000;
+    
+    // Drop flag if carrying
+    if (player.hasFlag) {
+      this.dropFlag(player);
+    }
+
+    if (killer) {
+      killer.kills++;
+      // Add ultimate charge for kill
+      killer.ultimateCharge = Math.min(100, killer.ultimateCharge + 20);
+    }
+
+    this.broadcast('playerKilled', {
+      victimId: player.id,
+      killerId,
+      position: { x: player.position.x, y: player.position.y, z: player.position.z },
+    });
+  }
+
+  private createVoidZone(position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: 'red' | 'blue') {
+    const zone: VoidZone = {
+      id: `void_${this.voidZoneIdCounter++}`,
+      position: { ...position },
+      radius: VOID_ZONE_RADIUS,
+      damage: VOID_ZONE_DAMAGE,
+      duration: VOID_ZONE_DURATION,
+      startTime: Date.now(),
+      ownerId,
+      ownerTeam,
+      lastDamageTick: new Map(),
+    };
+
+    this.voidZones.push(zone);
+
+    // Broadcast zone creation to all clients
+    this.broadcast('voidZoneCreated', {
+      id: zone.id,
+      position: zone.position,
+      radius: zone.radius,
+      duration: zone.duration,
+      startTime: zone.startTime,
+      ownerId: zone.ownerId,
+      ownerTeam: zone.ownerTeam,
+    });
+
+    return zone;
   }
 
   private checkFlagReturns() {

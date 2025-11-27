@@ -7,10 +7,11 @@ import { OtherPlayers } from './OtherPlayers';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
+import { VoidZones } from './VoidZone';
 import { useGameStore } from '../../store/gameStore';
 
 export function GameCanvas() {
-  const { gamePhase } = useGameStore();
+  const { gamePhase, voidZones } = useGameStore();
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
 
   return (
@@ -85,6 +86,7 @@ export function GameCanvas() {
             <Flags />
             <Effects />
             <SlideSpeedLines />
+            <VoidZones zones={voidZones} />
           </>
         )}
 

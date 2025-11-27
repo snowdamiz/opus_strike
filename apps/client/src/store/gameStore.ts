@@ -36,6 +36,16 @@ export interface UserStats {
 
 export type AppPhase = 'menu' | 'browsing_lobbies' | 'in_lobby' | 'in_game';
 
+export interface VoidZoneData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  radius: number;
+  duration: number;
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+}
+
 interface GameStore {
   // Wallet/Auth state
   walletAddress: string | null;
@@ -98,6 +108,9 @@ interface GameStore {
   // Slide visual effects
   slideIntensity: number; // 0-1 intensity for slide visual effects
   
+  // Void zones (from phantom blink)
+  voidZones: VoidZoneData[];
+  
   // Actions
   setWalletAddress: (address: string | null) => void;
   setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
@@ -133,6 +146,11 @@ interface GameStore {
   setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
   setSlideIntensity: (intensity: number) => void;
+  
+  // Void zone actions
+  addVoidZone: (zone: VoidZoneData) => void;
+  removeVoidZone: (id: string) => void;
+  clearExpiredVoidZones: () => void;
   
   reset: () => void;
   resetLobby: () => void;
@@ -174,6 +192,7 @@ const initialState = {
   clientCooldowns: {} as Record<string, number>,
   clientCharges: {} as Record<string, number>,
   slideIntensity: 0,
+  voidZones: [] as VoidZoneData[],
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -343,6 +362,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
   clearClientCooldowns: () => set({ clientCooldowns: {}, clientCharges: {} }),
   
   setSlideIntensity: (intensity) => set({ slideIntensity: intensity }),
+
+  addVoidZone: (zone) => set((state) => ({
+    voidZones: [...state.voidZones, zone]
+  })),
+  
+  removeVoidZone: (id) => set((state) => ({
+    voidZones: state.voidZones.filter(z => z.id !== id)
+  })),
+  
+  clearExpiredVoidZones: () => set((state) => {
+    const now = Date.now();
+    return {
+      voidZones: state.voidZones.filter(z => (now - z.startTime) / 1000 < z.duration)
+    };
+  }),
 
   reset: () => set(initialState),
   

@@ -629,7 +629,21 @@ export function PlayerController() {
         velocity.x = dx * 2;
         velocity.z = dz * 2;
         
-        console.log(`[Ability] Blinked to (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)})`);
+        // Create void zone at the destination for instant client-side feedback
+        // (Server will also broadcast this, but we create it immediately for responsiveness)
+        const voidZoneId = `local_void_${Date.now()}`;
+        const currentPlayer = useGameStore.getState().localPlayer;
+        useGameStore.getState().addVoidZone({
+          id: voidZoneId,
+          position: { x: targetX, y: targetY - 0.9, z: targetZ }, // Ground level
+          radius: 3, // VOID_ZONE_RADIUS
+          duration: 4, // VOID_ZONE_DURATION
+          startTime: Date.now(),
+          ownerId: currentPlayer?.id || '',
+          ownerTeam: (currentPlayer?.team || 'red') as 'red' | 'blue',
+        });
+        
+        console.log(`[Ability] Blinked to (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}) - Void zone created`);
         break;
       }
 
