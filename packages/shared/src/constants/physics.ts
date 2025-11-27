@@ -19,11 +19,17 @@ export const GROUND_NORMAL_THRESHOLD = 0.7;
 export const STEP_HEIGHT = 0.5;
 
 // Slide
-export const SLIDE_SPEED_BOOST = 1.5;
-export const SLIDE_DURATION = 0.8;
-export const SLIDE_COOLDOWN = 1.5;
-export const SLIDE_FRICTION = 0.98;
-export const MIN_SLIDE_SPEED = 8;
+export const SLIDE_SPEED_BOOST = 1.8; // Speed multiplier during slide
+export const SLIDE_DURATION = 0.5; // Duration of slide in seconds (shorter, snappier)
+export const SLIDE_COOLDOWN = 0.8; // Cooldown before next slide
+export const SLIDE_FRICTION = 0.94; // Friction applied during slide (higher = more slowdown)
+export const MIN_SLIDE_SPEED = 6; // Minimum speed to initiate slide
+export const SLIDE_INITIAL_BOOST = 1.6; // Initial speed boost when entering slide (faster burst)
+
+// Crouch
+export const CROUCH_TRANSITION_SPEED = 12; // How fast to transition camera height
+export const CROUCH_HEIGHT_OFFSET = -0.4; // How much to lower the camera when crouching
+export const SLIDE_CAMERA_PITCH_OFFSET = 0.12; // Slight upward camera tilt during slide (radians, ~7 degrees)
 
 // Wall running
 export const WALL_RUN_MIN_SPEED = 8;

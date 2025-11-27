@@ -26,7 +26,10 @@ defineTypes(QuaternionSchema, {
 
 export class MovementState extends Schema {
   isGrounded: boolean = true;
+  isSprinting: boolean = false;
+  isCrouching: boolean = false;
   isSliding: boolean = false;
+  slideTimeRemaining: number = 0;
   isWallRunning: boolean = false;
   wallRunSide: string = '';
   isGrappling: boolean = false;
@@ -36,7 +39,10 @@ export class MovementState extends Schema {
 }
 defineTypes(MovementState, {
   isGrounded: 'boolean',
+  isSprinting: 'boolean',
+  isCrouching: 'boolean',
   isSliding: 'boolean',
+  slideTimeRemaining: 'number',
   isWallRunning: 'boolean',
   wallRunSide: 'string',
   isGrappling: 'boolean',

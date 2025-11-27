@@ -326,7 +326,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         ultimateCharge: schemaPlayer.ultimateCharge ?? 0,
         movement: {
           isGrounded: true,
+          isSprinting: false,
+          isCrouching: false,
           isSliding: false,
+          slideTimeRemaining: 0,
           isWallRunning: false,
           wallRunSide: null,
           isGrappling: false,
@@ -366,7 +369,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       ultimateCharge: 0,
       movement: {
         isGrounded: true,
+        isSprinting: false,
+        isCrouching: false,
         isSliding: false,
+        slideTimeRemaining: 0,
         isWallRunning: false,
         wallRunSide: null,
         isGrappling: false,
@@ -550,7 +556,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
             ultimateCharge: 0,
             movement: {
               isGrounded: true,
+              isSprinting: false,
+              isCrouching: false,
               isSliding: false,
+              slideTimeRemaining: 0,
               isWallRunning: false,
               wallRunSide: null,
               isGrappling: false,
@@ -626,7 +635,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
               ultimateCharge: serverPlayer.ultimateCharge ?? 0,
               movement: {
                 isGrounded: true,
+                isSprinting: false,
+                isCrouching: false,
                 isSliding: false,
+                slideTimeRemaining: 0,
                 isWallRunning: false,
                 wallRunSide: null,
                 isGrappling: false,

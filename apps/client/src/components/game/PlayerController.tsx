@@ -21,6 +21,13 @@ import {
   AIR_CONTROL,
   GRAVITY,
   TICK_RATE,
+  SLIDE_DURATION,
+  SLIDE_COOLDOWN,
+  SLIDE_FRICTION,
+  SLIDE_INITIAL_BOOST,
+  CROUCH_TRANSITION_SPEED,
+  CROUCH_HEIGHT_OFFSET,
+  SLIDE_CAMERA_PITCH_OFFSET,
   getHeroStats,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
@@ -70,6 +77,17 @@ export function PlayerController() {
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
   const smoothedYRef = useRef<number | null>(null); // For smooth camera over bumps
+
+  // Sprint, crouch, and slide state
+  const isSprintingRef = useRef(false);
+  const isCrouchingRef = useRef(false);
+  const isSliding = useRef(false);
+  const slideTimeRef = useRef(0);
+  const slideCooldownRef = useRef(0);
+  const slideDirectionRef = useRef(new THREE.Vector3());
+  const crouchHeightRef = useRef(0); // Current crouch camera offset (interpolated)
+  const slidePitchRef = useRef(0); // Current slide camera pitch offset (interpolated)
+  const wasSprintingBeforeSlide = useRef(false); // Track if player was sprinting before slide
 
   // Ability state tracking
   const abilityPressedRef = useRef({ ability1: false, ability2: false, ultimate: false });
@@ -858,8 +876,124 @@ export function PlayerController() {
     // Calculate speed from hero stats
     const heroStats = getHeroStats(localPlayer.heroId as HeroId);
     let speed = heroStats.moveSpeed * movementMultiplier;
-    if (inputState.sprint && !shadowStepTargeting) speed *= SPRINT_MULTIPLIER;
-    if (inputState.crouch) speed *= CROUCH_MULTIPLIER;
+    
+    // Update slide cooldown
+    slideCooldownRef.current = Math.max(0, slideCooldownRef.current - dt);
+    
+    // Calculate horizontal speed for slide detection
+    const currentHorizontalSpeed = Math.sqrt(
+      velocityRef.current.x * velocityRef.current.x + 
+      velocityRef.current.z * velocityRef.current.z
+    );
+    
+    // Check if player is providing movement input
+    const hasMovementInput = inputState.moveForward || inputState.moveBackward || inputState.moveLeft || inputState.moveRight;
+    
+    // Sprint state - only when grounded, moving, and not crouching/sliding
+    const canSprint = inputState.sprint && 
+                      !shadowStepTargeting && 
+                      isGroundedRef.current && 
+                      !isSliding.current &&
+                      !isCrouchingRef.current &&
+                      hasMovementInput;
+    isSprintingRef.current = canSprint;
+    
+    // Handle slide initiation: Sprint + Crouch while moving
+    // We check if player is sprinting AND has movement input (don't require high speed - sprint speed will be applied)
+    // Note: We DON'T check isCrouchingRef because we want sprint+crouch to always trigger slide
+    const shouldStartSlide = inputState.crouch && 
+                             inputState.sprint &&  // Player is holding sprint
+                             hasMovementInput &&   // Player is moving
+                             isGroundedRef.current && 
+                             !isSliding.current && 
+                             slideCooldownRef.current <= 0;
+    
+    // Debug: Log when crouch is pressed while sprinting
+    if (inputState.crouch && inputState.sprint && hasMovementInput) {
+      console.log('[Slide Debug] Crouch+Sprint pressed. Grounded:', isGroundedRef.current, 
+                  'Already sliding:', isSliding.current, 
+                  'Cooldown:', slideCooldownRef.current.toFixed(2),
+                  'Should slide:', shouldStartSlide);
+    }
+    
+    if (shouldStartSlide) {
+      // Start sliding!
+      isSliding.current = true;
+      slideTimeRef.current = SLIDE_DURATION;
+      wasSprintingBeforeSlide.current = true;
+      isSprintingRef.current = false; // Stop sprinting when sliding
+      
+      // Calculate slide direction from look direction and movement input
+      const slideDir = new THREE.Vector3();
+      if (inputState.moveForward) slideDir.z -= 1;
+      if (inputState.moveBackward) slideDir.z += 1;
+      if (inputState.moveLeft) slideDir.x -= 1;
+      if (inputState.moveRight) slideDir.x += 1;
+      slideDir.normalize();
+      
+      // Apply rotation to get world-space slide direction
+      const euler = new THREE.Euler(0, yawRef.current, 0, 'YXZ');
+      slideDir.applyEuler(euler);
+      slideDirectionRef.current.copy(slideDir);
+      
+      // Set initial slide velocity (sprint speed with boost)
+      const slideSpeed = heroStats.moveSpeed * SPRINT_MULTIPLIER * SLIDE_INITIAL_BOOST;
+      velocityRef.current.x = slideDir.x * slideSpeed;
+      velocityRef.current.z = slideDir.z * slideSpeed;
+      
+      console.log('[Movement] Started slide! Speed:', slideSpeed.toFixed(1), 'Duration:', SLIDE_DURATION);
+    }
+    
+    // Update slide state
+    if (isSliding.current) {
+      slideTimeRef.current -= dt;
+      
+      // Apply slide friction
+      const friction = Math.pow(SLIDE_FRICTION, dt * 60);
+      velocityRef.current.x *= friction;
+      velocityRef.current.z *= friction;
+      
+      // Check for slide end conditions
+      const slideSpeed = Math.sqrt(
+        velocityRef.current.x * velocityRef.current.x + 
+        velocityRef.current.z * velocityRef.current.z
+      );
+      
+      // Slide ends when: timer expires, speed too low, or player jumps
+      if (slideTimeRef.current <= 0 || slideSpeed < 2 || inputState.jump) {
+        isSliding.current = false;
+        slideCooldownRef.current = SLIDE_COOLDOWN;
+        wasSprintingBeforeSlide.current = false;
+        isCrouchingRef.current = false; // Auto-uncrouch at end of slide
+        console.log('[Movement] Slide ended, auto-uncrouching');
+      }
+    }
+    
+    // Crouch state - not while sliding, not while sprinting
+    // Player can crouch ONLY if: pressing crouch AND not sliding AND not holding sprint
+    // (If holding sprint + crouch, that triggers slide instead)
+    if (isSliding.current) {
+      // During slide, maintain crouched visual but don't set crouch state
+      // (slide handles its own camera lowering)
+    } else if (inputState.crouch && !inputState.sprint) {
+      // Normal crouch - only when NOT holding sprint
+      isCrouchingRef.current = true;
+    } else {
+      // Release crouch when: not pressing crouch key, OR pressing sprint
+      isCrouchingRef.current = false;
+    }
+    
+    // Apply movement speed modifiers
+    if (isSliding.current) {
+      // During slide, don't apply normal movement - momentum carries player
+      // But allow slight steering
+      const steerStrength = 0.15;
+      speed = heroStats.moveSpeed * steerStrength;
+    } else if (isSprintingRef.current) {
+      speed *= SPRINT_MULTIPLIER;
+    } else if (isCrouchingRef.current) {
+      speed *= CROUCH_MULTIPLIER;
+    }
 
     // Check for active ability speed boosts
     const now = Date.now();
@@ -887,8 +1021,17 @@ export function PlayerController() {
     const velocity = velocityRef.current;
     const control = isGroundedRef.current ? 1 : AIR_CONTROL;
 
-    velocity.x += (moveDirection.x * speed - velocity.x) * control * 10 * dt;
-    velocity.z += (moveDirection.z * speed - velocity.z) * control * 10 * dt;
+    // When sliding, only apply slight steering - don't overwrite slide velocity
+    if (isSliding.current) {
+      // Allow slight steering during slide (just add small movement influence)
+      const steerForce = 3 * dt;
+      velocity.x += moveDirection.x * speed * steerForce;
+      velocity.z += moveDirection.z * speed * steerForce;
+    } else {
+      // Normal movement - interpolate velocity toward target
+      velocity.x += (moveDirection.x * speed - velocity.x) * control * 10 * dt;
+      velocity.z += (moveDirection.z * speed - velocity.z) * control * 10 * dt;
+    }
 
     // Current position
     const position = new THREE.Vector3(
@@ -1124,11 +1267,20 @@ export function PlayerController() {
       position.z = constrained.z;
     }
 
-    // Update camera (add eye height offset)
-    camera.position.set(position.x, position.y + 0.6, position.z);
+    // Interpolate crouch camera height
+    const targetCrouchOffset = (isCrouchingRef.current || isSliding.current) ? CROUCH_HEIGHT_OFFSET : 0;
+    crouchHeightRef.current += (targetCrouchOffset - crouchHeightRef.current) * Math.min(CROUCH_TRANSITION_SPEED * dt, 1);
+    
+    // Interpolate slide camera pitch (tilt up slightly during slide)
+    const targetSlidePitch = isSliding.current ? SLIDE_CAMERA_PITCH_OFFSET : 0; // Positive = look up
+    slidePitchRef.current += (targetSlidePitch - slidePitchRef.current) * Math.min(CROUCH_TRANSITION_SPEED * dt, 1);
+    
+    // Update camera (add eye height offset + crouch offset)
+    const eyeHeight = 0.6 + crouchHeightRef.current;
+    camera.position.set(position.x, position.y + eyeHeight, position.z);
     camera.rotation.order = 'YXZ';
     camera.rotation.y = yawRef.current;
-    camera.rotation.x = pitchRef.current;
+    camera.rotation.x = pitchRef.current + slidePitchRef.current; // Add slide pitch offset
 
     // Update store
     updateLocalPlayer({
@@ -1139,6 +1291,10 @@ export function PlayerController() {
       movement: {
         ...localPlayer.movement,
         isGrounded: isGroundedRef.current,
+        isSprinting: isSprintingRef.current,
+        isCrouching: isCrouchingRef.current,
+        isSliding: isSliding.current,
+        slideTimeRemaining: slideTimeRef.current,
       },
     });
 

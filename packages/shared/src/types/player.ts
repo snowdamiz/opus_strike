@@ -13,7 +13,10 @@ export type PlayerState =
 
 export interface PlayerMovementState {
   isGrounded: boolean;
+  isSprinting: boolean;
+  isCrouching: boolean;
   isSliding: boolean;
+  slideTimeRemaining: number;
   isWallRunning: boolean;
   wallRunSide: 'left' | 'right' | null;
   isGrappling: boolean;

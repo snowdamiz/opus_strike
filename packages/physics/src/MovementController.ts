@@ -44,7 +44,10 @@ export class MovementController {
     
     this.movementState = {
       isGrounded: false,
+      isSprinting: false,
+      isCrouching: false,
       isSliding: false,
+      slideTimeRemaining: 0,
       isWallRunning: false,
       wallRunSide: null,
       isGrappling: false,

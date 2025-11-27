@@ -26,7 +26,7 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
   moveLeft: 'KeyA',
   moveRight: 'KeyD',
   jump: 'Space',
-  crouch: 'ControlLeft',
+  crouch: 'KeyC',
   sprint: 'ShiftLeft',
   primaryFire: 'Mouse0',
   secondaryFire: 'Mouse1',
