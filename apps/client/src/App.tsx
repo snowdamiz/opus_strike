@@ -12,6 +12,7 @@ import { InGameMenu } from './components/ui/InGameMenu';
 import { GameConsole } from './components/ui/GameConsole';
 import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 import { TeleportEffects } from './components/ui/TeleportEffects';
+import { UltimateEffects } from './components/ui/UltimateEffects';
 
 export function App() {
   const { appPhase, gamePhase, isLoading, localPlayer } = useGameStore();
@@ -106,6 +107,7 @@ export function App() {
             <HUD />
             <ShadowStepOverlay />
             <TeleportEffects />
+            <UltimateEffects />
             {showScoreboard && <Scoreboard />}
           </>
         )}

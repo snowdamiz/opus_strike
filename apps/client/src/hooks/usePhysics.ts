@@ -357,6 +357,97 @@ export function checkGroundBelow(x: number, y: number, z: number, maxDist: numbe
   return info ? info.groundY : null;
 }
 
+// Check if a teleport destination is valid (not inside geometry)
+// Returns: { valid: boolean, adjustedPosition?: { x, y, z }, reason?: string }
+export function validateTeleportDestination(
+  targetX: number, 
+  targetY: number, 
+  targetZ: number,
+  playerHeight: number = 1.8,
+  playerRadius: number = 0.4
+): { valid: boolean; adjustedPosition?: { x: number; y: number; z: number }; reason?: string } {
+  if (!rapierInstance || !worldInstance) {
+    return { valid: true }; // Allow if physics not ready
+  }
+
+  try {
+    const playerHalfHeight = playerHeight / 2;
+    const feetY = targetY - playerHalfHeight;
+    const headY = targetY + playerHalfHeight;
+    const centerY = targetY;
+
+    // 1. Check if there's solid ground below the target
+    const groundCheck = checkGroundWithNormal(targetX, targetY + 5, targetZ, playerHeight + 10);
+    if (!groundCheck) {
+      return { valid: false, reason: 'No ground below target' };
+    }
+
+    // Use ground-adjusted Y for all further checks
+    const adjustedFeetY = groundCheck.groundY;
+    const adjustedCenterY = groundCheck.groundY + playerHalfHeight;
+    const adjustedHeadY = groundCheck.groundY + playerHeight;
+
+    // 2. Check for geometry at CENTER and HEAD heights only (skip feet to avoid ground hits)
+    const checkPoints = [
+      { y: adjustedCenterY, label: 'center' },
+      { y: adjustedHeadY - 0.3, label: 'head' },
+    ];
+
+    // 8 directions for coverage
+    const directions: { x: number; z: number }[] = [];
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      directions.push({ x: Math.cos(angle), z: Math.sin(angle) });
+    }
+
+    // Cast rays FROM the target position OUTWARD
+    // Only reject if VERY close hit (definitely inside solid geometry)
+    for (const point of checkPoints) {
+      for (const dir of directions) {
+        const ray = new rapierInstance.Ray(
+          { x: targetX, y: point.y, z: targetZ },
+          { x: dir.x, y: 0, z: dir.z }
+        );
+        const hit = worldInstance.castRay(ray, playerRadius + 0.3, true);
+        
+        // Only reject if extremely close (less than 20cm) - definitely inside
+        if (hit && hit.timeOfImpact < 0.2) {
+          return { 
+            valid: false, 
+            reason: `Inside solid geometry at ${point.label}` 
+          };
+        }
+      }
+    }
+
+    // 3. Simple up ray check - make sure there's headroom
+    const rayUp = new rapierInstance.Ray(
+      { x: targetX, y: adjustedFeetY + 0.3, z: targetZ },
+      { x: 0, y: 1, z: 0 }
+    );
+    const hitUp = worldInstance.castRay(rayUp, playerHeight - 0.2, true);
+    if (hitUp && hitUp.timeOfImpact < playerHeight - 0.5) {
+      return { valid: false, reason: 'Not enough headroom' };
+    }
+
+    // 5. Ensure the ground isn't too far below original target
+    if (groundCheck.groundY < feetY - 5) {
+      return { valid: false, reason: 'Ground too far below' };
+    }
+
+    // 6. Final adjusted position
+    const adjustedY = groundCheck.groundY + playerHalfHeight + 0.05;
+    
+    return { 
+      valid: true, 
+      adjustedPosition: { x: targetX, y: adjustedY, z: targetZ } 
+    };
+  } catch (e) {
+    console.error('[Physics] validateTeleportDestination error:', e);
+    return { valid: false, reason: 'Validation error' }; // Block on error to be safe
+  }
+}
+
 // Check for wall collision in a specific direction
 export function checkWallCollision(
   x: number, y: number, z: number,

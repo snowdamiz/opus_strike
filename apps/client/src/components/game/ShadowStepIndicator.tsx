@@ -2,7 +2,10 @@ import { useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
-import { checkGroundWithNormal, isPhysicsReady } from '../../hooks/usePhysics';
+import { checkGroundWithNormal, isPhysicsReady, validateTeleportDestination, checkWallCollision } from '../../hooks/usePhysics';
+
+const PLAYER_HEIGHT = 1.8;
+const PLAYER_RADIUS = 0.4;
 
 // Maximum teleport range
 const MAX_RANGE = 25;
@@ -138,10 +141,85 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
             const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 20, targetZ, 50);
             if (groundCheck && groundCheck.isWalkable) {
               targetY = groundCheck.groundY + 0.05;
-              isValid = true;
+            } else {
+              foundGround = false;
             }
-          } else if (horizontalDist >= MIN_RANGE && heightDiff < 15) {
-            isValid = true;
+          }
+          
+          // Additional validation: check if position is inside geometry
+          if (foundGround && horizontalDist >= MIN_RANGE && heightDiff < 15) {
+            const dx = targetX - localPlayer.position.x;
+            const dz = targetZ - localPlayer.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            const dirX = dx / dist;
+            const dirZ = dz / dist;
+            
+            // For elevated targets (like stairs), we need smarter wall checking
+            // If target is higher, cast rays from an elevated position to avoid hitting stair faces
+            const elevationDiff = targetY - playerFeetY;
+            const isElevatedTarget = elevationDiff > 0.3; // Target is notably higher
+            
+            let wallBlocking = false;
+            
+            if (!isElevatedTarget) {
+              // Flat or lower target - check for walls normally
+              const checkHeights = [0.9, 1.5]; // center, head only
+              for (const h of checkHeights) {
+                const wallCheck = checkWallCollision(
+                  localPlayer.position.x, 
+                  localPlayer.position.y - PLAYER_HEIGHT/2 + h, 
+                  localPlayer.position.z,
+                  dirX, dirZ,
+                  dist
+                );
+                // Only count as wall if normal is wall-like (not floor)
+                const normalY = Math.abs(wallCheck.normal.y);
+                if (wallCheck.hit && wallCheck.distance < dist - 1.5 && normalY < 0.5) {
+                  wallBlocking = true;
+                  break;
+                }
+              }
+            } else {
+              // Elevated target (stairs, ledges) - check from ABOVE the target height
+              // This avoids detecting the stair face itself as a wall
+              const elevatedCheckY = targetY + 1.0; // Check from above the target ground
+              const wallCheck = checkWallCollision(
+                localPlayer.position.x,
+                elevatedCheckY,
+                localPlayer.position.z,
+                dirX, dirZ,
+                dist
+              );
+              // Only block if there's a real wall (vertical surface) in the path at head height
+              const normalY = Math.abs(wallCheck.normal.y);
+              if (wallCheck.hit && wallCheck.distance < dist - 2.0 && normalY < 0.3) {
+                wallBlocking = true;
+              }
+            }
+            
+            if (wallBlocking) {
+              isValid = false;
+            } else {
+              // Validate the destination itself - for elevated targets, be more lenient
+              const teleportY = targetY + PLAYER_HEIGHT / 2 + 0.1;
+              const validation = validateTeleportDestination(targetX, teleportY, targetZ, PLAYER_HEIGHT, PLAYER_RADIUS);
+              
+              // For elevated targets (stairs/ledges), also accept if we just have valid ground
+              if (validation.valid) {
+                isValid = true;
+                if (validation.adjustedPosition) {
+                  targetY = validation.adjustedPosition.y - PLAYER_HEIGHT / 2;
+                }
+              } else if (isElevatedTarget) {
+                // Fallback for elevated targets: if ground is walkable, allow it
+                // This handles stairs where the geometry validation might be too strict
+                const groundRecheck = checkGroundWithNormal(targetX, teleportY + 2, targetZ, 5);
+                if (groundRecheck && groundRecheck.isWalkable) {
+                  isValid = true;
+                  targetY = groundRecheck.groundY + 0.05;
+                }
+              }
+            }
           }
         }
       }

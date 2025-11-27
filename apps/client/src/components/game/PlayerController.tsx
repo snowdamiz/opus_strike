@@ -9,6 +9,7 @@ import {
   checkWallCollision,
   isPhysicsReady, 
   getColliderCount,
+  validateTeleportDestination,
   type GroundInfo 
 } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
@@ -228,12 +229,109 @@ export function PlayerController() {
     // Read current position directly from store to avoid stale closure
     const currentPos = useGameStore.getState().localPlayer?.position;
     
-    // Calculate teleport destination (target is ground level, add player height)
-    const teleportY = target.y + PLAYER_HEIGHT / 2 + 0.1; // Slightly above to avoid clipping
+    // Calculate initial teleport destination (target is ground level, add player height)
+    let teleportX = target.x;
+    let teleportY = target.y + PLAYER_HEIGHT / 2 + 0.1; // Slightly above to avoid clipping
+    let teleportZ = target.z;
+    
+    // Check for walls between current position and target
+    if (currentPos) {
+      const dx = teleportX - currentPos.x;
+      const dz = teleportZ - currentPos.z;
+      const distToTarget = Math.sqrt(dx * dx + dz * dz);
+      const dirX = dx / distToTarget;
+      const dirZ = dz / distToTarget;
+      
+      const playerFeetY = currentPos.y - PLAYER_HEIGHT / 2;
+      const elevationDiff = target.y - playerFeetY;
+      const isElevatedTarget = elevationDiff > 0.3;
+      
+      let wallBlocking = false;
+      
+      if (!isElevatedTarget) {
+        // Flat or lower target - check for walls normally
+        const checkHeights = [0.9, 1.5]; // center, head
+        for (const h of checkHeights) {
+          const wallCheck = checkWallCollision(
+            currentPos.x, currentPos.y - PLAYER_HEIGHT/2 + h, currentPos.z,
+            dirX, dirZ,
+            distToTarget
+          );
+          
+          const normalY = Math.abs(wallCheck.normal.y);
+          if (wallCheck.hit && wallCheck.distance < distToTarget - 1.5 && normalY < 0.5) {
+            console.log(`[Ability] Shadow Step blocked by wall at height ${h}`);
+            wallBlocking = true;
+            break;
+          }
+        }
+      } else {
+        // Elevated target (stairs, ledges) - check from above the target height
+        const elevatedCheckY = target.y + 1.0;
+        const wallCheck = checkWallCollision(
+          currentPos.x,
+          elevatedCheckY,
+          currentPos.z,
+          dirX, dirZ,
+          distToTarget
+        );
+        const normalY = Math.abs(wallCheck.normal.y);
+        if (wallCheck.hit && wallCheck.distance < distToTarget - 2.0 && normalY < 0.3) {
+          console.log(`[Ability] Shadow Step blocked by wall (elevated check)`);
+          wallBlocking = true;
+        }
+      }
+      
+      if (wallBlocking) {
+        teleportingRef.current = false;
+        useGameStore.getState().setShadowStepTargeting(false, false);
+        shadowStepTargetRef.current = null;
+        shadowStepValidRef.current = false;
+        return;
+      }
+    }
+    
+    // Validate the teleport destination
+    const validation = validateTeleportDestination(teleportX, teleportY, teleportZ, PLAYER_HEIGHT, PLAYER_RADIUS);
+    
+    // Check if this is an elevated target (stairs, ledges)
+    const playerFeetY = currentPos ? currentPos.y - PLAYER_HEIGHT / 2 : 0;
+    const elevationDiff = target.y - playerFeetY;
+    const isElevatedTarget = elevationDiff > 0.3;
+    
+    if (!validation.valid) {
+      // For elevated targets, try a fallback - just check for walkable ground
+      if (isElevatedTarget) {
+        const groundRecheck = checkGroundWithNormal(teleportX, teleportY + 2, teleportZ, 5);
+        if (groundRecheck && groundRecheck.isWalkable) {
+          console.log(`[Ability] Shadow Step - using elevated fallback validation`);
+          teleportY = groundRecheck.groundY + PLAYER_HEIGHT / 2 + 0.1;
+        } else {
+          console.log(`[Ability] Shadow Step blocked: ${validation.reason}`);
+          teleportingRef.current = false;
+          useGameStore.getState().setShadowStepTargeting(false, false);
+          shadowStepTargetRef.current = null;
+          shadowStepValidRef.current = false;
+          return;
+        }
+      } else {
+        console.log(`[Ability] Shadow Step blocked: ${validation.reason}`);
+        teleportingRef.current = false;
+        useGameStore.getState().setShadowStepTargeting(false, false);
+        shadowStepTargetRef.current = null;
+        shadowStepValidRef.current = false;
+        return;
+      }
+    } else if (validation.adjustedPosition) {
+      // Use adjusted position if provided
+      teleportX = validation.adjustedPosition.x;
+      teleportY = validation.adjustedPosition.y;
+      teleportZ = validation.adjustedPosition.z;
+    }
     
     console.log(`[Ability] Shadow Step executing:`);
     console.log(`  From: (${currentPos?.x.toFixed(1)}, ${currentPos?.y.toFixed(1)}, ${currentPos?.z.toFixed(1)})`);
-    console.log(`  To: (${target.x.toFixed(1)}, ${teleportY.toFixed(1)}, ${target.z.toFixed(1)})`);
+    console.log(`  To: (${teleportX.toFixed(1)}, ${teleportY.toFixed(1)}, ${teleportZ.toFixed(1)})`);
     
     // Trigger visual effect
     triggerTeleportEffect('shadowstep');
@@ -248,12 +346,12 @@ export function PlayerController() {
     
     // Update local player position in store
     updateLocalPlayer({
-      position: { x: target.x, y: teleportY, z: target.z },
+      position: { x: teleportX, y: teleportY, z: teleportZ },
       velocity: { x: 0, y: 0, z: 0 },
     });
     
     // Also update camera immediately for instant feedback
-    camera.position.set(target.x, teleportY + 0.6, target.z);
+    camera.position.set(teleportX, teleportY + 0.6, teleportZ);
     
     // Reset velocity and smoothing
     velocityRef.current.set(0, 0, 0);
@@ -381,6 +479,115 @@ export function PlayerController() {
     switch (abilityId) {
       // ===== PHANTOM ABILITIES =====
       case 'phantom_blink': {
+        // Calculate target position first
+        const blinkDistance = 8;
+        const yaw = yawRef.current;
+        const pitch = pitchRef.current;
+        
+        const dx = -Math.sin(yaw);
+        const dz = -Math.cos(yaw);
+        
+        let targetX = position.x + dx * blinkDistance;
+        let targetY = position.y;
+        let targetZ = position.z + dz * blinkDistance;
+        
+        // Small upward boost if looking up
+        if (pitch < -0.3) {
+          targetY += 2;
+        }
+        
+        // Check for walls between current position and target (only at mid/head height to avoid ground hits)
+        const checkHeights = [0.9, 1.5]; // center, head (skip feet to avoid ground detection)
+        let wallBlocking = false;
+        const distToTarget = Math.sqrt(
+          (targetX - position.x) ** 2 + 
+          (targetZ - position.z) ** 2
+        );
+        
+        for (const h of checkHeights) {
+          const wallCheck = checkWallCollision(
+            position.x, position.y - PLAYER_HEIGHT/2 + h, position.z,
+            dx, dz,
+            distToTarget
+          );
+          
+          // Only count as blocking if wall is significantly closer than target
+          // and the hit normal indicates a vertical surface (wall), not floor
+          if (wallCheck.hit && wallCheck.distance < distToTarget - 1.0) {
+            // Check if the normal indicates a wall (mostly horizontal normal = vertical surface)
+            const normalY = Math.abs(wallCheck.normal.y);
+            if (normalY < 0.5) { // Wall-like surface (normal is mostly horizontal)
+              wallBlocking = true;
+              console.log(`[Ability] Blink blocked by wall at height ${h}, distance ${wallCheck.distance.toFixed(1)}`);
+              break;
+            }
+          }
+        }
+        
+        if (wallBlocking) {
+          // Find the maximum safe distance (minimum 3m to be useful)
+          let safeDistance = 3;
+          for (let testDist = blinkDistance - 1; testDist >= 3; testDist -= 1) {
+            let blocked = false;
+            for (const h of checkHeights) {
+              const wallCheck = checkWallCollision(
+                position.x, position.y - PLAYER_HEIGHT/2 + h, position.z,
+                dx, dz,
+                testDist
+              );
+              const normalY = Math.abs(wallCheck.normal.y);
+              if (wallCheck.hit && wallCheck.distance < testDist - 0.5 && normalY < 0.5) {
+                blocked = true;
+                break;
+              }
+            }
+            if (!blocked) {
+              safeDistance = testDist;
+              break;
+            }
+          }
+          
+          // Adjust target to safe distance
+          targetX = position.x + dx * safeDistance;
+          targetZ = position.z + dz * safeDistance;
+          console.log(`[Ability] Blink adjusted to safe distance: ${safeDistance}m`);
+        }
+        
+        // Validate the teleport destination
+        console.log(`[Ability] Blink validating: (${targetX.toFixed(1)}, ${targetY.toFixed(1)}, ${targetZ.toFixed(1)})`);
+        const validation = validateTeleportDestination(targetX, targetY, targetZ, PLAYER_HEIGHT, PLAYER_RADIUS);
+        console.log(`[Ability] Blink validation result: ${validation.valid ? 'VALID' : 'INVALID'} - ${validation.reason || 'ok'}`);
+        
+        if (!validation.valid) {
+          // Try shorter distances until we find a valid spot
+          let foundValid = false;
+          for (let dist = blinkDistance - 1; dist >= 2; dist--) {
+            const shorterX = position.x + dx * dist;
+            const shorterZ = position.z + dz * dist;
+            const shorterValidation = validateTeleportDestination(shorterX, targetY, shorterZ, PLAYER_HEIGHT, PLAYER_RADIUS);
+            
+            if (shorterValidation.valid) {
+              targetX = shorterValidation.adjustedPosition?.x ?? shorterX;
+              targetY = shorterValidation.adjustedPosition?.y ?? targetY;
+              targetZ = shorterValidation.adjustedPosition?.z ?? shorterZ;
+              foundValid = true;
+              console.log(`[Ability] Blink shortened to ${dist}m (original: ${validation.reason})`);
+              break;
+            }
+          }
+          
+          if (!foundValid) {
+            console.log(`[Ability] Blink BLOCKED - no valid position found: ${validation.reason}`);
+            // Don't consume charge if blink is completely blocked
+            return;
+          }
+        } else if (validation.adjustedPosition) {
+          // Use adjusted position (snapped to ground)
+          targetX = validation.adjustedPosition.x;
+          targetY = validation.adjustedPosition.y;
+          targetZ = validation.adjustedPosition.z;
+        }
+        
         // Use a charge (handles cooldown when charges depleted)
         if (!useAbilityCharge(abilityId)) {
           console.log('[Ability] Blink - no charges available');
@@ -390,21 +597,10 @@ export function PlayerController() {
         // Trigger visual effect
         triggerTeleportEffect('blink');
         
-        // Instant teleport in look direction
-        const distance = 8;
-        const yaw = yawRef.current;
-        const pitch = pitchRef.current;
-        
-        const dx = -Math.sin(yaw);
-        const dz = -Math.cos(yaw);
-        
-        position.x += dx * distance;
-        position.z += dz * distance;
-        
-        // Small upward boost if looking up
-        if (pitch < -0.3) {
-          position.y += 2;
-        }
+        // Apply the validated teleport
+        position.x = targetX;
+        position.y = targetY;
+        position.z = targetZ;
         
         // Reset velocity for clean teleport
         velocity.x = dx * 2;
@@ -423,8 +619,16 @@ export function PlayerController() {
 
       case 'phantom_veil': {
         // Become invisible - mark as active
+        const duration = ABILITY_DEFINITIONS[abilityId]?.duration ?? 6;
         abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
-        console.log('[Ability] Phantom Veil activated! (30% speed boost)');
+        
+        // Consume ultimate charge
+        updateLocalPlayer({ ultimateCharge: 0 });
+        
+        // Activate visual effect
+        useGameStore.getState().setUltimateEffect(true, 'phantom_veil', Date.now() + duration * 1000);
+        
+        console.log(`[Ability] Phantom Veil activated! (30% speed boost for ${duration}s)`);
         break;
       }
 

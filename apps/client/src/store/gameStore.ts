@@ -86,6 +86,11 @@ interface GameStore {
   shadowStepTargeting: boolean;
   shadowStepValid: boolean;
   
+  // Ultimate effect state
+  ultimateEffectActive: boolean;
+  ultimateEffectType: string | null; // e.g., 'phantom_veil', 'pulse_haste'
+  ultimateEffectEndTime: number;
+  
   // Client-side cooldowns (for instant UI feedback)
   clientCooldowns: Record<string, number>; // abilityId -> cooldown end timestamp
   clientCharges: Record<string, number>; // abilityId -> current charges
@@ -120,6 +125,7 @@ interface GameStore {
   
   // UI Actions
   setShadowStepTargeting: (targeting: boolean, valid?: boolean) => void;
+  setUltimateEffect: (active: boolean, type?: string | null, endTime?: number) => void;
   setClientCooldown: (abilityId: string, endTime: number) => void;
   setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
@@ -158,6 +164,9 @@ const initialState = {
   lastProcessedTick: 0,
   shadowStepTargeting: false,
   shadowStepValid: false,
+  ultimateEffectActive: false,
+  ultimateEffectType: null,
+  ultimateEffectEndTime: 0,
   clientCooldowns: {} as Record<string, number>,
   clientCharges: {} as Record<string, number>,
 };
@@ -310,6 +319,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setShadowStepTargeting: (targeting, valid = false) => set({ 
     shadowStepTargeting: targeting, 
     shadowStepValid: valid 
+  }),
+  
+  setUltimateEffect: (active, type = null, endTime = 0) => set({
+    ultimateEffectActive: active,
+    ultimateEffectType: type,
+    ultimateEffectEndTime: endTime,
   }),
 
   setClientCooldown: (abilityId, endTime) => set((state) => ({
