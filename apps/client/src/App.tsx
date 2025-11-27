@@ -10,6 +10,7 @@ import { LoadingScreen } from './components/ui/LoadingScreen';
 import { Scoreboard } from './components/ui/Scoreboard';
 import { InGameMenu } from './components/ui/InGameMenu';
 import { GameConsole } from './components/ui/GameConsole';
+import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 
 export function App() {
   const { appPhase, gamePhase, isLoading, localPlayer } = useGameStore();
@@ -102,6 +103,7 @@ export function App() {
         {isActiveGame && (
           <>
             <HUD />
+            <ShadowStepOverlay />
             {showScoreboard && <Scoreboard />}
           </>
         )}

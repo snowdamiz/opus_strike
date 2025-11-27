@@ -82,6 +82,13 @@ interface GameStore {
   pendingInputs: PlayerInput[];
   lastProcessedTick: number;
   
+  // UI State
+  shadowStepTargeting: boolean;
+  shadowStepValid: boolean;
+  
+  // Client-side cooldowns (for instant UI feedback)
+  clientCooldowns: Record<string, number>; // abilityId -> cooldown end timestamp
+  
   // Actions
   setWalletAddress: (address: string | null) => void;
   setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
@@ -109,6 +116,11 @@ interface GameStore {
   updateLobbyPlayer: (playerId: string, player: LobbyPlayer) => void;
   removeLobbyPlayer: (playerId: string) => void;
   setIsLobbyHost: (isHost: boolean) => void;
+  
+  // UI Actions
+  setShadowStepTargeting: (targeting: boolean, valid?: boolean) => void;
+  setClientCooldown: (abilityId: string, endTime: number) => void;
+  clearClientCooldowns: () => void;
   
   reset: () => void;
   resetLobby: () => void;
@@ -142,6 +154,9 @@ const initialState = {
   phaseEndTime: null,
   pendingInputs: [],
   lastProcessedTick: 0,
+  shadowStepTargeting: false,
+  shadowStepValid: false,
+  clientCooldowns: {} as Record<string, number>,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -288,6 +303,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
   
   setIsLobbyHost: (isHost) => set({ isLobbyHost: isHost }),
+  
+  setShadowStepTargeting: (targeting, valid = false) => set({ 
+    shadowStepTargeting: targeting, 
+    shadowStepValid: valid 
+  }),
+
+  setClientCooldown: (abilityId, endTime) => set((state) => ({
+    clientCooldowns: { ...state.clientCooldowns, [abilityId]: endTime }
+  })),
+  
+  clearClientCooldowns: () => set({ clientCooldowns: {} }),
 
   reset: () => set(initialState),
   

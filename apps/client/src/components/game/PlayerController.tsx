@@ -21,9 +21,12 @@ import {
   GRAVITY,
   TICK_RATE,
   getHeroStats,
+  HERO_DEFINITIONS,
+  ABILITY_DEFINITIONS,
   type HeroId,
 } from '@voxel-strike/shared';
 import { isInsideBoundary, constrainToBoundary } from '../../config/mapBoundaries';
+import { ShadowStepIndicator } from './ShadowStepIndicator';
 
 // Player collision constants
 const PLAYER_HEIGHT = 1.8;
@@ -41,7 +44,16 @@ let lastDebugTime = 0;
 
 export function PlayerController() {
   const { camera } = useThree();
-  const { localPlayer, updateLocalPlayer, gamePhase } = useGameStore();
+  // Get functions from store (these don't change)
+  const updateLocalPlayer = useGameStore(state => state.updateLocalPlayer);
+  const setShadowStepTargeting = useGameStore(state => state.setShadowStepTargeting);
+  const setClientCooldown = useGameStore(state => state.setClientCooldown);
+  // Get reactive state for React rendering
+  const gamePhase = useGameStore(state => state.gamePhase);
+  const shadowStepTargeting = useGameStore(state => state.shadowStepTargeting);
+  // Note: localPlayer is read directly from store in useFrame to avoid stale closures
+  const localPlayerForInit = useGameStore(state => state.localPlayer);
+  
   const { inputState, isPointerLocked, requestPointerLock } = useInput();
   const { world, playerBody } = usePhysics();
   const { sendInput } = useNetwork();
@@ -56,31 +68,151 @@ export function PlayerController() {
   const lastSendRef = useRef(0);
   const smoothedYRef = useRef<number | null>(null); // For smooth camera over bumps
 
+  // Ability state tracking
+  const abilityPressedRef = useRef({ ability1: false, ability2: false, ultimate: false });
+  const clientCooldownsRef = useRef<Record<string, number>>({}); // Client-side cooldown end times
+  const abilityActiveRef = useRef<Record<string, { active: boolean; startTime: number }>>({});
+  const teleportInProgressRef = useRef(false); // Prevent multiple teleports
+
+  // Shadow Step targeting state
+  const shadowStepTargetRef = useRef<THREE.Vector3 | null>(null);
+  const shadowStepValidRef = useRef(false);
+
   // Initialize camera position - also check if we need to spawn higher
   useEffect(() => {
-    if (localPlayer && !initializedRef.current) {
+    if (localPlayerForInit && !initializedRef.current) {
       // If spawning too low (under terrain), start high and fall down
-      const startY = localPlayer.position.y < 20 ? 60 : localPlayer.position.y;
-      camera.position.set(localPlayer.position.x, startY + 0.6, localPlayer.position.z);
+      const startY = localPlayerForInit.position.y < 20 ? 60 : localPlayerForInit.position.y;
+      camera.position.set(localPlayerForInit.position.x, startY + 0.6, localPlayerForInit.position.z);
       
       // Also update the player position in store
-      if (localPlayer.position.y < 20) {
+      if (localPlayerForInit.position.y < 20) {
         updateLocalPlayer({
-          position: { x: localPlayer.position.x, y: startY, z: localPlayer.position.z }
+          position: { x: localPlayerForInit.position.x, y: startY, z: localPlayerForInit.position.z }
         });
         console.log('[Player] Spawning high at y=60 to fall onto terrain');
       }
       
       initializedRef.current = true;
     }
-  }, [localPlayer, camera, updateLocalPlayer]);
+  }, [localPlayerForInit, camera, updateLocalPlayer]);
+
+  // Start a client-side cooldown for an ability
+  const startClientCooldown = useCallback((abilityId: string) => {
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    if (abilityDef) {
+      const cooldownMs = abilityDef.cooldown * 1000;
+      const endTime = Date.now() + cooldownMs;
+      clientCooldownsRef.current[abilityId] = endTime;
+      // Also update store so HUD can display cooldown
+      setClientCooldown(abilityId, endTime);
+      console.log(`[Ability] Started cooldown for ${abilityDef.name}: ${abilityDef.cooldown}s`);
+    }
+  }, [setClientCooldown]);
+
+  // Ref to prevent re-entry during teleport execution
+  const teleportingRef = useRef(false);
+
+  // Execute the Shadow Step teleport
+  const executeShadowStepTeleport = useCallback(() => {
+    // CRITICAL: Prevent re-entry (multiple clicks/keypresses)
+    if (teleportingRef.current) {
+      console.log('[Ability] Shadow Step blocked - already teleporting');
+      return;
+    }
+    
+    // Check cooldown to prevent using while on cooldown
+    const cooldownEnd = clientCooldownsRef.current['phantom_shadowstep'];
+    if (cooldownEnd && Date.now() < cooldownEnd) {
+      const remaining = Math.ceil((cooldownEnd - Date.now()) / 1000);
+      console.log(`[Ability] Shadow Step on cooldown - ${remaining}s remaining`);
+      // Use direct store access to ensure state update
+      useGameStore.getState().setShadowStepTargeting(false, false);
+      shadowStepTargetRef.current = null;
+      shadowStepValidRef.current = false;
+      teleportingRef.current = false;
+      return;
+    }
+    
+    if (!shadowStepTargetRef.current) {
+      console.log('[Ability] Shadow Step failed - no target position');
+      useGameStore.getState().setShadowStepTargeting(false, false);
+      teleportingRef.current = false;
+      return;
+    }
+    
+    if (!shadowStepValidRef.current) {
+      console.log('[Ability] Shadow Step failed - invalid target location');
+      // Don't exit targeting mode, let user re-aim
+      return;
+    }
+    
+    // Set teleporting flag IMMEDIATELY to prevent re-entry
+    teleportingRef.current = true;
+    
+    const target = shadowStepTargetRef.current.clone();
+    // Read current position directly from store to avoid stale closure
+    const currentPos = useGameStore.getState().localPlayer?.position;
+    
+    // Calculate teleport destination (target is ground level, add player height)
+    const teleportY = target.y + PLAYER_HEIGHT / 2 + 0.1; // Slightly above to avoid clipping
+    
+    console.log(`[Ability] Shadow Step executing:`);
+    console.log(`  From: (${currentPos?.x.toFixed(1)}, ${currentPos?.y.toFixed(1)}, ${currentPos?.z.toFixed(1)})`);
+    console.log(`  To: (${target.x.toFixed(1)}, ${teleportY.toFixed(1)}, ${target.z.toFixed(1)})`);
+    
+    // EXIT TARGETING MODE FIRST (before any async operations)
+    // Call directly from store to ensure we get the current action
+    useGameStore.getState().setShadowStepTargeting(false, false);
+    shadowStepTargetRef.current = null;
+    shadowStepValidRef.current = false;
+    
+    console.log('[Ability] Targeting mode disabled');
+    
+    // Update local player position in store
+    updateLocalPlayer({
+      position: { x: target.x, y: teleportY, z: target.z },
+      velocity: { x: 0, y: 0, z: 0 },
+    });
+    
+    // Also update camera immediately for instant feedback
+    camera.position.set(target.x, teleportY + 0.6, target.z);
+    
+    // Reset velocity and smoothing
+    velocityRef.current.set(0, 0, 0);
+    smoothedYRef.current = teleportY;
+    isGroundedRef.current = false; // Let physics re-establish ground
+    
+    // Start client-side cooldown AFTER teleport completes
+    startClientCooldown('phantom_shadowstep');
+    
+    // Send ability usage to server NOW (after teleport, for proper cooldown tracking)
+    sendInput({
+      tick: 0,
+      ability2: true,
+      timestamp: Date.now(),
+      position: { x: target.x, y: teleportY, z: target.z },
+      velocity: { x: 0, y: 0, z: 0 },
+    } as any);
+    
+    // Reset teleporting flag after a short delay (prevents accidental re-triggers)
+    setTimeout(() => {
+      teleportingRef.current = false;
+    }, 100);
+    
+    console.log(`[Ability] Shadow Step complete!`);
+  }, [updateLocalPlayer, camera, startClientCooldown, sendInput]);
 
   // Handle pointer lock on click
   const handleClick = useCallback(() => {
     if (!isPointerLocked) {
       requestPointerLock();
+    } else if (shadowStepTargeting && shadowStepValidRef.current && shadowStepTargetRef.current) {
+      // Confirm Shadow Step teleport on click
+      console.log('[Ability] Shadow Step confirmed!');
+      executeShadowStepTeleport();
     }
-  }, [isPointerLocked, requestPointerLock]);
+  }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport]);
 
   useEffect(() => {
     const canvas = document.querySelector('canvas');
@@ -89,6 +221,45 @@ export function PlayerController() {
       return () => canvas.removeEventListener('click', handleClick);
     }
   }, [handleClick]);
+
+  // Cancel Shadow Step on right click or Escape
+  useEffect(() => {
+    const handleCancel = (e: MouseEvent | KeyboardEvent) => {
+      // Read fresh from store
+      const isTargeting = useGameStore.getState().shadowStepTargeting;
+      if (!isTargeting) return;
+      
+      if ((e instanceof MouseEvent && e.button === 2) || 
+          (e instanceof KeyboardEvent && e.code === 'Escape')) {
+        e.preventDefault();
+        // Call directly from store
+        useGameStore.getState().setShadowStepTargeting(false, false);
+        shadowStepTargetRef.current = null;
+        shadowStepValidRef.current = false;
+        teleportingRef.current = false;
+        console.log('[Ability] Shadow Step cancelled');
+      }
+    };
+
+    const handleContextMenu = (e: MouseEvent) => {
+      if (shadowStepTargeting) {
+        e.preventDefault();
+        setShadowStepTargeting(false);
+        shadowStepTargetRef.current = null;
+        console.log('[Ability] Shadow Step cancelled');
+      }
+    };
+
+    window.addEventListener('mousedown', handleCancel);
+    window.addEventListener('keydown', handleCancel);
+    window.addEventListener('contextmenu', handleContextMenu);
+    
+    return () => {
+      window.removeEventListener('mousedown', handleCancel);
+      window.removeEventListener('keydown', handleCancel);
+      window.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, [shadowStepTargeting, setShadowStepTargeting]);
 
   // Handle mouse movement
   useEffect(() => {
@@ -104,7 +275,229 @@ export function PlayerController() {
     return () => document.removeEventListener('mousemove', handleMouseMove);
   }, [isPointerLocked]);
 
+  // Handle Shadow Step target updates from indicator
+  const handleShadowStepTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
+    shadowStepTargetRef.current = position;
+    shadowStepValidRef.current = isValid;
+    // Only update validity in store (for UI), don't touch targeting state
+    const store = useGameStore.getState();
+    if (store.shadowStepTargeting && store.shadowStepValid !== isValid) {
+      store.setShadowStepTargeting(true, isValid);
+    }
+  }, []);
+
+  // Execute ability effect on client
+  const executeAbility = useCallback((abilityId: string, position: THREE.Vector3, velocity: THREE.Vector3) => {
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    if (!abilityDef) return;
+
+    console.log(`[Ability] Executing ${abilityDef.name}!`);
+    
+    // Start cooldown for all abilities (except shadow step which has special handling)
+    if (abilityId !== 'phantom_shadowstep') {
+      startClientCooldown(abilityId);
+    }
+
+    switch (abilityId) {
+      // ===== PHANTOM ABILITIES =====
+      case 'phantom_blink': {
+        // Instant teleport in look direction
+        const distance = 8;
+        const yaw = yawRef.current;
+        const pitch = pitchRef.current;
+        
+        const dx = -Math.sin(yaw);
+        const dz = -Math.cos(yaw);
+        
+        position.x += dx * distance;
+        position.z += dz * distance;
+        
+        // Small upward boost if looking up
+        if (pitch < -0.3) {
+          position.y += 2;
+        }
+        
+        // Reset velocity for clean teleport
+        velocity.x = dx * 2;
+        velocity.z = dz * 2;
+        
+        console.log(`[Ability] Blinked to (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)})`);
+        break;
+      }
+
+      case 'phantom_shadowstep': {
+        // Enter targeting mode instead of instant teleport
+        setShadowStepTargeting(true);
+        console.log('[Ability] Shadow Step targeting mode activated - aim and click to teleport');
+        break;
+      }
+
+      case 'phantom_veil': {
+        // Become invisible - mark as active
+        abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
+        console.log('[Ability] Phantom Veil activated! (30% speed boost)');
+        break;
+      }
+
+      // ===== HOOKSHOT ABILITIES =====
+      case 'hookshot_grapple': {
+        // Grapple pull - launch toward look direction
+        const distance = 15;
+        const yaw = yawRef.current;
+        const pitch = pitchRef.current;
+        
+        velocity.x = -Math.sin(yaw) * Math.cos(pitch) * distance;
+        velocity.y = -Math.sin(pitch) * distance * 0.5 + 5;
+        velocity.z = -Math.cos(yaw) * Math.cos(pitch) * distance;
+        
+        console.log('[Ability] Grapple launched!');
+        break;
+      }
+
+      case 'hookshot_swing': {
+        // Swing momentum boost
+        const boost = 12;
+        const yaw = yawRef.current;
+        
+        velocity.x += -Math.sin(yaw) * boost;
+        velocity.y += 6;
+        velocity.z += -Math.cos(yaw) * boost;
+        
+        console.log('[Ability] Swing Line activated!');
+        break;
+      }
+
+      // ===== BLAZE ABILITIES =====
+      case 'blaze_rocketjump': {
+        // Explosive jump
+        velocity.y = 18;
+        position.y += 0.5;
+        
+        // Small horizontal push in look direction
+        const yaw = yawRef.current;
+        velocity.x += -Math.sin(yaw) * 5;
+        velocity.z += -Math.cos(yaw) * 5;
+        
+        console.log('[Ability] Rocket Jump!');
+        break;
+      }
+
+      // ===== GLACIER ABILITIES =====
+      case 'glacier_iceslide': {
+        // Speed boost in movement direction
+        const boost = 15;
+        const yaw = yawRef.current;
+        
+        velocity.x = -Math.sin(yaw) * boost;
+        velocity.z = -Math.cos(yaw) * boost;
+        
+        abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
+        console.log('[Ability] Ice Slide activated!');
+        break;
+      }
+
+      case 'glacier_wallclimb': {
+        // Wall climb - boost upward
+        velocity.y = 12;
+        abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
+        console.log('[Ability] Frost Climb activated!');
+        break;
+      }
+
+      // ===== PULSE ABILITIES =====
+      case 'pulse_speedboost': {
+        // Speed aura - mark as active
+        abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
+        console.log('[Ability] Speed Aura activated!');
+        break;
+      }
+
+      case 'pulse_dash': {
+        // Quick dash
+        const distance = 10;
+        const yaw = yawRef.current;
+        
+        position.x += -Math.sin(yaw) * distance;
+        position.z += -Math.cos(yaw) * distance;
+        
+        velocity.x = -Math.sin(yaw) * 8;
+        velocity.z = -Math.cos(yaw) * 8;
+        
+        console.log('[Ability] Quick Dash!');
+        break;
+      }
+
+      case 'pulse_haste': {
+        // Team haste - mark as active
+        abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
+        console.log('[Ability] Team Haste activated!');
+        break;
+      }
+
+      // ===== SENTINEL ABILITIES =====
+      case 'sentinel_fortify': {
+        // Fortify - plant in place
+        velocity.x = 0;
+        velocity.z = 0;
+        abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
+        console.log('[Ability] Fortify activated!');
+        break;
+      }
+
+      case 'sentinel_barrier': {
+        // Deploy barrier in front
+        console.log('[Ability] Energy Barrier deployed!');
+        break;
+      }
+
+      case 'sentinel_dome': {
+        // Shield dome
+        abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
+        console.log('[Ability] Shield Dome activated!');
+        break;
+      }
+    }
+  }, [startClientCooldown]);
+
+  // Check if ability can be used (client-side check using server cooldown data)
+  const canUseAbility = useCallback((abilityId: string, isUltimate: boolean) => {
+    // Read directly from store for fresh data
+    const localPlayer = useGameStore.getState().localPlayer;
+    if (!localPlayer) return false;
+
+    // Don't allow using abilities while Shadow Step targeting is active
+    if (shadowStepTargeting && abilityId !== 'phantom_shadowstep') return false;
+
+    // Check client-side cooldown first (for immediate feedback)
+    const clientCooldownEnd = clientCooldownsRef.current[abilityId];
+    if (clientCooldownEnd && Date.now() < clientCooldownEnd) {
+      return false;
+    }
+
+    // Check server-synced ability state
+    const abilityState = localPlayer.abilities?.[abilityId];
+    if (abilityState) {
+      if (abilityState.cooldownRemaining > 0) return false;
+      
+      // Check charges for multi-charge abilities
+      const abilityDef = ABILITY_DEFINITIONS[abilityId];
+      if (abilityDef?.charges && abilityDef.charges > 1) {
+        if (abilityState.charges <= 0) return false;
+      }
+    }
+
+    // Check ultimate charge
+    if (isUltimate && (localPlayer.ultimateCharge ?? 0) < 100) {
+      return false;
+    }
+
+    return true;
+  }, [shadowStepTargeting]);
+
   useFrame((_, delta) => {
+    // Read localPlayer directly from store to get latest state (avoids stale closures)
+    const localPlayer = useGameStore.getState().localPlayer;
+    
     // Only run movement during active gameplay
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
     
@@ -127,6 +520,9 @@ export function PlayerController() {
     // Get movement direction from input
     const moveDirection = new THREE.Vector3();
     
+    // Reduce movement speed while in Shadow Step targeting mode
+    const movementMultiplier = shadowStepTargeting ? 0.3 : 1;
+    
     if (inputState.moveForward) moveDirection.z -= 1;
     if (inputState.moveBackward) moveDirection.z += 1;
     if (inputState.moveLeft) moveDirection.x -= 1;
@@ -140,9 +536,31 @@ export function PlayerController() {
 
     // Calculate speed from hero stats
     const heroStats = getHeroStats(localPlayer.heroId as HeroId);
-    let speed = heroStats.moveSpeed;
-    if (inputState.sprint) speed *= SPRINT_MULTIPLIER;
+    let speed = heroStats.moveSpeed * movementMultiplier;
+    if (inputState.sprint && !shadowStepTargeting) speed *= SPRINT_MULTIPLIER;
     if (inputState.crouch) speed *= CROUCH_MULTIPLIER;
+
+    // Check for active ability speed boosts
+    const now = Date.now();
+    for (const [abilityId, state] of Object.entries(abilityActiveRef.current)) {
+      if (!state.active) continue;
+      
+      const abilityDef = ABILITY_DEFINITIONS[abilityId];
+      const duration = (abilityDef?.duration ?? 0) * 1000;
+      
+      // Check if ability has expired
+      if (now - state.startTime >= duration) {
+        state.active = false;
+        console.log(`[Ability] ${abilityDef?.name} ended`);
+        continue;
+      }
+
+      // Apply speed boosts for active abilities
+      if (abilityId === 'phantom_veil') speed *= 1.3;
+      if (abilityId === 'pulse_speedboost') speed *= 1.3;
+      if (abilityId === 'pulse_haste') speed *= 1.5;
+      if (abilityId === 'glacier_iceslide') speed *= 1.5;
+    }
 
     // Apply movement
     const velocity = velocityRef.current;
@@ -158,6 +576,42 @@ export function PlayerController() {
       localPlayer.position.z
     );
 
+    // ===== ABILITY INPUT HANDLING =====
+    const heroId = localPlayer.heroId as HeroId;
+    if (heroId) {
+      const heroDef = HERO_DEFINITIONS[heroId];
+      if (heroDef) {
+        // Ability 1 (E) - Blink
+        if (inputState.ability1 && !abilityPressedRef.current.ability1) {
+          if (!shadowStepTargeting && canUseAbility(heroDef.ability1.abilityId, false)) {
+            executeAbility(heroDef.ability1.abilityId, position, velocity);
+          }
+        }
+        abilityPressedRef.current.ability1 = inputState.ability1;
+
+        // Ability 2 (Q) - Shadow Step
+        if (inputState.ability2 && !abilityPressedRef.current.ability2) {
+          if (shadowStepTargeting) {
+            // If already targeting, Q confirms the teleport (like click)
+            if (shadowStepValidRef.current && shadowStepTargetRef.current) {
+              executeShadowStepTeleport();
+            }
+          } else if (canUseAbility(heroDef.ability2.abilityId, false)) {
+            executeAbility(heroDef.ability2.abilityId, position, velocity);
+          }
+        }
+        abilityPressedRef.current.ability2 = inputState.ability2;
+
+        // Ultimate (F)
+        if (inputState.ultimate && !abilityPressedRef.current.ultimate) {
+          if (!shadowStepTargeting && canUseAbility(heroDef.ultimate.abilityId, true)) {
+            executeAbility(heroDef.ultimate.abilityId, position, velocity);
+          }
+        }
+        abilityPressedRef.current.ultimate = inputState.ultimate;
+      }
+    }
+
     const physicsOk = isPhysicsReady();
 
     // Ground check with slope detection
@@ -168,7 +622,6 @@ export function PlayerController() {
       groundInfo = checkGroundWithNormal(position.x, position.y + 0.5, position.z, 50);
 
       // Debug logging (throttled)
-      const now = Date.now();
       if (now - lastDebugTime > 2000) {
         lastDebugTime = now;
         const colliders = getColliderCount();
@@ -225,8 +678,8 @@ export function PlayerController() {
       smoothedYRef.current = null;
     }
 
-    // Jump - check AFTER ground detection
-    if (inputState.jump && canJumpRef.current && isGroundedRef.current) {
+    // Jump - check AFTER ground detection (disabled during targeting)
+    if (inputState.jump && canJumpRef.current && isGroundedRef.current && !shadowStepTargeting) {
       velocity.y = heroStats.jumpForce;
       canJumpRef.current = false;
       isGroundedRef.current = false;
@@ -370,9 +823,12 @@ export function PlayerController() {
 
     // Send input to server at tick rate
     tickRef.current++;
-    const now = Date.now();
     if (now - lastSendRef.current >= 1000 / TICK_RATE) {
       lastSendRef.current = now;
+      
+      // Get current targeting state from store
+      const currentTargeting = useGameStore.getState().shadowStepTargeting;
+      
       sendInput({
         tick: tickRef.current,
         moveForward: inputState.moveForward,
@@ -385,7 +841,8 @@ export function PlayerController() {
         primaryFire: inputState.primaryFire,
         secondaryFire: inputState.secondaryFire,
         ability1: inputState.ability1,
-        ability2: inputState.ability2,
+        // Don't send ability2 while in Shadow Step targeting mode (wait for actual teleport)
+        ability2: currentTargeting ? false : inputState.ability2,
         ultimate: inputState.ultimate,
         interact: inputState.interact,
         lookYaw: yawRef.current,
@@ -398,6 +855,10 @@ export function PlayerController() {
     }
   });
 
-  return null;
+  return (
+    <ShadowStepIndicator 
+      isActive={shadowStepTargeting} 
+      onTargetUpdate={handleShadowStepTargetUpdate}
+    />
+  );
 }
-

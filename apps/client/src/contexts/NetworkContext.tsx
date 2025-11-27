@@ -580,10 +580,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
               ...currentStore.localPlayer,
               health: serverPlayer.health ?? currentStore.localPlayer.health,
               maxHealth: serverPlayer.maxHealth ?? currentStore.localPlayer.maxHealth,
+              ultimateCharge: serverPlayer.ultimateCharge ?? currentStore.localPlayer.ultimateCharge,
               state: serverPlayer.state || currentStore.localPlayer.state,
               heroId: serverPlayer.heroId || currentStore.localPlayer.heroId,
               team: serverPlayer.team || currentStore.localPlayer.team,
               hasFlag: serverPlayer.hasFlag ?? currentStore.localPlayer.hasFlag,
+              abilities: serverPlayer.abilities || currentStore.localPlayer.abilities,
             };
             setLocalPlayer(updated);
           }
@@ -602,7 +604,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
               lookPitch: serverPlayer.lookPitch ?? existingPlayer.lookPitch,
               health: serverPlayer.health ?? existingPlayer.health,
               maxHealth: serverPlayer.maxHealth ?? existingPlayer.maxHealth,
+              ultimateCharge: serverPlayer.ultimateCharge ?? existingPlayer.ultimateCharge,
               hasFlag: serverPlayer.hasFlag ?? existingPlayer.hasFlag,
+              abilities: serverPlayer.abilities || existingPlayer.abilities,
             };
             updatePlayer(serverPlayer.id, updatedPlayer);
           } else {
@@ -619,7 +623,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
               lookPitch: serverPlayer.lookPitch ?? 0,
               health: serverPlayer.health ?? 100,
               maxHealth: serverPlayer.maxHealth ?? 100,
-              ultimateCharge: 0,
+              ultimateCharge: serverPlayer.ultimateCharge ?? 0,
               movement: {
                 isGrounded: true,
                 isSliding: false,
@@ -631,7 +635,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
                 jetpackFuel: 100,
                 isGliding: false,
               },
-              abilities: {},
+              abilities: serverPlayer.abilities || {},
               hasFlag: serverPlayer.hasFlag ?? false,
               respawnTime: null,
               spawnProtectionUntil: null,
@@ -646,6 +650,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     room.onMessage('playerLeft', (data: { playerId: string }) => {
       console.log(`Player left: ${data.playerId}`);
       removePlayer(data.playerId);
+    });
+
+    // Handle ability usage confirmation from server
+    room.onMessage('abilityUsed', (data: { playerId: string; abilityId: string; success: boolean }) => {
+      console.log(`Ability used: ${data.abilityId} by ${data.playerId}, success: ${data.success}`);
     });
 
     room.onError((code, message) => {
