@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "build:client": "turbo run build --filter=@voxel-strike/client",
+    "build:server": "turbo run build --filter=@voxel-strike/server",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "clean": "turbo run clean && rm -rf node_modules",
+    "clean": "turbo run clean",
     "dev:client": "turbo run dev --filter=@voxel-strike/client",
     "dev:server": "turbo run dev --filter=@voxel-strike/server"
   },

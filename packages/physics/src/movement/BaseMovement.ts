@@ -1,12 +1,11 @@
 import type { Vec3, InputState, PlayerMovementState, HeroStats } from '@voxel-strike/shared';
 import { 
-  BASE_MOVE_SPEED,
   SPRINT_MULTIPLIER,
   CROUCH_MULTIPLIER,
   AIR_CONTROL,
-  BASE_JUMP_FORCE,
   GRAVITY,
   GROUND_FRICTION,
+  DEFAULT_HERO_STATS,
 } from '@voxel-strike/shared';
 import { vec3Length, createVec3 } from '@voxel-strike/shared';
 import type { PhysicsWorld } from '../PhysicsWorld.js';
@@ -32,8 +31,8 @@ export class BaseMovement {
   private world: PhysicsWorld;
   private playerId: string;
   
-  private moveSpeed: number = BASE_MOVE_SPEED;
-  private jumpForce: number = BASE_JUMP_FORCE;
+  private moveSpeed: number = DEFAULT_HERO_STATS.moveSpeed;
+  private jumpForce: number = DEFAULT_HERO_STATS.jumpForce;
   
   private coyoteTime: number = 0;
   private jumpBuffer: number = 0;

@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
+import type { Router as RouterType } from 'express';
 import prisma from '../db';
 import { verifySignature, generateNonce, createSignMessage } from './verify';
 
-const router = Router();
+const router: RouterType = Router();
 
 // In-memory store for nonces (in production, use Redis or similar)
 const nonceStore = new Map<string, { nonce: string; timestamp: number }>();

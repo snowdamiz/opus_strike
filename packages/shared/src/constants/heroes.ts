@@ -1,5 +1,21 @@
-import type { HeroDefinition, HeroId } from '../types/hero.js';
+import type { HeroDefinition, HeroId, HeroStats } from '../types/hero.js';
 import type { AbilityDefinition } from '../types/ability.js';
+
+// Default hero stats - used as fallback when no hero is selected
+export const DEFAULT_HERO_STATS: HeroStats = {
+  maxHealth: 200,
+  moveSpeed: 9,
+  jumpForce: 8.5,
+  size: { width: 0.8, height: 1.8, depth: 0.8 },
+};
+
+// Helper to get hero stats with fallback
+export function getHeroStats(heroId: HeroId | null | undefined): HeroStats {
+  if (heroId && HERO_DEFINITIONS[heroId]) {
+    return HERO_DEFINITIONS[heroId].stats;
+  }
+  return DEFAULT_HERO_STATS;
+}
 
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
@@ -9,8 +25,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'blink',
     stats: {
       maxHealth: 175,
-      moveSpeed: 13,
-      jumpForce: 12,
+      moveSpeed: 10,
+      jumpForce: 8.5,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
@@ -30,8 +46,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'grapple',
     stats: {
       maxHealth: 200,
-      moveSpeed: 11,
-      jumpForce: 11,
+      moveSpeed: 8,
+      jumpForce: 8.1,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
@@ -51,8 +67,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'aerial',
     stats: {
       maxHealth: 200,
-      moveSpeed: 11,
-      jumpForce: 13,
+      moveSpeed: 8,
+      jumpForce: 9.3,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
     passive: {
@@ -72,8 +88,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'parkour',
     stats: {
       maxHealth: 350,
-      moveSpeed: 9,
-      jumpForce: 10,
+      moveSpeed: 7,
+      jumpForce: 7.3,
       size: { width: 1.0, height: 2.0, depth: 1.0 },
     },
     passive: {
@@ -93,8 +109,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'speed',
     stats: {
       maxHealth: 175,
-      moveSpeed: 12,
-      jumpForce: 12,
+      moveSpeed: 9,
+      jumpForce: 8.5,
       size: { width: 0.7, height: 1.7, depth: 0.7 },
     },
     passive: {
@@ -114,8 +130,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'grounded',
     stats: {
       maxHealth: 300,
-      moveSpeed: 10,
-      jumpForce: 10,
+      moveSpeed: 7.5,
+      jumpForce: 7.3,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
     passive: {

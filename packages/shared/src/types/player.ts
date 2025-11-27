@@ -41,6 +41,9 @@ export interface PlayerInput {
   lookYaw: number;
   lookPitch: number;
   timestamp: number;
+  // Client position/velocity for sync (server-authoritative games should validate)
+  position?: Vec3;
+  velocity?: Vec3;
 }
 
 export interface PlayerStats {

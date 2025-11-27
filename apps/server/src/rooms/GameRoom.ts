@@ -7,6 +7,7 @@ import {
   TICK_RATE, 
   TICK_INTERVAL_MS,
   HERO_DEFINITIONS,
+  getHeroStats,
 } from '@voxel-strike/shared';
 import type { 
   HeroId, 
@@ -584,10 +585,10 @@ export class GameRoom extends Room<GameState> {
 
       const input = player.lastInput;
       const heroId = player.heroId as HeroId;
-      const heroDef = heroId ? HERO_DEFINITIONS[heroId] : null;
 
-      // Get movement parameters
-      const moveSpeed = heroDef?.stats.moveSpeed ?? 12;
+      // Get movement parameters from hero config
+      const heroStats = getHeroStats(heroId);
+      const moveSpeed = heroStats.moveSpeed;
       const dt = TICK_INTERVAL_MS / 1000;
 
       // Calculate move direction

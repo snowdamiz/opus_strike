@@ -9,9 +9,9 @@ interface JoinOptions {
 
 export class LobbyRoom extends Room<LobbyState> {
   maxClients = 10;
-  autoDispose = true;
 
   onCreate(options: JoinOptions) {
+    this.autoDispose = true;
     console.log('Lobby room created:', this.roomId);
 
     this.setState(new LobbyState());

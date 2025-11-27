@@ -15,13 +15,13 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { 
   MOUSE_SENSITIVITY, 
   PITCH_LIMIT,
-  BASE_MOVE_SPEED,
   SPRINT_MULTIPLIER,
   CROUCH_MULTIPLIER,
   AIR_CONTROL,
   GRAVITY,
-  BASE_JUMP_FORCE,
   TICK_RATE,
+  getHeroStats,
+  type HeroId,
 } from '@voxel-strike/shared';
 import { isInsideBoundary, constrainToBoundary } from '../../config/mapBoundaries';
 
@@ -138,8 +138,9 @@ export function PlayerController() {
     const euler = new THREE.Euler(0, yawRef.current, 0, 'YXZ');
     moveDirection.applyEuler(euler);
 
-    // Calculate speed
-    let speed = localPlayer.heroId ? BASE_MOVE_SPEED : BASE_MOVE_SPEED;
+    // Calculate speed from hero stats
+    const heroStats = getHeroStats(localPlayer.heroId as HeroId);
+    let speed = heroStats.moveSpeed;
     if (inputState.sprint) speed *= SPRINT_MULTIPLIER;
     if (inputState.crouch) speed *= CROUCH_MULTIPLIER;
 
@@ -226,7 +227,7 @@ export function PlayerController() {
 
     // Jump - check AFTER ground detection
     if (inputState.jump && canJumpRef.current && isGroundedRef.current) {
-      velocity.y = BASE_JUMP_FORCE;
+      velocity.y = heroStats.jumpForce;
       canJumpRef.current = false;
       isGroundedRef.current = false;
     }
