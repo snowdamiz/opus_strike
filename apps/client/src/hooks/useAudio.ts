@@ -28,7 +28,7 @@ const SOUND_EFFECTS = {
   walk: { path: '/sounds/walk.mp3', volume: 0.4 },
   jump: { path: '/sounds/jump.mp3', volume: 0.5 },
   land: { path: '/sounds/land.mp3', volume: 0.4 },
-  slide: { path: '/sounds/slide.mp3', volume: 0.5 },
+  slide: { path: '/sounds/slide.mp3', volume: 0.15 },
   wallRun: { path: '/sounds/wall_run.mp3', volume: 0.4 },
   
   // Abilities - Generic

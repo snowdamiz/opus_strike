@@ -128,7 +128,7 @@ export function PlayerController() {
   const { world, playerBody } = usePhysics();
   const { sendInput } = useNetwork();
   const { playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic } = useAbilitySounds();
-  const { updateWalkingSound, preloadWalkingSound } = useMovementSounds();
+  const { updateWalkingSound, preloadWalkingSound, startSlide: startSlideSound, stopSlide: stopSlideSound } = useMovementSounds();
   
   // Preload walking sound on mount
   useEffect(() => {
@@ -1045,6 +1045,9 @@ export function PlayerController() {
       wasSprintingBeforeSlide.current = true;
       isSprintingRef.current = false; // Stop sprinting when sliding
       
+      // Play slide sound
+      startSlideSound();
+      
       // Calculate slide direction from look direction and movement input
       // PERFORMANCE: Reuse pre-allocated objects
       const slideDir = moveDirectionRef.current;
@@ -1090,6 +1093,10 @@ export function PlayerController() {
         slideCooldownRef.current = SLIDE_COOLDOWN;
         wasSprintingBeforeSlide.current = false;
         isCrouchingRef.current = false; // Auto-uncrouch at end of slide
+        
+        // Stop slide sound
+        stopSlideSound();
+        
         console.log('[Movement] Slide ended, auto-uncrouching');
       }
     }
