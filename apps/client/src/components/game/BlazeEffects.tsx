@@ -5,75 +5,113 @@ import { useGameStore, type RocketData, type BombData } from '../../store/gameSt
 import { checkGroundWithNormal, isPhysicsReady } from '../../hooks/usePhysics';
 
 // ============================================================================
-// BLAZE ROCKET EFFECT
-// A rocket projectile with flame trail - OPTIMIZED for performance
+// SHARED MATERIALS - Reuse materials across all effects to reduce draw calls
+// ============================================================================
+
+const SHARED_MATERIALS = {
+  // Fire colors
+  fireCore: new THREE.MeshBasicMaterial({ color: 0xffffcc, transparent: true, opacity: 0.95 }),
+  fireInner: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.85 }),
+  fireOuter: new THREE.MeshBasicMaterial({ color: 0xff5500, transparent: true, opacity: 0.6 }),
+  fireRed: new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.4 }),
+  
+  // Explosion colors
+  explosionFlash: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true }),
+  explosionCore: new THREE.MeshBasicMaterial({ color: 0xffffaa, transparent: true }),
+  explosionMid: new THREE.MeshBasicMaterial({ color: 0xff7700, transparent: true }),
+  explosionOuter: new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true }),
+  
+  // Warning indicators
+  warningRed: new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, side: THREE.DoubleSide }),
+  warningOrange: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, side: THREE.DoubleSide }),
+  warningYellow: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, side: THREE.DoubleSide }),
+  targetYellow: new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, side: THREE.DoubleSide }),
+  dangerFill: new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, side: THREE.DoubleSide }),
+  
+  // Rocket/bomb body
+  metalDark: new THREE.MeshBasicMaterial({ color: 0x333333 }),
+  metalLight: new THREE.MeshBasicMaterial({ color: 0x555555 }),
+  rocketTip: new THREE.MeshBasicMaterial({ color: 0xff6600 }),
+  
+  // Smoke
+  smoke: new THREE.MeshBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.4 }),
+  smokeDark: new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.3 }),
+};
+
+// ============================================================================
+// SHARED GEOMETRIES - Reuse geometries to reduce GPU memory
+// ============================================================================
+
+const SHARED_GEOMETRIES = {
+  sphere8: new THREE.SphereGeometry(1, 8, 8),
+  sphere12: new THREE.SphereGeometry(1, 12, 12),
+  cone6: new THREE.ConeGeometry(1, 1, 6),
+  cone8: new THREE.ConeGeometry(1, 1, 8),
+  ring16: new THREE.RingGeometry(0.8, 1, 16),
+  ring24: new THREE.RingGeometry(0.8, 1, 24),
+  circle16: new THREE.CircleGeometry(1, 16),
+  plane: new THREE.PlaneGeometry(1, 1),
+  box: new THREE.BoxGeometry(1, 1, 1),
+  cylinder8: new THREE.CylinderGeometry(1, 1, 1, 8),
+};
+
+// ============================================================================
+// BLAZE ROCKET EFFECT - OPTIMIZED
+// Simple rocket with efficient trail
 // ============================================================================
 
 interface RocketEffectProps {
   rocket: RocketData;
 }
 
+// Pre-allocated vectors for rocket calculations
+const _rocketPos = new THREE.Vector3();
+const _rocketDir = new THREE.Vector3();
+const _rocketLookAt = new THREE.Vector3();
+
 export function RocketEffect({ rocket }: RocketEffectProps) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const trailMeshRef = useRef<THREE.Mesh>(null);
-  
-  // Pre-calculate the position based on elapsed time
-  const positionRef = useRef(new THREE.Vector3());
+  const groupRef = useRef<THREE.Group>(null);
   
   useFrame(() => {
-    if (!meshRef.current) return;
+    if (!groupRef.current) return;
     
     const elapsed = (Date.now() - rocket.startTime) / 1000;
     
-    // Update rocket position with slight gravity
-    const x = rocket.position.x + rocket.velocity.x * elapsed;
-    const y = rocket.position.y + rocket.velocity.y * elapsed - 0.5 * 2 * elapsed * elapsed;
-    const z = rocket.position.z + rocket.velocity.z * elapsed;
-    
-    positionRef.current.set(x, y, z);
-    meshRef.current.position.copy(positionRef.current);
-    
-    // Rotate rocket to face velocity direction
-    const lookAhead = new THREE.Vector3(
-      x + rocket.velocity.x * 0.1,
-      y + rocket.velocity.y * 0.1,
-      z + rocket.velocity.z * 0.1
+    // Update position
+    _rocketPos.set(
+      rocket.position.x + rocket.velocity.x * elapsed,
+      rocket.position.y + rocket.velocity.y * elapsed - elapsed * elapsed,
+      rocket.position.z + rocket.velocity.z * elapsed
     );
-    meshRef.current.lookAt(lookAhead);
-    meshRef.current.rotateX(Math.PI / 2); // Cylinder points up by default
+    groupRef.current.position.copy(_rocketPos);
     
-    // Update trail position
-    if (trailMeshRef.current) {
-      trailMeshRef.current.position.copy(positionRef.current);
-      trailMeshRef.current.lookAt(lookAhead);
-      trailMeshRef.current.rotateX(Math.PI / 2);
-    }
+    // Rotate to face velocity
+    _rocketDir.set(rocket.velocity.x, rocket.velocity.y - 2 * elapsed, rocket.velocity.z).normalize();
+    _rocketLookAt.copy(_rocketPos).add(_rocketDir);
+    groupRef.current.lookAt(_rocketLookAt);
   });
   
   return (
-    <group>
+    <group ref={groupRef}>
       {/* Rocket body */}
-      <mesh ref={meshRef}>
-        <coneGeometry args={[0.1, 0.4, 8]} />
-        <meshBasicMaterial color={0xff4500} />
-      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.4, 0.1]} material={SHARED_MATERIALS.metalDark} />
       
-      {/* Simple flame trail - no particles, just a stretched cone */}
-      <mesh ref={trailMeshRef}>
-        <coneGeometry args={[0.15, 0.8, 8]} />
-        <meshBasicMaterial 
-          color={0xff6600} 
-          transparent 
-          opacity={0.6}
-        />
-      </mesh>
+      {/* Rocket tip */}
+      <mesh position={[0, 0, -0.22]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.05, 0.1, 0.05]} material={SHARED_MATERIALS.rocketTip} />
+      
+      {/* Fire trail - single layered cone instead of multiple */}
+      <mesh position={[0, 0, 0.25]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.6, 0.08]} material={SHARED_MATERIALS.fireCore} />
+      <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.5, 0.12]} material={SHARED_MATERIALS.fireInner} />
+      
+      {/* Single light instead of multiple */}
+      <pointLight color={0xff6600} intensity={2} distance={6} decay={2} />
     </group>
   );
 }
 
 // ============================================================================
-// ROCKET JUMP EXPLOSION EFFECT
-// Visual explosion at player's feet when rocket jumping
+// ROCKET JUMP EXPLOSION EFFECT - OPTIMIZED
+// Dramatic but efficient explosion
 // ============================================================================
 
 interface RocketJumpExplosionData {
@@ -93,19 +131,48 @@ export function triggerRocketJumpExplosion(position: { x: number; y: number; z: 
   });
 }
 
-const ROCKET_JUMP_DURATION = 500; // ms
+const ROCKET_JUMP_DURATION = 600;
 
 function RocketJumpExplosion({ explosion }: { explosion: RocketJumpExplosionData }) {
   const groupRef = useRef<THREE.Group>(null);
-  const [scale, setScale] = useState(0.1);
-  const [opacity, setOpacity] = useState(1);
+  const coreRef = useRef<THREE.Mesh>(null);
+  const midRef = useRef<THREE.Mesh>(null);
+  const outerRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
   
   useFrame(() => {
     const elapsed = Date.now() - explosion.startTime;
-    const progress = Math.min(1, elapsed / ROCKET_JUMP_DURATION);
+    if (elapsed > ROCKET_JUMP_DURATION) return;
     
-    setScale(0.5 + progress * 3);
-    setOpacity(1 - progress);
+    const progress = elapsed / ROCKET_JUMP_DURATION;
+    const easeOut = 1 - Math.pow(1 - progress, 2);
+    const fadeOut = Math.max(0, 1 - progress * 1.3);
+    
+    // Scale and fade the explosion layers
+    if (coreRef.current) {
+      const s = 0.3 + easeOut * 2;
+      coreRef.current.scale.set(s, s, s);
+      (coreRef.current.material as THREE.MeshBasicMaterial).opacity = fadeOut * 0.9;
+    }
+    if (midRef.current) {
+      const s = 0.5 + easeOut * 2.5;
+      midRef.current.scale.set(s, s, s);
+      (midRef.current.material as THREE.MeshBasicMaterial).opacity = fadeOut * 0.7;
+    }
+    if (outerRef.current) {
+      const s = 0.6 + easeOut * 3;
+      outerRef.current.scale.set(s, s, s);
+      (outerRef.current.material as THREE.MeshBasicMaterial).opacity = fadeOut * 0.5;
+    }
+    if (ringRef.current) {
+      const s = 0.5 + easeOut * 4;
+      ringRef.current.scale.set(s, s, s);
+      (ringRef.current.material as THREE.MeshBasicMaterial).opacity = fadeOut * 0.6;
+    }
+    if (lightRef.current) {
+      lightRef.current.intensity = fadeOut * 15;
+    }
   });
   
   const elapsed = Date.now() - explosion.startTime;
@@ -113,33 +180,35 @@ function RocketJumpExplosion({ explosion }: { explosion: RocketJumpExplosionData
   
   return (
     <group ref={groupRef} position={[explosion.position.x, explosion.position.y - 0.5, explosion.position.z]}>
-      {/* Explosion sphere */}
-      <mesh scale={scale}>
-        <sphereGeometry args={[0.5, 16, 16]} />
-        <meshBasicMaterial 
-          color={0xff4400} 
-          transparent 
-          opacity={opacity * 0.8}
-        />
+      {/* Core - hot yellow */}
+      <mesh ref={coreRef} geometry={SHARED_GEOMETRIES.sphere8}>
+        <meshBasicMaterial color={0xffffaa} transparent opacity={0.9} />
       </mesh>
       
-      {/* Ground ring */}
-      <mesh rotation-x={-Math.PI / 2} scale={scale}>
-        <ringGeometry args={[0.3, 1, 16]} />
-        <meshBasicMaterial 
-          color={0xff6600} 
-          transparent 
-          opacity={opacity * 0.6}
-          side={THREE.DoubleSide}
-        />
+      {/* Mid - orange */}
+      <mesh ref={midRef} geometry={SHARED_GEOMETRIES.sphere8}>
+        <meshBasicMaterial color={0xff7700} transparent opacity={0.7} />
       </mesh>
+      
+      {/* Outer - red */}
+      <mesh ref={outerRef} geometry={SHARED_GEOMETRIES.sphere8}>
+        <meshBasicMaterial color={0xff3300} transparent opacity={0.5} />
+      </mesh>
+      
+      {/* Ground shockwave ring */}
+      <mesh ref={ringRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring16}>
+        <meshBasicMaterial color={0xff6600} transparent opacity={0.6} side={THREE.DoubleSide} />
+      </mesh>
+      
+      {/* Single light */}
+      <pointLight ref={lightRef} color={0xff5500} intensity={15} distance={12} decay={2} />
     </group>
   );
 }
 
 // ============================================================================
-// AIR STRIKE EFFECT
-// Multiple bombs falling in an area for the ultimate
+// AIR STRIKE EFFECT - OPTIMIZED
+// Fewer bombs, simpler visuals
 // ============================================================================
 
 interface AirStrikeData {
@@ -153,23 +222,21 @@ const airStrikes: AirStrikeData[] = [];
 let airStrikeIdCounter = 0;
 
 export function triggerAirStrike(position: { x: number; y: number; z: number }) {
-  // Create multiple bomb positions in a pattern
+  // Reduced bomb count for performance
   const bombs: { x: number; z: number; delay: number }[] = [];
-  const radius = 8;
-  const bombCount = 12;
+  const bombCount = 8; // Reduced from 15
   
   for (let i = 0; i < bombCount; i++) {
     const angle = (i / bombCount) * Math.PI * 2;
-    const r = radius * (0.3 + Math.random() * 0.7);
+    const r = 3 + (i / bombCount) * 8;
     bombs.push({
       x: position.x + Math.cos(angle) * r,
       z: position.z + Math.sin(angle) * r,
-      delay: i * 150 + Math.random() * 100, // Staggered drops
+      delay: i * 180,
     });
   }
   
-  // Add center bomb
-  bombs.push({ x: position.x, z: position.z, delay: bombCount * 100 });
+  bombs.push({ x: position.x, z: position.z, delay: bombCount * 180 + 200 });
   
   airStrikes.push({
     id: `airstrike_${airStrikeIdCounter++}`,
@@ -179,102 +246,105 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
   });
 }
 
-const AIR_STRIKE_DURATION = 3000; // 3 seconds total
-const BOMB_FALL_TIME = 800; // Each bomb takes 0.8s to fall
+const AIR_STRIKE_DURATION = 3000;
+const AIR_BOMB_FALL_TIME = 600;
 
-function AirStrikeBomb({ x, z, fallbackGroundY, delay, startTime }: { x: number; z: number; fallbackGroundY: number; delay: number; startTime: number }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const [hasExploded, setHasExploded] = useState(false);
-  const [explosionScale, setExplosionScale] = useState(0.1);
-  const [explosionOpacity, setExplosionOpacity] = useState(1);
-  const [actualGroundY, setActualGroundY] = useState<number | null>(null);
+function AirStrikeBomb({ x, z, fallbackGroundY, delay, startTime }: { 
+  x: number; z: number; fallbackGroundY: number; delay: number; startTime: number;
+}) {
+  const bombRef = useRef<THREE.Mesh>(null);
+  const warningRef = useRef<THREE.Group>(null);
+  const explosionRef = useRef<THREE.Group>(null);
+  const hasExplodedRef = useRef(false);
+  const groundYRef = useRef(fallbackGroundY);
   const groundCheckedRef = useRef(false);
   
-  // Get actual ground level using raycasting
-  const groundY = actualGroundY ?? fallbackGroundY;
-  
   useFrame(() => {
-    // Do ground check once when bomb starts falling
+    // Ground check once
     if (!groundCheckedRef.current && isPhysicsReady()) {
       groundCheckedRef.current = true;
       const groundCheck = checkGroundWithNormal(x, fallbackGroundY + 50, z, 100);
-      if (groundCheck && groundCheck.isWalkable) {
-        setActualGroundY(groundCheck.groundY);
+      if (groundCheck?.isWalkable) {
+        groundYRef.current = groundCheck.groundY;
       }
     }
     
     const elapsed = Date.now() - startTime - delay;
+    const groundY = groundYRef.current;
     
     if (elapsed < 0) {
-      // Not started yet
-      if (meshRef.current) meshRef.current.visible = false;
+      if (bombRef.current) bombRef.current.visible = false;
+      if (warningRef.current) warningRef.current.visible = false;
+      if (explosionRef.current) explosionRef.current.visible = false;
       return;
     }
     
-    if (meshRef.current) meshRef.current.visible = true;
+    const fallProgress = Math.min(1, elapsed / AIR_BOMB_FALL_TIME);
     
-    const fallProgress = Math.min(1, elapsed / BOMB_FALL_TIME);
-    
-    if (fallProgress < 1 && meshRef.current) {
-      // Falling
+    // Bomb falling
+    if (fallProgress < 1 && bombRef.current) {
+      bombRef.current.visible = true;
+      if (warningRef.current) warningRef.current.visible = true;
+      if (explosionRef.current) explosionRef.current.visible = false;
+      
       const startY = groundY + 50;
-      const y = startY - (startY - groundY) * fallProgress;
-      meshRef.current.position.set(x, y, z);
-      meshRef.current.rotation.x += 0.1;
-      meshRef.current.rotation.z += 0.05;
-    } else if (!hasExploded) {
-      setHasExploded(true);
+      const y = startY - (startY - groundY) * fallProgress * fallProgress;
+      bombRef.current.position.set(x, y, z);
+      bombRef.current.rotation.x += 0.15;
+      bombRef.current.rotation.z += 0.1;
+      
+      // Pulse warning
+      if (warningRef.current) {
+        const pulse = 0.8 + Math.sin(elapsed * 0.02) * 0.2;
+        warningRef.current.scale.setScalar(pulse);
+      }
+    } else if (!hasExplodedRef.current) {
+      hasExplodedRef.current = true;
     }
     
-    if (hasExploded) {
-      const explosionElapsed = elapsed - BOMB_FALL_TIME;
-      const explosionProgress = Math.min(1, explosionElapsed / 500);
-      setExplosionScale(1 + explosionProgress * 4);
-      setExplosionOpacity(1 - explosionProgress);
+    // Explosion
+    if (hasExplodedRef.current) {
+      if (bombRef.current) bombRef.current.visible = false;
+      if (warningRef.current) warningRef.current.visible = false;
+      if (explosionRef.current) {
+        explosionRef.current.visible = true;
+        const explosionElapsed = elapsed - AIR_BOMB_FALL_TIME;
+        const explosionProgress = Math.min(1, explosionElapsed / 500);
+        const easeOut = 1 - Math.pow(1 - explosionProgress, 2);
+        const fadeOut = Math.max(0, 1 - explosionProgress * 1.5);
+        const scale = 0.5 + easeOut * 3;
+        explosionRef.current.scale.setScalar(scale);
+        explosionRef.current.children.forEach(child => {
+          if ((child as THREE.Mesh).material) {
+            ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = fadeOut;
+          }
+        });
+      }
     }
   });
   
   return (
     <group>
       {/* Falling bomb */}
-      {!hasExploded && (
-        <mesh ref={meshRef}>
-          <sphereGeometry args={[0.3, 8, 8]} />
-          <meshBasicMaterial color={0x333333} />
-        </mesh>
-      )}
+      <mesh ref={bombRef} visible={false} geometry={SHARED_GEOMETRIES.sphere8} scale={0.25} material={SHARED_MATERIALS.metalDark} />
       
       {/* Warning circle */}
-      {!hasExploded && (
-        <mesh position={[x, groundY + 0.1, z]} rotation-x={-Math.PI / 2}>
-          <ringGeometry args={[1.5, 2, 16]} />
-          <meshBasicMaterial 
-            color={0xff0000} 
-            transparent 
-            opacity={0.5}
-            side={THREE.DoubleSide}
-          />
+      <group ref={warningRef} visible={false} position={[x, groundYRef.current + 0.1, z]}>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[2, 2, 1]}>
+          <meshBasicMaterial color={0xff0000} transparent opacity={0.7} side={THREE.DoubleSide} />
         </mesh>
-      )}
+      </group>
       
       {/* Explosion */}
-      {hasExploded && explosionOpacity > 0 && (
-        <group position={[x, groundY + 0.5, z]} scale={explosionScale}>
-          <mesh>
-            <sphereGeometry args={[0.5, 12, 12]} />
-            <meshBasicMaterial 
-              color={0xffaa00} 
-              transparent 
-              opacity={explosionOpacity}
-            />
-          </mesh>
-          <pointLight 
-            color={0xff4400} 
-            intensity={explosionOpacity * 5} 
-            distance={10} 
-          />
-        </group>
-      )}
+      <group ref={explosionRef} visible={false} position={[x, groundYRef.current + 0.5, z]}>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8}>
+          <meshBasicMaterial color={0xffcc00} transparent opacity={0.9} />
+        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.3}>
+          <meshBasicMaterial color={0xff5500} transparent opacity={0.6} />
+        </mesh>
+        <pointLight color={0xff4400} intensity={10} distance={8} decay={2} />
+      </group>
     </group>
   );
 }
@@ -300,8 +370,8 @@ function AirStrikeEffect({ strike }: { strike: AirStrikeData }) {
 }
 
 // ============================================================================
-// BLAZE BOMB EFFECT
-// A falling bomb with impact explosion - LARGE and VISIBLE
+// BLAZE BOMB EFFECT - OPTIMIZED
+// Single falling bomb with efficient explosion
 // ============================================================================
 
 interface BombEffectProps {
@@ -312,205 +382,122 @@ const BOMB_FALL_DURATION = 1500;
 const EXPLOSION_DURATION = 1200;
 
 export function BombEffect({ bomb }: BombEffectProps) {
-  const bombMeshRef = useRef<THREE.Mesh>(null);
-  const trailRef = useRef<THREE.Mesh>(null);
-  const [hasExploded, setHasExploded] = useState(bomb.hasExploded);
-  const [explosionScale, setExplosionScale] = useState(0.1);
-  const [explosionOpacity, setExplosionOpacity] = useState(1);
-  const [bombPos, setBombPos] = useState({ x: 0, y: 50, z: 0 });
+  const bombRef = useRef<THREE.Group>(null);
+  const warningRef = useRef<THREE.Group>(null);
+  const explosionRef = useRef<THREE.Group>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const hasExplodedRef = useRef(bomb.hasExploded);
   
   useFrame(() => {
     const now = Date.now();
     const elapsed = now - bomb.startTime;
     const fallProgress = Math.min(1, elapsed / BOMB_FALL_DURATION);
     
-    if (!hasExploded && fallProgress < 1) {
-      // Bomb falls from high above (50 units up)
-      const startY = bomb.targetPosition.y + 50;
-      const endY = bomb.targetPosition.y;
-      
-      const t = fallProgress;
-      // Accelerating fall (quadratic easing)
-      const easedT = t * t;
-      const x = bomb.targetPosition.x;
-      const z = bomb.targetPosition.z;
-      const y = startY + (endY - startY) * easedT;
-      
-      setBombPos({ x, y, z });
-      
-      if (bombMeshRef.current) {
-        bombMeshRef.current.position.set(x, y, z);
-        bombMeshRef.current.rotation.x += 0.15;
-        bombMeshRef.current.rotation.z += 0.1;
+    if (!hasExplodedRef.current && fallProgress < 1) {
+      // Bomb falling
+      if (bombRef.current) {
+        bombRef.current.visible = true;
+        const startY = bomb.targetPosition.y + 50;
+        const y = startY + (bomb.targetPosition.y - startY) * fallProgress * fallProgress;
+        bombRef.current.position.set(bomb.targetPosition.x, y, bomb.targetPosition.z);
+        bombRef.current.rotation.x += 0.1;
+        bombRef.current.rotation.z += 0.08;
       }
-      
-      // Update trail
-      if (trailRef.current) {
-        trailRef.current.position.set(x, y + 1, z);
+      if (warningRef.current) {
+        warningRef.current.visible = true;
+        const pulse = 0.9 + Math.sin(elapsed * 0.015) * 0.1;
+        warningRef.current.scale.setScalar(pulse);
       }
-    } else if (fallProgress >= 1 && !hasExploded) {
-      setHasExploded(true);
+      if (explosionRef.current) explosionRef.current.visible = false;
+    } else if (fallProgress >= 1 && !hasExplodedRef.current) {
+      hasExplodedRef.current = true;
     }
     
-    if (hasExploded) {
+    if (hasExplodedRef.current) {
+      if (bombRef.current) bombRef.current.visible = false;
+      if (warningRef.current) warningRef.current.visible = false;
+      
       const explosionElapsed = now - bomb.impactTime;
       const explosionProgress = Math.min(1, explosionElapsed / EXPLOSION_DURATION);
-      setExplosionScale(1 + explosionProgress * 8);
-      setExplosionOpacity(Math.max(0, 1 - explosionProgress));
+      
+      if (explosionProgress < 1 && explosionRef.current) {
+        explosionRef.current.visible = true;
+        const easeOut = 1 - Math.pow(1 - explosionProgress, 2);
+        const fadeOut = Math.max(0, 1 - explosionProgress * 1.2);
+        const scale = 1 + easeOut * 6;
+        explosionRef.current.scale.setScalar(scale);
+        
+        // Update opacity on children
+        explosionRef.current.children.forEach((child, i) => {
+          if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).material) {
+            const mat = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+            mat.opacity = fadeOut * (1 - i * 0.15);
+          }
+        });
+        
+        if (lightRef.current) {
+          lightRef.current.intensity = fadeOut * 40;
+        }
+      } else if (explosionProgress >= 1 && explosionRef.current) {
+        explosionRef.current.visible = false;
+      }
     }
   });
   
-  const elapsed = Date.now() - bomb.startTime;
-  const showBomb = elapsed < BOMB_FALL_DURATION && !hasExploded;
-  const showExplosion = hasExploded && explosionOpacity > 0.01;
-  
   return (
     <group>
-      {/* Falling bomb - LARGE */}
-      {showBomb && (
-        <>
-          <mesh ref={bombMeshRef}>
-            {/* Main bomb body */}
-            <sphereGeometry args={[1.2, 16, 16]} />
-            <meshBasicMaterial color={0x111111} />
-          </mesh>
-          
-          {/* Flame trail */}
-          <mesh ref={trailRef}>
-            <coneGeometry args={[0.5, 3, 8]} />
-            <meshBasicMaterial color={0xff4400} transparent opacity={0.7} />
-          </mesh>
-          
-          {/* Bomb glow */}
-          <pointLight
-            position={[bombPos.x, bombPos.y, bombPos.z]}
-            color={0xff4400}
-            intensity={3}
-            distance={10}
-          />
-        </>
-      )}
+      {/* Falling bomb */}
+      <group ref={bombRef}>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={[0.8, 1.2, 0.8]} material={SHARED_MATERIALS.metalDark} />
+        <mesh position={[0, -0.8, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.5, 0.6, 0.5]} material={SHARED_MATERIALS.metalDark} />
+        <mesh position={[0, 1.2, 0]} rotation={[Math.PI, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.3, 1.5, 0.3]} material={SHARED_MATERIALS.fireInner} />
+        <pointLight color={0xff4400} intensity={3} distance={10} decay={2} />
+      </group>
       
-      {/* Warning circle on ground - pulsing */}
-      {showBomb && (
-        <group position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.2, bomb.targetPosition.z]}>
-          {/* Outer danger ring */}
-          <mesh rotation-x={-Math.PI / 2}>
-            <ringGeometry args={[4, 4.5, 32]} />
-            <meshBasicMaterial
-              color={0xff0000}
-              transparent
-              opacity={0.8}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-          
-          {/* Middle ring */}
-          <mesh rotation-x={-Math.PI / 2}>
-            <ringGeometry args={[2.5, 3, 32]} />
-            <meshBasicMaterial
-              color={0xff4400}
-              transparent
-              opacity={0.7}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-          
-          {/* Inner ring */}
-          <mesh rotation-x={-Math.PI / 2}>
-            <ringGeometry args={[1, 1.3, 32]} />
-            <meshBasicMaterial
-              color={0xffaa00}
-              transparent
-              opacity={0.9}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-          
-          {/* Filled danger area */}
-          <mesh rotation-x={-Math.PI / 2} position-y={-0.1}>
-            <circleGeometry args={[4.5, 32]} />
-            <meshBasicMaterial
-              color={0xff2200}
-              transparent
-              opacity={0.25}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-          
-          {/* Cross lines */}
-          <mesh rotation-x={-Math.PI / 2}>
-            <planeGeometry args={[0.2, 10]} />
-            <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
-          </mesh>
-          <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2}>
-            <planeGeometry args={[0.2, 10]} />
-            <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
-          </mesh>
-        </group>
-      )}
+      {/* Warning zone */}
+      <group ref={warningRef} position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.15, bomb.targetPosition.z]}>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]}>
+          <meshBasicMaterial color={0xff0000} transparent opacity={0.7} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]}>
+          <meshBasicMaterial color={0xff4400} transparent opacity={0.6} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]} position-y={-0.1}>
+          <meshBasicMaterial color={0xff2200} transparent opacity={0.2} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.15, 10, 1]}>
+          <meshBasicMaterial color={0xff0000} transparent opacity={0.5} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.15, 10, 1]}>
+          <meshBasicMaterial color={0xff0000} transparent opacity={0.5} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
       
-      {/* EXPLOSION - BIG AND DRAMATIC */}
-      {showExplosion && (
-        <group 
-          position={[bomb.targetPosition.x, bomb.targetPosition.y + 1, bomb.targetPosition.z]}
-        >
-          {/* Core flash - bright yellow/white */}
-          <mesh scale={explosionScale * 0.8}>
-            <sphereGeometry args={[1, 16, 16]} />
-            <meshBasicMaterial
-              color={0xffffaa}
-              transparent
-              opacity={explosionOpacity}
-            />
-          </mesh>
-          
-          {/* Fire ball - orange */}
-          <mesh scale={explosionScale}>
-            <sphereGeometry args={[1.5, 16, 16]} />
-            <meshBasicMaterial
-              color={0xff6600}
-              transparent
-              opacity={explosionOpacity * 0.8}
-            />
-          </mesh>
-          
-          {/* Outer fire ring */}
-          <mesh scale={explosionScale * 1.2}>
-            <sphereGeometry args={[2, 12, 12]} />
-            <meshBasicMaterial
-              color={0xff2200}
-              transparent
-              opacity={explosionOpacity * 0.5}
-            />
-          </mesh>
-          
-          {/* Ground ring */}
-          <mesh rotation-x={-Math.PI / 2} position-y={-0.5} scale={explosionScale * 1.5}>
-            <ringGeometry args={[1, 3, 32]} />
-            <meshBasicMaterial
-              color={0xff4400}
-              transparent
-              opacity={explosionOpacity * 0.7}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-          
-          {/* Explosion light - VERY BRIGHT */}
-          <pointLight
-            color={0xff4400}
-            intensity={explosionOpacity * 50}
-            distance={30}
-          />
-        </group>
-      )}
+      {/* Explosion */}
+      <group ref={explosionRef} visible={false} position={[bomb.targetPosition.x, bomb.targetPosition.y + 1, bomb.targetPosition.z]}>
+        <mesh geometry={SHARED_GEOMETRIES.sphere12}>
+          <meshBasicMaterial color={0xffffcc} transparent opacity={0.95} />
+        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={1.3}>
+          <meshBasicMaterial color={0xff8800} transparent opacity={0.8} />
+        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.6}>
+          <meshBasicMaterial color={0xff4400} transparent opacity={0.6} />
+        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.9}>
+          <meshBasicMaterial color={0xff2200} transparent opacity={0.4} />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} position-y={-0.5} geometry={SHARED_GEOMETRIES.ring24} scale={[2, 2, 1]}>
+          <meshBasicMaterial color={0xff6600} transparent opacity={0.7} side={THREE.DoubleSide} />
+        </mesh>
+        <pointLight ref={lightRef} color={0xff5500} intensity={40} distance={30} decay={2} />
+      </group>
     </group>
   );
 }
 
 // ============================================================================
-// BOMB TARGETING INDICATOR
-// Shows where the bomb will land - uses proper ground detection like ShadowStep
+// BOMB TARGETING INDICATOR - OPTIMIZED
 // ============================================================================
 
 interface BombTargetingIndicatorProps {
@@ -518,22 +505,23 @@ interface BombTargetingIndicatorProps {
   onTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
-// Maximum and minimum bomb range
 const BOMB_MAX_RANGE = 60;
 const BOMB_MIN_RANGE = 5;
 
+// Pre-allocated vectors for targeting
+const _lookDir = new THREE.Vector3();
+const _horizontalDir = new THREE.Vector3();
+const _targetPos = new THREE.Vector3();
+
 export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
-  const pulseRef = useRef(0);
-  const { camera } = useThree();
-  const targetPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const rotationRef = useRef(0);
   const isValidRef = useRef(false);
+  const { camera } = useThree();
   
-  useFrame((state) => {
+  useFrame(() => {
     if (!isActive) {
-      if (indicatorRef.current) {
-        indicatorRef.current.visible = false;
-      }
+      if (indicatorRef.current) indicatorRef.current.visible = false;
       onTargetUpdate(null, false);
       return;
     }
@@ -544,11 +532,7 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       return;
     }
     
-    // Get camera look direction
-    const lookDir = new THREE.Vector3(0, 0, -1);
-    lookDir.applyQuaternion(camera.quaternion);
-    
-    // Player feet position for range calculation
+    _lookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
     const playerFeetY = localPlayer.position.y - 0.9;
     
     let targetX = camera.position.x;
@@ -558,77 +542,56 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
     let foundGround = false;
     
     if (isPhysicsReady()) {
-      const horizontalDir = new THREE.Vector3(lookDir.x, 0, lookDir.z);
-      const horizontalLength = horizontalDir.length();
+      _horizontalDir.set(_lookDir.x, 0, _lookDir.z);
+      const horizontalLength = _horizontalDir.length();
       
       if (horizontalLength > 0.01) {
-        horizontalDir.normalize();
+        _horizontalDir.normalize();
+        const pitch = Math.asin(Math.max(-1, Math.min(1, -_lookDir.y)));
         
-        // Calculate pitch angle
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -lookDir.y)));
-        
-        // If looking down, use ray-plane intersection
-        if (pitch > 0.1 && lookDir.y < -0.01) {
-          // Start with player's ground level as reference
-          const groundY = playerFeetY;
-          const t = (groundY - camera.position.y) / lookDir.y;
-          
+        if (pitch > 0.1 && _lookDir.y < -0.01) {
+          const t = (playerFeetY - camera.position.y) / _lookDir.y;
           if (t > 0 && t < 200) {
-            targetX = camera.position.x + lookDir.x * t;
-            targetZ = camera.position.z + lookDir.z * t;
-            
-            // Use physics to find actual ground at this position
-            const groundCheck = checkGroundWithNormal(targetX, groundY + 30, targetZ, 60);
-            if (groundCheck && groundCheck.isWalkable) {
+            targetX = camera.position.x + _lookDir.x * t;
+            targetZ = camera.position.z + _lookDir.z * t;
+            const groundCheck = checkGroundWithNormal(targetX, playerFeetY + 30, targetZ, 60);
+            if (groundCheck?.isWalkable) {
               targetY = groundCheck.groundY + 0.1;
               foundGround = true;
             }
           }
         }
         
-        // If not looking down enough or no ground found, project forward
         if (!foundGround) {
           const distanceFactor = Math.max(0.2, Math.cos(pitch));
           const projectionDist = BOMB_MIN_RANGE + (BOMB_MAX_RANGE - BOMB_MIN_RANGE) * distanceFactor * 0.5;
-          
-          targetX = localPlayer.position.x + horizontalDir.x * projectionDist;
-          targetZ = localPlayer.position.z + horizontalDir.z * projectionDist;
-          
-          // Use physics to find ground at this position
+          targetX = localPlayer.position.x + _horizontalDir.x * projectionDist;
+          targetZ = localPlayer.position.z + _horizontalDir.z * projectionDist;
           const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 60);
-          if (groundCheck && groundCheck.isWalkable) {
+          if (groundCheck?.isWalkable) {
             targetY = groundCheck.groundY + 0.1;
             foundGround = true;
           }
         }
         
-        // Validate range and clamp if needed
         if (foundGround) {
           const dx = targetX - localPlayer.position.x;
           const dz = targetZ - localPlayer.position.z;
           const horizontalDist = Math.sqrt(dx * dx + dz * dz);
           
-          // Clamp to max range
           if (horizontalDist > BOMB_MAX_RANGE) {
             const scale = BOMB_MAX_RANGE / horizontalDist;
             targetX = localPlayer.position.x + dx * scale;
             targetZ = localPlayer.position.z + dz * scale;
-            
-            // Re-check ground at clamped position
             const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 60);
-            if (groundCheck && groundCheck.isWalkable) {
+            if (groundCheck?.isWalkable) {
               targetY = groundCheck.groundY + 0.1;
             } else {
               foundGround = false;
             }
           }
           
-          // Valid if in range and ground found
-          const finalDist = Math.sqrt(
-            (targetX - localPlayer.position.x) ** 2 + 
-            (targetZ - localPlayer.position.z) ** 2
-          );
-          
+          const finalDist = Math.sqrt((targetX - localPlayer.position.x) ** 2 + (targetZ - localPlayer.position.z) ** 2);
           if (foundGround && finalDist >= BOMB_MIN_RANGE) {
             isValid = true;
           }
@@ -636,113 +599,71 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       }
     }
     
-    // Update refs and indicator
-    targetPositionRef.current.set(targetX, targetY, targetZ);
+    _targetPos.set(targetX, targetY, targetZ);
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {
       indicatorRef.current.visible = true;
-      indicatorRef.current.position.set(targetX, targetY, targetZ);
-      
-      // Pulsing animation
-      pulseRef.current = (pulseRef.current + 0.05) % (Math.PI * 2);
-      const pulse = 1 + Math.sin(pulseRef.current) * 0.1;
-      indicatorRef.current.scale.setScalar(pulse);
+      indicatorRef.current.position.copy(_targetPos);
+      rotationRef.current += 0.02;
     }
     
-    // Report to parent
-    onTargetUpdate(targetPositionRef.current.clone(), isValid);
+    onTargetUpdate(_targetPos.clone(), isValid);
   });
   
   if (!isActive) return null;
   
-  const ringColor = isValidRef.current ? 0xff4400 : 0xff0000;
+  const baseColor = isValidRef.current ? 0xff4400 : 0xff0000;
   
   return (
     <group ref={indicatorRef}>
-      {/* Large outer pulsing ring */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1}>
-        <ringGeometry args={[4, 4.5, 32]} />
-        <meshBasicMaterial
-          color={ringColor}
-          transparent
-          opacity={0.7}
-          side={THREE.DoubleSide}
-        />
+      {/* Main rings */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]}>
+        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]}>
+        <meshBasicMaterial color={0xff6600} transparent opacity={0.8} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]}>
+        <meshBasicMaterial color={0xffaa00} transparent opacity={0.9} side={THREE.DoubleSide} />
       </mesh>
       
-      {/* Middle ring */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15}>
-        <ringGeometry args={[2.5, 3, 32]} />
-        <meshBasicMaterial
-          color={0xff6600}
-          transparent
-          opacity={0.8}
-          side={THREE.DoubleSide}
-        />
+      {/* Center */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]}>
+        <meshBasicMaterial color={0xffff00} transparent opacity={1} side={THREE.DoubleSide} />
       </mesh>
       
-      {/* Inner ring */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.2}>
-        <ringGeometry args={[1, 1.3, 32]} />
-        <meshBasicMaterial
-          color={0xffaa00}
-          transparent
-          opacity={0.9}
-          side={THREE.DoubleSide}
-        />
+      {/* Fill */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]}>
+        <meshBasicMaterial color={0xff2200} transparent opacity={0.15} side={THREE.DoubleSide} />
       </mesh>
       
-      {/* Center bright dot */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.25}>
-        <circleGeometry args={[0.5, 16]} />
-        <meshBasicMaterial
-          color={0xffff00}
-          transparent
-          opacity={1}
-          side={THREE.DoubleSide}
-        />
+      {/* Cross */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]}>
+        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]}>
+        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
       </mesh>
       
-      {/* Blast radius filled area */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05}>
-        <circleGeometry args={[4.5, 32]} />
-        <meshBasicMaterial
-          color={0xff2200}
-          transparent
-          opacity={0.2}
-          side={THREE.DoubleSide}
-        />
+      {/* Vertical pillar */}
+      <mesh position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]}>
+        <meshBasicMaterial color={0xff6600} transparent opacity={0.3} />
       </mesh>
       
-      {/* Cross lines - horizontal */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15}>
-        <planeGeometry args={[0.15, 10]} />
-        <meshBasicMaterial color={ringColor} transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15}>
-        <planeGeometry args={[0.15, 10]} />
-        <meshBasicMaterial color={ringColor} transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-      
-      {/* Vertical pillar to show bomb drop path */}
-      <mesh position-y={20}>
-        <cylinderGeometry args={[0.08, 0.08, 40, 8]} />
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.4} />
-      </mesh>
-      
-      {/* Top marker - where bomb comes from */}
-      <mesh position-y={40}>
-        <sphereGeometry args={[0.5, 8, 8]} />
+      {/* Top marker */}
+      <mesh position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4}>
         <meshBasicMaterial color={0xff4400} transparent opacity={0.7} />
       </mesh>
+      
+      <pointLight color={baseColor} intensity={2} distance={6} decay={2} position-y={0.5} />
     </group>
   );
 }
 
 // ============================================================================
-// JETPACK EFFECT
-// Visual fire effect below player when using jetpack
+// JETPACK EFFECT - OPTIMIZED
+// Efficient dual flames
 // ============================================================================
 
 interface JetpackEffectProps {
@@ -751,106 +672,118 @@ interface JetpackEffectProps {
 }
 
 export function JetpackEffect({ isActive, playerPosition }: JetpackEffectProps) {
-  const flameRef = useRef<THREE.Mesh>(null);
-  const [scale, setScale] = useState(1);
+  const groupRef = useRef<THREE.Group>(null);
+  const leftFlameRef = useRef<THREE.Group>(null);
+  const rightFlameRef = useRef<THREE.Group>(null);
+  const lightRef = useRef<THREE.PointLight>(null);
   
   useFrame((state) => {
-    if (flameRef.current && isActive) {
-      // Flickering flame effect
-      const flicker = 0.8 + Math.sin(state.clock.elapsedTime * 30) * 0.2;
-      setScale(flicker);
+    if (!isActive || !groupRef.current) return;
+    
+    const time = state.clock.elapsedTime * 20;
+    const flicker = 0.85 + Math.sin(time) * 0.1 + Math.sin(time * 3.7) * 0.05;
+    
+    if (leftFlameRef.current) {
+      leftFlameRef.current.scale.set(flicker, flicker * 1.2, flicker);
+    }
+    if (rightFlameRef.current) {
+      rightFlameRef.current.scale.set(flicker, flicker * 1.1, flicker);
+    }
+    if (lightRef.current) {
+      lightRef.current.intensity = flicker * 5;
     }
   });
   
   if (!isActive) return null;
   
+  const thrusterOffset = 0.25;
+  
   return (
-    <group position={[playerPosition.x, playerPosition.y - 1.2, playerPosition.z]}>
-      {/* Main flame */}
-      <mesh ref={flameRef} scale={[scale, scale * 1.5, scale]}>
-        <coneGeometry args={[0.3, 1.2, 8]} />
-        <meshBasicMaterial color={0xff4400} transparent opacity={0.8} />
-      </mesh>
+    <group ref={groupRef} position={[playerPosition.x, playerPosition.y - 1.0, playerPosition.z]}>
+      {/* Left thruster */}
+      <group ref={leftFlameRef} position={[-thrusterOffset, 0, 0]}>
+        <mesh position={[0, -0.2, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.4, 0.08]}>
+          <meshBasicMaterial color={0xffffff} transparent opacity={0.95} />
+        </mesh>
+        <mesh position={[0, -0.4, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.6, 0.12]}>
+          <meshBasicMaterial color={0xffaa00} transparent opacity={0.85} />
+        </mesh>
+        <mesh position={[0, -0.55, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.18, 0.8, 0.18]}>
+          <meshBasicMaterial color={0xff5500} transparent opacity={0.6} />
+        </mesh>
+      </group>
       
-      {/* Inner hot core */}
-      <mesh scale={[scale * 0.5, scale, scale * 0.5]}>
-        <coneGeometry args={[0.15, 0.8, 8]} />
-        <meshBasicMaterial color={0xffff00} transparent opacity={0.9} />
-      </mesh>
+      {/* Right thruster */}
+      <group ref={rightFlameRef} position={[thrusterOffset, 0, 0]}>
+        <mesh position={[0, -0.2, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.4, 0.08]}>
+          <meshBasicMaterial color={0xffffff} transparent opacity={0.95} />
+        </mesh>
+        <mesh position={[0, -0.4, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.6, 0.12]}>
+          <meshBasicMaterial color={0xffaa00} transparent opacity={0.85} />
+        </mesh>
+        <mesh position={[0, -0.55, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.18, 0.8, 0.18]}>
+          <meshBasicMaterial color={0xff5500} transparent opacity={0.6} />
+        </mesh>
+      </group>
       
-      {/* Light */}
-      <pointLight color={0xff4400} intensity={2} distance={5} />
+      {/* Single light for both thrusters */}
+      <pointLight ref={lightRef} color={0xff6600} intensity={5} distance={8} decay={2} position={[0, -0.4, 0]} />
     </group>
   );
 }
 
 // ============================================================================
 // BLAZE EFFECTS MANAGER
-// Tracks and renders all active Blaze effects
 // ============================================================================
 
 export function BlazeEffectsManager() {
   const rockets = useGameStore(state => state.rockets);
   const bombs = useGameStore(state => state.bombs);
   const localPlayer = useGameStore(state => state.localPlayer);
+  const jetpackActive = useGameStore(state => state.jetpackActive);
   
   const [activeRocketJumpExplosions, setActiveRocketJumpExplosions] = useState<RocketJumpExplosionData[]>([]);
   const [activeAirStrikes, setActiveAirStrikes] = useState<AirStrikeData[]>([]);
-  const [jetpackActive, setJetpackActive] = useState(false);
   
-  // Get jetpack state from store
-  const jetpackActiveFromStore = useGameStore(state => state.jetpackActive);
-  
-  useEffect(() => {
-    setJetpackActive(jetpackActiveFromStore || false);
-  }, [jetpackActiveFromStore]);
-  
-  // Cleanup expired effects periodically (not every frame)
+  // Cleanup expired effects periodically
   useEffect(() => {
     const interval = setInterval(() => {
       useGameStore.getState().clearExpiredRockets();
       useGameStore.getState().clearExpiredBombs();
       
-      // Clean up rocket jump explosions
       const now = Date.now();
       const activeExplosions = rocketJumpExplosions.filter(e => now - e.startTime < ROCKET_JUMP_DURATION);
       rocketJumpExplosions.length = 0;
       rocketJumpExplosions.push(...activeExplosions);
       setActiveRocketJumpExplosions([...activeExplosions]);
       
-      // Clean up air strikes
-      const activeStrikes = airStrikes.filter(s => now - s.startTime < AIR_STRIKE_DURATION + 1000);
+      const activeStrks = airStrikes.filter(s => now - s.startTime < AIR_STRIKE_DURATION + 1000);
       airStrikes.length = 0;
-      airStrikes.push(...activeStrikes);
-      setActiveAirStrikes([...activeStrikes]);
-    }, 100);
+      airStrikes.push(...activeStrks);
+      setActiveAirStrikes([...activeStrks]);
+    }, 150); // Slightly less frequent cleanup
     
     return () => clearInterval(interval);
   }, []);
   
   return (
     <group>
-      {/* Render all rockets */}
       {rockets.map(rocket => (
         <RocketEffect key={rocket.id} rocket={rocket} />
       ))}
       
-      {/* Render all bombs */}
       {bombs.map(bomb => (
         <BombEffect key={bomb.id} bomb={bomb} />
       ))}
       
-      {/* Render rocket jump explosions */}
       {activeRocketJumpExplosions.map(explosion => (
         <RocketJumpExplosion key={explosion.id} explosion={explosion} />
       ))}
       
-      {/* Render air strikes */}
       {activeAirStrikes.map(strike => (
         <AirStrikeEffect key={strike.id} strike={strike} />
       ))}
       
-      {/* Render jetpack effect */}
       {localPlayer && jetpackActive && (
         <JetpackEffect isActive={true} playerPosition={localPlayer.position} />
       )}
