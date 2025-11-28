@@ -25,6 +25,7 @@ const sharedLoops = new Map<string, { source: AudioBufferSourceNode; gain: GainN
 const SOUND_EFFECTS = {
   // Movement
   footstep: { path: '/sounds/footstep.mp3', volume: 0.3 },
+  walk: { path: '/sounds/walk.mp3', volume: 0.4 },
   jump: { path: '/sounds/jump.mp3', volume: 0.5 },
   land: { path: '/sounds/land.mp3', volume: 0.4 },
   slide: { path: '/sounds/slide.mp3', volume: 0.5 },
@@ -293,14 +294,23 @@ export function useAudio() {
     setVolume,
     toggleMute,
     preloadSounds,
+    loadSound,
     isMuted: () => sharedConfig.muted,
     getVolume: () => sharedConfig.volume,
   };
 }
 
+// Walking sound state (shared across hook instances)
+let walkingSoundState = {
+  cachedBuffer: null as AudioBuffer | null,
+  lastStepTime: 0, // Time of last footstep
+  isWalking: false,
+  movementStartTime: 0, // When continuous movement started
+};
+
 // Sound effect helper hooks
 export function useMovementSounds() {
-  const { playSound, playLoop, stopLoop } = useAudio();
+  const { playSound, playLoop, stopLoop, loadSound, initAudio } = useAudio();
 
   const onFootstep = useCallback(() => {
     playSound('footstep', { pitch: 0.9 + Math.random() * 0.2 });
@@ -331,6 +341,116 @@ export function useMovementSounds() {
     stopLoop('wallrun', 0.2);
   }, [stopLoop]);
 
+  // Preload walking sound buffer (call once at startup)
+  const preloadWalkingSound = useCallback(async () => {
+    if (walkingSoundState.cachedBuffer) return;
+    
+    const sound = await loadSound('walk');
+    if (sound?.buffer) {
+      walkingSoundState.cachedBuffer = sound.buffer;
+      console.log('[Audio] Walking sound preloaded, duration:', sound.buffer.duration);
+    }
+  }, [loadSound]);
+
+  // Helper to play a single footstep sound
+  const playFootstep = useCallback(() => {
+    if (!sharedAudioContext) {
+      initAudio();
+    }
+    const ctx = sharedAudioContext;
+    if (!ctx) return;
+
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+
+    const buffer = walkingSoundState.cachedBuffer;
+    if (!buffer) {
+      preloadWalkingSound();
+      return;
+    }
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = false;
+    // Pitch variation for naturalness (0.85 to 1.15)
+    source.playbackRate.value = 0.85 + Math.random() * 0.3;
+
+    const gainNode = ctx.createGain();
+    gainNode.gain.value = 0.4 * sharedConfig.volume;
+
+    source.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    source.start();
+
+    walkingSoundState.lastStepTime = performance.now();
+  }, [initAudio, preloadWalkingSound]);
+
+  // Update walking sound based on movement state
+  // Plays discrete footstep sounds at intervals based on speed
+  // justLanded: passed from PlayerController, detected BEFORE jump check
+  const updateWalkingSound = useCallback((
+    horizontalSpeed: number,
+    isGrounded: boolean,
+    isSliding: boolean,
+    baseSpeed: number,
+    justLanded: boolean = false
+  ) => {
+    const MIN_WALKING_SPEED = 2.0; // Higher threshold to filter out tiny movements
+    const MIN_MOVEMENT_TIME = 150; // ms - must be moving this long before first footstep
+    const isMoving = horizontalSpeed > MIN_WALKING_SPEED;
+    const shouldPlaySteps = isMoving && isGrounded && !isSliding;
+    const now = performance.now();
+
+    // Track when continuous movement started (regardless of grounded state for bunny hop)
+    if (isMoving) {
+      if (walkingSoundState.movementStartTime === 0) {
+        walkingSoundState.movementStartTime = now;
+      }
+    } else {
+      walkingSoundState.movementStartTime = 0;
+    }
+
+    // Check if player has been moving long enough (prevents sounds on brief taps)
+    const movementDuration = walkingSoundState.movementStartTime > 0 
+      ? now - walkingSoundState.movementStartTime 
+      : 0;
+    const hasMovedEnough = movementDuration >= MIN_MOVEMENT_TIME;
+
+    // Play footstep immediately on landing (bunny hop support)
+    // Only if already moving for a while (not a fresh tap)
+    if (justLanded && isMoving && !isSliding && hasMovedEnough) {
+      playFootstep();
+      walkingSoundState.isWalking = true;
+      return; // Already played a step this frame
+    }
+
+    if (!shouldPlaySteps || !hasMovedEnough) {
+      walkingSoundState.isWalking = false;
+      return;
+    }
+
+    // Calculate interval between footsteps based on speed
+    const speedRatio = horizontalSpeed / baseSpeed;
+    const baseInterval = 300; // ms at normal speed
+    const minInterval = 150; // ms at max speed
+    const maxInterval = 500; // ms at slow walk
+    
+    const stepInterval = Math.max(minInterval, Math.min(maxInterval, baseInterval / speedRatio));
+    const timeSinceLastStep = now - walkingSoundState.lastStepTime;
+
+    // Play footstep if enough time has passed
+    if (timeSinceLastStep >= stepInterval) {
+      playFootstep();
+      walkingSoundState.isWalking = true;
+    }
+  }, [playFootstep]);
+
+  // Explicitly stop walking sound (useful for cleanup)
+  const stopWalkingSound = useCallback(() => {
+    walkingSoundState.isWalking = false;
+  }, []);
+
   return {
     onFootstep,
     onJump,
@@ -339,6 +459,9 @@ export function useMovementSounds() {
     stopSlide,
     startWallRun,
     stopWallRun,
+    updateWalkingSound,
+    stopWalkingSound,
+    preloadWalkingSound,
   };
 }
 

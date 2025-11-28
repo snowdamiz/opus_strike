@@ -13,7 +13,7 @@ import {
   type GroundInfo 
 } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
-import { useAbilitySounds } from '../../hooks/useAudio';
+import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { 
   MOUSE_SENSITIVITY, 
   PITCH_LIMIT,
@@ -128,6 +128,12 @@ export function PlayerController() {
   const { world, playerBody } = usePhysics();
   const { sendInput } = useNetwork();
   const { playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic } = useAbilitySounds();
+  const { updateWalkingSound, preloadWalkingSound } = useMovementSounds();
+  
+  // Preload walking sound on mount
+  useEffect(() => {
+    preloadWalkingSound();
+  }, [preloadWalkingSound]);
 
   const velocityRef = useRef(new THREE.Vector3());
   const yawRef = useRef(0);
@@ -1369,6 +1375,10 @@ export function PlayerController() {
       smoothedYRef.current = null;
     }
 
+    // Detect landing BEFORE jump check (for footstep sounds during bunny hop)
+    const justLanded = isGroundedRef.current && !wasGroundedRef.current;
+    wasGroundedRef.current = isGroundedRef.current;
+
     // Jump - check AFTER ground detection (disabled during targeting)
     if (inputState.jump && canJumpRef.current && isGroundedRef.current && !shadowStepTargeting) {
       velocity.y = heroStats.jumpForce;
@@ -1493,6 +1503,10 @@ export function PlayerController() {
       position.x = constrained.x;
       position.z = constrained.z;
     }
+
+    // Update walking sound based on movement state
+    const walkingHorizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    updateWalkingSound(walkingHorizontalSpeed, isGroundedRef.current, isSliding.current, heroStats.moveSpeed, justLanded);
 
     // Interpolate crouch camera height
     const targetCrouchOffset = (isCrouchingRef.current || isSliding.current) ? CROUCH_HEIGHT_OFFSET : 0;
