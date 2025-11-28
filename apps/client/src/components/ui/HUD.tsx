@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { HERO_DEFINITIONS, ABILITY_DEFINITIONS } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, ABILITY_DEFINITIONS, VOID_RAY_CHARGE_TIME } from '@voxel-strike/shared';
 import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
 import type { HeroId } from '@voxel-strike/shared';
 
@@ -57,8 +57,73 @@ function VoidIconSmall({ className }: { className?: string }) {
   );
 }
 
+// Simple Void Ray charge indicator
+
+function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
+  const [progress, setProgress] = useState(0);
+  
+  // Fast update loop for smooth animation
+  useEffect(() => {
+    // Immediately calculate initial progress
+    const calcProgress = () => Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
+    setProgress(calcProgress());
+    
+    // Update at 60fps for smooth animation
+    const interval = setInterval(() => {
+      setProgress(calcProgress());
+    }, 16);
+    
+    return () => clearInterval(interval);
+  }, [chargeStart]);
+
+  const isReady = progress >= 1;
+  const circumference = 2 * Math.PI * 28;
+  const strokeDashoffset = circumference * (1 - progress);
+
+  return (
+    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50">
+      <svg width="72" height="72" viewBox="0 0 72 72" className="-rotate-90">
+        {/* Background ring */}
+        <circle
+          cx="36"
+          cy="36"
+          r="28"
+          fill="none"
+          stroke="rgba(0, 0, 0, 0.4)"
+          strokeWidth="4"
+        />
+        {/* Progress ring */}
+        <circle
+          cx="36"
+          cy="36"
+          r="28"
+          fill="none"
+          stroke={isReady ? '#00ffff' : '#9333ea'}
+          strokeWidth="4"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          style={{
+            filter: isReady ? 'drop-shadow(0 0 6px #00ffff)' : 'drop-shadow(0 0 4px #9333ea)',
+            transition: 'stroke 0.1s',
+          }}
+        />
+      </svg>
+      {/* Center text */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span 
+          className={`font-mono text-sm font-bold ${isReady ? 'text-cyan-300' : 'text-white/80'}`}
+          style={{ textShadow: isReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)' }}
+        >
+          {isReady ? 'FIRE' : `${Math.floor(progress * 100)}%`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function HUD() {
-  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges, ultimateEffectActive } = useGameStore();
+  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges, ultimateEffectActive, voidRayCharging, voidRayChargeStart, bombTargeting, bombTargetValid, jetpackFuel, jetpackActive } = useGameStore();
   
   // Force re-render every 100ms for smooth cooldown updates
   const [, setTick] = useState(0);
@@ -96,16 +161,73 @@ export function HUD() {
         />
       )}
 
-      {/* Crosshair */}
+      {/* Crosshair - changes for bomb targeting mode */}
       <div className="crosshair">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="2" fill="white" fillOpacity="0.95" />
-          <line x1="12" y1="4" x2="12" y2="8" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-          <line x1="12" y1="16" x2="12" y2="20" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-          <line x1="4" y1="12" x2="8" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-          <line x1="16" y1="12" x2="20" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-        </svg>
+        {bombTargeting ? (
+          // Bomb targeting crosshair - larger, orange, with explosion radius indicator
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+            {/* Outer blast radius ring */}
+            <circle 
+              cx="24" cy="24" r="20" 
+              stroke={bombTargetValid ? "#ff6600" : "#ff3333"} 
+              strokeWidth="2" 
+              strokeDasharray="6 3"
+              opacity="0.6"
+              style={{ animation: 'spin 4s linear infinite' }}
+            />
+            {/* Inner targeting ring */}
+            <circle 
+              cx="24" cy="24" r="12" 
+              stroke={bombTargetValid ? "#ff8800" : "#ff4444"} 
+              strokeWidth="2"
+              opacity="0.8"
+            />
+            {/* Center dot */}
+            <circle 
+              cx="24" cy="24" r="3" 
+              fill={bombTargetValid ? "#ffaa00" : "#ff5555"}
+              opacity="0.95"
+            />
+            {/* Crosshair lines */}
+            <line x1="24" y1="6" x2="24" y2="14" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+            <line x1="24" y1="34" x2="24" y2="42" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+            <line x1="6" y1="24" x2="14" y2="24" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+            <line x1="34" y1="24" x2="42" y2="24" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+          </svg>
+        ) : (
+          // Normal crosshair
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="2" fill="white" fillOpacity="0.95" />
+            <line x1="12" y1="4" x2="12" y2="8" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+            <line x1="12" y1="16" x2="12" y2="20" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+            <line x1="4" y1="12" x2="8" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+            <line x1="16" y1="12" x2="20" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
+          </svg>
+        )}
       </div>
+      
+      {/* Bomb Targeting Instructions */}
+      {bombTargeting && (
+        <div className="fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none">
+          <div 
+            className="px-4 py-2 rounded-lg backdrop-blur-sm"
+            style={{ 
+              background: bombTargetValid ? 'rgba(255, 102, 0, 0.3)' : 'rgba(255, 50, 50, 0.3)',
+              border: `1px solid ${bombTargetValid ? '#ff6600' : '#ff3333'}`,
+            }}
+          >
+            <p className="text-white text-sm font-bold drop-shadow-lg">
+              {bombTargetValid ? 'CLICK TO DROP BOMB' : 'TARGET OUT OF RANGE'}
+            </p>
+            <p className="text-white/70 text-xs">Right-click or ESC to cancel</p>
+          </div>
+        </div>
+      )}
+
+      {/* Void Ray Charge Indicator */}
+      {voidRayCharging && localPlayer?.heroId === 'phantom' && (
+        <VoidRayChargeIndicator chargeStart={voidRayChargeStart} />
+      )}
 
       {/* ===== TOP CENTER - Score Panel (Redesigned) ===== */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2">
@@ -400,12 +522,12 @@ export function HUD() {
         </div>
         
         {/* Jetpack Fuel */}
-        {localPlayer.heroId === 'blaze' && localPlayer.movement?.jetpackFuel !== undefined && (
+        {localPlayer.heroId === 'blaze' && (
           <div 
             className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
             style={{
-              background: 'rgba(249, 115, 22, 0.1)',
-              border: '1px solid rgba(249, 115, 22, 0.3)',
+              background: jetpackActive ? 'rgba(249, 115, 22, 0.25)' : 'rgba(249, 115, 22, 0.1)',
+              border: jetpackActive ? '1px solid rgba(249, 115, 22, 0.6)' : '1px solid rgba(249, 115, 22, 0.3)',
             }}
           >
             <span className="text-[9px] font-display text-orange-400 tracking-wider">FUEL</span>
@@ -413,14 +535,16 @@ export function HUD() {
               <div 
                 className="h-full transition-all duration-100"
                 style={{ 
-                  width: `${localPlayer.movement.jetpackFuel}%`,
-                  background: 'linear-gradient(90deg, #f97316, #fbbf24)',
-                  boxShadow: '0 0 10px rgba(249, 115, 22, 0.5)',
+                  width: `${jetpackFuel}%`,
+                  background: jetpackActive 
+                    ? 'linear-gradient(90deg, #ff6b00, #ffaa00)'
+                    : 'linear-gradient(90deg, #f97316, #fbbf24)',
+                  boxShadow: jetpackActive ? '0 0 15px rgba(255, 170, 0, 0.7)' : '0 0 10px rgba(249, 115, 22, 0.5)',
                 }}
               />
             </div>
             <span className="text-[10px] font-mono text-orange-300/70">
-              {Math.round(localPlayer.movement.jetpackFuel)}%
+              {Math.round(jetpackFuel)}%
             </span>
           </div>
         )}

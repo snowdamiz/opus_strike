@@ -9,10 +9,13 @@ import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
 import { VoidZones } from './VoidZone';
 import { DireBalls } from './DireBall';
+import { VoidRays } from './VoidRay';
+import { PhantomEffectsManager } from './PhantomEffects';
+import { BlazeEffectsManager } from './BlazeEffects';
 import { useGameStore } from '../../store/gameStore';
 
 export function GameCanvas() {
-  const { gamePhase, voidZones, direBalls } = useGameStore();
+  const { gamePhase, voidZones, direBalls, voidRays } = useGameStore();
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
 
   return (
@@ -89,6 +92,9 @@ export function GameCanvas() {
             <SlideSpeedLines />
             <VoidZones zones={voidZones} />
             <DireBalls balls={direBalls} />
+            <VoidRays rays={voidRays} />
+            <PhantomEffectsManager />
+            <BlazeEffectsManager />
           </>
         )}
 

@@ -54,6 +54,36 @@ export interface DireBallData {
   ownerId: string;
 }
 
+export interface VoidRayData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+}
+
+// Blaze projectile types
+export interface RocketData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+}
+
+export interface BombData {
+  id: string;
+  targetPosition: { x: number; y: number; z: number };
+  startPosition: { x: number; y: number; z: number };
+  startTime: number;
+  impactTime: number; // When the bomb lands
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  hasExploded: boolean;
+}
+
 interface GameStore {
   // Wallet/Auth state
   walletAddress: string | null;
@@ -122,6 +152,25 @@ interface GameStore {
   // Dire balls (phantom primary fire projectiles)
   direBalls: DireBallData[];
   
+  // Void rays (phantom charged secondary fire)
+  voidRays: VoidRayData[];
+  
+  // Void ray charging state
+  voidRayCharging: boolean;
+  voidRayChargeStart: number;
+  
+  // Blaze projectiles
+  rockets: RocketData[];
+  bombs: BombData[];
+  
+  // Blaze bomb targeting state
+  bombTargeting: boolean;
+  bombTargetValid: boolean;
+  
+  // Blaze jetpack state
+  jetpackActive: boolean;
+  jetpackFuel: number; // 0-100
+
   // Actions
   setWalletAddress: (address: string | null) => void;
   setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
@@ -168,6 +217,27 @@ interface GameStore {
   removeDireBall: (id: string) => void;
   clearExpiredDireBalls: () => void;
   
+  // Void ray actions
+  addVoidRay: (ray: VoidRayData) => void;
+  removeVoidRay: (id: string) => void;
+  clearExpiredVoidRays: () => void;
+  setVoidRayCharging: (charging: boolean, startTime?: number) => void;
+  
+  // Blaze rocket actions
+  addRocket: (rocket: RocketData) => void;
+  removeRocket: (id: string) => void;
+  clearExpiredRockets: () => void;
+  
+  // Blaze bomb actions
+  addBomb: (bomb: BombData) => void;
+  removeBomb: (id: string) => void;
+  clearExpiredBombs: () => void;
+  setBombTargeting: (targeting: boolean, valid?: boolean) => void;
+  
+  // Blaze jetpack actions
+  setJetpackActive: (active: boolean) => void;
+  setJetpackFuel: (fuel: number) => void;
+  
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
   
@@ -213,6 +283,15 @@ const initialState = {
   slideIntensity: 0,
   voidZones: [] as VoidZoneData[],
   direBalls: [] as DireBallData[],
+  voidRays: [] as VoidRayData[],
+  voidRayCharging: false,
+  voidRayChargeStart: 0,
+  rockets: [] as RocketData[],
+  bombs: [] as BombData[],
+  bombTargeting: false,
+  bombTargetValid: false,
+  jetpackActive: false,
+  jetpackFuel: 100,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -439,6 +518,77 @@ export const useGameStore = create<GameStore>((set, get) => ({
       direBalls: state.direBalls.filter(b => now - b.startTime < LIFETIME)
     };
   }),
+
+  addVoidRay: (ray) => set((state) => ({
+    voidRays: [...state.voidRays, ray]
+  })),
+  
+  removeVoidRay: (id) => set((state) => ({
+    voidRays: state.voidRays.filter(r => r.id !== id)
+  })),
+  
+  clearExpiredVoidRays: () => set((state) => {
+    const now = Date.now();
+    const LIFETIME = 500; // 0.5 seconds - rays are quick
+    return {
+      voidRays: state.voidRays.filter(r => now - r.startTime < LIFETIME)
+    };
+  }),
+  
+  setVoidRayCharging: (charging, startTime = 0) => set({
+    voidRayCharging: charging,
+    voidRayChargeStart: startTime,
+  }),
+
+  // Blaze rocket actions
+  addRocket: (rocket) => set((state) => {
+    // Prevent duplicate rockets
+    if (state.rockets.some(r => r.id === rocket.id)) {
+      return state;
+    }
+    return { rockets: [...state.rockets, rocket] };
+  }),
+  
+  removeRocket: (id) => set((state) => ({
+    rockets: state.rockets.filter(r => r.id !== id)
+  })),
+  
+  clearExpiredRockets: () => set((state) => {
+    const now = Date.now();
+    const LIFETIME = 5000; // 5 seconds in ms
+    return {
+      rockets: state.rockets.filter(r => now - r.startTime < LIFETIME)
+    };
+  }),
+  
+  // Blaze bomb actions
+  addBomb: (bomb) => set((state) => {
+    // Prevent duplicate bombs
+    if (state.bombs.some(b => b.id === bomb.id)) {
+      return state;
+    }
+    return { bombs: [...state.bombs, bomb] };
+  }),
+  
+  removeBomb: (id) => set((state) => ({
+    bombs: state.bombs.filter(b => b.id !== id)
+  })),
+  
+  clearExpiredBombs: () => set((state) => {
+    const now = Date.now();
+    const TOTAL_LIFETIME = 5000; // Remove bombs 5 seconds after they were created (fall + explosion)
+    return {
+      bombs: state.bombs.filter(b => now - b.startTime < TOTAL_LIFETIME)
+    };
+  }),
+  
+  setBombTargeting: (targeting, valid = false) => set({
+    bombTargeting: targeting,
+    bombTargetValid: valid
+  }),
+  
+  setJetpackActive: (active) => set({ jetpackActive: active }),
+  setJetpackFuel: (fuel) => set({ jetpackFuel: Math.max(0, Math.min(100, fuel)) }),
 
   reset: () => set(initialState),
   

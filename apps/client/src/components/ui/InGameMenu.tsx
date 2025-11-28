@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { SettingsModal } from './SettingsModal';
 
 interface InGameMenuProps {
   onClose: () => void;
@@ -7,6 +9,7 @@ interface InGameMenuProps {
 
 export function InGameMenu({ onClose }: InGameMenuProps) {
   const { playerName, currentLobbyName } = useGameStore();
+  const [showSettings, setShowSettings] = useState(false);
   const { leaveGame } = useNetwork();
 
   const handleResume = () => {
@@ -65,7 +68,7 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
               RESUME
             </MenuButton>
             
-            <MenuButton onClick={() => {}}>
+            <MenuButton onClick={() => setShowSettings(true)}>
               SETTINGS
             </MenuButton>
             
@@ -96,6 +99,9 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
           <span className="font-display text-orange-400">{playerName}</span>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

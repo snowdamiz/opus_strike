@@ -24,19 +24,28 @@ function getSharedCoreMaterial(): THREE.ShaderMaterial {
     sharedCoreMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        color1: { value: new THREE.Color(0x1a0033) },
-        color2: { value: new THREE.Color(0x9333ea) },
-        color3: { value: new THREE.Color(0xff4400) },
+        color1: { value: new THREE.Color(0x0a0015) }, // Deep void
+        color2: { value: new THREE.Color(0x7c3aed) }, // Violet
+        color3: { value: new THREE.Color(0xc084fc) }, // Light purple
+        color4: { value: new THREE.Color(0x00ffff) }, // Cyan accent
       },
       vertexShader: `
         varying vec3 vNormal;
         varying vec2 vUv;
         varying vec3 vPosition;
+        uniform float time;
+        
         void main() {
           vNormal = normalize(normalMatrix * normal);
           vUv = uv;
           vPosition = position;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          
+          // Subtle distortion
+          vec3 pos = position;
+          float wave = sin(position.x * 15.0 + time * 10.0) * 0.02;
+          pos += normal * wave;
+          
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }
       `,
       fragmentShader: `
@@ -44,25 +53,73 @@ function getSharedCoreMaterial(): THREE.ShaderMaterial {
         uniform vec3 color1;
         uniform vec3 color2;
         uniform vec3 color3;
+        uniform vec3 color4;
         varying vec3 vNormal;
         varying vec2 vUv;
         varying vec3 vPosition;
-        float noise(vec3 p) {
+        
+        float hash(vec3 p) {
           return fract(sin(dot(p, vec3(12.9898, 78.233, 45.5432))) * 43758.5453);
         }
+        
+        float noise(vec3 p) {
+          vec3 i = floor(p);
+          vec3 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x),
+                mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+            mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z
+          );
+        }
+        
         void main() {
           vec3 viewDir = normalize(cameraPosition - vPosition);
-          float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
-          float swirl = sin(vPosition.x * 10.0 + time * 5.0) * 
-                       cos(vPosition.y * 10.0 - time * 4.0) * 
-                       sin(vPosition.z * 10.0 + time * 3.0);
-          swirl = swirl * 0.5 + 0.5;
-          float flicker = sin(time * 20.0 + vPosition.y * 15.0) * 0.3 + 0.7;
-          vec3 baseColor = mix(color1, color2, swirl);
-          baseColor = mix(baseColor, color3, fresnel * flicker * 0.5);
-          float brightness = noise(vPosition * 20.0 + vec3(time * 5.0));
-          baseColor += color2 * brightness * 0.3;
-          baseColor += color2 * fresnel * 1.5;
+          float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.5);
+          
+          // Swirling void patterns
+          float swirl1 = sin(vPosition.x * 12.0 + time * 8.0) * 
+                        cos(vPosition.y * 10.0 - time * 6.0) * 
+                        sin(vPosition.z * 14.0 + time * 5.0);
+          swirl1 = swirl1 * 0.5 + 0.5;
+          
+          float swirl2 = cos(vPosition.x * 8.0 - time * 7.0) * 
+                        sin(vPosition.y * 12.0 + time * 4.0);
+          swirl2 = swirl2 * 0.5 + 0.5;
+          
+          // Energy pulses
+          float pulse = sin(time * 15.0 + vPosition.y * 20.0) * 0.3 + 0.7;
+          float fastPulse = sin(time * 30.0) * 0.15 + 0.85;
+          
+          // Fractal noise for chaotic energy
+          float n = noise(vPosition * 15.0 + time * 3.0);
+          n += noise(vPosition * 30.0 - time * 5.0) * 0.5;
+          
+          // Build color layers
+          vec3 baseColor = color1;
+          baseColor = mix(baseColor, color2, swirl1 * 0.8);
+          baseColor = mix(baseColor, color3, swirl2 * swirl1 * 0.6);
+          
+          // Cyan energy core
+          float core = pow(1.0 - length(vPosition) * 3.0, 2.0);
+          baseColor = mix(baseColor, color4, core * 0.5 * pulse);
+          
+          // Fresnel edge glow
+          baseColor += color3 * fresnel * 1.8;
+          baseColor += color4 * fresnel * n * 0.5;
+          
+          // Lightning crackle
+          float lightning = step(0.85, noise(vPosition * 50.0 + time * 20.0));
+          baseColor += color4 * lightning * 2.0;
+          
+          // Flickering
+          float flicker = 0.8 + hash(vec3(time * 50.0, 0.0, 0.0)) * 0.2;
+          baseColor *= flicker * fastPulse;
+          
+          // Boost brightness
+          baseColor *= 1.3;
+          
           gl_FragColor = vec4(baseColor, 1.0);
         }
       `,
@@ -77,23 +134,52 @@ function getSharedGlowMaterial(): THREE.ShaderMaterial {
     sharedGlowMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        color: { value: new THREE.Color(0x7c3aed) },
+        color1: { value: new THREE.Color(0x7c3aed) },
+        color2: { value: new THREE.Color(0xc084fc) },
+        color3: { value: new THREE.Color(0x00ffff) },
       },
       vertexShader: `
         varying vec3 vNormal;
+        varying vec3 vPosition;
+        uniform float time;
+        
         void main() {
           vNormal = normalize(normalMatrix * normal);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          vPosition = position;
+          
+          // Breathing glow
+          vec3 pos = position;
+          float breathe = sin(time * 5.0) * 0.05 + 1.0;
+          pos *= breathe;
+          
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }
       `,
       fragmentShader: `
         uniform float time;
-        uniform vec3 color;
+        uniform vec3 color1;
+        uniform vec3 color2;
+        uniform vec3 color3;
         varying vec3 vNormal;
+        varying vec3 vPosition;
+        
         void main() {
-          float pulse = sin(time * 8.0) * 0.2 + 0.8;
-          float intensity = pow(0.6 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
-          gl_FragColor = vec4(color, intensity * pulse * 0.6);
+          // Multi-layer pulsing
+          float pulse1 = sin(time * 10.0) * 0.2 + 0.8;
+          float pulse2 = sin(time * 15.0 + vPosition.y * 10.0) * 0.15 + 0.85;
+          
+          // Fresnel glow
+          float fresnel = pow(0.6 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
+          
+          // Swirling color
+          float swirl = sin(vPosition.x * 10.0 + time * 8.0) * 0.5 + 0.5;
+          
+          vec3 color = mix(color1, color2, swirl);
+          color = mix(color, color3, fresnel * pulse2 * 0.3);
+          
+          float alpha = fresnel * pulse1 * pulse2 * 0.7;
+          
+          gl_FragColor = vec4(color, alpha);
         }
       `,
       transparent: true,
@@ -362,13 +448,25 @@ export function DireBall({ id, position, velocity, startTime, ownerId }: DireBal
         <primitive object={glowMaterial} />
       </mesh>
       
-      {/* Inner bright core - reduced geometry */}
+      {/* Inner bright core - cyan energy center */}
       <mesh>
-        <sphereGeometry args={[BALL_RADIUS * 0.4, 8, 8]} />
+        <sphereGeometry args={[BALL_RADIUS * 0.35, 12, 12]} />
         <meshBasicMaterial 
-          color={0xff6600} 
+          color={0x00ffff} 
           transparent 
-          opacity={0.9}
+          opacity={0.95}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+      
+      {/* Secondary glow ring */}
+      <mesh>
+        <sphereGeometry args={[BALL_RADIUS * 0.5, 8, 8]} />
+        <meshBasicMaterial 
+          color={0xc084fc} 
+          transparent 
+          opacity={0.4}
+          blending={THREE.AdditiveBlending}
         />
       </mesh>
       

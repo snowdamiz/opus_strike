@@ -58,7 +58,7 @@ function getMusicVolume(): number {
 const SOUND_EFFECTS = {
   // Movement
   footstep: { path: '/sounds/footstep.mp3', volume: 0.3 },
-  walk: { path: '/sounds/walk.mp3', volume: 0.4 },
+  walk: { path: '/sounds/walk.mp3', volume: 0.8 },
   jump: { path: '/sounds/jump.mp3', volume: 0.5 },
   land: { path: '/sounds/land.mp3', volume: 0.4 },
   slide: { path: '/sounds/slide.mp3', volume: 0.15 },
@@ -75,6 +75,16 @@ const SOUND_EFFECTS = {
   phantomShadowStep: { path: '/sounds/shadow_step_short.mp3', volume: 0.4 },
   phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
   phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1 },
+  phantomVoidRay: { path: '/sounds/phantom_strong.mp3', volume: 0.6 },
+  
+  // Blaze Abilities (using existing sounds as fallbacks)
+  blazeRocket: { path: '/sounds/rocket_fire.mp3', volume: 0.4 },
+  blazeBombTarget: { path: '/sounds/button.mp3', volume: 0.5 },
+  blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.5 },
+  blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 0.7 },
+  blazeJetpack: { path: '/sounds/jetpack.mp3', volume: 0.3 },
+  blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
+  blazeAirstrike: { path: '/sounds/airstrike.mp3', volume: 0.6 },
   
   // Combat
   hit: { path: '/sounds/hit.mp3', volume: 0.6 },
@@ -515,7 +525,7 @@ export function useMovementSounds() {
 
 // Ability sound effects hook
 export function useAbilitySounds() {
-  const { playSound } = useAudio();
+  const { playSound, playLoop, stopLoop } = useAudio();
 
   // Phantom abilities - sounds are loaded on first play, then cached
   const playPhantomBlink = useCallback(() => {
@@ -534,13 +544,61 @@ export function useAbilitySounds() {
     playSound('phantomBasic');
   }, [playSound]);
 
+  const playPhantomVoidRay = useCallback(() => {
+    playSound('phantomVoidRay');
+  }, [playSound]);
+  
+  // Blaze abilities
+  const playBlazeRocket = useCallback(() => {
+    playSound('blazeRocket');
+  }, [playSound]);
+  
+  const playBlazeBombTarget = useCallback(() => {
+    playSound('blazeBombTarget');
+  }, [playSound]);
+  
+  const playBlazeBombFall = useCallback(() => {
+    playSound('blazeBombFall');
+  }, [playSound]);
+  
+  const playBlazeBombExplode = useCallback(() => {
+    playSound('blazeBombExplode');
+  }, [playSound]);
+  
+  const playBlazeRocketJump = useCallback(() => {
+    playSound('blazeRocketJump');
+  }, [playSound]);
+  
+  const playBlazeAirstrike = useCallback(() => {
+    playSound('blazeAirstrike');
+  }, [playSound]);
+  
+  // Jetpack loop controls
+  const startJetpackSound = useCallback(() => {
+    playLoop('jetpack', 'blazeJetpack', { fadeIn: 0.1 });
+  }, [playLoop]);
+  
+  const stopJetpackSound = useCallback(() => {
+    stopLoop('jetpack', 0.15);
+  }, [stopLoop]);
+
   return {
     // Phantom
     playPhantomBlink,
     playPhantomShadowStep,
     playPhantomVeil,
     playPhantomBasic,
-  };
+    playPhantomVoidRay,
+    // Blaze
+    playBlazeRocket,
+    playBlazeBombTarget,
+    playBlazeBombFall,
+    playBlazeBombExplode,
+    playBlazeRocketJump,
+    playBlazeAirstrike,
+    startJetpackSound,
+    stopJetpackSound,
+  } as const;
 }
 
 // UI sound effects hook

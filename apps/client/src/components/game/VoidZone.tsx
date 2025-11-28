@@ -12,18 +12,178 @@ interface VoidZoneProps {
   ownerId: string;
 }
 
-// PERFORMANCE: Shared vortex shader material (compiled once)
-let sharedVortexMaterial: THREE.ShaderMaterial | null = null;
+// ============================================================================
+// ENHANCED VOID ZONE SHADER MATERIALS
+// Creates a stunning black hole / void vortex visual effect
+// ============================================================================
 
-function getSharedVortexMaterial(): THREE.ShaderMaterial {
+let sharedVortexMaterial: THREE.ShaderMaterial | null = null;
+let sharedEventHorizonMaterial: THREE.ShaderMaterial | null = null;
+let sharedAccretionMaterial: THREE.ShaderMaterial | null = null;
+let sharedLightningMaterial: THREE.ShaderMaterial | null = null;
+
+function getVortexMaterial(): THREE.ShaderMaterial {
   if (!sharedVortexMaterial) {
     sharedVortexMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
         opacity: { value: 1 },
-        color1: { value: new THREE.Color(0x1a0033) },
-        color2: { value: new THREE.Color(0x7c3aed) },
-        color3: { value: new THREE.Color(0x0f0f23) },
+        color1: { value: new THREE.Color(0x000000) }, // True black core
+        color2: { value: new THREE.Color(0x1a0033) }, // Deep void purple
+        color3: { value: new THREE.Color(0x7c3aed) }, // Violet energy
+        color4: { value: new THREE.Color(0xc084fc) }, // Light purple glow
+        color5: { value: new THREE.Color(0x00ffff) }, // Cyan accretion
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        uniform float time;
+        
+        void main() {
+          vUv = uv;
+          vPosition = position;
+          
+          // Slight warping effect at edges
+          vec3 pos = position;
+          float dist = length(uv - vec2(0.5));
+          float warp = sin(dist * 20.0 - time * 5.0) * 0.02 * (1.0 - dist);
+          pos.y += warp;
+          
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float opacity;
+        uniform vec3 color1;
+        uniform vec3 color2;
+        uniform vec3 color3;
+        uniform vec3 color4;
+        uniform vec3 color5;
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        
+        // Improved noise
+        float hash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+        
+        float noise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+            mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x),
+            f.y
+          );
+        }
+        
+        // Fractal brownian motion for organic detail
+        float fbm(vec2 p) {
+          float sum = 0.0;
+          float amp = 0.5;
+          for(int i = 0; i < 4; i++) {
+            sum += amp * noise(p);
+            p *= 2.0;
+            amp *= 0.5;
+          }
+          return sum;
+        }
+        
+        void main() {
+          vec2 center = vec2(0.5);
+          vec2 uv = vUv - center;
+          float dist = length(uv);
+          float angle = atan(uv.y, uv.x);
+          
+          // ===== BLACK HOLE CORE =====
+          float eventHorizon = smoothstep(0.15, 0.0, dist);
+          
+          // ===== SWIRLING ACCRETION DISK =====
+          // Multiple spiral arms at different speeds
+          float spiral1 = sin(angle * 5.0 + time * 4.0 - dist * 25.0) * 0.5 + 0.5;
+          float spiral2 = sin(angle * 7.0 - time * 3.0 + dist * 20.0) * 0.5 + 0.5;
+          float spiral3 = sin(angle * 3.0 + time * 6.0 - dist * 30.0) * 0.5 + 0.5;
+          float spiral4 = sin(angle * 11.0 - time * 2.0 + dist * 15.0) * 0.5 + 0.5;
+          
+          // Combine spirals with noise for organic look
+          float spiralNoise = fbm(uv * 8.0 + time * 0.5);
+          float accretion = spiral1 * spiral2 * (0.7 + spiralNoise * 0.3);
+          accretion += spiral3 * spiral4 * 0.3;
+          
+          // ===== GRAVITATIONAL LENSING EFFECT =====
+          float lensing = smoothstep(0.4, 0.2, dist) * smoothstep(0.1, 0.2, dist);
+          float lensingStrength = sin(angle * 2.0 + time * 8.0) * 0.5 + 0.5;
+          
+          // ===== ENERGY JETS =====
+          // Two opposing jets of energy
+          float jet1 = smoothstep(0.1, 0.0, abs(sin(angle) * dist));
+          float jet2 = smoothstep(0.1, 0.0, abs(cos(angle) * dist));
+          float jets = (jet1 + jet2) * smoothstep(0.0, 0.3, dist) * smoothstep(0.5, 0.3, dist);
+          jets *= sin(dist * 40.0 - time * 20.0) * 0.5 + 0.5;
+          
+          // ===== OUTER RING =====
+          float outerRing = smoothstep(0.48, 0.45, dist) * smoothstep(0.38, 0.45, dist);
+          float ringPulse = sin(time * 8.0 + dist * 30.0) * 0.3 + 0.7;
+          
+          // ===== INNER DISTORTION RING =====
+          float innerRing = smoothstep(0.25, 0.2, dist) * smoothstep(0.12, 0.2, dist);
+          float innerGlow = sin(time * 12.0) * 0.2 + 0.8;
+          
+          // ===== COLOR COMPOSITION =====
+          vec3 color = color1; // Start with black core
+          
+          // Add void purple in mid range
+          color = mix(color, color2, smoothstep(0.0, 0.3, dist) * (1.0 - eventHorizon));
+          
+          // Add violet energy spirals
+          color = mix(color, color3, accretion * lensing * 0.8);
+          
+          // Add light purple glow
+          color = mix(color, color4, innerRing * innerGlow * 0.6);
+          
+          // Add cyan energy jets
+          color += color5 * jets * 0.8;
+          
+          // Bright outer ring
+          color += color4 * outerRing * ringPulse * 1.5;
+          
+          // Electric arcs at the edge
+          float arc = step(0.9, hash(vec2(angle * 20.0, time * 10.0))) * outerRing;
+          color += color5 * arc * 3.0;
+          
+          // ===== ALPHA =====
+          float alpha = smoothstep(0.5, 0.2, dist) * opacity;
+          alpha = max(alpha, eventHorizon * 0.95); // Solid black core
+          alpha = max(alpha, outerRing * ringPulse * 0.8);
+          alpha = max(alpha, jets * 0.6);
+          
+          // Pulsing
+          float pulse = sin(time * 3.0) * 0.1 + 0.9;
+          alpha *= pulse;
+          
+          // Add bloom to bright areas
+          color *= 1.0 + (accretion * lensing * 0.5);
+          
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+  }
+  return sharedVortexMaterial;
+}
+
+function getEventHorizonMaterial(): THREE.ShaderMaterial {
+  if (!sharedEventHorizonMaterial) {
+    sharedEventHorizonMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        opacity: { value: 1 },
       },
       vertexShader: `
         varying vec2 vUv;
@@ -35,25 +195,25 @@ function getSharedVortexMaterial(): THREE.ShaderMaterial {
       fragmentShader: `
         uniform float time;
         uniform float opacity;
-        uniform vec3 color1;
-        uniform vec3 color2;
-        uniform vec3 color3;
         varying vec2 vUv;
+        
         void main() {
-          vec2 center = vec2(0.5, 0.5);
-          vec2 uv = vUv - center;
+          vec2 uv = vUv - vec2(0.5);
           float dist = length(uv);
-          float angle = atan(uv.y, uv.x);
-          float swirl = sin(angle * 8.0 + time * 3.0 - dist * 15.0) * 0.5 + 0.5;
-          float swirl2 = sin(angle * 5.0 - time * 2.0 + dist * 10.0) * 0.5 + 0.5;
-          float radialGrad = smoothstep(0.0, 0.5, dist);
-          vec3 color = mix(color3, color1, radialGrad);
-          color = mix(color, color2, swirl * swirl2 * (1.0 - dist * 1.5));
-          float edgeRing = smoothstep(0.45, 0.48, dist) * smoothstep(0.52, 0.48, dist);
-          color += color2 * edgeRing * 2.0;
-          float alpha = smoothstep(0.5, 0.3, dist) * opacity;
-          float pulse = sin(time * 4.0) * 0.15 + 0.85;
-          alpha *= pulse;
+          
+          // Absolute black center
+          float core = smoothstep(0.3, 0.0, dist);
+          
+          // Shimmering edge
+          float shimmer = sin(atan(uv.y, uv.x) * 20.0 + time * 10.0) * 0.5 + 0.5;
+          float edge = smoothstep(0.4, 0.25, dist) * smoothstep(0.1, 0.25, dist);
+          
+          vec3 color = vec3(0.0);
+          color += vec3(0.1, 0.0, 0.2) * edge * shimmer;
+          
+          float alpha = core * 0.95 + edge * shimmer * 0.3;
+          alpha *= opacity;
+          
           gl_FragColor = vec4(color, alpha);
         }
       `,
@@ -62,131 +222,366 @@ function getSharedVortexMaterial(): THREE.ShaderMaterial {
       depthWrite: false,
     });
   }
-  return sharedVortexMaterial;
+  return sharedEventHorizonMaterial;
 }
 
-// Pre-compile shader on module load
+function getAccretionMaterial(): THREE.ShaderMaterial {
+  if (!sharedAccretionMaterial) {
+    sharedAccretionMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        opacity: { value: 1 },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vPosition;
+        uniform float time;
+        
+        void main() {
+          vUv = uv;
+          vPosition = position;
+          
+          // Wobble effect
+          vec3 pos = position;
+          pos.y += sin(uv.x * 10.0 + time * 5.0) * 0.05;
+          
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float opacity;
+        varying vec2 vUv;
+        
+        void main() {
+          float dist = abs(vUv.y - 0.5) * 2.0;
+          
+          // Glowing accretion stream
+          float glow = smoothstep(1.0, 0.0, dist);
+          float energy = sin(vUv.x * 50.0 - time * 20.0) * 0.5 + 0.5;
+          
+          vec3 color = mix(
+            vec3(0.486, 0.227, 0.929), // Purple
+            vec3(0.0, 1.0, 1.0),        // Cyan
+            energy
+          );
+          
+          float alpha = glow * energy * opacity * 0.8;
+          
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  }
+  return sharedAccretionMaterial;
+}
+
+function getLightningMaterial(): THREE.ShaderMaterial {
+  if (!sharedLightningMaterial) {
+    sharedLightningMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        opacity: { value: 1 },
+      },
+      vertexShader: `
+        varying float vProgress;
+        attribute float progress;
+        
+        void main() {
+          vProgress = progress;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = 3.0;
+        }
+      `,
+      fragmentShader: `
+        uniform float time;
+        uniform float opacity;
+        varying float vProgress;
+        
+        void main() {
+          float pulse = sin(time * 30.0 + vProgress * 10.0) * 0.5 + 0.5;
+          vec3 color = vec3(0.752, 0.518, 0.988);
+          float alpha = pulse * opacity * (1.0 - vProgress);
+          
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  }
+  return sharedLightningMaterial;
+}
+
+// Pre-compile shaders
 if (typeof window !== 'undefined') {
-  requestAnimationFrame(() => getSharedVortexMaterial());
+  requestAnimationFrame(() => {
+    getVortexMaterial();
+    getEventHorizonMaterial();
+    getAccretionMaterial();
+    getLightningMaterial();
+  });
 }
 
-const PARTICLE_COUNT = 20; // Reduced from 50 for performance
-const VOID_ZONE_DAMAGE = 15; // Damage per tick
-const VOID_ZONE_DAMAGE_INTERVAL = 500; // ms between damage ticks
+const PARTICLE_COUNT = 60;
+const DEBRIS_COUNT = 20;
+const VOID_ZONE_DAMAGE = 15;
+const VOID_ZONE_DAMAGE_INTERVAL = 500;
 
 /**
- * VoidZone - A black hole-like damage zone that appears on the ground
- * Visual style: Purple/void themed, swirling dark vortex effect
- * PERFORMANCE: Shared shader, reduced particles, no point lights
+ * VoidZone - A devastating black hole / void vortex effect
+ * Features:
+ * - Swirling accretion disk with multiple spiral arms
+ * - True black event horizon at center
+ * - Energy jets and electric arcs
+ * - Orbiting debris particles
+ * - Gravitational lensing visual effect
  */
 export function VoidZone({ position, radius, duration, startTime, ownerId }: VoidZoneProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const innerRingRef = useRef<THREE.Mesh>(null);
-  const outerRingRef = useRef<THREE.Mesh>(null);
   const vortexRef = useRef<THREE.Mesh>(null);
+  const eventHorizonRef = useRef<THREE.Mesh>(null);
+  const innerRingsRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
-  const lastParticleUpdateRef = useRef(0);
+  const debrisRef = useRef<THREE.Points>(null);
   const lastDamageTickRef = useRef<Map<string, number>>(new Map());
+  const timeRef = useRef(0);
   
-  // Calculate remaining time for fade out effect
   const getProgress = () => {
     const elapsed = (Date.now() - startTime) / 1000;
     return Math.min(1, elapsed / duration);
   };
 
-  // Get shared material
-  const vortexMaterial = getSharedVortexMaterial();
+  // Get materials
+  const vortexMaterial = useMemo(() => getVortexMaterial().clone(), []);
+  const eventHorizonMaterial = useMemo(() => getEventHorizonMaterial().clone(), []);
+  const accretionMaterial = useMemo(() => getAccretionMaterial().clone(), []);
 
-  // Create particle geometry for floating debris - reduced count
+  // Orbiting particles - pulled toward center
   const particleGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(PARTICLE_COUNT * 3);
     const sizes = new Float32Array(PARTICLE_COUNT);
+    const speeds = new Float32Array(PARTICLE_COUNT);
+    const angles = new Float32Array(PARTICLE_COUNT);
+    const radii = new Float32Array(PARTICLE_COUNT);
     
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * radius * 0.9;
+      const r = 0.3 + Math.random() * radius * 0.9;
+      const height = Math.random() * 0.8;
+      
       positions[i * 3] = Math.cos(angle) * r;
-      positions[i * 3 + 1] = Math.random() * 1.5;
+      positions[i * 3 + 1] = height;
       positions[i * 3 + 2] = Math.sin(angle) * r;
-      sizes[i] = Math.random() * 0.1 + 0.05;
+      sizes[i] = Math.random() * 0.1 + 0.03;
+      speeds[i] = 0.5 + Math.random() * 2;
+      angles[i] = angle;
+      radii[i] = r;
     }
     
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    geometry.setAttribute('speed', new THREE.BufferAttribute(speeds, 1));
+    geometry.setAttribute('angle', new THREE.BufferAttribute(angles, 1));
+    geometry.setAttribute('radius', new THREE.BufferAttribute(radii, 1));
+    
     return geometry;
   }, [radius]);
 
-  const particleMaterial = useMemo(() => {
-    return new THREE.PointsMaterial({
-      color: 0xa855f7,
-      size: 0.15,
-      transparent: true,
-      opacity: 0.8,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-  }, []);
+  // Debris chunks being pulled in
+  const debrisGeometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(DEBRIS_COUNT * 3);
+    const velocities = new Float32Array(DEBRIS_COUNT * 3);
+    const sizes = new Float32Array(DEBRIS_COUNT);
+    
+    for (let i = 0; i < DEBRIS_COUNT; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const r = radius * (0.8 + Math.random() * 0.3);
+      
+      positions[i * 3] = Math.cos(angle) * r;
+      positions[i * 3 + 1] = 0.5 + Math.random() * 1.5;
+      positions[i * 3 + 2] = Math.sin(angle) * r;
+      
+      // Velocity toward center
+      velocities[i * 3] = -Math.cos(angle) * (0.5 + Math.random());
+      velocities[i * 3 + 1] = -0.3;
+      velocities[i * 3 + 2] = -Math.sin(angle) * (0.5 + Math.random());
+      
+      sizes[i] = 0.1 + Math.random() * 0.15;
+    }
+    
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    
+    return geometry;
+  }, [radius]);
+
+  const particleMaterial = useMemo(() => new THREE.PointsMaterial({
+    color: 0xc084fc,
+    size: 0.1,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+  }), []);
+
+  const debrisMaterial = useMemo(() => new THREE.PointsMaterial({
+    color: 0x7c3aed,
+    size: 0.12,
+    transparent: true,
+    opacity: 0.8,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+  }), []);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
 
     const progress = getProgress();
     
-    // Hide when duration expired (early exit)
     if (progress >= 1) {
       groupRef.current.visible = false;
       return;
     }
     
-    const fadeOut = progress > 0.7 ? 1 - ((progress - 0.7) / 0.3) : 1;
+    timeRef.current += delta;
+    const time = timeRef.current;
+    
+    // Fade in/out
     const fadeIn = Math.min(1, progress * 5);
+    const fadeOut = progress > 0.75 ? 1 - ((progress - 0.75) / 0.25) : 1;
     const currentOpacity = fadeIn * fadeOut;
 
-    // Update vortex shader
+    // Update main vortex shader
     if (vortexMaterial.uniforms) {
-      vortexMaterial.uniforms.time.value += delta;
+      vortexMaterial.uniforms.time.value = time;
       vortexMaterial.uniforms.opacity.value = currentOpacity;
     }
 
-    // Rotate inner ring (clockwise)
-    if (innerRingRef.current) {
-      innerRingRef.current.rotation.z -= delta * 2;
-      (innerRingRef.current.material as THREE.MeshBasicMaterial).opacity = currentOpacity * 0.7;
+    // Update event horizon
+    if (eventHorizonMaterial.uniforms) {
+      eventHorizonMaterial.uniforms.time.value = time;
+      eventHorizonMaterial.uniforms.opacity.value = currentOpacity;
     }
 
-    // Rotate outer ring (counter-clockwise)
-    if (outerRingRef.current) {
-      outerRingRef.current.rotation.z += delta * 1.5;
-      (outerRingRef.current.material as THREE.MeshBasicMaterial).opacity = currentOpacity * 0.5;
+    // Update accretion material
+    if (accretionMaterial.uniforms) {
+      accretionMaterial.uniforms.time.value = time;
+      accretionMaterial.uniforms.opacity.value = currentOpacity;
     }
 
-    // Check for enemy damage (NPCs and players)
+    // Rotate inner rings at different speeds
+    if (innerRingsRef.current) {
+      innerRingsRef.current.children.forEach((ring, i) => {
+        const speed = 1 + i * 0.5;
+        const direction = i % 2 === 0 ? 1 : -1;
+        ring.rotation.z += delta * speed * direction;
+        
+        // Pulsing scale
+        const scale = 1 + Math.sin(time * 3 + i) * 0.1;
+        ring.scale.setScalar(scale);
+      });
+    }
+
+    // Animate particles - spiral orbit toward center
+    if (particlesRef.current) {
+      const positions = particlesRef.current.geometry.attributes.position;
+      const speeds = particlesRef.current.geometry.attributes.speed;
+      const angleAttrs = particlesRef.current.geometry.attributes.angle;
+      const radiiAttrs = particlesRef.current.geometry.attributes.radius;
+      
+      for (let i = 0; i < positions.count; i++) {
+        const speed = (speeds as THREE.BufferAttribute).getX(i);
+        let angle = (angleAttrs as THREE.BufferAttribute).getX(i);
+        let r = (radiiAttrs as THREE.BufferAttribute).getX(i);
+        
+        // Spiral inward
+        angle += delta * speed * (1 + (1 - r / radius) * 2);
+        r -= delta * 0.3;
+        
+        // Reset when too close to center
+        if (r < 0.2) {
+          r = radius * (0.7 + Math.random() * 0.3);
+          angle = Math.random() * Math.PI * 2;
+        }
+        
+        (angleAttrs as THREE.BufferAttribute).setX(i, angle);
+        (radiiAttrs as THREE.BufferAttribute).setX(i, r);
+        
+        const height = (Math.sin(time * 3 + i) * 0.2 + 0.4) * (r / radius);
+        
+        positions.setX(i, Math.cos(angle) * r);
+        positions.setY(i, height);
+        positions.setZ(i, Math.sin(angle) * r);
+      }
+      positions.needsUpdate = true;
+      particleMaterial.opacity = currentOpacity * 0.9;
+    }
+
+    // Animate debris - pulled toward center
+    if (debrisRef.current) {
+      const positions = debrisRef.current.geometry.attributes.position;
+      const velocities = debrisRef.current.geometry.attributes.velocity;
+      
+      for (let i = 0; i < positions.count; i++) {
+        let x = positions.getX(i);
+        let y = positions.getY(i);
+        let z = positions.getZ(i);
+        
+        const vx = (velocities as THREE.BufferAttribute).getX(i);
+        const vy = (velocities as THREE.BufferAttribute).getY(i);
+        const vz = (velocities as THREE.BufferAttribute).getZ(i);
+        
+        x += vx * delta;
+        y += vy * delta;
+        z += vz * delta;
+        
+        // Reset when absorbed
+        const dist = Math.sqrt(x * x + z * z);
+        if (dist < 0.3 || y < 0) {
+          const angle = Math.random() * Math.PI * 2;
+          const r = radius * (0.8 + Math.random() * 0.3);
+          x = Math.cos(angle) * r;
+          y = 0.5 + Math.random() * 1.5;
+          z = Math.sin(angle) * r;
+        }
+        
+        positions.setX(i, x);
+        positions.setY(i, y);
+        positions.setZ(i, z);
+      }
+      positions.needsUpdate = true;
+      debrisMaterial.opacity = currentOpacity * 0.8;
+    }
+
+    // Damage check
     const now = Date.now();
     const { players, localPlayer } = useGameStore.getState();
     
     for (const [playerId, player] of players) {
-      // Skip self
       if (playerId === localPlayer?.id) continue;
-      
-      // Skip dead players
       if (player.state !== 'alive') continue;
-      
-      // Skip same team
       if (localPlayer && player.team === localPlayer.team) continue;
       
-      // Check if player is in the zone
       const dx = player.position.x - position.x;
       const dz = player.position.z - position.z;
       const distSq = dx * dx + dz * dz;
       
       if (distSq <= radius * radius) {
-        // Check damage interval
         const lastDamage = lastDamageTickRef.current.get(playerId) || 0;
         if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
           lastDamageTickRef.current.set(playerId, now);
           
-          // Only damage NPCs client-side (real players handled by server)
           if (playerId.startsWith('npc_')) {
             const result = damageNpc(playerId, VOID_ZONE_DAMAGE);
             if (result) {
@@ -196,96 +591,99 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
         }
       }
     }
-
-    // PERFORMANCE: Throttle particle animation to every 100ms
-    if (particlesRef.current && now - lastParticleUpdateRef.current > 100) {
-      lastParticleUpdateRef.current = now;
-      const positions = particlesRef.current.geometry.attributes.position;
-      const time = now * 0.001;
-      const fixedDelta = 0.1; // Fixed timestep for consistency
-      
-      for (let i = 0; i < positions.count; i++) {
-        const x = positions.getX(i);
-        const z = positions.getZ(i);
-        const dist = Math.sqrt(x * x + z * z);
-        const angle = Math.atan2(z, x);
-        
-        const newAngle = angle + fixedDelta * (2 + (1 - dist / radius) * 3);
-        const newDist = dist - fixedDelta * 0.3;
-        const finalDist = newDist < 0.1 ? radius * 0.8 + Math.random() * radius * 0.2 : newDist;
-        
-        positions.setX(i, Math.cos(newAngle) * finalDist);
-        positions.setZ(i, Math.sin(newAngle) * finalDist);
-        positions.setY(i, (Math.sin(time + i) * 0.3 + 0.5) * (1 - finalDist / radius));
-      }
-      positions.needsUpdate = true;
-      particleMaterial.opacity = currentOpacity * 0.8;
-    }
   });
 
   return (
-    <group ref={groupRef} position={[position.x, position.y + 0.05, position.z]}>
-      {/* Main vortex disc */}
+    <group ref={groupRef} position={[position.x, position.y + 0.02, position.z]}>
+      {/* Main vortex disc with enhanced shader */}
       <mesh ref={vortexRef} rotation-x={-Math.PI / 2}>
-        <circleGeometry args={[radius, 64]} />
+        <circleGeometry args={[radius, 128]} />
         <primitive object={vortexMaterial} />
       </mesh>
 
-      {/* Inner rotating ring with dashes */}
-      <mesh ref={innerRingRef} rotation-x={-Math.PI / 2} position-y={0.02}>
-        <ringGeometry args={[radius * 0.3, radius * 0.4, 32]} />
-        <meshBasicMaterial 
-          color={0x7c3aed} 
-          transparent 
-          opacity={0.7}
-          side={THREE.DoubleSide}
-        />
+      {/* True black event horizon center */}
+      <mesh ref={eventHorizonRef} rotation-x={-Math.PI / 2} position-y={0.03}>
+        <circleGeometry args={[radius * 0.25, 64]} />
+        <primitive object={eventHorizonMaterial} />
       </mesh>
 
-      {/* Outer rotating ring */}
-      <mesh ref={outerRingRef} rotation-x={-Math.PI / 2} position-y={0.01}>
-        <ringGeometry args={[radius * 0.85, radius * 0.95, 48]} />
-        <meshBasicMaterial 
-          color={0xa855f7} 
-          transparent 
-          opacity={0.5}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      {/* Rotating inner rings with varying speeds */}
+      <group ref={innerRingsRef}>
+        {/* Inner fast ring */}
+        <mesh rotation-x={-Math.PI / 2} position-y={0.04}>
+          <ringGeometry args={[radius * 0.28, radius * 0.35, 64]} />
+          <meshBasicMaterial 
+            color={0xc084fc}
+            transparent
+            opacity={0.7}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+        
+        {/* Middle ring */}
+        <mesh rotation-x={-Math.PI / 2} position-y={0.05}>
+          <ringGeometry args={[radius * 0.45, radius * 0.55, 64]} />
+          <meshBasicMaterial 
+            color={0x7c3aed}
+            transparent
+            opacity={0.5}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+        
+        {/* Outer ring */}
+        <mesh rotation-x={-Math.PI / 2} position-y={0.06}>
+          <ringGeometry args={[radius * 0.7, radius * 0.8, 64]} />
+          <meshBasicMaterial 
+            color={0x9333ea}
+            transparent
+            opacity={0.4}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      </group>
 
-      {/* Edge glow ring */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.03}>
-        <ringGeometry args={[radius * 0.98, radius * 1.02, 64]} />
+      {/* Outer edge glow ring */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
+        <ringGeometry args={[radius * 0.95, radius * 1.05, 64]} />
         <meshBasicMaterial 
-          color={0xc084fc} 
-          transparent 
-          opacity={0.8}
+          color={0xc084fc}
+          transparent
+          opacity={0.9}
           side={THREE.DoubleSide}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
 
-      {/* Floating particles */}
+      {/* Orbiting energy particles */}
       <points ref={particlesRef} geometry={particleGeometry}>
         <primitive object={particleMaterial} />
       </points>
 
-      {/* Center dark void - reduced geometry */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.04}>
-        <circleGeometry args={[radius * 0.15, 16]} />
+      {/* Debris being sucked in */}
+      <points ref={debrisRef} geometry={debrisGeometry}>
+        <primitive object={debrisMaterial} />
+      </points>
+
+      {/* Vertical energy column */}
+      <mesh position-y={0.5}>
+        <cylinderGeometry args={[0.1, radius * 0.3, 1, 16, 1, true]} />
         <meshBasicMaterial 
-          color={0x0a0015} 
-          transparent 
-          opacity={0.95}
+          color={0x7c3aed}
+          transparent
+          opacity={0.3}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
         />
       </mesh>
-
-      {/* PERFORMANCE: Removed point light - the shader provides enough glow effect */}
     </group>
   );
 }
 
-// Container component to render all active void zones
+// Container component
 interface VoidZoneData {
   id: string;
   position: { x: number; y: number; z: number };
@@ -303,16 +701,14 @@ interface VoidZonesProps {
 export function VoidZones({ zones }: VoidZonesProps) {
   const clearExpiredVoidZones = useGameStore(state => state.clearExpiredVoidZones);
   
-  // Periodically clean up expired zones from the store
   useEffect(() => {
     const interval = setInterval(() => {
       clearExpiredVoidZones();
-    }, 1000); // Clean up every second
+    }, 1000);
     
     return () => clearInterval(interval);
   }, [clearExpiredVoidZones]);
   
-  // Filter out expired zones for rendering
   const now = Date.now();
   const activeZones = zones.filter(zone => {
     const elapsed = (now - zone.startTime) / 1000;
@@ -334,4 +730,3 @@ export function VoidZones({ zones }: VoidZonesProps) {
     </>
   );
 }
-

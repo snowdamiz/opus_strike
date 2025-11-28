@@ -336,3 +336,6 @@ export function getAbilityDefinition(abilityId: string): AbilityDefinition | und
 
 export const ALL_HERO_IDS: HeroId[] = Object.keys(HERO_DEFINITIONS) as HeroId[];
 
+// Phantom ability constants
+export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray
+

@@ -14,6 +14,7 @@ import {
 } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
+import { BombTargetingIndicator, triggerRocketJumpExplosion, triggerAirStrike } from './BlazeEffects';
 import { 
   MOUSE_SENSITIVITY, 
   PITCH_LIMIT,
@@ -41,11 +42,13 @@ import {
   getHeroStats,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
+  VOID_RAY_CHARGE_TIME,
   type HeroId,
 } from '@voxel-strike/shared';
 import { isInsideBoundary, constrainToBoundary } from '../../config/mapBoundaries';
 import { ShadowStepIndicator } from './ShadowStepIndicator';
 import { triggerTeleportEffect } from '../ui/TeleportEffects';
+import { triggerBlinkEffect, triggerShadowArrival } from './PhantomEffects';
 
 // Player collision constants
 const PLAYER_HEIGHT = 1.8;
@@ -116,6 +119,10 @@ export function PlayerController() {
   // Get functions from store (these don't change)
   const updateLocalPlayer = useGameStore(state => state.updateLocalPlayer);
   const setShadowStepTargeting = useGameStore(state => state.setShadowStepTargeting);
+  const setBombTargeting = useGameStore(state => state.setBombTargeting);
+  const bombTargeting = useGameStore(state => state.bombTargeting);
+  const setJetpackActive = useGameStore(state => state.setJetpackActive);
+  const setJetpackFuel = useGameStore(state => state.setJetpackFuel);
   const setClientCooldown = useGameStore(state => state.setClientCooldown);
   const setClientCharges = useGameStore(state => state.setClientCharges);
   // Get reactive state for React rendering
@@ -127,7 +134,11 @@ export function PlayerController() {
   const { inputState, isPointerLocked, requestPointerLock } = useInput();
   const { world, playerBody } = usePhysics();
   const { sendInput } = useNetwork();
-  const { playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic } = useAbilitySounds();
+  const { 
+    playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
+    playBlazeRocket, playBlazeBombTarget, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
+    startJetpackSound, stopJetpackSound
+  } = useAbilitySounds();
   const { updateWalkingSound, preloadWalkingSound, startSlide: startSlideSound, stopSlide: stopSlideSound } = useMovementSounds();
   
   // Preload walking sound on mount
@@ -179,11 +190,40 @@ export function PlayerController() {
   const abilityActiveRef = useRef<Record<string, { active: boolean; startTime: number }>>({});
   const teleportInProgressRef = useRef(false); // Prevent multiple teleports
   
-  // Primary fire state (dire balls)
+  // Primary fire state (dire balls for Phantom)
   const lastFireTimeRef = useRef(0);
   const FIRE_RATE = 4; // Fires per second
   const FIRE_INTERVAL = 1000 / FIRE_RATE; // ms between shots
   const direBallIdRef = useRef(0);
+  
+  // Blaze rocket state (left-click)
+  const lastRocketFireTimeRef = useRef(0);
+  const ROCKET_FIRE_RATE = 2.5; // Rockets per second (slower than Phantom)
+  const ROCKET_FIRE_INTERVAL = 1000 / ROCKET_FIRE_RATE;
+  const rocketIdRef = useRef(0);
+  
+  // Blaze bomb state (right-click targeting)
+  const bombTargetRef = useRef<THREE.Vector3 | null>(null);
+  const bombValidRef = useRef(false);
+  const bombIdRef = useRef(0);
+  const BOMB_COOLDOWN = 8000; // 8 second cooldown between bombs
+  const lastBombTimeRef = useRef(0);
+  
+  // Blaze jetpack state
+  const jetpackFuelRef = useRef(100);
+  const jetpackActiveRef = useRef(false);
+  const JETPACK_FUEL_DRAIN = 50; // Fuel consumed per second (depletes in ~2 seconds)
+  const JETPACK_FUEL_REGEN = 15; // Fuel regenerated per second when grounded
+  const JETPACK_THRUST = 8; // Upward force (gentler lift)
+  
+  // Secondary fire press tracking (for bomb targeting - press once to target, press again to confirm)
+  const secondaryFirePressedRef = useRef(false);
+
+  // Void Ray charging state (secondary fire - right click)
+  const voidRayChargingRef = useRef(false);
+  const voidRayChargeStartRef = useRef(0);
+  const voidRayIdRef = useRef(0);
+  // VOID_RAY_CHARGE_TIME imported from @voxel-strike/shared
 
   // Shadow Step targeting state
   const shadowStepTargetRef = useRef<THREE.Vector3 | null>(null);
@@ -440,8 +480,9 @@ export function PlayerController() {
     console.log(`  From: (${currentPos?.x.toFixed(1)}, ${currentPos?.y.toFixed(1)}, ${currentPos?.z.toFixed(1)})`);
     console.log(`  To: (${teleportX.toFixed(1)}, ${teleportY.toFixed(1)}, ${teleportZ.toFixed(1)})`);
     
-    // Trigger visual effect
+    // Trigger visual effects (2D overlay + 3D arrival effect)
     triggerTeleportEffect('shadowstep');
+    triggerShadowArrival({ x: teleportX, y: teleportY, z: teleportZ });
     
     // Play Shadow Step sound effect
     playPhantomShadowStep();
@@ -488,6 +529,64 @@ export function PlayerController() {
     console.log(`[Ability] Shadow Step complete!`);
   }, [updateLocalPlayer, camera, startClientCooldown, sendInput, playPhantomShadowStep]);
 
+  // Execute bomb drop (Blaze right-click ability)
+  const executeBombDrop = useCallback(() => {
+    if (!bombTargetRef.current || !bombValidRef.current) {
+      console.log('[Ability] Bomb failed - no valid target');
+      return;
+    }
+    
+    // Check cooldown
+    const now = Date.now();
+    if (now - lastBombTimeRef.current < BOMB_COOLDOWN) {
+      const remaining = Math.ceil((BOMB_COOLDOWN - (now - lastBombTimeRef.current)) / 1000);
+      console.log(`[Ability] Bomb on cooldown - ${remaining}s remaining`);
+      return;
+    }
+    
+    const target = bombTargetRef.current.clone();
+    const localPlayer = useGameStore.getState().localPlayer;
+    if (!localPlayer) return;
+    
+    // Use player's foot position as ground reference if target Y seems wrong
+    const groundY = target.y < 1 ? (localPlayer.position.y - 1) : target.y;
+    
+    // Create bomb
+    bombIdRef.current++;
+    const bombId = `bomb_${localPlayer.id}_${bombIdRef.current}`;
+    
+    const BOMB_FALL_DURATION = 1500; // 1.5 seconds to fall
+    
+    useGameStore.getState().addBomb({
+      id: bombId,
+      targetPosition: { x: target.x, y: groundY, z: target.z },
+      startPosition: { x: localPlayer.position.x, y: localPlayer.position.y, z: localPlayer.position.z },
+      startTime: now,
+      impactTime: now + BOMB_FALL_DURATION,
+      ownerId: localPlayer.id,
+      ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+      hasExploded: false,
+    });
+    
+    // Play bomb targeting sound
+    playBlazeBombTarget();
+    
+    // Schedule explosion sound
+    setTimeout(() => {
+      playBlazeBombExplode();
+    }, BOMB_FALL_DURATION);
+    
+    // Start cooldown
+    lastBombTimeRef.current = now;
+    
+    // Exit targeting mode
+    useGameStore.getState().setBombTargeting(false, false);
+    bombTargetRef.current = null;
+    bombValidRef.current = false;
+    
+    console.log(`[Ability] Bomb deployed at (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})`);
+  }, [playBlazeBombTarget, playBlazeBombExplode]);
+
   // Handle pointer lock on click
   const handleClick = useCallback(() => {
     if (!isPointerLocked) {
@@ -496,8 +595,12 @@ export function PlayerController() {
       // Confirm Shadow Step teleport on click
       console.log('[Ability] Shadow Step confirmed!');
       executeShadowStepTeleport();
+    } else if (bombTargeting && bombValidRef.current && bombTargetRef.current) {
+      // Confirm Bomb drop on click
+      console.log('[Ability] Bomb confirmed!');
+      executeBombDrop();
     }
-  }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport]);
+  }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport, bombTargeting, executeBombDrop]);
 
   useEffect(() => {
     const canvas = document.querySelector('canvas');
@@ -507,22 +610,33 @@ export function PlayerController() {
     }
   }, [handleClick]);
 
-  // Cancel Shadow Step on right click or Escape
+  // Cancel Shadow Step or Bomb targeting on right click or Escape
   useEffect(() => {
     const handleCancel = (e: MouseEvent | KeyboardEvent) => {
       // Read fresh from store
-      const isTargeting = useGameStore.getState().shadowStepTargeting;
-      if (!isTargeting) return;
+      const isShadowStepTargeting = useGameStore.getState().shadowStepTargeting;
+      const isBombTargeting = useGameStore.getState().bombTargeting;
+      
+      if (!isShadowStepTargeting && !isBombTargeting) return;
       
       if ((e instanceof MouseEvent && e.button === 2) || 
           (e instanceof KeyboardEvent && e.code === 'Escape')) {
         e.preventDefault();
-        // Call directly from store
-        useGameStore.getState().setShadowStepTargeting(false, false);
-        shadowStepTargetRef.current = null;
-        shadowStepValidRef.current = false;
-        teleportingRef.current = false;
-        console.log('[Ability] Shadow Step cancelled');
+        
+        if (isShadowStepTargeting) {
+          useGameStore.getState().setShadowStepTargeting(false, false);
+          shadowStepTargetRef.current = null;
+          shadowStepValidRef.current = false;
+          teleportingRef.current = false;
+          console.log('[Ability] Shadow Step cancelled');
+        }
+        
+        if (isBombTargeting) {
+          useGameStore.getState().setBombTargeting(false, false);
+          bombTargetRef.current = null;
+          bombValidRef.current = false;
+          console.log('[Ability] Bomb targeting cancelled');
+        }
       }
     };
 
@@ -532,6 +646,12 @@ export function PlayerController() {
         setShadowStepTargeting(false);
         shadowStepTargetRef.current = null;
         console.log('[Ability] Shadow Step cancelled');
+      }
+      if (bombTargeting) {
+        e.preventDefault();
+        setBombTargeting(false);
+        bombTargetRef.current = null;
+        console.log('[Ability] Bomb targeting cancelled');
       }
     };
 
@@ -544,7 +664,7 @@ export function PlayerController() {
       window.removeEventListener('keydown', handleCancel);
       window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [shadowStepTargeting, setShadowStepTargeting]);
+  }, [shadowStepTargeting, setShadowStepTargeting, bombTargeting, setBombTargeting]);
 
   // Handle mouse movement
   useEffect(() => {
@@ -568,6 +688,17 @@ export function PlayerController() {
     const store = useGameStore.getState();
     if (store.shadowStepTargeting && store.shadowStepValid !== isValid) {
       store.setShadowStepTargeting(true, isValid);
+    }
+  }, []);
+  
+  // Handle Bomb target updates from indicator
+  const handleBombTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
+    bombTargetRef.current = position;
+    bombValidRef.current = isValid;
+    // Update validity in store for UI
+    const store = useGameStore.getState();
+    if (store.bombTargeting && store.bombTargetValid !== isValid) {
+      store.setBombTargeting(true, isValid);
     }
   }, []);
 
@@ -706,11 +837,15 @@ export function PlayerController() {
           return;
         }
         
+        // Save start position for 3D effect
+        const startPos = { x: position.x, y: position.y, z: position.z };
+        
         // Play blink sound effect FIRST for immediate audio feedback
         playPhantomBlink();
         
-        // Trigger visual effect
+        // Trigger visual effects (2D overlay + 3D world effect)
         triggerTeleportEffect('blink');
+        triggerBlinkEffect(startPos, { x: targetX, y: targetY, z: targetZ });
         
         // Apply the validated teleport
         position.x = targetX;
@@ -800,11 +935,63 @@ export function PlayerController() {
         position.y += 0.5;
         
         // Small horizontal push in look direction
-        const yaw = yawRef.current;
-        velocity.x += -Math.sin(yaw) * 5;
-        velocity.z += -Math.cos(yaw) * 5;
+        const rjYaw = yawRef.current;
+        velocity.x += -Math.sin(rjYaw) * 5;
+        velocity.z += -Math.cos(rjYaw) * 5;
+        
+        // Trigger visual explosion at player's feet
+        triggerRocketJumpExplosion({ x: position.x, y: position.y, z: position.z });
+        
+        // Play rocket jump sound
+        playBlazeRocketJump();
         
         console.log('[Ability] Rocket Jump!');
+        break;
+      }
+      
+      case 'blaze_jetpack': {
+        // Jetpack is handled in useFrame (hold to fly), not as a one-time ability
+        console.log('[Ability] Jetpack toggled');
+        break;
+      }
+      
+      case 'blaze_airstrike': {
+        // Enter air strike targeting mode or execute immediately at look position
+        const asYaw = yawRef.current;
+        const asPitch = pitchRef.current;
+        
+        // Calculate target position
+        const asDir = {
+          x: -Math.sin(asYaw) * Math.cos(asPitch),
+          y: Math.sin(asPitch),
+          z: -Math.cos(asYaw) * Math.cos(asPitch),
+        };
+        
+        // Project to ground
+        const groundY = position.y - 1;
+        let targetX = position.x;
+        let targetZ = position.z;
+        
+        if (asDir.y < 0) {
+          const t = (groundY - position.y) / asDir.y;
+          targetX = position.x + asDir.x * Math.min(t, 50);
+          targetZ = position.z + asDir.z * Math.min(t, 50);
+        } else {
+          // Looking up, target in front
+          targetX = position.x + asDir.x * 30;
+          targetZ = position.z + asDir.z * 30;
+        }
+        
+        // Trigger the air strike
+        triggerAirStrike({ x: targetX, y: groundY, z: targetZ });
+        
+        // Consume ultimate charge
+        updateLocalPlayer({ ultimateCharge: 0 });
+        
+        // Play sound
+        playBlazeAirstrike();
+        
+        console.log(`[Ability] Air Strike at (${targetX.toFixed(1)}, ${groundY.toFixed(1)}, ${targetZ.toFixed(1)})`);
         break;
       }
 
@@ -1227,13 +1414,15 @@ export function PlayerController() {
     if (heroId) {
       const heroDef = HERO_DEFINITIONS[heroId];
       if (heroDef) {
-        // Ability 1 (E) - Blink
-        if (inputState.ability1 && !abilityPressedRef.current.ability1) {
-          if (!shadowStepTargeting && canUseAbility(heroDef.ability1.abilityId, false)) {
-            executeAbility(heroDef.ability1.abilityId, position, velocity);
+        // Ability 1 (E) - Blink (skip for Blaze - jetpack is handled separately as hold ability)
+        if (heroId !== 'blaze') {
+          if (inputState.ability1 && !abilityPressedRef.current.ability1) {
+            if (!shadowStepTargeting && canUseAbility(heroDef.ability1.abilityId, false)) {
+              executeAbility(heroDef.ability1.abilityId, position, velocity);
+            }
           }
+          abilityPressedRef.current.ability1 = inputState.ability1;
         }
-        abilityPressedRef.current.ability1 = inputState.ability1;
 
         // Ability 2 (Q) - Shadow Step
         if (inputState.ability2 && !abilityPressedRef.current.ability2) {
@@ -1299,6 +1488,185 @@ export function PlayerController() {
             
             // Play attack sound
             playPhantomBasic();
+          }
+        }
+        
+        // Secondary Fire (Right Click) - Phantom charges and fires Void Ray
+        if (heroId === 'phantom' && !shadowStepTargeting) {
+          const now = Date.now();
+          
+          if (inputState.secondaryFire) {
+            // Start or continue charging
+            if (!voidRayChargingRef.current) {
+              // Start charging
+              voidRayChargingRef.current = true;
+              voidRayChargeStartRef.current = now;
+              useGameStore.getState().setVoidRayCharging(true, now);
+              console.log('[Ability] Void Ray charging started...');
+            }
+            
+            // Calculate charge progress for UI
+            const chargeProgress = Math.min(1, (now - voidRayChargeStartRef.current) / VOID_RAY_CHARGE_TIME);
+            
+            // Log charging progress occasionally
+            if (chargeProgress < 1 && Math.floor(chargeProgress * 10) !== Math.floor((now - voidRayChargeStartRef.current - 100) / VOID_RAY_CHARGE_TIME * 10)) {
+              console.log(`[Ability] Void Ray charging: ${Math.floor(chargeProgress * 100)}%`);
+            }
+          } else if (voidRayChargingRef.current) {
+            // Released right click - check if fully charged
+            const chargeTime = now - voidRayChargeStartRef.current;
+            const chargeProgress = chargeTime / VOID_RAY_CHARGE_TIME;
+            
+            if (chargeProgress >= 1) {
+              // Fully charged - FIRE!
+              console.log('[Ability] Void Ray FIRED!');
+              
+              // Calculate direction from look direction
+              const yaw = yawRef.current;
+              const pitch = pitchRef.current;
+              
+              const dirX = -Math.sin(yaw) * Math.cos(pitch);
+              const dirY = Math.sin(pitch);
+              const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+              
+              // Spawn position slightly in front of player
+              const spawnOffset = 1.0;
+              const spawnX = position.x + dirX * spawnOffset;
+              const spawnY = position.y + 0.5 + dirY * spawnOffset;
+              const spawnZ = position.z + dirZ * spawnOffset;
+              
+              // Create void ray
+              voidRayIdRef.current++;
+              const rayId = `voidray_${localPlayer.id}_${voidRayIdRef.current}`;
+              
+              useGameStore.getState().addVoidRay({
+                id: rayId,
+                startPosition: { x: spawnX, y: spawnY, z: spawnZ },
+                direction: { x: dirX, y: dirY, z: dirZ },
+                startTime: now,
+                ownerId: localPlayer.id,
+                ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+              });
+              
+              // Play void ray sound
+              playPhantomVoidRay();
+            } else {
+              console.log(`[Ability] Void Ray cancelled - only ${Math.floor(chargeProgress * 100)}% charged`);
+            }
+            
+            // Reset charging state
+            voidRayChargingRef.current = false;
+            voidRayChargeStartRef.current = 0;
+            useGameStore.getState().setVoidRayCharging(false, 0);
+          }
+        }
+        
+        // ===== BLAZE PRIMARY FIRE (Left Click) - Rockets =====
+        if (heroId === 'blaze' && inputState.primaryFire && !bombTargeting) {
+          const now = Date.now();
+          if (now - lastRocketFireTimeRef.current >= ROCKET_FIRE_INTERVAL) {
+            lastRocketFireTimeRef.current = now;
+            
+            // Calculate fire direction from look direction
+            const yaw = yawRef.current;
+            const pitch = pitchRef.current;
+            
+            const dirX = -Math.sin(yaw) * Math.cos(pitch);
+            const dirY = Math.sin(pitch);
+            const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+            
+            // Rocket speed (faster projectiles)
+            const ROCKET_SPEED = 50;
+            
+            // Spawn position slightly in front of player
+            const spawnOffset = 1.0;
+            const spawnX = position.x + dirX * spawnOffset;
+            const spawnY = position.y + 0.5 + dirY * spawnOffset;
+            const spawnZ = position.z + dirZ * spawnOffset;
+            
+            // Create rocket
+            rocketIdRef.current++;
+            const rocketId = `rocket_${localPlayer.id}_${rocketIdRef.current}`;
+            
+            useGameStore.getState().addRocket({
+              id: rocketId,
+              position: { x: spawnX, y: spawnY, z: spawnZ },
+              velocity: {
+                x: dirX * ROCKET_SPEED,
+                y: dirY * ROCKET_SPEED,
+                z: dirZ * ROCKET_SPEED
+              },
+              startTime: now,
+              ownerId: localPlayer.id,
+              ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+            });
+            
+            // Play rocket sound
+            playBlazeRocket();
+          }
+        }
+        
+        // ===== BLAZE SECONDARY FIRE (Right Click) - Bomb Targeting =====
+        // Works like Phantom's Q: press once to target, press again to confirm
+        if (heroId === 'blaze') {
+          if (inputState.secondaryFire && !secondaryFirePressedRef.current) {
+            if (bombTargeting) {
+              // Already targeting - second press confirms the bomb drop
+              if (bombValidRef.current && bombTargetRef.current) {
+                console.log('[Ability] Bomb confirmed via right-click!');
+                executeBombDrop();
+              }
+            } else {
+              // Not targeting yet - enter bomb targeting mode
+              const now = Date.now();
+              if (now - lastBombTimeRef.current >= BOMB_COOLDOWN) {
+                setBombTargeting(true);
+                playBlazeBombTarget();
+                console.log('[Ability] Bomb targeting mode activated - right-click or left-click to drop');
+              } else {
+                const remaining = Math.ceil((BOMB_COOLDOWN - (now - lastBombTimeRef.current)) / 1000);
+                console.log(`[Ability] Bomb on cooldown - ${remaining}s remaining`);
+              }
+            }
+          }
+          secondaryFirePressedRef.current = inputState.secondaryFire;
+        }
+        
+        // ===== BLAZE JETPACK (E - ability1) - Hold to fly =====
+        if (heroId === 'blaze') {
+          if (inputState.ability1 && jetpackFuelRef.current > 0) {
+            // Activate jetpack
+            if (!jetpackActiveRef.current) {
+              jetpackActiveRef.current = true;
+              setJetpackActive(true);
+              startJetpackSound(); // Start looping sound
+            }
+            
+            // Apply upward thrust
+            velocity.y = Math.max(velocity.y, JETPACK_THRUST);
+            
+            // Consume fuel
+            jetpackFuelRef.current -= JETPACK_FUEL_DRAIN * dt;
+            if (jetpackFuelRef.current <= 0) {
+              jetpackFuelRef.current = 0;
+              jetpackActiveRef.current = false;
+              setJetpackActive(false);
+              stopJetpackSound(); // Stop sound when fuel runs out
+            }
+            setJetpackFuel(jetpackFuelRef.current);
+          } else {
+            // Deactivate jetpack
+            if (jetpackActiveRef.current) {
+              jetpackActiveRef.current = false;
+              setJetpackActive(false);
+              stopJetpackSound(); // Stop sound when released
+            }
+            
+            // Regenerate fuel when grounded
+            if (isGroundedRef.current && jetpackFuelRef.current < 100) {
+              jetpackFuelRef.current = Math.min(100, jetpackFuelRef.current + JETPACK_FUEL_REGEN * dt);
+              setJetpackFuel(jetpackFuelRef.current);
+            }
           }
         }
       }
@@ -1531,10 +1899,12 @@ export function PlayerController() {
     slideRollRef.current += (targetSlideRoll - slideRollRef.current) * Math.min(slideTransitionSpeed, 1);
     slideIntensityRef.current += (targetSlideIntensity - slideIntensityRef.current) * Math.min(slideTransitionSpeed * 1.5, 1);
     
-    // Apply FOV change
-    const baseFov = 75;
-    camera.fov = baseFov + slideFovRef.current;
-    camera.updateProjectionMatrix();
+    // Apply FOV change (only for perspective camera)
+    if ('fov' in camera) {
+      const baseFov = 75;
+      (camera as THREE.PerspectiveCamera).fov = baseFov + slideFovRef.current;
+      camera.updateProjectionMatrix();
+    }
     
     // Update camera (add eye height offset + crouch offset)
     const eyeHeight = 0.6 + crouchHeightRef.current;
@@ -1601,9 +1971,15 @@ export function PlayerController() {
   });
 
   return (
-    <ShadowStepIndicator 
-      isActive={shadowStepTargeting} 
-      onTargetUpdate={handleShadowStepTargetUpdate}
-    />
+    <>
+      <ShadowStepIndicator 
+        isActive={shadowStepTargeting} 
+        onTargetUpdate={handleShadowStepTargetUpdate}
+      />
+      <BombTargetingIndicator
+        isActive={bombTargeting}
+        onTargetUpdate={handleBombTargetUpdate}
+      />
+    </>
   );
 }
