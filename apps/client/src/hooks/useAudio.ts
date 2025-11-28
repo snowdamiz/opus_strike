@@ -550,7 +550,8 @@ export function useAbilitySounds() {
   
   // Blaze abilities
   const playBlazeRocket = useCallback(() => {
-    playSound('blazeRocket');
+    // Add pitch variation for more natural feel (0.85 - 1.15 range)
+    playSound('blazeRocket', { pitch: 0.85 + Math.random() * 0.3 });
   }, [playSound]);
   
   const playBlazeBombTarget = useCallback(() => {

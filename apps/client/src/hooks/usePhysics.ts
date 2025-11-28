@@ -303,6 +303,67 @@ export function raycast(
   return null;
 }
 
+// Directional raycast from world instance (for use outside component)
+// Returns hit point, normal, and whether the surface is walkable
+export function raycastDirection(
+  originX: number, originY: number, originZ: number,
+  dirX: number, dirY: number, dirZ: number,
+  maxDistance: number
+): { 
+  hit: boolean; 
+  point: { x: number; y: number; z: number }; 
+  normal: { x: number; y: number; z: number }; 
+  distance: number;
+  isWalkable: boolean;
+} | null {
+  if (!rapierInstance || !worldInstance) {
+    return null;
+  }
+  
+  try {
+    const origin = { x: originX, y: originY, z: originZ };
+    const direction = { x: dirX, y: dirY, z: dirZ };
+    const ray = new rapierInstance.Ray(origin, direction);
+    
+    const hit = worldInstance.castRay(ray, maxDistance, true);
+    
+    if (hit) {
+      const hitDistance = hit.timeOfImpact;
+      const hitPoint = ray.pointAt(hitDistance);
+      
+      // Get surface normal
+      let normal = { x: 0, y: 1, z: 0 };
+      try {
+        const hitWithNormal = hit.collider.castRayAndGetNormal(ray, maxDistance, true);
+        if (hitWithNormal) {
+          normal = {
+            x: hitWithNormal.normal.x,
+            y: hitWithNormal.normal.y,
+            z: hitWithNormal.normal.z
+          };
+        }
+      } catch {
+        // Use default normal
+      }
+      
+      // Check if surface is walkable (not too steep)
+      const isWalkable = normal.y >= MAX_SLOPE_DOT;
+      
+      return {
+        hit: true,
+        point: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
+        normal,
+        distance: hitDistance,
+        isWalkable
+      };
+    }
+  } catch (error) {
+    console.error('[Physics] raycastDirection error:', error);
+  }
+  
+  return null;
+}
+
 // Ground check with surface normal - returns ground height and slope info
 export interface GroundInfo {
   groundY: number;

@@ -167,6 +167,10 @@ interface GameStore {
   bombTargeting: boolean;
   bombTargetValid: boolean;
   
+  // Blaze air strike targeting state
+  airStrikeTargeting: boolean;
+  airStrikeTargetValid: boolean;
+  
   // Blaze jetpack state
   jetpackActive: boolean;
   jetpackFuel: number; // 0-100
@@ -234,6 +238,9 @@ interface GameStore {
   clearExpiredBombs: () => void;
   setBombTargeting: (targeting: boolean, valid?: boolean) => void;
   
+  // Blaze air strike actions
+  setAirStrikeTargeting: (targeting: boolean, valid?: boolean) => void;
+  
   // Blaze jetpack actions
   setJetpackActive: (active: boolean) => void;
   setJetpackFuel: (fuel: number) => void;
@@ -290,6 +297,8 @@ const initialState = {
   bombs: [] as BombData[],
   bombTargeting: false,
   bombTargetValid: false,
+  airStrikeTargeting: false,
+  airStrikeTargetValid: false,
   jetpackActive: false,
   jetpackFuel: 100,
 };
@@ -585,6 +594,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setBombTargeting: (targeting, valid = false) => set({
     bombTargeting: targeting,
     bombTargetValid: valid
+  }),
+  
+  setAirStrikeTargeting: (targeting, valid = false) => set({
+    airStrikeTargeting: targeting,
+    airStrikeTargetValid: valid
   }),
   
   setJetpackActive: (active) => set({ jetpackActive: active }),

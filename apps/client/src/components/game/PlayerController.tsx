@@ -14,7 +14,7 @@ import {
 } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
-import { BombTargetingIndicator, triggerRocketJumpExplosion, triggerAirStrike } from './BlazeEffects';
+import { BombTargetingIndicator, AirStrikeTargetingIndicator, triggerRocketJumpExplosion, triggerAirStrike } from './BlazeEffects';
 import { 
   MOUSE_SENSITIVITY, 
   PITCH_LIMIT,
@@ -121,6 +121,8 @@ export function PlayerController() {
   const setShadowStepTargeting = useGameStore(state => state.setShadowStepTargeting);
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
   const bombTargeting = useGameStore(state => state.bombTargeting);
+  const setAirStrikeTargeting = useGameStore(state => state.setAirStrikeTargeting);
+  const airStrikeTargeting = useGameStore(state => state.airStrikeTargeting);
   const setJetpackActive = useGameStore(state => state.setJetpackActive);
   const setJetpackFuel = useGameStore(state => state.setJetpackFuel);
   const setClientCooldown = useGameStore(state => state.setClientCooldown);
@@ -218,6 +220,10 @@ export function PlayerController() {
   
   // Secondary fire press tracking (for bomb targeting - press once to target, press again to confirm)
   const secondaryFirePressedRef = useRef(false);
+
+  // Blaze air strike targeting state
+  const airStrikeTargetRef = useRef<THREE.Vector3 | null>(null);
+  const airStrikeValidRef = useRef(false);
 
   // Void Ray charging state (secondary fire - right click)
   const voidRayChargingRef = useRef(false);
@@ -587,6 +593,41 @@ export function PlayerController() {
     console.log(`[Ability] Bomb deployed at (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})`);
   }, [playBlazeBombTarget, playBlazeBombExplode]);
 
+  // Execute Air Strike at target location (must be before handleClick)
+  const executeAirStrike = useCallback(() => {
+    if (!airStrikeTargetRef.current || !airStrikeValidRef.current) {
+      console.log('[Ability] Air Strike failed - no valid target');
+      return;
+    }
+    
+    const localPlayer = useGameStore.getState().localPlayer;
+    if (!localPlayer) return;
+    
+    // Check ultimate charge
+    if ((localPlayer.ultimateCharge ?? 0) < 100) {
+      console.log('[Ability] Air Strike failed - ultimate not ready');
+      return;
+    }
+    
+    const target = airStrikeTargetRef.current.clone();
+    
+    // Trigger the air strike at target location
+    triggerAirStrike({ x: target.x, y: target.y, z: target.z });
+    
+    // Consume ultimate charge
+    updateLocalPlayer({ ultimateCharge: 0 });
+    
+    // Play sound
+    playBlazeAirstrike();
+    
+    // Exit targeting mode
+    useGameStore.getState().setAirStrikeTargeting(false, false);
+    airStrikeTargetRef.current = null;
+    airStrikeValidRef.current = false;
+    
+    console.log(`[Ability] Air Strike deployed at (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})`);
+  }, [updateLocalPlayer, playBlazeAirstrike]);
+
   // Handle pointer lock on click
   const handleClick = useCallback(() => {
     if (!isPointerLocked) {
@@ -599,8 +640,12 @@ export function PlayerController() {
       // Confirm Bomb drop on click
       console.log('[Ability] Bomb confirmed!');
       executeBombDrop();
+    } else if (airStrikeTargeting && airStrikeValidRef.current && airStrikeTargetRef.current) {
+      // Confirm Air Strike on click
+      console.log('[Ability] Air Strike confirmed!');
+      executeAirStrike();
     }
-  }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport, bombTargeting, executeBombDrop]);
+  }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport, bombTargeting, executeBombDrop, airStrikeTargeting, executeAirStrike]);
 
   useEffect(() => {
     const canvas = document.querySelector('canvas');
@@ -610,14 +655,15 @@ export function PlayerController() {
     }
   }, [handleClick]);
 
-  // Cancel Shadow Step or Bomb targeting on right click or Escape
+  // Cancel Shadow Step, Bomb, or Air Strike targeting on right click or Escape
   useEffect(() => {
     const handleCancel = (e: MouseEvent | KeyboardEvent) => {
       // Read fresh from store
       const isShadowStepTargeting = useGameStore.getState().shadowStepTargeting;
       const isBombTargeting = useGameStore.getState().bombTargeting;
+      const isAirStrikeTargeting = useGameStore.getState().airStrikeTargeting;
       
-      if (!isShadowStepTargeting && !isBombTargeting) return;
+      if (!isShadowStepTargeting && !isBombTargeting && !isAirStrikeTargeting) return;
       
       if ((e instanceof MouseEvent && e.button === 2) || 
           (e instanceof KeyboardEvent && e.code === 'Escape')) {
@@ -637,6 +683,13 @@ export function PlayerController() {
           bombValidRef.current = false;
           console.log('[Ability] Bomb targeting cancelled');
         }
+        
+        if (isAirStrikeTargeting) {
+          useGameStore.getState().setAirStrikeTargeting(false, false);
+          airStrikeTargetRef.current = null;
+          airStrikeValidRef.current = false;
+          console.log('[Ability] Air Strike targeting cancelled');
+        }
       }
     };
 
@@ -653,6 +706,12 @@ export function PlayerController() {
         bombTargetRef.current = null;
         console.log('[Ability] Bomb targeting cancelled');
       }
+      if (airStrikeTargeting) {
+        e.preventDefault();
+        setAirStrikeTargeting(false);
+        airStrikeTargetRef.current = null;
+        console.log('[Ability] Air Strike targeting cancelled');
+      }
     };
 
     window.addEventListener('mousedown', handleCancel);
@@ -664,7 +723,7 @@ export function PlayerController() {
       window.removeEventListener('keydown', handleCancel);
       window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [shadowStepTargeting, setShadowStepTargeting, bombTargeting, setBombTargeting]);
+  }, [shadowStepTargeting, setShadowStepTargeting, bombTargeting, setBombTargeting, airStrikeTargeting, setAirStrikeTargeting]);
 
   // Handle mouse movement
   useEffect(() => {
@@ -699,6 +758,17 @@ export function PlayerController() {
     const store = useGameStore.getState();
     if (store.bombTargeting && store.bombTargetValid !== isValid) {
       store.setBombTargeting(true, isValid);
+    }
+  }, []);
+  
+  // Handle Air Strike target updates from indicator
+  const handleAirStrikeTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
+    airStrikeTargetRef.current = position;
+    airStrikeValidRef.current = isValid;
+    // Update validity in store for UI
+    const store = useGameStore.getState();
+    if (store.airStrikeTargeting && store.airStrikeTargetValid !== isValid) {
+      store.setAirStrikeTargeting(true, isValid);
     }
   }, []);
 
@@ -956,42 +1026,9 @@ export function PlayerController() {
       }
       
       case 'blaze_airstrike': {
-        // Enter air strike targeting mode or execute immediately at look position
-        const asYaw = yawRef.current;
-        const asPitch = pitchRef.current;
-        
-        // Calculate target position
-        const asDir = {
-          x: -Math.sin(asYaw) * Math.cos(asPitch),
-          y: Math.sin(asPitch),
-          z: -Math.cos(asYaw) * Math.cos(asPitch),
-        };
-        
-        // Project to ground
-        const groundY = position.y - 1;
-        let targetX = position.x;
-        let targetZ = position.z;
-        
-        if (asDir.y < 0) {
-          const t = (groundY - position.y) / asDir.y;
-          targetX = position.x + asDir.x * Math.min(t, 50);
-          targetZ = position.z + asDir.z * Math.min(t, 50);
-        } else {
-          // Looking up, target in front
-          targetX = position.x + asDir.x * 30;
-          targetZ = position.z + asDir.z * 30;
-        }
-        
-        // Trigger the air strike
-        triggerAirStrike({ x: targetX, y: groundY, z: targetZ });
-        
-        // Consume ultimate charge
-        updateLocalPlayer({ ultimateCharge: 0 });
-        
-        // Play sound
-        playBlazeAirstrike();
-        
-        console.log(`[Ability] Air Strike at (${targetX.toFixed(1)}, ${groundY.toFixed(1)}, ${targetZ.toFixed(1)})`);
+        // Enter air strike targeting mode (like bomb)
+        setAirStrikeTargeting(true);
+        console.log('[Ability] Air Strike targeting mode activated - aim and click to deploy');
         break;
       }
 
@@ -2002,6 +2039,10 @@ export function PlayerController() {
       <BombTargetingIndicator
         isActive={bombTargeting}
         onTargetUpdate={handleBombTargetUpdate}
+      />
+      <AirStrikeTargetingIndicator
+        isActive={airStrikeTargeting}
+        onTargetUpdate={handleAirStrikeTargetUpdate}
       />
     </>
   );
