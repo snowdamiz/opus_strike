@@ -14,8 +14,51 @@ const HERO_COLORS: Record<string, { primary: string; glow: string; bg: string }>
   sentinel: { primary: '#eab308', glow: 'rgba(234, 179, 8, 0.4)', bg: 'rgba(234, 179, 8, 0.15)' },
 };
 
+// Faction definitions matching lobby
+const FACTIONS = {
+  red: {
+    name: 'SOLAR',
+    fullName: 'SOLAR VANGUARD',
+    primaryColor: '#f97316',
+    secondaryColor: '#fbbf24',
+    glowColor: 'rgba(249, 115, 22, 0.5)',
+    gradient: 'linear-gradient(180deg, rgba(249, 115, 22, 0.5) 0%, rgba(234, 88, 12, 0.6) 100%)',
+  },
+  blue: {
+    name: 'VOID',
+    fullName: 'VOID LEGION',
+    primaryColor: '#06b6d4',
+    secondaryColor: '#8b5cf6',
+    glowColor: 'rgba(6, 182, 212, 0.5)',
+    gradient: 'linear-gradient(180deg, rgba(6, 182, 212, 0.5) 0%, rgba(139, 92, 246, 0.5) 100%)',
+  },
+} as const;
+
+// Solar Icon - Small version for HUD
+function SolarIconSmall({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="4" fill="currentColor" />
+      <path d="M12 3V6M12 18V21M3 12H6M18 12H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M5.64 5.64L7.76 7.76M16.24 16.24L18.36 18.36M5.64 18.36L7.76 16.24M16.24 7.76L18.36 5.64" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// Void Icon - Small version for HUD
+function VoidIconSmall({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="2" />
+      <circle cx="12" cy="12" r="3" fill="currentColor" />
+      <path d="M12 3C7.03 3 3 7.03 3 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="3 2" />
+      <path d="M21 12C21 16.97 16.97 21 12 21" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="3 2" />
+    </svg>
+  );
+}
+
 export function HUD() {
-  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges } = useGameStore();
+  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges, ultimateEffectActive } = useGameStore();
   
   // Force re-render every 100ms for smooth cooldown updates
   const [, setTick] = useState(0);
@@ -33,6 +76,7 @@ export function HUD() {
   const isUltReady = ultimatePercent >= 100;
   const heroInfo = localPlayer.heroId ? HERO_DEFINITIONS[localPlayer.heroId] : null;
   const heroColors = localPlayer.heroId ? HERO_COLORS[localPlayer.heroId] : HERO_COLORS.phantom;
+  const playerFaction = localPlayer.team === 'red' ? FACTIONS.red : FACTIONS.blue;
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -63,162 +107,245 @@ export function HUD() {
         </svg>
       </div>
 
-      {/* ===== TOP CENTER - Score Panel ===== */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2">
-        <div className="flex items-center">
-          {/* Red Team */}
-          <div className="relative">
-            <div 
-              className="w-16 h-12 flex items-center justify-center"
-              style={{
-                background: 'linear-gradient(180deg, rgba(239, 68, 68, 0.4) 0%, rgba(185, 28, 28, 0.5) 100%)',
-                clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)',
-              }}
-            >
-              <span className="font-display text-4xl text-white tabular-nums drop-shadow-lg pr-2">
-                {redScore}
-              </span>
+      {/* ===== TOP CENTER - Score Panel (Redesigned) ===== */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2">
+        <div className="relative">
+          {/* Main score container */}
+          <div 
+            className="flex items-stretch rounded-b-2xl overflow-hidden backdrop-blur-md"
+            style={{
+              background: 'linear-gradient(180deg, rgba(10, 10, 15, 0.95) 0%, rgba(15, 15, 25, 0.9) 100%)',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), inset 0 -1px 0 rgba(255,255,255,0.05)',
+            }}
+          >
+            {/* Solar Vanguard Side */}
+            <div className="relative group">
+              <div 
+                className="w-28 h-16 flex items-center justify-center gap-2 relative overflow-hidden"
+                style={{
+                  background: FACTIONS.red.gradient,
+                }}
+              >
+                {/* Animated glow effect */}
+                <div 
+                  className="absolute inset-0 opacity-50"
+                  style={{
+                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.glowColor} 0%, transparent 70%)`,
+                  }}
+                />
+                
+                <SolarIconSmall className="w-5 h-5 text-white/80 relative z-10" />
+                <span 
+                  className="font-display text-4xl text-white tabular-nums drop-shadow-lg relative z-10"
+                  style={{ textShadow: `0 0 20px ${FACTIONS.red.glowColor}` }}
+                >
+                  {redScore}
+                </span>
+                
+                {/* Flag carrier indicator */}
+                {redFlag?.carrierId && (
+                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
+                    <span className="text-[9px]">🏴</span>
+                    <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
+                  </div>
+                )}
+              </div>
+              
+              {/* Faction label */}
+              <div 
+                className="absolute -bottom-5 left-0 right-0 h-5 flex items-center justify-center"
+                style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
+              >
+                <span className="text-[8px] font-display tracking-[0.25em] text-orange-300/70">SOLAR</span>
+              </div>
             </div>
-            {redFlag?.carrierId && (
-              <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
-            )}
-          </div>
 
-          {/* Center Timer */}
-          <div className="relative mx-1">
-            <div 
-              className="h-10 px-6 flex items-center justify-center"
-              style={{
-                background: 'linear-gradient(180deg, rgba(20, 20, 30, 0.95) 0%, rgba(10, 10, 15, 0.98) 100%)',
-                borderTop: '2px solid rgba(255, 255, 255, 0.1)',
-                borderBottom: '2px solid rgba(255, 255, 255, 0.05)',
-              }}
-            >
-              <span className={`font-mono text-xl tracking-widest tabular-nums font-medium ${
-                roundTimeRemaining < 30 ? 'text-red-400' : 
-                roundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
-              }`}>
-                {formatTime(roundTimeRemaining)}
-              </span>
+            {/* Center Divider + Timer */}
+            <div className="relative flex items-center">
+              {/* Diagonal dividers */}
+              <div 
+                className="absolute -left-3 top-0 bottom-0 w-6 z-10"
+                style={{
+                  background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
+                }}
+              />
+              <div 
+                className="absolute -right-3 top-0 bottom-0 w-6 z-10"
+                style={{
+                  background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
+                }}
+              />
+              
+              {/* Timer */}
+              <div className="relative px-8 h-16 flex flex-col items-center justify-center z-20 min-w-[100px]">
+                <span className={`font-mono text-2xl tracking-[0.15em] tabular-nums font-bold transition-colors ${
+                  roundTimeRemaining < 30 ? 'text-red-400 animate-pulse' : 
+                  roundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
+                }`}>
+                  {formatTime(roundTimeRemaining)}
+                </span>
+                <span className="text-[8px] font-display text-white/30 tracking-[0.3em] -mt-0.5">BATTLE</span>
+              </div>
             </div>
-            <div className="absolute -left-1 top-1/2 -translate-y-1/2 w-1 h-6 bg-gradient-to-b from-transparent via-white/20 to-transparent" />
-            <div className="absolute -right-1 top-1/2 -translate-y-1/2 w-1 h-6 bg-gradient-to-b from-transparent via-white/20 to-transparent" />
-          </div>
 
-          {/* Blue Team */}
-          <div className="relative">
-            <div 
-              className="w-16 h-12 flex items-center justify-center"
-              style={{
-                background: 'linear-gradient(180deg, rgba(59, 130, 246, 0.4) 0%, rgba(29, 78, 216, 0.5) 100%)',
-                clipPath: 'polygon(15% 0, 100% 0, 100% 100%, 0 100%)',
-              }}
-            >
-              <span className="font-display text-4xl text-white tabular-nums drop-shadow-lg pl-2">
-                {blueScore}
-              </span>
+            {/* Void Legion Side */}
+            <div className="relative group">
+              <div 
+                className="w-28 h-16 flex items-center justify-center gap-2 relative overflow-hidden"
+                style={{
+                  background: FACTIONS.blue.gradient,
+                }}
+              >
+                {/* Animated glow effect */}
+                <div 
+                  className="absolute inset-0 opacity-50"
+                  style={{
+                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.glowColor} 0%, transparent 70%)`,
+                  }}
+                />
+                
+                <span 
+                  className="font-display text-4xl text-white tabular-nums drop-shadow-lg relative z-10"
+                  style={{ textShadow: `0 0 20px ${FACTIONS.blue.glowColor}` }}
+                >
+                  {blueScore}
+                </span>
+                <VoidIconSmall className="w-5 h-5 text-white/80 relative z-10" />
+                
+                {/* Flag carrier indicator */}
+                {blueFlag?.carrierId && (
+                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
+                    <span className="text-[9px]">🏴</span>
+                    <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
+                  </div>
+                )}
+              </div>
+              
+              {/* Faction label */}
+              <div 
+                className="absolute -bottom-5 left-0 right-0 h-5 flex items-center justify-center"
+                style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
+              >
+                <span className="text-[8px] font-display tracking-[0.25em] text-cyan-300/70">VOID</span>
+              </div>
             </div>
-            {blueFlag?.carrierId && (
-              <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
-            )}
           </div>
+          
+          {/* Bottom accent line */}
+          <div 
+            className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/4 h-px"
+            style={{
+              background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+            }}
+          />
         </div>
       </div>
 
-      {/* ===== BOTTOM LEFT - Hero Portrait & Health ===== */}
+      {/* ===== BOTTOM LEFT - Hero Portrait & Health (Redesigned) ===== */}
       <div className="absolute bottom-6 left-6">
-        <div className="flex items-end gap-3">
+        <div className="flex items-end gap-4">
           {/* Hero Portrait Frame */}
           <div className="relative">
+            {/* Outer glow based on faction */}
             <div 
-              className="relative w-14 h-14 rounded-lg overflow-hidden flex items-center justify-center"
-              style={{ 
-                border: `2px solid ${heroColors.primary}`,
-                background: `linear-gradient(135deg, ${heroColors.bg}, rgba(0,0,0,0.7))`,
-                boxShadow: `0 0 20px ${heroColors.glow}`,
+              className="absolute -inset-1 rounded-xl opacity-60"
+              style={{
+                background: `radial-gradient(circle, ${playerFaction.glowColor} 0%, transparent 70%)`,
               }}
-            >
-              {localPlayer.heroId && (
-                <HeroIcon 
-                  heroId={localPlayer.heroId as HeroId} 
-                  size={32} 
-                  color={heroColors.primary}
-                />
-              )}
-              <div 
-                className={`absolute bottom-0 left-0 right-0 h-1 ${
-                  localPlayer.team === 'red' ? 'bg-red-500' : 'bg-blue-500'
-                }`}
-              />
-            </div>
+            />
+            
+            {/* Flag carrier badge */}
             {localPlayer.hasFlag && (
-              <div className="absolute -top-2 -right-2 w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center border-2 border-amber-300 animate-bounce">
-                <span className="text-[10px]">🏴</span>
+              <div 
+                className="absolute -top-3 -right-3 w-7 h-7 rounded-lg flex items-center justify-center animate-bounce border-2"
+                style={{
+                  background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+                  borderColor: '#fde047',
+                  boxShadow: '0 0 15px rgba(251, 191, 36, 0.6)',
+                }}
+              >
+                <span className="text-sm">🏴</span>
               </div>
             )}
           </div>
 
-          {/* Health Bar Stack */}
-          <div className="flex flex-col gap-1">
+          {/* Health & Stats Stack */}
+          <div className="flex flex-col gap-2">
             {/* Health Bar */}
-            <div className="relative w-44">
-              <div className="h-7 bg-black/80 rounded overflow-hidden border border-white/10">
+            <div className="relative w-52">
+              <div 
+                className="h-8 rounded-lg overflow-hidden backdrop-blur-sm"
+                style={{
+                  background: 'rgba(0, 0, 0, 0.7)',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5)',
+                }}
+              >
+                {/* Health fill */}
                 <div 
                   className={`h-full transition-all duration-150 relative ${
                     isCriticalHealth ? 'health-bar-critical' : 
-                    isLowHealth ? 'health-bar-low' : 'health-bar'
+                    isLowHealth ? 'health-bar-low' : ''
                   }`}
-                  style={{ width: `${healthPercent}%` }}
+                  style={{ 
+                    width: `${healthPercent}%`,
+                    background: isCriticalHealth 
+                      ? 'linear-gradient(180deg, #ef4444 0%, #b91c1c 100%)'
+                      : isLowHealth 
+                        ? 'linear-gradient(180deg, #f97316 0%, #c2410c 100%)'
+                        : 'linear-gradient(180deg, #22c55e 0%, #15803d 100%)',
+                    boxShadow: isCriticalHealth
+                      ? 'inset 0 0 20px rgba(239, 68, 68, 0.5)'
+                      : isLowHealth
+                        ? 'inset 0 0 20px rgba(249, 115, 22, 0.5)'
+                        : 'inset 0 0 20px rgba(34, 197, 94, 0.3)',
+                  }}
                 >
-                  <div className="absolute inset-0 bg-gradient-to-b from-white/25 to-transparent h-1/2" />
+                  {/* Shine effect */}
+                  <div className="absolute inset-0 bg-gradient-to-b from-white/30 to-transparent h-1/2" />
                 </div>
-                <div className="absolute inset-0 flex items-center px-3">
-                  <span className="font-mono text-base text-white font-bold drop-shadow-lg">
+                
+                {/* Health text */}
+                <div className="absolute inset-0 flex items-center justify-between px-3">
+                  <span className="font-mono text-lg text-white font-bold drop-shadow-lg">
                     {Math.ceil(localPlayer.health)}
+                  </span>
+                  <span className="text-[10px] text-white/50 font-mono">
+                    / {localPlayer.maxHealth}
                   </span>
                 </div>
               </div>
-              <div className="absolute inset-0 flex pointer-events-none rounded overflow-hidden">
-                {[...Array(10)].map((_, i) => (
-                  <div key={i} className="flex-1 border-r border-black/40 last:border-r-0" />
-                ))}
-              </div>
             </div>
-
-            {/* Ultimate Charge Bar */}
-            <div className="relative w-44">
-              <div className={`h-2.5 rounded overflow-hidden ${
-                isUltReady ? 'bg-amber-900/50' : 'bg-black/60'
-              }`}>
-                <div 
-                  className={`h-full transition-all duration-200 ${
-                    isUltReady 
-                      ? 'bg-gradient-to-r from-amber-500 to-yellow-400' 
-                      : 'bg-gradient-to-r from-violet-700 to-violet-500'
-                  }`}
-                  style={{ width: `${Math.min(100, ultimatePercent)}%` }}
-                >
-                  {isUltReady && (
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
-                  )}
-                </div>
-              </div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <span className={`text-[9px] font-mono tracking-wide ${
-                  isUltReady ? 'text-amber-200 font-bold' : 'text-white/50'
-                }`}>
-                  {isUltReady ? 'READY' : `${Math.floor(ultimatePercent)}%`}
-                </span>
-              </div>
+            
+            {/* Faction indicator */}
+            <div className="flex items-center gap-2">
+              {localPlayer.team === 'red' ? (
+                <SolarIconSmall className="w-3.5 h-3.5" style={{ color: playerFaction.primaryColor }} />
+              ) : (
+                <VoidIconSmall className="w-3.5 h-3.5" style={{ color: playerFaction.primaryColor }} />
+              )}
+              <span 
+                className="text-[9px] font-display tracking-[0.2em]"
+                style={{ color: playerFaction.primaryColor }}
+              >
+                {playerFaction.fullName}
+              </span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ===== BOTTOM CENTER - Ability Bar (Apex Style) ===== */}
+      {/* ===== BOTTOM CENTER - Ability Bar (Improved) ===== */}
       {heroInfo && (
         <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
-          <div className="flex items-end gap-3">
+          <div 
+            className="flex items-end gap-4 px-5 py-3 rounded-xl backdrop-blur-md"
+            style={{
+              background: 'rgba(10, 10, 15, 0.8)',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              boxShadow: '0 10px 40px rgba(0, 0, 0, 0.5)',
+            }}
+          >
             {/* Ability 1 (E) */}
             <AbilitySlotApex
               abilityId={heroInfo.ability1.abilityId}
@@ -242,6 +369,9 @@ export function HUD() {
               ultimateCharge={ultimatePercent}
             />
             
+            {/* Divider */}
+            <div className="w-px h-12 bg-gradient-to-b from-transparent via-white/20 to-transparent" />
+            
             {/* Ultimate (F) */}
             <AbilitySlotApex
               abilityId={heroInfo.ultimate.abilityId}
@@ -251,47 +381,85 @@ export function HUD() {
               isUltimate={true}
               heroColor={heroColors.primary}
               ultimateCharge={ultimatePercent}
+              ultimateEffectActive={ultimateEffectActive}
             />
           </div>
         </div>
       )}
 
-      {/* ===== BOTTOM RIGHT - Movement Status ===== */}
-      <div className="absolute bottom-6 right-6 flex flex-col items-end gap-1.5">
-        {/* Speed Display - Essential for bhop */}
-        <SpeedDisplay velocity={localPlayer.velocity} />
+      {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
+      <div className="absolute bottom-6 right-6 flex flex-col items-end gap-2">
         
-        {localPlayer.movement?.isWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" />}
-        {localPlayer.movement?.isSliding && <MovementIndicator label="SLIDING" color="#22c55e" />}
-        {localPlayer.movement?.isGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" />}
-        {localPlayer.movement?.isJetpacking && <MovementIndicator label="JETPACK" color="#f97316" />}
-        {localPlayer.movement?.isGliding && <MovementIndicator label="GLIDING" color="#a855f7" />}
+        {/* Movement indicators container */}
+        <div className="flex flex-col items-end gap-1.5">
+          {localPlayer.movement?.isWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
+          {localPlayer.movement?.isSliding && <MovementIndicator label="SLIDE" color="#22c55e" icon="slide" />}
+          {localPlayer.movement?.isGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" icon="grapple" />}
+          {localPlayer.movement?.isJetpacking && <MovementIndicator label="JETPACK" color="#f97316" icon="jetpack" />}
+          {localPlayer.movement?.isGliding && <MovementIndicator label="GLIDE" color="#a855f7" icon="glide" />}
+        </div>
         
+        {/* Jetpack Fuel */}
         {localPlayer.heroId === 'blaze' && localPlayer.movement?.jetpackFuel !== undefined && (
-          <div className="flex items-center gap-2 mt-2">
-            <span className="text-[9px] font-display text-orange-400/70 tracking-wider">FUEL</span>
-            <div className="w-16 h-1.5 bg-black/60 rounded-full overflow-hidden border border-orange-500/30">
+          <div 
+            className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
+            style={{
+              background: 'rgba(249, 115, 22, 0.1)',
+              border: '1px solid rgba(249, 115, 22, 0.3)',
+            }}
+          >
+            <span className="text-[9px] font-display text-orange-400 tracking-wider">FUEL</span>
+            <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
               <div 
-                className="h-full bg-gradient-to-r from-orange-600 to-orange-400 transition-all duration-100"
-                style={{ width: `${localPlayer.movement.jetpackFuel}%` }}
+                className="h-full transition-all duration-100"
+                style={{ 
+                  width: `${localPlayer.movement.jetpackFuel}%`,
+                  background: 'linear-gradient(90deg, #f97316, #fbbf24)',
+                  boxShadow: '0 0 10px rgba(249, 115, 22, 0.5)',
+                }}
               />
             </div>
+            <span className="text-[10px] font-mono text-orange-300/70">
+              {Math.round(localPlayer.movement.jetpackFuel)}%
+            </span>
           </div>
         )}
       </div>
 
-      {/* ===== FLAG CARRIER ALERT ===== */}
+      {/* ===== FLAG CARRIER ALERT (Improved) ===== */}
       {localPlayer.hasFlag && (
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 animate-bounce-slow">
-          <div className="relative px-5 py-2.5 rounded-lg overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-r from-amber-600/30 via-amber-500/40 to-amber-600/30 backdrop-blur-md" />
-            <div className="absolute inset-0 border border-amber-400/50 rounded-lg" />
-            <div className="relative flex items-center gap-3">
-              <span className="text-xl">🏴</span>
-              <span className="font-display text-amber-200 tracking-widest text-sm">
-                RETURN TO BASE
-              </span>
-              <span className="font-display text-amber-400 text-lg">→</span>
+        <div className="absolute top-24 left-1/2 -translate-x-1/2 animate-bounce-slow">
+          <div 
+            className="relative px-6 py-3 rounded-xl overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(245, 158, 11, 0.3) 100%)',
+              border: '2px solid rgba(251, 191, 36, 0.5)',
+              boxShadow: '0 0 40px rgba(251, 191, 36, 0.3), inset 0 0 20px rgba(251, 191, 36, 0.1)',
+            }}
+          >
+            {/* Animated border glow */}
+            <div 
+              className="absolute inset-0 animate-pulse opacity-50"
+              style={{
+                background: 'radial-gradient(ellipse at center, rgba(251, 191, 36, 0.3) 0%, transparent 70%)',
+              }}
+            />
+            
+            <div className="relative flex items-center gap-4">
+              <span className="text-2xl animate-bounce">🏴</span>
+              <div className="flex flex-col">
+                <span className="font-display text-amber-200 tracking-[0.2em] text-sm">
+                  RETURN THE FLAG
+                </span>
+                <span className="text-[10px] text-amber-300/60 font-body">
+                  to your base to score
+                </span>
+              </div>
+              <div className="flex items-center gap-1 text-amber-400">
+                <span className="font-display text-lg">→</span>
+                <span className="font-display text-lg">→</span>
+                <span className="font-display text-lg animate-pulse">→</span>
+              </div>
             </div>
           </div>
         </div>
@@ -317,6 +485,7 @@ function AbilitySlotApex({
   isUltimate,
   heroColor,
   ultimateCharge,
+  ultimateEffectActive,
 }: {
   abilityId: string;
   keybind: string;
@@ -326,54 +495,46 @@ function AbilitySlotApex({
   isUltimate: boolean;
   heroColor: string;
   ultimateCharge: number;
+  ultimateEffectActive?: boolean;
 }) {
   const abilityDef = ABILITY_DEFINITIONS[abilityId];
   if (!abilityDef) return null;
 
   const iconType = getAbilityIconType(abilityId);
   const maxCharges = abilityDef.charges || 1;
-  // Force 10s cooldown for blink (shared package might have old cached value)
   const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef.cooldown || 10);
   
-  // Calculate client-side cooldown remaining (for immediate UI feedback)
   const now = Date.now();
   const clientCooldownRemaining = clientCooldownEnd && clientCooldownEnd > now 
     ? Math.ceil((clientCooldownEnd - now) / 1000) 
     : 0;
   
-  // Use client cooldown if available (more responsive), fall back to server state
   const serverCooldown = abilityState?.cooldownRemaining ?? 0;
-  const cooldown = clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown;
+  // Ultimates use the charge system, not cooldowns - ignore any cooldown values
+  const cooldown = isUltimate ? 0 : (clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown);
   
-  // Use client charges if available, fall back to server state, then default to max
   const serverCharges = abilityState?.charges ?? maxCharges;
   let charges = clientCharges !== undefined ? clientCharges : serverCharges;
   
-  // If cooldown just ended and charges are 0, show full charges (they'll reset on next use)
   if (maxCharges > 1 && clientCooldownEnd && now >= clientCooldownEnd && charges === 0) {
     charges = maxCharges;
   }
   
-  const isActive = abilityState?.isActive ?? false;
-  
+  // For ultimates, use client-side effect state to avoid server sync flickering
+  const isActive = isUltimate ? (ultimateEffectActive ?? false) : (abilityState?.isActive ?? false);
   const onCooldown = cooldown > 0;
   const isUltReady = isUltimate && ultimateCharge >= 100;
   const isUltCharging = isUltimate && ultimateCharge < 100;
   const hasCharges = maxCharges > 1;
   const noChargesLeft = hasCharges && charges === 0;
-  
-  // Determine if ability is usable
   const isUsable = !onCooldown && !noChargesLeft && (!isUltimate || isUltReady);
-  
-  // Size based on ultimate vs regular ability
-  const size = isUltimate ? 'w-16 h-16' : 'w-14 h-14';
   const iconSize = isUltimate ? 28 : 24;
 
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col items-center gap-1.5">
       {/* Ability name label */}
       <span className={`text-[9px] font-body tracking-wide uppercase ${
-        isUsable ? 'text-white/70' : 'text-white/40'
+        isUsable ? 'text-white/70' : 'text-white/30'
       }`}>
         {abilityDef.name}
       </span>
@@ -383,9 +544,9 @@ function AbilitySlotApex({
         {/* Outer glow for ready ultimate */}
         {isUltReady && (
           <div 
-            className="absolute -inset-1 rounded-xl animate-pulse-soft"
+            className="absolute -inset-2 rounded-xl animate-pulse"
             style={{ 
-              background: `radial-gradient(circle, rgba(251, 191, 36, 0.5) 0%, transparent 70%)`,
+              background: 'radial-gradient(circle, rgba(251, 191, 36, 0.4) 0%, transparent 70%)',
             }}
           />
         )}
@@ -393,21 +554,26 @@ function AbilitySlotApex({
         {/* Ability box */}
         <div 
           className={`
-            relative ${size} rounded-lg overflow-hidden transition-all duration-150
+            relative w-14 h-14 rounded-xl overflow-hidden transition-all duration-150
             ${isActive ? 'ring-2 ring-white' : ''}
           `}
           style={{
             background: isUsable
               ? isUltimate 
-                ? 'linear-gradient(180deg, rgba(251, 191, 36, 0.3) 0%, rgba(180, 83, 9, 0.4) 100%)'
-                : `linear-gradient(180deg, ${heroColor}35 0%, ${heroColor}20 100%)`
-              : 'linear-gradient(180deg, rgba(40, 40, 50, 0.95) 0%, rgba(25, 25, 35, 0.98) 100%)',
+                ? 'linear-gradient(180deg, rgba(251, 191, 36, 0.35) 0%, rgba(180, 83, 9, 0.45) 100%)'
+                : `linear-gradient(180deg, ${heroColor}40 0%, ${heroColor}25 100%)`
+              : 'linear-gradient(180deg, rgba(30, 30, 40, 0.95) 0%, rgba(20, 20, 30, 0.98) 100%)',
             border: isUsable 
-              ? `2px solid ${isUltimate ? 'rgba(251, 191, 36, 0.7)' : heroColor}`
-              : '2px solid rgba(70, 70, 80, 0.6)',
+              ? `2px solid ${isUltimate ? 'rgba(251, 191, 36, 0.8)' : heroColor}`
+              : '2px solid rgba(60, 60, 70, 0.5)',
+            boxShadow: isUsable 
+              ? isUltimate 
+                ? '0 0 20px rgba(251, 191, 36, 0.3), inset 0 0 15px rgba(251, 191, 36, 0.1)'
+                : `0 0 15px ${heroColor}30, inset 0 0 10px ${heroColor}10`
+              : 'inset 0 2px 8px rgba(0,0,0,0.4)',
           }}
         >
-          {/* Cooldown overlay - darkens the ability */}
+          {/* Cooldown overlay */}
           {(onCooldown || noChargesLeft || isUltCharging) && (
             <div className="absolute inset-0 bg-black/50 z-10" />
           )}
@@ -420,7 +586,7 @@ function AbilitySlotApex({
                 cy="50"
                 r="45"
                 fill="none"
-                stroke="rgba(0,0,0,0.6)"
+                stroke="rgba(0,0,0,0.7)"
                 strokeWidth="90"
                 strokeDasharray={`${(cooldown / maxCooldown) * 283} 283`}
                 className="transition-all duration-100"
@@ -430,12 +596,12 @@ function AbilitySlotApex({
 
           {/* Keybind badge */}
           <div 
-            className={`absolute top-1 left-1 z-30 min-w-[20px] h-[20px] rounded flex items-center justify-center text-[11px] font-mono font-bold ${
+            className={`absolute top-1 left-1 z-30 min-w-[22px] h-[22px] rounded-md flex items-center justify-center text-[11px] font-mono font-bold ${
               isUsable 
                 ? isUltimate 
-                  ? 'bg-amber-500/50 text-amber-100' 
-                  : 'bg-white/25 text-white'
-                : 'bg-black/50 text-white/50'
+                  ? 'bg-amber-500/60 text-amber-100' 
+                  : 'bg-white/30 text-white'
+                : 'bg-black/60 text-white/40'
             }`}
           >
             {keybind}
@@ -443,22 +609,22 @@ function AbilitySlotApex({
 
           {/* Ability Icon */}
           <div className={`absolute inset-0 flex items-center justify-center z-20 ${
-            !isUsable ? 'opacity-40' : ''
+            !isUsable ? 'opacity-30' : ''
           }`}>
             <AbilityIcon 
               type={iconType} 
               size={iconSize} 
               color={isUsable 
                 ? (isUltimate ? '#fbbf24' : 'white') 
-                : 'rgba(255,255,255,0.5)'
+                : 'rgba(255,255,255,0.4)'
               }
             />
           </div>
 
-          {/* Cooldown timer text (centered, like Apex) */}
+          {/* Cooldown timer */}
           {onCooldown && (
             <div className="absolute inset-0 flex items-center justify-center z-30">
-              <span className="font-mono text-2xl font-bold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+              <span className="font-mono text-2xl font-bold text-white drop-shadow-[0_2px_6px_rgba(0,0,0,1)]">
                 {Math.ceil(cooldown)}
               </span>
             </div>
@@ -475,14 +641,14 @@ function AbilitySlotApex({
 
           {/* Charges indicator */}
           {hasCharges && (
-            <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex gap-1 z-30">
+            <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-1 z-30">
               {[...Array(maxCharges)].map((_, i) => (
                 <div 
                   key={i} 
                   className={`w-3 h-1.5 rounded-sm transition-all duration-150 ${
                     i < charges 
                       ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]' 
-                      : 'bg-white/25'
+                      : 'bg-white/20'
                   }`}
                 />
               ))}
@@ -494,7 +660,7 @@ function AbilitySlotApex({
             <div 
               className="absolute inset-0 z-10 animate-pulse"
               style={{ 
-                background: `radial-gradient(circle at center, ${heroColor}60 0%, transparent 60%)` 
+                background: `radial-gradient(circle at center, ${heroColor}70 0%, transparent 60%)` 
               }}
             />
           )}
@@ -504,79 +670,27 @@ function AbilitySlotApex({
   );
 }
 
-// ===== MOVEMENT INDICATOR =====
-function MovementIndicator({ label, color }: { label: string; color: string }) {
+// ===== MOVEMENT INDICATOR (Improved) =====
+function MovementIndicator({ label, color, icon }: { label: string; color: string; icon: string }) {
   return (
     <div 
-      className="flex items-center gap-2 px-3 py-1.5 rounded backdrop-blur-sm animate-fade-in"
+      className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-sm animate-fade-in"
       style={{ 
-        background: `${color}20`,
-        border: `1px solid ${color}50`,
+        background: `${color}15`,
+        border: `1px solid ${color}40`,
+        boxShadow: `0 0 15px ${color}20`,
       }}
     >
       <div 
-        className="w-1.5 h-1.5 rounded-full animate-pulse"
-        style={{ background: color }}
+        className="w-2 h-2 rounded-full animate-pulse"
+        style={{ background: color, boxShadow: `0 0 8px ${color}` }}
       />
       <span 
-        className="text-[10px] font-display tracking-widest"
+        className="text-[10px] font-display tracking-[0.15em]"
         style={{ color }}
       >
         {label}
       </span>
-    </div>
-  );
-}
-
-// ===== SPEED DISPLAY (CS BHOP STYLE) =====
-function SpeedDisplay({ velocity }: { velocity?: { x: number; y: number; z: number } }) {
-  if (!velocity) return null;
-  
-  // Calculate horizontal speed (units per second)
-  const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-  const speed = Math.round(horizontalSpeed * 10) / 10; // Round to 1 decimal
-  
-  // Color coding based on speed thresholds
-  // Normal walk ~9, sprint ~12.6, bhop can reach 20-32
-  let color = '#ffffff'; // Default white
-  let glowColor = 'rgba(255, 255, 255, 0.2)';
-  
-  if (speed >= 25) {
-    // Extreme speed - gold/yellow (like CS bhop servers)
-    color = '#fbbf24';
-    glowColor = 'rgba(251, 191, 36, 0.4)';
-  } else if (speed >= 18) {
-    // High speed - cyan
-    color = '#22d3ee';
-    glowColor = 'rgba(34, 211, 238, 0.4)';
-  } else if (speed >= 12) {
-    // Above walk speed - green
-    color = '#4ade80';
-    glowColor = 'rgba(74, 222, 128, 0.3)';
-  }
-  
-  return (
-    <div 
-      className="flex flex-col items-end mb-2 px-3 py-2 rounded-lg backdrop-blur-sm"
-      style={{ 
-        background: 'rgba(0, 0, 0, 0.4)',
-        border: '1px solid rgba(255, 255, 255, 0.1)',
-        boxShadow: `0 0 15px ${glowColor}`,
-      }}
-    >
-      <span className="text-[9px] font-display text-white/50 tracking-wider">SPEED</span>
-      <div className="flex items-baseline gap-1">
-        <span 
-          className="font-mono text-2xl font-bold tabular-nums transition-colors duration-150"
-          style={{ 
-            color,
-            textShadow: `0 0 10px ${glowColor}`,
-          }}
-        >
-          {speed.toFixed(1)}
-        </span>
-        <span className="text-[10px] text-white/40 font-mono">u/s</span>
-      </div>
     </div>
   );
 }

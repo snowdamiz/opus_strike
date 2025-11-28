@@ -399,6 +399,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     const syncPlayerFromSchema = (schemaPlayer: any, id: string) => {
       if (id === sessionId) {
         // Our own player - update local player with server data
+        // Get FRESH state to avoid overwriting ultimateCharge with stale data
         const store = useGameStore.getState();
         if (store.localPlayer) {
           const updated = {
@@ -408,6 +409,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
             health: schemaPlayer.health ?? store.localPlayer.health,
             maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
             state: schemaPlayer.state || store.localPlayer.state,
+            // Explicitly preserve ultimateCharge - it's managed by playerStates message
+            ultimateCharge: store.localPlayer.ultimateCharge,
           };
           setLocalPlayer(updated);
         }
@@ -488,23 +491,30 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           lastLoggedPlayerCount = serverPlayerCount;
         }
         
-        function processPlayer(schemaPlayer: any, id: string, store: any) {
+        function processPlayer(schemaPlayer: any, id: string, _store: any) {
           if (id === sessionId) {
-            if (store.localPlayer) {
+            // For the local player, get FRESH state to avoid overwriting ultimateCharge
+            // with stale data from the captured store snapshot
+            const freshStore = useGameStore.getState();
+            if (freshStore.localPlayer) {
               const updated = {
-                ...store.localPlayer,
-                heroId: schemaPlayer.heroId || store.localPlayer.heroId,
-                team: schemaPlayer.team || store.localPlayer.team,
-                health: schemaPlayer.health ?? store.localPlayer.health,
-                maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
-                state: schemaPlayer.state || store.localPlayer.state,
+                ...freshStore.localPlayer,
+                heroId: schemaPlayer.heroId || freshStore.localPlayer.heroId,
+                team: schemaPlayer.team || freshStore.localPlayer.team,
+                health: schemaPlayer.health ?? freshStore.localPlayer.health,
+                maxHealth: schemaPlayer.maxHealth ?? freshStore.localPlayer.maxHealth,
+                state: schemaPlayer.state || freshStore.localPlayer.state,
+                // Explicitly preserve ultimateCharge from fresh state
+                ultimateCharge: freshStore.localPlayer.ultimateCharge,
               };
               setLocalPlayer(updated);
             }
             return;
           }
 
-          const existingPlayer = store.players.get(id);
+          // For other players, get fresh state to avoid stale data
+          const otherStore = useGameStore.getState();
+          const existingPlayer = otherStore.players.get(id);
           if (!existingPlayer) {
             const playerData = createPlayerData(schemaPlayer, id);
             updatePlayer(id, playerData);
@@ -586,26 +596,51 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     room.onMessage('playerStates', (data: { players: any[] }) => {
-      const currentStore = useGameStore.getState();
-      
       for (const serverPlayer of data.players) {
         if (serverPlayer.id === sessionId) {
-          if (currentStore.localPlayer) {
+          // IMPORTANT: Get FRESH state for each update to avoid stale closure issues
+          // This prevents race conditions where concurrent handlers (syncPlayerFromSchema,
+          // processPlayer) might update the state between when we captured it and now.
+          const freshStore = useGameStore.getState();
+          if (freshStore.localPlayer) {
+            const localUltCharge = freshStore.localPlayer.ultimateCharge;
+            const serverUltCharge = serverPlayer.ultimateCharge ?? localUltCharge;
+            
+            // Race condition protection for ultimateCharge:
+            // 1. If server sends value MORE than 50 higher than local → stale high value after we used ultimate
+            // 2. If server sends value LOWER than local AND local is > 5 → stale low value (like initial 0)
+            //    We allow small decreases (< 5) for edge cases and accept 0 when local is also near 0
+            let ultimateCharge = serverUltCharge;
+            const serverJumpedUp = serverUltCharge > localUltCharge + 50;
+            const serverDroppedDown = serverUltCharge < localUltCharge && localUltCharge > 5;
+            
+            if (serverJumpedUp) {
+              // Server sent stale high value after we used ultimate - keep local (which should be ~0)
+              ultimateCharge = localUltCharge;
+            } else if (serverDroppedDown) {
+              // Server sent lower value but local is already higher - likely stale/out-of-order message
+              // Keep the higher local value since charge should only increase (until ultimate is used)
+              ultimateCharge = localUltCharge;
+            }
+            // Otherwise accept server value (normal progression or legitimate reset to 0)
+            
             const updated = {
-              ...currentStore.localPlayer,
-              health: serverPlayer.health ?? currentStore.localPlayer.health,
-              maxHealth: serverPlayer.maxHealth ?? currentStore.localPlayer.maxHealth,
-              ultimateCharge: serverPlayer.ultimateCharge ?? currentStore.localPlayer.ultimateCharge,
-              state: serverPlayer.state || currentStore.localPlayer.state,
-              heroId: serverPlayer.heroId || currentStore.localPlayer.heroId,
-              team: serverPlayer.team || currentStore.localPlayer.team,
-              hasFlag: serverPlayer.hasFlag ?? currentStore.localPlayer.hasFlag,
-              abilities: serverPlayer.abilities || currentStore.localPlayer.abilities,
+              ...freshStore.localPlayer,
+              health: serverPlayer.health ?? freshStore.localPlayer.health,
+              maxHealth: serverPlayer.maxHealth ?? freshStore.localPlayer.maxHealth,
+              ultimateCharge,
+              state: serverPlayer.state || freshStore.localPlayer.state,
+              heroId: serverPlayer.heroId || freshStore.localPlayer.heroId,
+              team: serverPlayer.team || freshStore.localPlayer.team,
+              hasFlag: serverPlayer.hasFlag ?? freshStore.localPlayer.hasFlag,
+              abilities: serverPlayer.abilities || freshStore.localPlayer.abilities,
             };
             setLocalPlayer(updated);
           }
         } else {
-          const existingPlayer = currentStore.players.get(serverPlayer.id);
+          // For other players, get fresh state to avoid stale data
+          const otherPlayerStore = useGameStore.getState();
+          const existingPlayer = otherPlayerStore.players.get(serverPlayer.id);
           if (existingPlayer) {
             const updatedPlayer: Player = {
               ...existingPlayer,

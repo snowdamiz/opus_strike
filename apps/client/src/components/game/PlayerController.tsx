@@ -127,7 +127,7 @@ export function PlayerController() {
   const { inputState, isPointerLocked, requestPointerLock } = useInput();
   const { world, playerBody } = usePhysics();
   const { sendInput } = useNetwork();
-  const { playPhantomBlink, playPhantomShadowStep, playPhantomVeil } = useAbilitySounds();
+  const { playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic } = useAbilitySounds();
 
   const velocityRef = useRef(new THREE.Vector3());
   const yawRef = useRef(0);
@@ -575,7 +575,9 @@ export function PlayerController() {
     // Start cooldown for abilities without special handling
     // - phantom_shadowstep: cooldown starts after teleport completes
     // - phantom_blink: uses charge system
-    const hasSpecialHandling = ['phantom_shadowstep', 'phantom_blink'].includes(abilityId);
+    // - ultimates: use ultimate charge system, not cooldowns
+    const isUltimate = ABILITY_DEFINITIONS[abilityId]?.type === 'ultimate';
+    const hasSpecialHandling = ['phantom_shadowstep', 'phantom_blink'].includes(abilityId) || isUltimate;
     if (!hasSpecialHandling) {
       startClientCooldown(abilityId);
     }
@@ -1281,6 +1283,9 @@ export function PlayerController() {
               startTime: now,
               ownerId: localPlayer.id,
             });
+            
+            // Play attack sound
+            playPhantomBasic();
           }
         }
       }

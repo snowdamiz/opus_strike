@@ -37,9 +37,10 @@ const SOUND_EFFECTS = {
   jetpack: { path: '/sounds/jetpack.mp3', volume: 0.4 },
   
   // Phantom Abilities (using shortened clips)
-  phantomBlink: { path: '/sounds/blink_short.mp3', volume: 0.7 },
-  phantomShadowStep: { path: '/sounds/shadow_step_short.mp3', volume: 0.7 },
-  phantomVeil: { path: '/sounds/phantom_veil_short.mp3', volume: 0.8 },
+  phantomBlink: { path: '/sounds/blink_short.mp3', volume: 0.4 },
+  phantomShadowStep: { path: '/sounds/shadow_step_short.mp3', volume: 0.4 },
+  phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
+  phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1 },
   
   // Combat
   hit: { path: '/sounds/hit.mp3', volume: 0.6 },
@@ -358,11 +359,16 @@ export function useAbilitySounds() {
     playSound('phantomVeil');
   }, [playSound]);
 
+  const playPhantomBasic = useCallback(() => {
+    playSound('phantomBasic');
+  }, [playSound]);
+
   return {
     // Phantom
     playPhantomBlink,
     playPhantomShadowStep,
     playPhantomVeil,
+    playPhantomBasic,
   };
 }
 
