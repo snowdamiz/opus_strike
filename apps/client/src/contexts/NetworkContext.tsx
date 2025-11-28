@@ -2,6 +2,7 @@ import { createContext, useContext, useRef, useCallback, ReactNode } from 'react
 import { Client, Room } from 'colyseus.js';
 import { useGameStore, LobbyPlayer, LobbyInfo } from '../store/gameStore';
 import { config } from '../config/environment';
+import { getClientId } from '../utils/clientId';
 import type { HeroId, Team, PlayerInput, Player } from '@voxel-strike/shared';
 
 interface NetworkContextType {
@@ -87,12 +88,34 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLoading(true);
 
     try {
+      // Clean up any existing connections before creating new lobby
+      if (lobbyRoomRef.current) {
+        try {
+          lobbyRoomRef.current.leave(false);
+        } catch (e) {
+          console.log('Error leaving old lobby room:', e);
+        }
+        lobbyRoomRef.current = null;
+      }
+      if (gameRoomRef.current) {
+        try {
+          gameRoomRef.current.leave(false);
+        } catch (e) {
+          console.log('Error leaving old game room:', e);
+        }
+        gameRoomRef.current = null;
+      }
+      
       const client = getClient();
+      const clientId = getClientId();
+      
+      console.log('Creating lobby with clientId:', clientId);
       
       lobbyRoomRef.current = await client.create('lobby_room', {
         playerName,
         lobbyName: lobbyName || `${playerName}'s Lobby`,
         isPrivate: isPrivate || false,
+        clientId,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -118,10 +141,32 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLoading(true);
 
     try {
+      // Clean up any existing connections before joining new lobby
+      if (lobbyRoomRef.current) {
+        try {
+          lobbyRoomRef.current.leave(false);
+        } catch (e) {
+          console.log('Error leaving old lobby room:', e);
+        }
+        lobbyRoomRef.current = null;
+      }
+      if (gameRoomRef.current) {
+        try {
+          gameRoomRef.current.leave(false);
+        } catch (e) {
+          console.log('Error leaving old game room:', e);
+        }
+        gameRoomRef.current = null;
+      }
+      
       const client = getClient();
+      const clientId = getClientId();
+      
+      console.log('Joining lobby with clientId:', clientId);
       
       lobbyRoomRef.current = await client.joinById(lobbyId, {
         playerName,
+        clientId,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -205,7 +250,17 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLobbyPlayers(updatedPlayers);
     });
 
+    // Track if we've already started joining a game to prevent double-joins
+    let isJoiningGame = false;
+    
     room.onMessage('gameStarting', async (data: { gameRoomId: string; players: { playerId: string; playerName: string; team: string }[] }) => {
+      // Prevent handling duplicate gameStarting messages
+      if (isJoiningGame) {
+        console.log('[Lobby] Ignoring duplicate gameStarting message, already joining a game');
+        return;
+      }
+      isJoiningGame = true;
+      
       console.log('Game starting! Room:', data.gameRoomId);
       
       // Find our assigned team
@@ -217,12 +272,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         await joinGameRoom(data.gameRoomId, playerName, myTeam);
       } catch (error) {
         console.error('Failed to join game room:', error);
+        isJoiningGame = false; // Reset on error so they can try again
       }
     });
 
     room.onMessage('kicked', (data: { reason: string }) => {
       console.log('Kicked from lobby:', data.reason);
       leaveLobby();
+    });
+
+    room.onMessage('duplicateSession', (data: { reason: string }) => {
+      console.log('Duplicate session detected in lobby:', data.reason);
+      // The server will disconnect us - no need to do anything, onLeave will handle cleanup
     });
 
     room.onMessage('error', (data: { message: string }) => {
@@ -245,6 +306,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current.leave();
       lobbyRoomRef.current = null;
     }
+    isJoiningGameRef.current = false;
     resetLobby();
     setAppPhase('browsing_lobbies');
     setConnected(false);
@@ -275,16 +337,45 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Track if we're currently in the process of joining a game room
+  const isJoiningGameRef = useRef(false);
+  
   // Join game room (called when game starts from lobby)
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string) => {
+    // Prevent concurrent join attempts
+    if (isJoiningGameRef.current) {
+      console.log('[joinGameRoom] Already joining a game room, ignoring duplicate call');
+      return;
+    }
+    isJoiningGameRef.current = true;
+    
     setLoading(true);
 
     try {
+      // Clean up any existing game room connection before joining new one
+      if (gameRoomRef.current) {
+        console.log('Cleaning up existing game room before joining new one');
+        try {
+          gameRoomRef.current.leave(false);
+        } catch (e) {
+          console.log('Error leaving old game room:', e);
+        }
+        gameRoomRef.current = null;
+      }
+      
+      // Clear any existing player data from store to prevent duplicates
+      const store = useGameStore.getState();
+      store.setPlayers(new Map());
+      
       const client = getClient();
+      const clientId = getClientId();
+      
+      console.log('Joining game room with clientId:', clientId);
       
       gameRoomRef.current = await client.joinById(gameRoomId, {
         playerName,
         preferredTeam: team,
+        clientId,
       });
 
       setupGameListeners(gameRoomRef.current, playerName);
@@ -298,6 +389,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Failed to join game room:', error);
       setLoading(false);
+      isJoiningGameRef.current = false; // Reset on error so they can try again
       throw error;
     }
   }, [getClient, setLoading, setRoomId, setAppPhase]);
@@ -394,6 +486,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       stats: { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 },
     };
     setLocalPlayer(defaultPlayer);
+    
+    // Store the local player name for ghost detection - this is set ONCE and won't change
+    const localPlayerName = playerName;
+    
+    // Immediately cleanup any ghost players that might exist from previous sessions
+    useGameStore.getState().cleanupGhostPlayers();
 
     // Helper function to sync a player from schema to store
     const syncPlayerFromSchema = (schemaPlayer: any, id: string) => {
@@ -415,6 +513,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           setLocalPlayer(updated);
         }
       } else {
+        // Skip ghost players: same name as us but different ID (stale session from before reload)
+        // Use captured localPlayerName from closure - guaranteed to be set
+        if (schemaPlayer.name === localPlayerName) {
+          console.log(`[SCHEMA SYNC] Ignoring ghost player: ${schemaPlayer.name} (${id})`);
+          return;
+        }
+        
         // Other player - add/update in store
         const playerData = createPlayerData(schemaPlayer, id);
         updatePlayer(id, playerData);
@@ -491,6 +596,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           lastLoggedPlayerCount = serverPlayerCount;
         }
         
+        // Periodic ghost cleanup every 10 polls (500ms)
+        if (pollCount % 10 === 0) {
+          useGameStore.getState().cleanupGhostPlayers();
+        }
+        
         function processPlayer(schemaPlayer: any, id: string, _store: any) {
           if (id === sessionId) {
             // For the local player, get FRESH state to avoid overwriting ultimateCharge
@@ -514,6 +624,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
           // For other players, get fresh state to avoid stale data
           const otherStore = useGameStore.getState();
+          
+          // Skip ghost players: same name as us but different ID (stale session from before reload)
+          // Use captured localPlayerName from closure - guaranteed to be set
+          if (schemaPlayer.name === localPlayerName) {
+            console.log(`[POLL] Ignoring ghost player: ${schemaPlayer.name} (${id})`);
+            return;
+          }
+          
           const existingPlayer = otherStore.players.get(id);
           if (!existingPlayer) {
             const playerData = createPlayerData(schemaPlayer, id);
@@ -554,6 +672,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       console.log(`Player joined message: ${data.playerName} (${data.playerId})`);
       
       if (data.playerId !== sessionId) {
+        // Skip ghost players: same name as us but different ID (stale session from before reload)
+        // Use captured localPlayerName from closure - guaranteed to be set
+        if (data.playerName === localPlayerName) {
+          console.log(`[JOIN MSG] Ignoring ghost player: ${data.playerName} (${data.playerId})`);
+          return;
+        }
+        
         const currentStore = useGameStore.getState();
         if (!currentStore.players.has(data.playerId)) {
           const newPlayer: Player = {
@@ -597,6 +722,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     room.onMessage('playerStates', (data: { players: any[] }) => {
       for (const serverPlayer of data.players) {
+        // Skip ghost players: same name as us but different ID (stale session from before reload)
+        // Use captured localPlayerName from closure - guaranteed to be set
+        if (serverPlayer.id !== sessionId && serverPlayer.name === localPlayerName) {
+          console.log(`[STATES MSG] Ignoring ghost player: ${serverPlayer.name} (${serverPlayer.id})`);
+          continue;
+        }
+        
         if (serverPlayer.id === sessionId) {
           // IMPORTANT: Get FRESH state for each update to avoid stale closure issues
           // This prevents race conditions where concurrent handlers (syncPlayerFromSchema,
@@ -735,6 +867,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       console.log(`Player ${data.victimId} killed by ${data.killerId}`);
     });
 
+    // Handle being kicked due to duplicate session (reconnection from another tab/window)
+    room.onMessage('duplicateSession', (data: { reason: string }) => {
+      console.log('Duplicate session detected:', data.reason);
+      // The server will disconnect us - no need to do anything, onLeave will handle cleanup
+    });
+
     room.onError((code, message) => {
       console.error('Room error:', code, message);
     });
@@ -763,6 +901,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current.leave();
       lobbyRoomRef.current = null;
     }
+    // Reset the joining flag so user can join a new game
+    isJoiningGameRef.current = false;
     // Reset game state but keep player name
     setRoomId(null);
     setConnected(false);
@@ -783,6 +923,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     if (clientRef.current) {
       clientRef.current = null;
     }
+    isJoiningGameRef.current = false;
     reset();
   }, [reset]);
 

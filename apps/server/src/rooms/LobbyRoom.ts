@@ -5,10 +5,15 @@ interface JoinOptions {
   playerName?: string;
   lobbyName?: string;
   isPrivate?: boolean;
+  clientId?: string; // Persistent client ID for reconnection detection
 }
 
 export class LobbyRoom extends Room<LobbyState> {
   maxClients = 10;
+  
+  // Track clientId -> sessionId mapping for reconnection detection
+  private clientIdToSessionId: Map<string, string> = new Map();
+  private sessionIdToClientId: Map<string, string> = new Map();
 
   onCreate(options: JoinOptions) {
     this.autoDispose = true;
@@ -51,7 +56,40 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   onJoin(client: Client, options: JoinOptions) {
-    console.log('Player joined lobby:', client.sessionId, options.playerName);
+    console.log(`[LobbyRoom] Player joining: sessionId=${client.sessionId}, name=${options.playerName}, clientId=${options.clientId}`);
+    console.log(`[LobbyRoom] Current players in lobby: ${this.state.players.size}, clientId map size: ${this.clientIdToSessionId.size}`);
+
+    // Handle reconnection: if same clientId exists, kick the old session
+    if (options.clientId) {
+      const existingSessionId = this.clientIdToSessionId.get(options.clientId);
+      console.log(`[LobbyRoom] Checking for existing session with clientId ${options.clientId}: found=${existingSessionId}`);
+      
+      if (existingSessionId && existingSessionId !== client.sessionId) {
+        console.log(`[LobbyRoom] DUPLICATE DETECTED! Kicking old session: ${existingSessionId}`);
+        
+        // Find and disconnect the old client
+        const oldClient = this.clients.find(c => c.sessionId === existingSessionId);
+        if (oldClient) {
+          oldClient.send('duplicateSession', { reason: 'Connected from another tab/window' });
+          oldClient.leave(4000); // Custom code for duplicate session
+        }
+        
+        // Clean up old session data
+        const oldPlayer = this.state.players.get(existingSessionId);
+        const wasHost = oldPlayer?.isHost;
+        this.state.players.delete(existingSessionId);
+        this.sessionIdToClientId.delete(existingSessionId);
+        
+        // Broadcast that old player left
+        this.broadcast('playerLeft', { playerId: existingSessionId });
+        
+        // If old player was host, we'll assign new host below when creating this player
+      }
+      
+      // Register this client's ID mapping
+      this.clientIdToSessionId.set(options.clientId, client.sessionId);
+      this.sessionIdToClientId.set(client.sessionId, options.clientId);
+    }
 
     const player = new LobbyPlayer();
     player.id = client.sessionId;
@@ -84,12 +122,22 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   onLeave(client: Client, consented: boolean) {
-    console.log('Player left lobby:', client.sessionId);
+    console.log('Player left lobby:', client.sessionId, 'consented:', consented);
 
     const player = this.state.players.get(client.sessionId);
     const wasHost = player?.isHost;
 
     this.state.players.delete(client.sessionId);
+    
+    // Clean up clientId mappings
+    const clientId = this.sessionIdToClientId.get(client.sessionId);
+    if (clientId) {
+      // Only remove from clientIdToSessionId if it still points to this session
+      if (this.clientIdToSessionId.get(clientId) === client.sessionId) {
+        this.clientIdToSessionId.delete(clientId);
+      }
+      this.sessionIdToClientId.delete(client.sessionId);
+    }
 
     // If host left, assign new host
     if (wasHost && this.state.players.size > 0) {
@@ -151,6 +199,12 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private async handleStartGame(client: Client) {
+    // IMPORTANT: Prevent double-execution - check status FIRST before any async operations
+    if (this.state.status === 'starting' || this.state.status === 'in_game') {
+      console.log('[LobbyRoom] Game already starting/started, ignoring duplicate startGame request');
+      return;
+    }
+    
     const player = this.state.players.get(client.sessionId);
     if (!player || !player.isHost) {
       client.send('error', { message: 'Only the host can start the game' });
@@ -175,8 +229,10 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
+    // Set status to 'starting' IMMEDIATELY to prevent race conditions
     this.state.status = 'starting';
     this.setMetadata({ ...this.metadata, status: 'starting' });
+    console.log('[LobbyRoom] Starting game, status set to starting');
 
     try {
       // Create the game room

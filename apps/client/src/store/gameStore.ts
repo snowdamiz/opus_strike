@@ -168,6 +168,9 @@ interface GameStore {
   removeDireBall: (id: string) => void;
   clearExpiredDireBalls: () => void;
   
+  // Ghost cleanup
+  cleanupGhostPlayers: () => void;
+  
   reset: () => void;
   resetLobby: () => void;
 }
@@ -316,6 +319,32 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const updatedPlayers = new Map(players);
     updatedPlayers.delete(playerId);
     set({ players: updatedPlayers });
+  },
+
+  // Remove any "ghost" players that have the same name as the local player but different ID
+  cleanupGhostPlayers: () => {
+    const { players, localPlayer } = get();
+    if (!localPlayer) return;
+    
+    const localName = localPlayer.name;
+    const localId = localPlayer.id;
+    
+    let hasGhosts = false;
+    const cleanedPlayers = new Map<string, Player>();
+    
+    players.forEach((player, id) => {
+      // Keep the player if it's the local player OR has a different name
+      if (id === localId || player.name !== localName) {
+        cleanedPlayers.set(id, player);
+      } else {
+        hasGhosts = true;
+        console.log(`[CLEANUP] Removing ghost player: ${player.name} (${id})`);
+      }
+    });
+    
+    if (hasGhosts) {
+      set({ players: cleanedPlayers });
+    }
   },
 
   addPendingInput: (input) => {

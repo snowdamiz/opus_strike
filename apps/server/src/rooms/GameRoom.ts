@@ -24,6 +24,7 @@ interface CreateOptions {
 interface JoinOptions {
   playerName?: string;
   preferredTeam?: Team;
+  clientId?: string; // Persistent client ID for reconnection detection
 }
 
 // Track last ability press state to detect key press (not hold)
@@ -56,6 +57,10 @@ export class GameRoom extends Room<GameState> {
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
   private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
+  
+  // Track clientId -> sessionId mapping for reconnection detection
+  private clientIdToSessionId: Map<string, string> = new Map();
+  private sessionIdToClientId: Map<string, string> = new Map();
 
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
@@ -110,7 +115,42 @@ export class GameRoom extends Room<GameState> {
   }
 
   onJoin(client: Client, options: JoinOptions) {
-    console.log('Player joined:', client.sessionId, options.playerName);
+    console.log(`[GameRoom] Player joining: sessionId=${client.sessionId}, name=${options.playerName}, clientId=${options.clientId}`);
+    console.log(`[GameRoom] Current players in room: ${this.state.players.size}, clientId map size: ${this.clientIdToSessionId.size}`);
+
+    // Handle reconnection: if same clientId exists, kick the old session
+    if (options.clientId) {
+      const existingSessionId = this.clientIdToSessionId.get(options.clientId);
+      console.log(`[GameRoom] Checking for existing session with clientId ${options.clientId}: found=${existingSessionId}`);
+      
+      if (existingSessionId && existingSessionId !== client.sessionId) {
+        console.log(`[GameRoom] DUPLICATE DETECTED! Kicking old session: ${existingSessionId}`);
+        
+        // Find and disconnect the old client
+        const oldClient = this.clients.find(c => c.sessionId === existingSessionId);
+        if (oldClient) {
+          // Send a message to the old client before kicking
+          oldClient.send('duplicateSession', { reason: 'Connected from another tab/window' });
+          oldClient.leave(4000); // Custom code for duplicate session
+        }
+        
+        // Clean up old session data (onLeave will also be called, but let's be safe)
+        const oldPlayer = this.state.players.get(existingSessionId);
+        if (oldPlayer?.hasFlag) {
+          this.dropFlag(oldPlayer);
+        }
+        this.state.players.delete(existingSessionId);
+        playerAbilityPressState.delete(existingSessionId);
+        this.sessionIdToClientId.delete(existingSessionId);
+        
+        // Broadcast that old player left
+        this.broadcast('playerLeft', { playerId: existingSessionId });
+      }
+      
+      // Register this client's ID mapping
+      this.clientIdToSessionId.set(options.clientId, client.sessionId);
+      this.sessionIdToClientId.set(client.sessionId, options.clientId);
+    }
 
     // Initialize ability press state tracking
     playerAbilityPressState.set(client.sessionId, { ability1: false, ability2: false, ultimate: false });
@@ -157,12 +197,17 @@ export class GameRoom extends Room<GameState> {
       },
     });
 
+    console.log(`[GameRoom] Player join complete. Total players now: ${this.state.players.size}`);
+    this.state.players.forEach((p, id) => {
+      console.log(`[GameRoom]   - ${p.name} (${id}) on team ${p.team}`);
+    });
+
     // Check if we should start hero select
     this.checkPhaseTransition();
   }
 
-  onLeave(client: Client) {
-    console.log('Player left:', client.sessionId);
+  onLeave(client: Client, consented: boolean) {
+    console.log('Player left:', client.sessionId, 'consented:', consented);
 
     const player = this.state.players.get(client.sessionId);
     
@@ -173,6 +218,17 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.delete(client.sessionId);
     playerAbilityPressState.delete(client.sessionId);
+    
+    // Clean up clientId mappings
+    const clientId = this.sessionIdToClientId.get(client.sessionId);
+    if (clientId) {
+      // Only remove from clientIdToSessionId if it still points to this session
+      // (it may have been updated to point to a new session if this was a duplicate kick)
+      if (this.clientIdToSessionId.get(clientId) === client.sessionId) {
+        this.clientIdToSessionId.delete(clientId);
+      }
+      this.sessionIdToClientId.delete(client.sessionId);
+    }
 
     this.broadcast('playerLeft', {
       playerId: client.sessionId,
