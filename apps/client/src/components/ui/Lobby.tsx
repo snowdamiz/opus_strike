@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { useUISounds } from '../../hooks/useAudio';
 
 // Faction definitions
 const FACTIONS = {
@@ -62,6 +63,7 @@ export function Lobby() {
     setAppPhase,
   } = useGameStore();
   const { leaveLobby, setLobbyReady, setLobbyTeam, startGame, kickPlayer } = useNetwork();
+  const { playButtonHover, playButtonClick } = useUISounds();
   const [pulseReady, setPulseReady] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
@@ -172,7 +174,8 @@ export function Lobby() {
           {/* Back button and lobby info */}
           <div className="flex items-center gap-4">
             <button
-              onClick={handleBack}
+              onClick={() => { playButtonClick(); handleBack(); }}
+              onMouseEnter={playButtonHover}
               className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all group"
             >
               <svg className="w-5 h-5 transition-transform group-hover:-translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -312,7 +315,8 @@ export function Lobby() {
                 onClick={() => handleTeamChange('red')}
               />
               <button
-                onClick={() => handleTeamChange('')}
+                onClick={() => { playButtonClick(); handleTeamChange(''); }}
+                onMouseEnter={playButtonHover}
                 className={`flex-1 py-3 rounded-lg font-display text-xs transition-all ${
                   !currentPlayer?.team
                     ? 'bg-white/15 text-white ring-1 ring-white/30' 
@@ -374,7 +378,8 @@ export function Lobby() {
               {/* Ready / Start Button */}
               {isLobbyHost ? (
                 <button
-                  onClick={handleStartGame}
+                  onClick={() => { playButtonClick(); handleStartGame(); }}
+                  onMouseEnter={playButtonHover}
                   disabled={!canStart || isLoading || countdown !== null}
                   className={`w-full py-4 rounded-lg font-display text-base transition-all relative overflow-hidden group ${
                     canStart 
@@ -409,7 +414,8 @@ export function Lobby() {
                 </button>
               ) : (
                 <button
-                  onClick={handleToggleReady}
+                  onClick={() => { playButtonClick(); handleToggleReady(); }}
+                  onMouseEnter={playButtonHover}
                   className="w-full py-4 rounded-lg font-display text-base transition-all relative overflow-hidden group hover:scale-[1.01] active:scale-[0.99] text-white"
                   style={{
                     background: isReady
@@ -442,7 +448,8 @@ export function Lobby() {
 
               {/* Leave Lobby Button */}
               <button
-                onClick={leaveLobby}
+                onClick={() => { playButtonClick(); leaveLobby(); }}
+                onMouseEnter={playButtonHover}
                 className="w-full py-2.5 rounded-lg font-display text-xs text-white/40 hover:bg-red-500/10 hover:text-red-400 transition-all flex items-center justify-center gap-1.5"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -554,10 +561,12 @@ interface FactionButtonProps {
 
 function FactionButton({ faction, isSelected, onClick }: FactionButtonProps) {
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
+  const { playButtonHover, playButtonClick } = useUISounds();
   
   return (
     <button
-      onClick={onClick}
+      onClick={() => { playButtonClick(); onClick(); }}
+      onMouseEnter={playButtonHover}
       className={`flex-1 py-3 rounded-lg font-display text-xs transition-all flex items-center justify-center gap-1.5 ${
         isSelected ? 'text-white' : 'hover:brightness-125'
       }`}
@@ -711,6 +720,7 @@ interface PlayerCardProps {
 function PlayerCard({ player, isCurrentPlayer, isLobbyHost, onKick, faction, compact }: PlayerCardProps) {
   const color = faction?.primaryColor || '#f97316';
   const secondaryColor = faction?.secondaryColor || '#fbbf24';
+  const { playButtonHover, playButtonClick } = useUISounds();
 
   return (
     <div 
@@ -774,7 +784,8 @@ function PlayerCard({ player, isCurrentPlayer, isLobbyHost, onKick, faction, com
       {/* Kick Button */}
       {isLobbyHost && !isCurrentPlayer && !player.isHost && (
         <button
-          onClick={onKick}
+          onClick={() => { playButtonClick(); onKick(); }}
+          onMouseEnter={playButtonHover}
           className="w-8 h-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20 transition-all"
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

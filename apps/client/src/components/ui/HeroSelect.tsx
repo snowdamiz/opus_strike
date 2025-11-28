@@ -3,6 +3,7 @@ import { HERO_DEFINITIONS, ALL_HERO_IDS, ABILITY_DEFINITIONS } from '@voxel-stri
 import type { HeroId } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { useUISounds } from '../../hooks/useAudio';
 import { HeroSVG } from './HeroSVG';
 import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
 
@@ -19,6 +20,7 @@ const HERO_COLORS: Record<HeroId, string> = {
 export function HeroSelect() {
   const { localPlayer, phaseEndTime } = useGameStore();
   const { selectHero, setReady, leaveGame } = useNetwork();
+  const { playButtonHover, playButtonClick } = useUISounds();
   const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
   const [hoveredHero, setHoveredHero] = useState<HeroId | null>(null);
   const [timeRemaining, setTimeRemaining] = useState(60);
@@ -84,7 +86,8 @@ export function HeroSelect() {
       <div className="relative z-10 flex items-center justify-between px-8 py-5 border-b border-white/5 bg-[#08080c]/80 backdrop-blur-sm">
         <div className="flex items-center gap-6">
           <button
-            onClick={leaveGame}
+            onClick={() => { playButtonClick(); leaveGame(); }}
+            onMouseEnter={playButtonHover}
             className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -137,8 +140,8 @@ export function HeroSelect() {
               return (
                 <button
                   key={heroId}
-                  onClick={() => handleSelectHero(heroId)}
-                  onMouseEnter={() => setHoveredHero(heroId)}
+                  onClick={() => { playButtonClick(); handleSelectHero(heroId); }}
+                  onMouseEnter={() => { playButtonHover(); setHoveredHero(heroId); }}
                   onMouseLeave={() => setHoveredHero(null)}
                   disabled={isLockedIn}
                   className={`
@@ -365,7 +368,8 @@ export function HeroSelect() {
       <div className="relative z-10 flex items-center justify-end px-8 py-5 border-t border-white/5 bg-[#08080c]/90 backdrop-blur-sm">
         {/* Lock In Button */}
         <button
-          onClick={handleLockIn}
+          onClick={() => { playButtonClick(); handleLockIn(); }}
+          onMouseEnter={playButtonHover}
           disabled={!selectedHero || isLockedIn}
           className={`relative px-10 py-4 rounded-xl font-display text-xl transition-all overflow-hidden ${
             isLockedIn 

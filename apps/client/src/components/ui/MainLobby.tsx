@@ -5,6 +5,7 @@ import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
 import { SettingsModal } from './SettingsModal';
 import { HeroSVG } from './HeroSVG';
+import { useUISounds } from '../../hooks/useAudio';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
@@ -55,6 +56,7 @@ const HERO_COLORS: Record<HeroId, string> = {
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
   const { fetchLobbies, createLobby, joinLobby } = useNetwork();
+  const { playButtonHover, playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
     isConnected,
@@ -409,7 +411,8 @@ export function MainLobby() {
               {(['play', 'heroes', 'loadout'] as MainTab[]).map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => setActiveTab(tab)}
+                  onClick={() => { playButtonClick(); setActiveTab(tab); }}
+                  onMouseEnter={playButtonHover}
                   className={`relative px-6 py-3 font-display text-lg tracking-wide transition-all ${
                     activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
                   }`}
@@ -426,7 +429,8 @@ export function MainLobby() {
           {/* Right side controls */}
           <div className="flex items-center gap-4">
             <button
-              onClick={() => setShowSettings(true)}
+              onClick={() => { playButtonClick(); setShowSettings(true); }}
+              onMouseEnter={playButtonHover}
               className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white transition-all"
             >
               <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -617,6 +621,7 @@ function PlayTab({
 }: PlayTabProps) {
   const [prevHero, setPrevHero] = useState<HeroId>(featuredHero);
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const { playButtonHover, playButtonClick } = useUISounds();
 
   // Handle hero transition animation
   useEffect(() => {
@@ -747,7 +752,8 @@ function PlayTab({
           )}
 
           <button
-            onClick={onQuickPlay}
+            onClick={() => { playButtonClick(); onQuickPlay(); }}
+            onMouseEnter={playButtonHover}
             disabled={isLoading}
             className="w-full py-5 rounded-xl font-display text-2xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
             style={{ 
@@ -785,7 +791,8 @@ function PlayTab({
 
           <div className="grid grid-cols-2 gap-3">
             <button
-              onClick={onOpenCreateLobby}
+              onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
+              onMouseEnter={playButtonHover}
               disabled={isLoading}
               className="py-4 rounded-xl font-display text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
             >
@@ -807,7 +814,8 @@ function PlayTab({
             </button>
 
             <button
-              onClick={onOpenBrowseGames}
+              onClick={() => { playButtonClick(); onOpenBrowseGames(); }}
+              onMouseEnter={playButtonHover}
               className="py-4 rounded-xl font-display text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -89,7 +89,8 @@ const SOUND_EFFECTS = {
   flagReturn: { path: '/sounds/flag_return.mp3', volume: 0.7 },
   
   // UI
-  buttonClick: { path: '/sounds/button_click.mp3', volume: 0.4 },
+  buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
+  buttonClick: { path: '/sounds/button_press.mp3', volume: 0.3 },
   countdown: { path: '/sounds/countdown.mp3', volume: 0.6 },
   matchStart: { path: '/sounds/match_start.mp3', volume: 0.8 },
   roundEnd: { path: '/sounds/round_end.mp3', volume: 0.8 },
@@ -539,6 +540,24 @@ export function useAbilitySounds() {
     playPhantomShadowStep,
     playPhantomVeil,
     playPhantomBasic,
+  };
+}
+
+// UI sound effects hook
+export function useUISounds() {
+  const { playSound } = useAudio();
+
+  const playButtonHover = useCallback(() => {
+    playSound('buttonHover', { volume: 0.5 });
+  }, [playSound]);
+
+  const playButtonClick = useCallback(() => {
+    playSound('buttonClick');
+  }, [playSound]);
+
+  return {
+    playButtonHover,
+    playButtonClick,
   };
 }
 
