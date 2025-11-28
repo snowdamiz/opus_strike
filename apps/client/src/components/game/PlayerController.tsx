@@ -1464,11 +1464,20 @@ export function PlayerController() {
             // Projectile speed (increased from original 35)
             const PROJECTILE_SPEED = 70;
             
-            // Spawn position slightly in front of player
-            const spawnOffset = 0.8; // How far in front of player to spawn
-            const spawnX = position.x + dirX * spawnOffset;
-            const spawnY = position.y + 0.5 + dirY * spawnOffset; // Slightly above center
-            const spawnZ = position.z + dirZ * spawnOffset;
+            // Spawn projectile slightly in front along look direction, offset down for hand position
+            const eyeHeight = 0.6;
+            const handDrop = 0.3; // How far below eye level the hand is
+            const forwardOffset = 0.8; // Small offset along look direction
+            
+            // Spawn position: start at eye level, move forward along look dir, drop down for hand
+            const spawnX = position.x + dirX * forwardOffset;
+            const spawnY = position.y + eyeHeight - handDrop + dirY * forwardOffset;
+            const spawnZ = position.z + dirZ * forwardOffset;
+            
+            // Fire exactly in look direction (no recalculation needed with small offset)
+            const finalDirX = dirX;
+            const finalDirY = dirY;
+            const finalDirZ = dirZ;
             
             // Create dire ball
             direBallIdRef.current++;
@@ -1478,9 +1487,9 @@ export function PlayerController() {
               id: ballId,
               position: { x: spawnX, y: spawnY, z: spawnZ },
               velocity: { 
-                x: dirX * PROJECTILE_SPEED, 
-                y: dirY * PROJECTILE_SPEED, 
-                z: dirZ * PROJECTILE_SPEED 
+                x: finalDirX * PROJECTILE_SPEED, 
+                y: finalDirY * PROJECTILE_SPEED, 
+                z: finalDirZ * PROJECTILE_SPEED 
               },
               startTime: now,
               ownerId: localPlayer.id,
@@ -1529,11 +1538,18 @@ export function PlayerController() {
               const dirY = Math.sin(pitch);
               const dirZ = -Math.cos(yaw) * Math.cos(pitch);
               
-              // Spawn position slightly in front of player
-              const spawnOffset = 1.0;
-              const spawnX = position.x + dirX * spawnOffset;
-              const spawnY = position.y + 0.5 + dirY * spawnOffset;
-              const spawnZ = position.z + dirZ * spawnOffset;
+              // Spawn projectile slightly in front along look direction, offset down for hand position
+              const eyeHeight = 0.6;
+              const handDrop = 0.3;
+              const forwardOffset = 0.8;
+              
+              const spawnX = position.x + dirX * forwardOffset;
+              const spawnY = position.y + eyeHeight - handDrop + dirY * forwardOffset;
+              const spawnZ = position.z + dirZ * forwardOffset;
+              
+              const finalDirX = dirX;
+              const finalDirY = dirY;
+              const finalDirZ = dirZ;
               
               // Create void ray
               voidRayIdRef.current++;
@@ -1542,7 +1558,7 @@ export function PlayerController() {
               useGameStore.getState().addVoidRay({
                 id: rayId,
                 startPosition: { x: spawnX, y: spawnY, z: spawnZ },
-                direction: { x: dirX, y: dirY, z: dirZ },
+                direction: { x: finalDirX, y: finalDirY, z: finalDirZ },
                 startTime: now,
                 ownerId: localPlayer.id,
                 ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
@@ -1578,11 +1594,18 @@ export function PlayerController() {
             // Rocket speed (faster projectiles)
             const ROCKET_SPEED = 50;
             
-            // Spawn position slightly in front of player
-            const spawnOffset = 1.0;
-            const spawnX = position.x + dirX * spawnOffset;
-            const spawnY = position.y + 0.5 + dirY * spawnOffset;
-            const spawnZ = position.z + dirZ * spawnOffset;
+            // Spawn projectile slightly in front along look direction, offset down for hand position
+            const eyeHeight = 0.6;
+            const handDrop = 0.3;
+            const forwardOffset = 0.8;
+            
+            const spawnX = position.x + dirX * forwardOffset;
+            const spawnY = position.y + eyeHeight - handDrop + dirY * forwardOffset;
+            const spawnZ = position.z + dirZ * forwardOffset;
+            
+            const finalDirX = dirX;
+            const finalDirY = dirY;
+            const finalDirZ = dirZ;
             
             // Create rocket
             rocketIdRef.current++;
@@ -1592,9 +1615,9 @@ export function PlayerController() {
               id: rocketId,
               position: { x: spawnX, y: spawnY, z: spawnZ },
               velocity: {
-                x: dirX * ROCKET_SPEED,
-                y: dirY * ROCKET_SPEED,
-                z: dirZ * ROCKET_SPEED
+                x: finalDirX * ROCKET_SPEED,
+                y: finalDirY * ROCKET_SPEED,
+                z: finalDirZ * ROCKET_SPEED
               },
               startTime: now,
               ownerId: localPlayer.id,
