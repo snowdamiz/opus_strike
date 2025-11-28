@@ -1,7 +1,9 @@
 import { useRef, useCallback, useEffect } from 'react';
 
 interface AudioConfig {
-  volume: number;
+  masterVolume: number;  // 0-100
+  sfxVolume: number;     // 0-100
+  musicVolume: number;   // 0-100
   muted: boolean;
 }
 
@@ -11,15 +13,46 @@ interface SoundEffect {
 }
 
 const DEFAULT_CONFIG: AudioConfig = {
-  volume: 0.7,
+  masterVolume: 80,
+  sfxVolume: 100,
+  musicVolume: 50,
   muted: false,
 };
 
+// Load settings from localStorage
+function loadAudioSettings(): AudioConfig {
+  try {
+    const saved = localStorage.getItem('voxel-strike-settings');
+    if (saved) {
+      const settings = JSON.parse(saved);
+      return {
+        masterVolume: settings.masterVolume ?? DEFAULT_CONFIG.masterVolume,
+        sfxVolume: settings.sfxVolume ?? DEFAULT_CONFIG.sfxVolume,
+        musicVolume: settings.musicVolume ?? DEFAULT_CONFIG.musicVolume,
+        muted: false,
+      };
+    }
+  } catch (e) {
+    console.warn('[Audio] Failed to load settings:', e);
+  }
+  return { ...DEFAULT_CONFIG };
+}
+
 // SINGLETON: Shared audio state across all hook instances
 let sharedAudioContext: AudioContext | null = null;
-const sharedConfig: AudioConfig = { ...DEFAULT_CONFIG };
+const sharedConfig: AudioConfig = loadAudioSettings();
 const sharedSounds = new Map<string, SoundEffect>();
-const sharedLoops = new Map<string, { source: AudioBufferSourceNode; gain: GainNode }>();
+const sharedLoops = new Map<string, { source: AudioBufferSourceNode; gain: GainNode; isMusic: boolean }>();
+
+// Calculate effective volume for SFX
+function getSfxVolume(): number {
+  return (sharedConfig.masterVolume / 100) * (sharedConfig.sfxVolume / 100);
+}
+
+// Calculate effective volume for music
+function getMusicVolume(): number {
+  return (sharedConfig.masterVolume / 100) * (sharedConfig.musicVolume / 100);
+}
 
 // Sound effect definitions
 const SOUND_EFFECTS = {
@@ -62,6 +95,10 @@ const SOUND_EFFECTS = {
   roundEnd: { path: '/sounds/round_end.mp3', volume: 0.8 },
   victory: { path: '/sounds/victory.mp3', volume: 0.9 },
   defeat: { path: '/sounds/defeat.mp3', volume: 0.7 },
+  
+  // Music (equal base volume, controlled by settings)
+  lobbyMusic: { path: '/sounds/lobby.mp3', volume: 0.3 },
+  gameMusic: { path: '/sounds/game.mp3', volume: 0.3 },
 } as const;
 
 type SoundName = keyof typeof SOUND_EFFECTS;
@@ -166,9 +203,9 @@ export function useAudio() {
       source.playbackRate.value = options.pitch;
     }
 
-    // Create gain node
+    // Create gain node (SFX volume)
     const gainNode = ctx.createGain();
-    gainNode.gain.value = (options?.volume ?? 1) * sound.volume * sharedConfig.volume;
+    gainNode.gain.value = (options?.volume ?? 1) * sound.volume * getSfxVolume();
 
     // Connect nodes
     source.connect(gainNode);
@@ -191,7 +228,7 @@ export function useAudio() {
   const playLoop = useCallback(async (
     id: string, 
     name: SoundName, 
-    options?: { volume?: number; fadeIn?: number }
+    options?: { volume?: number; fadeIn?: number; isMusic?: boolean }
   ) => {
     if (sharedConfig.muted) return;
     if (sharedLoops.has(id)) return; // Already playing
@@ -214,23 +251,25 @@ export function useAudio() {
     source.buffer = sound.buffer;
     source.loop = true;
 
+    // Use music volume for music tracks, SFX volume for other loops
+    const volumeMultiplier = options?.isMusic ? getMusicVolume() : getSfxVolume();
     const gainNode = ctx.createGain();
     
     if (options?.fadeIn) {
       gainNode.gain.value = 0;
       gainNode.gain.linearRampToValueAtTime(
-        (options.volume ?? 1) * sound.volume * sharedConfig.volume,
+        (options.volume ?? 1) * sound.volume * volumeMultiplier,
         ctx.currentTime + options.fadeIn
       );
     } else {
-      gainNode.gain.value = (options?.volume ?? 1) * sound.volume * sharedConfig.volume;
+      gainNode.gain.value = (options?.volume ?? 1) * sound.volume * volumeMultiplier;
     }
 
     source.connect(gainNode);
     gainNode.connect(ctx.destination);
     source.start();
 
-    sharedLoops.set(id, { source, gain: gainNode });
+    sharedLoops.set(id, { source, gain: gainNode, isMusic: options?.isMusic ?? false });
   }, [loadSound, initAudio]);
 
   // Stop looping sound
@@ -251,14 +290,20 @@ export function useAudio() {
     }
   }, []);
 
-  // Set master volume
-  const setVolume = useCallback((volume: number) => {
-    sharedConfig.volume = Math.max(0, Math.min(1, volume));
+  // Update audio settings from localStorage
+  const updateSettings = useCallback(() => {
+    const newSettings = loadAudioSettings();
+    sharedConfig.masterVolume = newSettings.masterVolume;
+    sharedConfig.sfxVolume = newSettings.sfxVolume;
+    sharedConfig.musicVolume = newSettings.musicVolume;
     
-    // Update all looping sounds
-    for (const loop of sharedLoops.values()) {
-      loop.gain.gain.value *= sharedConfig.volume;
+    // Update all currently playing loops with new volume
+    for (const [, loop] of sharedLoops) {
+      const volumeMultiplier = loop.isMusic ? getMusicVolume() : getSfxVolume();
+      loop.gain.gain.value = volumeMultiplier;
     }
+    
+    console.log('[Audio] Settings updated:', sharedConfig);
   }, []);
 
   // Toggle mute
@@ -291,12 +336,14 @@ export function useAudio() {
     playSound,
     playLoop,
     stopLoop,
-    setVolume,
+    updateSettings,
     toggleMute,
     preloadSounds,
     loadSound,
     isMuted: () => sharedConfig.muted,
-    getVolume: () => sharedConfig.volume,
+    getMasterVolume: () => sharedConfig.masterVolume,
+    getSfxVolume: () => sharedConfig.sfxVolume,
+    getMusicVolume: () => sharedConfig.musicVolume,
   };
 }
 
@@ -377,7 +424,7 @@ export function useMovementSounds() {
     source.playbackRate.value = 0.85 + Math.random() * 0.3;
 
     const gainNode = ctx.createGain();
-    gainNode.gain.value = 0.4 * sharedConfig.volume;
+    gainNode.gain.value = 0.4 * getSfxVolume();
 
     source.connect(gainNode);
     gainNode.connect(ctx.destination);
@@ -492,6 +539,185 @@ export function useAbilitySounds() {
     playPhantomShadowStep,
     playPhantomVeil,
     playPhantomBasic,
+  };
+}
+
+// Music state (shared singleton)
+let musicState = {
+  currentTrack: null as 'lobby' | 'game' | null,
+  pendingTrack: null as 'lobby' | 'game' | null, // Track to play once user interacts
+  isPlaying: false,
+  isPaused: false,
+  userHasInteracted: false,
+  pausedGainValue: 0,
+};
+
+// Set up one-time click listener to start audio on user interaction
+let interactionListenerSet = false;
+function setupInteractionListener(callback: () => void) {
+  if (interactionListenerSet) return;
+  interactionListenerSet = true;
+  
+  const handleInteraction = () => {
+    musicState.userHasInteracted = true;
+    callback();
+    // Remove listeners after first interaction
+    document.removeEventListener('click', handleInteraction);
+    document.removeEventListener('keydown', handleInteraction);
+  };
+  
+  document.addEventListener('click', handleInteraction);
+  document.addEventListener('keydown', handleInteraction);
+}
+
+// Background music hook
+export function useMusic() {
+  const { playLoop, stopLoop, initAudio } = useAudio();
+
+  // Actually start playing the music
+  const startMusic = useCallback((track: 'lobby' | 'game') => {
+    console.log(`[Music] startMusic called for ${track}, current: ${musicState.currentTrack}`);
+    
+    // Force stop any current music immediately (no fade to prevent overlap)
+    const lobbyLoop = sharedLoops.get('lobbyMusic');
+    if (lobbyLoop) {
+      try { lobbyLoop.source.stop(); } catch {}
+      sharedLoops.delete('lobbyMusic');
+    }
+    const gameLoop = sharedLoops.get('gameMusic');
+    if (gameLoop) {
+      try { gameLoop.source.stop(); } catch {}
+      sharedLoops.delete('gameMusic');
+    }
+    
+    initAudio();
+    
+    // Resume context if needed
+    if (sharedAudioContext?.state === 'suspended') {
+      sharedAudioContext.resume();
+    }
+    
+    const soundName = track === 'lobby' ? 'lobbyMusic' : 'gameMusic';
+    playLoop(soundName, soundName, { fadeIn: 1.5, isMusic: true });
+    musicState.currentTrack = track;
+    musicState.isPlaying = true;
+    musicState.isPaused = false;
+    musicState.pendingTrack = null;
+    console.log(`[Music] Started ${track} music`);
+  }, [playLoop, initAudio]);
+
+  // Pause music (fade out but don't stop)
+  const pauseMusic = useCallback(() => {
+    if (!musicState.isPlaying || musicState.isPaused) return;
+    
+    const loopId = musicState.currentTrack === 'lobby' ? 'lobbyMusic' : 'gameMusic';
+    const loop = sharedLoops.get(loopId);
+    
+    if (loop && sharedAudioContext) {
+      musicState.pausedGainValue = loop.gain.gain.value;
+      loop.gain.gain.linearRampToValueAtTime(0, sharedAudioContext.currentTime + 0.5);
+      musicState.isPaused = true;
+      console.log('[Music] Paused');
+    }
+  }, []);
+
+  // Resume music (fade back in)
+  const resumeMusic = useCallback(() => {
+    console.log('[Music] Resume called, isPlaying:', musicState.isPlaying, 'isPaused:', musicState.isPaused, 'track:', musicState.currentTrack);
+    if (!musicState.isPlaying || !musicState.isPaused) return;
+    
+    const loopId = musicState.currentTrack === 'lobby' ? 'lobbyMusic' : 'gameMusic';
+    const loop = sharedLoops.get(loopId);
+    
+    if (loop && sharedAudioContext) {
+      const targetVolume = musicState.pausedGainValue || getMusicVolume();
+      console.log('[Music] Resuming with volume:', targetVolume);
+      loop.gain.gain.linearRampToValueAtTime(
+        targetVolume,
+        sharedAudioContext.currentTime + 0.5
+      );
+      musicState.isPaused = false;
+      console.log('[Music] Resumed');
+    }
+  }, []);
+
+  // Play lobby music
+  const playLobbyMusic = useCallback(() => {
+    // Skip only if lobby is already playing and not paused
+    if (musicState.currentTrack === 'lobby' && musicState.isPlaying && !musicState.isPaused) {
+      console.log('[Music] Lobby music already playing, skipping');
+      return;
+    }
+    
+    if (!musicState.userHasInteracted) {
+      // Queue for when user interacts
+      musicState.pendingTrack = 'lobby';
+      setupInteractionListener(() => {
+        if (musicState.pendingTrack) {
+          startMusic(musicState.pendingTrack);
+        }
+      });
+      console.log('[Music] Lobby music queued (waiting for user interaction)');
+      return;
+    }
+    
+    console.log('[Music] Switching to lobby music');
+    startMusic('lobby');
+  }, [startMusic]);
+
+  // Play game music
+  const playGameMusic = useCallback(() => {
+    // Skip if already playing game music (and not paused)
+    if (musicState.currentTrack === 'game' && musicState.isPlaying && !musicState.isPaused) return;
+    
+    if (!musicState.userHasInteracted) {
+      // Queue for when user interacts
+      musicState.pendingTrack = 'game';
+      setupInteractionListener(() => {
+        if (musicState.pendingTrack) {
+          startMusic(musicState.pendingTrack);
+        }
+      });
+      console.log('[Music] Game music queued (waiting for user interaction)');
+      return;
+    }
+    
+    console.log('[Music] Starting game music, current track:', musicState.currentTrack, 'isPaused:', musicState.isPaused);
+    startMusic('game');
+  }, [startMusic]);
+
+  // Stop all music
+  const stopMusic = useCallback(() => {
+    if (sharedLoops.has('lobbyMusic')) {
+      stopLoop('lobbyMusic', 1.5);
+    }
+    if (sharedLoops.has('gameMusic')) {
+      stopLoop('gameMusic', 1.5);
+    }
+    musicState.currentTrack = null;
+    musicState.pendingTrack = null;
+    musicState.isPlaying = false;
+    console.log('[Music] Stopped music');
+  }, [stopLoop]);
+
+  // Update music based on game phase
+  const updateMusicForPhase = useCallback((phase: string) => {
+    if (phase === 'playing' || phase === 'countdown') {
+      playGameMusic();
+    } else {
+      playLobbyMusic();
+    }
+  }, [playGameMusic, playLobbyMusic]);
+
+  return {
+    playLobbyMusic,
+    playGameMusic,
+    stopMusic,
+    pauseMusic,
+    resumeMusic,
+    updateMusicForPhase,
+    currentTrack: () => musicState.currentTrack,
+    isPaused: () => musicState.isPaused,
   };
 }
 

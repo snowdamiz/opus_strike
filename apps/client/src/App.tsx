@@ -13,11 +13,39 @@ import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
+import { useMusic } from './hooks/useAudio';
 
 export function App() {
-  const { appPhase, gamePhase, isLoading, localPlayer } = useGameStore();
+  const { appPhase, gamePhase, isLoading } = useGameStore();
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
+  const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
+
+  // Manage background music based on game phase
+  useEffect(() => {
+    if (isLoading) return;
+    
+    console.log('[App] Music effect - appPhase:', appPhase, 'gamePhase:', gamePhase);
+    
+    // Play game music during active gameplay, lobby music otherwise
+    if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
+      playGameMusic();
+    } else {
+      playLobbyMusic();
+    }
+  }, [appPhase, gamePhase, isLoading, playLobbyMusic, playGameMusic]);
+
+  // Pause/resume music when in-game menu opens/closes (only during active game)
+  useEffect(() => {
+    // Only manage pause/resume when actually in a playing game
+    if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
+      if (showInGameMenu) {
+        pauseMusic();
+      } else {
+        resumeMusic();
+      }
+    }
+  }, [showInGameMenu, appPhase, gamePhase, pauseMusic, resumeMusic]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

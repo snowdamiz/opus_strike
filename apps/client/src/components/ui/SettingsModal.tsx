@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAudio } from '../../hooks/useAudio';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay';
 
@@ -58,6 +59,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
   });
   const [hasChanges, setHasChanges] = useState(false);
+  const { updateSettings: applyAudioSettings } = useAudio();
 
   const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -66,6 +68,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
   const handleSave = () => {
     localStorage.setItem('voxel-strike-settings', JSON.stringify(settings));
+    // Apply audio settings immediately
+    applyAudioSettings();
     setHasChanges(false);
   };
 
