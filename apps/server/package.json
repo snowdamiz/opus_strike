@@ -14,26 +14,29 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
-    "colyseus": "^0.15.55",
-    "@colyseus/ws-transport": "^0.15.0",
     "@colyseus/schema": "^2.0.0",
+    "@colyseus/ws-transport": "^0.15.0",
     "@dimforge/rapier3d-compat": "^0.14.0",
-    "@voxel-strike/shared": "workspace:*",
-    "@voxel-strike/physics": "workspace:*",
-    "@voxel-strike/game-logic": "workspace:*",
-    "express": "^4.21.1",
     "@prisma/client": "^5.22.0",
     "@solana/web3.js": "^1.95.4",
+    "@voxel-strike/game-logic": "workspace:*",
+    "@voxel-strike/physics": "workspace:*",
+    "@voxel-strike/shared": "workspace:*",
     "bs58": "^6.0.0",
-    "tweetnacl": "^1.0.3",
-    "dotenv": "^16.4.5"
+    "colyseus": "^0.15.55",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.8.4",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
 }
-

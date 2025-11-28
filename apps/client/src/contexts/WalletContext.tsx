@@ -48,12 +48,14 @@ interface WalletContextType {
   isAuthenticated: boolean;
   isNewUser: boolean;
   user: UserData | null;
+  isSessionLoading: boolean; // Loading session from cookies
   
   // Actions
   connect: () => Promise<void>;
   disconnect: () => void;
   authenticate: () => Promise<{ isNewUser: boolean }>;
   registerUser: (name: string) => Promise<UserData>;
+  logout: () => Promise<void>;
   
   // Errors
   error: string | null;
@@ -75,11 +77,12 @@ function getPhantomProvider(): PhantomProvider | null {
   return null;
 }
 
-// API helper
+// API helper with credentials support for session cookies
 async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const httpUrl = config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
   const response = await fetch(`${httpUrl}${endpoint}`, {
     ...options,
+    credentials: 'include', // Include cookies in requests
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,
@@ -103,6 +106,35 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [isNewUser, setIsNewUser] = useState(false);
   const [user, setUser] = useState<UserData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSessionLoading, setIsSessionLoading] = useState(true);
+  
+  // Restore session from cookies on page load
+  useEffect(() => {
+    const restoreSession = async () => {
+      try {
+        const result = await apiRequest<{
+          authenticated: boolean;
+          user?: UserData;
+          error?: string;
+        }>('/auth/session');
+        
+        if (result.authenticated && result.user) {
+          setIsAuthenticated(true);
+          setUser(result.user);
+          setWalletAddress(result.user.walletAddress);
+          setIsConnected(true);
+          setIsNewUser(false);
+        }
+      } catch (err) {
+        // No valid session - this is expected for first-time visitors
+        console.log('No existing session found');
+      } finally {
+        setIsSessionLoading(false);
+      }
+    };
+    
+    restoreSession();
+  }, []);
   
   // Check for Phantom installation
   useEffect(() => {
@@ -110,8 +142,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const provider = getPhantomProvider();
       setIsPhantomInstalled(!!provider);
       
-      // Check if already connected
-      if (provider?.isConnected && provider.publicKey) {
+      // Check if already connected (only update if not already authenticated via session)
+      if (provider?.isConnected && provider.publicKey && !isAuthenticated) {
         setIsConnected(true);
         setWalletAddress(provider.publicKey.toBase58());
       }
@@ -124,7 +156,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const timeout = setTimeout(checkForPhantom, 500);
     
     return () => clearTimeout(timeout);
-  }, []);
+  }, [isAuthenticated]);
   
   // Set up wallet event listeners
   useEffect(() => {
@@ -311,6 +343,33 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [walletAddress]);
   
+  // Logout - clear server session and local state
+  const logout = useCallback(async () => {
+    try {
+      await apiRequest('/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+    
+    // Disconnect wallet if connected
+    const provider = getPhantomProvider();
+    if (provider) {
+      try {
+        await provider.disconnect();
+      } catch (err) {
+        // Ignore disconnect errors
+      }
+    }
+    
+    // Clear all local state
+    setIsConnected(false);
+    setWalletAddress(null);
+    setIsAuthenticated(false);
+    setUser(null);
+    setIsNewUser(false);
+    setError(null);
+  }, []);
+  
   const clearError = useCallback(() => setError(null), []);
   
   return (
@@ -323,10 +382,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         isAuthenticated,
         isNewUser,
         user,
+        isSessionLoading,
         connect,
         disconnect,
         authenticate,
         registerUser,
+        logout,
         error,
         clearError,
       }}

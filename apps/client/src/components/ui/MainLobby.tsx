@@ -67,6 +67,7 @@ export function MainLobby() {
     user,
     connect,
     disconnect,
+    logout,
     authenticate,
     registerUser,
     error: walletError,
@@ -165,8 +166,8 @@ export function MainLobby() {
     }
   };
 
-  const handleDisconnect = () => {
-    disconnect();
+  const handleDisconnect = async () => {
+    await logout();
     setShowNameInput(false);
     setNewPlayerName('');
     setNameError(null);

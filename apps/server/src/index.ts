@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
@@ -23,11 +24,25 @@ const gameServer = new Server({
 gameServer.define('game_room', GameRoom);
 gameServer.define('lobby_room', LobbyRoom).enableRealtimeListing();
 
-// CORS for development - MUST be before routes
+// CORS configuration - MUST be before routes
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+];
+
 app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = _req.headers.origin;
+  
+  // Allow configured origins or all in development
+  if (origin && (ALLOWED_ORIGINS.includes(origin) || process.env.NODE_ENV !== 'production')) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Credentials', 'true');
   
   // Handle preflight requests
   if (_req.method === 'OPTIONS') {
@@ -36,6 +51,9 @@ app.use((_req, res, next) => {
   }
   next();
 });
+
+// Cookie parser middleware
+app.use(cookieParser());
 
 // JSON body parser
 app.use(express.json());

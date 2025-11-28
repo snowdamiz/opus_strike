@@ -43,8 +43,10 @@ export function MainMenu() {
     isAuthenticated,
     isNewUser,
     user,
+    isSessionLoading,
     connect,
     disconnect,
+    logout,
     authenticate,
     registerUser,
     error: walletError,
@@ -57,12 +59,12 @@ export function MainMenu() {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
 
-  // Handle authentication after wallet connection
+  // Handle authentication after wallet connection (only if not loading session)
   useEffect(() => {
-    if (isConnected && !isAuthenticated && !isAuthenticating) {
+    if (isConnected && !isAuthenticated && !isAuthenticating && !isSessionLoading) {
       handleAuthenticate();
     }
-  }, [isConnected]);
+  }, [isConnected, isSessionLoading]);
 
   // Handle user authenticated - proceed to lobby browser
   useEffect(() => {
@@ -131,8 +133,8 @@ export function MainMenu() {
     }
   };
 
-  const handleDisconnect = () => {
-    disconnect();
+  const handleDisconnect = async () => {
+    await logout();
     setShowNameInput(false);
     setPlayerName('');
     setNameError(null);
@@ -142,6 +144,30 @@ export function MainMenu() {
   const formatAddress = (address: string) => {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
+
+  // Show loading state while restoring session
+  if (isSessionLoading) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden bg-strike-bg">
+        <div className="absolute inset-0">
+          <div className="absolute inset-0 bg-gradient-radial from-purple-500/5 via-transparent to-transparent" />
+          <div className="absolute inset-0 pattern-grid opacity-50" />
+        </div>
+        <div className="relative z-10 flex flex-col items-center">
+          <h1 className="font-display text-6xl text-white tracking-wider mb-8">
+            VOXEL <span className="text-orange-500">STRIKE</span>
+          </h1>
+          <div className="flex items-center gap-3">
+            <svg className="w-6 h-6 animate-spin text-purple-400" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+            <span className="font-body text-white/60">Loading...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden bg-strike-bg">
