@@ -5,8 +5,12 @@ import { vec3Scale, vec3Add, vec3Normalize } from '@voxel-strike/shared';
 export class HookshotHero extends HeroBase {
   private momentumBoostUntil: number = 0;
   private lastSwingEnd: number = 0;
-  private activeZipline: { start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number } } | null = null;
-  private ziplineExpiresAt: number = 0;
+  private activeGrappleTrap: { 
+    position: { x: number; y: number; z: number }; 
+    radius: number;
+    startTime: number;
+    duration: number;
+  } | null = null;
 
   constructor() {
     super('hookshot');
@@ -18,15 +22,15 @@ export class HookshotHero extends HeroBase {
         return this.executeGrapple(context);
       case 'hookshot_swing':
         return this.executeSwing(context);
-      case 'hookshot_zipline':
-        return this.executeZipline(context);
+      case 'hookshot_grapple_trap':
+        return this.executeGrappleTrap(context);
       default:
         return { success: false, message: 'Unknown ability' };
     }
   }
 
   private executeGrapple(context: AbilityContext): AbilityResult {
-    // Calculate grapple target
+    // Q ability - Quick grapple that pulls player toward geometry
     const direction = vec3Normalize(context.direction);
     const grappleTarget = vec3Add(
       context.position, 
@@ -44,11 +48,18 @@ export class HookshotHero extends HeroBase {
   }
 
   private executeSwing(context: AbilityContext): AbilityResult {
-    // Swing line - creates a pendulum point
+    // E ability - Swing line for pendulum movement
     const direction = vec3Normalize(context.direction);
+    // Look upward slightly for swing points
+    const swingDir = {
+      x: direction.x,
+      y: Math.max(direction.y, 0.3),
+      z: direction.z,
+    };
+    const normalizedSwingDir = vec3Normalize(swingDir);
     const swingPoint = vec3Add(
       context.position, 
-      vec3Scale(direction, GRAPPLE_MAX_DISTANCE * 0.8)
+      vec3Scale(normalizedSwingDir, GRAPPLE_MAX_DISTANCE * 0.85)
     );
 
     return {
@@ -62,27 +73,27 @@ export class HookshotHero extends HeroBase {
     };
   }
 
-  private executeZipline(context: AbilityContext): AbilityResult {
-    // Deploy a zipline from current position in look direction
-    const direction = vec3Normalize(context.direction);
-    const ziplineEnd = vec3Add(
-      context.position, 
-      vec3Scale(direction, 50) // 50 unit zipline
-    );
+  private executeGrappleTrap(context: AbilityContext): AbilityResult {
+    // F ability (Ultimate) - Throw grapple trap that hooks enemies in AOE
+    // The trap position should be set by targeting on client
+    const trapPosition = context.targetPosition || context.position;
+    const trapRadius = 8;
+    const trapDuration = 8;
 
-    this.activeZipline = {
-      start: { ...context.position },
-      end: ziplineEnd,
+    this.activeGrappleTrap = {
+      position: { ...trapPosition },
+      radius: trapRadius,
+      startTime: context.timestamp,
+      duration: trapDuration,
     };
-    this.ziplineExpiresAt = context.timestamp + 15000; // 15 seconds
 
     return {
       success: true,
       effect: {
-        type: 'zipline',
-        position: context.position,
-        direction: ziplineEnd,
-        duration: 15,
+        type: 'grapple_trap',
+        position: trapPosition,
+        radius: trapRadius,
+        duration: trapDuration,
       },
     };
   }
@@ -95,9 +106,12 @@ export class HookshotHero extends HeroBase {
       this.momentumBoostUntil = this.lastSwingEnd + 2000;
     }
 
-    // Check zipline expiration
-    if (this.activeZipline && now >= this.ziplineExpiresAt) {
-      this.activeZipline = null;
+    // Check grapple trap expiration
+    if (this.activeGrappleTrap) {
+      const elapsed = (now - this.activeGrappleTrap.startTime) / 1000;
+      if (elapsed >= this.activeGrappleTrap.duration) {
+        this.activeGrappleTrap = null;
+      }
     }
   }
 
@@ -109,12 +123,19 @@ export class HookshotHero extends HeroBase {
     return Date.now() < this.momentumBoostUntil ? 0.15 : 0;
   }
 
-  getActiveZipline(): { start: { x: number; y: number; z: number }; end: { x: number; y: number; z: number } } | null {
-    return this.activeZipline;
+  getActiveGrappleTrap(): { 
+    position: { x: number; y: number; z: number }; 
+    radius: number;
+    startTime: number;
+    duration: number;
+  } | null {
+    return this.activeGrappleTrap;
   }
 
-  isZiplineActive(): boolean {
-    return this.activeZipline !== null && Date.now() < this.ziplineExpiresAt;
+  isGrappleTrapActive(): boolean {
+    if (!this.activeGrappleTrap) return false;
+    const elapsed = (Date.now() - this.activeGrappleTrap.startTime) / 1000;
+    return elapsed < this.activeGrappleTrap.duration;
   }
 }
 

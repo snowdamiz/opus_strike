@@ -54,9 +54,9 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
       name: 'Momentum Master',
       description: 'Gain 15% bonus speed after swinging for 2 seconds',
     },
-    ability1: { abilityId: 'hookshot_grapple', defaultKey: 'KeyE' },
-    ability2: { abilityId: 'hookshot_swing', defaultKey: 'KeyQ' },
-    ultimate: { abilityId: 'hookshot_zipline', defaultKey: 'KeyF' },
+    ability1: { abilityId: 'hookshot_swing', defaultKey: 'KeyE' },
+    ability2: { abilityId: 'hookshot_grapple', defaultKey: 'KeyQ' },
+    ultimate: { abilityId: 'hookshot_grapple_trap', defaultKey: 'KeyF' },
     description: 'A highly mobile fighter who uses grappling hooks to swing across the battlefield.',
   },
 
@@ -180,11 +180,11 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
   // Hookshot Abilities
   hookshot_grapple: {
     id: 'hookshot_grapple',
-    name: 'Grapple Hook',
+    name: 'Grapple Pull',
     type: 'movement',
     targeting: 'direction',
     cooldown: 6,
-    description: 'Fire a grappling hook that pulls you toward the hit point.',
+    description: 'Fire a quick medium-range hook that grabs geometry and pulls you in.',
   },
   hookshot_swing: {
     id: 'hookshot_swing',
@@ -195,15 +195,31 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 3,
     description: 'Fire a rope that lets you swing in an arc, building momentum.',
   },
-  hookshot_zipline: {
-    id: 'hookshot_zipline',
-    name: 'Zipline',
+  hookshot_grapple_trap: {
+    id: 'hookshot_grapple_trap',
+    name: 'Grapple Trap',
     type: 'ultimate',
+    targeting: 'ground',
+    cooldown: 0,
+    duration: 8,
+    resourceCost: 100,
+    description: 'Throw a grapple device that hooks enemies in its AOE, holding them and dealing damage.',
+  },
+  hookshot_basic_attack: {
+    id: 'hookshot_basic_attack',
+    name: 'Chain Hooks',
+    type: 'offensive',
     targeting: 'direction',
     cooldown: 0,
-    duration: 15,
-    resourceCost: 100,
-    description: 'Deploy a zipline that teammates can use for rapid traversal.',
+    description: 'Fire short-range hooks attached by rope that shoot forward and retract.',
+  },
+  hookshot_heavy_attack: {
+    id: 'hookshot_heavy_attack',
+    name: 'Drag Hook',
+    type: 'offensive',
+    targeting: 'direction',
+    cooldown: 4,
+    description: 'Fire a long-range hook that attaches to enemy heroes and pulls them toward you.',
   },
 
   // Blaze Abilities

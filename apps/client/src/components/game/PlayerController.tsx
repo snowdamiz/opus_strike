@@ -10,11 +10,13 @@ import {
   isPhysicsReady, 
   getColliderCount,
   validateTeleportDestination,
+  raycastDirection,
   type GroundInfo 
 } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { BombTargetingIndicator, AirStrikeTargetingIndicator, triggerRocketJumpExplosion, triggerAirStrike } from './BlazeEffects';
+import { GrappleTrapTargetingIndicator } from './HookshotEffects';
 import { 
   MOUSE_SENSITIVITY, 
   PITCH_LIMIT,
@@ -130,6 +132,8 @@ export function PlayerController() {
   // Get reactive state for React rendering
   const gamePhase = useGameStore(state => state.gamePhase);
   const shadowStepTargeting = useGameStore(state => state.shadowStepTargeting);
+  const grappleTrapTargeting = useGameStore(state => state.grappleTrapTargeting);
+  const setGrappleTrapTargeting = useGameStore(state => state.setGrappleTrapTargeting);
   // Note: localPlayer is read directly from store in useFrame to avoid stale closures
   const localPlayerForInit = useGameStore(state => state.localPlayer);
   
@@ -234,6 +238,30 @@ export function PlayerController() {
   // Shadow Step targeting state
   const shadowStepTargetRef = useRef<THREE.Vector3 | null>(null);
   const shadowStepValidRef = useRef(false);
+  
+  // Hookshot state
+  const hookProjectileIdRef = useRef(0);
+  const dragHookIdRef = useRef(0);
+  const grappleTrapIdRef = useRef(0);
+  const swingLineIdRef = useRef(0);
+  const grappleLineIdRef = useRef(0);
+  const lastHookFireTimeRef = useRef(0);
+  const lastDragHookTimeRef = useRef(0);
+  const HOOK_FIRE_RATE = 3; // Chain hooks per second
+  const HOOK_FIRE_INTERVAL = 1000 / HOOK_FIRE_RATE;
+  const DRAG_HOOK_COOLDOWN = 4000; // 4 second cooldown
+  const grappleTrapTargetRef = useRef<THREE.Vector3 | null>(null);
+  const grappleTrapValidRef = useRef(false);
+  const isSwingingRef = useRef(false);
+  const swingAttachPointRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  const swingRopeLengthRef = useRef(0);
+  const activeSwingLineIdRef = useRef<string | null>(null); // Track active swing line for hook-first-then-swing
+  // Apex-style momentum tracking for swing
+  const swingInitialRopeLengthRef = useRef(0); // Rope length when first attached
+  const swingMomentumRef = useRef({ x: 0, y: 0, z: 0 }); // Accumulated momentum during swing
+  const isGrapplingRef = useRef(false);
+  const grappleTargetRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  const activeGrappleLineIdRef = useRef<string | null>(null); // Track active grapple line for hook-first-then-pull
 
   // Initialize camera position - also check if we need to spawn higher
   useEffect(() => {
@@ -628,6 +656,39 @@ export function PlayerController() {
     console.log(`[Ability] Air Strike deployed at (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})`);
   }, [updateLocalPlayer, playBlazeAirstrike]);
 
+  // Execute grapple trap placement (must be before handleClick)
+  const executeGrappleTrapPlacement = useCallback(() => {
+    if (!grappleTrapTargetRef.current || !grappleTrapValidRef.current) return;
+    
+    const localPlayer = useGameStore.getState().localPlayer;
+    if (!localPlayer) return;
+    
+    const position = grappleTrapTargetRef.current;
+    const now = Date.now();
+    
+    // Create the grapple trap
+    grappleTrapIdRef.current++;
+    const trapId = `grapple_trap_${localPlayer.id}_${grappleTrapIdRef.current}`;
+    
+    useGameStore.getState().addGrappleTrap({
+      id: trapId,
+      position: { x: position.x, y: position.y, z: position.z },
+      startTime: now,
+      duration: 8, // 8 seconds duration
+      ownerId: localPlayer.id,
+      ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+      radius: 8,
+      hookedPlayers: [],
+    });
+    
+    // Exit targeting mode
+    setGrappleTrapTargeting(false);
+    grappleTrapTargetRef.current = null;
+    grappleTrapValidRef.current = false;
+    
+    console.log('[Ability] Grapple Trap placed!');
+  }, [setGrappleTrapTargeting]);
+
   // Handle pointer lock on click
   const handleClick = useCallback(() => {
     if (!isPointerLocked) {
@@ -644,8 +705,12 @@ export function PlayerController() {
       // Confirm Air Strike on click
       console.log('[Ability] Air Strike confirmed!');
       executeAirStrike();
+    } else if (grappleTrapTargeting && grappleTrapValidRef.current && grappleTrapTargetRef.current) {
+      // Confirm Grapple Trap on click
+      console.log('[Ability] Grapple Trap confirmed!');
+      executeGrappleTrapPlacement();
     }
-  }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport, bombTargeting, executeBombDrop, airStrikeTargeting, executeAirStrike]);
+  }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport, bombTargeting, executeBombDrop, airStrikeTargeting, executeAirStrike, grappleTrapTargeting, executeGrappleTrapPlacement]);
 
   useEffect(() => {
     const canvas = document.querySelector('canvas');
@@ -655,15 +720,16 @@ export function PlayerController() {
     }
   }, [handleClick]);
 
-  // Cancel Shadow Step, Bomb, or Air Strike targeting on right click or Escape
+  // Cancel Shadow Step, Bomb, Air Strike, or Grapple Trap targeting on right click or Escape
   useEffect(() => {
     const handleCancel = (e: MouseEvent | KeyboardEvent) => {
       // Read fresh from store
       const isShadowStepTargeting = useGameStore.getState().shadowStepTargeting;
       const isBombTargeting = useGameStore.getState().bombTargeting;
       const isAirStrikeTargeting = useGameStore.getState().airStrikeTargeting;
+      const isGrappleTrapTargeting = useGameStore.getState().grappleTrapTargeting;
       
-      if (!isShadowStepTargeting && !isBombTargeting && !isAirStrikeTargeting) return;
+      if (!isShadowStepTargeting && !isBombTargeting && !isAirStrikeTargeting && !isGrappleTrapTargeting) return;
       
       if ((e instanceof MouseEvent && e.button === 2) || 
           (e instanceof KeyboardEvent && e.code === 'Escape')) {
@@ -690,6 +756,13 @@ export function PlayerController() {
           airStrikeValidRef.current = false;
           console.log('[Ability] Air Strike targeting cancelled');
         }
+        
+        if (isGrappleTrapTargeting) {
+          useGameStore.getState().setGrappleTrapTargeting(false, false);
+          grappleTrapTargetRef.current = null;
+          grappleTrapValidRef.current = false;
+          console.log('[Ability] Grapple Trap targeting cancelled');
+        }
       }
     };
 
@@ -711,6 +784,12 @@ export function PlayerController() {
         setAirStrikeTargeting(false);
         airStrikeTargetRef.current = null;
         console.log('[Ability] Air Strike targeting cancelled');
+      }
+      if (grappleTrapTargeting) {
+        e.preventDefault();
+        setGrappleTrapTargeting(false);
+        grappleTrapTargetRef.current = null;
+        console.log('[Ability] Grapple Trap targeting cancelled');
       }
     };
 
@@ -769,6 +848,17 @@ export function PlayerController() {
     const store = useGameStore.getState();
     if (store.airStrikeTargeting && store.airStrikeTargetValid !== isValid) {
       store.setAirStrikeTargeting(true, isValid);
+    }
+  }, []);
+  
+  // Handle Grapple Trap target updates from indicator
+  const handleGrappleTrapTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
+    grappleTrapTargetRef.current = position;
+    grappleTrapValidRef.current = isValid;
+    // Update validity in store for UI
+    const store = useGameStore.getState();
+    if (store.grappleTrapTargeting && store.grappleTrapTargetValid !== isValid) {
+      store.setGrappleTrapTargeting(true, isValid);
     }
   }, []);
 
@@ -972,29 +1062,199 @@ export function PlayerController() {
 
       // ===== HOOKSHOT ABILITIES =====
       case 'hookshot_grapple': {
-        // Grapple pull - launch toward look direction
-        const distance = 15;
+        // Q ability - Quick grapple to geometry
+        // Fire a grapple hook that attaches to geometry and pulls player toward it
+        const grapplePlayer = useGameStore.getState().localPlayer;
+        if (!grapplePlayer) break;
+        
         const yaw = yawRef.current;
         const pitch = pitchRef.current;
         
-        velocity.x = -Math.sin(yaw) * Math.cos(pitch) * distance;
-        velocity.y = -Math.sin(pitch) * distance * 0.5 + 5;
-        velocity.z = -Math.cos(yaw) * Math.cos(pitch) * distance;
+        const dirX = -Math.sin(yaw) * Math.cos(pitch);
+        const dirY = Math.sin(pitch);
+        const dirZ = -Math.cos(yaw) * Math.cos(pitch);
         
-        console.log('[Ability] Grapple launched!');
+        // Raycast to find grapple point - try multiple directions for better hit chance
+        const GRAPPLE_MAX_RANGE = 40;
+        let grapplePoint = null;
+        
+        if (isPhysicsReady()) {
+          // First try exact look direction
+          let hit = raycastDirection(
+            position.x, position.y + 0.6, position.z,
+            dirX, dirY, dirZ,
+            GRAPPLE_MAX_RANGE
+          );
+          
+          if (hit?.hit) {
+            grapplePoint = hit.point;
+            console.log(`[Grapple] Found point at distance ${hit.distance.toFixed(1)}`);
+          } else {
+            // Try slightly downward if looking up and no hit
+            hit = raycastDirection(
+              position.x, position.y + 0.6, position.z,
+              dirX, Math.min(dirY, -0.1), dirZ,
+              GRAPPLE_MAX_RANGE
+            );
+            if (hit?.hit) {
+              grapplePoint = hit.point;
+              console.log(`[Grapple] Found point (downward) at distance ${hit.distance.toFixed(1)}`);
+            }
+          }
+        }
+        
+        if (grapplePoint) {
+          // Create grapple line visual
+          grappleLineIdRef.current++;
+          const lineId = `grapple_${grapplePlayer.id}_${grappleLineIdRef.current}`;
+          
+          const startPos = { x: position.x, y: position.y + 0.6, z: position.z };
+          
+          console.log('[Ability] === CREATING GRAPPLE LINE ===');
+          console.log('[Ability] Line ID:', lineId);
+          console.log('[Ability] Start Position:', JSON.stringify(startPos));
+          console.log('[Ability] End Position:', JSON.stringify(grapplePoint));
+          console.log('[Ability] Owner ID:', grapplePlayer.id);
+          
+          useGameStore.getState().addGrappleLine({
+            id: lineId,
+            startPosition: startPos,
+            endPosition: grapplePoint,
+            startTime: Date.now(),
+            ownerId: grapplePlayer.id,
+            state: 'extending', // Hook is flying out - player won't be pulled yet
+          });
+          
+          // Verify it was added
+          const linesAfter = useGameStore.getState().grappleLines;
+          console.log('[Ability] Grapple lines in store after add:', linesAfter.length);
+          
+          // Store the target but DON'T start pulling yet - wait for hook to reach target
+          // The physics loop will check when the grapple line state becomes 'attached'
+          grappleTargetRef.current = grapplePoint;
+          activeGrappleLineIdRef.current = lineId;
+          isGrapplingRef.current = false; // Will be set to true when hook reaches target
+          
+          const dist = Math.sqrt(
+            (grapplePoint.x - position.x) ** 2 + 
+            (grapplePoint.y - position.y) ** 2 + 
+            (grapplePoint.z - position.z) ** 2
+          );
+        
+          console.log(`[Ability] Grapple Hook fired! Target distance: ${dist.toFixed(1)}m`);
+        } else {
+          console.log('[Ability] Grapple - No surface found! Try aiming at geometry.');
+        }
         break;
       }
 
       case 'hookshot_swing': {
-        // Swing momentum boost
-        const boost = 12;
+        // E ability - Apex Legends Pathfinder style grapple with momentum
+        // Hook shoots out first, then player swings with momentum physics
+        const swingPlayer = useGameStore.getState().localPlayer;
+        if (!swingPlayer) break;
+        
         const yaw = yawRef.current;
+        const pitch = pitchRef.current;
         
-        velocity.x += -Math.sin(yaw) * boost;
-        velocity.y += 6;
-        velocity.z += -Math.cos(yaw) * boost;
+        const dirX = -Math.sin(yaw) * Math.cos(pitch);
+        const dirY = Math.sin(pitch);
+        const dirZ = -Math.cos(yaw) * Math.cos(pitch);
         
-        console.log('[Ability] Swing Line activated!');
+        // Raycast to find attach point - try multiple angles
+        const SWING_MAX_RANGE = 40;
+        let attachPoint = null;
+        
+        if (isPhysicsReady()) {
+          // First try looking slightly upward
+          const swingDirY = Math.max(dirY, 0.2);
+          let hit = raycastDirection(
+            position.x, position.y + 0.6, position.z,
+            dirX, swingDirY, dirZ,
+            SWING_MAX_RANGE
+          );
+          
+          if (hit?.hit) {
+            attachPoint = hit.point;
+            console.log(`[Swing] Found attach point at distance ${hit.distance.toFixed(1)}`);
+          } else {
+            // Try exact look direction
+            hit = raycastDirection(
+              position.x, position.y + 0.6, position.z,
+              dirX, dirY, dirZ,
+              SWING_MAX_RANGE
+            );
+            if (hit?.hit) {
+              attachPoint = hit.point;
+              console.log(`[Swing] Found attach point (exact) at distance ${hit.distance.toFixed(1)}`);
+            } else {
+              // Try more upward
+              hit = raycastDirection(
+                position.x, position.y + 0.6, position.z,
+                dirX * 0.7, 0.6, dirZ * 0.7,
+                SWING_MAX_RANGE
+              );
+              if (hit?.hit) {
+                attachPoint = hit.point;
+                console.log(`[Swing] Found attach point (upward) at distance ${hit.distance.toFixed(1)}`);
+              }
+            }
+          }
+        }
+        
+        if (attachPoint) {
+          // Create swing line visual with 'extending' state (hook shoots out first)
+          swingLineIdRef.current++;
+          const lineId = `swing_${swingPlayer.id}_${swingLineIdRef.current}`;
+          
+          const duration = ABILITY_DEFINITIONS['hookshot_swing']?.duration ?? 3;
+          const startPos = { x: position.x, y: position.y + 0.6, z: position.z };
+          
+          useGameStore.getState().addSwingLine({
+            id: lineId,
+            startPosition: startPos,
+            attachPoint: attachPoint,
+            startTime: Date.now(),
+            duration: duration,
+            ownerId: swingPlayer.id,
+            isActive: true,
+            state: 'extending', // Hook fires out first, like Q ability
+          });
+          
+          // Store target but DON'T start swinging yet - wait for hook to reach target
+          swingAttachPointRef.current = attachPoint;
+          activeSwingLineIdRef.current = lineId;
+          isSwingingRef.current = false; // Will be set to true when hook reaches target
+          
+          // Calculate initial rope length (will be used when hook attaches)
+          swingInitialRopeLengthRef.current = Math.sqrt(
+            (attachPoint.x - position.x) ** 2 +
+            (attachPoint.y - position.y) ** 2 +
+            (attachPoint.z - position.z) ** 2
+          );
+          swingRopeLengthRef.current = swingInitialRopeLengthRef.current;
+          
+          // Reset momentum tracking
+          swingMomentumRef.current = { x: 0, y: 0, z: 0 };
+          
+          console.log('[Ability] Swing hook fired! Distance:', swingInitialRopeLengthRef.current.toFixed(1));
+        } else {
+          console.log('[Ability] Swing Line - No attach point found! Try aiming at walls or ceilings.');
+        }
+        break;
+      }
+
+      case 'hookshot_grapple_trap': {
+        // F ability (Ultimate) - Throw a grapple trap that hooks enemies in AOE
+        // Enter targeting mode
+        useGameStore.getState().setGrappleTrapTargeting(true);
+        grappleTrapTargetRef.current = null;
+        grappleTrapValidRef.current = false;
+        
+        // Consume ultimate charge
+        updateLocalPlayer({ ultimateCharge: 0 });
+        
+        console.log('[Ability] Grapple Trap targeting mode activated!');
         break;
       }
 
@@ -1115,8 +1375,9 @@ export function PlayerController() {
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer) return false;
 
-    // Don't allow using abilities while Shadow Step targeting is active
+    // Don't allow using abilities while targeting mode is active (except the targeting ability itself)
     if (shadowStepTargeting && abilityId !== 'phantom_shadowstep') return false;
+    if (grappleTrapTargeting && abilityId !== 'hookshot_grapple_trap') return false;
 
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
     const maxCharges = abilityDef?.charges || 1;
@@ -1454,22 +1715,30 @@ export function PlayerController() {
         // Ability 1 (E) - Blink (skip for Blaze - jetpack is handled separately as hold ability)
         if (heroId !== 'blaze') {
           if (inputState.ability1 && !abilityPressedRef.current.ability1) {
-            if (!shadowStepTargeting && canUseAbility(heroDef.ability1.abilityId, false)) {
+            console.log(`[Input] E pressed for hero: ${heroId}, ability: ${heroDef.ability1.abilityId}`);
+            if (!shadowStepTargeting && !grappleTrapTargeting && canUseAbility(heroDef.ability1.abilityId, false)) {
+              console.log(`[Input] Executing ability1: ${heroDef.ability1.abilityId}`);
               executeAbility(heroDef.ability1.abilityId, position, velocity);
+            } else {
+              console.log(`[Input] Cannot use ability1 - shadowStep: ${shadowStepTargeting}, grappleTrap: ${grappleTrapTargeting}, canUse: ${canUseAbility(heroDef.ability1.abilityId, false)}`);
             }
           }
           abilityPressedRef.current.ability1 = inputState.ability1;
         }
 
-        // Ability 2 (Q) - Shadow Step
+        // Ability 2 (Q) - Shadow Step for Phantom, Grapple for Hookshot
         if (inputState.ability2 && !abilityPressedRef.current.ability2) {
-          if (shadowStepTargeting) {
+          console.log(`[Input] Q pressed for hero: ${heroId}, ability: ${heroDef.ability2.abilityId}`);
+          if (heroId === 'phantom' && shadowStepTargeting) {
             // If already targeting, Q confirms the teleport (like click)
             if (shadowStepValidRef.current && shadowStepTargetRef.current) {
               executeShadowStepTeleport();
             }
           } else if (canUseAbility(heroDef.ability2.abilityId, false)) {
+            console.log(`[Input] Executing ability2: ${heroDef.ability2.abilityId}`);
             executeAbility(heroDef.ability2.abilityId, position, velocity);
+          } else {
+            console.log(`[Input] Cannot use ability2 - canUse: ${canUseAbility(heroDef.ability2.abilityId, false)}`);
           }
         }
         abilityPressedRef.current.ability2 = inputState.ability2;
@@ -1729,6 +1998,114 @@ export function PlayerController() {
             }
           }
         }
+        
+        // ===== HOOKSHOT PRIMARY FIRE (Left Click) - Chain Hooks =====
+        if (heroId === 'hookshot' && inputState.primaryFire && !grappleTrapTargeting) {
+          const now = Date.now();
+          if (now - lastHookFireTimeRef.current >= HOOK_FIRE_INTERVAL) {
+            lastHookFireTimeRef.current = now;
+            
+            // Calculate fire direction from look direction
+            const yaw = yawRef.current;
+            const pitch = pitchRef.current;
+            
+            const dirX = -Math.sin(yaw) * Math.cos(pitch);
+            const dirY = Math.sin(pitch);
+            const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+            
+            // Hook speed
+            const HOOK_SPEED = 60;
+            const HOOK_MAX_DISTANCE = 12;
+            
+            // Spawn position - from hand
+            const eyeHeight = 0.6;
+            const handDrop = 0.3;
+            const forwardOffset = 0.8;
+            
+            const spawnX = position.x + dirX * forwardOffset;
+            const spawnY = position.y + eyeHeight - handDrop + dirY * forwardOffset;
+            const spawnZ = position.z + dirZ * forwardOffset;
+            
+            // Create hook projectile
+            hookProjectileIdRef.current++;
+            const hookId = `hook_${localPlayer.id}_${hookProjectileIdRef.current}`;
+            
+            useGameStore.getState().addHookProjectile({
+              id: hookId,
+              position: { x: spawnX, y: spawnY, z: spawnZ },
+              velocity: {
+                x: dirX * HOOK_SPEED,
+                y: dirY * HOOK_SPEED,
+                z: dirZ * HOOK_SPEED
+              },
+              startTime: now,
+              ownerId: localPlayer.id,
+              ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+              state: 'extending',
+              maxDistance: HOOK_MAX_DISTANCE,
+              startPosition: { x: spawnX, y: spawnY, z: spawnZ },
+            });
+            
+            console.log('[Hookshot] Chain hook fired!');
+          }
+        }
+        
+        // ===== HOOKSHOT SECONDARY FIRE (Right Click) - Drag Hook =====
+        if (heroId === 'hookshot' && inputState.secondaryFire && !secondaryFirePressedRef.current && !grappleTrapTargeting) {
+          const now = Date.now();
+          if (now - lastDragHookTimeRef.current >= DRAG_HOOK_COOLDOWN) {
+            lastDragHookTimeRef.current = now;
+            
+            // Calculate fire direction from look direction
+            const yaw = yawRef.current;
+            const pitch = pitchRef.current;
+            
+            const dirX = -Math.sin(yaw) * Math.cos(pitch);
+            const dirY = Math.sin(pitch);
+            const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+            
+            // Drag hook speed
+            const DRAG_HOOK_SPEED = 50;
+            
+            // Spawn position - from hand
+            const eyeHeight = 0.6;
+            const handDrop = 0.3;
+            const forwardOffset = 0.8;
+            
+            const spawnX = position.x + dirX * forwardOffset;
+            const spawnY = position.y + eyeHeight - handDrop + dirY * forwardOffset;
+            const spawnZ = position.z + dirZ * forwardOffset;
+            
+            // Create drag hook
+            dragHookIdRef.current++;
+            const hookId = `draghook_${localPlayer.id}_${dragHookIdRef.current}`;
+            
+            useGameStore.getState().addDragHook({
+              id: hookId,
+              position: { x: spawnX, y: spawnY, z: spawnZ },
+              velocity: {
+                x: dirX * DRAG_HOOK_SPEED,
+                y: dirY * DRAG_HOOK_SPEED,
+                z: dirZ * DRAG_HOOK_SPEED
+              },
+              startTime: now,
+              ownerId: localPlayer.id,
+              ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+              state: 'flying',
+              startPosition: { x: spawnX, y: spawnY, z: spawnZ },
+            });
+            
+            console.log('[Hookshot] Drag hook launched!');
+          } else {
+            const remaining = Math.ceil((DRAG_HOOK_COOLDOWN - (now - lastDragHookTimeRef.current)) / 1000);
+            console.log(`[Hookshot] Drag hook on cooldown - ${remaining}s remaining`);
+          }
+        }
+        
+        // Track secondary fire press for hookshot (same as blaze)
+        if (heroId === 'hookshot') {
+          secondaryFirePressedRef.current = inputState.secondaryFire;
+        }
       }
     }
 
@@ -1821,8 +2198,291 @@ export function PlayerController() {
       isGroundedRef.current = false;
     }
 
-    // Apply gravity (only once!)
-    velocity.y += GRAVITY * dt;
+    // ===== GRAPPLE PULL PHYSICS (Q ability) =====
+    // Check if we have an active grapple line waiting for hook to reach target
+    if (activeGrappleLineIdRef.current && grappleTargetRef.current && !isGrapplingRef.current) {
+      // Find the active grapple line and check if hook has reached target (state = 'attached')
+      const grappleLines = useGameStore.getState().grappleLines;
+      const activeLine = grappleLines.find(l => l.id === activeGrappleLineIdRef.current);
+      
+      if (activeLine && activeLine.state === 'attached') {
+        // Hook has reached target! Now start pulling the player
+        console.log('[Grapple] Hook attached! Starting pull...');
+        isGrapplingRef.current = true;
+        // Give initial impulse to break away from ground
+        velocity.y = Math.max(velocity.y, 8);
+      } else if (!activeLine) {
+        // Line was removed (timeout or other reason), cancel grapple
+        activeGrappleLineIdRef.current = null;
+        grappleTargetRef.current = null;
+      }
+    }
+    
+    // Continuously pull player toward grapple target with increasing speed
+    if (isGrapplingRef.current && grappleTargetRef.current) {
+      const target = grappleTargetRef.current;
+      const toTarget = {
+        x: target.x - position.x,
+        y: target.y - position.y,
+        z: target.z - position.z,
+      };
+      const dist = Math.sqrt(toTarget.x ** 2 + toTarget.y ** 2 + toTarget.z ** 2);
+      
+      // Stop grappling when close enough to target
+      if (dist < 1.5) {
+        isGrapplingRef.current = false;
+        grappleTargetRef.current = null;
+        activeGrappleLineIdRef.current = null;
+        // Give small upward boost when arriving
+        velocity.y = Math.max(velocity.y, 5);
+        console.log('[Grapple] Reached destination!');
+      } else {
+        // Calculate pull strength - starts at base speed, accelerates as closer
+        // Base pull: 25, max pull: 60, acceleration factor based on proximity
+        const maxDist = 40; // Max grapple range
+        const proximityFactor = 1 - Math.min(dist / maxDist, 1); // 0 at max dist, 1 when close
+        const basePull = 28;
+        const maxPull = 65;
+        const pullStrength = basePull + (maxPull - basePull) * (proximityFactor * proximityFactor);
+        
+        // Direction toward target
+        const dirX = toTarget.x / dist;
+        const dirY = toTarget.y / dist;
+        const dirZ = toTarget.z / dist;
+        
+        // Apply pull - override velocity to move toward target
+        velocity.x = dirX * pullStrength;
+        velocity.y = dirY * pullStrength + 2; // Small upward bias to clear obstacles
+        velocity.z = dirZ * pullStrength;
+      }
+    }
+    
+    // ===== APEX LEGENDS PATHFINDER-STYLE SWING PHYSICS (E ability) =====
+    // Phase 1: Wait for hook to reach target (extending state)
+    if (activeSwingLineIdRef.current && swingAttachPointRef.current && !isSwingingRef.current) {
+      const swingLines = useGameStore.getState().swingLines;
+      const activeLine = swingLines.find(l => l.id === activeSwingLineIdRef.current);
+      
+      if (activeLine && activeLine.state === 'attached') {
+        // Hook has reached target! Start the swing
+        console.log('[Swing] Hook attached! Starting Pathfinder-style swing...');
+        isSwingingRef.current = true;
+        
+        // Update line state to 'swinging'
+        useGameStore.getState().updateSwingLine(activeSwingLineIdRef.current, { state: 'swinging' });
+        
+        // Calculate current distance to attach point (player may have moved)
+        const attach = swingAttachPointRef.current;
+        swingRopeLengthRef.current = Math.sqrt(
+          (attach.x - position.x) ** 2 +
+          (attach.y - position.y) ** 2 +
+          (attach.z - position.z) ** 2
+        );
+        swingInitialRopeLengthRef.current = swingRopeLengthRef.current;
+        
+        // Initialize momentum with current velocity
+        swingMomentumRef.current = { x: velocity.x, y: velocity.y, z: velocity.z };
+        
+        // Give initial pull toward attach point (like Pathfinder's initial hook pull)
+        const toAttach = {
+          x: attach.x - position.x,
+          y: attach.y - position.y,
+          z: attach.z - position.z,
+        };
+        const dist = Math.sqrt(toAttach.x ** 2 + toAttach.y ** 2 + toAttach.z ** 2);
+        if (dist > 0) {
+          const initialPull = 12; // Initial pull strength
+          velocity.x += (toAttach.x / dist) * initialPull;
+          velocity.y += (toAttach.y / dist) * initialPull;
+          velocity.z += (toAttach.z / dist) * initialPull;
+        }
+      } else if (!activeLine) {
+        // Line was removed, cancel swing preparation
+        activeSwingLineIdRef.current = null;
+        swingAttachPointRef.current = null;
+      }
+    }
+    
+    // Phase 2: Active swing with momentum (Pathfinder physics)
+    if (isSwingingRef.current && swingAttachPointRef.current) {
+      const attach = swingAttachPointRef.current;
+      const swingLines = useGameStore.getState().swingLines;
+      const activeLine = swingLines.find(l => l.id === activeSwingLineIdRef.current);
+      const elapsed = activeLine ? (Date.now() - activeLine.startTime) / 1000 : 0;
+      const duration = ABILITY_DEFINITIONS['hookshot_swing']?.duration ?? 3;
+      
+      // Check if swing should end
+      if (elapsed >= duration || !activeLine) {
+        // End swing - player keeps ALL momentum (this is key to Pathfinder feel)
+        isSwingingRef.current = false;
+        swingAttachPointRef.current = null;
+        activeSwingLineIdRef.current = null;
+        console.log('[Swing] Released! Final velocity:', Math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2).toFixed(1));
+      } else {
+        // === APEX PATHFINDER MOMENTUM PHYSICS ===
+        
+        // Vector from player to attach point
+        const toAttach = {
+          x: attach.x - position.x,
+          y: attach.y - position.y,
+          z: attach.z - position.z,
+        };
+        const currentLength = Math.sqrt(toAttach.x ** 2 + toAttach.y ** 2 + toAttach.z ** 2);
+        
+        // Normalized rope direction (toward attach point)
+        const ropeDir = {
+          x: toAttach.x / currentLength,
+          y: toAttach.y / currentLength,
+          z: toAttach.z / currentLength,
+        };
+        
+        // === 1. LOOK DIRECTION MOMENTUM (Slingshot effect) ===
+        // Looking perpendicular to rope adds momentum in that direction
+        // Looking away from rope while being pulled creates slingshot
+        const lookDir = {
+          x: -Math.sin(yawRef.current) * Math.cos(pitchRef.current),
+          y: Math.sin(pitchRef.current),
+          z: -Math.cos(yawRef.current) * Math.cos(pitchRef.current),
+        };
+        
+        // Calculate how much the player is looking away from the rope
+        // Dot product: 1 = looking at attach, -1 = looking away
+        const lookDot = lookDir.x * ropeDir.x + lookDir.y * ropeDir.y + lookDir.z * ropeDir.z;
+        
+        // The more you look away, the more slingshot momentum you get
+        // Pathfinder players look perpendicular or away to build speed
+        const slingshotFactor = 1 - lookDot; // 0 when looking at attach, 2 when looking opposite
+        const slingshotStrength = 25 * slingshotFactor; // Slingshot force
+        
+        // Apply slingshot force in look direction (perpendicular component only)
+        // Remove the component that's along the rope to get perpendicular look direction
+        const lookAlongRope = lookDir.x * ropeDir.x + lookDir.y * ropeDir.y + lookDir.z * ropeDir.z;
+        const lookPerp = {
+          x: lookDir.x - ropeDir.x * lookAlongRope,
+          y: lookDir.y - ropeDir.y * lookAlongRope,
+          z: lookDir.z - ropeDir.z * lookAlongRope,
+        };
+        const lookPerpLen = Math.sqrt(lookPerp.x ** 2 + lookPerp.y ** 2 + lookPerp.z ** 2);
+        
+        if (lookPerpLen > 0.1) {
+          velocity.x += (lookPerp.x / lookPerpLen) * slingshotStrength * dt;
+          velocity.y += (lookPerp.y / lookPerpLen) * slingshotStrength * dt * 0.5; // Less vertical influence
+          velocity.z += (lookPerp.z / lookPerpLen) * slingshotStrength * dt;
+        }
+        
+        // === 2. STRAFE INPUT MOMENTUM ===
+        // WASD input perpendicular to rope adds momentum (Pathfinder air-strafe)
+        const wishDir = { x: 0, y: 0, z: 0 };
+        if (inputState.moveForward) { wishDir.x -= Math.sin(yawRef.current); wishDir.z -= Math.cos(yawRef.current); }
+        if (inputState.moveBackward) { wishDir.x += Math.sin(yawRef.current); wishDir.z += Math.cos(yawRef.current); }
+        if (inputState.moveLeft) { wishDir.x -= Math.cos(yawRef.current); wishDir.z += Math.sin(yawRef.current); }
+        if (inputState.moveRight) { wishDir.x += Math.cos(yawRef.current); wishDir.z -= Math.sin(yawRef.current); }
+        
+        const wishLen = Math.sqrt(wishDir.x ** 2 + wishDir.z ** 2);
+        if (wishLen > 0.1) {
+          // Normalize
+          wishDir.x /= wishLen;
+          wishDir.z /= wishLen;
+          
+          // Remove component along rope to get perpendicular strafe
+          const strafeAlongRope = wishDir.x * ropeDir.x + wishDir.z * ropeDir.z;
+          const strafePerp = {
+            x: wishDir.x - ropeDir.x * strafeAlongRope,
+            z: wishDir.z - ropeDir.z * strafeAlongRope,
+          };
+          const strafePerpLen = Math.sqrt(strafePerp.x ** 2 + strafePerp.z ** 2);
+          
+          if (strafePerpLen > 0.1) {
+            const strafeStrength = 20; // Air strafe strength during swing
+            velocity.x += (strafePerp.x / strafePerpLen) * strafeStrength * dt;
+            velocity.z += (strafePerp.z / strafePerpLen) * strafeStrength * dt;
+          }
+        }
+        
+        // === 3. GRAVITY (Full gravity, rope constrains arc) ===
+        velocity.y += GRAVITY * dt;
+        
+        // === 4. ROPE TENSION CONSTRAINT ===
+        // Key to Pathfinder feel: rope can shorten but not extend beyond initial length
+        // When rope is taut, remove velocity component that would extend the rope
+        
+        // Allow rope to shorten (player can approach attach point)
+        const minLength = 2; // Minimum rope length
+        const maxLength = swingInitialRopeLengthRef.current; // Cannot extend beyond initial
+        
+        if (currentLength > maxLength) {
+          // Rope is taut - apply tension to prevent extension
+          // Calculate velocity component along rope (positive = moving away from attach)
+          const velAlongRope = velocity.x * (-ropeDir.x) + velocity.y * (-ropeDir.y) + velocity.z * (-ropeDir.z);
+          
+          if (velAlongRope > 0) {
+            // Player is moving away from attach point - redirect this velocity tangentially
+            // This creates the Pathfinder "whip around" feel
+            velocity.x += ropeDir.x * velAlongRope;
+            velocity.y += ropeDir.y * velAlongRope;
+            velocity.z += ropeDir.z * velAlongRope;
+          }
+          
+          // Pull player back to max rope length
+          const overExtend = currentLength - maxLength;
+          const tensionForce = overExtend * 50; // Strong tension to enforce constraint
+          velocity.x += ropeDir.x * tensionForce * dt;
+          velocity.y += ropeDir.y * tensionForce * dt;
+          velocity.z += ropeDir.z * tensionForce * dt;
+          
+          // Also physically constrain position
+          position.x = attach.x - ropeDir.x * maxLength;
+          position.y = attach.y - ropeDir.y * maxLength;
+          position.z = attach.z - ropeDir.z * maxLength;
+        }
+        
+        // === 5. NATURAL PULL TOWARD ANCHOR (Small constant pull for swing arc) ===
+        const naturalPull = 8;
+        velocity.x += ropeDir.x * naturalPull * dt;
+        velocity.y += ropeDir.y * naturalPull * dt * 0.3; // Reduced vertical pull
+        velocity.z += ropeDir.z * naturalPull * dt;
+        
+        // === 6. SPEED BOOST WHEN BELOW ANCHOR (Pendulum physics) ===
+        // Being below the anchor point and swinging forward gives bonus speed
+        if (position.y < attach.y) {
+          const heightDiff = attach.y - position.y;
+          const swingBoost = Math.min(heightDiff * 0.5, 3); // Cap the bonus
+          // Calculate horizontal velocity direction
+          const hSpeed = Math.sqrt(velocity.x ** 2 + velocity.z ** 2);
+          if (hSpeed > 0.1) {
+            velocity.x += (velocity.x / hSpeed) * swingBoost * dt;
+            velocity.z += (velocity.z / hSpeed) * swingBoost * dt;
+          }
+        }
+        
+        // === 7. JUMP TO RELEASE (Early release option) ===
+        if (inputState.jump) {
+          // Jumping during swing releases with current momentum + small boost
+          const releaseBoost = 5;
+          const hSpeed = Math.sqrt(velocity.x ** 2 + velocity.z ** 2);
+          if (hSpeed > 0.1) {
+            velocity.x += (velocity.x / hSpeed) * releaseBoost;
+            velocity.z += (velocity.z / hSpeed) * releaseBoost;
+          }
+          velocity.y = Math.max(velocity.y, 8); // Ensure upward momentum on release
+          
+          // End swing
+          isSwingingRef.current = false;
+          swingAttachPointRef.current = null;
+          if (activeSwingLineIdRef.current) {
+            useGameStore.getState().updateSwingLine(activeSwingLineIdRef.current, { state: 'done', isActive: false });
+          }
+          activeSwingLineIdRef.current = null;
+          console.log('[Swing] Jump release! Speed:', Math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2).toFixed(1));
+        }
+      }
+    }
+
+    // Apply gravity (only once!) - reduced during grapple, skipped during swing (handled in swing physics)
+    const gravityMult = isGrapplingRef.current ? 0.1 : 1.0;
+    if (!isSwingingRef.current) {
+      velocity.y += GRAVITY * dt * gravityMult;
+    }
 
     // Horizontal movement with step-up for stairs
     const moveX = velocity.x * dt;
@@ -2043,6 +2703,10 @@ export function PlayerController() {
       <AirStrikeTargetingIndicator
         isActive={airStrikeTargeting}
         onTargetUpdate={handleAirStrikeTargetUpdate}
+      />
+      <GrappleTrapTargetingIndicator
+        isActive={grappleTrapTargeting}
+        onTargetUpdate={handleGrappleTrapTargetUpdate}
       />
     </>
   );

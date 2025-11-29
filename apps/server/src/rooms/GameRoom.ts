@@ -576,7 +576,7 @@ export class GameRoom extends Room<GameState> {
 
       // ===== HOOKSHOT ABILITIES =====
       case 'hookshot_grapple': {
-        // Set grappling state (actual grapple physics on client)
+        // Q ability - Grapple pull toward geometry (actual physics on client)
         player.movement.isGrappling = true;
         abilityState.isActive = true;
         abilityState.activatedAt = now;
@@ -584,12 +584,14 @@ export class GameRoom extends Room<GameState> {
       }
 
       case 'hookshot_swing': {
+        // E ability - Swing line for pendulum movement
         abilityState.isActive = true;
         abilityState.activatedAt = now;
         break;
       }
 
-      case 'hookshot_zipline': {
+      case 'hookshot_grapple_trap': {
+        // Ultimate - Grapple trap that hooks enemies in AOE
         abilityState.isActive = true;
         abilityState.activatedAt = now;
         break;

@@ -300,7 +300,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     'phantom_veil': 'veil',
     'hookshot_grapple': 'grapple',
     'hookshot_swing': 'swing',
-    'hookshot_zipline': 'zipline',
+    'hookshot_grapple_trap': 'grapple', // Uses grapple icon for trap ultimate
     'blaze_jetpack': 'jetpack',
     'blaze_rocketjump': 'rocketjump',
     'blaze_airstrike': 'airstrike',

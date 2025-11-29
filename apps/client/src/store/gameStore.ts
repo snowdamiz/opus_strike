@@ -84,6 +84,63 @@ export interface BombData {
   hasExploded: boolean;
 }
 
+// Hookshot projectile types
+export interface HookProjectileData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  state: 'extending' | 'retracting';
+  maxDistance: number;
+  startPosition: { x: number; y: number; z: number };
+}
+
+export interface DragHookData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  state: 'flying' | 'attached' | 'pulling';
+  targetId?: string; // Player ID if hooked
+  startPosition: { x: number; y: number; z: number };
+}
+
+export interface GrappleTrapData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  startTime: number;
+  duration: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  radius: number;
+  hookedPlayers: string[]; // IDs of players hooked
+}
+
+export interface SwingLineData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  attachPoint: { x: number; y: number; z: number };
+  startTime: number;
+  duration: number;
+  ownerId: string;
+  isActive: boolean;
+  // Apex-style grapple state
+  state: 'extending' | 'attached' | 'swinging' | 'done';
+}
+
+export interface GrappleLineData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  endPosition: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+  state: 'extending' | 'attached' | 'pulling' | 'retracting' | 'done';
+}
+
 interface GameStore {
   // Wallet/Auth state
   walletAddress: string | null;
@@ -175,6 +232,17 @@ interface GameStore {
   jetpackActive: boolean;
   jetpackFuel: number; // 0-100
 
+  // Hookshot projectiles
+  hookProjectiles: HookProjectileData[];
+  dragHooks: DragHookData[];
+  grappleTraps: GrappleTrapData[];
+  swingLines: SwingLineData[];
+  grappleLines: GrappleLineData[];
+  
+  // Hookshot grapple trap targeting state
+  grappleTrapTargeting: boolean;
+  grappleTrapTargetValid: boolean;
+
   // Actions
   setWalletAddress: (address: string | null) => void;
   setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
@@ -245,6 +313,33 @@ interface GameStore {
   setJetpackActive: (active: boolean) => void;
   setJetpackFuel: (fuel: number) => void;
   
+  // Hookshot projectile actions
+  addHookProjectile: (hook: HookProjectileData) => void;
+  updateHookProjectile: (id: string, updates: Partial<HookProjectileData>) => void;
+  removeHookProjectile: (id: string) => void;
+  clearExpiredHookProjectiles: () => void;
+  
+  addDragHook: (hook: DragHookData) => void;
+  updateDragHook: (id: string, updates: Partial<DragHookData>) => void;
+  removeDragHook: (id: string) => void;
+  clearExpiredDragHooks: () => void;
+  
+  addGrappleTrap: (trap: GrappleTrapData) => void;
+  updateGrappleTrap: (id: string, updates: Partial<GrappleTrapData>) => void;
+  removeGrappleTrap: (id: string) => void;
+  clearExpiredGrappleTraps: () => void;
+  setGrappleTrapTargeting: (targeting: boolean, valid?: boolean) => void;
+  
+  addSwingLine: (line: SwingLineData) => void;
+  updateSwingLine: (id: string, updates: Partial<SwingLineData>) => void;
+  removeSwingLine: (id: string) => void;
+  clearExpiredSwingLines: () => void;
+  
+  addGrappleLine: (line: GrappleLineData) => void;
+  updateGrappleLine: (id: string, updates: Partial<GrappleLineData>) => void;
+  removeGrappleLine: (id: string) => void;
+  clearExpiredGrappleLines: () => void;
+  
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
   
@@ -301,6 +396,13 @@ const initialState = {
   airStrikeTargetValid: false,
   jetpackActive: false,
   jetpackFuel: 100,
+  hookProjectiles: [] as HookProjectileData[],
+  dragHooks: [] as DragHookData[],
+  grappleTraps: [] as GrappleTrapData[],
+  swingLines: [] as SwingLineData[],
+  grappleLines: [] as GrappleLineData[],
+  grappleTrapTargeting: false,
+  grappleTrapTargetValid: false,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -603,6 +705,125 @@ export const useGameStore = create<GameStore>((set, get) => ({
   
   setJetpackActive: (active) => set({ jetpackActive: active }),
   setJetpackFuel: (fuel) => set({ jetpackFuel: Math.max(0, Math.min(100, fuel)) }),
+
+  // Hookshot projectile actions
+  addHookProjectile: (hook) => set((state) => {
+    if (state.hookProjectiles.some(h => h.id === hook.id)) return state;
+    return { hookProjectiles: [...state.hookProjectiles, hook] };
+  }),
+  
+  updateHookProjectile: (id, updates) => set((state) => ({
+    hookProjectiles: state.hookProjectiles.map(h => 
+      h.id === id ? { ...h, ...updates } : h
+    )
+  })),
+  
+  removeHookProjectile: (id) => set((state) => ({
+    hookProjectiles: state.hookProjectiles.filter(h => h.id !== id)
+  })),
+  
+  clearExpiredHookProjectiles: () => set((state) => {
+    const now = Date.now();
+    const LIFETIME = 2000; // 2 seconds max for hook projectiles
+    return {
+      hookProjectiles: state.hookProjectiles.filter(h => now - h.startTime < LIFETIME)
+    };
+  }),
+  
+  addDragHook: (hook) => set((state) => {
+    if (state.dragHooks.some(h => h.id === hook.id)) return state;
+    return { dragHooks: [...state.dragHooks, hook] };
+  }),
+  
+  updateDragHook: (id, updates) => set((state) => ({
+    dragHooks: state.dragHooks.map(h => 
+      h.id === id ? { ...h, ...updates } : h
+    )
+  })),
+  
+  removeDragHook: (id) => set((state) => ({
+    dragHooks: state.dragHooks.filter(h => h.id !== id)
+  })),
+  
+  clearExpiredDragHooks: () => set((state) => {
+    const now = Date.now();
+    const LIFETIME = 5000; // 5 seconds max for drag hooks (includes pull time)
+    return {
+      dragHooks: state.dragHooks.filter(h => now - h.startTime < LIFETIME)
+    };
+  }),
+  
+  addGrappleTrap: (trap) => set((state) => {
+    if (state.grappleTraps.some(t => t.id === trap.id)) return state;
+    return { grappleTraps: [...state.grappleTraps, trap] };
+  }),
+  
+  updateGrappleTrap: (id, updates) => set((state) => ({
+    grappleTraps: state.grappleTraps.map(t => 
+      t.id === id ? { ...t, ...updates } : t
+    )
+  })),
+  
+  removeGrappleTrap: (id) => set((state) => ({
+    grappleTraps: state.grappleTraps.filter(t => t.id !== id)
+  })),
+  
+  clearExpiredGrappleTraps: () => set((state) => {
+    const now = Date.now();
+    return {
+      grappleTraps: state.grappleTraps.filter(t => (now - t.startTime) / 1000 < t.duration)
+    };
+  }),
+  
+  setGrappleTrapTargeting: (targeting, valid = false) => set({
+    grappleTrapTargeting: targeting,
+    grappleTrapTargetValid: valid
+  }),
+  
+  addSwingLine: (line) => set((state) => {
+    if (state.swingLines.some(l => l.id === line.id)) return state;
+    return { swingLines: [...state.swingLines, line] };
+  }),
+  
+  updateSwingLine: (id, updates) => set((state) => ({
+    swingLines: state.swingLines.map(l => 
+      l.id === id ? { ...l, ...updates } : l
+    )
+  })),
+  
+  removeSwingLine: (id) => set((state) => ({
+    swingLines: state.swingLines.filter(l => l.id !== id)
+  })),
+  
+  clearExpiredSwingLines: () => set((state) => {
+    const now = Date.now();
+    return {
+      swingLines: state.swingLines.filter(l => (now - l.startTime) / 1000 < l.duration)
+    };
+  }),
+  
+  addGrappleLine: (line) => set((state) => {
+    if (state.grappleLines.some(l => l.id === line.id)) return state;
+    return { grappleLines: [...state.grappleLines, line] };
+  }),
+  
+  updateGrappleLine: (id, updates) => set((state) => ({
+    grappleLines: state.grappleLines.map(l => 
+      l.id === id ? { ...l, ...updates } : l
+    )
+  })),
+  
+  removeGrappleLine: (id) => set((state) => ({
+    grappleLines: state.grappleLines.filter(l => l.id !== id)
+  })),
+  
+  clearExpiredGrappleLines: () => set((state) => {
+    const now = Date.now();
+    const LIFETIME = 6000; // 6 seconds max - enough for hook extension + player pull
+    return {
+      grappleLines: state.grappleLines.filter(l => now - l.startTime < LIFETIME)
+    };
+  }),
 
   reset: () => set(initialState),
   

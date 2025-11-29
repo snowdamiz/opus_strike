@@ -12,6 +12,8 @@ import { DireBalls } from './DireBall';
 import { VoidRays } from './VoidRay';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
+import { HookshotEffectsManager } from './HookshotEffects';
+import { FirstPersonArms } from './FirstPersonArms';
 import { useGameStore } from '../../store/gameStore';
 
 export function GameCanvas() {
@@ -95,6 +97,8 @@ export function GameCanvas() {
             <VoidRays rays={voidRays} />
             <PhantomEffectsManager />
             <BlazeEffectsManager />
+            <HookshotEffectsManager />
+            <FirstPersonArms />
           </>
         )}
 
