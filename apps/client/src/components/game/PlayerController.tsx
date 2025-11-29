@@ -245,6 +245,7 @@ export function PlayerController() {
   const grappleTrapIdRef = useRef(0);
   const swingLineIdRef = useRef(0);
   const grappleLineIdRef = useRef(0);
+  const earthWallIdRef = useRef(0);
   const lastHookFireTimeRef = useRef(0);
   const lastDragHookTimeRef = useRef(0);
   const HOOK_FIRE_RATE = 3; // Chain hooks per second
@@ -656,25 +657,65 @@ export function PlayerController() {
     console.log(`[Ability] Air Strike deployed at (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})`);
   }, [updateLocalPlayer, playBlazeAirstrike]);
 
-  // Execute grapple trap placement (must be before handleClick)
+  // Execute grapple trap throw (grenade-style arc)
   const executeGrappleTrapPlacement = useCallback(() => {
     if (!grappleTrapTargetRef.current || !grappleTrapValidRef.current) return;
     
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer) return;
     
-    const position = grappleTrapTargetRef.current;
+    const targetPos = grappleTrapTargetRef.current;
     const now = Date.now();
     
-    // Create the grapple trap
+    // Calculate throw velocity for grenade arc
+    const startPos = {
+      x: localPlayer.position.x,
+      y: localPlayer.position.y + 1.5, // Throw from head height
+      z: localPlayer.position.z,
+    };
+    
+    // Calculate direction to target
+    const dx = targetPos.x - startPos.x;
+    const dy = targetPos.y - startPos.y;
+    const dz = targetPos.z - startPos.z;
+    const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+    
+    // Calculate throw velocity using projectile motion physics
+    // We want to hit the target with a nice arc
+    const THROW_SPEED = 30;
+    const GRAVITY = 25;
+    
+    // Calculate optimal launch angle for the distance
+    // Using simplified arc: throw at 45 degrees adjusted for height difference
+    const timeOfFlight = Math.max(0.5, horizontalDist / 20); // Estimate time based on distance
+    
+    // Horizontal velocity components (normalize and scale)
+    const horizMag = Math.sqrt(dx * dx + dz * dz);
+    const horizVelX = horizMag > 0 ? (dx / horizMag) * (horizontalDist / timeOfFlight) : 0;
+    const horizVelZ = horizMag > 0 ? (dz / horizMag) * (horizontalDist / timeOfFlight) : 0;
+    
+    // Vertical velocity: v0y = (dy + 0.5 * g * t^2) / t
+    // This ensures we hit the target height after timeOfFlight
+    const vertVel = (dy + 0.5 * GRAVITY * timeOfFlight * timeOfFlight) / timeOfFlight;
+    
+    // Cap velocities for reasonable arc
+    const throwVelocity = {
+      x: Math.max(-THROW_SPEED, Math.min(THROW_SPEED, horizVelX)),
+      y: Math.max(5, Math.min(THROW_SPEED * 1.2, vertVel)), // Always throw upward
+      z: Math.max(-THROW_SPEED, Math.min(THROW_SPEED, horizVelZ)),
+    };
+    
+    // Create the grapple trap with throw data
     grappleTrapIdRef.current++;
     const trapId = `grapple_trap_${localPlayer.id}_${grappleTrapIdRef.current}`;
     
     useGameStore.getState().addGrappleTrap({
       id: trapId,
-      position: { x: position.x, y: position.y, z: position.z },
+      position: { x: targetPos.x, y: targetPos.y, z: targetPos.z }, // Final target (for fallback)
+      startPosition: startPos, // Where it's thrown from
+      velocity: throwVelocity, // Initial throw velocity
       startTime: now,
-      duration: 8, // 8 seconds duration
+      duration: 8, // 8 seconds duration after landing
       ownerId: localPlayer.id,
       ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
       radius: 8,
@@ -686,7 +727,7 @@ export function PlayerController() {
     grappleTrapTargetRef.current = null;
     grappleTrapValidRef.current = false;
     
-    console.log('[Ability] Grapple Trap placed!');
+    console.log('[Ability] Grapple Trap thrown!');
   }, [setGrappleTrapTargeting]);
 
   // Handle pointer lock on click
@@ -1149,112 +1190,169 @@ export function PlayerController() {
       }
 
       case 'hookshot_swing': {
-        // E ability - Apex Legends Pathfinder style grapple with momentum
-        // Hook shoots out first, then player swings with momentum physics
-        const swingPlayer = useGameStore.getState().localPlayer;
-        if (!swingPlayer) break;
+        // E ability - Earth Wall: Hook slides on ground, wall of dirt rises behind
+        const earthWallPlayer = useGameStore.getState().localPlayer;
+        if (!earthWallPlayer) break;
         
         const yaw = yawRef.current;
-        const pitch = pitchRef.current;
         
-        const dirX = -Math.sin(yaw) * Math.cos(pitch);
-        const dirY = Math.sin(pitch);
-        const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+        // Get horizontal aim direction (ignore pitch - hook travels on ground)
+        const dirX = -Math.sin(yaw);
+        const dirZ = -Math.cos(yaw);
         
-        // Raycast to find attach point - try multiple angles
-        const SWING_MAX_RANGE = 40;
-        let attachPoint = null;
+        // Normalize horizontal direction
+        const dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ);
+        const normDirX = dirLen > 0 ? dirX / dirLen : 0;
+        const normDirZ = dirLen > 0 ? dirZ / dirLen : 1;
+        
+        // Find ground level at start position
+        let groundY = position.y;
+        if (isPhysicsReady()) {
+          const groundCheck = checkGroundWithNormal(position.x, position.y + 2, position.z, 10);
+          if (groundCheck) {
+            groundY = groundCheck.groundY;
+          }
+        }
+        
+        // Create earth wall effect
+        earthWallIdRef.current = (earthWallIdRef.current || 0) + 1;
+        const wallId = `earthwall_${earthWallPlayer.id}_${earthWallIdRef.current}`;
+        
+        const startPos = { x: position.x, y: groundY, z: position.z };
+        const direction = { x: normDirX, y: 0, z: normDirZ };
+        
+        useGameStore.getState().addEarthWall({
+          id: wallId,
+          startPosition: startPos,
+          direction: direction,
+          startTime: Date.now(),
+          duration: 3, // Wall stays up for 3 seconds
+          ownerId: earthWallPlayer.id,
+          ownerTeam: earthWallPlayer.team,
+          maxDistance: 25, // How far the hook travels
+          hookProgress: 0,
+          wallSegments: [],
+        });
+        
+        console.log('[Ability] Earth Wall deployed! Direction:', normDirX.toFixed(2), normDirZ.toFixed(2));
+        break;
+      }
+
+      case 'hookshot_grapple_trap': {
+        // F ability (Ultimate) - Instantly throw a grapple trap toward where player is looking
+        const trapPlayer = useGameStore.getState().localPlayer;
+        if (!trapPlayer) break;
+        
+        const now = Date.now();
+        const TRAP_MAX_RANGE = 30;
+        const TRAP_THROW_SPEED = 30;
+        const TRAP_GRAVITY = 25;
+        
+        // Calculate throw direction from camera
+        const trapYaw = yawRef.current;
+        const trapPitch = pitchRef.current;
+        const throwDirX = -Math.sin(trapYaw) * Math.cos(trapPitch);
+        const throwDirY = Math.sin(trapPitch);
+        const throwDirZ = -Math.cos(trapYaw) * Math.cos(trapPitch);
+        
+        // Start position (throw from head height)
+        const startPos = {
+          x: trapPlayer.position.x,
+          y: trapPlayer.position.y + 1.5,
+          z: trapPlayer.position.z,
+        };
+        
+        // Find target position using raycast
+        let targetX = startPos.x + throwDirX * TRAP_MAX_RANGE;
+        let targetY = startPos.y + throwDirY * TRAP_MAX_RANGE;
+        let targetZ = startPos.z + throwDirZ * TRAP_MAX_RANGE;
         
         if (isPhysicsReady()) {
-          // First try looking slightly upward
-          const swingDirY = Math.max(dirY, 0.2);
-          let hit = raycastDirection(
-            position.x, position.y + 0.6, position.z,
-            dirX, swingDirY, dirZ,
-            SWING_MAX_RANGE
+          // Try direct raycast first
+          const directHit = raycastDirection(
+            camera.position.x, camera.position.y, camera.position.z,
+            throwDirX, throwDirY, throwDirZ,
+            TRAP_MAX_RANGE + 10
           );
           
-          if (hit?.hit) {
-            attachPoint = hit.point;
-            console.log(`[Swing] Found attach point at distance ${hit.distance.toFixed(1)}`);
-          } else {
-            // Try exact look direction
-            hit = raycastDirection(
-              position.x, position.y + 0.6, position.z,
-              dirX, dirY, dirZ,
-              SWING_MAX_RANGE
-            );
-            if (hit?.hit) {
-              attachPoint = hit.point;
-              console.log(`[Swing] Found attach point (exact) at distance ${hit.distance.toFixed(1)}`);
+          if (directHit?.hit) {
+            targetX = directHit.point.x;
+            targetY = directHit.point.y;
+            targetZ = directHit.point.z;
+            
+            // If hit a wall, find ground below
+            if (!directHit.isWalkable) {
+              const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50);
+              if (groundBelow?.isWalkable) {
+                targetY = groundBelow.groundY + 0.1;
+              }
             } else {
-              // Try more upward
-              hit = raycastDirection(
-                position.x, position.y + 0.6, position.z,
-                dirX * 0.7, 0.6, dirZ * 0.7,
-                SWING_MAX_RANGE
-              );
-              if (hit?.hit) {
-                attachPoint = hit.point;
-                console.log(`[Swing] Found attach point (upward) at distance ${hit.distance.toFixed(1)}`);
+              targetY += 0.1;
+            }
+          } else {
+            // No direct hit, sample along look direction to find ground
+            const sampleDistances = [15, 20, 25, TRAP_MAX_RANGE];
+            for (const dist of sampleDistances) {
+              const sampleX = camera.position.x + throwDirX * dist;
+              const sampleY = camera.position.y + throwDirY * dist;
+              const sampleZ = camera.position.z + throwDirZ * dist;
+              
+              const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150);
+              if (groundCheck?.isWalkable) {
+                targetX = sampleX;
+                targetY = groundCheck.groundY + 0.1;
+                targetZ = sampleZ;
+                break;
               }
             }
           }
         }
         
-        if (attachPoint) {
-          // Create swing line visual with 'extending' state (hook shoots out first)
-          swingLineIdRef.current++;
-          const lineId = `swing_${swingPlayer.id}_${swingLineIdRef.current}`;
-          
-          const duration = ABILITY_DEFINITIONS['hookshot_swing']?.duration ?? 3;
-          const startPos = { x: position.x, y: position.y + 0.6, z: position.z };
-          
-          useGameStore.getState().addSwingLine({
-            id: lineId,
-            startPosition: startPos,
-            attachPoint: attachPoint,
-            startTime: Date.now(),
-            duration: duration,
-            ownerId: swingPlayer.id,
-            isActive: true,
-            state: 'extending', // Hook fires out first, like Q ability
-          });
-          
-          // Store target but DON'T start swinging yet - wait for hook to reach target
-          swingAttachPointRef.current = attachPoint;
-          activeSwingLineIdRef.current = lineId;
-          isSwingingRef.current = false; // Will be set to true when hook reaches target
-          
-          // Calculate initial rope length (will be used when hook attaches)
-          swingInitialRopeLengthRef.current = Math.sqrt(
-            (attachPoint.x - position.x) ** 2 +
-            (attachPoint.y - position.y) ** 2 +
-            (attachPoint.z - position.z) ** 2
-          );
-          swingRopeLengthRef.current = swingInitialRopeLengthRef.current;
-          
-          // Reset momentum tracking
-          swingMomentumRef.current = { x: 0, y: 0, z: 0 };
-          
-          console.log('[Ability] Swing hook fired! Distance:', swingInitialRopeLengthRef.current.toFixed(1));
-        } else {
-          console.log('[Ability] Swing Line - No attach point found! Try aiming at walls or ceilings.');
-        }
-        break;
-      }
-
-      case 'hookshot_grapple_trap': {
-        // F ability (Ultimate) - Throw a grapple trap that hooks enemies in AOE
-        // Enter targeting mode
-        useGameStore.getState().setGrappleTrapTargeting(true);
-        grappleTrapTargetRef.current = null;
-        grappleTrapValidRef.current = false;
+        // Calculate throw velocity for grenade arc
+        const dx = targetX - startPos.x;
+        const dy = targetY - startPos.y;
+        const dz = targetZ - startPos.z;
+        const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+        
+        // Estimate time of flight based on distance
+        const timeOfFlight = Math.max(0.5, horizontalDist / 20);
+        
+        // Horizontal velocity components
+        const horizMag = Math.sqrt(dx * dx + dz * dz);
+        const horizVelX = horizMag > 0 ? (dx / horizMag) * (horizontalDist / timeOfFlight) : 0;
+        const horizVelZ = horizMag > 0 ? (dz / horizMag) * (horizontalDist / timeOfFlight) : 0;
+        
+        // Vertical velocity to hit target height
+        const vertVel = (dy + 0.5 * TRAP_GRAVITY * timeOfFlight * timeOfFlight) / timeOfFlight;
+        
+        // Cap velocities
+        const throwVelocity = {
+          x: Math.max(-TRAP_THROW_SPEED, Math.min(TRAP_THROW_SPEED, horizVelX)),
+          y: Math.max(5, Math.min(TRAP_THROW_SPEED * 1.2, vertVel)),
+          z: Math.max(-TRAP_THROW_SPEED, Math.min(TRAP_THROW_SPEED, horizVelZ)),
+        };
+        
+        // Create the grapple trap
+        grappleTrapIdRef.current++;
+        const trapId = `grapple_trap_${trapPlayer.id}_${grappleTrapIdRef.current}`;
+        
+        useGameStore.getState().addGrappleTrap({
+          id: trapId,
+          position: { x: targetX, y: targetY, z: targetZ },
+          startPosition: startPos,
+          velocity: throwVelocity,
+          startTime: now,
+          duration: 8,
+          ownerId: trapPlayer.id,
+          ownerTeam: (trapPlayer.team || 'red') as 'red' | 'blue',
+          radius: 8,
+          hookedPlayers: [],
+        });
         
         // Consume ultimate charge
         updateLocalPlayer({ ultimateCharge: 0 });
         
-        console.log('[Ability] Grapple Trap targeting mode activated!');
+        console.log('[Ability] Grapple Trap thrown instantly!');
         break;
       }
 
@@ -2013,9 +2111,9 @@ export function PlayerController() {
             const dirY = Math.sin(pitch);
             const dirZ = -Math.cos(yaw) * Math.cos(pitch);
             
-            // Hook speed
-            const HOOK_SPEED = 60;
-            const HOOK_MAX_DISTANCE = 12;
+            // Hook speed (slower for better visual feedback)
+            const HOOK_SPEED = 38;
+            const HOOK_MAX_DISTANCE = 14;
             
             // Spawn position - from hand
             const eyeHeight = 0.6;

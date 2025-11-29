@@ -48,27 +48,23 @@ export class HookshotHero extends HeroBase {
   }
 
   private executeSwing(context: AbilityContext): AbilityResult {
-    // E ability - Swing line for pendulum movement
+    // E ability - Earth Wall: Hook slides on ground, wall of dirt rises behind
     const direction = vec3Normalize(context.direction);
-    // Look upward slightly for swing points
-    const swingDir = {
+    // Use horizontal direction only (hook travels on ground)
+    const horizontalDir = vec3Normalize({
       x: direction.x,
-      y: Math.max(direction.y, 0.3),
+      y: 0,
       z: direction.z,
-    };
-    const normalizedSwingDir = vec3Normalize(swingDir);
-    const swingPoint = vec3Add(
-      context.position, 
-      vec3Scale(normalizedSwingDir, GRAPPLE_MAX_DISTANCE * 0.85)
-    );
+    });
 
     return {
       success: true,
       effect: {
-        type: 'swing',
+        type: 'earth_wall',
         position: context.position,
-        direction: swingPoint,
-        duration: 3,
+        direction: horizontalDir,
+        duration: 3, // Wall stays up for 3 seconds
+        maxDistance: 25,
       },
     };
   }

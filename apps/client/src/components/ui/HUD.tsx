@@ -35,9 +35,9 @@ const FACTIONS = {
 } as const;
 
 // Solar Icon - Small version for HUD
-function SolarIconSmall({ className }: { className?: string }) {
+function SolarIconSmall({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none">
+    <svg className={className} style={style} viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="4" fill="currentColor" />
       <path d="M12 3V6M12 18V21M3 12H6M18 12H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
       <path d="M5.64 5.64L7.76 7.76M16.24 16.24L18.36 18.36M5.64 18.36L7.76 16.24M16.24 7.76L18.36 5.64" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -46,9 +46,9 @@ function SolarIconSmall({ className }: { className?: string }) {
 }
 
 // Void Icon - Small version for HUD
-function VoidIconSmall({ className }: { className?: string }) {
+function VoidIconSmall({ className, style }: { className?: string; style?: React.CSSProperties }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none">
+    <svg className={className} style={style} viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="2" />
       <circle cx="12" cy="12" r="3" fill="currentColor" />
       <path d="M12 3C7.03 3 3 7.03 3 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeDasharray="3 2" />

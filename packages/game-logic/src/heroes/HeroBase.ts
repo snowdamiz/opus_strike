@@ -30,6 +30,7 @@ export interface AbilityEffectData {
   duration?: number;
   value?: number;
   radius?: number;
+  maxDistance?: number;
 }
 
 export abstract class HeroBase {

@@ -1,8 +1,8 @@
-import { useRef, useMemo, useState, useEffect } from 'react';
+import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { useGameStore, type HookProjectileData, type DragHookData, type GrappleTrapData, type SwingLineData, type GrappleLineData } from '../../store/gameStore';
+import { useGameStore, type HookProjectileData, type DragHookData, type GrappleTrapData, type SwingLineData, type GrappleLineData, type EarthWallData } from '../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../hooks/usePhysics';
 import { damageNpc } from '../ui/GameConsole';
 
@@ -41,13 +41,52 @@ const HOOKSHOT_COLORS = {
 
 // ============================================================================
 // HOOK PROJECTILE - Short range chain hooks (basic attack)
+// Features a proper hook with energy rope, shoots out and retracts
+// FULLY OPTIMIZED: Zero state updates in useFrame, all refs, pre-allocated objects
 // ============================================================================
 
-const HOOK_SPEED = 60;
-const HOOK_MAX_DISTANCE = 12;
+const HOOK_SPEED = 38;
+const HOOK_MAX_DISTANCE = 10; // Reduced for close-range
 const HOOK_DAMAGE = 25;
 const HOOK_HIT_RADIUS = 1.0;
-const HOOK_RETRACT_SPEED = 80;
+const HOOK_RETRACT_SPEED = 50;
+
+// Hand position offset from player feet (matches spawn position in PlayerController)
+const HAND_HEIGHT = 0.3;
+
+// Pre-allocated vectors to avoid GC pressure in useFrame (module-level singletons)
+const _hookDir = new THREE.Vector3();
+const _hookQuat = new THREE.Quaternion();
+const _hookForward = new THREE.Vector3(0, 0, -1); // Pre-allocated unit vector
+const _ropeMid = new THREE.Vector3();
+const _ropeEnd = new THREE.Vector3();
+
+// Pre-create shared materials for rope (created once, shared across all hooks)
+const ROPE_MATERIAL_MAIN = new THREE.MeshBasicMaterial({ 
+  color: HOOKSHOT_COLORS.energy, 
+  transparent: true, 
+  opacity: 0.9 
+});
+const ROPE_MATERIAL_GLOW = new THREE.MeshBasicMaterial({ 
+  color: HOOKSHOT_COLORS.energyGlow, 
+  transparent: true, 
+  opacity: 0.4 
+});
+const ROPE_MATERIAL_CORE = new THREE.MeshBasicMaterial({ 
+  color: 0xffffff, 
+  transparent: true, 
+  opacity: 0.8 
+});
+
+// Shared hook materials (avoid creating materials per hook instance)
+const HOOK_MATERIALS = {
+  ring: new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.2, side: THREE.DoubleSide }),
+  shaft: new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.85, roughness: 0.25 }),
+  crown: new THREE.MeshStandardMaterial({ color: 0x777777, metalness: 0.85, roughness: 0.25 }),
+  fluke: new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.9, roughness: 0.15 }),
+  tip: new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.95, roughness: 0.1 }),
+  glow: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.3 }),
+};
 
 interface HookProjectileProps {
   hook: HookProjectileData;
@@ -56,204 +95,243 @@ interface HookProjectileProps {
 function HookProjectile({ hook }: HookProjectileProps) {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
-  const ropeRef = useRef<THREE.Mesh>(null);
-  const hasHitRef = useRef(false);
+  const ropeMainRef = useRef<THREE.Mesh>(null);
+  const ropeGlowRef = useRef<THREE.Mesh>(null);
+  const ropeCoreRef = useRef<THREE.Mesh>(null);
   
-  const currentPos = useRef({ ...hook.position });
+  // All state tracked via refs - NO useState, NO store updates in render loop
+  const hasHitRef = useRef(false);
+  const hookStateRef = useRef<'extending' | 'retracting'>(hook.state as 'extending' | 'retracting');
+  const currentPosRef = useRef({ x: hook.position.x, y: hook.position.y, z: hook.position.z });
+  const playerPosRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
+  const isFirstFrameRef = useRef(true);
+  const shouldRemoveRef = useRef(false);
+  
+  // Cache velocity values (they don't change)
+  const velX = hook.velocity.x;
+  const velY = hook.velocity.y;
+  const velZ = hook.velocity.z;
+  const speed = Math.sqrt(velX * velX + velY * velY + velZ * velZ);
+  const dirX = velX / speed;
+  const dirY = velY / speed;
+  const dirZ = velZ / speed;
+  
+  // Get store actions once (not in useFrame)
   const removeHookProjectile = useGameStore(state => state.removeHookProjectile);
-  const updateHookProjectile = useGameStore(state => state.updateHookProjectile);
   
   useFrame((_, delta) => {
-    if (!groupRef.current || !hookRef.current || !ropeRef.current) return;
+    if (!hookRef.current || shouldRemoveRef.current) return;
     
-    const { players, localPlayer } = useGameStore.getState();
+    // Get player position without triggering re-renders
+    const state = useGameStore.getState();
+    const localPlayer = state.localPlayer;
+    const players = state.players;
     
-    // Calculate distance from start
-    const dx = currentPos.current.x - hook.startPosition.x;
-    const dy = currentPos.current.y - hook.startPosition.y;
-    const dz = currentPos.current.z - hook.startPosition.z;
-    const distanceFromStart = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    // Determine target player position
+    let targetX: number, targetY: number, targetZ: number;
+    if (localPlayer && hook.ownerId === localPlayer.id) {
+      targetX = localPlayer.position.x;
+      targetY = localPlayer.position.y + HAND_HEIGHT;
+      targetZ = localPlayer.position.z;
+    } else {
+      const owner = players.get(hook.ownerId);
+      if (owner) {
+        targetX = owner.position.x;
+        targetY = owner.position.y + HAND_HEIGHT;
+        targetZ = owner.position.z;
+      } else {
+        targetX = hook.startPosition.x;
+        targetY = hook.startPosition.y;
+        targetZ = hook.startPosition.z;
+      }
+    }
     
-    if (hook.state === 'extending') {
+    // Smooth lerp for player position (snap on first frame)
+    const lerpFactor = isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
+    playerPosRef.current.x += (targetX - playerPosRef.current.x) * lerpFactor;
+    playerPosRef.current.y += (targetY - playerPosRef.current.y) * lerpFactor;
+    playerPosRef.current.z += (targetZ - playerPosRef.current.z) * lerpFactor;
+    isFirstFrameRef.current = false;
+    
+    const pX = playerPosRef.current.x;
+    const pY = playerPosRef.current.y;
+    const pZ = playerPosRef.current.z;
+    
+    const curPos = currentPosRef.current;
+    
+    if (hookStateRef.current === 'extending') {
       // Move forward
-      currentPos.current.x += hook.velocity.x * delta;
-      currentPos.current.y += hook.velocity.y * delta;
-      currentPos.current.z += hook.velocity.z * delta;
+      curPos.x += velX * delta;
+      curPos.y += velY * delta;
+      curPos.z += velZ * delta;
       
       // Check max distance
-      if (distanceFromStart >= hook.maxDistance) {
-        updateHookProjectile(hook.id, { state: 'retracting' });
+      const dx = curPos.x - pX;
+      const dy = curPos.y - pY;
+      const dz = curPos.z - pZ;
+      if (dx * dx + dy * dy + dz * dz >= HOOK_MAX_DISTANCE * HOOK_MAX_DISTANCE) {
+        hookStateRef.current = 'retracting';
       }
       
-      // Check terrain collision
+      // Terrain collision (throttled - not every frame)
       if (isPhysicsReady()) {
-        const speed = Math.sqrt(hook.velocity.x ** 2 + hook.velocity.y ** 2 + hook.velocity.z ** 2);
-        const dir = {
-          x: hook.velocity.x / speed,
-          y: hook.velocity.y / speed,
-          z: hook.velocity.z / speed,
-        };
-        const hit = raycastDirection(
-          currentPos.current.x, currentPos.current.y, currentPos.current.z,
-          dir.x, dir.y, dir.z,
-          delta * speed + 0.5
-        );
+        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5);
         if (hit?.hit) {
-          updateHookProjectile(hook.id, { state: 'retracting' });
+          hookStateRef.current = 'retracting';
         }
       }
       
-      // Check enemy collision
-      if (!hasHitRef.current) {
+      // Enemy collision
+      if (!hasHitRef.current && localPlayer) {
         for (const [playerId, player] of players) {
-          if (playerId === localPlayer?.id) continue;
-          if (player.state !== 'alive') continue;
-          if (localPlayer && player.team === localPlayer.team) continue;
+          if (playerId === localPlayer.id || player.state !== 'alive') continue;
+          if (player.team === localPlayer.team) continue;
           
-          const pdx = player.position.x - currentPos.current.x;
-          const pdy = (player.position.y + 0.9) - currentPos.current.y;
-          const pdz = player.position.z - currentPos.current.z;
-          const distance = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
+          const pdx = player.position.x - curPos.x;
+          const pdy = (player.position.y + 0.9) - curPos.y;
+          const pdz = player.position.z - curPos.z;
           
-          if (distance <= HOOK_HIT_RADIUS) {
+          if (pdx * pdx + pdy * pdy + pdz * pdz <= HOOK_HIT_RADIUS * HOOK_HIT_RADIUS) {
             hasHitRef.current = true;
-            console.log(`[HookProjectile] HIT! ${player.name}`);
-            
             if (playerId.startsWith('npc_')) {
-              const result = damageNpc(playerId, HOOK_DAMAGE);
-              if (result) {
-                console.log(`[HookProjectile] Dealt ${HOOK_DAMAGE} damage to ${result.npcName}`);
-              }
+              damageNpc(playerId, HOOK_DAMAGE);
             }
-            
-            updateHookProjectile(hook.id, { state: 'retracting' });
+            hookStateRef.current = 'retracting';
             break;
           }
         }
       }
-    } else if (hook.state === 'retracting') {
-      // Move back toward start position
-      const toStartX = hook.startPosition.x - currentPos.current.x;
-      const toStartY = hook.startPosition.y - currentPos.current.y;
-      const toStartZ = hook.startPosition.z - currentPos.current.z;
-      const toStartDist = Math.sqrt(toStartX * toStartX + toStartY * toStartY + toStartZ * toStartZ);
+    } else {
+      // Retracting - move toward player
+      const toX = pX - curPos.x;
+      const toY = pY - curPos.y;
+      const toZ = pZ - curPos.z;
+      const distSq = toX * toX + toY * toY + toZ * toZ;
       
-      if (toStartDist < 0.5) {
+      if (distSq < 0.25) { // 0.5^2
+        shouldRemoveRef.current = true;
         removeHookProjectile(hook.id);
         return;
       }
       
-      const retractSpeed = HOOK_RETRACT_SPEED * delta;
-      currentPos.current.x += (toStartX / toStartDist) * retractSpeed;
-      currentPos.current.y += (toStartY / toStartDist) * retractSpeed;
-      currentPos.current.z += (toStartZ / toStartDist) * retractSpeed;
+      const dist = Math.sqrt(distSq);
+      const retractDelta = HOOK_RETRACT_SPEED * delta;
+      curPos.x += (toX / dist) * retractDelta;
+      curPos.y += (toY / dist) * retractDelta;
+      curPos.z += (toZ / dist) * retractDelta;
     }
     
-    // Update visual positions
-    hookRef.current.position.set(currentPos.current.x, currentPos.current.y, currentPos.current.z);
+    // Update hook position directly
+    hookRef.current.position.set(curPos.x, curPos.y, curPos.z);
     
-    // Point hook in direction of travel
-    const vel = hook.state === 'extending' 
-      ? new THREE.Vector3(hook.velocity.x, hook.velocity.y, hook.velocity.z)
-      : new THREE.Vector3(
-          hook.startPosition.x - currentPos.current.x,
-          hook.startPosition.y - currentPos.current.y,
-          hook.startPosition.z - currentPos.current.z
-        );
-    if (vel.length() > 0.01) {
-      vel.normalize();
-      const quat = new THREE.Quaternion();
-      quat.setFromUnitVectors(new THREE.Vector3(0, 0, -1), vel);
-      hookRef.current.quaternion.copy(quat);
+    // Update hook orientation
+    const hdx = curPos.x - pX;
+    const hdy = curPos.y - pY;
+    const hdz = curPos.z - pZ;
+    const hLen = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
+    
+    if (hLen > 0.01) {
+      _hookDir.set(hdx / hLen, hdy / hLen, hdz / hLen);
+      _hookQuat.setFromUnitVectors(_hookForward, _hookDir);
+      hookRef.current.quaternion.copy(_hookQuat);
     }
     
-    // Update rope - use localPlayer already fetched above for start position
-    let ropeStartPos = hook.startPosition;
-    if (localPlayer && hook.ownerId === localPlayer.id) {
-      ropeStartPos = {
-        x: localPlayer.position.x,
-        y: localPlayer.position.y + 0.6,
-        z: localPlayer.position.z,
-      };
+    // Update rope meshes directly (no React state)
+    _ropeEnd.set(curPos.x, curPos.y, curPos.z);
+    _ropeMid.set((pX + curPos.x) * 0.5, (pY + curPos.y) * 0.5, (pZ + curPos.z) * 0.5);
+    
+    if (ropeMainRef.current) {
+      ropeMainRef.current.position.copy(_ropeMid);
+      ropeMainRef.current.scale.set(0.025, hLen, 0.025);
+      ropeMainRef.current.lookAt(_ropeEnd);
+      ropeMainRef.current.rotateX(Math.PI / 2);
     }
-    
-    const ropeStart = new THREE.Vector3(ropeStartPos.x, ropeStartPos.y, ropeStartPos.z);
-    const ropeEnd = new THREE.Vector3(currentPos.current.x, currentPos.current.y, currentPos.current.z);
-    const ropeMid = ropeStart.clone().add(ropeEnd).multiplyScalar(0.5);
-    const ropeLength = ropeStart.distanceTo(ropeEnd);
-    
-    ropeRef.current.position.copy(ropeMid);
-    ropeRef.current.scale.set(0.04, ropeLength, 0.04);
-    ropeRef.current.lookAt(ropeEnd);
-    ropeRef.current.rotateX(Math.PI / 2);
+    if (ropeGlowRef.current) {
+      ropeGlowRef.current.position.copy(_ropeMid);
+      ropeGlowRef.current.scale.set(0.05, hLen, 0.05);
+      ropeGlowRef.current.lookAt(_ropeEnd);
+      ropeGlowRef.current.rotateX(Math.PI / 2);
+    }
+    if (ropeCoreRef.current) {
+      ropeCoreRef.current.position.copy(_ropeMid);
+      ropeCoreRef.current.scale.set(0.012, hLen, 0.012);
+      ropeCoreRef.current.lookAt(_ropeEnd);
+      ropeCoreRef.current.rotateX(Math.PI / 2);
+    }
   });
   
   return (
     <group ref={groupRef}>
-      {/* Small grappling hook - for basic attack */}
+      {/* Hook head - uses shared materials */}
       <group ref={hookRef} position={[hook.position.x, hook.position.y, hook.position.z]}>
-        {/* Hook shaft */}
-        <mesh geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.05, 0.2, 0.05]} rotation={[Math.PI / 2, 0, 0]}>
-          <meshStandardMaterial color={0x666666} metalness={0.8} roughness={0.3} />
-        </mesh>
-        
-        {/* Hook tip - pointed */}
-        <mesh position={[0, 0, -0.15]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.1, 0.06]}>
-          <meshStandardMaterial color={0xaaaaaa} metalness={0.9} roughness={0.2} />
-        </mesh>
-        
-        {/* Curved hook claw */}
-        <group position={[0, 0, -0.2]}>
-          {/* Main curved part */}
-          <mesh position={[0, -0.08, 0]} rotation={[0.4, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.03, 0.15, 0.03]}>
-            <meshStandardMaterial color={0x888888} metalness={0.8} roughness={0.3} />
-          </mesh>
-          {/* Hook barb */}
-          <mesh position={[0, -0.18, 0.05]} rotation={[-0.7, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.025, 0.08, 0.025]}>
-            <meshStandardMaterial color={0xcccccc} metalness={0.9} roughness={0.2} />
-          </mesh>
-        </group>
-        
-        {/* Small light on hook */}
-        <pointLight color={0xffaa00} intensity={1} distance={2} decay={2} />
+        <mesh position={[0, 0, 0.25]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.15, 0.15, 0.06]} material={HOOK_MATERIALS.ring} />
+        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.6, 0.06]} material={HOOK_MATERIALS.shaft} />
+        <mesh position={[0, 0, 0.1]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.04, 0.35, 0.04]} material={HOOK_MATERIALS.crown} />
+        {/* Left arm */}
+        <mesh position={[-0.1, 0, -0.2]} rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.045, 0.25, 0.045]} material={HOOK_MATERIALS.shaft} />
+        <mesh position={[-0.24, 0, -0.3]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.14, 0.03]} material={HOOK_MATERIALS.fluke} />
+        {/* Right arm */}
+        <mesh position={[0.1, 0, -0.2]} rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.045, 0.25, 0.045]} material={HOOK_MATERIALS.shaft} />
+        <mesh position={[0.24, 0, -0.3]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.14, 0.03]} material={HOOK_MATERIALS.fluke} />
+        {/* Tip */}
+        <mesh position={[0, 0, -0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.12, 0.08]} material={HOOK_MATERIALS.tip} />
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2} material={HOOK_MATERIALS.glow} />
+        <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={3} decay={2} />
       </group>
       
-      {/* Chain/rope */}
-      <mesh ref={ropeRef} geometry={SHARED_GEOMETRIES.cylinder8}>
-        <meshStandardMaterial color={0x8b7355} metalness={0.3} roughness={0.7} />
-      </mesh>
+      {/* Rope layers - updated via refs */}
+      <mesh ref={ropeMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_MAIN} />
+      <mesh ref={ropeGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_GLOW} />
+      <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_CORE} />
     </group>
   );
 }
 
 // ============================================================================
-// DRAG HOOK - Long range hook that pulls enemies (heavy attack)
-// Looks like a large grappling hook with thick chain
+// DRAG HOOK - Long range hook that pulls enemies (heavy attack / right click)
+// SAME MECHANICS AS LEFT CLICK: Extends out, retracts back to player
+// If it hits an enemy, it pulls them back with it
+// OVER-THE-TOP STYLING: Bigger hook, thicker glowing chains
 // ============================================================================
 
-const DRAG_HOOK_SPEED = 50;
-const DRAG_HOOK_MAX_DISTANCE = 35;
+const DRAG_HOOK_SPEED = 45;
+const DRAG_HOOK_MAX_DISTANCE = 30; // Increased for long-range pulls
 const DRAG_HOOK_DAMAGE = 40;
-const DRAG_HOOK_PULL_SPEED = 25;
+const DRAG_HOOK_RETRACT_SPEED = 55;
 const DRAG_HOOK_HIT_RADIUS = 1.2;
 
-// Create a custom hook geometry for better visual
-const HOOK_GEOMETRY = (() => {
-  const shape = new THREE.Shape();
-  // Draw a hook profile
-  shape.moveTo(0, 0);
-  shape.lineTo(0.15, 0);
-  shape.lineTo(0.15, 0.4);
-  shape.quadraticCurveTo(0.15, 0.55, 0.05, 0.6);
-  shape.quadraticCurveTo(-0.1, 0.65, -0.15, 0.5);
-  shape.lineTo(-0.12, 0.45);
-  shape.quadraticCurveTo(-0.05, 0.55, 0.05, 0.5);
-  shape.lineTo(0.05, 0);
-  shape.closePath();
-  
-  const extrudeSettings = { depth: 0.08, bevelEnabled: false };
-  return new THREE.ExtrudeGeometry(shape, extrudeSettings);
-})();
+// Hand height for drag hook
+const DRAG_HOOK_HAND_HEIGHT = 0.3;
+
+// Pre-allocated vectors for drag hook calculations (avoid GC pressure)
+const _dragHookDir = new THREE.Vector3();
+const _dragHookQuat = new THREE.Quaternion();
+const _dragHookForward = new THREE.Vector3(0, 0, -1);
+const _dragRopeMid = new THREE.Vector3();
+const _dragRopeEnd = new THREE.Vector3();
+
+// Pre-create shared materials for heavy chain (more intense than basic attack)
+const HEAVY_CHAIN_MATERIAL_MAIN = new THREE.MeshBasicMaterial({ 
+  color: HOOKSHOT_COLORS.energy, 
+  transparent: true, 
+  opacity: 1.0 
+});
+const HEAVY_CHAIN_MATERIAL_OUTER = new THREE.MeshBasicMaterial({ 
+  color: HOOKSHOT_COLORS.energyGlow, 
+  transparent: true, 
+  opacity: 0.6 
+});
+const HEAVY_CHAIN_MATERIAL_CORE = new THREE.MeshBasicMaterial({ 
+  color: 0xffffff, 
+  transparent: true, 
+  opacity: 0.9 
+});
+// Extra outer glow layer for heavy attack
+const HEAVY_CHAIN_MATERIAL_MEGA_GLOW = new THREE.MeshBasicMaterial({ 
+  color: HOOKSHOT_COLORS.energy, 
+  transparent: true, 
+  opacity: 0.25 
+});
 
 interface DragHookProps {
   hook: DragHookData;
@@ -262,261 +340,247 @@ interface DragHookProps {
 function DragHookEffect({ hook }: DragHookProps) {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
-  const ropeRef = useRef<THREE.Mesh>(null);
-  const chainSegmentsRef = useRef<(THREE.Mesh | null)[]>([]);
+  
+  // Multi-layer rope refs for over-the-top chain effect
+  const chainMainRef = useRef<THREE.Mesh>(null);
+  const chainOuterRef = useRef<THREE.Mesh>(null);
+  const chainCoreRef = useRef<THREE.Mesh>(null);
+  const chainMegaGlowRef = useRef<THREE.Mesh>(null);
+  
   const glowRef = useRef<THREE.Mesh>(null);
   
-  const currentPos = useRef({ ...hook.position });
-  const targetPosRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  // All state tracked via refs - SAME PATTERN AS LEFT CLICK
+  const hookStateRef = useRef<'extending' | 'retracting'>(hook.state === 'flying' ? 'extending' : 'retracting');
+  const currentPosRef = useRef({ x: hook.position.x, y: hook.position.y, z: hook.position.z });
+  const playerPosRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
+  const isFirstFrameRef = useRef(true);
+  const shouldRemoveRef = useRef(false);
+  const hasHitRef = useRef(false);
+  const hookedTargetIdRef = useRef<string | null>(null);
+  
+  // Cache velocity values (they don't change)
+  const velX = hook.velocity.x;
+  const velY = hook.velocity.y;
+  const velZ = hook.velocity.z;
+  const speed = Math.sqrt(velX * velX + velY * velY + velZ * velZ);
+  const dirX = velX / speed;
+  const dirY = velY / speed;
+  const dirZ = velZ / speed;
+  
   const removeDragHook = useGameStore(state => state.removeDragHook);
-  const updateDragHook = useGameStore(state => state.updateDragHook);
   
   useFrame((state, delta) => {
-    if (!groupRef.current || !hookRef.current) return;
+    if (!hookRef.current || shouldRemoveRef.current) return;
     
     const time = state.clock.elapsedTime;
-    const { players, localPlayer } = useGameStore.getState();
+    const storeState = useGameStore.getState();
+    const { players, localPlayer } = storeState;
     
-    // Update hook start position to follow player
-    let startPos = hook.startPosition;
+    // Determine target player position (same as left click)
+    let targetX: number, targetY: number, targetZ: number;
     if (localPlayer && hook.ownerId === localPlayer.id) {
-      startPos = {
-        x: localPlayer.position.x,
-        y: localPlayer.position.y + 0.6,
-        z: localPlayer.position.z,
-      };
+      targetX = localPlayer.position.x;
+      targetY = localPlayer.position.y + DRAG_HOOK_HAND_HEIGHT;
+      targetZ = localPlayer.position.z;
+    } else {
+      const owner = players.get(hook.ownerId);
+      if (owner) {
+        targetX = owner.position.x;
+        targetY = owner.position.y + DRAG_HOOK_HAND_HEIGHT;
+        targetZ = owner.position.z;
+      } else {
+        targetX = hook.startPosition.x;
+        targetY = hook.startPosition.y;
+        targetZ = hook.startPosition.z;
+      }
     }
     
-    if (hook.state === 'flying') {
-      // Move forward
-      currentPos.current.x += hook.velocity.x * delta;
-      currentPos.current.y += hook.velocity.y * delta;
-      currentPos.current.z += hook.velocity.z * delta;
+    // Smooth lerp for player position (snap on first frame) - SAME AS LEFT CLICK
+    const lerpFactor = isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
+    playerPosRef.current.x += (targetX - playerPosRef.current.x) * lerpFactor;
+    playerPosRef.current.y += (targetY - playerPosRef.current.y) * lerpFactor;
+    playerPosRef.current.z += (targetZ - playerPosRef.current.z) * lerpFactor;
+    isFirstFrameRef.current = false;
+    
+    const pX = playerPosRef.current.x;
+    const pY = playerPosRef.current.y;
+    const pZ = playerPosRef.current.z;
+    
+    const curPos = currentPosRef.current;
+    
+    if (hookStateRef.current === 'extending') {
+      // Move forward - SAME AS LEFT CLICK
+      curPos.x += velX * delta;
+      curPos.y += velY * delta;
+      curPos.z += velZ * delta;
       
-      // Check max distance
-      const dx = currentPos.current.x - startPos.x;
-      const dy = currentPos.current.y - startPos.y;
-      const dz = currentPos.current.z - startPos.z;
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      
-      if (dist >= DRAG_HOOK_MAX_DISTANCE) {
-        removeDragHook(hook.id);
-        return;
+      // Check max distance - if reached, start retracting
+      const dx = curPos.x - pX;
+      const dy = curPos.y - pY;
+      const dz = curPos.z - pZ;
+      if (dx * dx + dy * dy + dz * dz >= DRAG_HOOK_MAX_DISTANCE * DRAG_HOOK_MAX_DISTANCE) {
+        hookStateRef.current = 'retracting';
       }
       
-      // Check terrain collision
+      // Terrain collision - if hit, start retracting
       if (isPhysicsReady()) {
-        const speed = Math.sqrt(hook.velocity.x ** 2 + hook.velocity.y ** 2 + hook.velocity.z ** 2);
-        const dir = { x: hook.velocity.x / speed, y: hook.velocity.y / speed, z: hook.velocity.z / speed };
-        const hit = raycastDirection(
-          currentPos.current.x, currentPos.current.y, currentPos.current.z,
-          dir.x, dir.y, dir.z,
-          delta * speed + 0.3
-        );
+        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5);
         if (hit?.hit) {
-          removeDragHook(hook.id);
-          return;
+          hookStateRef.current = 'retracting';
         }
       }
       
-      // Check enemy collision
+      // Enemy collision - if hit, start retracting AND pull enemy
+      if (!hasHitRef.current && localPlayer) {
       for (const [playerId, player] of players) {
-        if (playerId === localPlayer?.id) continue;
-        if (player.state !== 'alive') continue;
-        if (localPlayer && player.team === localPlayer.team) continue;
+          if (playerId === localPlayer.id || player.state !== 'alive') continue;
+          if (player.team === localPlayer.team) continue;
         
-        const pdx = player.position.x - currentPos.current.x;
-        const pdy = (player.position.y + 0.9) - currentPos.current.y;
-        const pdz = player.position.z - currentPos.current.z;
-        const distance = Math.sqrt(pdx * pdx + pdy * pdy + pdz * pdz);
-        
-        if (distance <= DRAG_HOOK_HIT_RADIUS) {
-          console.log(`[DragHook] HOOKED! ${player.name}`);
-          updateDragHook(hook.id, { 
-            state: 'attached', 
-            targetId: playerId,
-            position: currentPos.current,
-          });
-          targetPosRef.current = { ...player.position };
+          const pdx = player.position.x - curPos.x;
+          const pdy = (player.position.y + 0.9) - curPos.y;
+          const pdz = player.position.z - curPos.z;
           
-          // Apply initial damage
+          if (pdx * pdx + pdy * pdy + pdz * pdz <= DRAG_HOOK_HIT_RADIUS * DRAG_HOOK_HIT_RADIUS) {
+            hasHitRef.current = true;
+            hookedTargetIdRef.current = playerId;
           if (playerId.startsWith('npc_')) {
             damageNpc(playerId, DRAG_HOOK_DAMAGE);
           }
+            hookStateRef.current = 'retracting';
           break;
         }
       }
-    } else if (hook.state === 'attached' || hook.state === 'pulling') {
-      // Pull target toward player
-      if (hook.targetId) {
-        const target = players.get(hook.targetId);
-        if (target && target.state === 'alive') {
-          // Keep hook attached to target
-          currentPos.current.x = target.position.x;
-          currentPos.current.y = target.position.y + 0.9;
-          currentPos.current.z = target.position.z;
-          
-          // Check if target is close enough
-          const toPlayer = {
-            x: startPos.x - target.position.x,
-            y: startPos.y - 0.6 - target.position.y,
-            z: startPos.z - target.position.z,
-          };
-          const dist = Math.sqrt(toPlayer.x ** 2 + toPlayer.y ** 2 + toPlayer.z ** 2);
-          
-          if (dist < 2) {
-            removeDragHook(hook.id);
-            return;
           }
         } else {
+      // Retracting - move toward player - SAME AS LEFT CLICK
+      const toX = pX - curPos.x;
+      const toY = pY - curPos.y;
+      const toZ = pZ - curPos.z;
+      const distSq = toX * toX + toY * toY + toZ * toZ;
+      
+      if (distSq < 0.25) { // 0.5^2 - close enough to player, remove
+        shouldRemoveRef.current = true;
           removeDragHook(hook.id);
           return;
         }
-      }
+      
+      const dist = Math.sqrt(distSq);
+      const retractDelta = DRAG_HOOK_RETRACT_SPEED * delta;
+      curPos.x += (toX / dist) * retractDelta;
+      curPos.y += (toY / dist) * retractDelta;
+      curPos.z += (toZ / dist) * retractDelta;
     }
     
-    // Update hook position
-    hookRef.current.position.set(currentPos.current.x, currentPos.current.y, currentPos.current.z);
+    // Update hook position directly
+    hookRef.current.position.set(curPos.x, curPos.y, curPos.z);
     
-    // Point hook in direction of travel
-    const dir = hook.state === 'flying'
-      ? new THREE.Vector3(hook.velocity.x, hook.velocity.y, hook.velocity.z).normalize()
-      : new THREE.Vector3(
-          startPos.x - currentPos.current.x,
-          startPos.y - currentPos.current.y,
-          startPos.z - currentPos.current.z
-        ).normalize();
+    // Update hook orientation - point away from player
+    const hdx = curPos.x - pX;
+    const hdy = curPos.y - pY;
+    const hdz = curPos.z - pZ;
+    const hLen = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
     
-    if (dir.length() > 0.01) {
-      const quat = new THREE.Quaternion();
-      quat.setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
-      hookRef.current.quaternion.copy(quat);
+    if (hLen > 0.01) {
+      _dragHookDir.set(hdx / hLen, hdy / hLen, hdz / hLen);
+      _dragHookQuat.setFromUnitVectors(_dragHookForward, _dragHookDir);
+      hookRef.current.quaternion.copy(_dragHookQuat);
     }
     
-    // Update rope
-    const ropeStart = new THREE.Vector3(startPos.x, startPos.y, startPos.z);
-    const ropeEnd = new THREE.Vector3(currentPos.current.x, currentPos.current.y, currentPos.current.z);
-    const ropeMid = ropeStart.clone().add(ropeEnd).multiplyScalar(0.5);
-    const ropeLength = ropeStart.distanceTo(ropeEnd);
+    // Update chain meshes directly (no React state) - SAME PATTERN AS LEFT CLICK
+    _dragRopeEnd.set(curPos.x, curPos.y, curPos.z);
+    _dragRopeMid.set((pX + curPos.x) * 0.5, (pY + curPos.y) * 0.5, (pZ + curPos.z) * 0.5);
     
-    if (ropeRef.current) {
-      ropeRef.current.position.copy(ropeMid);
-      ropeRef.current.scale.set(0.04, ropeLength, 0.04);
-      ropeRef.current.lookAt(ropeEnd);
-      ropeRef.current.rotateX(Math.PI / 2);
+    // Main energy layer (thicker than left click)
+    if (chainMainRef.current) {
+      chainMainRef.current.position.copy(_dragRopeMid);
+      chainMainRef.current.scale.set(0.045, hLen, 0.045);
+      chainMainRef.current.lookAt(_dragRopeEnd);
+      chainMainRef.current.rotateX(Math.PI / 2);
+    }
+    // Outer glow layer (thicker than left click)
+    if (chainOuterRef.current) {
+      chainOuterRef.current.position.copy(_dragRopeMid);
+      chainOuterRef.current.scale.set(0.08, hLen, 0.08);
+      chainOuterRef.current.lookAt(_dragRopeEnd);
+      chainOuterRef.current.rotateX(Math.PI / 2);
+    }
+    // Bright core (thicker than left click)
+    if (chainCoreRef.current) {
+      chainCoreRef.current.position.copy(_dragRopeMid);
+      chainCoreRef.current.scale.set(0.02, hLen, 0.02);
+      chainCoreRef.current.lookAt(_dragRopeEnd);
+      chainCoreRef.current.rotateX(Math.PI / 2);
+    }
+    // Mega outer glow (extra layer for heavy attack)
+    if (chainMegaGlowRef.current) {
+      chainMegaGlowRef.current.position.copy(_dragRopeMid);
+      chainMegaGlowRef.current.scale.set(0.12, hLen, 0.12);
+      chainMegaGlowRef.current.lookAt(_dragRopeEnd);
+      chainMegaGlowRef.current.rotateX(Math.PI / 2);
     }
     
-    // Animate glow
+    // Animate hook glow effects
     if (glowRef.current) {
-      const pulse = 0.8 + Math.sin(time * 10) * 0.2;
-      glowRef.current.scale.setScalar(pulse * 0.3);
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.5 + Math.sin(time * 8) * 0.2;
+      const pulse = 0.9 + Math.sin(time * 12) * 0.3;
+      glowRef.current.scale.setScalar(pulse * 0.4);
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.6 + Math.sin(time * 10) * 0.2;
     }
   });
   
   return (
     <group ref={groupRef}>
-      {/* MASSIVE GRAPPLING HOOK - Very visible drag hook */}
-      <group ref={hookRef}>
-        {/* Main hook shaft - thick and industrial */}
-        <mesh geometry={SHARED_GEOMETRIES.cylinder12} scale={[0.12, 0.5, 0.12]} rotation={[Math.PI / 2, 0, 0]}>
-          <meshStandardMaterial color={0x444444} metalness={0.85} roughness={0.25} />
-        </mesh>
+      {/* === HEAVY HOOK - Bigger version of left click hook === */}
+      <group ref={hookRef} position={[hook.position.x, hook.position.y, hook.position.z]}>
+        {/* Ring at back where rope attaches - BIGGER */}
+        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.22, 0.22, 0.08]} material={HOOK_MATERIALS.ring} />
         
-        {/* Reinforcement rings on shaft */}
-        <mesh position={[0, 0, 0.1]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.14, 0.14, 0.03]}>
-          <meshStandardMaterial color={0x666666} metalness={0.8} roughness={0.3} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh position={[0, 0, -0.1]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.14, 0.14, 0.03]}>
-          <meshStandardMaterial color={0x666666} metalness={0.8} roughness={0.3} side={THREE.DoubleSide} />
-        </mesh>
+        {/* Main shaft - THICKER */}
+        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.09, 0.75, 0.09]} material={HOOK_MATERIALS.shaft} />
         
-        {/* Hook tip - large pointed spear head */}
-        <mesh position={[0, 0, -0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.15, 0.25, 0.15]}>
-          <meshStandardMaterial color={0xdddddd} metalness={0.95} roughness={0.15} />
-        </mesh>
+        {/* Crown/crossbar - WIDER */}
+        <mesh position={[0, 0, 0.12]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.055, 0.45, 0.055]} material={HOOK_MATERIALS.crown} />
         
-        {/* THE HOOK CLAW - Large curved grappling hook */}
-        <group position={[0, 0, -0.5]}>
-          {/* Main curved hook arm - pointing down and back */}
-          <mesh position={[0, -0.15, 0.05]} rotation={[0.4, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.07, 0.35, 0.07]}>
-            <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
-          </mesh>
-          {/* Hook tip - curved back for grabbing */}
-          <mesh position={[0, -0.38, 0.18]} rotation={[-0.9, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.06, 0.18, 0.06]}>
-            <meshStandardMaterial color={0xeeeeee} metalness={0.95} roughness={0.1} />
-          </mesh>
+        {/* Left arm - BIGGER */}
+        <mesh position={[-0.14, 0, -0.25]} rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.32, 0.06]} material={HOOK_MATERIALS.shaft} />
+        <mesh position={[-0.32, 0, -0.38]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.18, 0.04]} material={HOOK_MATERIALS.fluke} />
           
-          {/* Side hooks for extra grabbing power */}
-          <mesh position={[0.12, -0.12, 0]} rotation={[0.3, 0.3, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.05, 0.25, 0.05]}>
-            <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
-          </mesh>
-          <mesh position={[0.18, -0.28, 0.1]} rotation={[-0.7, 0.3, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.12, 0.04]}>
-            <meshStandardMaterial color={0xeeeeee} metalness={0.95} roughness={0.1} />
-          </mesh>
-          
-          <mesh position={[-0.12, -0.12, 0]} rotation={[0.3, -0.3, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.05, 0.25, 0.05]}>
-            <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
-          </mesh>
-          <mesh position={[-0.18, -0.28, 0.1]} rotation={[-0.7, -0.3, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.12, 0.04]}>
-            <meshStandardMaterial color={0xeeeeee} metalness={0.95} roughness={0.1} />
-          </mesh>
-        </group>
+        {/* Right arm - BIGGER */}
+        <mesh position={[0.14, 0, -0.25]} rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.32, 0.06]} material={HOOK_MATERIALS.shaft} />
+        <mesh position={[0.32, 0, -0.38]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.18, 0.04]} material={HOOK_MATERIALS.fluke} />
         
-        {/* Ring at base where chain attaches */}
-        <mesh position={[0, 0, 0.3]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} scale={[0.15, 0.15, 0.06]}>
-          <meshStandardMaterial color={0x888888} metalness={0.8} roughness={0.3} side={THREE.DoubleSide} />
+        {/* Tip - BIGGER */}
+        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.18, 0.12]} material={HOOK_MATERIALS.tip} />
+        
+        {/* Energy glow - BIGGER and more intense */}
+        <mesh ref={glowRef} geometry={SHARED_GEOMETRIES.sphere8} scale={0.35} material={HOOK_MATERIALS.glow} />
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.5}>
+          <meshBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.2} />
         </mesh>
         
-        {/* ENERGY EFFECTS - Cyan energy surrounding the hook */}
-        <mesh ref={glowRef} geometry={SHARED_GEOMETRIES.sphere12} scale={0.5}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.35} />
-        </mesh>
-        
-        {/* Secondary glow - larger, more diffuse */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.7}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.15} />
-        </mesh>
-        
-        {/* Energy crackling effect around hook */}
-        <mesh position={[0, -0.3, -0.3]} rotation={[Math.PI / 4, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.25, 0.25, 0.02]}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.6} side={THREE.DoubleSide} />
-        </mesh>
-        
-        {/* Hook light - intense */}
-        <pointLight color={HOOKSHOT_COLORS.energy} intensity={5} distance={6} decay={2} />
-        <pointLight color={0xffffff} intensity={2} distance={3} decay={2} position={[0, 0, -0.4]} />
+        {/* Lights - MORE INTENSE */}
+        <pointLight color={HOOKSHOT_COLORS.energy} intensity={4} distance={5} decay={2} />
+        <pointLight color={0xffffff} intensity={2} distance={3} decay={2} position={[0, 0, -0.3]} />
       </group>
       
-      {/* HEAVY CHAIN - Energy infused */}
-      <mesh ref={ropeRef} geometry={SHARED_GEOMETRIES.cylinder12}>
-        <meshStandardMaterial 
-          color={0x555555} 
-          metalness={0.75} 
-          roughness={0.35}
-          emissive={HOOKSHOT_COLORS.energyGlow}
-          emissiveIntensity={0.15}
-        />
-      </mesh>
-      
-      {/* Chain energy glow effect - outer */}
-      {chainSegmentsRef.current.length === 0 && (
-        <mesh geometry={SHARED_GEOMETRIES.cylinder8}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.25} />
-        </mesh>
-      )}
+      {/* === HEAVY CHAIN - Multi-layer, thicker than left click === */}
+      <mesh ref={chainMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_MAIN} />
+      <mesh ref={chainOuterRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_OUTER} />
+      <mesh ref={chainCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_CORE} />
+      <mesh ref={chainMegaGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_MEGA_GLOW} />
     </group>
   );
 }
 
 // ============================================================================
-// GRAPPLE TRAP - AOE trap that hooks enemies (Ultimate)
+// GRAPPLE TRAP - AOE trap that hooks enemies (Ultimate / F ability)
+// THROWN LIKE A GRENADE: Flies in arc affected by gravity, lands and activates
+// VISUALS: Red circle border + hook device in center
 // ============================================================================
 
 const GRAPPLE_TRAP_RADIUS = 8;
-const GRAPPLE_TRAP_HOOK_DAMAGE = 30;
-const GRAPPLE_TRAP_DOT_DAMAGE = 10;
-const GRAPPLE_TRAP_PULL_STRENGTH = 15;
+const GRAPPLE_TRAP_DOT_DAMAGE = 15;
+const GRAPPLE_TRAP_GRAVITY = 25; // Gravity affecting the thrown device
+const GRAPPLE_TRAP_THROW_SPEED = 30; // Initial throw velocity
 
 interface GrappleTrapProps {
   trap: GrappleTrapData;
@@ -525,35 +589,107 @@ interface GrappleTrapProps {
 function GrappleTrapEffect({ trap }: GrappleTrapProps) {
   const groupRef = useRef<THREE.Group>(null);
   const deviceRef = useRef<THREE.Group>(null);
-  const chainsRef = useRef<(THREE.Mesh | null)[]>([]);
-  const pulseRingsRef = useRef<(THREE.Mesh | null)[]>([]);
+  const circleRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
+  
+  // Flying state for grenade arc
+  const isLandedRef = useRef(false);
+  const currentPosRef = useRef({ 
+    x: trap.startPosition?.x ?? trap.position.x, 
+    y: trap.startPosition?.y ?? trap.position.y, 
+    z: trap.startPosition?.z ?? trap.position.z 
+  });
+  const velocityRef = useRef({ 
+    x: trap.velocity?.x ?? 0, 
+    y: trap.velocity?.y ?? 0, 
+    z: trap.velocity?.z ?? 0 
+  });
+  const landedPosRef = useRef({ x: trap.position.x, y: trap.position.y, z: trap.position.z });
+  const landedTimeRef = useRef<number | null>(null);
   
   const lastDamageTimeRef = useRef<Map<string, number>>(new Map());
   
   useFrame((state, delta) => {
-    if (!groupRef.current) return;
+    if (!groupRef.current || !deviceRef.current) return;
     
     const time = state.clock.elapsedTime;
     const elapsed = (Date.now() - trap.startTime) / 1000;
-    const remaining = trap.duration - elapsed;
     
-    if (remaining <= 0) return;
+    // Check if trap has expired
+    if (landedTimeRef.current !== null) {
+      const landedElapsed = (Date.now() - landedTimeRef.current) / 1000;
+      if (landedElapsed >= trap.duration) return;
+    }
     
+    // === FLYING PHASE (grenade arc) ===
+    if (!isLandedRef.current) {
+      const pos = currentPosRef.current;
+      const vel = velocityRef.current;
+      
+      // Apply gravity
+      vel.y -= GRAPPLE_TRAP_GRAVITY * delta;
+      
+      // Move device
+      pos.x += vel.x * delta;
+      pos.y += vel.y * delta;
+      pos.z += vel.z * delta;
+      
+      // Check for ground collision
+      if (isPhysicsReady()) {
+        const groundCheck = checkGroundWithNormal(pos.x, pos.y + 2, pos.z, 10);
+        if (groundCheck && pos.y <= groundCheck.groundY + 0.1) {
+          // Landed!
+          isLandedRef.current = true;
+          landedPosRef.current = { x: pos.x, y: groundCheck.groundY, z: pos.z };
+          landedTimeRef.current = Date.now();
+          pos.y = groundCheck.groundY;
+        }
+      } else if (pos.y <= 0) {
+        // Fallback ground check
+        isLandedRef.current = true;
+        landedPosRef.current = { x: pos.x, y: 0, z: pos.z };
+        landedTimeRef.current = Date.now();
+        pos.y = 0;
+      }
+      
+      // Update device position while flying
+      groupRef.current.position.set(pos.x, pos.y, pos.z);
+      
+      // Spin while flying
+      deviceRef.current.rotation.x += delta * 8;
+      deviceRef.current.rotation.z += delta * 6;
+      
+      // Hide circle while flying
+      if (circleRef.current) {
+        circleRef.current.visible = false;
+      }
+      
+      return;
+    }
+    
+    // === LANDED PHASE (active trap) ===
     const { players, localPlayer } = useGameStore.getState();
+    const landedPos = landedPosRef.current;
     
-    // Check for players in AOE
+    // Position group at landed location
+    groupRef.current.position.set(landedPos.x, landedPos.y, landedPos.z);
+    
+    // Show and animate circle
+    if (circleRef.current) {
+      circleRef.current.visible = true;
+    }
+    
+    // Check for players in AOE and apply damage
     for (const [playerId, player] of players) {
       if (playerId === localPlayer?.id && trap.ownerTeam === localPlayer?.team) continue;
       if (player.state !== 'alive') continue;
       if (localPlayer && player.team === trap.ownerTeam) continue;
       
-      const dx = player.position.x - trap.position.x;
-      const dz = player.position.z - trap.position.z;
+      const dx = player.position.x - landedPos.x;
+      const dz = player.position.z - landedPos.z;
       const dist = Math.sqrt(dx * dx + dz * dz);
       
       if (dist <= trap.radius) {
-        // Apply DOT damage every second
         const lastDamage = lastDamageTimeRef.current.get(playerId) || 0;
         const now = Date.now();
         
@@ -562,126 +698,403 @@ function GrappleTrapEffect({ trap }: GrappleTrapProps) {
           
           if (playerId.startsWith('npc_')) {
             damageNpc(playerId, GRAPPLE_TRAP_DOT_DAMAGE);
-            console.log(`[GrappleTrap] DOT damage to ${player.name}`);
           }
         }
       }
     }
     
-    // Animate device rotation
-    if (deviceRef.current) {
-      deviceRef.current.rotation.y += delta * 2;
-      const bob = Math.sin(time * 3) * 0.1;
-      deviceRef.current.position.y = trap.position.y + 0.3 + bob;
-    }
+    // Animate device - slow spin when landed
+    deviceRef.current.rotation.y += delta * 1.5;
+    deviceRef.current.position.y = 0.4 + Math.sin(time * 2) * 0.05;
     
-    // Animate chains - extend outward
-    const numChains = 8;
-    chainsRef.current.forEach((chain, i) => {
-      if (chain) {
-        const angle = (i / numChains) * Math.PI * 2 + time * 0.5;
-        const extend = trap.radius * 0.8;
-        chain.position.set(
-          Math.cos(angle) * extend * 0.5,
-          0.1 + Math.sin(time * 4 + i) * 0.05,
-          Math.sin(angle) * extend * 0.5
-        );
-        chain.scale.set(0.03, extend, 0.03);
-        chain.rotation.set(0, angle, Math.PI / 2);
-      }
-    });
-    
-    // Animate pulse rings
-    pulseRingsRef.current.forEach((ring, i) => {
-      if (ring) {
-        const pulseProgress = ((time * 0.5 + i * 0.33) % 1);
-        const scale = 0.5 + pulseProgress * trap.radius;
-        ring.scale.set(scale, scale, 1);
-        (ring.material as THREE.MeshBasicMaterial).opacity = (1 - pulseProgress) * 0.5;
-      }
-    });
-    
-    // Update light
+    // Animate light pulse
     if (lightRef.current) {
-      lightRef.current.intensity = 3 + Math.sin(time * 6) * 1;
+      lightRef.current.intensity = 2 + Math.sin(time * 4) * 0.5;
     }
   });
   
+  // Check if already expired on mount
   const elapsed = (Date.now() - trap.startTime) / 1000;
-  if (elapsed >= trap.duration) return null;
+  if (elapsed >= trap.duration + 5) return null; // Extra time for flight
   
   return (
-    <group ref={groupRef} position={[trap.position.x, trap.position.y, trap.position.z]}>
-      {/* Central device */}
-      <group ref={deviceRef} position={[0, 0.3, 0]}>
-        {/* Core */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={0.25}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.trap} />
+    <group ref={groupRef} position={[currentPosRef.current.x, currentPosRef.current.y, currentPosRef.current.z]}>
+      {/* === HOOK DEVICE - Central mechanical trap device === */}
+      <group ref={deviceRef} position={[0, 0.4, 0]}>
+        {/* Main body - cylindrical core */}
+        <mesh geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.2, 0.15, 0.2]}>
+          <meshStandardMaterial color={0x3a3a3a} metalness={0.9} roughness={0.2} />
         </mesh>
-        {/* Outer ring */}
-        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} scale={[0.4, 0.4, 1]}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.trapGlow} transparent opacity={0.8} side={THREE.DoubleSide} />
+        
+        {/* Top cap with hook ring */}
+        <mesh position={[0, 0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.25, 0.05, 0.25]}>
+          <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
         </mesh>
-        {/* Spinning arms */}
-        {[0, 1, 2, 3].map(i => (
-          <mesh 
-            key={i} 
-            position={[Math.cos(i * Math.PI / 2) * 0.2, 0, Math.sin(i * Math.PI / 2) * 0.2]}
-            geometry={SHARED_GEOMETRIES.box}
-            scale={[0.1, 0.05, 0.3]}
-          >
-            <meshBasicMaterial color={HOOKSHOT_COLORS.metal} />
-          </mesh>
-        ))}
+        
+        {/* Hook attachment ring on top */}
+        <mesh position={[0, 0.15, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.12, 0.12, 0.04]}>
+          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} side={THREE.DoubleSide} />
+      </mesh>
+      
+        {/* Four hook arms extending outward */}
+        {[0, 1, 2, 3].map(i => {
+          const angle = (i * Math.PI / 2);
+          return (
+            <group key={i} rotation={[0, angle, 0]}>
+              {/* Arm */}
+              <mesh position={[0.18, -0.02, 0]} rotation={[0, 0, 0.6]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.04, 0.15, 0.04]}>
+                <meshStandardMaterial color={0x4a4a4a} metalness={0.85} roughness={0.25} />
+      </mesh>
+              {/* Hook tip */}
+              <mesh position={[0.28, -0.08, 0]} rotation={[0, 0, 1.8]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.035, 0.08, 0.035]}>
+                <meshStandardMaterial color={HOOKSHOT_COLORS.energyGlow} metalness={0.9} roughness={0.15} emissive={HOOKSHOT_COLORS.energy} emissiveIntensity={0.3} />
+              </mesh>
+            </group>
+          );
+        })}
+        
+        {/* Bottom base */}
+        <mesh position={[0, -0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.22, 0.05, 0.22]}>
+          <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
+      </mesh>
+      
+        {/* Cyan energy core glow - matches hookshot theme */}
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12}>
+          <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.8} />
+        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2}>
+          <meshBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.3} />
+        </mesh>
+        
+        {/* Device light */}
+        <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={4} decay={2} />
       </group>
       
-      {/* AOE boundary ring */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring24} scale={[trap.radius, trap.radius, 1]}>
-        <meshBasicMaterial color={HOOKSHOT_COLORS.danger} transparent opacity={0.6} side={THREE.DoubleSide} />
-      </mesh>
-      
-      {/* Inner warning ring */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.08} geometry={SHARED_GEOMETRIES.ring16} scale={[trap.radius * 0.6, trap.radius * 0.6, 1]}>
-        <meshBasicMaterial color={HOOKSHOT_COLORS.trap} transparent opacity={0.5} side={THREE.DoubleSide} />
-      </mesh>
-      
-      {/* Ground fill */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.02} geometry={SHARED_GEOMETRIES.circle16} scale={[trap.radius, trap.radius, 1]}>
-        <meshBasicMaterial color={HOOKSHOT_COLORS.trap} transparent opacity={0.15} side={THREE.DoubleSide} />
-      </mesh>
-      
-      {/* Chains extending outward */}
-      {Array.from({ length: 8 }).map((_, i) => (
-        <mesh 
-          key={`chain-${i}`}
-          ref={el => chainsRef.current[i] = el}
-          geometry={SHARED_GEOMETRIES.cylinder8}
-        >
-          <meshBasicMaterial color={HOOKSHOT_COLORS.rope} />
+      {/* === CYAN CIRCLE BORDER - AOE indicator matching hookshot theme === */}
+      <mesh ref={circleRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring24} scale={[trap.radius, trap.radius, 1]}>
+        <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.8} side={THREE.DoubleSide} />
         </mesh>
-      ))}
       
-      {/* Pulse rings */}
-      {[0, 1, 2].map(i => (
-        <mesh
-          key={`pulse-${i}`}
-          ref={el => pulseRingsRef.current[i] = el}
-          rotation-x={-Math.PI / 2}
-          position-y={0.1}
-          geometry={SHARED_GEOMETRIES.ring16}
-        >
-          <meshBasicMaterial color={HOOKSHOT_COLORS.trapGlow} transparent opacity={0.4} side={THREE.DoubleSide} />
-        </mesh>
-      ))}
-      
-      <pointLight ref={lightRef} color={HOOKSHOT_COLORS.trap} intensity={4} distance={trap.radius * 1.5} decay={2} position={[0, 1, 0]} />
+      {/* Ground light when active */}
+      <pointLight ref={lightRef} color={HOOKSHOT_COLORS.energy} intensity={2} distance={trap.radius * 1.2} decay={2} position={[0, 0.5, 0]} />
     </group>
   );
 }
 
 // ============================================================================
-// SWING LINE - Apex Legends Pathfinder style grapple (E ability)
-// Hook shoots out first, then player swings with momentum
+// EARTH WALL - Hook slides on ground, wall of dirt rises behind (E ability)
+// ============================================================================
+
+// Earth wall colors
+const EARTH_COLORS = {
+  dirt: 0x8B4513, // Saddle brown
+  dirtDark: 0x654321, // Dark brown
+  dirtLight: 0xA0522D, // Sienna
+  rock: 0x696969, // Dim gray
+  grass: 0x556B2F, // Dark olive green
+  hookMetal: 0x3a3a3a,
+  hookGlow: 0xff6600, // Orange glow for earth hook
+};
+
+const EARTH_WALL_SPEED = 35; // Units per second
+const EARTH_WALL_MAX_DISTANCE = 25;
+const EARTH_WALL_SEGMENT_SPACING = 1.5; // Distance between wall segments
+const EARTH_WALL_MAX_HEIGHT = 4; // Maximum wall height
+const EARTH_WALL_WIDTH = 2.5; // Wall width
+const EARTH_WALL_RISE_SPEED = 8; // How fast segments rise
+
+interface EarthWallProps {
+  wall: EarthWallData;
+}
+
+// Single dirt/rock wall segment
+function WallSegment({ 
+  position, 
+  targetHeight, 
+  creationTime,
+  index,
+  rotationY, // Rotation to face perpendicular to travel direction
+}: { 
+  position: { x: number; y: number; z: number };
+  targetHeight: number;
+  creationTime: number;
+  index: number;
+  rotationY: number;
+}) {
+  const meshRef = useRef<THREE.Group>(null);
+  const currentHeightRef = useRef(0.1); // Start with small height so it renders
+  
+  // Vary colors and shapes based on index for natural look
+  const colorVariation = (index % 3);
+  const mainColor = colorVariation === 0 ? EARTH_COLORS.dirt : 
+                    colorVariation === 1 ? EARTH_COLORS.dirtDark : EARTH_COLORS.dirtLight;
+  
+  useFrame((_, delta) => {
+    if (!meshRef.current) return;
+    
+    // Rise up from ground
+    if (currentHeightRef.current < targetHeight) {
+      currentHeightRef.current = Math.min(
+        currentHeightRef.current + EARTH_WALL_RISE_SPEED * delta, 
+        targetHeight
+      );
+    }
+    
+    const h = currentHeightRef.current;
+    
+    // Update position - wall rises from ground
+    meshRef.current.position.set(position.x, position.y + h / 2, position.z);
+    meshRef.current.scale.set(1, Math.max(0.01, h), 1);
+  });
+  
+  return (
+    <group ref={meshRef} position={[position.x, position.y, position.z]} rotation={[0, rotationY, 0]}>
+      {/* Main dirt block - wide to block vision */}
+      <mesh geometry={SHARED_GEOMETRIES.box} scale={[EARTH_WALL_WIDTH, 1, 1]}>
+        <meshStandardMaterial 
+          color={mainColor} 
+          roughness={0.9} 
+          metalness={0.1}
+        />
+      </mesh>
+      
+      {/* Rock chunks embedded in dirt */}
+      <mesh 
+        position={[0.4 * (index % 2 === 0 ? 1 : -1), 0.2, 0.35]} 
+        geometry={SHARED_GEOMETRIES.box} 
+        scale={[0.4, 0.3, 0.3]}
+        rotation={[0.2, 0.3, 0.1]}
+      >
+        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
+      </mesh>
+      
+      <mesh 
+        position={[-0.3 * (index % 2 === 0 ? 1 : -1), -0.15, 0.3]} 
+        geometry={SHARED_GEOMETRIES.box} 
+        scale={[0.35, 0.25, 0.25]}
+        rotation={[0.1, -0.2, 0.15]}
+      >
+        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
+      </mesh>
+      
+      {/* Back side rock */}
+      <mesh 
+        position={[0.2 * (index % 2 === 0 ? -1 : 1), 0, -0.35]} 
+        geometry={SHARED_GEOMETRIES.box} 
+        scale={[0.3, 0.35, 0.25]}
+        rotation={[-0.1, 0.2, 0.1]}
+      >
+        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
+      </mesh>
+      
+      {/* Top grass/soil texture */}
+      <mesh 
+        position={[0, 0.51, 0]} 
+        geometry={SHARED_GEOMETRIES.box} 
+        scale={[EARTH_WALL_WIDTH * 0.95, 0.1, 0.9]}
+      >
+        <meshStandardMaterial color={EARTH_COLORS.grass} roughness={1} metalness={0} />
+      </mesh>
+      
+      {/* Dirt debris around base - front */}
+      {[0, 1, 2].map((i) => (
+        <mesh 
+          key={`front-${i}`}
+          position={[
+            (i - 1) * 0.7 + Math.sin(index + i) * 0.2, 
+            -0.45, 
+            0.6 + Math.cos(index + i) * 0.15
+          ]} 
+          geometry={SHARED_GEOMETRIES.sphere8} 
+          scale={[0.2, 0.12, 0.2]}
+        >
+          <meshStandardMaterial color={EARTH_COLORS.dirtDark} roughness={1} metalness={0} />
+        </mesh>
+      ))}
+      
+      {/* Dirt debris around base - back */}
+      {[0, 1].map((i) => (
+        <mesh 
+          key={`back-${i}`}
+          position={[
+            (i - 0.5) * 0.8, 
+            -0.45, 
+            -0.55 + Math.sin(index + i) * 0.1
+          ]} 
+          geometry={SHARED_GEOMETRIES.sphere8} 
+          scale={[0.18, 0.1, 0.18]}
+        >
+          <meshStandardMaterial color={EARTH_COLORS.dirtDark} roughness={1} metalness={0} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function EarthWallEffect({ wall }: EarthWallProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const hookRef = useRef<THREE.Group>(null);
+  
+  const hookProgressRef = useRef(0);
+  const lastSegmentDistRef = useRef(0);
+  const hookGroundYRef = useRef(wall.startPosition.y); // Track hook's ground level
+  
+  // Use state for wall segments so React re-renders when they're added
+  const [wallSegments, setWallSegments] = useState<{ x: number; y: number; z: number; height: number; time: number }[]>([]);
+  
+  const removeEarthWall = useGameStore(state => state.removeEarthWall);
+  
+  useEffect(() => {
+    console.log('[EarthWall] MOUNTED - ID:', wall.id);
+    return () => console.log('[EarthWall] UNMOUNTED:', wall.id);
+  }, [wall.id]);
+  
+  useFrame((state, delta) => {
+    if (!groupRef.current || !hookRef.current) return;
+    
+    const time = state.clock.elapsedTime;
+    const elapsed = (Date.now() - wall.startTime) / 1000;
+    
+    // Check if wall should be removed (duration expired)
+    if (elapsed > wall.duration + 2) {
+      removeEarthWall(wall.id);
+      return;
+    }
+    
+    // Calculate current hook XZ position (travels horizontally)
+    const currentDist = Math.min(hookProgressRef.current, wall.maxDistance);
+    const hookX = wall.startPosition.x + wall.direction.x * currentDist;
+    const hookZ = wall.startPosition.z + wall.direction.z * currentDist;
+    
+    // Raycast to find ground level at hook position
+    if (isPhysicsReady()) {
+      const groundCheck = checkGroundWithNormal(hookX, wall.startPosition.y + 50, hookZ, 100);
+      if (groundCheck) {
+        hookGroundYRef.current = groundCheck.groundY;
+      }
+    }
+    
+    const hookPos = {
+      x: hookX,
+      y: hookGroundYRef.current,
+      z: hookZ,
+    };
+    
+    // Hook is still traveling
+    if (hookProgressRef.current < wall.maxDistance) {
+      hookProgressRef.current += EARTH_WALL_SPEED * delta;
+      
+      // Create new wall segments behind the hook
+      if (currentDist - lastSegmentDistRef.current >= EARTH_WALL_SEGMENT_SPACING && currentDist > 1) {
+        lastSegmentDistRef.current = currentDist;
+        
+        // Calculate segment XZ position (slightly behind hook head)
+        const segmentX = hookPos.x - wall.direction.x * 1.5;
+        const segmentZ = hookPos.z - wall.direction.z * 1.5;
+        
+        // Raycast to find ground level at segment position
+        let segmentGroundY = hookGroundYRef.current;
+        if (isPhysicsReady()) {
+          const segmentGroundCheck = checkGroundWithNormal(segmentX, wall.startPosition.y + 50, segmentZ, 100);
+          if (segmentGroundCheck) {
+            segmentGroundY = segmentGroundCheck.groundY;
+          }
+        }
+        
+        // Vary height slightly for natural look
+        const heightVariation = 0.8 + Math.random() * 0.4;
+        
+        // Add new segment using setState to trigger re-render
+        setWallSegments(prev => [...prev, {
+          x: segmentX,
+          y: segmentGroundY,
+          z: segmentZ,
+          height: EARTH_WALL_MAX_HEIGHT * heightVariation,
+          time: Date.now(),
+        }]);
+        
+        console.log('[EarthWall] Added segment at', segmentX.toFixed(1), segmentZ.toFixed(1), 'groundY:', segmentGroundY.toFixed(1));
+      }
+      
+      // Update hook visual - position on ground
+      hookRef.current.visible = true;
+      hookRef.current.position.set(hookPos.x, hookPos.y + 0.5, hookPos.z);
+      
+      // Rotate hook to face direction of travel
+      const angle = Math.atan2(wall.direction.x, wall.direction.z);
+      hookRef.current.rotation.y = angle;
+      
+      // Bob the hook slightly as it travels
+      hookRef.current.position.y += Math.sin(time * 15) * 0.1;
+    } else {
+      // Hook reached max distance - hide it
+      hookRef.current.visible = false;
+    }
+  });
+  
+  return (
+    <group ref={groupRef}>
+      {/* THE GROUND HOOK - Large industrial hook that plows through ground */}
+      <group ref={hookRef} position={[wall.startPosition.x, wall.startPosition.y + 0.5, wall.startPosition.z]}>
+        {/* Main hook body - large and heavy */}
+        <mesh geometry={SHARED_GEOMETRIES.box} scale={[0.8, 0.6, 1.5]}>
+          <meshStandardMaterial color={EARTH_COLORS.hookMetal} metalness={0.85} roughness={0.3} />
+        </mesh>
+        
+        {/* Plow blade at front */}
+        <mesh position={[0, -0.1, -0.9]} rotation={[0.3, 0, 0]} geometry={SHARED_GEOMETRIES.box} scale={[1.2, 0.1, 0.5]}>
+          <meshStandardMaterial color={0x555555} metalness={0.9} roughness={0.2} />
+        </mesh>
+        
+        {/* Hook arm - curved down into ground */}
+        <mesh position={[0, -0.2, -0.5]} rotation={[-0.5, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.15, 0.8, 0.15]}>
+          <meshStandardMaterial color={EARTH_COLORS.hookMetal} metalness={0.85} roughness={0.3} />
+        </mesh>
+        
+        {/* Hook tip - buried in ground */}
+        <mesh position={[0, -0.6, -0.2]} rotation={[-1.2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.4, 0.2]}>
+          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} />
+        </mesh>
+        
+        {/* Side fins for stability */}
+        <mesh position={[0.5, 0, 0]} rotation={[0, 0, 0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]}>
+          <meshStandardMaterial color={0x444444} metalness={0.8} roughness={0.35} />
+        </mesh>
+        <mesh position={[-0.5, 0, 0]} rotation={[0, 0, -0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]}>
+          <meshStandardMaterial color={0x444444} metalness={0.8} roughness={0.35} />
+        </mesh>
+        
+        {/* Orange energy glow */}
+        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={0.4}>
+          <meshBasicMaterial color={EARTH_COLORS.hookGlow} transparent opacity={0.5} />
+        </mesh>
+        
+        {/* Dirt spray particles effect */}
+        <pointLight color={EARTH_COLORS.hookGlow} intensity={4} distance={5} decay={2} />
+        
+        {/* Ground disturbance - ring of dirt being pushed up */}
+        <mesh position={[0, -0.4, -0.3]} rotation={[-Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} scale={[1, 1, 0.3]}>
+          <meshBasicMaterial color={EARTH_COLORS.dirt} transparent opacity={0.7} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
+      
+      {/* WALL SEGMENTS - Rising dirt walls perpendicular to travel direction */}
+      {wallSegments.map((segment, i) => (
+        <WallSegment
+          key={`${wall.id}_seg_${i}`}
+          position={segment}
+          targetHeight={segment.height}
+          creationTime={segment.time}
+          index={i}
+          rotationY={Math.atan2(wall.direction.x, wall.direction.z) + Math.PI / 2} // Perpendicular to travel
+        />
+      ))}
+    </group>
+  );
+}
+
+// ============================================================================
+// SWING LINE - Kept for backwards compatibility but now unused for Hookshot E
 // ============================================================================
 
 interface SwingLineProps {
@@ -692,12 +1105,10 @@ function SwingLineEffect({ line }: SwingLineProps) {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   
-  // Track hook extension distance (how far from player the hook has traveled)
   const hookExtensionRef = useRef(0);
   const hasReachedRef = useRef(false);
   const frameCount = useRef(0);
   
-  // State for rope points - using simple arrays for better React change detection
   const [ropePoints, setRopePoints] = useState<[[number, number, number], [number, number, number]]>([
     [line.startPosition.x, line.startPosition.y, line.startPosition.z],
     [line.startPosition.x, line.startPosition.y, line.startPosition.z]
@@ -706,7 +1117,6 @@ function SwingLineEffect({ line }: SwingLineProps) {
   const removeSwingLine = useGameStore(state => state.removeSwingLine);
   const updateSwingLine = useGameStore(state => state.updateSwingLine);
   
-  // Log when effect mounts
   useEffect(() => {
     console.log('[SwingLine] MOUNTED - ID:', line.id, 'State:', line.state);
     return () => console.log('[SwingLine] UNMOUNTED:', line.id);
@@ -717,12 +1127,8 @@ function SwingLineEffect({ line }: SwingLineProps) {
     
     if (!groupRef.current || !hookRef.current) return;
     
-    const time = state.clock.elapsedTime;
-    
-    // Get localPlayer fresh each frame
     const { localPlayer, players } = useGameStore.getState();
     
-    // Player position (rope start) - get from the actual player who owns this line
     let playerPos = line.startPosition;
     
     if (localPlayer && line.ownerId === localPlayer.id) {
@@ -742,7 +1148,6 @@ function SwingLineEffect({ line }: SwingLineProps) {
       }
     }
     
-    // Calculate direction from player to target attach point
     const toTarget = {
       x: line.attachPoint.x - playerPos.x,
       y: line.attachPoint.y - playerPos.y,
@@ -753,15 +1158,12 @@ function SwingLineEffect({ line }: SwingLineProps) {
     const dirY = totalDist > 0 ? toTarget.y / totalDist : 0;
     const dirZ = totalDist > 0 ? toTarget.z / totalDist : 0;
     
-    // Calculate current hook position based on extension distance and state
     let hookPos = { x: playerPos.x, y: playerPos.y, z: playerPos.z };
     
     if (line.state === 'extending' && !hasReachedRef.current) {
-      // Hook is flying out toward target
-      const speed = 90 * delta; // Fast hook extension
+      const speed = 90 * delta;
       hookExtensionRef.current += speed;
       
-      // Calculate initial distance (from original start position to attach point)
       const initialDist = Math.sqrt(
         (line.attachPoint.x - line.startPosition.x) ** 2 +
         (line.attachPoint.y - line.startPosition.y) ** 2 +
@@ -769,13 +1171,11 @@ function SwingLineEffect({ line }: SwingLineProps) {
       );
       
       if (hookExtensionRef.current >= initialDist) {
-        // Hook reached target
         hasReachedRef.current = true;
         hookPos = { ...line.attachPoint };
         console.log('[SwingLine] Hook attached!');
         updateSwingLine(line.id, { state: 'attached' });
       } else {
-        // Position hook along the line from player toward target
         hookPos = {
           x: playerPos.x + dirX * hookExtensionRef.current,
           y: playerPos.y + dirY * hookExtensionRef.current,
@@ -783,33 +1183,27 @@ function SwingLineEffect({ line }: SwingLineProps) {
         };
       }
     } else if (line.state === 'attached' || line.state === 'swinging') {
-      // Hook is attached - stays at target position
       hasReachedRef.current = true;
       hookPos = { ...line.attachPoint };
     } else if (line.state === 'done') {
-      // Swing is done - remove line
       removeSwingLine(line.id);
       return;
     }
     
-    // Check timeout/duration
     const elapsed = (Date.now() - line.startTime) / 1000;
     if (elapsed > line.duration + 1) {
       removeSwingLine(line.id);
       return;
     }
     
-    // Update hook visual position
     hookRef.current.position.set(hookPos.x, hookPos.y, hookPos.z);
     
-    // Point hook toward target (away from player)
     if (totalDist > 0.01) {
       const quat = new THREE.Quaternion();
       quat.setFromUnitVectors(new THREE.Vector3(0, 0, -1), new THREE.Vector3(dirX, dirY, dirZ));
       hookRef.current.quaternion.copy(quat);
     }
     
-    // Update rope points
     setRopePoints([
       [playerPos.x, playerPos.y, playerPos.z],
       [hookPos.x, hookPos.y, hookPos.z]
@@ -820,79 +1214,22 @@ function SwingLineEffect({ line }: SwingLineProps) {
   
   return (
     <group ref={groupRef}>
-      {/* ANCHOR-STYLE GRAPPLING HOOK (same as Q ability for consistency) */}
       <group ref={hookRef} position={[line.startPosition.x, line.startPosition.y, line.startPosition.z]}>
-        {/* === ANCHOR RING (top) - where rope attaches === */}
         <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.08]}>
           <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} side={THREE.DoubleSide} />
         </mesh>
-        
-        {/* === MAIN SHAFT (vertical bar) === */}
         <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.8, 0.08]}>
           <meshStandardMaterial color={0x666666} metalness={0.85} roughness={0.25} />
         </mesh>
-        
-        {/* === CROWN/STOCK (horizontal bar near top) === */}
-        <mesh position={[0, 0, 0.15]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.05, 0.5, 0.05]}>
-          <meshStandardMaterial color={0x777777} metalness={0.85} roughness={0.25} />
-        </mesh>
-        
-        {/* === ANCHOR ARMS/FLUKES (curved hooks at bottom) === */}
-        {/* Left arm */}
-        <group position={[-0.15, 0, -0.3]}>
-          <mesh rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]}>
-            <meshStandardMaterial color={0x666666} metalness={0.85} roughness={0.25} />
-          </mesh>
-          <mesh position={[-0.2, 0, -0.15]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]}>
-            <meshStandardMaterial color={0xaaaaaa} metalness={0.9} roughness={0.15} />
-          </mesh>
-        </group>
-        
-        {/* Right arm */}
-        <group position={[0.15, 0, -0.3]}>
-          <mesh rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]}>
-            <meshStandardMaterial color={0x666666} metalness={0.85} roughness={0.25} />
-          </mesh>
-          <mesh position={[0.2, 0, -0.15]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]}>
-            <meshStandardMaterial color={0xaaaaaa} metalness={0.9} roughness={0.15} />
-          </mesh>
-        </group>
-        
-        {/* === BOTTOM POINT === */}
         <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.15, 0.1]}>
           <meshStandardMaterial color={0xcccccc} metalness={0.95} roughness={0.1} />
         </mesh>
-        
-        {/* Small point light so the hook is visible */}
         <pointLight color={0xffffff} intensity={2} distance={4} decay={2} />
       </group>
       
-      {/* ENERGY ROPE - Main thick line (same style as Q ability) */}
-      <Line
-        points={ropePoints}
-        color={HOOKSHOT_COLORS.energy}
-        lineWidth={8}
-        transparent
-        opacity={1}
-      />
-      
-      {/* ENERGY ROPE - Outer glow effect (thicker, more transparent) */}
-      <Line
-        points={ropePoints}
-        color={HOOKSHOT_COLORS.energyGlow}
-        lineWidth={16}
-        transparent
-        opacity={0.4}
-      />
-      
-      {/* ENERGY ROPE - Inner bright core */}
-      <Line
-        points={ropePoints}
-        color={0xffffff}
-        lineWidth={3}
-        transparent
-        opacity={0.8}
-      />
+      <Line points={ropePoints} color={HOOKSHOT_COLORS.energy} lineWidth={8} transparent opacity={1} />
+      <Line points={ropePoints} color={HOOKSHOT_COLORS.energyGlow} lineWidth={16} transparent opacity={0.4} />
+      <Line points={ropePoints} color={0xffffff} lineWidth={3} transparent opacity={0.8} />
     </group>
   );
 }
@@ -900,7 +1237,18 @@ function SwingLineEffect({ line }: SwingLineProps) {
 // ============================================================================
 // GRAPPLE LINE - Quick grapple to geometry (Q ability)
 // Shows a hook shooting out and rope connecting player to hook
+// OPTIMIZED: Uses same ref-based rope rendering as basic attack for smooth following
 // ============================================================================
+
+// Pre-allocated vectors for grapple line calculations (avoid GC pressure)
+const _grappleDir = new THREE.Vector3();
+const _grappleQuat = new THREE.Quaternion();
+const _grappleForward = new THREE.Vector3(0, 0, -1);
+const _grappleRopeMid = new THREE.Vector3();
+const _grappleRopeEnd = new THREE.Vector3();
+
+// Height offset from player feet to hand position (matches basic attack)
+const GRAPPLE_HAND_HEIGHT = 0.6;
 
 interface GrappleLineProps {
   line: GrappleLineData;
@@ -910,75 +1258,72 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   
-  // Track hook extension distance (how far from player the hook has traveled)
+  // Rope mesh refs - same approach as basic attack for smooth updates
+  const ropeMainRef = useRef<THREE.Mesh>(null);
+  const ropeGlowRef = useRef<THREE.Mesh>(null);
+  const ropeCoreRef = useRef<THREE.Mesh>(null);
+  
+  // All state tracked via refs - NO useState, NO store updates in render loop (like basic attack)
   const hookExtensionRef = useRef(0);
   const hasReachedRef = useRef(false);
-  const frameCount = useRef(0);
+  const isFirstFrameRef = useRef(true);
+  const shouldRemoveRef = useRef(false);
   
-  // State for rope points - using simple arrays for better React change detection
-  const [ropePoints, setRopePoints] = useState<[[number, number, number], [number, number, number]]>([
-    [line.startPosition.x, line.startPosition.y, line.startPosition.z],
-    [line.startPosition.x, line.startPosition.y, line.startPosition.z]
-  ]);
+  // Track current positions via refs for smooth interpolation
+  const currentHookPosRef = useRef({ x: line.startPosition.x, y: line.startPosition.y, z: line.startPosition.z });
+  const playerPosRef = useRef({ x: line.startPosition.x, y: line.startPosition.y, z: line.startPosition.z });
   
   const removeGrappleLine = useGameStore(state => state.removeGrappleLine);
   
-  // Log when effect mounts
-  useEffect(() => {
-    console.log('[GrappleLine] MOUNTED - ID:', line.id);
-    return () => console.log('[GrappleLine] UNMOUNTED:', line.id);
-  }, [line.id]);
-  
-  useFrame((state, delta) => {
-    frameCount.current++;
+  useFrame((_, delta) => {
+    if (!hookRef.current || shouldRemoveRef.current) return;
     
-    if (!groupRef.current || !hookRef.current) {
-      return;
-    }
+    // Get player position without triggering re-renders (like basic attack)
+    const state = useGameStore.getState();
+    const localPlayer = state.localPlayer;
+    const players = state.players;
     
-    // Get localPlayer fresh each frame - ALWAYS use current position
-    const { localPlayer, players } = useGameStore.getState();
-    
-    // Player position (rope start) - get from the actual player who owns this line
-    let playerPos = line.startPosition;
-    
-    // First check if this is the local player's line
+    // Determine target player position
+    let targetX: number, targetY: number, targetZ: number;
     if (localPlayer && line.ownerId === localPlayer.id) {
-      playerPos = {
-        x: localPlayer.position.x,
-        y: localPlayer.position.y + 0.6,
-        z: localPlayer.position.z,
-      };
+      targetX = localPlayer.position.x;
+      targetY = localPlayer.position.y + GRAPPLE_HAND_HEIGHT;
+      targetZ = localPlayer.position.z;
     } else {
-      // Check if it's another player's line
       const owner = players.get(line.ownerId);
       if (owner) {
-        playerPos = {
-          x: owner.position.x,
-          y: owner.position.y + 0.6,
-          z: owner.position.z,
-        };
+        targetX = owner.position.x;
+        targetY = owner.position.y + GRAPPLE_HAND_HEIGHT;
+        targetZ = owner.position.z;
+      } else {
+        targetX = line.startPosition.x;
+        targetY = line.startPosition.y;
+        targetZ = line.startPosition.z;
       }
     }
     
-    // Debug: log on first few frames to verify position is updating
-    if (frameCount.current <= 5) {
-      console.log(`[GrappleLine] Frame ${frameCount.current}: playerPos =`, playerPos, 'localPlayer.id =', localPlayer?.id, 'line.ownerId =', line.ownerId);
-    }
+    // Smooth lerp for player position (snap on first frame) - same as basic attack
+    const lerpFactor = isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
+    playerPosRef.current.x += (targetX - playerPosRef.current.x) * lerpFactor;
+    playerPosRef.current.y += (targetY - playerPosRef.current.y) * lerpFactor;
+    playerPosRef.current.z += (targetZ - playerPosRef.current.z) * lerpFactor;
+    isFirstFrameRef.current = false;
+    
+    const pX = playerPosRef.current.x;
+    const pY = playerPosRef.current.y;
+    const pZ = playerPosRef.current.z;
     
     // Calculate direction from player to target
-    const toTarget = {
-      x: line.endPosition.x - playerPos.x,
-      y: line.endPosition.y - playerPos.y,
-      z: line.endPosition.z - playerPos.z,
-    };
-    const totalDist = Math.sqrt(toTarget.x ** 2 + toTarget.y ** 2 + toTarget.z ** 2);
-    const dirX = totalDist > 0 ? toTarget.x / totalDist : 0;
-    const dirY = totalDist > 0 ? toTarget.y / totalDist : 0;
-    const dirZ = totalDist > 0 ? toTarget.z / totalDist : 0;
+    const toTargetX = line.endPosition.x - pX;
+    const toTargetY = line.endPosition.y - pY;
+    const toTargetZ = line.endPosition.z - pZ;
+    const totalDist = Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY + toTargetZ * toTargetZ);
+    const dirX = totalDist > 0 ? toTargetX / totalDist : 0;
+    const dirY = totalDist > 0 ? toTargetY / totalDist : 0;
+    const dirZ = totalDist > 0 ? toTargetZ / totalDist : 0;
     
-    // Calculate current hook position based on extension distance
-    let hookPos = { x: playerPos.x, y: playerPos.y, z: playerPos.z };
+    // Hook position calculation
+    const hookPos = currentHookPosRef.current;
     
     // Hook extension logic
     if (!hasReachedRef.current && line.state === 'extending') {
@@ -989,25 +1334,27 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
       if (hookExtensionRef.current >= totalDist) {
         // Hook reached target
         hasReachedRef.current = true;
-        hookPos = { ...line.endPosition };
-        console.log('[GrappleLine] Hook attached!');
+        hookPos.x = line.endPosition.x;
+        hookPos.y = line.endPosition.y;
+        hookPos.z = line.endPosition.z;
         useGameStore.getState().updateGrappleLine(line.id, { state: 'attached' });
       } else {
         // Position hook along the line from player toward target
-        hookPos = {
-          x: playerPos.x + dirX * hookExtensionRef.current,
-          y: playerPos.y + dirY * hookExtensionRef.current,
-          z: playerPos.z + dirZ * hookExtensionRef.current,
-        };
+        hookPos.x = pX + dirX * hookExtensionRef.current;
+        hookPos.y = pY + dirY * hookExtensionRef.current;
+        hookPos.z = pZ + dirZ * hookExtensionRef.current;
       }
     } else if (line.state === 'attached' || line.state === 'pulling') {
       // Hook is attached to geometry - stays at target position
       hasReachedRef.current = true;
-      hookPos = { ...line.endPosition };
+      hookPos.x = line.endPosition.x;
+      hookPos.y = line.endPosition.y;
+      hookPos.z = line.endPosition.z;
     }
     
     // Check completion - player reached the hook
     if (hasReachedRef.current && totalDist < 1.5) {
+      shouldRemoveRef.current = true;
       removeGrappleLine(line.id);
       return;
     }
@@ -1015,26 +1362,48 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
     // Timeout
     const elapsed = (Date.now() - line.startTime) / 1000;
     if (elapsed > 5.0) {
+      shouldRemoveRef.current = true;
       removeGrappleLine(line.id);
       return;
     }
     
-    // Update hook visual position
+    // Update hook visual position directly
     hookRef.current.position.set(hookPos.x, hookPos.y, hookPos.z);
     
-    // Point hook toward target (away from player)
-    if (totalDist > 0.01) {
-      const quat = new THREE.Quaternion();
-      quat.setFromUnitVectors(new THREE.Vector3(0, 0, -1), new THREE.Vector3(dirX, dirY, dirZ));
-      hookRef.current.quaternion.copy(quat);
+    // Update hook orientation - point toward target (away from player)
+    const hdx = hookPos.x - pX;
+    const hdy = hookPos.y - pY;
+    const hdz = hookPos.z - pZ;
+    const hLen = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
+    
+    if (hLen > 0.01) {
+      _grappleDir.set(hdx / hLen, hdy / hLen, hdz / hLen);
+      _grappleQuat.setFromUnitVectors(_grappleForward, _grappleDir);
+      hookRef.current.quaternion.copy(_grappleQuat);
     }
     
-    // UPDATE ROPE POINTS - Always from current player position to current hook position
-    setRopePoints([
-      [playerPos.x, playerPos.y, playerPos.z],
-      [hookPos.x, hookPos.y, hookPos.z]
-    ]);
+    // Update rope meshes directly (no React state) - same approach as basic attack
+    _grappleRopeEnd.set(hookPos.x, hookPos.y, hookPos.z);
+    _grappleRopeMid.set((pX + hookPos.x) * 0.5, (pY + hookPos.y) * 0.5, (pZ + hookPos.z) * 0.5);
     
+    if (ropeMainRef.current) {
+      ropeMainRef.current.position.copy(_grappleRopeMid);
+      ropeMainRef.current.scale.set(0.035, hLen, 0.035);
+      ropeMainRef.current.lookAt(_grappleRopeEnd);
+      ropeMainRef.current.rotateX(Math.PI / 2);
+    }
+    if (ropeGlowRef.current) {
+      ropeGlowRef.current.position.copy(_grappleRopeMid);
+      ropeGlowRef.current.scale.set(0.06, hLen, 0.06);
+      ropeGlowRef.current.lookAt(_grappleRopeEnd);
+      ropeGlowRef.current.rotateX(Math.PI / 2);
+    }
+    if (ropeCoreRef.current) {
+      ropeCoreRef.current.position.copy(_grappleRopeMid);
+      ropeCoreRef.current.scale.set(0.015, hLen, 0.015);
+      ropeCoreRef.current.lookAt(_grappleRopeEnd);
+      ropeCoreRef.current.rotateX(Math.PI / 2);
+    }
   });
   
   return (
@@ -1086,36 +1455,17 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
           <meshStandardMaterial color={0xcccccc} metalness={0.95} roughness={0.1} />
         </mesh>
         
+        {/* Energy glow around hook */}
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.25} material={HOOK_MATERIALS.glow} />
+        
         {/* Small point light so the hook is visible */}
-        <pointLight color={0xffffff} intensity={2} distance={4} decay={2} />
+        <pointLight color={HOOKSHOT_COLORS.energy} intensity={3} distance={5} decay={2} />
       </group>
       
-      {/* ENERGY ROPE - Main thick line */}
-      <Line
-        points={ropePoints}
-        color={HOOKSHOT_COLORS.energy}
-        lineWidth={8}
-        transparent
-        opacity={1}
-      />
-      
-      {/* ENERGY ROPE - Outer glow effect (thicker, more transparent) */}
-      <Line
-        points={ropePoints}
-        color={HOOKSHOT_COLORS.energyGlow}
-        lineWidth={16}
-        transparent
-        opacity={0.4}
-      />
-      
-      {/* ENERGY ROPE - Inner bright core */}
-      <Line
-        points={ropePoints}
-        color={0xffffff}
-        lineWidth={3}
-        transparent
-        opacity={0.8}
-      />
+      {/* ENERGY ROPE - Using cylinder meshes updated via refs (same as basic attack) */}
+      <mesh ref={ropeMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_MAIN} />
+      <mesh ref={ropeGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_GLOW} />
+      <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_CORE} />
     </group>
   );
 }
@@ -1243,35 +1593,28 @@ export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: Grap
   
   if (!isActive) return null;
   
-  const baseColor = isValidRef.current ? HOOKSHOT_COLORS.trap : HOOKSHOT_COLORS.danger;
+  // Cyan color scheme for trap targeting - matches hookshot hero theme
+  const baseColor = isValidRef.current ? HOOKSHOT_COLORS.energy : HOOKSHOT_COLORS.energyGlow; // Cyan when valid, darker cyan when invalid
   
   return (
     <group ref={indicatorRef}>
-      {/* Main AOE ring */}
+      {/* Main AOE ring - cyan border matching hookshot theme */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[GRAPPLE_TRAP_RADIUS, GRAPPLE_TRAP_RADIUS, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
+        <meshBasicMaterial color={baseColor} transparent opacity={0.8} side={THREE.DoubleSide} />
       </mesh>
-      {/* Inner ring */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.12} geometry={SHARED_GEOMETRIES.ring16} scale={[GRAPPLE_TRAP_RADIUS * 0.5, GRAPPLE_TRAP_RADIUS * 0.5, 1]}>
-        <meshBasicMaterial color={HOOKSHOT_COLORS.trapGlow} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Center marker */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]}>
-        <meshBasicMaterial color={0xffffff} transparent opacity={1} side={THREE.DoubleSide} />
-      </mesh>
-      {/* Ground fill */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[GRAPPLE_TRAP_RADIUS, GRAPPLE_TRAP_RADIUS, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.15} side={THREE.DoubleSide} />
+      {/* Center marker - white crosshair */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.circle16} scale={[0.4, 0.4, 1]}>
+        <meshBasicMaterial color={0xffffff} transparent opacity={0.9} side={THREE.DoubleSide} />
       </mesh>
       {/* Cross hairs */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.15, GRAPPLE_TRAP_RADIUS * 2, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.6} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]}>
+        <meshBasicMaterial color={baseColor} transparent opacity={0.5} side={THREE.DoubleSide} />
       </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.15, GRAPPLE_TRAP_RADIUS * 2, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.6} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]}>
+        <meshBasicMaterial color={baseColor} transparent opacity={0.5} side={THREE.DoubleSide} />
       </mesh>
       
-      <pointLight color={baseColor} intensity={3} distance={GRAPPLE_TRAP_RADIUS} decay={2} position-y={0.5} />
+      <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={GRAPPLE_TRAP_RADIUS} decay={2} position-y={0.5} />
     </group>
   );
 }
@@ -1286,6 +1629,7 @@ export function HookshotEffectsManager() {
   const grappleTraps = useGameStore(state => state.grappleTraps);
   const swingLines = useGameStore(state => state.swingLines);
   const grappleLines = useGameStore(state => state.grappleLines);
+  const earthWalls = useGameStore(state => state.earthWalls);
   
   // Log when grapple lines change
   useEffect(() => {
@@ -1306,6 +1650,7 @@ export function HookshotEffectsManager() {
       useGameStore.getState().clearExpiredGrappleTraps();
       useGameStore.getState().clearExpiredSwingLines();
       useGameStore.getState().clearExpiredGrappleLines();
+      useGameStore.getState().clearExpiredEarthWalls();
     }, 150);
     
     return () => clearInterval(interval);
@@ -1328,7 +1673,7 @@ export function HookshotEffectsManager() {
         <GrappleTrapEffect key={trap.id} trap={trap} />
       ))}
       
-      {/* Swing lines (E ability) */}
+      {/* Swing lines (legacy, kept for compatibility) */}
       {swingLines.map(line => (
         <SwingLineEffect key={line.id} line={line} />
       ))}
@@ -1336,6 +1681,11 @@ export function HookshotEffectsManager() {
       {/* Grapple lines (Q ability) */}
       {grappleLines.map(line => (
         <GrappleLineEffect key={line.id} line={line} />
+      ))}
+      
+      {/* Earth Walls (E ability - hook slides on ground, wall rises behind) */}
+      {earthWalls.map(wall => (
+        <EarthWallEffect key={wall.id} wall={wall} />
       ))}
     </group>
   );

@@ -111,7 +111,9 @@ export interface DragHookData {
 
 export interface GrappleTrapData {
   id: string;
-  position: { x: number; y: number; z: number };
+  position: { x: number; y: number; z: number }; // Target/landing position
+  startPosition?: { x: number; y: number; z: number }; // Where it was thrown from
+  velocity?: { x: number; y: number; z: number }; // Initial throw velocity for grenade arc
   startTime: number;
   duration: number;
   ownerId: string;
@@ -130,6 +132,20 @@ export interface SwingLineData {
   isActive: boolean;
   // Apex-style grapple state
   state: 'extending' | 'attached' | 'swinging' | 'done';
+}
+
+// Earth Wall - Hookshot E ability (hook slides on ground, wall rises behind it)
+export interface EarthWallData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number }; // Horizontal direction of travel
+  startTime: number;
+  duration: number; // How long the wall stays up (3 seconds)
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  maxDistance: number; // How far the hook travels
+  hookProgress: number; // 0-1, how far the hook has traveled
+  wallSegments: { x: number; y: number; z: number; height: number }[]; // Wall segments created
 }
 
 export interface GrappleLineData {
@@ -238,6 +254,7 @@ interface GameStore {
   grappleTraps: GrappleTrapData[];
   swingLines: SwingLineData[];
   grappleLines: GrappleLineData[];
+  earthWalls: EarthWallData[];
   
   // Hookshot grapple trap targeting state
   grappleTrapTargeting: boolean;
@@ -340,6 +357,12 @@ interface GameStore {
   removeGrappleLine: (id: string) => void;
   clearExpiredGrappleLines: () => void;
   
+  // Earth wall actions (E ability)
+  addEarthWall: (wall: EarthWallData) => void;
+  updateEarthWall: (id: string, updates: Partial<EarthWallData>) => void;
+  removeEarthWall: (id: string) => void;
+  clearExpiredEarthWalls: () => void;
+  
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
   
@@ -401,6 +424,7 @@ const initialState = {
   grappleTraps: [] as GrappleTrapData[],
   swingLines: [] as SwingLineData[],
   grappleLines: [] as GrappleLineData[],
+  earthWalls: [] as EarthWallData[],
   grappleTrapTargeting: false,
   grappleTrapTargetValid: false,
 };
@@ -822,6 +846,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const LIFETIME = 6000; // 6 seconds max - enough for hook extension + player pull
     return {
       grappleLines: state.grappleLines.filter(l => now - l.startTime < LIFETIME)
+    };
+  }),
+  
+  // Earth wall actions (E ability)
+  addEarthWall: (wall) => set((state) => {
+    if (state.earthWalls.some(w => w.id === wall.id)) return state;
+    return { earthWalls: [...state.earthWalls, wall] };
+  }),
+  
+  updateEarthWall: (id, updates) => set((state) => ({
+    earthWalls: state.earthWalls.map(w => 
+      w.id === id ? { ...w, ...updates } : w
+    )
+  })),
+  
+  removeEarthWall: (id) => set((state) => ({
+    earthWalls: state.earthWalls.filter(w => w.id !== id)
+  })),
+  
+  clearExpiredEarthWalls: () => set((state) => {
+    const now = Date.now();
+    return {
+      earthWalls: state.earthWalls.filter(w => {
+        const elapsed = (now - w.startTime) / 1000;
+        // Wall stays for duration (3s) + travel time (hook takes ~1s to fully extend)
+        return elapsed < w.duration + 1.5;
+      })
     };
   }),
 
