@@ -236,6 +236,7 @@ export type AbilityIconType =
   | 'airstrike'
   | 'iceslide' 
   | 'wallclimb' 
+  | 'frostshield'
   | 'fortress'
   | 'speedboost' 
   | 'dash' 
@@ -271,6 +272,8 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <IceslideIcon size={size} color={color} className={className} />;
     case 'wallclimb':
       return <WallclimbIcon size={size} color={color} className={className} />;
+    case 'frostshield':
+      return <FrostshieldIcon size={size} color={color} className={className} />;
     case 'fortress':
       return <FortressIcon size={size} color={color} className={className} />;
     case 'speedboost':
@@ -305,7 +308,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     'blaze_rocketjump': 'rocketjump',
     'blaze_airstrike': 'airstrike',
     'glacier_iceslide': 'iceslide',
-    'glacier_wallclimb': 'wallclimb',
+    'glacier_frostshield': 'frostshield',
     'glacier_fortress': 'fortress',
     'pulse_speedboost': 'speedboost',
     'pulse_dash': 'dash',
@@ -455,6 +458,23 @@ function WallclimbIcon({ size, color, className }: IconProps) {
       <path d="M11 13L8 10" stroke={color} strokeWidth="2" strokeLinecap="round" />
       <path d="M17 13L20 10" stroke={color} strokeWidth="2" strokeLinecap="round" />
       <path d="M12 16L10 20M16 16L18 20" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+// Frostshield - Ice shield with snowflake
+function FrostshieldIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      {/* Shield outline */}
+      <path d="M12 2L4 6V12C4 16.4 7.5 20.5 12 22C16.5 20.5 20 16.4 20 12V6L12 2Z" stroke={color} strokeWidth="2" fill={color} fillOpacity="0.2" />
+      {/* Snowflake center */}
+      <circle cx="12" cy="11" r="1.5" fill={color} />
+      {/* Snowflake arms */}
+      <path d="M12 7V15M9 9L15 13M15 9L9 13" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+      {/* Small crystals */}
+      <path d="M12 7L11 8M12 7L13 8" stroke={color} strokeWidth="1" strokeLinecap="round" />
+      <path d="M12 15L11 14M12 15L13 14" stroke={color} strokeWidth="1" strokeLinecap="round" />
     </svg>
   );
 }

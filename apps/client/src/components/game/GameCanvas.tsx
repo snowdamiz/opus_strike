@@ -13,6 +13,7 @@ import { VoidRays } from './VoidRay';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
+import { GlacierEffectsManager } from './GlacierEffects';
 import { FirstPersonArms } from './FirstPersonArms';
 import { useGameStore } from '../../store/gameStore';
 
@@ -98,6 +99,7 @@ export function GameCanvas() {
             <PhantomEffectsManager />
             <BlazeEffectsManager />
             <HookshotEffectsManager />
+            <GlacierEffectsManager />
             <FirstPersonArms />
           </>
         )}

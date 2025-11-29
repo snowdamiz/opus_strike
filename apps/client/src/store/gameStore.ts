@@ -134,6 +134,37 @@ export interface SwingLineData {
   state: 'extending' | 'attached' | 'swinging' | 'done';
 }
 
+// Ice Mallet Swing - Glacier basic attack (melee swing in arc)
+export interface IceMalletSwingData {
+  id: string;
+  position: { x: number; y: number; z: number }; // Player position when swinging
+  direction: { x: number; y: number; z: number }; // Look direction (center of swing arc)
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  hasHit: boolean; // Track if we've already hit something this swing
+  swingDirection: 1 | -1; // 1 = right-to-left, -1 = left-to-right (alternates)
+}
+
+// Ice Wall Rush - Glacier E ability (propels player forward while building ice wall behind)
+export interface IceWallSegmentData {
+  position: { x: number; y: number; z: number };
+  height: number;
+  width: number;
+  rotation: number; // Y rotation to face perpendicular to travel direction
+  createdAt: number;
+}
+
+export interface IceWallRushData {
+  id: string;
+  startPosition: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+  segments: IceWallSegmentData[]; // Wall segments created during rush
+  isActive: boolean;
+}
+
 // Earth Wall - Hookshot E ability (hook slides on ground, wall rises behind it)
 export interface EarthWallData {
   id: string;
@@ -259,6 +290,22 @@ interface GameStore {
   // Hookshot grapple trap targeting state
   grappleTrapTargeting: boolean;
   grappleTrapTargetValid: boolean;
+  
+  // Glacier effects
+  iceMalletSwings: IceMalletSwingData[];
+  glacierSwingHeld: boolean; // Track if left click is being held for continuous swinging
+  glacierShieldActive: boolean; // Track if right click ice shield is active
+  glacierShieldStartTime: number; // When the shield was raised (for animation)
+  
+  // Ice Wall Rush (E ability)
+  iceWallRushes: IceWallRushData[];
+  iceWallRushActive: boolean;
+  iceWallRushFuel: number; // 0-100 (like jetpack)
+  
+  // Frost Storm Shield (Q ability)
+  frostStormActive: boolean;
+  frostStormShield: number; // Current shield HP (0-75)
+  frostStormStartTime: number; // When the frost storm was activated
 
   // Actions
   setWalletAddress: (address: string | null) => void;
@@ -363,6 +410,27 @@ interface GameStore {
   removeEarthWall: (id: string) => void;
   clearExpiredEarthWalls: () => void;
   
+  // Ice mallet swing actions (Glacier basic attack)
+  addIceMalletSwing: (swing: IceMalletSwingData) => void;
+  updateIceMalletSwing: (id: string, updates: Partial<IceMalletSwingData>) => void;
+  removeIceMalletSwing: (id: string) => void;
+  clearExpiredIceMalletSwings: () => void;
+  setGlacierSwingHeld: (held: boolean) => void;
+  setGlacierShieldActive: (active: boolean) => void;
+  
+  // Ice Wall Rush actions (Glacier E ability)
+  addIceWallRush: (rush: IceWallRushData) => void;
+  updateIceWallRush: (id: string, updates: Partial<IceWallRushData>) => void;
+  removeIceWallRush: (id: string) => void;
+  clearExpiredIceWallRushes: () => void;
+  setIceWallRushActive: (active: boolean) => void;
+  setIceWallRushFuel: (fuel: number) => void;
+  
+  // Frost Storm Shield actions (Glacier Q ability)
+  setFrostStormActive: (active: boolean) => void;
+  setFrostStormShield: (shield: number) => void;
+  damageFrostStormShield: (damage: number) => number; // Returns overflow damage
+  
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
   
@@ -427,6 +495,16 @@ const initialState = {
   earthWalls: [] as EarthWallData[],
   grappleTrapTargeting: false,
   grappleTrapTargetValid: false,
+  iceMalletSwings: [] as IceMalletSwingData[],
+  glacierSwingHeld: false,
+  glacierShieldActive: false,
+  glacierShieldStartTime: 0,
+  iceWallRushes: [] as IceWallRushData[],
+  iceWallRushActive: false,
+  iceWallRushFuel: 100,
+  frostStormActive: false,
+  frostStormShield: 0,
+  frostStormStartTime: 0,
 };
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -484,7 +562,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   updateLocalPlayer: (updates) => {
     const { localPlayer, players } = get();
     if (!localPlayer) {
-      console.log('updateLocalPlayer called but no localPlayer yet');
       return;
     }
 
@@ -552,7 +629,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
         cleanedPlayers.set(id, player);
       } else {
         hasGhosts = true;
-        console.log(`[CLEANUP] Removing ghost player: ${player.name} (${id})`);
       }
     });
     
@@ -875,6 +951,102 @@ export const useGameStore = create<GameStore>((set, get) => ({
       })
     };
   }),
+
+  // Ice mallet swing actions
+  addIceMalletSwing: (swing) => set((state) => {
+    if (state.iceMalletSwings.some(s => s.id === swing.id)) return state;
+    return { iceMalletSwings: [...state.iceMalletSwings, swing] };
+  }),
+  
+  updateIceMalletSwing: (id, updates) => set((state) => ({
+    iceMalletSwings: state.iceMalletSwings.map(s => 
+      s.id === id ? { ...s, ...updates } : s
+    )
+  })),
+  
+  removeIceMalletSwing: (id) => set((state) => ({
+    iceMalletSwings: state.iceMalletSwings.filter(s => s.id !== id)
+  })),
+  
+  clearExpiredIceMalletSwings: () => set((state) => {
+    const now = Date.now();
+    const SWING_DURATION_MS = 400; // Swing animation takes ~0.4s (1.5 swings/sec = 667ms, but animation is faster)
+    return {
+      iceMalletSwings: state.iceMalletSwings.filter(s => {
+        const elapsed = now - s.startTime;
+        return elapsed < SWING_DURATION_MS;
+      })
+    };
+  }),
+  
+  setGlacierSwingHeld: (held) => set({ glacierSwingHeld: held }),
+  
+  setGlacierShieldActive: (active) => set((state) => ({
+    glacierShieldActive: active,
+    // Only update start time when activating, not when deactivating
+    glacierShieldStartTime: active && !state.glacierShieldActive ? Date.now() : state.glacierShieldStartTime,
+  })),
+  
+  // Ice Wall Rush actions
+  addIceWallRush: (rush) => set((state) => {
+    if (state.iceWallRushes.some(r => r.id === rush.id)) return state;
+    return { iceWallRushes: [...state.iceWallRushes, rush] };
+  }),
+  
+  updateIceWallRush: (id, updates) => set((state) => ({
+    iceWallRushes: state.iceWallRushes.map(r => 
+      r.id === id ? { ...r, ...updates } : r
+    )
+  })),
+  
+  removeIceWallRush: (id) => set((state) => ({
+    iceWallRushes: state.iceWallRushes.filter(r => r.id !== id)
+  })),
+  
+  clearExpiredIceWallRushes: () => set((state) => {
+    const now = Date.now();
+    const WALL_LIFETIME = 5000; // Wall segments last 5 seconds after rush ends
+    return {
+      iceWallRushes: state.iceWallRushes.filter(r => {
+        // Keep if still active or if within lifetime
+        if (r.isActive) return true;
+        const lastSegment = r.segments[r.segments.length - 1];
+        if (!lastSegment) return false;
+        return (now - lastSegment.createdAt) < WALL_LIFETIME;
+      })
+    };
+  }),
+  
+  setIceWallRushActive: (active) => set({ iceWallRushActive: active }),
+  setIceWallRushFuel: (fuel) => set({ iceWallRushFuel: Math.max(0, Math.min(100, fuel)) }),
+  
+  // Frost Storm Shield actions
+  setFrostStormActive: (active) => set((state) => ({
+    frostStormActive: active,
+    frostStormStartTime: active && !state.frostStormActive ? Date.now() : state.frostStormStartTime,
+    frostStormShield: active ? 75 : 0, // Reset shield to max when activating
+  })),
+  
+  setFrostStormShield: (shield) => set({ frostStormShield: Math.max(0, Math.min(75, shield)) }),
+  
+  damageFrostStormShield: (damage) => {
+    const state = get();
+    if (!state.frostStormActive || state.frostStormShield <= 0) {
+      return damage; // No shield, return full damage
+    }
+    
+    const shieldDamage = Math.min(state.frostStormShield, damage);
+    const newShield = state.frostStormShield - shieldDamage;
+    const overflow = damage - shieldDamage;
+    
+    set({ 
+      frostStormShield: newShield,
+      // Deactivate if shield is depleted
+      frostStormActive: newShield > 0,
+    });
+    
+    return overflow; // Return remaining damage to apply to health
+  },
 
   reset: () => set(initialState),
   

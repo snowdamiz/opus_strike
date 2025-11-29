@@ -35,7 +35,6 @@ export function usePhysics(): PhysicsContext {
 
     async function setup() {
       try {
-        console.log('[Physics] Initializing Rapier...');
         const RAPIER = await initPhysics();
 
         if (!mounted) return;
@@ -44,7 +43,6 @@ export function usePhysics(): PhysicsContext {
         const gravity = { x: 0, y: -20, z: 0 }; // Reduced for floatier feel
         worldRef.current = new RAPIER.World(gravity);
         worldInstance = worldRef.current;
-        console.log('[Physics] World created');
 
         // Create ground as a fixed rigid body - positioned LOW as safety net
         // The actual terrain from GLB is higher (around y=10-20)
@@ -52,7 +50,6 @@ export function usePhysics(): PhysicsContext {
         const groundBody = worldRef.current.createRigidBody(groundBodyDesc);
         const groundColliderDesc = RAPIER.ColliderDesc.cuboid(200, 1, 200);
         worldRef.current.createCollider(groundColliderDesc, groundBody);
-        console.log('[Physics] Fallback ground plane created at y=-49 (safety net)');
 
         // Note: No test platform needed - terrain from GLB provides collision
 
@@ -70,22 +67,18 @@ export function usePhysics(): PhysicsContext {
         createBoundaryColliders(worldRef.current, RAPIER);
 
         // Load GLB map and create trimesh colliders
-        console.log('[Physics] Loading map colliders...');
         await loadMapColliders(worldRef.current, RAPIER);
 
         // IMPORTANT: Step the world to initialize collision structures
         // This is required for raycasts to work in Rapier
         worldRef.current.step();
         worldRef.current.step(); // Step twice to be safe
-        console.log('[Physics] World stepped to initialize');
         
         // Also update the internal structures for queries
         worldRef.current.updateSceneQueries();
-        console.log('[Physics] Scene queries updated');
 
         physicsReady = true;
         setIsReady(true);
-        console.log('[Physics] Ready!');
         
         // Test raycast from above to verify it works
         testRaycast();
@@ -135,18 +128,15 @@ function createBoundaryColliders(world: RAPIER.World, rapier: typeof RAPIER) {
     );
     world.createCollider(colliderDesc, body);
   }
-  console.log('[Physics] Boundary walls created');
 }
 
 async function loadMapColliders(world: RAPIER.World, rapier: typeof RAPIER): Promise<void> {
   return new Promise((resolve) => {
-    console.log('[Physics] Starting to load map from:', CURRENT_MAP);
     const loader = new GLTFLoader();
     
     loader.load(
       CURRENT_MAP,
       (gltf) => {
-        console.log('[Physics] GLB loaded successfully, processing meshes...');
         let meshCount = 0;
         let successCount = 0;
         let totalVertices = 0;
@@ -164,8 +154,6 @@ async function loadMapColliders(world: RAPIER.World, rapier: typeof RAPIER): Pro
               const success = createTrimeshCollider(world, rapier, child);
               if (success) {
                 successCount++;
-              } else {
-                console.log(`[Physics] Skipped mesh "${child.name}" (${vertCount} verts)`);
               }
             } catch (error) {
               console.warn('[Physics] Failed to create collider for mesh:', child.name, error);
@@ -173,8 +161,6 @@ async function loadMapColliders(world: RAPIER.World, rapier: typeof RAPIER): Pro
           }
         });
         
-        console.log(`[Physics] Created ${successCount}/${meshCount} trimesh colliders (${totalVertices} total vertices)`);
-        console.log(`[Physics] Total colliders in world: ${world.colliders.len()}`);
         resolve();
       },
       (progress) => {
@@ -187,7 +173,6 @@ async function loadMapColliders(world: RAPIER.World, rapier: typeof RAPIER): Pro
       },
       (error) => {
         console.error('[Physics] Failed to load GLB:', error);
-        console.log('[Physics] Continuing with fallback ground only');
         // Resolve anyway so the game can continue with fallback ground
         resolve();
       }
@@ -689,25 +674,147 @@ export function getColliderCount(): number {
   return worldInstance.colliders.len();
 }
 
+// ============================================================================
+// ICE WALL COLLIDERS - Dynamic colliders for Glacier's E ability
+// ============================================================================
+
+interface IceWallColliderData {
+  rigidBody: RAPIER.RigidBody;
+  collider: RAPIER.Collider;
+  createdAt: number;
+}
+
+const iceWallColliders = new Map<string, IceWallColliderData>();
+
+/**
+ * Add a collider for an ice wall segment
+ * @param id - Unique identifier for this wall segment
+ * @param x - X position (center of wall)
+ * @param y - Y position (base of wall)
+ * @param z - Z position (center of wall)
+ * @param rotation - Y rotation in radians
+ * @param width - Wall width
+ * @param height - Wall height
+ * @param depth - Wall thickness
+ */
+export function addIceWallCollider(
+  id: string,
+  x: number, y: number, z: number,
+  rotation: number,
+  width: number, height: number, depth: number
+): boolean {
+  if (!rapierInstance || !worldInstance) return false;
+  
+  // Don't add duplicate
+  if (iceWallColliders.has(id)) return true;
+  
+  try {
+    // Create fixed rigid body at wall position
+    // Position at center of wall (y + height/2)
+    const bodyDesc = rapierInstance.RigidBodyDesc.fixed()
+      .setTranslation(x, y + height / 2, z)
+      .setRotation({ x: 0, y: Math.sin(rotation / 2), z: 0, w: Math.cos(rotation / 2) });
+    
+    const rigidBody = worldInstance.createRigidBody(bodyDesc);
+    
+    // Create cuboid collider (half-extents)
+    const colliderDesc = rapierInstance.ColliderDesc.cuboid(width / 2, height / 2, depth / 2);
+    const collider = worldInstance.createCollider(colliderDesc, rigidBody);
+    
+    // CRITICAL: Update scene queries so raycasts can detect this new collider
+    // Without this, dynamically added colliders are invisible to raycasts
+    worldInstance.updateSceneQueries();
+    
+    iceWallColliders.set(id, {
+      rigidBody,
+      collider,
+      createdAt: Date.now(),
+    });
+    
+    return true;
+  } catch (e) {
+    console.error('[Physics] Failed to add ice wall collider:', e);
+    return false;
+  }
+}
+
+/**
+ * Remove an ice wall collider
+ */
+export function removeIceWallCollider(id: string): boolean {
+  if (!worldInstance) return false;
+  
+  const data = iceWallColliders.get(id);
+  if (!data) return false;
+  
+  try {
+    worldInstance.removeCollider(data.collider, true);
+    worldInstance.removeRigidBody(data.rigidBody);
+    iceWallColliders.delete(id);
+    return true;
+  } catch (e) {
+    console.error('[Physics] Failed to remove ice wall collider:', e);
+    return false;
+  }
+}
+
+/**
+ * Remove all expired ice wall colliders
+ * @param maxAge - Maximum age in milliseconds before removal
+ */
+export function cleanupExpiredIceWallColliders(maxAge: number): number {
+  if (!worldInstance) return 0;
+  
+  const now = Date.now();
+  let removed = 0;
+  
+  for (const [id, data] of iceWallColliders) {
+    if (now - data.createdAt > maxAge) {
+      try {
+        worldInstance.removeCollider(data.collider, true);
+        worldInstance.removeRigidBody(data.rigidBody);
+        iceWallColliders.delete(id);
+        removed++;
+      } catch (e) {
+        // Collider may already be removed
+        iceWallColliders.delete(id);
+      }
+    }
+  }
+  
+  return removed;
+}
+
+/**
+ * Remove all ice wall colliders (cleanup on game end)
+ */
+export function clearAllIceWallColliders(): void {
+  if (!worldInstance) {
+    iceWallColliders.clear();
+    return;
+  }
+  
+  for (const [id, data] of iceWallColliders) {
+    try {
+      worldInstance.removeCollider(data.collider, true);
+      worldInstance.removeRigidBody(data.rigidBody);
+    } catch (e) {
+      // Ignore errors during cleanup
+    }
+  }
+  iceWallColliders.clear();
+}
+
+/**
+ * Get the number of active ice wall colliders
+ */
+export function getIceWallColliderCount(): number {
+  return iceWallColliders.size;
+}
+
 // Test function to verify raycasting works
 function testRaycast() {
   if (!rapierInstance || !worldInstance) {
-    console.log('[Physics] Test: Cannot test, physics not ready');
     return;
   }
-
-  // Test 1: Cast from y=50 down, should hit test platform at y=10
-  const ray1 = new rapierInstance.Ray({ x: 0, y: 50, z: 0 }, { x: 0, y: -1, z: 0 });
-  const hit1 = worldInstance.castRay(ray1, 100, true);
-  console.log('[Physics] Test 1 (y=50 down):', hit1 ? `hit at distance ${hit1.timeOfImpact.toFixed(2)} (ground y=${(50 - hit1.timeOfImpact).toFixed(2)})` : 'NO HIT');
-
-  // Test 2: Cast from y=5 down, should hit ground at y=0
-  const ray2 = new rapierInstance.Ray({ x: 0, y: 5, z: 0 }, { x: 0, y: -1, z: 0 });
-  const hit2 = worldInstance.castRay(ray2, 100, true);
-  console.log('[Physics] Test 2 (y=5 down):', hit2 ? `hit at distance ${hit2.timeOfImpact.toFixed(2)} (ground y=${(5 - hit2.timeOfImpact).toFixed(2)})` : 'NO HIT');
-
-  // Test 3: Cast from y=1 down, should hit ground at y=0
-  const ray3 = new rapierInstance.Ray({ x: 0, y: 1, z: 0 }, { x: 0, y: -1, z: 0 });
-  const hit3 = worldInstance.castRay(ray3, 100, true);
-  console.log('[Physics] Test 3 (y=1 down):', hit3 ? `hit at distance ${hit3.timeOfImpact.toFixed(2)} (ground y=${(1 - hit3.timeOfImpact).toFixed(2)})` : 'NO HIT');
 }

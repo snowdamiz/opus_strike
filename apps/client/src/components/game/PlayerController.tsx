@@ -33,6 +33,10 @@ import {
   SLIDE_CAMERA_PITCH_OFFSET,
   SLIDE_FOV_BOOST,
   SLIDE_CAMERA_ROLL,
+  // Glacier passive slide boost constants
+  GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER,
+  GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER,
+  GLACIER_PASSIVE_SLIDE_FRICTION,
   // CS-style bunny hop constants
   BHOP_GROUND_ACCEL,
   BHOP_AIR_ACCEL,
@@ -41,6 +45,17 @@ import {
   BHOP_GROUND_FRICTION,
   BHOP_STOP_SPEED,
   BHOP_LANDING_SPEED_RETENTION,
+  // Ice Wall Rush constants
+  ICE_WALL_RUSH_SPEED,
+  ICE_WALL_RUSH_FUEL_DRAIN,
+  ICE_WALL_RUSH_FUEL_REGEN,
+  ICE_WALL_RUSH_REGEN_DELAY,
+  ICE_WALL_SEGMENT_INTERVAL,
+  ICE_WALL_SEGMENT_HEIGHT,
+  ICE_WALL_SEGMENT_WIDTH,
+  // Frost Storm Shield constants
+  FROST_STORM_SHIELD_AMOUNT,
+  FROST_STORM_DURATION,
   getHeroStats,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
@@ -65,6 +80,23 @@ const SMOOTH_SPEED_LARGE = 20; // Smoothing speed for larger steps (higher = sna
 
 // Debug flag
 let lastDebugTime = 0;
+
+/**
+ * Check if the player's team has a Glacier hero
+ * Used for Glacier's passive "Frozen Momentum" which boosts teammate slides
+ */
+function teamHasGlacier(localPlayerTeam: string | undefined): boolean {
+  if (!localPlayerTeam) return false;
+  
+  const players = useGameStore.getState().players;
+  for (const [, player] of players) {
+    // Check if player is on same team and is playing Glacier
+    if (player.team === localPlayerTeam && player.heroId === 'glacier') {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Quake/Source engine acceleration function
@@ -127,6 +159,10 @@ export function PlayerController() {
   const airStrikeTargeting = useGameStore(state => state.airStrikeTargeting);
   const setJetpackActive = useGameStore(state => state.setJetpackActive);
   const setJetpackFuel = useGameStore(state => state.setJetpackFuel);
+  const setIceWallRushActive = useGameStore(state => state.setIceWallRushActive);
+  const setIceWallRushFuel = useGameStore(state => state.setIceWallRushFuel);
+  const addIceWallRush = useGameStore(state => state.addIceWallRush);
+  const updateIceWallRush = useGameStore(state => state.updateIceWallRush);
   const setClientCooldown = useGameStore(state => state.setClientCooldown);
   const setClientCharges = useGameStore(state => state.setClientCharges);
   // Get reactive state for React rendering
@@ -222,6 +258,16 @@ export function PlayerController() {
   const JETPACK_FUEL_REGEN = 15; // Fuel regenerated per second when grounded
   const JETPACK_THRUST = 8; // Upward force (gentler lift)
   
+  // Glacier Ice Wall Rush state
+  const iceWallRushFuelRef = useRef(100);
+  const iceWallRushActiveRef = useRef(false);
+  const iceWallRushIdRef = useRef(0);
+  const activeIceWallRushIdRef = useRef<string | null>(null);
+  const lastWallSegmentTimeRef = useRef(0);
+  const lastFuelUpdateRef = useRef(100); // Track last fuel update to throttle
+  const iceWallRushDeactivatedAtRef = useRef(0); // Track when ability was last deactivated (for regen delay)
+  const FUEL_UPDATE_THRESHOLD = 2; // Only update store if fuel changed by this much
+  
   // Secondary fire press tracking (for bomb targeting - press once to target, press again to confirm)
   const secondaryFirePressedRef = useRef(false);
 
@@ -264,6 +310,12 @@ export function PlayerController() {
   const grappleTargetRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const activeGrappleLineIdRef = useRef<string | null>(null); // Track active grapple line for hook-first-then-pull
 
+  // Glacier state
+  const iceMalletIdRef = useRef(0);
+  const lastMalletSwingTimeRef = useRef(0);
+  const MALLET_SWING_RATE = 1.5; // Swings per second
+  const MALLET_SWING_INTERVAL = 1000 / MALLET_SWING_RATE;
+
   // Initialize camera position - also check if we need to spawn higher
   useEffect(() => {
     if (localPlayerForInit && !initializedRef.current) {
@@ -276,7 +328,6 @@ export function PlayerController() {
         updateLocalPlayer({
           position: { x: localPlayerForInit.position.x, y: startY, z: localPlayerForInit.position.z }
         });
-        console.log('[Player] Spawning high at y=60 to fall onto terrain');
       }
       
       initializedRef.current = true;
@@ -311,7 +362,6 @@ export function PlayerController() {
     // Check if on cooldown (charges depleted)
     const cooldownEnd = clientCooldownsRef.current[abilityId];
     if (cooldownEnd && Date.now() < cooldownEnd) {
-      console.log(`[Ability] ${abilityDef.name}: Still on cooldown`);
       return false;
     }
     
@@ -326,11 +376,9 @@ export function PlayerController() {
       // Clear the cooldown
       clientCooldownsRef.current[abilityId] = 0;
       setClientCooldown(abilityId, 0);
-      console.log(`[Ability] ${abilityDef.name}: Charges reset to ${maxCharges}`);
     }
     
     if (currentCharges <= 0) {
-      console.log(`[Ability] ${abilityDef.name}: No charges available`);
       return false;
     }
     
@@ -338,17 +386,13 @@ export function PlayerController() {
     const newCharges = currentCharges - 1;
     clientChargesRef.current[abilityId] = newCharges;
     setClientCharges(abilityId, newCharges);
-    
-    console.log(`[Ability] ${abilityDef.name}: Used charge, ${newCharges}/${maxCharges} remaining`);
-    
+        
     // If no charges left, start cooldown to restore ALL charges
     if (newCharges === 0) {
       const cooldownMs = cooldownSeconds * 1000;
       const endTime = Date.now() + cooldownMs;
       clientCooldownsRef.current[abilityId] = endTime;
       setClientCooldown(abilityId, endTime);
-      
-      console.log(`[Ability] ${abilityDef.name}: All charges used, ${cooldownSeconds}s cooldown started`);
     }
     
     return true;
@@ -363,7 +407,6 @@ export function PlayerController() {
       clientCooldownsRef.current[abilityId] = endTime;
       // Also update store so HUD can display cooldown
       setClientCooldown(abilityId, endTime);
-      console.log(`[Ability] Started cooldown for ${abilityDef.name}: ${abilityDef.cooldown}s`);
     }
   }, [setClientCooldown]);
 
@@ -374,7 +417,6 @@ export function PlayerController() {
   const executeShadowStepTeleport = useCallback(() => {
     // CRITICAL: Prevent re-entry (multiple clicks/keypresses)
     if (teleportingRef.current) {
-      console.log('[Ability] Shadow Step blocked - already teleporting');
       return;
     }
     
@@ -382,7 +424,6 @@ export function PlayerController() {
     const cooldownEnd = clientCooldownsRef.current['phantom_shadowstep'];
     if (cooldownEnd && Date.now() < cooldownEnd) {
       const remaining = Math.ceil((cooldownEnd - Date.now()) / 1000);
-      console.log(`[Ability] Shadow Step on cooldown - ${remaining}s remaining`);
       // Use direct store access to ensure state update
       useGameStore.getState().setShadowStepTargeting(false, false);
       shadowStepTargetRef.current = null;
@@ -392,14 +433,12 @@ export function PlayerController() {
     }
     
     if (!shadowStepTargetRef.current) {
-      console.log('[Ability] Shadow Step failed - no target position');
       useGameStore.getState().setShadowStepTargeting(false, false);
       teleportingRef.current = false;
       return;
     }
     
     if (!shadowStepValidRef.current) {
-      console.log('[Ability] Shadow Step failed - invalid target location');
       // Don't exit targeting mode, let user re-aim
       return;
     }
@@ -442,7 +481,6 @@ export function PlayerController() {
           
           const normalY = Math.abs(wallCheck.normal.y);
           if (wallCheck.hit && wallCheck.distance < distToTarget - 1.5 && normalY < 0.5) {
-            console.log(`[Ability] Shadow Step blocked by wall at height ${h}`);
             wallBlocking = true;
             break;
           }
@@ -459,7 +497,6 @@ export function PlayerController() {
         );
         const normalY = Math.abs(wallCheck.normal.y);
         if (wallCheck.hit && wallCheck.distance < distToTarget - 2.0 && normalY < 0.3) {
-          console.log(`[Ability] Shadow Step blocked by wall (elevated check)`);
           wallBlocking = true;
         }
       }
@@ -486,10 +523,8 @@ export function PlayerController() {
       if (isElevatedTarget) {
         const groundRecheck = checkGroundWithNormal(teleportX, teleportY + 2, teleportZ, 5);
         if (groundRecheck && groundRecheck.isWalkable) {
-          console.log(`[Ability] Shadow Step - using elevated fallback validation`);
           teleportY = groundRecheck.groundY + PLAYER_HEIGHT / 2 + 0.1;
         } else {
-          console.log(`[Ability] Shadow Step blocked: ${validation.reason}`);
           teleportingRef.current = false;
           useGameStore.getState().setShadowStepTargeting(false, false);
           shadowStepTargetRef.current = null;
@@ -497,7 +532,6 @@ export function PlayerController() {
           return;
         }
       } else {
-        console.log(`[Ability] Shadow Step blocked: ${validation.reason}`);
         teleportingRef.current = false;
         useGameStore.getState().setShadowStepTargeting(false, false);
         shadowStepTargetRef.current = null;
@@ -511,10 +545,6 @@ export function PlayerController() {
       teleportZ = validation.adjustedPosition.z;
     }
     
-    console.log(`[Ability] Shadow Step executing:`);
-    console.log(`  From: (${currentPos?.x.toFixed(1)}, ${currentPos?.y.toFixed(1)}, ${currentPos?.z.toFixed(1)})`);
-    console.log(`  To: (${teleportX.toFixed(1)}, ${teleportY.toFixed(1)}, ${teleportZ.toFixed(1)})`);
-    
     // Trigger visual effects (2D overlay + 3D arrival effect)
     triggerTeleportEffect('shadowstep');
     triggerShadowArrival({ x: teleportX, y: teleportY, z: teleportZ });
@@ -527,9 +557,7 @@ export function PlayerController() {
     useGameStore.getState().setShadowStepTargeting(false, false);
     shadowStepTargetRef.current = null;
     shadowStepValidRef.current = false;
-    
-    console.log('[Ability] Targeting mode disabled');
-    
+        
     // Update local player position in store
     updateLocalPlayer({
       position: { x: teleportX, y: teleportY, z: teleportZ },
@@ -559,15 +587,12 @@ export function PlayerController() {
     // Reset teleporting flag after a short delay (prevents accidental re-triggers)
     setTimeout(() => {
       teleportingRef.current = false;
-    }, 100);
-    
-    console.log(`[Ability] Shadow Step complete!`);
+    }, 100);    
   }, [updateLocalPlayer, camera, startClientCooldown, sendInput, playPhantomShadowStep]);
 
   // Execute bomb drop (Blaze right-click ability)
   const executeBombDrop = useCallback(() => {
     if (!bombTargetRef.current || !bombValidRef.current) {
-      console.log('[Ability] Bomb failed - no valid target');
       return;
     }
     
@@ -575,7 +600,6 @@ export function PlayerController() {
     const now = Date.now();
     if (now - lastBombTimeRef.current < BOMB_COOLDOWN) {
       const remaining = Math.ceil((BOMB_COOLDOWN - (now - lastBombTimeRef.current)) / 1000);
-      console.log(`[Ability] Bomb on cooldown - ${remaining}s remaining`);
       return;
     }
     
@@ -618,14 +642,11 @@ export function PlayerController() {
     useGameStore.getState().setBombTargeting(false, false);
     bombTargetRef.current = null;
     bombValidRef.current = false;
-    
-    console.log(`[Ability] Bomb deployed at (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})`);
   }, [playBlazeBombTarget, playBlazeBombExplode]);
 
   // Execute Air Strike at target location (must be before handleClick)
   const executeAirStrike = useCallback(() => {
     if (!airStrikeTargetRef.current || !airStrikeValidRef.current) {
-      console.log('[Ability] Air Strike failed - no valid target');
       return;
     }
     
@@ -634,7 +655,6 @@ export function PlayerController() {
     
     // Check ultimate charge
     if ((localPlayer.ultimateCharge ?? 0) < 100) {
-      console.log('[Ability] Air Strike failed - ultimate not ready');
       return;
     }
     
@@ -653,8 +673,6 @@ export function PlayerController() {
     useGameStore.getState().setAirStrikeTargeting(false, false);
     airStrikeTargetRef.current = null;
     airStrikeValidRef.current = false;
-    
-    console.log(`[Ability] Air Strike deployed at (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})`);
   }, [updateLocalPlayer, playBlazeAirstrike]);
 
   // Execute grapple trap throw (grenade-style arc)
@@ -726,8 +744,6 @@ export function PlayerController() {
     setGrappleTrapTargeting(false);
     grappleTrapTargetRef.current = null;
     grappleTrapValidRef.current = false;
-    
-    console.log('[Ability] Grapple Trap thrown!');
   }, [setGrappleTrapTargeting]);
 
   // Handle pointer lock on click
@@ -736,19 +752,15 @@ export function PlayerController() {
       requestPointerLock();
     } else if (shadowStepTargeting && shadowStepValidRef.current && shadowStepTargetRef.current) {
       // Confirm Shadow Step teleport on click
-      console.log('[Ability] Shadow Step confirmed!');
       executeShadowStepTeleport();
     } else if (bombTargeting && bombValidRef.current && bombTargetRef.current) {
       // Confirm Bomb drop on click
-      console.log('[Ability] Bomb confirmed!');
       executeBombDrop();
     } else if (airStrikeTargeting && airStrikeValidRef.current && airStrikeTargetRef.current) {
       // Confirm Air Strike on click
-      console.log('[Ability] Air Strike confirmed!');
       executeAirStrike();
     } else if (grappleTrapTargeting && grappleTrapValidRef.current && grappleTrapTargetRef.current) {
       // Confirm Grapple Trap on click
-      console.log('[Ability] Grapple Trap confirmed!');
       executeGrappleTrapPlacement();
     }
   }, [isPointerLocked, requestPointerLock, shadowStepTargeting, executeShadowStepTeleport, bombTargeting, executeBombDrop, airStrikeTargeting, executeAirStrike, grappleTrapTargeting, executeGrappleTrapPlacement]);
@@ -781,28 +793,24 @@ export function PlayerController() {
           shadowStepTargetRef.current = null;
           shadowStepValidRef.current = false;
           teleportingRef.current = false;
-          console.log('[Ability] Shadow Step cancelled');
         }
         
         if (isBombTargeting) {
           useGameStore.getState().setBombTargeting(false, false);
           bombTargetRef.current = null;
           bombValidRef.current = false;
-          console.log('[Ability] Bomb targeting cancelled');
         }
         
         if (isAirStrikeTargeting) {
           useGameStore.getState().setAirStrikeTargeting(false, false);
           airStrikeTargetRef.current = null;
           airStrikeValidRef.current = false;
-          console.log('[Ability] Air Strike targeting cancelled');
         }
         
         if (isGrappleTrapTargeting) {
           useGameStore.getState().setGrappleTrapTargeting(false, false);
           grappleTrapTargetRef.current = null;
           grappleTrapValidRef.current = false;
-          console.log('[Ability] Grapple Trap targeting cancelled');
         }
       }
     };
@@ -812,25 +820,21 @@ export function PlayerController() {
         e.preventDefault();
         setShadowStepTargeting(false);
         shadowStepTargetRef.current = null;
-        console.log('[Ability] Shadow Step cancelled');
       }
       if (bombTargeting) {
         e.preventDefault();
         setBombTargeting(false);
         bombTargetRef.current = null;
-        console.log('[Ability] Bomb targeting cancelled');
       }
       if (airStrikeTargeting) {
         e.preventDefault();
         setAirStrikeTargeting(false);
         airStrikeTargetRef.current = null;
-        console.log('[Ability] Air Strike targeting cancelled');
       }
       if (grappleTrapTargeting) {
         e.preventDefault();
         setGrappleTrapTargeting(false);
         grappleTrapTargetRef.current = null;
-        console.log('[Ability] Grapple Trap targeting cancelled');
       }
     };
 
@@ -907,8 +911,6 @@ export function PlayerController() {
   const executeAbility = useCallback((abilityId: string, position: THREE.Vector3, velocity: THREE.Vector3) => {
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
     if (!abilityDef) return;
-
-    console.log(`[Ability] Executing ${abilityDef.name}!`);
     
     // Start cooldown for abilities without special handling
     // - phantom_shadowstep: cooldown starts after teleport completes
@@ -962,7 +964,6 @@ export function PlayerController() {
             const normalY = Math.abs(wallCheck.normal.y);
             if (normalY < 0.5) { // Wall-like surface (normal is mostly horizontal)
               wallBlocking = true;
-              console.log(`[Ability] Blink blocked by wall at height ${h}, distance ${wallCheck.distance.toFixed(1)}`);
               break;
             }
           }
@@ -994,13 +995,10 @@ export function PlayerController() {
           // Adjust target to safe distance
           targetX = position.x + dx * safeDistance;
           targetZ = position.z + dz * safeDistance;
-          console.log(`[Ability] Blink adjusted to safe distance: ${safeDistance}m`);
         }
         
         // Validate the teleport destination
-        console.log(`[Ability] Blink validating: (${targetX.toFixed(1)}, ${targetY.toFixed(1)}, ${targetZ.toFixed(1)})`);
         const validation = validateTeleportDestination(targetX, targetY, targetZ, PLAYER_HEIGHT, PLAYER_RADIUS);
-        console.log(`[Ability] Blink validation result: ${validation.valid ? 'VALID' : 'INVALID'} - ${validation.reason || 'ok'}`);
         
         if (!validation.valid) {
           // Try shorter distances until we find a valid spot
@@ -1015,13 +1013,11 @@ export function PlayerController() {
               targetY = shorterValidation.adjustedPosition?.y ?? targetY;
               targetZ = shorterValidation.adjustedPosition?.z ?? shorterZ;
               foundValid = true;
-              console.log(`[Ability] Blink shortened to ${dist}m (original: ${validation.reason})`);
               break;
             }
           }
           
           if (!foundValid) {
-            console.log(`[Ability] Blink BLOCKED - no valid position found: ${validation.reason}`);
             // Don't consume charge if blink is completely blocked
             return;
           }
@@ -1034,7 +1030,6 @@ export function PlayerController() {
         
         // Use a charge (handles cooldown when charges depleted)
         if (!useAbilityCharge(abilityId)) {
-          console.log('[Ability] Blink - no charges available');
           return;
         }
         
@@ -1071,7 +1066,6 @@ export function PlayerController() {
           ownerTeam: (currentPlayer?.team || 'red') as 'red' | 'blue',
         });
         
-        console.log(`[Ability] Blinked to (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}) - Void zone created`);
         break;
       }
 
@@ -1079,7 +1073,6 @@ export function PlayerController() {
         // Enter targeting mode instead of instant teleport
         setShadowStepTargeting(true);
         // Sound will play when teleport actually happens (in shadow step execution below)
-        console.log('[Ability] Shadow Step targeting mode activated - aim and click to teleport');
         break;
       }
 
@@ -1097,7 +1090,6 @@ export function PlayerController() {
         // Play ultimate sound effect
         playPhantomVeil();
         
-        console.log(`[Ability] Phantom Veil activated! (30% speed boost for ${duration}s)`);
         break;
       }
 
@@ -1129,7 +1121,6 @@ export function PlayerController() {
           
           if (hit?.hit) {
             grapplePoint = hit.point;
-            console.log(`[Grapple] Found point at distance ${hit.distance.toFixed(1)}`);
           } else {
             // Try slightly downward if looking up and no hit
             hit = raycastDirection(
@@ -1139,7 +1130,6 @@ export function PlayerController() {
             );
             if (hit?.hit) {
               grapplePoint = hit.point;
-              console.log(`[Grapple] Found point (downward) at distance ${hit.distance.toFixed(1)}`);
             }
           }
         }
@@ -1150,12 +1140,6 @@ export function PlayerController() {
           const lineId = `grapple_${grapplePlayer.id}_${grappleLineIdRef.current}`;
           
           const startPos = { x: position.x, y: position.y + 0.6, z: position.z };
-          
-          console.log('[Ability] === CREATING GRAPPLE LINE ===');
-          console.log('[Ability] Line ID:', lineId);
-          console.log('[Ability] Start Position:', JSON.stringify(startPos));
-          console.log('[Ability] End Position:', JSON.stringify(grapplePoint));
-          console.log('[Ability] Owner ID:', grapplePlayer.id);
           
           useGameStore.getState().addGrappleLine({
             id: lineId,
@@ -1168,7 +1152,6 @@ export function PlayerController() {
           
           // Verify it was added
           const linesAfter = useGameStore.getState().grappleLines;
-          console.log('[Ability] Grapple lines in store after add:', linesAfter.length);
           
           // Store the target but DON'T start pulling yet - wait for hook to reach target
           // The physics loop will check when the grapple line state becomes 'attached'
@@ -1182,9 +1165,6 @@ export function PlayerController() {
             (grapplePoint.z - position.z) ** 2
           );
         
-          console.log(`[Ability] Grapple Hook fired! Target distance: ${dist.toFixed(1)}m`);
-        } else {
-          console.log('[Ability] Grapple - No surface found! Try aiming at geometry.');
         }
         break;
       }
@@ -1234,7 +1214,6 @@ export function PlayerController() {
           wallSegments: [],
         });
         
-        console.log('[Ability] Earth Wall deployed! Direction:', normDirX.toFixed(2), normDirZ.toFixed(2));
         break;
       }
 
@@ -1352,7 +1331,6 @@ export function PlayerController() {
         // Consume ultimate charge
         updateLocalPlayer({ ultimateCharge: 0 });
         
-        console.log('[Ability] Grapple Trap thrown instantly!');
         break;
       }
 
@@ -1373,20 +1351,17 @@ export function PlayerController() {
         // Play rocket jump sound
         playBlazeRocketJump();
         
-        console.log('[Ability] Rocket Jump!');
         break;
       }
       
       case 'blaze_jetpack': {
         // Jetpack is handled in useFrame (hold to fly), not as a one-time ability
-        console.log('[Ability] Jetpack toggled');
         break;
       }
       
       case 'blaze_airstrike': {
         // Enter air strike targeting mode (like bomb)
         setAirStrikeTargeting(true);
-        console.log('[Ability] Air Strike targeting mode activated - aim and click to deploy');
         break;
       }
 
@@ -1400,15 +1375,23 @@ export function PlayerController() {
         velocity.z = -Math.cos(yaw) * boost;
         
         abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
-        console.log('[Ability] Ice Slide activated!');
         break;
       }
 
-      case 'glacier_wallclimb': {
-        // Wall climb - boost upward
-        velocity.y = 12;
+      case 'glacier_frostshield': {
+        // Frost Storm Shield - gives 75 shield and snow storm effect for 6 seconds
+        const store = useGameStore.getState();
+        store.setFrostStormActive(true);
         abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
-        console.log('[Ability] Frost Climb activated!');
+        
+        // Auto-deactivate after duration (6 seconds)
+        setTimeout(() => {
+          const currentStore = useGameStore.getState();
+          if (currentStore.frostStormActive) {
+            currentStore.setFrostStormActive(false);
+            abilityActiveRef.current[abilityId] = { active: false, startTime: 0 };
+          }
+        }, FROST_STORM_DURATION * 1000);
         break;
       }
 
@@ -1416,7 +1399,6 @@ export function PlayerController() {
       case 'pulse_speedboost': {
         // Speed aura - mark as active
         abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
-        console.log('[Ability] Speed Aura activated!');
         break;
       }
 
@@ -1431,14 +1413,12 @@ export function PlayerController() {
         velocity.x = -Math.sin(yaw) * 8;
         velocity.z = -Math.cos(yaw) * 8;
         
-        console.log('[Ability] Quick Dash!');
         break;
       }
 
       case 'pulse_haste': {
         // Team haste - mark as active
         abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
-        console.log('[Ability] Team Haste activated!');
         break;
       }
 
@@ -1448,20 +1428,17 @@ export function PlayerController() {
         velocity.x = 0;
         velocity.z = 0;
         abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
-        console.log('[Ability] Fortify activated!');
         break;
       }
 
       case 'sentinel_barrier': {
         // Deploy barrier in front
-        console.log('[Ability] Energy Barrier deployed!');
         break;
       }
 
       case 'sentinel_dome': {
         // Shield dome
         abilityActiveRef.current[abilityId] = { active: true, startTime: Date.now() };
-        console.log('[Ability] Shield Dome activated!');
         break;
       }
     }
@@ -1613,18 +1590,19 @@ export function PlayerController() {
                              !isSliding.current && 
                              slideCooldownRef.current <= 0;
     
-    // Debug: Log when crouch is pressed while sprinting
-    if (inputState.crouch && inputState.sprint && hasMovementInput) {
-      console.log('[Slide Debug] Crouch+Sprint pressed. Grounded:', isGroundedRef.current, 
-                  'Already sliding:', isSliding.current, 
-                  'Cooldown:', slideCooldownRef.current.toFixed(2),
-                  'Should slide:', shouldStartSlide);
-    }
-    
     if (shouldStartSlide) {
       // Start sliding!
       isSliding.current = true;
-      slideTimeRef.current = SLIDE_DURATION;
+      
+      // Check for Glacier passive "Frozen Momentum" - boosts teammate slides
+      const hasGlacierPassive = teamHasGlacier(localPlayer.team);
+      
+      // Apply Glacier passive duration boost (50% longer slides)
+      const slideDuration = hasGlacierPassive 
+        ? SLIDE_DURATION * GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER 
+        : SLIDE_DURATION;
+      slideTimeRef.current = slideDuration;
+      
       wasSprintingBeforeSlide.current = true;
       isSprintingRef.current = false; // Stop sprinting when sliding
       
@@ -1648,19 +1626,23 @@ export function PlayerController() {
       slideDirectionRef.current.copy(slideDir);
       
       // Set initial slide velocity (sprint speed with boost)
-      const slideSpeed = heroStats.moveSpeed * SPRINT_MULTIPLIER * SLIDE_INITIAL_BOOST;
+      // Apply Glacier passive speed boost (40% faster slides)
+      const slideSpeedMultiplier = hasGlacierPassive 
+        ? SLIDE_INITIAL_BOOST * GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER 
+        : SLIDE_INITIAL_BOOST;
+      const slideSpeed = heroStats.moveSpeed * SPRINT_MULTIPLIER * slideSpeedMultiplier;
       velocityRef.current.x = slideDir.x * slideSpeed;
       velocityRef.current.z = slideDir.z * slideSpeed;
-      
-      console.log('[Movement] Started slide! Speed:', slideSpeed.toFixed(1), 'Duration:', SLIDE_DURATION);
     }
     
     // Update slide state
     if (isSliding.current) {
       slideTimeRef.current -= dt;
       
-      // Apply slide friction
-      const friction = Math.pow(SLIDE_FRICTION, dt * 60);
+      // Apply slide friction (Glacier passive reduces friction for further slides)
+      const hasGlacierPassive = teamHasGlacier(localPlayer.team);
+      const slideFriction = hasGlacierPassive ? GLACIER_PASSIVE_SLIDE_FRICTION : SLIDE_FRICTION;
+      const friction = Math.pow(slideFriction, dt * 60);
       velocityRef.current.x *= friction;
       velocityRef.current.z *= friction;
       
@@ -1679,8 +1661,6 @@ export function PlayerController() {
         
         // Stop slide sound
         stopSlideSound();
-        
-        console.log('[Movement] Slide ended, auto-uncrouching');
       }
     }
     
@@ -1721,7 +1701,6 @@ export function PlayerController() {
       // Check if ability has expired
       if (now - state.startTime >= duration) {
         state.active = false;
-        console.log(`[Ability] ${abilityDef?.name} ended`);
         continue;
       }
 
@@ -1810,15 +1789,11 @@ export function PlayerController() {
     if (heroId) {
       const heroDef = HERO_DEFINITIONS[heroId];
       if (heroDef) {
-        // Ability 1 (E) - Blink (skip for Blaze - jetpack is handled separately as hold ability)
-        if (heroId !== 'blaze') {
+        // Ability 1 (E) - Blink (skip for Blaze/Glacier - hold abilities handled separately)
+        if (heroId !== 'blaze' && heroId !== 'glacier') {
           if (inputState.ability1 && !abilityPressedRef.current.ability1) {
-            console.log(`[Input] E pressed for hero: ${heroId}, ability: ${heroDef.ability1.abilityId}`);
             if (!shadowStepTargeting && !grappleTrapTargeting && canUseAbility(heroDef.ability1.abilityId, false)) {
-              console.log(`[Input] Executing ability1: ${heroDef.ability1.abilityId}`);
               executeAbility(heroDef.ability1.abilityId, position, velocity);
-            } else {
-              console.log(`[Input] Cannot use ability1 - shadowStep: ${shadowStepTargeting}, grappleTrap: ${grappleTrapTargeting}, canUse: ${canUseAbility(heroDef.ability1.abilityId, false)}`);
             }
           }
           abilityPressedRef.current.ability1 = inputState.ability1;
@@ -1826,14 +1801,12 @@ export function PlayerController() {
 
         // Ability 2 (Q) - Shadow Step for Phantom, Grapple for Hookshot
         if (inputState.ability2 && !abilityPressedRef.current.ability2) {
-          console.log(`[Input] Q pressed for hero: ${heroId}, ability: ${heroDef.ability2.abilityId}`);
           if (heroId === 'phantom' && shadowStepTargeting) {
             // If already targeting, Q confirms the teleport (like click)
             if (shadowStepValidRef.current && shadowStepTargetRef.current) {
               executeShadowStepTeleport();
             }
           } else if (canUseAbility(heroDef.ability2.abilityId, false)) {
-            console.log(`[Input] Executing ability2: ${heroDef.ability2.abilityId}`);
             executeAbility(heroDef.ability2.abilityId, position, velocity);
           } else {
             console.log(`[Input] Cannot use ability2 - canUse: ${canUseAbility(heroDef.ability2.abilityId, false)}`);
@@ -1915,15 +1888,6 @@ export function PlayerController() {
               voidRayChargingRef.current = true;
               voidRayChargeStartRef.current = now;
               useGameStore.getState().setVoidRayCharging(true, now);
-              console.log('[Ability] Void Ray charging started...');
-            }
-            
-            // Calculate charge progress for UI
-            const chargeProgress = Math.min(1, (now - voidRayChargeStartRef.current) / VOID_RAY_CHARGE_TIME);
-            
-            // Log charging progress occasionally
-            if (chargeProgress < 1 && Math.floor(chargeProgress * 10) !== Math.floor((now - voidRayChargeStartRef.current - 100) / VOID_RAY_CHARGE_TIME * 10)) {
-              console.log(`[Ability] Void Ray charging: ${Math.floor(chargeProgress * 100)}%`);
             }
           } else if (voidRayChargingRef.current) {
             // Released right click - check if fully charged
@@ -1932,8 +1896,7 @@ export function PlayerController() {
             
             if (chargeProgress >= 1) {
               // Fully charged - FIRE!
-              console.log('[Ability] Void Ray FIRED!');
-              
+            
               // Calculate direction from look direction
               const yaw = yawRef.current;
               const pitch = pitchRef.current;
@@ -1970,8 +1933,6 @@ export function PlayerController() {
               
               // Play void ray sound
               playPhantomVoidRay();
-            } else {
-              console.log(`[Ability] Void Ray cancelled - only ${Math.floor(chargeProgress * 100)}% charged`);
             }
             
             // Reset charging state
@@ -2040,7 +2001,6 @@ export function PlayerController() {
             if (bombTargeting) {
               // Already targeting - second press confirms the bomb drop
               if (bombValidRef.current && bombTargetRef.current) {
-                console.log('[Ability] Bomb confirmed via right-click!');
                 executeBombDrop();
               }
             } else {
@@ -2049,10 +2009,6 @@ export function PlayerController() {
               if (now - lastBombTimeRef.current >= BOMB_COOLDOWN) {
                 setBombTargeting(true);
                 playBlazeBombTarget();
-                console.log('[Ability] Bomb targeting mode activated - right-click or left-click to drop');
-              } else {
-                const remaining = Math.ceil((BOMB_COOLDOWN - (now - lastBombTimeRef.current)) / 1000);
-                console.log(`[Ability] Bomb on cooldown - ${remaining}s remaining`);
               }
             }
           }
@@ -2093,6 +2049,169 @@ export function PlayerController() {
             if (isGroundedRef.current && jetpackFuelRef.current < 100) {
               jetpackFuelRef.current = Math.min(100, jetpackFuelRef.current + JETPACK_FUEL_REGEN * dt);
               setJetpackFuel(jetpackFuelRef.current);
+            }
+          }
+        }
+        
+        // ===== GLACIER ICE WALL RUSH (E - ability1) - Hold to propel forward + build wall =====
+        if (heroId === 'glacier') {
+          const now = Date.now();
+          
+          if (inputState.ability1 && iceWallRushFuelRef.current > 0) {
+            // Get look direction for propulsion (horizontal + slight vertical)
+            const yaw = yawRef.current;
+            const pitch = pitchRef.current;
+            
+            // Direction to propel - use horizontal look direction with some vertical influence
+            const dirX = -Math.sin(yaw);
+            const dirZ = -Math.cos(yaw);
+            // Allow some upward/downward influence from pitch, but limit it
+            const dirY = Math.sin(pitch) * 0.3;
+            
+            // Activate ice wall rush
+            if (!iceWallRushActiveRef.current) {
+              iceWallRushActiveRef.current = true;
+              setIceWallRushActive(true);
+              
+              // Create new ice wall rush instance
+              iceWallRushIdRef.current++;
+              const rushId = `icewall_${localPlayer.id}_${iceWallRushIdRef.current}`;
+              activeIceWallRushIdRef.current = rushId;
+              
+              addIceWallRush({
+                id: rushId,
+                startPosition: { x: position.x, y: position.y, z: position.z },
+                startTime: now,
+                ownerId: localPlayer.id,
+                ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+                segments: [],
+                isActive: true,
+              });
+              
+              lastWallSegmentTimeRef.current = now;
+              lastFuelUpdateRef.current = iceWallRushFuelRef.current;
+            }
+            
+            // Apply propulsion force in look direction
+            const propulsionSpeed = ICE_WALL_RUSH_SPEED;
+            velocity.x = dirX * propulsionSpeed;
+            velocity.z = dirZ * propulsionSpeed;
+            
+            // Ground-hugging during rush: check ground ahead and snap to it for smooth stair climbing
+            // This allows the ability to traverse stairs without getting stuck
+            const lookAhead = propulsionSpeed * dt * 3;
+            const aheadX = position.x + dirX * lookAhead;
+            const aheadZ = position.z + dirZ * lookAhead;
+            const groundAhead = checkGroundWithNormal(aheadX, position.y + STEP_HEIGHT + 1, aheadZ, STEP_HEIGHT + 3);
+            
+            if (groundAhead && groundAhead.isWalkable) {
+              const currentFeetY = position.y - PLAYER_HEIGHT / 2;
+              const targetGroundY = groundAhead.groundY;
+              const heightDiff = targetGroundY - currentFeetY;
+              
+              if (heightDiff > 0.05 && heightDiff <= STEP_HEIGHT * 1.2) {
+                // Step up smoothly - move to the elevated ground
+                position.y = targetGroundY + PLAYER_HEIGHT / 2;
+                smoothedYRef.current = position.y;
+                velocity.y = 0;
+                isGroundedRef.current = true;
+              } else if (heightDiff < -0.1 && heightDiff > -STEP_HEIGHT) {
+                // Step down - snap to ground below
+                position.y = targetGroundY + PLAYER_HEIGHT / 2;
+                smoothedYRef.current = position.y;
+                velocity.y = 0;
+                isGroundedRef.current = true;
+              } else if (Math.abs(heightDiff) <= 0.05) {
+                // Already at ground level, stay grounded
+                velocity.y = -1; // Slight downward to maintain ground contact
+                isGroundedRef.current = true;
+              }
+            } else {
+              // No ground ahead, allow some vertical movement based on look
+              velocity.y = Math.max(velocity.y + dirY * 5 * dt, dirY * propulsionSpeed * 0.3);
+            }
+            
+            // Create wall segments behind the player at intervals
+            if (now - lastWallSegmentTimeRef.current >= ICE_WALL_SEGMENT_INTERVAL * 1000) {
+              lastWallSegmentTimeRef.current = now;
+              
+              // Wall segment position - behind the player
+              const behindDistance = 1.5; // Distance behind player to place wall
+              const segmentX = position.x + dirX * -behindDistance;
+              const segmentZ = position.z + dirZ * -behindDistance;
+              
+              // Get ground level at segment position - use simple fallback for performance
+              const segmentY = position.y - 0.9; // Player feet level (simpler, no raycast)
+              
+              // Wall rotation - perpendicular to travel direction
+              const wallRotation = yaw + Math.PI / 2; // 90 degrees to travel direction
+              
+              const newSegment = {
+                position: { x: segmentX, y: segmentY, z: segmentZ },
+                height: ICE_WALL_SEGMENT_HEIGHT,
+                width: ICE_WALL_SEGMENT_WIDTH,
+                rotation: wallRotation,
+                createdAt: now,
+              };
+              
+              // Update the rush with new segment - direct store access
+              if (activeIceWallRushIdRef.current) {
+                const store = useGameStore.getState();
+                const currentRush = store.iceWallRushes.find(r => r.id === activeIceWallRushIdRef.current);
+                if (currentRush) {
+                  // Push directly to avoid array spread (segments array is mutable internally)
+                  updateIceWallRush(activeIceWallRushIdRef.current, {
+                    segments: [...currentRush.segments, newSegment],
+                  });
+                }
+              }
+            }
+            
+            // Consume fuel
+            iceWallRushFuelRef.current -= ICE_WALL_RUSH_FUEL_DRAIN * dt;
+            if (iceWallRushFuelRef.current <= 0) {
+              iceWallRushFuelRef.current = 0;
+              iceWallRushActiveRef.current = false;
+              setIceWallRushActive(false);
+              lastFuelUpdateRef.current = 0;
+              iceWallRushDeactivatedAtRef.current = now; // Track deactivation time for regen delay
+              
+              // Mark rush as inactive
+              if (activeIceWallRushIdRef.current) {
+                updateIceWallRush(activeIceWallRushIdRef.current, { isActive: false });
+                activeIceWallRushIdRef.current = null;
+              }
+            }
+            
+            // Throttle fuel updates - only update if changed significantly
+            if (Math.abs(iceWallRushFuelRef.current - lastFuelUpdateRef.current) >= FUEL_UPDATE_THRESHOLD) {
+              lastFuelUpdateRef.current = iceWallRushFuelRef.current;
+              setIceWallRushFuel(iceWallRushFuelRef.current);
+            }
+          } else {
+            // Deactivate ice wall rush
+            if (iceWallRushActiveRef.current) {
+              iceWallRushActiveRef.current = false;
+              setIceWallRushActive(false);
+              iceWallRushDeactivatedAtRef.current = now; // Track deactivation time for regen delay
+              
+              // Mark rush as inactive
+              if (activeIceWallRushIdRef.current) {
+                updateIceWallRush(activeIceWallRushIdRef.current, { isActive: false });
+                activeIceWallRushIdRef.current = null;
+              }
+            }
+            
+            // Regenerate fuel when grounded (throttled) - with 1 second delay after use
+            const timeSinceDeactivation = now - iceWallRushDeactivatedAtRef.current;
+            if (isGroundedRef.current && iceWallRushFuelRef.current < 100 && timeSinceDeactivation >= ICE_WALL_RUSH_REGEN_DELAY) {
+              iceWallRushFuelRef.current = Math.min(100, iceWallRushFuelRef.current + ICE_WALL_RUSH_FUEL_REGEN * dt);
+              
+              // Throttle fuel updates during regen
+              if (Math.abs(iceWallRushFuelRef.current - lastFuelUpdateRef.current) >= FUEL_UPDATE_THRESHOLD) {
+                lastFuelUpdateRef.current = iceWallRushFuelRef.current;
+                setIceWallRushFuel(iceWallRushFuelRef.current);
+              }
             }
           }
         }
@@ -2143,8 +2262,6 @@ export function PlayerController() {
               maxDistance: HOOK_MAX_DISTANCE,
               startPosition: { x: spawnX, y: spawnY, z: spawnZ },
             });
-            
-            console.log('[Hookshot] Chain hook fired!');
           }
         }
         
@@ -2193,16 +2310,57 @@ export function PlayerController() {
               startPosition: { x: spawnX, y: spawnY, z: spawnZ },
             });
             
-            console.log('[Hookshot] Drag hook launched!');
-          } else {
-            const remaining = Math.ceil((DRAG_HOOK_COOLDOWN - (now - lastDragHookTimeRef.current)) / 1000);
-            console.log(`[Hookshot] Drag hook on cooldown - ${remaining}s remaining`);
           }
         }
         
         // Track secondary fire press for hookshot (same as blaze)
         if (heroId === 'hookshot') {
           secondaryFirePressedRef.current = inputState.secondaryFire;
+        }
+        
+        // ===== GLACIER PRIMARY FIRE (Left Click) - Ice Mallet Swing =====
+        if (heroId === 'glacier') {
+          // Cannot swing while holding shield (right click blocks left click)
+          const isShielding = inputState.secondaryFire;
+          
+          // Track if left click is held (for continuous swing visual) - but not while shielding
+          useGameStore.getState().setGlacierSwingHeld(inputState.primaryFire && !isShielding);
+          
+          if (inputState.primaryFire && !isShielding) {
+            const now = Date.now();
+            if (now - lastMalletSwingTimeRef.current >= MALLET_SWING_INTERVAL) {
+              lastMalletSwingTimeRef.current = now;
+              
+              // Calculate swing direction from look direction
+              const yaw = yawRef.current;
+              const pitch = pitchRef.current;
+              
+              const dirX = -Math.sin(yaw) * Math.cos(pitch);
+              const dirY = Math.sin(pitch);
+              const dirZ = -Math.cos(yaw) * Math.cos(pitch);
+              
+              // Create ice mallet swing (alternating direction)
+              iceMalletIdRef.current++;
+              const malletId = `mallet_${localPlayer.id}_${iceMalletIdRef.current}`;
+              // Alternate swing direction: odd = right-to-left (1), even = left-to-right (-1)
+              const swingDirection = (iceMalletIdRef.current % 2 === 1) ? 1 : -1;
+              
+              useGameStore.getState().addIceMalletSwing({
+                id: malletId,
+                position: { x: position.x, y: position.y, z: position.z },
+                direction: { x: dirX, y: dirY, z: dirZ },
+                startTime: now,
+                ownerId: localPlayer.id,
+                ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
+                hasHit: false,
+                swingDirection: swingDirection as 1 | -1,
+              });
+            }
+          }
+          
+          // ===== GLACIER SECONDARY FIRE (Right Click) - Ice Shield =====
+          // Hold right click to raise an ice shield wall in front of the player
+          useGameStore.getState().setGlacierShieldActive(inputState.secondaryFire);
         }
       }
     }
@@ -2215,14 +2373,6 @@ export function PlayerController() {
     if (physicsOk) {
       // Check for ground below player
       groundInfo = checkGroundWithNormal(position.x, position.y + 0.5, position.z, 50);
-
-      // Debug logging (throttled)
-      if (now - lastDebugTime > 2000) {
-        lastDebugTime = now;
-        const colliders = getColliderCount();
-        const walkable = groundInfo ? (groundInfo.isWalkable ? 'yes' : 'STEEP') : 'n/a';
-        console.log('[Player] Y:', position.y.toFixed(1), '| Ground:', groundInfo ? groundInfo.groundY.toFixed(1) : 'none', '| Walkable:', walkable, '| Grounded:', isGroundedRef.current);
-      }
     }
 
     // Ground collision FIRST - determine if grounded before applying physics
@@ -2305,7 +2455,6 @@ export function PlayerController() {
       
       if (activeLine && activeLine.state === 'attached') {
         // Hook has reached target! Now start pulling the player
-        console.log('[Grapple] Hook attached! Starting pull...');
         isGrapplingRef.current = true;
         // Give initial impulse to break away from ground
         velocity.y = Math.max(velocity.y, 8);
@@ -2333,7 +2482,6 @@ export function PlayerController() {
         activeGrappleLineIdRef.current = null;
         // Give small upward boost when arriving
         velocity.y = Math.max(velocity.y, 5);
-        console.log('[Grapple] Reached destination!');
       } else {
         // Calculate pull strength - starts at base speed, accelerates as closer
         // Base pull: 25, max pull: 60, acceleration factor based on proximity
@@ -2363,7 +2511,6 @@ export function PlayerController() {
       
       if (activeLine && activeLine.state === 'attached') {
         // Hook has reached target! Start the swing
-        console.log('[Swing] Hook attached! Starting Pathfinder-style swing...');
         isSwingingRef.current = true;
         
         // Update line state to 'swinging'
@@ -2415,7 +2562,6 @@ export function PlayerController() {
         isSwingingRef.current = false;
         swingAttachPointRef.current = null;
         activeSwingLineIdRef.current = null;
-        console.log('[Swing] Released! Final velocity:', Math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2).toFixed(1));
       } else {
         // === APEX PATHFINDER MOMENTUM PHYSICS ===
         
@@ -2571,7 +2717,6 @@ export function PlayerController() {
             useGameStore.getState().updateSwingLine(activeSwingLineIdRef.current, { state: 'done', isActive: false });
           }
           activeSwingLineIdRef.current = null;
-          console.log('[Swing] Jump release! Speed:', Math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2).toFixed(1));
         }
       }
     }
@@ -2593,10 +2738,16 @@ export function PlayerController() {
       
       // STEP-UP LOGIC: Check ground at target position and ahead
       // This handles stairs without relying on wall detection
-      if (isGroundedRef.current) {
+      // Also works during Ice Wall Rush when slightly airborne
+      const isIceWallRushing = iceWallRushActiveRef.current;
+      const effectivelyGrounded = isGroundedRef.current || (isIceWallRushing && velocity.y < 2);
+      
+      if (effectivelyGrounded) {
         // Check ground further ahead for stairs (not just at target position)
+        // Scale look-ahead with movement speed for high-speed abilities
         const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
-        const lookAheadDist = Math.max(moveDist * 3, 0.5); // Look ahead more
+        const speedScale = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z) / 10;
+        const lookAheadDist = Math.max(moveDist * 3, 0.5, speedScale * 0.5); // Scale with speed
         const aheadX = position.x + (moveX / moveDist) * lookAheadDist;
         const aheadZ = position.z + (moveZ / moveDist) * lookAheadDist;
         
@@ -2608,7 +2759,9 @@ export function PlayerController() {
           const heightDiff = targetGroundY - currentFeetY;
           
           // If target ground is higher (but within step height), step up
-          if (heightDiff > 0.1 && heightDiff <= STEP_HEIGHT) {
+          // Allow slightly higher steps during Ice Wall Rush for smoother traversal
+          const effectiveStepHeight = isIceWallRushing ? STEP_HEIGHT * 1.25 : STEP_HEIGHT;
+          if (heightDiff > 0.1 && heightDiff <= effectiveStepHeight) {
             // Check ceiling clearance
             const ceilingCheck = checkGroundWithNormal(aheadX, targetGroundY + PLAYER_HEIGHT + 0.5, aheadZ, 1);
             const hasCeiling = ceilingCheck && ceilingCheck.groundY < targetGroundY + PLAYER_HEIGHT;
@@ -2674,7 +2827,6 @@ export function PlayerController() {
     // Out of bounds detection - respawn if player falls below main terrain level
     const OUT_OF_BOUNDS_Y = 5;
     if (position.y < OUT_OF_BOUNDS_Y && isGroundedRef.current) {
-      console.log('[Player] Out of bounds! Respawning...');
       position.set(-30, 60, -20); // Spawn in center of playable area
       velocity.set(0, 0, 0);
       smoothedYRef.current = null;

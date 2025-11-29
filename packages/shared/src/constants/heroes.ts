@@ -1,5 +1,6 @@
 import type { HeroDefinition, HeroId, HeroStats } from '../types/hero.js';
 import type { AbilityDefinition } from '../types/ability.js';
+import { FROST_STORM_DURATION, FROST_STORM_COOLDOWN } from './physics.js';
 
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
@@ -93,11 +94,11 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
       size: { width: 1.0, height: 2.0, depth: 1.0 },
     },
     passive: {
-      name: 'Permafrost',
-      description: 'Take 20% less damage when sliding or wall running',
+      name: 'Frozen Momentum',
+      description: 'Allies slide 40% faster and 50% further when Glacier is on the team',
     },
     ability1: { abilityId: 'glacier_iceslide', defaultKey: 'KeyE' },
-    ability2: { abilityId: 'glacier_wallclimb', defaultKey: 'KeyQ' },
+    ability2: { abilityId: 'glacier_frostshield', defaultKey: 'KeyQ' },
     ultimate: { abilityId: 'glacier_fortress', defaultKey: 'KeyF' },
     description: 'A tank who combines ice-powered parkour with defensive abilities.',
   },
@@ -251,23 +252,30 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
   },
 
   // Glacier Abilities
+  glacier_mallet_swing: {
+    id: 'glacier_mallet_swing',
+    name: 'Ice Mallet',
+    type: 'offensive',
+    targeting: 'direction',
+    cooldown: 0,
+    description: 'Swing a massive ice mallet in a wide arc. 1.5 swings per second.',
+  },
   glacier_iceslide: {
     id: 'glacier_iceslide',
-    name: 'Ice Slide',
+    name: 'Ice Wall Rush',
     type: 'movement',
-    targeting: 'instant',
-    cooldown: 6,
-    duration: 2,
-    description: 'Create an ice path that boosts your slide speed and duration.',
+    targeting: 'self',
+    cooldown: 0,
+    description: 'Hold to propel forward while building a wall of ice behind you. Wall blocks player movement.',
   },
-  glacier_wallclimb: {
-    id: 'glacier_wallclimb',
-    name: 'Frost Climb',
-    type: 'movement',
-    targeting: 'instant',
-    cooldown: 10,
-    duration: 3,
-    description: 'Freeze handholds into walls, allowing vertical climbing.',
+  glacier_frostshield: {
+    id: 'glacier_frostshield',
+    name: 'Frost Storm',
+    type: 'defensive',
+    targeting: 'self',
+    cooldown: FROST_STORM_COOLDOWN,
+    duration: FROST_STORM_DURATION,
+    description: 'Surround yourself with a protective blizzard. Gain 75 shield for 8 seconds.',
   },
   glacier_fortress: {
     id: 'glacier_fortress',

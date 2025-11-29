@@ -123,7 +123,7 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
 }
 
 export function HUD() {
-  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges, ultimateEffectActive, voidRayCharging, voidRayChargeStart, bombTargeting, bombTargetValid, jetpackFuel, jetpackActive } = useGameStore();
+  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges, ultimateEffectActive, voidRayCharging, voidRayChargeStart, bombTargeting, bombTargetValid, jetpackFuel, jetpackActive, iceWallRushFuel, iceWallRushActive, frostStormActive, frostStormShield } = useGameStore();
   
   // Force re-render every 100ms for smooth cooldown updates
   const [, setTick] = useState(0);
@@ -437,6 +437,38 @@ export function HUD() {
                   </span>
                 </div>
               </div>
+              
+              {/* Frost Storm Shield Bar - shown when active */}
+              {frostStormActive && frostStormShield > 0 && (
+                <div 
+                  className="h-3 mt-1 rounded-md overflow-hidden backdrop-blur-sm"
+                  style={{
+                    background: 'rgba(0, 0, 0, 0.6)',
+                    border: '1px solid rgba(96, 165, 250, 0.4)',
+                    boxShadow: '0 0 10px rgba(59, 130, 246, 0.3)',
+                  }}
+                >
+                  {/* Shield fill */}
+                  <div 
+                    className="h-full transition-all duration-150 relative"
+                    style={{ 
+                      width: `${(frostStormShield / 75) * 100}%`,
+                      background: 'linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%)',
+                      boxShadow: 'inset 0 0 15px rgba(147, 197, 253, 0.5)',
+                    }}
+                  >
+                    {/* Shine effect */}
+                    <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent h-1/2" />
+                  </div>
+                  
+                  {/* Shield text */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="text-[9px] font-mono text-cyan-200 font-bold drop-shadow-lg">
+                      ❄ {Math.ceil(frostStormShield)}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
             
             {/* Faction indicator */}
@@ -545,6 +577,34 @@ export function HUD() {
             </div>
             <span className="text-[10px] font-mono text-orange-300/70">
               {Math.round(jetpackFuel)}%
+            </span>
+          </div>
+        )}
+        
+        {/* Ice Wall Rush Charge (Glacier E ability) */}
+        {localPlayer.heroId === 'glacier' && (
+          <div 
+            className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
+            style={{
+              background: iceWallRushActive ? 'rgba(59, 130, 246, 0.25)' : 'rgba(59, 130, 246, 0.1)',
+              border: iceWallRushActive ? '1px solid rgba(59, 130, 246, 0.6)' : '1px solid rgba(59, 130, 246, 0.3)',
+            }}
+          >
+            <span className="text-[9px] font-display text-blue-400 tracking-wider">ICE</span>
+            <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
+              <div 
+                className="h-full transition-all duration-100"
+                style={{ 
+                  width: `${iceWallRushFuel}%`,
+                  background: iceWallRushActive 
+                    ? 'linear-gradient(90deg, #3b82f6, #60a5fa)'
+                    : 'linear-gradient(90deg, #60a5fa, #93c5fd)',
+                  boxShadow: iceWallRushActive ? '0 0 15px rgba(96, 165, 250, 0.7)' : '0 0 10px rgba(59, 130, 246, 0.5)',
+                }}
+              />
+            </div>
+            <span className="text-[10px] font-mono text-blue-300/70">
+              {Math.round(iceWallRushFuel)}%
             </span>
           </div>
         )}

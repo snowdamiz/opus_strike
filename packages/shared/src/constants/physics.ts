@@ -54,6 +54,11 @@ export const SLIDE_FRICTION = 0.96; // Friction applied during slide (higher = l
 export const MIN_SLIDE_SPEED = 5; // Minimum speed to initiate slide
 export const SLIDE_INITIAL_BOOST = 1.8; // Initial speed boost when entering slide (ensures faster than sprint)
 
+// Glacier Passive - Frozen Momentum (team slide boost when Glacier is on the team)
+export const GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER = 1.4; // 40% faster slides
+export const GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER = 1.5; // 50% longer slides (further distance)
+export const GLACIER_PASSIVE_SLIDE_FRICTION = 0.975; // Less friction = slides further
+
 // Crouch
 export const CROUCH_TRANSITION_SPEED = 12; // How fast to transition camera height
 export const CROUCH_HEIGHT_OFFSET = -0.4; // How much to lower the camera when crouching
@@ -94,6 +99,23 @@ export const JETPACK_FUEL_REGEN = 20; // per second when grounded
 export const JETPACK_THRUST = 20;
 export const JETPACK_HOVER_THRUST = 12;
 export const JETPACK_MAX_VERTICAL_SPEED = 15;
+
+// Ice Wall Rush (Glacier E ability)
+export const ICE_WALL_RUSH_MAX_FUEL = 100;
+export const ICE_WALL_RUSH_FUEL_DRAIN = 60; // per second - depletes faster
+export const ICE_WALL_RUSH_FUEL_REGEN = 15; // per second when grounded - slower regen
+export const ICE_WALL_RUSH_REGEN_DELAY = 1000; // ms delay before regen starts after use
+export const ICE_WALL_RUSH_SPEED = 14; // propulsion speed - slightly slower
+export const ICE_WALL_SEGMENT_INTERVAL = 0.10; // Create wall segment every 150ms
+export const ICE_WALL_SEGMENT_HEIGHT = 3.5; // Height of each wall segment
+export const ICE_WALL_SEGMENT_WIDTH = 2.0; // Width of each wall segment  
+export const ICE_WALL_SEGMENT_DEPTH = 0.8; // Thickness of wall
+export const ICE_WALL_DURATION = 5; // How long wall segments last (seconds)
+
+// Frost Storm Shield (Glacier Q ability)
+export const FROST_STORM_SHIELD_AMOUNT = 75; // Shield HP
+export const FROST_STORM_DURATION = 8; // Duration in seconds
+export const FROST_STORM_COOLDOWN = 18; // Cooldown in seconds
 
 // Glide
 export const GLIDE_FALL_SPEED = -4;

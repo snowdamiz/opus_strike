@@ -69,7 +69,6 @@ export function damageNpc(npcId: string, damage: number): { killed: boolean; npc
   
   // Fallback: Apply damage client-side if network not available
   // This ensures damage works even before network context is fully initialized
-  console.log(`[NPC Damage Fallback] Applying ${damage} damage to ${npc.name} client-side`);
   const newHealth = Math.max(0, npc.health - damage);
   
   if (newHealth <= 0) {
@@ -185,7 +184,6 @@ export function GameConsole() {
   useEffect(() => {
     setNetworkDamageNpc(network.damageNpc);
     setNetworkKillNpc(network.killNpc);
-    console.log('[GameConsole] Network NPC functions initialized');
   }, [network.damageNpc, network.killNpc]);
 
   // Auto-scroll to bottom
