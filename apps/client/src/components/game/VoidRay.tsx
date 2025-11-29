@@ -385,10 +385,6 @@ export function VoidRay({ id, startPosition, direction, startTime, ownerId }: Vo
     return new THREE.Euler().setFromQuaternion(quaternion);
   }, [direction.x, direction.y, direction.z]);
   
-  useEffect(() => {
-    console.log(`[VoidRay] Created: ${id}`);
-    return () => console.log(`[VoidRay] Destroyed: ${id}`);
-  }, [id]);
   
   useFrame((state, delta) => {
     if (!groupRef.current) return;
@@ -529,13 +525,8 @@ export function VoidRay({ id, startPosition, direction, startTime, ownerId }: Vo
     // Player collision
     const { players, localPlayer } = useGameStore.getState();
     
-    if (!hasLoggedRef.current) {
-      hasLoggedRef.current = true;
-      const enemies = Array.from(players.entries()).filter(([pid, p]) => 
-        pid !== localPlayer?.id && p.team !== localPlayer?.team && p.state === 'alive'
-      );
-      console.log(`[VoidRay] Checking ${enemies.length} enemies`);
-    }
+    // Track if we've already logged (now a no-op but kept for hasLoggedRef reference)
+    hasLoggedRef.current = true;
     
     for (const [playerId, player] of players) {
       if (playerId === localPlayer?.id) continue;
@@ -556,14 +547,10 @@ export function VoidRay({ id, startPosition, direction, startTime, ownerId }: Vo
       const distance = closestPoint.distanceTo(playerPos);
       
       if (distance <= PLAYER_HIT_RADIUS + RAY_RADIUS) {
-        console.log(`[VoidRay] HIT! ${player.name}`);
         hitPlayersRef.current.add(playerId);
         
         if (playerId.startsWith('npc_')) {
-          const result = damageNpc(playerId, RAY_DAMAGE);
-          if (result) {
-            console.log(`[VoidRay] Dealt ${RAY_DAMAGE} damage to ${result.npcName}${result.killed ? ' - ELIMINATED!' : ''}`);
-          }
+          damageNpc(playerId, RAY_DAMAGE);
         }
       }
     }

@@ -1,7 +1,8 @@
 import { useRef, useMemo, useEffect, useState } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { PHANTOM_COLORS } from './effectResources';
 
 // ============================================================================
 // PHANTOM BLINK TELEPORT EFFECT

@@ -1,43 +1,17 @@
-import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
+import { useRef, useMemo, useState, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, type HookProjectileData, type DragHookData, type GrappleTrapData, type SwingLineData, type GrappleLineData, type EarthWallData } from '../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../hooks/usePhysics';
 import { damageNpc } from '../ui/GameConsole';
-
-// ============================================================================
-// SHARED GEOMETRIES - Created once, reused everywhere
-// ============================================================================
-
-const SHARED_GEOMETRIES = {
-  sphere8: new THREE.SphereGeometry(1, 8, 8),
-  sphere12: new THREE.SphereGeometry(1, 12, 12),
-  cone6: new THREE.ConeGeometry(1, 1, 6),
-  cone8: new THREE.ConeGeometry(1, 1, 8),
-  ring16: new THREE.RingGeometry(0.8, 1, 16),
-  ring24: new THREE.RingGeometry(0.8, 1, 24),
-  circle16: new THREE.CircleGeometry(1, 16),
-  plane: new THREE.PlaneGeometry(1, 1),
-  box: new THREE.BoxGeometry(1, 1, 1),
-  cylinder8: new THREE.CylinderGeometry(1, 1, 1, 8),
-  cylinder12: new THREE.CylinderGeometry(1, 1, 1, 12),
-};
-
-// Hookshot color palette - industrial/mechanical theme
-const HOOKSHOT_COLORS = {
-  metal: 0x4a4a4a,
-  metalLight: 0x6a6a6a,
-  metalDark: 0x2a2a2a,
-  rope: 0x8b7355, // Brown rope
-  ropeHighlight: 0xa08060,
-  hookTip: 0xcccccc,
-  energy: 0x00ccff, // Cyan energy
-  energyGlow: 0x0099cc,
-  trap: 0xff6600, // Orange for trap
-  trapGlow: 0xff9944,
-  danger: 0xff3333,
-};
+import { 
+  SHARED_GEOMETRIES, 
+  HOOKSHOT_COLORS, 
+  EARTH_COLORS,
+  getHookshotMaterials,
+  TEMP_VECTORS,
+} from './effectResources';
 
 // ============================================================================
 // HOOK PROJECTILE - Short range chain hooks (basic attack)
@@ -54,39 +28,8 @@ const HOOK_RETRACT_SPEED = 50;
 // Hand position offset from player feet (matches spawn position in PlayerController)
 const HAND_HEIGHT = 0.3;
 
-// Pre-allocated vectors to avoid GC pressure in useFrame (module-level singletons)
-const _hookDir = new THREE.Vector3();
-const _hookQuat = new THREE.Quaternion();
-const _hookForward = new THREE.Vector3(0, 0, -1); // Pre-allocated unit vector
-const _ropeMid = new THREE.Vector3();
-const _ropeEnd = new THREE.Vector3();
-
-// Pre-create shared materials for rope (created once, shared across all hooks)
-const ROPE_MATERIAL_MAIN = new THREE.MeshBasicMaterial({ 
-  color: HOOKSHOT_COLORS.energy, 
-  transparent: true, 
-  opacity: 0.9 
-});
-const ROPE_MATERIAL_GLOW = new THREE.MeshBasicMaterial({ 
-  color: HOOKSHOT_COLORS.energyGlow, 
-  transparent: true, 
-  opacity: 0.4 
-});
-const ROPE_MATERIAL_CORE = new THREE.MeshBasicMaterial({ 
-  color: 0xffffff, 
-  transparent: true, 
-  opacity: 0.8 
-});
-
-// Shared hook materials (avoid creating materials per hook instance)
-const HOOK_MATERIALS = {
-  ring: new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.2, side: THREE.DoubleSide }),
-  shaft: new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.85, roughness: 0.25 }),
-  crown: new THREE.MeshStandardMaterial({ color: 0x777777, metalness: 0.85, roughness: 0.25 }),
-  fluke: new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.9, roughness: 0.15 }),
-  tip: new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.95, roughness: 0.1 }),
-  glow: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.3 }),
-};
+// Get shared materials from centralized resources
+const getHookMaterials = () => getHookshotMaterials();
 
 interface HookProjectileProps {
   hook: HookProjectileData;
@@ -98,6 +41,9 @@ function HookProjectile({ hook }: HookProjectileProps) {
   const ropeMainRef = useRef<THREE.Mesh>(null);
   const ropeGlowRef = useRef<THREE.Mesh>(null);
   const ropeCoreRef = useRef<THREE.Mesh>(null);
+  
+  // Get shared materials once
+  const HOOK_MATERIALS = getHookMaterials();
   
   // All state tracked via refs - NO useState, NO store updates in render loop
   const hasHitRef = useRef(false);
@@ -224,38 +170,38 @@ function HookProjectile({ hook }: HookProjectileProps) {
     // Update hook position directly
     hookRef.current.position.set(curPos.x, curPos.y, curPos.z);
     
-    // Update hook orientation
+    // Update hook orientation using shared temp vectors
     const hdx = curPos.x - pX;
     const hdy = curPos.y - pY;
     const hdz = curPos.z - pZ;
     const hLen = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
     
     if (hLen > 0.01) {
-      _hookDir.set(hdx / hLen, hdy / hLen, hdz / hLen);
-      _hookQuat.setFromUnitVectors(_hookForward, _hookDir);
-      hookRef.current.quaternion.copy(_hookQuat);
+      TEMP_VECTORS.v1.set(hdx / hLen, hdy / hLen, hdz / hLen);
+      TEMP_VECTORS.quat1.setFromUnitVectors(TEMP_VECTORS.forward, TEMP_VECTORS.v1);
+      hookRef.current.quaternion.copy(TEMP_VECTORS.quat1);
     }
     
     // Update rope meshes directly (no React state)
-    _ropeEnd.set(curPos.x, curPos.y, curPos.z);
-    _ropeMid.set((pX + curPos.x) * 0.5, (pY + curPos.y) * 0.5, (pZ + curPos.z) * 0.5);
+    TEMP_VECTORS.v2.set(curPos.x, curPos.y, curPos.z);
+    TEMP_VECTORS.v3.set((pX + curPos.x) * 0.5, (pY + curPos.y) * 0.5, (pZ + curPos.z) * 0.5);
     
     if (ropeMainRef.current) {
-      ropeMainRef.current.position.copy(_ropeMid);
+      ropeMainRef.current.position.copy(TEMP_VECTORS.v3);
       ropeMainRef.current.scale.set(0.025, hLen, 0.025);
-      ropeMainRef.current.lookAt(_ropeEnd);
+      ropeMainRef.current.lookAt(TEMP_VECTORS.v2);
       ropeMainRef.current.rotateX(Math.PI / 2);
     }
     if (ropeGlowRef.current) {
-      ropeGlowRef.current.position.copy(_ropeMid);
+      ropeGlowRef.current.position.copy(TEMP_VECTORS.v3);
       ropeGlowRef.current.scale.set(0.05, hLen, 0.05);
-      ropeGlowRef.current.lookAt(_ropeEnd);
+      ropeGlowRef.current.lookAt(TEMP_VECTORS.v2);
       ropeGlowRef.current.rotateX(Math.PI / 2);
     }
     if (ropeCoreRef.current) {
-      ropeCoreRef.current.position.copy(_ropeMid);
+      ropeCoreRef.current.position.copy(TEMP_VECTORS.v3);
       ropeCoreRef.current.scale.set(0.012, hLen, 0.012);
-      ropeCoreRef.current.lookAt(_ropeEnd);
+      ropeCoreRef.current.lookAt(TEMP_VECTORS.v2);
       ropeCoreRef.current.rotateX(Math.PI / 2);
     }
   });
@@ -279,10 +225,10 @@ function HookProjectile({ hook }: HookProjectileProps) {
         <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={3} decay={2} />
       </group>
       
-      {/* Rope layers - updated via refs */}
-      <mesh ref={ropeMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_MAIN} />
-      <mesh ref={ropeGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_GLOW} />
-      <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_CORE} />
+      {/* Rope layers - updated via refs, using shared materials */}
+      <mesh ref={ropeMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeMain} />
+      <mesh ref={ropeGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeGlow} />
+      <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeCore} />
     </group>
   );
 }
@@ -303,36 +249,6 @@ const DRAG_HOOK_HIT_RADIUS = 1.2;
 // Hand height for drag hook
 const DRAG_HOOK_HAND_HEIGHT = 0.3;
 
-// Pre-allocated vectors for drag hook calculations (avoid GC pressure)
-const _dragHookDir = new THREE.Vector3();
-const _dragHookQuat = new THREE.Quaternion();
-const _dragHookForward = new THREE.Vector3(0, 0, -1);
-const _dragRopeMid = new THREE.Vector3();
-const _dragRopeEnd = new THREE.Vector3();
-
-// Pre-create shared materials for heavy chain (more intense than basic attack)
-const HEAVY_CHAIN_MATERIAL_MAIN = new THREE.MeshBasicMaterial({ 
-  color: HOOKSHOT_COLORS.energy, 
-  transparent: true, 
-  opacity: 1.0 
-});
-const HEAVY_CHAIN_MATERIAL_OUTER = new THREE.MeshBasicMaterial({ 
-  color: HOOKSHOT_COLORS.energyGlow, 
-  transparent: true, 
-  opacity: 0.6 
-});
-const HEAVY_CHAIN_MATERIAL_CORE = new THREE.MeshBasicMaterial({ 
-  color: 0xffffff, 
-  transparent: true, 
-  opacity: 0.9 
-});
-// Extra outer glow layer for heavy attack
-const HEAVY_CHAIN_MATERIAL_MEGA_GLOW = new THREE.MeshBasicMaterial({ 
-  color: HOOKSHOT_COLORS.energy, 
-  transparent: true, 
-  opacity: 0.25 
-});
-
 interface DragHookProps {
   hook: DragHookData;
 }
@@ -348,6 +264,9 @@ function DragHookEffect({ hook }: DragHookProps) {
   const chainMegaGlowRef = useRef<THREE.Mesh>(null);
   
   const glowRef = useRef<THREE.Mesh>(null);
+  
+  // Get shared materials
+  const HOOK_MATERIALS = getHookMaterials();
   
   // All state tracked via refs - SAME PATTERN AS LEFT CLICK
   const hookStateRef = useRef<'extending' | 'retracting'>(hook.state === 'flying' ? 'extending' : 'retracting');
@@ -474,48 +393,48 @@ function DragHookEffect({ hook }: DragHookProps) {
     // Update hook position directly
     hookRef.current.position.set(curPos.x, curPos.y, curPos.z);
     
-    // Update hook orientation - point away from player
+    // Update hook orientation - point away from player (using shared temp vectors)
     const hdx = curPos.x - pX;
     const hdy = curPos.y - pY;
     const hdz = curPos.z - pZ;
     const hLen = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
     
     if (hLen > 0.01) {
-      _dragHookDir.set(hdx / hLen, hdy / hLen, hdz / hLen);
-      _dragHookQuat.setFromUnitVectors(_dragHookForward, _dragHookDir);
-      hookRef.current.quaternion.copy(_dragHookQuat);
+      TEMP_VECTORS.v1.set(hdx / hLen, hdy / hLen, hdz / hLen);
+      TEMP_VECTORS.quat1.setFromUnitVectors(TEMP_VECTORS.forward, TEMP_VECTORS.v1);
+      hookRef.current.quaternion.copy(TEMP_VECTORS.quat1);
     }
     
     // Update chain meshes directly (no React state) - SAME PATTERN AS LEFT CLICK
-    _dragRopeEnd.set(curPos.x, curPos.y, curPos.z);
-    _dragRopeMid.set((pX + curPos.x) * 0.5, (pY + curPos.y) * 0.5, (pZ + curPos.z) * 0.5);
+    TEMP_VECTORS.v2.set(curPos.x, curPos.y, curPos.z);
+    TEMP_VECTORS.v3.set((pX + curPos.x) * 0.5, (pY + curPos.y) * 0.5, (pZ + curPos.z) * 0.5);
     
     // Main energy layer (thicker than left click)
     if (chainMainRef.current) {
-      chainMainRef.current.position.copy(_dragRopeMid);
+      chainMainRef.current.position.copy(TEMP_VECTORS.v3);
       chainMainRef.current.scale.set(0.045, hLen, 0.045);
-      chainMainRef.current.lookAt(_dragRopeEnd);
+      chainMainRef.current.lookAt(TEMP_VECTORS.v2);
       chainMainRef.current.rotateX(Math.PI / 2);
     }
     // Outer glow layer (thicker than left click)
     if (chainOuterRef.current) {
-      chainOuterRef.current.position.copy(_dragRopeMid);
+      chainOuterRef.current.position.copy(TEMP_VECTORS.v3);
       chainOuterRef.current.scale.set(0.08, hLen, 0.08);
-      chainOuterRef.current.lookAt(_dragRopeEnd);
+      chainOuterRef.current.lookAt(TEMP_VECTORS.v2);
       chainOuterRef.current.rotateX(Math.PI / 2);
     }
     // Bright core (thicker than left click)
     if (chainCoreRef.current) {
-      chainCoreRef.current.position.copy(_dragRopeMid);
+      chainCoreRef.current.position.copy(TEMP_VECTORS.v3);
       chainCoreRef.current.scale.set(0.02, hLen, 0.02);
-      chainCoreRef.current.lookAt(_dragRopeEnd);
+      chainCoreRef.current.lookAt(TEMP_VECTORS.v2);
       chainCoreRef.current.rotateX(Math.PI / 2);
     }
     // Mega outer glow (extra layer for heavy attack)
     if (chainMegaGlowRef.current) {
-      chainMegaGlowRef.current.position.copy(_dragRopeMid);
+      chainMegaGlowRef.current.position.copy(TEMP_VECTORS.v3);
       chainMegaGlowRef.current.scale.set(0.12, hLen, 0.12);
-      chainMegaGlowRef.current.lookAt(_dragRopeEnd);
+      chainMegaGlowRef.current.lookAt(TEMP_VECTORS.v2);
       chainMegaGlowRef.current.rotateX(Math.PI / 2);
     }
     
@@ -563,10 +482,10 @@ function DragHookEffect({ hook }: DragHookProps) {
       </group>
       
       {/* === HEAVY CHAIN - Multi-layer, thicker than left click === */}
-      <mesh ref={chainMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_MAIN} />
-      <mesh ref={chainOuterRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_OUTER} />
-      <mesh ref={chainCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_CORE} />
-      <mesh ref={chainMegaGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_CHAIN_MATERIAL_MEGA_GLOW} />
+      <mesh ref={chainMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainMain} />
+      <mesh ref={chainOuterRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainOuter} />
+      <mesh ref={chainCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainCore} />
+      <mesh ref={chainMegaGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainMegaGlow} />
     </group>
   );
 }
@@ -785,16 +704,7 @@ function GrappleTrapEffect({ trap }: GrappleTrapProps) {
 // EARTH WALL - Hook slides on ground, wall of dirt rises behind (E ability)
 // ============================================================================
 
-// Earth wall colors
-const EARTH_COLORS = {
-  dirt: 0x8B4513, // Saddle brown
-  dirtDark: 0x654321, // Dark brown
-  dirtLight: 0xA0522D, // Sienna
-  rock: 0x696969, // Dim gray
-  grass: 0x556B2F, // Dark olive green
-  hookMetal: 0x3a3a3a,
-  hookGlow: 0xff6600, // Orange glow for earth hook
-};
+// Earth wall colors imported from effectResources
 
 const EARTH_WALL_SPEED = 35; // Units per second
 const EARTH_WALL_MAX_DISTANCE = 25;
@@ -944,10 +854,6 @@ function EarthWallEffect({ wall }: EarthWallProps) {
   
   const removeEarthWall = useGameStore(state => state.removeEarthWall);
   
-  useEffect(() => {
-    console.log('[EarthWall] MOUNTED - ID:', wall.id);
-    return () => console.log('[EarthWall] UNMOUNTED:', wall.id);
-  }, [wall.id]);
   
   useFrame((state, delta) => {
     if (!groupRef.current || !hookRef.current) return;
@@ -1013,7 +919,6 @@ function EarthWallEffect({ wall }: EarthWallProps) {
           time: Date.now(),
         }]);
         
-        console.log('[EarthWall] Added segment at', segmentX.toFixed(1), segmentZ.toFixed(1), 'groundY:', segmentGroundY.toFixed(1));
       }
       
       // Update hook visual - position on ground
@@ -1117,10 +1022,6 @@ function SwingLineEffect({ line }: SwingLineProps) {
   const removeSwingLine = useGameStore(state => state.removeSwingLine);
   const updateSwingLine = useGameStore(state => state.updateSwingLine);
   
-  useEffect(() => {
-    console.log('[SwingLine] MOUNTED - ID:', line.id, 'State:', line.state);
-    return () => console.log('[SwingLine] UNMOUNTED:', line.id);
-  }, [line.id]);
   
   useFrame((state, delta) => {
     frameCount.current++;
@@ -1173,7 +1074,6 @@ function SwingLineEffect({ line }: SwingLineProps) {
       if (hookExtensionRef.current >= initialDist) {
         hasReachedRef.current = true;
         hookPos = { ...line.attachPoint };
-        console.log('[SwingLine] Hook attached!');
         updateSwingLine(line.id, { state: 'attached' });
       } else {
         hookPos = {
@@ -1240,13 +1140,6 @@ function SwingLineEffect({ line }: SwingLineProps) {
 // OPTIMIZED: Uses same ref-based rope rendering as basic attack for smooth following
 // ============================================================================
 
-// Pre-allocated vectors for grapple line calculations (avoid GC pressure)
-const _grappleDir = new THREE.Vector3();
-const _grappleQuat = new THREE.Quaternion();
-const _grappleForward = new THREE.Vector3(0, 0, -1);
-const _grappleRopeMid = new THREE.Vector3();
-const _grappleRopeEnd = new THREE.Vector3();
-
 // Height offset from player feet to hand position (matches basic attack)
 const GRAPPLE_HAND_HEIGHT = 0.6;
 
@@ -1262,6 +1155,9 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
   const ropeMainRef = useRef<THREE.Mesh>(null);
   const ropeGlowRef = useRef<THREE.Mesh>(null);
   const ropeCoreRef = useRef<THREE.Mesh>(null);
+  
+  // Get shared materials
+  const HOOK_MATERIALS = getHookMaterials();
   
   // All state tracked via refs - NO useState, NO store updates in render loop (like basic attack)
   const hookExtensionRef = useRef(0);
@@ -1377,31 +1273,31 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
     const hLen = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
     
     if (hLen > 0.01) {
-      _grappleDir.set(hdx / hLen, hdy / hLen, hdz / hLen);
-      _grappleQuat.setFromUnitVectors(_grappleForward, _grappleDir);
-      hookRef.current.quaternion.copy(_grappleQuat);
+      TEMP_VECTORS.v1.set(hdx / hLen, hdy / hLen, hdz / hLen);
+      TEMP_VECTORS.quat1.setFromUnitVectors(TEMP_VECTORS.forward, TEMP_VECTORS.v1);
+      hookRef.current.quaternion.copy(TEMP_VECTORS.quat1);
     }
     
     // Update rope meshes directly (no React state) - same approach as basic attack
-    _grappleRopeEnd.set(hookPos.x, hookPos.y, hookPos.z);
-    _grappleRopeMid.set((pX + hookPos.x) * 0.5, (pY + hookPos.y) * 0.5, (pZ + hookPos.z) * 0.5);
+    TEMP_VECTORS.v2.set(hookPos.x, hookPos.y, hookPos.z);
+    TEMP_VECTORS.v3.set((pX + hookPos.x) * 0.5, (pY + hookPos.y) * 0.5, (pZ + hookPos.z) * 0.5);
     
     if (ropeMainRef.current) {
-      ropeMainRef.current.position.copy(_grappleRopeMid);
+      ropeMainRef.current.position.copy(TEMP_VECTORS.v3);
       ropeMainRef.current.scale.set(0.035, hLen, 0.035);
-      ropeMainRef.current.lookAt(_grappleRopeEnd);
+      ropeMainRef.current.lookAt(TEMP_VECTORS.v2);
       ropeMainRef.current.rotateX(Math.PI / 2);
     }
     if (ropeGlowRef.current) {
-      ropeGlowRef.current.position.copy(_grappleRopeMid);
+      ropeGlowRef.current.position.copy(TEMP_VECTORS.v3);
       ropeGlowRef.current.scale.set(0.06, hLen, 0.06);
-      ropeGlowRef.current.lookAt(_grappleRopeEnd);
+      ropeGlowRef.current.lookAt(TEMP_VECTORS.v2);
       ropeGlowRef.current.rotateX(Math.PI / 2);
     }
     if (ropeCoreRef.current) {
-      ropeCoreRef.current.position.copy(_grappleRopeMid);
+      ropeCoreRef.current.position.copy(TEMP_VECTORS.v3);
       ropeCoreRef.current.scale.set(0.015, hLen, 0.015);
-      ropeCoreRef.current.lookAt(_grappleRopeEnd);
+      ropeCoreRef.current.lookAt(TEMP_VECTORS.v2);
       ropeCoreRef.current.rotateX(Math.PI / 2);
     }
   });
@@ -1463,9 +1359,9 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
       </group>
       
       {/* ENERGY ROPE - Using cylinder meshes updated via refs (same as basic attack) */}
-      <mesh ref={ropeMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_MAIN} />
-      <mesh ref={ropeGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_GLOW} />
-      <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={ROPE_MATERIAL_CORE} />
+      <mesh ref={ropeMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeMain} />
+      <mesh ref={ropeGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeGlow} />
+      <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeCore} />
     </group>
   );
 }
@@ -1481,9 +1377,6 @@ interface GrappleTrapTargetingProps {
 
 const TRAP_MAX_RANGE = 30;
 const TRAP_MIN_RANGE = 3;
-
-const _trapLookDir = new THREE.Vector3();
-const _trapTargetPos = new THREE.Vector3();
 
 export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: GrappleTrapTargetingProps) {
   const indicatorRef = useRef<THREE.Group>(null);
@@ -1503,7 +1396,7 @@ export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: Grap
       return;
     }
     
-    _trapLookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    TEMP_VECTORS.v1.set(0, 0, -1).applyQuaternion(camera.quaternion);
     
     let targetX = camera.position.x;
     let targetY = camera.position.y;
@@ -1514,7 +1407,7 @@ export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: Grap
     if (isPhysicsReady()) {
       const directHit = raycastDirection(
         camera.position.x, camera.position.y, camera.position.z,
-        _trapLookDir.x, _trapLookDir.y, _trapLookDir.z,
+        TEMP_VECTORS.v1.x, TEMP_VECTORS.v1.y, TEMP_VECTORS.v1.z,
         TRAP_MAX_RANGE + 10
       );
       
@@ -1535,14 +1428,14 @@ export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: Grap
       }
       
       if (!foundTarget) {
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -_trapLookDir.y)));
+        const pitch = Math.asin(Math.max(-1, Math.min(1, -TEMP_VECTORS.v1.y)));
         const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 20 : 25);
         const sampleDistances = [baseDist * 0.5, baseDist, baseDist * 1.5, TRAP_MAX_RANGE];
         
         for (const dist of sampleDistances) {
-          const sampleX = camera.position.x + _trapLookDir.x * dist;
-          const sampleY = camera.position.y + _trapLookDir.y * dist;
-          const sampleZ = camera.position.z + _trapLookDir.z * dist;
+          const sampleX = camera.position.x + TEMP_VECTORS.v1.x * dist;
+          const sampleY = camera.position.y + TEMP_VECTORS.v1.y * dist;
+          const sampleZ = camera.position.z + TEMP_VECTORS.v1.z * dist;
           
           const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150);
           
@@ -1580,15 +1473,15 @@ export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: Grap
       }
     }
     
-    _trapTargetPos.set(targetX, targetY, targetZ);
+    TEMP_VECTORS.v4.set(targetX, targetY, targetZ);
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {
       indicatorRef.current.visible = true;
-      indicatorRef.current.position.copy(_trapTargetPos);
+      indicatorRef.current.position.copy(TEMP_VECTORS.v4);
     }
     
-    onTargetUpdate(_trapTargetPos.clone(), isValid);
+    onTargetUpdate(TEMP_VECTORS.v4.clone(), isValid);
   });
   
   if (!isActive) return null;
@@ -1631,16 +1524,6 @@ export function HookshotEffectsManager() {
   const grappleLines = useGameStore(state => state.grappleLines);
   const earthWalls = useGameStore(state => state.earthWalls);
   
-  // Log when grapple lines change
-  useEffect(() => {
-    if (grappleLines.length > 0) {
-      console.log('[HookshotEffects] === GRAPPLE LINES UPDATE ===');
-      console.log('[HookshotEffects] Count:', grappleLines.length);
-      grappleLines.forEach(line => {
-        console.log('[HookshotEffects] Line:', line.id, 'State:', line.state);
-      });
-    }
-  }, [grappleLines]);
   
   // Cleanup interval
   useEffect(() => {

@@ -583,10 +583,7 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
           lastDamageTickRef.current.set(playerId, now);
           
           if (playerId.startsWith('npc_')) {
-            const result = damageNpc(playerId, VOID_ZONE_DAMAGE);
-            if (result) {
-              console.log(`[VoidZone] Hit ${result.npcName} for ${VOID_ZONE_DAMAGE} damage${result.killed ? ' - ELIMINATED!' : ''}`);
-            }
+            damageNpc(playerId, VOID_ZONE_DAMAGE);
           }
         }
       }

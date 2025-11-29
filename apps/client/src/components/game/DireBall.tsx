@@ -241,13 +241,6 @@ export function DireBall({ id, position, velocity, startTime, ownerId }: DireBal
   // Get removeDireBall action from store
   const removeDireBall = useGameStore(state => state.removeDireBall);
   
-  // Debug: Log when DireBall is created
-  useEffect(() => {
-    console.log(`[DireBall] Created: ${id} at (${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)})`);
-    return () => {
-      console.log(`[DireBall] Destroyed: ${id}`);
-    };
-  }, [id, position.x, position.y, position.z]);
   
   // Get shared materials (no shader compilation on spawn)
   const coreMaterial = getSharedCoreMaterial();
@@ -339,15 +332,8 @@ export function DireBall({ id, position, velocity, startTime, ownerId }: DireBal
     // Check for NPC/enemy player collision
     const { players, localPlayer } = useGameStore.getState();
     
-    // Debug log once per ball to show what we're checking
-    if (!hasLoggedOnce.current) {
-      hasLoggedOnce.current = true;
-      const otherPlayers = Array.from(players.entries()).filter(([pid]) => pid !== localPlayer?.id);
-      console.log(`[DireBall] Checking ${otherPlayers.length} other players. Local team: ${localPlayer?.team}`);
-      otherPlayers.forEach(([pid, p]) => {
-        console.log(`  - ${p.name} (${pid.slice(0,8)}): team=${p.team}, state=${p.state}`);
-      });
-    }
+    // Mark as logged
+    hasLoggedOnce.current = true;
     
     // Check all players for collision (NPCs and real players)
     for (const [playerId, player] of players) {
@@ -369,14 +355,9 @@ export function DireBall({ id, position, velocity, startTime, ownerId }: DireBal
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
       
       if (distance <= NPC_HIT_RADIUS) {
-        console.log(`[DireBall] HIT! ${player.name} at distance ${distance.toFixed(2)}m`);
-        
         // Apply damage - NPCs use damageNpc, real players would use server damage
         if (playerId.startsWith('npc_')) {
-          const result = damageNpc(playerId, PROJECTILE_DAMAGE);
-          if (result) {
-            console.log(`[DireBall] Dealt ${PROJECTILE_DAMAGE} damage to ${result.npcName}${result.killed ? ' - ELIMINATED!' : ''}`);
-          }
+          damageNpc(playerId, PROJECTILE_DAMAGE);
         }
         
         // Mark as collided and remove

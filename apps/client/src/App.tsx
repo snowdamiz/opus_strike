@@ -25,8 +25,6 @@ export function App() {
   useEffect(() => {
     if (isLoading) return;
     
-    console.log('[App] Music effect - appPhase:', appPhase, 'gamePhase:', gamePhase);
-    
     // Play game music during active gameplay, lobby music otherwise
     if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
       playGameMusic();

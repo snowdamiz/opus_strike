@@ -3,23 +3,10 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type RocketData, type BombData } from '../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../hooks/usePhysics';
-
-// ============================================================================
-// SHARED GEOMETRIES - Created once, reused everywhere
-// ============================================================================
-
-const SHARED_GEOMETRIES = {
-  sphere8: new THREE.SphereGeometry(1, 8, 8),
-  sphere12: new THREE.SphereGeometry(1, 12, 12),
-  cone6: new THREE.ConeGeometry(1, 1, 6),
-  cone8: new THREE.ConeGeometry(1, 1, 8),
-  ring16: new THREE.RingGeometry(0.8, 1, 16),
-  ring24: new THREE.RingGeometry(0.8, 1, 24),
-  circle16: new THREE.CircleGeometry(1, 16),
-  plane: new THREE.PlaneGeometry(1, 1),
-  box: new THREE.BoxGeometry(1, 1, 1),
-  cylinder8: new THREE.CylinderGeometry(1, 1, 1, 8),
-};
+import { 
+  SHARED_GEOMETRIES, 
+  BLAZE_COLORS,
+} from './effectResources';
 
 // ============================================================================
 // ROCKET EFFECT - Individual rockets with good visuals
@@ -29,7 +16,7 @@ const SHARED_GEOMETRIES = {
 const MAX_ROCKETS = 30;
 const ROCKET_LIFETIME = 5000;
 
-// Pre-allocated vectors to avoid GC in useFrame
+// Pre-allocated vectors for rockets (local to avoid conflicts)
 const _rocketPos = new THREE.Vector3();
 const _rocketDir = new THREE.Vector3();
 const _rocketLookAt = new THREE.Vector3();
@@ -984,8 +971,10 @@ interface BombTargetingIndicatorProps {
 const BOMB_MAX_RANGE = 60;
 const BOMB_MIN_RANGE = 3;
 
-const _lookDir = new THREE.Vector3();
-const _targetPos = new THREE.Vector3();
+// Pre-allocated vectors for bomb targeting (local to avoid conflicts)
+const _bombLookDir = new THREE.Vector3();
+const _bombTargetPos = new THREE.Vector3();
+const _bombHorizDir = new THREE.Vector3();
 
 export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
@@ -1005,7 +994,7 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       return;
     }
     
-    _lookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    _bombLookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
     
     let targetX = camera.position.x;
     let targetY = camera.position.y;
@@ -1016,7 +1005,7 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
     if (isPhysicsReady()) {
       const directHit = raycastDirection(
         camera.position.x, camera.position.y, camera.position.z,
-        _lookDir.x, _lookDir.y, _lookDir.z,
+        _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
         BOMB_MAX_RANGE + 10
       );
       
@@ -1037,14 +1026,14 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       }
       
       if (!foundTarget) {
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -_lookDir.y)));
+        const pitch = Math.asin(Math.max(-1, Math.min(1, -_bombLookDir.y)));
         const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
         const sampleDistances = [baseDist * 0.5, baseDist, baseDist * 1.5, BOMB_MAX_RANGE];
         
         for (const dist of sampleDistances) {
-          const sampleX = camera.position.x + _lookDir.x * dist;
-          const sampleY = camera.position.y + _lookDir.y * dist;
-          const sampleZ = camera.position.z + _lookDir.z * dist;
+          const sampleX = camera.position.x + _bombLookDir.x * dist;
+          const sampleY = camera.position.y + _bombLookDir.y * dist;
+          const sampleZ = camera.position.z + _bombLookDir.z * dist;
           
           const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150);
           
@@ -1090,9 +1079,9 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       
       if (!foundTarget) {
         const fallbackDist = 20;
-        const horizDir = new THREE.Vector3(_lookDir.x, 0, _lookDir.z).normalize();
-        targetX = localPlayer.position.x + horizDir.x * fallbackDist;
-        targetZ = localPlayer.position.z + horizDir.z * fallbackDist;
+        _bombHorizDir.set(_bombLookDir.x, 0, _bombLookDir.z).normalize();
+        targetX = localPlayer.position.x + _bombHorizDir.x * fallbackDist;
+        targetZ = localPlayer.position.z + _bombHorizDir.z * fallbackDist;
         
         const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100);
         if (groundCheck?.isWalkable) {
@@ -1105,15 +1094,15 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       }
     }
     
-    _targetPos.set(targetX, targetY, targetZ);
+    _bombTargetPos.set(targetX, targetY, targetZ);
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {
       indicatorRef.current.visible = true;
-      indicatorRef.current.position.copy(_targetPos);
+      indicatorRef.current.position.copy(_bombTargetPos);
     }
     
-    onTargetUpdate(_targetPos.clone(), isValid);
+    onTargetUpdate(_bombTargetPos.clone(), isValid);
   });
   
   if (!isActive) return null;
@@ -1166,8 +1155,10 @@ interface AirStrikeTargetingIndicatorProps {
 const AIRSTRIKE_MAX_RANGE = 80;
 const AIRSTRIKE_MIN_RANGE = 10;
 
+// Pre-allocated vectors for airstrike targeting (local to avoid conflicts)
 const _asLookDir = new THREE.Vector3();
 const _asTargetPos = new THREE.Vector3();
+const _asHorizDir = new THREE.Vector3();
 
 export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStrikeTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
@@ -1272,9 +1263,9 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
       
       if (!foundTarget) {
         const fallbackDist = 30;
-        const horizDir = new THREE.Vector3(_asLookDir.x, 0, _asLookDir.z).normalize();
-        targetX = localPlayer.position.x + horizDir.x * fallbackDist;
-        targetZ = localPlayer.position.z + horizDir.z * fallbackDist;
+        _asHorizDir.set(_asLookDir.x, 0, _asLookDir.z).normalize();
+        targetX = localPlayer.position.x + _asHorizDir.x * fallbackDist;
+        targetZ = localPlayer.position.z + _asHorizDir.z * fallbackDist;
         
         const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 40, targetZ, 120);
         if (groundCheck?.isWalkable) {

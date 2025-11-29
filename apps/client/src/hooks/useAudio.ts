@@ -126,7 +126,6 @@ export function useAudio() {
     }
 
     sharedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    console.log('[Audio] AudioContext created, state:', sharedAudioContext.state);
   }, []);
 
   // Load a sound effect
@@ -168,7 +167,6 @@ export function useAudio() {
       };
       
       sharedSounds.set(name, effect);
-      console.log(`[Audio] Loaded sound: ${name}`);
       return effect;
     } catch (error) {
       console.warn(`[Audio] Failed to load sound: ${name}`, error);
@@ -232,7 +230,6 @@ export function useAudio() {
     }
 
     source.start();
-    console.log(`[Audio] Playing: ${name}`);
   }, [loadSound, initAudio]);
 
   // Play looping sound
@@ -313,8 +310,6 @@ export function useAudio() {
       const volumeMultiplier = loop.isMusic ? getMusicVolume() : getSfxVolume();
       loop.gain.gain.value = volumeMultiplier;
     }
-    
-    console.log('[Audio] Settings updated:', sharedConfig);
   }, []);
 
   // Toggle mute
@@ -335,9 +330,7 @@ export function useAudio() {
       initAudio();
     }
     
-    console.log(`[Audio] Preloading ${names.length} sounds...`);
     await Promise.all(names.map(name => loadSound(name)));
-    console.log(`[Audio] Preload complete`);
   }, [initAudio, loadSound]);
 
   // No cleanup on unmount - audio context is shared/singleton
@@ -406,7 +399,6 @@ export function useMovementSounds() {
     const sound = await loadSound('walk');
     if (sound?.buffer) {
       walkingSoundState.cachedBuffer = sound.buffer;
-      console.log('[Audio] Walking sound preloaded, duration:', sound.buffer.duration);
     }
   }, [loadSound]);
 
@@ -653,9 +645,7 @@ export function useMusic() {
   const { playLoop, stopLoop, initAudio } = useAudio();
 
   // Actually start playing the music
-  const startMusic = useCallback((track: 'lobby' | 'game') => {
-    console.log(`[Music] startMusic called for ${track}, current: ${musicState.currentTrack}`);
-    
+  const startMusic = useCallback((track: 'lobby' | 'game') => {    
     // Force stop any current music immediately (no fade to prevent overlap)
     const lobbyLoop = sharedLoops.get('lobbyMusic');
     if (lobbyLoop) {
@@ -681,7 +671,6 @@ export function useMusic() {
     musicState.isPlaying = true;
     musicState.isPaused = false;
     musicState.pendingTrack = null;
-    console.log(`[Music] Started ${track} music`);
   }, [playLoop, initAudio]);
 
   // Pause music (fade out but don't stop)
@@ -695,13 +684,11 @@ export function useMusic() {
       musicState.pausedGainValue = loop.gain.gain.value;
       loop.gain.gain.linearRampToValueAtTime(0, sharedAudioContext.currentTime + 0.5);
       musicState.isPaused = true;
-      console.log('[Music] Paused');
     }
   }, []);
 
   // Resume music (fade back in)
   const resumeMusic = useCallback(() => {
-    console.log('[Music] Resume called, isPlaying:', musicState.isPlaying, 'isPaused:', musicState.isPaused, 'track:', musicState.currentTrack);
     if (!musicState.isPlaying || !musicState.isPaused) return;
     
     const loopId = musicState.currentTrack === 'lobby' ? 'lobbyMusic' : 'gameMusic';
@@ -709,13 +696,11 @@ export function useMusic() {
     
     if (loop && sharedAudioContext) {
       const targetVolume = musicState.pausedGainValue || getMusicVolume();
-      console.log('[Music] Resuming with volume:', targetVolume);
       loop.gain.gain.linearRampToValueAtTime(
         targetVolume,
         sharedAudioContext.currentTime + 0.5
       );
       musicState.isPaused = false;
-      console.log('[Music] Resumed');
     }
   }, []);
 
@@ -723,7 +708,6 @@ export function useMusic() {
   const playLobbyMusic = useCallback(() => {
     // Skip only if lobby is already playing and not paused
     if (musicState.currentTrack === 'lobby' && musicState.isPlaying && !musicState.isPaused) {
-      console.log('[Music] Lobby music already playing, skipping');
       return;
     }
     
@@ -735,11 +719,9 @@ export function useMusic() {
           startMusic(musicState.pendingTrack);
         }
       });
-      console.log('[Music] Lobby music queued (waiting for user interaction)');
       return;
     }
     
-    console.log('[Music] Switching to lobby music');
     startMusic('lobby');
   }, [startMusic]);
 
@@ -756,11 +738,9 @@ export function useMusic() {
           startMusic(musicState.pendingTrack);
         }
       });
-      console.log('[Music] Game music queued (waiting for user interaction)');
       return;
     }
     
-    console.log('[Music] Starting game music, current track:', musicState.currentTrack, 'isPaused:', musicState.isPaused);
     startMusic('game');
   }, [startMusic]);
 
@@ -775,7 +755,6 @@ export function useMusic() {
     musicState.currentTrack = null;
     musicState.pendingTrack = null;
     musicState.isPlaying = false;
-    console.log('[Music] Stopped music');
   }, [stopLoop]);
 
   // Update music based on game phase
