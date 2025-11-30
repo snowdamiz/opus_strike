@@ -6,7 +6,12 @@ import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../h
 import { 
   SHARED_GEOMETRIES, 
   BLAZE_COLORS,
+  getBlazeMaterials,
+  precompileBlazeMaterials,
 } from './effectResources';
+
+// Get all pre-created materials once at module load
+const BLAZE_MATS = getBlazeMaterials();
 
 // ============================================================================
 // ROCKET EFFECT - Individual rockets with good visuals
@@ -50,34 +55,17 @@ function RocketEffect({ rocket }: RocketEffectProps) {
   return (
     <group ref={groupRef}>
       {/* Rocket body - dark metallic */}
-      <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.35, 0.08]}>
-        <meshBasicMaterial color={0x333333} />
-      </mesh>
-      
+      <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.35, 0.08]} material={BLAZE_MATS.rocketBody} />
       {/* Rocket nose - glowing orange */}
-      <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.08, 0.04]}>
-        <meshBasicMaterial color={0xff6600} />
-      </mesh>
-      
+      <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.08, 0.04]} material={BLAZE_MATS.rocketNose} />
       {/* Fire core - bright white/yellow */}
-      <mesh position={[0, 0, 0.22]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.05, 0.35, 0.05]}>
-        <meshBasicMaterial color={0xffffcc} transparent opacity={0.95} />
-      </mesh>
-      
+      <mesh position={[0, 0, 0.22]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.05, 0.35, 0.05]} material={BLAZE_MATS.rocketFireCore} />
       {/* Fire inner - bright orange */}
-      <mesh position={[0, 0, 0.32]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.45, 0.08]}>
-        <meshBasicMaterial color={0xffaa00} transparent opacity={0.9} />
-      </mesh>
-      
+      <mesh position={[0, 0, 0.32]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.45, 0.08]} material={BLAZE_MATS.rocketFireInner} />
       {/* Fire outer - red/orange */}
-      <mesh position={[0, 0, 0.4]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.5, 0.12]}>
-        <meshBasicMaterial color={0xff5500} transparent opacity={0.7} />
-      </mesh>
-      
+      <mesh position={[0, 0, 0.4]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.5, 0.12]} material={BLAZE_MATS.rocketFireOuter} />
       {/* Smoke trail hint */}
-      <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.15, 0.4, 0.15]}>
-        <meshBasicMaterial color={0xff3300} transparent opacity={0.4} />
-      </mesh>
+      <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.15, 0.4, 0.15]} material={BLAZE_MATS.rocketSmokeTrail} />
     </group>
   );
 }
@@ -257,35 +245,17 @@ function RocketJumpExplosion({ explosion }: { explosion: RocketJumpExplosionData
   return (
     <group ref={groupRef} position={[explosion.position.x, explosion.position.y - 0.3, explosion.position.z]}>
       {/* Initial bright flash */}
-      <mesh ref={flashRef} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={0xffffff} transparent opacity={1} />
-      </mesh>
-      
+      <mesh ref={flashRef} geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.explosionFlash} />
       {/* Core - white hot */}
-      <mesh ref={coreRef} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={0xffffcc} transparent opacity={0.95} />
-      </mesh>
-      
+      <mesh ref={coreRef} geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.explosionCore} />
       {/* Mid - orange fire */}
-      <mesh ref={midRef} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={0xff8800} transparent opacity={0.8} />
-      </mesh>
-      
+      <mesh ref={midRef} geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.explosionMid} />
       {/* Outer - red fire */}
-      <mesh ref={outerRef} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={0xff3300} transparent opacity={0.5} />
-      </mesh>
-      
+      <mesh ref={outerRef} geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.explosionOuter} />
       {/* Primary shockwave ring */}
-      <mesh ref={ringRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24}>
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-      
+      <mesh ref={ringRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} material={BLAZE_MATS.shockwaveOrange} />
       {/* Secondary inner ring */}
-      <mesh ref={ring2Ref} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16}>
-        <meshBasicMaterial color={0xffaa00} transparent opacity={0.5} side={THREE.DoubleSide} />
-      </mesh>
-      
+      <mesh ref={ring2Ref} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} material={BLAZE_MATS.shockwaveYellow} />
       {/* Rising smoke puffs */}
       {[0, 1, 2, 3].map(i => (
         <mesh 
@@ -293,27 +263,20 @@ function RocketJumpExplosion({ explosion }: { explosion: RocketJumpExplosionData
           ref={el => smokeRefs.current[i] = el}
           position={[Math.sin(i * 1.5) * 0.3, 0, Math.cos(i * 1.5) * 0.3]}
           geometry={SHARED_GEOMETRIES.sphere8}
-        >
-          <meshBasicMaterial color={0x555555} transparent opacity={0.4} />
-        </mesh>
+          material={BLAZE_MATS.smoke}
+        />
       ))}
-      
       {/* Flying sparks */}
       {ROCKET_JUMP_SPARKS.map((_, i) => (
         <mesh 
           key={`spark-${i}`}
           ref={el => sparkRefs.current[i] = el}
           geometry={SHARED_GEOMETRIES.sphere8}
-        >
-          <meshBasicMaterial color={0xffcc00} transparent opacity={1} />
-        </mesh>
+          material={BLAZE_MATS.sparkYellow}
+        />
       ))}
-      
       {/* Ground scorch */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.02} geometry={SHARED_GEOMETRIES.circle16} scale={[1.5, 1.5, 1]}>
-        <meshBasicMaterial color={0x331100} transparent opacity={0.4} side={THREE.DoubleSide} />
-      </mesh>
-      
+      <mesh rotation-x={-Math.PI / 2} position-y={0.02} geometry={SHARED_GEOMETRIES.circle16} scale={[1.5, 1.5, 1]} material={BLAZE_MATS.groundScorch} />
       <pointLight ref={lightRef} color={0xff5500} intensity={25} distance={15} decay={2} />
     </group>
   );
@@ -539,20 +502,16 @@ function AirStrikeEffect({ strike }: { strike: AirStrikeData }) {
             ref={el => bombMeshes.current[i] = el}
             visible={false}
             geometry={SHARED_GEOMETRIES.sphere8}
-          >
-            <meshBasicMaterial color={0x1a1a1a} />
-          </mesh>
-          
+            material={BLAZE_MATS.airBombBody}
+          />
           {/* Fire trail */}
           <mesh
             ref={el => trailMeshes.current[i] = el}
             visible={false}
             rotation={[Math.PI, 0, 0]}
             geometry={SHARED_GEOMETRIES.cone8}
-          >
-            <meshBasicMaterial color={0xff6600} transparent opacity={0.8} />
-          </mesh>
-          
+            material={BLAZE_MATS.airBombTrail}
+          />
           {/* Warning ring */}
           <mesh
             ref={el => warningMeshes.current[i] = el}
@@ -561,10 +520,8 @@ function AirStrikeEffect({ strike }: { strike: AirStrikeData }) {
             rotation-x={-Math.PI / 2}
             geometry={SHARED_GEOMETRIES.ring24}
             scale={[2.5, 2.5, 1]}
-          >
-            <meshBasicMaterial color={0xff0000} transparent opacity={0.8} side={THREE.DoubleSide} />
-          </mesh>
-          
+            material={BLAZE_MATS.airWarningRing}
+          />
           {/* Warning fill */}
           <mesh
             ref={el => warningFillMeshes.current[i] = el}
@@ -573,40 +530,22 @@ function AirStrikeEffect({ strike }: { strike: AirStrikeData }) {
             rotation-x={-Math.PI / 2}
             geometry={SHARED_GEOMETRIES.circle16}
             scale={[2.5, 2.5, 1]}
-          >
-            <meshBasicMaterial color={0xff2200} transparent opacity={0.25} side={THREE.DoubleSide} />
-          </mesh>
-          
+            material={BLAZE_MATS.airWarningFill}
+          />
           {/* Explosion - multiple layers */}
           <group 
             ref={el => explosionGroups.current[i] = el}
             visible={false}
             position={[bomb.x, bomb.groundY + 0.8, bomb.z]}
           >
-            {/* Core flash */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8}>
-              <meshBasicMaterial color={0xffffcc} transparent opacity={1} />
-            </mesh>
-            {/* Inner fire */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.3}>
-              <meshBasicMaterial color={0xffaa00} transparent opacity={0.9} />
-            </mesh>
-            {/* Outer fire */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.6}>
-              <meshBasicMaterial color={0xff5500} transparent opacity={0.7} />
-            </mesh>
-            {/* Smoke ring */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={2.0}>
-              <meshBasicMaterial color={0xff2200} transparent opacity={0.4} />
-            </mesh>
-            {/* Ground ring */}
-            <mesh rotation-x={-Math.PI / 2} position-y={-0.5} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]}>
-              <meshBasicMaterial color={0xff6600} transparent opacity={0.6} side={THREE.DoubleSide} />
-            </mesh>
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.explosionCore} />
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.3} material={BLAZE_MATS.rocketFireInner} />
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.6} material={BLAZE_MATS.rocketFireOuter} />
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={2.0} material={BLAZE_MATS.explosionDarkOuter} />
+            <mesh rotation-x={-Math.PI / 2} position-y={-0.5} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]} material={BLAZE_MATS.shockwaveOrange} />
           </group>
         </group>
       ))}
-      
       {/* Dynamic light that follows active explosions */}
       <pointLight 
         ref={lightRef}
@@ -799,71 +738,43 @@ export function BombEffect({ bomb }: BombEffectProps) {
       {/* Falling bomb assembly */}
       <group ref={bombRef}>
         {/* Main body - elongated */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={[0.9, 1.4, 0.9]}>
-          <meshBasicMaterial color={0x1a1a1a} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={[0.9, 1.4, 0.9]} material={BLAZE_MATS.bombBodyDark} />
         {/* Metal band */}
-        <mesh position={[0, 0.2, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[1.0, 0.15, 1.0]}>
-          <meshBasicMaterial color={0x444444} />
-        </mesh>
+        <mesh position={[0, 0.2, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[1.0, 0.15, 1.0]} material={BLAZE_MATS.bombMetal} />
         {/* Nose cone */}
-        <mesh position={[0, -1.0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.7, 0.8, 0.7]}>
-          <meshBasicMaterial color={0x111111} />
-        </mesh>
+        <mesh position={[0, -1.0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.7, 0.8, 0.7]} material={BLAZE_MATS.bombNose} />
         {/* Tail fins - 4 of them */}
         {[0, 1, 2, 3].map(i => (
           <mesh key={`fin-${i}`} position={[0, 0.9, 0]} rotation={[0, (i / 4) * Math.PI * 2, 0]}>
-            <mesh position={[0.5, 0, 0]} geometry={SHARED_GEOMETRIES.plane} scale={[0.4, 0.5, 1]} rotation={[0, Math.PI / 2, 0]}>
-              <meshBasicMaterial color={0x222222} side={THREE.DoubleSide} />
-            </mesh>
+            <mesh position={[0.5, 0, 0]} geometry={SHARED_GEOMETRIES.plane} scale={[0.4, 0.5, 1]} rotation={[0, Math.PI / 2, 0]} material={BLAZE_MATS.bombFin} />
           </mesh>
         ))}
         {/* Red warning stripe */}
-        <mesh position={[0, -0.3, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.95, 0.1, 0.95]}>
-          <meshBasicMaterial color={0xcc0000} />
-        </mesh>
+        <mesh position={[0, -0.3, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.95, 0.1, 0.95]} material={BLAZE_MATS.bombStripe} />
         {/* Bomb light */}
         <pointLight color={0xff4400} intensity={5} distance={15} decay={2} />
       </group>
       
       {/* Fire trail */}
-      <mesh ref={trailRef} visible={false} rotation={[Math.PI, 0, 0]} geometry={SHARED_GEOMETRIES.cone8}>
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.8} />
-      </mesh>
+      <mesh ref={trailRef} visible={false} rotation={[Math.PI, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} material={BLAZE_MATS.bombTrailFire} />
       
       {/* Glow around bomb */}
-      <mesh ref={glowRef} visible={false} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={0xff4400} transparent opacity={0.25} />
-      </mesh>
+      <mesh ref={glowRef} visible={false} geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.bombGlow} />
       
       {/* Warning zone */}
       <group ref={warningRef} position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.15, bomb.targetPosition.z]}>
         {/* Outer danger ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring24} scale={[6, 6, 1]}>
-          <meshBasicMaterial color={0xff0000} transparent opacity={0.8} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring24} scale={[6, 6, 1]} material={BLAZE_MATS.warningRingRed} />
         {/* Inner ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[4, 4, 1]}>
-          <meshBasicMaterial color={0xff4400} transparent opacity={0.7} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[4, 4, 1]} material={BLAZE_MATS.warningRingOrange} />
         {/* Center ring */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[2, 2, 1]}>
-          <meshBasicMaterial color={0xffaa00} transparent opacity={0.6} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.ring16} scale={[2, 2, 1]} material={BLAZE_MATS.warningRingYellow} />
         {/* Crosshairs */}
-        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]}>
-          <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]}>
-          <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]} material={BLAZE_MATS.warningCross} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 12, 1]} material={BLAZE_MATS.warningCross} />
         {/* Diagonal lines */}
-        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]}>
-          <meshBasicMaterial color={0xff4400} transparent opacity={0.4} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh rotation-x={-Math.PI / 2} rotation-z={-Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]}>
-          <meshBasicMaterial color={0xff4400} transparent opacity={0.4} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]} material={BLAZE_MATS.warningCrossDiag} />
+        <mesh rotation-x={-Math.PI / 2} rotation-z={-Math.PI / 4} geometry={SHARED_GEOMETRIES.plane} scale={[0.1, 8, 1]} material={BLAZE_MATS.warningCrossDiag} />
       </group>
       
       {/* Pulsing danger fill */}
@@ -874,9 +785,8 @@ export function BombEffect({ bomb }: BombEffectProps) {
         rotation-x={-Math.PI / 2} 
         geometry={SHARED_GEOMETRIES.circle16} 
         scale={[6, 6, 1]}
-      >
-        <meshBasicMaterial color={0xff2200} transparent opacity={0.2} side={THREE.DoubleSide} />
-      </mesh>
+        material={BLAZE_MATS.warningFillPulse}
+      />
       
       {/* Initial flash */}
       <mesh 
@@ -884,32 +794,21 @@ export function BombEffect({ bomb }: BombEffectProps) {
         visible={false}
         position={[bomb.targetPosition.x, bomb.targetPosition.y + 1, bomb.targetPosition.z]}
         geometry={SHARED_GEOMETRIES.sphere8}
-      >
-        <meshBasicMaterial color={0xffffff} transparent opacity={1} />
-      </mesh>
+        material={BLAZE_MATS.explosionFlash}
+      />
       
       {/* Explosion group */}
       <group ref={explosionRef} visible={false} position={[bomb.targetPosition.x, bomb.targetPosition.y + 1.5, bomb.targetPosition.z]}>
         {/* White hot core */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere12}>
-          <meshBasicMaterial color={0xffffee} transparent opacity={0.95} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere12} material={BLAZE_MATS.explosionCore} />
         {/* Bright yellow */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={1.2}>
-          <meshBasicMaterial color={0xffcc00} transparent opacity={0.9} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={1.2} material={BLAZE_MATS.sparkYellow} />
         {/* Orange fire */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.4}>
-          <meshBasicMaterial color={0xff8800} transparent opacity={0.8} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.4} material={BLAZE_MATS.explosionMid} />
         {/* Red fire */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.7}>
-          <meshBasicMaterial color={0xff4400} transparent opacity={0.6} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.7} material={BLAZE_MATS.rocketFireOuter} />
         {/* Dark red outer */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={2.0}>
-          <meshBasicMaterial color={0xcc2200} transparent opacity={0.4} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={2.0} material={BLAZE_MATS.explosionDarkOuter} />
         
         {/* Rising smoke column */}
         {[0, 1, 2, 3, 4].map(i => (
@@ -917,9 +816,8 @@ export function BombEffect({ bomb }: BombEffectProps) {
             key={`smoke-${i}`}
             ref={el => smokeRefs.current[i] = el}
             geometry={SHARED_GEOMETRIES.sphere8}
-          >
-            <meshBasicMaterial color={i < 2 ? 0x444444 : 0x333333} transparent opacity={0.5} />
-          </mesh>
+            material={i < 2 ? BLAZE_MATS.smokeDark : BLAZE_MATS.smoke}
+          />
         ))}
         
         {/* Flying debris */}
@@ -928,9 +826,8 @@ export function BombEffect({ bomb }: BombEffectProps) {
             key={`debris-${i}`}
             ref={el => debrisRefs.current[i] = el}
             geometry={SHARED_GEOMETRIES.sphere8}
-          >
-            <meshBasicMaterial color={i % 2 === 0 ? 0xff6600 : 0xffaa00} transparent opacity={1} />
-          </mesh>
+            material={i % 2 === 0 ? BLAZE_MATS.rocketNose : BLAZE_MATS.sparkOrange}
+          />
         ))}
         
         <pointLight ref={lightRef} color={0xff5500} intensity={60} distance={40} decay={2} />
@@ -942,9 +839,8 @@ export function BombEffect({ bomb }: BombEffectProps) {
         position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.2, bomb.targetPosition.z]}
         rotation-x={-Math.PI / 2} 
         geometry={SHARED_GEOMETRIES.ring24}
-      >
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
+        material={BLAZE_MATS.shockwaveOrange}
+      />
       
       {/* Secondary inner shockwave */}
       <mesh 
@@ -952,9 +848,8 @@ export function BombEffect({ bomb }: BombEffectProps) {
         position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.25, bomb.targetPosition.z]}
         rotation-x={-Math.PI / 2} 
         geometry={SHARED_GEOMETRIES.ring16}
-      >
-        <meshBasicMaterial color={0xffaa00} transparent opacity={0.5} side={THREE.DoubleSide} />
-      </mesh>
+        material={BLAZE_MATS.shockwaveYellow}
+      />
     </group>
   );
 }
@@ -980,6 +875,19 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
   const indicatorRef = useRef<THREE.Group>(null);
   const isValidRef = useRef(false);
   const { camera } = useThree();
+  
+  // Clone materials for this instance to avoid shared state issues
+  // useMemo ensures materials exist before first render (unlike useEffect)
+  const materials = useMemo(() => ({
+    outerRing: BLAZE_MATS.bombOuterRing.clone(),
+    midRing: BLAZE_MATS.bombMidRing.clone(),
+    innerRing: BLAZE_MATS.bombInnerRing.clone(),
+    centerDot: BLAZE_MATS.bombCenterDot.clone(),
+    fill: BLAZE_MATS.bombFill.clone(),
+    cross: BLAZE_MATS.bombCrossValid.clone(),
+    beam: BLAZE_MATS.bombBeam.clone(),
+    beamTop: BLAZE_MATS.bombBeamTop.clone(),
+  }), []);
   
   useFrame(() => {
     if (!isActive) {
@@ -1095,6 +1003,7 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
     }
     
     _bombTargetPos.set(targetX, targetY, targetZ);
+    const wasValid = isValidRef.current;
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {
@@ -1102,43 +1011,43 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       indicatorRef.current.position.copy(_bombTargetPos);
     }
     
+    // Update materials for validity-dependent elements (only when validity changes)
+    if (wasValid !== isValid) {
+      const validColor = 0xff4400;
+      const invalidColor = 0xff0000;
+      const targetColor = isValid ? validColor : invalidColor;
+      
+      // Update cloned materials directly (safe since they're per-instance)
+      materials.outerRing.color.setHex(targetColor);
+      materials.cross.color.setHex(targetColor);
+    }
+    
     onTargetUpdate(_bombTargetPos.clone(), isValid);
   });
   
   if (!isActive) return null;
   
-  const baseColor = isValidRef.current ? 0xff4400 : 0xff0000;
-  
   return (
     <group ref={indicatorRef}>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]}>
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]}>
-        <meshBasicMaterial color={0xffaa00} transparent opacity={0.9} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]}>
-        <meshBasicMaterial color={0xffff00} transparent opacity={1} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]}>
-        <meshBasicMaterial color={0xff2200} transparent opacity={0.15} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]}>
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.3} />
-      </mesh>
-      <mesh position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4}>
-        <meshBasicMaterial color={0xff4400} transparent opacity={0.7} />
-      </mesh>
-      <pointLight color={baseColor} intensity={2} distance={6} decay={2} position-y={0.5} />
+      {/* Outer ring - validity dependent color */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]} material={materials.outerRing} />
+      {/* Mid ring */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]} material={materials.midRing} />
+      {/* Inner ring */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]} material={materials.innerRing} />
+      {/* Center dot */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]} material={materials.centerDot} />
+      {/* Fill */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]} material={materials.fill} />
+      {/* Cross lines - validity dependent color */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
+      {/* Vertical beam */}
+      <mesh position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]} material={materials.beam} />
+      {/* Beam top sphere */}
+      <mesh position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4} material={materials.beamTop} />
+      {/* Light */}
+      <pointLight color={0xff4400} intensity={2} distance={6} decay={2} position-y={0.5} />
     </group>
   );
 }
@@ -1164,6 +1073,16 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
   const indicatorRef = useRef<THREE.Group>(null);
   const isValidRef = useRef(false);
   const { camera } = useThree();
+  
+  // Clone materials for this instance (useMemo ensures they exist before first render)
+  const materials = useMemo(() => ({
+    outerRing: BLAZE_MATS.airOuterRing.clone(),
+    midRing: BLAZE_MATS.airValidMidRing.clone(),
+    innerRing: BLAZE_MATS.airInnerRing.clone(),
+    centerDot: BLAZE_MATS.airCenterDot.clone(),
+    fill: BLAZE_MATS.airFill.clone(),
+    cross: BLAZE_MATS.airCross.clone(),
+  }), []);
   
   useFrame(() => {
     if (!isActive) {
@@ -1279,6 +1198,7 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
     }
     
     _asTargetPos.set(targetX, targetY, targetZ);
+    const wasValid = isValidRef.current;
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {
@@ -1286,40 +1206,35 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
       indicatorRef.current.position.copy(_asTargetPos);
     }
     
+    // Update materials for validity-dependent elements (only when validity changes)
+    if (wasValid !== isValid) {
+      const targetColor = isValid ? 0xff2200 : 0x880000;
+      materials.midRing.color.setHex(targetColor);
+    }
+    
     onTargetUpdate(_asTargetPos.clone(), isValid);
   });
   
   if (!isActive) return null;
   
-  const baseColor = isValidRef.current ? 0xff2200 : 0x880000;
-  
   return (
     <group ref={indicatorRef}>
-      {/* Large danger zone indicator */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[10, 10, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.12} geometry={SHARED_GEOMETRIES.ring24} scale={[7, 7, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.14} geometry={SHARED_GEOMETRIES.ring16} scale={[4, 4, 1]}>
-        <meshBasicMaterial color={0xff4400} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.circle16} scale={[0.8, 0.8, 1]}>
-        <meshBasicMaterial color={0xffff00} transparent opacity={1} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[10, 10, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.1} side={THREE.DoubleSide} />
-      </mesh>
+      {/* Large danger zone indicator - outer ring */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[10, 10, 1]} material={materials.outerRing} />
+      {/* Mid ring - validity dependent */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.12} geometry={SHARED_GEOMETRIES.ring24} scale={[7, 7, 1]} material={materials.midRing} />
+      {/* Inner ring */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.14} geometry={SHARED_GEOMETRIES.ring16} scale={[4, 4, 1]} material={materials.innerRing} />
+      {/* Center dot */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.circle16} scale={[0.8, 0.8, 1]} material={materials.centerDot} />
+      {/* Fill */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[10, 10, 1]} material={materials.fill} />
       
-      {/* Cross */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 22, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 22, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
-      </mesh>
+      {/* Cross lines */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 22, 1]} material={materials.cross} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 22, 1]} material={materials.cross} />
       
+      {/* Light */}
       <pointLight color={0xff2200} intensity={3} distance={12} decay={2} position-y={1} />
     </group>
   );
@@ -1439,68 +1354,40 @@ export function JetpackEffect({ isActive, playerPosition }: JetpackEffectProps) 
       {/* Left thruster assembly */}
       <group ref={leftFlameRef} position={[-thrusterOffset, 0, 0.05]}>
         {/* Thruster nozzle */}
-        <mesh position={[0, 0.05, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.08, 0.08]}>
-          <meshBasicMaterial color={0x333333} />
-        </mesh>
+        <mesh position={[0, 0.05, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.08, 0.08]} material={BLAZE_MATS.jetpackNozzle} />
         {/* White hot core */}
-        <mesh position={[0, -0.15, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.35, 0.06]}>
-          <meshBasicMaterial color={0xffffff} transparent opacity={0.98} />
-        </mesh>
+        <mesh position={[0, -0.15, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.35, 0.06]} material={BLAZE_MATS.jetpackFlameWhite} />
         {/* Bright yellow inner */}
-        <mesh position={[0, -0.3, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.5, 0.1]}>
-          <meshBasicMaterial color={0xffffaa} transparent opacity={0.92} />
-        </mesh>
+        <mesh position={[0, -0.3, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.5, 0.1]} material={BLAZE_MATS.jetpackFlameYellow} />
         {/* Orange mid flame */}
-        <mesh position={[0, -0.45, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.14, 0.7, 0.14]}>
-          <meshBasicMaterial color={0xffaa00} transparent opacity={0.8} />
-        </mesh>
+        <mesh position={[0, -0.45, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.14, 0.7, 0.14]} material={BLAZE_MATS.jetpackFlameOrange} />
         {/* Red outer flame */}
-        <mesh position={[0, -0.6, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.9, 0.2]}>
-          <meshBasicMaterial color={0xff5500} transparent opacity={0.55} />
-        </mesh>
+        <mesh position={[0, -0.6, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.9, 0.2]} material={BLAZE_MATS.jetpackFlameRed} />
         {/* Dark red tip */}
-        <mesh position={[0, -0.75, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.25, 1.0, 0.25]}>
-          <meshBasicMaterial color={0xcc2200} transparent opacity={0.3} />
-        </mesh>
+        <mesh position={[0, -0.75, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.25, 1.0, 0.25]} material={BLAZE_MATS.jetpackFlameDarkRed} />
       </group>
       
       {/* Left glow */}
-      <mesh ref={leftGlowRef} position={[-thrusterOffset, -0.3, 0.05]} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.35} />
-      </mesh>
+      <mesh ref={leftGlowRef} position={[-thrusterOffset, -0.3, 0.05]} geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.jetpackGlow} />
       
       {/* Right thruster assembly */}
       <group ref={rightFlameRef} position={[thrusterOffset, 0, 0.05]}>
         {/* Thruster nozzle */}
-        <mesh position={[0, 0.05, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.08, 0.08]}>
-          <meshBasicMaterial color={0x333333} />
-        </mesh>
+        <mesh position={[0, 0.05, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.08, 0.08]} material={BLAZE_MATS.jetpackNozzle} />
         {/* White hot core */}
-        <mesh position={[0, -0.15, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.35, 0.06]}>
-          <meshBasicMaterial color={0xffffff} transparent opacity={0.98} />
-        </mesh>
+        <mesh position={[0, -0.15, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.35, 0.06]} material={BLAZE_MATS.jetpackFlameWhite} />
         {/* Bright yellow inner */}
-        <mesh position={[0, -0.3, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.5, 0.1]}>
-          <meshBasicMaterial color={0xffffaa} transparent opacity={0.92} />
-        </mesh>
+        <mesh position={[0, -0.3, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.5, 0.1]} material={BLAZE_MATS.jetpackFlameYellow} />
         {/* Orange mid flame */}
-        <mesh position={[0, -0.45, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.14, 0.7, 0.14]}>
-          <meshBasicMaterial color={0xffaa00} transparent opacity={0.8} />
-        </mesh>
+        <mesh position={[0, -0.45, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.14, 0.7, 0.14]} material={BLAZE_MATS.jetpackFlameOrange} />
         {/* Red outer flame */}
-        <mesh position={[0, -0.6, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.9, 0.2]}>
-          <meshBasicMaterial color={0xff5500} transparent opacity={0.55} />
-        </mesh>
+        <mesh position={[0, -0.6, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.9, 0.2]} material={BLAZE_MATS.jetpackFlameRed} />
         {/* Dark red tip */}
-        <mesh position={[0, -0.75, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.25, 1.0, 0.25]}>
-          <meshBasicMaterial color={0xcc2200} transparent opacity={0.3} />
-        </mesh>
+        <mesh position={[0, -0.75, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.25, 1.0, 0.25]} material={BLAZE_MATS.jetpackFlameDarkRed} />
       </group>
       
       {/* Right glow */}
-      <mesh ref={rightGlowRef} position={[thrusterOffset, -0.3, 0.05]} geometry={SHARED_GEOMETRIES.sphere8}>
-        <meshBasicMaterial color={0xff6600} transparent opacity={0.35} />
-      </mesh>
+      <mesh ref={rightGlowRef} position={[thrusterOffset, -0.3, 0.05]} geometry={SHARED_GEOMETRIES.sphere8} material={BLAZE_MATS.jetpackGlow} />
       
       {/* Smoke particles */}
       {JETPACK_SMOKE_PARTICLES.map((_, i) => (
@@ -1508,9 +1395,8 @@ export function JetpackEffect({ isActive, playerPosition }: JetpackEffectProps) 
           key={`smoke-${i}`}
           ref={el => smokeRefs.current[i] = el}
           geometry={SHARED_GEOMETRIES.sphere8}
-        >
-          <meshBasicMaterial color={0x666666} transparent opacity={0.3} />
-        </mesh>
+          material={BLAZE_MATS.jetpackSmoke}
+        />
       ))}
       
       {/* Sparks */}
@@ -1519,15 +1405,12 @@ export function JetpackEffect({ isActive, playerPosition }: JetpackEffectProps) 
           key={`spark-${i}`}
           ref={el => sparkRefs.current[i] = el}
           geometry={SHARED_GEOMETRIES.sphere8}
-        >
-          <meshBasicMaterial color={0xffdd00} transparent opacity={0.9} />
-        </mesh>
+          material={BLAZE_MATS.jetpackSpark}
+        />
       ))}
       
       {/* Heat distortion ring at nozzles */}
-      <mesh rotation-x={-Math.PI / 2} position={[0, -0.1, 0.05]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.5, 0.5, 1]}>
-        <meshBasicMaterial color={0xff8800} transparent opacity={0.15} side={THREE.DoubleSide} />
-      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position={[0, -0.1, 0.05]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.5, 0.5, 1]} material={BLAZE_MATS.jetpackHeatRing} />
       
       <pointLight ref={lightRef} color={0xff6600} intensity={8} distance={12} decay={2} position={[0, -0.5, 0]} />
     </group>
@@ -1538,13 +1421,28 @@ export function JetpackEffect({ isActive, playerPosition }: JetpackEffectProps) 
 // BLAZE EFFECTS MANAGER
 // ============================================================================
 
+// Track if we've pre-compiled shaders
+let _shadersPrecompiled = false;
+
 export function BlazeEffectsManager() {
   const bombs = useGameStore(state => state.bombs);
   const localPlayer = useGameStore(state => state.localPlayer);
   const jetpackActive = useGameStore(state => state.jetpackActive);
+  const { gl } = useThree();
   
   const [activeRocketJumpExplosions, setActiveRocketJumpExplosions] = useState<RocketJumpExplosionData[]>([]);
   const [activeAirStrikes, setActiveAirStrikes] = useState<AirStrikeData[]>([]);
+  
+  // Pre-compile all shaders on first mount to avoid first-use stutter
+  useEffect(() => {
+    if (!_shadersPrecompiled && gl) {
+      _shadersPrecompiled = true;
+      // Use requestAnimationFrame to avoid blocking the initial render
+      requestAnimationFrame(() => {
+        precompileBlazeMaterials(gl);
+      });
+    }
+  }, [gl]);
   
   useEffect(() => {
     const interval = setInterval(() => {

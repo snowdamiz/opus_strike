@@ -220,6 +220,155 @@ export const EARTH_COLORS = {
 } as const;
 
 // ============================================================================
+// SHARED BLAZE MATERIALS (pre-created and pre-compiled for instant use)
+// ALL materials used by Blaze effects are defined here to avoid first-use stutter
+// ============================================================================
+
+let _blazeMaterials: {
+  // Targeting indicator materials
+  bombOuterRing: THREE.MeshBasicMaterial;
+  bombMidRing: THREE.MeshBasicMaterial;
+  bombInnerRing: THREE.MeshBasicMaterial;
+  bombCenterDot: THREE.MeshBasicMaterial;
+  bombFill: THREE.MeshBasicMaterial;
+  bombCrossValid: THREE.MeshBasicMaterial;
+  bombBeam: THREE.MeshBasicMaterial;
+  bombBeamTop: THREE.MeshBasicMaterial;
+  airOuterRing: THREE.MeshBasicMaterial;
+  airInnerRing: THREE.MeshBasicMaterial;
+  airCenterDot: THREE.MeshBasicMaterial;
+  airFill: THREE.MeshBasicMaterial;
+  airCross: THREE.MeshBasicMaterial;
+  airValidMidRing: THREE.MeshBasicMaterial;
+  // Rocket materials
+  rocketBody: THREE.MeshBasicMaterial;
+  rocketNose: THREE.MeshBasicMaterial;
+  rocketFireCore: THREE.MeshBasicMaterial;
+  rocketFireInner: THREE.MeshBasicMaterial;
+  rocketFireOuter: THREE.MeshBasicMaterial;
+  rocketSmokeTrail: THREE.MeshBasicMaterial;
+  // Explosion materials
+  explosionFlash: THREE.MeshBasicMaterial;
+  explosionCore: THREE.MeshBasicMaterial;
+  explosionMid: THREE.MeshBasicMaterial;
+  explosionOuter: THREE.MeshBasicMaterial;
+  explosionDarkOuter: THREE.MeshBasicMaterial;
+  shockwaveOrange: THREE.MeshBasicMaterial;
+  shockwaveYellow: THREE.MeshBasicMaterial;
+  smoke: THREE.MeshBasicMaterial;
+  smokeDark: THREE.MeshBasicMaterial;
+  sparkYellow: THREE.MeshBasicMaterial;
+  sparkOrange: THREE.MeshBasicMaterial;
+  groundScorch: THREE.MeshBasicMaterial;
+  // Bomb effect materials
+  bombBodyDark: THREE.MeshBasicMaterial;
+  bombMetal: THREE.MeshBasicMaterial;
+  bombNose: THREE.MeshBasicMaterial;
+  bombFin: THREE.MeshBasicMaterial;
+  bombStripe: THREE.MeshBasicMaterial;
+  bombTrailFire: THREE.MeshBasicMaterial;
+  bombGlow: THREE.MeshBasicMaterial;
+  warningRingRed: THREE.MeshBasicMaterial;
+  warningRingOrange: THREE.MeshBasicMaterial;
+  warningRingYellow: THREE.MeshBasicMaterial;
+  warningCross: THREE.MeshBasicMaterial;
+  warningCrossDiag: THREE.MeshBasicMaterial;
+  warningFillPulse: THREE.MeshBasicMaterial;
+  // Airstrike bomb materials
+  airBombBody: THREE.MeshBasicMaterial;
+  airBombTrail: THREE.MeshBasicMaterial;
+  airWarningRing: THREE.MeshBasicMaterial;
+  airWarningFill: THREE.MeshBasicMaterial;
+  // Jetpack materials
+  jetpackNozzle: THREE.MeshBasicMaterial;
+  jetpackFlameWhite: THREE.MeshBasicMaterial;
+  jetpackFlameYellow: THREE.MeshBasicMaterial;
+  jetpackFlameOrange: THREE.MeshBasicMaterial;
+  jetpackFlameRed: THREE.MeshBasicMaterial;
+  jetpackFlameDarkRed: THREE.MeshBasicMaterial;
+  jetpackGlow: THREE.MeshBasicMaterial;
+  jetpackSmoke: THREE.MeshBasicMaterial;
+  jetpackSpark: THREE.MeshBasicMaterial;
+  jetpackHeatRing: THREE.MeshBasicMaterial;
+} | null = null;
+
+export function getBlazeMaterials() {
+  if (!_blazeMaterials) {
+    _blazeMaterials = {
+      // Targeting indicator materials
+      bombOuterRing: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
+      bombMidRing: new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
+      bombInnerRing: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+      bombCenterDot: new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1, side: THREE.DoubleSide, depthWrite: false }),
+      bombFill: new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.15, side: THREE.DoubleSide, depthWrite: false }),
+      bombCrossValid: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
+      bombBeam: new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.3, depthWrite: false }),
+      bombBeamTop: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.7, depthWrite: false }),
+      airOuterRing: new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }),
+      airInnerRing: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
+      airCenterDot: new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 1, side: THREE.DoubleSide, depthWrite: false }),
+      airFill: new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false }),
+      airCross: new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }),
+      airValidMidRing: new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
+      // Rocket materials
+      rocketBody: new THREE.MeshBasicMaterial({ color: 0x333333 }),
+      rocketNose: new THREE.MeshBasicMaterial({ color: 0xff6600 }),
+      rocketFireCore: new THREE.MeshBasicMaterial({ color: 0xffffcc, transparent: true, opacity: 0.95 }),
+      rocketFireInner: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.9 }),
+      rocketFireOuter: new THREE.MeshBasicMaterial({ color: 0xff5500, transparent: true, opacity: 0.7 }),
+      rocketSmokeTrail: new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.4 }),
+      // Explosion materials (shared by rocket jump, bomb, airstrike explosions)
+      explosionFlash: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 }),
+      explosionCore: new THREE.MeshBasicMaterial({ color: 0xffffcc, transparent: true, opacity: 0.95 }),
+      explosionMid: new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.8 }),
+      explosionOuter: new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.5 }),
+      explosionDarkOuter: new THREE.MeshBasicMaterial({ color: 0xcc2200, transparent: true, opacity: 0.4 }),
+      shockwaveOrange: new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.7, side: THREE.DoubleSide }),
+      shockwaveYellow: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.5, side: THREE.DoubleSide }),
+      smoke: new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true, opacity: 0.4 }),
+      smokeDark: new THREE.MeshBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.5 }),
+      sparkYellow: new THREE.MeshBasicMaterial({ color: 0xffcc00, transparent: true, opacity: 1 }),
+      sparkOrange: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 1 }),
+      groundScorch: new THREE.MeshBasicMaterial({ color: 0x331100, transparent: true, opacity: 0.4, side: THREE.DoubleSide }),
+      // Bomb effect materials
+      bombBodyDark: new THREE.MeshBasicMaterial({ color: 0x1a1a1a }),
+      bombMetal: new THREE.MeshBasicMaterial({ color: 0x444444 }),
+      bombNose: new THREE.MeshBasicMaterial({ color: 0x111111 }),
+      bombFin: new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide }),
+      bombStripe: new THREE.MeshBasicMaterial({ color: 0xcc0000 }),
+      bombTrailFire: new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.8 }),
+      bombGlow: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.25 }),
+      warningRingRed: new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+      warningRingOrange: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.7, side: THREE.DoubleSide }),
+      warningRingYellow: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.6, side: THREE.DoubleSide }),
+      warningCross: new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.6, side: THREE.DoubleSide }),
+      warningCrossDiag: new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.4, side: THREE.DoubleSide }),
+      warningFillPulse: new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.2, side: THREE.DoubleSide }),
+      // Airstrike bomb materials
+      airBombBody: new THREE.MeshBasicMaterial({ color: 0x1a1a1a }),
+      airBombTrail: new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.8 }),
+      airWarningRing: new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+      airWarningFill: new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.25, side: THREE.DoubleSide }),
+      // Jetpack materials
+      jetpackNozzle: new THREE.MeshBasicMaterial({ color: 0x333333 }),
+      jetpackFlameWhite: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.98 }),
+      jetpackFlameYellow: new THREE.MeshBasicMaterial({ color: 0xffffaa, transparent: true, opacity: 0.92 }),
+      jetpackFlameOrange: new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.8 }),
+      jetpackFlameRed: new THREE.MeshBasicMaterial({ color: 0xff5500, transparent: true, opacity: 0.55 }),
+      jetpackFlameDarkRed: new THREE.MeshBasicMaterial({ color: 0xcc2200, transparent: true, opacity: 0.3 }),
+      jetpackGlow: new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.35 }),
+      jetpackSmoke: new THREE.MeshBasicMaterial({ color: 0x666666, transparent: true, opacity: 0.3 }),
+      jetpackSpark: new THREE.MeshBasicMaterial({ color: 0xffdd00, transparent: true, opacity: 0.9 }),
+      jetpackHeatRing: new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.15, side: THREE.DoubleSide }),
+    };
+  }
+  return _blazeMaterials;
+}
+
+// Alias for backward compatibility
+export const getBlazeTargetingMaterials = getBlazeMaterials;
+
+// ============================================================================
 // SHARED HOOKSHOT MATERIALS (pre-created for instant use)
 // ============================================================================
 
@@ -237,6 +386,36 @@ let _hookshotMaterials: {
   heavyChainOuter: THREE.MeshBasicMaterial;
   heavyChainCore: THREE.MeshBasicMaterial;
   heavyChainMegaGlow: THREE.MeshBasicMaterial;
+  // Earth Wall materials
+  earthDirt: THREE.MeshStandardMaterial;
+  earthDirtDark: THREE.MeshStandardMaterial;
+  earthDirtLight: THREE.MeshStandardMaterial;
+  earthRock: THREE.MeshStandardMaterial;
+  earthGrass: THREE.MeshStandardMaterial;
+  earthHookMetal: THREE.MeshStandardMaterial;
+  earthHookMetalLight: THREE.MeshStandardMaterial;
+  earthHookGlow: THREE.MeshBasicMaterial;
+  earthHookRing: THREE.MeshBasicMaterial;
+  earthPlowBlade: THREE.MeshStandardMaterial;
+  earthDebris: THREE.MeshStandardMaterial;
+  // Grapple Trap materials
+  trapBody: THREE.MeshStandardMaterial;
+  trapCap: THREE.MeshStandardMaterial;
+  trapRing: THREE.MeshStandardMaterial;
+  trapArm: THREE.MeshStandardMaterial;
+  trapHookTip: THREE.MeshStandardMaterial;
+  trapBase: THREE.MeshStandardMaterial;
+  trapCoreGlow: THREE.MeshBasicMaterial;
+  trapOuterGlow: THREE.MeshBasicMaterial;
+  trapCircleRing: THREE.MeshBasicMaterial;
+  // Extra glow materials
+  heavyGlowOuter: THREE.MeshBasicMaterial;
+  // Targeting indicator materials
+  targetRingValid: THREE.MeshBasicMaterial;
+  targetRingInvalid: THREE.MeshBasicMaterial;
+  targetCenter: THREE.MeshBasicMaterial;
+  targetCross: THREE.MeshBasicMaterial;
+  targetCrossInvalid: THREE.MeshBasicMaterial;
 } | null = null;
 
 export function getHookshotMaterials() {
@@ -255,6 +434,36 @@ export function getHookshotMaterials() {
       heavyChainOuter: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energyGlow, transparent: true, opacity: 0.6 }),
       heavyChainCore: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }),
       heavyChainMegaGlow: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.25 }),
+      // Earth Wall materials (pre-created to avoid first-use stutter)
+      earthDirt: new THREE.MeshStandardMaterial({ color: EARTH_COLORS.dirt, roughness: 0.9, metalness: 0.1 }),
+      earthDirtDark: new THREE.MeshStandardMaterial({ color: EARTH_COLORS.dirtDark, roughness: 0.9, metalness: 0.1 }),
+      earthDirtLight: new THREE.MeshStandardMaterial({ color: EARTH_COLORS.dirtLight, roughness: 0.9, metalness: 0.1 }),
+      earthRock: new THREE.MeshStandardMaterial({ color: EARTH_COLORS.rock, roughness: 0.95, metalness: 0.05 }),
+      earthGrass: new THREE.MeshStandardMaterial({ color: EARTH_COLORS.grass, roughness: 1, metalness: 0 }),
+      earthHookMetal: new THREE.MeshStandardMaterial({ color: EARTH_COLORS.hookMetal, metalness: 0.85, roughness: 0.3 }),
+      earthHookMetalLight: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.9, roughness: 0.2 }),
+      earthHookGlow: new THREE.MeshBasicMaterial({ color: EARTH_COLORS.hookGlow, transparent: true, opacity: 0.5 }),
+      earthHookRing: new THREE.MeshBasicMaterial({ color: EARTH_COLORS.dirt, transparent: true, opacity: 0.7, side: THREE.DoubleSide }),
+      earthPlowBlade: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.9, roughness: 0.2 }),
+      earthDebris: new THREE.MeshStandardMaterial({ color: EARTH_COLORS.dirtDark, roughness: 1, metalness: 0 }),
+      // Grapple Trap materials (pre-created to avoid first-use stutter)
+      trapBody: new THREE.MeshStandardMaterial({ color: 0x3a3a3a, metalness: 0.9, roughness: 0.2 }),
+      trapCap: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.85, roughness: 0.25 }),
+      trapRing: new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.2, side: THREE.DoubleSide }),
+      trapArm: new THREE.MeshStandardMaterial({ color: 0x4a4a4a, metalness: 0.85, roughness: 0.25 }),
+      trapHookTip: new THREE.MeshStandardMaterial({ color: HOOKSHOT_COLORS.energyGlow, metalness: 0.9, roughness: 0.15, emissive: HOOKSHOT_COLORS.energy, emissiveIntensity: 0.3 }),
+      trapBase: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.85, roughness: 0.25 }),
+      trapCoreGlow: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.8 }),
+      trapOuterGlow: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energyGlow, transparent: true, opacity: 0.3 }),
+      trapCircleRing: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+      // Extra glow materials for drag hook
+      heavyGlowOuter: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energyGlow, transparent: true, opacity: 0.2 }),
+      // Targeting indicator materials
+      targetRingValid: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+      targetRingInvalid: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energyGlow, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+      targetCenter: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.DoubleSide }),
+      targetCross: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.5, side: THREE.DoubleSide }),
+      targetCrossInvalid: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energyGlow, transparent: true, opacity: 0.5, side: THREE.DoubleSide }),
     };
   }
   return _hookshotMaterials;
@@ -351,12 +560,17 @@ export function createShaderMaterial(
 
 let _initialized = false;
 
+// Store reference to pre-compilation scene for cleanup
+let _precompileScene: THREE.Scene | null = null;
+let _precompileCamera: THREE.Camera | null = null;
+
 export function initializeEffectResources() {
   if (_initialized) return;
   _initialized = true;
   
   // Force creation of all shared materials
   getHookshotMaterials();
+  getBlazeMaterials(); // Pre-create all Blaze effect materials
   
   // Pre-create common glow materials
   [HOOKSHOT_COLORS.energy, HOOKSHOT_COLORS.energyGlow, BLAZE_COLORS.fireOrange, PHANTOM_COLORS.violet].forEach(color => {
@@ -366,9 +580,155 @@ export function initializeEffectResources() {
   });
 }
 
+/**
+ * Pre-compile all Blaze effect shaders by rendering them once.
+ * Call this with the WebGL renderer after the scene is set up.
+ * This forces WebGL to compile all shaders upfront, avoiding first-use stutter.
+ */
+export function precompileBlazeMaterials(renderer: THREE.WebGLRenderer) {
+  const mats = getBlazeMaterials();
+  
+  // Create a temporary scene with all materials
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 10);
+  camera.position.z = 5;
+  
+  // Use a single sphere geometry for all material tests
+  const geo = SHARED_GEOMETRIES.sphere8;
+  
+  // Add a mesh for each material to force shader compilation
+  const allMaterials = Object.values(mats);
+  const meshes: THREE.Mesh[] = [];
+  
+  allMaterials.forEach((mat, i) => {
+    const mesh = new THREE.Mesh(geo, mat);
+    // Position meshes off-screen but still renderable
+    mesh.position.set(i * 0.01, 0, 0);
+    scene.add(mesh);
+    meshes.push(mesh);
+  });
+  
+  // Also compile the geometries
+  const geoMesh = new THREE.Mesh(SHARED_GEOMETRIES.ring24, mats.bombOuterRing);
+  scene.add(geoMesh);
+  
+  const geoMesh2 = new THREE.Mesh(SHARED_GEOMETRIES.cone8, mats.rocketBody);
+  scene.add(geoMesh2);
+  
+  const geoMesh3 = new THREE.Mesh(SHARED_GEOMETRIES.cylinder8, mats.bombBeam);
+  scene.add(geoMesh3);
+  
+  const geoMesh4 = new THREE.Mesh(SHARED_GEOMETRIES.circle16, mats.bombFill);
+  scene.add(geoMesh4);
+  
+  const geoMesh5 = new THREE.Mesh(SHARED_GEOMETRIES.plane, mats.bombCrossValid);
+  scene.add(geoMesh5);
+  
+  // Render once to compile all shaders
+  // Save current render target
+  const currentRenderTarget = renderer.getRenderTarget();
+  
+  // Create a small render target for compilation (1x1 pixel is enough)
+  const renderTarget = new THREE.WebGLRenderTarget(1, 1);
+  renderer.setRenderTarget(renderTarget);
+  renderer.render(scene, camera);
+  
+  // Restore original render target
+  renderer.setRenderTarget(currentRenderTarget);
+  
+  // Cleanup render target
+  renderTarget.dispose();
+  
+  // Remove meshes from scene (materials and geometries are kept)
+  meshes.forEach(mesh => scene.remove(mesh));
+  scene.remove(geoMesh);
+  scene.remove(geoMesh2);
+  scene.remove(geoMesh3);
+  scene.remove(geoMesh4);
+  scene.remove(geoMesh5);
+  
+  // Store for potential cleanup
+  _precompileScene = scene;
+  _precompileCamera = camera;
+}
+
+/**
+ * Pre-compile all Hookshot effect shaders by rendering them once.
+ * This includes basic hook materials, Earth Wall, and Grapple Trap materials.
+ * Call this with the WebGL renderer after the scene is set up.
+ * This forces WebGL to compile all shaders upfront, avoiding first-use stutter.
+ */
+export function precompileHookshotMaterials(renderer: THREE.WebGLRenderer) {
+  const mats = getHookshotMaterials();
+  
+  // Create a temporary scene with all materials
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 10);
+  camera.position.z = 5;
+  
+  // Add ambient light for MeshStandardMaterial to render properly
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1);
+  scene.add(ambientLight);
+  
+  const meshes: THREE.Mesh[] = [];
+  
+  // Add a mesh for each material to force shader compilation
+  const allMaterials = Object.values(mats);
+  allMaterials.forEach((mat, i) => {
+    const mesh = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, mat);
+    mesh.position.set(i * 0.01, 0, 0);
+    scene.add(mesh);
+    meshes.push(mesh);
+  });
+  
+  // Also compile with different geometries used by hookshot effects
+  const geoMesh1 = new THREE.Mesh(SHARED_GEOMETRIES.ring16, mats.ring);
+  scene.add(geoMesh1);
+  meshes.push(geoMesh1);
+  
+  const geoMesh2 = new THREE.Mesh(SHARED_GEOMETRIES.cylinder8, mats.shaft);
+  scene.add(geoMesh2);
+  meshes.push(geoMesh2);
+  
+  const geoMesh3 = new THREE.Mesh(SHARED_GEOMETRIES.cone8, mats.fluke);
+  scene.add(geoMesh3);
+  meshes.push(geoMesh3);
+  
+  const geoMesh4 = new THREE.Mesh(SHARED_GEOMETRIES.box, mats.earthDirt);
+  scene.add(geoMesh4);
+  meshes.push(geoMesh4);
+  
+  const geoMesh5 = new THREE.Mesh(SHARED_GEOMETRIES.ring24, mats.trapCircleRing);
+  scene.add(geoMesh5);
+  meshes.push(geoMesh5);
+  
+  // Render once to compile all shaders
+  const currentRenderTarget = renderer.getRenderTarget();
+  const renderTarget = new THREE.WebGLRenderTarget(1, 1);
+  renderer.setRenderTarget(renderTarget);
+  renderer.render(scene, camera);
+  
+  // Restore original render target
+  renderer.setRenderTarget(currentRenderTarget);
+  
+  // Cleanup
+  renderTarget.dispose();
+  meshes.forEach(mesh => scene.remove(mesh));
+  scene.remove(ambientLight);
+}
+
 // Auto-initialize on first import (browser only)
+// This pre-creates all materials before any components mount
 if (typeof window !== 'undefined') {
-  requestAnimationFrame(initializeEffectResources);
+  // Initialize immediately to create material objects
+  initializeEffectResources();
+  
+  // Also schedule for next frame to ensure complete initialization
+  requestAnimationFrame(() => {
+    // Force creation of all Blaze materials
+    getBlazeMaterials();
+    getHookshotMaterials();
+  });
 }
 
 // Re-export LOD utilities for convenient single-import access

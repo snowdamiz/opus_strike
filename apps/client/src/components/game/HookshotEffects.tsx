@@ -1,7 +1,10 @@
-import { useRef, useMemo, useState, useEffect } from 'react';
+import { useRef, useMemo, useState, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
+
+// Track if hookshot materials have been precompiled
+let hookshotMaterialsPrecompiled = false;
 import { useGameStore, type HookProjectileData, type DragHookData, type GrappleTrapData, type SwingLineData, type GrappleLineData, type EarthWallData } from '../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../hooks/usePhysics';
 import { damageNpc } from '../ui/GameConsole';
@@ -11,7 +14,12 @@ import {
   EARTH_COLORS,
   getHookshotMaterials,
   TEMP_VECTORS,
+  precompileHookshotMaterials,
 } from './effectResources';
+
+// PRE-LOAD all hookshot materials at module load time (before any component mounts)
+// This ensures shaders are created immediately, not on first ability use
+const HOOKSHOT_MATS = getHookshotMaterials();
 
 // ============================================================================
 // HOOK PROJECTILE - Short range chain hooks (basic attack)
@@ -470,11 +478,9 @@ function DragHookEffect({ hook }: DragHookProps) {
         {/* Tip - BIGGER */}
         <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.18, 0.12]} material={HOOK_MATERIALS.tip} />
         
-        {/* Energy glow - BIGGER and more intense */}
+        {/* Energy glow - BIGGER and more intense - uses shared materials */}
         <mesh ref={glowRef} geometry={SHARED_GEOMETRIES.sphere8} scale={0.35} material={HOOK_MATERIALS.glow} />
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.5}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.2} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.5} material={HOOK_MATERIALS.heavyGlowOuter} />
         
         {/* Lights - MORE INTENSE */}
         <pointLight color={HOOKSHOT_COLORS.energy} intensity={4} distance={5} decay={2} />
@@ -510,6 +516,9 @@ function GrappleTrapEffect({ trap }: GrappleTrapProps) {
   const deviceRef = useRef<THREE.Group>(null);
   const circleRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
+  
+  // Get pre-compiled shared materials once
+  const HOOK_MATERIALS = getHookshotMaterials();
   
   // Flying state for grenade arc
   const isLandedRef = useRef(false);
@@ -638,22 +647,16 @@ function GrappleTrapEffect({ trap }: GrappleTrapProps) {
   
   return (
     <group ref={groupRef} position={[currentPosRef.current.x, currentPosRef.current.y, currentPosRef.current.z]}>
-      {/* === HOOK DEVICE - Central mechanical trap device === */}
+      {/* === HOOK DEVICE - Central mechanical trap device === OPTIMIZED: uses shared materials */}
       <group ref={deviceRef} position={[0, 0.4, 0]}>
         {/* Main body - cylindrical core */}
-        <mesh geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.2, 0.15, 0.2]}>
-          <meshStandardMaterial color={0x3a3a3a} metalness={0.9} roughness={0.2} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.2, 0.15, 0.2]} material={HOOK_MATERIALS.trapBody} />
         
         {/* Top cap with hook ring */}
-        <mesh position={[0, 0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.25, 0.05, 0.25]}>
-          <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
-        </mesh>
+        <mesh position={[0, 0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.25, 0.05, 0.25]} material={HOOK_MATERIALS.trapCap} />
         
         {/* Hook attachment ring on top */}
-        <mesh position={[0, 0.15, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.12, 0.12, 0.04]}>
-          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} side={THREE.DoubleSide} />
-      </mesh>
+        <mesh position={[0, 0.15, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.12, 0.12, 0.04]} material={HOOK_MATERIALS.trapRing} />
       
         {/* Four hook arms extending outward */}
         {[0, 1, 2, 3].map(i => {
@@ -661,38 +664,26 @@ function GrappleTrapEffect({ trap }: GrappleTrapProps) {
           return (
             <group key={i} rotation={[0, angle, 0]}>
               {/* Arm */}
-              <mesh position={[0.18, -0.02, 0]} rotation={[0, 0, 0.6]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.04, 0.15, 0.04]}>
-                <meshStandardMaterial color={0x4a4a4a} metalness={0.85} roughness={0.25} />
-      </mesh>
+              <mesh position={[0.18, -0.02, 0]} rotation={[0, 0, 0.6]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.04, 0.15, 0.04]} material={HOOK_MATERIALS.trapArm} />
               {/* Hook tip */}
-              <mesh position={[0.28, -0.08, 0]} rotation={[0, 0, 1.8]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.035, 0.08, 0.035]}>
-                <meshStandardMaterial color={HOOKSHOT_COLORS.energyGlow} metalness={0.9} roughness={0.15} emissive={HOOKSHOT_COLORS.energy} emissiveIntensity={0.3} />
-              </mesh>
+              <mesh position={[0.28, -0.08, 0]} rotation={[0, 0, 1.8]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.035, 0.08, 0.035]} material={HOOK_MATERIALS.trapHookTip} />
             </group>
           );
         })}
         
         {/* Bottom base */}
-        <mesh position={[0, -0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.22, 0.05, 0.22]}>
-          <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
-      </mesh>
+        <mesh position={[0, -0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.22, 0.05, 0.22]} material={HOOK_MATERIALS.trapBase} />
       
         {/* Cyan energy core glow - matches hookshot theme */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.8} />
-        </mesh>
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.3} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12} material={HOOK_MATERIALS.trapCoreGlow} />
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2} material={HOOK_MATERIALS.trapOuterGlow} />
         
         {/* Device light */}
         <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={4} decay={2} />
       </group>
       
       {/* === CYAN CIRCLE BORDER - AOE indicator matching hookshot theme === */}
-      <mesh ref={circleRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring24} scale={[trap.radius, trap.radius, 1]}>
-        <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.8} side={THREE.DoubleSide} />
-        </mesh>
+      <mesh ref={circleRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring24} scale={[trap.radius, trap.radius, 1]} material={HOOK_MATERIALS.trapCircleRing} />
       
       {/* Ground light when active */}
       <pointLight ref={lightRef} color={HOOKSHOT_COLORS.energy} intensity={2} distance={trap.radius * 1.2} decay={2} position={[0, 0.5, 0]} />
@@ -717,7 +708,7 @@ interface EarthWallProps {
   wall: EarthWallData;
 }
 
-// Single dirt/rock wall segment
+// Single dirt/rock wall segment - OPTIMIZED: Uses pre-compiled shared materials
 function WallSegment({ 
   position, 
   targetHeight, 
@@ -734,10 +725,13 @@ function WallSegment({
   const meshRef = useRef<THREE.Group>(null);
   const currentHeightRef = useRef(0.1); // Start with small height so it renders
   
-  // Vary colors and shapes based on index for natural look
+  // Get pre-compiled shared materials once
+  const HOOK_MATERIALS = getHookshotMaterials();
+  
+  // Select material variant based on index for natural look (uses pre-compiled materials)
   const colorVariation = (index % 3);
-  const mainColor = colorVariation === 0 ? EARTH_COLORS.dirt : 
-                    colorVariation === 1 ? EARTH_COLORS.dirtDark : EARTH_COLORS.dirtLight;
+  const mainMaterial = colorVariation === 0 ? HOOK_MATERIALS.earthDirt : 
+                       colorVariation === 1 ? HOOK_MATERIALS.earthDirtDark : HOOK_MATERIALS.earthDirtLight;
   
   useFrame((_, delta) => {
     if (!meshRef.current) return;
@@ -759,54 +753,44 @@ function WallSegment({
   
   return (
     <group ref={meshRef} position={[position.x, position.y, position.z]} rotation={[0, rotationY, 0]}>
-      {/* Main dirt block - wide to block vision */}
-      <mesh geometry={SHARED_GEOMETRIES.box} scale={[EARTH_WALL_WIDTH, 1, 1]}>
-        <meshStandardMaterial 
-          color={mainColor} 
-          roughness={0.9} 
-          metalness={0.1}
-        />
-      </mesh>
+      {/* Main dirt block - wide to block vision - uses shared material */}
+      <mesh geometry={SHARED_GEOMETRIES.box} scale={[EARTH_WALL_WIDTH, 1, 1]} material={mainMaterial} />
       
-      {/* Rock chunks embedded in dirt */}
+      {/* Rock chunks embedded in dirt - uses shared material */}
       <mesh 
         position={[0.4 * (index % 2 === 0 ? 1 : -1), 0.2, 0.35]} 
         geometry={SHARED_GEOMETRIES.box} 
         scale={[0.4, 0.3, 0.3]}
         rotation={[0.2, 0.3, 0.1]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
-      </mesh>
+        material={HOOK_MATERIALS.earthRock}
+      />
       
       <mesh 
         position={[-0.3 * (index % 2 === 0 ? 1 : -1), -0.15, 0.3]} 
         geometry={SHARED_GEOMETRIES.box} 
         scale={[0.35, 0.25, 0.25]}
         rotation={[0.1, -0.2, 0.15]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
-      </mesh>
+        material={HOOK_MATERIALS.earthRock}
+      />
       
-      {/* Back side rock */}
+      {/* Back side rock - uses shared material */}
       <mesh 
         position={[0.2 * (index % 2 === 0 ? -1 : 1), 0, -0.35]} 
         geometry={SHARED_GEOMETRIES.box} 
         scale={[0.3, 0.35, 0.25]}
         rotation={[-0.1, 0.2, 0.1]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
-      </mesh>
+        material={HOOK_MATERIALS.earthRock}
+      />
       
-      {/* Top grass/soil texture */}
+      {/* Top grass/soil texture - uses shared material */}
       <mesh 
         position={[0, 0.51, 0]} 
         geometry={SHARED_GEOMETRIES.box} 
         scale={[EARTH_WALL_WIDTH * 0.95, 0.1, 0.9]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.grass} roughness={1} metalness={0} />
-      </mesh>
+        material={HOOK_MATERIALS.earthGrass}
+      />
       
-      {/* Dirt debris around base - front */}
+      {/* Dirt debris around base - front - uses shared material */}
       {[0, 1, 2].map((i) => (
         <mesh 
           key={`front-${i}`}
@@ -817,12 +801,11 @@ function WallSegment({
           ]} 
           geometry={SHARED_GEOMETRIES.sphere8} 
           scale={[0.2, 0.12, 0.2]}
-        >
-          <meshStandardMaterial color={EARTH_COLORS.dirtDark} roughness={1} metalness={0} />
-        </mesh>
+          material={HOOK_MATERIALS.earthDebris}
+        />
       ))}
       
-      {/* Dirt debris around base - back */}
+      {/* Dirt debris around base - back - uses shared material */}
       {[0, 1].map((i) => (
         <mesh 
           key={`back-${i}`}
@@ -833,9 +816,8 @@ function WallSegment({
           ]} 
           geometry={SHARED_GEOMETRIES.sphere8} 
           scale={[0.18, 0.1, 0.18]}
-        >
-          <meshStandardMaterial color={EARTH_COLORS.dirtDark} roughness={1} metalness={0} />
-        </mesh>
+          material={HOOK_MATERIALS.earthDebris}
+        />
       ))}
     </group>
   );
@@ -848,6 +830,9 @@ function EarthWallEffect({ wall }: EarthWallProps) {
   const hookProgressRef = useRef(0);
   const lastSegmentDistRef = useRef(0);
   const hookGroundYRef = useRef(wall.startPosition.y); // Track hook's ground level
+  
+  // Get pre-compiled shared materials once
+  const HOOK_MATERIALS = getHookshotMaterials();
   
   // Use state for wall segments so React re-renders when they're added
   const [wallSegments, setWallSegments] = useState<{ x: number; y: number; z: number; height: number; time: number }[]>([]);
@@ -939,48 +924,32 @@ function EarthWallEffect({ wall }: EarthWallProps) {
   
   return (
     <group ref={groupRef}>
-      {/* THE GROUND HOOK - Large industrial hook that plows through ground */}
+      {/* THE GROUND HOOK - Large industrial hook that plows through ground - OPTIMIZED: uses shared materials */}
       <group ref={hookRef} position={[wall.startPosition.x, wall.startPosition.y + 0.5, wall.startPosition.z]}>
         {/* Main hook body - large and heavy */}
-        <mesh geometry={SHARED_GEOMETRIES.box} scale={[0.8, 0.6, 1.5]}>
-          <meshStandardMaterial color={EARTH_COLORS.hookMetal} metalness={0.85} roughness={0.3} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.box} scale={[0.8, 0.6, 1.5]} material={HOOK_MATERIALS.earthHookMetal} />
         
         {/* Plow blade at front */}
-        <mesh position={[0, -0.1, -0.9]} rotation={[0.3, 0, 0]} geometry={SHARED_GEOMETRIES.box} scale={[1.2, 0.1, 0.5]}>
-          <meshStandardMaterial color={0x555555} metalness={0.9} roughness={0.2} />
-        </mesh>
+        <mesh position={[0, -0.1, -0.9]} rotation={[0.3, 0, 0]} geometry={SHARED_GEOMETRIES.box} scale={[1.2, 0.1, 0.5]} material={HOOK_MATERIALS.earthPlowBlade} />
         
         {/* Hook arm - curved down into ground */}
-        <mesh position={[0, -0.2, -0.5]} rotation={[-0.5, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.15, 0.8, 0.15]}>
-          <meshStandardMaterial color={EARTH_COLORS.hookMetal} metalness={0.85} roughness={0.3} />
-        </mesh>
+        <mesh position={[0, -0.2, -0.5]} rotation={[-0.5, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.15, 0.8, 0.15]} material={HOOK_MATERIALS.earthHookMetal} />
         
         {/* Hook tip - buried in ground */}
-        <mesh position={[0, -0.6, -0.2]} rotation={[-1.2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.4, 0.2]}>
-          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} />
-        </mesh>
+        <mesh position={[0, -0.6, -0.2]} rotation={[-1.2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.4, 0.2]} material={HOOK_MATERIALS.earthHookMetalLight} />
         
         {/* Side fins for stability */}
-        <mesh position={[0.5, 0, 0]} rotation={[0, 0, 0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]}>
-          <meshStandardMaterial color={0x444444} metalness={0.8} roughness={0.35} />
-        </mesh>
-        <mesh position={[-0.5, 0, 0]} rotation={[0, 0, -0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]}>
-          <meshStandardMaterial color={0x444444} metalness={0.8} roughness={0.35} />
-        </mesh>
+        <mesh position={[0.5, 0, 0]} rotation={[0, 0, 0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]} material={HOOK_MATERIALS.earthHookMetal} />
+        <mesh position={[-0.5, 0, 0]} rotation={[0, 0, -0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]} material={HOOK_MATERIALS.earthHookMetal} />
         
         {/* Orange energy glow */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={0.4}>
-          <meshBasicMaterial color={EARTH_COLORS.hookGlow} transparent opacity={0.5} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={0.4} material={HOOK_MATERIALS.earthHookGlow} />
         
         {/* Dirt spray particles effect */}
         <pointLight color={EARTH_COLORS.hookGlow} intensity={4} distance={5} decay={2} />
         
         {/* Ground disturbance - ring of dirt being pushed up */}
-        <mesh position={[0, -0.4, -0.3]} rotation={[-Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} scale={[1, 1, 0.3]}>
-          <meshBasicMaterial color={EARTH_COLORS.dirt} transparent opacity={0.7} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh position={[0, -0.4, -0.3]} rotation={[-Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} scale={[1, 1, 0.3]} material={HOOK_MATERIALS.earthHookRing} />
       </group>
       
       {/* WALL SEGMENTS - Rising dirt walls perpendicular to travel direction */}
@@ -1112,18 +1081,16 @@ function SwingLineEffect({ line }: SwingLineProps) {
   
   if (!line.isActive && line.state === 'done') return null;
   
+  // Get shared materials once (moved outside return to reduce allocations)
+  const HOOK_MATERIALS = getHookMaterials();
+  
   return (
     <group ref={groupRef}>
       <group ref={hookRef} position={[line.startPosition.x, line.startPosition.y, line.startPosition.z]}>
-        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.08]}>
-          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} side={THREE.DoubleSide} />
-        </mesh>
-        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.8, 0.08]}>
-          <meshStandardMaterial color={0x666666} metalness={0.85} roughness={0.25} />
-        </mesh>
-        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.15, 0.1]}>
-          <meshStandardMaterial color={0xcccccc} metalness={0.95} roughness={0.1} />
-        </mesh>
+        {/* Uses shared pre-compiled materials */}
+        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.08]} material={HOOK_MATERIALS.ring} />
+        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.8, 0.08]} material={HOOK_MATERIALS.shaft} />
+        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.15, 0.1]} material={HOOK_MATERIALS.tip} />
         <pointLight color={0xffffff} intensity={2} distance={4} decay={2} />
       </group>
       
@@ -1304,52 +1271,36 @@ function GrappleLineEffect({ line }: GrappleLineProps) {
   
   return (
     <group ref={groupRef}>
-      {/* ANCHOR-STYLE GRAPPLING HOOK */}
+      {/* ANCHOR-STYLE GRAPPLING HOOK - OPTIMIZED: uses pre-compiled shared materials */}
       <group ref={hookRef} position={[line.startPosition.x, line.startPosition.y, line.startPosition.z]}>
         {/* === ANCHOR RING (top) - where rope attaches === */}
-        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.08]}>
-          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.08]} material={HOOK_MATERIALS.ring} />
         
         {/* === MAIN SHAFT (vertical bar) === */}
-        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.8, 0.08]}>
-          <meshStandardMaterial color={0x666666} metalness={0.85} roughness={0.25} />
-        </mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.8, 0.08]} material={HOOK_MATERIALS.shaft} />
         
         {/* === CROWN/STOCK (horizontal bar near top) === */}
-        <mesh position={[0, 0, 0.15]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.05, 0.5, 0.05]}>
-          <meshStandardMaterial color={0x777777} metalness={0.85} roughness={0.25} />
-        </mesh>
+        <mesh position={[0, 0, 0.15]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.05, 0.5, 0.05]} material={HOOK_MATERIALS.crown} />
         
         {/* === ANCHOR ARMS/FLUKES (curved hooks at bottom) === */}
         {/* Left arm */}
         <group position={[-0.15, 0, -0.3]}>
           {/* Arm going outward and down */}
-          <mesh rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]}>
-            <meshStandardMaterial color={0x666666} metalness={0.85} roughness={0.25} />
-          </mesh>
+          <mesh rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]} material={HOOK_MATERIALS.shaft} />
           {/* Curved fluke tip */}
-          <mesh position={[-0.2, 0, -0.15]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]}>
-            <meshStandardMaterial color={0xaaaaaa} metalness={0.9} roughness={0.15} />
-          </mesh>
+          <mesh position={[-0.2, 0, -0.15]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]} material={HOOK_MATERIALS.fluke} />
         </group>
         
         {/* Right arm */}
         <group position={[0.15, 0, -0.3]}>
           {/* Arm going outward and down */}
-          <mesh rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]}>
-            <meshStandardMaterial color={0x666666} metalness={0.85} roughness={0.25} />
-          </mesh>
+          <mesh rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]} material={HOOK_MATERIALS.shaft} />
           {/* Curved fluke tip */}
-          <mesh position={[0.2, 0, -0.15]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]}>
-            <meshStandardMaterial color={0xaaaaaa} metalness={0.9} roughness={0.15} />
-          </mesh>
+          <mesh position={[0.2, 0, -0.15]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]} material={HOOK_MATERIALS.fluke} />
         </group>
         
         {/* === BOTTOM POINT === */}
-        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.15, 0.1]}>
-          <meshStandardMaterial color={0xcccccc} metalness={0.95} roughness={0.1} />
-        </mesh>
+        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.15, 0.1]} material={HOOK_MATERIALS.tip} />
         
         {/* Energy glow around hook */}
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.25} material={HOOK_MATERIALS.glow} />
@@ -1486,28 +1437,148 @@ export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: Grap
   
   if (!isActive) return null;
   
-  // Cyan color scheme for trap targeting - matches hookshot hero theme
-  const baseColor = isValidRef.current ? HOOKSHOT_COLORS.energy : HOOKSHOT_COLORS.energyGlow; // Cyan when valid, darker cyan when invalid
+  // Use pre-compiled shared materials - select based on validity state
+  const ringMaterial = isValidRef.current ? HOOKSHOT_MATS.targetRingValid : HOOKSHOT_MATS.targetRingInvalid;
+  const crossMaterial = isValidRef.current ? HOOKSHOT_MATS.targetCross : HOOKSHOT_MATS.targetCrossInvalid;
   
   return (
     <group ref={indicatorRef}>
-      {/* Main AOE ring - cyan border matching hookshot theme */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[GRAPPLE_TRAP_RADIUS, GRAPPLE_TRAP_RADIUS, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
+      {/* Main AOE ring - cyan border matching hookshot theme - OPTIMIZED: uses shared materials */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[GRAPPLE_TRAP_RADIUS, GRAPPLE_TRAP_RADIUS, 1]} material={ringMaterial} />
       {/* Center marker - white crosshair */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.circle16} scale={[0.4, 0.4, 1]}>
-        <meshBasicMaterial color={0xffffff} transparent opacity={0.9} side={THREE.DoubleSide} />
-      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.circle16} scale={[0.4, 0.4, 1]} material={HOOKSHOT_MATS.targetCenter} />
       {/* Cross hairs */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.5} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.5} side={THREE.DoubleSide} />
-      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]} material={crossMaterial} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]} material={crossMaterial} />
       
       <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={GRAPPLE_TRAP_RADIUS} decay={2} position-y={0.5} />
+    </group>
+  );
+}
+
+// ============================================================================
+// HOOKSHOT EFFECTS WARMUP - Pre-renders hidden effects to eliminate first-use stutter
+// Mount this BEFORE gameplay starts to precompile all shaders and geometries
+// ============================================================================
+
+let warmupComplete = false;
+
+// Dummy data for warmup - positions far away so invisible
+const WARMUP_HOOK: HookProjectileData = {
+  id: 'warmup_hook',
+  position: { x: -9999, y: -9999, z: -9999 },
+  velocity: { x: 1, y: 0, z: 0 },
+  startTime: 0,
+  ownerId: 'warmup',
+  ownerTeam: 'red',
+  state: 'extending',
+  maxDistance: 10,
+  startPosition: { x: -9999, y: -9999, z: -9999 },
+};
+
+const WARMUP_DRAG_HOOK: DragHookData = {
+  id: 'warmup_drag',
+  position: { x: -9999, y: -9999, z: -9999 },
+  velocity: { x: 1, y: 0, z: 0 },
+  startTime: 0,
+  ownerId: 'warmup',
+  ownerTeam: 'red',
+  state: 'flying',
+  startPosition: { x: -9999, y: -9999, z: -9999 },
+};
+
+const WARMUP_SWING_LINE: SwingLineData = {
+  id: 'warmup_swing',
+  startPosition: { x: -9999, y: -9999, z: -9999 },
+  attachPoint: { x: -9998, y: -9999, z: -9999 },
+  startTime: 0,
+  duration: 1,
+  ownerId: 'warmup',
+  state: 'extending',
+  isActive: true,
+};
+
+const WARMUP_GRAPPLE_LINE: GrappleLineData = {
+  id: 'warmup_grapple',
+  startPosition: { x: -9999, y: -9999, z: -9999 },
+  endPosition: { x: -9998, y: -9999, z: -9999 },
+  startTime: 0,
+  ownerId: 'warmup',
+  state: 'extending',
+};
+
+const WARMUP_EARTH_WALL: EarthWallData = {
+  id: 'warmup_wall',
+  startPosition: { x: -9999, y: -9999, z: -9999 },
+  direction: { x: 1, y: 0, z: 0 },
+  startTime: 0,
+  duration: 1,
+  maxDistance: 10,
+  ownerId: 'warmup',
+  ownerTeam: 'red',
+  hookProgress: 0,
+  wallSegments: [],
+};
+
+const WARMUP_TRAP: GrappleTrapData = {
+  id: 'warmup_trap',
+  position: { x: -9999, y: -9999, z: -9999 },
+  radius: 8,
+  startTime: 0,
+  duration: 1,
+  ownerId: 'warmup',
+  ownerTeam: 'red',
+  startPosition: { x: -9999, y: -9999, z: -9999 },
+  velocity: { x: 0, y: 0, z: 0 },
+  hookedPlayers: [],
+};
+
+/**
+ * Warmup component - Mount this OUTSIDE the isPlaying check to precompile
+ * all hookshot effect shaders before gameplay starts.
+ * Renders hidden instances of each effect type once, then removes them.
+ */
+export function HookshotEffectsWarmup() {
+  const [showWarmup, setShowWarmup] = useState(!warmupComplete);
+  const { gl } = useThree();
+  
+  useEffect(() => {
+    if (!warmupComplete && gl) {
+      warmupComplete = true;
+      // Precompile materials
+      precompileHookshotMaterials(gl);
+      
+      // Keep warmup meshes rendered for 2 frames to ensure GPU compilation
+      const timer = setTimeout(() => {
+        setShowWarmup(false);
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [gl]);
+  
+  if (!showWarmup) return null;
+  
+  // Render hidden instances of ALL effect types to force shader compilation
+  return (
+    <group position={[-9999, -9999, -9999]} visible={false}>
+      {/* Basic hook projectile */}
+      <HookProjectile hook={WARMUP_HOOK} />
+      
+      {/* Drag hook (heavy attack) */}
+      <DragHookEffect hook={WARMUP_DRAG_HOOK} />
+      
+      {/* Swing line (has Line component from drei that needs compilation) */}
+      <SwingLineEffect line={WARMUP_SWING_LINE} />
+      
+      {/* Grapple line (Q ability) */}
+      <GrappleLineEffect line={WARMUP_GRAPPLE_LINE} />
+      
+      {/* Earth wall (E ability) */}
+      <EarthWallEffect wall={WARMUP_EARTH_WALL} />
+      
+      {/* Grapple trap (ultimate) */}
+      <GrappleTrapEffect trap={WARMUP_TRAP} />
     </group>
   );
 }
@@ -1524,6 +1595,16 @@ export function HookshotEffectsManager() {
   const grappleLines = useGameStore(state => state.grappleLines);
   const earthWalls = useGameStore(state => state.earthWalls);
   
+  // Get the WebGL renderer for shader precompilation
+  const { gl } = useThree();
+  
+  // Pre-compile all hookshot materials on first render (backup in case warmup missed)
+  useEffect(() => {
+    if (gl && !hookshotMaterialsPrecompiled) {
+      hookshotMaterialsPrecompiled = true;
+      precompileHookshotMaterials(gl);
+    }
+  }, [gl]);
   
   // Cleanup interval
   useEffect(() => {

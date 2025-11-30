@@ -12,7 +12,7 @@ import { DireBalls } from './DireBall';
 import { VoidRays } from './VoidRay';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
-import { HookshotEffectsManager } from './HookshotEffects';
+import { HookshotEffectsManager, HookshotEffectsWarmup } from './HookshotEffects';
 import { GlacierEffectsManager } from './GlacierEffects';
 import { FirstPersonArms } from './FirstPersonArms';
 import { useGameStore } from '../../store/gameStore';
@@ -86,6 +86,9 @@ export function GameCanvas() {
         
         {/* Other players - always rendered so players can see each other in lobby */}
         <OtherPlayers />
+        
+        {/* Warmup components - precompile shaders BEFORE gameplay starts */}
+        <HookshotEffectsWarmup />
         
         {/* Game objects only during gameplay */}
         {isPlaying && (
