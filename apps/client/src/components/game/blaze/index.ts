@@ -23,3 +23,7 @@ export {
   JetpackEffect,
 } from './jetpack';
 
+export { 
+  prewarmBlazeMaterials,
+} from './materials';
+

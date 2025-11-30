@@ -364,6 +364,18 @@ export function initializeEffectResources() {
     getGlowMaterial(color, 0.5);
     getGlowMaterial(color, 0.7);
   });
+  
+  // Prewarm Blaze materials (airstrike, etc.)
+  import('./blaze/materials').then(({ prewarmBlazeMaterials }) => {
+    prewarmBlazeMaterials();
+  });
+  
+  // Prewarm Phantom materials
+  import('./phantom/materials').then(({ getRiftMaterial, getTrailMaterial, getShadowArrivalMaterial }) => {
+    getRiftMaterial();
+    getTrailMaterial();
+    getShadowArrivalMaterial();
+  });
 }
 
 // Auto-initialize on first import (browser only)

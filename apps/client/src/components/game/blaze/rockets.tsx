@@ -1,8 +1,16 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
+import {
+  getRocketBodyMaterial,
+  getRocketNoseMaterial,
+  getRocketFireCoreMaterial,
+  getRocketFireInnerMaterial,
+  getRocketFireOuterMaterial,
+  getRocketSmokeMaterial,
+} from './materials';
 
 // ============================================================================
 // ROCKET EFFECT - Individual rockets with good visuals
@@ -23,6 +31,16 @@ interface RocketEffectProps {
 
 function RocketEffect({ rocket }: RocketEffectProps) {
   const groupRef = useRef<THREE.Group>(null);
+  
+  // Get pre-cached materials once
+  const materials = useMemo(() => ({
+    body: getRocketBodyMaterial(),
+    nose: getRocketNoseMaterial(),
+    fireCore: getRocketFireCoreMaterial(),
+    fireInner: getRocketFireInnerMaterial(),
+    fireOuter: getRocketFireOuterMaterial(),
+    smoke: getRocketSmokeMaterial(),
+  }), []);
   
   useFrame(() => {
     if (!groupRef.current) return;
@@ -46,34 +64,22 @@ function RocketEffect({ rocket }: RocketEffectProps) {
   return (
     <group ref={groupRef}>
       {/* Rocket body - dark metallic */}
-      <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.35, 0.08]}>
-        <meshBasicMaterial color={0x333333} />
-      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.35, 0.08]} material={materials.body} />
       
       {/* Rocket nose - glowing orange */}
-      <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.08, 0.04]}>
-        <meshBasicMaterial color={0xff6600} />
-      </mesh>
+      <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.08, 0.04]} material={materials.nose} />
       
       {/* Fire core - bright white/yellow */}
-      <mesh position={[0, 0, 0.22]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.05, 0.35, 0.05]}>
-        <meshBasicMaterial color={0xffffcc} transparent opacity={0.95} />
-      </mesh>
+      <mesh position={[0, 0, 0.22]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.05, 0.35, 0.05]} material={materials.fireCore} />
       
       {/* Fire inner - bright orange */}
-      <mesh position={[0, 0, 0.32]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.45, 0.08]}>
-        <meshBasicMaterial color={0xffaa00} transparent opacity={0.9} />
-      </mesh>
+      <mesh position={[0, 0, 0.32]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.45, 0.08]} material={materials.fireInner} />
       
       {/* Fire outer - red/orange */}
-      <mesh position={[0, 0, 0.4]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.5, 0.12]}>
-        <meshBasicMaterial color={0xff5500} transparent opacity={0.7} />
-      </mesh>
+      <mesh position={[0, 0, 0.4]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.5, 0.12]} material={materials.fireOuter} />
       
       {/* Smoke trail hint */}
-      <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.15, 0.4, 0.15]}>
-        <meshBasicMaterial color={0xff3300} transparent opacity={0.4} />
-      </mesh>
+      <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.15, 0.4, 0.15]} material={materials.smoke} />
     </group>
   );
 }
