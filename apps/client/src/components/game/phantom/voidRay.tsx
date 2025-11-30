@@ -1,9 +1,9 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore, VoidRayData } from '../../store/gameStore';
-import { getPhysicsWorld, isPhysicsReady, raycast } from '../../hooks/usePhysics';
-import { damageNpc } from '../ui/GameConsole';
+import { useGameStore, VoidRayData } from '../../../store/gameStore';
+import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
+import { damageNpc } from '../../ui/GameConsole';
 
 interface VoidRayProps {
   id: string;
@@ -696,3 +696,4 @@ export function VoidRays({ rays }: VoidRaysProps) {
     </>
   );
 }
+

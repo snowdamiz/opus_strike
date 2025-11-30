@@ -7,14 +7,11 @@ import { OtherPlayers } from './OtherPlayers';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
-import { VoidZones } from './VoidZone';
-import { DireBalls } from './DireBall';
-import { VoidRays } from './VoidRay';
+import { VoidZones, DireBalls, VoidRays } from './phantom';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
 import { GlacierEffectsManager } from './GlacierEffects';
-import { FirstPersonArms } from './FirstPersonArms';
 import { useGameStore } from '../../store/gameStore';
 
 export function GameCanvas() {
@@ -100,7 +97,6 @@ export function GameCanvas() {
             <BlazeEffectsManager />
             <HookshotEffectsManager />
             <GlacierEffectsManager />
-            <FirstPersonArms />
           </>
         )}
 

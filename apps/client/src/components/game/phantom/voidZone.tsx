@@ -1,8 +1,8 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore } from '../../store/gameStore';
-import { damageNpc } from '../ui/GameConsole';
+import { useGameStore } from '../../../store/gameStore';
+import { damageNpc } from '../../ui/GameConsole';
 
 interface VoidZoneProps {
   position: { x: number; y: number; z: number };
@@ -28,11 +28,11 @@ function getVortexMaterial(): THREE.ShaderMaterial {
       uniforms: {
         time: { value: 0 },
         opacity: { value: 1 },
-        color1: { value: new THREE.Color(0x000000) }, // True black core
-        color2: { value: new THREE.Color(0x1a0033) }, // Deep void purple
-        color3: { value: new THREE.Color(0x7c3aed) }, // Violet energy
-        color4: { value: new THREE.Color(0xc084fc) }, // Light purple glow
-        color5: { value: new THREE.Color(0x00ffff) }, // Cyan accretion
+        color1: { value: new THREE.Color(0x000000) },
+        color2: { value: new THREE.Color(0x1a0033) },
+        color3: { value: new THREE.Color(0x7c3aed) },
+        color4: { value: new THREE.Color(0xc084fc) },
+        color5: { value: new THREE.Color(0x00ffff) },
       },
       vertexShader: `
         varying vec2 vUv;
@@ -42,13 +42,10 @@ function getVortexMaterial(): THREE.ShaderMaterial {
         void main() {
           vUv = uv;
           vPosition = position;
-          
-          // Slight warping effect at edges
           vec3 pos = position;
           float dist = length(uv - vec2(0.5));
           float warp = sin(dist * 20.0 - time * 5.0) * 0.02 * (1.0 - dist);
           pos.y += warp;
-          
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }
       `,
@@ -63,7 +60,6 @@ function getVortexMaterial(): THREE.ShaderMaterial {
         varying vec2 vUv;
         varying vec3 vPosition;
         
-        // Improved noise
         float hash(vec2 p) {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
         }
@@ -79,7 +75,6 @@ function getVortexMaterial(): THREE.ShaderMaterial {
           );
         }
         
-        // Fractal brownian motion for organic detail
         float fbm(vec2 p) {
           float sum = 0.0;
           float amp = 0.5;
@@ -97,73 +92,47 @@ function getVortexMaterial(): THREE.ShaderMaterial {
           float dist = length(uv);
           float angle = atan(uv.y, uv.x);
           
-          // ===== BLACK HOLE CORE =====
           float eventHorizon = smoothstep(0.15, 0.0, dist);
           
-          // ===== SWIRLING ACCRETION DISK =====
-          // Multiple spiral arms at different speeds
           float spiral1 = sin(angle * 5.0 + time * 4.0 - dist * 25.0) * 0.5 + 0.5;
           float spiral2 = sin(angle * 7.0 - time * 3.0 + dist * 20.0) * 0.5 + 0.5;
           float spiral3 = sin(angle * 3.0 + time * 6.0 - dist * 30.0) * 0.5 + 0.5;
           float spiral4 = sin(angle * 11.0 - time * 2.0 + dist * 15.0) * 0.5 + 0.5;
           
-          // Combine spirals with noise for organic look
           float spiralNoise = fbm(uv * 8.0 + time * 0.5);
           float accretion = spiral1 * spiral2 * (0.7 + spiralNoise * 0.3);
           accretion += spiral3 * spiral4 * 0.3;
           
-          // ===== GRAVITATIONAL LENSING EFFECT =====
           float lensing = smoothstep(0.4, 0.2, dist) * smoothstep(0.1, 0.2, dist);
-          float lensingStrength = sin(angle * 2.0 + time * 8.0) * 0.5 + 0.5;
           
-          // ===== ENERGY JETS =====
-          // Two opposing jets of energy
           float jet1 = smoothstep(0.1, 0.0, abs(sin(angle) * dist));
           float jet2 = smoothstep(0.1, 0.0, abs(cos(angle) * dist));
           float jets = (jet1 + jet2) * smoothstep(0.0, 0.3, dist) * smoothstep(0.5, 0.3, dist);
           jets *= sin(dist * 40.0 - time * 20.0) * 0.5 + 0.5;
           
-          // ===== OUTER RING =====
           float outerRing = smoothstep(0.48, 0.45, dist) * smoothstep(0.38, 0.45, dist);
           float ringPulse = sin(time * 8.0 + dist * 30.0) * 0.3 + 0.7;
           
-          // ===== INNER DISTORTION RING =====
           float innerRing = smoothstep(0.25, 0.2, dist) * smoothstep(0.12, 0.2, dist);
           float innerGlow = sin(time * 12.0) * 0.2 + 0.8;
           
-          // ===== COLOR COMPOSITION =====
-          vec3 color = color1; // Start with black core
-          
-          // Add void purple in mid range
+          vec3 color = color1;
           color = mix(color, color2, smoothstep(0.0, 0.3, dist) * (1.0 - eventHorizon));
-          
-          // Add violet energy spirals
           color = mix(color, color3, accretion * lensing * 0.8);
-          
-          // Add light purple glow
           color = mix(color, color4, innerRing * innerGlow * 0.6);
-          
-          // Add cyan energy jets
           color += color5 * jets * 0.8;
-          
-          // Bright outer ring
           color += color4 * outerRing * ringPulse * 1.5;
           
-          // Electric arcs at the edge
           float arc = step(0.9, hash(vec2(angle * 20.0, time * 10.0))) * outerRing;
           color += color5 * arc * 3.0;
           
-          // ===== ALPHA =====
           float alpha = smoothstep(0.5, 0.2, dist) * opacity;
-          alpha = max(alpha, eventHorizon * 0.95); // Solid black core
+          alpha = max(alpha, eventHorizon * 0.95);
           alpha = max(alpha, outerRing * ringPulse * 0.8);
           alpha = max(alpha, jets * 0.6);
           
-          // Pulsing
           float pulse = sin(time * 3.0) * 0.1 + 0.9;
           alpha *= pulse;
-          
-          // Add bloom to bright areas
           color *= 1.0 + (accretion * lensing * 0.5);
           
           gl_FragColor = vec4(color, alpha);
@@ -200,11 +169,7 @@ function getEventHorizonMaterial(): THREE.ShaderMaterial {
         void main() {
           vec2 uv = vUv - vec2(0.5);
           float dist = length(uv);
-          
-          // Absolute black center
           float core = smoothstep(0.3, 0.0, dist);
-          
-          // Shimmering edge
           float shimmer = sin(atan(uv.y, uv.x) * 20.0 + time * 10.0) * 0.5 + 0.5;
           float edge = smoothstep(0.4, 0.25, dist) * smoothstep(0.1, 0.25, dist);
           
@@ -240,11 +205,8 @@ function getAccretionMaterial(): THREE.ShaderMaterial {
         void main() {
           vUv = uv;
           vPosition = position;
-          
-          // Wobble effect
           vec3 pos = position;
           pos.y += sin(uv.x * 10.0 + time * 5.0) * 0.05;
-          
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }
       `,
@@ -255,19 +217,16 @@ function getAccretionMaterial(): THREE.ShaderMaterial {
         
         void main() {
           float dist = abs(vUv.y - 0.5) * 2.0;
-          
-          // Glowing accretion stream
           float glow = smoothstep(1.0, 0.0, dist);
           float energy = sin(vUv.x * 50.0 - time * 20.0) * 0.5 + 0.5;
           
           vec3 color = mix(
-            vec3(0.486, 0.227, 0.929), // Purple
-            vec3(0.0, 1.0, 1.0),        // Cyan
+            vec3(0.486, 0.227, 0.929),
+            vec3(0.0, 1.0, 1.0),
             energy
           );
           
           float alpha = glow * energy * opacity * 0.8;
-          
           gl_FragColor = vec4(color, alpha);
         }
       `,
@@ -280,51 +239,12 @@ function getAccretionMaterial(): THREE.ShaderMaterial {
   return sharedAccretionMaterial;
 }
 
-function getLightningMaterial(): THREE.ShaderMaterial {
-  if (!sharedLightningMaterial) {
-    sharedLightningMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        time: { value: 0 },
-        opacity: { value: 1 },
-      },
-      vertexShader: `
-        varying float vProgress;
-        attribute float progress;
-        
-        void main() {
-          vProgress = progress;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = 3.0;
-        }
-      `,
-      fragmentShader: `
-        uniform float time;
-        uniform float opacity;
-        varying float vProgress;
-        
-        void main() {
-          float pulse = sin(time * 30.0 + vProgress * 10.0) * 0.5 + 0.5;
-          vec3 color = vec3(0.752, 0.518, 0.988);
-          float alpha = pulse * opacity * (1.0 - vProgress);
-          
-          gl_FragColor = vec4(color, alpha);
-        }
-      `,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-  }
-  return sharedLightningMaterial;
-}
-
 // Pre-compile shaders
 if (typeof window !== 'undefined') {
   requestAnimationFrame(() => {
     getVortexMaterial();
     getEventHorizonMaterial();
     getAccretionMaterial();
-    getLightningMaterial();
   });
 }
 
@@ -333,15 +253,6 @@ const DEBRIS_COUNT = 20;
 const VOID_ZONE_DAMAGE = 15;
 const VOID_ZONE_DAMAGE_INTERVAL = 500;
 
-/**
- * VoidZone - A devastating black hole / void vortex effect
- * Features:
- * - Swirling accretion disk with multiple spiral arms
- * - True black event horizon at center
- * - Energy jets and electric arcs
- * - Orbiting debris particles
- * - Gravitational lensing visual effect
- */
 export function VoidZone({ position, radius, duration, startTime, ownerId }: VoidZoneProps) {
   const groupRef = useRef<THREE.Group>(null);
   const vortexRef = useRef<THREE.Mesh>(null);
@@ -357,12 +268,10 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
     return Math.min(1, elapsed / duration);
   };
 
-  // Get materials
   const vortexMaterial = useMemo(() => getVortexMaterial().clone(), []);
   const eventHorizonMaterial = useMemo(() => getEventHorizonMaterial().clone(), []);
   const accretionMaterial = useMemo(() => getAccretionMaterial().clone(), []);
 
-  // Orbiting particles - pulled toward center
   const particleGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(PARTICLE_COUNT * 3);
@@ -394,7 +303,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
     return geometry;
   }, [radius]);
 
-  // Debris chunks being pulled in
   const debrisGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
     const positions = new Float32Array(DEBRIS_COUNT * 3);
@@ -409,7 +317,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
       positions[i * 3 + 1] = 0.5 + Math.random() * 1.5;
       positions[i * 3 + 2] = Math.sin(angle) * r;
       
-      // Velocity toward center
       velocities[i * 3] = -Math.cos(angle) * (0.5 + Math.random());
       velocities[i * 3 + 1] = -0.3;
       velocities[i * 3 + 2] = -Math.sin(angle) * (0.5 + Math.random());
@@ -457,43 +364,35 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
     timeRef.current += delta;
     const time = timeRef.current;
     
-    // Fade in/out
     const fadeIn = Math.min(1, progress * 5);
     const fadeOut = progress > 0.75 ? 1 - ((progress - 0.75) / 0.25) : 1;
     const currentOpacity = fadeIn * fadeOut;
 
-    // Update main vortex shader
     if (vortexMaterial.uniforms) {
       vortexMaterial.uniforms.time.value = time;
       vortexMaterial.uniforms.opacity.value = currentOpacity;
     }
 
-    // Update event horizon
     if (eventHorizonMaterial.uniforms) {
       eventHorizonMaterial.uniforms.time.value = time;
       eventHorizonMaterial.uniforms.opacity.value = currentOpacity;
     }
 
-    // Update accretion material
     if (accretionMaterial.uniforms) {
       accretionMaterial.uniforms.time.value = time;
       accretionMaterial.uniforms.opacity.value = currentOpacity;
     }
 
-    // Rotate inner rings at different speeds
     if (innerRingsRef.current) {
       innerRingsRef.current.children.forEach((ring, i) => {
         const speed = 1 + i * 0.5;
         const direction = i % 2 === 0 ? 1 : -1;
         ring.rotation.z += delta * speed * direction;
-        
-        // Pulsing scale
         const scale = 1 + Math.sin(time * 3 + i) * 0.1;
         ring.scale.setScalar(scale);
       });
     }
 
-    // Animate particles - spiral orbit toward center
     if (particlesRef.current) {
       const positions = particlesRef.current.geometry.attributes.position;
       const speeds = particlesRef.current.geometry.attributes.speed;
@@ -505,11 +404,9 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
         let angle = (angleAttrs as THREE.BufferAttribute).getX(i);
         let r = (radiiAttrs as THREE.BufferAttribute).getX(i);
         
-        // Spiral inward
         angle += delta * speed * (1 + (1 - r / radius) * 2);
         r -= delta * 0.3;
         
-        // Reset when too close to center
         if (r < 0.2) {
           r = radius * (0.7 + Math.random() * 0.3);
           angle = Math.random() * Math.PI * 2;
@@ -528,7 +425,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
       particleMaterial.opacity = currentOpacity * 0.9;
     }
 
-    // Animate debris - pulled toward center
     if (debrisRef.current) {
       const positions = debrisRef.current.geometry.attributes.position;
       const velocities = debrisRef.current.geometry.attributes.velocity;
@@ -546,7 +442,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
         y += vy * delta;
         z += vz * delta;
         
-        // Reset when absorbed
         const dist = Math.sqrt(x * x + z * z);
         if (dist < 0.3 || y < 0) {
           const angle = Math.random() * Math.PI * 2;
@@ -564,7 +459,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
       debrisMaterial.opacity = currentOpacity * 0.8;
     }
 
-    // Damage check
     const now = Date.now();
     const { players, localPlayer } = useGameStore.getState();
     
@@ -592,21 +486,17 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
 
   return (
     <group ref={groupRef} position={[position.x, position.y + 0.02, position.z]}>
-      {/* Main vortex disc with enhanced shader */}
       <mesh ref={vortexRef} rotation-x={-Math.PI / 2}>
         <circleGeometry args={[radius, 128]} />
         <primitive object={vortexMaterial} />
       </mesh>
 
-      {/* True black event horizon center */}
       <mesh ref={eventHorizonRef} rotation-x={-Math.PI / 2} position-y={0.03}>
         <circleGeometry args={[radius * 0.25, 64]} />
         <primitive object={eventHorizonMaterial} />
       </mesh>
 
-      {/* Rotating inner rings with varying speeds */}
       <group ref={innerRingsRef}>
-        {/* Inner fast ring */}
         <mesh rotation-x={-Math.PI / 2} position-y={0.04}>
           <ringGeometry args={[radius * 0.28, radius * 0.35, 64]} />
           <meshBasicMaterial 
@@ -618,7 +508,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
           />
         </mesh>
         
-        {/* Middle ring */}
         <mesh rotation-x={-Math.PI / 2} position-y={0.05}>
           <ringGeometry args={[radius * 0.45, radius * 0.55, 64]} />
           <meshBasicMaterial 
@@ -630,7 +519,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
           />
         </mesh>
         
-        {/* Outer ring */}
         <mesh rotation-x={-Math.PI / 2} position-y={0.06}>
           <ringGeometry args={[radius * 0.7, radius * 0.8, 64]} />
           <meshBasicMaterial 
@@ -643,7 +531,6 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
         </mesh>
       </group>
 
-      {/* Outer edge glow ring */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
         <ringGeometry args={[radius * 0.95, radius * 1.05, 64]} />
         <meshBasicMaterial 
@@ -655,17 +542,14 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
         />
       </mesh>
 
-      {/* Orbiting energy particles */}
       <points ref={particlesRef} geometry={particleGeometry}>
         <primitive object={particleMaterial} />
       </points>
 
-      {/* Debris being sucked in */}
       <points ref={debrisRef} geometry={debrisGeometry}>
         <primitive object={debrisMaterial} />
       </points>
 
-      {/* Vertical energy column */}
       <mesh position-y={0.5}>
         <cylinderGeometry args={[0.1, radius * 0.3, 1, 16, 1, true]} />
         <meshBasicMaterial 
@@ -727,3 +611,4 @@ export function VoidZones({ zones }: VoidZonesProps) {
     </>
   );
 }
+

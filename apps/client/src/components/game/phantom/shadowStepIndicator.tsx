@@ -1,8 +1,8 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore } from '../../store/gameStore';
-import { checkGroundWithNormal, isPhysicsReady, validateTeleportDestination } from '../../hooks/usePhysics';
+import { useGameStore } from '../../../store/gameStore';
+import { checkGroundWithNormal, isPhysicsReady, validateTeleportDestination } from '../../../hooks/usePhysics';
 
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.4;

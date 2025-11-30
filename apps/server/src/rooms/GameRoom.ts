@@ -16,6 +16,21 @@ import type {
   PlayerInput,
 } from '@voxel-strike/shared';
 
+// Import extracted ability handlers
+import {
+  VoidZone,
+  VOID_ZONE_RADIUS,
+  VOID_ZONE_DAMAGE,
+  VOID_ZONE_DURATION,
+  VOID_ZONE_DAMAGE_INTERVAL,
+  initializePlayerAbilities,
+  resetAbilityCooldowns,
+  tryUseAbility,
+  executeAbility,
+  updateAbilityCooldowns,
+  updateActiveAbilities,
+} from './abilityHandlers';
+
 interface CreateOptions {
   lobbyId?: string;
   lobbyName?: string;
@@ -24,29 +39,11 @@ interface CreateOptions {
 interface JoinOptions {
   playerName?: string;
   preferredTeam?: Team;
-  clientId?: string; // Persistent client ID for reconnection detection
+  clientId?: string;
 }
 
 // Track last ability press state to detect key press (not hold)
 const playerAbilityPressState = new Map<string, { ability1: boolean; ability2: boolean; ultimate: boolean }>();
-
-// Void zone tracking (from phantom blink ability)
-interface VoidZone {
-  id: string;
-  position: { x: number; y: number; z: number };
-  radius: number;
-  damage: number;
-  duration: number;
-  startTime: number;
-  ownerId: string;
-  ownerTeam: 'red' | 'blue';
-  lastDamageTick: Map<string, number>; // Track last damage tick per player
-}
-
-const VOID_ZONE_RADIUS = 3;
-const VOID_ZONE_DAMAGE = 15;
-const VOID_ZONE_DURATION = 4; // seconds
-const VOID_ZONE_DAMAGE_INTERVAL = 500; // ms between damage ticks
 
 export class GameRoom extends Room<GameState> {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -302,7 +299,7 @@ export class GameRoom extends Room<GameState> {
       if (player.state !== 'alive') return;
 
       // Update ability cooldowns
-      this.updateAbilityCooldowns(player, dt);
+      updateAbilityCooldowns(player, dt);
 
       // Passive ultimate charge (2% per second)
       if (player.ultimateCharge < 100) {
@@ -310,7 +307,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       // Process active abilities (like Phantom Veil)
-      this.updateActiveAbilities(player, now);
+      updateActiveAbilities(player, now);
     });
 
     // Check flag returns
@@ -326,29 +323,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastPlayerStates();
   }
 
-  private updateAbilityCooldowns(player: Player, dt: number) {
-    player.abilities.forEach((ability) => {
-      if (ability.cooldownRemaining > 0) {
-        ability.cooldownRemaining = Math.max(0, ability.cooldownRemaining - dt);
-      }
-    });
-  }
-
-  private updateActiveAbilities(player: Player, now: number) {
-    player.abilities.forEach((ability) => {
-      if (!ability.isActive) return;
-
-      const abilityDef = ABILITY_DEFINITIONS[ability.abilityId];
-      if (!abilityDef || !abilityDef.duration) return;
-
-      // Check if ability duration has expired
-      const elapsedMs = now - ability.activatedAt;
-      if (elapsedMs >= abilityDef.duration * 1000) {
-        ability.isActive = false;
-        // Could broadcast ability ended event here
-      }
-    });
-  }
+  // Ability cooldown and active ability updates are now in abilityHandlers.ts
 
   private broadcastPlayerStates() {
     const playerStates: any[] = [];
@@ -436,15 +411,15 @@ export class GameRoom extends Room<GameState> {
     if (prevState) {
       // Ability 1 (E key)
       if (input.ability1 && !prevState.ability1) {
-        this.tryUseAbility(player, 'ability1');
+        this.handleAbilityUse(player, 'ability1');
       }
       // Ability 2 (Q key)
       if (input.ability2 && !prevState.ability2) {
-        this.tryUseAbility(player, 'ability2');
+        this.handleAbilityUse(player, 'ability2');
       }
       // Ultimate (F key)
       if (input.ultimate && !prevState.ultimate) {
-        this.tryUseAbility(player, 'ultimate');
+        this.handleAbilityUse(player, 'ultimate');
       }
 
       // Update press state
@@ -454,230 +429,27 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private tryUseAbility(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
-    const heroId = player.heroId as HeroId;
-    if (!heroId) return;
-
-    const heroDef = HERO_DEFINITIONS[heroId];
-    if (!heroDef) return;
-
-    const abilitySlot = heroDef[slot];
-    const abilityId = abilitySlot.abilityId;
-    const abilityDef = ABILITY_DEFINITIONS[abilityId];
-    if (!abilityDef) return;
-
-    const abilityState = player.abilities.get(abilityId);
-    if (!abilityState) return;
-
-    // Check if on cooldown
-    if (abilityState.cooldownRemaining > 0) {
-      console.log(`${player.name} tried to use ${abilityDef.name} but it's on cooldown (${abilityState.cooldownRemaining.toFixed(1)}s)`);
+  private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
+    const result = tryUseAbility(player, slot);
+    if (!result.success || !result.abilityId || !result.abilityState || !result.abilityDef) {
       return;
     }
 
-    // Check charges for multi-charge abilities
-    if (abilityDef.charges && abilityDef.charges > 1) {
-      if (abilityState.charges <= 0) {
-        console.log(`${player.name} tried to use ${abilityDef.name} but has no charges`);
-        return;
-      }
-    }
-
-    // Check ultimate charge
-    if (slot === 'ultimate') {
-      if (player.ultimateCharge < 100) {
-        console.log(`${player.name} tried to use ultimate but only has ${player.ultimateCharge.toFixed(0)}%`);
-        return;
-      }
-      // Consume ultimate charge
-      player.ultimateCharge = 0;
-    }
-
-    // Use the ability!
-    console.log(`${player.name} used ${abilityDef.name}!`);
-
-    // Handle charges vs cooldown
-    if (abilityDef.charges && abilityDef.charges > 1) {
-      abilityState.charges--;
-      // Start charge regen cooldown
-      abilityState.cooldownRemaining = abilityDef.chargeRegenTime || abilityDef.cooldown;
-    } else {
-      abilityState.cooldownRemaining = abilityDef.cooldown;
-    }
-
-    // Execute ability effect
-    this.executeAbility(player, abilityId, abilityState, abilityDef);
+    // Execute ability effect with context for void zone creation
+    executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
+      createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
+    });
 
     // Broadcast ability use
     this.broadcast('abilityUsed', {
       playerId: player.id,
-      abilityId,
+      abilityId: result.abilityId,
       position: { x: player.position.x, y: player.position.y, z: player.position.z },
       direction: { 
         yaw: player.lookYaw, 
         pitch: player.lookPitch 
       },
     });
-  }
-
-  private executeAbility(player: Player, abilityId: string, abilityState: AbilityStateSchema, abilityDef: any) {
-    const now = Date.now();
-
-    switch (abilityId) {
-      // ===== PHANTOM ABILITIES =====
-      case 'phantom_blink': {
-        // Instant teleport in movement/look direction
-        const distance = 8; // 8 units blink distance
-        const yaw = player.lookYaw;
-        const pitch = player.lookPitch;
-        
-        // Calculate direction from yaw (horizontal)
-        const dx = -Math.sin(yaw);
-        const dz = -Math.cos(yaw);
-        
-        // Calculate destination position
-        const destX = player.position.x + dx * distance;
-        const destZ = player.position.z + dz * distance;
-        const destY = player.position.y + (pitch < -0.3 ? 2 : 0);
-        
-        // Update position
-        player.position.x = destX;
-        player.position.z = destZ;
-        player.position.y = destY;
-        
-        // Create void zone at the DESTINATION (where player lands)
-        this.createVoidZone(
-          { x: destX, y: destY - 0.9, z: destZ }, // Ground level
-          player.id,
-          player.team as 'red' | 'blue'
-        );
-        break;
-      }
-
-      case 'phantom_shadowstep': {
-        // Mark current location and dash forward
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        // For now, just do a forward dash
-        const distance = 12;
-        const yaw = player.lookYaw;
-        player.position.x += -Math.sin(yaw) * distance;
-        player.position.z += -Math.cos(yaw) * distance;
-        break;
-      }
-
-      case 'phantom_veil': {
-        // Become invisible (handled by client rendering based on isActive)
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        // Speed boost is handled in physics
-        break;
-      }
-
-      // ===== HOOKSHOT ABILITIES =====
-      case 'hookshot_grapple': {
-        // Q ability - Grapple pull toward geometry (actual physics on client)
-        player.movement.isGrappling = true;
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      case 'hookshot_swing': {
-        // E ability - Swing line for pendulum movement
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      case 'hookshot_grapple_trap': {
-        // Ultimate - Grapple trap that hooks enemies in AOE
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      // ===== BLAZE ABILITIES =====
-      case 'blaze_jetpack': {
-        // Toggle jetpack (handled on client with fuel)
-        player.movement.isJetpacking = !player.movement.isJetpacking;
-        break;
-      }
-
-      case 'blaze_rocketjump': {
-        // Explosive jump
-        player.velocity.y = 20; // Strong upward velocity
-        player.position.y += 0.5; // Small position boost to get off ground
-        break;
-      }
-
-      case 'blaze_airstrike': {
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      // ===== GLACIER ABILITIES =====
-      case 'glacier_iceslide': {
-        player.movement.isSliding = true;
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      case 'glacier_wallclimb': {
-        player.movement.isWallRunning = true;
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      case 'glacier_fortress': {
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      // ===== PULSE ABILITIES =====
-      case 'pulse_speedboost': {
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      case 'pulse_dash': {
-        const distance = 10;
-        const yaw = player.lookYaw;
-        player.position.x += -Math.sin(yaw) * distance;
-        player.position.z += -Math.cos(yaw) * distance;
-        break;
-      }
-
-      case 'pulse_haste': {
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      // ===== SENTINEL ABILITIES =====
-      case 'sentinel_fortify': {
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      case 'sentinel_barrier': {
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-
-      case 'sentinel_dome': {
-        abilityState.isActive = true;
-        abilityState.activatedAt = now;
-        break;
-      }
-    }
   }
 
   private handleHeroSelect(client: Client, heroId: HeroId) {
@@ -695,55 +467,9 @@ export class GameRoom extends Room<GameState> {
     player.ultimateCharge = 0;
 
     // Initialize abilities for this hero
-    this.initializePlayerAbilities(player, heroId);
+    initializePlayerAbilities(player, heroId);
 
     console.log(`${player.name} selected ${heroDef.name}`);
-  }
-
-  private initializePlayerAbilities(player: Player, heroId: HeroId) {
-    const heroDef = HERO_DEFINITIONS[heroId];
-    if (!heroDef) return;
-
-    // Clear existing abilities
-    player.abilities.clear();
-
-    // Initialize ability 1
-    const ability1Id = heroDef.ability1.abilityId;
-    const ability1Def = ABILITY_DEFINITIONS[ability1Id];
-    if (ability1Def) {
-      const ability1State = new AbilityStateSchema();
-      ability1State.abilityId = ability1Id;
-      ability1State.cooldownRemaining = 0;
-      ability1State.charges = ability1Def.charges || 1;
-      ability1State.isActive = false;
-      player.abilities.set(ability1Id, ability1State);
-    }
-
-    // Initialize ability 2
-    const ability2Id = heroDef.ability2.abilityId;
-    const ability2Def = ABILITY_DEFINITIONS[ability2Id];
-    if (ability2Def) {
-      const ability2State = new AbilityStateSchema();
-      ability2State.abilityId = ability2Id;
-      ability2State.cooldownRemaining = 0;
-      ability2State.charges = ability2Def.charges || 1;
-      ability2State.isActive = false;
-      player.abilities.set(ability2Id, ability2State);
-    }
-
-    // Initialize ultimate
-    const ultimateId = heroDef.ultimate.abilityId;
-    const ultimateDef = ABILITY_DEFINITIONS[ultimateId];
-    if (ultimateDef) {
-      const ultimateState = new AbilityStateSchema();
-      ultimateState.abilityId = ultimateId;
-      ultimateState.cooldownRemaining = 0;
-      ultimateState.charges = ultimateDef.charges || 1;
-      ultimateState.isActive = false;
-      player.abilities.set(ultimateId, ultimateState);
-    }
-
-    console.log(`Initialized abilities for ${player.name}: ${ability1Id}, ${ability2Id}, ${ultimateId}`);
   }
 
   private handleTeamSelect(client: Client, team: Team) {
@@ -852,7 +578,7 @@ export class GameRoom extends Room<GameState> {
               const def = HERO_DEFINITIONS.phantom;
               p.maxHealth = def.stats.maxHealth;
               p.health = p.maxHealth;
-              this.initializePlayerAbilities(p, 'phantom');
+              initializePlayerAbilities(p, 'phantom');
             }
           });
           this.startCountdown();
@@ -903,14 +629,7 @@ export class GameRoom extends Room<GameState> {
       player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
       
       // Reset ability cooldowns
-      player.abilities.forEach(ability => {
-        ability.cooldownRemaining = 0;
-        ability.isActive = false;
-        const def = ABILITY_DEFINITIONS[ability.abilityId];
-        if (def) {
-          ability.charges = def.charges || 1;
-        }
-      });
+      resetAbilityCooldowns(player);
     });
 
     // Reset flags
@@ -1158,14 +877,7 @@ export class GameRoom extends Room<GameState> {
     player.velocity.z = 0;
 
     // Reset ability cooldowns on respawn
-    player.abilities.forEach(ability => {
-      ability.cooldownRemaining = 0;
-      ability.isActive = false;
-      const def = ABILITY_DEFINITIONS[ability.abilityId];
-      if (def) {
-        ability.charges = def.charges || 1;
-      }
-    });
+    resetAbilityCooldowns(player);
   }
 
   private updatePhysics() {
@@ -1365,7 +1077,7 @@ export class GameRoom extends Room<GameState> {
     npc.lookPitch = 0;
 
     // Initialize abilities for this NPC
-    this.initializePlayerAbilities(npc, heroId);
+    initializePlayerAbilities(npc, heroId);
 
     // Add to game state
     this.state.players.set(npcId, npc);
