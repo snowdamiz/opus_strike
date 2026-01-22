@@ -39,13 +39,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 7 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Replace setState calls in useFrame hooks with direct ref mutations
-- [ ] 01-02-PLAN.md — Update Zustand subscriptions to narrow selectors with shallow comparison
-- [ ] 01-03A-PLAN.md — Add React.memo wrappers to Phantom and Blaze effect components
-- [ ] 01-03B-PLAN.md — Add React.memo wrappers to Hookshot and Glacier effect components
-- [ ] 01-04A-PLAN.md — Extend TEMP_VECTORS pool and replace object creation in voidRay.tsx
-- [ ] 01-04B-PLAN.md — Replace object creation in remaining effect components
-- [ ] 01-05-PLAN.md — Remove or wrap all console.log statements for production
+- [x] 01-01-PLAN.md — Replace setState calls in useFrame hooks with direct ref mutations
+- [x] 01-02-PLAN.md — Update Zustand subscriptions to narrow selectors with shallow comparison
+- [x] 01-03A-PLAN.md — Add React.memo wrappers to Phantom and Blaze effect components
+- [x] 01-03B-PLAN.md — Add React.memo wrappers to Hookshot and Glacier effect components
+- [x] 01-04A-PLAN.md — Extend TEMP_VECTORS pool and replace object creation in voidRay.tsx
+- [x] 01-04B-PLAN.md — Replace object creation in remaining effect components
+- [x] 01-05-PLAN.md — Remove or wrap all console.log statements for production
 
 ### Phase 2: Visual State Architecture
 
@@ -61,7 +61,7 @@ Plans:
 3. Real-time FPS/GPU metrics display in corner of screen during gameplay
 4. Store only updates on game events (ability fired, player hit), not per-frame position data
 
-**Plans**: 5 plans (3 original + 2 gap closure)
+**Plans**: 5 plans
 
 Plans:
 - [x] 02-01-PLAN.md — Create visualStore.ts for high-frequency visual data using vanilla Zustand
@@ -87,8 +87,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: Implement InstancedMesh for rockets
-- [ ] 03-02: Implement InstancedMesh for hookshot projectiles and other repeated projectiles
+- [ ] 03-01-PLAN.md — Implement InstancedMesh for rockets using Drei Instances API
+- [ ] 03-02-PLAN.md — Implement InstancedMesh for dire balls and other repeated projectiles
 
 ### Phase 4: Object Pooling System
 
