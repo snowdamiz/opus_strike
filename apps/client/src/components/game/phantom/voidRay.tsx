@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
+import { TEMP_VECTORS } from '../../effectResources';
 
 interface VoidRayProps {
   id: string;
@@ -533,22 +534,23 @@ export function VoidRay({ id, startPosition, direction, startTime, ownerId }: Vo
       if (player.state !== 'alive') continue;
       if (localPlayer && player.team === localPlayer.team) continue;
       if (hitPlayersRef.current.has(playerId)) continue;
-      
-      const playerPos = new THREE.Vector3(player.position.x, player.position.y + 0.9, player.position.z);
-      const rayStart = new THREE.Vector3(startPosition.x, startPosition.y, startPosition.z);
-      const rayDir = new THREE.Vector3(direction.x, direction.y, direction.z).normalize();
-      
-      const toPlayer = playerPos.clone().sub(rayStart);
+
+      // Use pooled temp vectors to avoid per-frame allocations
+      const playerPos = TEMP_VECTORS.v5.set(player.position.x, player.position.y + 0.9, player.position.z);
+      const rayStart = TEMP_VECTORS.v6.set(startPosition.x, startPosition.y, startPosition.z);
+      const rayDir = TEMP_VECTORS.v7.set(direction.x, direction.y, direction.z).normalize();
+
+      const toPlayer = TEMP_VECTORS.v8.copy(playerPos).sub(rayStart);
       const projectionLength = toPlayer.dot(rayDir);
-      
+
       if (projectionLength < 0 || projectionLength > currentLengthRef.current) continue;
-      
-      const closestPoint = rayStart.clone().add(rayDir.clone().multiplyScalar(projectionLength));
+
+      const closestPoint = TEMP_VECTORS.v9.copy(rayStart).add(TEMP_VECTORS.v10.copy(rayDir).multiplyScalar(projectionLength));
       const distance = closestPoint.distanceTo(playerPos);
-      
+
       if (distance <= PLAYER_HIT_RADIUS + RAY_RADIUS) {
         hitPlayersRef.current.add(playerId);
-        
+
         if (playerId.startsWith('npc_')) {
           damageNpc(playerId, RAY_DAMAGE);
         }
