@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { SHARED_GEOMETRIES } from '../effectResources';
 
 // ============================================================================
@@ -21,7 +22,7 @@ const JETPACK_SMOKE_PARTICLES = Array.from({ length: 8 }, (_, i) => ({
   side: i < 4 ? -1 : 1, // Left or right thruster
 }));
 
-export function JetpackEffect({ isActive, playerPosition }: JetpackEffectProps) {
+export const JetpackEffect = React.memo(({ isActive, playerPosition }: JetpackEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const leftFlameRef = useRef<THREE.Group>(null);
   const rightFlameRef = useRef<THREE.Group>(null);
@@ -210,5 +211,13 @@ export function JetpackEffect({ isActive, playerPosition }: JetpackEffectProps) 
       <pointLight ref={lightRef} color={0xff6600} intensity={8} distance={12} decay={2} position={[0, -0.5, 0]} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (playerPosition)
+  return (
+    prev.isActive === next.isActive &&
+    prev.playerPosition.x === next.playerPosition.x &&
+    prev.playerPosition.y === next.playerPosition.y &&
+    prev.playerPosition.z === next.playerPosition.z
+  );
+});
 

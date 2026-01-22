@@ -1,6 +1,7 @@
 import { useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { useGameStore, type BombData } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -59,7 +60,7 @@ interface BombEffectProps {
   bomb: BombData;
 }
 
-export function BombEffect({ bomb }: BombEffectProps) {
+export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const bombRef = useRef<THREE.Group>(null);
   const trailRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
@@ -371,7 +372,18 @@ export function BombEffect({ bomb }: BombEffectProps) {
       />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (bomb)
+  return (
+    prev.bomb.id === next.bomb.id &&
+    prev.bomb.targetPosition.x === next.bomb.targetPosition.x &&
+    prev.bomb.targetPosition.y === next.bomb.targetPosition.y &&
+    prev.bomb.targetPosition.z === next.bomb.targetPosition.z &&
+    prev.bomb.startTime === next.bomb.startTime &&
+    prev.bomb.hasExploded === next.bomb.hasExploded &&
+    prev.bomb.impactTime === next.bomb.impactTime
+  );
+});
 
 // ============================================================================
 // BOMB TARGETING INDICATOR - TRUE 3D RAYCASTING

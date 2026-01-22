@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -90,7 +91,7 @@ const AIR_BOMB_FALL_TIME = 600;
 const AIR_EXPLOSION_TIME = 700; // Longer explosions
 
 // Single optimized component for all air strike visuals
-function AirStrikeEffect({ strike }: { strike: AirStrikeData }) {
+const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
   const bombMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const trailMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const warningMeshes = useRef<(THREE.Mesh | null)[]>([]);
@@ -304,7 +305,16 @@ function AirStrikeEffect({ strike }: { strike: AirStrikeData }) {
       />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (strike)
+  return (
+    prev.strike.id === next.strike.id &&
+    prev.strike.centerPosition.x === next.strike.centerPosition.x &&
+    prev.strike.centerPosition.y === next.strike.centerPosition.y &&
+    prev.strike.centerPosition.z === next.strike.centerPosition.z &&
+    prev.strike.startTime === next.strike.startTime
+  );
+});
 
 // ============================================================================
 // AIR STRIKE TARGETING INDICATOR - Simplified for performance

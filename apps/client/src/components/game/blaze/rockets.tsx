@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import {
@@ -29,7 +30,7 @@ interface RocketEffectProps {
   rocket: RocketData;
 }
 
-function RocketEffect({ rocket }: RocketEffectProps) {
+const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
   
   // Get pre-cached materials once
@@ -82,7 +83,19 @@ function RocketEffect({ rocket }: RocketEffectProps) {
       <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.15, 0.4, 0.15]} material={materials.smoke} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (rocket)
+  return (
+    prev.rocket.id === next.rocket.id &&
+    prev.rocket.position.x === next.rocket.position.x &&
+    prev.rocket.position.y === next.rocket.position.y &&
+    prev.rocket.position.z === next.rocket.position.z &&
+    prev.rocket.velocity.x === next.rocket.velocity.x &&
+    prev.rocket.velocity.y === next.rocket.velocity.y &&
+    prev.rocket.velocity.z === next.rocket.velocity.z &&
+    prev.rocket.startTime === next.rocket.startTime
+  );
+});
 
 // Rocket manager - renders rockets without individual lights for performance
 export function RocketsManager() {
@@ -160,7 +173,7 @@ const ROCKET_JUMP_SPARKS = Array.from({ length: 12 }, (_, i) => ({
   size: 0.04 + Math.random() * 0.06,
 }));
 
-function RocketJumpExplosion({ explosion }: { explosion: RocketJumpExplosionData }) {
+const RocketJumpExplosion = React.memo(({ explosion }: { explosion: RocketJumpExplosionData }) => {
   const groupRef = useRef<THREE.Group>(null);
   const flashRef = useRef<THREE.Mesh>(null);
   const coreRef = useRef<THREE.Mesh>(null);
@@ -319,7 +332,16 @@ function RocketJumpExplosion({ explosion }: { explosion: RocketJumpExplosionData
       <pointLight ref={lightRef} color={0xff5500} intensity={25} distance={15} decay={2} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (explosion)
+  return (
+    prev.explosion.id === next.explosion.id &&
+    prev.explosion.position.x === next.explosion.position.x &&
+    prev.explosion.position.y === next.explosion.position.y &&
+    prev.explosion.position.z === next.explosion.position.z &&
+    prev.explosion.startTime === next.explosion.startTime
+  );
+});
 
 // Hook to manage rocket jump explosions
 export function useRocketJumpExplosions() {
