@@ -62,14 +62,24 @@ export const SHARED_GEOMETRIES = {
 
 // ============================================================================
 // PRE-ALLOCATED VECTORS - Avoid GC pressure in useFrame loops
-// Use these for temporary calculations, never store references
+// ============================================================================
+//
+// USAGE: Always .set() values, never store references
+// BAD:  const myVec = new THREE.Vector3(x, y, z)
+// GOOD: TEMP_VECTORS.v1.set(x, y, z); // use TEMP_VECTORS.v1; // then .set(0,0,0) if needed
+//
+// These vectors are reused across all effects. Always call .set() before use
+// to avoid carrying over values from previous calculations.
 // ============================================================================
 
 export const TEMP_VECTORS = {
+  // Original vectors (v1-v4 for general use)
   v1: new THREE.Vector3(),
   v2: new THREE.Vector3(),
   v3: new THREE.Vector3(),
   v4: new THREE.Vector3(),
+
+  // Direction vectors
   quat1: new THREE.Quaternion(),
   quat2: new THREE.Quaternion(),
   euler1: new THREE.Euler(),
@@ -77,6 +87,21 @@ export const TEMP_VECTORS = {
   forward: new THREE.Vector3(0, 0, -1),
   up: new THREE.Vector3(0, 1, 0),
   right: new THREE.Vector3(1, 0, 0),
+
+  // Additional vectors for parallel effect use (v5-v10 for complex effects)
+  // These allow multiple effects to run simultaneously without overwriting each other's temp values
+  v5: new THREE.Vector3(),
+  v6: new THREE.Vector3(),
+  v7: new THREE.Vector3(),
+  v8: new THREE.Vector3(),
+  v9: new THREE.Vector3(),
+  v10: new THREE.Vector3(),
+
+  // Named temp vectors for specific use cases in effect calculations
+  tempPos: new THREE.Vector3(),   // Temporary position calculations
+  tempDir: new THREE.Vector3(),   // Temporary direction vectors
+  tempScale: new THREE.Vector3(), // Temporary scale values
+  tempRot: new THREE.Quaternion(), // Temporary rotation values
 } as const;
 
 // ============================================================================
