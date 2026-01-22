@@ -1,51 +1,44 @@
 ---
 phase: 01-react-optimization-foundation
-plan: 04
+plan: 04A
 type: execute
 wave: 1
 depends_on: []
 files_modified:
   - apps/client/src/components/game/effectResources.ts
   - apps/client/src/components/game/phantom/voidRay.tsx
-  - apps/client/src/components/game/phantom/direBall.tsx
-  - apps/client/src/components/game/blaze/rockets.tsx
-  - apps/client/src/components/game/blaze/bomb.tsx
-  - apps/client/src/components/game/hookshot/dragHook.tsx
 autonomous: true
 user_setup: []
 
 must_haves:
   truths:
-    - "useFrame hooks create zero temporary Vector3/Quaternion objects per frame"
-    - "Allocation profiling shows flat memory allocation during 60fps gameplay"
-    - "Garbage collection pauses eliminated during ability usage"
+    - "TEMP_VECTORS pool extended with additional vectors for parallel effect use"
+    - "voidRay.tsx useFrame creates zero temporary Vector3/Quaternion objects per frame"
+    - "Allocation profiling shows flat memory allocation in voidRay during 60fps gameplay"
   artifacts:
     - path: "apps/client/src/components/game/effectResources.ts"
       provides: "Extended TEMP_VECTORS pool for effect use"
-      contains: "TEMP_VECTORS.*v[5-9]|TEMP_VECTORS.*temp[A-Z]"
+      contains: "TEMP_VECTORS.*v[5-9]|TEMP_VECTORS.*v10|TEMP_VECTORS.*temp[A-Z]"
     - path: "apps/client/src/components/game/phantom/voidRay.tsx"
       provides: "VoidRay using pooled temp vectors"
       contains: "TEMP_VECTORS\\."
-    - path: "apps/client/src/components/game/blaze/rockets.tsx"
-      provides: "Rockets using pooled temp vectors"
-      contains: "TEMP_VECTORS\\."
   key_links:
-    - from: "useFrame hooks in effect components"
+    - from: "useFrame hooks in voidRay.tsx"
       to: "TEMP_VECTORS pool in effectResources.ts"
       via: "Import and usage of pooled vectors"
       pattern: "from.*effectResources.*TEMP_VECTORS"
-    - from: "Vector calculations"
+    - from: "Vector calculations in voidRay"
       to: "Pre-allocated temp vectors"
       via: ".set() calls on temp vectors instead of new Vector3()"
       pattern: "\\.set\\("
 ---
 
 <objective>
-Replace all object creation (new Vector3, new Quaternion, etc.) in useFrame hooks with pre-allocated temp vector reuse to eliminate GC pressure.
+Extend TEMP_VECTORS pool and replace object creation in voidRay.tsx useFrame with pre-allocated temp vector reuse.
 
-Purpose: Creating new Vector3/Quaternion objects in useFrame (60 times/second) causes massive GC pressure and periodic collection pauses. The existing TEMP_VECTORS pool in effectResources.ts provides the pattern - we need to extend it and apply it consistently.
+Purpose: Creating new Vector3/Quaternion objects in useFrame (60 times/second) causes massive GC pressure and periodic collection pauses. The existing TEMP_VECTORS pool needs extension and voidRay.tsx is the highest-priority component for this optimization.
 
-Output: All hot code paths using pre-allocated temp vectors from shared pool, eliminating per-frame allocations.
+Output: Extended TEMP_VECTORS pool and voidRay.tsx using pre-allocated temp vectors, eliminating per-frame allocations in this critical component.
 </objective>
 
 <execution_context>
@@ -61,8 +54,6 @@ Output: All hot code paths using pre-allocated temp vectors from shared pool, el
 
 @apps/client/src/components/game/effectResources.ts
 @apps/client/src/components/game/phantom/voidRay.tsx
-@apps/client/src/components/game/phantom/direBall.tsx
-@apps/client/src/components/game/blaze/rockets.tsx
 </context>
 
 <tasks>
@@ -171,92 +162,21 @@ NOTE: Each VoidRay component has its own useFrame. We use v5-v10 which should be
   <done>voidRay.tsx uses pooled temp vectors, zero object creation in useFrame</done>
 </task>
 
-<task type="auto">
-  <name>Task 3: Replace Vector3 creation in direBall.tsx useFrame</name>
-  <files>apps/client/src/components/game/phantom/direBall.tsx</files>
-  <action>
-1. Grep for `new THREE.Vector3` inside useFrame blocks
-2. For each match, replace with appropriate TEMP_VECTORS pool access
-3. Import TEMP_VECTORS from effectResources
-
-Pattern to find and fix:
-```typescript
-// In useFrame:
-const temp = new THREE.Vector3(x, y, z);
-// becomes:
-const temp = TEMP_VECTORS.v1.set(x, y, z);
-
-const cloned = someVector.clone();
-// becomes:
-const cloned = TEMP_VECTORS.v2.copy(someVector);
-```
-
-WHY: Same pattern as voidRay - dire balls are high-frequency projectiles creating temp objects each frame. Eliminating this reduces GC pause frequency.
-  </action>
-  <verify>grep -n "new THREE.Vector3" apps/client/src/components/game/phantom/direBall.tsx | grep -A5 -B5 "useFrame" returns no matches</verify>
-  <done>direBall.tsx uses pooled temp vectors</done>
-</task>
-
-<task type="auto">
-  <name>Task 4: Replace Vector3 creation in blaze effects (rockets, bomb)</name>
-  <files>
-    apps/client/src/components/game/blaze/rockets.tsx
-    apps/client/src/components/game/blaze/bomb.tsx
-  </files>
-  <action>
-1. In rockets.tsx: Find `new THREE.Vector3` in useFrame, replace with TEMP_VECTORS
-2. In bomb.tsx: Find `new THREE.Vector3` in useFrame, replace with TEMP_VECTORS
-3. Both files: Import TEMP_VECTORS from effectResources
-
-Common blaze patterns to fix:
-- Position interpolation: `new Vector3()` for lerping
-- Direction calculations
-- Distance check vectors
-
-WHY: Rockets are the most frequently created effect (5-10/sec per player). With 3 players firing, that's 15-30 rockets creating temp vectors per frame = massive GC pressure.
-  </action>
-  <verify>grep -n "new THREE.Vector3" apps/client/src/components/game/blaze/{rockets,bomb}.tsx returns no matches in useFrame blocks</verify>
-  <done>blaze effects use pooled temp vectors</done>
-</task>
-
-<task type="auto">
-  <name>Task 5: Replace Vector3 creation in hookshot effects (dragHook)</name>
-  <files>
-    apps/client/src/components/game/hookshot/dragHook.tsx
-    apps/client/src/components/game/hookshot/swingLine.tsx
-    apps/client/src/components/game/hookshot/grappleLine.tsx
-  </files>
-  <action>
-1. Audit dragHook.tsx, swingLine.tsx, grappleLine.tsx for object creation in useFrame
-2. Replace with TEMP_VECTORS pool usage
-3. For chain/rope calculations, use v5-v10 vectors (avoid conflict with other effects)
-
-Hookshot effects often calculate:
-- Chain segment positions (multiple vectors per frame)
-- Player-to-hook distance vectors
-- Rope curve interpolation points
-
-WHY: Hookshot chains/ropes update position every frame. Creating new vectors for each chain segment (10+ segments) = 600+ objects/sec GC pressure.
-  </action>
-  <verify>grep -n "new THREE.Vector3\|new THREE.Quaternion" apps/client/src/components/game/hookshot/{dragHook,swingLine,grappleLine}.tsx returns no matches in useFrame</verify>
-  <done>hookshot effects use pooled temp vectors</done>
-</task>
-
 </tasks>
 
 <verification>
-1. Chrome DevTools Memory profiler: Record 30 seconds of ability usage, check for flat allocation (no sawtooth pattern from GC)
-2. Search: `grep -n "new THREE.Vector3\|new THREE.Quaternion\|new THREE.Euler" apps/client/src/components/game/**/*.tsx` inside useFrame blocks returns zero
-3. Visual: All effects still animate correctly
+1. Chrome DevTools Memory profiler: Record 30 seconds focusing on void ray usage, check for flat allocation (no sawtooth pattern from GC)
+2. Search: `grep -n "new THREE.Vector3\|new THREE.Quaternion\|new THREE.Euler" apps/client/src/components/game/phantom/voidRay.tsx` inside useFrame blocks returns zero
+3. Visual: Void ray effect still animates correctly
 </verification>
 
 <success_criteria>
-1. Zero `new THREE.Vector3/Quaternion/Euler` in useFrame hooks across all effect components
-2. All effect components import and use TEMP_VECTORS from effectResources.ts
-3. Memory profiler shows flat allocation during heavy ability usage
+1. TEMP_VECTORS pool extended with v5-v10 and named temp vectors
+2. voidRay.tsx uses pooled temp vectors, zero object creation in useFrame
+3. Memory profiler shows flat allocation during void ray usage
 4. No visual regressions
 </success_criteria>
 
 <output>
-After completion, create `.planning/phases/01-react-optimization-foundation/01-04-SUMMARY.md`
+After completion, create `.planning/phases/01-react-optimization-foundation/01-04A-SUMMARY.md`
 </output>
