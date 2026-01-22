@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { visualStore } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
 import { HERO_DEFINITIONS } from '@voxel-strike/shared';
 import type { Player, Team } from '@voxel-strike/shared';
@@ -75,29 +76,47 @@ function OtherPlayer({ player }: OtherPlayerProps) {
     hasLoggedRef.current = true;
   }
 
-  // Interpolation for smooth movement
+  // VISUAL_STORE_VERIFICATION: This component reads visualStore.getState() in useFrame.
+  // Verify with React DevTools profiler that OtherPlayers does NOT re-render when player positions update at 60fps.
+  // Expected: OtherPlayers renders only when players Map changes (add/remove), not on position updates.
   useFrame((_, delta) => {
     if (!groupRef.current) return;
 
     // Initialize position on first frame
     if (!initializedRef.current) {
-      currentPosition.current.set(player.position.x, player.position.y, player.position.z);
+      const visualState = visualStore.getState();
+      const initialPos = visualState.playerPositions.get(player.id);
+      currentPosition.current.set(
+        initialPos?.x ?? player.position.x,
+        initialPos?.y ?? player.position.y,
+        initialPos?.z ?? player.position.z
+      );
       groupRef.current.position.copy(currentPosition.current);
       initializedRef.current = true;
     }
 
-    targetPosition.current.set(
-      player.position.x,
-      player.position.y,
-      player.position.z
-    );
+    // Read from visualStore non-reactively (no re-renders)
+    const visualState = visualStore.getState();
+    const targetPos = visualState.playerPositions.get(player.id);
+    if (targetPos) {
+      targetPosition.current.set(targetPos.x, targetPos.y, targetPos.z);
+    } else {
+      // Fallback to prop position if visualStore doesn't have data yet
+      targetPosition.current.set(player.position.x, player.position.y, player.position.z);
+    }
 
     // Lerp current position toward target
     currentPosition.current.lerp(targetPosition.current, Math.min(1, delta * 15));
     groupRef.current.position.copy(currentPosition.current);
 
-    // Rotate body to face movement direction
-    groupRef.current.rotation.y = player.lookYaw;
+    // Read rotation from visualStore non-reactively
+    const targetRot = visualState.playerRotations.get(player.id);
+    if (targetRot !== undefined) {
+      groupRef.current.rotation.y = targetRot;
+    } else {
+      // Fallback to prop rotation if visualStore doesn't have data yet
+      groupRef.current.rotation.y = player.lookYaw;
+    }
   });
 
   const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
