@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 2 of 6 (Visual State Architecture)
-Plan: 2 of 3 in current phase
-Status: In progress
-Last activity: 2026-01-22T11:19:26Z — Completed 02-02: VisualStore Integration
+Plan: 3 of 3 in current phase
+Status: Phase complete
+Last activity: 2026-01-22T11:21:41Z — Completed 02-03: Performance Monitoring Integration
 
-Progress: [███░░░░░░] 33%
+Progress: [████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: 124s
-- Total execution time: 0.365 hours
+- Total plans completed: 10
+- Average duration: 117s
+- Total execution time: 0.326 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 - React Optimization Foundation | 7 | 7 | 134s |
-| 02 - Visual State Architecture | 2 | 3 | 84s |
+| 02 - Visual State Architecture | 3 | 3 | 77s |
 
 **Recent Trend:**
-- Last 3 plans: 109s (02-02), 58s (02-01), 546s (01-05)
-- Trend: Phase 2 progressing smoothly
+- Last 3 plans: 62s (02-03), 109s (02-02), 58s (02-01)
+- Trend: Phase 2 completed efficiently
 
 *Updated after each plan completion*
 
@@ -58,6 +58,9 @@ Recent decisions affecting current work:
 - **Fallback to props when visualStore doesn't have data** (02-02): OtherPlayers falls back to prop-based position/rotation if visualStore doesn't have the player data yet. Ensures robustness during initial sync and handles edge cases.
 - **Update visualStore after authoritative state updates** (02-02): VisualStore updates happen after gameStore set() calls complete. Visual state derives from authoritative game state, maintaining separation of concerns.
 - **Local player visual updates after physics** (02-02): PlayerController updates visualStore after updateLocalPlayer() which happens after physics. Ensures visual representation matches local player's simulated position.
+- **r3f-perf for performance monitoring** (02-03): Use r3f-perf library for React Three Fiber-specific performance metrics (FPS, GPU time, triangle count, geometries). Provides browser DevTools can't show R3F-internal metrics.
+- **Top-left positioning for PerfMonitor** (02-03): PerfMonitor positioned in top-left corner of canvas for visibility during gameplay without obstructing center screen action.
+- **Non-minimal mode for detailed metrics** (02-03): PerfMonitor uses minimal={false} to show detailed metrics including FPS, GPU time, triangle count, geometries, textures, and shaders during development.
 
 ### Pending Todos
 
@@ -69,6 +72,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T11:19:26Z
-Stopped at: Completed 02-02-PLAN.md (VisualStore Integration)
+Last session: 2026-01-22T11:21:41Z
+Stopped at: Completed 02-03-PLAN.md (Performance Monitoring Integration)
 Resume file: None
