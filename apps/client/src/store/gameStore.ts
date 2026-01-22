@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { GameStateSync } from '@voxel-strike/shared';
+import { setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
 
 // Import types
 import type {
@@ -276,6 +277,12 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       players,
       localPlayer,
     });
+
+    // Update visual store with authoritative server positions for interpolation
+    players.forEach((player, id) => {
+      setPlayerVisualPosition(id, player.position);
+      setPlayerVisualRotation(id, player.lookYaw);
+    });
   },
 
   updateLocalPlayer: (updates) => {
@@ -308,6 +315,12 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const { playerId } = get();
     const localPlayer = playerId ? players.get(playerId) ?? null : null;
     set({ players, localPlayer });
+
+    // Update visual store for bulk player updates (initial sync)
+    players.forEach((player, id) => {
+      setPlayerVisualPosition(id, player.position);
+      setPlayerVisualRotation(id, player.lookYaw);
+    });
   },
 
   updatePlayer: (playerId, player) => {
@@ -319,6 +332,10 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       players: updatedPlayers,
       localPlayer: playerId === localPlayer?.id ? player : localPlayer,
     });
+
+    // Update visual store for individual player updates
+    setPlayerVisualPosition(playerId, player.position);
+    setPlayerVisualRotation(playerId, player.lookYaw);
   },
 
   removePlayer: (playerId) => {
