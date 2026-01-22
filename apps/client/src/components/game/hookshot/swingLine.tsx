@@ -3,9 +3,9 @@ import { useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, type SwingLineData } from '../../../store/gameStore';
-import { 
-  SHARED_GEOMETRIES, 
-  HOOKSHOT_COLORS, 
+import {
+  SHARED_GEOMETRIES,
+  HOOKSHOT_COLORS,
 } from '../effectResources';
 
 // ============================================================================
@@ -19,16 +19,20 @@ interface SwingLineProps {
 export function SwingLineEffect({ line }: SwingLineProps) {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
-  
+
   const hookExtensionRef = useRef(0);
   const hasReachedRef = useRef(false);
   const frameCount = useRef(0);
-  
-  const [ropePoints, setRopePoints] = useState<[[number, number, number], [number, number, number]]>([
+
+  // Use ref for rope points to avoid setState in useFrame (prevents 60fps re-renders)
+  const ropePointsRef = useRef<[[number, number, number], [number, number, number]]>([
     [line.startPosition.x, line.startPosition.y, line.startPosition.z],
     [line.startPosition.x, line.startPosition.y, line.startPosition.z]
   ]);
-  
+
+  // Version counter to trigger re-renders when rope points change significantly
+  const [ropeVersion, setRopeVersion] = useState(0);
+
   const removeSwingLine = useGameStore(state => state.removeSwingLine);
   const updateSwingLine = useGameStore(state => state.updateSwingLine);
   
@@ -106,17 +110,31 @@ export function SwingLineEffect({ line }: SwingLineProps) {
     }
     
     hookRef.current.position.set(hookPos.x, hookPos.y, hookPos.z);
-    
+
     if (totalDist > 0.01) {
       const quat = new THREE.Quaternion();
       quat.setFromUnitVectors(new THREE.Vector3(0, 0, -1), new THREE.Vector3(dirX, dirY, dirZ));
       hookRef.current.quaternion.copy(quat);
     }
-    
-    setRopePoints([
+
+    // Update rope points directly via ref (no setState in useFrame - prevents 60fps re-renders)
+    const newPoints: [[number, number, number], [number, number, number]] = [
       [playerPos.x, playerPos.y, playerPos.z],
       [hookPos.x, hookPos.y, hookPos.z]
-    ]);
+    ];
+
+    // Only trigger re-render if rope state changed (extending vs attached)
+    const oldPoints = ropePointsRef.current;
+    const stateChanged =
+      (line.state === 'extending' && !hasReachedRef.current) ||
+      (line.state !== 'extending' && hasReachedRef.current);
+
+    ropePointsRef.current = newPoints;
+
+    if (stateChanged && frameCount.current % 10 === 0) {
+      // Throttle re-renders during state transitions
+      setRopeVersion(v => v + 1);
+    }
   });
   
   if (!line.isActive && line.state === 'done') return null;
@@ -135,10 +153,10 @@ export function SwingLineEffect({ line }: SwingLineProps) {
         </mesh>
         <pointLight color={0xffffff} intensity={2} distance={4} decay={2} />
       </group>
-      
-      <Line points={ropePoints} color={HOOKSHOT_COLORS.energy} lineWidth={8} transparent opacity={1} />
-      <Line points={ropePoints} color={HOOKSHOT_COLORS.energyGlow} lineWidth={16} transparent opacity={0.4} />
-      <Line points={ropePoints} color={0xffffff} lineWidth={3} transparent opacity={0.8} />
+
+      <Line points={ropePointsRef.current} color={HOOKSHOT_COLORS.energy} lineWidth={8} transparent opacity={1} />
+      <Line points={ropePointsRef.current} color={HOOKSHOT_COLORS.energyGlow} lineWidth={16} transparent opacity={0.4} />
+      <Line points={ropePointsRef.current} color={0xffffff} lineWidth={3} transparent opacity={0.8} />
     </group>
   );
 }
