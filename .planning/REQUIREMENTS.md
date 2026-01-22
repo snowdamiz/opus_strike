@@ -79,15 +79,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REND-05 | Phase 2 | Pending |
 | REND-01 | Phase 3 | Pending |
 | REND-02 | Phase 3 | Pending |
-| ARCH-03 | Phase 4 | Pending |
 | REND-03 | Phase 4 | Pending |
-| REND-04 | Phase 5 | Pending |
+| ARCH-03 | Phase 5 | Pending |
+| REND-04 | Phase 6 | Pending |
 
 **Coverage:**
 - v1 requirements: 13 total
 - Mapped to phases: 13
-- Unmapped: 0 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after initial definition*
+*Last updated: 2026-01-22 after roadmap creation*
