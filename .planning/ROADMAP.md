@@ -61,12 +61,14 @@ Plans:
 3. Real-time FPS/GPU metrics display in corner of screen during gameplay
 4. Store only updates on game events (ability fired, player hit), not per-frame position data
 
-**Plans**: 3 plans
+**Plans**: 5 plans (3 original + 2 gap closure)
 
 Plans:
-- [ ] 02-01-PLAN.md — Create visualStore.ts for high-frequency visual data using vanilla Zustand
-- [ ] 02-02-PLAN.md — Migrate player position interpolation to visualStore-based updates
-- [ ] 02-03-PLAN.md — Add r3f-perf monitoring component to GameCanvas
+- [x] 02-01-PLAN.md — Create visualStore.ts for high-frequency visual data using vanilla Zustand
+- [x] 02-02-PLAN.md — Migrate player position interpolation to visualStore-based updates
+- [x] 02-03-PLAN.md — Add r3f-perf monitoring component to GameCanvas
+- [ ] 02-04-PLAN.md — Remove per-frame position updates from gameStore.updateLocalPlayer call
+- [ ] 02-05-PLAN.md — Fix updateGameState to preserve Map reference on position updates
 
 ### Phase 3: Instanced Rendering
 
@@ -152,8 +154,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. React Optimization Foundation | 0/7 | Ready to execute | - |
-| 2. Visual State Architecture | 0/3 | Ready to execute | - |
+| 1. React Optimization Foundation | 7/7 | Complete | 2026-01-22 |
+| 2. Visual State Architecture | 3/5 | Gap closure | 2026-01-22 |
 | 3. Instanced Rendering | 0/2 | Not started | - |
 | 4. Object Pooling System | 0/1 | Not started | - |
 | 5. Centralized Animation | 0/1 | Not started | - |
