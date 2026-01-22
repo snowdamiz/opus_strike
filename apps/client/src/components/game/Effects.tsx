@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -25,32 +25,40 @@ export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
 }
 
 export function Effects() {
-  const [activeEffects, setActiveEffects] = useState<Effect[]>([]);
+  // Use ref for active effects to avoid setState in useFrame (prevents 60fps re-renders)
+  const activeEffectsRef = useRef<Effect[]>([]);
+
+  // Version counter to trigger re-renders when effects change (incremented only when count changes)
+  const [effectsVersion, setEffectsVersion] = useState(0);
+
   const lastEffectCountRef = useRef(0);
   const lastCleanupRef = useRef(0);
 
   useFrame(() => {
     const now = Date.now();
-    
+
     // Only clean up every 100ms to avoid excessive processing
     if (now - lastCleanupRef.current < 100) return;
     lastCleanupRef.current = now;
-    
+
     // Clean up expired effects
     const currentEffects = effects.filter(e => now - e.startTime < e.duration);
     effects.length = 0;
     effects.push(...currentEffects);
-    
-    // PERFORMANCE FIX: Only trigger re-render if effect count changed
+
+    // Update ref with current effects (no re-render triggered)
+    activeEffectsRef.current = currentEffects;
+
+    // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
     if (currentEffects.length !== lastEffectCountRef.current) {
       lastEffectCountRef.current = currentEffects.length;
-      setActiveEffects([...currentEffects]);
+      setEffectsVersion(v => v + 1);
     }
   });
 
   return (
     <group>
-      {activeEffects.map(effect => {
+      {activeEffectsRef.current.map(effect => {
         switch (effect.type) {
           case 'grapple':
             return <GrappleLine key={effect.id} effect={effect} />;
