@@ -153,10 +153,13 @@ export function EarthWallEffect({ wall }: EarthWallProps) {
   const hookProgressRef = useRef(0);
   const lastSegmentDistRef = useRef(0);
   const hookGroundYRef = useRef(wall.startPosition.y); // Track hook's ground level
-  
-  // Use state for wall segments so React re-renders when they're added
-  const [wallSegments, setWallSegments] = useState<{ x: number; y: number; z: number; height: number; time: number }[]>([]);
-  
+
+  // Use ref for wall segments to avoid setState in useFrame (prevents 60fps re-renders)
+  const wallSegmentsRef = useRef<{ x: number; y: number; z: number; height: number; time: number }[]>([]);
+
+  // Version counter to trigger re-renders when segments change (incremented only when segments added)
+  const [segmentsVersion, setSegmentsVersion] = useState(0);
+
   const removeEarthWall = useGameStore(state => state.removeEarthWall);
   
   useFrame((state, delta) => {
@@ -213,15 +216,18 @@ export function EarthWallEffect({ wall }: EarthWallProps) {
         
         // Vary height slightly for natural look
         const heightVariation = 0.8 + Math.random() * 0.4;
-        
-        // Add new segment using setState to trigger re-render
-        setWallSegments(prev => [...prev, {
+
+        // Add new segment directly to ref (no setState in useFrame - prevents 60fps re-renders)
+        wallSegmentsRef.current.push({
           x: segmentX,
           y: segmentGroundY,
           z: segmentZ,
           height: EARTH_WALL_MAX_HEIGHT * heightVariation,
           time: Date.now(),
-        }]);
+        });
+
+        // Trigger re-render by incrementing version (only when segment added, not every frame)
+        setSegmentsVersion(v => v + 1);
       }
       
       // Update hook visual - position on ground
@@ -287,9 +293,9 @@ export function EarthWallEffect({ wall }: EarthWallProps) {
       </group>
       
       {/* WALL SEGMENTS - Rising dirt walls perpendicular to travel direction */}
-      {wallSegments.map((segment, i) => (
+      {wallSegmentsRef.current.map((segment, i) => (
         <WallSegment
-          key={`${wall.id}_seg_${i}`}
+          key={`${wall.id}_seg_${i}_${segmentsVersion}`} // Include version to trigger re-render on add
           position={segment}
           targetHeight={segment.height}
           creationTime={segment.time}
