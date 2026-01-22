@@ -235,7 +235,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       startTime: Date.now(),
       duration: 3,
       ownerId: ctx.localPlayer.id,
-      ownerTeam: ctx.localPlayer.team,
+      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
       maxDistance: 25,
       hookProgress: 0,
       wallSegments: [],

@@ -79,7 +79,7 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     if ('fov' in camera) {
       const baseFov = 75;
       (camera as THREE.PerspectiveCamera).fov = baseFov + slideFovRef.current;
-      camera.updateProjectionMatrix();
+      (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
     }
 
     // Apply rotation

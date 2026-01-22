@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
-import { TEMP_VECTORS } from '../../effectResources';
+import { TEMP_VECTORS } from '../effectResources';
 
 interface VoidRayProps {
   id: string;
