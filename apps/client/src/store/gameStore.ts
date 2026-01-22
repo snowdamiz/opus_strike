@@ -242,11 +242,73 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setPhaseEndTime: (time) => set({ phaseEndTime: time }),
 
   updateGameState: (state) => {
-    const { playerId } = get();
-    const players = new Map<string, Player>();
+    // NOTE: We update players Map entries in-place for position/rotation data to avoid
+    // triggering React re-renders on every server tick. The Map reference only changes
+    // when players are added/removed. Position data flows to visualStore (non-reactive)
+    // for 60fps interpolation, while gameStore tracks authoritative game state.
+    const { playerId, players: existingPlayers } = get();
 
+    // Build set of snapshot IDs for removal detection
+    const snapshotIds = new Set(state.players.map(p => p.id));
+
+    // Check if any players need to be removed (not in snapshot)
+    let needsRemoval = false;
+    for (const [id] of existingPlayers) {
+      if (!snapshotIds.has(id)) {
+        needsRemoval = true;
+        break;
+      }
+    }
+
+    // If no removals needed, update in-place without changing Map reference
+    if (!needsRemoval) {
+      // Update existing players in-place for position/rotation data
+      for (const snapshot of state.players) {
+        const existingPlayer = existingPlayers.get(snapshot.id);
+        if (existingPlayer) {
+          // Update in-place for position/rotation (high-frequency, visual-only)
+          existingPlayer.position = snapshot.position;
+          existingPlayer.velocity = snapshot.velocity;
+          existingPlayer.lookYaw = snapshot.lookYaw;
+          existingPlayer.lookPitch = snapshot.lookPitch;
+
+          // Update other fields (these are game events that MAY warrant re-renders)
+          existingPlayer.health = snapshot.health;
+          existingPlayer.state = snapshot.state;
+          existingPlayer.movement = snapshot.movement;
+          existingPlayer.abilities = snapshot.abilities;
+          existingPlayer.hasFlag = snapshot.hasFlag;
+        }
+      }
+
+      const localPlayer = playerId ? existingPlayers.get(playerId) ?? null : null;
+
+      // Same Map reference - no re-renders for position updates
+      set({
+        tick: state.tick,
+        serverTime: state.serverTime,
+        gamePhase: state.phase,
+        redScore: state.redScore,
+        blueScore: state.blueScore,
+        redFlag: state.redFlag,
+        blueFlag: state.blueFlag,
+        roundTimeRemaining: state.roundTimeRemaining,
+        players: existingPlayers,
+        localPlayer,
+      });
+
+      // Update visual store with authoritative server positions for interpolation
+      state.players.forEach((snapshot) => {
+        setPlayerVisualPosition(snapshot.id, snapshot.position);
+        setPlayerVisualRotation(snapshot.id, snapshot.lookYaw);
+      });
+      return;
+    }
+
+    // If removals needed, create new Map (changes reference, triggers re-render)
+    const players = new Map<string, Player>();
     for (const snapshot of state.players) {
-      const existingPlayer = get().players.get(snapshot.id);
+      const existingPlayer = existingPlayers.get(snapshot.id);
       if (existingPlayer) {
         players.set(snapshot.id, {
           ...existingPlayer,
