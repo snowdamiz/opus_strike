@@ -1,9 +1,9 @@
 /**
  * PlayerController - Refactored
- * 
+ *
  * Main player controller that orchestrates movement, camera, physics, and abilities.
  * Logic has been extracted into specialized hooks for better maintainability.
- * 
+ *
  * @see hooks/player/useCamera.ts - Camera control and mouse look
  * @see hooks/player/useMovement.ts - Movement, slide, and bunny hop physics
  * @see hooks/player/useAbilitySystem.ts - Cooldowns and charge management
@@ -15,6 +15,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { setPlayerVisualPosition, setPlayerVisualRotation } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
 import { usePhysics, isPhysicsReady } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
@@ -529,6 +530,10 @@ export function PlayerController() {
         slideTimeRemaining: movement.refs.slideTime.current,
       },
     });
+
+    // Update visual store for non-reactive position access
+    setPlayerVisualPosition(localPlayer.id, { x: position.x, y: position.y, z: position.z });
+    setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
 
     // Update slide intensity
     useGameStore.getState().setSlideIntensity(movement.getSlideIntensity());
