@@ -50,6 +50,7 @@ Recent decisions affecting current work:
 - **Console stripping via esbuild drop** (01-05): Configure `esbuild: { drop: ['console', 'debugger'] }` in vite.config.ts for production builds. Removes all console statements at compile-time with zero runtime overhead. Use `process.argv.includes('build')` to detect production mode.
 - **Zero-allocation pattern complete across all effects** (01-04B): All remaining effect components (swingLine) now use TEMP_VECTORS pool. Module-level vectors accepted for rockets/bomb (created once, not per-frame). useMemo allocations acceptable for static rotation (only runs on dependency change).
 - **React.memo pattern for effect components** (01-03A): All Phantom and Blaze effect components wrapped in React.memo with custom comparison functions. Custom comparison checks primitive x/y/z values instead of object references to prevent re-renders when parent managers update.
+- **React.memo with ID-based comparison for Hookshot/Glacier effects** (01-03B): Hookshot and Glacier effect components wrapped in React.memo with custom comparison on ID fields (hook.id, wall.id, etc.) since effect data is immutable after creation. WallSegment sub-component compares on index and position primitives.
 
 ### Pending Todos
 
