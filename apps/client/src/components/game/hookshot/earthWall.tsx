@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type EarthWallData } from '../../../store/gameStore';
@@ -19,13 +19,13 @@ const EARTH_WALL_WIDTH = 2.5; // Wall width
 const EARTH_WALL_RISE_SPEED = 8; // How fast segments rise
 
 // Single dirt/rock wall segment
-function WallSegment({ 
-  position, 
-  targetHeight, 
+const WallSegment = React.memo(function WallSegment({
+  position,
+  targetHeight,
   creationTime,
   index,
   rotationY, // Rotation to face perpendicular to travel direction
-}: { 
+}: {
   position: { x: number; y: number; z: number };
   targetHeight: number;
   creationTime: number;
@@ -140,13 +140,19 @@ function WallSegment({
       ))}
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if index or position changes
+  return prev.index === next.index &&
+         prev.position.x === next.position.x &&
+         prev.position.y === next.position.y &&
+         prev.position.z === next.position.z;
+});
 
 interface EarthWallProps {
   wall: EarthWallData;
 }
 
-export function EarthWallEffect({ wall }: EarthWallProps) {
+export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   
@@ -305,5 +311,8 @@ export function EarthWallEffect({ wall }: EarthWallProps) {
       ))}
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if wall.id or startTime changes
+  return prev.wall.id === next.wall.id && prev.wall.startTime === next.wall.startTime;
+});
 

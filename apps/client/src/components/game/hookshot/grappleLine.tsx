@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type GrappleLineData } from '../../../store/gameStore';
@@ -25,7 +25,7 @@ interface GrappleLineProps {
   line: GrappleLineData;
 }
 
-export function GrappleLineEffect({ line }: GrappleLineProps) {
+export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   
@@ -242,5 +242,8 @@ export function GrappleLineEffect({ line }: GrappleLineProps) {
       <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeCore} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if line.id or state changes
+  return prev.line.id === next.line.id && prev.line.state === next.line.state;
+});
 

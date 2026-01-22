@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
@@ -34,7 +34,7 @@ interface DragHookProps {
   hook: DragHookData;
 }
 
-export function DragHookEffect({ hook }: DragHookProps) {
+export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   
@@ -269,5 +269,8 @@ export function DragHookEffect({ hook }: DragHookProps) {
       <mesh ref={chainMegaGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainMegaGlow} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if hook.id or state changes
+  return prev.hook.id === next.hook.id && prev.hook.state === next.hook.state;
+});
 

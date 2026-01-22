@@ -160,5 +160,8 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
       <Line points={ropePointsRef.current} color={0xffffff} lineWidth={3} transparent opacity={0.8} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if line.id or state changes
+  return prev.line.id === next.line.id && prev.line.state === next.line.state;
+});
 

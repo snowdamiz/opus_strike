@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type GrappleTrapData } from '../../../store/gameStore';
@@ -24,7 +24,7 @@ interface GrappleTrapProps {
   trap: GrappleTrapData;
 }
 
-export function GrappleTrapEffect({ trap }: GrappleTrapProps) {
+export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const deviceRef = useRef<THREE.Group>(null);
   const circleRef = useRef<THREE.Mesh>(null);
@@ -216,7 +216,10 @@ export function GrappleTrapEffect({ trap }: GrappleTrapProps) {
       <pointLight ref={lightRef} color={HOOKSHOT_COLORS.energy} intensity={2} distance={trap.radius * 1.2} decay={2} position={[0, 0.5, 0]} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if trap.id or startTime changes
+  return prev.trap.id === next.trap.id && prev.trap.startTime === next.trap.startTime;
+});
 
 // ============================================================================
 // GRAPPLE TRAP TARGETING INDICATOR
@@ -230,7 +233,7 @@ interface GrappleTrapTargetingProps {
 const TRAP_MAX_RANGE = 30;
 const TRAP_MIN_RANGE = 3;
 
-export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: GrappleTrapTargetingProps) {
+export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpdate }: GrappleTrapTargetingProps) => {
   const indicatorRef = useRef<THREE.Group>(null);
   const isValidRef = useRef(false);
   const { camera } = useThree();
@@ -362,5 +365,5 @@ export function GrappleTrapTargetingIndicator({ isActive, onTargetUpdate }: Grap
       <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={GRAPPLE_TRAP_RADIUS} decay={2} position-y={0.5} />
     </group>
   );
-}
+});
 

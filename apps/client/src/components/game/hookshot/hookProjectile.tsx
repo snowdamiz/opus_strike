@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type HookProjectileData } from '../../../store/gameStore';
@@ -33,7 +33,7 @@ interface HookProjectileProps {
   hook: HookProjectileData;
 }
 
-export function HookProjectile({ hook }: HookProjectileProps) {
+export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
   const ropeMainRef = useRef<THREE.Mesh>(null);
@@ -229,5 +229,8 @@ export function HookProjectile({ hook }: HookProjectileProps) {
       <mesh ref={ropeCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeCore} />
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if hook.id or hook.state changes
+  return prev.hook.id === next.hook.id && prev.hook.state === next.hook.state;
+});
 
