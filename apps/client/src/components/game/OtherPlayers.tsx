@@ -12,6 +12,10 @@ let lastLoggedPlayerCount = -1;
 let lastLoggedOtherCount = -1;
 
 export function OtherPlayers() {
+  // NOTE: This component subscribes to gameStore.players but does NOT re-render on
+  // position updates because updateGameState() updates Map entries in-place (same Map
+  // reference). The Map reference only changes when players are added/removed. Position
+  // interpolation reads from visualStore in useFrame (non-reactive, 60fps).
   const { players, playerId, gamePhase } = useGameStore(
     useShallow(state => ({
       players: state.players,
