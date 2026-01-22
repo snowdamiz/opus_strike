@@ -1,11 +1,15 @@
-import type { 
-  GamePhase, 
-  Player, 
+import type {
+  GamePhase,
+  Player,
   Team,
   HeroId,
   Vec3,
   PlayerInput,
 } from '@voxel-strike/shared';
+
+// Re-export VisualState from visualStore for central type access
+import type { VisualState } from './visualStore';
+export type { VisualState };
 
 // ============================================================================
 // LOBBY TYPES
