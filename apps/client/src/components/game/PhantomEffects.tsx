@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useGameStore } from '../../store/gameStore';
+import { useShallow } from 'zustand/shallow';
 import {
   BlinkTeleportEffect,
   ShadowStepArrivalEffect,
@@ -24,7 +25,13 @@ export { triggerBlinkEffect, triggerShadowArrival } from './phantom';
 export function PhantomEffectsManager() {
   const [activeBlinkEffects, setActiveBlinkEffects] = useState<BlinkEffectData[]>([]);
   const [activeShadowArrivals, setActiveShadowArrivals] = useState<ShadowArrivalData[]>([]);
-  const { localPlayer, ultimateEffectActive, ultimateEffectType } = useGameStore();
+  const { localPlayer, ultimateEffectActive, ultimateEffectType } = useGameStore(
+    useShallow(state => ({
+      localPlayer: state.localPlayer,
+      ultimateEffectActive: state.ultimateEffectActive,
+      ultimateEffectType: state.ultimateEffectType,
+    }))
+  );
   
   useFrame(() => {
     const now = Date.now();

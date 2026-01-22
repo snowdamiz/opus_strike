@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
+import { useShallow } from 'zustand/shallow';
 import { HERO_DEFINITIONS, ABILITY_DEFINITIONS, VOID_RAY_CHARGE_TIME } from '@voxel-strike/shared';
 import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
 import type { HeroId } from '@voxel-strike/shared';
@@ -123,7 +124,49 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
 }
 
 export function HUD() {
-  const { localPlayer, redScore, blueScore, roundTimeRemaining, redFlag, blueFlag, clientCooldowns, clientCharges, ultimateEffectActive, voidRayCharging, voidRayChargeStart, bombTargeting, bombTargetValid, jetpackFuel, jetpackActive, iceWallRushFuel, iceWallRushActive, frostStormActive, frostStormShield } = useGameStore();
+  const {
+    localPlayer,
+    redScore,
+    blueScore,
+    roundTimeRemaining,
+    redFlag,
+    blueFlag,
+    clientCooldowns,
+    clientCharges,
+    ultimateEffectActive,
+    voidRayCharging,
+    voidRayChargeStart,
+    bombTargeting,
+    bombTargetValid,
+    jetpackFuel,
+    jetpackActive,
+    iceWallRushFuel,
+    iceWallRushActive,
+    frostStormActive,
+    frostStormShield,
+  } = useGameStore(
+    useShallow(state => ({
+      localPlayer: state.localPlayer,
+      redScore: state.redScore,
+      blueScore: state.blueScore,
+      roundTimeRemaining: state.roundTimeRemaining,
+      redFlag: state.redFlag,
+      blueFlag: state.blueFlag,
+      clientCooldowns: state.clientCooldowns,
+      clientCharges: state.clientCharges,
+      ultimateEffectActive: state.ultimateEffectActive,
+      voidRayCharging: state.voidRayCharging,
+      voidRayChargeStart: state.voidRayChargeStart,
+      bombTargeting: state.bombTargeting,
+      bombTargetValid: state.bombTargetValid,
+      jetpackFuel: state.jetpackFuel,
+      jetpackActive: state.jetpackActive,
+      iceWallRushFuel: state.iceWallRushFuel,
+      iceWallRushActive: state.iceWallRushActive,
+      frostStormActive: state.frostStormActive,
+      frostStormShield: state.frostStormShield,
+    }))
+  );
   
   // Force re-render every 100ms for smooth cooldown updates
   const [, setTick] = useState(0);

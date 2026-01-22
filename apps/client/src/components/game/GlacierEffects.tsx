@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
+import { useShallow } from 'zustand/shallow';
 import { cleanupExpiredIceWallColliders } from '../../hooks/usePhysics';
 import { ICE_WALL_DURATION } from '@voxel-strike/shared';
 import {
@@ -19,14 +20,25 @@ export { GLACIER_COLORS } from './glacier';
 // ============================================================================
 
 export function GlacierEffectsManager() {
-  const iceMalletSwings = useGameStore(state => state.iceMalletSwings);
-  const iceWallRushes = useGameStore(state => state.iceWallRushes);
-  const iceWallRushActive = useGameStore(state => state.iceWallRushActive);
-  const localPlayer = useGameStore(state => state.localPlayer);
-  const gamePhase = useGameStore(state => state.gamePhase);
-  const glacierSwingHeld = useGameStore(state => state.glacierSwingHeld);
-  const glacierShieldActive = useGameStore(state => state.glacierShieldActive);
-  const frostStormActive = useGameStore(state => state.frostStormActive);
+  const {
+    iceMalletSwings,
+    iceWallRushes,
+    iceWallRushActive,
+    localPlayer,
+    gamePhase,
+    glacierSwingHeld,
+    glacierShieldActive,
+    frostStormActive,
+  } = useGameStore(useShallow(state => ({
+    iceMalletSwings: state.iceMalletSwings,
+    iceWallRushes: state.iceWallRushes,
+    iceWallRushActive: state.iceWallRushActive,
+    localPlayer: state.localPlayer,
+    gamePhase: state.gamePhase,
+    glacierSwingHeld: state.glacierSwingHeld,
+    glacierShieldActive: state.glacierShieldActive,
+    frostStormActive: state.frostStormActive,
+  })));
   
   const wasShieldActiveRef = useRef(false);
   const shieldLoweringRef = useRef(false);

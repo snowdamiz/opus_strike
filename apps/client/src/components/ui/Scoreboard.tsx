@@ -1,4 +1,5 @@
 import { useGameStore } from '../../store/gameStore';
+import { useShallow } from 'zustand/shallow';
 import type { Team, Player } from '@voxel-strike/shared';
 
 // Faction definitions
@@ -47,7 +48,14 @@ function VoidIcon({ className, style }: { className?: string; style?: React.CSSP
 }
 
 export function Scoreboard() {
-  const { players, localPlayer, redScore, blueScore } = useGameStore();
+  const { players, localPlayer, redScore, blueScore } = useGameStore(
+    useShallow(state => ({
+      players: state.players,
+      localPlayer: state.localPlayer,
+      redScore: state.redScore,
+      blueScore: state.blueScore,
+    }))
+  );
 
   const solarPlayers = Array.from(players.values()).filter(p => p.team === 'red');
   const voidPlayers = Array.from(players.values()).filter(p => p.team === 'blue');
