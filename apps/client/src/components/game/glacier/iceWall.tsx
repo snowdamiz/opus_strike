@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { type IceWallRushData } from '../../../store/gameStore';
@@ -32,7 +32,7 @@ interface IceWallRushProps {
   rush: IceWallRushData;
 }
 
-export function IceWallRush({ rush }: IceWallRushProps) {
+export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
   const instancedMeshRef = useRef<THREE.InstancedMesh>(null);
   const frostMeshesRef = useRef<Map<number, THREE.Mesh>>(new Map());
   // Track which segments have colliders registered
@@ -161,5 +161,9 @@ export function IceWallRush({ rush }: IceWallRushProps) {
       ))}
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if rush.id changes
+  // Rush segments change internally via refs, so only ID comparison needed
+  return prev.rush.id === next.rush.id;
+});
 

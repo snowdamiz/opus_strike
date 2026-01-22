@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../../store/gameStore';
@@ -26,7 +26,7 @@ interface FrostStormParticle {
   type: 'snow' | 'ice';
 }
 
-export function FrostStormEffect() {
+export const FrostStormEffect = React.memo(function FrostStormEffect() {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const particleRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -165,5 +165,5 @@ export function FrostStormEffect() {
       />
     </group>
   );
-}
+});
 

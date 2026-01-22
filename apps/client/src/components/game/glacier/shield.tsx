@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../../store/gameStore';
@@ -35,7 +35,7 @@ interface IceShieldProps {
   lowerStartTime: number;
 }
 
-export function IceShield({ isLowering, lowerStartTime }: IceShieldProps) {
+export const IceShield = React.memo(({ isLowering, lowerStartTime }: IceShieldProps) => {
   const instancedMeshRef = useRef<THREE.InstancedMesh>(null);
   const groupRef = useRef<THREE.Group>(null);
   const panelRef = useRef<THREE.Mesh>(null);
@@ -175,5 +175,5 @@ export function IceShield({ isLowering, lowerStartTime }: IceShieldProps) {
       <pointLight ref={lightRef} position={[0, 1.5, 0.5]} color={GLACIER_COLORS.iceLight} intensity={2} distance={6} decay={2} />
     </group>
   );
-}
+});
 

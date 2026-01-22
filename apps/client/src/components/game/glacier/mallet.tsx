@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type IceMalletSwingData } from '../../../store/gameStore';
@@ -36,7 +36,7 @@ interface IceMalletSwingProps {
   swing: IceMalletSwingData;
 }
 
-export function IceMalletSwing({ swing }: IceMalletSwingProps) {
+export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const offsetGroupRef = useRef<THREE.Group>(null);
@@ -242,7 +242,10 @@ export function IceMalletSwing({ swing }: IceMalletSwingProps) {
       </group>
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison: only re-render if swing.id changes
+  return prev.swing.id === next.swing.id;
+});
 
 // ============================================================================
 // IDLE MALLET - Optimized with cached materials
@@ -250,7 +253,7 @@ export function IceMalletSwing({ swing }: IceMalletSwingProps) {
 
 const IDLE_PULLOUT_DURATION = 0.25;
 
-export function IdleMallet() {
+export const IdleMallet = React.memo(function IdleMallet() {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const malletGroupRef = useRef<THREE.Group>(null);
@@ -313,5 +316,5 @@ export function IdleMallet() {
       </group>
     </group>
   );
-}
+});
 
