@@ -515,12 +515,10 @@ export function PlayerController() {
     cameraControl.updateCameraRotation(camera, isSliding, movement.refs.isCrouching.current, dt);
     camera.position.set(position.x, position.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
 
-    // Update store
+    // Update game store with movement state ONLY (position/rotation go to visualStore below)
+    // Position/velocity/rotation data flows ONLY to visualStore (non-reactive) to avoid React re-renders
+    // Game state tracks only game events: movement flags, abilities, damage, etc.
     updateLocalPlayer({
-      position: { x: position.x, y: position.y, z: position.z },
-      velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
-      lookYaw: cameraControl.refs.yaw.current,
-      lookPitch: cameraControl.refs.pitch.current,
       movement: {
         ...localPlayer.movement,
         isGrounded: movement.refs.isGrounded.current,
