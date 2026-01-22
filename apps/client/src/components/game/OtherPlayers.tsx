@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { useShallow } from 'zustand/shallow';
 import { HERO_DEFINITIONS } from '@voxel-strike/shared';
 import type { Player, Team } from '@voxel-strike/shared';
 
@@ -10,7 +11,13 @@ let lastLoggedPlayerCount = -1;
 let lastLoggedOtherCount = -1;
 
 export function OtherPlayers() {
-  const { players, playerId, gamePhase } = useGameStore();
+  const { players, playerId, gamePhase } = useGameStore(
+    useShallow(state => ({
+      players: state.players,
+      playerId: state.playerId,
+      gamePhase: state.gamePhase,
+    }))
+  );
 
   const allPlayers = Array.from(players.values());
 
