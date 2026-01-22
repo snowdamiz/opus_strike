@@ -10,27 +10,27 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 1 of 6 (React Optimization Foundation)
-Plan: 4 of 5 in current phase
+Plan: 4B of 5 in current phase
 Status: In progress
-Last activity: 2026-01-22T10:16:49Z — Completed 01-05: Console Removal in Production Builds
+Last activity: 2026-01-22T10:22:44Z — Completed 01-04B: Zero-Allocation Effect Components (Remaining)
 
 Progress: [████░░░░░░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 118s
-- Total execution time: 0.131 hours
+- Total plans completed: 5
+- Average duration: 117s
+- Total execution time: 0.162 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 - React Optimization Foundation | 4 | 5 | 118s |
+| 01 - React Optimization Foundation | 5 | 5 | 117s |
 
 **Recent Trend:**
-- Last 3 plans: 91s (01-02), 150s (01-02 alt), 546s (01-05)
+- Last 3 plans: 150s (01-02 alt), 546s (01-05), 122s (01-04B)
 - Trend: On track for Phase 1
 
 *Updated after each plan completion*
@@ -48,6 +48,7 @@ Recent decisions affecting current work:
 - **TEMP_VECTORS pool extended to v5-v10** (01-04A): Added 6 additional generic vectors plus 4 named semantic vectors (tempPos, tempDir, tempScale, tempRot) to support parallel effect calculations without conflicts
 - **Zero-allocation pattern established** (01-04A): useFrame calculations must use TEMP_VECTORS.vX.set() instead of new THREE.Vector3() to eliminate per-frame GC pressure
 - **Console stripping via esbuild drop** (01-05): Configure `esbuild: { drop: ['console', 'debugger'] }` in vite.config.ts for production builds. Removes all console statements at compile-time with zero runtime overhead. Use `process.argv.includes('build')` to detect production mode.
+- **Zero-allocation pattern complete across all effects** (01-04B): All remaining effect components (swingLine) now use TEMP_VECTORS pool. Module-level vectors accepted for rockets/bomb (created once, not per-frame). useMemo allocations acceptable for static rotation (only runs on dependency change).
 
 ### Pending Todos
 
@@ -59,6 +60,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T10:16:49Z
-Stopped at: Completed 01-05-PLAN.md (Console Removal in Production Builds)
+Last session: 2026-01-22T10:22:44Z
+Stopped at: Completed 01-04B-PLAN.md (Zero-Allocation Effect Components - Remaining)
 Resume file: None
