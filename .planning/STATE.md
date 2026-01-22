@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 2 of 6 (Visual State Architecture)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: In progress
-Last activity: 2026-01-22T11:16:34Z — Completed 02-01: VisualStore Creation
+Last activity: 2026-01-22T11:19:26Z — Completed 02-02: VisualStore Integration
 
-Progress: [██░░░░░░░] 17%
+Progress: [███░░░░░░] 33%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
-- Average duration: 126s
-- Total execution time: 0.335 hours
+- Total plans completed: 9
+- Average duration: 124s
+- Total execution time: 0.365 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 - React Optimization Foundation | 7 | 7 | 134s |
-| 02 - Visual State Architecture | 1 | 3 | 58s |
+| 02 - Visual State Architecture | 2 | 3 | 84s |
 
 **Recent Trend:**
-- Last 3 plans: 58s (02-01), 546s (01-05), 122s (01-04B)
-- Trend: Starting Phase 2 (Visual State Architecture)
+- Last 3 plans: 109s (02-02), 58s (02-01), 546s (01-05)
+- Trend: Phase 2 progressing smoothly
 
 *Updated after each plan completion*
 
@@ -55,6 +55,9 @@ Recent decisions affecting current work:
 - **Vanilla Zustand store for visual state** (02-01): Use `createStore` from `zustand/vanilla` for visual state that can be mutated at 60fps without triggering React re-renders. Access via `visualStore.getState()` in useFrame hooks.
 - **Map-based player tracking in visualStore** (02-01): Use `Map<string, {x, y, z}>` for player positions/rotations instead of arrays for O(1) lookup by playerId and efficient add/remove operations.
 - **Plain objects for visual position data** (02-01): Use `{x: number; y: number; z: number}` instead of THREE.Vector3 in VisualState interface. Simpler, no dependency issues, components convert to THREE.Vector3 as needed during interpolation.
+- **Fallback to props when visualStore doesn't have data** (02-02): OtherPlayers falls back to prop-based position/rotation if visualStore doesn't have the player data yet. Ensures robustness during initial sync and handles edge cases.
+- **Update visualStore after authoritative state updates** (02-02): VisualStore updates happen after gameStore set() calls complete. Visual state derives from authoritative game state, maintaining separation of concerns.
+- **Local player visual updates after physics** (02-02): PlayerController updates visualStore after updateLocalPlayer() which happens after physics. Ensures visual representation matches local player's simulated position.
 
 ### Pending Todos
 
@@ -66,6 +69,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T11:16:34Z
-Stopped at: Completed 02-01-PLAN.md (VisualStore Creation)
+Last session: 2026-01-22T11:19:26Z
+Stopped at: Completed 02-02-PLAN.md (VisualStore Integration)
 Resume file: None
