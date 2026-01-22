@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
+import { useShallow } from 'zustand/shallow';
 import {
   RocketsManager,
   RocketJumpExplosions,
@@ -21,9 +22,13 @@ export {
 // ============================================================================
 
 export function BlazeEffectsManager() {
-  const bombs = useGameStore(state => state.bombs);
-  const localPlayer = useGameStore(state => state.localPlayer);
-  const jetpackActive = useGameStore(state => state.jetpackActive);
+  const { bombs, localPlayer, jetpackActive } = useGameStore(
+    useShallow(state => ({
+      bombs: state.bombs,
+      localPlayer: state.localPlayer,
+      jetpackActive: state.jetpackActive,
+    }))
+  );
   
   useEffect(() => {
     const interval = setInterval(() => {
