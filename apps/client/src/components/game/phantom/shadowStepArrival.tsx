@@ -1,6 +1,7 @@
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { getShadowArrivalMaterial, SHADOW_ARRIVAL_DURATION } from './materials';
 
 // ============================================================================
@@ -13,7 +14,7 @@ interface ShadowStepArrivalProps {
   startTime: number;
 }
 
-export function ShadowStepArrivalEffect({ position, startTime }: ShadowStepArrivalProps) {
+export const ShadowStepArrivalEffect = React.memo(({ position, startTime }: ShadowStepArrivalProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const shadowRef = useRef<THREE.Mesh>(null);
   const ringsRef = useRef<THREE.Group>(null);
@@ -115,5 +116,13 @@ export function ShadowStepArrivalEffect({ position, startTime }: ShadowStepArriv
       </mesh>
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (position)
+  return (
+    prev.position.x === next.position.x &&
+    prev.position.y === next.position.y &&
+    prev.position.z === next.position.z &&
+    prev.startTime === next.startTime
+  );
+});
 

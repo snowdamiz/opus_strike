@@ -1,6 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
@@ -225,8 +226,9 @@ const NPC_HIT_RADIUS = 1.2; // Radius for NPC collision detection (accounts for 
  * DireBall - A dark magic fireball projectile
  * Visual style: Purple/black flaming sphere with swirling dark energy
  * PERFORMANCE: Uses shared materials, no point lights, reduced particles
+ * Wrapped in React.memo to prevent cascading re-renders from parent updates
  */
-export function DireBall({ id, position, velocity, startTime, ownerId }: DireBallProps) {
+export const DireBall = React.memo(({ id, position, velocity, startTime, ownerId }: DireBallProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const outerGlowRef = useRef<THREE.Mesh>(null);
@@ -460,7 +462,20 @@ export function DireBall({ id, position, velocity, startTime, ownerId }: DireBal
           The shader materials provide enough visual glow effect */}
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (position, velocity)
+  return (
+    prev.id === next.id &&
+    prev.position.x === next.position.x &&
+    prev.position.y === next.position.y &&
+    prev.position.z === next.position.z &&
+    prev.velocity.x === next.velocity.x &&
+    prev.velocity.y === next.velocity.y &&
+    prev.velocity.z === next.velocity.z &&
+    prev.startTime === next.startTime &&
+    prev.ownerId === next.ownerId
+  );
+});
 
 // Container component to render all active dire balls
 export interface DireBallData {

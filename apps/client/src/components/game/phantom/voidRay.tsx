@@ -1,6 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
@@ -250,7 +251,7 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export function VoidRay({ id, startPosition, direction, startTime, ownerId }: VoidRayProps) {
+export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId }: VoidRayProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const beamRef = useRef<THREE.Mesh>(null);
   const coreRef = useRef<THREE.Mesh>(null);
@@ -665,7 +666,20 @@ export function VoidRay({ id, startPosition, direction, startTime, ownerId }: Vo
       </group>
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (startPosition, direction)
+  return (
+    prev.id === next.id &&
+    prev.startPosition.x === next.startPosition.x &&
+    prev.startPosition.y === next.startPosition.y &&
+    prev.startPosition.z === next.startPosition.z &&
+    prev.direction.x === next.direction.x &&
+    prev.direction.y === next.direction.y &&
+    prev.direction.z === next.direction.z &&
+    prev.startTime === next.startTime &&
+    prev.ownerId === next.ownerId
+  );
+});
 
 // Container
 interface VoidRaysProps {

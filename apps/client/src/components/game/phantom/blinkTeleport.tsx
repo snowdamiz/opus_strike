@@ -1,6 +1,7 @@
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { getRiftMaterial, getTrailMaterial, BLINK_EFFECT_DURATION } from './materials';
 
 // ============================================================================
@@ -14,7 +15,7 @@ interface BlinkTeleportEffectProps {
   startTime: number;
 }
 
-export function BlinkTeleportEffect({ startPosition, endPosition, startTime }: BlinkTeleportEffectProps) {
+export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, startTime }: BlinkTeleportEffectProps) => {
   const startGroupRef = useRef<THREE.Group>(null);
   const endGroupRef = useRef<THREE.Group>(null);
   const trailRef = useRef<THREE.Points>(null);
@@ -199,5 +200,16 @@ export function BlinkTeleportEffect({ startPosition, endPosition, startTime }: B
       </points>
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (startPosition, endPosition)
+  return (
+    prev.startPosition.x === next.startPosition.x &&
+    prev.startPosition.y === next.startPosition.y &&
+    prev.startPosition.z === next.startPosition.z &&
+    prev.endPosition.x === next.endPosition.x &&
+    prev.endPosition.y === next.endPosition.y &&
+    prev.endPosition.z === next.endPosition.z &&
+    prev.startTime === next.startTime
+  );
+});
 

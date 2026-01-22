@@ -1,6 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
 import { damageNpc } from '../../ui/GameConsole';
 
@@ -253,7 +254,7 @@ const DEBRIS_COUNT = 20;
 const VOID_ZONE_DAMAGE = 15;
 const VOID_ZONE_DAMAGE_INTERVAL = 500;
 
-export function VoidZone({ position, radius, duration, startTime, ownerId }: VoidZoneProps) {
+export const VoidZone = React.memo(({ position, radius, duration, startTime, ownerId }: VoidZoneProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const vortexRef = useRef<THREE.Mesh>(null);
   const eventHorizonRef = useRef<THREE.Mesh>(null);
@@ -562,7 +563,18 @@ export function VoidZone({ position, radius, duration, startTime, ownerId }: Voi
       </mesh>
     </group>
   );
-}
+}, (prev, next) => {
+  // Custom comparison for object props (position)
+  return (
+    prev.position.x === next.position.x &&
+    prev.position.y === next.position.y &&
+    prev.position.z === next.position.z &&
+    prev.radius === next.radius &&
+    prev.duration === next.duration &&
+    prev.startTime === next.startTime &&
+    prev.ownerId === next.ownerId
+  );
+});
 
 // Container component
 interface VoidZoneData {
