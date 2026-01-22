@@ -15,6 +15,10 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
+    // Strip console and debugger from production builds
+    esbuild: {
+      drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
+    },
   },
   optimizeDeps: {
     exclude: ['@dimforge/rapier3d-compat'],
@@ -23,6 +27,8 @@ export default defineConfig({
       define: {
         global: 'globalThis',
       },
+      // Also drop during development dependency optimization
+      drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
     },
   },
   define: {
