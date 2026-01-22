@@ -12,8 +12,8 @@ Transform a stuttering React Three Fiber multiplayer game (200ms+ hitches during
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: React Optimization Foundation** - Eliminate React-level performance anti-patterns
-- [ ] **Phase 2: Visual State Architecture** - Separate high-frequency visual updates from game state
+- [x] **Phase 1: React Optimization Foundation** - Eliminate React-level performance anti-patterns
+- [x] **Phase 2: Visual State Architecture** - Separate high-frequency visual updates from game state
 - [ ] **Phase 3: Instanced Rendering** - Reduce draw calls via InstancedMesh for projectiles
 - [ ] **Phase 4: Object Pooling System** - Eliminate GC pressure through object reuse
 - [ ] **Phase 5: Centralized Animation** - Consolidate 80+ useFrame hooks into managed loop
@@ -67,8 +67,8 @@ Plans:
 - [x] 02-01-PLAN.md — Create visualStore.ts for high-frequency visual data using vanilla Zustand
 - [x] 02-02-PLAN.md — Migrate player position interpolation to visualStore-based updates
 - [x] 02-03-PLAN.md — Add r3f-perf monitoring component to GameCanvas
-- [ ] 02-04-PLAN.md — Remove per-frame position updates from gameStore.updateLocalPlayer call
-- [ ] 02-05-PLAN.md — Fix updateGameState to preserve Map reference on position updates
+- [x] 02-04-PLAN.md — Remove per-frame position updates from gameStore.updateLocalPlayer call
+- [x] 02-05-PLAN.md — Fix updateGameState to preserve Map reference on position updates
 
 ### Phase 3: Instanced Rendering
 
@@ -155,7 +155,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. React Optimization Foundation | 7/7 | Complete | 2026-01-22 |
-| 2. Visual State Architecture | 3/5 | Gap closure | 2026-01-22 |
+| 2. Visual State Architecture | 5/5 | Complete | 2026-01-22 |
 | 3. Instanced Rendering | 0/2 | Not started | - |
 | 4. Object Pooling System | 0/1 | Not started | - |
 | 5. Centralized Animation | 0/1 | Not started | - |
