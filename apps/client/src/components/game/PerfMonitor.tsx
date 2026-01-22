@@ -12,14 +12,13 @@ import { Perf } from 'r3f-perf';
  * - Shader count
  *
  * Position: top-left corner of canvas
- * Charts: enabled with 200px size for visual history
+ * Charts: enabled with detailed metrics (not minimal mode)
  */
 export function PerfMonitor() {
   return (
     <Perf
       position="top-left"
       minimal={false}
-      styleChartSize={200}
     />
   );
 }

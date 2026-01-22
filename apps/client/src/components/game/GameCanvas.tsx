@@ -4,6 +4,7 @@ import { OrbitControls, Sky, Grid } from '@react-three/drei';
 import { VoxelWorld } from './VoxelWorld';
 import { PlayerController } from './PlayerController';
 import { OtherPlayers } from './OtherPlayers';
+import { PerfMonitor } from './PerfMonitor';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
@@ -56,6 +57,9 @@ export function GameCanvas() {
         />
         <pointLight position={[-40, 10, 0]} intensity={50} color="#ff6666" distance={30} />
         <pointLight position={[40, 10, 0]} intensity={50} color="#6666ff" distance={30} />
+
+        {/* Performance monitor */}
+        <PerfMonitor />
 
         {/* Sky */}
         <Sky sunPosition={[100, 50, 100]} />
