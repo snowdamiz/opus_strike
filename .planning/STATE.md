@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 2 of 6 (Visual State Architecture)
-Plan: 3 of 3 in current phase
-Status: Phase complete
-Last activity: 2026-01-22T11:21:41Z — Completed 02-03: Performance Monitoring Integration
+Plan: 4 of 5 in current phase
+Status: In progress
+Last activity: 2026-01-22T11:34:56Z — Completed 02-04: Local Player Position Updates
 
-Progress: [████░░░░░] 50%
+Progress: [████████░░] 92%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 10
-- Average duration: 117s
-- Total execution time: 0.326 hours
+- Total plans completed: 11
+- Average duration: 115s
+- Total execution time: 0.352 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 - React Optimization Foundation | 7 | 7 | 134s |
-| 02 - Visual State Architecture | 3 | 3 | 77s |
+| 02 - Visual State Architecture | 4 | 5 | 82s |
 
 **Recent Trend:**
-- Last 3 plans: 62s (02-03), 109s (02-02), 58s (02-01)
-- Trend: Phase 2 completed efficiently
+- Last 3 plans: 103s (02-04), 62s (02-03), 109s (02-02)
+- Trend: Phase 2 progressing efficiently, 1 plan remaining
 
 *Updated after each plan completion*
 
@@ -61,6 +61,8 @@ Recent decisions affecting current work:
 - **r3f-perf for performance monitoring** (02-03): Use r3f-perf library for React Three Fiber-specific performance metrics (FPS, GPU time, triangle count, geometries). Provides browser DevTools can't show R3F-internal metrics.
 - **Top-left positioning for PerfMonitor** (02-03): PerfMonitor positioned in top-left corner of canvas for visibility during gameplay without obstructing center screen action.
 - **Non-minimal mode for detailed metrics** (02-03): PerfMonitor uses minimal={false} to show detailed metrics including FPS, GPU time, triangle count, geometries, textures, and shaders during development.
+- **Per-frame position data flows ONLY to visualStore** (02-04): Local player position/velocity/rotation updates in useFrame go exclusively to visualStore (non-reactive). gameStore.updateLocalPlayer() in per-frame loop only tracks movement state flags (isGrounded, isSprinting, isCrouching, isSliding, slideTimeRemaining).
+- **Game state tracks discrete events, not continuous data** (02-04): gameStore is for game events (abilities fired, player hit, flag capture, spawn), not per-frame position updates. One-time position updates (spawn initialization) correctly use gameStore as game events.
 
 ### Pending Todos
 
@@ -72,6 +74,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T11:21:41Z
-Stopped at: Completed 02-03-PLAN.md (Performance Monitoring Integration)
+Last session: 2026-01-22T11:34:56Z
+Stopped at: Completed 02-04-PLAN.md (Local Player Position Updates)
 Resume file: None
