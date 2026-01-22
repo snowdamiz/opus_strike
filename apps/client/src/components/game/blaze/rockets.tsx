@@ -12,10 +12,11 @@ import {
   getRocketFireOuterMaterial,
   getRocketSmokeMaterial,
 } from './materials';
+import { InstancedRockets } from '../effects/instanced/InstancedRockets';
 
 // ============================================================================
-// ROCKET EFFECT - Individual rockets with good visuals
-// Optimized by using shared geometries and minimal state
+// ROCKET EFFECT - Individual rockets with good visuals (LEGACY - kept for reference)
+// Replaced by InstancedRockets for performance (single draw call per rocket part)
 // ============================================================================
 
 const MAX_ROCKETS = 30;
@@ -30,9 +31,10 @@ interface RocketEffectProps {
   rocket: RocketData;
 }
 
+// Legacy RocketEffect - kept for reference/fallback
 const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
-  
+
   // Get pre-cached materials once
   const materials = useMemo(() => ({
     body: getRocketBodyMaterial(),
@@ -42,12 +44,12 @@ const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
     fireOuter: getRocketFireOuterMaterial(),
     smoke: getRocketSmokeMaterial(),
   }), []);
-  
+
   useFrame(() => {
     if (!groupRef.current) return;
-    
+
     const elapsed = (Date.now() - rocket.startTime) / 1000;
-    
+
     // Update position with gravity
     _rocketPos.set(
       rocket.position.x + rocket.velocity.x * elapsed,
@@ -55,30 +57,30 @@ const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
       rocket.position.z + rocket.velocity.z * elapsed
     );
     groupRef.current.position.copy(_rocketPos);
-    
+
     // Rotate to face velocity direction
     _rocketDir.set(rocket.velocity.x, rocket.velocity.y - 2 * elapsed, rocket.velocity.z).normalize();
     _rocketLookAt.copy(_rocketPos).add(_rocketDir);
     groupRef.current.lookAt(_rocketLookAt);
   });
-  
+
   return (
     <group ref={groupRef}>
       {/* Rocket body - dark metallic */}
       <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.35, 0.08]} material={materials.body} />
-      
+
       {/* Rocket nose - glowing orange */}
       <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.08, 0.04]} material={materials.nose} />
-      
+
       {/* Fire core - bright white/yellow */}
       <mesh position={[0, 0, 0.22]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.05, 0.35, 0.05]} material={materials.fireCore} />
-      
+
       {/* Fire inner - bright orange */}
       <mesh position={[0, 0, 0.32]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.45, 0.08]} material={materials.fireInner} />
-      
+
       {/* Fire outer - red/orange */}
       <mesh position={[0, 0, 0.4]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.5, 0.12]} material={materials.fireOuter} />
-      
+
       {/* Smoke trail hint */}
       <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.15, 0.4, 0.15]} material={materials.smoke} />
     </group>
@@ -97,22 +99,29 @@ const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
   );
 });
 
-// Rocket manager - renders rockets without individual lights for performance
+// ============================================================================
+// ROCKETS MANAGER - Instanced rendering for performance
+// ============================================================================
+
 export function RocketsManager() {
   const rockets = useGameStore(state => state.rockets);
   const lightRef = useRef<THREE.PointLight>(null);
-  
+
+  // Instanced rendering: All rockets render in single draw call via InstancedMesh
+  // Each rocket = 6 instances (body, nose, fireCore, fireInner, fireOuter, smoke)
+  // Position/rotation updates at 60fps without React re-renders
+
   // Update single shared light position
   useFrame(() => {
     if (!lightRef.current || rockets.length === 0) {
       if (lightRef.current) lightRef.current.intensity = 0;
       return;
     }
-    
+
     const now = Date.now();
     let avgX = 0, avgY = 0, avgZ = 0;
     let count = 0;
-    
+
     for (const rocket of rockets) {
       if (now - rocket.startTime < ROCKET_LIFETIME) {
         const elapsed = (now - rocket.startTime) / 1000;
@@ -122,7 +131,7 @@ export function RocketsManager() {
         count++;
       }
     }
-    
+
     if (count > 0) {
       lightRef.current.position.set(avgX / count, avgY / count, avgZ / count);
       lightRef.current.intensity = Math.min(count * 2, 10);
@@ -130,12 +139,10 @@ export function RocketsManager() {
       lightRef.current.intensity = 0;
     }
   });
-  
+
   return (
     <group>
-      {rockets.slice(0, MAX_ROCKETS).map(rocket => (
-        <RocketEffect key={rocket.id} rocket={rocket} />
-      ))}
+      <InstancedRockets />
       {/* Single shared light for all rockets */}
       <pointLight ref={lightRef} color={0xff6600} intensity={0} distance={12} decay={2} />
     </group>
