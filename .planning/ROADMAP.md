@@ -39,11 +39,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plans
 
 Plans:
-- [ ] 01-01: Replace setState calls in useFrame hooks with direct ref mutations
-- [ ] 01-02: Update Zustand subscriptions to narrow selectors with shallow comparison
-- [ ] 01-03: Add React.memo wrappers to all effect components
-- [ ] 01-04: Replace object creation in useFrame with pre-allocated temp vector reuse
-- [ ] 01-05: Remove or wrap all console.log statements for production
+- [ ] 01-01-PLAN.md — Replace setState calls in useFrame hooks with direct ref mutations
+- [ ] 01-02-PLAN.md — Update Zustand subscriptions to narrow selectors with shallow comparison
+- [ ] 01-03-PLAN.md — Add React.memo wrappers to all effect components
+- [ ] 01-04-PLAN.md — Replace object creation in useFrame with pre-allocated temp vector reuse
+- [ ] 01-05-PLAN.md — Remove or wrap all console.log statements for production
 
 ### Phase 2: Visual State Architecture
 
@@ -150,7 +150,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. React Optimization Foundation | 0/5 | Not started | - |
+| 1. React Optimization Foundation | 0/5 | Ready to execute | - |
 | 2. Visual State Architecture | 0/3 | Not started | - |
 | 3. Instanced Rendering | 0/2 | Not started | - |
 | 4. Object Pooling System | 0/1 | Not started | - |
