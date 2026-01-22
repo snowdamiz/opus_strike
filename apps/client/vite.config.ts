@@ -2,6 +2,11 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+// In Vite, command === 'build' indicates production build
+// The esbuild drop configuration strips console and debugger statements
+const isProduction = process.argv.includes('build');
+const dropOptions = isProduction ? ['console', 'debugger'] : [];
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -13,11 +18,16 @@ export default defineConfig({
     port: 3000,
     host: true,
   },
+  // Use esbuild option at top level for transpilation
+  esbuild: {
+    drop: dropOptions,
+  },
   build: {
     target: 'esnext',
-    // Strip console and debugger from production builds
+    // Also configure for minification
+    minify: 'esbuild',
     esbuild: {
-      drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
+      drop: dropOptions,
     },
   },
   optimizeDeps: {
@@ -28,7 +38,7 @@ export default defineConfig({
         global: 'globalThis',
       },
       // Also drop during development dependency optimization
-      drop: process.env.NODE_ENV === 'production' ? ['console', 'debugger'] : [],
+      drop: dropOptions,
     },
   },
   define: {
