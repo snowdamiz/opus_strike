@@ -64,9 +64,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Create visualStore.ts for high-frequency visual data
-- [ ] 02-02: Migrate player position interpolation to ref-based updates
-- [ ] 02-03: Add r3f-perf monitoring component
+- [ ] 02-01-PLAN.md — Create visualStore.ts for high-frequency visual data using vanilla Zustand
+- [ ] 02-02-PLAN.md — Migrate player position interpolation to visualStore-based updates
+- [ ] 02-03-PLAN.md — Add r3f-perf monitoring component to GameCanvas
 
 ### Phase 3: Instanced Rendering
 
@@ -153,7 +153,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. React Optimization Foundation | 0/7 | Ready to execute | - |
-| 2. Visual State Architecture | 0/3 | Not started | - |
+| 2. Visual State Architecture | 0/3 | Ready to execute | - |
 | 3. Instanced Rendering | 0/2 | Not started | - |
 | 4. Object Pooling System | 0/1 | Not started | - |
 | 5. Centralized Animation | 0/1 | Not started | - |
