@@ -5,33 +5,34 @@
 See: .planning/PROJECT.md (updated 2026-01-22)
 
 **Core value:** Stable 60 FPS during heavy multiplayer combat with no visible hitches
-**Current focus:** Phase 1 - React Optimization Foundation
+**Current focus:** Phase 2 - Visual State Architecture
 
 ## Current Position
 
-Phase: 1 of 6 (React Optimization Foundation)
-Plan: 7 of 7 in current phase
-Status: Phase complete
-Last activity: 2026-01-22T10:25:04Z — Completed 01-03A: React.memo for Effect Components
+Phase: 2 of 6 (Visual State Architecture)
+Plan: 1 of 3 in current phase
+Status: In progress
+Last activity: 2026-01-22T11:16:34Z — Completed 02-01: VisualStore Creation
 
-Progress: [██████████░] 100%
+Progress: [██░░░░░░░] 17%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 7
-- Average duration: 134s
-- Total execution time: 0.261 hours
+- Total plans completed: 8
+- Average duration: 126s
+- Total execution time: 0.335 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 - React Optimization Foundation | 7 | 7 | 134s |
+| 02 - Visual State Architecture | 1 | 3 | 58s |
 
 **Recent Trend:**
-- Last 3 plans: 546s (01-05), 122s (01-04B), 269s (01-03A)
-- Trend: Phase 1 complete
+- Last 3 plans: 58s (02-01), 546s (01-05), 122s (01-04B)
+- Trend: Starting Phase 2 (Visual State Architecture)
 
 *Updated after each plan completion*
 
@@ -51,6 +52,9 @@ Recent decisions affecting current work:
 - **Zero-allocation pattern complete across all effects** (01-04B): All remaining effect components (swingLine) now use TEMP_VECTORS pool. Module-level vectors accepted for rockets/bomb (created once, not per-frame). useMemo allocations acceptable for static rotation (only runs on dependency change).
 - **React.memo pattern for effect components** (01-03A): All Phantom and Blaze effect components wrapped in React.memo with custom comparison functions. Custom comparison checks primitive x/y/z values instead of object references to prevent re-renders when parent managers update.
 - **React.memo with ID-based comparison for Hookshot/Glacier effects** (01-03B): Hookshot and Glacier effect components wrapped in React.memo with custom comparison on ID fields (hook.id, wall.id, etc.) since effect data is immutable after creation. WallSegment sub-component compares on index and position primitives.
+- **Vanilla Zustand store for visual state** (02-01): Use `createStore` from `zustand/vanilla` for visual state that can be mutated at 60fps without triggering React re-renders. Access via `visualStore.getState()` in useFrame hooks.
+- **Map-based player tracking in visualStore** (02-01): Use `Map<string, {x, y, z}>` for player positions/rotations instead of arrays for O(1) lookup by playerId and efficient add/remove operations.
+- **Plain objects for visual position data** (02-01): Use `{x: number; y: number; z: number}` instead of THREE.Vector3 in VisualState interface. Simpler, no dependency issues, components convert to THREE.Vector3 as needed during interpolation.
 
 ### Pending Todos
 
@@ -62,6 +66,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T10:25:04Z
-Stopped at: Completed 01-03A-PLAN.md (React.memo for Effect Components)
+Last session: 2026-01-22T11:16:34Z
+Stopped at: Completed 02-01-PLAN.md (VisualStore Creation)
 Resume file: None
