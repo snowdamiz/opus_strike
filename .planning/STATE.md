@@ -10,29 +10,29 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 2 of 6 (Visual State Architecture)
-Plan: 4 of 5 in current phase
-Status: In progress
-Last activity: 2026-01-22T11:34:56Z — Completed 02-04: Local Player Position Updates
+Plan: 5 of 5 in current phase
+Status: Phase complete
+Last activity: 2026-01-22T11:36:35Z — Completed 02-05: In-Place Map Updates for Player Position Data
 
-Progress: [████████░░] 92%
+Progress: [█████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 11
-- Average duration: 115s
-- Total execution time: 0.352 hours
+- Total plans completed: 12
+- Average duration: 121s
+- Total execution time: 0.403 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 - React Optimization Foundation | 7 | 7 | 134s |
-| 02 - Visual State Architecture | 4 | 5 | 82s |
+| 02 - Visual State Architecture | 5 | 5 | 91s |
 
 **Recent Trend:**
-- Last 3 plans: 103s (02-04), 62s (02-03), 109s (02-02)
-- Trend: Phase 2 progressing efficiently, 1 plan remaining
+- Last 3 plans: 219s (02-05), 103s (02-04), 62s (02-03)
+- Trend: Phase 2 complete
 
 *Updated after each plan completion*
 
@@ -63,6 +63,7 @@ Recent decisions affecting current work:
 - **Non-minimal mode for detailed metrics** (02-03): PerfMonitor uses minimal={false} to show detailed metrics including FPS, GPU time, triangle count, geometries, textures, and shaders during development.
 - **Per-frame position data flows ONLY to visualStore** (02-04): Local player position/velocity/rotation updates in useFrame go exclusively to visualStore (non-reactive). gameStore.updateLocalPlayer() in per-frame loop only tracks movement state flags (isGrounded, isSprinting, isCrouching, isSliding, slideTimeRemaining).
 - **Game state tracks discrete events, not continuous data** (02-04): gameStore is for game events (abilities fired, player hit, flag capture, spawn), not per-frame position updates. One-time position updates (spawn initialization) correctly use gameStore as game events.
+- **In-place Map mutation for position updates** (02-05): updateGameState() preserves the players Map reference by updating existing player object properties in-place instead of creating a new Map. Only creates new Map when players are removed (structural change). Prevents React re-renders in components subscribed to gameStore.players when network players move.
 
 ### Pending Todos
 
@@ -74,6 +75,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-22T11:34:56Z
-Stopped at: Completed 02-04-PLAN.md (Local Player Position Updates)
+Last session: 2026-01-22T11:36:35Z
+Stopped at: Completed 02-05-PLAN.md (In-Place Map Updates for Player Position Data)
 Resume file: None
