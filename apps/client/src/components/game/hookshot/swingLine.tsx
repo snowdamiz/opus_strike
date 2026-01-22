@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
@@ -6,6 +6,7 @@ import { useGameStore, type SwingLineData } from '../../../store/gameStore';
 import {
   SHARED_GEOMETRIES,
   HOOKSHOT_COLORS,
+  TEMP_VECTORS,
 } from '../effectResources';
 
 // ============================================================================
@@ -16,7 +17,7 @@ interface SwingLineProps {
   line: SwingLineData;
 }
 
-export function SwingLineEffect({ line }: SwingLineProps) {
+export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
 
@@ -112,9 +113,9 @@ export function SwingLineEffect({ line }: SwingLineProps) {
     hookRef.current.position.set(hookPos.x, hookPos.y, hookPos.z);
 
     if (totalDist > 0.01) {
-      const quat = new THREE.Quaternion();
-      quat.setFromUnitVectors(new THREE.Vector3(0, 0, -1), new THREE.Vector3(dirX, dirY, dirZ));
-      hookRef.current.quaternion.copy(quat);
+      TEMP_VECTORS.v1.set(dirX, dirY, dirZ);
+      TEMP_VECTORS.quat1.setFromUnitVectors(TEMP_VECTORS.forward, TEMP_VECTORS.v1);
+      hookRef.current.quaternion.copy(TEMP_VECTORS.quat1);
     }
 
     // Update rope points directly via ref (no setState in useFrame - prevents 60fps re-renders)
