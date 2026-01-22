@@ -182,26 +182,25 @@ export abstract class HeroBase {
   }
 }
 
-export function createHero(heroId: HeroId): HeroBase {
-  // Dynamic import would be cleaner but for simplicity:
+export async function createHero(heroId: HeroId): Promise<HeroBase> {
   switch (heroId) {
     case 'phantom':
-      const { PhantomHero } = require('./PhantomHero.js');
+      const { PhantomHero } = await import('./PhantomHero.js');
       return new PhantomHero();
     case 'hookshot':
-      const { HookshotHero } = require('./HookshotHero.js');
+      const { HookshotHero } = await import('./HookshotHero.js');
       return new HookshotHero();
     case 'blaze':
-      const { BlazeHero } = require('./BlazeHero.js');
+      const { BlazeHero } = await import('./BlazeHero.js');
       return new BlazeHero();
     case 'glacier':
-      const { GlacierHero } = require('./GlacierHero.js');
+      const { GlacierHero } = await import('./GlacierHero.js');
       return new GlacierHero();
     case 'pulse':
-      const { PulseHero } = require('./PulseHero.js');
+      const { PulseHero } = await import('./PulseHero.js');
       return new PulseHero();
     case 'sentinel':
-      const { SentinelHero } = require('./SentinelHero.js');
+      const { SentinelHero } = await import('./SentinelHero.js');
       return new SentinelHero();
     default:
       throw new Error(`Unknown hero: ${heroId}`);
