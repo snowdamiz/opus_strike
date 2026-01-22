@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
+import { useShallow } from 'zustand/shallow';
 import { 
   HookProjectile,
   DragHookEffect,
@@ -17,12 +18,21 @@ export { GrappleTrapTargetingIndicator } from './hookshot';
 // ============================================================================
 
 export function HookshotEffectsManager() {
-  const hookProjectiles = useGameStore(state => state.hookProjectiles);
-  const dragHooks = useGameStore(state => state.dragHooks);
-  const grappleTraps = useGameStore(state => state.grappleTraps);
-  const swingLines = useGameStore(state => state.swingLines);
-  const grappleLines = useGameStore(state => state.grappleLines);
-  const earthWalls = useGameStore(state => state.earthWalls);
+  const {
+    hookProjectiles,
+    dragHooks,
+    grappleTraps,
+    swingLines,
+    grappleLines,
+    earthWalls,
+  } = useGameStore(useShallow(state => ({
+    hookProjectiles: state.hookProjectiles,
+    dragHooks: state.dragHooks,
+    grappleTraps: state.grappleTraps,
+    swingLines: state.swingLines,
+    grappleLines: state.grappleLines,
+    earthWalls: state.earthWalls,
+  })));
   
   // Cleanup interval
   useEffect(() => {
