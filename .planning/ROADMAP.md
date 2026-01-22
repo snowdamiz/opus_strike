@@ -84,11 +84,12 @@ Plans:
 3. All projectile types (rockets, dire balls, hooks) use InstancedMesh pattern
 4. Visual quality identical to pre-optimization (no art regression)
 
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
 - [ ] 03-01-PLAN.md — Implement InstancedMesh for rockets using Drei Instances API
-- [ ] 03-02-PLAN.md — Implement InstancedMesh for dire balls and other repeated projectiles
+- [ ] 03-02-PLAN.md — Implement InstancedMesh for Phantom dire balls with shader material preservation
+- [ ] 03-03-PLAN.md — Implement InstancedMesh for hookshot hook heads with dynamic rope rendering
 
 ### Phase 4: Object Pooling System
 
