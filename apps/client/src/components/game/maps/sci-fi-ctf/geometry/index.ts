@@ -6,3 +6,5 @@
 
 export { TeamABase } from './TeamABase';
 export { TeamBBase } from './TeamBBase';
+export { Routes } from './Routes';
+export { CenterZone } from './CenterZone';
