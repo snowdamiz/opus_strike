@@ -5,3 +5,4 @@
  */
 
 export { TeamABase } from './TeamABase';
+export { TeamBBase } from './TeamBBase';

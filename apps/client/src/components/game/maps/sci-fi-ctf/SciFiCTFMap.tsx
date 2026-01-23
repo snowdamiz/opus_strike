@@ -7,7 +7,7 @@
 
 import { Grid } from '@react-three/drei';
 import { MAP_CONFIG } from './config';
-import { TeamABase } from './geometry';
+import { TeamABase, TeamBBase } from './geometry';
 
 export function SciFiCTFMap() {
   const { dimensions } = MAP_CONFIG;
@@ -32,9 +32,9 @@ export function SciFiCTFMap() {
 
       {/* Team base geometry */}
       <TeamABase />
+      <TeamBBase />
 
       {/* Placeholder for additional map geometry - to be added in subsequent plans:
-       * - Plan 03: Team B base geometry
        * - Plan 04: Central arena and route structures
        * - Plan 05: Physics colliders
        */}
