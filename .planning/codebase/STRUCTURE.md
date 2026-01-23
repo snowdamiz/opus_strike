@@ -5,229 +5,255 @@
 ## Directory Layout
 
 ```
-opus_strike/
-├── .planning/              # GSD planning documents and codebase analysis
-│   ├── codebase/           # Architecture, conventions, testing docs
-│   ├── phases/             # Implementation phase plans
-│   └── research/           # Technical research documents
-├── apps/                   # Application workspaces
-│   ├── client/             # Vite + React Three Fiber game client
-│   └── server/             # Node.js + Colyseus game server
-├── packages/               # Shared libraries (Turborepo workspaces)
-│   ├── game-logic/         # Hero definitions, abilities, game modes
-│   ├── physics/            # Movement physics and collision detection
-│   └── shared/             # Shared types, constants, utilities
-├── package.json            # Root package.json (Turborepo workspace)
-├── pnpm-workspace.yaml     # PNPM workspace configuration
-├── turbo.json              # Turborepo build pipeline configuration
-├── tsconfig.base.json      # Base TypeScript configuration
-├── docker-compose.yml      # Docker services (PostgreSQL)
-└── PLAN.md                 # Project overview and roadmap
+voxel-strike/
+├── apps/
+│   ├── client/                 # Vite + React + Three.js game client
+│   │   ├── src/
+│   │   │   ├── components/     # React components organized by domain
+│   │   │   ├── contexts/       # React contexts (NetworkContext, WalletContext)
+│   │   │   ├── hooks/          # Custom hooks for logic extraction
+│   │   │   ├── store/          # Zustand stores (gameStore, visualStore)
+│   │   │   ├── config/         # Configuration files
+│   │   │   ├── types/          # Local type definitions
+│   │   │   ├── utils/          # Utilities (clientId, etc.)
+│   │   │   ├── styles/         # CSS and Tailwind
+│   │   │   ├── App.tsx         # Root component
+│   │   │   └── main.tsx        # React DOM bootstrap
+│   │   ├── public/             # Static assets (sounds, maps)
+│   │   ├── dist/               # Build output
+│   │   ├── vite.config.ts
+│   │   ├── tsconfig.json
+│   │   └── package.json
+│   │
+│   └── server/                 # Express + Colyseus game server
+│       ├── src/
+│       │   ├── rooms/          # Colyseus room implementations
+│       │   │   ├── schema/     # Colyseus schema definitions
+│       │   │   ├── GameRoom.ts
+│       │   │   ├── LobbyRoom.ts
+│       │   │   └── abilityHandlers.ts
+│       │   ├── auth/           # Authentication routes and logic
+│       │   ├── db/             # Database client initialization
+│       │   └── index.ts        # Server entry point
+│       ├── prisma/             # Prisma schema and migrations
+│       ├── dist/               # Build output
+│       ├── tsconfig.json
+│       └── package.json
+│
+├── packages/
+│   ├── shared/                 # Shared types and constants (consumed by all)
+│   │   ├── src/
+│   │   │   ├── types/          # Type definitions (hero, ability, player, game)
+│   │   │   ├── constants/      # Game config constants
+│   │   │   ├── utils/          # Math utilities
+│   │   │   └── index.ts        # Main export barrel
+│   │   ├── dist/               # Build output
+│   │   ├── tsconfig.json
+│   │   └── package.json
+│   │
+│   ├── physics/                # Rapier physics and movement logic
+│   │   ├── src/
+│   │   │   ├── movement/       # Movement controllers by type
+│   │   │   ├── PhysicsWorld.ts
+│   │   │   ├── MovementController.ts
+│   │   │   ├── CollisionDetection.ts
+│   │   │   └── index.ts
+│   │   ├── dist/               # Build output
+│   │   ├── tsconfig.json
+│   │   └── package.json
+│   │
+│   └── game-logic/             # Hero definitions and game rules
+│       ├── src/
+│       │   ├── heroes/         # Hero class definitions
+│       │   ├── abilities/      # Shared ability logic and effects
+│       │   ├── match/          # Match management, spawn, flag rules
+│       │   ├── ctf/            # Capture-the-flag game mode
+│       │   └── index.ts
+│       ├── dist/               # Build output
+│       ├── tsconfig.json
+│       └── package.json
+│
+├── pnpm-workspace.yaml         # Monorepo workspace configuration
+├── turbo.json                  # Turborepo build orchestration
+├── tsconfig.base.json          # Shared TypeScript config
+├── package.json                # Workspace scripts (dev, build, lint)
+├── .planning/                  # GSD planning directory
+├── .gitignore
+└── README.md
 ```
 
 ## Directory Purposes
 
-**`.planning/`:**
-- Purpose: GSD command documentation and planning artifacts
-- Contains: Architecture docs, phase plans, research notes
-- Key files: `codebase/ARCHITECTURE.md`, `codebase/STRUCTURE.md`, `phases/*/plan.md`
+**apps/client/src/components/:**
+- Purpose: React UI components organized by feature domain
+- Contains: Game UI (HUD, menus, overlays), 3D game objects (players, effects, world)
+- Key subdirs: `game/` (3D rendering), `ui/` (2D screens and overlays)
 
-**`apps/client/`:**
-- Purpose: Browser-based 3D multiplayer game client
-- Contains: React components, Three.js rendering, UI, client-side game logic, Zustand stores, custom hooks
-- Key files: `src/main.tsx`, `src/App.tsx`, `src/components/game/GameCanvas.tsx`, `src/store/gameStore.ts`
+**apps/client/src/contexts/:**
+- Purpose: React context providers for cross-component communication
+- Contains: NetworkContext (Colyseus rooms, multiplayer ops), WalletContext (Solana auth)
 
-**`apps/client/src/components/`:**
-- Purpose: React components for UI and 3D game objects
-- Contains: `ui/` (2D overlays), `game/` (3D rendered components), hero-specific effect managers
-- Key subdirs: `components/ui/` (HUD, menus), `components/game/` (3D world, player, effects)
+**apps/client/src/hooks/:**
+- Purpose: Custom React hooks for logic extraction and reusability
+- Contains: useInput (keyboard/mouse), usePhysics (Rapier world), useAudio, player-specific hooks
+- Key subdirs: `player/` (movement, abilities, camera), `physics/` (collision helpers)
 
-**`apps/client/src/hooks/`:**
-- Purpose: Reusable React hooks for game logic
-- Contains: Input handling, physics, audio, player movement, camera control, abilities
-- Key subdirs: `hooks/player/` (movement, camera, physics), `hooks/player/abilities/` (hero-specific)
+**apps/client/src/store/:**
+- Purpose: Zustand state management with sliced domains
+- Contains: gameStore (main reactive store), visualStore (non-reactive visual state), slices (projectiles, glacier)
+- Pattern: Each slice exports state interface and actions, composed in index
 
-**`apps/client/src/store/`:**
-- Purpose: Zustand state management
-- Contains: `gameStore.ts` (main game state), `visualStore.ts` (rendering state), `slices/` (feature modules)
-- Key files: `store/gameStore.ts`, `store/visualStore.ts`, `store/slices/projectiles.ts`
+**apps/client/src/config/:**
+- Purpose: Environment and configuration constants
+- Contains: environment.ts (server URLs), mapBoundaries.ts (level geometry)
 
-**`apps/client/src/contexts/`:**
-- Purpose: React context providers for global concerns
-- Contains: `NetworkContext.tsx` (Colyseus connection), `WalletContext.tsx` (Solana wallet)
-- Key files: `contexts/NetworkContext.tsx`, `contexts/gameMessageHandlers.ts`
+**apps/client/src/styles/:**
+- Purpose: Global CSS and Tailwind configuration
+- Contains: index.css (global styles), Tailwind directives
 
-**`apps/server/`:**
-- Purpose: Authoritative game server
-- Contains: Colyseus rooms, Express API, Prisma database client, authentication
-- Key files: `src/index.ts`, `src/rooms/GameRoom.ts`, `src/rooms/LobbyRoom.ts`
+**apps/server/src/rooms/:**
+- Purpose: Colyseus room implementations for lobby and game state management
+- Contains: GameRoom (gameplay), LobbyRoom (pre-game), schema (state definitions), ability handlers
+- Pattern: Room<Schema> subclasses with message handlers
 
-**`apps/server/src/rooms/`:**
-- Purpose: Colyseus room implementations
-- Contains: `GameRoom.ts` (active game session), `LobbyRoom.ts` (pre-game matchmaking), `schema/` (networked state)
-- Key files: `rooms/GameRoom.ts`, `rooms/abilityHandlers.ts`, `rooms/schema/GameState.ts`
+**apps/server/src/rooms/schema/:**
+- Purpose: Colyseus schema definitions for network serialization
+- Contains: GameState, LobbyState, Player, Components, Abilities
+- Pattern: @type/@filter decorators for efficient delta compression
 
-**`apps/server/src/auth/`:**
-- Purpose: Solana wallet authentication
-- Contains: `verify.ts` (signature verification), `routes.ts` (Express endpoints)
-- Key files: `auth/verify.ts`, `auth/routes.ts`
+**apps/server/src/auth/:**
+- Purpose: Authentication endpoints and verification logic
+- Contains: routes.ts (Express endpoints), verify.ts (JWT/wallet verification)
 
-**`apps/server/prisma/`:**
-- Purpose: Database schema and migrations
-- Contains: Prisma schema definition, migration files
-- Key files: `prisma/schema.prisma`
+**packages/shared/src/types/:**
+- Purpose: Type definitions shared across client and server
+- Contains: hero.ts, ability.ts, player.ts, game.ts, input.ts, network.ts, vector.ts
+- Usage: Imported by all packages for type safety
 
-**`packages/shared/`:**
-- Purpose: Code shared between client and server (types, constants, utils)
-- Contains: TypeScript type definitions, game constants, math utilities
-- Key subdirs: `src/types/`, `src/constants/`, `src/utils/`
+**packages/shared/src/constants/:**
+- Purpose: Game configuration and balance constants
+- Contains: game.ts (gameplay config), physics.ts (movement params), heroes.ts (hero stats)
+- Usage: Determines game mechanics, client and server must match exactly
 
-**`packages/game-logic/`:**
-- Purpose: Platform-agnostic game rules and hero definitions
-- Contains: Hero classes, ability systems, CTF game mode, match management
-- Key subdirs: `src/heroes/`, `src/abilities/`, `src/ctf/`, `src/match/`
+**packages/physics/src/movement/:**
+- Purpose: Encapsulated movement controllers for different locomotion types
+- Contains: BaseMovement, AerialMovement, ParkourMovement, AbilityMovement
+- Pattern: Controllers update position/velocity based on input and deltaTime
 
-**`packages/physics/`:**
-- Purpose: Character controller physics using Rapier3D
-- Contains: Physics world wrapper, movement systems, collision detection
-- Key subdirs: `src/movement/` (movement modules)
-- Key files: `src/PhysicsWorld.ts`, `src/MovementController.ts`
+**packages/game-logic/src/heroes/:**
+- Purpose: Hero class definitions with ability specs and stat scaling
+- Contains: HeroBase, PhantomHero, BlazeHero, GlacierHero, etc.
+- Pattern: Extend HeroBase with hero-specific ability definitions and passive effects
 
 ## Key File Locations
 
 **Entry Points:**
-- `apps/client/index.html`: HTML entry point for client
-- `apps/client/src/main.tsx`: React root render
-- `apps/client/src/App.tsx`: Top-level app component with phase routing
-- `apps/server/src/index.ts`: Server startup and Colyseus initialization
+- `apps/client/src/main.tsx`: Client bootstrap, React DOM render
+- `apps/client/src/App.tsx`: Root app component, phase routing
+- `apps/server/src/index.ts`: Server bootstrap, Express/Colyseus setup
 
 **Configuration:**
-- `turbo.json`: Turborepo build pipeline (dev, build, lint, typecheck tasks)
-- `tsconfig.base.json`: Base TypeScript config extended by all packages
-- `apps/client/vite.config.ts`: Vite bundler configuration
-- `apps/client/tailwind.config.js`: TailwindCSS styling configuration
-- `apps/server/prisma/schema.prisma`: Database schema
+- `apps/client/src/config/environment.ts`: Server URL, API endpoints
+- `packages/shared/src/constants/game.ts`: Game config (max players, score to win, tick rate)
+- `apps/server/src/rooms/abilityHandlers.ts`: Ability execution and cooldown logic
 
 **Core Logic:**
-- `apps/client/src/components/game/PlayerController.tsx`: Main player controller (orchestrates movement, camera, abilities)
-- `apps/client/src/store/gameStore.ts`: Central game state (Zustand, 508 lines)
-- `apps/server/src/rooms/GameRoom.ts`: Server-side game room with tick loop
-- `packages/game-logic/src/heroes/HeroBase.ts`: Base class for all heroes
+- `apps/client/src/store/gameStore.ts`: Main client state store with all actions
+- `apps/server/src/rooms/GameRoom.ts`: Server game loop, input processing, state broadcasting
+- `packages/physics/src/PhysicsWorld.ts`: Rapier world initialization and collision queries
 
 **Testing:**
-- Not detected (no test files found in standard locations)
+- No dedicated test files currently; test infrastructure not detected
+
+**Networking:**
+- `apps/client/src/contexts/NetworkContext.tsx`: Colyseus client, room joining, message sending
+- `apps/client/src/contexts/gameMessageHandlers.ts`: Server state sync handlers
 
 ## Naming Conventions
 
 **Files:**
-- React components: PascalCase with `.tsx` extension (`PlayerController.tsx`, `GameCanvas.tsx`)
-- TypeScript modules: camelCase with `.ts` extension (`useInput.ts`, `gameStore.ts`)
-- Type definitions: lowercase with `.d.ts` or within `.ts` files (`types/hero.ts`)
-- Directories: lowercase or kebab-case (`game-logic`, `components`, `hooks`)
+- Components: PascalCase (e.g., `PlayerController.tsx`, `GameCanvas.tsx`)
+- Hooks: camelCase prefix `use` (e.g., `useInput.ts`, `usePhysics.ts`)
+- Utilities: camelCase (e.g., `clientId.ts`, `math.ts`)
+- Types: snake_case for type files (e.g., `game.ts`, `ability.ts`) containing multiple exported types
+- Schemas: PascalCase (e.g., `GameState.ts`, `LobbyState.ts`)
 
-**Functions:**
-- React components: PascalCase (`PlayerController`, `GameCanvas`)
-- Hooks: camelCase starting with `use` (`useMovement`, `useCamera`, `useInput`)
-- Regular functions: camelCase (`syncPlayerFromSchema`, `setupPollingSync`)
-- Handlers: camelCase with `handle` prefix (`handleInput`, `handleHeroSelect`)
+**Directories:**
+- Feature domains: kebab-case when multi-word (e.g., `game-logic`, `ws-transport`)
+- Functional grouping: lowercase plural (e.g., `components`, `hooks`, `types`, `constants`)
 
-**Variables:**
-- Local variables: camelCase (`playerBody`, `inputState`, `isPointerLocked`)
-- Constants: UPPER_SNAKE_CASE (`TICK_RATE`, `PLAYER_HEIGHT`, `GRAVITY`)
-- React refs: camelCase with `Ref` suffix (`clientRef`, `lobbyRoomRef`, `playerBodyRef`)
-
-**Types:**
-- Interfaces: PascalCase (`GameState`, `Player`, `AbilityContext`, `NetworkContextType`)
-- Type aliases: PascalCase (`HeroId`, `Team`, `Vec3`)
-- Enums: PascalCase with UPPER_SNAKE_CASE values (not widely used, prefer union types)
+**Exports:**
+- Barrel files (`index.ts`) in directories export everything needed by consumers
+- Game store slices export separate state interface and action creator
+- Shared package exports all types and constants via main `index.ts`
 
 ## Where to Add New Code
 
-**New Hero:**
+**New Feature (Hero, Ability):**
 - Hero class: `packages/game-logic/src/heroes/NewHero.ts`
-- Hero constants: `packages/shared/src/constants/heroes.ts`
-- Client ability hooks: `apps/client/src/hooks/player/abilities/useNewHeroAbilities.ts`
-- Visual effects: `apps/client/src/components/game/NewHeroEffects.tsx`
-- Export from: `packages/game-logic/src/index.ts`
+- Ability effects: `packages/game-logic/src/abilities/`
+- Client rendering: `apps/client/src/components/game/NewHeroEffects.tsx`
+- Client hooks: `apps/client/src/hooks/player/abilities/useNewHeroAbilities.ts`
+- Server handlers: Extend `apps/server/src/rooms/abilityHandlers.ts`
 
-**New Ability:**
-- Ability definition: Add to `ABILITY_DEFINITIONS` in `packages/shared/src/constants/heroes.ts`
-- Server handler: Add case to `apps/server/src/rooms/abilityHandlers.ts` → `executeAbility`
-- Client handler: Add to appropriate hero ability hook in `apps/client/src/hooks/player/abilities/`
-- Visual effects: Update corresponding `*Effects.tsx` manager in `apps/client/src/components/game/`
-
-**New UI Component:**
-- 2D overlay: `apps/client/src/components/ui/NewComponent.tsx`
-- 3D game element: `apps/client/src/components/game/NewGameObject.tsx`
-- Import in: `apps/client/src/App.tsx` or `apps/client/src/components/game/GameCanvas.tsx`
-
-**New Game Mode:**
-- Game mode logic: `packages/game-logic/src/modes/NewMode.ts`
-- Server integration: Instantiate in `apps/server/src/rooms/GameRoom.ts`
-- Export from: `packages/game-logic/src/index.ts`
-
-**New Shared Type:**
-- Type definition: `packages/shared/src/types/newtype.ts`
-- Export from: `packages/shared/src/index.ts`
-
-**New Hook:**
-- Player-related: `apps/client/src/hooks/player/useNewHook.ts`
-- General purpose: `apps/client/src/hooks/useNewHook.ts`
-- Export from: `apps/client/src/hooks/player/index.ts` (if in player subdirectory)
-
-**New Store Slice:**
-- Slice definition: `apps/client/src/store/slices/newFeature.ts`
-- Import and compose: `apps/client/src/store/gameStore.ts`
+**New Component/Module:**
+- UI component: `apps/client/src/components/ui/NewScreen.tsx`
+- Game object: `apps/client/src/components/game/NewGameObject.tsx`
+- Add to barrel exports in `components/ui/index.ts` or `components/game/index.ts`
 
 **Utilities:**
-- Shared helpers: `packages/shared/src/utils/newUtil.ts`
-- Client-only helpers: `apps/client/src/utils/newUtil.ts`
-- Server-only helpers: `apps/server/src/utils/newUtil.ts`
+- Math helpers: `packages/shared/src/utils/`
+- Physics helpers: `packages/physics/src/`
+- Client helpers: `apps/client/src/utils/`
+
+**Constants & Types:**
+- Game constants: `packages/shared/src/constants/`
+- Type definitions: `packages/shared/src/types/`
+- Local types: `apps/client/src/types/` (use sparingly, prefer shared)
+
+**New Room/Network Feature:**
+- Colyseus schema: `apps/server/src/rooms/schema/NewSchema.ts`
+- Room handler: Extend existing room or create new in `apps/server/src/rooms/NewRoom.ts`
+- Client handler: `apps/client/src/contexts/gameMessageHandlers.ts` add setup function
 
 ## Special Directories
 
-**`apps/client/public/`:**
-- Purpose: Static assets served by Vite
+**apps/client/public/:**
+- Purpose: Static assets served directly (sounds, map images)
 - Generated: No
-- Committed: Yes
-- Contains: `maps/` (map data), `sounds/` (audio files), images
+- Committed: Yes (assets)
 
-**`apps/client/dist/`:**
-- Purpose: Vite build output (production bundle)
-- Generated: Yes (via `npm run build`)
-- Committed: No (in .gitignore)
+**apps/client/dist/:**
+- Purpose: Production build output
+- Generated: Yes (during `pnpm build`)
+- Committed: No
 
-**`apps/server/dist/`:**
-- Purpose: TypeScript compilation output
-- Generated: Yes (via `npm run build`)
-- Committed: No (in .gitignore)
+**apps/server/prisma/:**
+- Purpose: Database schema and migrations
+- Generated: No (manually edited)
+- Committed: Yes (schema.prisma)
 
-**`packages/*/dist/`:**
-- Purpose: Compiled TypeScript for each package
-- Generated: Yes (via Turborepo `turbo run build`)
-- Committed: No (in .gitignore)
+**packages/*/dist/:**
+- Purpose: Compiled TypeScript outputs (.js, .d.ts)
+- Generated: Yes (during `pnpm build`)
+- Committed: No
 
-**`node_modules/`:**
-- Purpose: PNPM dependency installation (hoisted to root and per-workspace)
-- Generated: Yes (via `pnpm install`)
-- Committed: No (in .gitignore)
+**.turbo/:**
+- Purpose: Turborepo cache
+- Generated: Yes
+- Committed: No
 
-**`.turbo/`:**
-- Purpose: Turborepo build cache for faster rebuilds
-- Generated: Yes (automatically during builds)
-- Committed: No (in .gitignore)
+**node_modules/:**
+- Purpose: Dependencies
+- Generated: Yes (during `pnpm install`)
+- Committed: No
 
-**`apps/server/prisma/migrations/`:**
-- Purpose: Database migration history (when generated)
-- Generated: Yes (via `prisma migrate dev`)
-- Committed: Yes (tracks schema changes)
+## Build Outputs
 
-**`apps/client/src/components/game/effects/instanced/`:**
-- Purpose: Optimized instanced rendering components (recent addition for performance)
-- Generated: No
-- Committed: Yes
-- Contains: `InstancedRockets.tsx` (instanced rocket rendering)
+**Client:** `apps/client/dist/` - Vite SPA output (HTML + JS bundles + assets)
 
----
+**Server:** `apps/server/dist/` - Compiled Node.js code
 
-*Structure analysis: 2026-01-22*
+**Packages:** `packages/*/dist/` - Compiled library outputs (.js + .d.ts)
+
+All build outputs are in `.gitignore` and regenerated from source.

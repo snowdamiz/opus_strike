@@ -4,144 +4,290 @@
 
 ## Test Framework
 
+**Status:** Not detected
+
 **Runner:**
-- Not configured - no test framework detected
+- No Jest, Vitest, or other test runner configured
+- No `jest.config.js`, `vitest.config.ts`, or similar files present
+- No test scripts in package.json files
 
 **Assertion Library:**
-- None
+- No testing libraries detected in dependencies
 
 **Run Commands:**
-```bash
-# No test commands configured
-# Root package.json has "lint" and "typecheck" but no "test" script
-```
+- No test commands available
+- Only build, dev, typecheck, and lint commands present in package.json
 
 ## Test File Organization
 
-**Location:**
-- No test files found in source directories
-- Only test files present are in `node_modules` (third-party packages)
+**Current State:**
+- No test files present in codebase
+- No `*.test.ts`, `*.spec.ts`, `*.test.tsx`, or `*.spec.tsx` files found
+- No `__tests__` directories
 
-**Naming:**
-- Not applicable - no test files
+**Observation:**
+Testing infrastructure has not been established. All validation appears to be manual and runtime-based.
 
-**Structure:**
-- Not applicable
+## Type Safety as Substitute for Tests
 
-## Test Structure
+The codebase relies heavily on TypeScript's strict mode for safety:
+- `strict: true` in `tsconfig.base.json`
+- `strictNullChecks: true` enforced
+- `noFallthroughCasesInSwitch: true`
+- Full type annotations throughout
 
-**Suite Organization:**
-- No tests present
+**Example from `gameStore.ts`:**
+```typescript
+interface CoreState {
+  walletAddress: string | null;
+  userId: string | null;
+  userStats: UserStats | null;
+  isConnected: boolean;
+  isLoading: boolean;
+  // ... more typed fields
+}
 
-**Patterns:**
-- Not applicable
-
-## Mocking
-
-**Framework:**
-- None configured
-
-**Patterns:**
-- Not applicable
-
-**What to Mock:**
-- Not applicable
-
-**What NOT to Mock:**
-- Not applicable
-
-## Fixtures and Factories
-
-**Test Data:**
-- Not applicable
-
-**Location:**
-- Not applicable
-
-## Coverage
-
-**Requirements:**
-- None enforced
-
-**View Coverage:**
-```bash
-# No coverage tooling configured
+interface CoreActions {
+  setWalletAddress: (address: string | null) => void;
+  setUser: (userId: string | null, name: string, stats: UserStats | null) => void;
+  // ... more typed actions
+}
 ```
 
-## Test Types
+## Mocking Strategy
 
-**Unit Tests:**
-- Not present
+**Current Approach:**
+- No mocking framework detected
+- NPC/bot spawning provides test/development alternative to unit mocking
+- Message handlers in `NetworkContext` can be stubbed by controlling Room messages
 
-**Integration Tests:**
-- Not present
+**Testing capability from `NetworkContext.tsx`:**
+```typescript
+const spawnNpc = useCallback((heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => {
+  if (gameRoomRef.current) {
+    const data: any = { heroId, position, name };
+    if (team) data.team = team;
+    gameRoomRef.current.send('spawnNpc', data);
+  }
+}, []);
 
-**E2E Tests:**
-- Not present
+const damageNpc = useCallback((npcId: string, damage: number) => {
+  gameRoomRef.current?.send('damageNpc', { npcId, damage });
+}, []);
 
-## Common Patterns
+const killNpc = useCallback((npcId: string) => {
+  gameRoomRef.current?.send('killNpc', { npcId });
+}, []);
 
-**Async Testing:**
-- Not applicable
+const killAllNpcs = useCallback(() => {
+  gameRoomRef.current?.send('killAllNpcs', {});
+}, []);
+```
 
-**Error Testing:**
-- Not applicable
+## Manual Testing Capabilities
 
-## Current State
+The game includes built-in development commands accessible through:
 
-This codebase does not currently have any testing infrastructure configured. No test files exist in the application or package source directories.
+**In-game Console:**
+- Location: `apps/client/src/components/ui/GameConsole.tsx`
+- Triggered by backtick key (`) during gameplay
+- Provides direct command execution interface
 
-**What this means for implementation:**
+**NPC/Bot Operations:**
+- `spawnNpc(heroId, team?, position?, name?)` - spawn test NPCs
+- `damageNpc(npcId, damage)` - damage test enemies
+- `killNpc(npcId)` - kill individual NPC
+- `killAllNpcs()` - kill all spawned NPCs
 
-When adding tests to this codebase, you will need to:
+## Async Testing Patterns
 
-1. Choose and install a test framework (recommended: Vitest for Vite-based client, Jest or Vitest for server)
-2. Add test scripts to package.json files
-3. Create test configuration files
-4. Establish testing patterns from scratch
+**Promise-based async operations:**
+```typescript
+// From fetchLobbies in NetworkContext.tsx
+const fetchLobbies = useCallback(async (): Promise<LobbyInfo[]> => {
+  try {
+    const httpUrl = config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+    const response = await fetch(`${httpUrl}/lobbies`);
+    const data = await response.json();
+    const lobbies = data.lobbies || [];
+    setAvailableLobbies(lobbies);
+    return lobbies;
+  } catch (error) {
+    console.error('Failed to fetch lobbies:', error);
+    return [];
+  }
+}, [setAvailableLobbies]);
+```
 
-**Quality Assurance Approach:**
+**Room connection async patterns:**
+```typescript
+// From joinGameRoom in NetworkContext.tsx
+const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string) => {
+  if (isJoiningGameRef.current) {
+    console.log('[joinGameRoom] Already joining a game room, ignoring duplicate call');
+    return;
+  }
+  isJoiningGameRef.current = true;
 
-The project currently relies on:
-- TypeScript strict mode for type safety
-- Manual testing during development
-- `turbo run typecheck` for compile-time error detection
-- `turbo run lint` (though no linter is configured)
+  setLoading(true);
 
-**Recommendations for Future Testing:**
+  try {
+    gameRoomRef.current = await client.joinById(gameRoomId, {
+      playerName,
+      preferredTeam: team,
+      clientId,
+    });
 
-Given the monorepo structure with Turbo and the existing tech stack:
+    setupGameListeners(gameRoomRef.current, playerName);
+    // ... success handling
+  } catch (error) {
+    console.error('Failed to join game room:', error);
+    setLoading(false);
+    isJoiningGameRef.current = false;
+    throw error;
+  }
+}, [getClient, setupGameListeners, setLoading, setRoomId, setAppPhase]);
+```
 
-- **Client (React + Three.js):** Vitest + React Testing Library for component tests, Playwright for E2E
-- **Server (Colyseus):** Vitest or Jest for game logic, integration tests for room state
-- **Packages:** Vitest for shared logic (game-logic, physics, shared)
-- **Coverage target:** Start with 60% for critical paths (game logic, ability systems, movement)
-- **Test location:** Co-located `__tests__` directories or `.test.ts` files next to source
+## Error Testing
 
-**Critical Areas Needing Test Coverage:**
+**Runtime validation approach:**
+- Console warnings for missing/invalid resources
+- Graceful degradation (e.g., sound files return null instead of throwing)
+- Network errors caught and logged with fallback states
 
-Based on codebase exploration, these systems would benefit most from testing:
+**Example from `useAudio.ts`:**
+```typescript
+const loadSound = useCallback(async (name: SoundName): Promise<SoundEffect | null> => {
+  // ... setup code ...
+  try {
+    const response = await fetch(soundDef.path);
+    if (!response.ok) {
+      console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
+      return null;
+    }
 
-1. **Hero ability execution** (`packages/game-logic/src/heroes/`, `packages/game-logic/src/abilities/`)
-   - Ability cooldown logic
-   - Charge systems
-   - Ultimate charge accumulation
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = await ctx.decodeAudioData(arrayBuffer);
 
-2. **Physics and movement** (`packages/physics/src/`)
-   - Ground detection
-   - Wall-running
-   - Sliding mechanics
-   - Grappling physics
+    const effect: SoundEffect = {
+      buffer,
+      volume: soundDef.volume,
+    };
 
-3. **Network synchronization** (`apps/server/src/rooms/`, `apps/client/src/store/`)
+    sharedSounds.set(name, effect);
+    return effect;
+  } catch (error) {
+    console.warn(`[Audio] Failed to load sound: ${name}`, error);
+    return null;
+  }
+}, [initAudio]);
+```
+
+## Test Coverage Analysis
+
+**Critical Untested Areas:**
+
+1. **Network Synchronization (`NetworkContext.tsx`)**
+   - Room lifecycle (create, join, leave)
+   - Message handlers (playerJoined, playerLeft, phaseChange, etc.)
+   - Duplicate session detection
+   - Reconnection logic with clientId tracking
+   - Lines: 557 total, complex event handling
+
+2. **Game State Management (`gameStore.ts`)**
+   - `updateGameState()` with Map mutation optimization
    - Player state reconciliation
-   - Input prediction
-   - Reconnection handling
+   - Slice integration (projectiles, glacier)
+   - Lines: 509 total, critical business logic
 
-4. **Game mode logic** (`packages/game-logic/src/ctf/`, `packages/game-logic/src/match/`)
-   - Flag capture
-   - Scoring
-   - Round transitions
+3. **Ability System (`abilityHandlers.ts` in server, ability hooks in client)**
+   - Ability execution and cooldown management
+   - Projectile spawning and tracking
+   - Effect resolution and collision
+   - Lines: 498 (gameMessageHandlers)
+
+4. **Physics and Movement (`PlayerController`, physics hooks)**
+   - Movement input processing
+   - Collision detection
+   - Gravity and jumping
+   - Movement sound syncing
+
+5. **Audio System (`useAudio.ts`)**
+   - Audio context initialization and browser compatibility
+   - Singleton pattern enforcement
+   - Audio loading and caching
+   - Volume/mute state management
+   - Looping audio with fade in/out
+   - Lines: 780 total, many singleton side effects
+
+6. **UI Components (MainLobby, HeroSelect, HUD, etc.)**
+   - Largest components: MainLobby (1411), HUD (922), Lobby (798)
+   - Event handling and state transitions
+   - Player interaction validation
+
+## Recommended Testing Structure (if implemented)
+
+**Unit test targets (by priority):**
+1. `apps/server/src/rooms/abilityHandlers.ts` - core game mechanics
+2. `apps/server/src/auth/verify.ts` - signature verification
+3. `packages/game-logic/src/heroes/*.ts` - hero definitions and ability logic
+4. `apps/client/src/store/gameStore.ts` - state management
+5. `apps/client/src/hooks/useAudio.ts` - audio state and lifecycle
+
+**Integration test targets:**
+1. Network room creation and joining flow
+2. Game lifecycle (lobby → hero select → gameplay → end)
+3. Ability execution with server validation
+4. Player synchronization across clients
+5. Audio playback during game phases
+
+**E2E test targets:**
+1. Complete game match flow (2+ players)
+2. CTF flag mechanics
+3. Lobby creation and player management
+4. Reconnection after disconnect
+5. Hero ability execution and visual effects
+
+## Manual Testing Checklist
+
+Current approach relies on manual testing:
+- Start dev server and client
+- Use GameConsole for ability/NPC testing
+- Monitor browser console and network tab
+- Verify physics simulation visually
+- Test audio with different volume settings
+- Join multiple lobbies and test synchronization
+- Disconnect/reconnect to test reconnection logic
+
+## Coverage Gaps by Feature
+
+**Hero Abilities:**
+- No unit tests for ability cooldown calculations
+- No tests for ability effect interactions
+- Server-side validation untested
+
+**State Synchronization:**
+- Client/server state reconciliation untested
+- Map optimization in `updateGameState()` untested
+- Duplicate player cleanup untested
+
+**Network Protocol:**
+- Message ordering untested
+- Reconnection with duplicate detection untested
+- Room lifecycle edge cases untested
+
+**Audio:**
+- Context initialization in different browsers untested
+- Singleton pattern enforcement untested
+- Audio loading error handling untested
+- Fade in/out timing untested
+
+**Physics:**
+- Collision detection untested
+- Jump mechanics untested
+- Slide mechanics untested
+- Wall run mechanics untested
 
 ---
 

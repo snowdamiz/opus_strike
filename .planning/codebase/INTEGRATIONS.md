@@ -4,134 +4,154 @@
 
 ## APIs & External Services
 
-**Blockchain:**
-- Solana - Wallet-based authentication
-  - SDK/Client: `@solana/web3.js` 1.95.4
-  - Auth: Phantom wallet browser extension
-  - Purpose: User authentication via wallet signature, no transactions
-  - Implementation: `apps/server/src/auth/verify.ts`, `apps/client/src/contexts/WalletContext.tsx`
+**Solana Blockchain:**
+- Phantom Wallet - User authentication via wallet signing
+  - SDK/Client: `@solana/web3.js`, `tweetnacl`, `bs58`
+  - Integration: `apps/client/src/contexts/WalletContext.tsx`
+  - Auth: Wallet signing (no transaction costs, message-based)
+
+**Game Multiplayer:**
+- Colyseus - Real-time game state synchronization
+  - Server: `colyseus` 0.15.55 with `@colyseus/ws-transport`
+  - Client: `colyseus.js` 0.15.25
+  - Server rooms: `game_room`, `lobby_room` (defined in `apps/server/src/index.ts`)
+  - WebSocket connection on configured `SERVER_URL`
 
 ## Data Storage
 
 **Databases:**
-- PostgreSQL 16
-  - Connection: `DATABASE_URL` env var
-  - Client: Prisma ORM (`@prisma/client` 5.22.0)
-  - Schema: `apps/server/prisma/schema.prisma`
-  - Container: Docker Compose service `voxel-strike-db` on port 5432
-  - Default credentials: `voxelstrike` / `voxelstrike_dev` (development only)
+- PostgreSQL 16-alpine
+  - Connection: `DATABASE_URL` environment variable
+  - Client: Prisma ORM (`@prisma/client`)
+  - Container: Docker image `postgres:16-alpine`
+  - Port: 5432 (local development)
+  - Credentials: User `voxelstrike`, Password `voxelstrike_dev` (development)
+  - Database: `voxelstrike`
 
 **File Storage:**
-- Local filesystem only
-- No cloud storage integration detected
+- Local filesystem only (no external storage integration)
+- 3D models: GLTF assets served from `apps/client/public/`
+- Static assets: Images, fonts in `apps/client/public/`
 
 **Caching:**
-- In-memory nonce store for auth flow
-  - Implementation: `Map` in `apps/server/src/auth/routes.ts`
-  - Lifecycle: 5-minute TTL with periodic cleanup
-  - Purpose: Temporary storage for wallet signature nonces
+- None detected (Colyseus handles state caching in-memory per room)
 
 ## Authentication & Identity
 
 **Auth Provider:**
-- Custom Solana wallet authentication
-  - Implementation: Sign-in with Ethereum (SIWE) style message signing
-  - Flow: Nonce generation → Phantom signature → Server verification
-  - Session: JWT tokens stored in HTTP-only cookies (30-day expiry)
-  - Signature verification: TweetNaCl (`tweetnacl` 1.0.3)
-  - Routes: `apps/server/src/auth/routes.ts`
+- Custom implementation with Solana wallet integration
 
-**User Database:**
-- Prisma User model
-  - Fields: `walletAddress` (unique), `name`, stats fields
-  - Location: `apps/server/prisma/schema.prisma`
+**Implementation Details:**
+- Location: `apps/server/src/auth/` (routes, verify, nonce management)
+- Flow:
+  1. Client requests nonce via `GET /auth/nonce?walletAddress=<address>`
+  2. Server generates unique nonce and stores temporarily (5-minute TTL)
+  3. Client signs message via Phantom wallet using `signMessage()`
+  4. Client submits signature to `POST /auth/verify`
+  5. Server validates signature using `verifySignature()` from `apps/server/src/auth/verify.ts`
+  6. Server creates JWT token and sets HTTP-only cookie
+  7. New users complete registration via `POST /auth/register`
+  8. Session validation via `GET /auth/session` uses JWT from cookies
+
+**JWT Configuration:**
+- Secret: `JWT_SECRET` environment variable (development default: `voxel-strike-secret-key-change-in-production`)
+- Expiry: 30 days
+- Cookie: `auth_token` (HTTP-only, secure in production, sameSite in production)
+- Token payload: `{ walletAddress, userId }`
+
+**Signature Verification:**
+- Algorithm: Ed25519 (Solana default)
+- Libraries: `tweetnacl` for cryptographic verification, `bs58` for key decoding
+- Verification code: `apps/server/src/auth/verify.ts::verifySignature()`
+- Protection: Nonce-based to prevent replay attacks
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None - console.error logging only
+- None detected (application logs errors to console)
 
 **Logs:**
-- Console-based logging
-- No external logging service integration
-
-**Performance:**
-- r3f-perf 7.2.3 for client-side Three.js performance monitoring (dev only)
-- Statsjs integration via `@types/stats.js`
+- Console logging only (development)
+- No centralized logging service integrated
+- Server startup information logged to console
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- Not configured - local development only
+- Not deployed (local development environment)
+- Docker Compose for local PostgreSQL
 
 **CI Pipeline:**
-- None detected - no GitHub Actions, Jenkins, or other CI config files
+- None detected (no GitHub Actions, GitLab CI, or similar)
 
-**Container Orchestration:**
-- Docker Compose 3.8 - Database only
-  - Service: `postgres` (PostgreSQL 16-alpine)
-  - Healthcheck: `pg_isready` with 5-second intervals
-  - Volume: `postgres_data` for persistence
-  - File: `docker-compose.yml`
+**Build Pipeline:**
+- Turborepo orchestrates builds
+- Vite builds client to `apps/client/dist`
+- TypeScript builds server to `apps/server/dist`
+- Commands: `pnpm build`, `pnpm build:client`, `pnpm build:server`
 
 ## Environment Configuration
 
-**Required env vars:**
-- `DATABASE_URL` - PostgreSQL connection string (format: `postgresql://user:password@host:port/database`)
-- `JWT_SECRET` - Secret key for JWT signing (defaults to insecure dev key)
-- `PORT` - Server port (defaults to 2567)
-- `NODE_ENV` - Environment mode (affects CORS, cookie security)
+**Required Environment Variables:**
 
-**Secrets location:**
-- `apps/server/.env` - Local development
-- Not committed to git (in `.gitignore`)
+**Server (`apps/server/.env`):**
+- `DATABASE_URL` - PostgreSQL connection string (format: `postgresql://user:password@host:port/database?schema=public`)
+- `PORT` - Server port (default: 2567)
+- `JWT_SECRET` - Secret key for JWT signing (must change in production)
+- `NODE_ENV` - Environment mode (`development`, `production`)
 
-**Client configuration:**
-- `apps/client/src/config/environment.ts` - Server URL configuration
-- Vite env variable support via `import.meta.env`
+**Client:**
+- `VITE_SERVER_URL` - WebSocket server URL (development default: `ws://localhost:2567`, production: `wss://...`)
+- Set via `import.meta.env` in Vite
+- Configured in `apps/client/src/config/environment.ts`
+
+**Docker Compose:**
+- `POSTGRES_USER` - PostgreSQL user (default: `voxelstrike`)
+- `POSTGRES_PASSWORD` - PostgreSQL password (default: `voxelstrike_dev`)
+- `POSTGRES_DB` - Database name (default: `voxelstrike`)
+
+**Secrets Location:**
+- Development: `.env` files in `apps/server/` (Git-ignored)
+- Production: Environment variables should be set via hosting platform secrets management
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- None
+- `POST /auth/verify` - Webhook for signature verification (internal)
+- `POST /auth/register` - User registration callback
+- `GET /auth/session` - Session validation endpoint
+- `GET /auth/user/:walletAddress` - User lookup endpoint
+- `GET /health` - Health check endpoint
+- `GET /lobbies` - List available game lobbies
 
 **Outgoing:**
-- None
+- None detected (no external service callbacks)
 
-## Game Networking
+## WebSocket Configuration
 
-**Real-time Communication:**
-- Colyseus WebSocket server
-  - Transport: `@colyseus/ws-transport` 0.15.0
-  - Client SDK: `colyseus.js` 0.15.25
-  - State sync: `@colyseus/schema` 2.0.0
-  - Rooms: `GameRoom`, `LobbyRoom`
-  - Endpoint: `ws://localhost:2567` (configurable via client config)
-  - Ping: 5-second intervals, 3 max retries
+**Server:**
+- Transport: `@colyseus/ws-transport`
+- Ping interval: 5000ms
+- Max retries: 3
+- Port: 2567 (configurable via `PORT` env var)
 
-**CORS Configuration:**
-- Allowed origins: `http://localhost:5173`, `http://localhost:3000`, `http://127.0.0.1:5173`, `http://127.0.0.1:3000`
-- Credentials: Enabled for cookie-based auth
-- Implementation: Express middleware in `apps/server/src/index.ts`
+**Client Connection:**
+- Library: `colyseus.js`
+- URL: `ws://localhost:2567` (dev) or `wss://...` (production)
+- CORS: Configured in `apps/server/src/index.ts`
+  - Allowed origins: `http://localhost:5173`, `http://localhost:3000`, `http://127.0.0.1:5173`, `http://127.0.0.1:3000`
+  - All origins allowed in non-production environments
 
-## Browser APIs
+## Room Management
 
-**WebGL:**
-- Three.js renderer with WebGL 2.0
-- GPU detection: `detect-gpu` 5.0.70
+**Game Rooms:**
+- `game_room` - Active game sessions (5v5 CTF matches)
+- `lobby_room` - Matchmaking and team selection lobbies
 
-**WebSockets:**
-- Native browser WebSocket API (via Colyseus client)
-
-**Web Crypto:**
-- Not used - Solana signature verification done via TweetNaCl
-
-**Phantom Wallet API:**
-- Browser extension injection
-  - Global: `window.phantom.solana` or `window.solana`
-  - Methods: `connect()`, `disconnect()`, `signMessage()`, event listeners
-  - Detection: `isPhantom` flag check
-  - Implementation: `apps/client/src/contexts/WalletContext.tsx`
+**Room Features:**
+- Real-time listing via Colyseus `enableRealtimeListing()`
+- Room metadata: `isPublic`, `name`, `status`
+- Graceful shutdown on SIGTERM/SIGINT
 
 ---
 
