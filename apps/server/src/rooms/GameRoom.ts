@@ -2,13 +2,14 @@ import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
 import { Player } from './schema/Player';
 import { Vec3Schema, AbilityStateSchema } from './schema/Components';
-import { 
-  DEFAULT_GAME_CONFIG, 
-  TICK_RATE, 
+import {
+  DEFAULT_GAME_CONFIG,
+  TICK_RATE,
   TICK_INTERVAL_MS,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
   getHeroStats,
+  SCI_FI_CTF_POSITIONS,
 } from '@voxel-strike/shared';
 import type { 
   HeroId, 
@@ -988,22 +989,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getSpawnPosition(team: Team): { x: number; y: number; z: number } {
-    // Spawn positions for the new GLB map
-    const baseX = team === 'red' ? -20 : 20;
-    const offsets = [
-      { x: -3, z: -3 },
-      { x: -3, z: 3 },
-      { x: 3, z: -3 },
-      { x: 3, z: 3 },
-      { x: 0, z: 0 },
-    ];
-    
-    const offset = offsets[Math.floor(Math.random() * offsets.length)];
-    
+    // Use configured spawn positions from shared map config
+    const spawnPoints = SCI_FI_CTF_POSITIONS.spawnPoints[team];
+    const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+
     return {
-      x: baseX + offset.x,
-      y: 50, // Spawn high above the map, player will fall down
-      z: offset.z,
+      x: spawn.x,
+      y: spawn.y,
+      z: spawn.z,
     };
   }
 

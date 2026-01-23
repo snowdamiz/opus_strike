@@ -115,18 +115,13 @@ export function PlayerController() {
   // Initialize camera position
   useEffect(() => {
     if (localPlayerForInit && !initializedRef.current) {
-      const startY = localPlayerForInit.position.y < 20 ? 60 : localPlayerForInit.position.y;
+      // Trust the server's spawn position - it uses configured map positions
+      const startY = localPlayerForInit.position.y;
       camera.position.set(localPlayerForInit.position.x, startY + EYE_HEIGHT, localPlayerForInit.position.z);
-
-      if (localPlayerForInit.position.y < 20) {
-        updateLocalPlayer({
-          position: { x: localPlayerForInit.position.x, y: startY, z: localPlayerForInit.position.z },
-        });
-      }
 
       initializedRef.current = true;
     }
-  }, [localPlayerForInit, camera, updateLocalPlayer]);
+  }, [localPlayerForInit, camera]);
 
   // Create sound objects for passing to ability hooks
   const playerSounds = {

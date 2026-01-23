@@ -24,9 +24,10 @@ export const SMALL_BUMP_THRESHOLD = 0.15;
 export const SMOOTH_SPEED_SMALL = 8;
 export const SMOOTH_SPEED_LARGE = 20;
 
-// Out of bounds
-export const OUT_OF_BOUNDS_Y = 5;
-export const RESPAWN_Y = 60;
+// Out of bounds - ground level is y=0, spawns at y=1
+// Only consider out of bounds if significantly below map
+export const OUT_OF_BOUNDS_Y = -20;
+export const RESPAWN_Y = 2;
 
 // ============================================================================
 // FIRING RATES
