@@ -2,11 +2,12 @@
  * SciFiCTFMap - Main map component for the asymmetrical CTF arena
  *
  * This component renders the procedural sci-fi themed CTF map.
- * Currently renders a debug grid floor; geometry will be added in subsequent plans.
+ * Includes debug grid floor and team base geometry.
  */
 
 import { Grid } from '@react-three/drei';
 import { MAP_CONFIG } from './config';
+import { TeamABase } from './geometry';
 
 export function SciFiCTFMap() {
   const { dimensions } = MAP_CONFIG;
@@ -29,10 +30,12 @@ export function SciFiCTFMap() {
         infiniteGrid={false}
       />
 
-      {/* Placeholder for map geometry - to be added in subsequent plans:
-       * - Plan 02: Ground geometry and elevation
-       * - Plan 03: Boundary walls and route structures
-       * - Plan 04: Team base areas
+      {/* Team base geometry */}
+      <TeamABase />
+
+      {/* Placeholder for additional map geometry - to be added in subsequent plans:
+       * - Plan 03: Team B base geometry
+       * - Plan 04: Central arena and route structures
        * - Plan 05: Physics colliders
        */}
     </group>
