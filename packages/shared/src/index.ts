@@ -15,3 +15,6 @@ export * from './constants/heroes.js';
 // Utils
 export * from './utils/math.js';
 
+// Maps
+export * from './maps/index.js';
+
