@@ -32,20 +32,21 @@ export const MAP_CONFIG = {
 
   // Spawn positions - distributed across base area
   // 5 positions per team for rotation variety
+  // y=3 ensures player spawns above floor geometry
   spawnPoints: {
     teamA: [
-      { x: -80, y: 1, z: -12 }, // North spawn (near north route)
-      { x: -80, y: 1, z: 0 }, // Center spawn
-      { x: -80, y: 1, z: 12 }, // South spawn (near south route)
-      { x: -75, y: 1, z: -6 }, // Front-north spawn
-      { x: -75, y: 1, z: 6 }, // Front-south spawn
+      { x: -80, y: 3, z: -12 }, // North spawn (near north route)
+      { x: -80, y: 3, z: 0 }, // Center spawn
+      { x: -80, y: 3, z: 12 }, // South spawn (near south route)
+      { x: -75, y: 3, z: -6 }, // Front-north spawn
+      { x: -75, y: 3, z: 6 }, // Front-south spawn
     ],
     teamB: [
-      { x: 80, y: 1, z: -12 }, // North spawn
-      { x: 80, y: 1, z: 0 }, // Center spawn
-      { x: 80, y: 1, z: 12 }, // South spawn
-      { x: 75, y: 1, z: -6 }, // Front-north spawn (closer to routes)
-      { x: 75, y: 1, z: 6 }, // Front-south spawn
+      { x: 80, y: 3, z: -12 }, // North spawn
+      { x: 80, y: 3, z: 0 }, // Center spawn
+      { x: 80, y: 3, z: 12 }, // South spawn
+      { x: 75, y: 3, z: -6 }, // Front-north spawn (closer to routes)
+      { x: 75, y: 3, z: 6 }, // Front-south spawn
     ],
   },
 

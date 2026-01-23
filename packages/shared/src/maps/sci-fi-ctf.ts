@@ -13,20 +13,21 @@ export const SCI_FI_CTF_POSITIONS = {
   teamBBase: { x: 80, y: 0, z: 0 },
 
   // Spawn positions - distributed across base area
+  // y=3 ensures player spawns above floor geometry (will drop slightly on spawn)
   spawnPoints: {
     red: [
-      { x: -80, y: 1, z: -12 },
-      { x: -80, y: 1, z: 0 },
-      { x: -80, y: 1, z: 12 },
-      { x: -75, y: 1, z: -6 },
-      { x: -75, y: 1, z: 6 },
+      { x: -80, y: 3, z: -12 },
+      { x: -80, y: 3, z: 0 },
+      { x: -80, y: 3, z: 12 },
+      { x: -75, y: 3, z: -6 },
+      { x: -75, y: 3, z: 6 },
     ] as Vec3[],
     blue: [
-      { x: 80, y: 1, z: -12 },
-      { x: 80, y: 1, z: 0 },
-      { x: 80, y: 1, z: 12 },
-      { x: 75, y: 1, z: -6 },
-      { x: 75, y: 1, z: 6 },
+      { x: 80, y: 3, z: -12 },
+      { x: 80, y: 3, z: 0 },
+      { x: 80, y: 3, z: 12 },
+      { x: 75, y: 3, z: -6 },
+      { x: 75, y: 3, z: 6 },
     ] as Vec3[],
   },
 
