@@ -463,6 +463,14 @@ export function PlayerController() {
       movement.refs.smoothedY.current = groundResult.newSmoothedY;
     }
 
+    // Reset smoothedY when becoming airborne to prevent bounce-on-land from height
+    // Without this, smoothedY retains the old ground level, causing the player to be
+    // "pulled up" toward the old height when landing at a lower elevation
+    const justBecameAirborne = !movement.refs.isGrounded.current && movement.refs.wasGrounded.current;
+    if (justBecameAirborne) {
+      movement.refs.smoothedY.current = null;
+    }
+
     // Handle landing (bunny hop speed retention)
     const justLanded = movement.refs.isGrounded.current && !movement.refs.wasGrounded.current;
     movement.handleLanding(velocity, movement.refs.wasGrounded.current, movement.refs.isGrounded.current);
