@@ -7,7 +7,7 @@
 
 import { Grid } from '@react-three/drei';
 import { MAP_CONFIG } from './config';
-import { TeamABase, TeamBBase, Routes, CenterZone, Boundaries } from './geometry';
+import { TeamABase, TeamBBase, Routes, CenterZone, Boundaries, FlagZone } from './geometry';
 
 export function SciFiCTFMap() {
   return (
@@ -31,6 +31,18 @@ export function SciFiCTFMap() {
       {/* Team base geometry */}
       <TeamABase />
       <TeamBBase />
+
+      {/* Flag Zone Visual Indicators - contested state feedback */}
+      <FlagZone
+        position={[MAP_CONFIG.flagZones.teamA.x, 0, MAP_CONFIG.flagZones.teamA.z]}
+        team="red"
+        size={4}
+      />
+      <FlagZone
+        position={[MAP_CONFIG.flagZones.teamB.x, 0, MAP_CONFIG.flagZones.teamB.z]}
+        team="blue"
+        size={4}
+      />
 
       {/* Route structures - three lanes connecting bases */}
       <Routes />
