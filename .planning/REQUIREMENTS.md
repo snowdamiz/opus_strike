@@ -1,54 +1,61 @@
-# Requirements: Opus Strike Performance Optimization
+# Requirements: Opus Strike CTF Map
 
 **Defined:** 2026-01-22
-**Core Value:** Stable 60 FPS during heavy multiplayer combat with no visible hitches
+**Core Value:** A fully playable asymmetrical CTF map with proper collision, spawn points, and flag zones that integrates seamlessly with the existing game systems.
 
 ## v1 Requirements
 
 Requirements for initial release. Each maps to roadmap phases.
 
-### Foundation
+### Map Foundation
 
-Critical React-level optimizations. Without these, performance is unacceptable.
+- [ ] **FOUND-01**: Remove current imported map from game world
+- [ ] **FOUND-02**: Create asymmetrical map layout with visually distinct team sides
+- [ ] **FOUND-03**: Establish three main attack routes connecting team bases
+- [ ] **FOUND-04**: Balance travel times between routes (no route significantly faster)
 
-- [ ] **FND-01**: Replace all setState calls in useFrame hooks with direct ref mutations
-- [ ] **FND-02**: Update all Zustand store subscriptions to use narrow selectors with shallow comparison
-- [ ] **FND-03**: Add React.memo wrapper to all effect components (RocketEffect, HookshotEffect, ExplosionEffect, etc.)
-- [ ] **FND-04**: Replace object creation in useFrame with pre-allocated temp vector reuse
-- [ ] **FND-05**: Remove or wrap all console.log statements in production code (57 occurrences found)
+### Team Areas
 
-### Rendering
+- [ ] **TEAM-01**: Build Team A base area with distinct visual identity
+- [ ] **TEAM-02**: Build Team B base area with distinct visual identity
+- [ ] **TEAM-03**: Configure spawn points for Team A (multiple positions)
+- [ ] **TEAM-04**: Configure spawn points for Team B (multiple positions)
+- [ ] **TEAM-05**: Create flag zone for Team A with 2-3 entry points
+- [ ] **TEAM-06**: Create flag zone for Team B with 2-3 entry points
+- [ ] **TEAM-07**: Integrate flag zones with FlagManager and CTFGameMode
 
-Rendering optimizations to reduce draw calls and GPU overhead.
+### Cover & Engagement
 
-- [ ] **REND-01**: Implement InstancedMesh for rockets (single draw call for all rockets)
-- [ ] **REND-02**: Implement InstancedMesh for hookshot projectiles and other repeated projectiles
-- [ ] **REND-03**: Implement object pooling system for explosion effects and particles
-- [ ] **REND-04**: Extend existing LOD system to cull distant particle effects
-- [ ] **REND-05**: Add r3f-perf monitoring component for real-time FPS/GPU metrics
+- [ ] **COVR-01**: Place hard cover elements (walls, barriers) along routes
+- [ ] **COVR-02**: Define 2-3 choke points for team fight engagement
+- [ ] **COVR-03**: Create mixed sightlines (short, medium, long range options)
+- [ ] **COVR-04**: Add elevated positions with height advantage
+- [ ] **COVR-05**: Build ramps/stairs for vertical navigation
 
-### Architecture
+### Environment Elements
 
-Structural changes to separate high-frequency visual updates from game state.
+- [ ] **ENVR-01**: Create building structures (solid, provide cover/routing)
+- [ ] **ENVR-02**: Add trees/foliage for decoration and concealment
+- [ ] **ENVR-03**: Place props (barrels, crates) for small cover and detail
 
-- [ ] **ARCH-01**: Create visualStore.ts for high-frequency visual data (60fps mutations)
-- [ ] **ARCH-02**: Migrate player position interpolation to use ref-based updates instead of store updates
-- [ ] **ARCH-03**: Consolidate 80+ useFrame hooks into centralized animation loop with priority-based system
+### Technical Integration
+
+- [ ] **TECH-01**: Generate collision meshes for all walkable surfaces
+- [ ] **TECH-02**: Generate collision meshes for all blocking surfaces (walls, buildings)
+- [ ] **TECH-03**: Register collision meshes with Rapier physics world
+- [ ] **TECH-04**: Integrate spawn positions with SpawnManager
+- [ ] **TECH-05**: Use instanced rendering for repeated props (performance optimization)
 
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
 
-### Adaptive Quality
+### Advanced Features
 
-- **ADAPT-01**: Implement adaptive quality scaling to auto-reduce shadow resolution during heavy combat
-- **ADAPT-02**: Implement dynamic particle count adjustment based on FPS
-- **ADAPT-03**: Add adaptive rendering distance scaling
-
-### Advanced Monitoring
-
-- **MON-02**: Implement performance regression testing in CI/CD
-- **MON-03**: Add user telemetry for performance metrics
+- **ADV-01**: Hero-specific shortcuts (grapple points, teleport spots)
+- **ADV-02**: Competitive lighting optimization (clear visibility, no dark corners)
+- **ADV-03**: Collision layer separation (players, projectiles, triggers)
+- **ADV-04**: Debug visualization toggle for testing
 
 ## Out of Scope
 
@@ -56,12 +63,11 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| WebGPU migration | Experimental in 2025, limited browser support. Current bottleneck is React, not GPU. |
-| R3F v9 upgrade | Currently in alpha/beta with breaking changes. v8 is stable and sufficient. |
-| Gameplay mechanics changes | Optimizing rendering, not changing ability behavior or game feel. |
-| Server-side optimization | Focus on client-side rendering stutters. Server performance is separate concern. |
-| ECS pattern (miniplex) | Significant refactor. Evaluate only if current architecture proves insufficient. |
-| Compute shaders | Overkill for current scale. Defer until hitting performance walls with standard optimizations. |
+| Destructible/interactive elements | Adds complexity without testing value |
+| Multiple map variants | Single map sufficient for testing |
+| Map editor/tools | Manual construction is fine for one map |
+| Complex textures/materials | Low-poly aesthetic uses simple materials |
+| Dynamic lighting | Performance overhead, not needed for testing |
 
 ## Traceability
 
@@ -69,25 +75,36 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FND-01 | Phase 1 | Pending |
-| FND-02 | Phase 1 | Pending |
-| FND-03 | Phase 1 | Pending |
-| FND-04 | Phase 1 | Pending |
-| FND-05 | Phase 1 | Pending |
-| ARCH-01 | Phase 2 | Pending |
-| ARCH-02 | Phase 2 | Pending |
-| REND-05 | Phase 2 | Pending |
-| REND-01 | Phase 3 | Pending |
-| REND-02 | Phase 3 | Pending |
-| REND-03 | Phase 4 | Pending |
-| ARCH-03 | Phase 5 | Pending |
-| REND-04 | Phase 6 | Pending |
+| FOUND-01 | TBD | Pending |
+| FOUND-02 | TBD | Pending |
+| FOUND-03 | TBD | Pending |
+| FOUND-04 | TBD | Pending |
+| TEAM-01 | TBD | Pending |
+| TEAM-02 | TBD | Pending |
+| TEAM-03 | TBD | Pending |
+| TEAM-04 | TBD | Pending |
+| TEAM-05 | TBD | Pending |
+| TEAM-06 | TBD | Pending |
+| TEAM-07 | TBD | Pending |
+| COVR-01 | TBD | Pending |
+| COVR-02 | TBD | Pending |
+| COVR-03 | TBD | Pending |
+| COVR-04 | TBD | Pending |
+| COVR-05 | TBD | Pending |
+| ENVR-01 | TBD | Pending |
+| ENVR-02 | TBD | Pending |
+| ENVR-03 | TBD | Pending |
+| TECH-01 | TBD | Pending |
+| TECH-02 | TBD | Pending |
+| TECH-03 | TBD | Pending |
+| TECH-04 | TBD | Pending |
+| TECH-05 | TBD | Pending |
 
 **Coverage:**
-- v1 requirements: 13 total
-- Mapped to phases: 13
-- Unmapped: 0
+- v1 requirements: 24 total
+- Mapped to phases: 0
+- Unmapped: 24 ⚠️
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after roadmap creation*
+*Last updated: 2026-01-22 after initial definition*
