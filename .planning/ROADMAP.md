@@ -29,10 +29,14 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Ground plane exists with visually distinct Team A and Team B sides
   3. Three navigable paths connect the two sides (even if just floor geometry)
   4. Walking each route takes approximately equal time (within 20% variance)
-**Plans**: TBD
+**Plans**: 5 plans in 3 waves
 
 Plans:
-- [ ] 01-01: TBD
+- [ ] 01-01-PLAN.md - Remove old GLB map, scaffold structure, create materials (Wave 1)
+- [ ] 01-02-PLAN.md - Team A base geometry (tech/platform aesthetic) (Wave 2)
+- [ ] 01-03-PLAN.md - Team B base geometry (natural/cave aesthetic) (Wave 2)
+- [ ] 01-04-PLAN.md - Center zone, routes, interconnects, hazards (Wave 2)
+- [ ] 01-05-PLAN.md - Boundary walls, mapBoundaries update, physics colliders (Wave 3)
 
 ### Phase 2: Team Base Construction
 **Goal**: Both teams have complete, functional base areas with spawn points and flag capture zones integrated with game systems
@@ -99,7 +103,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Map Foundation | 0/? | Not started | - |
+| 1. Map Foundation | 0/5 | Planned | - |
 | 2. Team Base Construction | 0/? | Not started | - |
 | 3. Combat Routes & Cover | 0/? | Not started | - |
 | 4. Environment Decoration | 0/? | Not started | - |
