@@ -1,145 +1,164 @@
 # Architecture
 
-**Analysis Date:** 2024-01-22
+**Analysis Date:** 2026-01-22
 
 ## Pattern Overview
 
-**Overall:** Distributed Real-Time Multiplayer Architecture with Monorepo Package Structure
+**Overall:** Client-Server Architecture with Real-time Multiplayer (Colyseus)
 
 **Key Characteristics:**
-- Client-Server WebSocket-based real-time multiplayer game
-- Monorepo with shared packages and separate apps
-- Physics-first 3D voxel-based combat game
-- Component-based hero system with abilities
-- State synchronization through Colyseus
-- React Three Fiber for 3D rendering
+- Turborepo monorepo with shared packages for code reuse
+- Client-authoritative prediction with server reconciliation
+- WebSocket-based real-time state synchronization via Colyseus
+- Physics simulation on both client (visual) and server (authoritative)
+- Component-based visual rendering with React Three Fiber
 
 ## Layers
 
-**Presentation Layer:**
-- Purpose: UI rendering and user interaction
-- Location: `apps/client/src`
-- Contains: React components, hooks, contexts, Three.js/React Three Fiber
-- Depends on: State management, Network layer, Game logic packages
-- Used by: End users
+**Client Application:**
+- Purpose: Renders 3D game world, handles input, predicts movement, displays UI
+- Location: `apps/client/`
+- Contains: React components, Three.js/R3F rendering, client physics, UI, state management
+- Depends on: `@voxel-strike/shared`, `@voxel-strike/game-logic`, `@voxel-strike/physics`, `@react-three/fiber`, `zustand`, `colyseus.js`
+- Used by: End users via browser
 
-**Network Layer:**
-- Purpose: Real-time communication and state synchronization
-- Location: `apps/server/src`, `apps/client/src/hooks`
-- Contains: WebSocket handling, state schemas, message handlers
-- Depends on: Colyseus framework, State models
-- Used by: Client and server applications
+**Server Application:**
+- Purpose: Authoritative game state, physics simulation, matchmaking, authentication
+- Location: `apps/server/`
+- Contains: Colyseus rooms, server-side game logic, Prisma database client, auth handlers
+- Depends on: `@voxel-strike/shared`, `@voxel-strike/game-logic`, `@voxel-strike/physics`, `colyseus`, `express`, `prisma`
+- Used by: Client connects via WebSocket
 
-**Game Logic Layer:**
-- Purpose: Core game mechanics and rules
-- Location: `packages/game-logic/src`
-- Contains: Hero implementations, abilities, game modes
-- Depends on: Physics engine, Shared types/constants
-- Used by: Server for authoritative game logic
-
-**Physics Layer:**
-- Purpose: Movement, collision, and physics simulation
-- Location: `packages/physics/src`
-- Contains: Rapier3D integration, movement controllers
-- Depends on: Rapier3D physics engine, Shared types
-- Used by: Game logic, Client prediction
-
-**Shared Layer:**
-- Purpose: Type definitions, constants, utilities
-- Location: `packages/shared/src`
+**Shared Package:**
+- Purpose: Type definitions, constants, and utilities used by both client and server
+- Location: `packages/shared/`
 - Contains: TypeScript types, game constants, math utilities
-- Depends on: No external dependencies
+- Depends on: Nothing (pure TypeScript)
 - Used by: All other packages and apps
+
+**Game Logic Package:**
+- Purpose: Hero definitions, ability systems, game mode logic (CTF), match management
+- Location: `packages/game-logic/`
+- Contains: Hero classes, ability systems, CTF flag management, spawn management
+- Depends on: `@voxel-strike/shared`, `@voxel-strike/physics`
+- Used by: Both client and server for consistent game rules
+
+**Physics Package:**
+- Purpose: Character movement physics, collision detection, Rapier3D integration
+- Location: `packages/physics/`
+- Contains: Physics world wrapper, movement controllers, collision detection
+- Depends on: `@dimforge/rapier3d-compat`, `@voxel-strike/shared`
+- Used by: Both client and server for movement simulation
 
 ## Data Flow
 
-**Client to Server Flow:**
-1. User input captured via React event handlers
-2. Input transformed to standardized format in hooks
-3. Sent to server via WebSocket using Colyseus client
-4. Server validates input and updates authoritative game state
-5. Server broadcasts state updates to all connected clients
+**Player Input Flow:**
 
-**Server to Client Flow:**
-1. Server processes game tick and updates GameState
-2. State changes pushed to all clients via WebSocket
-3. Client receives state and updates Zustand store
-4. React Three Fiber renders new positions/rotations
-5. UI components update based on state changes
+1. User input captured in `apps/client/src/hooks/useInput.ts`
+2. `PlayerController.tsx` processes input with client-side prediction
+3. Input sent to server via `NetworkContext.tsx` → WebSocket
+4. Server `GameRoom.ts` receives input, updates authoritative state
+5. Server broadcasts state changes via Colyseus schema
+6. Client receives updates in `NetworkContext.tsx` message handlers
+7. Client reconciles predicted state with server state in `gameStore.ts`
+
+**Game State Synchronization Flow:**
+
+1. Server maintains authoritative `GameState` (Colyseus Schema)
+2. Client polls state at 60Hz (`setupPollingSync` in `gameMessageHandlers.ts`)
+3. Server state synced to client `gameStore` (Zustand)
+4. Visual state separated in `visualStore` for smooth interpolation
+5. React Three Fiber renders from visual state each frame
+
+**Ability Execution Flow:**
+
+1. Player presses ability key (detected in `PlayerController.tsx`)
+2. Hero-specific hook handles client-side effects (`hooks/player/abilities/`)
+3. Ability command sent to server via `sendInput`
+4. Server validates ability in `GameRoom.ts` → `abilityHandlers.ts`
+5. Server executes ability, updates game state
+6. State changes broadcast to all clients
+7. Clients render visual effects based on state updates
 
 **State Management:**
-- Server: Authoritative state maintained in Colyseus Room
-- Client: Mirror state via Zustand store
-- Shared: Single source of truth for types and constants
-- Physics: Local prediction with server reconciliation
+- Client uses Zustand for global state (`gameStore.ts` - 508 lines)
+- Separated visual state (`visualStore.ts`) for rendering interpolation
+- Store organized with slices pattern (`slices/projectiles.ts`, `slices/glacier.ts`)
+- Server uses Colyseus Schema for networked state synchronization
 
 ## Key Abstractions
 
 **Hero System:**
-- Purpose: Character-specific abilities and behaviors
-- Examples: `packages/game-logic/src/heroes/`
-- Pattern: Base Hero class with specific implementations
+- Purpose: Defines playable characters with unique abilities
+- Examples: `packages/game-logic/src/heroes/PhantomHero.ts`, `packages/game-logic/src/heroes/BlazeHero.ts`, `packages/game-logic/src/heroes/GlacierHero.ts`
+- Pattern: Class-based inheritance from `HeroBase.ts`, each hero defines stats and ability metadata
 
-**Ability System:**
-- Purpose: Shared ability mechanics and effects
-- Examples: `packages/game-logic/src/abilities/`
-- Pattern: Template method pattern for different ability types
+**Room Pattern (Colyseus):**
+- Purpose: Manages multiplayer sessions with synchronized state
+- Examples: `apps/server/src/rooms/GameRoom.ts`, `apps/server/src/rooms/LobbyRoom.ts`
+- Pattern: Colyseus Room lifecycle (`onCreate`, `onJoin`, `onLeave`, `onMessage`), tick-based simulation
 
-**Physics World:**
-- Purpose: 3D physics simulation
-- Examples: `packages/physics/src/PhysicsWorld.ts`
-- Pattern: Wrapper around Rapier3D physics engine
+**Component Hooks:**
+- Purpose: Encapsulate reusable game logic for React components
+- Examples: `apps/client/src/hooks/player/useMovement.ts`, `apps/client/src/hooks/player/useCamera.ts`, `apps/client/src/hooks/player/abilities/useBlazeAbilities.ts`
+- Pattern: Custom React hooks that return state and control functions
 
-**Game State Schema:**
-- Purpose: Networked game state synchronization
-- Examples: `apps/server/src/rooms/schema/`
-- Pattern: Colyseus Schema for real-time state sharing
+**Schema Definitions:**
+- Purpose: Network-serializable state synchronized between client and server
+- Examples: `apps/server/src/rooms/schema/GameState.ts`, `apps/server/src/rooms/schema/Player.ts`, `apps/server/src/rooms/schema/Components.ts`
+- Pattern: Colyseus `@colyseus/schema` decorators for automatic serialization
 
-**Movement Controller:**
-- Purpose: Player movement and physics interactions
-- Examples: `packages/physics/src/movement/`
-- Pattern: Strategy pattern for different movement types
+**Visual Effects Manager:**
+- Purpose: Coordinate 3D visual effects for hero abilities
+- Examples: `apps/client/src/components/game/PhantomEffects.tsx`, `apps/client/src/components/game/BlazeEffects.tsx`
+- Pattern: Manager components that subscribe to game store and spawn/update effect instances
 
 ## Entry Points
 
-**Client Entry Point:**
-- Location: `apps/client/src/main.tsx`
-- Triggers: React app initialization, Three.js setup
-- Responsibilities: Root component rendering, provider setup
+**Client Entry:**
+- Location: `apps/client/index.html` → `apps/client/src/main.tsx` → `apps/client/src/App.tsx`
+- Triggers: Browser loads page
+- Responsibilities: Initialize React, set up providers (Wallet, Network), render app phase (menu/lobby/game)
 
-**Server Entry Point:**
+**Server Entry:**
 - Location: `apps/server/src/index.ts`
-- Triggers: Express server, Colyseus WebSocket server
-- Responsibilities: Room registration, middleware setup
+- Triggers: Node process starts (`npm run dev` or `node dist/index.js`)
+- Responsibilities: Create Express server, initialize Colyseus game server, register room types, start HTTP server on port 2567
 
-**Game Room:**
-- Location: `apps/server/src/rooms/GameRoom.ts`
-- Triggers: When players join game rooms
-- Responsibilities: Game loop, state management, player coordination
+**Game Loop (Client):**
+- Location: `apps/client/src/components/game/PlayerController.tsx` (`useFrame` hook)
+- Triggers: React Three Fiber frame callback (60fps)
+- Responsibilities: Update camera, process movement, update physics, handle abilities, send input to server
 
-**Lobby Room:**
-- Location: `apps/server/src/rooms/LobbyRoom.ts`
-- Triggers: When players wait for games
-- Responsibilities: Player matchmaking, lobby state
+**Game Loop (Server):**
+- Location: `apps/server/src/rooms/GameRoom.ts` (`tick()` method, called from `setInterval`)
+- Triggers: Server tick interval (60Hz = 16.67ms)
+- Responsibilities: Process inputs, update physics, execute abilities, update game state, detect collisions/damage
 
 ## Error Handling
 
-**Strategy:** Centralized error handling with graceful degradation
+**Strategy:** Defensive programming with try-catch blocks in critical paths, console logging for debugging
 
 **Patterns:**
-- WebSocket disconnection handling with reconnection logic
-- Physics world error boundaries
-- Schema validation on server state changes
-- Client-side error boundaries for React components
+- Network errors: Logged in `NetworkContext.tsx`, user sees loading screens or disconnected state
+- Physics errors: Rapier physics failures logged but don't crash game, players may fall through world
+- Ability validation: Server rejects invalid abilities silently, client cooldowns prevent most issues
+- State reconciliation: Client prediction errors corrected when server state arrives
 
 ## Cross-Cutting Concerns
 
-**Logging:** Console logging with structured formatting
-**Validation:** Input validation on server, type validation on client
-**Authentication:** JWT-based auth via `/auth` routes
-**Performance:** Physics tick rate optimization, delta time-based updates
+**Logging:** Console logs throughout (removed in production build via Vite esbuild.drop). Debug console available in-game (backtick key) at `apps/client/src/components/ui/GameConsole.tsx`
+
+**Validation:**
+- Server validates all player inputs before applying
+- Ability cooldowns enforced on both client (UX) and server (authority)
+- Team balance checked in lobby before game start
+
+**Authentication:**
+- Solana wallet signature verification (`apps/server/src/auth/verify.ts`)
+- JWT tokens issued via Express routes (`apps/server/src/auth/routes.ts`)
+- Cookies used for session persistence
 
 ---
 
-*Architecture analysis: 2024-01-22*
-```
+*Architecture analysis: 2026-01-22*

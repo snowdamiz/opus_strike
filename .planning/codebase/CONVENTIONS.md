@@ -1,115 +1,259 @@
 # Coding Conventions
 
-**Analysis Date:** 2024-01-22
+**Analysis Date:** 2026-01-22
 
 ## Naming Patterns
 
 **Files:**
-- PascalCase for components and entry points (e.g., `App.tsx`, `GameCanvas.tsx`)
-- camelCase for hooks and utilities (e.g., `useGameStore.ts`, `clientId.ts`)
-- kebab-case for directory names (e.g., `hero-svgs/`, `player-abilities/`)
-- Index files use `index.ts`/`index.tsx` for re-exports
+- React components: PascalCase with `.tsx` extension (`HeroSelect.tsx`, `GameCanvas.tsx`, `MainMenu.tsx`)
+- React hooks: camelCase prefixed with `use` (`useNetworkClient.ts`, `usePhysics.ts`, `useAudio.ts`)
+- Utilities: camelCase (e.g., `clientId.ts`, `math.ts`)
+- Types: camelCase (e.g., `hero.ts`, `network.ts`, `ability.ts`)
+- Constants: camelCase (e.g., `heroes.ts`, `physics.ts`, `game.ts`)
+- Class files: PascalCase (e.g., `GameRoom.ts`, `MovementController.ts`, `HeroBase.ts`)
 
 **Functions:**
-- camelCase for all functions (e.g., `updateGameState`, `setAppPhase`)
-- Hook functions prefixed with `use` (e.g., `useGameStore`, `useMusic`)
-- Action creators use verb-first naming (e.g., `setWalletAddress`, `updatePlayer`)
+- camelCase for all functions and methods
+- Examples: `getClientId()`, `createHero()`, `handleInput()`, `updateGameState()`
+- Async functions use standard naming, not prefixed with "async"
 
 **Variables:**
-- camelCase for local variables and props (e.g., `playerId`, `isLoading`)
-- Constants use UPPER_SNAKE_CASE (e.g., `MAX_PLAYERS`, `TICK_RATE`)
-- Interface names use PascalCase with descriptive suffixes (e.g., `Player`, `GameStateSync`)
+- camelCase for local variables and parameters
+- Examples: `playerName`, `clientId`, `heroId`, `abilityState`
+- Constants in files use UPPER_SNAKE_CASE (e.g., `VOID_ZONE_RADIUS`, `TICK_RATE`, `DEFAULT_HERO_STATS`)
 
 **Types:**
-- Interface names use PascalCase (e.g., `Vec3`, `Quaternion`)
-- Type aliases use PascalCase (e.g., `GamePhase`, `AppPhase`)
-- Generic type parameters use single uppercase letters (e.g., `T`, `K`)
+- PascalCase for interfaces and types
+- Examples: `HeroDefinition`, `AbilityContext`, `MovementInput`, `GameStateSync`
+- Type union literals use snake_case strings (e.g., `'hero_select' | 'waiting' | 'playing'`)
+
+**Classes:**
+- PascalCase for class names
+- Examples: `HeroBase`, `MovementController`, `GameRoom`, `PhysicsWorld`
+- Abstract classes follow same pattern (e.g., `HeroBase`)
 
 ## Code Style
 
 **Formatting:**
-- No specific linter configuration detected
-- Code appears to use standard TypeScript formatting
-- Indentation uses tabs (detected in various files)
+- No explicit formatter configured (no Prettier/ESLint config files detected)
+- Indentation: 2 spaces (observed in all source files)
+- Single quotes preferred for strings in most files
+- Template literals used for multi-line strings and interpolation
 
 **Linting:**
-- No ESLint configuration found
-- No Prettier configuration found
-- TypeScript compiler used for type checking only
+- No ESLint configuration detected in root or app directories
+- TypeScript strict mode enabled via `tsconfig.base.json`:
+  - `strict: true`
+  - `strictNullChecks: true`
+  - `noFallthroughCasesInSwitch: true`
+  - `forceConsistentCasingInFileNames: true`
+- `noUnusedLocals` and `noUnusedParameters` explicitly disabled
+
+**TypeScript:**
+- Target: ES2022
+- Module: ESNext (client), CommonJS (server)
+- JSX: react-jsx (client only)
+- Decorators enabled for server (Colyseus schema): `experimentalDecorators: true`, `emitDecoratorMetadata: true`
 
 ## Import Organization
 
 **Order:**
-1. React imports (e.g., `import { useEffect, useState } from 'react'`)
-2. Third-party library imports (e.g., `import { create } from 'zustand'`)
-3. Workspace package imports (e.g., `import type { GameStateSync } from '@voxel-strike/shared'`)
-4. Local file imports (e.g., `import { useGameStore } from './store/gameStore'`)
+1. External package imports (React, Three.js, Colyseus, etc.)
+2. Internal workspace package imports (`@voxel-strike/*`)
+3. Relative imports (local files)
+4. Type-only imports are inline (use `import type` syntax)
+
+**Example from `apps/client/src/App.tsx`:**
+```typescript
+import { useEffect, useState } from 'react';
+import { useGameStore } from './store/gameStore';
+import { MainLobby } from './components/ui/MainLobby';
+```
+
+**Example from `apps/server/src/rooms/GameRoom.ts`:**
+```typescript
+import { Room, Client } from 'colyseus';
+import { GameState } from './schema/GameState';
+import { DEFAULT_GAME_CONFIG, TICK_RATE } from '@voxel-strike/shared';
+import type { HeroId, Team, PlayerInput } from '@voxel-strike/shared';
+```
 
 **Path Aliases:**
-- `@` alias resolves to `src` directory (configured in `vite.config.ts`)
-- Relative imports use consistent `./` prefix for same-level files
-- Barrel exports used in shared packages for clean imports
+- Client uses `@/*` alias pointing to `./src/*` (configured in `apps/client/tsconfig.json`)
+- No path aliases configured for server or packages
+- Workspace packages imported via `@voxel-strike/*` namespace
+
+**File Extensions:**
+- Explicit `.js` extensions in dynamic imports for ESM compatibility
+- Example: `await import('./PhantomHero.js')`
 
 ## Error Handling
 
 **Patterns:**
-- Try/catch blocks used sparingly, mostly in server-side code
-- Error messages use descriptive strings (e.g., 'Failed to list lobbies')
-- No centralized error handling pattern detected
-- Errors logged to console with `console.error()`
+- Try-catch blocks for async operations (HTTP requests, room creation)
+- Error logging to console with context
+- Error objects passed to callbacks/handlers without throwing up the stack
+- No centralized error handling framework
+
+**Example from `apps/server/src/index.ts`:**
+```typescript
+try {
+  const rooms = await matchMaker.query({ name: 'lobby_room' });
+  // ... process rooms
+  res.json({ lobbies });
+} catch (error) {
+  console.error('Failed to list lobbies:', error);
+  res.status(500).json({ error: 'Failed to list lobbies' });
+}
+```
+
+**Example from `apps/client/src/contexts/NetworkContext.tsx`:**
+```typescript
+try {
+  const lobby = await client.joinById(lobbyId, options);
+  // ... setup
+} catch (error) {
+  console.error('Failed to join lobby:', error);
+  setError(error as Error);
+}
+```
 
 ## Logging
 
-**Framework:** `console.log`, `console.error`
+**Framework:** Native `console` methods
 
 **Patterns:**
-- Development logging present (e.g., console.log in server startup)
-- No logging library detected
-- Error logging uses `console.error`
-- No structured logging pattern
+- Server uses structured logging with prefixes: `console.log('[GameRoom] Player joining: ...')`
+- Client uses descriptive messages: `console.log('Received lobby state:', data)`
+- Error logging: `console.error('Failed to X:', error)`
+- Debug logging present in development (not removed for production)
+- Banner-style ASCII art for server startup in `apps/server/src/index.ts`
+
+**Common log points:**
+- Server: Player join/leave events, room lifecycle, game state transitions
+- Client: Network events, lobby operations, connection state changes
+- Both: Error conditions
 
 ## Comments
 
 **When to Comment:**
-- Complex game logic sections (e.g., state synchronization)
-- Server startup and configuration
-- Critical game mechanics (e.g., ability systems)
-- Architecture explanations
+- Complex algorithms and game logic calculations
+- Inline explanations for non-obvious behavior
+- TODO markers for future work (sparse usage: only 3 TODOs found)
+- Event handler purposes
+- State management rationale
+
+**Example from `apps/client/src/store/gameStore.ts`:**
+```typescript
+// NOTE: We update players Map entries in-place for position/rotation data to avoid
+// triggering React re-renders on every server tick. The Map reference only changes
+// when players are added/removed.
+```
+
+**Example from `apps/client/src/App.tsx`:**
+```typescript
+// ESC handling - only when menu is already open (to close it)
+// When pointer is locked, browser will exit pointer lock on ESC,
+// and we handle that in pointerlockchange event below
+```
 
 **JSDoc/TSDoc:**
-- Minimal usage - mostly function comments
-- Type definitions are self-documented
-- No extensive API documentation
+- Used for utility functions (e.g., `apps/client/src/utils/clientId.ts`)
+- Includes descriptions and parameter/return documentation
+- Not consistently applied across all public APIs
+
+**Example:**
+```typescript
+/**
+ * Gets the persistent client ID, creating one if it doesn't exist.
+ * This ID is stored in localStorage and survives page reloads.
+ */
+export function getClientId(): string {
+```
 
 ## Function Design
 
 **Size:**
-- Functions range from small (5-10 lines) to medium (30-50 lines)
-- Large functions broken into smaller, focused functions
-- No extreme function lengths detected
+- Most functions 10-50 lines
+- Complex update loops (game tick, physics) 100-200 lines
+- React components vary widely (50-200 lines)
 
 **Parameters:**
-- Typically 1-3 parameters
-- Optional parameters clearly marked
-- Object destructuring used for multiple parameters
+- Object parameters preferred for complex inputs
+- Example: `update(movementInput: MovementInput)` instead of multiple parameters
+- Options objects for configuration: `onCreate(options: CreateOptions)`
 
 **Return Values:**
-- Explicit return types in function signatures
-- Consistent return patterns (e.g., always return boolean for checks)
-- Void return for state setters
+- Explicit types always defined
+- Object returns for multiple values (e.g., `MovementState` with position, velocity, movement)
+- `void` for side-effect functions
+- Promise-wrapped for async functions
+
+**Arrow Functions vs. Regular:**
+- React component functions: Regular function declarations
+- Class methods: Regular method syntax
+- Callbacks and inline functions: Arrow functions
+- Example: `const handleKeyDown = (e: KeyboardEvent) => { ... }`
 
 ## Module Design
 
 **Exports:**
-- Barrel exports used extensively in packages
-- Type exports prefixed with `export type`
-- Re-exports for shared types across packages
+- Named exports preferred over default exports
+- Multiple exports per file common
+- Re-exports used in index files for package entry points
+- Type exports separated with `export type` syntax
+
+**Example from `packages/shared/src/index.ts`:**
+```typescript
+export * from './types/hero.js';
+export * from './types/ability.js';
+export * from './constants/heroes.js';
+```
+
+**Example from `apps/client/src/store/gameStore.ts`:**
+```typescript
+export type { LobbyInfo, LobbyPlayer, UserStats, AppPhase } from './types';
+export const useGameStore = create<GameStore>(...);
+```
 
 **Barrel Files:**
-- Consistent use of `index.ts` for package exports
-- Clean re-export structure (e.g., `packages/shared/src/index.ts`)
-- No circular dependencies detected
+- Used in packages: `packages/shared/src/index.ts`, `packages/game-logic/src/index.ts`
+- Not used extensively in apps (direct imports preferred)
+
+## State Management
+
+**Client:**
+- Zustand for global game state (`apps/client/src/store/gameStore.ts`)
+- State organized with slices pattern for different concerns (projectiles, glacier effects, etc.)
+- Direct mutation avoided - immutable updates with spread operators
+- Separate visual store for high-frequency non-reactive data (60fps position updates)
+
+**Server:**
+- Colyseus Schema for synchronized state
+- Imperative mutation allowed (Colyseus synchronizes changes)
+- Schema classes use decorators: `@type()`, `@filter()`
+
+## React Patterns
+
+**Hooks Usage:**
+- Custom hooks for reusable logic (network, physics, audio)
+- `useEffect` for lifecycle and side effects
+- `useState` for local component state
+- `useRef` for DOM/Three.js object references
+- `useShallow` from Zustand for selective re-renders
+
+**Component Structure:**
+- Functional components only (no class components observed)
+- Props destructured in function parameters
+- Early returns for conditional rendering
+- Fragments used to avoid wrapper divs
+
+**Three.js with React:**
+- `@react-three/fiber` for declarative Three.js
+- `@react-three/drei` helper components (OrbitControls, Sky, Grid)
+- `useFrame` hook for animation loop
+- Refs for accessing Three.js objects directly
 
 ---
 
-*Convention analysis: 2024-01-22*
+*Convention analysis: 2026-01-22*
