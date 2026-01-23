@@ -15,7 +15,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
-import { setPlayerVisualPosition, setPlayerVisualRotation } from '../../store/visualStore';
+import { visualStore, setPlayerVisualPosition, setPlayerVisualRotation } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
 import { usePhysics, isPhysicsReady } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
@@ -316,9 +316,15 @@ export function PlayerController() {
       dt
     );
 
-    // Position from store
+    // Position from visualStore (client-predicted) with fallback to gameStore (server spawn)
     const position = positionRef.current;
-    position.set(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z);
+    const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
+    if (visualPos) {
+      position.set(visualPos.x, visualPos.y, visualPos.z);
+    } else {
+      // First frame - use server position
+      position.set(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z);
+    }
     const velocity = movement.refs.velocity.current;
 
     // Create ability context
@@ -499,8 +505,9 @@ export function PlayerController() {
     // Out of bounds check
     physics.checkOutOfBounds(position, velocity, movement.refs.isGrounded.current);
 
-    // Map boundary constraint
-    physics.constrainToMapBoundary(position, { x: localPlayer.position.x, z: localPlayer.position.z });
+    // Map boundary constraint - use visualPos (frame start position) as previous
+    const prevPos = visualPos || localPlayer.position;
+    physics.constrainToMapBoundary(position, { x: prevPos.x, z: prevPos.z });
 
     // Update walking sound
     const walkingSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
