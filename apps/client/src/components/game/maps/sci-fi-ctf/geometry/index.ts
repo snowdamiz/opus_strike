@@ -10,3 +10,4 @@ export { Routes } from './Routes';
 export { CenterZone } from './CenterZone';
 export { Boundaries } from './Boundaries';
 export { SpawnIndicator } from './SpawnIndicator';
+export { FlagZone } from './FlagZone';
