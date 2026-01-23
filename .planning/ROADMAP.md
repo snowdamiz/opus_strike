@@ -48,10 +48,14 @@ Plans:
   3. Players spawn at configured positions within their team's base area
   4. Flag zones are visible with game objects and have 2-3 entry points each
   5. Capturing a flag triggers correct game state updates (FlagManager/CTFGameMode)
-**Plans**: TBD
+**Plans**: 5 plans in 3 waves
 
 Plans:
-- [ ] 02-01: TBD
+- [ ] 02-01-PLAN.md - Extend MAP_CONFIG with spawn and flag positions (Wave 1)
+- [ ] 02-02-PLAN.md - Update MatchManager to use configured positions (Wave 1)
+- [ ] 02-03-PLAN.md - Create spawn point indicators in team bases (Wave 2)
+- [ ] 02-04-PLAN.md - Create flag zone effects with contested state (Wave 2)
+- [ ] 02-05-PLAN.md - Integration verification and visual checkpoint (Wave 3)
 
 ### Phase 3: Combat Routes & Cover
 **Goal**: Routes between bases provide tactical gameplay with cover options, engagement choke points, and vertical positions
@@ -104,11 +108,11 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Map Foundation | 5/5 | ✓ Complete | 2026-01-22 |
-| 2. Team Base Construction | 0/? | Not started | - |
+| 2. Team Base Construction | 0/5 | Not started | - |
 | 3. Combat Routes & Cover | 0/? | Not started | - |
 | 4. Environment Decoration | 0/? | Not started | - |
 | 5. Physics & Performance | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22 - Phase 1 complete*
+*Last updated: 2026-01-22 - Phase 2 planned (5 plans in 3 waves)*
