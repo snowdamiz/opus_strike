@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 1 of 5 (Map Foundation)
-Plan: 1 of 5 in current phase
+Plan: 2 of 5 in current phase
 Status: In progress
-Last activity: 2026-01-23 - Completed 01-01-PLAN.md
+Last activity: 2026-01-23 - Completed 01-02-PLAN.md
 
-Progress: [##--------] 20%
+Progress: [####------] 40%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
-- Average duration: 3m
-- Total execution time: 0.05 hours
+- Total plans completed: 2
+- Average duration: 2.5m
+- Total execution time: 0.08 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-map-foundation | 1 | 3m | 3m |
+| 01-map-foundation | 2 | 5m | 2.5m |
 
 **Recent Trend:**
-- Last 5 plans: 3m
-- Trend: -
+- Last 5 plans: 3m, 2m
+- Trend: improving
 
 *Updated after each plan completion*
 
@@ -44,6 +44,9 @@ Recent decisions affecting current work:
 
 - Map dimensions: 200x100 elongated rectangle (width x depth)
 - Material construction: THREE.MeshStandardMaterial constructor (not JSX) for single GPU resource
+- Flag zone at y=1 (raised platform, distinct from ground and command)
+- Command platform at y=3 matching platformHeight config constant
+- Floating tech elements use useFrame for subtle bob animation
 
 ### Pending Todos
 
@@ -56,5 +59,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Completed 01-01-PLAN.md
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None
