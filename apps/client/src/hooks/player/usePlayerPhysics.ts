@@ -17,8 +17,6 @@ import {
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   STEP_HEIGHT,
-  SMALL_BUMP_THRESHOLD,
-  SMOOTH_SPEED_SMALL,
   SMOOTH_SPEED_LARGE,
   OUT_OF_BOUNDS_Y,
   RESPAWN_Y,
@@ -92,7 +90,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     }
 
     const groundInfo = checkGroundWithNormal(position.x, position.y + 0.5, position.z, 50);
-    
+
     if (!groundInfo) {
       return { isGrounded: false, canJump: false, newSmoothedY: null, groundInfo: null };
     }
@@ -104,28 +102,24 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     // Close to or below ground
     if (distToGround <= 0.15 && velocity.y <= 0) {
       if (groundInfo.isWalkable) {
-        // Calculate height change for smoothing
+        // Calculate smoothed Y position for ground following
         const currentY = smoothedY ?? position.y;
-        const heightChange = Math.abs(targetY - currentY);
 
-        // Use smoothing for small bumps, snap for larger changes
-        let newY: number;
-        if (heightChange < SMALL_BUMP_THRESHOLD && smoothedY !== null) {
-          const smoothSpeed = SMOOTH_SPEED_SMALL * dt;
-          newY = currentY + (targetY - currentY) * Math.min(smoothSpeed, 1);
-        } else {
-          const smoothSpeed = SMOOTH_SPEED_LARGE * dt;
-          newY = currentY + (targetY - currentY) * Math.min(smoothSpeed, 1);
-        }
+        // Use consistent fast smoothing for both landing and walking
+        // Previously used SMOOTH_SPEED_SMALL (8) for small changes, which caused
+        // slow settling (~1 second) after landing, creating a "bouncy" feeling
+        // Now using SMOOTH_SPEED_LARGE (20) uniformly for snappy ground following
+        const smoothSpeed = SMOOTH_SPEED_LARGE * dt;
+        const newY = currentY + (targetY - currentY) * Math.min(smoothSpeed, 1);
 
         position.y = newY;
         velocity.y = 0;
 
-        return { 
-          isGrounded: true, 
-          canJump: true, 
+        return {
+          isGrounded: true,
+          canJump: true,
           newSmoothedY: newY,
-          groundInfo 
+          groundInfo
         };
       } else {
         // Too steep - slide
