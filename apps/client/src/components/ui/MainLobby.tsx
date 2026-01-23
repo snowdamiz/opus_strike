@@ -73,7 +73,7 @@ export function MainLobby() {
     error: walletError,
     clearError,
   } = useWallet();
-  
+
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -81,7 +81,7 @@ export function MainLobby() {
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showBrowseGames, setShowBrowseGames] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
-  
+
   // Authentication states
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -267,22 +267,22 @@ export function MainLobby() {
       {/* Cinematic Background */}
       <div className="absolute inset-0">
         {/* Background Image - blurred with slow pan for depth */}
-        <div 
+        <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat blur-[2px] animate-bg-pan"
           style={{ backgroundImage: 'url(/bg.jpg)' }}
         />
-        
+
         {/* Dark overlay gradient for readability - stronger to let heroes pop */}
         <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a12]/80 via-[#0f0f1a]/75 to-[#08080c]/90" />
-        
+
         {/* Center darkening for hero contrast */}
-        <div 
+        <div
           className="absolute inset-0"
-          style={{ 
+          style={{
             background: 'radial-gradient(ellipse 60% 70% at 50% 45%, rgba(10,10,18,0.5) 0%, transparent 70%)'
           }}
         />
-        
+
         {/* Subtle color spots */}
         <div className="absolute inset-0 opacity-30">
           <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-gradient-radial from-orange-900/20 to-transparent blur-3xl" />
@@ -292,9 +292,9 @@ export function MainLobby() {
         <div className="absolute inset-0 pattern-grid opacity-10" />
         <div className="absolute bottom-0 left-0 right-0 h-2/5 bg-gradient-to-t from-[#0a0a12] to-transparent" />
         <div className="absolute inset-0 vignette-pulse" />
-        
+
         {/* Extra vignette for edges */}
-        <div 
+        <div
           className="absolute inset-0 pointer-events-none"
           style={{
             boxShadow: 'inset 0 0 200px 80px rgba(0,0,0,0.7)'
@@ -319,7 +319,7 @@ export function MainLobby() {
 
       {/* Top Navigation Bar */}
       <nav className="absolute top-0 left-0 right-0 z-20">
-        <div className="flex items-center justify-between px-8 py-4">
+        <div className="flex items-center justify-between px-4 lg:px-6 xl:px-8 py-3 lg:py-4">
           {/* Logo & Tabs */}
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
@@ -348,20 +348,20 @@ export function MainLobby() {
                     </linearGradient>
                     {/* Glow filter */}
                     <filter id="boltGlow" x="-50%" y="-50%" width="200%" height="200%">
-                      <feGaussianBlur stdDeviation="2" result="blur"/>
-                      <feFlood floodColor="#fbbf24" floodOpacity="0.8"/>
-                      <feComposite in2="blur" operator="in"/>
+                      <feGaussianBlur stdDeviation="2" result="blur" />
+                      <feFlood floodColor="#fbbf24" floodOpacity="0.8" />
+                      <feComposite in2="blur" operator="in" />
                       <feMerge>
-                        <feMergeNode/>
-                        <feMergeNode in="SourceGraphic"/>
+                        <feMergeNode />
+                        <feMergeNode in="SourceGraphic" />
                       </feMerge>
                     </filter>
                     {/* Drop shadow for cube */}
                     <filter id="cubeShadow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#000" floodOpacity="0.4"/>
+                      <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#000" floodOpacity="0.4" />
                     </filter>
                   </defs>
-                  
+
                   {/* Isometric Cube - clean geometry */}
                   <g filter="url(#cubeShadow)">
                     {/* Left face (darker) */}
@@ -371,24 +371,24 @@ export function MainLobby() {
                     {/* Top face (brightest) */}
                     <path d="M24 6 L38 14 L24 22 L10 14 Z" fill="url(#topFace)" />
                   </g>
-                  
+
                   {/* Edge highlights */}
                   <path d="M24 22 L24 38" stroke="rgba(0,0,0,0.3)" strokeWidth="0.5" />
                   <path d="M24 6 L24 22" stroke="rgba(255,255,255,0.4)" strokeWidth="0.75" />
                   <path d="M10 14 L24 22 L38 14" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5" fill="none" />
-                  
+
                   {/* Lightning bolt - sharp & dynamic */}
                   <g filter="url(#boltGlow)">
-                    <path 
-                      d="M28 2 L20 19 L26 19 L18 40 L22 40 L30 21 L24 21 L30 2 Z" 
+                    <path
+                      d="M28 2 L20 19 L26 19 L18 40 L22 40 L30 21 L24 21 L30 2 Z"
                       fill="url(#boltMain)"
                       stroke="#fff"
                       strokeWidth="0.5"
                       strokeLinejoin="round"
                     />
                     {/* Inner highlight */}
-                    <path 
-                      d="M27 6 L22 17 L25 17 L21 32" 
+                    <path
+                      d="M27 6 L22 17 L25 17 L21 32"
                       stroke="rgba(255,255,255,0.9)"
                       strokeWidth="1.5"
                       strokeLinecap="round"
@@ -396,7 +396,7 @@ export function MainLobby() {
                       fill="none"
                     />
                   </g>
-                  
+
                   {/* Subtle sparkle accents */}
                   <circle cx="15" cy="10" r="0.8" fill="#fef3c7" opacity="0.7" />
                   <circle cx="33" cy="8" r="0.6" fill="#fef3c7" opacity="0.5" />
@@ -414,9 +414,8 @@ export function MainLobby() {
                   key={tab}
                   onClick={() => { playButtonClick(); setActiveTab(tab); }}
                   onMouseEnter={playButtonHover}
-                  className={`relative px-6 py-3 font-display text-lg tracking-wide transition-all ${
-                    activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
-                  }`}
+                  className={`relative px-6 py-3 font-display text-lg tracking-wide transition-all ${activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
+                    }`}
                 >
                   {tab.toUpperCase()}
                   {activeTab === tab && (
@@ -443,7 +442,7 @@ export function MainLobby() {
             {/* Conditional: Show sign-in button or profile card */}
             {isAuthenticated && user ? (
               <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-strike-surface/80 border border-white/5 group relative">
-                <div 
+                <div
                   className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-white"
                   style={{ background: heroColor }}
                 >
@@ -475,7 +474,7 @@ export function MainLobby() {
                 }}
               >
                 {/* Button shimmer */}
-                <div 
+                <div
                   className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
                   style={{
                     background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
@@ -504,7 +503,7 @@ export function MainLobby() {
       </nav>
 
       {/* Main Content Area */}
-      <div className="absolute inset-0 pt-20 pb-20 z-10">
+      <div className="absolute inset-0 pt-20 pb-4 lg:pb-20 z-10">
         {activeTab === 'play' && (
           <PlayTab
             isLoading={isLoading}
@@ -541,7 +540,7 @@ export function MainLobby() {
       {/* Modals */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showCreateLobby && (
-        <CreateLobbyModal 
+        <CreateLobbyModal
           playerName={playerName}
           isLoading={isLoading}
           error={error}
@@ -559,7 +558,7 @@ export function MainLobby() {
           onClose={() => setShowBrowseGames(false)}
         />
       )}
-      
+
       {/* Authentication Modal */}
       {showAuthModal && (
         <AuthModal
@@ -652,7 +651,7 @@ function PlayTab({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
             {/* Glow effect on hover */}
-            <div 
+            <div
               className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10 blur-lg"
               style={{ background: heroColor + '30' }}
             />
@@ -661,23 +660,23 @@ function PlayTab({
           {/* Hero Container */}
           <div className="relative">
             {/* Background glow that matches hero color */}
-            <div 
+            <div
               className="absolute inset-0 blur-[120px] opacity-40 transition-colors duration-1000 -z-10"
-              style={{ 
+              style={{
                 background: `radial-gradient(ellipse at center, ${heroColor} 0%, transparent 60%)`,
                 transform: 'scale(2)',
               }}
             />
-            
+
             {/* Animated Hero SVG */}
-            <div 
-              className={`relative transition-all duration-300 ${isTransitioning ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
-              style={{ 
+            <div
+              className={`relative transition-all duration-300 hero-svg-container ${isTransitioning ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
+              style={{
                 filter: `drop-shadow(0 0 60px ${heroColor}50)`,
               }}
             >
-              <HeroSVG 
-                heroId={isTransitioning ? prevHero : featuredHero} 
+              <HeroSVG
+                heroId={isTransitioning ? prevHero : featuredHero}
                 size={440}
                 className="hero-svg-enter"
               />
@@ -694,7 +693,7 @@ function PlayTab({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
             {/* Glow effect on hover */}
-            <div 
+            <div
               className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10 blur-lg"
               style={{ background: heroColor + '30' }}
             />
@@ -702,17 +701,17 @@ function PlayTab({
         </div>
 
         {/* Hero info - below the SVG with proper spacing */}
-        <div className="text-center w-[450px] mt-6">
-          <h2 
-            className="font-display text-5xl text-white mb-2 transition-all duration-500"
+        <div className="text-center w-[280px] lg:w-[300px] xl:w-[360px] 2xl:w-[450px] mt-1 md:mt-2 lg:mt-3 xl:mt-4 2xl:mt-6">
+          <h2
+            className="font-display text-2xl md:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-1 xl:mb-2 transition-all duration-500"
             style={{ textShadow: `0 0 30px ${heroColor}50, 0 2px 10px rgba(0,0,0,0.5)` }}
           >
             {heroInfo.name.toUpperCase()}
           </h2>
-          <p className="text-white/50 font-body text-sm max-w-sm mx-auto leading-relaxed">{heroInfo.description}</p>
+          <p className="text-white/50 font-body text-xs xl:text-sm max-w-sm mx-auto leading-relaxed">{heroInfo.description}</p>
 
           {/* Carousel Dot Indicators */}
-          <div className="flex items-center justify-center gap-2 mt-5 mb-6">
+          <div className="flex items-center justify-center gap-2 mt-2 xl:mt-3 2xl:mt-5 mb-2 xl:mb-4 2xl:mb-6">
             {ALL_HERO_IDS.map((heroId) => {
               const isActive = heroId === featuredHero;
               const dotColor = HERO_COLORS[heroId];
@@ -720,18 +719,17 @@ function PlayTab({
                 <button
                   key={heroId}
                   onClick={() => onSelectHero(heroId)}
-                  className={`relative transition-all duration-300 ${
-                    isActive ? 'scale-100' : 'scale-75 opacity-50 hover:opacity-80 hover:scale-90'
-                  }`}
+                  className={`relative transition-all duration-300 ${isActive ? 'scale-100' : 'scale-75 opacity-50 hover:opacity-80 hover:scale-90'
+                    }`}
                   aria-label={`Select ${HERO_DEFINITIONS[heroId].name}`}
                   title={HERO_DEFINITIONS[heroId].name}
                 >
                   <div
                     className="w-3 h-3 rounded-full transition-all duration-300"
-                    style={{ 
+                    style={{
                       background: isActive ? dotColor : 'rgba(255,255,255,0.3)',
-                      boxShadow: isActive 
-                        ? `0 0 12px ${dotColor}80, 0 0 0 2px rgba(10,10,18,1), 0 0 0 4px ${dotColor}` 
+                      boxShadow: isActive
+                        ? `0 0 12px ${dotColor}80, 0 0 0 2px rgba(10,10,18,1), 0 0 0 4px ${dotColor}`
                         : 'none',
                     }}
                   />
@@ -742,10 +740,10 @@ function PlayTab({
         </div>
 
         {/* Spacer before buttons */}
-        <div className="h-6" />
+        <div className="h-1 xl:h-3 2xl:h-6" />
 
         {/* Action Buttons */}
-        <div className="w-[500px] space-y-3">
+        <div className="w-[280px] lg:w-[320px] xl:w-[400px] 2xl:w-[500px] space-y-2 lg:space-y-2.5 xl:space-y-3">
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4 backdrop-blur-sm">
               <p className="text-red-400 text-sm font-body text-center">{error}</p>
@@ -756,9 +754,9 @@ function PlayTab({
             onClick={() => { playButtonClick(); onQuickPlay(); }}
             onMouseEnter={playButtonHover}
             disabled={isLoading}
-            className="w-full py-5 rounded-xl font-display text-2xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
-            style={{ 
-              background: isAuthenticated 
+            className="w-full py-3 xl:py-4 2xl:py-5 rounded-xl font-display text-lg xl:text-xl 2xl:text-2xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
+            style={{
+              background: isAuthenticated
                 ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
                 : 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
               boxShadow: isAuthenticated
@@ -767,7 +765,7 @@ function PlayTab({
             }}
           >
             {/* Button shimmer effect */}
-            <div 
+            <div
               className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
               style={{
                 background: `linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)`,
@@ -790,12 +788,12 @@ function PlayTab({
             </span>
           </button>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2 xl:gap-3">
             <button
               onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
               onMouseEnter={playButtonHover}
               disabled={isLoading}
-              className="py-4 rounded-xl font-display text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
+              className="py-2.5 xl:py-3 2xl:py-4 rounded-xl font-display text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
             >
               {isAuthenticated ? (
                 <>
@@ -817,7 +815,7 @@ function PlayTab({
             <button
               onClick={() => { playButtonClick(); onOpenBrowseGames(); }}
               onMouseEnter={playButtonHover}
-              className="py-4 rounded-xl font-display text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
+              className="py-2.5 xl:py-3 2xl:py-4 rounded-xl font-display text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -846,13 +844,13 @@ interface BrowseGamesModalProps {
   onClose: () => void;
 }
 
-function BrowseGamesModal({ 
-  availableLobbies, 
-  isLoading, 
-  isRefreshing, 
-  onRefresh, 
-  onJoinLobby, 
-  onClose 
+function BrowseGamesModal({
+  availableLobbies,
+  isLoading,
+  isRefreshing,
+  onRefresh,
+  onJoinLobby,
+  onClose
 }: BrowseGamesModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -880,8 +878,8 @@ function BrowseGamesModal({
               disabled={isRefreshing}
               className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white/60 text-sm font-body hover:bg-white/10 hover:text-white transition-all"
             >
-              <svg 
-                className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} 
+              <svg
+                className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`}
                 fill="none" viewBox="0 0 24 24" stroke="currentColor"
               >
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -914,9 +912,9 @@ function BrowseGamesModal({
           ) : (
             <div className="p-4 space-y-2">
               {availableLobbies.map((lobby) => (
-                <LobbyRow 
-                  key={lobby.roomId} 
-                  lobby={lobby} 
+                <LobbyRow
+                  key={lobby.roomId}
+                  lobby={lobby}
                   onJoin={() => onJoinLobby(lobby.roomId)}
                   disabled={isLoading}
                 />
@@ -1006,7 +1004,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
           </div>
 
           {/* Private Toggle */}
-          <div 
+          <div
             className="flex items-center justify-between p-4 bg-white/[0.03] border border-white/5 rounded-xl cursor-pointer hover:border-white/10 transition-colors"
             onClick={() => setIsPrivate(!isPrivate)}
           >
@@ -1069,9 +1067,8 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
   return (
     <div className="flex items-center gap-4 p-4 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] transition-colors group">
       {/* Icon */}
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-        canJoin ? 'bg-orange-500/10' : 'bg-white/5'
-      }`}>
+      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${canJoin ? 'bg-orange-500/10' : 'bg-white/5'
+        }`}>
         {isInGame ? (
           <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
@@ -1099,14 +1096,13 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
             </span>
           )}
         </div>
-        
+
         {/* Player count */}
         <div className="flex items-center gap-3">
           <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden max-w-40">
-            <div 
-              className={`h-full rounded-full transition-all ${
-                isFull ? 'bg-red-500' : isInGame ? 'bg-amber-500' : 'bg-orange-500'
-              }`}
+            <div
+              className={`h-full rounded-full transition-all ${isFull ? 'bg-red-500' : isInGame ? 'bg-amber-500' : 'bg-orange-500'
+                }`}
               style={{ width: `${(lobby.playerCount / lobby.maxPlayers) * 100}%` }}
             />
           </div>
@@ -1120,11 +1116,10 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
       <button
         onClick={onJoin}
         disabled={disabled || !canJoin}
-        className={`px-5 py-2.5 rounded-lg font-display text-sm transition-all ${
-          canJoin 
-            ? 'bg-orange-500 text-white hover:bg-orange-400 hover:scale-105' 
-            : 'bg-white/5 text-white/30 cursor-not-allowed'
-        }`}
+        className={`px-5 py-2.5 rounded-lg font-display text-sm transition-all ${canJoin
+          ? 'bg-orange-500 text-white hover:bg-orange-400 hover:scale-105'
+          : 'bg-white/5 text-white/30 cursor-not-allowed'
+          }`}
       >
         {isInGame ? 'LIVE' : isFull ? 'FULL' : 'JOIN'}
       </button>
@@ -1192,8 +1187,8 @@ function AuthModal({
             {showNameInput ? 'CREATE PROFILE' : 'CONNECT WALLET'}
           </h2>
           <p className="text-white/40 text-sm mt-1 font-body">
-            {showNameInput 
-              ? 'Choose your callsign to continue' 
+            {showNameInput
+              ? 'Choose your callsign to continue'
               : 'Sign in with your Phantom wallet'}
           </p>
         </div>
@@ -1345,7 +1340,7 @@ function AuthModal({
                     }}
                   >
                     {/* Button shimmer */}
-                    <div 
+                    <div
                       className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
                       style={{
                         background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
@@ -1374,9 +1369,9 @@ function AuthModal({
                     <div className="text-center">
                       <p className="text-white/40 text-xs font-body">
                         Don't have Phantom?{' '}
-                        <a 
-                          href="https://phantom.app/" 
-                          target="_blank" 
+                        <a
+                          href="https://phantom.app/"
+                          target="_blank"
                           rel="noopener noreferrer"
                           className="text-purple-400 hover:text-purple-300 transition-colors"
                         >

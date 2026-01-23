@@ -127,7 +127,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       />
 
       {/* Modal */}
-      <div className="relative w-full max-w-4xl max-h-[85vh] mx-4 flex flex-col bg-strike-surface border border-white/10 rounded-xl overflow-hidden shadow-2xl">
+      <div className="relative w-full max-w-xl lg:max-w-2xl xl:max-w-3xl 2xl:max-w-4xl max-h-[85vh] mx-4 flex flex-col bg-strike-surface border border-white/10 rounded-xl overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
           <div className="flex items-center gap-3">
@@ -155,7 +155,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         {/* Content */}
         <div className="flex-1 flex overflow-hidden">
           {/* Sidebar */}
-          <div className="w-48 border-r border-white/5 p-3 space-y-1">
+          <div className="w-36 lg:w-40 xl:w-48 border-r border-white/5 p-2 lg:p-3 space-y-1">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
@@ -295,7 +295,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 {/* Keybinds */}
                 <div className="pt-4 border-t border-white/5">
                   <h3 className="font-display text-white mb-4">KEYBINDS</h3>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 lg:gap-3">
                     {[
                       { action: 'Move Forward', key: 'W' },
                       { action: 'Move Back', key: 'S' },

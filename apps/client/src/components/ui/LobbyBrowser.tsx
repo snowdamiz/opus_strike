@@ -52,7 +52,7 @@ export function LobbyBrowser() {
       </div>
 
       {/* Content */}
-      <div className="relative z-10 w-full max-w-5xl mx-auto px-6">
+      <div className="relative z-10 w-full max-w-2xl lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto px-4 lg:px-6">
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="font-display text-5xl text-white">
@@ -64,7 +64,7 @@ export function LobbyBrowser() {
         {/* Main Grid */}
         <div className="grid grid-cols-12 gap-6">
           {/* Lobby List */}
-          <div className="col-span-8">
+          <div className="col-span-12 lg:col-span-8">
             <div className="card overflow-hidden">
               {/* Header */}
               <div className="px-5 py-3 border-b border-strike-border flex items-center justify-between bg-strike-elevated/50">
@@ -91,7 +91,7 @@ export function LobbyBrowser() {
               </div>
 
               {/* List */}
-              <div className="max-h-[360px] overflow-y-auto">
+              <div className="max-h-[280px] lg:max-h-[320px] xl:max-h-[360px] overflow-y-auto">
                 {availableLobbies.length === 0 ? (
                   <div className="py-16 text-center">
                     <div className="w-14 h-14 mx-auto mb-4 rounded-lg bg-white/5 flex items-center justify-center">
@@ -119,7 +119,7 @@ export function LobbyBrowser() {
           </div>
 
           {/* Create Lobby */}
-          <div className="col-span-4 space-y-4">
+          <div className="col-span-12 lg:col-span-4 space-y-4">
             <div className="card p-5">
               <div className="flex items-center gap-2 mb-5">
                 <div className="w-8 h-8 rounded bg-orange-500/20 flex items-center justify-center">

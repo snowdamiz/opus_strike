@@ -62,18 +62,18 @@ function VoidIconSmall({ className, style }: { className?: string; style?: React
 
 function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
   const [progress, setProgress] = useState(0);
-  
+
   // Fast update loop for smooth animation
   useEffect(() => {
     // Immediately calculate initial progress
     const calcProgress = () => Math.min(1, (Date.now() - chargeStart) / VOID_RAY_CHARGE_TIME);
     setProgress(calcProgress());
-    
+
     // Update at 60fps for smooth animation
     const interval = setInterval(() => {
       setProgress(calcProgress());
     }, 16);
-    
+
     return () => clearInterval(interval);
   }, [chargeStart]);
 
@@ -112,7 +112,7 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
       </svg>
       {/* Center text */}
       <div className="absolute inset-0 flex items-center justify-center">
-        <span 
+        <span
           className={`font-mono text-sm font-bold ${isReady ? 'text-cyan-300' : 'text-white/80'}`}
           style={{ textShadow: isReady ? '0 0 8px #00ffff' : '0 2px 4px rgba(0,0,0,0.8)' }}
         >
@@ -167,7 +167,7 @@ export function HUD() {
       frostStormShield: state.frostStormShield,
     }))
   );
-  
+
   // Force re-render every 100ms for smooth cooldown updates
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -196,7 +196,7 @@ export function HUD() {
     <div className="absolute inset-0 pointer-events-none select-none z-hud">
       {/* Low health vignette effect */}
       {isLowHealth && (
-        <div 
+        <div
           className={`absolute inset-0 pointer-events-none ${isCriticalHealth ? 'animate-pulse' : 'animate-pulse-soft'}`}
           style={{
             background: `radial-gradient(ellipse at center, transparent 30%, ${isCriticalHealth ? 'rgba(239, 68, 68, 0.35)' : 'rgba(239, 68, 68, 0.2)'} 100%)`,
@@ -210,24 +210,24 @@ export function HUD() {
           // Bomb targeting crosshair - larger, orange, with explosion radius indicator
           <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
             {/* Outer blast radius ring */}
-            <circle 
-              cx="24" cy="24" r="20" 
-              stroke={bombTargetValid ? "#ff6600" : "#ff3333"} 
-              strokeWidth="2" 
+            <circle
+              cx="24" cy="24" r="20"
+              stroke={bombTargetValid ? "#ff6600" : "#ff3333"}
+              strokeWidth="2"
               strokeDasharray="6 3"
               opacity="0.6"
               style={{ animation: 'spin 4s linear infinite' }}
             />
             {/* Inner targeting ring */}
-            <circle 
-              cx="24" cy="24" r="12" 
-              stroke={bombTargetValid ? "#ff8800" : "#ff4444"} 
+            <circle
+              cx="24" cy="24" r="12"
+              stroke={bombTargetValid ? "#ff8800" : "#ff4444"}
               strokeWidth="2"
               opacity="0.8"
             />
             {/* Center dot */}
-            <circle 
-              cx="24" cy="24" r="3" 
+            <circle
+              cx="24" cy="24" r="3"
               fill={bombTargetValid ? "#ffaa00" : "#ff5555"}
               opacity="0.95"
             />
@@ -248,13 +248,13 @@ export function HUD() {
           </svg>
         )}
       </div>
-      
+
       {/* Bomb Targeting Instructions */}
       {bombTargeting && (
         <div className="fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none">
-          <div 
+          <div
             className="px-4 py-2 rounded-lg backdrop-blur-sm"
-            style={{ 
+            style={{
               background: bombTargetValid ? 'rgba(255, 102, 0, 0.3)' : 'rgba(255, 50, 50, 0.3)',
               border: `1px solid ${bombTargetValid ? '#ff6600' : '#ff3333'}`,
             }}
@@ -276,7 +276,7 @@ export function HUD() {
       <div className="absolute top-0 left-1/2 -translate-x-1/2">
         <div className="relative">
           {/* Main score container */}
-          <div 
+          <div
             className="flex items-stretch rounded-b-2xl overflow-hidden backdrop-blur-md"
             style={{
               background: 'linear-gradient(180deg, rgba(10, 10, 15, 0.95) 0%, rgba(15, 15, 25, 0.9) 100%)',
@@ -285,28 +285,28 @@ export function HUD() {
           >
             {/* Solar Vanguard Side */}
             <div className="relative group">
-              <div 
-                className="w-28 h-16 flex items-center justify-center gap-2 relative overflow-hidden"
+              <div
+                className="w-20 lg:w-24 xl:w-28 h-14 lg:h-16 flex items-center justify-center gap-1.5 lg:gap-2 relative overflow-hidden"
                 style={{
                   background: FACTIONS.red.gradient,
                 }}
               >
                 {/* Animated glow effect */}
-                <div 
+                <div
                   className="absolute inset-0 opacity-50"
                   style={{
                     background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.glowColor} 0%, transparent 70%)`,
                   }}
                 />
-                
+
                 <SolarIconSmall className="w-5 h-5 text-white/80 relative z-10" />
-                <span 
+                <span
                   className="font-display text-4xl text-white tabular-nums drop-shadow-lg relative z-10"
                   style={{ textShadow: `0 0 20px ${FACTIONS.red.glowColor}` }}
                 >
                   {redScore}
                 </span>
-                
+
                 {/* Flag carrier indicator */}
                 {redFlag?.carrierId && (
                   <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
@@ -315,9 +315,9 @@ export function HUD() {
                   </div>
                 )}
               </div>
-              
+
               {/* Faction label */}
-              <div 
+              <div
                 className="absolute -bottom-5 left-0 right-0 h-5 flex items-center justify-center"
                 style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
               >
@@ -328,25 +328,24 @@ export function HUD() {
             {/* Center Divider + Timer */}
             <div className="relative flex items-center">
               {/* Diagonal dividers */}
-              <div 
+              <div
                 className="absolute -left-3 top-0 bottom-0 w-6 z-10"
                 style={{
                   background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
                 }}
               />
-              <div 
+              <div
                 className="absolute -right-3 top-0 bottom-0 w-6 z-10"
                 style={{
                   background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
                 }}
               />
-              
+
               {/* Timer */}
               <div className="relative px-8 h-16 flex flex-col items-center justify-center z-20 min-w-[100px]">
-                <span className={`font-mono text-2xl tracking-[0.15em] tabular-nums font-bold transition-colors ${
-                  roundTimeRemaining < 30 ? 'text-red-400 animate-pulse' : 
-                  roundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
-                }`}>
+                <span className={`font-mono text-2xl tracking-[0.15em] tabular-nums font-bold transition-colors ${roundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
+                    roundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
+                  }`}>
                   {formatTime(roundTimeRemaining)}
                 </span>
                 <span className="text-[8px] font-display text-white/30 tracking-[0.3em] -mt-0.5">BATTLE</span>
@@ -355,28 +354,28 @@ export function HUD() {
 
             {/* Void Legion Side */}
             <div className="relative group">
-              <div 
-                className="w-28 h-16 flex items-center justify-center gap-2 relative overflow-hidden"
+              <div
+                className="w-20 lg:w-24 xl:w-28 h-14 lg:h-16 flex items-center justify-center gap-1.5 lg:gap-2 relative overflow-hidden"
                 style={{
                   background: FACTIONS.blue.gradient,
                 }}
               >
                 {/* Animated glow effect */}
-                <div 
+                <div
                   className="absolute inset-0 opacity-50"
                   style={{
                     background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.glowColor} 0%, transparent 70%)`,
                   }}
                 />
-                
-                <span 
+
+                <span
                   className="font-display text-4xl text-white tabular-nums drop-shadow-lg relative z-10"
                   style={{ textShadow: `0 0 20px ${FACTIONS.blue.glowColor}` }}
                 >
                   {blueScore}
                 </span>
                 <VoidIconSmall className="w-5 h-5 text-white/80 relative z-10" />
-                
+
                 {/* Flag carrier indicator */}
                 {blueFlag?.carrierId && (
                   <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
@@ -385,9 +384,9 @@ export function HUD() {
                   </div>
                 )}
               </div>
-              
+
               {/* Faction label */}
-              <div 
+              <div
                 className="absolute -bottom-5 left-0 right-0 h-5 flex items-center justify-center"
                 style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
               >
@@ -395,9 +394,9 @@ export function HUD() {
               </div>
             </div>
           </div>
-          
+
           {/* Bottom accent line */}
-          <div 
+          <div
             className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/4 h-px"
             style={{
               background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
@@ -407,21 +406,21 @@ export function HUD() {
       </div>
 
       {/* ===== BOTTOM LEFT - Hero Portrait & Health (Redesigned) ===== */}
-      <div className="absolute bottom-6 left-6">
+      <div className="absolute bottom-4 left-4 xl:bottom-6 xl:left-6 hud-scale">
         <div className="flex items-end gap-4">
           {/* Hero Portrait Frame */}
           <div className="relative">
             {/* Outer glow based on faction */}
-            <div 
+            <div
               className="absolute -inset-1 rounded-xl opacity-60"
               style={{
                 background: `radial-gradient(circle, ${playerFaction.glowColor} 0%, transparent 70%)`,
               }}
             />
-            
+
             {/* Flag carrier badge */}
             {localPlayer.hasFlag && (
-              <div 
+              <div
                 className="absolute -top-3 -right-3 w-7 h-7 rounded-lg flex items-center justify-center animate-bounce border-2"
                 style={{
                   background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
@@ -437,8 +436,8 @@ export function HUD() {
           {/* Health & Stats Stack */}
           <div className="flex flex-col gap-2">
             {/* Health Bar */}
-            <div className="relative w-52">
-              <div 
+            <div className="relative w-32 lg:w-36 xl:w-44 2xl:w-52">
+              <div
                 className="h-8 rounded-lg overflow-hidden backdrop-blur-sm"
                 style={{
                   background: 'rgba(0, 0, 0, 0.7)',
@@ -447,16 +446,15 @@ export function HUD() {
                 }}
               >
                 {/* Health fill */}
-                <div 
-                  className={`h-full transition-all duration-150 relative ${
-                    isCriticalHealth ? 'health-bar-critical' : 
-                    isLowHealth ? 'health-bar-low' : ''
-                  }`}
-                  style={{ 
+                <div
+                  className={`h-full transition-all duration-150 relative ${isCriticalHealth ? 'health-bar-critical' :
+                      isLowHealth ? 'health-bar-low' : ''
+                    }`}
+                  style={{
                     width: `${healthPercent}%`,
-                    background: isCriticalHealth 
+                    background: isCriticalHealth
                       ? 'linear-gradient(180deg, #ef4444 0%, #b91c1c 100%)'
-                      : isLowHealth 
+                      : isLowHealth
                         ? 'linear-gradient(180deg, #f97316 0%, #c2410c 100%)'
                         : 'linear-gradient(180deg, #22c55e 0%, #15803d 100%)',
                     boxShadow: isCriticalHealth
@@ -469,7 +467,7 @@ export function HUD() {
                   {/* Shine effect */}
                   <div className="absolute inset-0 bg-gradient-to-b from-white/30 to-transparent h-1/2" />
                 </div>
-                
+
                 {/* Health text */}
                 <div className="absolute inset-0 flex items-center justify-between px-3">
                   <span className="font-mono text-lg text-white font-bold drop-shadow-lg">
@@ -480,10 +478,10 @@ export function HUD() {
                   </span>
                 </div>
               </div>
-              
+
               {/* Frost Storm Shield Bar - shown when active */}
               {frostStormActive && frostStormShield > 0 && (
-                <div 
+                <div
                   className="h-3 mt-1 rounded-md overflow-hidden backdrop-blur-sm"
                   style={{
                     background: 'rgba(0, 0, 0, 0.6)',
@@ -492,9 +490,9 @@ export function HUD() {
                   }}
                 >
                   {/* Shield fill */}
-                  <div 
+                  <div
                     className="h-full transition-all duration-150 relative"
-                    style={{ 
+                    style={{
                       width: `${(frostStormShield / 75) * 100}%`,
                       background: 'linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%)',
                       boxShadow: 'inset 0 0 15px rgba(147, 197, 253, 0.5)',
@@ -503,7 +501,7 @@ export function HUD() {
                     {/* Shine effect */}
                     <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent h-1/2" />
                   </div>
-                  
+
                   {/* Shield text */}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <span className="text-[9px] font-mono text-cyan-200 font-bold drop-shadow-lg">
@@ -513,7 +511,7 @@ export function HUD() {
                 </div>
               )}
             </div>
-            
+
             {/* Faction indicator */}
             <div className="flex items-center gap-2">
               {localPlayer.team === 'red' ? (
@@ -521,7 +519,7 @@ export function HUD() {
               ) : (
                 <VoidIconSmall className="w-3.5 h-3.5" style={{ color: playerFaction.primaryColor }} />
               )}
-              <span 
+              <span
                 className="text-[9px] font-display tracking-[0.2em]"
                 style={{ color: playerFaction.primaryColor }}
               >
@@ -534,9 +532,9 @@ export function HUD() {
 
       {/* ===== BOTTOM CENTER - Ability Bar (Improved) ===== */}
       {heroInfo && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
-          <div 
-            className="flex items-end gap-4 px-5 py-3 rounded-xl backdrop-blur-md"
+        <div className="absolute bottom-4 xl:bottom-6 left-1/2 -translate-x-1/2">
+          <div
+            className="flex items-end gap-3 lg:gap-4 px-3 lg:px-4 xl:px-5 py-2 lg:py-3 rounded-xl backdrop-blur-md"
             style={{
               background: 'rgba(10, 10, 15, 0.8)',
               border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -554,7 +552,7 @@ export function HUD() {
               heroColor={heroColors.primary}
               ultimateCharge={ultimatePercent}
             />
-            
+
             {/* Ability 2 (Q) */}
             <AbilitySlotApex
               abilityId={heroInfo.ability2.abilityId}
@@ -565,10 +563,10 @@ export function HUD() {
               heroColor={heroColors.primary}
               ultimateCharge={ultimatePercent}
             />
-            
+
             {/* Divider */}
             <div className="w-px h-12 bg-gradient-to-b from-transparent via-white/20 to-transparent" />
-            
+
             {/* Ultimate (F) */}
             <AbilitySlotApex
               abilityId={heroInfo.ultimate.abilityId}
@@ -585,8 +583,8 @@ export function HUD() {
       )}
 
       {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
-      <div className="absolute bottom-6 right-6 flex flex-col items-end gap-2">
-        
+      <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2">
+
         {/* Movement indicators container */}
         <div className="flex flex-col items-end gap-1.5">
           {localPlayer.movement?.isWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
@@ -595,10 +593,10 @@ export function HUD() {
           {localPlayer.movement?.isJetpacking && <MovementIndicator label="JETPACK" color="#f97316" icon="jetpack" />}
           {localPlayer.movement?.isGliding && <MovementIndicator label="GLIDE" color="#a855f7" icon="glide" />}
         </div>
-        
+
         {/* Jetpack Fuel */}
         {localPlayer.heroId === 'blaze' && (
-          <div 
+          <div
             className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
             style={{
               background: jetpackActive ? 'rgba(249, 115, 22, 0.25)' : 'rgba(249, 115, 22, 0.1)',
@@ -607,11 +605,11 @@ export function HUD() {
           >
             <span className="text-[9px] font-display text-orange-400 tracking-wider">FUEL</span>
             <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full transition-all duration-100"
-                style={{ 
+                style={{
                   width: `${jetpackFuel}%`,
-                  background: jetpackActive 
+                  background: jetpackActive
                     ? 'linear-gradient(90deg, #ff6b00, #ffaa00)'
                     : 'linear-gradient(90deg, #f97316, #fbbf24)',
                   boxShadow: jetpackActive ? '0 0 15px rgba(255, 170, 0, 0.7)' : '0 0 10px rgba(249, 115, 22, 0.5)',
@@ -623,10 +621,10 @@ export function HUD() {
             </span>
           </div>
         )}
-        
+
         {/* Ice Wall Rush Charge (Glacier E ability) */}
         {localPlayer.heroId === 'glacier' && (
-          <div 
+          <div
             className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
             style={{
               background: iceWallRushActive ? 'rgba(59, 130, 246, 0.25)' : 'rgba(59, 130, 246, 0.1)',
@@ -635,11 +633,11 @@ export function HUD() {
           >
             <span className="text-[9px] font-display text-blue-400 tracking-wider">ICE</span>
             <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full transition-all duration-100"
-                style={{ 
+                style={{
                   width: `${iceWallRushFuel}%`,
-                  background: iceWallRushActive 
+                  background: iceWallRushActive
                     ? 'linear-gradient(90deg, #3b82f6, #60a5fa)'
                     : 'linear-gradient(90deg, #60a5fa, #93c5fd)',
                   boxShadow: iceWallRushActive ? '0 0 15px rgba(96, 165, 250, 0.7)' : '0 0 10px rgba(59, 130, 246, 0.5)',
@@ -656,7 +654,7 @@ export function HUD() {
       {/* ===== FLAG CARRIER ALERT (Improved) ===== */}
       {localPlayer.hasFlag && (
         <div className="absolute top-24 left-1/2 -translate-x-1/2 animate-bounce-slow">
-          <div 
+          <div
             className="relative px-6 py-3 rounded-xl overflow-hidden"
             style={{
               background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.2) 0%, rgba(245, 158, 11, 0.3) 100%)',
@@ -665,13 +663,13 @@ export function HUD() {
             }}
           >
             {/* Animated border glow */}
-            <div 
+            <div
               className="absolute inset-0 animate-pulse opacity-50"
               style={{
                 background: 'radial-gradient(ellipse at center, rgba(251, 191, 36, 0.3) 0%, transparent 70%)',
               }}
             />
-            
+
             <div className="relative flex items-center gap-4">
               <span className="text-2xl animate-bounce">🏴</span>
               <div className="flex flex-col">
@@ -703,9 +701,9 @@ interface AbilityState {
   isActive: boolean;
 }
 
-function AbilitySlotApex({ 
-  abilityId, 
-  keybind, 
+function AbilitySlotApex({
+  abilityId,
+  keybind,
   abilityState,
   clientCooldownEnd,
   clientCharges,
@@ -730,23 +728,23 @@ function AbilitySlotApex({
   const iconType = getAbilityIconType(abilityId);
   const maxCharges = abilityDef.charges || 1;
   const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef.cooldown || 10);
-  
+
   const now = Date.now();
-  const clientCooldownRemaining = clientCooldownEnd && clientCooldownEnd > now 
-    ? Math.ceil((clientCooldownEnd - now) / 1000) 
+  const clientCooldownRemaining = clientCooldownEnd && clientCooldownEnd > now
+    ? Math.ceil((clientCooldownEnd - now) / 1000)
     : 0;
-  
+
   const serverCooldown = abilityState?.cooldownRemaining ?? 0;
   // Ultimates use the charge system, not cooldowns - ignore any cooldown values
   const cooldown = isUltimate ? 0 : (clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown);
-  
+
   const serverCharges = abilityState?.charges ?? maxCharges;
   let charges = clientCharges !== undefined ? clientCharges : serverCharges;
-  
+
   if (maxCharges > 1 && clientCooldownEnd && now >= clientCooldownEnd && charges === 0) {
     charges = maxCharges;
   }
-  
+
   // For ultimates, use client-side effect state to avoid server sync flickering
   const isActive = isUltimate ? (ultimateEffectActive ?? false) : (abilityState?.isActive ?? false);
   const onCooldown = cooldown > 0;
@@ -760,9 +758,8 @@ function AbilitySlotApex({
   return (
     <div className="flex flex-col items-center gap-1.5">
       {/* Ability name label */}
-      <span className={`text-[9px] font-body tracking-wide uppercase ${
-        isUsable ? 'text-white/70' : 'text-white/30'
-      }`}>
+      <span className={`text-[9px] font-body tracking-wide uppercase ${isUsable ? 'text-white/70' : 'text-white/30'
+        }`}>
         {abilityDef.name}
       </span>
 
@@ -770,31 +767,31 @@ function AbilitySlotApex({
       <div className="relative">
         {/* Outer glow for ready ultimate */}
         {isUltReady && (
-          <div 
+          <div
             className="absolute -inset-2 rounded-xl animate-pulse"
-            style={{ 
+            style={{
               background: 'radial-gradient(circle, rgba(251, 191, 36, 0.4) 0%, transparent 70%)',
             }}
           />
         )}
 
         {/* Ability box */}
-        <div 
+        <div
           className={`
             relative w-14 h-14 rounded-xl overflow-hidden transition-all duration-150
             ${isActive ? 'ring-2 ring-white' : ''}
           `}
           style={{
             background: isUsable
-              ? isUltimate 
+              ? isUltimate
                 ? 'linear-gradient(180deg, rgba(251, 191, 36, 0.35) 0%, rgba(180, 83, 9, 0.45) 100%)'
                 : `linear-gradient(180deg, ${heroColor}40 0%, ${heroColor}25 100%)`
               : 'linear-gradient(180deg, rgba(30, 30, 40, 0.95) 0%, rgba(20, 20, 30, 0.98) 100%)',
-            border: isUsable 
+            border: isUsable
               ? `2px solid ${isUltimate ? 'rgba(251, 191, 36, 0.8)' : heroColor}`
               : '2px solid rgba(60, 60, 70, 0.5)',
-            boxShadow: isUsable 
-              ? isUltimate 
+            boxShadow: isUsable
+              ? isUltimate
                 ? '0 0 20px rgba(251, 191, 36, 0.3), inset 0 0 15px rgba(251, 191, 36, 0.1)'
                 : `0 0 15px ${heroColor}30, inset 0 0 10px ${heroColor}10`
               : 'inset 0 2px 8px rgba(0,0,0,0.4)',
@@ -822,27 +819,25 @@ function AbilitySlotApex({
           )}
 
           {/* Keybind badge */}
-          <div 
-            className={`absolute top-1 left-1 z-30 min-w-[22px] h-[22px] rounded-md flex items-center justify-center text-[11px] font-mono font-bold ${
-              isUsable 
-                ? isUltimate 
-                  ? 'bg-amber-500/60 text-amber-100' 
+          <div
+            className={`absolute top-1 left-1 z-30 min-w-[22px] h-[22px] rounded-md flex items-center justify-center text-[11px] font-mono font-bold ${isUsable
+                ? isUltimate
+                  ? 'bg-amber-500/60 text-amber-100'
                   : 'bg-white/30 text-white'
                 : 'bg-black/60 text-white/40'
-            }`}
+              }`}
           >
             {keybind}
           </div>
 
           {/* Ability Icon */}
-          <div className={`absolute inset-0 flex items-center justify-center z-20 ${
-            !isUsable ? 'opacity-30' : ''
-          }`}>
-            <AbilityIcon 
-              type={iconType} 
-              size={iconSize} 
-              color={isUsable 
-                ? (isUltimate ? '#fbbf24' : 'white') 
+          <div className={`absolute inset-0 flex items-center justify-center z-20 ${!isUsable ? 'opacity-30' : ''
+            }`}>
+            <AbilityIcon
+              type={iconType}
+              size={iconSize}
+              color={isUsable
+                ? (isUltimate ? '#fbbf24' : 'white')
                 : 'rgba(255,255,255,0.4)'
               }
             />
@@ -870,13 +865,12 @@ function AbilitySlotApex({
           {hasCharges && (
             <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-1 z-30">
               {[...Array(maxCharges)].map((_, i) => (
-                <div 
-                  key={i} 
-                  className={`w-3 h-1.5 rounded-sm transition-all duration-150 ${
-                    i < charges 
-                      ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]' 
+                <div
+                  key={i}
+                  className={`w-3 h-1.5 rounded-sm transition-all duration-150 ${i < charges
+                      ? 'bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]'
                       : 'bg-white/20'
-                  }`}
+                    }`}
                 />
               ))}
             </div>
@@ -884,10 +878,10 @@ function AbilitySlotApex({
 
           {/* Active glow pulse */}
           {isActive && (
-            <div 
+            <div
               className="absolute inset-0 z-10 animate-pulse"
-              style={{ 
-                background: `radial-gradient(circle at center, ${heroColor}70 0%, transparent 60%)` 
+              style={{
+                background: `radial-gradient(circle at center, ${heroColor}70 0%, transparent 60%)`
               }}
             />
           )}
@@ -900,19 +894,19 @@ function AbilitySlotApex({
 // ===== MOVEMENT INDICATOR (Improved) =====
 function MovementIndicator({ label, color, icon }: { label: string; color: string; icon: string }) {
   return (
-    <div 
+    <div
       className="flex items-center gap-2 px-3 py-1.5 rounded-lg backdrop-blur-sm animate-fade-in"
-      style={{ 
+      style={{
         background: `${color}15`,
         border: `1px solid ${color}40`,
         boxShadow: `0 0 15px ${color}20`,
       }}
     >
-      <div 
+      <div
         className="w-2 h-2 rounded-full animate-pulse"
         style={{ background: color, boxShadow: `0 0 8px ${color}` }}
       />
-      <span 
+      <span
         className="text-[10px] font-display tracking-[0.15em]"
         style={{ color }}
       >

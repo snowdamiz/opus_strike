@@ -243,7 +243,7 @@ export function Lobby() {
       {/* Main Content */}
       <div className="absolute inset-0 pt-20 pb-20 z-10 flex items-center justify-center gap-10 px-8">
         {/* Solar Vanguard Panel */}
-        <div className="w-80 h-[520px] flex-shrink-0">
+        <div className="w-52 lg:w-60 xl:w-72 2xl:w-80 h-[340px] lg:h-[380px] xl:h-[460px] 2xl:h-[520px] flex-shrink-0">
           <FactionPanel
             faction={FACTIONS.red}
             players={solarPlayers}
@@ -254,7 +254,7 @@ export function Lobby() {
         </div>
 
         {/* Center Battle Arena */}
-        <div className="w-[360px] flex-shrink-0 flex flex-col items-center justify-center relative">
+        <div className="w-[240px] lg:w-[280px] xl:w-[320px] 2xl:w-[360px] flex-shrink-0 flex flex-col items-center justify-center relative">
           {/* Epic VS Section */}
           <div className="relative mb-6">
             {/* Outer glow ring */}
@@ -487,7 +487,7 @@ export function Lobby() {
         </div>
 
         {/* Void Legion Panel */}
-        <div className="w-80 h-[520px] flex-shrink-0">
+        <div className="w-52 lg:w-60 xl:w-72 2xl:w-80 h-[340px] lg:h-[380px] xl:h-[460px] 2xl:h-[520px] flex-shrink-0">
           <FactionPanel
             faction={FACTIONS.blue}
             players={voidPlayers}

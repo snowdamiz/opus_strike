@@ -18,7 +18,7 @@ export function HeroesPage() {
   const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
   const [prevHero, setPrevHero] = useState<HeroId>(selectedHero);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  
+
   const heroInfo = HERO_DEFINITIONS[selectedHero];
   const heroColor = HERO_COLORS[selectedHero];
 
@@ -35,74 +35,73 @@ export function HeroesPage() {
   }, [selectedHero, prevHero]);
 
   return (
-    <div className="h-full flex px-8 py-4 gap-8">
+    <div className="h-full flex px-4 xl:px-6 2xl:px-8 py-4 gap-4 xl:gap-6 2xl:gap-8">
       {/* Left Panel - Hero Selector */}
-      <div className="w-[280px] flex flex-col justify-center">
+      <div className="w-[160px] lg:w-[180px] xl:w-[220px] 2xl:w-[280px] flex flex-col justify-center">
         <div className="mb-5 px-1">
           <h2 className="font-display text-2xl text-white drop-shadow-lg">SELECT HERO</h2>
           <p className="text-white/50 text-xs font-body">Learn abilities & playstyles</p>
         </div>
-        
+
         <div className="space-y-2">
           {ALL_HERO_IDS.map((heroId) => {
             const hero = HERO_DEFINITIONS[heroId];
             const color = HERO_COLORS[heroId];
             const isSelected = selectedHero === heroId;
-            
+
             return (
               <button
                 key={heroId}
                 onClick={() => setSelectedHero(heroId)}
-                className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 backdrop-blur-md ${
-                  isSelected ? 'scale-[1.02]' : 'hover:scale-[1.01]'
-                }`}
+                className={`w-full group relative overflow-hidden rounded-xl transition-all duration-300 backdrop-blur-md ${isSelected ? 'scale-[1.02]' : 'hover:scale-[1.01]'
+                  }`}
                 style={{
-                  background: isSelected 
-                    ? `linear-gradient(135deg, ${color}40 0%, rgba(15,15,26,0.9) 100%)` 
+                  background: isSelected
+                    ? `linear-gradient(135deg, ${color}40 0%, rgba(15,15,26,0.9) 100%)`
                     : 'linear-gradient(135deg, rgba(15,15,26,0.85) 0%, rgba(15,15,26,0.7) 100%)',
-                  border: isSelected 
-                    ? `2px solid ${color}70` 
+                  border: isSelected
+                    ? `2px solid ${color}70`
                     : '1px solid rgba(255,255,255,0.1)',
-                  boxShadow: isSelected 
-                    ? `0 8px 32px ${color}40, 0 0 0 1px ${color}30, inset 0 1px 0 rgba(255,255,255,0.1)` 
+                  boxShadow: isSelected
+                    ? `0 8px 32px ${color}40, 0 0 0 1px ${color}30, inset 0 1px 0 rgba(255,255,255,0.1)`
                     : '0 4px 16px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05)',
                 }}
               >
                 {/* Hover glow effect */}
-                <div 
+                <div
                   className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
                   style={{ background: `radial-gradient(circle at center, ${color}20, transparent 70%)` }}
                 />
-                
+
                 {/* Content */}
                 <div className="relative flex items-center gap-3 p-3">
                   {/* Hero Avatar */}
-                  <div 
+                  <div
                     className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300"
-                    style={{ 
-                      background: isSelected 
-                        ? `linear-gradient(135deg, ${color}, ${color}cc)` 
+                    style={{
+                      background: isSelected
+                        ? `linear-gradient(135deg, ${color}, ${color}cc)`
                         : `linear-gradient(135deg, ${color}60, ${color}30)`,
-                      boxShadow: isSelected 
-                        ? `0 4px 20px ${color}60, inset 0 1px 0 rgba(255,255,255,0.3)` 
+                      boxShadow: isSelected
+                        ? `0 4px 20px ${color}60, inset 0 1px 0 rgba(255,255,255,0.3)`
                         : `0 2px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.1)`,
                     }}
                   >
                     <HeroIcon heroId={heroId} size={28} color="#ffffff" />
                   </div>
-                  
+
                   {/* Hero Info */}
                   <div className="flex-1 text-left min-w-0">
-                    <h3 
+                    <h3
                       className="font-display text-base transition-colors truncate drop-shadow-md"
                       style={{ color: isSelected ? 'white' : 'rgba(255,255,255,0.85)' }}
                     >
                       {hero.name.toUpperCase()}
                     </h3>
-                    <span 
+                    <span
                       className="inline-block text-[10px] px-2 py-0.5 rounded-full uppercase font-body mt-1 font-medium"
-                      style={{ 
-                        background: isSelected ? `${color}50` : `${color}30`, 
+                      style={{
+                        background: isSelected ? `${color}50` : `${color}30`,
                         color: isSelected ? 'white' : color,
                         border: `1px solid ${color}50`,
                         textShadow: '0 1px 2px rgba(0,0,0,0.3)'
@@ -114,12 +113,12 @@ export function HeroesPage() {
 
                   {/* Selection indicator */}
                   {isSelected && (
-                    <div 
-                      className="w-1.5 h-10 rounded-full flex-shrink-0" 
-                      style={{ 
+                    <div
+                      className="w-1.5 h-10 rounded-full flex-shrink-0"
+                      style={{
                         background: `linear-gradient(180deg, ${color}, ${color}80)`,
                         boxShadow: `0 0 12px ${color}, 0 0 4px ${color}`
-                      }} 
+                      }}
                     />
                   )}
                 </div>
@@ -132,7 +131,7 @@ export function HeroesPage() {
       {/* Center Panel - Hero Showcase */}
       <div className="flex-1 flex flex-col items-center justify-center relative">
         {/* Background glow */}
-        <div 
+        <div
           className="absolute inset-0 transition-all duration-500"
           style={{
             background: `radial-gradient(ellipse at center, ${heroColor}25, transparent 55%)`,
@@ -142,32 +141,32 @@ export function HeroesPage() {
         {/* Hero SVG Display */}
         <div className="relative flex flex-col items-center">
           {/* Animated Hero SVG */}
-          <div 
+          <div
             className={`relative transition-all duration-250 ${isTransitioning ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
-            style={{ 
+            style={{
               filter: `drop-shadow(0 0 50px ${heroColor}40)`,
             }}
           >
-            <HeroSVG 
-              heroId={isTransitioning ? prevHero : selectedHero} 
+            <HeroSVG
+              heroId={isTransitioning ? prevHero : selectedHero}
               size={380}
               className="hero-svg-enter"
             />
           </div>
-          
+
           {/* Hero Info Below */}
-          <div className="text-center w-[420px] mt-4">
-            <h1 
+          <div className="text-center w-[260px] lg:w-[300px] xl:w-[360px] 2xl:w-[420px] mt-4">
+            <h1
               className="font-display text-5xl text-white mb-3 transition-colors duration-300 drop-shadow-2xl"
               style={{ textShadow: `0 0 50px ${heroColor}70, 0 0 100px ${heroColor}40, 0 4px 8px rgba(0,0,0,0.8)` }}
             >
               {heroInfo.name.toUpperCase()}
             </h1>
             <div className="flex items-center justify-center gap-3 mb-4">
-              <span 
+              <span
                 className="px-5 py-2 rounded-full text-sm font-body uppercase tracking-wider backdrop-blur-md font-medium"
-                style={{ 
-                  background: `linear-gradient(135deg, ${heroColor}50, ${heroColor}30)`, 
+                style={{
+                  background: `linear-gradient(135deg, ${heroColor}50, ${heroColor}30)`,
                   color: 'white',
                   border: `1px solid ${heroColor}60`,
                   boxShadow: `0 4px 20px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
@@ -179,7 +178,7 @@ export function HeroesPage() {
               <span className="text-white/40">•</span>
               <span className="text-white/70 font-body text-sm drop-shadow-md">{heroInfo.movementFocus}</span>
             </div>
-            <p 
+            <p
               className="text-white/70 font-body text-sm leading-relaxed max-w-sm mx-auto"
               style={{ textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}
             >
@@ -197,15 +196,15 @@ export function HeroesPage() {
       </div>
 
       {/* Right Panel - Abilities */}
-      <div className="w-[380px] flex flex-col justify-center">
+      <div className="w-[220px] lg:w-[250px] xl:w-[300px] 2xl:w-[380px] h-full flex flex-col min-h-0">
         {/* Section Header */}
-        <div className="mb-5 px-1">
+        <div className="mb-5 px-1 flex-shrink-0">
           <h2 className="font-display text-2xl text-white drop-shadow-lg">ABILITIES</h2>
           <p className="text-white/50 text-xs font-body">Master your hero's kit</p>
         </div>
 
         {/* Abilities List */}
-        <div className="space-y-3">
+        <div className="space-y-3 flex-1 overflow-y-auto min-h-0 pr-2 custom-scrollbar">
           {/* Passive */}
           <AbilityCard
             name={heroInfo.passive.name}
@@ -244,17 +243,17 @@ export function HeroesPage() {
 // Quick Stat Component
 function QuickStat({ label, value, icon, color }: { label: string; value: number; icon: string; color: string }) {
   return (
-    <div 
+    <div
       className="flex flex-col items-center px-6 py-4 rounded-xl backdrop-blur-md"
-      style={{ 
+      style={{
         background: 'linear-gradient(135deg, rgba(15,15,26,0.9) 0%, rgba(15,15,26,0.7) 100%)',
         border: '1px solid rgba(255,255,255,0.12)',
         boxShadow: '0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)'
       }}
     >
       <span className="text-xl mb-1.5 drop-shadow-md">{icon}</span>
-      <span 
-        className="font-display text-3xl text-white drop-shadow-lg" 
+      <span
+        className="font-display text-3xl text-white drop-shadow-lg"
         style={{ textShadow: `0 0 24px ${color}50, 0 2px 4px rgba(0,0,0,0.5)` }}
       >
         {value}
@@ -281,29 +280,29 @@ function AbilityCard({ ability, abilityId, name, description, color, isPassive, 
   const iconType = isPassive ? 'passive' : isUltimate ? 'ultimate' : (abilityId ? getAbilityIconType(abilityId) : 'passive');
 
   return (
-    <div 
+    <div
       className="group relative overflow-hidden rounded-xl transition-all duration-300 hover:scale-[1.01] backdrop-blur-md"
       style={{
-        background: isUltimate 
-          ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(15,15,26,0.95) 100%)' 
+        background: isUltimate
+          ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(15,15,26,0.95) 100%)'
           : isPassive
             ? 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(15,15,26,0.9) 100%)'
             : `linear-gradient(135deg, ${color}20 0%, rgba(15,15,26,0.92) 100%)`,
-        border: isUltimate 
-          ? '2px solid rgba(245, 158, 11, 0.5)' 
-          : isPassive 
+        border: isUltimate
+          ? '2px solid rgba(245, 158, 11, 0.5)'
+          : isPassive
             ? '1px solid rgba(255,255,255,0.15)'
             : `1px solid ${color}40`,
-        boxShadow: isUltimate 
-          ? '0 8px 32px rgba(245, 158, 11, 0.25), inset 0 1px 0 rgba(255,255,255,0.1)' 
+        boxShadow: isUltimate
+          ? '0 8px 32px rgba(245, 158, 11, 0.25), inset 0 1px 0 rgba(255,255,255,0.1)'
           : `0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)`,
       }}
     >
       {/* Shimmer effect on hover */}
-      <div 
+      <div
         className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
         style={{
-          background: isUltimate 
+          background: isUltimate
             ? 'linear-gradient(135deg, transparent 30%, rgba(245, 158, 11, 0.15) 50%, transparent 70%)'
             : `linear-gradient(135deg, transparent 30%, ${color}20 50%, transparent 70%)`,
         }}
@@ -312,17 +311,17 @@ function AbilityCard({ ability, abilityId, name, description, color, isPassive, 
       <div className="relative p-4">
         <div className="flex items-start gap-4">
           {/* Ability Icon Badge */}
-          <div 
+          <div
             className="relative w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden"
-            style={{ 
-              background: isUltimate 
-                ? 'linear-gradient(135deg, #f59e0b, #d97706)' 
-                : isPassive 
-                  ? 'linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.08))' 
+            style={{
+              background: isUltimate
+                ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                : isPassive
+                  ? 'linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.08))'
                   : `linear-gradient(135deg, ${color}, ${color}cc)`,
-              boxShadow: isUltimate 
-                ? '0 4px 20px rgba(245, 158, 11, 0.5), inset 0 1px 0 rgba(255,255,255,0.3)' 
-                : isPassive 
+              boxShadow: isUltimate
+                ? '0 4px 20px rgba(245, 158, 11, 0.5), inset 0 1px 0 rgba(255,255,255,0.3)'
+                : isPassive
                   ? '0 4px 16px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15)'
                   : `0 4px 20px ${color}50, inset 0 1px 0 rgba(255,255,255,0.25)`,
             }}
@@ -331,16 +330,16 @@ function AbilityCard({ ability, abilityId, name, description, color, isPassive, 
             <div className="absolute inset-0 bg-gradient-to-b from-white/25 to-transparent" />
             <AbilityIcon type={iconType} size={24} color="#ffffff" className="relative z-10 drop-shadow-md" />
           </div>
-          
+
           {/* Content */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1.5">
               <h4 className="font-display text-white text-base drop-shadow-md">{abilityName}</h4>
               {isPassive && (
-                <span 
+                <span
                   className="text-[9px] px-2.5 py-0.5 rounded-full uppercase font-body font-medium"
-                  style={{ 
-                    background: 'rgba(255,255,255,0.15)', 
+                  style={{
+                    background: 'rgba(255,255,255,0.15)',
                     color: 'rgba(255,255,255,0.8)',
                     border: '1px solid rgba(255,255,255,0.2)',
                     textShadow: '0 1px 2px rgba(0,0,0,0.3)'
@@ -354,15 +353,15 @@ function AbilityCard({ ability, abilityId, name, description, color, isPassive, 
               )}
             </div>
             <p className="text-white/70 text-xs font-body leading-relaxed">{abilityDesc}</p>
-            
+
             {/* Meta info */}
             {ability && (ability.cooldown > 0 || ability.duration || ability.charges) && (
               <div className="flex items-center gap-2 mt-3">
                 {ability.cooldown > 0 && (
-                  <span 
+                  <span
                     className="text-[10px] font-mono flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium"
-                    style={{ 
-                      background: `${color}25`, 
+                    style={{
+                      background: `${color}25`,
                       color: 'white',
                       border: `1px solid ${color}40`,
                       boxShadow: `0 2px 8px ${color}20`
@@ -372,10 +371,10 @@ function AbilityCard({ ability, abilityId, name, description, color, isPassive, 
                   </span>
                 )}
                 {ability.duration && (
-                  <span 
+                  <span
                     className="text-[10px] font-mono flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium"
-                    style={{ 
-                      background: `${color}25`, 
+                    style={{
+                      background: `${color}25`,
                       color: 'white',
                       border: `1px solid ${color}40`,
                       boxShadow: `0 2px 8px ${color}20`
@@ -385,10 +384,10 @@ function AbilityCard({ ability, abilityId, name, description, color, isPassive, 
                   </span>
                 )}
                 {ability.charges && (
-                  <span 
+                  <span
                     className="text-[10px] font-mono flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium"
-                    style={{ 
-                      background: `${color}25`, 
+                    style={{
+                      background: `${color}25`,
                       color: 'white',
                       border: `1px solid ${color}40`,
                       boxShadow: `0 2px 8px ${color}20`

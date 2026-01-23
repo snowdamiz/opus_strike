@@ -62,8 +62,8 @@ export function Scoreboard() {
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-none">
-      <div 
-        className="w-full max-w-4xl mx-8 rounded-2xl overflow-hidden animate-scale-in"
+      <div
+        className="w-full max-w-2xl lg:max-w-3xl xl:max-w-4xl mx-4 lg:mx-6 xl:mx-8 rounded-2xl overflow-hidden animate-scale-in"
         style={{
           background: 'linear-gradient(180deg, rgba(15, 15, 25, 0.98) 0%, rgba(10, 10, 18, 0.98) 100%)',
           border: '1px solid rgba(255, 255, 255, 0.1)',

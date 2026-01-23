@@ -9,6 +9,7 @@ import { LoadingScreen } from './components/ui/LoadingScreen';
 import { Scoreboard } from './components/ui/Scoreboard';
 import { InGameMenu } from './components/ui/InGameMenu';
 import { GameConsole } from './components/ui/GameConsole';
+import { PerfMonitorOverlay } from './components/game/PerfMonitor';
 import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
@@ -24,7 +25,7 @@ export function App() {
   // Manage background music based on game phase
   useEffect(() => {
     if (isLoading) return;
-    
+
     // Play game music during active gameplay, lobby music otherwise
     if (appPhase === 'in_game' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
       playGameMusic();
@@ -59,7 +60,7 @@ export function App() {
         // Request pointer lock and close menu
         const canvas = document.querySelector('canvas');
         if (canvas) {
-          canvas.requestPointerLock().catch(() => {});
+          canvas.requestPointerLock().catch(() => { });
         }
         setShowInGameMenu(false);
       }
@@ -120,10 +121,10 @@ export function App() {
     return (
       <div className="w-full h-full relative game-active">
         <GameCanvas />
-        
+
         {/* Show hero select during pre-game phases */}
         {isPreGame && <HeroSelect />}
-        
+
         {/* Show HUD during active gameplay */}
         {isActiveGame && (
           <>
@@ -138,14 +139,14 @@ export function App() {
 
         {/* Countdown overlay */}
         {gamePhase === 'countdown' && <CountdownOverlay />}
-        
+
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
             <h2 className="font-display text-6xl text-white">Round Over</h2>
           </div>
         )}
-        
+
         {gamePhase === 'game_end' && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50">
             <h2 className="font-display text-6xl text-voxel-primary">Game Over</h2>
@@ -155,8 +156,11 @@ export function App() {
         {/* In-game menu (ESC) */}
         {showInGameMenu && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
 
-        {/* Developer console (backtick key) */}
+        {/* Developer console (Enter key) */}
         <GameConsole />
+
+        {/* Performance monitor overlay (toggle with /debug) */}
+        <PerfMonitorOverlay />
       </div>
     );
   }
@@ -185,7 +189,7 @@ function CountdownOverlay() {
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
       <div className="text-center">
-        <div 
+        <div
           className="font-display text-[200px] text-voxel-primary animate-pulse"
           style={{ textShadow: '0 0 60px rgba(0, 255, 136, 0.8)' }}
         >

@@ -154,7 +154,7 @@ export function MainMenu() {
           <div className="absolute inset-0 pattern-grid opacity-50" />
         </div>
         <div className="relative z-10 flex flex-col items-center">
-          <h1 className="font-display text-6xl text-white tracking-wider mb-8">
+          <h1 className="font-display text-4xl lg:text-6xl text-white tracking-wider mb-8">
             VOXEL <span className="text-orange-500">STRIKE</span>
           </h1>
           <div className="flex items-center gap-3">
@@ -176,10 +176,10 @@ export function MainMenu() {
         {/* Gradient ambient */}
         <div className="absolute inset-0 bg-gradient-radial from-purple-500/5 via-transparent to-transparent" />
         <div className="absolute bottom-0 right-0 w-1/2 h-1/2 bg-gradient-radial from-cyan-500/5 via-transparent to-transparent" />
-        
+
         {/* Subtle grid */}
         <div className="absolute inset-0 pattern-grid opacity-50" />
-        
+
         {/* Diagonal accent lines */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-purple-500/30 to-transparent" />
         <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-500/20 to-transparent" />
@@ -202,10 +202,10 @@ export function MainMenu() {
       </div>
 
       {/* Main content */}
-      <div className="relative z-10 flex flex-col items-center">
+      <div className="relative z-10 flex flex-col items-center responsive-scale-container">
         {/* Logo */}
-        <div className="mb-12 text-center">
-          <h1 className="font-display text-8xl text-white tracking-wider">
+        <div className="mb-6 lg:mb-12 text-center">
+          <h1 className="font-display text-5xl md:text-6xl lg:text-8xl text-white tracking-wider">
             VOXEL <span className="text-orange-500">STRIKE</span>
           </h1>
           <div className="mt-3 flex items-center justify-center gap-4">
@@ -229,8 +229,8 @@ export function MainMenu() {
                 {showNameInput ? 'CREATE PROFILE' : 'ENTER ARENA'}
               </h2>
               <p className="text-white/40 text-sm mt-1 font-body">
-                {showNameInput 
-                  ? 'Choose your callsign to continue' 
+                {showNameInput
+                  ? 'Choose your callsign to continue'
                   : 'Connect your Phantom wallet to play'}
               </p>
             </div>
@@ -381,7 +381,7 @@ export function MainMenu() {
                         }}
                       >
                         {/* Button shimmer */}
-                        <div 
+                        <div
                           className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
                           style={{
                             background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
@@ -410,9 +410,9 @@ export function MainMenu() {
                         <div className="text-center">
                           <p className="text-white/40 text-xs font-body">
                             Don't have Phantom?{' '}
-                            <a 
-                              href="https://phantom.app/" 
-                              target="_blank" 
+                            <a
+                              href="https://phantom.app/"
+                              target="_blank"
                               rel="noopener noreferrer"
                               className="text-purple-400 hover:text-purple-300 transition-colors"
                             >
@@ -454,7 +454,7 @@ export function MainMenu() {
         </div>
 
         {/* Version */}
-        <p className="mt-8 font-mono text-xs text-white/20">
+        <p className="mt-4 lg:mt-8 font-mono text-xs text-white/20">
           v0.1.0
         </p>
       </div>

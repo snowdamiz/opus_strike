@@ -58,7 +58,7 @@ export function damageNpc(npcId: string, damage: number): { killed: boolean; npc
   const { players, updatePlayer, removePlayer } = useGameStore.getState();
   const npc = players.get(npcId);
   if (!npc || !isNpcId(npcId)) return null;
-  
+
   // Try to send damage to server first
   if (networkDamageNpc) {
     networkDamageNpc(npcId, damage);
@@ -66,11 +66,11 @@ export function damageNpc(npcId: string, damage: number): { killed: boolean; npc
     const predictedKill = npc.health - damage <= 0;
     return { killed: predictedKill, npcName: npc.name };
   }
-  
+
   // Fallback: Apply damage client-side if network not available
   // This ensures damage works even before network context is fully initialized
   const newHealth = Math.max(0, npc.health - damage);
-  
+
   if (newHealth <= 0) {
     removePlayer(npcId);
     return { killed: true, npcName: npc.name };
@@ -84,21 +84,21 @@ export function damageNpc(npcId: string, damage: number): { killed: boolean; npc
 export function findNpcsInRadius(position: { x: number; y: number; z: number }, radius: number): string[] {
   const { players } = useGameStore.getState();
   const result: string[] = [];
-  
+
   players.forEach((player, playerId) => {
     if (!isNpcId(playerId)) return;
     if (player.state !== 'alive') return;
-    
+
     const dx = player.position.x - position.x;
     const dy = player.position.y - position.y;
     const dz = player.position.z - position.z;
     const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    
+
     if (distance <= radius) {
       result.push(playerId);
     }
   });
-  
+
   return result;
 }
 
@@ -135,7 +135,7 @@ function PositionDisplay() {
       // Don't copy if console is open or typing in an input
       if (isConsoleOpenGlobal) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      
+
       if (e.key === 'p' || e.key === 'P') {
         const posString = `{ x: ${position.x.toFixed(1)}, z: ${position.z.toFixed(1)} }`;
         navigator.clipboard.writeText(posString).then(() => {
@@ -173,13 +173,13 @@ export function GameConsole() {
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showPosition, setShowPosition] = useState(false);
-  
+
   const inputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
+
   // Get network functions for NPC operations
   const network = useNetwork();
-  
+
   // Set the network functions for projectiles to use
   useEffect(() => {
     setNetworkDamageNpc(network.damageNpc);
@@ -203,15 +203,18 @@ export function GameConsole() {
     isConsoleOpenGlobal = isOpen;
   }, [isOpen]);
 
-  // Toggle console with backtick key
+  // Toggle console with Enter key (not when already in an input)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === '`' || e.key === '~') {
+      // Only open chat with Enter when not already open and not in an input
+      if (e.key === 'Enter' && !isOpen) {
+        // Don't intercept if already in an input field
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
         e.preventDefault();
         e.stopPropagation();
-        setIsOpen(prev => !prev);
+        setIsOpen(true);
       }
-      
+
       // Close with Escape
       if (e.key === 'Escape' && isOpen) {
         e.preventDefault();
@@ -247,7 +250,7 @@ export function GameConsole() {
     switch (command) {
       case '/help': {
         const topic = parts[1]?.toLowerCase();
-        
+
         if (!topic) {
           // Main help overview
           addMessage('╔════════════════════════════════════════╗', 'info');
@@ -367,13 +370,13 @@ export function GameConsole() {
       case '/spawn': {
         const heroId = parts[1]?.toLowerCase() as HeroId;
         const teamArg = parts[2]?.toLowerCase();
-        
+
         if (!heroId || !ALL_HERO_IDS.includes(heroId)) {
           addMessage(`Usage: /spawn <heroId> [team]`, 'error');
           addMessage(`Valid heroes: ${ALL_HERO_IDS.join(', ')}`, 'error');
           break;
         }
-        
+
         // If team specified, validate it
         if (teamArg && teamArg !== 'red' && teamArg !== 'blue') {
           addMessage('Error: Team must be "red" or "blue"', 'error');
@@ -384,7 +387,7 @@ export function GameConsole() {
         // If no team specified, server will spawn on OPPOSITE team (so you can damage them)
         const team = teamArg as Team | undefined;
         network.spawnNpc(heroId, team as Team);
-        
+
         if (team) {
           addMessage(`Requesting spawn of ${HERO_DEFINITIONS[heroId].name} on ${team} team...`, 'info');
         } else {
@@ -399,13 +402,13 @@ export function GameConsole() {
         const y = parseFloat(parts[3]);
         const z = parseFloat(parts[4]);
         const teamArg = parts[5]?.toLowerCase();
-        
+
         if (!heroId || !ALL_HERO_IDS.includes(heroId)) {
           addMessage(`Usage: /spawnat <heroId> <x> <y> <z> [team]`, 'error');
           addMessage(`Valid heroes: ${ALL_HERO_IDS.join(', ')}`, 'error');
           break;
         }
-        
+
         if (isNaN(x) || isNaN(y) || isNaN(z)) {
           addMessage('Error: Invalid coordinates', 'error');
           break;
@@ -419,7 +422,7 @@ export function GameConsole() {
         // Send spawn request to server with specific position
         const team = teamArg as Team | undefined;
         network.spawnNpc(heroId, team, { x, y, z });
-        
+
         if (team) {
           addMessage(`Requesting spawn of ${HERO_DEFINITIONS[heroId].name} on ${team} team at (${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)})...`, 'info');
         } else {
@@ -431,12 +434,12 @@ export function GameConsole() {
       case '/npcs': {
         const { players } = useGameStore.getState();
         const npcIds = getSpawnedNpcIds();
-        
+
         if (npcIds.length === 0) {
           addMessage('No NPCs spawned. Use /spawn <heroId> to create one.', 'info');
           break;
         }
-        
+
         addMessage(`Spawned NPCs (${npcIds.length}):`, 'info');
         npcIds.forEach((npcId) => {
           const npc = players.get(npcId);
@@ -450,7 +453,7 @@ export function GameConsole() {
 
       case '/kill': {
         const npcId = parts[1];
-        
+
         if (!npcId) {
           addMessage('Usage: /kill <npcId>', 'error');
           addMessage('Use /npcs to see spawned NPC IDs', 'info');
@@ -484,7 +487,7 @@ export function GameConsole() {
       case '/damage': {
         const npcId = parts[1];
         const damage = parseFloat(parts[2]);
-        
+
         if (!npcId || isNaN(damage)) {
           addMessage('Usage: /damage <npcId> <amount>', 'error');
           break;
@@ -515,7 +518,7 @@ export function GameConsole() {
 
       case '/killall': {
         const npcIds = getSpawnedNpcIds();
-        
+
         if (npcIds.length === 0) {
           addMessage('No NPCs to remove.', 'info');
           break;
@@ -533,7 +536,7 @@ export function GameConsole() {
           addMessage('Error: No local player', 'error');
           break;
         }
-        
+
         // Toggle between max health (999999) and normal
         const isGodMode = localPlayer.maxHealth > 10000;
         if (isGodMode) {
@@ -553,6 +556,13 @@ export function GameConsole() {
         // Close console after toggling
         setTimeout(() => setIsOpen(false), 100);
         break;
+
+      case '/debug': {
+        const { debugMode, toggleDebugMode } = useGameStore.getState();
+        toggleDebugMode();
+        addMessage(`Debug mode ${!debugMode ? 'ON' : 'OFF'} - Performance monitor ${!debugMode ? 'visible' : 'hidden'}`, 'info');
+        break;
+      }
 
       case '/tp':
         if (parts.length >= 4) {
@@ -619,51 +629,51 @@ export function GameConsole() {
     <>
       {/* Position display (always visible when enabled) */}
       {showPosition && <PositionDisplay />}
-      
-      {/* Console panel */}
-      <div 
-        className="fixed top-0 left-0 w-full h-[40%] bg-black/90 text-green-400 font-mono text-sm z-[9999] flex flex-col"
+
+      {/* Chat box panel - positioned bottom-mid left */}
+      <div
+        className="fixed bottom-4 left-4 w-[500px] max-w-[calc(100vw-2rem)] bg-black/80 backdrop-blur-sm text-green-400 font-mono text-sm z-[9999] flex flex-col rounded-lg border border-white/10 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-1">
-        {messages.map((msg) => (
-          <div 
-            key={msg.id}
-            className={`
+        {/* Messages - compact height with scroll */}
+        <div className="max-h-[200px] overflow-y-auto p-3 space-y-1">
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`
               ${msg.type === 'input' ? 'text-white' : ''}
               ${msg.type === 'output' ? 'text-green-400' : ''}
               ${msg.type === 'error' ? 'text-red-400' : ''}
               ${msg.type === 'info' ? 'text-cyan-400' : ''}
             `}
-          >
-            {msg.text}
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
+            >
+              {msg.text}
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
 
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="border-t border-green-800 p-2 flex">
-        <span className="text-green-400 mr-2">{'>'}</span>
-        <input
-          ref={inputRef}
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          className="flex-1 bg-transparent outline-none text-white caret-green-400"
-          placeholder="Type a command..."
-          autoComplete="off"
-          spellCheck={false}
-        />
-      </form>
+        {/* Input */}
+        <form onSubmit={handleSubmit} className="border-t border-green-800 p-2 flex">
+          <span className="text-green-400 mr-2">{'>'}</span>
+          <input
+            ref={inputRef}
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="flex-1 bg-transparent outline-none text-white caret-green-400"
+            placeholder="Type a command..."
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </form>
 
-      {/* Help hint */}
-      <div className="text-xs text-gray-500 px-3 pb-2">
-        Press ` to toggle console | ESC to close | ↑↓ for history
+        {/* Help hint */}
+        <div className="text-xs text-gray-500 px-3 pb-2">
+          Press Enter to open | ESC to close | Type /debug to toggle performance monitor
+        </div>
       </div>
-    </div>
     </>
   );
 }
