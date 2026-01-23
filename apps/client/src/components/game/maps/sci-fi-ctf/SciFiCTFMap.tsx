@@ -7,7 +7,7 @@
 
 import { Grid } from '@react-three/drei';
 import { MAP_CONFIG } from './config';
-import { TeamABase, TeamBBase, Routes, CenterZone } from './geometry';
+import { TeamABase, TeamBBase, Routes, CenterZone, Boundaries } from './geometry';
 
 export function SciFiCTFMap() {
   return (
@@ -37,6 +37,9 @@ export function SciFiCTFMap() {
 
       {/* Central arena - hub, connectors, hazards, ramps */}
       <CenterZone />
+
+      {/* Perimeter walls enclosing the map */}
+      <Boundaries />
     </group>
   );
 }
