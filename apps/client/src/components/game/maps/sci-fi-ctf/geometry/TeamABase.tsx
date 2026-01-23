@@ -15,6 +15,7 @@ import {
   teamAAccent,
   teamAGlow,
 } from '../materials';
+import { SpawnIndicator } from './SpawnIndicator';
 
 const { teamABase, platformHeight } = MAP_CONFIG;
 
@@ -210,6 +211,21 @@ export function TeamABase() {
       <mesh position={[BASE_WIDTH / 2 - 1, 0.02, 12]} material={teamAGlow}>
         <boxGeometry args={[4, 0.05, 8]} />
       </mesh>
+
+      {/* ============= SPAWN INDICATORS ============= */}
+      {/* Render at each configured spawn position */}
+      {/* Positions are world coordinates, need to subtract teamABase to get local */}
+      {MAP_CONFIG.spawnPoints.teamA.map((spawn, index) => (
+        <SpawnIndicator
+          key={`spawn-a-${index}`}
+          position={[
+            spawn.x - teamABase.x, // Convert to local coordinates
+            0, // Ground level (indicator sits on floor)
+            spawn.z - teamABase.z,
+          ]}
+          team="red"
+        />
+      ))}
     </group>
   );
 }
