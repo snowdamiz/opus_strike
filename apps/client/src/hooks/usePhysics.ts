@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { createMapColliders } from '../components/game/maps/sci-fi-ctf/colliders';
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -57,11 +58,8 @@ export function usePhysics(): PhysicsContext {
           .setTranslation(0, 0.9, 0);
         worldRef.current.createCollider(playerColliderDesc, playerBodyRef.current);
 
-        // Create boundary walls
-        createBoundaryColliders(worldRef.current, RAPIER);
-
-        // Note: Map colliders will be created procedurally in Plan 05
-        // For now, only the safety ground and boundary walls provide collision
+        // Create all map colliders (ground floors, walls, platforms, tunnels)
+        createMapColliders(worldRef.current, RAPIER);
 
         // IMPORTANT: Step the world to initialize collision structures
         // This is required for raycasts to work in Rapier
@@ -93,35 +91,6 @@ export function usePhysics(): PhysicsContext {
     playerBody: playerBodyRef.current,
     isReady,
   };
-}
-
-function createBoundaryColliders(world: RAPIER.World, rapier: typeof RAPIER) {
-  const boundaryHeight = 100;
-  // Outer safety boundary - polygon boundary handles actual gameplay limits
-  const mapSize = 120;
-
-  // Invisible boundary walls - use fixed rigid bodies
-  const walls = [
-    { pos: [0, boundaryHeight / 2, -mapSize / 2], size: [mapSize / 2, boundaryHeight / 2, 2] },
-    { pos: [0, boundaryHeight / 2, mapSize / 2], size: [mapSize / 2, boundaryHeight / 2, 2] },
-    { pos: [-mapSize / 2, boundaryHeight / 2, 0], size: [2, boundaryHeight / 2, mapSize / 2] },
-    { pos: [mapSize / 2, boundaryHeight / 2, 0], size: [2, boundaryHeight / 2, mapSize / 2] },
-  ];
-
-  for (const wall of walls) {
-    const bodyDesc = rapier.RigidBodyDesc.fixed().setTranslation(
-      wall.pos[0] as number,
-      wall.pos[1] as number,
-      wall.pos[2] as number
-    );
-    const body = world.createRigidBody(bodyDesc);
-    const colliderDesc = rapier.ColliderDesc.cuboid(
-      wall.size[0] as number,
-      wall.size[1] as number,
-      wall.size[2] as number
-    );
-    world.createCollider(colliderDesc, body);
-  }
 }
 
 export function getPhysicsWorld(): RAPIER.World | null {
