@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import RAPIER from '@dimforge/rapier3d-compat';
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-
-// Map configuration - must match VoxelWorld.tsx
-const CURRENT_MAP = '/maps/Inferno_World_free.glb';
-const MAP_SCALE = 1;
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -66,8 +60,8 @@ export function usePhysics(): PhysicsContext {
         // Create boundary walls
         createBoundaryColliders(worldRef.current, RAPIER);
 
-        // Load GLB map and create trimesh colliders
-        await loadMapColliders(worldRef.current, RAPIER);
+        // Note: Map colliders will be created procedurally in Plan 05
+        // For now, only the safety ground and boundary walls provide collision
 
         // IMPORTANT: Step the world to initialize collision structures
         // This is required for raycasts to work in Rapier
@@ -128,121 +122,6 @@ function createBoundaryColliders(world: RAPIER.World, rapier: typeof RAPIER) {
     );
     world.createCollider(colliderDesc, body);
   }
-}
-
-async function loadMapColliders(world: RAPIER.World, rapier: typeof RAPIER): Promise<void> {
-  return new Promise((resolve) => {
-    const loader = new GLTFLoader();
-    
-    loader.load(
-      CURRENT_MAP,
-      (gltf) => {
-        let meshCount = 0;
-        let successCount = 0;
-        let totalVertices = 0;
-        
-        // First, update all world matrices
-        gltf.scene.updateMatrixWorld(true);
-        
-        gltf.scene.traverse((child) => {
-          if (child instanceof THREE.Mesh && child.geometry) {
-            meshCount++;
-            const vertCount = child.geometry.getAttribute('position')?.count || 0;
-            totalVertices += vertCount;
-            
-            try {
-              const success = createTrimeshCollider(world, rapier, child);
-              if (success) {
-                successCount++;
-              }
-            } catch (error) {
-              console.warn('[Physics] Failed to create collider for mesh:', child.name, error);
-            }
-          }
-        });
-        
-        resolve();
-      },
-      (progress) => {
-        if (progress.total > 0) {
-          const percent = Math.round((progress.loaded / progress.total) * 100);
-          if (percent % 25 === 0) {
-            console.log(`[Physics] Loading: ${percent}%`);
-          }
-        }
-      },
-      (error) => {
-        console.error('[Physics] Failed to load GLB:', error);
-        // Resolve anyway so the game can continue with fallback ground
-        resolve();
-      }
-    );
-  });
-}
-
-function createTrimeshCollider(
-  world: RAPIER.World,
-  rapier: typeof RAPIER,
-  mesh: THREE.Mesh
-): boolean {
-  const geometry = mesh.geometry;
-  
-  if (!geometry) return false;
-
-  // Clone geometry to avoid modifying the original
-  const bufferGeometry = geometry.clone();
-  
-  // Apply mesh's world transform to geometry
-  bufferGeometry.applyMatrix4(mesh.matrixWorld);
-
-  // Get position attribute
-  const positionAttribute = bufferGeometry.getAttribute('position');
-  if (!positionAttribute) return false;
-
-  // Extract vertices
-  const vertexCount = positionAttribute.count;
-  const vertices = new Float32Array(vertexCount * 3);
-  
-  for (let i = 0; i < vertexCount; i++) {
-    vertices[i * 3] = positionAttribute.getX(i) * MAP_SCALE;
-    vertices[i * 3 + 1] = positionAttribute.getY(i) * MAP_SCALE;
-    vertices[i * 3 + 2] = positionAttribute.getZ(i) * MAP_SCALE;
-  }
-
-  // Get indices
-  let indices: Uint32Array;
-  if (bufferGeometry.index) {
-    indices = new Uint32Array(bufferGeometry.index.array);
-  } else {
-    // Non-indexed geometry - create sequential indices for triangles
-    const indexCount = vertexCount;
-    indices = new Uint32Array(indexCount);
-    for (let i = 0; i < indexCount; i++) {
-      indices[i] = i;
-    }
-  }
-
-  // Ensure we have valid triangles (at least 3 vertices and 3 indices)
-  if (vertices.length < 9 || indices.length < 3) {
-    return false;
-  }
-
-  // Create trimesh collider attached to a fixed rigid body
-  try {
-    const colliderDesc = rapier.ColliderDesc.trimesh(vertices, indices);
-
-    if (colliderDesc) {
-      // Create a fixed rigid body at origin for the trimesh
-      const bodyDesc = rapier.RigidBodyDesc.fixed();
-      const body = world.createRigidBody(bodyDesc);
-      world.createCollider(colliderDesc, body);
-      return true;
-    }
-  } catch (error) {
-    // Silently fail for invalid meshes
-  }
-  
-  return false;
 }
 
 export function getPhysicsWorld(): RAPIER.World | null {
