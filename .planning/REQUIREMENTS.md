@@ -9,10 +9,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Map Foundation
 
-- [ ] **FOUND-01**: Remove current imported map from game world
-- [ ] **FOUND-02**: Create asymmetrical map layout with visually distinct team sides
-- [ ] **FOUND-03**: Establish three main attack routes connecting team bases
-- [ ] **FOUND-04**: Balance travel times between routes (no route significantly faster)
+- [x] **FOUND-01**: Remove current imported map from game world
+- [x] **FOUND-02**: Create asymmetrical map layout with visually distinct team sides
+- [x] **FOUND-03**: Establish three main attack routes connecting team bases
+- [x] **FOUND-04**: Balance travel times between routes (no route significantly faster)
 
 ### Team Areas
 
@@ -75,10 +75,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | Phase 1 | Pending |
-| FOUND-02 | Phase 1 | Pending |
-| FOUND-03 | Phase 1 | Pending |
-| FOUND-04 | Phase 1 | Pending |
+| FOUND-01 | Phase 1 | Complete |
+| FOUND-02 | Phase 1 | Complete |
+| FOUND-03 | Phase 1 | Complete |
+| FOUND-04 | Phase 1 | Complete |
 | TEAM-01 | Phase 2 | Pending |
 | TEAM-02 | Phase 2 | Pending |
 | TEAM-03 | Phase 2 | Pending |
@@ -107,4 +107,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-01-22*
-*Last updated: 2026-01-22 after roadmap creation*
+*Last updated: 2026-01-22 - Phase 1 requirements complete*

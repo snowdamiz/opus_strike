@@ -12,7 +12,7 @@ This roadmap delivers a custom asymmetrical CTF arena for Opus Strike in five ph
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Map Foundation** - Remove old map, create asymmetrical layout with three attack routes
+- [x] **Phase 1: Map Foundation** - Remove old map, create asymmetrical layout with three attack routes
 - [ ] **Phase 2: Team Base Construction** - Build both team bases with spawns, flag zones, and game system integration
 - [ ] **Phase 3: Combat Routes & Cover** - Add cover elements, choke points, sightlines, buildings, and vertical positions
 - [ ] **Phase 4: Environment Decoration** - Add trees, foliage, props for visual polish and concealment
@@ -32,11 +32,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plans in 3 waves
 
 Plans:
-- [ ] 01-01-PLAN.md - Remove old GLB map, scaffold structure, create materials (Wave 1)
-- [ ] 01-02-PLAN.md - Team A base geometry (tech/platform aesthetic) (Wave 2)
-- [ ] 01-03-PLAN.md - Team B base geometry (natural/cave aesthetic) (Wave 2)
-- [ ] 01-04-PLAN.md - Center zone, routes, interconnects, hazards (Wave 2)
-- [ ] 01-05-PLAN.md - Boundary walls, mapBoundaries update, physics colliders (Wave 3)
+- [x] 01-01-PLAN.md - Remove old GLB map, scaffold structure, create materials (Wave 1)
+- [x] 01-02-PLAN.md - Team A base geometry (tech/platform aesthetic) (Wave 2)
+- [x] 01-03-PLAN.md - Team B base geometry (natural/cave aesthetic) (Wave 2)
+- [x] 01-04-PLAN.md - Center zone, routes, interconnects, hazards (Wave 2)
+- [x] 01-05-PLAN.md - Boundary walls, mapBoundaries update, physics colliders (Wave 3)
 
 ### Phase 2: Team Base Construction
 **Goal**: Both teams have complete, functional base areas with spawn points and flag capture zones integrated with game systems
@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Map Foundation | 0/5 | Planned | - |
+| 1. Map Foundation | 5/5 | ✓ Complete | 2026-01-22 |
 | 2. Team Base Construction | 0/? | Not started | - |
 | 3. Combat Routes & Cover | 0/? | Not started | - |
 | 4. Environment Decoration | 0/? | Not started | - |
@@ -111,4 +111,4 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 ---
 *Roadmap created: 2026-01-22*
-*Last updated: 2026-01-22*
+*Last updated: 2026-01-22 - Phase 1 complete*
