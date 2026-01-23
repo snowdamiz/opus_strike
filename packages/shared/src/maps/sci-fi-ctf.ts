@@ -8,33 +8,38 @@
 import type { Vec3 } from '../types/vector.js';
 
 export const SCI_FI_CTF_POSITIONS = {
-  // Team base center positions
-  teamABase: { x: -80, y: 0, z: 0 },
-  teamBBase: { x: 80, y: 0, z: 0 },
+  // Team base center positions (Tron map)
+  // CT spawn at Z=-35, T spawn at Z=32
+  teamABase: { x: -35, y: 0, z: -25 },  // A site
+  teamBBase: { x: 35, y: 0, z: -25 },   // B site
 
-  // Spawn positions - distributed across base area
-  // y=3 ensures player spawns above floor geometry (will drop slightly on spawn)
+  // Spawn positions based on actual Tron map spawn platforms
+  // CT_Spawn_Platform: X[-10,10], Z=-35 (Blender Y=35)
+  // T_Spawn_Platform: X[-10,10], Z=32 (Blender Y=-32)
+  // y=1 places player just above ground level
   spawnPoints: {
     red: [
-      { x: -80, y: 3, z: -12 },
-      { x: -80, y: 3, z: 0 },
-      { x: -80, y: 3, z: 12 },
-      { x: -75, y: 3, z: -6 },
-      { x: -75, y: 3, z: 6 },
+      // T spawn (terrorist/red team) - south side of map (Z=32)
+      { x: -6, y: 1, z: 32 },
+      { x: 0, y: 1, z: 32 },
+      { x: 6, y: 1, z: 32 },
+      { x: -3, y: 1, z: 35 },
+      { x: 3, y: 1, z: 35 },
     ] as Vec3[],
     blue: [
-      { x: 80, y: 3, z: -12 },
-      { x: 80, y: 3, z: 0 },
-      { x: 80, y: 3, z: 12 },
-      { x: 75, y: 3, z: -6 },
-      { x: 75, y: 3, z: 6 },
+      // CT spawn (counter-terrorist/blue team) - north side of map (Z=-35)
+      { x: -6, y: 1, z: -35 },
+      { x: 0, y: 1, z: -35 },
+      { x: 6, y: 1, z: -35 },
+      { x: -3, y: 1, z: -38 },
+      { x: 3, y: 1, z: -38 },
     ] as Vec3[],
   },
 
-  // Flag zone positions
+  // Flag zone positions at A and B sites
   flagZones: {
-    red: { x: -90, y: 1, z: 0 },
-    blue: { x: 92, y: 1, z: 0 },
+    red: { x: -35, y: 1, z: -25 },   // A site
+    blue: { x: 35, y: 1, z: -25 },   // B site
   },
 } as const;
 

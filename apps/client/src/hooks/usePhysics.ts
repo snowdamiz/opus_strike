@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { createMapColliders } from '../components/game/maps/sci-fi-ctf/colliders';
+import type * as THREE from 'three';
+import { createCollidersFromGLB } from '../components/game/maps/tron/glbColliders';
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -58,8 +59,8 @@ export function usePhysics(): PhysicsContext {
           .setTranslation(0, 0.9, 0);
         worldRef.current.createCollider(playerColliderDesc, playerBodyRef.current);
 
-        // Create all map colliders (ground floors, walls, platforms, tunnels)
-        createMapColliders(worldRef.current, RAPIER);
+        // Map colliders are now loaded from GLB via loadMapColliders()
+        // Called by TronMap component after GLB is loaded
 
         // IMPORTANT: Step the world to initialize collision structures
         // This is required for raycasts to work in Rapier
@@ -99,6 +100,44 @@ export function getPhysicsWorld(): RAPIER.World | null {
 
 export function isPhysicsReady(): boolean {
   return physicsReady;
+}
+
+// Track if map colliders have been loaded
+let mapCollidersLoaded = false;
+
+/**
+ * Load map colliders from a GLB scene
+ * Called by the map component after the GLB is loaded
+ */
+export function loadMapColliders(scene: THREE.Object3D): boolean {
+  if (!rapierInstance || !worldInstance) {
+    console.warn('[Physics] Cannot load map colliders - physics not ready');
+    return false;
+  }
+
+  if (mapCollidersLoaded) {
+    console.log('[Physics] Map colliders already loaded, skipping');
+    return true;
+  }
+
+  console.log('[Physics] Loading map colliders from GLB...');
+  const stats = createCollidersFromGLB(scene, worldInstance, rapierInstance);
+
+  // Step the world to initialize the new colliders
+  worldInstance.step();
+  worldInstance.updateSceneQueries();
+
+  mapCollidersLoaded = true;
+  console.log(`[Physics] Map colliders loaded: ${stats.box + stats.trimesh + stats.hull} colliders`);
+
+  return true;
+}
+
+/**
+ * Check if map colliders have been loaded
+ */
+export function areMapCollidersLoaded(): boolean {
+  return mapCollidersLoaded;
 }
 
 // Utility function for raycasting

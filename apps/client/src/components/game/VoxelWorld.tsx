@@ -1,4 +1,4 @@
-import { SciFiCTFMap } from './maps/sci-fi-ctf';
+import { TronMap } from './maps/tron';
 
 // Fallback floor size (invisible, catches players who fall through)
 const FALLBACK_FLOOR_SIZE = 500;
@@ -6,8 +6,8 @@ const FALLBACK_FLOOR_SIZE = 500;
 export function VoxelWorld() {
   return (
     <group>
-      {/* Procedural sci-fi CTF map (includes Boundaries component) */}
-      <SciFiCTFMap />
+      {/* Tron GLB map */}
+      <TronMap />
 
       {/* Fallback ground plane far below the map - invisible safety net */}
       <Ground />

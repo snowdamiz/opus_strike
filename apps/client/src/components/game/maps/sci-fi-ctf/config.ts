@@ -6,54 +6,53 @@
  */
 
 export const MAP_CONFIG = {
-  // Map dimensions (elongated rectangle)
+  // Map dimensions (Tron map - from Blender analysis)
   dimensions: {
-    width: 200, // X-axis (perpendicular to team axis)
-    depth: 100, // Z-axis (team A to team B axis)
+    width: 100, // X-axis: -50 to 50
+    depth: 80,  // Z-axis: -40 to 40
   },
 
-  // Team base positions
-  // Team A: Tech/platform aesthetic (left side)
-  // Team B: Natural/cave aesthetic (right side)
-  teamABase: { x: -80, y: 0, z: 0 },
-  teamBBase: { x: 80, y: 0, z: 0 },
+  // Team base positions (A and B sites on Tron map)
+  teamABase: { x: -35, y: 0, z: -25 },
+  teamBBase: { x: 35, y: 0, z: -25 },
 
   // Elevation constants
   groundY: 0, // Base ground level
-  platformHeight: 3, // Standard platform elevation
-  wallHeight: 15, // Boundary wall height (impassable)
+  platformHeight: 4, // Elevated platform height
+  wallHeight: 12, // Boundary wall height (impassable)
 
   // Route engagement distances
   routes: {
     closeQuarters: { name: 'Tunnels', avgWidth: 4 },
     mediumRange: { name: 'Mid Lane', avgWidth: 12 },
-    longRange: { name: 'Skybridge', avgWidth: 8 },
+    longRange: { name: 'Elevated', avgWidth: 8 },
   },
 
-  // Spawn positions - distributed across base area
-  // 5 positions per team for rotation variety
-  // y=3 ensures player spawns above floor geometry
+  // Spawn positions based on actual Tron map spawn platforms
+  // T spawn (red/teamA): Z=32, CT spawn (blue/teamB): Z=-35
   spawnPoints: {
     teamA: [
-      { x: -80, y: 3, z: -12 }, // North spawn (near north route)
-      { x: -80, y: 3, z: 0 }, // Center spawn
-      { x: -80, y: 3, z: 12 }, // South spawn (near south route)
-      { x: -75, y: 3, z: -6 }, // Front-north spawn
-      { x: -75, y: 3, z: 6 }, // Front-south spawn
+      // T spawn - south side
+      { x: -6, y: 1, z: 32 },
+      { x: 0, y: 1, z: 32 },
+      { x: 6, y: 1, z: 32 },
+      { x: -3, y: 1, z: 35 },
+      { x: 3, y: 1, z: 35 },
     ],
     teamB: [
-      { x: 80, y: 3, z: -12 }, // North spawn
-      { x: 80, y: 3, z: 0 }, // Center spawn
-      { x: 80, y: 3, z: 12 }, // South spawn
-      { x: 75, y: 3, z: -6 }, // Front-north spawn (closer to routes)
-      { x: 75, y: 3, z: 6 }, // Front-south spawn
+      // CT spawn - north side
+      { x: -6, y: 1, z: -35 },
+      { x: 0, y: 1, z: -35 },
+      { x: 6, y: 1, z: -35 },
+      { x: -3, y: 1, z: -38 },
+      { x: 3, y: 1, z: -38 },
     ],
   },
 
-  // Flag zone positions - center of flag platforms in world coordinates
+  // Flag zone positions at A and B sites
   flagZones: {
-    teamA: { x: -90, y: 1, z: 0 }, // Back of Team A base on raised platform
-    teamB: { x: 92, y: 1, z: 0 }, // Back of Team B base in alcove
+    teamA: { x: -35, y: 1, z: -25 },
+    teamB: { x: 35, y: 1, z: -25 },
   },
 } as const;
 
