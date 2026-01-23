@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-01-22)
 ## Current Position
 
 Phase: 2 of 5 (Team Base Construction)
-Plan: 4 of 5 in current phase (02-03 pending)
-Status: In progress
-Last activity: 2026-01-23 - Completed 02-04-PLAN.md
+Plan: 5 of 5 in current phase
+Status: Phase complete
+Last activity: 2026-01-23 - Completed 02-03-PLAN.md
 
-Progress: [################----] 80% (8/10 plans)
+Progress: [##################--] 90% (9/10 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
+- Total plans completed: 9
 - Average duration: 2.3m
-- Total execution time: 0.31 hours
+- Total execution time: 0.35 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01-map-foundation | 5 | 13.5m | 2.7m |
-| 02-team-base-construction | 3 | 5m | 1.7m |
+| 02-team-base-construction | 4 | 7m | 1.8m |
 
 **Recent Trend:**
-- Last 5 plans: 3m, 3.5m, 2m, 1m, 2m
+- Last 5 plans: 3.5m, 2m, 1m, 2m, 2m
 - Trend: stable
 
 *Updated after each plan completion*
@@ -61,6 +61,7 @@ Recent decisions affecting current work:
 - Contested pulse rate: 6Hz contested vs 1.5Hz safe for clear urgent warning
 - Contest radius: 15 units default for enemy nearby detection
 - Player alive check: player.state === 'alive' (not isAlive field)
+- Spawn indicator: ring + center dot at y=0.02 with shared materials per team
 
 ### Pending Todos
 
@@ -73,5 +74,5 @@ None.
 ## Session Continuity
 
 Last session: 2026-01-23
-Stopped at: Completed 02-04-PLAN.md
+Stopped at: Completed 02-03-PLAN.md (Phase 02 complete)
 Resume file: None
