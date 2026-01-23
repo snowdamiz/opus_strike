@@ -97,6 +97,9 @@ export function createMapColliders(world: RAPIER.World, rapier: typeof RAPIER): 
   // Main spawn platform at Team A base
   // Position: teamABase.x = -80, y = -0.25 (top at y=0)
   // Size: 30 x 0.5 x 40
+  // Coverage: x[-95 to -65], z[-20 to +20]
+  // Verified: All 5 Team A spawn positions fall within this area:
+  //   (-80,1,-12), (-80,1,0), (-80,1,12), (-75,1,-6), (-75,1,6)
   createCuboidCollider(
     world, rapier,
     teamABase.x, -0.25, teamABase.z,
@@ -128,6 +131,9 @@ export function createMapColliders(world: RAPIER.World, rapier: typeof RAPIER): 
   // Main spawn platform at Team B base
   // Position: teamBBase.x = +80, y = -0.25 (top at y=0)
   // Size: 30 x 0.5 x 40
+  // Coverage: x[65 to 95], z[-20 to +20]
+  // Verified: All 5 Team B spawn positions fall within this area:
+  //   (80,1,-12), (80,1,0), (80,1,12), (75,1,-6), (75,1,6)
   createCuboidCollider(
     world, rapier,
     teamBBase.x, -0.25, teamBBase.z,
