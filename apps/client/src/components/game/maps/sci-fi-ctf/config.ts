@@ -29,6 +29,31 @@ export const MAP_CONFIG = {
     mediumRange: { name: 'Mid Lane', avgWidth: 12 },
     longRange: { name: 'Skybridge', avgWidth: 8 },
   },
+
+  // Spawn positions - distributed across base area
+  // 5 positions per team for rotation variety
+  spawnPoints: {
+    teamA: [
+      { x: -80, y: 1, z: -12 }, // North spawn (near north route)
+      { x: -80, y: 1, z: 0 }, // Center spawn
+      { x: -80, y: 1, z: 12 }, // South spawn (near south route)
+      { x: -75, y: 1, z: -6 }, // Front-north spawn
+      { x: -75, y: 1, z: 6 }, // Front-south spawn
+    ],
+    teamB: [
+      { x: 80, y: 1, z: -12 }, // North spawn
+      { x: 80, y: 1, z: 0 }, // Center spawn
+      { x: 80, y: 1, z: 12 }, // South spawn
+      { x: 75, y: 1, z: -6 }, // Front-north spawn (closer to routes)
+      { x: 75, y: 1, z: 6 }, // Front-south spawn
+    ],
+  },
+
+  // Flag zone positions - center of flag platforms in world coordinates
+  flagZones: {
+    teamA: { x: -90, y: 1, z: 0 }, // Back of Team A base on raised platform
+    teamB: { x: 92, y: 1, z: 0 }, // Back of Team B base in alcove
+  },
 } as const;
 
 // Type export for consumers
