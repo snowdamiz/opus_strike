@@ -40,12 +40,18 @@ export function usePhysics(): PhysicsContext {
         worldRef.current = new RAPIER.World(gravity);
         worldInstance = worldRef.current;
 
-        // Create ground as a fixed rigid body - positioned LOW as safety net
-        // The actual terrain from GLB is higher (around y=10-20)
-        const groundBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, -50, 0);
-        const groundBody = worldRef.current.createRigidBody(groundBodyDesc);
-        const groundColliderDesc = RAPIER.ColliderDesc.cuboid(200, 1, 200);
-        worldRef.current.createCollider(groundColliderDesc, groundBody);
+        // Create main arena floor collider at Y=0
+        // This covers the Tron map play area (100x80 units)
+        const floorBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0);
+        const floorBody = worldRef.current.createRigidBody(floorBodyDesc);
+        const floorColliderDesc = RAPIER.ColliderDesc.cuboid(50, 0.5, 40);
+        worldRef.current.createCollider(floorColliderDesc, floorBody);
+
+        // Safety net ground far below in case player falls through
+        const safetyBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, -50, 0);
+        const safetyBody = worldRef.current.createRigidBody(safetyBodyDesc);
+        const safetyColliderDesc = RAPIER.ColliderDesc.cuboid(200, 1, 200);
+        worldRef.current.createCollider(safetyColliderDesc, safetyBody);
 
         // Note: No test platform needed - terrain from GLB provides collision
 

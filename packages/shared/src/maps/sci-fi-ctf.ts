@@ -16,23 +16,23 @@ export const SCI_FI_CTF_POSITIONS = {
   // Spawn positions based on actual Tron map spawn platforms
   // CT_Spawn_Platform: X[-10,10], Z=-35 (Blender Y=35)
   // T_Spawn_Platform: X[-10,10], Z=32 (Blender Y=-32)
-  // y=1 places player just above ground level
+  // y=5 places player well above ground to avoid clipping issues
   spawnPoints: {
     red: [
-      // T spawn (terrorist/red team) - south side of map (Z=32)
-      { x: -6, y: 1, z: 32 },
-      { x: 0, y: 1, z: 32 },
-      { x: 6, y: 1, z: 32 },
-      { x: -3, y: 1, z: 35 },
-      { x: 3, y: 1, z: 35 },
+      // T spawn (terrorist/red team) - south side of map (Z=30)
+      { x: -6, y: 5, z: 30 },
+      { x: 0, y: 5, z: 30 },
+      { x: 6, y: 5, z: 30 },
+      { x: -3, y: 5, z: 33 },
+      { x: 3, y: 5, z: 33 },
     ] as Vec3[],
     blue: [
-      // CT spawn (counter-terrorist/blue team) - north side of map (Z=-35)
-      { x: -6, y: 1, z: -35 },
-      { x: 0, y: 1, z: -35 },
-      { x: 6, y: 1, z: -35 },
-      { x: -3, y: 1, z: -38 },
-      { x: 3, y: 1, z: -38 },
+      // CT spawn (counter-terrorist/blue team) - north side of map (Z=-33)
+      { x: -6, y: 5, z: -33 },
+      { x: 0, y: 5, z: -33 },
+      { x: 6, y: 5, z: -33 },
+      { x: -3, y: 5, z: -36 },
+      { x: 3, y: 5, z: -36 },
     ] as Vec3[],
   },
 

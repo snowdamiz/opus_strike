@@ -1,6 +1,6 @@
 import { Canvas } from '@react-three/fiber';
 import { Suspense } from 'react';
-import { OrbitControls, Sky, Grid } from '@react-three/drei';
+import { OrbitControls, Grid } from '@react-three/drei';
 import { VoxelWorld } from './VoxelWorld';
 import { PlayerController } from './PlayerController';
 import { OtherPlayers } from './OtherPlayers';
@@ -32,18 +32,19 @@ export function GameCanvas() {
         antialias: true,
         powerPreference: 'high-performance',
       }}
-      style={{ 
+      style={{
         position: 'absolute',
         inset: 0,
-        background: '#1a1a2e',
+        background: '#1e2a4a',
       }}
     >
       <Suspense fallback={null}>
-        {/* Lighting - brighter for visibility */}
-        <ambientLight intensity={0.8} />
+        {/* Lighting - dark neon Tron aesthetic */}
+        <ambientLight intensity={0.3} color="#1a1a3a" />
         <directionalLight
           position={[50, 100, 50]}
-          intensity={1.5}
+          intensity={2.0}
+          color="#4488ff"
           castShadow
           shadow-mapSize={[2048, 2048]}
           shadow-camera-far={200}
@@ -52,17 +53,13 @@ export function GameCanvas() {
           shadow-camera-top={100}
           shadow-camera-bottom={-100}
         />
-        <hemisphereLight
-          args={['#87CEEB', '#445544', 0.6]}
-        />
+        <hemisphereLight args={['#0d0d1a', '#0a0a15', 0.3]} />
         <pointLight position={[-40, 10, 0]} intensity={50} color="#ff6666" distance={30} />
         <pointLight position={[40, 10, 0]} intensity={50} color="#6666ff" distance={30} />
 
         {/* Performance monitor */}
         <PerfMonitor />
 
-        {/* Sky */}
-        <Sky sunPosition={[100, 50, 100]} />
 
         {/* World */}
         <VoxelWorld />
@@ -107,8 +104,8 @@ export function GameCanvas() {
         {/* Orbit controls when not playing for looking around */}
         {!isPlaying && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
 
-        {/* Background color */}
-        <color attach="background" args={['#1a1a2e']} />
+        {/* Background color - lighter for Tron sky */}
+        <color attach="background" args={['#1e2a4a']} />
       </Suspense>
     </Canvas>
   );
