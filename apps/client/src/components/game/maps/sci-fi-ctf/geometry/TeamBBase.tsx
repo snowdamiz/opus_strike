@@ -11,6 +11,7 @@ import {
   teamBAccent,
   teamBGlow,
 } from '../materials';
+import { SpawnIndicator } from './SpawnIndicator';
 
 const { teamBBase: TEAM_B_BASE } = MAP_CONFIG;
 
@@ -199,6 +200,21 @@ export function TeamBBase() {
       <mesh position={[-14, 0.05, 16]} material={teamBGlow}>
         <boxGeometry args={[8, 0.1, 0.6]} />
       </mesh>
+
+      {/* =====================================================================
+          SPAWN INDICATORS - Cave floor markers
+          ===================================================================== */}
+      {MAP_CONFIG.spawnPoints.teamB.map((spawn, index) => (
+        <SpawnIndicator
+          key={`spawn-b-${index}`}
+          position={[
+            spawn.x - TEAM_B_BASE.x, // Convert to local coordinates
+            0, // Ground level
+            spawn.z - TEAM_B_BASE.z,
+          ]}
+          team="blue"
+        />
+      ))}
     </group>
   );
 }
