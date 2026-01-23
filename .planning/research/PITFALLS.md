@@ -1,477 +1,280 @@
 # Pitfalls Research
 
-**Domain:** React Three Fiber Performance Optimization
+**Domain:** R3F Game Level Design with Rapier Physics (CTF Map)
 **Researched:** 2026-01-22
-**Confidence:** HIGH
-
-> **Current project status:** 39 useFrame hooks across 27 files, 57 console.log occurrences, excessive React re-renders from store updates. This research focuses on avoiding new problems while fixing existing ones.
-
----
+**Confidence:** HIGH (verified against official Rapier docs and R3F sources)
 
 ## Critical Pitfalls
 
-### Pitfall 1: setState Inside useFrame
+### Pitfall 1: Trimesh Colliders on Dynamic Objects
 
 **What goes wrong:**
-Calling React state setters (including Zustand store actions) inside useFrame triggers expensive React re-renders on every frame (60+ times per second). This is the #1 cause of performance problems in React Three Fiber applications.
+Using `trimesh` colliders for dynamic rigid bodies (players, moveable objects) causes objects to get stuck, clip through geometry, or exhibit erratic collision behavior. Trimeshes have no interior volume, making it easy for other objects to penetrate and become trapped.
 
 **Why it happens:**
-- Developers treat useFrame like a standard animation loop
-- React's re-render paradigm conflicts with Three.js's direct mutation model
-- Using `useGameStore.getState()` in useFrame still triggers re-renders if the state slice was previously subscribed to
+Developers assume that matching the visual mesh exactly with a physics collider is the "correct" approach. Rapier trimeshes are optimized for static geometry (terrain, buildings), not dynamic bodies.
 
-**Consequences:**
-- Frame drops from 60 FPS to 30 or lower
-- Input lag becomes noticeable
-- Battery drain on mobile devices
-- Garbage collection pressure from constant re-render allocation
+**How to avoid:**
+- Use primitive colliders (cuboid, capsule, ball) or compound shapes for all dynamic bodies
+- For complex non-convex dynamic objects, use convex decomposition (multiple convex hull shapes combined)
+- Reserve trimesh colliders exclusively for `type="fixed"` rigid bodies (map geometry)
+- Your existing `PhysicsWorld.ts` correctly uses capsule colliders for players - maintain this pattern
+
+**Warning signs:**
+- Players or objects getting stuck inside walls
+- Inconsistent collision behavior at certain angles
+- Objects teleporting or jittering when colliding
+
+**Phase to address:**
+Map Geometry Phase - When defining collision meshes for level geometry. Establish collider type conventions before building out the map.
+
+---
+
+### Pitfall 2: Physics Mesh / Visual Mesh Mismatch
+
+**What goes wrong:**
+The collision mesh doesn't align with what players see visually. Players hit invisible walls, pass through visible geometry, or see gaps they can't traverse.
+
+**Why it happens:**
+- GLTF/GLB imports create colliders from transformed geometry without accounting for scale/rotation applied in the scene graph
+- Simplified collision meshes drift from visual updates during iteration
+- Parent-child transform chains aren't applied to physics bodies
+- Three.js uses SI units (1 unit = 1 meter), but modeled assets may use different scales
+
+**How to avoid:**
+- Always enable `<Physics debug>` during development to visualize colliders
+- Apply all transforms (position, rotation, scale) before generating collision geometry
+- Use `mesh.geometry.computeBoundingBox()` after transforms to verify alignment
+- For imported models, bake transforms in Blender before export (Ctrl+A > Apply All Transforms)
+- Create a collision mesh validation pass: overlay debug wireframes on visual mesh
+- Document expected scale (e.g., "player height = 1.8 units") as a reference constant
+
+**Warning signs:**
+- Debug colliders don't align with visible meshes
+- Players report "invisible walls" or "passing through walls"
+- Collision behaves differently after re-exporting model
+
+**Phase to address:**
+Map Geometry Phase - Establish transform conventions and debug visualization early. Add collision verification to map testing checklist.
+
+---
+
+### Pitfall 3: Collision Groups Misconfiguration (One-Way Matching)
+
+**What goes wrong:**
+Collision filtering silently fails. Objects that should collide don't, or collision events don't fire. Developers assume setting collision groups on one object is sufficient.
+
+**Why it happens:**
+Rapier requires **mutual matching** for collision to occur. If collider A allows collision with group 1, but collider B (in group 1) doesn't allow collision with A's group, no collision happens. This is different from some other physics engines.
 
 **How to avoid:**
 ```typescript
-// BAD - Triggers re-render every frame
-useFrame(() => {
-  setPosition(new THREE.Vector3(1, 2, 3)); // React state
-  useGameStore.getState().setLocalPlayer({ ... }); // Zustand action
-});
+import { interactionGroups } from "@react-three/rapier";
 
-// GOOD - Mutates directly, no React re-render
-const meshRef = useRef<THREE.Mesh>(null);
-useFrame(() => {
-  if (meshRef.current) {
-    meshRef.current.position.set(1, 2, 3); // Direct mutation
-  }
-});
+// WRONG: One-way collision won't work
+<Player collisionGroups={interactionGroups(0, [1, 2])} />  // Player in 0, collides with 1,2
+<Wall collisionGroups={interactionGroups(1)} />            // Wall in 1, collides with ALL
+
+// RIGHT: Mutual collision groups
+<Player collisionGroups={interactionGroups(0, [1, 2])} />  // Player in 0, collides with 1,2
+<Wall collisionGroups={interactionGroups(1, [0, 1])} />    // Wall in 1, collides with 0,1
 ```
 
-**Warning signs:**
-- React DevTools Profiler shows components rendering 60+ times per second
-- Performance monitor shows frame time spiking when certain effects are active
-- Store subscribers in components that also have useFrame hooks
+- Create a collision matrix document defining which groups interact
+- Use consistent group numbers: 0=players, 1=map, 2=projectiles, 3=triggers, etc.
+- Test collision groups in isolation before combining systems
 
-**Phase to address:** Phase 1 - Store/useFrame separation (foundation)
+**Warning signs:**
+- Some collisions work, others silently fail
+- Collision events fire inconsistently
+- Works with `collisionGroups` commented out, breaks when enabled
+
+**Phase to address:**
+Player/Physics Setup Phase - Define collision group conventions before implementing map colliders.
 
 ---
 
-### Pitfall 2: Creating Objects Inside useFrame
+### Pitfall 4: Ghost Collisions on Triangle Mesh Edges
 
 **What goes wrong:**
-Creating new THREE.Vector3, THREE.Euler, or other objects inside useFrame causes garbage collection thrashing. At 60 FPS, this can create thousands of objects per second.
+Players sliding along floors or walls experience sudden velocity changes, get "caught" on invisible edges, or bounce unexpectedly. Especially noticeable when moving diagonally across tiled geometry.
 
 **Why it happens:**
-- Developer习惯 from non-real-time React code
-- Not understanding that Three.js objects are expensive to allocate
-- Convenience of `new THREE.Vector3(x, y, z)` syntax
-
-**Consequences:**
-- GC pauses causing frame stutter
-- Memory leaks if objects accumulate
-- Performance degrades over time (gradual slowdown during gameplay)
+Internal edges where triangles meet create "ghost contacts" - the physics engine detects collision with the seam between triangles even though the surface is continuous. Long, thin triangles (common in procedural geometry) worsen numerical stability.
 
 **How to avoid:**
+- Enable `TrimeshFlags.FIX_INTERNAL_EDGES` when creating trimesh colliders:
 ```typescript
-// BAD - Creates new object every frame
-useFrame(() => {
-  const position = new THREE.Vector3(1, 2, 3);
-  mesh.current.position.copy(position);
-});
-
-// GOOD - Reuses pre-allocated vectors
-const tempPos = useRef(new THREE.Vector3());
-useFrame(() => {
-  tempPos.current.set(1, 2, 3);
-  mesh.current.position.copy(tempPos.current);
-});
-
-// BETTER - Use shared temp vectors from effectResources.ts
-import { TEMP_VECTORS } from './effectResources';
-useFrame(() => {
-  TEMP_VECTORS.v1.set(1, 2, 3);
-  mesh.current.position.copy(TEMP_VECTORS.v1);
-});
+const colliderDesc = RAPIER.ColliderDesc.trimesh(vertices, indices)
+  .setTriMeshFlags(RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES);
 ```
+- Avoid long, thin triangles in floor/wall geometry (keep triangles roughly equilateral)
+- Use heightfield colliders for terrain instead of trimesh where possible
+- Consider compound box colliders for flat surfaces instead of triangulated meshes
+- Test player movement at acute angles to surfaces during development
 
 **Warning signs:**
-- Chrome DevTools Memory profiler shows increasing heap allocation
-- FPS gradually drops during gameplay sessions
-- "Allocation size" in performance timeline shows consistent spikes
+- Player jerks or stutters when walking diagonally
+- Inconsistent slide behavior on ramps
+- Player gets stuck in flat areas with no visible obstacle
 
-**Phase to address:** Phase 1 - Already partially addressed via `effectResources.ts`
+**Phase to address:**
+Map Geometry Phase - Configure trimesh flags when setting up level collision. Test movement patterns early.
 
 ---
 
-### Pitfall 3: Over-Memoization (Premature Optimization)
+### Pitfall 5: Spawn Point Collision and Line-of-Sight Issues
 
 **What goes wrong:**
-Wrapping everything in `useMemo`, `useCallback`, and `React.memo` without measuring can actually make performance worse. Memoization has a cost, and React often re-computes anyway.
+Players spawn inside geometry (stuck in walls/floors), spawn visible to enemies (instant death on spawn), or spawn outside the playable area.
 
 **Why it happens:**
-- Fear of re-renders leads to defensive memoization
-- Copy-paste optimization patterns without understanding
-- ESLint rules demanding dependencies for every callback
-
-**Consequences:**
-- Worse performance due to memoization overhead
-- More complex code that's harder to maintain
-- False sense of security (memoization doesn't prevent all re-renders)
-- Stale closures causing bugs
+- Spawn coordinates don't account for player collider dimensions
+- Spawn points placed in editor don't verify physics world state
+- Y-coordinate assumes flat ground but terrain varies
+- No spawn protection or enemy proximity checks
 
 **How to avoid:**
-```typescript
-// AVOID - Premature memoization
-const expensiveValue = useMemo(() => calculateSomething(a, b), [a, b]);
-const handleClick = useCallback(() => doSomething(x), [x]);
-
-// PREFER - Simple until proven otherwise
-const expensiveValue = calculateSomething(a, b);
-const handleClick = () => doSomething(x);
-
-// ONLY memoize when measurements show it helps:
-// - Expensive calculations that run frequently
-// - Referential stability required by useEffect/useCallback
-// - Props passed to memoized child components
-```
+- Spawn point Y should be `groundHeight + (playerHeight / 2) + epsilon` (e.g., +0.1)
+- Perform a shape cast downward from spawn point to find actual ground
+- Check spawn point collision with physics bodies before spawning
+- Implement spawn protection (invulnerability window or enemy distance check)
+- For CTF: ensure spawn points have no direct line-of-sight to enemy base
+- Validate spawn points are within map boundary polygon (use your existing `isInsideBoundary()`)
 
 **Warning signs:**
-- Multiple layers of useMemo/useCallback for trivial operations
-- Re-render profiling shows no difference with/without memoization
-- ESLint exhaustive-deps causing dependency arrays to grow
+- Players fall through floor on spawn
+- Players spawn inside walls and die/get stuck
+- Frequent "spawn kills" reported
 
-**Phase to address:** Phase 2 - Measure first, then optimize
+**Phase to address:**
+Spawn System Phase - After map geometry is complete, validate all spawn points against physics world. Add runtime spawn validation.
 
 ---
 
-### Pitfall 4: Store Subscription Granularity Mismatch
+### Pitfall 6: Performance Death from Complex Collision Meshes
 
 **What goes wrong:**
-Subscribing to large state objects (like entire player state) causes re-renders when any nested property changes. This is especially bad with Zustand when not using selectors properly.
+Frame rate drops significantly when multiple players are on the map, especially near detailed geometry. Physics step takes >16ms, causing visible lag.
 
 **Why it happens:**
-- Convenience of `const state = useGameStore()`
-- Not understanding how Zustand's shallow comparison works
-- Selecting nested objects that are recreated on each update
-
-**Consequences:**
-- Components re-render when unrelated state changes
-- Multiple useFrame hooks re-register when parent re-renders
-- Cascading re-renders through component tree
+- Using visual mesh directly as collision mesh (thousands of triangles)
+- Trimesh contact manifolds generate many contact points
+- Each mesh is a draw call; physics calculations are per-triangle
+- No LOD for collision meshes (all detail always active)
 
 **How to avoid:**
-```typescript
-// BAD - Subscribes to entire store
-const state = useGameStore();
-const { localPlayer, gamePhase, players } = useGameStore();
-
-// BAD - Re-creates object on every call (no selector stability)
-const localPlayer = useGameStore(state => state.localPlayer); // Object reference changes
-
-// GOOD - Selects specific primitive values
-const localPlayerId = useGameStore(state => state.localPlayer?.id);
-const gamePhase = useGameStore(state => state.gamePhase);
-
-// GOOD - Uses shallow comparison for objects
-const players = useGameStore(state => state.players, shallow);
-
-// BEST - Uses Zustand's pattern for stable object selection
-const localPlayer = useGameStore(
-  state => state.localPlayer,
-  (a, b) => a?.id === b?.id && a?.position === b?.position // custom equality
-);
-```
+- Create simplified collision meshes: 10-50 triangles vs 1000+ visual triangles
+- Use compound primitive colliders (boxes, capsules) for buildings/structures
+- Profile with `r3f-perf` or Spector.js to identify hotspots
+- Set collision mesh budget: e.g., max 500 triangles for entire map collision
+- Consider using separate collision-only meshes in Blender (non-rendered layer)
+- For repeated geometry, use instanced colliders where possible
 
 **Warning signs:**
-- React DevTools shows components re-rendering when "unrelated" state changes
-- Effect cleanup functions running unexpectedly
-- Multiple instances of same effect (useFrame registered multiple times)
+- FPS drops in specific map areas
+- Physics step time increases with player count
+- Profiler shows high `world.step()` time
 
-**Phase to address:** Phase 1 - Store subscription audit
-
----
-
-### Pitfall 5: Multiple Conflicting useFrame Hooks
-
-**What goes wrong:**
-While React Three Fiber handles multiple useFrame hooks efficiently (they're batched), having many useFrame hooks that each access the store or perform similar work causes redundant computations.
-
-**Why it happens:**
-- Component-level isolation (each effect component manages its own loop)
-- Not consolidating related updates
-- Fear of "monolithic" useFrame callbacks
-
-**Note:** This is NOT about the number of useFrame hooks themselves (R3F handles 39 hooks fine), but about what they DO.
-
-**Consequences:**
-- Multiple store reads per frame for same data
-- Redundant distance calculations, visibility checks
-- Harder to reason about frame budget
-
-**How to avoid:**
-```typescript
-// ACCEPTABLE - Multiple useFrame hooks are fine if they're independent
-useFrame(() => updateRockets()); // 3 rockets
-useFrame(() => updateBombs()); // 2 bombs
-useFrame(() => updateTraps()); // 4 traps
-
-// BETTER - Consolidate when accessing same data
-useFrame(() => {
-  const now = Date.now();
-  updateRockets(now);
-  updateBombs(now);
-  updateTraps(now);
-});
-
-// BEST - Single loop for related effects, but keep components separate
-function BlazeEffectsManager() {
-  useFrame((state, delta) => {
-    const now = state.clock.elapsedTime;
-    // Update all blaze-related effects in one loop
-  });
-  return <Rockets /><Bombs /><Jetpacks />;
-}
-```
-
-**Warning signs:**
-- Multiple effects calculating distance to camera
-- Same store slice read in multiple useFrame hooks
-- Profiler shows same data accessed multiple times per frame
-
-**Phase to address:** Phase 2 - Effect consolidation
-
----
-
-## Moderate Pitfalls
-
-### Pitfall 6: console.log in Production Code
-
-**What goes wrong:**
-Console.log statements in production cause performance degradation and can expose sensitive information. Current codebase has 57 occurrences.
-
-**Why it happens:**
-- Debugging code left in place
-- Using console.log as a "poor man's telemetry"
-- Not having a build step that removes them
-
-**Consequences:**
-- String serialization overhead
-- Blocking I/O in some browsers
-- Exposed internal state to browser console
-- Can cause crashes with circular references
-
-**How to avoid:**
-```typescript
-// BAD - Production console.logs
-console.log('OtherPlayers:', { totalInStore: players.size, otherPlayersToRender: otherPlayers.length });
-console.log('OtherPlayer mounted:', player.id.slice(0,6), player.name);
-
-// GOOD - Use conditional logging
-const DEBUG = import.meta.env.DEV;
-if (DEBUG) {
-  console.log('OtherPlayers:', data);
-}
-
-// BETTER - Use a proper logging utility
-import { logger } from '@/utils/logger';
-logger.debug('OtherPlayers', data); // Only logs in dev
-```
-
-**Warning signs:**
-- Browser console fills up during gameplay
-- Console panel shows "object" expanding on every frame
-
-**Phase to address:** Phase 1 - Remove all production console.logs
-
----
-
-### Pitfall 7: Not Disposing Three.js Resources
-
-**What goes wrong:**
-Geometries, materials, and textures created but never disposed cause memory leaks. This is especially problematic for single-page applications with repeated game sessions.
-
-**Why it happens:**
-- React's unmount doesn't automatically dispose Three.js resources
-- Not tracking created resources
-- Assuming garbage collection will handle it
-
-**Consequences:**
-- Memory grows with each game session
-- Textures accumulate in GPU memory
-- Browser tab eventually crashes or becomes sluggish
-
-**How to avoid:**
-```typescript
-// BAD - Doesn't clean up
-function Effect() {
-  const material = useMemo(() => new THREE.MeshBasicMaterial(), []);
-  return <mesh material={material} />;
-}
-
-// GOOD - Disposes on unmount
-function Effect() {
-  const materialRef = useRef<THREE.Material | null>(null);
-
-  useEffect(() => {
-    materialRef.current = new THREE.MeshBasicMaterial();
-    return () => {
-      materialRef.current?.dispose();
-    };
-  }, []);
-
-  return <mesh material={materialRef.current} />;
-}
-
-// BEST - Use shared resources (like effectResources.ts)
-const SHARED_GEOMETRIES = {
-  sphere8: new THREE.SphereGeometry(1, 8, 8), // Created once, never disposed
-};
-```
-
-**Warning signs:**
-- Chrome Task Manager shows memory growing during gameplay
-- Same material appears multiple times in memory profiler
-- Performance degrades after playing multiple matches
-
-**Phase to address:** Phase 2 - Resource audit
-
----
-
-### Pitfall 8: Key Props Causing Unnecessary Remounts
-
-**What goes wrong:**
-Using unstable values as `key` props causes React to unmount and remount components, destroying Three.js resources and re-running effects.
-
-**Why it happens:**
-- Using array index as key
-- Using object references as keys
-- Generating keys from computed values
-
-**Consequences:**
-- useFrame cleanup and re-registration every key change
-- Visual flickering from remounting
-- Lost animation state
-
-**How to avoid:**
-```typescript
-// BAD - Index as key (causes remounts on reorder)
-{players.map((player, index) => (
-  <OtherPlayer key={index} player={player} />
-))}
-
-// BAD - Object reference as key
-{players.map(player => (
-  <OtherPlayer key={player} player={player} />
-))}
-
-// GOOD - Stable unique identifier
-{players.map(player => (
-  <OtherPlayer key={player.id} player={player} />
-))}
-
-// For temporary effects, use stable ID generator
-const effectId = useRef(`effect_${Math.random().toString(36).slice(2)}`);
-```
-
-**Warning signs:**
-- React DevTools shows components rapidly mounting/unmounting
-- useEffect cleanup running frequently
-- Visual "pops" when lists change
-
-**Phase to address:** Phase 1 - Key prop audit
-
----
-
-## Performance Traps
-
-| Trap | Symptoms | Prevention | Breaks At |
-|------|----------|------------|-----------|
-| Point lights per effect | FPS drops when many active | Use single shared light | 5+ lights |
-| Shadow map size too high | Frame time spikes on camera move | Use 1024 or 2048 max | 4096+ |
-| Not using InstancedMesh | Draw calls > 1000 | InstancedMesh for repeated geometry | 100+ instances |
-| Antialias in post-processing | Double-rendering cost | Choose one or the other | Always |
-| Fog with transparency | Sorting artifacts | Use custom shaders | Multiple transparent layers |
-
----
-
-## Integration Gotchas
-
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| Zustand | Subscribing to whole store | Use shallow selectors or specific keys |
-| Drei | Not checking if helper is optimized | Read source, check for Instance variants |
-| Physics (Cannon/Ammo) | Running physics in React render | Run in useFrame, sync to store on change |
-| Post-processing | Creating effect pipeline every render | Create once in useMemo with stable deps |
+**Phase to address:**
+Map Geometry Phase - Establish collision mesh complexity budget. Create simplified collision mesh workflow before detailed visual modeling.
 
 ---
 
 ## Technical Debt Patterns
 
-| Shortcut | Benefit | Cost | When Acceptable |
-|----------|---------|------|-----------------|
-| console.log everywhere | Easy debugging | Production perf hit | Only during initial development |
-| Direct store.getState() | No subscription overhead | Can miss updates, timing issues | Inside useFrame only |
-| Single large useFrame | Consolidated updates | Hard to maintain, test | MVP only |
-| Skipping memoization | Simpler code | Re-renders when complexity grows | Until measurements show need |
+| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
+|----------|-------------------|----------------|-----------------|
+| Using visual mesh as collision mesh | Fast iteration, accurate collisions | Severe performance issues at scale | Prototyping only, replace before testing with 4+ players |
+| Hardcoded spawn coordinates | Quick setup | Breaks when map geometry changes | Never in production; use data-driven spawn system |
+| Skipping `debug` prop during development | Slightly faster renders | Hours debugging invisible collision issues | Never - always enable during development |
+| Single collision group for everything | No collision filtering code | Can't implement projectile pass-through, triggers, etc. | Early prototype only |
+| Synchronous physics on main thread | Simpler code | Frame drops during complex physics | Acceptable for <10 physics bodies |
 
----
+## Integration Gotchas
+
+| Integration | Common Mistake | Correct Approach |
+|-------------|----------------|------------------|
+| GLTF Import | Assuming colliders auto-generate correctly | Manually verify transforms, create simplified collision mesh |
+| React-Three-Rapier | Wrapping entire scene in single `<RigidBody>` | Use separate `<RigidBody>` per logical object, compound colliders for complex shapes |
+| Instanced Meshes | Expecting physics performance to match render performance | Physics is per-body CPU cost; instancing only helps GPU draw calls |
+| Component Unmount | Assuming R3F auto-disposes physics bodies | Verify `world.removeRigidBody()` is called; check for memory leaks in long sessions |
+| Heightfield Terrain | Using heightfield for complex multi-level geometry | Heightfields are single-surface; use trimesh for multi-floor structures |
+
+## Performance Traps
+
+| Trap | Symptoms | Prevention | When It Breaks |
+|------|----------|------------|----------------|
+| Trimesh for dynamic bodies | Collision jitter, stuck objects | Use primitive/compound colliders | Immediately with complex meshes |
+| No contact skin | Objects intersect visually before repelling | Set `contactSkin` to 0.01-0.05 | High-speed collisions |
+| Many small colliders | Physics step time > 16ms | Merge adjacent colliders | ~100+ active colliders |
+| Raycasting every frame per player | CPU spike, dropped frames | Cache raycast results, reduce frequency | 4+ players raycasting |
+| No CCD for fast objects | Projectiles tunnel through walls | Enable `ccd: true` on fast rigid bodies | Projectile speed > 50 units/sec |
+
+## Security Mistakes
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Client-authoritative collision | Cheaters pass through walls | Server validates all position changes |
+| Spawn point prediction | Spawn camping exploits | Randomize spawn selection server-side |
+| Exposed collision groups | Cheaters disable collision with projectiles | Collision filtering must be server-authoritative |
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| Invisible collision bounds | Players confused why they can't go somewhere | Add subtle visual indicators (barriers, fences) at boundaries |
+| Precise pixel-perfect collision | Players feel clipped by geometry | Add small collision buffer (~0.1 units inside visual mesh) |
+| Silent spawn failures | Players stuck, must restart | Detect spawn collision, find alternative spawn, notify player |
+| No collision feedback | Players unsure if they hit something | Audio/visual feedback on collision events |
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **useFrame hooks actually run:** Some useFrame hooks may be in components that never mount or are conditionally rendered
-- [ ] **Store updates batched:** Multiple setState calls per frame should be batched
-- [ ] **Materials actually shared:** Verify materials aren't being duplicated (use material.uuid to check)
-- [ ] **Effects actually clean up:** Verify useEffect cleanup runs when effects expire
-- [ ] **LOD actually works:** Distance-based LOD should disable effects, not just reduce detail
-
----
+- [ ] **Map Collision:** Debug wireframes align with visual mesh at all positions - verify in corners and edges
+- [ ] **Spawn Points:** All spawn points verified inside boundary polygon and not intersecting geometry
+- [ ] **Player Movement:** Test diagonal movement across all floor surfaces - no ghost collisions
+- [ ] **Flag Positions:** Flag bases have valid collision for pickup/capture detection
+- [ ] **Boundary Walls:** Players cannot escape map via any angle of approach
+- [ ] **Multiplayer Load:** Test with 8+ simultaneous players - physics step under 16ms
+- [ ] **Component Cleanup:** Navigate away and back to game - memory usage stable
 
 ## Recovery Strategies
 
-| Pitfall | Cost | Recovery Steps |
-|---------|-------|----------------|
-| setState in useFrame | HIGH | 1. Move state updates outside useFrame, 2. Use refs for frame-local state, 3. Batch updates via requestAnimationFrame |
-| Object creation in useFrame | MEDIUM | 1. Audit useFrame for `new` calls, 2. Create pre-allocated temp vectors, 3. Use shared resource module |
-| Over-memoization | LOW | 1. Run React DevTools Profiler, 2. Remove useMemo that doesn't help, 3. Keep only expensive computations |
-| Store subscription issues | MEDIUM | 1. Add selector functions, 2. Use shallow comparison, 3. Verify with React DevTools |
-| Console logs | LOW | 1. Global search for console.log, 2. Replace with debug logger, 3. Add build-time stripping |
-
----
+| Pitfall | Recovery Cost | Recovery Steps |
+|---------|---------------|----------------|
+| Trimesh on dynamic bodies | LOW | Change collider type to primitive/compound; minimal code change |
+| Mesh/collider mismatch | MEDIUM | Re-export with baked transforms; may need collision mesh rebuild |
+| Collision group failures | MEDIUM | Audit all groups with collision matrix; systematic re-test |
+| Ghost collisions | MEDIUM | Enable FIX_INTERNAL_EDGES flag; may need mesh topology cleanup |
+| Performance issues | HIGH | Create simplified collision mesh from scratch; significant rework |
+| Spawn point issues | LOW | Validate spawns against physics world; straightforward fix |
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| setState in useFrame | Phase 1 | React Profiler shows < 5 renders/sec during gameplay |
-| Object creation in useFrame | Phase 1 | Chrome Memory profiler shows stable allocation rate |
-| Over-memoization | Phase 2 | Before/after Profiler measurements show difference |
-| Store subscription issues | Phase 1 | React DevTools highlights only changed components |
-| Multiple useFrame conflicts | Phase 2 | Single frame shows minimal redundant work |
-| console.log in production | Phase 1 | Build output has zero console.log calls |
-| Not disposing resources | Phase 2 | Memory stable across 10 game sessions |
-| Key prop instability | Phase 1 | No unexpected mount/unmount in DevTools |
-
----
+| Trimesh on dynamic bodies | Map Geometry | Code review: no `trimesh` colliders on non-fixed bodies |
+| Mesh/collider mismatch | Map Geometry | Visual: `<Physics debug>` aligns with rendered mesh |
+| Collision group failures | Player/Physics Setup | Test matrix: all expected collision pairs fire events |
+| Ghost collisions | Map Geometry | Playtest: smooth diagonal movement on all surfaces |
+| Spawn point issues | Spawn System | Runtime: no spawn failures in 100 spawn cycles per point |
+| Performance issues | Map Geometry | Profile: physics step < 8ms with 8 players |
+| Multiplayer sync | Networking Phase | Test: deterministic replay produces identical results |
 
 ## Sources
 
-### Official Documentation (HIGH Confidence)
-- [React Three Fiber - Performance Pitfalls](https://r3f.docs.pmnd.rs/advanced/pitfalls) - Official documentation on setState in loops, mount costs
-- [React Three Fiber - Scaling Performance](https://r3f.docs.pmnd.rs/advanced/scaling-performance) - Official performance guide
-- [Zustand GitHub Repository](https://github.com/pmndrs/zustand) - Official Zustand by pmndrs (same team as R3F)
-
-### Community Discussions (MEDIUM Confidence)
-- [How to use state management with R3F without performance issues](https://discourse.threejs.org/t/how-to-use-state-management-with-react-three-fiber-without-performance-issues/61223) - Confirms Zustand + R3F compatibility
-- [How to improve three.js performance with R3F](https://discourse.threejs.org/t/how-to-improve-three-js-performance-with-react-three-fiber/69562) - Real-world optimization discussion
-- [R3F Instances Performance Issue #3306](https://github.com/pmndrs/react-three-fiber/issues/3306) - Real-world performance problem case study
-
-### Articles (MEDIUM Confidence)
-- [100 Three.js Best Practices (2026)](https://www.utsubo.com/blog/threejs-best-practices-100-tips) - Comprehensive best practices including R3F-specific pitfalls
-- [Hacker News - React Re-render Discussion](https://news.ycombinator.com/item?id=23004848) - Notes on premature optimization in React community
-
-### Code Analysis (HIGH Confidence)
-- Current codebase: 39 useFrame hooks across 27 files
-- Current codebase: 57 console.log occurrences
-- Current codebase: Shared resource pattern in `effectResources.ts` (good pattern to follow)
-- Current codebase: Store subscription patterns in `gameStore.ts` and components
+- [Rapier Colliders Documentation](https://rapier.rs/docs/user_guides/javascript/colliders/) - Trimesh limitations, collider types
+- [Rapier Advanced Collision Detection](https://rapier.rs/docs/user_guides/javascript/advanced_collision_detection_js/) - CCD, contact manifolds
+- [Rapier Collision Groups](https://rapier.rs/docs/user_guides/javascript/collider_collision_groups/) - Bitmask filtering, mutual matching requirement
+- [Rapier Determinism](https://rapier.rs/docs/user_guides/javascript/determinism/) - Cross-platform determinism for multiplayer
+- [react-three-rapier GitHub](https://github.com/pmndrs/react-three-rapier) - Debug prop, interactionGroups helper, InstancedRigidBodies
+- [R3F Performance Pitfalls](https://docs.pmnd.rs/react-three-fiber/advanced/pitfalls) - Memory leaks, disposal, key requirements
+- [R3F Scaling Performance](https://r3f.docs.pmnd.rs/advanced/scaling-performance) - Draw calls, instancing, on-demand rendering
+- [Ghost Collision Feature Request (Rapier #669)](https://github.com/dimforge/rapier/issues/669) - Internal edge fix discussion
+- [Three.js Forum: GLTF Collision](https://discourse.threejs.org/t/react-three-fiber-add-collision-to-imported-blender-gltf-object/41184) - Transform issues with imported models
+- [Multiplayer Level Design Techniques](https://games.themindstudios.com/post/multiplayer-level-design-techniques/) - Spawn placement, flow design
+- [Halo Spawn Points Guide (c20)](https://c20.reclaimers.net/h1/guides/multiplayer/player-spawns/) - Team spawn conventions for CTF
 
 ---
-
-*Pitfalls research for: React Three Fiber Performance Optimization*
+*Pitfalls research for: R3F CTF Map Level Design with Rapier Physics*
 *Researched: 2026-01-22*

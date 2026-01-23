@@ -1,544 +1,313 @@
 # Architecture Research
 
-**Domain:** React Three Fiber Performance Optimization for Real-Time Multiplayer Games
+**Domain:** R3F Game Level Construction for CTF Map
 **Researched:** 2026-01-22
-**Confidence:** HIGH
+**Confidence:** HIGH (based on existing codebase analysis and official documentation)
 
 ## Standard Architecture
 
 ### System Overview
 
 ```
-+-----------------------------------------------------------------------------+
-|                         PRESENTATION LAYER (React)                          |
-+-----------------------------------------------------------------------------+
-|  +-------------+  +-------------+  +-------------+  +-------------+         |
-|  |   UI Layer  |  | 3D Canvas   |  |  HUD/Overlay|  |    Effects  |         |
-|  | (HTML/CSS)  |  |   (R3F)     |  |  Components |  |  Components |         |
-|  +------+------+  +------+------+  +------+------+  +------+------+         |
-|         |                    |                    |              |           |
-+---------+--------------------+--------------------+--------------+-----------+
-|                          VISUAL STATE LAYER                             |
-|  +-------------+  +-------------+  +-------------+  +-------------+         |
-|  |Visual Store |  |   Effect    |  |  Animation  |  |  Particle   |         |
-|  | (High-freq) |  |  Managers   |  |    Loop     |  |    Pool     |         |
-|  +------+------+  +------+------+  +------+------+  +------+------+         |
-|         |                    |                    |              |           |
-+---------+--------------------+--------------------+--------------+-----------+
-|                          GAME STATE LAYER                              |
-|  +-------------+  +-------------+  +-------------+  +-------------+         |
-|  | Game Store  |  | Projectile  |  |   Player    |  |    Ability  |         |
-|  |  (Zustand)  |  |   Slice     |  |    Slice    |  |   Systems  |         |
-|  +------+------+  +------+------+  +------+------+  +------+------+         |
-|         |                                                               |
-+---------+---------------------------------------------------------------+
-|                          NETWORK LAYER                                  |
-|  +-------------+  +-------------+                                       |
-|  |   Colyseus  |  |  WebSocket  |                                       |
-|  |   Client    |  |   Messages  |                                       |
-|  +------+------+  +------+------+                                       |
-+-----------------------------------------------------------------------------+
++---------------------------------------------------------------------------------+
+|                          Presentation Layer (R3F)                               |
+|  +-------------+  +-------------+  +-------------+  +-------------+             |
+|  | MapGeometry |  | MapZones    |  | MapSpawns   |  | MapLighting |             |
+|  | Components  |  | (Flags,etc) |  | (Points)    |  | (Ambient)   |             |
+|  +------+------+  +------+------+  +------+------+  +------+------+             |
+|         |                |                |                |                    |
++---------+----------------+----------------+----------------+--------------------+
+          |                |                |
++---------v----------------v----------------v---------------------------------+
+|                      Physics Integration Layer                              |
+|  +------------------+  +------------------+  +------------------+            |
+|  | CollisionMeshes |  | TrimeshColliders |  | BoundaryPolygon  |            |
+|  | (from GLTF/JSX) |  | (Rapier)         |  | (2D constraint)  |            |
+|  +--------+---------+  +--------+---------+  +--------+---------+            |
+|           |                     |                     |                      |
++-----------+---------------------+---------------------+----------------------+
+            |                     |                     |
++-----------v---------------------v---------------------v----------------------+
+|                      Game Logic Layer (Shared Package)                       |
+|  +------------------+  +------------------+  +------------------+             |
+|  | SpawnManager     |  | FlagManager      |  | CTFGameMode      |             |
+|  | (spawn points)   |  | (base positions) |  | (game rules)     |             |
+|  +------------------+  +------------------+  +------------------+             |
++------------------------------------------------------------------------------+
 ```
 
 ### Component Responsibilities
 
 | Component | Responsibility | Typical Implementation |
 |-----------|----------------|------------------------|
-| **UI Components** | HUD, menus, overlays that display game state | React components, subscribe to low-frequency state |
-| **Canvas Layer** | Container for 3D scene, handles render loop | `<Canvas>` from @react-three/fiber |
-| **Effect Managers** | Coordinate high-frequency visual updates | Custom components with centralized `useFrame` |
-| **Visual Store** | Separate store for 60fps+ visual data | Zustand slice or `useRef`-based state |
-| **Game Store** | Authoritative game state (player data, scores) | Zustand with selective subscriptions |
-| **Network Layer** | WebSocket communication, message parsing | Colyseus client, message handlers |
-| **Particle Pool** | Reusable effect objects (rockets, explosions) | Object pool pattern with pre-allocated resources |
+| MapGeometry | Visual 3D mesh rendering | R3F `<primitive>` with GLTF or JSX mesh components |
+| MapZones | Game-relevant area definitions | Flag base positions, capture zones, hazard areas |
+| MapSpawns | Spawn point configurations | Vec3 arrays per team with rotation data |
+| MapLighting | Level-specific lighting setup | Ambient, directional, point lights per area |
+| CollisionMeshes | Physics collision surfaces | Trimesh colliders from visual geometry |
+| BoundaryPolygon | Playable area constraint | 2D polygon with ray-casting containment check |
 
 ## Recommended Project Structure
 
 ```
 apps/client/src/
-├── components/
-│   ├── game/                      # 3D rendering components
-│   │   ├── core/                  # NEW: Centralized rendering systems
-│   │   │   ├── AnimationLoop.tsx  # Single useFrame entry point
-│   │   │   ├── VisualStateManager.tsx # High-freq visual state
-│   │   │   └── EffectObjectPool.tsx # Object pooling for effects
-│   │   ├── players/               # Player rendering components
-│   │   ├── effects/               # Ability effect components
-│   │   │   ├── blaze/             # Blaze-specific effects
-│   │   │   ├── hookshot/          # Hookshot-specific effects
-│   │   │   └── shared/            # Shared effect utilities
-│   │   └── GameCanvas.tsx         # Main canvas container
-│   ├── ui/                        # 2D UI components
-│   └── shared/                    # Shared UI/game components
-├── store/
-│   ├── gameStore.ts               # Game state (low-freq updates)
-│   ├── visualStore.ts             # NEW: Visual state (high-freq updates)
-│   └── slices/
-│       ├── projectiles.ts         # Projectile data
-│       └── ...
-├── hooks/
-│   ├── useVisualState.ts          # NEW: Hook for accessing visual state
+├── components/game/
+│   ├── maps/                    # Map-specific components
+│   │   ├── index.ts             # Map registry/loader
+│   │   ├── CTFMap.tsx           # Base CTF map component interface
+│   │   ├── inferno/             # Current map (Inferno_World_free)
+│   │   │   ├── InfernoMap.tsx   # Main map component
+│   │   │   ├── infernoConfig.ts # Map-specific config (scale, bounds)
+│   │   │   └── infernoBoundary.ts # Boundary polygon points
+│   │   └── lowpoly-ctf/         # New custom map
+│   │       ├── LowPolyCTFMap.tsx  # Main map component
+│   │       ├── geometry/          # Map geometry components
+│   │       │   ├── Base.tsx       # Base structure mesh
+│   │       │   ├── MidZone.tsx    # Center area mesh
+│   │       │   └── Ramps.tsx      # Ramp/path meshes
+│   │       ├── colliders/         # Physics collision meshes
+│   │       │   ├── TerrainCollider.tsx
+│   │       │   └── StructureColliders.tsx
+│   │       ├── config.ts          # Map config (spawns, bases, bounds)
+│   │       └── boundary.ts        # Boundary polygon
+│   ├── VoxelWorld.tsx           # Map loader/switcher
 │   └── ...
-├── systems/                       # NEW: Game systems for decoupled logic
-│   ├── projectileSystem.ts        # Projectile movement/collision
-│   ├── effectSystem.ts            # Effect lifecycle management
-│   └── animationSystem.ts         # Centralized animation updates
-└── utils/
-    └── objectPool.ts              # Generic object pool implementation
+├── config/
+│   ├── mapBoundaries.ts         # Active map boundary (move to per-map)
+│   └── maps/                    # Map configurations
+│       └── index.ts             # Map registry
+└── hooks/
+    └── useMapPhysics.ts         # Map-specific physics initialization
 ```
 
 ### Structure Rationale
 
-- **core/**: Centralizes animation loop to reduce useFrame explosion from 80+ hooks to single loop
-- **visualStore.ts**: Separates 60fps visual updates from game state, preventing cascading re-renders
-- **systems/**: Decouples game logic from React components, enables entity-component patterns
-- **objectPool.ts**: Reuses expensive objects (rockets, particles) instead of creating/destroying
+- **maps/[mapname]/** - Each map is self-contained with its own geometry, colliders, and config
+- **geometry/** - Visual components separated from collision for independent optimization
+- **colliders/** - Physics meshes can be simplified versions of visual geometry
+- **config.ts** - Single source of truth for spawn points, base positions, boundaries
 
 ## Architectural Patterns
 
-### Pattern 1: Visual State Separation
+### Pattern 1: Declarative Map Component
 
-**What:** Separate high-frequency visual data (positions, animation states) from authoritative game state (health, scores)
-
-**When to use:** When rendering 60fps animations with React state management causing re-renders
-
+**What:** Map as a self-contained R3F component that exposes configuration via props/context
+**When to use:** For maps that need to integrate with existing game systems
 **Trade-offs:**
-- **Pros:** Eliminates cascading re-renders, keeps game state pure
-- **Cons:** Requires synchronization between visual and game state
+- Pro: Encapsulation, easy to swap maps
+- Con: Must ensure collider initialization timing with physics world
 
 **Example:**
 ```typescript
-// visualStore.ts - High-frequency visual data, no React re-renders
-interface VisualState {
-  projectiles: Map<string, VisualProjectile>;
-  effects: Map<string, VisualEffect>;
-  playerVisuals: Map<string, PlayerVisual>;
-}
-
-// Update visual state via direct mutation in useFrame
-useFrame(() => {
-  const visuals = useVisualStore.getState();
-  visuals.projectiles.forEach(proj => {
-    proj.position.addScaledVector(proj.velocity, delta);
-    // Direct mutation - no React re-render
-  });
-});
-
-// Subscribe only to game state for UI components
-const score = useGameStore(state => state.blueScore);
-```
-
-**Sources:**
-- [Performance pitfalls - React Three Fiber](https://r3f.docs.pmnd.rs/advanced/pitfalls) - "Do not bind to fast state reactively"
-- [How to use state management with R3F without performance issues](https://discourse.threejs.org/t/how-to-use-state-management-with-react-three-fiber-without-performance-issues/61223)
-
-### Pattern 2: Centralized Animation Loop
-
-**What:** Consolidate all `useFrame` hooks into a single animation coordinator that manages updates
-
-**When to use:** When 80+ separate `useFrame` hooks cause scheduler overhead
-
-**Trade-offs:**
-- **Pros:** Reduces scheduler overhead, easier to coordinate animations, can batch updates
-- **Cons:** More complex coordination, potential for single point of failure
-
-**Example:**
-```typescript
-// AnimationLoop.tsx - Single useFrame entry point
-interface AnimationSystem {
-  id: string;
-  priority: number; // Higher = earlier in frame
-  update: (delta: number, time: number) => void;
-}
-
-export function AnimationLoop() {
-  const systemsRef = useRef<AnimationSystem[]>([]);
-
-  const registerSystem = useCallback((system: AnimationSystem) => {
-    systemsRef.current.push(system);
-    return () => {
-      systemsRef.current = systemsRef.current.filter(s => s.id !== system.id);
-    };
-  }, []);
-
-  // Provide registration context
-  return (
-    <AnimationLoopContext.Provider value={{ registerSystem }}>
-      <LoopRunner systems={systemsRef} />
-      {children}
-    </AnimationLoopContext.Provider>
-  );
-}
-
-function LoopRunner({ systems }: { systems: RefObject<AnimationSystem[]> }) {
-  useFrame((state, delta) => {
-    // Sort by priority and execute in order
-    const sorted = [...systems.current].sort((a, b) => b.priority - a.priority);
-    sorted.forEach(sys => sys.update(delta, state.clock.elapsedTime));
-  });
-  return null;
-}
-
-// Usage in effect components
-function RocketEffect() {
-  const { registerSystem } = useAnimationLoop();
-  const rocketData = useRef<RocketData>();
+// LowPolyCTFMap.tsx
+export function LowPolyCTFMap({ onReady }: { onReady?: () => void }) {
+  const { registerColliders } = useMapPhysics();
 
   useEffect(() => {
-    return registerSystem({
-      id: `rocket-${rocketData.current.id}`,
-      priority: 10,
-      update: (delta) => {
-        // Update rocket position
-      },
-    });
+    // Register colliders when geometry loads
+    registerColliders(mapColliderData);
+    onReady?.();
   }, []);
-}
-```
 
-**Sources:**
-- [Scaling performance - React Three Fiber](https://r3f.docs.pmnd.rs/advanced/scaling-performance) - "Threejs has a render-loop, it does not work like the DOM does"
-- [Performance pitfalls - React Three Fiber](https://r3f.docs.pmnd.rs/advanced/pitfalls) - "Fast updates are carried out in useFrame by mutation"
+  return (
+    <group>
+      {/* Visual geometry */}
+      <MapTerrain />
+      <RedBase />
+      <BlueBase />
+      <MidZone />
 
-### Pattern 3: Object Pooling
-
-**What:** Pre-allocate a fixed pool of reusable objects instead of creating/destroying
-
-**When to use:** For frequently created/destroyed objects (projectiles, particles, explosions)
-
-**Trade-offs:**
-- **Pros:** Eliminates GC pressure, predictable memory usage, faster allocations
-- **Cons:** Fixed pool size, more complex lifecycle management
-
-**Example:**
-```typescript
-// objectPool.ts - Generic object pool
-export class ObjectPool<T> {
-  private available: T[] = [];
-  private active: Set<T> = new Set();
-
-  constructor(
-    private factory: () => T,
-    private reset: (obj: T) => void,
-    initialSize: number
-  ) {
-    for (let i = 0; i < initialSize; i++) {
-      this.available.push(factory());
-    }
-  }
-
-  acquire(): T {
-    const obj = this.available.pop() ?? this.factory();
-    this.active.add(obj);
-    return obj;
-  }
-
-  release(obj: T): void {
-    if (this.active.delete(obj)) {
-      this.reset(obj);
-      this.available.push(obj);
-    }
-  }
-
-  updateAll(updateFn: (obj: T) => void): void {
-    this.active.forEach(updateFn);
-  }
-}
-
-// Usage for rockets
-const rocketPool = new ObjectPool(
-  () => ({ position: new THREE.Vector3(), velocity: new THREE.Vector3() }),
-  (rocket) => rocket.position.set(0, 0, 0),
-  50 // Pre-allocate 50 rockets
-);
-
-// In animation loop
-useFrame(() => {
-  rocketPool.updateAll((rocket) => {
-    rocket.position.addScaledVector(rocket.velocity, delta);
-  });
-});
-```
-
-**Sources:**
-- [100 Three.js Best Practices (2026)](https://www.utsubo.com/blog/threejs-best-practices-100-tips) - "Use object pooling for spawned entities"
-- [Introduction to Object Pooling in Three.js](https://kingdavvid.hashnode.dev/introduction-to-object-pooling-in-threejs)
-
-### Pattern 4: Selective Subscription
-
-**What:** Subscribe to minimal slices of state to prevent unnecessary re-renders
-
-**When to use:** When store updates trigger component re-renders for unrelated data
-
-**Trade-offs:**
-- **Pros:** Each component only re-renders when its specific data changes
-- **Cons:** More boilerplate, need to carefully manage subscriptions
-
-**Example:**
-```typescript
-// BAD: Subscribes to entire store, re-renders on any change
-const RocketsManager() {
-  const { rockets, bombs, jetpackActive } = useGameStore();
-  // Re-renders when bombs change, even though we only render rockets
-}
-
-// GOOD: Subscribe only to what's needed
-const RocketsManager() {
-  const rockets = useGameStore(state => state.rockets);
-  // Only re-renders when rockets array changes
-}
-
-// BETTER: Use shallow comparison for arrays
-import { shallow } from 'zustand/shallow';
-
-const RocketsManager() {
-  const { rockets, addRocket } = useGameStore(
-    state => ({ rockets: state.rockets, addRocket: state.addRocket }),
-    shallow
+      {/* Non-visual collision helpers */}
+      <CollisionMeshes visible={__DEV__} />
+    </group>
   );
-  // Only re-renders when rockets reference changes, not on individual rocket updates
 }
+
+// Export map configuration for game systems
+export const mapConfig: MapConfig = {
+  redBase: { x: -40, y: 10, z: 0 },
+  blueBase: { x: 40, y: 10, z: 0 },
+  redSpawns: [...],
+  blueSpawns: [...],
+  boundary: [...],
+};
 ```
 
-**Sources:**
-- [Optimizing Zustand - Preventing Unnecessary Re-renders](https://dev.to/eraywebdev/optimizing-zustand-how-to-prevent-unnecessary-re-renders-in-your-react-app-59do)
-- [How to Stop Unnecessary Re-Renders with Zustand](https://www.linkedin.com/posts/osimfavour_most-people-struggle-to-fix-react-performance-activity-7367202121374490624-u5mH)
+### Pattern 2: Separated Visual/Collision Geometry
 
-### Pattern 5: Direct Mutation in useFrame
-
-**What:** Update Three.js object properties directly in useFrame, not via React state
-
-**When to use:** For 60fps animations, position updates, visual effects
-
+**What:** Visual meshes and physics colliders as separate geometry, allowing LOD for each
+**When to use:** When visual detail exceeds physics precision needs
 **Trade-offs:**
-- **Pros:** Bypasses React scheduler, frame-rate independent, no re-renders
-- **Cons:** Mutation can be confusing, component must "own" the mutated objects
+- Pro: Optimized collision detection, visual fidelity independent of physics
+- Con: Two geometries to maintain, potential for visual/collision mismatch
 
 **Example:**
 ```typescript
-// BAD: setState in useFrame causes re-renders
-const [position, setPosition] = useState([0, 0, 0]);
-useFrame(() => {
-  setPosition(p => [p[0] + 0.1, p[1], p[2]]);
-});
-return <mesh position={position} />
+// TerrainCollider.tsx - simplified collision mesh
+export function TerrainCollider() {
+  const geometry = useMemo(() => {
+    // Simplified geometry for collision
+    const geo = new THREE.PlaneGeometry(100, 100, 10, 10);
+    // Apply height displacement for terrain
+    return geo;
+  }, []);
 
-// GOOD: Direct mutation, no re-render
-const meshRef = useRef<THREE.Mesh>();
-const direction = useRef(new THREE.Vector3(1, 0, 0));
+  // Register with Rapier on mount
+  useColliderRegistration(geometry);
 
-useFrame((_, delta) => {
-  if (meshRef.current) {
-    meshRef.current.position.addScaledVector(direction.current, delta);
-  }
-});
-return <mesh ref={meshRef} />
+  return null; // No visual representation
+}
 
-// EXCELLENT: Reuse Vector3 objects to avoid GC
-const _tempVec = new THREE.Vector3();
-useFrame((_, delta) => {
-  if (meshRef.current) {
-    _tempVec.copy(direction.current).multiplyScalar(delta);
-    meshRef.current.position.add(_tempVec);
-  }
-});
+// MapTerrain.tsx - detailed visual mesh
+export function MapTerrain() {
+  return (
+    <mesh>
+      <planeGeometry args={[100, 100, 100, 100]} />
+      <meshStandardMaterial map={terrainTexture} />
+    </mesh>
+  );
+}
 ```
 
-**Sources:**
-- [Performance pitfalls - React Three Fiber](https://r3f.docs.pmnd.rs/advanced/pitfalls) - "Avoid setState in loops"
+### Pattern 3: Configuration-Driven Spawns and Zones
+
+**What:** Map config file defines all game-relevant positions that game logic consumes
+**When to use:** Always - decouples map from game mode
+**Trade-offs:**
+- Pro: Game logic doesn't need to know map structure
+- Con: Config must stay in sync with visual geometry
+
+**Example:**
+```typescript
+// config.ts
+export const mapConfig = {
+  name: 'lowpoly-ctf',
+
+  // Team bases (flag positions)
+  redBase: { x: -40, y: 12, z: 0 },
+  blueBase: { x: 40, y: 12, z: 0 },
+
+  // Spawn points per team
+  redSpawns: [
+    { x: -35, y: 12, z: -5 },
+    { x: -35, y: 12, z: 5 },
+    { x: -38, y: 12, z: 0 },
+  ],
+  blueSpawns: [
+    { x: 35, y: 12, z: -5 },
+    { x: 35, y: 12, z: 5 },
+    { x: 38, y: 12, z: 0 },
+  ],
+
+  // Map scale and position
+  transform: {
+    scale: 1,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+  },
+};
+```
 
 ## Data Flow
 
-### Current Flow (Problematic)
+### Map Loading Flow
 
 ```
-Server Update (20 tick)
+[GameCanvas mounts]
     |
-    v
-Colyseus Message
+[VoxelWorld selects active map]
     |
-    v
-Zustand GameStore.set() <-- TRIGGERS ALL SUBSCRIBERS
+[MapComponent mounts] --> [Visual geometry renders]
     |
-    +---> BlazeEffectsManager (re-render)
-    +---> HookshotEffectsManager (re-render)
-    +---> GlacierEffectsManager (re-render)
-    +---> UI Components (re-render)
-    +---> Other effect components (re-render)
+[useEffect triggers] --> [Collider registration starts]
     |
-    v
-React Reconciliation (cascading)
+[usePhysics.loadMapColliders()] --> [Rapier trimesh creation]
     |
-    v
-Three.js renders (may drop frames if reconciliation takes too long)
+[physics.step() called] --> [Collision structures initialized]
+    |
+[onReady callback] --> [Game can start]
 ```
 
-### Recommended Flow (Optimized)
+### Spawn Point Data Flow
 
 ```
-Server Update (20 tick)
+[Map config.ts]
     |
-    v
-Colyseus Message
+    v (exports)
+[SpawnManager.initialize(config.redSpawns, config.blueSpawns)]
     |
-    +-----------------------+
-    |                       |
-    v                       v
-GameStore (low-freq)   VisualStore (high-freq)
-    |                       |
-    |                       +---> Direct mutations in useFrame
-    |                       |    (no React re-renders)
-    |                       |
-    v                       v
-UI Components          Three.js objects
-(React re-render)     (direct updates)
-    |                       |
-    +----------+------------+
-               |
-               v
-        Three.js renders (smooth, no reconciliation stalls)
+    v (stores)
+[SpawnManager internal arrays]
+    |
+    v (provides)
+[SpawnManager.getSpawnPoint(team)] --> [Player respawn position]
+```
+
+### Collision Data Flow
+
+```
+[Map geometry (GLTF or JSX meshes)]
+    |
+    v (traverse meshes)
+[Extract vertices + indices from BufferGeometry]
+    |
+    v (apply world transform)
+[Scale/rotate/translate vertices to world space]
+    |
+    v (create collider)
+[rapier.ColliderDesc.trimesh(vertices, indices)]
+    |
+    v (attach to body)
+[world.createCollider(colliderDesc, fixedBody)]
+    |
+    v (query)
+[world.castRay() / checkGroundWithNormal() / checkWallCollision()]
 ```
 
 ### Key Data Flows
 
-1. **Game State (low-frequency, < 20Hz):** Server -> GameStore -> UI Components
-2. **Visual Data (high-frequency, 60Hz):** VisualStore mutations -> Three.js objects (direct)
-3. **Player Input:** Event -> Client prediction -> VisualStore -> Server
-4. **Effect Lifecycle:** Effect spawned -> ObjectPool acquire -> Animation update -> ObjectPool release
-
-### State Management
-
-```
-+------------------+                    +------------------+
-|   GameStore      |                    |   VisualStore    |
-|  (Zustand)       |                    |  (Zustand/Refs)  |
-+------------------+                    +------------------+
-| Players          |                    | Projectiles      |
-| Health           |                    | Particle effects |
-| Scores           |                    | Animation states |
-| Flags            |                    | Interpolated pos |
-| Cooldowns        |                    |                  |
-+------------------+                    +------------------+
-         ^                                        ^
-         | (subscribe)                            | (direct access)
-         |                                        |
-+---------+----------+                  +---------+----------+
-| UI Components      |                  | Effect Components  |
-| (React)            |                  | (useFrame)         |
-+---------------------+                  +--------------------+
-```
+1. **Visual to Physics:** Mesh geometry -> BufferGeometry -> Float32Array vertices -> Rapier trimesh
+2. **Config to Game:** mapConfig.ts -> SpawnManager/FlagManager -> CTFGameMode
+3. **Boundary to Player:** boundary.ts -> isInsideBoundary() -> constrainToMapBoundary()
 
 ## Scaling Considerations
 
 | Scale | Architecture Adjustments |
 |-------|--------------------------|
-| 0-10 players | Monolithic visual store, basic object pooling |
-| 10-50 players | InstancedMesh for projectiles, LOD for distant effects |
-| 50+ players | Spatial partitioning, culling, worker threads for physics |
+| 1 map | Current monolithic approach is fine |
+| 2-5 maps | Per-map folders with shared interface, map registry |
+| 5+ maps | Lazy loading, LOD system, collision mesh simplification |
 
 ### Scaling Priorities
 
-1. **First bottleneck:** React reconciliation overhead during projectile spam
-   - **Fix:** Visual state separation + selective subscription
-
-2. **Second bottleneck:** GC pressure from creating/destroying effect objects
-   - **Fix:** Object pooling for projectiles, particles, explosions
-
-3. **Third bottleneck:** 80+ useFrame scheduler overhead
-   - **Fix:** Centralized animation loop with priority system
+1. **First bottleneck:** Collision mesh complexity - simplify trimesh geometry before adding detail
+2. **Second bottleneck:** Map loading time - implement async loading with progress indicator
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: setState in useFrame
+### Anti-Pattern 1: Tight Coupling to GLTF Structure
 
-**What people do:**
-```typescript
-useFrame(() => {
-  setPosition(p => [p[0] + 0.1, p[1], p[2]]); // Triggers re-render every frame!
-});
-```
+**What people do:** Reference GLTF node names directly in game code
+**Why it's wrong:** Changing map model breaks game logic
+**Do this instead:** Export map config separately; map component translates GLTF structure to config
 
-**Why it's wrong:** Forces React reconciliation 60 times per second, completely defeating React Three Fiber's design
+### Anti-Pattern 2: Visual Geometry as Physics Collider
 
-**Do this instead:**
-```typescript
-const ref = useRef();
-useFrame((_, delta) => {
-  ref.current.position.x += delta; // Direct mutation, no re-render
-});
-```
+**What people do:** Use high-detail visual mesh directly for collision
+**Why it's wrong:** Wasted physics computation, potential for buggy collision on complex surfaces
+**Do this instead:** Create simplified collision geometry, use convex decomposition for complex shapes
 
-### Anti-Pattern 2: Subscribing to Entire Store Slices
+### Anti-Pattern 3: Hard-coded Spawn/Base Positions
 
-**What people do:**
-```typescript
-const EffectManager() {
-  const store = useGameStore(); // Re-renders on ANY store change
-  // ...
-}
-```
+**What people do:** Embed positions directly in SpawnManager/FlagManager
+**Why it's wrong:** Changing map requires modifying game logic code
+**Do this instead:** SpawnManager receives positions from map config at initialization
 
-**Why it's wrong:** Every projectile add/remove triggers all effect managers to re-render
+### Anti-Pattern 4: Global Boundary Polygon
 
-**Do this instead:**
-```typescript
-const EffectManager() {
-  const rockets = useGameStore(s => s.rockets); // Only rockets
-  // Or use shallow comparison
-}
-```
-
-### Anti-Pattern 3: Creating Objects in Render Loop
-
-**What people do:**
-```typescript
-useFrame(() => {
-  mesh.position.lerp(new THREE.Vector3(x, y, z), 0.1); // New Vector3 every frame!
-});
-```
-
-**Why it's wrong:** Allocates 60 objects per second, triggers GC pauses
-
-**Do this instead:**
-```typescript
-const _temp = new THREE.Vector3(); // Reuse
-useFrame(() => {
-  _temp.set(x, y, z);
-  mesh.position.lerp(_temp, 0.1);
-});
-```
-
-### Anti-Pattern 4: Indiscriminate Mounting/Unmounting
-
-**What people do:**
-```typescript
-{shouldShow && <ExpensiveEffect />} // Mount/unmount frequently
-```
-
-**Why it's wrong:** Materials/geometries get re-initialized on each mount
-
-**Do this instead:**
-```typescript
-<ExpensiveEffect visible={shouldShow} /> // Just hide, don't unmount
-```
-
-### Anti-Pattern 5: Reactive Binding to Fast State
-
-**What people do:**
-```typescript
-const position = useSelector(state => state.playerPosition); // 60fps updates
-return <mesh position={position} />
-```
-
-**Why it's wrong:** React has to reconcile on every position change
-
-**Do this instead:**
-```typescript
-const ref = useRef();
-useFrame(() => {
-  ref.current.position.copy(api.getState().playerPosition);
-});
-```
+**What people do:** Single mapBoundaries.ts file shared across all maps
+**Why it's wrong:** Can only have one map's boundary active
+**Do this instead:** Each map exports its boundary; VoxelWorld sets active boundary on map change
 
 ## Integration Points
 
@@ -546,86 +315,42 @@ useFrame(() => {
 
 | Service | Integration Pattern | Notes |
 |---------|---------------------|-------|
-| Colyseus Server | WebSocket via `@colyseus/schema` | Keep game state sync separate from visual updates |
-| Three.js | Direct manipulation via refs | Prefer useFrame mutations over React state for animations |
-| Zustand | Slices with selective subscription | Use shallow comparison for arrays |
+| Rapier Physics | Global world instance + per-map collider registration | Must step world after adding colliders |
+| SpawnManager | Initialize with map config on map load | Call before game start |
+| FlagManager | Initialize with base positions on map load | Positions from map config |
+| CTFGameMode | Receives managers already configured | Doesn't know about map structure |
 
 ### Internal Boundaries
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
-| GameStore -> VisualStore | Copy on sync, mutate in useFrame | Visual state is derived, not source of truth |
-| Effect Components -> AnimationLoop | Registration via context | Components register callbacks, don't own useFrame |
-| ProjectileSystem -> ObjectPool | acquire/release pattern | System doesn't know about pool implementation |
+| MapComponent -> usePhysics | Function call to register colliders | Async, wait for physics ready |
+| MapConfig -> GameLogic | Import config, pass to managers | Synchronous at game start |
+| VoxelWorld -> MapComponent | Component rendering | Props for any dynamic config |
+| PlayerController -> Physics | Query functions (raycast, ground check) | Every frame during gameplay |
 
 ## Build Order Implications
 
-### Phase 1: Visual State Separation (Foundation)
-**Prerequisites:** None
-**Effort:** Medium
-**Impact:** HIGH
+Based on dependencies, the recommended build order for a new map:
 
-1. Create `visualStore.ts` separate from `gameStore.ts`
-2. Move high-frequency data (projectile positions, effect states) to visual store
-3. Update effect components to mutate visual state in useFrame
+1. **Map Config** - Define spawns, bases, boundaries (no dependencies)
+2. **Boundary Polygon** - Playable area constraint (depends on config)
+3. **Collision Meshes** - Simplified physics geometry (depends on config for bounds)
+4. **Visual Geometry** - Detailed render meshes (can parallel with collision)
+5. **Map Component** - Assembles geometry + registers colliders (depends on 3, 4)
+6. **VoxelWorld Integration** - Map selection/loading (depends on 5)
+7. **Manager Integration** - Connect config to SpawnManager/FlagManager (depends on 1, 6)
 
-**Why first:** This is the foundation. Without separating visual from game state, other optimizations have limited impact.
-
-### Phase 2: Selective Subscriptions (Quick Win)
-**Prerequisites:** Phase 1
-**Effort:** Low
-**Impact:** MEDIUM
-
-1. Audit all store subscriptions for broad selectors
-2. Convert to narrow selectors with shallow comparison
-3. Add React.memo to effect components
-
-**Why second:** Easy win with low risk, reduces immediate re-render cascade.
-
-### Phase 3: Centralized Animation Loop (Medium Effort)
-**Prerequisites:** Phase 1
-**Effort:** Medium
-**Impact:** MEDIUM
-
-1. Create `AnimationLoop.tsx` coordinator
-2. Create registration context
-3. Migrate effect components to register systems instead of individual useFrame
-
-**Why third:** Reduces scheduler overhead but requires careful coordination.
-
-### Phase 4: Object Pooling (Optimization)
-**Prerequisites:** Phase 1
-**Effort:** High
-**Impact:** MEDIUM
-
-1. Create generic `ObjectPool` utility
-2. Pre-allocate pools for rockets, projectiles, particles
-3. Update effect components to acquire/release from pool
-
-**Why fourth:** GC pressure is secondary to re-render overhead. Pooling adds complexity.
-
-### Phase 5: Instancing (Advanced)
-**Prerequisites:** Phase 1, Phase 4
-**Effort:** High
-**Impact:** LOW-MEDIUM
-
-1. Convert projectile rendering to InstancedMesh
-2. Update animation loop to set instance matrices
-3. Maintain fallback for small counts
-
-**Why last:** Instancing adds significant complexity and R3F has reported issues. Only after other optimizations are exhausted.
+**Parallelizable:** Steps 3 and 4 can be done in parallel. Step 1 should be done first as it informs all other work.
 
 ## Sources
 
-- [Scaling performance - React Three Fiber](https://r3f.docs.pmnd.rs/advanced/scaling-performance) - Official R3F performance documentation (HIGH confidence)
-- [Performance pitfalls - React Three Fiber](https://r3f.docs.pmnd.rs/advanced/pitfalls) - Official R3F anti-patterns guide (HIGH confidence)
-- [How to use state management with R3F without performance issues](https://discourse.threejs.org/t/how-to-use-state-management-with-react-three-fiber-without-performance-issues/61223) - Three.js community discussion (MEDIUM confidence)
-- [Zustand causing more re-renders than expected](https://github.com/pmndrs/zustand/discussions/2642) - GitHub discussion (MEDIUM confidence)
-- [Optimizing Zustand - Preventing Unnecessary Re-renders](https://dev.to/eraywebdev/optimizing-zustand-how-to-prevent-unnecessary-re-renders-in-your-react-app-59do) - Zustand optimization guide (MEDIUM confidence)
-- [Simplifying React Three Fiber with Entity Component System](https://douges.dev/blog/simplifying-r3f-with-ecs) - ECS pattern for R3F (MEDIUM confidence)
-- [100 Three.js Best Practices (2026)](https://www.utsubo.com/blog/threejs-best-practices-100-tips) - Three.js best practices including object pooling (LOW confidence - future dated)
-- [Introduction to Object Pooling in Three.js](https://kingdavvid.hashnode.dev/introduction-to-object-pooling-in-threejs) - Object pooling tutorial (LOW confidence - older)
+- Existing codebase analysis: `/apps/client/src/components/game/VoxelWorld.tsx`, `/apps/client/src/hooks/usePhysics.ts`
+- Existing architecture: `/packages/game-logic/src/match/SpawnManager.ts`, `/packages/game-logic/src/ctf/FlagManager.ts`
+- [React Three Fiber Documentation](https://r3f.docs.pmnd.rs/getting-started/introduction)
+- [React Three Rapier GitHub](https://github.com/pmndrs/react-three-rapier)
+- [Rapier Colliders Documentation](https://rapier.rs/docs/user_guides/javascript/colliders/)
 
 ---
-*Architecture research for React Three Fiber Performance Optimization*
+*Architecture research for: R3F Game Level Construction*
 *Researched: 2026-01-22*

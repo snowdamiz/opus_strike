@@ -1,224 +1,225 @@
-# Stack Research: React Three Fiber Performance Optimization
+# Stack Research: Level Design in React Three Fiber with Rapier
 
-**Project:** Opus Strike Performance Optimization
-**Researched:** 2025-01-22
-**Confidence:** HIGH
+**Domain:** Game level/map design for R3F multiplayer hero shooter
+**Researched:** 2026-01-22
+**Confidence:** HIGH (verified via official docs, Context7, and current articles)
+
+## Executive Summary
+
+Building CTF maps in React Three Fiber follows a **hybrid approach**: use Blender for visual geometry exported as compressed GLB, then define collision separately using simplified Rapier shapes. The key insight from 2025 best practices is that **visual geometry and collision geometry should be decoupled** — trimesh colliders work but are expensive; prefer primitive collider composition for performance.
 
 ## Recommended Stack
 
-### Core Framework
+### Core Technologies (Already in Project)
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| React Three Fiber | ^8.17.10 | 3D rendering framework | Current stable version (v8.x). Your project uses 8.17.10. v9 is in alpha/beta - wait for stable. Official docs provide comprehensive performance guidance. |
-| Three.js | ^0.169.0 | 3D engine | Your current version. InstancedMesh API stable since r150+. WebGPU renderer available but experimental. |
-| React | ^18.3.1 | UI framework | Your current version. Concurrent rendering enables `startTransition` for expensive operations. |
-| Zustand | ^4.x | State management | Already in use. Critical: Must use selector pattern to prevent re-renders. |
-| Colyseus.js | Latest | Multiplayer networking | Already in use. Keep 20Hz server updates separate from 60fps visual updates. |
+| Technology | Version | Purpose | Status |
+|------------|---------|---------|--------|
+| @react-three/fiber | 8.17 | React renderer for Three.js | Already installed |
+| @react-three/drei | 9.114 | Helpers and abstractions | Already installed |
+| three | 0.169 | 3D engine | Already installed |
+| @dimforge/rapier3d-compat | 0.14 | Physics engine (WASM) | Already installed |
 
-### Performance Libraries
+### Level Design Libraries
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| @react-three/drei | ^9.x | R3F helper library | Provides `<Instances />`, `<PerformanceMonitor />`, `<AdaptiveDpr />`, `<Detailed />` for LOD. Your project already uses this. |
-| r3f-perf | ^7.x | Performance monitoring | Drop-in FPS/GPU monitoring. Latest version 7.2.3+. Critical for catching regressions during optimization. |
-| @react-three/postprocessing | ^2.x | Post-processing effects | Use sparingly. Bloom, SSAO, SMAA merge effects into fewer passes than manual setup. |
+| Library | Version | Purpose | Why Recommended |
+|---------|---------|---------|-----------------|
+| @react-three/csg | ^3.2.0 | Constructive solid geometry | Build complex shapes from primitives declaratively. Use for doors, windows, carved-out areas. Outputs standard BufferGeometry compatible with Rapier. |
+| gltfjsx | ^6.5.0 (CLI) | GLTF to JSX conversion | Converts Blender exports to typed React components. Enables Draco compression, texture optimization, and targeted mesh manipulation. |
 
-### State Management Patterns
+### Supporting Libraries
 
-| Pattern | Purpose | When to Use |
-|---------|---------|-------------|
-| Selective Zustand selectors | Prevent cascading re-renders | ALL store subscriptions. Use `shallow` for arrays. |
-| Visual state separation | High-freq updates without React re-renders | 60fps position updates, animation states |
-| Direct store.getState() | Read-only access in useFrame | Inside useFrame only, never subscribe |
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| @react-three/rapier | ^1.4.0 | React wrapper for Rapier | Use instead of raw @dimforge/rapier3d-compat. Provides `<RigidBody>`, `<Physics>`, automatic collider generation. Already using Rapier directly, but wrapper simplifies level geometry handling. |
+| three-bvh-csg | ^0.0.16 | Fast CSG operations (underlying lib) | Already bundled with @react-three/csg. Used for boolean operations on geometry. |
 
 ### Development Tools
 
-| Tool | Version | Purpose | When to Use |
-|------|---------|---------|-------------|
-| r3f-perf | ^7.x | FPS/GPU profiling | During ALL optimization work. Remove in production builds. |
-| Spector.js | Latest | WebGL frame capture | Debugging draw calls, shader issues. Browser extension. |
-| React DevTools Profiler | Built-in | React render profiling | Identifying unnecessary re-renders |
-| stats.js/stats-gl | Latest | Minimal FPS counter | Quick checks, lighter than r3f-perf |
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| gltfjsx CLI | Model pipeline | `npx gltfjsx map.glb --transform --draco --types` for compressed, typed components |
+| r3f-perf | Performance monitoring | Already installed (7.2.3). Use to verify draw calls stay under 1000. |
+| Blender 4.x | Map authoring | Export to GLB with these settings: Apply Modifiers, Include Normals, Draco compression |
+
+## Level Design Approach
+
+### Recommended: Blender GLB + Simplified Colliders
+
+**WHY:** The project already uses this pattern (`VoxelWorld.tsx` loads `Inferno_World_free.glb`). Extend it by adding proper Rapier integration instead of the current polygon-based boundary system.
+
+```
+Visual Layer (GLB)          Collision Layer (Rapier)
+├── Building meshes    →    CuboidColliders (boxes)
+├── Terrain mesh       →    HeightfieldCollider or trimesh (static only)
+├── Props/details      →    No colliders (pass-through)
+└── Spawn areas        →    Named empty groups for spawn points
+```
+
+### Collision Mesh Strategy
+
+| Geometry Type | Collider Choice | Rationale |
+|---------------|-----------------|-----------|
+| Floors/Walls | `CuboidCollider` | Fast. Define manually with position/size matching visual. |
+| Ramps/Slopes | `CuboidCollider` rotated | Cheaper than trimesh. Slight inaccuracy acceptable. |
+| Terrain | `HeightfieldCollider` | Most memory-efficient for large areas. |
+| Complex static (buildings) | `colliders="trimesh"` on `<RigidBody type="fixed">` | Acceptable for fixed geometry only. Never use on dynamic bodies. |
+| CTF flag zones | `CuboidCollider` sensor | Use `sensor={true}` for trigger volumes. |
+
+### CSG for Procedural Elements
+
+Use `@react-three/csg` when you need:
+- Windows carved into walls
+- Door frames
+- Arches and tunnels
+- Any boolean operation (subtract, union, intersect)
+
+```tsx
+import { Geometry, Base, Subtraction } from '@react-three/csg'
+
+function WallWithWindow() {
+  return (
+    <mesh>
+      <Geometry>
+        <Base geometry={wallGeometry} />
+        <Subtraction geometry={windowGeometry} position={[0, 2, 0]} />
+      </Geometry>
+      <meshStandardMaterial />
+    </mesh>
+  )
+}
+```
+
+**CRITICAL:** CSG geometry can be fed directly to Rapier. Access via ref:
+```tsx
+const geoRef = useRef()
+// geoRef.current is THREE.BufferGeometry → use with trimesh collider
+```
+
+## Performance Considerations for Multiplayer
+
+### Draw Call Budget
+
+| Context | Max Draw Calls | Strategy |
+|---------|---------------|----------|
+| Full map render | <500 | Merge static geometry, instance repeated props |
+| During combat | <300 | Use LOD (Drei's `<Detailed />`) for distant objects |
+| Many players visible | <200 for map | Reserve headroom for player models/effects |
+
+### Instancing for Repeated Elements
+
+The project already uses `@react-three/drei` Instances (verified in codebase for rockets). Apply same pattern to map props:
+
+```tsx
+import { Instances, Instance } from '@react-three/drei'
+
+// Crates, barrels, cover objects - one draw call for all
+<Instances limit={100}>
+  <boxGeometry args={[1, 1, 1]} />
+  <meshStandardMaterial color="brown" />
+  {cratePositions.map((pos, i) => (
+    <Instance key={i} position={pos} />
+  ))}
+</Instances>
+```
+
+**Limitation:** Drei's declarative Instances have CPU overhead. For 1000+ static props, use raw `THREE.InstancedMesh` instead.
+
+### Physics Optimization
+
+| Setting | Recommendation | Why |
+|---------|---------------|-----|
+| `colliders="cuboid"` default | Set on `<Physics>` component | Prevents accidental trimesh generation |
+| Simple shapes for dynamics | Always cuboid/ball for players | Trimesh on dynamic bodies causes tunneling |
+| Fixed bodies for map | `type="fixed"` on all map RigidBodies | Rapier skips simulation for fixed bodies |
+| Collision groups | Use `collisionGroups` for layers | Separate player-map from projectile-map checks |
 
 ## Installation
 
 ```bash
-# Core (already installed, keep current versions)
-npm install @react-three/fiber@8.17.10 three@0.169.0 react@18.3.1 zustand@4
+# New dependencies for level design
+pnpm add @react-three/csg @react-three/rapier
 
-# Performance helpers (already installed)
-npm install @react-three/drei@9
-
-# Performance monitoring (ADD for optimization phase)
-npm install r3f-perf
-
-# Optional post-processing (if needed)
-npm install @react-three/postprocessing@2
-
-# Dev dependencies
-npm install -D @types/three
+# Dev tools (CLI)
+pnpm add -D gltfjsx
 ```
-
-## Current Stack Analysis
-
-### Keep (No Changes Needed)
-- **@react-three/fiber@8.17.10** - Stable v8, solid for production
-- **three@0.169.0** - Recent stable, InstancedMesh mature
-- **@react-three/drei** - Already using, has performance utilities
-- **zustand** - Right choice, needs selector optimization
-- **vite** - Build tool, performs well
-
-### Add (For Optimization)
-- **r3f-perf** - Essential for measuring improvement
-- **@react-three/postprocessing** - Only if needed for effects
-
-### DO NOT Upgrade
-- **React Three Fiber to v9** - Currently in alpha/beta. Breaking changes, not production-ready.
-- **Three.js WebGPU renderer** - Experimental, limited browser support. Defer until 2026.
 
 ## Alternatives Considered
 
-| Category | Recommended | Alternative | Why Not Alternative |
-|----------|-------------|-------------|---------------------|
-| State Management | Zustand (selectors) | Redux Toolkit | Redux boilerplate overkill. Zustand is from same team as R3F (pmndrs), designed for this use case. |
-| Performance Monitoring | r3f-perf | React DevTools Profiler | DevTools can't see GPU time, draw calls, or Three.js-specific metrics. r3f-perf shows `calls` (meshes rendered), GL programs, memory. |
-| Instancing | THREE.InstancedMesh | Individual meshes | Draw calls: 1 vs 100+. Your projectiles MUST use instancing. |
-| Animation | useFrame + mutation | react-spring | Spring animations great for UI, but game loop (60fps positions) should use direct mutation in useFrame. |
-| Post-processing | @react-three/postprocessing | Three.js EffectComposer | Drei's wrapper merges effects into fewer passes, easier setup with R3F. |
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| Blender GLB | Procedural geometry only | Prototype/testing. Not for final maps. |
+| @react-three/csg | three-csg-ts | If you need vanilla Three.js without React wrappers |
+| @react-three/rapier | Raw Rapier API | Already using raw API. Wrapper recommended for level geometry ease. |
+| Drei Instances | THREE.InstancedMesh | 1000+ static objects with no interactivity |
+| Trimesh colliders | Convex decomposition | If trimesh causes physics issues. More complex setup. |
 
 ## What NOT to Use
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| `useState` inside `useFrame` | Triggers React re-render 60fps. Completely defeats R3F design. | `useRef` + direct mutation |
-| `new THREE.Vector3()` in `useFrame` | Creates 60+ objects/second, GC pressure causes stutter. | Pre-allocated temp vectors |
-| Subscribing to entire Zustand store | Every store update re-renders ALL components. | Narrow selectors with `shallow` |
-| Conditional mounting for effects | Mount/unmount re-creates materials/geometries (expensive). | `visible` prop to hide |
-| R3F v9 (alpha/beta) | Breaking changes, unstable. | Stay on v8.x until stable |
-| WebGPU renderer (2025) | Experimental, poor browser support. | WebGL renderer (current) |
-| Point lights per projectile | 5+ lights kills FPS. | Single shared light or baked lighting |
-
-## Stack Patterns by Variant
-
-### If targeting 60fps on mid-range devices:
-- Use `<AdaptiveDpr />` from Drei to scale pixel ratio based on performance
-- Limit shadow map resolution to 1024 or 2048
-- Use `<Detailed />` for LOD on distant objects
-- Cap particle counts based on `<PerformanceMonitor />` feedback
-
-### If targeting 60fps on high-end only:
-- Use r3f-perf to ensure no unnecessary draw calls
-- Still use InstancedMesh for projectiles (non-negotiable)
-- Can enable higher shadow resolution
-- More particle effects acceptable
-
-### If mobile support required:
-- `<AdaptiveDpr />` becomes critical (start at 1.0, can drop to 0.5)
-- Use `<PerformanceMonitor />` with aggressive thresholds
-- Consider `frameloop="demand"` for static scenes
-- Reduce particle counts by 50%
+| `colliders="trimesh"` on dynamic bodies | Objects get stuck inside. No interior. | Convex hull or primitive composition |
+| Auto colliders for entire map | Performance nightmare. Every mesh gets collider. | `colliders={false}` on `<Physics>`, add manually |
+| Polygon boundary checks | Current approach in `mapBoundaries.ts`. Works but doesn't integrate with Rapier. | Replace with `RigidBody type="fixed"` wall colliders |
+| HeightfieldCollider for buildings | Only works for terrain-like topology | CuboidCollider or trimesh for vertical structures |
 
 ## Version Compatibility
 
-| Package | Compatible With | Notes |
+| Package A | Compatible With | Notes |
 |-----------|-----------------|-------|
-| @react-three/fiber@8.17.x | three@0.160-0.171 | Your 0.169.0 is perfect. Three.js 0.172+ may have issues. |
-| @react-three/drei@9.x | @react-three/fiber@8.x | Drei v9 is for Fiber v8. |
-| r3f-perf@7.x | @react-three/fiber@8.x | Tested with Fiber 8.x. |
-| @react-three/postprocessing@2.x | @react-three/fiber@8.x | Postprocessing v2 for Fiber v8. |
+| @react-three/rapier@1.4 | @react-three/fiber@8.x, React 18 | V2 adds React 19 + R3F v9 support |
+| @react-three/csg@3.x | three@0.160+ | Uses three-bvh-csg internally |
+| gltfjsx@6.5 | three@0.169 | --transform flag requires glTF-Transform |
 
-## Critical Stack Decisions for This Project
+## Workflow: Building a New Map
 
-### 1. Keep Current Three.js/R3F Versions
-**Rationale:** You're on stable versions (R3F 8.17.10, Three 0.169.0). Upgrading to R3F v9 (alpha) during performance optimization is reckless. The v8 API is stable, well-documented, and your issues are anti-patterns, not version bugs.
+1. **Blender**: Model visual geometry, organize in collections (Walls, Props, Spawns)
+2. **Export**: GLB with Draco compression, embedded textures
+3. **Convert**: `npx gltfjsx map.glb --transform --draco --types`
+4. **Collision**: Define simplified colliders in React component:
 
-### 2. Add r3f-perf Immediately
-**Rationale:** Can't optimize what you can't measure. r3f-perf shows:
-- FPS (target: 60)
-- `calls` (meshes rendered - target: minimize)
-- GPU memory
-- Custom data tracking
-
-Usage:
 ```tsx
-import { Perf } from 'r3f-perf'
+function CTFMap() {
+  const { scene } = useGLTF('/maps/ctf_arena.glb')
 
-<Canvas>
-  <Perf position="top-left" />
-  {/* ... rest of scene */}
-</Canvas>
+  return (
+    <Physics colliders={false}>
+      {/* Visual geometry */}
+      <primitive object={scene} />
+
+      {/* Simplified collision layer */}
+      <RigidBody type="fixed">
+        {/* Floor */}
+        <CuboidCollider args={[50, 0.5, 50]} position={[0, -0.5, 0]} />
+
+        {/* Walls - manually placed to match visual */}
+        <CuboidCollider args={[50, 10, 1]} position={[0, 5, -50]} />
+        <CuboidCollider args={[50, 10, 1]} position={[0, 5, 50]} />
+
+        {/* Complex area - use trimesh only where needed */}
+        <mesh geometry={buildingGeometry}>
+          <RigidBody type="fixed" colliders="trimesh" />
+        </mesh>
+      </RigidBody>
+
+      {/* Flag capture zones (sensors) */}
+      <RigidBody type="fixed" sensor>
+        <CuboidCollider args={[2, 2, 2]} position={[20, 1, 0]} />
+      </RigidBody>
+    </Physics>
+  )
+}
 ```
-
-### 3. NO WebGPU Migration
-**Rationale:** WebGPU is immature (2025). Browser support is ~60% and growing, but you don't need it. Your bottleneck is React re-renders, not GPU throughput. WebGPU is a 2026+ consideration.
-
-### 4. Use Drei's Performance Utilities
-Already available in @react-three/drei:
-- `<PerformanceMonitor />` - Detect performance degradation and react
-- `<AdaptiveDpr />` - Auto-adjust pixel ratio
-- `<Instances />` - Wrapper around THREE.InstancedMesh (but verify performance vs native)
-- `<Detailed />` - LOD for distant objects
-
-## Performance Monitoring Strategy
-
-### Phase 1 (Baseline)
-```tsx
-import { Perf } from 'r3f-perf'
-
-<Canvas>
-  <Perf position="top-left" overClock={false} />
-  {/* existing scene */}
-</Canvas>
-```
-- Record baseline FPS, calls, memory
-- Identify stutter patterns
-
-### Phase 2 (During Optimization)
-```tsx
-import { Perf } from 'r3f-perf'
-
-<Canvas>
-  <Perf
-    position="top-left"
-    deepAnalyze={true}  // More detailed GL info
-    matrixUpdate={true} // Track matrixWorld calls
-  />
-  {/* optimized scene */}
-</Canvas>
-```
-- Verify improvements
-- Catch regressions
-
-### Production
-- Remove `<Perf />` component
-- Or use conditional: `{import.meta.env.DEV && <Perf />}`
 
 ## Sources
 
-### Official Documentation (HIGH Confidence)
-- [React Three Fiber - Performance Pitfalls](https://r3f.docs.pmnd.rs/advanced/pitfalls) - Official anti-patterns guide. Covers setState in loops, object creation, mount costs.
-- [React Three Fiber - Scaling Performance](https://r3f.docs.pmnd.rs/advanced/scaling-performance) - Official performance guide. Covers instancing, LOD, on-demand rendering.
-- [Poimandres Documentation](https://docs.pmnd.rs/) - Index of pmndrs/* libraries including Zustand, Drei.
-
-### Package Repositories (HIGH Confidence)
-- [r3f-perf GitHub](https://github.com/utsuboco/r3f-perf) - Official repo. Latest version 7.2.3.
-- [@react-three/drei GitHub](https://github.com/pmndrs/drei) - Official repo. Latest is v9.x.
-- [React Three Fiber Releases](https://github.com/pmndrs/react-three-fiber/releases) - v8.17.10 is latest stable. v9 is alpha.
-
-### Performance Guides (MEDIUM Confidence)
-- [100 Three.js Best Practices (2026)](https://www.utsubo.com/blog/threejs-best-practices-100-tips) - Comprehensive guide. Tip #72 specifically recommends r3f-perf.
-- [Building Efficient Three.js Scenes (Feb 2025)](https://tympanus.net/codrops/2025/02/11/building-efficient-three-js-scenes-optimize-performance-while-maintaining-quality/) - Recent guide on Fiber + Drei optimization.
-- [R3F-Perf Tutorial](https://sbcode.net/react-three-fiber/r3f-perf/) - Usage guide showing `calls` metric for draw call analysis.
-
-### Community Discussions (MEDIUM Confidence)
-- [R3F Instances Performance Issue #3306](https://github.com/pmndrs/react-three-fiber/issues/3306) - Discusses performance drops with Drei Instances. Verify for your use case.
-- [How to improve three.js performance with R3F](https://discourse.threejs.org/t/how-to-improve-three-js-performance-with-react-three-fiber/69562) - Real-world optimization discussion.
-
-### Three.js Documentation (HIGH Confidence)
-- [Three.js Docs](https://threejs.org/docs/) - Core API reference. InstancedMesh documentation.
+- [@react-three/rapier GitHub](https://github.com/pmndrs/react-three-rapier) - Automatic collider generation, RigidBody API (HIGH confidence)
+- [Rapier Colliders Docs](https://rapier.rs/docs/user_guides/javascript/colliders/) - Collider types, trimesh vs hull guidance (HIGH confidence)
+- [@react-three/csg GitHub](https://github.com/pmndrs/react-three-csg) - CSG operations for procedural geometry (HIGH confidence)
+- [Drei Instances Docs](https://drei.docs.pmnd.rs/performances/instances) - Instancing API and createInstances (HIGH confidence)
+- [R3F Scaling Performance](https://r3f.docs.pmnd.rs/advanced/scaling-performance) - Draw call budget, instancing strategy (HIGH confidence)
+- [Codrops Three.js Performance 2025](https://tympanus.net/codrops/2025/02/11/building-efficient-three-js-scenes-optimize-performance-while-maintaining-quality/) - Physics optimization, simple collider shapes (MEDIUM confidence)
+- [Codrops Blender to Three.js 2025](https://tympanus.net/codrops/2025/04/08/3d-world-in-the-browser-with-blender-and-three-js/) - Map workflow, texture baking, optimization (MEDIUM confidence)
 
 ---
-
-*Stack research for: React Three Fiber Performance Optimization*
-*Researched: 2025-01-22*
+*Stack research for: CTF map level design in React Three Fiber with Rapier physics*
+*Researched: 2026-01-22*
