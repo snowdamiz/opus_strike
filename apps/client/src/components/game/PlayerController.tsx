@@ -475,9 +475,10 @@ export function PlayerController() {
       movement.refs.isGrounded.current = false;
     }
 
-    // Gravity (reduced during grapple, skipped during swing)
+    // Gravity (reduced during grapple, skipped during swing, skipped when grounded)
     physics.applyGravity(
       velocity,
+      movement.refs.isGrounded.current,
       hookshotAbilities.isGrapplingRef.current,
       hookshotAbilities.isSwingingRef.current,
       dt

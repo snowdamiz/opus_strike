@@ -63,7 +63,7 @@ export interface UsePlayerPhysicsReturn {
     dt: number
   ) => { didStepUp: boolean; newSmoothedY: number | null };
   
-  applyGravity: (velocity: THREE.Vector3, isGrappling: boolean, isSwinging: boolean, dt: number) => void;
+  applyGravity: (velocity: THREE.Vector3, isGrounded: boolean, isGrappling: boolean, isSwinging: boolean, dt: number) => void;
   
   checkOutOfBounds: (position: THREE.Vector3, velocity: THREE.Vector3, isGrounded: boolean) => void;
   
@@ -248,13 +248,18 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
   // Apply gravity
   const applyGravity = useCallback((
     velocity: THREE.Vector3,
+    isGrounded: boolean,
     isGrappling: boolean,
     isSwinging: boolean,
     dt: number
   ) => {
+    // Skip gravity when grounded to prevent bounce-on-land
+    // (ground check already handles positioning and zeroes velocity.y)
+    if (isGrounded) return;
+
     // Reduced gravity during grapple, skipped during swing
     if (isSwinging) return;
-    
+
     const gravityMult = isGrappling ? 0.1 : 1.0;
     velocity.y += GRAVITY * dt * gravityMult;
   }, []);
