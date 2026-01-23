@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { PerfHeadless, usePerf } from 'r3f-perf';
 import { useGameStore } from '../../store/gameStore';
+import { visualStore } from '../../store/visualStore';
 
 /**
  * Custom Performance Monitor - Premium Debug UI
@@ -27,6 +28,10 @@ function PerfDisplay() {
     fps: 0, gpu: 0, cpu: 0,
     triangles: 0, geometries: 0, textures: 0, shaders: 0, calls: 0
   });
+
+  // Get local player position from visualStore (polled for live updates)
+  const playerId = useGameStore((state) => state.playerId);
+  const [position, setPosition] = useState({ x: 0, y: 0, z: 0 });
 
   // Use ref to track if component is mounted
   const isMounted = useRef(true);
@@ -56,6 +61,22 @@ function PerfDisplay() {
       });
     }
   }, [log, gl]);
+
+  // Poll visualStore for live position updates (10fps is enough for debug display)
+  useEffect(() => {
+    if (!playerId) return;
+
+    const interval = setInterval(() => {
+      if (isMounted.current) {
+        const pos = visualStore.getState().playerPositions.get(playerId);
+        if (pos) {
+          setPosition({ x: pos.x, y: pos.y, z: pos.z });
+        }
+      }
+    }, 100); // 10fps polling
+
+    return () => clearInterval(interval);
+  }, [playerId]);
 
   // Color based on FPS
   const getFpsColor = (fps: number) => {
@@ -131,6 +152,25 @@ function PerfDisplay() {
           <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Shaders</span>
             <span className="text-white/70 tabular-nums text-right">{data.shaders}</span>
+          </div>
+        </div>
+
+        {/* Position Section */}
+        <div className="mt-3 pt-2 border-t border-white/10">
+          <div className="text-white/40 text-[9px] uppercase mb-1.5">Position</div>
+          <div className="grid grid-cols-3 gap-2 text-[10px]">
+            <div className="text-center">
+              <span className="text-white/40">X</span>
+              <div className="text-cyan-400 tabular-nums">{position.x.toFixed(1)}</div>
+            </div>
+            <div className="text-center">
+              <span className="text-white/40">Y</span>
+              <div className="text-cyan-400 tabular-nums">{position.y.toFixed(1)}</div>
+            </div>
+            <div className="text-center">
+              <span className="text-white/40">Z</span>
+              <div className="text-cyan-400 tabular-nums">{position.z.toFixed(1)}</div>
+            </div>
           </div>
         </div>
       </div>

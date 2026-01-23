@@ -40,10 +40,10 @@ export function GameCanvas() {
     >
       <Suspense fallback={null}>
         {/* Lighting - dark neon Tron aesthetic */}
-        <ambientLight intensity={0.3} color="#1a1a3a" />
+        <ambientLight intensity={0.45} color="#2a2a4a" />
         <directionalLight
           position={[50, 100, 50]}
-          intensity={2.0}
+          intensity={2.5}
           color="#4488ff"
           castShadow
           shadow-mapSize={[2048, 2048]}
@@ -53,7 +53,7 @@ export function GameCanvas() {
           shadow-camera-top={100}
           shadow-camera-bottom={-100}
         />
-        <hemisphereLight args={['#0d0d1a', '#0a0a15', 0.3]} />
+        <hemisphereLight args={['#1a1a2a', '#0d0d1a', 0.45]} />
         <pointLight position={[-40, 10, 0]} intensity={50} color="#ff6666" distance={30} />
         <pointLight position={[40, 10, 0]} intensity={50} color="#6666ff" distance={30} />
 

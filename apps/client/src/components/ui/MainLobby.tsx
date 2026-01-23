@@ -670,7 +670,7 @@ function PlayTab({
 
             {/* Animated Hero SVG */}
             <div
-              className={`relative transition-all duration-300 hero-svg-container ${isTransitioning ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
+              className={`relative transition-all duration-300 hero-svg-container scale-[0.55] sm:scale-[0.6] md:scale-[0.68] lg:scale-[0.8] xl:scale-90 2xl:scale-100 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}
               style={{
                 filter: `drop-shadow(0 0 60px ${heroColor}50)`,
               }}
@@ -701,17 +701,17 @@ function PlayTab({
         </div>
 
         {/* Hero info - below the SVG with proper spacing */}
-        <div className="text-center w-[280px] lg:w-[300px] xl:w-[360px] 2xl:w-[450px] mt-1 md:mt-2 lg:mt-3 xl:mt-4 2xl:mt-6">
+        <div className="text-center w-[240px] sm:w-[260px] md:w-[280px] lg:w-[300px] xl:w-[340px] 2xl:w-[400px] -mt-10 sm:-mt-8 md:-mt-6 lg:-mt-4 xl:-mt-2 2xl:mt-0">
           <h2
-            className="font-display text-2xl md:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-1 xl:mb-2 transition-all duration-500"
+            className="font-display text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-0.5 lg:mb-1 xl:mb-2 transition-all duration-500"
             style={{ textShadow: `0 0 30px ${heroColor}50, 0 2px 10px rgba(0,0,0,0.5)` }}
           >
             {heroInfo.name.toUpperCase()}
           </h2>
-          <p className="text-white/50 font-body text-xs xl:text-sm max-w-sm mx-auto leading-relaxed">{heroInfo.description}</p>
+          <p className="text-white/50 font-body text-[10px] sm:text-xs xl:text-sm max-w-sm mx-auto leading-relaxed">{heroInfo.description}</p>
 
           {/* Carousel Dot Indicators */}
-          <div className="flex items-center justify-center gap-2 mt-2 xl:mt-3 2xl:mt-5 mb-2 xl:mb-4 2xl:mb-6">
+          <div className="flex items-center justify-center gap-1.5 sm:gap-2 mt-1 sm:mt-1.5 lg:mt-2 xl:mt-3 2xl:mt-4 mb-1 sm:mb-1.5 lg:mb-2 xl:mb-3 2xl:mb-4">
             {ALL_HERO_IDS.map((heroId) => {
               const isActive = heroId === featuredHero;
               const dotColor = HERO_COLORS[heroId];
@@ -740,10 +740,10 @@ function PlayTab({
         </div>
 
         {/* Spacer before buttons */}
-        <div className="h-1 xl:h-3 2xl:h-6" />
+        <div className="h-0 lg:h-1 xl:h-2 2xl:h-3" />
 
         {/* Action Buttons */}
-        <div className="w-[280px] lg:w-[320px] xl:w-[400px] 2xl:w-[500px] space-y-2 lg:space-y-2.5 xl:space-y-3">
+        <div className="w-[220px] sm:w-[240px] md:w-[260px] lg:w-[300px] xl:w-[360px] 2xl:w-[440px] space-y-1 sm:space-y-1.5 lg:space-y-2 xl:space-y-2.5">
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4 backdrop-blur-sm">
               <p className="text-red-400 text-sm font-body text-center">{error}</p>
@@ -754,7 +754,7 @@ function PlayTab({
             onClick={() => { playButtonClick(); onQuickPlay(); }}
             onMouseEnter={playButtonHover}
             disabled={isLoading}
-            className="w-full py-3 xl:py-4 2xl:py-5 rounded-xl font-display text-lg xl:text-xl 2xl:text-2xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
+            className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 2xl:py-4 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl 2xl:text-2xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
             style={{
               background: isAuthenticated
                 ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
@@ -771,40 +771,40 @@ function PlayTab({
                 background: `linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)`,
               }}
             />
-            <span className="relative flex items-center justify-center gap-3">
+            <span className="relative flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
               {isAuthenticated ? (
                 <>
-                  <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z" />
                   </svg>
                   {isLoading ? 'STARTING...' : 'QUICK PLAY'}
                 </>
               ) : (
                 <>
-                  <PhantomIcon className="w-7 h-7" />
+                  <PhantomIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
                   SIGN IN TO PLAY
                 </>
               )}
             </span>
           </button>
 
-          <div className="grid grid-cols-2 gap-2 xl:gap-3">
+          <div className="grid grid-cols-2 gap-1 sm:gap-1.5 lg:gap-2 xl:gap-2.5">
             <button
               onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
               onMouseEnter={playButtonHover}
               disabled={isLoading}
-              className="py-2.5 xl:py-3 2xl:py-4 rounded-xl font-display text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
+              className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2 backdrop-blur-sm"
             >
               {isAuthenticated ? (
                 <>
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
                   CREATE GAME
                 </>
               ) : (
                 <>
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
                   </svg>
                   SIGN IN
@@ -815,9 +815,9 @@ function PlayTab({
             <button
               onClick={() => { playButtonClick(); onOpenBrowseGames(); }}
               onMouseEnter={playButtonHover}
-              className="py-2.5 xl:py-3 2xl:py-4 rounded-xl font-display text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-2 backdrop-blur-sm"
+              className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2 backdrop-blur-sm"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               BROWSE GAMES
