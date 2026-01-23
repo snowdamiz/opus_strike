@@ -1,5 +1,5 @@
 import type { GamePhase, GameConfig, Team, HeroId, Vec3 } from '@voxel-strike/shared';
-import { DEFAULT_GAME_CONFIG, ULTIMATE_CHARGE_PER_KILL, ULTIMATE_CHARGE_PER_ASSIST, ULTIMATE_CHARGE_PER_CAPTURE } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, ULTIMATE_CHARGE_PER_KILL, ULTIMATE_CHARGE_PER_ASSIST, ULTIMATE_CHARGE_PER_CAPTURE, SCI_FI_CTF_POSITIONS } from '@voxel-strike/shared';
 import { CTFGameMode, CTFPlayer, CTFEvent } from '../ctf/CTFGameMode.js';
 import { SpawnManager } from './SpawnManager.js';
 import { AbilitySystem } from '../abilities/AbilitySystem.js';
@@ -62,16 +62,16 @@ export class MatchManager {
   }
 
   initialize(): void {
-    // Set up spawn points
-    this.spawnManager.initialize(
-      { x: -40, y: 1, z: 0 },
-      { x: 40, y: 1, z: 0 }
-    );
+    const { spawnPoints, flagZones } = SCI_FI_CTF_POSITIONS;
 
-    // Initialize CTF
+    // Set up spawn points from map config
+    this.spawnManager.setSpawnPoints('red', spawnPoints.red);
+    this.spawnManager.setSpawnPoints('blue', spawnPoints.blue);
+
+    // Initialize CTF with configured flag positions
     this.ctfMode.initialize(
-      { x: -40, y: 1, z: 0 },
-      { x: 40, y: 1, z: 0 }
+      flagZones.red,
+      flagZones.blue
     );
   }
 
