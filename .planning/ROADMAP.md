@@ -1,8 +1,8 @@
-# Roadmap: Opus Strike Performance Optimization
+# Roadmap: Opus Strike CTF Map
 
 ## Overview
 
-Transform a stuttering React Three Fiber multiplayer game (200ms+ hitches during ability use) into a smooth 60 FPS experience by eliminating React re-renders, implementing instanced rendering, adding object pooling, and consolidating animation loops. The journey follows the dependency hierarchy: eliminate anti-patterns first, then architectural separation of visual/game state, then rendering optimizations, then advanced pooling and scheduling.
+This roadmap delivers a custom asymmetrical CTF arena for Opus Strike in five phases. We start by establishing the map foundation and route structure, then build team-specific areas with spawns and flag zones, add cover elements and verticality for tactical gameplay, polish with decorative elements, and finally integrate physics collision and performance optimizations. Each phase produces a testable increment toward a fully playable competitive map.
 
 ## Phases
 
@@ -12,152 +12,99 @@ Transform a stuttering React Three Fiber multiplayer game (200ms+ hitches during
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [x] **Phase 1: React Optimization Foundation** - Eliminate React-level performance anti-patterns
-- [x] **Phase 2: Visual State Architecture** - Separate high-frequency visual updates from game state
-- [ ] **Phase 3: Instanced Rendering** - Reduce draw calls via InstancedMesh for projectiles
-- [ ] **Phase 4: Object Pooling System** - Eliminate GC pressure through object reuse
-- [ ] **Phase 5: Centralized Animation** - Consolidate 80+ useFrame hooks into managed loop
-- [ ] **Phase 6: LOD Enhancement** - Extend distance-based culling for particle effects
+- [ ] **Phase 1: Map Foundation** - Remove old map, create asymmetrical layout with three attack routes
+- [ ] **Phase 2: Team Base Construction** - Build both team bases with spawns, flag zones, and game system integration
+- [ ] **Phase 3: Combat Routes & Cover** - Add cover elements, choke points, sightlines, buildings, and vertical positions
+- [ ] **Phase 4: Environment Decoration** - Add trees, foliage, props for visual polish and concealment
+- [ ] **Phase 5: Physics & Performance** - Generate collision meshes, integrate with Rapier, optimize with instancing
 
 ## Phase Details
 
-### Phase 1: React Optimization Foundation
-
-**Goal**: Eliminate React-level performance anti-patterns that cause cascading re-renders
-
+### Phase 1: Map Foundation
+**Goal**: Establish the playable arena with clear asymmetrical layout and three distinct routes between team sides
 **Depends on**: Nothing (first phase)
-
-**Requirements**: FND-01, FND-02, FND-03, FND-04, FND-05
-
+**Requirements**: FOUND-01, FOUND-02, FOUND-03, FOUND-04
 **Success Criteria** (what must be TRUE):
-1. Game maintains 60 FPS when 3+ players use abilities simultaneously (no hitches above 50ms)
-2. React DevTools Profiler shows no component re-rendering more than once per frame during ability use
-3. All effect components (RocketEffect, HookshotEffect, etc.) render only when their props actually change
-4. No console.log statements execute in production builds
-5. Zero temporary objects created per frame in hot code paths (verified via allocation profiling)
-
-**Plans**: 7 plans
+  1. Imported map no longer appears in game world
+  2. Ground plane exists with visually distinct Team A and Team B sides
+  3. Three navigable paths connect the two sides (even if just floor geometry)
+  4. Walking each route takes approximately equal time (within 20% variance)
+**Plans**: TBD
 
 Plans:
-- [x] 01-01-PLAN.md — Replace setState calls in useFrame hooks with direct ref mutations
-- [x] 01-02-PLAN.md — Update Zustand subscriptions to narrow selectors with shallow comparison
-- [x] 01-03A-PLAN.md — Add React.memo wrappers to Phantom and Blaze effect components
-- [x] 01-03B-PLAN.md — Add React.memo wrappers to Hookshot and Glacier effect components
-- [x] 01-04A-PLAN.md — Extend TEMP_VECTORS pool and replace object creation in voidRay.tsx
-- [x] 01-04B-PLAN.md — Replace object creation in remaining effect components
-- [x] 01-05-PLAN.md — Remove or wrap all console.log statements for production
+- [ ] 01-01: TBD
 
-### Phase 2: Visual State Architecture
-
-**Goal**: Separate high-frequency visual updates from authoritative game state
-
+### Phase 2: Team Base Construction
+**Goal**: Both teams have complete, functional base areas with spawn points and flag capture zones integrated with game systems
 **Depends on**: Phase 1
-
-**Requirements**: ARCH-01, ARCH-02, REND-05
-
+**Requirements**: TEAM-01, TEAM-02, TEAM-03, TEAM-04, TEAM-05, TEAM-06, TEAM-07
 **Success Criteria** (what must be TRUE):
-1. Player position interpolation updates at 60 FPS without triggering store updates
-2. Visual state mutations are invisible to React DevTools (no re-renders from position updates)
-3. Real-time FPS/GPU metrics display in corner of screen during gameplay
-4. Store only updates on game events (ability fired, player hit), not per-frame position data
-
-**Plans**: 5 plans
+  1. Team A base has distinct visual identity (color, shape, or landmarks)
+  2. Team B base has distinct visual identity (different from Team A)
+  3. Players spawn at configured positions within their team's base area
+  4. Flag zones are visible with game objects and have 2-3 entry points each
+  5. Capturing a flag triggers correct game state updates (FlagManager/CTFGameMode)
+**Plans**: TBD
 
 Plans:
-- [x] 02-01-PLAN.md — Create visualStore.ts for high-frequency visual data using vanilla Zustand
-- [x] 02-02-PLAN.md — Migrate player position interpolation to visualStore-based updates
-- [x] 02-03-PLAN.md — Add r3f-perf monitoring component to GameCanvas
-- [x] 02-04-PLAN.md — Remove per-frame position updates from gameStore.updateLocalPlayer call
-- [x] 02-05-PLAN.md — Fix updateGameState to preserve Map reference on position updates
+- [ ] 02-01: TBD
 
-### Phase 3: Instanced Rendering
-
-**Goal**: Reduce draw calls via InstancedMesh for repeated projectile types
-
+### Phase 3: Combat Routes & Cover
+**Goal**: Routes between bases provide tactical gameplay with cover options, engagement choke points, and vertical positions
 **Depends on**: Phase 2
-
-**Requirements**: REND-01, REND-02
-
+**Requirements**: COVR-01, COVR-02, COVR-03, COVR-04, COVR-05, ENVR-01
 **Success Criteria** (what must be TRUE):
-1. 30 rockets on screen render in single draw call (not 30+)
-2. r3f-perf shows draw call reduction of 80%+ during heavy ability use
-3. All projectile types (rockets, dire balls, hooks) use InstancedMesh pattern
-4. Visual quality identical to pre-optimization (no art regression)
-
-**Plans**: 3 plans
+  1. Each route has hard cover elements (walls, barriers) players can use to break line of sight
+  2. At least 2 choke points exist where teams naturally engage
+  3. Players can choose short, medium, or long-range engagement positions
+  4. At least 2 elevated positions provide height advantage
+  5. All elevated positions are reachable via ramps or stairs (no jump-only)
+**Plans**: TBD
 
 Plans:
-- [ ] 03-01-PLAN.md — Implement InstancedMesh for rockets using Drei Instances API
-- [ ] 03-02-PLAN.md — Implement InstancedMesh for Phantom dire balls with shader material preservation
-- [ ] 03-03-PLAN.md — Implement InstancedMesh for hookshot hook heads with dynamic rope rendering
+- [ ] 03-01: TBD
 
-### Phase 4: Object Pooling System
-
-**Goal**: Eliminate GC pressure through object reuse for frequently spawned effects
-
+### Phase 4: Environment Decoration
+**Goal**: Map has visual polish with decorative elements that add atmosphere and gameplay-relevant concealment
 **Depends on**: Phase 3
-
-**Requirements**: REND-03
-
+**Requirements**: ENVR-02, ENVR-03
 **Success Criteria** (what must be TRUE):
-1. No GC pauses visible in performance profiler during 10-second ability spam test
-2. Explosion and particle effects acquire from pool instead of creating new objects
-3. Objects return to pool after effect completes (no memory leaks)
-4. Pool size auto-adjusts or is configurable per effect type
-
-**Plans**: 1 plan
+  1. Trees and foliage appear in appropriate areas (not blocking critical sightlines)
+  2. Props (barrels, crates) provide small cover and visual detail throughout map
+  3. Decorative elements maintain low-poly aesthetic consistent with game style
+**Plans**: TBD
 
 Plans:
-- [ ] 04-01: Implement object pooling system for explosion effects and particles
+- [ ] 04-01: TBD
 
-### Phase 5: Centralized Animation
-
-**Goal**: Consolidate 80+ useFrame hooks into single managed animation loop
-
+### Phase 5: Physics & Performance
+**Goal**: All map geometry has proper collision detection and performance is optimized for multiplayer
 **Depends on**: Phase 4
-
-**Requirements**: ARCH-03
-
+**Requirements**: TECH-01, TECH-02, TECH-03, TECH-04, TECH-05
 **Success Criteria** (what must be TRUE):
-1. UseFrame hook count reduced from 80+ to under 10
-2. Animation loop executes with priority-based ordering (critical before nice-to-have)
-3. All existing effect animations function identically (no behavioral regression)
-4. Scheduler overhead visible in profiler is reduced by 50%+
-
-**Plans**: 1 plan
+  1. Players cannot walk through walls, buildings, or solid cover
+  2. Players can walk on all intended surfaces (floors, ramps, platforms)
+  3. SpawnManager spawns players at configured positions without clipping into geometry
+  4. Repeated props (crates, barrels, trees) use instanced rendering
+  5. Frame rate stays stable during multiplayer gameplay (no physics-induced drops)
+**Plans**: TBD
 
 Plans:
-- [ ] 05-01: Consolidate useFrame hooks into centralized animation loop with priority system
-
-### Phase 6: LOD Enhancement
-
-**Goal**: Extend distance-based culling to reduce particle rendering load
-
-**Depends on**: Phase 5
-
-**Requirements**: REND-04
-
-**Success Criteria** (what must be TRUE):
-1. Distant particle effects (>50 units) render at reduced quality or are culled
-2. Visual impact is minimal (player sees no significant quality difference at distance)
-3. Vertex count reduced by 30%+ during typical gameplay
-4. LOD threshold is configurable per effect type
-
-**Plans**: 1 plan
-
-Plans:
-- [ ] 06-01: Extend existing LOD system to cull distant particle effects
+- [ ] 05-01: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. React Optimization Foundation | 7/7 | Complete | 2026-01-22 |
-| 2. Visual State Architecture | 5/5 | Complete | 2026-01-22 |
-| 3. Instanced Rendering | 0/2 | Not started | - |
-| 4. Object Pooling System | 0/1 | Not started | - |
-| 5. Centralized Animation | 0/1 | Not started | - |
-| 6. LOD Enhancement | 0/1 | Not started | - |
+| 1. Map Foundation | 0/? | Not started | - |
+| 2. Team Base Construction | 0/? | Not started | - |
+| 3. Combat Routes & Cover | 0/? | Not started | - |
+| 4. Environment Decoration | 0/? | Not started | - |
+| 5. Physics & Performance | 0/? | Not started | - |
+
+---
+*Roadmap created: 2026-01-22*
+*Last updated: 2026-01-22*
