@@ -24,11 +24,14 @@ import {
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal } from '../../usePhysics';
+import { triggerTerrainImpact } from '../../../components/game/TerrainImpactEffects';
 import {
   GLACIER_MALLET_SWING_INTERVAL,
   FUEL_UPDATE_THRESHOLD,
   PLAYER_HEIGHT,
   STEP_HEIGHT,
+  TERRAIN_RAMP_DOWN_SMOOTH_SPEED,
+  TERRAIN_RAMP_UP_SMOOTH_SPEED,
   calculateLookDirection,
   calculateHorizontalLookDirection,
 } from '../constants';
@@ -59,6 +62,11 @@ export interface UseGlacierAbilitiesReturn {
   ) => void;
   executeIceSlide: (ctx: AbilityContext, setAbilityActive: (id: string, active: boolean) => void) => void;
   executeFrostStormShield: (setAbilityActive: (id: string, active: boolean) => void) => void;
+}
+
+function smoothY(currentY: number, targetY: number, speed: number, dt: number): number {
+  const t = 1 - Math.exp(-speed * dt);
+  return currentY + (targetY - currentY) * t;
 }
 
 export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
@@ -165,11 +173,21 @@ export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
         const heightDiff = targetGroundY - currentFeetY;
 
         if (heightDiff > 0.05 && heightDiff <= STEP_HEIGHT * 1.2) {
-          ctx.position.y = targetGroundY + PLAYER_HEIGHT / 2;
+          ctx.position.y = smoothY(
+            smoothedY.current ?? ctx.position.y,
+            targetGroundY + PLAYER_HEIGHT / 2,
+            TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35,
+            ctx.dt
+          );
           smoothedY.current = ctx.position.y;
           ctx.velocity.y = 0;
         } else if (heightDiff < -0.1 && heightDiff > -STEP_HEIGHT) {
-          ctx.position.y = targetGroundY + PLAYER_HEIGHT / 2;
+          ctx.position.y = smoothY(
+            smoothedY.current ?? ctx.position.y,
+            targetGroundY + PLAYER_HEIGHT / 2,
+            TERRAIN_RAMP_DOWN_SMOOTH_SPEED * 1.35,
+            ctx.dt
+          );
           smoothedY.current = ctx.position.y;
           ctx.velocity.y = 0;
         } else if (Math.abs(heightDiff) <= 0.05) {
@@ -196,6 +214,11 @@ export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
           rotation: wallRotation,
           createdAt: now,
         };
+
+        triggerTerrainImpact('glacier_ice_wall', newSegment.position, {
+          normal: { x: 0, y: 1, z: 0 },
+          scale: 0.75,
+        });
 
         if (activeIceWallRushIdRef.current) {
           const store = useGameStore.getState();
@@ -300,5 +323,3 @@ export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
     executeFrostStormShield,
   };
 }
-
-

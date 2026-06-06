@@ -1,9 +1,16 @@
 import { HeroBase, AbilityContext, AbilityResult } from './HeroBase.js';
-import { JETPACK_MAX_FUEL, JETPACK_FUEL_REGEN } from '@voxel-strike/shared';
+import {
+  BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
+  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  BLAZE_FLAMETHROWER_MAX_FUEL,
+  BLAZE_FLAMETHROWER_FUEL_REGEN,
+  BLAZE_FLAMETHROWER_RANGE,
+  BLAZE_FLAMETHROWER_DAMAGE,
+} from '@voxel-strike/shared';
 import { vec3Scale, vec3Normalize } from '@voxel-strike/shared';
 
 export class BlazeHero extends HeroBase {
-  private jetpackFuel: number = JETPACK_MAX_FUEL;
+  private flamethrowerFuel: number = BLAZE_FLAMETHROWER_MAX_FUEL;
   private passiveFuelRegenBonus: number = 0;
   private lastKillTime: number = 0;
   private airstrikeTarget: { x: number; y: number; z: number } | null = null;
@@ -15,8 +22,8 @@ export class BlazeHero extends HeroBase {
 
   executeAbility(abilityId: string, context: AbilityContext): AbilityResult {
     switch (abilityId) {
-      case 'blaze_jetpack':
-        return this.executeJetpack(context);
+      case 'blaze_flamethrower':
+        return this.executeFlamethrower(context);
       case 'blaze_rocketjump':
         return this.executeRocketJump(context);
       case 'blaze_airstrike':
@@ -26,29 +33,30 @@ export class BlazeHero extends HeroBase {
     }
   }
 
-  private executeJetpack(_context: AbilityContext): AbilityResult {
-    // Jetpack is handled by movement system
-    // This just validates that we can use it
-    if (this.jetpackFuel <= 0) {
+  private executeFlamethrower(context: AbilityContext): AbilityResult {
+    if (this.flamethrowerFuel <= 0) {
       return { success: false, message: 'No fuel' };
     }
 
     return {
       success: true,
       effect: {
-        type: 'jetpack_activate',
-        position: _context.position,
+        type: 'flamethrower',
+        position: context.position,
+        direction: context.direction,
+        value: BLAZE_FLAMETHROWER_DAMAGE,
+        maxDistance: BLAZE_FLAMETHROWER_RANGE,
       },
     };
   }
 
   private executeRocketJump(context: AbilityContext): AbilityResult {
     // Explosive jump - launches upward with an explosion
-    const launchForce = { x: 0, y: 20, z: 0 };
-    
+    const launchForce = { x: 0, y: BLAZE_ROCKET_JUMP_VERTICAL_FORCE, z: 0 };
+
     // Add forward component based on look direction
-    launchForce.x = context.direction.x * 5;
-    launchForce.z = context.direction.z * 5;
+    launchForce.x = context.direction.x * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
+    launchForce.z = context.direction.z * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
 
     return {
       success: true,
@@ -101,18 +109,21 @@ export class BlazeHero extends HeroBase {
   }
 
   consumeFuel(amount: number): void {
-    this.jetpackFuel = Math.max(0, this.jetpackFuel - amount);
+    this.flamethrowerFuel = Math.max(0, this.flamethrowerFuel - amount);
   }
 
   regenerateFuel(deltaTime: number, isGrounded: boolean): void {
     if (isGrounded) {
-      const regenRate = JETPACK_FUEL_REGEN * (1 + this.passiveFuelRegenBonus);
-      this.jetpackFuel = Math.min(JETPACK_MAX_FUEL, this.jetpackFuel + regenRate * deltaTime);
+      const regenRate = BLAZE_FLAMETHROWER_FUEL_REGEN * (1 + this.passiveFuelRegenBonus);
+      this.flamethrowerFuel = Math.min(
+        BLAZE_FLAMETHROWER_MAX_FUEL,
+        this.flamethrowerFuel + regenRate * deltaTime
+      );
     }
   }
 
   getFuel(): number {
-    return this.jetpackFuel;
+    return this.flamethrowerFuel;
   }
 
   getPassiveFuelRegenBonus(): number {
@@ -127,4 +138,3 @@ export class BlazeHero extends HeroBase {
     return this.airstrikeTarget !== null && Date.now() < this.airstrikeEndTime;
   }
 }
-

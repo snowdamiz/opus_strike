@@ -115,8 +115,7 @@ interface MenuButtonProps {
 
 function MenuButton({ children, onClick, primary, danger }: MenuButtonProps) {
   let className = `
-    w-full py-3 font-display text-lg rounded-lg transition-all duration-150
-    active:scale-[0.98]
+    w-full py-3 font-display text-lg rounded-lg
   `;
 
   if (primary) {
@@ -128,8 +127,8 @@ function MenuButton({ children, onClick, primary, danger }: MenuButtonProps) {
   }
 
   return (
-    <button onClick={onClick} className={className}>
-      {children}
-    </button>
+ <button onClick={onClick} className={className}>
+ {children}
+ </button>
   );
 }

@@ -5,12 +5,6 @@ import {
   GRAPPLE_SWING_FORCE,
   GRAPPLE_DETACH_DISTANCE,
   GRAPPLE_MOMENTUM_TRANSFER,
-  JETPACK_MAX_FUEL,
-  JETPACK_FUEL_CONSUMPTION,
-  JETPACK_FUEL_REGEN,
-  JETPACK_THRUST,
-  JETPACK_HOVER_THRUST,
-  JETPACK_MAX_VERTICAL_SPEED,
   GLIDE_FALL_SPEED,
   GLIDE_FORWARD_BOOST,
 } from '@voxel-strike/shared';
@@ -49,8 +43,8 @@ export class AerialMovement {
   private isGrappling: boolean = false;
   private grappleRopeLength: number = 0;
   
-  // Jetpack state
-  private jetpackFuel: number = JETPACK_MAX_FUEL;
+  // Legacy movement shape kept for network compatibility. Blaze E no longer flies.
+  private jetpackFuel: number = 100;
   private isJetpacking: boolean = false;
   
   // Glide state
@@ -80,18 +74,12 @@ export class AerialMovement {
     }
 
     if (heroId === 'blaze') {
-      const jetpackResult = this.updateJetpack(
-        newPosition, newVelocity, playerInput, deltaTime, movementState.isGrounded
-      );
-      newPosition = jetpackResult.position;
-      newVelocity = jetpackResult.velocity;
-      this.jetpackFuel = jetpackResult.fuel;
-      this.isJetpacking = jetpackResult.isJetpacking;
+      this.isJetpacking = false;
 
       // Glide check
-      if (!movementState.isGrounded && !this.isJetpacking && playerInput.jump && newVelocity.y < 0) {
+      if (!movementState.isGrounded && playerInput.jump && newVelocity.y < 0) {
         this.isGliding = true;
-      } else if (movementState.isGrounded || this.isJetpacking) {
+      } else if (movementState.isGrounded) {
         this.isGliding = false;
       }
 
@@ -174,41 +162,6 @@ export class AerialMovement {
     return { position: newPosition, velocity: newVelocity };
   }
 
-  private updateJetpack(
-    position: Vec3,
-    velocity: Vec3,
-    input: InputState,
-    deltaTime: number,
-    isGrounded: boolean
-  ): { position: Vec3; velocity: Vec3; fuel: number; isJetpacking: boolean } {
-    let newPosition = { ...position };
-    let newVelocity = { ...velocity };
-    let fuel = this.jetpackFuel;
-    let isJetpacking = false;
-
-    // Regenerate fuel when grounded
-    if (isGrounded) {
-      fuel = Math.min(JETPACK_MAX_FUEL, fuel + JETPACK_FUEL_REGEN * deltaTime);
-    }
-
-    // Use jetpack (ability1 key or hold jump in air)
-    if ((input.ability1 || (input.jump && !isGrounded)) && fuel > 0) {
-      isJetpacking = true;
-      fuel = Math.max(0, fuel - JETPACK_FUEL_CONSUMPTION * deltaTime);
-
-      // Determine thrust based on input
-      const thrust = input.crouch ? JETPACK_HOVER_THRUST : JETPACK_THRUST;
-      
-      // Apply thrust
-      newVelocity.y += thrust * deltaTime;
-      
-      // Cap vertical speed
-      newVelocity.y = Math.min(newVelocity.y, JETPACK_MAX_VERTICAL_SPEED);
-    }
-
-    return { position: newPosition, velocity: newVelocity, fuel, isJetpacking };
-  }
-
   private updateGlide(
     position: Vec3,
     velocity: Vec3,
@@ -266,4 +219,3 @@ function vec3Cross3D(a: Vec3, b: Vec3): Vec3 {
 function vec3Dot3D(a: Vec3, b: Vec3): number {
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
-

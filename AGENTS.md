@@ -1,0 +1,1 @@
+- Dont test in the browser, leave that to the user

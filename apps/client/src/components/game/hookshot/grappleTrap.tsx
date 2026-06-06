@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { useGameStore, type GrappleTrapData } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
+import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -80,6 +81,10 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
           landedPosRef.current = { x: pos.x, y: groundCheck.groundY, z: pos.z };
           landedTimeRef.current = Date.now();
           pos.y = groundCheck.groundY;
+          triggerTerrainImpact('hookshot_trap', landedPosRef.current, {
+            normal: groundCheck.normal,
+            scale: 1.05,
+          });
         }
       } else if (pos.y <= 0) {
         // Fallback ground check
@@ -87,6 +92,7 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
         landedPosRef.current = { x: pos.x, y: 0, z: pos.z };
         landedTimeRef.current = Date.now();
         pos.y = 0;
+        triggerTerrainImpact('hookshot_trap', landedPosRef.current, { scale: 1.05 });
       }
       
       // Update device position while flying
@@ -366,4 +372,3 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
     </group>
   );
 });
-

@@ -7,7 +7,7 @@ A browser-based 5v5 Capture the Flag game with Minecraft-style voxel graphics an
 - **6 Unique Heroes** with distinct movement abilities:
   - **Phantom** (Flanker) - Blink teleportation, Shadow Step, Invisibility
   - **Hookshot** (Mobile) - Grappling hook, Swing mechanics, Zipline ultimate
-  - **Blaze** (Assault) - Jetpack, Rocket jump, Air strike ultimate
+  - **Blaze** (Assault) - Flamethrower, Rocket jump, Air strike ultimate
   - **Glacier** (Tank) - Ice slide, Wall climb, Frozen fortress
   - **Pulse** (Support) - Speed aura, Quick dash, Team haste ultimate
   - **Sentinel** (Defense) - Fortify, Energy barrier, Shield dome
@@ -17,7 +17,7 @@ A browser-based 5v5 Capture the Flag game with Minecraft-style voxel graphics an
   - Sliding mechanics
   - Ledge mantling
   - Grappling hook physics
-  - Jetpack with fuel management
+  - Flamethrower fuel management
   - Gliding
 
 - **Capture the Flag Mode**:

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { HERO_DEFINITIONS, ALL_HERO_IDS, ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
@@ -18,61 +18,61 @@ const HERO_COLORS: Record<HeroId, string> = {
 };
 
 export function HeroSelect() {
-  const { localPlayer, phaseEndTime } = useGameStore();
+  const localHeroId = useGameStore((state) => state.localPlayer?.heroId);
+  const phaseEndTime = useGameStore((state) => state.phaseEndTime);
   const { selectHero, setReady, leaveGame } = useNetwork();
-  const { playButtonHover, playButtonClick } = useUISounds();
+  const { playButtonClick } = useUISounds();
   const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
-  const [hoveredHero, setHoveredHero] = useState<HeroId | null>(null);
-  const [timeRemaining, setTimeRemaining] = useState(60);
   const [isLockedIn, setIsLockedIn] = useState(false);
+  const didPreselectRef = useRef(false);
 
   // Preselect Phantom on mount
   useEffect(() => {
-    if (!localPlayer?.heroId) {
-      selectHero('phantom');
-    } else {
-      setSelectedHero(localPlayer.heroId);
+    if (localHeroId) {
+      didPreselectRef.current = true;
+      setSelectedHero(localHeroId);
+      return;
     }
-  }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (phaseEndTime) {
-        const remaining = Math.ceil((phaseEndTime - Date.now()) / 1000);
-        setTimeRemaining(Math.max(0, remaining));
+    if (!didPreselectRef.current) {
+      didPreselectRef.current = true;
+      selectHero('phantom');
+    }
+  }, [localHeroId, selectHero]);
 
-        // Auto lock-in when timer reaches 0
-        if (remaining <= 0 && !isLockedIn && selectedHero) {
-          setIsLockedIn(true);
-          setReady(true);
-        }
-      }
-    }, 100);
-    return () => clearInterval(interval);
-  }, [phaseEndTime, isLockedIn, selectedHero, setReady]);
-
-  const displayHero = hoveredHero ?? selectedHero;
+  const displayHero = selectedHero;
   const heroInfo = displayHero ? HERO_DEFINITIONS[displayHero] : null;
   const accentColor = displayHero ? HERO_COLORS[displayHero] : '#f97316';
 
-  const handleSelectHero = (heroId: HeroId) => {
-    if (isLockedIn) return;
+  const handleSelectHero = useCallback((heroId: HeroId) => {
+    if (isLockedIn || heroId === selectedHero) return;
     setSelectedHero(heroId);
     selectHero(heroId);
-  };
+  }, [isLockedIn, selectedHero, selectHero]);
 
-  const handleLockIn = () => {
+  const handleLockIn = useCallback(() => {
     if (!selectedHero || isLockedIn) return;
     setIsLockedIn(true);
     setReady(true);
-  };
+  }, [isLockedIn, selectedHero, setReady]);
+
+  const handleTimerExpired = useCallback(() => {
+    if (isLockedIn || !selectedHero) return;
+    setIsLockedIn(true);
+    setReady(true);
+  }, [isLockedIn, selectedHero, setReady]);
+
+  const handleHeroCardClick = useCallback((heroId: HeroId) => {
+    handleSelectHero(heroId);
+    playButtonClick();
+  }, [handleSelectHero, playButtonClick]);
 
   return (
     <div className="absolute inset-0 bg-[#06060a] flex flex-col overflow-hidden">
       {/* Animated background */}
       <div className="absolute inset-0 pointer-events-none">
         <div
-          className="absolute inset-0 transition-all duration-700"
+          className="absolute inset-0"
           style={{
             background: displayHero
               ? `radial-gradient(ellipse at 70% 50%, ${accentColor}15, transparent 50%)`
@@ -83,24 +83,23 @@ export function HeroSelect() {
       </div>
 
       {/* Top Bar */}
-      <div className="relative z-10 flex items-center justify-between px-3 md:px-4 xl:px-6 2xl:px-8 py-2 md:py-3 xl:py-4 2xl:py-5 border-b border-white/5 bg-[#08080c]/80 backdrop-blur-sm">
+      <div className="relative z-10 flex items-center justify-between px-3 md:px-4 xl:px-6 2xl:px-8 py-2 md:py-3 xl:py-4 2xl:py-5 border-b border-white/5 bg-[#08080c]/80">
         <div className="flex items-center gap-4 xl:gap-6">
-          <button
-            onClick={() => { playButtonClick(); leaveGame(); }}
-            onMouseEnter={playButtonHover}
-            className="flex items-center gap-2 px-3 xl:px-4 py-2 xl:py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            <span className="font-display text-xs xl:text-sm">LEAVE</span>
-          </button>
+ <button
+ onClick={() => { playButtonClick(); leaveGame(); }}
+ className="flex items-center gap-2 px-3 xl:px-4 py-2 xl:py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/20"
+ >
+ <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+ </svg>
+ <span className="font-display text-xs xl:text-sm">LEAVE</span>
+ </button>
 
           <div className="w-px h-6 xl:h-8 bg-white/10" />
 
           <div>
             <h1 className="font-display text-lg md:text-xl xl:text-2xl 2xl:text-3xl text-white tracking-wide">
-              CHOOSE YOUR <span style={{ color: accentColor }} className="transition-colors duration-300">HERO</span>
+              CHOOSE YOUR <span style={{ color: accentColor }}>HERO</span>
             </h1>
             <p className="text-white/30 text-[9px] md:text-[10px] xl:text-xs font-body mt-0.5">Select a hero and lock in to begin</p>
           </div>
@@ -108,54 +107,40 @@ export function HeroSelect() {
 
         {/* Timer and Lock In */}
         <div className="flex items-center gap-3 xl:gap-4">
-          <div
-            className={`flex items-center gap-2 xl:gap-3 px-3 xl:px-4 py-2 xl:py-2.5 rounded-lg xl:rounded-xl border transition-all ${timeRemaining < 10
-              ? 'bg-red-500/20 border-red-500/30'
-              : 'bg-white/5 border-white/10'
-              }`}
-          >
-            <span className="text-[9px] xl:text-[10px] text-white/40 font-body uppercase tracking-wider">Time</span>
-            <span className={`font-mono text-lg xl:text-xl font-bold tracking-tight ${timeRemaining < 10 ? 'text-red-400' : 'text-white'}`}>
-              {timeRemaining.toString().padStart(2, '0')}
-            </span>
-            {timeRemaining < 10 && (
-              <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-            )}
-          </div>
+          <HeroSelectTimer
+            phaseEndTime={phaseEndTime}
+            isLockedIn={isLockedIn}
+            onExpired={handleTimerExpired}
+          />
 
           {/* Lock In Button */}
-          <button
-            onClick={() => { playButtonClick(); handleLockIn(); }}
-            onMouseEnter={playButtonHover}
-            disabled={!selectedHero || isLockedIn}
-            className={`relative px-4 md:px-5 xl:px-6 py-2 md:py-2.5 xl:py-3 rounded-lg md:rounded-xl font-display text-xs md:text-sm xl:text-base transition-all overflow-hidden ${isLockedIn
-              ? 'bg-green-500/20 border-2 border-green-500/50 text-green-400'
-              : selectedHero
-                ? 'text-white hover:scale-105 hover:shadow-2xl'
-                : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'
-              }`}
-            style={!isLockedIn && selectedHero ? {
-              background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)`,
-              boxShadow: `0 10px 40px ${accentColor}40`,
-            } : {}}
-          >
-            {/* Button shimmer */}
-            {!isLockedIn && selectedHero && (
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-shimmer" />
-            )}
-            <span className="relative flex items-center gap-2">
-              {isLockedIn ? (
-                <>
-                  <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                  </svg>
-                  LOCKED IN
-                </>
-              ) : (
-                'LOCK IN'
-              )}
-            </span>
-          </button>
+ <button
+ onClick={() => { playButtonClick(); handleLockIn(); }}
+ disabled={!selectedHero || isLockedIn}
+ className={`relative px-4 md:px-5 xl:px-6 py-2 md:py-2.5 xl:py-3 rounded-lg md:rounded-xl font-display text-xs md:text-sm xl:text-base overflow-hidden ${isLockedIn
+ ? 'bg-green-500/20 border-2 border-green-500/50 text-green-400'
+ : selectedHero
+ ? 'text-white border border-white/10 hover:border-white/30'
+ : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'
+ }`}
+ style={!isLockedIn && selectedHero ? {
+ background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)`,
+ boxShadow: `0 10px 40px ${accentColor}40`,
+ } : {}}
+ >
+ <span className="relative flex items-center gap-2">
+ {isLockedIn ? (
+ <>
+ <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+ </svg>
+ LOCKED IN
+ </>
+ ) : (
+ 'LOCK IN'
+ )}
+ </span>
+ </button>
         </div>
       </div>
 
@@ -168,122 +153,24 @@ export function HeroSelect() {
               const hero = HERO_DEFINITIONS[heroId];
               const color = HERO_COLORS[heroId];
               const isSelected = selectedHero === heroId;
-              const isHovered = hoveredHero === heroId;
 
               return (
-                <button
+                <HeroCard
                   key={heroId}
-                  onClick={() => { playButtonClick(); handleSelectHero(heroId); }}
-                  onMouseEnter={() => { playButtonHover(); setHoveredHero(heroId); }}
-                  onMouseLeave={() => setHoveredHero(null)}
-                  disabled={isLockedIn}
-                  className={`
-                    relative w-full aspect-[3/4] rounded-2xl overflow-hidden transition-all duration-200
-                    ${isLockedIn && !isSelected ? 'opacity-30 scale-95' : ''}
-                    ${isSelected ? 'scale-[1.02]' : 'hover:scale-[1.01]'}
-                    group
-                  `}
-                  style={{
-                    background: isSelected
-                      ? `linear-gradient(160deg, ${color}25, ${color}08 50%, #0a0a10)`
-                      : 'linear-gradient(160deg, #14141c, #0a0a10)',
-                    boxShadow: isSelected
-                      ? `0 0 50px ${color}30, 0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 ${color}30`
-                      : '0 10px 30px rgba(0,0,0,0.3)',
-                  }}
-                >
-                  {/* Border glow */}
-                  <div
-                    className="absolute inset-0 rounded-2xl transition-all duration-200"
-                    style={{
-                      border: isSelected
-                        ? `2px solid ${color}`
-                        : isHovered
-                          ? `1px solid ${color}50`
-                          : '1px solid rgba(255,255,255,0.06)',
-                      boxShadow: isSelected ? `inset 0 0 30px ${color}20` : 'none',
-                    }}
-                  />
-
-                  {/* Background glow for selected/hovered */}
-                  <div
-                    className="absolute inset-0 transition-opacity duration-300"
-                    style={{
-                      background: `radial-gradient(ellipse at center 30%, ${color}30, transparent 60%)`,
-                      opacity: isSelected ? 0.6 : isHovered ? 0.3 : 0,
-                    }}
-                  />
-
-                  {/* Hero SVG - Large and centered */}
-                  <div
-                    className="absolute inset-0 flex items-center justify-center transition-all duration-300"
-                    style={{
-                      filter: isSelected ? `drop-shadow(0 0 30px ${color}60)` : isHovered ? `drop-shadow(0 0 15px ${color}40)` : 'none',
-                      transform: isSelected ? 'scale(1.05)' : isHovered ? 'scale(1.02)' : 'scale(1)',
-                    }}
-                  >
-                    <HeroSVG heroId={heroId} size={220} />
-                  </div>
-
-                  {/* Bottom gradient overlay */}
-                  <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#08080c] via-[#08080c]/80 to-transparent" />
-
-                  {/* Content overlay */}
-                  <div className="absolute inset-0 flex flex-col justify-between p-4">
-                    {/* Top row */}
-                    <div className="flex items-start justify-between">
-                      {/* Role Badge */}
-                      <div
-                        className="px-3 py-1.5 rounded-lg text-[10px] font-display uppercase tracking-wider backdrop-blur-sm"
-                        style={{
-                          background: `${color}25`,
-                          color: color,
-                          border: `1px solid ${color}30`,
-                        }}
-                      >
-                        {hero.role}
-                      </div>
-
-                      {/* Selected Check */}
-                      {isSelected && (
-                        <div
-                          className="w-8 h-8 rounded-lg flex items-center justify-center"
-                          style={{
-                            background: `linear-gradient(135deg, ${color}, ${color}cc)`,
-                            boxShadow: `0 4px 15px ${color}50`,
-                          }}
-                        >
-                          <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Bottom row - Hero info */}
-                    <div>
-                      <h3
-                        className="font-display text-2xl transition-colors duration-200"
-                        style={{
-                          color: isSelected ? 'white' : color,
-                          textShadow: isSelected ? `0 0 20px ${color}80` : 'none',
-                        }}
-                      >
-                        {hero.name.toUpperCase()}
-                      </h3>
-                      <p className="text-white/40 text-xs font-body mt-1 capitalize">
-                        {hero.movementFocus} specialist
-                      </p>
-                    </div>
-                  </div>
-                </button>
+                  heroId={heroId}
+                  hero={hero}
+                  color={color}
+                  isSelected={isSelected}
+                  isLockedIn={isLockedIn}
+                  onSelect={handleHeroCardClick}
+                />
               );
             })}
           </div>
         </div>
 
         {/* Hero Details - Right Side */}
-        <div className="w-[48%] lg:w-[45%] xl:w-[42%] border-l border-white/5 flex flex-col bg-[#08080c]/50 backdrop-blur-sm min-h-0">
+        <div className="w-[48%] lg:w-[45%] xl:w-[42%] border-l border-white/5 flex flex-col bg-[#08080c]/50 min-h-0">
           {heroInfo ? (
             <div className="flex-1 flex flex-col min-h-0">
               {/* Hero Header with large display */}
@@ -293,7 +180,7 @@ export function HeroSelect() {
               >
                 {/* Background hero silhouette */}
                 <div className="absolute -right-10 -top-10 opacity-10 hidden xl:block">
-                  <HeroSVG heroId={displayHero!} size={200} />
+                  <HeroSVG heroId={displayHero!} size={200} animated={false} />
                 </div>
 
                 <div className="relative z-10">
@@ -400,8 +287,171 @@ export function HeroSelect() {
   );
 }
 
+type HeroDefinition = (typeof HERO_DEFINITIONS)[HeroId];
+
+const getRemainingSeconds = (phaseEndTime: number | null) => {
+  if (!phaseEndTime) return 60;
+  return Math.max(0, Math.ceil((phaseEndTime - Date.now()) / 1000));
+};
+
+const HeroSelectTimer = memo(function HeroSelectTimer({
+  phaseEndTime,
+  isLockedIn,
+  onExpired,
+}: {
+  phaseEndTime: number | null;
+  isLockedIn: boolean;
+  onExpired: () => void;
+}) {
+  const [timeRemaining, setTimeRemaining] = useState(() => getRemainingSeconds(phaseEndTime));
+  const didExpireRef = useRef(false);
+
+  useEffect(() => {
+    didExpireRef.current = false;
+  }, [phaseEndTime]);
+
+  useEffect(() => {
+    const updateTimer = () => {
+      const remaining = getRemainingSeconds(phaseEndTime);
+      setTimeRemaining((current) => (current === remaining ? current : remaining));
+
+      if (remaining <= 0 && !isLockedIn && !didExpireRef.current) {
+        didExpireRef.current = true;
+        onExpired();
+      }
+    };
+
+    updateTimer();
+    const interval = window.setInterval(updateTimer, 250);
+    return () => window.clearInterval(interval);
+  }, [phaseEndTime, isLockedIn, onExpired]);
+
+  return (
+    <div
+      className={`flex items-center gap-2 xl:gap-3 px-3 xl:px-4 py-2 xl:py-2.5 rounded-lg xl:rounded-xl border ${timeRemaining < 10
+        ? 'bg-red-500/20 border-red-500/30'
+        : 'bg-white/5 border-white/10'
+        }`}
+    >
+      <span className="text-[9px] xl:text-[10px] text-white/40 font-body uppercase tracking-wider">Time</span>
+      <span className={`font-mono text-lg xl:text-xl font-bold tracking-tight ${timeRemaining < 10 ? 'text-red-400' : 'text-white'}`}>
+        {timeRemaining.toString().padStart(2, '0')}
+      </span>
+      {timeRemaining < 10 && (
+        <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+      )}
+    </div>
+  );
+});
+
+const HeroCard = memo(function HeroCard({
+  heroId,
+  hero,
+  color,
+  isSelected,
+  isLockedIn,
+  onSelect,
+}: {
+  heroId: HeroId;
+  hero: HeroDefinition;
+  color: string;
+  isSelected: boolean;
+  isLockedIn: boolean;
+  onSelect: (heroId: HeroId) => void;
+}) {
+  return (
+ <button
+ onClick={() => onSelect(heroId)}
+ disabled={isLockedIn}
+ className={`
+ group relative w-full aspect-[3/4] rounded-2xl overflow-hidden
+ ${isLockedIn && !isSelected ? 'opacity-30' : ''}
+ `}
+ style={{
+ background: isSelected
+ ? `linear-gradient(160deg, ${color}25, ${color}08 50%, #0a0a10)`
+ : 'linear-gradient(160deg, #14141c, #0a0a10)',
+ boxShadow: isSelected
+ ? `0 0 36px ${color}28, 0 16px 32px rgba(0,0,0,0.46), inset 0 1px 0 ${color}30`
+ : '0 10px 24px rgba(0,0,0,0.28)',
+ }}
+ >
+ <div
+ className="absolute inset-0 rounded-2xl"
+ style={{
+ border: isSelected ? `2px solid ${color}` : '1px solid rgba(255,255,255,0.06)',
+ boxShadow: isSelected ? `inset 0 0 24px ${color}18` : 'none',
+ }}
+ />
+ {!isSelected && (
+ <div
+ className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100"
+ style={{ border: `1px solid ${color}50` }}
+ />
+ )}
+ <div
+ className={`absolute inset-0 ${isSelected ? 'opacity-60' : 'opacity-0 group-hover:opacity-30'}`}
+ style={{ background: `radial-gradient(ellipse at center 30%, ${color}30, transparent 60%)` }}
+ />
+
+ <div
+ className="absolute inset-0 flex items-center justify-center"
+ style={{ filter: isSelected ? `drop-shadow(0 0 24px ${color}55)` : undefined }}
+ >
+ <HeroSVG heroId={heroId} size={220} animated={isSelected} />
+ </div>
+
+ <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#08080c] via-[#08080c]/80 to-transparent" />
+
+ <div className="absolute inset-0 flex flex-col justify-between p-4">
+ <div className="flex items-start justify-between">
+ <div
+ className="px-3 py-1.5 rounded-lg text-[10px] font-display uppercase tracking-wider"
+ style={{
+ background: `${color}25`,
+ color,
+ border: `1px solid ${color}30`,
+ }}
+ >
+ {hero.role}
+ </div>
+
+ {isSelected && (
+ <div
+ className="w-8 h-8 rounded-lg flex items-center justify-center"
+ style={{
+ background: `linear-gradient(135deg, ${color}, ${color}cc)`,
+ boxShadow: `0 4px 15px ${color}50`,
+ }}
+ >
+ <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+ </svg>
+ </div>
+ )}
+ </div>
+
+ <div>
+ <h3
+ className="font-display text-2xl"
+ style={{
+ color: isSelected ? 'white' : color,
+ textShadow: isSelected ? `0 0 20px ${color}80` : 'none',
+ }}
+ >
+ {hero.name.toUpperCase()}
+ </h3>
+ <p className="text-white/40 text-xs font-body mt-1 capitalize">
+ {hero.movementFocus} specialist
+ </p>
+ </div>
+ </div>
+ </button>
+  );
+});
+
 // Stat Card Component
-function StatCard({ label, value, icon, color }: { label: string; value: number; icon: string; color: string }) {
+const StatCard = memo(function StatCard({ label, value, icon, color }: { label: string; value: number; icon: string; color: string }) {
   return (
     <div
       className="p-1.5 md:p-2 xl:p-3 2xl:p-4 rounded-lg md:rounded-xl border border-white/5 bg-white/[0.02]"
@@ -419,10 +469,10 @@ function StatCard({ label, value, icon, color }: { label: string; value: number;
       </span>
     </div>
   );
-}
+});
 
 // Ability Card Component
-function AbilityCard({
+const AbilityCard = memo(function AbilityCard({
   ability,
   abilityId,
   name,
@@ -447,7 +497,7 @@ function AbilityCard({
 
   return (
     <div
-      className={`p-2 md:p-2.5 xl:p-3 2xl:p-4 rounded-lg md:rounded-xl border transition-all hover:scale-[1.01] ${isUltimate
+      className={`p-2 md:p-2.5 xl:p-3 2xl:p-4 rounded-lg md:rounded-xl border ${isUltimate
         ? 'border-amber-500/30 bg-gradient-to-r from-amber-500/15 to-amber-500/5'
         : isPassive
           ? 'border-white/10 bg-white/[0.03]'
@@ -517,4 +567,4 @@ function AbilityCard({
       </div>
     </div>
   );
-}
+});

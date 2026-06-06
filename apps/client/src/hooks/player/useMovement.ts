@@ -24,6 +24,8 @@ import {
   BHOP_AIR_SPEED_CAP,
   BHOP_MAX_VELOCITY,
   BHOP_GROUND_FRICTION,
+  BHOP_NO_INPUT_FRICTION_MULTIPLIER,
+  BHOP_GROUND_STOP_THRESHOLD,
   BHOP_STOP_SPEED,
   BHOP_LANDING_SPEED_RETENTION,
 } from '@voxel-strike/shared';
@@ -189,17 +191,25 @@ export function useMovement(): UseMovementReturn {
     } : { x: 0, z: 0 };
 
     const wishSpeed = speed;
+    const hasMovementInput = wishDir.x !== 0 || wishDir.z !== 0;
 
     if (isGrounded) {
       // === GROUND MOVEMENT WITH FRICTION ===
       const currentSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
 
       if (currentSpeed > 0) {
+        const friction = hasMovementInput
+          ? BHOP_GROUND_FRICTION
+          : BHOP_GROUND_FRICTION * BHOP_NO_INPUT_FRICTION_MULTIPLIER;
         const control = currentSpeed < BHOP_STOP_SPEED ? BHOP_STOP_SPEED : currentSpeed;
-        const drop = control * BHOP_GROUND_FRICTION * dt;
+        const drop = control * friction * dt;
 
         let newSpeed = currentSpeed - drop;
         if (newSpeed < 0) newSpeed = 0;
+
+        if (!hasMovementInput && newSpeed < BHOP_GROUND_STOP_THRESHOLD) {
+          newSpeed = 0;
+        }
 
         if (newSpeed !== currentSpeed) {
           const ratio = newSpeed / currentSpeed;
@@ -209,7 +219,7 @@ export function useMovement(): UseMovementReturn {
       }
 
       // Accelerate if there's input
-      if (wishDir.x !== 0 || wishDir.z !== 0) {
+      if (hasMovementInput) {
         quakeAccelerate(velocity, wishDir, wishSpeed, BHOP_GROUND_ACCEL, dt);
       }
     } else {
@@ -392,5 +402,4 @@ export function useMovement(): UseMovementReturn {
     getSlideIntensity,
   };
 }
-
 

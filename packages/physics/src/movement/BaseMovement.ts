@@ -10,6 +10,8 @@ import {
   BHOP_AIR_SPEED_CAP,
   BHOP_MAX_VELOCITY,
   BHOP_GROUND_FRICTION,
+  BHOP_NO_INPUT_FRICTION_MULTIPLIER,
+  BHOP_GROUND_STOP_THRESHOLD,
   BHOP_STOP_SPEED,
   BHOP_TIMING_WINDOW,
   BHOP_LANDING_SPEED_RETENTION,
@@ -214,18 +216,26 @@ export class BaseMovement {
    */
   private applyGroundMovement(velocity: Vec3, wishDir: Vec3, wishSpeed: number, dt: number): Vec3 {
     const newVelocity = { ...velocity };
+    const hasMovementInput = wishDir.x !== 0 || wishDir.z !== 0;
     
     // Apply friction first
     const speed = Math.sqrt(newVelocity.x * newVelocity.x + newVelocity.z * newVelocity.z);
     
     if (speed > 0) {
       // Calculate friction drop
+      const friction = hasMovementInput
+        ? BHOP_GROUND_FRICTION
+        : BHOP_GROUND_FRICTION * BHOP_NO_INPUT_FRICTION_MULTIPLIER;
       const control = speed < BHOP_STOP_SPEED ? BHOP_STOP_SPEED : speed;
-      const drop = control * BHOP_GROUND_FRICTION * dt;
+      const drop = control * friction * dt;
       
       // Scale velocity by friction
       let newSpeed = speed - drop;
       if (newSpeed < 0) newSpeed = 0;
+
+      if (!hasMovementInput && newSpeed < BHOP_GROUND_STOP_THRESHOLD) {
+        newSpeed = 0;
+      }
       
       if (newSpeed !== speed) {
         const ratio = newSpeed / speed;
@@ -235,7 +245,7 @@ export class BaseMovement {
     }
     
     // Then accelerate if there's input
-    if (wishDir.x !== 0 || wishDir.z !== 0) {
+    if (hasMovementInput) {
       return this.accelerate(newVelocity, wishDir, wishSpeed, BHOP_GROUND_ACCEL, dt);
     }
     

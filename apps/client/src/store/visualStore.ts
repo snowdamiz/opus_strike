@@ -32,6 +32,10 @@ export interface VisualState {
 
   /** Raw server positions before interpolation (for extrapolation/prediction) */
   interpolationTargets: Map<string, { x: number; y: number; z: number }>;
+
+  /** High-frequency Blaze flamethrower pose for the held flame effect */
+  flamethrowerOrigin: { x: number; y: number; z: number } | null;
+  flamethrowerDirection: { x: number; y: number; z: number };
 }
 
 // ============================================================================
@@ -44,6 +48,8 @@ const initialVisualState: VisualState = {
   cameraShake: { intensity: 0, time: 0 },
   slideFov: 0,
   interpolationTargets: new Map(),
+  flamethrowerOrigin: null,
+  flamethrowerDirection: { x: 0, y: 0, z: -1 },
 };
 
 // ============================================================================
@@ -155,6 +161,16 @@ export const removePlayerVisualState = (playerId: string): void => {
       playerRotations: newRotations,
       interpolationTargets: newTargets,
     };
+  });
+};
+
+export const setFlamethrowerVisualPose = (
+  origin: { x: number; y: number; z: number } | null,
+  direction: { x: number; y: number; z: number }
+): void => {
+  visualStore.setState({
+    flamethrowerOrigin: origin ? { ...origin } : null,
+    flamethrowerDirection: { ...direction },
   });
 };
 

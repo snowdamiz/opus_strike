@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import RAPIER from '@dimforge/rapier3d-compat';
-import type * as THREE from 'three';
-import { createCollidersFromGLB } from '../components/game/maps/tron/glbColliders';
+import { GRAVITY, type VoxelMapManifest } from '@voxel-strike/shared';
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -35,13 +34,16 @@ export function usePhysics(): PhysicsContext {
 
         if (!mounted) return;
 
+        physicsReady = false;
+        loadedProceduralMapId = null;
+        mapColliderBodies = [];
+
         // Create physics world with gravity
-        const gravity = { x: 0, y: -20, z: 0 }; // Reduced for floatier feel
+        const gravity = { x: 0, y: GRAVITY, z: 0 };
         worldRef.current = new RAPIER.World(gravity);
         worldInstance = worldRef.current;
 
-        // Create main arena floor collider at Y=0
-        // This covers the Tron map play area (100x80 units)
+        // Thin fallback under the procedural terrain while map colliders load.
         const floorBodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0);
         const floorBody = worldRef.current.createRigidBody(floorBodyDesc);
         const floorColliderDesc = RAPIER.ColliderDesc.cuboid(50, 0.5, 40);
@@ -53,8 +55,6 @@ export function usePhysics(): PhysicsContext {
         const safetyColliderDesc = RAPIER.ColliderDesc.cuboid(200, 1, 200);
         worldRef.current.createCollider(safetyColliderDesc, safetyBody);
 
-        // Note: No test platform needed - terrain from GLB provides collision
-
         // Create player rigid body
         const playerDesc = RAPIER.RigidBodyDesc.kinematicPositionBased()
           .setTranslation(0, 50, 0);
@@ -64,9 +64,6 @@ export function usePhysics(): PhysicsContext {
         const playerColliderDesc = RAPIER.ColliderDesc.capsule(0.5, 0.4)
           .setTranslation(0, 0.9, 0);
         worldRef.current.createCollider(playerColliderDesc, playerBodyRef.current);
-
-        // Map colliders are now loaded from GLB via loadMapColliders()
-        // Called by TronMap component after GLB is loaded
 
         // IMPORTANT: Step the world to initialize collision structures
         // This is required for raycasts to work in Rapier
@@ -90,6 +87,14 @@ export function usePhysics(): PhysicsContext {
 
     return () => {
       mounted = false;
+      if (worldInstance === worldRef.current) {
+        physicsReady = false;
+        worldInstance = null;
+        loadedProceduralMapId = null;
+        mapColliderBodies = [];
+      }
+      worldRef.current = null;
+      playerBodyRef.current = null;
     };
   }, []);
 
@@ -108,42 +113,61 @@ export function isPhysicsReady(): boolean {
   return physicsReady;
 }
 
-// Track if map colliders have been loaded
-let mapCollidersLoaded = false;
+let loadedProceduralMapId: string | null = null;
+let mapColliderBodies: RAPIER.RigidBody[] = [];
 
 /**
- * Load map colliders from a GLB scene
- * Called by the map component after the GLB is loaded
+ * Load fixed cuboid colliders generated from the shared procedural voxel map.
  */
-export function loadMapColliders(scene: THREE.Object3D): boolean {
+export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean {
   if (!rapierInstance || !worldInstance) {
-    console.warn('[Physics] Cannot load map colliders - physics not ready');
+    console.warn('[Physics] Cannot load procedural map colliders - physics not ready');
     return false;
   }
 
-  if (mapCollidersLoaded) {
-    console.log('[Physics] Map colliders already loaded, skipping');
+  if (loadedProceduralMapId === manifest.id) {
+    console.log('[Physics] Procedural map colliders already loaded, skipping');
     return true;
   }
 
-  console.log('[Physics] Loading map colliders from GLB...');
-  const stats = createCollidersFromGLB(scene, worldInstance, rapierInstance);
+  for (const body of mapColliderBodies) {
+    worldInstance.removeRigidBody(body);
+  }
+  mapColliderBodies = [];
+
+  console.log(`[Physics] Loading procedural map colliders for ${manifest.id}...`);
+
+  for (const collider of manifest.colliders) {
+    const bodyDesc = rapierInstance.RigidBodyDesc.fixed().setTranslation(
+      collider.center.x,
+      collider.center.y,
+      collider.center.z
+    );
+    const body = worldInstance.createRigidBody(bodyDesc);
+    const colliderDesc = rapierInstance.ColliderDesc.cuboid(
+      collider.halfExtents.x,
+      collider.halfExtents.y,
+      collider.halfExtents.z
+    );
+    worldInstance.createCollider(colliderDesc, body);
+    mapColliderBodies.push(body);
+  }
 
   // Step the world to initialize the new colliders
   worldInstance.step();
   worldInstance.updateSceneQueries();
 
-  mapCollidersLoaded = true;
-  console.log(`[Physics] Map colliders loaded: ${stats.box + stats.trimesh + stats.hull} colliders`);
+  loadedProceduralMapId = manifest.id;
+  console.log(`[Physics] Procedural map colliders loaded: ${manifest.colliders.length} colliders`);
 
   return true;
 }
 
 /**
- * Check if map colliders have been loaded
+ * Check if the generated map colliders have been loaded.
  */
-export function areMapCollidersLoaded(): boolean {
-  return mapCollidersLoaded;
+export function areProceduralMapCollidersLoaded(mapId?: string): boolean {
+  return mapId ? loadedProceduralMapId === mapId : loadedProceduralMapId !== null;
 }
 
 // Utility function for raycasting

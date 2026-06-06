@@ -166,4 +166,3 @@ export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
   // Rush segments change internally via refs, so only ID comparison needed
   return prev.rush.id === next.rush.id;
 });
-

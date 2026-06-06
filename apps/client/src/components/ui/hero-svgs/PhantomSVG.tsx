@@ -1,5 +1,11 @@
 import type { HeroSVGInternalProps } from './types';
 
+const PHANTOM_DISSOLVE_PARTICLES = Array.from({ length: 20 }, (_, i) => ({
+  cx: 70 + ((i * 37) % 60),
+  cy: 50 + ((i * 53) % 200),
+  r: 3 + ((i * 17) % 5),
+}));
+
 export function PhantomSVG({ colors, className, size }: HeroSVGInternalProps) {
   return (
     <svg 
@@ -36,12 +42,12 @@ export function PhantomSVG({ colors, className, size }: HeroSVGInternalProps) {
         <mask id="phantom-dissolve">
           <rect x="0" y="0" width="200" height="300" fill="white" />
           <g className="phantom-particles">
-            {[...Array(20)].map((_, i) => (
+            {PHANTOM_DISSOLVE_PARTICLES.map((particle, i) => (
               <circle
                 key={i}
-                cx={70 + Math.random() * 60}
-                cy={50 + Math.random() * 200}
-                r={3 + Math.random() * 5}
+                cx={particle.cx}
+                cy={particle.cy}
+                r={particle.r}
                 fill="black"
                 className="phantom-particle"
                 style={{ animationDelay: `${i * 0.1}s` }}
@@ -229,4 +235,3 @@ export function PhantomSVG({ colors, className, size }: HeroSVGInternalProps) {
     </svg>
   );
 }
-

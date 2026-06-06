@@ -67,6 +67,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setAppPhase,
     setGamePhase,
     setPhaseEndTime,
+    setMapSeed,
     setLocalPlayer,
     updatePlayer,
     removePlayer,
@@ -364,8 +365,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     const syncInterval = setupPollingSync(room, sessionId, localPlayerName, actions);
 
     // Set up message handlers
-    room.onMessage('phaseChange', (data: { phase: string; endTime: number }) => {
+    room.onMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number }) => {
       console.log('Phase change message:', data.phase);
+      if (typeof data.mapSeed === 'number') {
+        setMapSeed(data.mapSeed);
+      }
       setGamePhase(data.phase as any);
       setPhaseEndTime(data.endTime);
     });
@@ -399,7 +403,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setConnected(true);
-  }, [setConnected, setGamePhase, setPhaseEndTime, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby]);
+  }, [setConnected, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby]);
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string) => {
     if (isJoiningGameRef.current) {

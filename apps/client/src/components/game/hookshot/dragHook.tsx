@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
+import { getOwnerVisualPosition } from './ownerPosition';
+import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -76,24 +78,16 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     const storeState = useGameStore.getState();
     const { players, localPlayer } = storeState;
     
-    // Determine target player position (same as left click)
-    let targetX: number, targetY: number, targetZ: number;
-    if (localPlayer && hook.ownerId === localPlayer.id) {
-      targetX = localPlayer.position.x;
-      targetY = localPlayer.position.y + DRAG_HOOK_HAND_HEIGHT;
-      targetZ = localPlayer.position.z;
-    } else {
-      const owner = players.get(hook.ownerId);
-      if (owner) {
-        targetX = owner.position.x;
-        targetY = owner.position.y + DRAG_HOOK_HAND_HEIGHT;
-        targetZ = owner.position.z;
-      } else {
-        targetX = hook.startPosition.x;
-        targetY = hook.startPosition.y;
-        targetZ = hook.startPosition.z;
-      }
-    }
+    const targetPosition = getOwnerVisualPosition(
+      hook.ownerId,
+      DRAG_HOOK_HAND_HEIGHT,
+      hook.startPosition,
+      players,
+      localPlayer
+    );
+    const targetX = targetPosition.x;
+    const targetY = targetPosition.y;
+    const targetZ = targetPosition.z;
     
     // Smooth lerp for player position (snap on first frame) - SAME AS LEFT CLICK
     const lerpFactor = isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
@@ -126,6 +120,10 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
       if (isPhysicsReady()) {
         const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5);
         if (hit?.hit) {
+          triggerTerrainImpact('hookshot_drag_hook', hit.point, {
+            normal: hit.normal,
+            direction: { x: dirX, y: dirY, z: dirZ },
+          });
           hookStateRef.current = 'retracting';
         }
       }
@@ -273,4 +271,3 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   // Custom comparison: only re-render if hook.id or state changes
   return prev.hook.id === next.hook.id && prev.hook.state === next.hook.state;
 });
-

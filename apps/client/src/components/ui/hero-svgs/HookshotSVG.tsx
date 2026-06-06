@@ -60,9 +60,7 @@ export function HookshotSVG({ colors, className, size }: HeroSVGInternalProps) {
           className="cable-main"
         />
         {/* Cable pulse */}
-        <circle cx="30" cy="20" r="6" fill={colors.primary} className="cable-anchor">
-          <animate attributeName="r" values="6;8;6" dur="0.8s" repeatCount="indefinite" />
-        </circle>
+        <circle cx="30" cy="20" r="7" fill={colors.primary} className="cable-anchor" />
       </g>
       
       {/* Hook at the end */}
@@ -94,9 +92,7 @@ export function HookshotSVG({ colors, className, size }: HeroSVGInternalProps) {
           fill={colors.primary}
           className="hookshot-visor"
         />
-        <ellipse cx="100" cy="68" rx="14" ry="6" fill="#ffffff" opacity="0.8">
-          <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite" />
-        </ellipse>
+        <ellipse cx="100" cy="68" rx="14" ry="6" fill="#ffffff" opacity="0.9" />
         
         {/* Arms - reaching for grapple */}
         <g className="hookshot-arms">
@@ -178,4 +174,3 @@ export function HookshotSVG({ colors, className, size }: HeroSVGInternalProps) {
     </svg>
   );
 }
-

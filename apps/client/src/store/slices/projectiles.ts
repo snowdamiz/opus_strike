@@ -32,8 +32,10 @@ export interface ProjectileState {
   bombTargetValid: boolean;
   airStrikeTargeting: boolean;
   airStrikeTargetValid: boolean;
-  jetpackActive: boolean;
-  jetpackFuel: number;
+  flamethrowerActive: boolean;
+  flamethrowerFuel: number;
+  flamethrowerOrigin: { x: number; y: number; z: number } | null;
+  flamethrowerDirection: { x: number; y: number; z: number };
 
   // Hookshot projectiles
   hookProjectiles: HookProjectileData[];
@@ -77,9 +79,13 @@ export interface ProjectileActions {
   // Blaze air strike actions
   setAirStrikeTargeting: (targeting: boolean, valid?: boolean) => void;
 
-  // Blaze jetpack actions
-  setJetpackActive: (active: boolean) => void;
-  setJetpackFuel: (fuel: number) => void;
+  // Blaze flamethrower actions
+  setFlamethrowerActive: (active: boolean) => void;
+  setFlamethrowerFuel: (fuel: number) => void;
+  setFlamethrowerPose: (
+    origin: { x: number; y: number; z: number },
+    direction: { x: number; y: number; z: number }
+  ) => void;
 
   // Hook projectile actions
   addHookProjectile: (hook: HookProjectileData) => void;
@@ -137,8 +143,10 @@ export const projectileInitialState: ProjectileState = {
   bombTargetValid: false,
   airStrikeTargeting: false,
   airStrikeTargetValid: false,
-  jetpackActive: false,
-  jetpackFuel: 100,
+  flamethrowerActive: false,
+  flamethrowerFuel: 100,
+  flamethrowerOrigin: null,
+  flamethrowerDirection: { x: 0, y: 0, z: -1 },
   hookProjectiles: [],
   dragHooks: [],
   grappleTraps: [],
@@ -228,7 +236,7 @@ export const createProjectileSlice: StateCreator<
 
   clearExpiredRockets: () => set((state) => {
     const now = Date.now();
-    const LIFETIME = 5000;
+    const LIFETIME = 3000;
     return {
       rockets: state.rockets.filter(r => now - r.startTime < LIFETIME)
     };
@@ -263,9 +271,13 @@ export const createProjectileSlice: StateCreator<
     airStrikeTargetValid: valid
   }),
 
-  // ==================== JETPACK ====================
-  setJetpackActive: (active) => set({ jetpackActive: active }),
-  setJetpackFuel: (fuel) => set({ jetpackFuel: Math.max(0, Math.min(100, fuel)) }),
+  // ==================== FLAMETHROWER ====================
+  setFlamethrowerActive: (active) => set({ flamethrowerActive: active }),
+  setFlamethrowerFuel: (fuel) => set({ flamethrowerFuel: Math.max(0, Math.min(100, fuel)) }),
+  setFlamethrowerPose: (origin, direction) => set({
+    flamethrowerOrigin: { ...origin },
+    flamethrowerDirection: { ...direction },
+  }),
 
   // ==================== HOOK PROJECTILES ====================
   addHookProjectile: (hook) => set((state) => {
@@ -416,5 +428,3 @@ export const createProjectileSlice: StateCreator<
     };
   }),
 });
-
-

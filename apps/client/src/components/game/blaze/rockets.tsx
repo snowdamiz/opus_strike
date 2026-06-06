@@ -3,7 +3,10 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
+import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
+import { damageNpc } from '../../ui/GameConsole';
 import { SHARED_GEOMETRIES } from '../effectResources';
+import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import {
   getRocketBodyMaterial,
   getRocketNoseMaterial,
@@ -12,15 +15,17 @@ import {
   getRocketFireOuterMaterial,
   getRocketSmokeMaterial,
 } from './materials';
-import { InstancedRockets } from '../effects/instanced/InstancedRockets';
 
 // ============================================================================
-// ROCKET EFFECT - Individual rockets with good visuals (LEGACY - kept for reference)
-// Replaced by InstancedRockets for performance (single draw call per rocket part)
+// BLAZE PRIMARY PROJECTILE
 // ============================================================================
 
 const MAX_ROCKETS = 30;
-const ROCKET_LIFETIME = 5000;
+const ROCKET_LIFETIME = 3000;
+const PROJECTILE_LIFETIME_SECONDS = ROCKET_LIFETIME / 1000;
+const PROJECTILE_RADIUS = 0.21;
+const PROJECTILE_DAMAGE = 35;
+const NPC_HIT_RADIUS = 1.2;
 
 // Pre-allocated vectors for rockets (local to avoid conflicts)
 const _rocketPos = new THREE.Vector3();
@@ -31,9 +36,15 @@ interface RocketEffectProps {
   rocket: RocketData;
 }
 
-// Legacy RocketEffect - kept for reference/fallback
 const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
+  const hasCollided = useRef(false);
+  const currentPos = useRef({
+    x: rocket.position.x,
+    y: rocket.position.y,
+    z: rocket.position.z,
+  });
+  const removeRocket = useGameStore(state => state.removeRocket);
 
   // Get pre-cached materials once
   const materials = useMemo(() => ({
@@ -45,27 +56,97 @@ const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
     smoke: getRocketSmokeMaterial(),
   }), []);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!groupRef.current) return;
+
+    if (hasCollided.current) {
+      groupRef.current.visible = false;
+      return;
+    }
 
     const elapsed = (Date.now() - rocket.startTime) / 1000;
 
-    // Update position with gravity
+    if (elapsed >= PROJECTILE_LIFETIME_SECONDS) {
+      groupRef.current.visible = false;
+      return;
+    }
+
+    const moveX = rocket.velocity.x * delta;
+    const moveY = rocket.velocity.y * delta;
+    const moveZ = rocket.velocity.z * delta;
+    const moveDistance = Math.sqrt(moveX * moveX + moveY * moveY + moveZ * moveZ);
+
+    if (isPhysicsReady() && moveDistance > 0.001) {
+      const world = getPhysicsWorld();
+      if (world) {
+        const speed = Math.sqrt(
+          rocket.velocity.x * rocket.velocity.x +
+          rocket.velocity.y * rocket.velocity.y +
+          rocket.velocity.z * rocket.velocity.z
+        );
+        const direction = {
+          x: rocket.velocity.x / speed,
+          y: rocket.velocity.y / speed,
+          z: rocket.velocity.z / speed,
+        };
+
+        const hit = raycast(world, currentPos.current, direction, moveDistance + PROJECTILE_RADIUS);
+
+        if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
+          hasCollided.current = true;
+          groupRef.current.visible = false;
+          triggerTerrainImpact('blaze_rocket', hit.point, {
+            normal: hit.normal,
+            direction,
+          });
+          removeRocket(rocket.id);
+          return;
+        }
+      }
+    }
+
+    const { players, localPlayer } = useGameStore.getState();
+
+    for (const [playerId, player] of players) {
+      if (playerId === localPlayer?.id) continue;
+      if (player.state !== 'alive') continue;
+      if (localPlayer && player.team === localPlayer.team) continue;
+
+      const dx = player.position.x - currentPos.current.x;
+      const dy = (player.position.y + 0.9) - currentPos.current.y;
+      const dz = player.position.z - currentPos.current.z;
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      if (distance <= NPC_HIT_RADIUS) {
+        if (playerId.startsWith('npc_')) {
+          damageNpc(playerId, PROJECTILE_DAMAGE);
+        }
+
+        hasCollided.current = true;
+        groupRef.current.visible = false;
+        removeRocket(rocket.id);
+        return;
+      }
+    }
+
+    currentPos.current.x += moveX;
+    currentPos.current.y += moveY;
+    currentPos.current.z += moveZ;
+
     _rocketPos.set(
-      rocket.position.x + rocket.velocity.x * elapsed,
-      rocket.position.y + rocket.velocity.y * elapsed - elapsed * elapsed,
-      rocket.position.z + rocket.velocity.z * elapsed
+      currentPos.current.x,
+      currentPos.current.y,
+      currentPos.current.z
     );
     groupRef.current.position.copy(_rocketPos);
 
-    // Rotate to face velocity direction
-    _rocketDir.set(rocket.velocity.x, rocket.velocity.y - 2 * elapsed, rocket.velocity.z).normalize();
+    _rocketDir.set(rocket.velocity.x, rocket.velocity.y, rocket.velocity.z).normalize();
     _rocketLookAt.copy(_rocketPos).add(_rocketDir);
     groupRef.current.lookAt(_rocketLookAt);
   });
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} position={[rocket.position.x, rocket.position.y, rocket.position.z]}>
       {/* Rocket body - dark metallic */}
       <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.35, 0.08]} material={materials.body} />
 
@@ -95,21 +176,18 @@ const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
     prev.rocket.velocity.x === next.rocket.velocity.x &&
     prev.rocket.velocity.y === next.rocket.velocity.y &&
     prev.rocket.velocity.z === next.rocket.velocity.z &&
-    prev.rocket.startTime === next.rocket.startTime
+    prev.rocket.startTime === next.rocket.startTime &&
+    prev.rocket.ownerId === next.rocket.ownerId
   );
 });
 
 // ============================================================================
-// ROCKETS MANAGER - Instanced rendering for performance
+// ROCKETS MANAGER
 // ============================================================================
 
 export function RocketsManager() {
   const rockets = useGameStore(state => state.rockets);
   const lightRef = useRef<THREE.PointLight>(null);
-
-  // Instanced rendering: All rockets render in single draw call via InstancedMesh
-  // Each rocket = 6 instances (body, nose, fireCore, fireInner, fireOuter, smoke)
-  // Position/rotation updates at 60fps without React re-renders
 
   // Update single shared light position
   useFrame(() => {
@@ -126,7 +204,7 @@ export function RocketsManager() {
       if (now - rocket.startTime < ROCKET_LIFETIME) {
         const elapsed = (now - rocket.startTime) / 1000;
         avgX += rocket.position.x + rocket.velocity.x * elapsed;
-        avgY += rocket.position.y + rocket.velocity.y * elapsed - elapsed * elapsed;
+        avgY += rocket.position.y + rocket.velocity.y * elapsed;
         avgZ += rocket.position.z + rocket.velocity.z * elapsed;
         count++;
       }
@@ -140,9 +218,16 @@ export function RocketsManager() {
     }
   });
 
+  const now = Date.now();
+  const activeRockets = rockets
+    .filter(rocket => now - rocket.startTime < ROCKET_LIFETIME)
+    .slice(0, MAX_ROCKETS);
+
   return (
     <group>
-      <InstancedRockets />
+      {activeRockets.map(rocket => (
+        <RocketEffect key={rocket.id} rocket={rocket} />
+      ))}
       {/* Single shared light for all rockets */}
       <pointLight ref={lightRef} color={0xff6600} intensity={0} distance={12} decay={2} />
     </group>
@@ -380,4 +465,3 @@ export function RocketJumpExplosions() {
     </>
   );
 }
-

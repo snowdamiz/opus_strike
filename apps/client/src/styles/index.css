@@ -345,7 +345,6 @@ body,
   overflow: hidden;
   font-family: 'Bebas Neue', sans-serif;
   letter-spacing: 0.1em;
-  transition: all 0.15s ease;
 }
 
 .btn-primary {
@@ -748,12 +747,27 @@ input[type="color"]::-webkit-color-swatch {
 
 /* Base hero SVG styles */
 .hero-svg {
-  filter: drop-shadow(0 0 30px var(--hero-glow, rgba(255, 255, 255, 0.3)));
-  transition: transform 0.5s ease, filter 0.5s ease;
+  filter: drop-shadow(0 0 18px var(--hero-glow, rgba(255, 255, 255, 0.25)));
 }
 
 .hero-svg:hover {
-  transform: scale(1.02);
+  transform: none;
+}
+
+.hero-svg:not(.hero-svg-static) {
+  animation: hero-svg-float 4.8s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.hero-svg-static,
+.hero-svg-static * {
+  animation: none !important;
+  transition: none !important;
+}
+
+.hero-svg-static:hover {
+  transform: none;
 }
 
 /* === PHANTOM ANIMATIONS === */
@@ -1567,7 +1581,7 @@ input[type="color"]::-webkit-color-swatch {
 }
 
 .hero-svg-enter {
-  animation: hero-entrance 0.5s ease-out forwards;
+  animation: hero-entrance 220ms ease-out forwards;
 }
 
 /* Hero switch transition */
@@ -1589,7 +1603,97 @@ input[type="color"]::-webkit-color-swatch {
 }
 
 .hero-svg-switch {
-  animation: hero-switch 0.6s ease-in-out;
+  animation: hero-switch 260ms ease-in-out;
+}
+
+/* ===== LIGHTWEIGHT HERO SVG MOTION ===== */
+/* Selected hero portraits used to animate dozens of child nodes at once. Keep them mostly
+   static and move one large group per hero so selection still feels alive without SVG churn. */
+.hero-svg * {
+  animation: none !important;
+}
+
+.hero-svg :is(.speed-line, .motion-line, .spark, .float-particle, .dash-particle, .frost-particle) {
+  opacity: 0.55;
+}
+
+.hero-svg:not(.hero-svg-static).hero-svg-phantom .phantom-body,
+.hero-svg:not(.hero-svg-static).hero-svg-hookshot .hookshot-body,
+.hero-svg:not(.hero-svg-static).hero-svg-blaze .blaze-body,
+.hero-svg:not(.hero-svg-static).hero-svg-glacier .glacier-body,
+.hero-svg:not(.hero-svg-static).hero-svg-pulse .pulse-body,
+.hero-svg:not(.hero-svg-static).hero-svg-sentinel .sentinel-body {
+  animation: hero-portrait-drift 3.8s ease-in-out infinite !important;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.hero-svg:not(.hero-svg-static).hero-svg-phantom .phantom-energy,
+.hero-svg:not(.hero-svg-static).hero-svg-blaze .blaze-flames,
+.hero-svg:not(.hero-svg-static).hero-svg-glacier .cold-aura,
+.hero-svg:not(.hero-svg-static).hero-svg-pulse .pulse-rings,
+.hero-svg:not(.hero-svg-static).hero-svg-sentinel .sentinel-shield,
+.hero-svg:not(.hero-svg-static).hero-svg-hookshot .hookshot-cable {
+  animation: hero-portrait-glow 3.4s ease-in-out infinite !important;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.hero-svg:not(.hero-svg-static).hero-svg-phantom .phantom-wisps,
+.hero-svg:not(.hero-svg-static).hero-svg-hookshot .hookshot-speed-lines,
+.hero-svg:not(.hero-svg-static).hero-svg-blaze .blaze-heat-waves,
+.hero-svg:not(.hero-svg-static).hero-svg-glacier .glacier-crystals,
+.hero-svg:not(.hero-svg-static).hero-svg-pulse .pulse-speed-lines,
+.hero-svg:not(.hero-svg-static).hero-svg-sentinel .sentinel-aura {
+  animation: hero-accent-sway 2.8s ease-in-out infinite !important;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes hero-svg-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes hero-portrait-drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes hero-portrait-glow {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 0.85;
+  }
+}
+
+@keyframes hero-accent-sway {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translateX(0);
+  }
+
+  50% {
+    opacity: 0.85;
+    transform: translateX(6px);
+  }
 }
 
 /* ===== R3F-PERF CUSTOMIZATION ===== */

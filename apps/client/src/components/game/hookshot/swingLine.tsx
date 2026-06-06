@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, type SwingLineData } from '../../../store/gameStore';
+import { getOwnerVisualPosition } from './ownerPosition';
 import {
   SHARED_GEOMETRIES,
   HOOKSHOT_COLORS,
@@ -44,24 +45,7 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
     
     const { localPlayer, players } = useGameStore.getState();
     
-    let playerPos = line.startPosition;
-    
-    if (localPlayer && line.ownerId === localPlayer.id) {
-      playerPos = {
-        x: localPlayer.position.x,
-        y: localPlayer.position.y + 0.6,
-        z: localPlayer.position.z,
-      };
-    } else {
-      const owner = players.get(line.ownerId);
-      if (owner) {
-        playerPos = {
-          x: owner.position.x,
-          y: owner.position.y + 0.6,
-          z: owner.position.z,
-        };
-      }
-    }
+    const playerPos = getOwnerVisualPosition(line.ownerId, 0.6, line.startPosition, players, localPlayer);
     
     const toTarget = {
       x: line.attachPoint.x - playerPos.x,
@@ -164,4 +148,3 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
   // Custom comparison: only re-render if line.id or state changes
   return prev.line.id === next.line.id && prev.line.state === next.line.state;
 });
-

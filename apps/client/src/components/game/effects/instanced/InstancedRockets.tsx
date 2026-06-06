@@ -31,7 +31,11 @@ const ROCKET_LIFETIME = 5000;
 // Pre-allocated vectors for position calculations (zero-allocation pattern)
 const _rocketPos = new THREE.Vector3();
 const _rocketDir = new THREE.Vector3();
-const _rocketLookAt = new THREE.Vector3();
+const _rocketForward = new THREE.Vector3(0, 0, -1);
+const _rocketQuat = new THREE.Quaternion();
+const _partQuat = new THREE.Quaternion();
+const _partEuler = new THREE.Euler();
+const _partOffset = new THREE.Vector3();
 
 // Instance data cache for updating refs
 interface InstanceData {
@@ -107,15 +111,15 @@ export function InstancedRockets() {
         rocket.velocity.y - 2 * elapsed,
         rocket.velocity.z
       ).normalize();
-      _rocketLookAt.copy(_rocketPos).add(_rocketDir);
+      _rocketQuat.setFromUnitVectors(_rocketForward, _rocketDir);
 
       // Update all instances for this rocket
-      updateInstance(instances.body, _rocketPos, _rocketLookAt, [0.08, 0.35, 0.08], alive, [Math.PI / 2, 0, 0]);
-      updateInstance(instances.nose, _rocketPos, _rocketLookAt, [0.04, 0.08, 0.04], alive, [Math.PI / 2, 0, 0], [0, 0, -0.2]);
-      updateInstance(instances.fireCore, _rocketPos, _rocketLookAt, [0.05, 0.35, 0.05], alive, [Math.PI / 2, 0, 0], [0, 0, 0.22]);
-      updateInstance(instances.fireInner, _rocketPos, _rocketLookAt, [0.08, 0.45, 0.08], alive, [Math.PI / 2, 0, 0], [0, 0, 0.32]);
-      updateInstance(instances.fireOuter, _rocketPos, _rocketLookAt, [0.12, 0.5, 0.12], alive, [Math.PI / 2, 0, 0], [0, 0, 0.4]);
-      updateInstance(instances.smoke, _rocketPos, _rocketLookAt, [0.15, 0.4, 0.15], alive, [Math.PI / 2, 0, 0], [0, 0, 0.55]);
+      updateInstance(instances.body, _rocketPos, _rocketQuat, [0.08, 0.35, 0.08], alive, [Math.PI / 2, 0, 0]);
+      updateInstance(instances.nose, _rocketPos, _rocketQuat, [0.04, 0.08, 0.04], alive, [Math.PI / 2, 0, 0], [0, 0, -0.2]);
+      updateInstance(instances.fireCore, _rocketPos, _rocketQuat, [0.05, 0.35, 0.05], alive, [Math.PI / 2, 0, 0], [0, 0, 0.22]);
+      updateInstance(instances.fireInner, _rocketPos, _rocketQuat, [0.08, 0.45, 0.08], alive, [Math.PI / 2, 0, 0], [0, 0, 0.32]);
+      updateInstance(instances.fireOuter, _rocketPos, _rocketQuat, [0.12, 0.5, 0.12], alive, [Math.PI / 2, 0, 0], [0, 0, 0.4]);
+      updateInstance(instances.smoke, _rocketPos, _rocketQuat, [0.15, 0.4, 0.15], alive, [Math.PI / 2, 0, 0], [0, 0, 0.55]);
     });
 
     // Hide unused instances (beyond current rocket count)
@@ -253,7 +257,7 @@ export function InstancedRockets() {
 function updateInstance(
   instance: THREE.Object3D | null,
   position: THREE.Vector3,
-  lookAt: THREE.Vector3,
+  rocketQuaternion: THREE.Quaternion,
   scale: [number, number, number],
   alive: boolean,
   rotation: [number, number, number],
@@ -266,24 +270,17 @@ function updateInstance(
     return;
   }
 
-  // Set position with offset
   instance.position.copy(position);
   if (offset) {
-    instance.position.x += offset[0];
-    instance.position.y += offset[1];
-    instance.position.z += offset[2];
+    _partOffset.set(offset[0], offset[1], offset[2]).applyQuaternion(rocketQuaternion);
+    instance.position.add(_partOffset);
   }
 
-  // Set scale
   instance.scale.set(scale[0], scale[1], scale[2]);
 
-  // Set rotation to face velocity direction
-  instance.lookAt(lookAt);
-
-  // Apply part-specific rotation
-  instance.rotateX(rotation[0]);
-  instance.rotateY(rotation[1]);
-  instance.rotateZ(rotation[2]);
+  _partEuler.set(rotation[0], rotation[1], rotation[2]);
+  _partQuat.setFromEuler(_partEuler);
+  instance.quaternion.copy(rocketQuaternion).multiply(_partQuat);
 
   // Update matrix
   instance.updateMatrix();

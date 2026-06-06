@@ -20,10 +20,9 @@ export {
 } from './bomb';
 
 export { 
-  JetpackEffect,
-} from './jetpack';
+  FlamethrowerEffect,
+} from './flamethrower';
 
 export { 
   prewarmBlazeMaterials,
 } from './materials';
-

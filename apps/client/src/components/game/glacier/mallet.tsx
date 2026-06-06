@@ -2,8 +2,10 @@ import React, { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type IceMalletSwingData } from '../../../store/gameStore';
+import { raycastDirection } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
 import { SHARED_GEOMETRIES } from '../effectResources';
+import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import {
   GLACIER_COLORS,
   tempVec3,
@@ -45,6 +47,7 @@ export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
   const iceShardRefs = useRef<(THREE.Mesh | null)[]>([]);
   const lightRef = useRef<THREE.PointLight>(null);
   const hasHitRef = useRef(swing.hasHit);
+  const hasTerrainImpactRef = useRef(false);
   const hitPlayersRef = useRef<Set<string>>(new Set());
   const shouldRemoveRef = useRef(false);
   
@@ -118,6 +121,27 @@ export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
     
     if (lightRef.current) {
       lightRef.current.intensity = 1.0 + swingIntensity * 2.5;
+    }
+
+    if (!hasTerrainImpactRef.current && isLocalPlayerSwing && progress > 0.46) {
+      tempVec3.set(0, 0, -1).applyQuaternion(camera.quaternion);
+      const hit = raycastDirection(
+        camera.position.x,
+        camera.position.y,
+        camera.position.z,
+        tempVec3.x,
+        tempVec3.y,
+        tempVec3.z,
+        MALLET_RANGE
+      );
+
+      if (hit?.hit && hit.distance > 0.7) {
+        hasTerrainImpactRef.current = true;
+        triggerTerrainImpact('glacier_mallet', hit.point, {
+          normal: hit.normal,
+          direction: { x: tempVec3.x, y: tempVec3.y, z: tempVec3.z },
+        });
+      }
     }
     
     // Update frost particles (reduced count from 12 to 6 for performance)
@@ -317,4 +341,3 @@ export const IdleMallet = React.memo(function IdleMallet() {
     </group>
   );
 });
-

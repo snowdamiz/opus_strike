@@ -23,6 +23,8 @@ export const STEP_HEIGHT = 0.8;
 export const SMALL_BUMP_THRESHOLD = 0.15;
 export const SMOOTH_SPEED_SMALL = 8;
 export const SMOOTH_SPEED_LARGE = 20;
+export const TERRAIN_RAMP_UP_SMOOTH_SPEED = 10;
+export const TERRAIN_RAMP_DOWN_SMOOTH_SPEED = 14;
 
 // Out of bounds - ground level is y=0, spawns at y=1
 // Only consider out of bounds if significantly below map
@@ -39,14 +41,11 @@ export const PHANTOM_FIRE_INTERVAL = 1000 / PHANTOM_FIRE_RATE;
 export const PHANTOM_PROJECTILE_SPEED = 70;
 
 // Blaze
-export const BLAZE_ROCKET_FIRE_RATE = 2.5;
+export const BLAZE_ROCKET_FIRE_RATE = PHANTOM_FIRE_RATE;
 export const BLAZE_ROCKET_FIRE_INTERVAL = 1000 / BLAZE_ROCKET_FIRE_RATE;
-export const BLAZE_ROCKET_SPEED = 50;
+export const BLAZE_ROCKET_SPEED = PHANTOM_PROJECTILE_SPEED;
 export const BLAZE_BOMB_COOLDOWN = 8000;
 export const BLAZE_BOMB_FALL_DURATION = 1500;
-export const BLAZE_JETPACK_FUEL_DRAIN = 50;
-export const BLAZE_JETPACK_FUEL_REGEN = 15;
-export const BLAZE_JETPACK_THRUST = 8;
 
 // Hookshot
 export const HOOKSHOT_FIRE_RATE = 3;
@@ -121,5 +120,3 @@ export function calculateHorizontalLookDirection(yaw: number): { x: number; z: n
     z: -Math.cos(yaw),
   };
 }
-
-

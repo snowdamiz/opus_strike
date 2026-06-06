@@ -13,24 +13,26 @@ interface HeroSVGProps {
   heroId: HeroId;
   className?: string;
   size?: number;
+  animated?: boolean;
 }
 
-export function HeroSVG({ heroId, className = '', size = 400 }: HeroSVGProps) {
+export function HeroSVG({ heroId, className = '', size = 400, animated = true }: HeroSVGProps) {
   const colors = HERO_COLORS[heroId];
+  const animationClassName = animated ? className : `${className} hero-svg-static`;
   
   switch (heroId) {
     case 'phantom':
-      return <PhantomSVG colors={colors} className={className} size={size} />;
+      return <PhantomSVG colors={colors} className={animationClassName} size={size} animated={animated} />;
     case 'hookshot':
-      return <HookshotSVG colors={colors} className={className} size={size} />;
+      return <HookshotSVG colors={colors} className={animationClassName} size={size} animated={animated} />;
     case 'blaze':
-      return <BlazeSVG colors={colors} className={className} size={size} />;
+      return <BlazeSVG colors={colors} className={animationClassName} size={size} animated={animated} />;
     case 'glacier':
-      return <GlacierSVG colors={colors} className={className} size={size} />;
+      return <GlacierSVG colors={colors} className={animationClassName} size={size} animated={animated} />;
     case 'pulse':
-      return <PulseSVG colors={colors} className={className} size={size} />;
+      return <PulseSVG colors={colors} className={animationClassName} size={size} animated={animated} />;
     case 'sentinel':
-      return <SentinelSVG colors={colors} className={className} size={size} />;
+      return <SentinelSVG colors={colors} className={animationClassName} size={size} animated={animated} />;
     default:
       return null;
   }

@@ -58,8 +58,8 @@ export function PlayerController() {
   const bombTargeting = useGameStore(state => state.bombTargeting);
   const setAirStrikeTargeting = useGameStore(state => state.setAirStrikeTargeting);
   const airStrikeTargeting = useGameStore(state => state.airStrikeTargeting);
-  const setJetpackActive = useGameStore(state => state.setJetpackActive);
-  const setJetpackFuel = useGameStore(state => state.setJetpackFuel);
+  const setFlamethrowerActive = useGameStore(state => state.setFlamethrowerActive);
+  const setFlamethrowerFuel = useGameStore(state => state.setFlamethrowerFuel);
   const setIceWallRushActive = useGameStore(state => state.setIceWallRushActive);
   const setIceWallRushFuel = useGameStore(state => state.setIceWallRushFuel);
   const addIceWallRush = useGameStore(state => state.addIceWallRush);
@@ -79,7 +79,7 @@ export function PlayerController() {
   const {
     playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
     playBlazeRocket, playBlazeBombTarget, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
-    startJetpackSound, stopJetpackSound,
+    startFlamethrowerSound, stopFlamethrowerSound,
   } = useAbilitySounds();
   const { updateWalkingSound, preloadWalkingSound, startSlide, stopSlide } = useMovementSounds();
 
@@ -127,7 +127,7 @@ export function PlayerController() {
   const playerSounds = {
     playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
     playBlazeRocket, playBlazeBombTarget, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
-    startJetpackSound, stopJetpackSound,
+    startFlamethrowerSound, stopFlamethrowerSound,
   };
 
   const movementSounds = {
@@ -274,10 +274,17 @@ export function PlayerController() {
       return;
     }
 
-    if (!isPlaying) return;
-
     const dt = Math.min(delta, 0.1);
     const now = Date.now();
+
+    if (!isPlaying || localPlayer.state !== 'alive') {
+      const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
+      cameraControl.updateCameraRotation(camera, false, false, dt);
+      camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
+      setPlayerVisualPosition(localPlayer.id, visualPos);
+      setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
+      return;
+    }
 
     // Get hero stats (cached)
     const heroId = localPlayer.heroId as HeroId;
@@ -326,6 +333,15 @@ export function PlayerController() {
       position.set(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z);
     }
     const velocity = movement.refs.velocity.current;
+    if (
+      movement.refs.smoothedY.current !== null &&
+      Math.abs(position.y - movement.refs.smoothedY.current) > 1.5
+    ) {
+      movement.refs.smoothedY.current = null;
+      movement.refs.wasGrounded.current = false;
+      movement.refs.isGrounded.current = false;
+      movement.refs.canJump.current = false;
+    }
 
     // Create ability context
     const abilityCtx = {
@@ -417,7 +433,12 @@ export function PlayerController() {
           blazeAbilities.fireRocket(abilityCtx, playerSounds);
         }
         blazeAbilities.handleBombTargeting(abilityCtx, playerSounds);
-        blazeAbilities.handleJetpack(abilityCtx, playerSounds, setJetpackActive, setJetpackFuel);
+        blazeAbilities.handleFlamethrower(
+          abilityCtx,
+          playerSounds,
+          setFlamethrowerActive,
+          setFlamethrowerFuel
+        );
       }
 
       if (heroId === 'glacier') {

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { GameStateSync } from '@voxel-strike/shared';
+import { createRandomSeed, type GameStateSync } from '@voxel-strike/shared';
 import { setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
 
 // Import types
@@ -83,6 +83,7 @@ interface CoreState {
   gamePhase: GamePhase;
   tick: number;
   serverTime: number;
+  mapSeed: number;
 
   // Teams
   redScore: number;
@@ -133,6 +134,7 @@ interface CoreActions {
   setAppPhase: (phase: AppPhase) => void;
   setGamePhase: (phase: GamePhase) => void;
   setPhaseEndTime: (time: number | null) => void;
+  setMapSeed: (seed: number) => void;
   updateGameState: (state: GameStateSync) => void;
   updateLocalPlayer: (updates: Partial<Player>) => void;
   setLocalPlayer: (player: Player) => void;
@@ -195,6 +197,7 @@ const coreInitialState: CoreState = {
   gamePhase: 'waiting',
   tick: 0,
   serverTime: 0,
+  mapSeed: createRandomSeed(),
   redScore: 0,
   blueScore: 0,
   redFlag: null,
@@ -246,6 +249,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setAppPhase: (phase) => set({ appPhase: phase }),
   setGamePhase: (phase) => set({ gamePhase: phase }),
   setPhaseEndTime: (time) => set({ phaseEndTime: time }),
+  setMapSeed: (seed) => set({ mapSeed: seed >>> 0 }),
 
   updateGameState: (state) => {
     // NOTE: We update players Map entries in-place for position/rotation data to avoid
@@ -293,6 +297,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       set({
         tick: state.tick,
         serverTime: state.serverTime,
+        mapSeed: state.mapSeed ?? get().mapSeed,
         gamePhase: state.phase,
         redScore: state.redScore,
         blueScore: state.blueScore,
@@ -336,6 +341,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     set({
       tick: state.tick,
       serverTime: state.serverTime,
+      mapSeed: state.mapSeed ?? get().mapSeed,
       gamePhase: state.phase,
       redScore: state.redScore,
       blueScore: state.blueScore,

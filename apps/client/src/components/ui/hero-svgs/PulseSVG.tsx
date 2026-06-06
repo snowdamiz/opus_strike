@@ -1,5 +1,9 @@
 import type { HeroSVGInternalProps } from './types';
 
+const PULSE_DASH_PARTICLES = Array.from({ length: 10 }, (_, i) => ({
+  r: 2 + ((i * 5) % 2),
+}));
+
 export function PulseSVG({ colors, className, size }: HeroSVGInternalProps) {
   return (
     <svg 
@@ -58,12 +62,8 @@ export function PulseSVG({ colors, className, size }: HeroSVGInternalProps) {
       {/* Character body - lean and agile */}
       <g className="pulse-body">
         {/* Energy core in chest */}
-        <circle cx="100" cy="120" r="15" fill="url(#pulse-energy)" className="energy-core">
-          <animate attributeName="r" values="15;18;15" dur="1s" repeatCount="indefinite" />
-        </circle>
-        <circle cx="100" cy="120" r="10" fill="#ffffff" opacity="0.8">
-          <animate attributeName="opacity" values="0.8;1;0.8" dur="0.5s" repeatCount="indefinite" />
-        </circle>
+        <circle cx="100" cy="120" r="16" fill="url(#pulse-energy)" className="energy-core" />
+        <circle cx="100" cy="120" r="10" fill="#ffffff" opacity="0.9" />
         
         {/* Torso - slim athletic build */}
         <path 
@@ -86,12 +86,8 @@ export function PulseSVG({ colors, className, size }: HeroSVGInternalProps) {
           fill="#0f172a"
         />
         {/* Energy eyes */}
-        <ellipse cx="90" cy="62" rx="6" ry="4" fill="#ffffff" className="pulse-eye-left">
-          <animate attributeName="opacity" values="1;0.5;1" dur="0.3s" repeatCount="indefinite" />
-        </ellipse>
-        <ellipse cx="110" cy="62" rx="6" ry="4" fill="#ffffff" className="pulse-eye-right">
-          <animate attributeName="opacity" values="1;0.5;1" dur="0.3s" repeatCount="indefinite" />
-        </ellipse>
+        <ellipse cx="90" cy="62" rx="6" ry="4" fill="#ffffff" className="pulse-eye-left" opacity="0.9" />
+        <ellipse cx="110" cy="62" rx="6" ry="4" fill="#ffffff" className="pulse-eye-right" opacity="0.9" />
         
         {/* Arms - running pose */}
         <g className="pulse-arms">
@@ -151,12 +147,12 @@ export function PulseSVG({ colors, className, size }: HeroSVGInternalProps) {
       
       {/* Dash particles */}
       <g className="pulse-particles">
-        {[...Array(10)].map((_, i) => (
+        {PULSE_DASH_PARTICLES.map((particle, i) => (
           <circle
             key={i}
             cx={20 + i * 8}
             cy={140 + Math.sin(i) * 30}
-            r={2 + Math.random() * 2}
+            r={particle.r}
             fill={colors.primary}
             className="dash-particle"
             style={{ animationDelay: `${i * 0.1}s` }}
@@ -180,4 +176,3 @@ export function PulseSVG({ colors, className, size }: HeroSVGInternalProps) {
     </svg>
   );
 }
-

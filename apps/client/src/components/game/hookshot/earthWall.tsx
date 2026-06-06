@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type EarthWallData } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady } from '../../../hooks/usePhysics';
+import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { 
   SHARED_GEOMETRIES, 
   EARTH_COLORS,
@@ -159,6 +160,8 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   const hookProgressRef = useRef(0);
   const lastSegmentDistRef = useRef(0);
   const hookGroundYRef = useRef(wall.startPosition.y); // Track hook's ground level
+  const hasStartImpactRef = useRef(false);
+  const hasEndImpactRef = useRef(false);
 
   // Use ref for wall segments to avoid setState in useFrame (prevents 60fps re-renders)
   const wallSegmentsRef = useRef<{ x: number; y: number; z: number; height: number; time: number }[]>([]);
@@ -198,6 +201,14 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
       y: hookGroundYRef.current,
       z: hookZ,
     };
+
+    if (!hasStartImpactRef.current) {
+      hasStartImpactRef.current = true;
+      triggerTerrainImpact('earth_wall', hookPos, {
+        direction: wall.direction,
+        scale: 0.9,
+      });
+    }
     
     // Hook is still traveling
     if (hookProgressRef.current < wall.maxDistance) {
@@ -249,6 +260,13 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
     } else {
       // Hook reached max distance - hide it
       hookRef.current.visible = false;
+      if (!hasEndImpactRef.current) {
+        hasEndImpactRef.current = true;
+        triggerTerrainImpact('earth_wall', hookPos, {
+          direction: wall.direction,
+          scale: 1.1,
+        });
+      }
     }
   });
   
@@ -315,4 +333,3 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   // Custom comparison: only re-render if wall.id or startTime changes
   return prev.wall.id === next.wall.id && prev.wall.startTime === next.wall.startTime;
 });
-

@@ -1,4 +1,4 @@
-import { TronMap } from './maps/tron';
+import { VoxelMap } from './procedural';
 
 // Fallback floor size (invisible, catches players who fall through)
 const FALLBACK_FLOOR_SIZE = 500;
@@ -6,8 +6,7 @@ const FALLBACK_FLOOR_SIZE = 500;
 export function VoxelWorld() {
   return (
     <group>
-      {/* Tron GLB map */}
-      <TronMap />
+      <VoxelMap />
 
       {/* Fallback ground plane far below the map - invisible safety net */}
       <Ground />
@@ -28,4 +27,3 @@ function Ground() {
     </mesh>
   );
 }
-

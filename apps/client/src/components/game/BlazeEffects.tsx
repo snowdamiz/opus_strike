@@ -6,7 +6,7 @@ import {
   RocketJumpExplosions,
   AirStrikeEffects,
   BombEffect,
-  JetpackEffect,
+  FlamethrowerEffect,
 } from './blaze';
 
 // Re-export trigger functions and targeting indicators for external use
@@ -22,11 +22,10 @@ export {
 // ============================================================================
 
 export function BlazeEffectsManager() {
-  const { bombs, localPlayer, jetpackActive } = useGameStore(
+  const { bombs, flamethrowerActive } = useGameStore(
     useShallow(state => ({
       bombs: state.bombs,
-      localPlayer: state.localPlayer,
-      jetpackActive: state.jetpackActive,
+      flamethrowerActive: state.flamethrowerActive,
     }))
   );
   
@@ -54,8 +53,10 @@ export function BlazeEffectsManager() {
       {/* Air strikes */}
       <AirStrikeEffects />
       
-      {localPlayer && jetpackActive && (
-        <JetpackEffect isActive={true} playerPosition={localPlayer.position} />
+      {flamethrowerActive && (
+        <FlamethrowerEffect
+          isActive={true}
+        />
       )}
     </group>
   );

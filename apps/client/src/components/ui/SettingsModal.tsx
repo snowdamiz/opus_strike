@@ -142,14 +142,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               <p className="text-white/40 text-sm font-body">Configure your game experience</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-all"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+ <button
+ onClick={onClose}
+ className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 "
+ >
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+ </svg>
+ </button>
         </div>
 
         {/* Content */}
@@ -157,18 +157,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           {/* Sidebar */}
           <div className="w-36 lg:w-40 xl:w-48 border-r border-white/5 p-2 lg:p-3 space-y-1">
             {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-display text-sm transition-all ${
-                  activeTab === tab.id
-                    ? 'bg-orange-500/20 text-orange-400'
-                    : 'text-white/50 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                {tab.icon}
-                {tab.label.toUpperCase()}
-              </button>
+ <button
+ key={tab.id}
+ onClick={() => setActiveTab(tab.id)}
+ className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-display text-sm ${
+ activeTab === tab.id
+ ? 'bg-orange-500/20 text-orange-400'
+ : 'text-white/50 hover:text-white hover:bg-white/5'
+ }`}
+ >
+ {tab.icon}
+ {tab.label.toUpperCase()}
+ </button>
             ))}
           </div>
 
@@ -369,30 +369,30 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-white/5 bg-strike-elevated/50">
-          <button
-            onClick={handleReset}
-            className="px-4 py-2 rounded-lg text-white/50 font-display hover:text-white hover:bg-white/5 transition-all"
-          >
-            RESET DEFAULTS
-          </button>
+ <button
+ onClick={handleReset}
+ className="px-4 py-2 rounded-lg text-white/50 font-display hover:text-white hover:bg-white/5 "
+ >
+ RESET DEFAULTS
+ </button>
           <div className="flex items-center gap-3">
-            <button
-              onClick={onClose}
-              className="px-6 py-2 rounded-lg bg-white/5 text-white/70 font-display hover:bg-white/10 hover:text-white transition-all"
-            >
-              CANCEL
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!hasChanges}
-              className={`px-6 py-2 rounded-lg font-display transition-all ${
-                hasChanges
-                  ? 'bg-orange-500 text-white hover:bg-orange-400'
-                  : 'bg-white/5 text-white/30 cursor-not-allowed'
-              }`}
-            >
-              SAVE CHANGES
-            </button>
+ <button
+ onClick={onClose}
+ className="px-6 py-2 rounded-lg bg-white/5 text-white/70 font-display hover:bg-white/10 hover:text-white "
+ >
+ CANCEL
+ </button>
+ <button
+ onClick={handleSave}
+ disabled={!hasChanges}
+ className={`px-6 py-2 rounded-lg font-display ${
+ hasChanges
+ ? 'bg-orange-500 text-white hover:bg-orange-400'
+ : 'bg-white/5 text-white/30 cursor-not-allowed'
+ }`}
+ >
+ SAVE CHANGES
+ </button>
           </div>
         </div>
       </div>
@@ -420,18 +420,18 @@ function SettingRow({ label, description, children }: {
 // Toggle Input Component
 function ToggleInput({ value, onChange }: { value: boolean; onChange: (value: boolean) => void }) {
   return (
-    <button
-      onClick={() => onChange(!value)}
-      className={`w-12 h-6 rounded-full transition-all relative ${
-        value ? 'bg-orange-500' : 'bg-white/20'
-      }`}
-    >
-      <div
-        className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
-          value ? 'left-7' : 'left-1'
-        }`}
-      />
-    </button>
+ <button
+ onClick={() => onChange(!value)}
+ className={`w-12 h-6 rounded-full relative ${
+ value ? 'bg-orange-500' : 'bg-white/20'
+ }`}
+ >
+ <div
+ className={`absolute top-1 w-4 h-4 rounded-full bg-white ${
+ value ? 'left-7' : 'left-1'
+ }`}
+ />
+ </button>
   );
 }
 

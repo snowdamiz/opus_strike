@@ -63,7 +63,7 @@ export function Lobby() {
     setAppPhase,
   } = useGameStore();
   const { leaveLobby, setLobbyReady, setLobbyTeam, startGame, kickPlayer } = useNetwork();
-  const { playButtonHover, playButtonClick } = useUISounds();
+  const { playButtonClick } = useUISounds();
   const [pulseReady, setPulseReady] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
@@ -113,9 +113,9 @@ export function Lobby() {
     <div className="w-full h-full relative overflow-hidden bg-strike-bg">
       {/* Cinematic Background */}
       <div className="absolute inset-0">
-        {/* Background image with blur and pan */}
+        {/* Background image */}
         <div 
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat blur-[2px] animate-bg-pan scale-110"
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{ backgroundImage: 'url(/bg.jpg)' }}
         />
         
@@ -124,13 +124,13 @@ export function Lobby() {
         
         {/* Faction color glows */}
         <div 
-          className="absolute top-0 left-0 w-1/2 h-full opacity-25 transition-opacity duration-1000"
+          className="absolute top-0 left-0 w-1/2 h-full opacity-25"
           style={{ 
             background: `radial-gradient(ellipse 70% 50% at 20% 50%, ${FACTIONS.red.glowColor} 0%, transparent 70%)`
           }}
         />
         <div 
-          className="absolute top-0 right-0 w-1/2 h-full opacity-25 transition-opacity duration-1000"
+          className="absolute top-0 right-0 w-1/2 h-full opacity-25"
           style={{ 
             background: `radial-gradient(ellipse 70% 50% at 80% 50%, ${FACTIONS.blue.glowColor} 0%, transparent 70%)`
           }}
@@ -147,25 +147,6 @@ export function Lobby() {
           className="absolute inset-0 pointer-events-none"
           style={{ boxShadow: 'inset 0 0 200px 80px rgba(0,0,0,0.7)' }}
         />
-
-        {/* Floating particles */}
-        {[...Array(24)].map((_, i) => (
-          <div
-            key={i}
-            className="absolute w-1 h-1 rounded-full animate-float-particle"
-            style={{
-              left: `${5 + Math.random() * 90}%`,
-              top: `${Math.random() * 100}%`,
-              background: i % 3 === 0 
-                ? FACTIONS.red.glowColor
-                : i % 3 === 1 
-                  ? FACTIONS.blue.glowColor
-                  : 'rgba(255, 255, 255, 0.3)',
-              animationDelay: `${Math.random() * 10}s`,
-              animationDuration: `${15 + Math.random() * 10}s`,
-            }}
-          />
-        ))}
       </div>
 
       {/* Top Navigation Bar */}
@@ -173,15 +154,14 @@ export function Lobby() {
         <div className="flex items-center justify-between px-8 py-4">
           {/* Back button and lobby info */}
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => { playButtonClick(); handleBack(); }}
-              onMouseEnter={playButtonHover}
-              className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all group"
-            >
-              <svg className="w-5 h-5 transition-transform group-hover:-translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
+ <button
+ onClick={() => { playButtonClick(); handleBack(); }}
+ className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 group"
+ >
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+ </svg>
+ </button>
             
             <div className="flex items-center gap-3">
               <div className={`w-3 h-3 rounded-full transition-all ${
@@ -314,17 +294,16 @@ export function Lobby() {
                 isSelected={currentPlayer?.team === 'red'}
                 onClick={() => handleTeamChange('red')}
               />
-              <button
-                onClick={() => { playButtonClick(); handleTeamChange(''); }}
-                onMouseEnter={playButtonHover}
-                className={`flex-1 py-3 rounded-lg font-display text-xs transition-all ${
-                  !currentPlayer?.team
-                    ? 'bg-white/15 text-white ring-1 ring-white/30' 
-                    : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/60'
-                }`}
-              >
-                AUTO
-              </button>
+ <button
+ onClick={() => { playButtonClick(); handleTeamChange(''); }}
+ className={`flex-1 py-3 rounded-lg font-display text-xs ${
+ !currentPlayer?.team
+ ? 'bg-white/15 text-white ring-1 ring-white/30'
+ : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/60'
+ }`}
+ >
+ AUTO
+ </button>
               <FactionButton
                 faction={FACTIONS.blue}
                 isSelected={currentPlayer?.team === 'blue'}
@@ -377,86 +356,83 @@ export function Lobby() {
             <div className="space-y-2.5">
               {/* Ready / Start Button */}
               {isLobbyHost ? (
-                <button
-                  onClick={() => { playButtonClick(); handleStartGame(); }}
-                  onMouseEnter={playButtonHover}
-                  disabled={!canStart || isLoading || countdown !== null}
-                  className={`w-full py-4 rounded-lg font-display text-base transition-all relative overflow-hidden group ${
-                    canStart 
-                      ? 'text-white hover:scale-[1.01] active:scale-[0.99]' 
-                      : 'bg-white/5 text-white/25 cursor-not-allowed'
-                  }`}
-                  style={canStart ? {
-                    background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
-                    boxShadow: '0 0 40px rgba(34,197,94,0.3)',
-                  } : undefined}
-                >
-                  <span className="relative flex items-center justify-center gap-2">
-                    {countdown !== null ? (
-                      <span className="text-3xl font-bold animate-pulse">{countdown}</span>
-                    ) : isLoading ? (
-                      <>
-                        <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        INITIATING...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                        COMMENCE BATTLE
-                      </>
-                    )}
-                  </span>
-                </button>
+ <button
+ onClick={() => { playButtonClick(); handleStartGame(); }}
+ disabled={!canStart || isLoading || countdown !== null}
+ className={`w-full py-4 rounded-lg font-display text-base relative overflow-hidden group ${
+ canStart
+ ? 'text-white'
+ : 'bg-white/5 text-white/25 cursor-not-allowed'
+ }`}
+ style={canStart ? {
+ background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+ boxShadow: '0 0 40px rgba(34,197,94,0.3)',
+ } : undefined}
+ >
+ <span className="relative flex items-center justify-center gap-2">
+ {countdown !== null ? (
+ <span className="text-3xl font-bold">{countdown}</span>
+ ) : isLoading ? (
+ <>
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24">
+ <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+ <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+ </svg>
+ INITIATING...
+ </>
+ ) : (
+ <>
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+ </svg>
+ COMMENCE BATTLE
+ </>
+ )}
+ </span>
+ </button>
               ) : (
-                <button
-                  onClick={() => { playButtonClick(); handleToggleReady(); }}
-                  onMouseEnter={playButtonHover}
-                  className="w-full py-4 rounded-lg font-display text-base transition-all relative overflow-hidden group hover:scale-[1.01] active:scale-[0.99] text-white"
-                  style={{
-                    background: isReady
-                      ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
-                      : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
-                    boxShadow: isReady
-                      ? '0 0 40px rgba(34,197,94,0.3)'
-                      : '0 0 40px rgba(249,115,22,0.3)',
-                  }}
-                >
-                  <span className="relative flex items-center justify-center gap-2">
-                    {isReady ? (
-                      <>
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                        </svg>
-                        BATTLE READY!
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                        </svg>
-                        READY FOR COMBAT
-                      </>
-                    )}
-                  </span>
-                </button>
+ <button
+ onClick={() => { playButtonClick(); handleToggleReady(); }}
+ className="w-full py-4 rounded-lg font-display text-base relative overflow-hidden group text-white"
+ style={{
+ background: isReady
+ ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
+ : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
+ boxShadow: isReady
+ ? '0 0 40px rgba(34,197,94,0.3)'
+ : '0 0 40px rgba(249,115,22,0.3)',
+ }}
+ >
+ <span className="relative flex items-center justify-center gap-2">
+ {isReady ? (
+ <>
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+ </svg>
+ BATTLE READY!
+ </>
+ ) : (
+ <>
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+ </svg>
+ READY FOR COMBAT
+ </>
+ )}
+ </span>
+ </button>
               )}
 
               {/* Leave Lobby Button */}
-              <button
-                onClick={() => { playButtonClick(); leaveLobby(); }}
-                onMouseEnter={playButtonHover}
-                className="w-full py-2.5 rounded-lg font-display text-xs text-white/40 hover:bg-red-500/10 hover:text-red-400 transition-all flex items-center justify-center gap-1.5"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                Abandon Mission
-              </button>
+ <button
+ onClick={() => { playButtonClick(); leaveLobby(); }}
+ className="w-full py-2.5 rounded-lg font-display text-xs text-white/40 hover:bg-red-500/10 hover:text-red-400 flex items-center justify-center gap-1.5"
+ >
+ <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+ </svg>
+ Abandon Mission
+ </button>
             </div>
           </div>
 
@@ -561,26 +537,25 @@ interface FactionButtonProps {
 
 function FactionButton({ faction, isSelected, onClick }: FactionButtonProps) {
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
-  const { playButtonHover, playButtonClick } = useUISounds();
+  const { playButtonClick } = useUISounds();
   
   return (
-    <button
-      onClick={() => { playButtonClick(); onClick(); }}
-      onMouseEnter={playButtonHover}
-      className={`flex-1 py-3 rounded-lg font-display text-xs transition-all flex items-center justify-center gap-1.5 ${
-        isSelected ? 'text-white' : 'hover:brightness-125'
-      }`}
-      style={isSelected ? {
-        background: `linear-gradient(135deg, ${faction.primaryColor}, ${faction.secondaryColor})`,
-        boxShadow: `0 0 30px ${faction.glowColor}`,
-      } : {
-        background: `${faction.primaryColor}15`,
-        color: `${faction.primaryColor}aa`,
-      }}
-    >
-      <Icon className="w-3.5 h-3.5" />
-      {faction.name}
-    </button>
+ <button
+ onClick={() => { playButtonClick(); onClick(); }}
+ className={`flex-1 py-3 rounded-lg font-display text-xs flex items-center justify-center gap-1.5 ${
+ isSelected ? 'text-white' : 'hover:text-white'
+ }`}
+ style={isSelected ? {
+ background: `linear-gradient(135deg, ${faction.primaryColor}, ${faction.secondaryColor})`,
+ boxShadow: `0 0 30px ${faction.glowColor}`,
+ } : {
+ background: `${faction.primaryColor}15`,
+ color: `${faction.primaryColor}aa`,
+ }}
+ >
+ <Icon className="w-3.5 h-3.5" />
+ {faction.name}
+ </button>
   );
 }
 
@@ -720,7 +695,7 @@ interface PlayerCardProps {
 function PlayerCard({ player, isCurrentPlayer, isLobbyHost, onKick, faction, compact }: PlayerCardProps) {
   const color = faction?.primaryColor || '#f97316';
   const secondaryColor = faction?.secondaryColor || '#fbbf24';
-  const { playButtonHover, playButtonClick } = useUISounds();
+  const { playButtonClick } = useUISounds();
 
   return (
     <div 
@@ -783,15 +758,14 @@ function PlayerCard({ player, isCurrentPlayer, isLobbyHost, onKick, faction, com
 
       {/* Kick Button */}
       {isLobbyHost && !isCurrentPlayer && !player.isHost && (
-        <button
-          onClick={() => { playButtonClick(); onKick(); }}
-          onMouseEnter={playButtonHover}
-          className="w-8 h-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20 transition-all"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+ <button
+ onClick={() => { playButtonClick(); onKick(); }}
+ className="w-8 h-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20"
+ >
+ <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+ </svg>
+ </button>
       )}
     </div>
   );

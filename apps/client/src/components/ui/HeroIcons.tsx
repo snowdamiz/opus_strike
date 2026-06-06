@@ -231,7 +231,7 @@ export type AbilityIconType =
   | 'grapple' 
   | 'swing' 
   | 'zipline'
-  | 'jetpack' 
+  | 'flamethrower'
   | 'rocketjump' 
   | 'airstrike'
   | 'iceslide' 
@@ -262,8 +262,8 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <SwingIcon size={size} color={color} className={className} />;
     case 'zipline':
       return <ZiplineIcon size={size} color={color} className={className} />;
-    case 'jetpack':
-      return <JetpackIcon size={size} color={color} className={className} />;
+    case 'flamethrower':
+      return <FlamethrowerIcon size={size} color={color} className={className} />;
     case 'rocketjump':
       return <RocketjumpIcon size={size} color={color} className={className} />;
     case 'airstrike':
@@ -304,7 +304,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     'hookshot_grapple': 'grapple',
     'hookshot_swing': 'swing',
     'hookshot_grapple_trap': 'grapple', // Uses grapple icon for trap ultimate
-    'blaze_jetpack': 'jetpack',
+    'blaze_flamethrower': 'flamethrower',
     'blaze_rocketjump': 'rocketjump',
     'blaze_airstrike': 'airstrike',
     'glacier_iceslide': 'iceslide',
@@ -398,13 +398,15 @@ function ZiplineIcon({ size, color, className }: IconProps) {
   );
 }
 
-// Jetpack - Rocket flames
-function JetpackIcon({ size, color, className }: IconProps) {
+// Flamethrower - Forward flame stream
+function FlamethrowerIcon({ size, color, className }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <rect x="8" y="4" width="8" height="10" rx="2" fill={color} />
-      <path d="M9 14L8 20L10 18L12 21L14 18L16 20L15 14" fill={color} />
-      <rect x="10" y="6" width="4" height="4" rx="1" fill="#0a0a0f" opacity="0.3" />
+      <path d="M3 13L8 10V14L3 16V13Z" fill={color} opacity="0.75" />
+      <rect x="6" y="9" width="7" height="6" rx="2" fill={color} />
+      <path d="M12 12C14 7 19 5 21 5C20 7 21 9 18 11C21 12 21 15 20 17C18 15 14 16 12 12Z" fill={color} />
+      <path d="M14 12C15.5 9.5 18 8.5 19.5 8.5C18.8 10 19 11 17.2 12C19 13 19 14.3 18.5 15C17 14 15.3 14.2 14 12Z" fill="#fef3c7" opacity="0.9" />
+      <circle cx="4" cy="10" r="1" fill={color} opacity="0.5" />
     </svg>
   );
 }
@@ -568,4 +570,3 @@ function UltimateIcon({ size, color, className }: IconProps) {
     </svg>
   );
 }
-

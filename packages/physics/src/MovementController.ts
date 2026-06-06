@@ -130,7 +130,7 @@ export class MovementController {
       this.movementState.wallRunSide = parkourResult.wallRunSide;
     }
 
-    // 3. Aerial movement (grappling, jetpack, gliding)
+    // 3. Aerial movement (grappling, gliding)
     if (this.canUseAerial()) {
       const aerialResult = this.aerialMovement.update({
         position: this.position,
@@ -232,4 +232,3 @@ export class MovementController {
     this.abilityMovement.executeBlink(targetPosition);
   }
 }
-

@@ -8,8 +8,19 @@ import {
   TICK_INTERVAL_MS,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
+  GRAVITY,
   getHeroStats,
-  SCI_FI_CTF_POSITIONS,
+  createRandomSeed,
+  getProceduralCTFPositions,
+  PROCEDURAL_MAP_ORIGIN,
+  PROCEDURAL_MAP_WORLD_SIZE,
+  BLAZE_FLAMETHROWER_MAX_FUEL,
+  BLAZE_FLAMETHROWER_FUEL_DRAIN,
+  BLAZE_FLAMETHROWER_FUEL_REGEN,
+  BLAZE_FLAMETHROWER_RANGE,
+  BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
+  BLAZE_FLAMETHROWER_DAMAGE,
+  BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
 } from '@voxel-strike/shared';
 import type { 
   HeroId, 
@@ -45,6 +56,11 @@ interface JoinOptions {
 
 // Track last ability press state to detect key press (not hold)
 const playerAbilityPressState = new Map<string, { ability1: boolean; ability2: boolean; ultimate: boolean }>();
+const MAP_MIN_X = PROCEDURAL_MAP_ORIGIN.x;
+const MAP_MAX_X = PROCEDURAL_MAP_ORIGIN.x + PROCEDURAL_MAP_WORLD_SIZE.x;
+const MAP_MIN_Z = PROCEDURAL_MAP_ORIGIN.z;
+const MAP_MAX_Z = PROCEDURAL_MAP_ORIGIN.z + PROCEDURAL_MAP_WORLD_SIZE.z;
+const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 
 export class GameRoom extends Room<GameState> {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -55,6 +71,8 @@ export class GameRoom extends Room<GameState> {
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
   private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
+  private authoritativePositionUntil: Map<string, number> = new Map();
+  private flamethrowerLastDamageTick: Map<string, number> = new Map();
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -69,6 +87,8 @@ export class GameRoom extends Room<GameState> {
     this.setState(new GameState());
     this.state.roomId = this.roomId;
     this.state.config = this.config;
+    this.state.mapSeed = createRandomSeed();
+    console.log(`[GameRoom] Map seed: ${this.state.mapSeed}`);
 
     // Set up tick loop
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
@@ -176,10 +196,7 @@ export class GameRoom extends Room<GameState> {
     player.state = 'selecting';
 
     // Set spawn position
-    const spawn = this.getSpawnPosition(player.team as Team);
-    player.position.x = spawn.x;
-    player.position.y = spawn.y;
-    player.position.z = spawn.z;
+    this.placePlayerAtSpawn(player);
 
     this.state.players.set(client.sessionId, player);
 
@@ -216,6 +233,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.delete(client.sessionId);
     playerAbilityPressState.delete(client.sessionId);
+    this.authoritativePositionUntil.delete(client.sessionId);
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -317,6 +335,9 @@ export class GameRoom extends Room<GameState> {
     // Update void zones (damage enemies inside)
     this.updateVoidZones(now);
 
+    // Update held Blaze flamethrowers
+    this.updateBlazeFlamethrowers(now, dt);
+
     // Update physics simulation (simplified)
     this.updatePhysics();
 
@@ -341,7 +362,7 @@ export class GameRoom extends Room<GameState> {
         };
       });
 
-      playerStates.push({
+    playerStates.push({
         id,
         name: player.name,
         team: player.team,
@@ -368,7 +389,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     if (playerStates.length > 0) {
-      this.broadcast('playerStates', { players: playerStates });
+      this.broadcast('playerStates', { players: playerStates, mapSeed: this.state.mapSeed });
     }
   }
 
@@ -395,13 +416,15 @@ export class GameRoom extends Room<GameState> {
     player.lookYaw = input.lookYaw;
     player.lookPitch = input.lookPitch;
 
-    // Use client-reported position for now (trust client for smoother sync)
-    if (input.position) {
-      player.position.x = Math.max(-95, Math.min(95, input.position.x));
+    const shouldAcceptClientPosition = Date.now() >= (this.authoritativePositionUntil.get(client.sessionId) ?? 0);
+
+    // Use client-reported position after server-side spawn placement has had time to sync.
+    if (input.position && shouldAcceptClientPosition) {
+      player.position.x = Math.max(MAP_MIN_X, Math.min(MAP_MAX_X, input.position.x));
       player.position.y = Math.max(-10, Math.min(100, input.position.y));
-      player.position.z = Math.max(-95, Math.min(95, input.position.z));
+      player.position.z = Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, input.position.z));
     }
-    if (input.velocity) {
+    if (input.velocity && shouldAcceptClientPosition) {
       player.velocity.x = input.velocity.x;
       player.velocity.y = input.velocity.y;
       player.velocity.z = input.velocity.z;
@@ -466,6 +489,10 @@ export class GameRoom extends Room<GameState> {
     player.maxHealth = heroDef.stats.maxHealth;
     player.health = player.maxHealth;
     player.ultimateCharge = 0;
+    if (heroId === 'blaze') {
+      player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
+      player.movement.isJetpacking = false;
+    }
 
     // Initialize abilities for this hero
     initializePlayerAbilities(player, heroId);
@@ -488,11 +515,7 @@ export class GameRoom extends Room<GameState> {
 
     player.team = team;
     
-    // Update spawn position
-    const spawn = this.getSpawnPosition(team);
-    player.position.x = spawn.x;
-    player.position.y = spawn.y;
-    player.position.z = spawn.z;
+    this.placePlayerAtSpawn(player);
   }
 
   private handleReady(client: Client, ready: boolean) {
@@ -595,6 +618,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcast('phaseChange', {
       phase: 'hero_select',
       endTime: this.state.phaseEndTime,
+      mapSeed: this.state.mapSeed,
     });
   }
 
@@ -605,15 +629,13 @@ export class GameRoom extends Room<GameState> {
     // Set all players to spawning
     this.state.players.forEach(player => {
       player.state = 'spawning';
-      const spawn = this.getSpawnPosition(player.team as Team);
-      player.position.x = spawn.x;
-      player.position.y = spawn.y;
-      player.position.z = spawn.z;
+      this.placePlayerAtSpawn(player);
     });
 
     this.broadcast('phaseChange', {
       phase: 'countdown',
       endTime: this.state.phaseEndTime,
+      mapSeed: this.state.mapSeed,
     });
   }
 
@@ -628,6 +650,11 @@ export class GameRoom extends Room<GameState> {
       player.state = 'alive';
       player.health = player.maxHealth;
       player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
+      this.placePlayerAtSpawn(player);
+      if (player.heroId === 'blaze') {
+        player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
+        player.movement.isJetpacking = false;
+      }
       
       // Reset ability cooldowns
       resetAbilityCooldowns(player);
@@ -639,6 +666,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcast('phaseChange', {
       phase: 'playing',
       endTime: Date.now() + this.config.roundTimeSeconds * 1000,
+      mapSeed: this.state.mapSeed,
     });
   }
 
@@ -674,6 +702,7 @@ export class GameRoom extends Room<GameState> {
     // Reset room after delay
     setTimeout(() => {
       this.state.phase = 'waiting';
+      this.state.mapSeed = createRandomSeed();
       this.state.redTeam.score = 0;
       this.state.blueTeam.score = 0;
       this.resetFlags();
@@ -694,26 +723,26 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetFlags() {
-    // Red flag at red base - adjusted for new map
-    this.state.redTeam.flag.position.x = -20;
-    this.state.redTeam.flag.position.y = 10;
-    this.state.redTeam.flag.position.z = 0;
+    const positions = getProceduralCTFPositions(this.state.mapSeed);
+
+    this.state.redTeam.flag.position.x = positions.flagZones.red.x;
+    this.state.redTeam.flag.position.y = positions.flagZones.red.y;
+    this.state.redTeam.flag.position.z = positions.flagZones.red.z;
     this.state.redTeam.flag.isAtBase = true;
     this.state.redTeam.flag.carrierId = '';
 
-    this.state.redTeam.flag.basePosition.x = -20;
-    this.state.redTeam.flag.basePosition.y = 10;
-    this.state.redTeam.flag.basePosition.z = 0;
+    this.state.redTeam.flag.basePosition.x = positions.flagZones.red.x;
+    this.state.redTeam.flag.basePosition.y = positions.flagZones.red.y;
+    this.state.redTeam.flag.basePosition.z = positions.flagZones.red.z;
 
-    // Blue flag at blue base - adjusted for new map
-    this.state.blueTeam.flag.position.x = 20;
-    this.state.blueTeam.flag.position.y = 10;
-    this.state.blueTeam.flag.position.z = 0;
+    this.state.blueTeam.flag.position.x = positions.flagZones.blue.x;
+    this.state.blueTeam.flag.position.y = positions.flagZones.blue.y;
+    this.state.blueTeam.flag.position.z = positions.flagZones.blue.z;
     this.state.blueTeam.flag.isAtBase = true;
     this.state.blueTeam.flag.carrierId = '';
-    this.state.blueTeam.flag.basePosition.x = 20;
-    this.state.blueTeam.flag.basePosition.y = 10;
-    this.state.blueTeam.flag.basePosition.z = 0;
+    this.state.blueTeam.flag.basePosition.x = positions.flagZones.blue.x;
+    this.state.blueTeam.flag.basePosition.y = positions.flagZones.blue.y;
+    this.state.blueTeam.flag.basePosition.z = positions.flagZones.blue.z;
   }
 
   private updateVoidZones(now: number) {
@@ -768,6 +797,97 @@ export class GameRoom extends Room<GameState> {
         }
       });
     }
+  }
+
+  private updateBlazeFlamethrowers(now: number, dt: number) {
+    this.state.players.forEach((player) => {
+      if (player.heroId !== 'blaze') return;
+
+      player.movement.isJetpacking = false;
+
+      const isFiring = player.state === 'alive' && Boolean(player.lastInput?.ability1);
+      if (isFiring && player.movement.jetpackFuel > 0) {
+        player.movement.jetpackFuel = Math.max(
+          0,
+          player.movement.jetpackFuel - BLAZE_FLAMETHROWER_FUEL_DRAIN * dt
+        );
+        this.applyFlamethrowerDamage(player, now);
+        return;
+      }
+
+      if (player.movement.jetpackFuel < BLAZE_FLAMETHROWER_MAX_FUEL) {
+        player.movement.jetpackFuel = Math.min(
+          BLAZE_FLAMETHROWER_MAX_FUEL,
+          player.movement.jetpackFuel + BLAZE_FLAMETHROWER_FUEL_REGEN * dt
+        );
+      }
+    });
+  }
+
+  private applyFlamethrowerDamage(source: Player, now: number) {
+    const pitch = source.lookPitch;
+    const cosPitch = Math.cos(pitch);
+    const forward = {
+      x: -Math.sin(source.lookYaw) * cosPitch,
+      y: Math.sin(pitch),
+      z: -Math.cos(source.lookYaw) * cosPitch,
+    };
+    const right = {
+      x: Math.cos(source.lookYaw),
+      y: 0,
+      z: -Math.sin(source.lookYaw),
+    };
+
+    const origin = {
+      x: source.position.x + forward.x * 0.7 + right.x * 0.22,
+      y: source.position.y + 0.5 + forward.y * 0.7,
+      z: source.position.z + forward.z * 0.7 + right.z * 0.22,
+    };
+
+    const rangeSq = BLAZE_FLAMETHROWER_RANGE * BLAZE_FLAMETHROWER_RANGE;
+
+    this.state.players.forEach((target) => {
+      if (target.state !== 'alive') return;
+      if (target.id === source.id) return;
+      if (target.team === source.team) return;
+      if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) return;
+
+      const toTarget = {
+        x: target.position.x - origin.x,
+        y: target.position.y + 0.9 - origin.y,
+        z: target.position.z - origin.z,
+      };
+      const distSq = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
+      if (distSq > rangeSq || distSq <= 0.0001) return;
+
+      const distance = Math.sqrt(distSq);
+      const dot = (
+        toTarget.x * forward.x +
+        toTarget.y * forward.y +
+        toTarget.z * forward.z
+      ) / distance;
+      if (dot < BLAZE_FLAMETHROWER_CONE_DOT) return;
+
+      const tickKey = `${source.id}:${target.id}`;
+      const lastDamage = this.flamethrowerLastDamageTick.get(tickKey) || 0;
+      if (now - lastDamage < BLAZE_FLAMETHROWER_DAMAGE_INTERVAL) return;
+
+      const falloff = 1 - (distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
+      const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));
+      target.health = Math.max(0, target.health - damage);
+      this.flamethrowerLastDamageTick.set(tickKey, now);
+
+      this.broadcast('playerDamaged', {
+        targetId: target.id,
+        damage,
+        sourceId: source.id,
+        damageType: 'flamethrower',
+      });
+
+      if (target.health <= 0) {
+        this.handlePlayerDeath(target, source.id);
+      }
+    });
   }
 
   private handlePlayerDeath(player: Player, killerId: string) {
@@ -869,13 +989,14 @@ export class GameRoom extends Room<GameState> {
     player.respawnTime = 0;
     player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
 
-    const spawn = this.getSpawnPosition(player.team as Team);
-    player.position.x = spawn.x;
-    player.position.y = spawn.y;
-    player.position.z = spawn.z;
+    this.placePlayerAtSpawn(player);
     player.velocity.x = 0;
     player.velocity.y = 0;
     player.velocity.z = 0;
+    if (player.heroId === 'blaze') {
+      player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
+      player.movement.isJetpacking = false;
+    }
 
     // Reset ability cooldowns on respawn
     resetAbilityCooldowns(player);
@@ -939,8 +1060,8 @@ export class GameRoom extends Room<GameState> {
       player.velocity.x = moveX * speed;
       player.velocity.z = moveZ * speed;
 
-      // Apply gravity (reduced for floatier feel)
-      player.velocity.y -= 20 * dt;
+      // Apply gravity
+      player.velocity.y += GRAVITY * dt;
 
       // Update position
       player.position.x += player.velocity.x * dt;
@@ -950,16 +1071,12 @@ export class GameRoom extends Room<GameState> {
       // Ground collision - basic fallback (client handles proper terrain collision)
       if (player.position.y < -10) {
         // Respawn if fallen off the map
-        const spawn = this.getSpawnPosition(player.team as Team);
-        player.position.x = spawn.x;
-        player.position.y = spawn.y;
-        player.position.z = spawn.z;
+        this.placePlayerAtSpawn(player);
         player.velocity.y = 0;
       }
 
-      // Clamp to larger bounds for new map
-      player.position.x = Math.max(-95, Math.min(95, player.position.x));
-      player.position.z = Math.max(-95, Math.min(95, player.position.z));
+      player.position.x = Math.max(MAP_MIN_X, Math.min(MAP_MAX_X, player.position.x));
+      player.position.z = Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, player.position.z));
     });
   }
 
@@ -989,8 +1106,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getSpawnPosition(team: Team): { x: number; y: number; z: number } {
-    // Use configured spawn positions from shared map config
-    const spawnPoints = SCI_FI_CTF_POSITIONS.spawnPoints[team];
+    const spawnPoints = getProceduralCTFPositions(this.state.mapSeed).spawnPoints[team];
     const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
 
     return {
@@ -998,6 +1114,17 @@ export class GameRoom extends Room<GameState> {
       y: spawn.y,
       z: spawn.z,
     };
+  }
+
+  private placePlayerAtSpawn(player: Player): void {
+    const spawn = this.getSpawnPosition(player.team as Team);
+    player.position.x = spawn.x;
+    player.position.y = spawn.y;
+    player.position.z = spawn.z;
+    player.velocity.x = 0;
+    player.velocity.y = 0;
+    player.velocity.z = 0;
+    this.authoritativePositionUntil.set(player.id, Date.now() + 1200);
   }
 
   // ===== NPC/BOT HANDLING =====

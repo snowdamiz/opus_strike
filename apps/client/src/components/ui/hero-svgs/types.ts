@@ -4,12 +4,14 @@ export interface HeroSVGInternalProps {
   colors: { primary: string; secondary: string; glow: string };
   className: string;
   size: number;
+  animated?: boolean;
 }
 
 export interface HeroSVGProps {
   heroId: HeroId;
   className?: string;
   size?: number;
+  animated?: boolean;
 }
 
 export const HERO_COLORS: Record<HeroId, { primary: string; secondary: string; glow: string }> = {
@@ -20,4 +22,3 @@ export const HERO_COLORS: Record<HeroId, { primary: string; secondary: string; g
   pulse: { primary: '#22c55e', secondary: '#16a34a', glow: 'rgba(34, 197, 94, 0.6)' },
   sentinel: { primary: '#eab308', secondary: '#ca8a04', glow: 'rgba(234, 179, 8, 0.6)' },
 };
-

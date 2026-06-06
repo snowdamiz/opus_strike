@@ -56,7 +56,7 @@ const HERO_COLORS: Record<HeroId, string> = {
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
   const { fetchLobbies, createLobby, joinLobby } = useNetwork();
-  const { playButtonHover, playButtonClick } = useUISounds();
+  const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
     isConnected,
@@ -184,17 +184,6 @@ export function MainLobby() {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
 
-  // Cycle featured hero for visual interest (auto-rotate)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const heroes = ALL_HERO_IDS;
-      const currentIndex = heroes.indexOf(featuredHero);
-      const nextIndex = (currentIndex + 1) % heroes.length;
-      setFeaturedHero(heroes[nextIndex]);
-    }, 8000);
-    return () => clearInterval(interval);
-  }, [featuredHero]);
-
   // Manual carousel navigation
   const handlePrevHero = () => {
     const heroes = ALL_HERO_IDS;
@@ -266,9 +255,9 @@ export function MainLobby() {
     <div className="w-full h-full relative overflow-hidden bg-strike-bg">
       {/* Cinematic Background */}
       <div className="absolute inset-0">
-        {/* Background Image - blurred with slow pan for depth */}
+        {/* Background Image */}
         <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat blur-[2px] animate-bg-pan"
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
           style={{ backgroundImage: 'url(/bg.jpg)' }}
         />
 
@@ -283,15 +272,8 @@ export function MainLobby() {
           }}
         />
 
-        {/* Subtle color spots */}
-        <div className="absolute inset-0 opacity-30">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-gradient-radial from-orange-900/20 to-transparent blur-3xl" />
-          <div className="absolute bottom-1/3 right-1/3 w-80 h-80 rounded-full bg-gradient-radial from-cyan-900/20 to-transparent blur-3xl" />
-        </div>
-
         <div className="absolute inset-0 pattern-grid opacity-10" />
         <div className="absolute bottom-0 left-0 right-0 h-2/5 bg-gradient-to-t from-[#0a0a12] to-transparent" />
-        <div className="absolute inset-0 vignette-pulse" />
 
         {/* Extra vignette for edges */}
         <div
@@ -301,20 +283,6 @@ export function MainLobby() {
           }}
         />
 
-        {/* Floating particles */}
-        {[...Array(15)].map((_, i) => (
-          <div
-            key={i}
-            className="absolute w-1 h-1 rounded-full animate-float-particle"
-            style={{
-              left: `${5 + Math.random() * 90}%`,
-              top: `${Math.random() * 100}%`,
-              background: i % 2 === 0 ? 'rgba(249, 115, 22, 0.4)' : 'rgba(6, 182, 212, 0.3)',
-              animationDelay: `${Math.random() * 10}s`,
-              animationDuration: `${15 + Math.random() * 10}s`,
-            }}
-          />
-        ))}
       </div>
 
       {/* Top Navigation Bar */}
@@ -325,7 +293,7 @@ export function MainLobby() {
             <div className="flex items-center gap-3">
               {/* Logo Icon - Stylized voxel with energy bolt */}
               <div className="w-12 h-12 relative flex items-center justify-center">
-                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full drop-shadow-lg">
+                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
                   <defs>
                     {/* Cube face gradients */}
                     <linearGradient id="frontFace" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -346,24 +314,10 @@ export function MainLobby() {
                       <stop offset="50%" stopColor="#fde047" />
                       <stop offset="100%" stopColor="#f59e0b" />
                     </linearGradient>
-                    {/* Glow filter */}
-                    <filter id="boltGlow" x="-50%" y="-50%" width="200%" height="200%">
-                      <feGaussianBlur stdDeviation="2" result="blur" />
-                      <feFlood floodColor="#fbbf24" floodOpacity="0.8" />
-                      <feComposite in2="blur" operator="in" />
-                      <feMerge>
-                        <feMergeNode />
-                        <feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                    {/* Drop shadow for cube */}
-                    <filter id="cubeShadow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#000" floodOpacity="0.4" />
-                    </filter>
                   </defs>
 
                   {/* Isometric Cube - clean geometry */}
-                  <g filter="url(#cubeShadow)">
+                  <g>
                     {/* Left face (darker) */}
                     <path d="M24 22 L10 14 L10 30 L24 38 Z" fill="url(#sideFace)" />
                     {/* Right face (medium) */}
@@ -378,7 +332,7 @@ export function MainLobby() {
                   <path d="M10 14 L24 22 L38 14" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5" fill="none" />
 
                   {/* Lightning bolt - sharp & dynamic */}
-                  <g filter="url(#boltGlow)">
+                  <g>
                     <path
                       d="M28 2 L20 19 L26 19 L18 40 L22 40 L30 21 L24 21 L30 2 Z"
                       fill="url(#boltMain)"
@@ -403,41 +357,39 @@ export function MainLobby() {
                 </svg>
               </div>
               <div>
-                <h1 className="font-display text-xl text-white tracking-wider drop-shadow-lg">VOXEL STRIKE</h1>
+                <h1 className="font-display text-xl text-white tracking-wider">VOXEL STRIKE</h1>
                 <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
               </div>
             </div>
 
             <div className="flex items-center ml-8">
               {(['play', 'heroes', 'loadout'] as MainTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  onClick={() => { playButtonClick(); setActiveTab(tab); }}
-                  onMouseEnter={playButtonHover}
-                  className={`relative px-6 py-3 font-display text-lg tracking-wide transition-all ${activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
-                    }`}
-                >
-                  {tab.toUpperCase()}
-                  {activeTab === tab && (
-                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500" />
-                  )}
-                </button>
+ <button
+ key={tab}
+ onClick={() => { playButtonClick(); setActiveTab(tab); }}
+ className={`relative px-6 py-3 font-display text-lg tracking-wide ${activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
+ }`}
+ >
+ {tab.toUpperCase()}
+ {activeTab === tab && (
+ <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500" />
+ )}
+ </button>
               ))}
             </div>
           </div>
 
           {/* Right side controls */}
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => { playButtonClick(); setShowSettings(true); }}
-              onMouseEnter={playButtonHover}
-              className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white transition-all"
-            >
-              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
+ <button
+ onClick={() => { playButtonClick(); setShowSettings(true); }}
+ className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white"
+ >
+ <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+ </svg>
+ </button>
 
             {/* Conditional: Show sign-in button or profile card */}
             {isAuthenticated && user ? (
@@ -453,57 +405,57 @@ export function MainLobby() {
                   <p className="text-[10px] text-white/40 font-body">Level 1</p>
                 </div>
                 {/* Disconnect button on hover */}
-                <button
-                  onClick={handleDisconnect}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-white/10"
-                  title="Disconnect wallet"
-                >
-                  <svg className="w-4 h-4 text-white/40 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                  </svg>
-                </button>
+ <button
+ onClick={handleDisconnect}
+ className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/10"
+ title="Disconnect wallet"
+ >
+ <svg className="w-4 h-4 text-white/40 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+ </svg>
+ </button>
               </div>
             ) : (
-              <button
-                onClick={handleSignInClick}
-                disabled={isConnecting}
-                className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl font-display text-sm text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
-                style={{
-                  background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
-                  boxShadow: '0 0 30px rgba(153, 69, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)',
-                }}
-              >
-                {/* Button shimmer */}
-                <div
-                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-                  style={{
-                    background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
-                  }}
-                />
-                <span className="relative flex items-center gap-2">
-                  {isConnecting ? (
-                    <>
-                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      CONNECTING...
-                    </>
-                  ) : (
-                    <>
-                      <PhantomIcon className="w-5 h-5" />
-                      SIGN IN
-                    </>
-                  )}
-                </span>
-              </button>
+ <button
+ onClick={handleSignInClick}
+ disabled={isConnecting}
+ className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl font-display text-sm text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
+ style={{
+ background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
+ boxShadow: '0 0 30px rgba(153, 69, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)',
+ }}
+ >
+ {/* Button shimmer */}
+ <div
+ className="absolute inset-0 opacity-0 group-hover:opacity-100"
+ style={{
+ background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
+ }}
+ />
+ <span className="relative flex items-center gap-2">
+ {isConnecting ? (
+ <>
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24">
+ <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+ <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+ </svg>
+ CONNECTING...
+ </>
+ ) : (
+ <>
+ <PhantomIcon className="w-5 h-5" />
+ SIGN IN
+ </>
+ )}
+ </span>
+ </button>
             )}
           </div>
         </div>
       </nav>
 
       {/* Main Content Area */}
-      <div className="absolute inset-0 pt-20 pb-4 lg:pb-20 z-10">
+      <div className={`absolute inset-0 pt-20 pb-4 z-10 ${activeTab === 'play' ? 'lg:pb-20' : ''}`}>
         {activeTab === 'play' && (
           <PlayTab
             isLoading={isLoading}
@@ -619,21 +571,7 @@ function PlayTab({
   onNextHero,
   onSelectHero,
 }: PlayTabProps) {
-  const [prevHero, setPrevHero] = useState<HeroId>(featuredHero);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const { playButtonHover, playButtonClick } = useUISounds();
-
-  // Handle hero transition animation
-  useEffect(() => {
-    if (featuredHero !== prevHero) {
-      setIsTransitioning(true);
-      const timer = setTimeout(() => {
-        setPrevHero(featuredHero);
-        setIsTransitioning(false);
-      }, 300);
-      return () => clearTimeout(timer);
-    }
-  }, [featuredHero, prevHero]);
+  const { playButtonClick } = useUISounds();
 
   return (
     <div className="h-full flex items-center justify-center">
@@ -642,68 +580,54 @@ function PlayTab({
         {/* Hero Visual with Carousel Controls */}
         <div className="relative flex items-center gap-4">
           {/* Previous Arrow */}
-          <button
-            onClick={onPrevHero}
-            className="group relative w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all hover:scale-110 active:scale-95"
-            aria-label="Previous hero"
-          >
-            <svg className="w-6 h-6 transition-transform group-hover:-translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            {/* Glow effect on hover */}
-            <div
-              className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10 blur-lg"
-              style={{ background: heroColor + '30' }}
-            />
-          </button>
+ <button
+ onClick={onPrevHero}
+ className="group relative w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
+ aria-label="Previous hero"
+ >
+ <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+ </svg>
+ </button>
 
           {/* Hero Container */}
           <div className="relative">
             {/* Background glow that matches hero color */}
             <div
-              className="absolute inset-0 blur-[120px] opacity-40 transition-colors duration-1000 -z-10"
+              className="absolute inset-0 opacity-20 -z-10"
               style={{
                 background: `radial-gradient(ellipse at center, ${heroColor} 0%, transparent 60%)`,
-                transform: 'scale(2)',
+                transform: 'scale(1.4)',
               }}
             />
 
-            {/* Animated Hero SVG */}
+            {/* Hero SVG */}
             <div
-              className={`relative transition-all duration-300 hero-svg-container scale-[0.55] sm:scale-[0.6] md:scale-[0.68] lg:scale-[0.8] xl:scale-90 2xl:scale-100 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}
-              style={{
-                filter: `drop-shadow(0 0 60px ${heroColor}50)`,
-              }}
+              className="relative hero-svg-container scale-[0.55] sm:scale-[0.6] md:scale-[0.68] lg:scale-[0.8] xl:scale-90 2xl:scale-100"
             >
               <HeroSVG
-                heroId={isTransitioning ? prevHero : featuredHero}
+                heroId={featuredHero}
                 size={440}
-                className="hero-svg-enter"
               />
             </div>
           </div>
 
           {/* Next Arrow */}
-          <button
-            onClick={onNextHero}
-            className="group relative w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20 transition-all hover:scale-110 active:scale-95"
-            aria-label="Next hero"
-          >
-            <svg className="w-6 h-6 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-            {/* Glow effect on hover */}
-            <div
-              className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10 blur-lg"
-              style={{ background: heroColor + '30' }}
-            />
-          </button>
+ <button
+ onClick={onNextHero}
+ className="group relative w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
+ aria-label="Next hero"
+ >
+ <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+ </svg>
+ </button>
         </div>
 
         {/* Hero info - below the SVG with proper spacing */}
         <div className="text-center w-[240px] sm:w-[260px] md:w-[280px] lg:w-[300px] xl:w-[340px] 2xl:w-[400px] -mt-10 sm:-mt-8 md:-mt-6 lg:-mt-4 xl:-mt-2 2xl:mt-0">
           <h2
-            className="font-display text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-0.5 lg:mb-1 xl:mb-2 transition-all duration-500"
+            className="font-display text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-0.5 lg:mb-1 xl:mb-2"
             style={{ textShadow: `0 0 30px ${heroColor}50, 0 2px 10px rgba(0,0,0,0.5)` }}
           >
             {heroInfo.name.toUpperCase()}
@@ -716,24 +640,24 @@ function PlayTab({
               const isActive = heroId === featuredHero;
               const dotColor = HERO_COLORS[heroId];
               return (
-                <button
-                  key={heroId}
-                  onClick={() => onSelectHero(heroId)}
-                  className={`relative transition-all duration-300 ${isActive ? 'scale-100' : 'scale-75 opacity-50 hover:opacity-80 hover:scale-90'
-                    }`}
-                  aria-label={`Select ${HERO_DEFINITIONS[heroId].name}`}
-                  title={HERO_DEFINITIONS[heroId].name}
-                >
-                  <div
-                    className="w-3 h-3 rounded-full transition-all duration-300"
-                    style={{
-                      background: isActive ? dotColor : 'rgba(255,255,255,0.3)',
-                      boxShadow: isActive
-                        ? `0 0 12px ${dotColor}80, 0 0 0 2px rgba(10,10,18,1), 0 0 0 4px ${dotColor}`
-                        : 'none',
-                    }}
-                  />
-                </button>
+ <button
+ key={heroId}
+ onClick={() => onSelectHero(heroId)}
+ className={`relative ${isActive ? 'scale-100' : 'scale-75 opacity-50 hover:opacity-80 '
+ }`}
+ aria-label={`Select ${HERO_DEFINITIONS[heroId].name}`}
+ title={HERO_DEFINITIONS[heroId].name}
+ >
+ <div
+ className="w-3 h-3 rounded-full"
+ style={{
+ background: isActive ? dotColor : 'rgba(255,255,255,0.3)',
+ boxShadow: isActive
+ ? `0 0 12px ${dotColor}80, 0 0 0 2px rgba(10,10,18,1), 0 0 0 4px ${dotColor}`
+ : 'none',
+ }}
+ />
+ </button>
               );
             })}
           </div>
@@ -745,88 +669,85 @@ function PlayTab({
         {/* Action Buttons */}
         <div className="w-[220px] sm:w-[240px] md:w-[260px] lg:w-[300px] xl:w-[360px] 2xl:w-[440px] space-y-1 sm:space-y-1.5 lg:space-y-2 xl:space-y-2.5">
           {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4 backdrop-blur-sm">
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
               <p className="text-red-400 text-sm font-body text-center">{error}</p>
             </div>
           )}
 
-          <button
-            onClick={() => { playButtonClick(); onQuickPlay(); }}
-            onMouseEnter={playButtonHover}
-            disabled={isLoading}
-            className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 2xl:py-4 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl 2xl:text-2xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
-            style={{
-              background: isAuthenticated
-                ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
-                : 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
-              boxShadow: isAuthenticated
-                ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
-                : '0 0 60px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
-            }}
-          >
-            {/* Button shimmer effect */}
-            <div
-              className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-              style={{
-                background: `linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)`,
-              }}
-            />
-            <span className="relative flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
-              {isAuthenticated ? (
-                <>
-                  <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                  {isLoading ? 'STARTING...' : 'QUICK PLAY'}
-                </>
-              ) : (
-                <>
-                  <PhantomIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
-                  SIGN IN TO PLAY
-                </>
-              )}
-            </span>
-          </button>
+ <button
+ onClick={() => { playButtonClick(); onQuickPlay(); }}
+ disabled={isLoading}
+ className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 2xl:py-4 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl 2xl:text-2xl text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
+ style={{
+ background: isAuthenticated
+ ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
+ : 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
+ boxShadow: isAuthenticated
+ ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
+ : '0 0 60px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+ }}
+ >
+ {/* Button shimmer effect */}
+ <div
+ className="absolute inset-0 opacity-0 group-hover:opacity-100"
+ style={{
+ background: `linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)`,
+ }}
+ />
+ <span className="relative flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
+ {isAuthenticated ? (
+ <>
+ <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" fill="currentColor" viewBox="0 0 24 24">
+ <path d="M8 5v14l11-7z" />
+ </svg>
+ {isLoading ? 'STARTING...' : 'QUICK PLAY'}
+ </>
+ ) : (
+ <>
+ <PhantomIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
+ SIGN IN TO PLAY
+ </>
+ )}
+ </span>
+ </button>
 
           <div className="grid grid-cols-2 gap-1 sm:gap-1.5 lg:gap-2 xl:gap-2.5">
-            <button
-              onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
-              onMouseEnter={playButtonHover}
-              disabled={isLoading}
-              className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2 backdrop-blur-sm"
-            >
-              {isAuthenticated ? (
-                <>
-                  <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                  CREATE GAME
-                </>
-              ) : (
-                <>
-                  <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                  SIGN IN
-                </>
-              )}
-            </button>
+ <button
+ onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
+ disabled={isLoading}
+ className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2"
+ >
+ {isAuthenticated ? (
+ <>
+ <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+ </svg>
+ CREATE GAME
+ </>
+ ) : (
+ <>
+ <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+ </svg>
+ SIGN IN
+ </>
+ )}
+ </button>
 
-            <button
-              onClick={() => { playButtonClick(); onOpenBrowseGames(); }}
-              onMouseEnter={playButtonHover}
-              className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 transition-all flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2 backdrop-blur-sm"
-            >
-              <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              BROWSE GAMES
-              {lobbyCount > 0 && (
-                <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">
-                  {lobbyCount}
-                </span>
-              )}
-            </button>
+ <button
+ onClick={() => { playButtonClick(); onOpenBrowseGames(); }}
+ className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2"
+ >
+ <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+ </svg>
+ BROWSE GAMES
+ {lobbyCount > 0 && (
+ <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">
+ {lobbyCount}
+ </span>
+ )}
+ </button>
           </div>
         </div>
       </div>
@@ -855,7 +776,7 @@ function BrowseGamesModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/80" onClick={onClose} />
 
       {/* Modal */}
       <div className="relative w-full max-w-2xl mx-4 bg-strike-surface border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
@@ -873,27 +794,27 @@ function BrowseGamesModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={onRefresh}
-              disabled={isRefreshing}
-              className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white/60 text-sm font-body hover:bg-white/10 hover:text-white transition-all"
-            >
-              <svg
-                className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`}
-                fill="none" viewBox="0 0 24 24" stroke="currentColor"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              Refresh
-            </button>
-            <button
-              onClick={onClose}
-              className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+ <button
+ onClick={onRefresh}
+ disabled={isRefreshing}
+ className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white/60 text-sm font-body hover:bg-white/10 hover:text-white"
+ >
+ <svg
+ className={`w-4 h-4 ${isRefreshing ? '' : ''}`}
+ fill="none" viewBox="0 0 24 24" stroke="currentColor"
+ >
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+ </svg>
+ Refresh
+ </button>
+ <button
+ onClick={onClose}
+ className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10"
+ >
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+ </svg>
+ </button>
           </div>
         </div>
 
@@ -925,12 +846,12 @@ function BrowseGamesModal({
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-white/5 bg-strike-elevated/30">
-          <button
-            onClick={onClose}
-            className="w-full py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white transition-all"
-          >
-            CLOSE
-          </button>
+ <button
+ onClick={onClose}
+ className="w-full py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
+ >
+ CLOSE
+ </button>
         </div>
       </div>
     </div>
@@ -958,7 +879,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/80" onClick={onClose} />
 
       {/* Modal */}
       <div className="relative w-full max-w-md mx-4 bg-strike-surface border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
@@ -972,14 +893,14 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
             </div>
             <h2 className="font-display text-2xl text-white">CREATE GAME</h2>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+ <button
+ onClick={onClose}
+ className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10"
+ >
+ <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+ </svg>
+ </button>
         </div>
 
         {/* Content */}
@@ -1031,20 +952,20 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
 
           {/* Actions */}
           <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white transition-all"
-            >
-              CANCEL
-            </button>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="flex-1 py-3 rounded-xl font-display text-white bg-orange-500 hover:bg-orange-400 transition-all disabled:opacity-50"
-            >
-              {isLoading ? 'CREATING...' : 'CREATE'}
-            </button>
+ <button
+ type="button"
+ onClick={onClose}
+ className="flex-1 py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
+ >
+ CANCEL
+ </button>
+ <button
+ type="submit"
+ disabled={isLoading}
+ className="flex-1 py-3 rounded-xl font-display text-white bg-orange-500 hover:bg-orange-400 disabled:opacity-50"
+ >
+ {isLoading ? 'CREATING...' : 'CREATE'}
+ </button>
           </div>
         </form>
       </div>
@@ -1113,16 +1034,16 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
       </div>
 
       {/* Join Button */}
-      <button
-        onClick={onJoin}
-        disabled={disabled || !canJoin}
-        className={`px-5 py-2.5 rounded-lg font-display text-sm transition-all ${canJoin
-          ? 'bg-orange-500 text-white hover:bg-orange-400 hover:scale-105'
-          : 'bg-white/5 text-white/30 cursor-not-allowed'
-          }`}
-      >
-        {isInGame ? 'LIVE' : isFull ? 'FULL' : 'JOIN'}
-      </button>
+ <button
+ onClick={onJoin}
+ disabled={disabled || !canJoin}
+ className={`px-5 py-2.5 rounded-lg font-display text-sm ${canJoin
+ ? 'bg-orange-500 text-white hover:bg-orange-400 '
+ : 'bg-white/5 text-white/30 cursor-not-allowed'
+ }`}
+ >
+ {isInGame ? 'LIVE' : isFull ? 'FULL' : 'JOIN'}
+ </button>
     </div>
   );
 }
@@ -1174,7 +1095,7 @@ function AuthModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/80" onClick={onClose} />
 
       {/* Modal */}
       <div className="relative w-full max-w-sm mx-4 bg-strike-surface border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
@@ -1207,14 +1128,14 @@ function AuthModal({
                     <p className="text-white font-mono text-sm">{walletAddress && formatAddress(walletAddress)}</p>
                   </div>
                 </div>
-                <button
-                  onClick={onDisconnect}
-                  className="text-white/40 hover:text-white/80 transition-colors"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+ <button
+ onClick={onDisconnect}
+ className="text-white/40 hover:text-white/80"
+ >
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+ </svg>
+ </button>
               </div>
 
               {/* Player name input */}
@@ -1250,30 +1171,30 @@ function AuthModal({
               )}
 
               {/* Register button */}
-              <button
-                onClick={onRegister}
-                disabled={isRegistering}
-                className="btn btn-primary w-full py-4 rounded-lg text-xl clip-corner"
-              >
-                <span className="flex items-center justify-center gap-2">
-                  {isRegistering ? (
-                    <>
-                      <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      CREATING...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M8 5v14l11-7z" />
-                      </svg>
-                      START PLAYING
-                    </>
-                  )}
-                </span>
-              </button>
+ <button
+ onClick={onRegister}
+ disabled={isRegistering}
+ className="btn btn-primary w-full py-4 rounded-lg text-xl clip-corner"
+ >
+ <span className="flex items-center justify-center gap-2">
+ {isRegistering ? (
+ <>
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24">
+ <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+ <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+ </svg>
+ CREATING...
+ </>
+ ) : (
+ <>
+ <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+ <path d="M8 5v14l11-7z" />
+ </svg>
+ START PLAYING
+ </>
+ )}
+ </span>
+ </button>
             </>
           ) : (
             <>
@@ -1289,14 +1210,14 @@ function AuthModal({
                         <p className="text-white font-mono text-sm">{formatAddress(walletAddress)}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={onDisconnect}
-                      className="text-white/40 hover:text-white/80 transition-colors"
-                    >
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                      </svg>
-                    </button>
+ <button
+ onClick={onDisconnect}
+ className="text-white/40 hover:text-white/80"
+ >
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+ </svg>
+ </button>
                   </div>
 
                   {/* Authenticating state */}
@@ -1314,55 +1235,55 @@ function AuthModal({
 
                   {/* Retry authentication button */}
                   {!isAuthenticating && !isAuthenticated && (
-                    <button
-                      onClick={onAuthenticate}
-                      className="btn btn-primary w-full py-4 rounded-lg text-lg"
-                    >
-                      <span className="flex items-center justify-center gap-2">
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                        </svg>
-                        SIGN TO AUTHENTICATE
-                      </span>
-                    </button>
+ <button
+ onClick={onAuthenticate}
+ className="btn btn-primary w-full py-4 rounded-lg text-lg"
+ >
+ <span className="flex items-center justify-center gap-2">
+ <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+ </svg>
+ SIGN TO AUTHENTICATE
+ </span>
+ </button>
                   )}
                 </div>
               ) : (
                 <>
                   {/* Connect wallet button */}
-                  <button
-                    onClick={onConnect}
-                    disabled={isConnecting}
-                    className="w-full py-4 rounded-xl font-display text-xl text-white transition-all hover:brightness-110 hover:scale-[1.02] active:scale-[0.99] relative overflow-hidden group"
-                    style={{
-                      background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
-                      boxShadow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
-                    }}
-                  >
-                    {/* Button shimmer */}
-                    <div
-                      className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-                      style={{
-                        background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
-                      }}
-                    />
-                    <span className="relative flex items-center justify-center gap-3">
-                      {isConnecting ? (
-                        <>
-                          <svg className="w-6 h-6 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                          CONNECTING...
-                        </>
-                      ) : (
-                        <>
-                          <PhantomIcon className="w-6 h-6" />
-                          CONNECT PHANTOM
-                        </>
-                      )}
-                    </span>
-                  </button>
+ <button
+ onClick={onConnect}
+ disabled={isConnecting}
+ className="w-full py-4 rounded-xl font-display text-xl text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
+ style={{
+ background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
+ boxShadow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+ }}
+ >
+ {/* Button shimmer */}
+ <div
+ className="absolute inset-0 opacity-0 group-hover:opacity-100"
+ style={{
+ background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
+ }}
+ />
+ <span className="relative flex items-center justify-center gap-3">
+ {isConnecting ? (
+ <>
+ <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24">
+ <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+ <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+ </svg>
+ CONNECTING...
+ </>
+ ) : (
+ <>
+ <PhantomIcon className="w-6 h-6" />
+ CONNECT PHANTOM
+ </>
+ )}
+ </span>
+ </button>
 
                   {/* Phantom not installed message */}
                   {!isPhantomInstalled && (
@@ -1393,12 +1314,12 @@ function AuthModal({
           )}
 
           {/* Cancel button */}
-          <button
-            onClick={onClose}
-            className="w-full py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white transition-all"
-          >
-            CANCEL
-          </button>
+ <button
+ onClick={onClose}
+ className="w-full py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
+ >
+ CANCEL
+ </button>
         </div>
       </div>
     </div>

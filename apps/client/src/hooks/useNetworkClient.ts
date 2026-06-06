@@ -21,6 +21,7 @@ export function useNetworkClient(): NetworkClient {
     setPlayerId,
     setGamePhase,
     setPhaseEndTime,
+    setMapSeed,
     updateGameState,
     reset,
   } = useGameStore();
@@ -47,7 +48,10 @@ export function useNetworkClient(): NetworkClient {
         updateGameState(state);
       });
 
-      room.onMessage('phaseChange', (data: { phase: string; endTime: number }) => {
+      room.onMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number }) => {
+        if (typeof data.mapSeed === 'number') {
+          setMapSeed(data.mapSeed);
+        }
         setGamePhase(data.phase as any);
         setPhaseEndTime(data.endTime);
       });
@@ -93,7 +97,7 @@ export function useNetworkClient(): NetworkClient {
       setLoading(false);
       throw error;
     }
-  }, [setConnected, setLoading, setRoomId, setPlayerId, setGamePhase, setPhaseEndTime, updateGameState, reset]);
+  }, [setConnected, setLoading, setRoomId, setPlayerId, setGamePhase, setPhaseEndTime, setMapSeed, updateGameState, reset]);
 
   const disconnect = useCallback(() => {
     if (roomRef.current) {
@@ -125,4 +129,3 @@ export function useNetworkClient(): NetworkClient {
     sendInput,
   };
 }
-

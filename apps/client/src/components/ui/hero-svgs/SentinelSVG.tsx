@@ -91,9 +91,7 @@ export function SentinelSVG({ colors, className, size }: HeroSVGInternalProps) {
             strokeWidth="2"
           />
           <circle cx="0" cy="0" r="12" fill={colors.secondary} />
-          <circle cx="0" cy="0" r="8" fill="#ffffff" opacity="0.8">
-            <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite" />
-          </circle>
+          <circle cx="0" cy="0" r="8" fill="#ffffff" opacity="0.9" />
         </g>
         
         {/* Shield energy ripples */}
@@ -126,9 +124,7 @@ export function SentinelSVG({ colors, className, size }: HeroSVGInternalProps) {
         
         {/* Visor slit */}
         <rect x="80" y="60" width="40" height="8" rx="2" fill="#0f172a" />
-        <rect x="85" y="62" width="30" height="4" rx="1" fill={colors.primary} opacity="0.8">
-          <animate attributeName="opacity" values="0.8;1;0.8" dur="1.5s" repeatCount="indefinite" />
-        </rect>
+        <rect x="85" y="62" width="30" height="4" rx="1" fill={colors.primary} opacity="0.9" />
         
         {/* Helmet crest */}
         <polygon points="100,35 95,50 105,50" fill={colors.primary} />
@@ -203,4 +199,3 @@ export function SentinelSVG({ colors, className, size }: HeroSVGInternalProps) {
     </svg>
   );
 }
-

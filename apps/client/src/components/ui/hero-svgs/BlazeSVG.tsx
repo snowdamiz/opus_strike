@@ -1,5 +1,9 @@
 import type { HeroSVGInternalProps } from './types';
 
+const BLAZE_SPARKS = Array.from({ length: 12 }, (_, i) => ({
+  r: 2 + ((i * 7) % 3),
+}));
+
 export function BlazeSVG({ colors, className, size }: HeroSVGInternalProps) {
   return (
     <svg 
@@ -29,13 +33,6 @@ export function BlazeSVG({ colors, className, size }: HeroSVGInternalProps) {
           <stop offset="0%" stopColor={colors.primary} />
           <stop offset="100%" stopColor="#7c2d12" />
         </linearGradient>
-
-        <filter id="fire-turbulence">
-          <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="3" result="noise">
-            <animate attributeName="baseFrequency" values="0.03;0.05;0.03" dur="2s" repeatCount="indefinite" />
-          </feTurbulence>
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="10" />
-        </filter>
       </defs>
       
       {/* Heat distortion background */}
@@ -64,13 +61,7 @@ export function BlazeSVG({ colors, className, size }: HeroSVGInternalProps) {
             d="M0 0 Q-15 30 -5 60 Q5 90 0 100 Q10 85 15 60 Q20 30 10 0 Z" 
             fill="url(#blaze-fire)"
             className="flame-main"
-          >
-            <animate attributeName="d" 
-              values="M0 0 Q-15 30 -5 60 Q5 90 0 100 Q10 85 15 60 Q20 30 10 0 Z;
-                      M0 0 Q-10 35 -8 65 Q0 95 5 105 Q15 90 18 65 Q15 35 10 0 Z;
-                      M0 0 Q-15 30 -5 60 Q5 90 0 100 Q10 85 15 60 Q20 30 10 0 Z" 
-              dur="0.3s" repeatCount="indefinite" />
-          </path>
+          />
           {/* Inner flame */}
           <path 
             d="M2 5 Q-5 25 0 50 Q5 40 8 25 Q10 15 8 5 Z" 
@@ -85,13 +76,7 @@ export function BlazeSVG({ colors, className, size }: HeroSVGInternalProps) {
             d="M0 0 Q-15 30 -5 60 Q5 90 0 100 Q10 85 15 60 Q20 30 10 0 Z" 
             fill="url(#blaze-fire)"
             className="flame-main"
-          >
-            <animate attributeName="d" 
-              values="M0 0 Q-15 30 -5 60 Q5 90 0 100 Q10 85 15 60 Q20 30 10 0 Z;
-                      M0 0 Q-20 35 -10 70 Q-2 100 5 110 Q12 95 20 70 Q18 40 10 0 Z;
-                      M0 0 Q-15 30 -5 60 Q5 90 0 100 Q10 85 15 60 Q20 30 10 0 Z" 
-              dur="0.25s" repeatCount="indefinite" />
-          </path>
+          />
           <path 
             d="M2 5 Q-5 25 0 50 Q5 40 8 25 Q10 15 8 5 Z" 
             fill="#fef3c7"
@@ -101,12 +86,12 @@ export function BlazeSVG({ colors, className, size }: HeroSVGInternalProps) {
       
       {/* Fire sparks */}
       <g className="blaze-sparks">
-        {[...Array(12)].map((_, i) => (
+        {BLAZE_SPARKS.map((spark, i) => (
           <circle
             key={i}
             cx={60 + (i % 4) * 25}
             cy={220 + (i % 3) * 25}
-            r={2 + Math.random() * 3}
+            r={spark.r}
             fill={i % 2 === 0 ? colors.primary : '#fcd34d'}
             className="spark"
             style={{ animationDelay: `${i * 0.15}s` }}
@@ -138,9 +123,7 @@ export function BlazeSVG({ colors, className, size }: HeroSVGInternalProps) {
           fill="#0f172a"
         />
         {/* Visor glow */}
-        <ellipse cx="100" cy="52" rx="16" ry="8" fill={colors.primary} opacity="0.6">
-          <animate attributeName="opacity" values="0.6;1;0.6" dur="1.5s" repeatCount="indefinite" />
-        </ellipse>
+        <ellipse cx="100" cy="52" rx="16" ry="8" fill={colors.primary} opacity="0.75" />
         
         {/* Arms */}
         <g className="blaze-arms">
@@ -202,4 +185,3 @@ export function BlazeSVG({ colors, className, size }: HeroSVGInternalProps) {
     </svg>
   );
 }
-

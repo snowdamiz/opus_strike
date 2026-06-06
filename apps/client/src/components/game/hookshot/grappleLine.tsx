@@ -2,6 +2,8 @@ import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type GrappleLineData } from '../../../store/gameStore';
+import { getOwnerVisualPosition } from './ownerPosition';
+import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -57,24 +59,16 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
     const localPlayer = state.localPlayer;
     const players = state.players;
     
-    // Determine target player position
-    let targetX: number, targetY: number, targetZ: number;
-    if (localPlayer && line.ownerId === localPlayer.id) {
-      targetX = localPlayer.position.x;
-      targetY = localPlayer.position.y + GRAPPLE_HAND_HEIGHT;
-      targetZ = localPlayer.position.z;
-    } else {
-      const owner = players.get(line.ownerId);
-      if (owner) {
-        targetX = owner.position.x;
-        targetY = owner.position.y + GRAPPLE_HAND_HEIGHT;
-        targetZ = owner.position.z;
-      } else {
-        targetX = line.startPosition.x;
-        targetY = line.startPosition.y;
-        targetZ = line.startPosition.z;
-      }
-    }
+    const targetPosition = getOwnerVisualPosition(
+      line.ownerId,
+      GRAPPLE_HAND_HEIGHT,
+      line.startPosition,
+      players,
+      localPlayer
+    );
+    const targetX = targetPosition.x;
+    const targetY = targetPosition.y;
+    const targetZ = targetPosition.z;
     
     // Smooth lerp for player position (snap on first frame) - same as basic attack
     const lerpFactor = isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
@@ -111,6 +105,10 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
         hookPos.x = line.endPosition.x;
         hookPos.y = line.endPosition.y;
         hookPos.z = line.endPosition.z;
+        triggerTerrainImpact('hookshot_grapple', line.endPosition, {
+          normal: { x: -dirX, y: -dirY, z: -dirZ },
+          direction: { x: dirX, y: dirY, z: dirZ },
+        });
         useGameStore.getState().updateGrappleLine(line.id, { state: 'attached' });
       } else {
         // Position hook along the line from player toward target
@@ -246,4 +244,3 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
   // Custom comparison: only re-render if line.id or state changes
   return prev.line.id === next.line.id && prev.line.state === next.line.state;
 });
-

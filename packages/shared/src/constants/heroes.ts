@@ -5,7 +5,7 @@ import { FROST_STORM_DURATION, FROST_STORM_COOLDOWN } from './physics.js';
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
   maxHealth: 200,
-  moveSpeed: 9,
+  moveSpeed: 6.3,
   jumpForce: 8.5,
   size: { width: 0.8, height: 1.8, depth: 0.8 },
 };
@@ -26,7 +26,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'blink',
     stats: {
       maxHealth: 175,
-      moveSpeed: 7, // Reduced 20% from 10 for better balance
+      moveSpeed: 4.9,
       jumpForce: 8.5,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
@@ -47,7 +47,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'grapple',
     stats: {
       maxHealth: 200,
-      moveSpeed: 8,
+      moveSpeed: 5.6,
       jumpForce: 8.1,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
@@ -68,18 +68,18 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'aerial',
     stats: {
       maxHealth: 200,
-      moveSpeed: 8,
+      moveSpeed: 5.6,
       jumpForce: 9.3,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
     passive: {
       name: 'Afterburner',
-      description: 'Jetpack fuel regenerates 50% faster after getting a kill',
+      description: 'Flamethrower fuel regenerates 50% faster after getting a kill',
     },
-    ability1: { abilityId: 'blaze_jetpack', defaultKey: 'KeyE' },
+    ability1: { abilityId: 'blaze_flamethrower', defaultKey: 'KeyE' },
     ability2: { abilityId: 'blaze_rocketjump', defaultKey: 'KeyQ' },
     ultimate: { abilityId: 'blaze_airstrike', defaultKey: 'KeyF' },
-    description: 'An aerial assault specialist with jetpack-powered mobility and explosive abilities.',
+    description: 'An assault specialist with sustained fire pressure and explosive abilities.',
   },
 
   glacier: {
@@ -89,7 +89,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'parkour',
     stats: {
       maxHealth: 350,
-      moveSpeed: 7,
+      moveSpeed: 4.9,
       jumpForce: 7.3,
       size: { width: 1.0, height: 2.0, depth: 1.0 },
     },
@@ -110,7 +110,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'speed',
     stats: {
       maxHealth: 175,
-      moveSpeed: 9,
+      moveSpeed: 6.3,
       jumpForce: 8.5,
       size: { width: 0.7, height: 1.7, depth: 0.7 },
     },
@@ -131,7 +131,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'grounded',
     stats: {
       maxHealth: 300,
-      moveSpeed: 7.5,
+      moveSpeed: 5.25,
       jumpForce: 7.3,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
@@ -224,13 +224,13 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
   },
 
   // Blaze Abilities
-  blaze_jetpack: {
-    id: 'blaze_jetpack',
-    name: 'Jetpack',
-    type: 'movement',
-    targeting: 'self',
+  blaze_flamethrower: {
+    id: 'blaze_flamethrower',
+    name: 'Flamethrower',
+    type: 'offensive',
+    targeting: 'direction',
     cooldown: 0,
-    description: 'Hold to fly upward. Consumes fuel that regenerates when grounded.',
+    description: 'Hold to spray a short-range cone of flame. Consumes fuel that regenerates when grounded.',
   },
   blaze_rocketjump: {
     id: 'blaze_rocketjump',
@@ -362,4 +362,3 @@ export const ALL_HERO_IDS: HeroId[] = Object.keys(HERO_DEFINITIONS) as HeroId[];
 
 // Phantom ability constants
 export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray
-

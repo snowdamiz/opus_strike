@@ -42,6 +42,7 @@ function loadAudioSettings(): AudioConfig {
 let sharedAudioContext: AudioContext | null = null;
 const sharedConfig: AudioConfig = loadAudioSettings();
 const sharedSounds = new Map<string, SoundEffect>();
+const sharedSoundLoads = new Map<string, Promise<SoundEffect | null>>();
 const sharedLoops = new Map<string, { source: AudioBufferSourceNode; gain: GainNode; isMusic: boolean }>();
 
 // Calculate effective volume for SFX
@@ -82,7 +83,7 @@ const SOUND_EFFECTS = {
   blazeBombTarget: { path: '/sounds/button.mp3', volume: 0.5 },
   blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.5 },
   blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 0.7 },
-  blazeJetpack: { path: '/sounds/jetpack.mp3', volume: 0.3 },
+  blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
   blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
   blazeAirstrike: { path: '/sounds/airstrike.mp3', volume: 0.6 },
   
@@ -140,38 +141,42 @@ export function useAudio() {
       return null;
     }
 
-    // Resume if suspended
-    if (ctx.state === 'suspended') {
-      await ctx.resume();
-    }
-
     const existing = sharedSounds.get(name);
     if (existing?.buffer) return existing;
 
+    const pending = sharedSoundLoads.get(name);
+    if (pending) return pending;
+
     const soundDef = SOUND_EFFECTS[name];
-    
-    try {
-      // Fetch and decode the actual audio file
-      const response = await fetch(soundDef.path);
-      if (!response.ok) {
-        console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
+
+    const loadPromise = (async () => {
+      try {
+        const response = await fetch(soundDef.path);
+        if (!response.ok) {
+          console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
+          return null;
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = await ctx.decodeAudioData(arrayBuffer);
+
+        const effect: SoundEffect = {
+          buffer,
+          volume: soundDef.volume,
+        };
+
+        sharedSounds.set(name, effect);
+        return effect;
+      } catch (error) {
+        console.warn(`[Audio] Failed to load sound: ${name}`, error);
         return null;
+      } finally {
+        sharedSoundLoads.delete(name);
       }
-      
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = await ctx.decodeAudioData(arrayBuffer);
-      
-      const effect: SoundEffect = {
-        buffer,
-        volume: soundDef.volume,
-      };
-      
-      sharedSounds.set(name, effect);
-      return effect;
-    } catch (error) {
-      console.warn(`[Audio] Failed to load sound: ${name}`, error);
-      return null;
-    }
+    })();
+
+    sharedSoundLoads.set(name, loadPromise);
+    return loadPromise;
   }, [initAudio]);
 
   // Play a sound effect
@@ -566,13 +571,13 @@ export function useAbilitySounds() {
     playSound('blazeAirstrike');
   }, [playSound]);
   
-  // Jetpack loop controls
-  const startJetpackSound = useCallback(() => {
-    playLoop('jetpack', 'blazeJetpack', { fadeIn: 0.1 });
+  // Flamethrower loop controls
+  const startFlamethrowerSound = useCallback(() => {
+    playLoop('flamethrower', 'blazeFlamethrower', { fadeIn: 0.1 });
   }, [playLoop]);
   
-  const stopJetpackSound = useCallback(() => {
-    stopLoop('jetpack', 0.15);
+  const stopFlamethrowerSound = useCallback(() => {
+    stopLoop('flamethrower', 0.15);
   }, [stopLoop]);
 
   return {
@@ -589,18 +594,20 @@ export function useAbilitySounds() {
     playBlazeBombExplode,
     playBlazeRocketJump,
     playBlazeAirstrike,
-    startJetpackSound,
-    stopJetpackSound,
+    startFlamethrowerSound,
+    stopFlamethrowerSound,
   } as const;
 }
 
 // UI sound effects hook
 export function useUISounds() {
-  const { playSound } = useAudio();
+  const { playSound, preloadSounds } = useAudio();
 
-  const playButtonHover = useCallback(() => {
-    playSound('buttonHover', { volume: 0.5 });
-  }, [playSound]);
+  useEffect(() => {
+    void preloadSounds(['buttonClick']);
+  }, [preloadSounds]);
+
+  const playButtonHover = useCallback(() => {}, []);
 
   const playButtonClick = useCallback(() => {
     playSound('buttonClick');
@@ -777,4 +784,3 @@ export function useMusic() {
     isPaused: () => musicState.isPaused,
   };
 }
-

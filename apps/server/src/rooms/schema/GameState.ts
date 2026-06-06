@@ -8,6 +8,7 @@ export class GameState extends Schema {
   phase: string = 'waiting';
   tick: number = 0;
   serverTime: number = 0;
+  mapSeed: number = 0;
 
   // Teams
   redTeam: TeamState = new TeamState();
@@ -44,6 +45,7 @@ defineTypes(GameState, {
   phase: 'string',
   tick: 'number',
   serverTime: 'number',
+  mapSeed: 'number',
   redTeam: TeamState,
   blueTeam: TeamState,
   players: { map: Player },

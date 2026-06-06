@@ -1,5 +1,6 @@
 import type { Room } from 'colyseus.js';
 import { useGameStore } from '../store/gameStore';
+import { setPlayerVisualPosition, setPlayerVisualRotation, visualStore } from '../store/visualStore';
 import type { HeroId, Team, Player } from '@voxel-strike/shared';
 
 // ============================================================================
@@ -101,6 +102,50 @@ export function createDefaultLocalPlayer(sessionId: string, playerName: string):
   };
 }
 
+function getSchemaPosition(schemaPlayer: any): { x: number; y: number; z: number } | null {
+  if (!schemaPlayer.position) return null;
+
+  return {
+    x: schemaPlayer.position.x ?? 0,
+    y: schemaPlayer.position.y ?? 1,
+    z: schemaPlayer.position.z ?? 0,
+  };
+}
+
+function getSchemaVelocity(schemaPlayer: any, fallback: Player['velocity']): Player['velocity'] {
+  if (!schemaPlayer.velocity) return fallback;
+
+  return {
+    x: schemaPlayer.velocity.x ?? fallback.x,
+    y: schemaPlayer.velocity.y ?? fallback.y,
+    z: schemaPlayer.velocity.z ?? fallback.z,
+  };
+}
+
+function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPosition: { x: number; y: number; z: number }): boolean {
+  const visualPosition = visualStore.getState().playerPositions.get(localPlayer.id);
+
+  if (!visualPosition) return true;
+  if (nextState !== 'alive') return true;
+  if (localPlayer.state !== nextState && ['dead', 'spawning', 'selecting'].includes(localPlayer.state)) return true;
+
+  const isDefaultLocalPosition =
+    localPlayer.position.x === 0 &&
+    localPlayer.position.y === 1 &&
+    localPlayer.position.z === 0;
+  if (isDefaultLocalPosition) return true;
+
+  const dx = visualPosition.x - nextPosition.x;
+  const dy = visualPosition.y - nextPosition.y;
+  const dz = visualPosition.z - nextPosition.z;
+  return dx * dx + dy * dy + dz * dz > 400;
+}
+
+function syncLocalVisualPosition(player: Player): void {
+  setPlayerVisualPosition(player.id, player.position);
+  setPlayerVisualRotation(player.id, player.lookYaw);
+}
+
 // ============================================================================
 // STORE ACTION TYPES
 // ============================================================================
@@ -111,6 +156,7 @@ export interface GameStoreActions {
   removePlayer: (playerId: string) => void;
   setGamePhase: (phase: any) => void;
   setPhaseEndTime: (time: number | null) => void;
+  setMapSeed: (seed: number) => void;
   setConnected: (connected: boolean) => void;
   setRoomId: (roomId: string | null) => void;
   setAppPhase: (phase: any) => void;
@@ -135,17 +181,29 @@ export function syncPlayerFromSchema(
     // Our own player - update local player with server data
     const store = useGameStore.getState();
     if (store.localPlayer) {
+      const nextState = schemaPlayer.state || store.localPlayer.state;
+      const nextPosition = getSchemaPosition(schemaPlayer);
+      const shouldSyncPosition = nextPosition
+        ? shouldSyncLocalPosition(store.localPlayer, nextState, nextPosition)
+        : false;
       const updated = {
         ...store.localPlayer,
         heroId: schemaPlayer.heroId || store.localPlayer.heroId,
         team: schemaPlayer.team || store.localPlayer.team,
         health: schemaPlayer.health ?? store.localPlayer.health,
         maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
-        state: schemaPlayer.state || store.localPlayer.state,
+        state: nextState,
+        position: shouldSyncPosition ? nextPosition! : store.localPlayer.position,
+        velocity: shouldSyncPosition ? getSchemaVelocity(schemaPlayer, store.localPlayer.velocity) : store.localPlayer.velocity,
+        lookYaw: schemaPlayer.lookYaw ?? store.localPlayer.lookYaw,
+        lookPitch: schemaPlayer.lookPitch ?? store.localPlayer.lookPitch,
         // Explicitly preserve ultimateCharge - it's managed by playerStates message
         ultimateCharge: store.localPlayer.ultimateCharge,
       };
       actions.setLocalPlayer(updated);
+      if (shouldSyncPosition) {
+        syncLocalVisualPosition(updated);
+      }
     }
   } else {
     // Skip ghost players: same name as us but different ID
@@ -173,16 +231,28 @@ export function processPlayerDuringPoll(
   if (id === sessionId) {
     const freshStore = useGameStore.getState();
     if (freshStore.localPlayer) {
+      const nextState = schemaPlayer.state || freshStore.localPlayer.state;
+      const nextPosition = getSchemaPosition(schemaPlayer);
+      const shouldSyncPosition = nextPosition
+        ? shouldSyncLocalPosition(freshStore.localPlayer, nextState, nextPosition)
+        : false;
       const updated = {
         ...freshStore.localPlayer,
         heroId: schemaPlayer.heroId || freshStore.localPlayer.heroId,
         team: schemaPlayer.team || freshStore.localPlayer.team,
         health: schemaPlayer.health ?? freshStore.localPlayer.health,
         maxHealth: schemaPlayer.maxHealth ?? freshStore.localPlayer.maxHealth,
-        state: schemaPlayer.state || freshStore.localPlayer.state,
+        state: nextState,
+        position: shouldSyncPosition ? nextPosition! : freshStore.localPlayer.position,
+        velocity: shouldSyncPosition ? getSchemaVelocity(schemaPlayer, freshStore.localPlayer.velocity) : freshStore.localPlayer.velocity,
+        lookYaw: schemaPlayer.lookYaw ?? freshStore.localPlayer.lookYaw,
+        lookPitch: schemaPlayer.lookPitch ?? freshStore.localPlayer.lookPitch,
         ultimateCharge: freshStore.localPlayer.ultimateCharge,
       };
       actions.setLocalPlayer(updated);
+      if (shouldSyncPosition) {
+        syncLocalVisualPosition(updated);
+      }
     }
     return;
   }
@@ -289,7 +359,11 @@ export function setupPlayerStatesHandler(
   localPlayerName: string,
   actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer'>
 ) {
-  room.onMessage('playerStates', (data: { players: any[] }) => {
+  room.onMessage('playerStates', (data: { players: any[]; mapSeed?: number }) => {
+    if (typeof data.mapSeed === 'number') {
+      useGameStore.getState().setMapSeed(data.mapSeed);
+    }
+
     for (const serverPlayer of data.players) {
       // Skip ghost players
       if (serverPlayer.id !== sessionId && serverPlayer.name === localPlayerName) {
@@ -300,6 +374,11 @@ export function setupPlayerStatesHandler(
       if (serverPlayer.id === sessionId) {
         const freshStore = useGameStore.getState();
         if (freshStore.localPlayer) {
+          const nextState = serverPlayer.state || freshStore.localPlayer.state;
+          const nextPosition = serverPlayer.position ?? null;
+          const shouldSyncPosition = nextPosition
+            ? shouldSyncLocalPosition(freshStore.localPlayer, nextState, nextPosition)
+            : false;
           const localUltCharge = freshStore.localPlayer.ultimateCharge;
           const serverUltCharge = serverPlayer.ultimateCharge ?? localUltCharge;
 
@@ -319,13 +398,20 @@ export function setupPlayerStatesHandler(
             health: serverPlayer.health ?? freshStore.localPlayer.health,
             maxHealth: serverPlayer.maxHealth ?? freshStore.localPlayer.maxHealth,
             ultimateCharge,
-            state: serverPlayer.state || freshStore.localPlayer.state,
+            state: nextState,
             heroId: serverPlayer.heroId || freshStore.localPlayer.heroId,
             team: serverPlayer.team || freshStore.localPlayer.team,
+            position: shouldSyncPosition ? nextPosition! : freshStore.localPlayer.position,
+            velocity: shouldSyncPosition
+              ? (serverPlayer.velocity ?? freshStore.localPlayer.velocity)
+              : freshStore.localPlayer.velocity,
             hasFlag: serverPlayer.hasFlag ?? freshStore.localPlayer.hasFlag,
             abilities: serverPlayer.abilities || freshStore.localPlayer.abilities,
           };
           actions.setLocalPlayer(updated);
+          if (shouldSyncPosition) {
+            syncLocalVisualPosition(updated);
+          }
         }
       } else {
         const otherPlayerStore = useGameStore.getState();
@@ -455,6 +541,10 @@ export function setupPollingSync(
     // Sync phase
     if (room.state.phase) {
       const store = useGameStore.getState();
+      if (typeof room.state.mapSeed === 'number' && room.state.mapSeed !== store.mapSeed) {
+        useGameStore.getState().setMapSeed(room.state.mapSeed);
+      }
+
       if (room.state.phase !== store.gamePhase) {
         console.log('Phase synced:', room.state.phase);
         actions.setGamePhase(room.state.phase as any);
@@ -495,4 +585,3 @@ export function setupPollingSync(
     }
   }, 50);
 }
-

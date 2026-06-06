@@ -4,13 +4,20 @@
  * Handles Blaze-specific abilities:
  * - Rockets (primary fire)
  * - Bomb (secondary fire - targeting)
- * - Jetpack (E ability - hold)
+ * - Flamethrower (E ability - hold)
  * - Rocket Jump (Q ability)
  * - Air Strike (Ultimate - targeting)
  */
 
 import { useRef, useCallback } from 'react';
 import * as THREE from 'three';
+import {
+  BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
+  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  BLAZE_FLAMETHROWER_FUEL_DRAIN,
+  BLAZE_FLAMETHROWER_FUEL_REGEN,
+  BLAZE_FLAMETHROWER_MAX_FUEL,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { triggerRocketJumpExplosion, triggerAirStrike } from '../../../components/game/BlazeEffects';
 import {
@@ -18,12 +25,10 @@ import {
   BLAZE_ROCKET_SPEED,
   BLAZE_BOMB_COOLDOWN,
   BLAZE_BOMB_FALL_DURATION,
-  BLAZE_JETPACK_FUEL_DRAIN,
-  BLAZE_JETPACK_FUEL_REGEN,
-  BLAZE_JETPACK_THRUST,
   calculateProjectileSpawn,
   calculateLookDirection,
 } from '../constants';
+import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import type { AbilityContext, PlayerSounds } from '../types';
 
 export interface UseBlazeAbilitiesReturn {
@@ -34,8 +39,8 @@ export interface UseBlazeAbilitiesReturn {
   bombIdRef: React.MutableRefObject<number>;
   bombTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
   bombValidRef: React.MutableRefObject<boolean>;
-  jetpackFuelRef: React.MutableRefObject<number>;
-  jetpackActiveRef: React.MutableRefObject<boolean>;
+  flamethrowerFuelRef: React.MutableRefObject<number>;
+  flamethrowerActiveRef: React.MutableRefObject<boolean>;
   airStrikeTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
   airStrikeValidRef: React.MutableRefObject<boolean>;
   secondaryFirePressedRef: React.MutableRefObject<boolean>;
@@ -44,11 +49,11 @@ export interface UseBlazeAbilitiesReturn {
   fireRocket: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
-  handleJetpack: (
+  handleFlamethrower: (
     ctx: AbilityContext,
     sounds: PlayerSounds,
-    setJetpackActive: (active: boolean) => void,
-    setJetpackFuel: (fuel: number) => void
+    setFlamethrowerActive: (active: boolean) => void,
+    setFlamethrowerFuel: (fuel: number) => void
   ) => void;
   executeRocketJump: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   executeAirStrike: (
@@ -71,9 +76,9 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const bombValidRef = useRef(false);
   const secondaryFirePressedRef = useRef(false);
 
-  // Jetpack state
-  const jetpackFuelRef = useRef(100);
-  const jetpackActiveRef = useRef(false);
+  // Flamethrower state
+  const flamethrowerFuelRef = useRef(BLAZE_FLAMETHROWER_MAX_FUEL);
+  const flamethrowerActiveRef = useRef(false);
 
   // Air Strike state
   const airStrikeTargetRef = useRef<THREE.Vector3 | null>(null);
@@ -175,58 +180,71 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     bombValidRef.current = false;
   }, []);
 
-  // Handle jetpack (E ability - hold)
-  const handleJetpack = useCallback((
+  // Handle flamethrower (E ability - hold)
+  const handleFlamethrower = useCallback((
     ctx: AbilityContext,
     sounds: PlayerSounds,
-    setJetpackActive: (active: boolean) => void,
-    setJetpackFuel: (fuel: number) => void
+    setFlamethrowerActive: (active: boolean) => void,
+    setFlamethrowerFuel: (fuel: number) => void
   ) => {
-    if (ctx.inputState.ability1 && jetpackFuelRef.current > 0) {
-      // Activate jetpack
-      if (!jetpackActiveRef.current) {
-        jetpackActiveRef.current = true;
-        setJetpackActive(true);
-        sounds.startJetpackSound();
+    if (ctx.inputState.ability1 && flamethrowerFuelRef.current > 0) {
+      if (!flamethrowerActiveRef.current) {
+        flamethrowerActiveRef.current = true;
+        setFlamethrowerActive(true);
+        sounds.startFlamethrowerSound();
       }
 
-      // Apply upward thrust
-      ctx.velocity.y = Math.max(ctx.velocity.y, BLAZE_JETPACK_THRUST);
+      const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
+      const right = {
+        x: Math.cos(ctx.yaw),
+        y: 0,
+        z: -Math.sin(ctx.yaw),
+      };
+      const origin = {
+        x: ctx.position.x + direction.x * 0.7 + right.x * 0.22,
+        y: ctx.position.y + 0.5 + direction.y * 0.7,
+        z: ctx.position.z + direction.z * 0.7 + right.z * 0.22,
+      };
+      setFlamethrowerVisualPose(origin, direction);
 
       // Consume fuel
-      jetpackFuelRef.current -= BLAZE_JETPACK_FUEL_DRAIN * ctx.dt;
-      if (jetpackFuelRef.current <= 0) {
-        jetpackFuelRef.current = 0;
-        jetpackActiveRef.current = false;
-        setJetpackActive(false);
-        sounds.stopJetpackSound();
+      flamethrowerFuelRef.current -= BLAZE_FLAMETHROWER_FUEL_DRAIN * ctx.dt;
+      if (flamethrowerFuelRef.current <= 0) {
+        flamethrowerFuelRef.current = 0;
+        flamethrowerActiveRef.current = false;
+        setFlamethrowerActive(false);
+        setFlamethrowerVisualPose(null, { x: 0, y: 0, z: -1 });
+        sounds.stopFlamethrowerSound();
       }
-      setJetpackFuel(jetpackFuelRef.current);
+      setFlamethrowerFuel(flamethrowerFuelRef.current);
     } else {
-      // Deactivate jetpack
-      if (jetpackActiveRef.current) {
-        jetpackActiveRef.current = false;
-        setJetpackActive(false);
-        sounds.stopJetpackSound();
+      if (flamethrowerActiveRef.current) {
+        flamethrowerActiveRef.current = false;
+        setFlamethrowerActive(false);
+        setFlamethrowerVisualPose(null, { x: 0, y: 0, z: -1 });
+        sounds.stopFlamethrowerSound();
       }
 
       // Regenerate fuel when grounded
-      if (ctx.isGrounded && jetpackFuelRef.current < 100) {
-        jetpackFuelRef.current = Math.min(100, jetpackFuelRef.current + BLAZE_JETPACK_FUEL_REGEN * ctx.dt);
-        setJetpackFuel(jetpackFuelRef.current);
+      if (ctx.isGrounded && flamethrowerFuelRef.current < BLAZE_FLAMETHROWER_MAX_FUEL) {
+        flamethrowerFuelRef.current = Math.min(
+          BLAZE_FLAMETHROWER_MAX_FUEL,
+          flamethrowerFuelRef.current + BLAZE_FLAMETHROWER_FUEL_REGEN * ctx.dt
+        );
+        setFlamethrowerFuel(flamethrowerFuelRef.current);
       }
     }
   }, []);
 
   // Execute Rocket Jump (Q ability)
   const executeRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
-    ctx.velocity.y = 18;
+    ctx.velocity.y = BLAZE_ROCKET_JUMP_VERTICAL_FORCE;
     ctx.position.y += 0.5;
 
     // Small horizontal push
     const rjYaw = ctx.yaw;
-    ctx.velocity.x += -Math.sin(rjYaw) * 5;
-    ctx.velocity.z += -Math.cos(rjYaw) * 5;
+    ctx.velocity.x += -Math.sin(rjYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
+    ctx.velocity.z += -Math.cos(rjYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
 
     // Visual explosion
     triggerRocketJumpExplosion({ x: ctx.position.x, y: ctx.position.y, z: ctx.position.z });
@@ -285,20 +303,18 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     bombIdRef,
     bombTargetRef,
     bombValidRef,
-    jetpackFuelRef,
-    jetpackActiveRef,
+    flamethrowerFuelRef,
+    flamethrowerActiveRef,
     airStrikeTargetRef,
     airStrikeValidRef,
     secondaryFirePressedRef,
     fireRocket,
     handleBombTargeting,
     executeBombDrop,
-    handleJetpack,
+    handleFlamethrower,
     executeRocketJump,
     executeAirStrike,
     handleBombTargetUpdate,
     handleAirStrikeTargetUpdate,
   };
 }
-
-

@@ -128,8 +128,8 @@ export interface BlazeState {
   rocketId: number;
   lastBombTime: number;
   bombId: number;
-  jetpackFuel: number;
-  jetpackActive: boolean;
+  flamethrowerFuel: number;
+  flamethrowerActive: boolean;
 }
 
 export interface GlacierState {
@@ -193,8 +193,8 @@ export interface PlayerSounds {
   playBlazeBombExplode: () => void;
   playBlazeRocketJump: () => void;
   playBlazeAirstrike: () => void;
-  startJetpackSound: () => void;
-  stopJetpackSound: () => void;
+  startFlamethrowerSound: () => void;
+  stopFlamethrowerSound: () => void;
 }
 
 export interface MovementSounds {
@@ -202,5 +202,4 @@ export interface MovementSounds {
   startSlide: () => void;
   stopSlide: () => void;
 }
-
 

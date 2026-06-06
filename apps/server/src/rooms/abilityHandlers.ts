@@ -3,6 +3,7 @@ import { AbilityStateSchema } from './schema/Components';
 import { 
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
+  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
@@ -257,13 +258,13 @@ export function executeAbility(
     }
 
     // ===== BLAZE ABILITIES =====
-    case 'blaze_jetpack': {
-      player.movement.isJetpacking = !player.movement.isJetpacking;
+    case 'blaze_flamethrower': {
+      player.movement.isJetpacking = false;
       break;
     }
 
     case 'blaze_rocketjump': {
-      player.velocity.y = 20;
+      player.velocity.y = BLAZE_ROCKET_JUMP_VERTICAL_FORCE;
       player.position.y += 0.5;
       break;
     }
@@ -368,4 +369,3 @@ export function updateActiveAbilities(player: Player, now: number): void {
     }
   });
 }
-

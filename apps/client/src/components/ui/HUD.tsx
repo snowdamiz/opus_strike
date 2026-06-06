@@ -138,8 +138,8 @@ export function HUD() {
     voidRayChargeStart,
     bombTargeting,
     bombTargetValid,
-    jetpackFuel,
-    jetpackActive,
+    flamethrowerFuel,
+    flamethrowerActive,
     iceWallRushFuel,
     iceWallRushActive,
     frostStormActive,
@@ -159,8 +159,8 @@ export function HUD() {
       voidRayChargeStart: state.voidRayChargeStart,
       bombTargeting: state.bombTargeting,
       bombTargetValid: state.bombTargetValid,
-      jetpackFuel: state.jetpackFuel,
-      jetpackActive: state.jetpackActive,
+      flamethrowerFuel: state.flamethrowerFuel,
+      flamethrowerActive: state.flamethrowerActive,
       iceWallRushFuel: state.iceWallRushFuel,
       iceWallRushActive: state.iceWallRushActive,
       frostStormActive: state.frostStormActive,
@@ -590,34 +590,34 @@ export function HUD() {
           {localPlayer.movement?.isWallRunning && <MovementIndicator label="WALL RUN" color="#06b6d4" icon="wall" />}
           {localPlayer.movement?.isSliding && <MovementIndicator label="SLIDE" color="#22c55e" icon="slide" />}
           {localPlayer.movement?.isGrappling && <MovementIndicator label="GRAPPLE" color="#06b6d4" icon="grapple" />}
-          {localPlayer.movement?.isJetpacking && <MovementIndicator label="JETPACK" color="#f97316" icon="jetpack" />}
+          {flamethrowerActive && <MovementIndicator label="FLAME" color="#f97316" icon="flame" />}
           {localPlayer.movement?.isGliding && <MovementIndicator label="GLIDE" color="#a855f7" icon="glide" />}
         </div>
 
-        {/* Jetpack Fuel */}
+        {/* Flamethrower Fuel */}
         {localPlayer.heroId === 'blaze' && (
           <div
             className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
             style={{
-              background: jetpackActive ? 'rgba(249, 115, 22, 0.25)' : 'rgba(249, 115, 22, 0.1)',
-              border: jetpackActive ? '1px solid rgba(249, 115, 22, 0.6)' : '1px solid rgba(249, 115, 22, 0.3)',
+              background: flamethrowerActive ? 'rgba(249, 115, 22, 0.25)' : 'rgba(249, 115, 22, 0.1)',
+              border: flamethrowerActive ? '1px solid rgba(249, 115, 22, 0.6)' : '1px solid rgba(249, 115, 22, 0.3)',
             }}
           >
-            <span className="text-[9px] font-display text-orange-400 tracking-wider">FUEL</span>
+            <span className="text-[9px] font-display text-orange-400 tracking-wider">FLAME</span>
             <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
               <div
                 className="h-full transition-all duration-100"
                 style={{
-                  width: `${jetpackFuel}%`,
-                  background: jetpackActive
+                  width: `${flamethrowerFuel}%`,
+                  background: flamethrowerActive
                     ? 'linear-gradient(90deg, #ff6b00, #ffaa00)'
                     : 'linear-gradient(90deg, #f97316, #fbbf24)',
-                  boxShadow: jetpackActive ? '0 0 15px rgba(255, 170, 0, 0.7)' : '0 0 10px rgba(249, 115, 22, 0.5)',
+                  boxShadow: flamethrowerActive ? '0 0 15px rgba(255, 170, 0, 0.7)' : '0 0 10px rgba(249, 115, 22, 0.5)',
                 }}
               />
             </div>
             <span className="text-[10px] font-mono text-orange-300/70">
-              {Math.round(jetpackFuel)}%
+              {Math.round(flamethrowerFuel)}%
             </span>
           </div>
         )}

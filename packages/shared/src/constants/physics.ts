@@ -1,5 +1,5 @@
 // World settings
-export const GRAVITY = -22; // Decreased for floatier feel
+export const GRAVITY = -24; // Slightly heavier fall than the previous floaty tuning
 export const AIR_RESISTANCE = 0.01;
 export const GROUND_FRICTION = 0.9;
 
@@ -25,9 +25,14 @@ export const BHOP_AIR_ACCEL = 15;
 export const BHOP_AIR_SPEED_CAP = 2;
 // Maximum velocity the player can achieve through bunny hopping
 // About 1.5x sprint speed - rewarding skilled movement
-export const BHOP_MAX_VELOCITY = 20;
+export const BHOP_MAX_VELOCITY = 14;
 // Ground friction - how quickly you slow down on ground
 export const BHOP_GROUND_FRICTION = 6;
+// Extra grounded friction when no movement key is held. This keeps Quake-style
+// acceleration while moving, but makes key release feel crisp instead of floaty.
+export const BHOP_NO_INPUT_FRICTION_MULTIPLIER = 4;
+// Snap tiny leftover ground velocity to zero after releasing movement input.
+export const BHOP_GROUND_STOP_THRESHOLD = 0.75;
 // Stop speed - below this speed, friction applies more strongly
 export const BHOP_STOP_SPEED = 1.5;
 // Speed boost when landing a bhop with good timing
@@ -100,6 +105,19 @@ export const JETPACK_THRUST = 20;
 export const JETPACK_HOVER_THRUST = 12;
 export const JETPACK_MAX_VERTICAL_SPEED = 15;
 
+// Blaze Flamethrower
+export const BLAZE_FLAMETHROWER_MAX_FUEL = 100;
+export const BLAZE_FLAMETHROWER_FUEL_DRAIN = 50; // per second
+export const BLAZE_FLAMETHROWER_FUEL_REGEN = 15; // per second when grounded
+export const BLAZE_FLAMETHROWER_RANGE = 9;
+export const BLAZE_FLAMETHROWER_CONE_HALF_ANGLE = Math.PI / 5;
+export const BLAZE_FLAMETHROWER_DAMAGE = 8;
+export const BLAZE_FLAMETHROWER_DAMAGE_INTERVAL = 250; // ms between damage ticks
+
+// Rocket Jump
+export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 11;
+export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;
+
 // Ice Wall Rush (Glacier E ability)
 export const ICE_WALL_RUSH_MAX_FUEL = 100;
 export const ICE_WALL_RUSH_FUEL_DRAIN = 60; // per second - depletes faster
@@ -134,4 +152,3 @@ export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.4;
 export const PLAYER_CROUCH_HEIGHT = 1.0;
 export const PLAYER_MASS = 80;
-

@@ -18,6 +18,8 @@ import {
   PLAYER_RADIUS,
   STEP_HEIGHT,
   SMOOTH_SPEED_LARGE,
+  TERRAIN_RAMP_DOWN_SMOOTH_SPEED,
+  TERRAIN_RAMP_UP_SMOOTH_SPEED,
   OUT_OF_BOUNDS_Y,
   RESPAWN_Y,
 } from './constants';
@@ -71,6 +73,11 @@ export interface UsePlayerPhysicsReturn {
   ) => void;
 }
 
+function smoothY(currentY: number, targetY: number, speed: number, dt: number): number {
+  const t = 1 - Math.exp(-speed * dt);
+  return currentY + (targetY - currentY) * t;
+}
+
 export function usePlayerPhysics(): UsePlayerPhysicsReturn {
   // Check ground and handle landing
   const checkGround = useCallback((
@@ -98,19 +105,21 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     const targetY = groundInfo.groundY + PLAYER_HEIGHT / 2;
     const playerFeetY = position.y - PLAYER_HEIGHT / 2;
     const distToGround = playerFeetY - groundInfo.groundY;
+    const snapDistance = distToGround >= 0 ? STEP_HEIGHT : 0.15;
 
     // Close to or below ground
-    if (distToGround <= 0.15 && velocity.y <= 0) {
+    if (distToGround <= snapDistance && velocity.y <= 0) {
       if (groundInfo.isWalkable) {
         // Calculate smoothed Y position for ground following
         const currentY = smoothedY ?? position.y;
-
-        // Use consistent fast smoothing for both landing and walking
-        // Previously used SMOOTH_SPEED_SMALL (8) for small changes, which caused
-        // slow settling (~1 second) after landing, creating a "bouncy" feeling
-        // Now using SMOOTH_SPEED_LARGE (20) uniformly for snappy ground following
-        const smoothSpeed = SMOOTH_SPEED_LARGE * dt;
-        const newY = currentY + (targetY - currentY) * Math.min(smoothSpeed, 1);
+        const heightDelta = targetY - currentY;
+        const isTerrainFollow = Math.abs(heightDelta) <= STEP_HEIGHT + 0.1 && Math.abs(velocity.y) < 3;
+        const smoothSpeed = isTerrainFollow
+          ? heightDelta >= 0
+            ? TERRAIN_RAMP_UP_SMOOTH_SPEED
+            : TERRAIN_RAMP_DOWN_SMOOTH_SPEED
+          : SMOOTH_SPEED_LARGE;
+        const newY = smoothY(currentY, targetY, smoothSpeed, dt);
 
         position.y = newY;
         velocity.y = 0;
@@ -192,10 +201,15 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
             const hasCeiling = ceilingCheck && ceilingCheck.groundY < targetGroundY + PLAYER_HEIGHT;
 
             if (!hasCeiling) {
-              // Step up!
-              position.x = position.x + moveX * 2;
-              position.z = position.z + moveZ * 2;
-              position.y = targetGroundY + PLAYER_HEIGHT / 2;
+              const targetY = targetGroundY + PLAYER_HEIGHT / 2;
+              const currentY = smoothedY ?? position.y;
+              const smoothSpeed = isIceWallRushing
+                ? TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35
+                : TERRAIN_RAMP_UP_SMOOTH_SPEED;
+
+              position.x += moveX;
+              position.z += moveZ;
+              position.y = smoothY(currentY, targetY, smoothSpeed, dt);
               newSmoothedY = position.y;
               velocity.y = 0;
               didStepUp = true;
@@ -297,5 +311,4 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     constrainToMapBoundary,
   };
 }
-
 

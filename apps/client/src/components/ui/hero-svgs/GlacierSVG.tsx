@@ -89,12 +89,8 @@ export function GlacierSVG({ colors, className, size }: HeroSVGInternalProps) {
         
         {/* Glowing eyes */}
         <g className="glacier-eyes">
-          <circle cx="90" cy="50" r="5" fill="#ffffff">
-            <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite" />
-          </circle>
-          <circle cx="110" cy="50" r="5" fill="#ffffff">
-            <animate attributeName="opacity" values="0.8;1;0.8" dur="2s" repeatCount="indefinite" />
-          </circle>
+          <circle cx="90" cy="50" r="5" fill="#ffffff" opacity="0.9" />
+          <circle cx="110" cy="50" r="5" fill="#ffffff" opacity="0.9" />
           <circle cx="90" cy="50" r="3" fill={colors.primary} />
           <circle cx="110" cy="50" r="3" fill={colors.primary} />
         </g>
@@ -116,12 +112,8 @@ export function GlacierSVG({ colors, className, size }: HeroSVGInternalProps) {
             fill="none"
           />
           {/* Ice fists */}
-          <circle cx="15" cy="165" r="18" fill={colors.secondary}>
-            <animate attributeName="r" values="18;20;18" dur="3s" repeatCount="indefinite" />
-          </circle>
-          <circle cx="185" cy="165" r="18" fill={colors.secondary}>
-            <animate attributeName="r" values="18;20;18" dur="3s" repeatCount="indefinite" />
-          </circle>
+          <circle cx="15" cy="165" r="19" fill={colors.secondary} />
+          <circle cx="185" cy="165" r="19" fill={colors.secondary} />
           {/* Ice spikes on fists */}
           <polygon points="5,150 0,140 10,145" fill="#e0f2fe" />
           <polygon points="195,150 200,140 190,145" fill="#e0f2fe" />
@@ -165,12 +157,8 @@ export function GlacierSVG({ colors, className, size }: HeroSVGInternalProps) {
       
       {/* Breath frost */}
       <g className="glacier-breath" opacity="0.4">
-        <ellipse cx="100" cy="70" rx="20" ry="8" fill={colors.primary} className="breath-cloud">
-          <animate attributeName="rx" values="20;25;20" dur="3s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.4;0.6;0.4" dur="3s" repeatCount="indefinite" />
-        </ellipse>
+        <ellipse cx="100" cy="70" rx="22" ry="8" fill={colors.primary} className="breath-cloud" />
       </g>
     </svg>
   );
 }
-

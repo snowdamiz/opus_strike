@@ -5,6 +5,7 @@ import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { damageNpc } from '../../ui/GameConsole';
+import { triggerTerrainImpact } from '../TerrainImpactEffects';
 
 interface DireBallProps {
   id: string;
@@ -325,6 +326,10 @@ export const DireBall = React.memo(({ id, position, velocity, startTime, ownerId
           // Hit terrain - mark as collided and remove from store
           hasCollided.current = true;
           groupRef.current.visible = false;
+          triggerTerrainImpact('phantom_dire_ball', hit.point, {
+            normal: hit.normal,
+            direction,
+          });
           removeDireBall(id);
           return;
         }
@@ -524,4 +529,3 @@ export function DireBalls({ balls }: DireBallsProps) {
     </>
   );
 }
-

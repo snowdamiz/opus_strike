@@ -43,7 +43,7 @@ Shared physics simulation with client-side prediction and server reconciliation:
 
 - **Base movement**: WASD + mouse look, jumping, crouching
 - **Parkour**: Wall running (angle detection), sliding, mantling ledges
-- **Aerial**: Grappling hook physics, jetpack thrust, gliding drag
+- **Aerial**: Grappling hook physics, gliding drag, rocket-jump momentum
 - **Abilities**: Dash vectors, blink teleportation with validation
 
 ### 2. Hero System (6 Heroes to Start)
@@ -58,7 +58,7 @@ Each hero has a passive + 2 abilities + ultimate:
 
 | **Hookshot** | Mobile | Grappling | Grapple hook, swing momentum, zipline ult |
 
-| **Blaze** | Assault | Aerial | Jetpack hover, rocket jump, air strike ult |
+| **Blaze** | Assault | Aerial | Flamethrower, rocket jump, air strike ult |
 
 | **Glacier** | Tank | Parkour | Ice slide, wall climb, frozen fortress ult |
 

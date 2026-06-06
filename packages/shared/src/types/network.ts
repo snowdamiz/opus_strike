@@ -34,6 +34,7 @@ export interface GameStateSync {
   tick: number;
   serverTime: number;
   phase: GamePhase;
+  mapSeed: number;
   players: PlayerSnapshot[];
   redScore: number;
   blueScore: number;
@@ -110,4 +111,3 @@ export interface JoinOptions {
   playerName: string;
   preferredTeam?: Team;
 }
-
