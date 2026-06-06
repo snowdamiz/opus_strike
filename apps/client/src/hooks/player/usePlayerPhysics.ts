@@ -274,8 +274,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
           : SMOOTH_SPEED_LARGE;
         const newY = smoothY(currentY, targetY, smoothSpeed, dt);
 
-        // Keep the collision body on the true ground; smooth only the camera height.
-        position.y = targetY;
+        position.y = newY;
         velocity.y = 0;
 
         return {
@@ -368,8 +367,9 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
             position.x += moveX;
             position.z += moveZ;
-            position.y = targetY;
-            newSmoothedY = smoothY(currentY, targetY, smoothSpeed, dt);
+            const newY = smoothY(currentY, targetY, smoothSpeed, dt);
+            position.y = newY;
+            newSmoothedY = newY;
             velocity.y = 0;
             didStepUp = isStepUp;
             hitTerrain = isStepUp;

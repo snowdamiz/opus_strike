@@ -23,8 +23,8 @@ export const STEP_HEIGHT = 0.9;
 export const SMALL_BUMP_THRESHOLD = 0.15;
 export const SMOOTH_SPEED_SMALL = 8;
 export const SMOOTH_SPEED_LARGE = 20;
-export const TERRAIN_RAMP_UP_SMOOTH_SPEED = 10;
-export const TERRAIN_RAMP_DOWN_SMOOTH_SPEED = 14;
+export const TERRAIN_RAMP_UP_SMOOTH_SPEED = 7;
+export const TERRAIN_RAMP_DOWN_SMOOTH_SPEED = 9;
 
 // Out of bounds - ground level is y=0, spawns at y=1
 // Only consider out of bounds if significantly below map
