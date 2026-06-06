@@ -10,6 +10,7 @@
 
 export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.48;
+export const PLAYER_CROUCH_HEIGHT = 1.0;
 export const EYE_HEIGHT = 0.6;
 
 // ============================================================================

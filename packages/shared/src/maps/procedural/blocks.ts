@@ -67,3 +67,10 @@ export function getBlockId(numericId: number): VoxelBlockId {
 export function isSolidBlock(blockId: VoxelBlockId | number): boolean {
   return getBlockDefinition(blockId).solid;
 }
+
+const NON_COLLIDING_DECORATIVE_BLOCKS = new Set<VoxelBlockId>(['wood', 'leaves', 'cactus']);
+
+export function isCollisionBlock(blockId: VoxelBlockId | number): boolean {
+  const block = getBlockDefinition(blockId);
+  return block.solid && !NON_COLLIDING_DECORATIVE_BLOCKS.has(block.id);
+}

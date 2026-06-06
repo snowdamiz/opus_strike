@@ -17,6 +17,7 @@ import {
 } from '../usePhysics';
 import {
   PLAYER_HEIGHT,
+  PLAYER_CROUCH_HEIGHT,
   PLAYER_RADIUS,
   STEP_HEIGHT,
   SMOOTH_SPEED_LARGE,
@@ -62,16 +63,25 @@ export interface UsePlayerPhysicsReturn {
     isGrounded: boolean,
     smoothedY: number | null,
     isIceWallRushing: boolean,
-    dt: number
-  ) => { didStepUp: boolean; newSmoothedY: number | null; hitTerrain: boolean };
+    dt: number,
+    playerHeight?: number
+  ) => {
+    didStepUp: boolean;
+    didFollowTerrain: boolean;
+    newSmoothedY: number | null;
+    hitTerrain: boolean;
+  };
   
   applyGravity: (velocity: THREE.Vector3, isGrounded: boolean, isGrappling: boolean, isSwinging: boolean, dt: number) => void;
 
   applyVerticalMovement: (
     position: THREE.Vector3,
     velocity: THREE.Vector3,
-    dt: number
+    dt: number,
+    playerHeight?: number
   ) => { hitCeiling: boolean };
+
+  canStandAtPosition: (position: THREE.Vector3) => boolean;
   
   checkOutOfBounds: (position: THREE.Vector3, velocity: THREE.Vector3, isGrounded: boolean) => void;
   
@@ -113,10 +123,22 @@ function isGroundHitAboveStepRange(position: THREE.Vector3, groundY: number): bo
   return groundY - playerFeetY > MAX_GROUND_HIT_ABOVE_FEET;
 }
 
-function getAllowedUpwardMoveBeforeCeiling(position: THREE.Vector3, upwardMove: number): number | null {
+function getBodyCenterY(positionY: number, playerHeight: number): number {
+  return positionY - PLAYER_HEIGHT / 2 + playerHeight / 2;
+}
+
+function getBodyTopY(positionY: number, playerHeight: number): number {
+  return positionY - PLAYER_HEIGHT / 2 + playerHeight;
+}
+
+function getAllowedUpwardMoveBeforeCeiling(
+  position: THREE.Vector3,
+  upwardMove: number,
+  playerHeight: number = PLAYER_HEIGHT
+): number | null {
   if (upwardMove <= 0 || !isPhysicsReady()) return null;
 
-  const headY = position.y + PLAYER_HEIGHT / 2;
+  const headY = getBodyTopY(position.y, playerHeight);
   const castDistance = upwardMove + CEILING_CLEARANCE * 2;
   let nearestAllowedMove = Infinity;
 
@@ -140,20 +162,55 @@ function getAllowedUpwardMoveBeforeCeiling(position: THREE.Vector3, upwardMove: 
   return nearestAllowedMove === Infinity ? null : nearestAllowedMove;
 }
 
-function canMovePlayerBody(position: THREE.Vector3, moveX: number, moveZ: number): boolean {
+function canMovePlayerBody(
+  position: THREE.Vector3,
+  moveX: number,
+  moveZ: number,
+  playerHeight: number = PLAYER_HEIGHT
+): boolean {
   return !checkPlayerBodyMovement(
     position.x,
-    position.y,
+    getBodyCenterY(position.y, playerHeight),
     position.z,
     moveX,
     moveZ,
     PLAYER_RADIUS,
-    PLAYER_HEIGHT
+    playerHeight
   ).blocked;
 }
 
-function canOccupyPlayerBody(x: number, y: number, z: number): boolean {
-  return hasPlayerBodyClearance(x, y, z, PLAYER_RADIUS, PLAYER_HEIGHT);
+function canOccupyPlayerBody(
+  x: number,
+  y: number,
+  z: number,
+  playerHeight: number = PLAYER_HEIGHT
+): boolean {
+  return hasPlayerBodyClearance(x, getBodyCenterY(y, playerHeight), z, PLAYER_RADIUS, playerHeight);
+}
+
+function hasStandingHeadroom(position: THREE.Vector3): boolean {
+  if (!isPhysicsReady()) return true;
+
+  const crouchedHeadY = getBodyTopY(position.y, PLAYER_CROUCH_HEIGHT);
+  const castDistance = PLAYER_HEIGHT - PLAYER_CROUCH_HEIGHT + CEILING_CLEARANCE * 2;
+
+  for (const offset of CEILING_PROBE_OFFSETS) {
+    const hit = raycastDirection(
+      position.x + offset.x,
+      crouchedHeadY - CEILING_CLEARANCE,
+      position.z + offset.z,
+      0,
+      1,
+      0,
+      castDistance
+    );
+
+    if (hit?.hit) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function getWalkableGroundAt(x: number, y: number, z: number, maxDist: number): GroundInfo | null {
@@ -199,15 +256,25 @@ function findGroundedTerrainMove(
   const probeMaxDistance = effectiveStepHeight + MAX_STEP_DOWN_HEIGHT + 2;
   let best: { ground: GroundInfo; heightDiff: number } | null = null;
 
+  const targetSample = { x: position.x + moveX, z: position.z + moveZ };
   const samples = [
-    { x: position.x + moveX, z: position.z + moveZ },
+    targetSample,
     ...STEP_UP_PROBE_SIDE_OFFSETS.map((sideOffset) => ({
       x: position.x + dirX * (PLAYER_RADIUS + Math.max(moveDist, 0.04)) + sideX * sideOffset,
       z: position.z + dirZ * (PLAYER_RADIUS + Math.max(moveDist, 0.04)) + sideZ * sideOffset,
     })),
   ];
 
-  for (const sample of samples) {
+  const targetGround = getWalkableGroundAt(targetSample.x, probeOriginY, targetSample.z, probeMaxDistance);
+  if (targetGround) {
+    const heightDiff = targetGround.groundY - currentFeetY;
+    if (heightDiff <= STEP_UP_MIN_HEIGHT && heightDiff >= -MAX_STEP_DOWN_HEIGHT) {
+      return { ground: targetGround, heightDiff };
+    }
+  }
+
+  for (let i = 1; i < samples.length; i++) {
+    const sample = samples[i];
     const ground = getWalkableGroundAt(sample.x, probeOriginY, sample.z, probeMaxDistance);
     if (!ground) continue;
 
@@ -274,7 +341,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
           : SMOOTH_SPEED_LARGE;
         const newY = smoothY(currentY, targetY, smoothSpeed, dt);
 
-        position.y = newY;
+        position.y = targetY;
         velocity.y = 0;
 
         return {
@@ -308,20 +375,27 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     isGrounded: boolean,
     smoothedY: number | null,
     isIceWallRushing: boolean,
-    dt: number
-  ): { didStepUp: boolean; newSmoothedY: number | null; hitTerrain: boolean } => {
+    dt: number,
+    playerHeight: number = PLAYER_HEIGHT
+  ): {
+    didStepUp: boolean;
+    didFollowTerrain: boolean;
+    newSmoothedY: number | null;
+    hitTerrain: boolean;
+  } => {
     const moveX = velocity.x * dt;
     const moveZ = velocity.z * dt;
     const targetX = position.x + moveX;
     const targetZ = position.z + moveZ;
     let didStepUp = false;
+    let didFollowTerrain = false;
     let hitTerrain = false;
     let newSmoothedY = smoothedY;
 
     if (!isPhysicsReady() || (Math.abs(moveX) <= 0.001 && Math.abs(moveZ) <= 0.001)) {
       position.x += moveX;
       position.z += moveZ;
-      return { didStepUp: false, newSmoothedY, hitTerrain: false };
+      return { didStepUp: false, didFollowTerrain: false, newSmoothedY, hitTerrain: false };
     }
 
     // Step-up logic for stairs
@@ -345,15 +419,10 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
           if (isStepUp) {
             const targetY = targetGroundY + PLAYER_HEIGHT / 2;
             const upwardMove = targetY - position.y;
-            const ceilingAllowance = getAllowedUpwardMoveBeforeCeiling(position, upwardMove);
+            const ceilingAllowance = getAllowedUpwardMoveBeforeCeiling(position, upwardMove, playerHeight);
             const hasCeilingClearance = ceilingAllowance === null || ceilingAllowance >= upwardMove - CEILING_CLEARANCE;
 
-            if (hasCeilingClearance) {
-              const raisedPosition = new THREE.Vector3(position.x, targetY, position.z);
-              canTraverse =
-                canOccupyPlayerBody(targetX, targetY, targetZ) &&
-                canMovePlayerBody(raisedPosition, moveX, moveZ);
-            }
+            canTraverse = hasCeilingClearance;
           }
 
           if (canTraverse) {
@@ -365,16 +434,18 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
                 : TERRAIN_RAMP_UP_SMOOTH_SPEED
               : TERRAIN_RAMP_DOWN_SMOOTH_SPEED;
 
+            const newY = smoothY(currentY, targetY, smoothSpeed, dt);
+
             position.x += moveX;
             position.z += moveZ;
-            const newY = smoothY(currentY, targetY, smoothSpeed, dt);
-            position.y = newY;
+            position.y = targetY;
             newSmoothedY = newY;
             velocity.y = 0;
             didStepUp = isStepUp;
+            didFollowTerrain = true;
             hitTerrain = isStepUp;
 
-            return { didStepUp, newSmoothedY, hitTerrain };
+            return { didStepUp, didFollowTerrain, newSmoothedY, hitTerrain };
           }
         }
       }
@@ -382,19 +453,19 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
     // Normal movement if didn't step up
     if (!didStepUp) {
-      if (canMovePlayerBody(position, moveX, moveZ)) {
+      if (canMovePlayerBody(position, moveX, moveZ, playerHeight)) {
         position.x += moveX;
         position.z += moveZ;
       } else {
         hitTerrain = true;
 
-        if (Math.abs(moveX) > 0.001 && canMovePlayerBody(position, moveX, 0)) {
+        if (Math.abs(moveX) > 0.001 && canMovePlayerBody(position, moveX, 0, playerHeight)) {
           position.x += moveX;
         } else {
           velocity.x = 0;
         }
 
-        if (Math.abs(moveZ) > 0.001 && canMovePlayerBody(position, 0, moveZ)) {
+        if (Math.abs(moveZ) > 0.001 && canMovePlayerBody(position, 0, moveZ, playerHeight)) {
           position.z += moveZ;
         } else {
           velocity.z = 0;
@@ -402,7 +473,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
       }
     }
 
-    return { didStepUp, newSmoothedY, hitTerrain };
+    return { didStepUp, didFollowTerrain, newSmoothedY, hitTerrain };
   }, []);
 
   // Apply gravity
@@ -427,7 +498,8 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
   const applyVerticalMovement = useCallback((
     position: THREE.Vector3,
     velocity: THREE.Vector3,
-    dt: number
+    dt: number,
+    playerHeight: number = PLAYER_HEIGHT
   ): { hitCeiling: boolean } => {
     const verticalMove = velocity.y * dt;
 
@@ -436,7 +508,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
       return { hitCeiling: false };
     }
 
-    const allowedMove = getAllowedUpwardMoveBeforeCeiling(position, verticalMove);
+    const allowedMove = getAllowedUpwardMoveBeforeCeiling(position, verticalMove, playerHeight);
     if (allowedMove !== null && allowedMove <= verticalMove) {
       position.y += allowedMove;
       velocity.y = 0;
@@ -445,6 +517,10 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
     position.y += verticalMove;
     return { hitCeiling: false };
+  }, []);
+
+  const canStandAtPosition = useCallback((position: THREE.Vector3): boolean => {
+    return hasStandingHeadroom(position);
   }, []);
 
   // Check and handle out of bounds
@@ -483,6 +559,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     applyHorizontalMovement,
     applyGravity,
     applyVerticalMovement,
+    canStandAtPosition,
     checkOutOfBounds,
     constrainToMapBoundary,
   };

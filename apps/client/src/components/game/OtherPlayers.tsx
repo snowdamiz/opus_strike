@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import { HERO_DEFINITIONS, PLAYER_HEIGHT } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-strike/shared';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import { HeroIcon } from '../ui/HeroIcons';
@@ -74,6 +74,7 @@ interface OtherPlayerProps {
 }
 
 const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
+const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
 
 function setPlayerRenderOrigin(
   target: THREE.Vector3,
@@ -86,6 +87,11 @@ function OtherPlayer({ player }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
   const playerHeight = heroStats?.size.height ?? 1.8;
+  const hasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
+  const visibleHeight = hasLoweredPosture
+    ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
+    : playerHeight;
+  const postureScaleY = visibleHeight / playerHeight;
   const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const currentPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const initializedRef = useRef(false);
@@ -143,6 +149,7 @@ function OtherPlayer({ player }: OtherPlayerProps) {
         heroId={player.heroId}
         team={player.team} 
         height={playerHeight}
+        postureScaleY={postureScaleY}
         isBot={player.isBot}
         isMoving={Math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z) > 0.5}
         hasFlag={player.hasFlag}
@@ -155,10 +162,10 @@ function OtherPlayer({ player }: OtherPlayerProps) {
         team={player.team}
         health={player.health}
         maxHealth={player.maxHealth}
-        height={playerHeight}
+        height={visibleHeight}
       />
 
-      <PlayerVisibilityBeacon team={player.team} height={playerHeight} isBot={player.isBot} />
+      <PlayerVisibilityBeacon team={player.team} height={visibleHeight} isBot={player.isBot} />
 
       {/* Flag indicator */}
       {player.hasFlag && (

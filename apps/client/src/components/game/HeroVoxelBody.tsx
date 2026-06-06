@@ -23,6 +23,7 @@ interface HeroVoxelBodyProps {
   isBot?: boolean;
   isMoving?: boolean;
   hasFlag?: boolean;
+  postureScaleY?: number;
 }
 
 const TEAM_COLORS: Record<Team, string> = {
@@ -177,10 +178,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   isBot = false,
   isMoving = false,
   hasFlag = false,
+  postureScaleY = 1,
 }: HeroVoxelBodyProps) {
   const groupRef = useRef<THREE.Group>(null);
   const resolvedHero = heroId || 'phantom';
   const scale = height / 1.8;
+  const verticalScale = Math.max(0.45, Math.min(1, postureScaleY));
   const teamColor = TEAM_COLORS[team];
   const parts = HERO_PARTS[resolvedHero];
   const colors = HERO_COLORS[resolvedHero];
@@ -209,7 +212,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   });
 
   return (
-    <group ref={groupRef} scale={[scale, scale, scale]}>
+    <group ref={groupRef} scale={[scale, scale * verticalScale, scale]}>
       {parts.map((part, index) => (
         <mesh
           key={`${resolvedHero}-${index}`}

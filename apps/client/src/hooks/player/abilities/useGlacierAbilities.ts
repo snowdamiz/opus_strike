@@ -180,7 +180,7 @@ export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
             TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35,
             ctx.dt
           );
-          ctx.position.y = smoothedY.current;
+          ctx.position.y = targetY;
           ctx.velocity.y = 0;
         } else if (heightDiff < -0.1 && heightDiff > -STEP_HEIGHT) {
           const targetY = targetGroundY + PLAYER_HEIGHT / 2;
@@ -190,7 +190,7 @@ export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
             TERRAIN_RAMP_DOWN_SMOOTH_SPEED * 1.35,
             ctx.dt
           );
-          ctx.position.y = smoothedY.current;
+          ctx.position.y = targetY;
           ctx.velocity.y = 0;
         } else if (Math.abs(heightDiff) <= 0.05) {
           ctx.velocity.y = -1;

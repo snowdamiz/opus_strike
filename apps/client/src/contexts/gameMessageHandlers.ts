@@ -4,7 +4,7 @@ import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setPlayerVisualPosition, setPlayerVisualRotation, visualStore } from '../store/visualStore';
 import { addEffect } from '../components/game/Effects';
-import type { BotDifficulty, HeroId, Team, Player } from '@voxel-strike/shared';
+import type { BotDifficulty, HeroId, Team, Player, PlayerMovementState } from '@voxel-strike/shared';
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -27,6 +27,43 @@ export function createDefaultMovement() {
     isJetpacking: false,
     jetpackFuel: 100,
     isGliding: false,
+  };
+}
+
+function normalizeMovementState(
+  movement: any,
+  fallback?: PlayerMovementState
+): PlayerMovementState {
+  const base: PlayerMovementState = fallback
+    ? {
+        ...fallback,
+        grapplePoint: fallback.grapplePoint ? { ...fallback.grapplePoint } : null,
+      }
+    : createDefaultMovement();
+  const wallRunSide = movement?.wallRunSide === 'left' || movement?.wallRunSide === 'right'
+    ? movement.wallRunSide
+    : base.wallRunSide;
+
+  return {
+    ...base,
+    isGrounded: movement?.isGrounded ?? base.isGrounded,
+    isSprinting: movement?.isSprinting ?? base.isSprinting,
+    isCrouching: movement?.isCrouching ?? base.isCrouching,
+    isSliding: movement?.isSliding ?? base.isSliding,
+    slideTimeRemaining: movement?.slideTimeRemaining ?? base.slideTimeRemaining,
+    isWallRunning: movement?.isWallRunning ?? base.isWallRunning,
+    wallRunSide,
+    isGrappling: movement?.isGrappling ?? base.isGrappling,
+    grapplePoint: movement?.grapplePoint
+      ? {
+          x: movement.grapplePoint.x ?? 0,
+          y: movement.grapplePoint.y ?? 0,
+          z: movement.grapplePoint.z ?? 0,
+        }
+      : base.grapplePoint,
+    isJetpacking: movement?.isJetpacking ?? base.isJetpacking,
+    jetpackFuel: movement?.jetpackFuel ?? base.jetpackFuel,
+    isGliding: movement?.isGliding ?? base.isGliding,
   };
 }
 
@@ -72,7 +109,7 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     health: schemaPlayer.health ?? 100,
     maxHealth: schemaPlayer.maxHealth ?? 100,
     ultimateCharge: schemaPlayer.ultimateCharge ?? 0,
-    movement: createDefaultMovement(),
+    movement: normalizeMovementState(schemaPlayer.movement),
     abilities: {},
     hasFlag: schemaPlayer.hasFlag || false,
     respawnTime: null,
@@ -215,6 +252,7 @@ export function syncPlayerFromSchema(
         lookPitch: schemaPlayer.lookPitch ?? store.localPlayer.lookPitch,
         // Explicitly preserve ultimateCharge - it's managed by playerStates message
         ultimateCharge: store.localPlayer.ultimateCharge,
+        movement: normalizeMovementState(schemaPlayer.movement, store.localPlayer.movement),
       };
       actions.setLocalPlayer(updated);
       if (shouldSyncPosition) {
@@ -267,6 +305,7 @@ export function processPlayerDuringPoll(
         lookYaw: schemaPlayer.lookYaw ?? freshStore.localPlayer.lookYaw,
         lookPitch: schemaPlayer.lookPitch ?? freshStore.localPlayer.lookPitch,
         ultimateCharge: freshStore.localPlayer.ultimateCharge,
+        movement: normalizeMovementState(schemaPlayer.movement, freshStore.localPlayer.movement),
       };
       actions.setLocalPlayer(updated);
       if (shouldSyncPosition) {
@@ -315,6 +354,7 @@ export function processPlayerDuringPoll(
       ultimateCharge: schemaPlayer.ultimateCharge ?? existingPlayer.ultimateCharge,
       hasFlag: schemaPlayer.hasFlag ?? existingPlayer.hasFlag,
       stats: schemaPlayer.stats || existingPlayer.stats,
+      movement: normalizeMovementState(schemaPlayer.movement, existingPlayer.movement),
     };
     actions.updatePlayer(id, positionUpdated);
   }
@@ -461,6 +501,7 @@ export function setupPlayerStatesHandler(
             hasFlag: serverPlayer.hasFlag ?? freshStore.localPlayer.hasFlag,
             abilities: serverPlayer.abilities || freshStore.localPlayer.abilities,
             stats: serverPlayer.stats || freshStore.localPlayer.stats,
+            movement: normalizeMovementState(serverPlayer.movement, freshStore.localPlayer.movement),
           };
           actions.setLocalPlayer(updated);
           if (shouldSyncPosition) {
@@ -492,6 +533,7 @@ export function setupPlayerStatesHandler(
             hasFlag: serverPlayer.hasFlag ?? existingPlayer.hasFlag,
             abilities: serverPlayer.abilities || existingPlayer.abilities,
             stats: serverPlayer.stats || existingPlayer.stats,
+            movement: normalizeMovementState(serverPlayer.movement, existingPlayer.movement),
           };
           actions.updatePlayer(serverPlayer.id, updatedPlayer);
         } else {
@@ -512,7 +554,7 @@ export function setupPlayerStatesHandler(
             health: serverPlayer.health ?? 100,
             maxHealth: serverPlayer.maxHealth ?? 100,
             ultimateCharge: serverPlayer.ultimateCharge ?? 0,
-            movement: createDefaultMovement(),
+            movement: normalizeMovementState(serverPlayer.movement),
             abilities: serverPlayer.abilities || {},
             hasFlag: serverPlayer.hasFlag ?? false,
             respawnTime: null,

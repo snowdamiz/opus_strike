@@ -31,9 +31,11 @@ import {
   useGlacierAbilities,
   useHookshotAbilities,
   PLAYER_HEIGHT,
+  PLAYER_CROUCH_HEIGHT,
   EYE_HEIGHT,
 } from '../../hooks/player';
 import {
+  CROUCH_MULTIPLIER,
   TICK_RATE,
   createEmptyInputState,
   getHeroStats,
@@ -404,35 +406,6 @@ export function PlayerController() {
     }
     const heroStats = cachedHeroStatsRef.current.stats!;
 
-    // Calculate movement
-    const movementMultiplier = shadowStepTargeting ? 0.3 : 1;
-    const moveDirection = movement.calculateMoveDirection(frameInput, cameraControl.refs.yaw.current);
-
-    // Update slide state
-    const { isSliding, speed: modifiedSpeed } = movement.updateSlideState(
-      frameInput,
-      movement.refs.isGrounded.current,
-      cameraControl.refs.yaw.current,
-      heroStats.moveSpeed * movementMultiplier,
-      localPlayer.team,
-      dt,
-      movementSounds
-    );
-
-    // Apply ability speed boosts
-    const { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
-    const finalSpeed = modifiedSpeed * speedMultiplier;
-
-    // Apply movement physics
-    movement.applyMovement(
-      movement.refs.velocity.current,
-      moveDirection,
-      finalSpeed,
-      movement.refs.isGrounded.current,
-      isSliding,
-      dt
-    );
-
     // Position from visualStore (client-predicted) with fallback to gameStore (server spawn)
     const position = positionRef.current;
     const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
@@ -452,6 +425,43 @@ export function PlayerController() {
       movement.refs.isGrounded.current = false;
       movement.refs.canJump.current = false;
     }
+
+    const movementMultiplier = shadowStepTargeting ? 0.3 : 1;
+    const moveDirection = movement.calculateMoveDirection(frameInput, cameraControl.refs.yaw.current);
+
+    // Update slide state
+    let { isSliding, speed: modifiedSpeed } = movement.updateSlideState(
+      frameInput,
+      movement.refs.isGrounded.current,
+      cameraControl.refs.yaw.current,
+      heroStats.moveSpeed * movementMultiplier,
+      localPlayer.team,
+      dt,
+      movementSounds
+    );
+
+    if (!isSliding && !movement.refs.isCrouching.current && !physics.canStandAtPosition(position)) {
+      movement.refs.isCrouching.current = true;
+      movement.refs.isSprinting.current = false;
+      modifiedSpeed = heroStats.moveSpeed * movementMultiplier * CROUCH_MULTIPLIER;
+    }
+    const playerBodyHeight = (isSliding || movement.refs.isCrouching.current)
+      ? PLAYER_CROUCH_HEIGHT
+      : PLAYER_HEIGHT;
+
+    // Apply ability speed boosts
+    const { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
+    const finalSpeed = modifiedSpeed * speedMultiplier;
+
+    // Apply movement physics
+    movement.applyMovement(
+      movement.refs.velocity.current,
+      moveDirection,
+      finalSpeed,
+      movement.refs.isGrounded.current,
+      isSliding,
+      dt
+    );
 
     // Create ability context
     const abilityCtx = {
@@ -627,13 +637,14 @@ export function PlayerController() {
     );
 
     // Horizontal movement with step-up
-    const { didStepUp, newSmoothedY, hitTerrain } = physics.applyHorizontalMovement(
+    const { didFollowTerrain, newSmoothedY, hitTerrain } = physics.applyHorizontalMovement(
       position,
       velocity,
       movement.refs.isGrounded.current,
       movement.refs.smoothedY.current,
       glacierAbilities.iceWallRushActiveRef.current,
-      dt
+      dt,
+      playerBodyHeight
     );
 
     if (newSmoothedY !== null) {
@@ -643,9 +654,9 @@ export function PlayerController() {
       hookshotAbilities.handleSwingTerrainContact();
     }
 
-    // Vertical movement (skip if stepped up)
-    if (!didStepUp) {
-      const { hitCeiling } = physics.applyVerticalMovement(position, velocity, dt);
+    // Vertical movement (skip when terrain following already placed the body)
+    if (!didFollowTerrain) {
+      const { hitCeiling } = physics.applyVerticalMovement(position, velocity, dt, playerBodyHeight);
       if (hitCeiling && heroId === 'hookshot') {
         hookshotAbilities.handleSwingTerrainContact();
       }
@@ -701,7 +712,7 @@ export function PlayerController() {
         moveLeft: frameInput.moveLeft,
         moveRight: frameInput.moveRight,
         jump: frameInput.jump,
-        crouch: frameInput.crouch,
+        crouch: frameInput.crouch || movement.refs.isCrouching.current,
         sprint: frameInput.sprint,
         primaryFire: frameInput.primaryFire,
         secondaryFire: frameInput.secondaryFire,

@@ -531,6 +531,20 @@ export class GameRoom extends Room<GameState> {
         maxHealth: player.maxHealth,
         ultimateCharge: player.ultimateCharge,
         hasFlag: player.hasFlag,
+        movement: {
+          isGrounded: player.movement.isGrounded,
+          isSprinting: player.movement.isSprinting,
+          isCrouching: player.movement.isCrouching,
+          isSliding: player.movement.isSliding,
+          slideTimeRemaining: player.movement.slideTimeRemaining,
+          isWallRunning: player.movement.isWallRunning,
+          wallRunSide: player.movement.wallRunSide || null,
+          isGrappling: player.movement.isGrappling,
+          grapplePoint: null,
+          isJetpacking: player.movement.isJetpacking,
+          jetpackFuel: player.movement.jetpackFuel,
+          isGliding: player.movement.isGliding,
+        },
         abilities, // Include abilities in state sync
         stats: {
           kills: player.kills,

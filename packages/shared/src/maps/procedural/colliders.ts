@@ -1,4 +1,4 @@
-import { isSolidBlock } from './blocks.js';
+import { isCollisionBlock } from './blocks.js';
 import type { VoxelChunk, VoxelCollider, VoxelMapManifest, VoxelSize } from './types.js';
 
 interface ColliderInput {
@@ -71,7 +71,7 @@ export function generateVoxelColliders(input: ColliderInput): VoxelCollider[] {
   for (let y = 0; y < input.size.y; y++) {
     for (let z = 0; z < input.size.z; z++) {
       for (let x = 0; x < input.size.x; x++) {
-        if (isSolidBlock(getGlobalBlock(lookupInput, x, y, z))) {
+        if (isCollisionBlock(getGlobalBlock(lookupInput, x, y, z))) {
           solid[index(x, y, z, input.size)] = 1;
         }
       }
