@@ -48,7 +48,6 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
     <>
       <GameDialog
         title="PAUSED"
-        description={currentLobbyName ?? undefined}
         icon={(
           <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
             <path d="M8 5h3v14H8V5zm5 0h3v14h-3V5z" />

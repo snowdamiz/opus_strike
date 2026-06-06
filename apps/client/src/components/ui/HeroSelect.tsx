@@ -83,8 +83,8 @@ export function HeroSelect() {
       </div>
 
       {/* Top Bar */}
-      <div className="relative z-10 flex items-center justify-between px-3 md:px-4 xl:px-6 2xl:px-8 py-2 md:py-3 xl:py-4 2xl:py-5 border-b border-white/5 bg-[#08080c]/80">
-        <div className="flex items-center gap-4 xl:gap-6">
+      <div className="relative z-10 flex items-center justify-between gap-4 px-[var(--menu-safe-x)] py-2 md:py-3 xl:py-4 2xl:py-5 border-b border-white/5 bg-[#08080c]/80">
+        <div className="flex min-w-0 items-center gap-4 xl:gap-6">
  <button
  onClick={() => { playButtonClick(); leaveGame(); }}
  className="flex items-center gap-2 px-3 xl:px-4 py-2 xl:py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/20"
@@ -97,7 +97,7 @@ export function HeroSelect() {
 
           <div className="w-px h-6 xl:h-8 bg-white/10" />
 
-          <div>
+          <div className="min-w-0">
             <h1 className="font-display text-lg md:text-xl xl:text-2xl 2xl:text-3xl text-white tracking-wide">
               CHOOSE YOUR <span style={{ color: accentColor }}>HERO</span>
             </h1>
@@ -106,7 +106,7 @@ export function HeroSelect() {
         </div>
 
         {/* Timer and Lock In */}
-        <div className="flex items-center gap-3 xl:gap-4">
+        <div className="flex shrink-0 items-center gap-3 xl:gap-4">
           <HeroSelectTimer
             phaseEndTime={phaseEndTime}
             isLockedIn={isLockedIn}
@@ -145,10 +145,10 @@ export function HeroSelect() {
       </div>
 
       {/* Main Content */}
-      <div className="relative z-10 flex-1 flex overflow-hidden min-h-0">
+      <div className="relative z-10 flex-1 flex overflow-hidden min-h-0 menu-content-wide">
         {/* Hero Grid - Left Side */}
-        <div className="w-[52%] lg:w-[55%] xl:w-[58%] p-1.5 md:p-2 lg:p-3 xl:p-4 2xl:p-6 overflow-y-auto flex items-center justify-center">
-          <div className="grid grid-cols-3 gap-2 lg:gap-3 xl:gap-4 2xl:gap-5 w-full max-w-[420px] lg:max-w-[480px] xl:max-w-[600px] 2xl:max-w-[720px]">
+        <div className="w-[52%] lg:w-[55%] xl:w-[58%] p-1.5 md:p-2 lg:p-3 xl:p-4 2xl:p-6 overflow-y-auto custom-scrollbar flex items-center justify-center">
+          <div className="grid grid-cols-3 gap-2 lg:gap-3 xl:gap-4 2xl:gap-5 w-full max-w-[min(46vw,960px)]">
             {ALL_HERO_IDS.map((heroId) => {
               const hero = HERO_DEFINITIONS[heroId];
               const color = HERO_COLORS[heroId];

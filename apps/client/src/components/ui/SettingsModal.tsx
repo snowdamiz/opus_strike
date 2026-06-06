@@ -13,6 +13,27 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
+const resolutionScaleOptions = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'ultra', label: 'Ultra' },
+];
+
+const materialQualityOptions = [
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+];
+
+const featureQualityOptions = [
+  { value: 'off', label: 'Off' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'ultra', label: 'Ultra' },
+];
+
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
   const savedSettings = useSettingsStore(state => state.settings);
@@ -80,7 +101,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   return (
     <GameDialog
       title="SETTINGS"
-      description="Configure your game experience"
       icon={(
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -89,26 +109,27 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       )}
       size="xl"
       onClose={onClose}
-      bodyClassName="flex-1 flex overflow-hidden"
+      panelClassName="h-[min(70vh,40rem)]"
+      bodyClassName="flex-1 flex overflow-hidden min-h-0"
       footer={(
         <>
           <button
             onClick={handleReset}
-            className="px-4 py-2 rounded-lg text-white/50 font-display hover:text-white hover:bg-white/5 "
+            className="px-3.5 py-2 rounded-lg text-xs text-white/50 font-display hover:text-white hover:bg-white/5 "
           >
             RESET DEFAULTS
           </button>
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="px-6 py-2 rounded-lg bg-white/5 text-white/70 font-display hover:bg-white/10 hover:text-white "
+              className="px-[1.125rem] py-2 rounded-lg bg-white/5 text-xs text-white/70 font-display hover:bg-white/10 hover:text-white "
             >
               CANCEL
             </button>
             <button
               onClick={handleSave}
               disabled={!hasChanges}
-              className={`px-6 py-2 rounded-lg font-display ${
+              className={`px-[1.125rem] py-2 rounded-lg text-xs font-display ${
                 hasChanges
                   ? 'bg-orange-500 text-white hover:bg-orange-400'
                   : 'bg-white/5 text-white/30 cursor-not-allowed'
@@ -121,12 +142,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       )}
     >
           {/* Sidebar */}
-          <div className="w-36 lg:w-40 xl:w-48 border-r border-white/5 p-2 lg:p-3 space-y-1">
+          <div className="w-32 lg:w-40 xl:w-48 shrink-0 border-r border-white/5 p-2.5 lg:p-3 space-y-1.5">
             {tabs.map((tab) => (
  <button
  key={tab.id}
  onClick={() => setActiveTab(tab.id)}
- className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg font-display text-sm ${
+ className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg font-display text-xs [&_svg]:h-[1rem] [&_svg]:w-[1rem] ${
  activeTab === tab.id
  ? 'bg-orange-500/20 text-orange-400'
  : 'text-white/50 hover:text-white hover:bg-white/5'
@@ -139,19 +160,53 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           </div>
 
           {/* Settings Content */}
-          <div className="flex-1 p-6 overflow-y-auto">
+          <div className="flex-1 p-[clamp(1.125rem,1.6vw,1.65rem)] overflow-y-auto custom-scrollbar">
             {activeTab === 'video' && (
-              <div className="space-y-6">
-                <SettingRow label="Graphics Quality" description="Overall visual quality preset">
+              <div className="space-y-4">
+                <SettingRow label="Resolution Scale" description="Internal render resolution">
                   <SelectInput
-                    value={settings.quality}
-                    onChange={(v) => updateSetting('quality', v as ClientSettings['quality'])}
-                    options={[
-                      { value: 'low', label: 'Low' },
-                      { value: 'medium', label: 'Medium' },
-                      { value: 'high', label: 'High' },
-                      { value: 'ultra', label: 'Ultra' },
-                    ]}
+                    value={settings.resolutionScale}
+                    onChange={(v) => updateSetting('resolutionScale', v as ClientSettings['resolutionScale'])}
+                    options={resolutionScaleOptions}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Anti-Aliasing" description="Smooth jagged geometry edges">
+                  <ToggleInput
+                    value={settings.antialiasing}
+                    onChange={(v) => updateSetting('antialiasing', v)}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Material Detail" description="Surface maps, bump detail, and occlusion">
+                  <SelectInput
+                    value={settings.materialQuality}
+                    onChange={(v) => updateSetting('materialQuality', v as ClientSettings['materialQuality'])}
+                    options={materialQualityOptions}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Shadow Quality" description="Shadow map resolution and soft filtering">
+                  <SelectInput
+                    value={settings.shadowQuality}
+                    onChange={(v) => updateSetting('shadowQuality', v as ClientSettings['shadowQuality'])}
+                    options={featureQualityOptions}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Reflections" description="Generated environment reflections for metal and glass">
+                  <SelectInput
+                    value={settings.reflectionQuality}
+                    onChange={(v) => updateSetting('reflectionQuality', v as ClientSettings['reflectionQuality'])}
+                    options={featureQualityOptions}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Environment Detail" description="Weather particles and procedural dressing density">
+                  <SelectInput
+                    value={settings.environmentQuality}
+                    onChange={(v) => updateSetting('environmentQuality', v as ClientSettings['environmentQuality'])}
+                    options={featureQualityOptions}
                   />
                 </SettingRow>
 
@@ -175,7 +230,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             )}
 
             {activeTab === 'audio' && (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <SettingRow label="Master Volume" description={`${settings.masterVolume}%`}>
                   <SliderInput
                     value={settings.masterVolume}
@@ -210,7 +265,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             )}
 
             {activeTab === 'controls' && (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <SettingRow label="Mouse Sensitivity" description="Adjust look sensitivity">
                   <SliderInput
                     value={settings.sensitivity}
@@ -244,8 +299,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
                 {/* Keybinds */}
                 <div className="pt-4 border-t border-white/5">
-                  <h3 className="font-display text-white mb-4">KEYBINDS</h3>
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 lg:gap-3">
+                  <h3 className="font-display text-base text-white mb-4">KEYBINDS</h3>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
                     {[
                       { action: 'Move Forward', key: 'W' },
                       { action: 'Move Back', key: 'S' },
@@ -260,9 +315,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                       { action: 'Interact', key: 'R' },
                       { action: 'Scoreboard', key: 'Tab' },
                     ].map((bind) => (
-                      <div key={bind.action} className="flex items-center justify-between px-3 py-2 rounded bg-white/5">
+                      <div key={bind.action} className="flex items-center justify-between gap-3 px-3.5 py-2 rounded bg-white/5">
                         <span className="text-white/60 font-body text-sm">{bind.action}</span>
-                        <span className="px-2 py-1 bg-white/10 rounded text-white font-mono text-xs">
+                        <span className="px-2.5 py-1 bg-white/10 rounded text-white font-mono text-xs">
                           {bind.key}
                         </span>
                       </div>
@@ -273,7 +328,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             )}
 
             {activeTab === 'gameplay' && (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 <SettingRow label="Damage Numbers" description="Show damage dealt on hit">
                   <ToggleInput
                     value={settings.showDamageNumbers}
@@ -326,12 +381,12 @@ function SettingRow({ label, description, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between py-3">
-      <div>
-        <h4 className="font-display text-white">{label}</h4>
-        <p className="text-white/40 text-sm font-body mt-0.5">{description}</p>
+    <div className="flex items-center justify-between gap-6 py-3">
+      <div className="min-w-0">
+        <h4 className="font-display text-sm text-white">{label}</h4>
+        <p className="text-white/40 text-xs font-body mt-0.5">{description}</p>
       </div>
-      {children}
+      <div className="shrink-0">{children}</div>
     </div>
   );
 }
@@ -365,7 +420,7 @@ function SliderInput({ value, onChange, min, max, step }: {
   const percent = ((value - min) / (max - min)) * 100;
   
   return (
-    <div className="w-48 flex items-center gap-3">
+    <div className="w-[10.5rem] xl:w-48 flex items-center gap-3">
       <input
         type="range"
         value={value}
@@ -378,7 +433,7 @@ function SliderInput({ value, onChange, min, max, step }: {
           background: `linear-gradient(to right, #f97316 0%, #f97316 ${percent}%, rgba(255,255,255,0.2) ${percent}%, rgba(255,255,255,0.2) 100%)`,
         }}
       />
-      <span className="w-10 text-right text-white/60 font-mono text-sm">{value}</span>
+      <span className="w-9 text-right text-white/60 font-mono text-xs">{value}</span>
     </div>
   );
 }
@@ -435,7 +490,7 @@ function SelectInput({ value, onChange, options }: {
         onKeyDown={handleKeyDown}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        className="w-full h-10 px-3.5 rounded-lg bg-white/[0.07] border border-white/10 text-white font-body cursor-pointer focus:outline-none focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.1] flex items-center justify-between gap-3"
+        className="w-full h-10 px-3.5 rounded-lg bg-white/[0.07] border border-white/10 text-sm text-white font-body cursor-pointer focus:outline-none focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.1] flex items-center justify-between gap-3"
       >
         <span>{selectedOption.label}</span>
         <svg
@@ -451,7 +506,7 @@ function SelectInput({ value, onChange, options }: {
       {isOpen && (
         <div
           role="listbox"
-          className="absolute right-0 top-12 z-50 w-full overflow-hidden rounded-xl border border-white/15 bg-[#171720]/95 shadow-2xl backdrop-blur-md"
+          className="absolute right-0 top-12 z-50 w-full overflow-hidden rounded-lg border border-white/15 bg-[#171720]/95 shadow-2xl backdrop-blur-md"
         >
           {options.map((option) => {
             const isSelected = option.value === value;
@@ -466,7 +521,7 @@ function SelectInput({ value, onChange, options }: {
                   onChange(option.value);
                   setIsOpen(false);
                 }}
-                className={`w-full px-3.5 py-2.5 text-left font-body flex items-center gap-2 hover:bg-white/10 ${
+                className={`w-full px-3.5 py-2.5 text-left text-sm font-body flex items-center gap-2 hover:bg-white/10 ${
                   isSelected ? 'text-orange-300 bg-orange-500/15' : 'text-white/70'
                 }`}
               >

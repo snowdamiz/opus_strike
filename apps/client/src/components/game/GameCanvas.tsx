@@ -1,6 +1,6 @@
 import { Canvas, useThree } from '@react-three/fiber';
 import { Suspense, useEffect, useMemo } from 'react';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { Environment, OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { getVoxelMapTheme } from '@voxel-strike/shared';
 import { VoxelWorld } from './VoxelWorld';
@@ -18,39 +18,12 @@ import { HookshotEffectsManager } from './HookshotEffects';
 import { GlacierEffectsManager } from './GlacierEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
 import { useGameStore } from '../../store/gameStore';
-import { useSettingsStore, type GraphicsQuality } from '../../store/settingsStore';
-
-const QUALITY_CONFIG: Record<GraphicsQuality, {
-  dpr: [number, number];
-  shadows: boolean;
-  antialias: boolean;
-  exposure: number;
-}> = {
-  low: {
-    dpr: [0.75, 1],
-    shadows: false,
-    antialias: false,
-    exposure: 1,
-  },
-  medium: {
-    dpr: [1, 1.25],
-    shadows: true,
-    antialias: false,
-    exposure: 1.04,
-  },
-  high: {
-    dpr: [1, 1.75],
-    shadows: true,
-    antialias: true,
-    exposure: 1.08,
-  },
-  ultra: {
-    dpr: [1.25, 2],
-    shadows: true,
-    antialias: true,
-    exposure: 1.12,
-  },
-};
+import { useSettingsStore } from '../../store/settingsStore';
+import {
+  getVisualQualityConfig,
+  type ReflectionQualityConfig,
+  type ShadowQualityConfig,
+} from './visualQuality';
 
 function CameraSettingsApplier({ fov }: { fov: number }) {
   const { camera } = useThree();
@@ -65,11 +38,72 @@ function CameraSettingsApplier({ fov }: { fov: number }) {
   return null;
 }
 
+function RendererSettingsApplier({
+  exposure,
+  shadows,
+}: {
+  exposure: number;
+  shadows: ShadowQualityConfig;
+}) {
+  const { gl } = useThree();
+
+  useEffect(() => {
+    gl.toneMapping = THREE.ACESFilmicToneMapping;
+    gl.toneMappingExposure = exposure;
+    gl.shadowMap.enabled = shadows.enabled;
+    gl.shadowMap.type = shadows.type;
+    gl.shadowMap.needsUpdate = true;
+  }, [exposure, gl, shadows.enabled, shadows.type]);
+
+  return null;
+}
+
+function ReflectionEnvironment({
+  theme,
+  config,
+}: {
+  theme: ReturnType<typeof getVoxelMapTheme>;
+  config: ReflectionQualityConfig;
+}) {
+  const sunColor = useMemo(
+    () => new THREE.Color(theme.sunColor).lerp(new THREE.Color('#ffffff'), theme.id === 'basalt' ? 0.25 : 0.1),
+    [theme]
+  );
+  const groundColor = useMemo(
+    () => new THREE.Color(theme.ground.stone).lerp(new THREE.Color(theme.structures.accent), 0.18),
+    [theme]
+  );
+
+  if (!config.enabled) return null;
+
+  return (
+    <Environment
+      background={false}
+      frames={1}
+      resolution={config.resolution}
+      environmentIntensity={config.sceneIntensity}
+    >
+      <color attach="background" args={[theme.skyColor]} />
+      <mesh frustumCulled={false}>
+        <sphereGeometry args={[80, 32, 16]} />
+        <meshBasicMaterial color={theme.skyColor} side={THREE.BackSide} />
+      </mesh>
+      <mesh position={[18, 24, -20]} frustumCulled={false}>
+        <sphereGeometry args={[4, 24, 12]} />
+        <meshBasicMaterial color={sunColor} toneMapped={false} />
+      </mesh>
+      <mesh position={[0, -18, 0]} rotation={[-Math.PI / 2, 0, 0]} frustumCulled={false}>
+        <circleGeometry args={[80, 32]} />
+        <meshBasicMaterial color={groundColor} />
+      </mesh>
+    </Environment>
+  );
+}
+
 export function GameCanvas() {
   const { gamePhase, voidZones, direBalls, voidRays, mapSeed } = useGameStore();
-  const quality = useSettingsStore(state => state.settings.quality);
-  const fov = useSettingsStore(state => state.settings.fov);
-  const qualityConfig = QUALITY_CONFIG[quality];
+  const settings = useSettingsStore(state => state.settings);
+  const qualityConfig = getVisualQualityConfig(settings);
   const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
   const gridCellColor = useMemo(
     () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
@@ -83,23 +117,24 @@ export function GameCanvas() {
 
   return (
     <Canvas
-      key={quality}
-      shadows={qualityConfig.shadows}
-      dpr={qualityConfig.dpr}
+      key={`${settings.resolutionScale}:${settings.antialiasing}`}
+      shadows={qualityConfig.shadows.enabled}
+      dpr={qualityConfig.render.dpr}
       camera={{ 
-        fov, 
+        fov: settings.fov,
         near: 0.1, 
         far: 1000,
         position: [0, 2, 10], // Start at a reasonable height
       }}
       gl={{ 
-        antialias: qualityConfig.antialias,
+        antialias: qualityConfig.render.antialias,
         powerPreference: 'high-performance',
       }}
       onCreated={({ gl }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
-        gl.toneMappingExposure = qualityConfig.exposure;
-        gl.shadowMap.type = THREE.PCFSoftShadowMap;
+        gl.toneMappingExposure = qualityConfig.render.exposure;
+        gl.shadowMap.enabled = qualityConfig.shadows.enabled;
+        gl.shadowMap.type = qualityConfig.shadows.type;
       }}
       style={{
         position: 'absolute',
@@ -108,8 +143,10 @@ export function GameCanvas() {
       }}
     >
       <Suspense fallback={null}>
-        <CameraSettingsApplier fov={fov} />
-        <WorldAtmosphere theme={mapTheme} seed={mapSeed} />
+        <CameraSettingsApplier fov={settings.fov} />
+        <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
+        <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
+        <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={qualityConfig.environment} />
 
         {/* Lighting follows the generated map theme. */}
         <ambientLight intensity={0.42} color={mapTheme.ambientColor} />
@@ -118,13 +155,13 @@ export function GameCanvas() {
           position={[58, 105, 34]}
           intensity={4.85}
           color={mapTheme.sunColor}
-          castShadow
-          shadow-mapSize={[4096, 4096]}
-          shadow-camera-far={200}
-          shadow-camera-left={-100}
-          shadow-camera-right={100}
-          shadow-camera-top={100}
-          shadow-camera-bottom={-100}
+          castShadow={qualityConfig.shadows.enabled}
+          shadow-mapSize={[qualityConfig.shadows.mapSize, qualityConfig.shadows.mapSize]}
+          shadow-camera-far={qualityConfig.shadows.far}
+          shadow-camera-left={-qualityConfig.shadows.volume}
+          shadow-camera-right={qualityConfig.shadows.volume}
+          shadow-camera-top={qualityConfig.shadows.volume}
+          shadow-camera-bottom={-qualityConfig.shadows.volume}
           shadow-bias={-0.00018}
           shadow-normalBias={0.045}
         />
@@ -142,7 +179,13 @@ export function GameCanvas() {
 
 
         {/* World */}
-        <VoxelWorld />
+        <VoxelWorld
+          shadowsEnabled={qualityConfig.shadows.enabled}
+          dressingShadows={qualityConfig.shadows.dressingShadows}
+          dressingDensity={qualityConfig.environment.dressingDensity}
+          reflectionIntensity={qualityConfig.reflections.materialIntensity}
+          materialDetail={qualityConfig.render.materialDetail}
+        />
 
         {/* Grid helper for visibility */}
         <Grid 

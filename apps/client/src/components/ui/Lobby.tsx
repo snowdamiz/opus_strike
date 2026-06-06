@@ -138,7 +138,7 @@ export function Lobby() {
   };
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-strike-bg">
+    <div className="menu-screen bg-strike-bg">
       {/* Cinematic Background */}
       <div className="absolute inset-0">
         {/* Background image */}
@@ -179,26 +179,26 @@ export function Lobby() {
 
       {/* Top Navigation Bar */}
       <nav className="absolute top-0 left-0 right-0 z-20">
-        <div className="flex items-center justify-between px-8 py-4">
+        <div className="menu-nav flex items-center justify-between gap-4">
           {/* Back button and lobby info */}
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 items-center gap-3 xl:gap-4">
  <button
  onClick={() => { playButtonClick(); handleBack(); }}
- className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 group"
+ className="w-10 h-10 shrink-0 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 group"
  >
  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
  </svg>
  </button>
             
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <div className={`w-3 h-3 rounded-full transition-all ${
                 pulseReady 
                   ? 'bg-green-400 shadow-lg shadow-green-400/50 animate-pulse' 
                   : 'bg-orange-400 shadow-lg shadow-orange-400/30'
               }`} />
-              <div>
-                <h1 className="font-display text-2xl text-white tracking-wide">{currentLobbyName || 'Game Lobby'}</h1>
+              <div className="min-w-0">
+                <h1 className="font-display text-xl xl:text-2xl text-white tracking-wide truncate">{currentLobbyName || 'Game Lobby'}</h1>
                 <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">
                   {readyCount}/{playerList.length} Ready • {humanCount} human • {botCount} AI
                 </p>
@@ -207,7 +207,7 @@ export function Lobby() {
           </div>
 
           {/* Right side - Host badge & Player info */}
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 items-center gap-3 xl:gap-4">
             {isLobbyHost && (
               <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/10 border border-amber-500/30">
                 <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -249,9 +249,10 @@ export function Lobby() {
       </nav>
 
       {/* Main Content */}
-      <div className="absolute inset-0 pt-20 pb-20 z-10 flex items-center justify-center gap-10 px-8">
+      <div className="menu-main menu-main-play">
+        <div className="lobby-layout menu-content-wide">
         {/* Solar Vanguard Panel */}
-        <div className="w-52 lg:w-60 xl:w-72 2xl:w-80 h-[340px] lg:h-[380px] xl:h-[460px] 2xl:h-[520px] flex-shrink-0">
+        <div className="lobby-team-panel">
           <FactionPanel
             faction={FACTIONS.red}
             players={solarPlayers}
@@ -264,9 +265,9 @@ export function Lobby() {
         </div>
 
         {/* Center Battle Arena */}
-        <div className="w-[240px] lg:w-[280px] xl:w-[320px] 2xl:w-[360px] flex-shrink-0 flex flex-col items-center justify-center relative">
+        <div className="lobby-center-panel menu-compact-scale menu-scroll-y custom-scrollbar flex flex-col items-center justify-center relative">
           {/* Epic VS Section */}
-          <div className="relative mb-6">
+          <div className="relative mb-3 xl:mb-6">
             {/* Outer glow ring */}
             <div 
               className={`absolute -inset-8 rounded-full transition-all duration-700 ${
@@ -279,7 +280,7 @@ export function Lobby() {
             
             {/* Battle emblem */}
             <div 
-              className={`relative w-28 h-28 rounded-2xl flex items-center justify-center transition-all duration-500 ${
+              className={`relative w-24 h-24 xl:w-28 xl:h-28 rounded-2xl flex items-center justify-center transition-all duration-500 ${
                 pulseReady ? 'scale-105' : 'scale-100'
               }`}
               style={{
@@ -502,7 +503,7 @@ export function Lobby() {
         </div>
 
         {/* Void Legion Panel */}
-        <div className="w-52 lg:w-60 xl:w-72 2xl:w-80 h-[340px] lg:h-[380px] xl:h-[460px] 2xl:h-[520px] flex-shrink-0">
+        <div className="lobby-team-panel">
           <FactionPanel
             faction={FACTIONS.blue}
             players={voidPlayers}
@@ -514,6 +515,7 @@ export function Lobby() {
             reverse
           />
         </div>
+        </div>
       </div>
 
       {/* Bottom Status Bar */}
@@ -523,8 +525,8 @@ export function Lobby() {
           background: 'linear-gradient(to top, rgba(10,10,18,0.95), rgba(10,10,18,0.6), transparent)',
         }}
       >
-        <div className="flex items-center justify-center py-4">
-          <div className="flex items-center gap-8 px-6 py-2.5 rounded-full bg-white/[0.03] border border-white/5">
+        <div className="flex items-center justify-center py-2 xl:py-4">
+          <div className="flex items-center gap-5 xl:gap-8 px-5 xl:px-6 py-2 xl:py-2.5 rounded-full bg-white/[0.03] border border-white/5">
             {/* Solar count */}
             <div className="flex items-center gap-2.5">
               <div 
@@ -667,22 +669,22 @@ function FactionPanel({
   return (
     <div className="h-full flex flex-col">
       {/* Faction Header */}
-      <div className={`flex items-center gap-3 mb-4 ${reverse ? 'flex-row-reverse' : ''}`}>
+      <div className={`flex items-center gap-2 xl:gap-3 mb-3 xl:mb-4 ${reverse ? 'flex-row-reverse' : ''}`}>
         <div 
-          className="w-12 h-12 rounded-xl flex items-center justify-center shadow-lg"
+          className="w-10 h-10 xl:w-12 xl:h-12 rounded-xl flex shrink-0 items-center justify-center shadow-lg"
           style={{
             background: `linear-gradient(135deg, ${faction.primaryColor}, ${faction.secondaryColor})`,
             boxShadow: `0 4px 20px ${faction.glowColor}`,
           }}
         >
-          <Icon className="w-6 h-6 text-white" />
+          <Icon className="w-5 h-5 xl:w-6 xl:h-6 text-white" />
         </div>
-        <div className={reverse ? 'text-right flex-1' : 'flex-1'}>
-          <h2 className="font-display text-xl tracking-wide" style={{ color: faction.primaryColor }}>
+        <div className={`min-w-0 ${reverse ? 'text-right flex-1' : 'flex-1'}`}>
+          <h2 className="font-display text-lg xl:text-xl 2xl:text-2xl tracking-wide truncate" style={{ color: faction.primaryColor }}>
             {faction.fullName}
           </h2>
           <div className={`flex items-center gap-2 mt-0.5 ${reverse ? 'justify-end' : ''}`}>
-            <p className="text-[10px] text-white/30 font-body italic">{faction.tagline}</p>
+            <p className="min-w-0 truncate text-[10px] text-white/30 font-body italic">{faction.tagline}</p>
             <span className="text-white/20">•</span>
             <div className="flex gap-1">
               {[...Array(maxPlayers)].map((_, i) => (
@@ -716,7 +718,7 @@ function FactionPanel({
           }}
         />
         
-        <div className="p-4 h-full overflow-y-auto space-y-2">
+        <div className="p-3 xl:p-4 h-full overflow-y-auto custom-scrollbar space-y-2">
           {/* Players */}
           {players.map((player) => (
             <PlayerCard 

@@ -163,14 +163,14 @@ export function HeroesPage() {
   ];
 
   return (
-    <div className="h-full flex px-4 xl:px-6 2xl:px-8 pt-2 pb-4 gap-4 xl:gap-5 2xl:gap-7">
-      <div className="w-[160px] lg:w-[176px] xl:w-[204px] 2xl:w-[238px] flex flex-col justify-center min-h-0">
+    <div className="heroes-page-layout menu-content-wide">
+      <div className="min-w-0 flex flex-col justify-center min-h-0">
         <div className="mb-2.5 px-0.5">
           <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">Roster</p>
           <h2 className="font-display text-2xl text-white leading-none">SELECT HERO</h2>
         </div>
 
-        <div className={SIDE_STACK_CLASS}>
+        <div className={`${SIDE_STACK_CLASS} min-h-0 menu-scroll-y custom-scrollbar pr-1`}>
           {ALL_HERO_IDS.map((heroId) => {
             const hero = HERO_DEFINITIONS[heroId];
             const color = HERO_COLORS[heroId];
@@ -234,18 +234,18 @@ export function HeroesPage() {
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center relative min-w-0">
+      <div className="min-w-0 flex flex-col items-center justify-center relative">
         <div
           className="absolute left-1/2 top-[43%] h-[54%] w-[56%] -translate-x-1/2 -translate-y-1/2 opacity-30 blur-3xl pointer-events-none"
           style={{ background: `radial-gradient(ellipse at center, ${heroColor}, transparent 68%)` }}
         />
 
-        <div className="relative flex flex-col items-center">
+        <div className="relative flex flex-col items-center menu-compact-scale">
           <div className="relative hero-svg-container scale-[0.82] lg:scale-90 xl:scale-95 2xl:scale-100">
             <HeroSVG heroId={selectedHero} size={360} />
           </div>
 
-          <div className="text-center w-[260px] lg:w-[300px] xl:w-[360px] 2xl:w-[420px] mt-1">
+          <div className="text-center w-[clamp(18rem,24vw,34rem)] mt-1">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1 mb-2">
               <span
                 className="h-2 w-2 rounded-full"
@@ -263,7 +263,7 @@ export function HeroesPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5 mt-3 w-[260px] lg:w-[300px] xl:w-[336px]">
+          <div className="grid grid-cols-3 gap-2.5 mt-3 w-[clamp(18rem,21vw,30rem)]">
             <QuickStat label="HP" value={heroInfo.stats.maxHealth} />
             <QuickStat label="SPD" value={heroInfo.stats.moveSpeed} />
             <QuickStat label="JMP" value={heroInfo.stats.jumpForce} />
@@ -271,7 +271,7 @@ export function HeroesPage() {
         </div>
       </div>
 
-      <div className="w-[250px] lg:w-[288px] xl:w-[336px] 2xl:w-[398px] flex flex-col justify-center min-h-0">
+      <div className="min-w-0 flex flex-col justify-center min-h-0">
         <div className="mb-2.5 px-0.5 flex-shrink-0">
           <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">Full kit</p>
           <h2 className="font-display text-2xl text-white leading-none">ABILITIES</h2>

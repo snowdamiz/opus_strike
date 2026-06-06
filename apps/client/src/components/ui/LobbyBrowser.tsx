@@ -41,7 +41,7 @@ export function LobbyBrowser() {
   const handleBack = () => setAppPhase('menu');
 
   return (
-    <div className="w-full h-full flex items-center justify-center relative overflow-hidden bg-strike-bg">
+    <div className="menu-screen flex items-center justify-center bg-strike-bg">
       {/* Background */}
       <div className="absolute inset-0">
         <div className="absolute inset-0 bg-gradient-radial from-orange-500/5 via-transparent to-transparent" />
@@ -50,17 +50,17 @@ export function LobbyBrowser() {
       </div>
 
       {/* Content */}
-      <div className="relative z-10 w-full max-w-2xl lg:max-w-3xl xl:max-w-4xl 2xl:max-w-5xl mx-auto px-4 lg:px-6">
+      <div className="dialog-page relative z-10 w-full max-w-2xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-7xl mx-auto px-4 lg:px-6 py-6">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="font-display text-5xl text-white">
+        <div className="text-center mb-5 xl:mb-8">
+          <h1 className="font-display text-4xl xl:text-5xl 2xl:text-6xl text-white">
             FIND <span className="text-orange-500">MATCH</span>
           </h1>
           <p className="mt-2 text-white/40 font-body">Join a game or create your own</p>
         </div>
 
         {/* Main Grid */}
-        <div className="grid grid-cols-12 gap-6">
+        <div className="grid grid-cols-12 gap-4 xl:gap-6">
           {/* Lobby List */}
           <div className="col-span-12 lg:col-span-8">
             <div className="card overflow-hidden">
@@ -76,7 +76,7 @@ export function LobbyBrowser() {
               </div>
 
               {/* List */}
-              <div className="max-h-[280px] lg:max-h-[320px] xl:max-h-[360px] overflow-y-auto">
+              <div className="max-h-[min(42vh,30rem)] overflow-y-auto custom-scrollbar">
                 {availableLobbies.length === 0 ? (
                   <div className="py-16 text-center">
                     <div className="w-14 h-14 mx-auto mb-4 rounded-lg bg-white/5 flex items-center justify-center">

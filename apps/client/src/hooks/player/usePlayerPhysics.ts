@@ -64,7 +64,8 @@ export interface UsePlayerPhysicsReturn {
     smoothedY: number | null,
     isIceWallRushing: boolean,
     dt: number,
-    playerHeight?: number
+    playerHeight?: number,
+    isJumpingFromGround?: boolean
   ) => {
     didStepUp: boolean;
     didFollowTerrain: boolean;
@@ -103,6 +104,7 @@ const GROUND_PROBE_RADIUS = PLAYER_RADIUS * 0.45;
 const STEP_UP_MIN_HEIGHT = 0.08;
 const STEP_UP_PROBE_SIDE_OFFSETS = [0, -PLAYER_RADIUS * 0.72, PLAYER_RADIUS * 0.72];
 const MAX_STEP_DOWN_HEIGHT = STEP_HEIGHT + 0.1;
+const JUMP_EDGE_ASSIST_HEIGHT = 0.62;
 const GROUND_PROBE_OFFSETS = [
   { x: 0, z: 0 },
   { x: GROUND_PROBE_RADIUS, z: 0 },
@@ -168,10 +170,21 @@ function canMovePlayerBody(
   moveZ: number,
   playerHeight: number = PLAYER_HEIGHT
 ): boolean {
+  return canMovePlayerBodyAt(position.x, position.y, position.z, moveX, moveZ, playerHeight);
+}
+
+function canMovePlayerBodyAt(
+  x: number,
+  y: number,
+  z: number,
+  moveX: number,
+  moveZ: number,
+  playerHeight: number = PLAYER_HEIGHT
+): boolean {
   return !checkPlayerBodyMovement(
-    position.x,
-    getBodyCenterY(position.y, playerHeight),
-    position.z,
+    x,
+    getBodyCenterY(y, playerHeight),
+    z,
     moveX,
     moveZ,
     PLAYER_RADIUS,
@@ -186,6 +199,43 @@ function canOccupyPlayerBody(
   playerHeight: number = PLAYER_HEIGHT
 ): boolean {
   return hasPlayerBodyClearance(x, getBodyCenterY(y, playerHeight), z, PLAYER_RADIUS, playerHeight);
+}
+
+function canJumpClearLowTerrainEdge(
+  position: THREE.Vector3,
+  moveX: number,
+  moveZ: number,
+  playerHeight: number = PLAYER_HEIGHT
+): boolean {
+  const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
+  if (moveDist <= 0.0001) return false;
+
+  const assistedY = position.y + JUMP_EDGE_ASSIST_HEIGHT;
+  const hasClearStart = canOccupyPlayerBody(position.x, assistedY, position.z, playerHeight);
+  if (!hasClearStart) return false;
+
+  const hasClearRaisedMove = canMovePlayerBodyAt(
+    position.x,
+    assistedY,
+    position.z,
+    moveX,
+    moveZ,
+    playerHeight
+  );
+  if (!hasClearRaisedMove) return false;
+
+  const currentFeetY = position.y - PLAYER_HEIGHT / 2;
+  const targetGround = getWalkableGroundAt(
+    position.x + moveX,
+    position.y + STEP_HEIGHT + 1,
+    position.z + moveZ,
+    STEP_HEIGHT + MAX_STEP_DOWN_HEIGHT + 2
+  );
+
+  if (!targetGround) return true;
+
+  const heightDiff = targetGround.groundY - currentFeetY;
+  return heightDiff <= STEP_HEIGHT && heightDiff >= -MAX_STEP_DOWN_HEIGHT;
 }
 
 function hasStandingHeadroom(position: THREE.Vector3): boolean {
@@ -376,7 +426,8 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     smoothedY: number | null,
     isIceWallRushing: boolean,
     dt: number,
-    playerHeight: number = PLAYER_HEIGHT
+    playerHeight: number = PLAYER_HEIGHT,
+    isJumpingFromGround: boolean = false
   ): {
     didStepUp: boolean;
     didFollowTerrain: boolean;
@@ -398,10 +449,11 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
       return { didStepUp: false, didFollowTerrain: false, newSmoothedY, hitTerrain: false };
     }
 
-    // Step-up logic for stairs
+    // Step-up logic for stairs and low terrain ledges.
     const effectivelyGrounded = isGrounded || (isIceWallRushing && velocity.y < 2);
+    const canUseAirborneStepAssist = isJumpingFromGround || (!isGrounded && velocity.y > 0);
 
-    if (effectivelyGrounded) {
+    if (effectivelyGrounded || canUseAirborneStepAssist) {
       const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
       if (moveDist > 0) {
         const effectiveStepHeight = isIceWallRushing ? STEP_HEIGHT * 1.25 : STEP_HEIGHT;
@@ -425,8 +477,24 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
             canTraverse = hasCeilingClearance;
           }
 
-          if (canTraverse) {
+          if (canTraverse && (!canUseAirborneStepAssist || isStepUp)) {
             const targetY = targetGroundY + PLAYER_HEIGHT / 2;
+            const shouldPreserveJumpAscent = canUseAirborneStepAssist && isStepUp;
+
+            if (shouldPreserveJumpAscent) {
+              position.x += moveX;
+              position.z += moveZ;
+              position.y = Math.max(position.y, targetY);
+              didStepUp = true;
+
+              return {
+                didStepUp,
+                didFollowTerrain: false,
+                newSmoothedY: null,
+                hitTerrain: false,
+              };
+            }
+
             const currentY = smoothedY ?? position.y;
             const smoothSpeed = isStepUp
               ? isIceWallRushing
@@ -457,6 +525,12 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
         position.x += moveX;
         position.z += moveZ;
       } else {
+        if (canUseAirborneStepAssist && canJumpClearLowTerrainEdge(position, moveX, moveZ, playerHeight)) {
+          position.x += moveX;
+          position.z += moveZ;
+          return { didStepUp, didFollowTerrain, newSmoothedY, hitTerrain: false };
+        }
+
         hitTerrain = true;
 
         if (Math.abs(moveX) > 0.001 && canMovePlayerBody(position, moveX, 0, playerHeight)) {

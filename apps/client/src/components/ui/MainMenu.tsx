@@ -148,7 +148,7 @@ export function MainMenu() {
   // Show loading state while restoring session
   if (isSessionLoading) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden bg-strike-bg">
+      <div className="menu-screen flex flex-col items-center justify-center px-4 bg-strike-bg">
         <div className="absolute inset-0">
           <div className="absolute inset-0 bg-gradient-radial from-purple-500/5 via-transparent to-transparent" />
           <div className="absolute inset-0 pattern-grid opacity-50" />
@@ -170,7 +170,7 @@ export function MainMenu() {
   }
 
   return (
-    <div className="w-full h-full flex flex-col items-center justify-center relative overflow-hidden bg-strike-bg">
+    <div className="menu-screen flex flex-col items-center justify-center px-4 bg-strike-bg">
       {/* Background layers */}
       <div className="absolute inset-0">
         {/* Gradient ambient */}
@@ -186,7 +186,7 @@ export function MainMenu() {
       </div>
 
       {/* Main content */}
-      <div className="relative z-10 flex flex-col items-center responsive-scale-container">
+      <div className="dialog-page relative z-10 flex flex-col items-center responsive-scale-container">
         {/* Logo */}
         <div className="mb-6 lg:mb-12 text-center">
           <h1 className="font-display text-5xl md:text-6xl lg:text-8xl text-white tracking-wider">

@@ -45,44 +45,28 @@ function SlopHeroesMark({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <defs>
-        <linearGradient id="slop-core" x1="10" y1="8" x2="48" y2="49" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#b8ff4d" />
-          <stop offset="0.46" stopColor="#20d389" />
-          <stop offset="1" stopColor="#f97316" />
+        <linearGradient id="slop-mark-cyan" x1="9" y1="8" x2="38" y2="33" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#65fbff" />
+          <stop offset="1" stopColor="#08a9ff" />
         </linearGradient>
-        <linearGradient id="slop-side" x1="16" y1="42" x2="49" y2="18" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#0f8f68" />
-          <stop offset="1" stopColor="#0d5f5a" />
+        <linearGradient id="slop-mark-orange" x1="20" y1="24" x2="48" y2="47" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#ffd26a" />
+          <stop offset="1" stopColor="#f15a24" />
         </linearGradient>
-        <linearGradient id="slop-slash" x1="18" y1="5" x2="35" y2="51" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#fff7ad" />
-          <stop offset="0.52" stopColor="#ffffff" />
-          <stop offset="1" stopColor="#48f0ff" />
+        <linearGradient id="slop-mark-slash" x1="22" y1="7" x2="32" y2="49" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#f8ffff" />
+          <stop offset="0.52" stopColor="#7af3ff" />
+          <stop offset="1" stopColor="#1378ff" />
         </linearGradient>
-        <filter id="slop-glow" x="-20%" y="-20%" width="140%" height="140%">
-          <feGaussianBlur stdDeviation="2.4" result="blur" />
-          <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.30 0 0 0 0 1 0 0 0 0 0.54 0 0 0 0.52 0" />
-          <feBlend in="SourceGraphic" />
-        </filter>
       </defs>
 
-      <g filter="url(#slop-glow)">
-        <path d="M28 4L47 14.5V36.5L28 47L9 36.5V14.5L28 4Z" fill="url(#slop-core)" />
-        <path d="M28 25L47 14.5V36.5L28 47V25Z" fill="url(#slop-side)" opacity="0.82" />
-        <path d="M9 14.5L28 25V47L9 36.5V14.5Z" fill="#16895f" opacity="0.78" />
-        <path d="M28 4L47 14.5L28 25L9 14.5L28 4Z" fill="#caff5b" opacity="0.92" />
-        <path d="M16 37C16 42 20 40.5 20 46.5C20 49.5 16.5 51 14.5 48.5C12.6 46.1 14.5 42.5 12 38.5L16 37Z" fill="#20d389" />
-        <path d="M38.5 35C37.5 39.5 41.8 40.5 40.2 45.4C39.2 48.2 35.3 48.2 34.4 45.2C33.6 42.3 36.1 39.9 35.3 36.5L38.5 35Z" fill="#f97316" />
-        <path
-          d="M33.5 7L20.8 28.2H28.1L20.5 50L38 22.7H29.6L33.5 7Z"
-          fill="url(#slop-slash)"
-          stroke="#0a0a12"
-          strokeWidth="1.2"
-          strokeLinejoin="round"
-        />
-        <circle cx="16" cy="11" r="1.5" fill="#fff7ad" />
-        <circle cx="45" cy="25" r="1.2" fill="#48f0ff" />
-      </g>
+      <path d="M12.3 26.9C14 14.6 24.6 10.1 35.8 14" stroke="url(#slop-mark-cyan)" strokeWidth="5.6" strokeLinecap="round" />
+      <path d="M43.7 29.1C42 41.4 31.4 45.9 20.2 42" stroke="url(#slop-mark-orange)" strokeWidth="5.6" strokeLinecap="round" />
+      <path d="M25.2 6.7H31.4L24.1 49.3H17.9L25.2 6.7Z" fill="#05070b" />
+      <path d="M26.9 7.3H31.4L24.1 48.7H19.6L26.9 7.3Z" fill="url(#slop-mark-slash)" />
+      <path d="M33.6 10.6L44.2 15.7L35.3 21.8L39.8 28L29.7 23.5L33.6 10.6Z" fill="url(#slop-mark-orange)" stroke="#05070b" strokeWidth="1.7" strokeLinejoin="round" />
+      <circle cx="12.3" cy="15.1" r="1.7" fill="#65fbff" />
+      <circle cx="43.7" cy="40.9" r="1.7" fill="#f97316" />
     </svg>
   );
 }
@@ -290,7 +274,7 @@ export function MainLobby() {
   const heroColor = HERO_COLORS[featuredHero];
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-strike-bg">
+    <div className="menu-screen bg-strike-bg">
       {/* Cinematic Background */}
       <div className="absolute inset-0">
         {/* Background Image */}
@@ -325,25 +309,25 @@ export function MainLobby() {
 
       {/* Top Navigation Bar */}
       <nav className="absolute top-0 left-0 right-0 z-20">
-        <div className="flex items-center justify-between px-4 lg:px-6 xl:px-8 py-3 lg:py-4">
+        <div className="menu-nav flex items-center justify-between gap-4">
           {/* Logo & Tabs */}
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 relative flex items-center justify-center">
+          <div className="flex min-w-0 items-center gap-4 xl:gap-6">
+            <div className="flex shrink-0 items-center gap-3">
+              <div className="w-10 h-10 xl:w-12 xl:h-12 relative flex items-center justify-center">
                 <SlopHeroesMark className="w-full h-full" />
               </div>
-              <div>
-                <h1 className="font-display text-xl text-white tracking-wider">SLOP HEROES</h1>
+              <div className="min-w-0">
+                <h1 className="font-display text-lg xl:text-xl text-white tracking-wider whitespace-nowrap">SLOP HEROES</h1>
                 <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
               </div>
             </div>
 
-            <div className="flex items-center ml-8">
+            <div className="flex min-w-0 items-center ml-2 xl:ml-8">
               {(['play', 'heroes', 'loadout'] as MainTab[]).map((tab) => (
  <button
  key={tab}
  onClick={() => { playButtonClick(); setActiveTab(tab); }}
- className={`relative px-6 py-3 font-display text-lg tracking-wide ${activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
+ className={`relative px-3 lg:px-5 xl:px-6 py-3 font-display text-base xl:text-lg tracking-wide whitespace-nowrap ${activeTab === tab ? 'text-white' : 'text-white/40 hover:text-white/70'
  }`}
  >
  {tab.toUpperCase()}
@@ -356,7 +340,7 @@ export function MainLobby() {
           </div>
 
           {/* Right side controls */}
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 items-center gap-3 xl:gap-4">
  <button
  onClick={() => { playButtonClick(); setShowSettings(true); }}
  className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white"
@@ -431,7 +415,7 @@ export function MainLobby() {
       </nav>
 
       {/* Main Content Area */}
-      <div className={`absolute inset-0 pt-20 pb-4 z-10 ${activeTab === 'play' ? 'lg:pb-20' : ''}`}>
+      <div className={`menu-main ${activeTab === 'play' ? 'menu-main-play' : ''}`}>
         {activeTab === 'play' && (
           <PlayTab
             isLoading={isLoading}
@@ -451,7 +435,7 @@ export function MainLobby() {
         )}
         {activeTab === 'heroes' && <HeroesPage />}
         {activeTab === 'loadout' && (
-          <div className="h-full flex items-center justify-center">
+          <div className="h-full flex items-center justify-center menu-content">
             <div className="text-center">
               <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
                 <svg className="w-10 h-10 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -548,18 +532,18 @@ function PlayTab({
   const { playButtonClick } = useUISounds();
 
   return (
-    <div className="h-full flex items-center justify-center">
+    <div className="h-full flex items-center justify-center menu-content">
       {/* Centered Content */}
-      <div className="relative flex flex-col items-center">
+      <div className="play-tab-stage menu-compact-scale relative flex flex-col items-center">
         {/* Hero Visual with Carousel Controls */}
-        <div className="relative flex items-center gap-4">
+        <div className="relative flex items-center gap-3 lg:gap-4 2xl:gap-6">
           {/* Previous Arrow */}
  <button
  onClick={onPrevHero}
- className="group relative w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
+ className="group relative w-10 h-10 xl:w-12 xl:h-12 2xl:w-14 2xl:h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
  aria-label="Previous hero"
  >
- <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <svg className="w-5 h-5 xl:w-6 xl:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
  </svg>
  </button>
@@ -589,17 +573,17 @@ function PlayTab({
           {/* Next Arrow */}
  <button
  onClick={onNextHero}
- className="group relative w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
+ className="group relative w-10 h-10 xl:w-12 xl:h-12 2xl:w-14 2xl:h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
  aria-label="Next hero"
  >
- <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+ <svg className="w-5 h-5 xl:w-6 xl:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
  </svg>
  </button>
         </div>
 
         {/* Hero info - below the SVG with proper spacing */}
-        <div className="text-center w-[240px] sm:w-[260px] md:w-[280px] lg:w-[300px] xl:w-[340px] 2xl:w-[400px] -mt-10 sm:-mt-8 md:-mt-6 lg:-mt-4 xl:-mt-2 2xl:mt-0">
+        <div className="text-center w-[clamp(17rem,24vw,32rem)] -mt-10 sm:-mt-8 md:-mt-6 lg:-mt-4 xl:-mt-2 2xl:mt-0">
           <h2
             className="font-display text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-0.5 lg:mb-1 xl:mb-2"
             style={{ textShadow: `0 0 30px ${heroColor}50, 0 2px 10px rgba(0,0,0,0.5)` }}
@@ -641,7 +625,7 @@ function PlayTab({
         <div className="h-0 lg:h-1 xl:h-2 2xl:h-3" />
 
         {/* Action Buttons */}
-        <div className="w-[220px] sm:w-[240px] md:w-[260px] lg:w-[300px] xl:w-[360px] 2xl:w-[440px] space-y-1 sm:space-y-1.5 lg:space-y-2 xl:space-y-2.5">
+        <div className="w-[clamp(18rem,25vw,34rem)] space-y-1.5 lg:space-y-2 xl:space-y-2.5">
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
               <p className="text-red-400 text-sm font-body text-center">{error}</p>
@@ -754,20 +738,20 @@ function BrowseGamesModal({
       iconClassName="bg-cyan-500/15 text-cyan-300"
       size="lg"
       onClose={onClose}
-      bodyClassName="max-h-[400px] overflow-y-auto"
+      bodyClassName="max-h-[min(56vh,32rem)] overflow-y-auto custom-scrollbar"
     >
       {availableLobbies.length === 0 ? (
-        <div className="py-16 text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-xl bg-white/5 flex items-center justify-center">
-            <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="py-12 text-center">
+          <div className="w-14 h-14 mx-auto mb-4 rounded-xl bg-white/5 flex items-center justify-center">
+            <svg className="w-7 h-7 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </div>
-          <p className="font-display text-xl text-white/40">NO GAMES FOUND</p>
+          <p className="font-display text-lg text-white/40">NO GAMES FOUND</p>
           <p className="mt-2 text-white/20 text-sm font-body">Create one to get started!</p>
         </div>
       ) : (
-        <div className="p-4 space-y-2">
+        <div className="p-3 space-y-2">
           {availableLobbies.map((lobby) => (
             <LobbyRow
               key={lobby.roomId}
@@ -811,10 +795,10 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
       size="md"
       onClose={onClose}
     >
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-4">
         {/* Game Name */}
         <div>
-          <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-2">
+          <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
             Game Name
           </label>
           <input
@@ -823,36 +807,36 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
             onChange={(e) => setLobbyName(e.target.value)}
             placeholder={`${playerName}'s Lobby`}
             maxLength={24}
-            className="input w-full px-4 py-3 text-lg rounded-xl"
+            className="input w-full px-3.5 py-2.5 text-base rounded-lg"
             autoFocus
           />
-          <p className="mt-1.5 text-white/30 text-xs font-body">
+          <p className="mt-1.5 text-white/30 text-[11px] font-body">
             Leave empty for default name
           </p>
         </div>
 
         {/* Private Toggle */}
         <div
-          className="flex items-center justify-between p-4 bg-white/[0.03] border border-white/5 rounded-xl cursor-pointer hover:border-white/10 transition-colors"
+          className="flex items-center justify-between gap-3 p-3 bg-white/[0.03] border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors"
           onClick={() => setIsPrivate(!isPrivate)}
         >
           <div className="flex items-center gap-3">
-            <svg className={`w-5 h-5 ${isPrivate ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className={`w-4 h-4 ${isPrivate ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
             <div>
-              <p className="font-body text-white">Private Game</p>
-              <p className="text-xs text-white/40">Invite only - won't appear in browser</p>
+              <p className="font-body text-sm text-white">Private Game</p>
+              <p className="text-[11px] text-white/40">Invite only - won't appear in browser</p>
             </div>
           </div>
-          <div className={`w-12 h-6 rounded-full transition-all relative ${isPrivate ? 'bg-orange-500' : 'bg-white/20'}`}>
-            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${isPrivate ? 'left-7' : 'left-1'}`} />
+          <div className={`w-10 h-5 shrink-0 rounded-full transition-all relative ${isPrivate ? 'bg-orange-500' : 'bg-white/20'}`}>
+            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${isPrivate ? 'left-[22px]' : 'left-0.5'}`} />
           </div>
         </div>
 
         {/* Error */}
         {error && (
-          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
             <p className="text-red-400 text-sm font-body">{error}</p>
           </div>
         )}
@@ -862,14 +846,14 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
+          className="flex-1 py-2.5 rounded-lg font-display text-sm text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
           >
             CANCEL
           </button>
           <button
             type="submit"
             disabled={isLoading}
-            className="flex-1 py-3 rounded-xl font-display text-white bg-orange-500 hover:bg-orange-400 disabled:opacity-50"
+            className="flex-1 py-2.5 rounded-lg font-display text-sm text-white bg-orange-500 hover:bg-orange-400 disabled:opacity-50"
           >
             {isLoading ? 'CREATING...' : 'CREATE'}
           </button>
@@ -892,17 +876,17 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
   const canJoin = !isFull && !isInGame;
 
   return (
-    <div className="flex items-center gap-4 p-4 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] transition-colors group">
+    <div className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] transition-colors group">
       {/* Icon */}
-      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${canJoin ? 'bg-orange-500/10' : 'bg-white/5'
+      <div className={`w-10 h-10 rounded-lg flex shrink-0 items-center justify-center ${canJoin ? 'bg-orange-500/10' : 'bg-white/5'
         }`}>
         {isInGame ? (
-          <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         ) : (
-          <svg className={`w-6 h-6 ${canJoin ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className={`w-5 h-5 ${canJoin ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         )}
@@ -911,7 +895,7 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-display text-lg text-white truncate">{lobby.name}</h3>
+          <h3 className="font-display text-base text-white truncate">{lobby.name}</h3>
           {isInGame && (
             <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-display rounded-full animate-pulse">
               IN GAME
@@ -933,7 +917,7 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
               style={{ width: `${(lobby.playerCount / lobby.maxPlayers) * 100}%` }}
             />
           </div>
-          <span className="text-sm text-white/50 font-mono">
+          <span className="text-xs text-white/50 font-mono">
             {lobby.playerCount}/{lobby.maxPlayers}
           </span>
         </div>
@@ -943,7 +927,7 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
  <button
  onClick={onJoin}
  disabled={disabled || !canJoin}
- className={`px-5 py-2.5 rounded-lg font-display text-sm ${canJoin
+ className={`px-4 py-2 rounded-lg font-display text-xs ${canJoin
  ? 'bg-orange-500 text-white hover:bg-orange-400 '
  : 'bg-white/5 text-white/30 cursor-not-allowed'
  }`}
@@ -1001,12 +985,11 @@ function AuthModal({
   return (
     <GameDialog
       title={showNameInput ? 'CREATE PROFILE' : 'CONNECT WALLET'}
-      description={showNameInput ? 'Choose your callsign to continue' : 'Sign in with your Phantom wallet'}
       icon={<PhantomIcon className="w-6 h-6" />}
       iconClassName="bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/20"
       size="sm"
       onClose={onClose}
-      bodyClassName="p-6 space-y-4"
+      bodyClassName="p-5 space-y-3"
     >
           {/* Name input for new users */}
           {showNameInput ? (
@@ -1045,7 +1028,7 @@ function AuthModal({
                     }}
                     placeholder="Enter your name"
                     maxLength={16}
-                    className="input w-full px-4 py-3 text-lg"
+                    className="input w-full px-3.5 py-2.5 text-base"
                     onKeyDown={(e) => e.key === 'Enter' && onRegister()}
                     autoFocus
                   />
@@ -1066,7 +1049,7 @@ function AuthModal({
  <button
  onClick={onRegister}
  disabled={isRegistering}
- className="btn btn-primary w-full py-4 rounded-lg text-xl clip-corner"
+ className="btn btn-primary w-full py-3 rounded-lg text-base clip-corner"
  >
  <span className="flex items-center justify-center gap-2">
  {isRegistering ? (
@@ -1129,7 +1112,7 @@ function AuthModal({
                   {!isAuthenticating && !isAuthenticated && (
  <button
  onClick={onAuthenticate}
- className="btn btn-primary w-full py-4 rounded-lg text-lg"
+ className="btn btn-primary w-full py-3 rounded-lg text-base"
  >
  <span className="flex items-center justify-center gap-2">
  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1146,7 +1129,7 @@ function AuthModal({
  <button
  onClick={onConnect}
  disabled={isConnecting}
- className="w-full py-4 rounded-xl font-display text-xl text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
+ className="w-full py-3 rounded-lg font-display text-base text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
  style={{
  background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
  boxShadow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
@@ -1159,7 +1142,7 @@ function AuthModal({
  background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
  }}
  />
- <span className="relative flex items-center justify-center gap-3">
+ <span className="relative flex items-center justify-center gap-2.5">
  {isConnecting ? (
  <>
  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24">
@@ -1170,7 +1153,7 @@ function AuthModal({
  </>
  ) : (
  <>
- <PhantomIcon className="w-6 h-6" />
+ <PhantomIcon className="w-5 h-5" />
  CONNECT PHANTOM
  </>
  )}

@@ -185,7 +185,15 @@ function getBiomeDensities(theme: VoxelMapTheme): { tuft: number; pebble: number
   return { tuft: 0.048, pebble: 0.022, crystal: 0.01 };
 }
 
-function createDressingSet(manifest: VoxelMapManifest): DressingSet {
+function createDressingSet(manifest: VoxelMapManifest, densityScale: number): DressingSet {
+  if (densityScale <= 0) {
+    return { tufts: [], pebbles: [], crystals: [] };
+  }
+
+  const safeDensityScale = Math.min(1.35, Math.max(0, densityScale));
+  const maxTufts = Math.round(MAX_TUFTS * safeDensityScale);
+  const maxPebbles = Math.round(MAX_PEBBLES * safeDensityScale);
+  const maxCrystals = Math.round(MAX_CRYSTALS * safeDensityScale);
   const surfaces = getTopSurfaces(manifest);
   const densities = getBiomeDensities(manifest.theme);
   const tufts: DressingInstance[] = [];
@@ -207,7 +215,7 @@ function createDressingSet(manifest: VoxelMapManifest): DressingSet {
       const pebbleRoll = hashCell(manifest.seed, x, z, 0xbeef);
       const crystalRoll = hashCell(manifest.seed, x, z, 0xc275);
 
-      if (tufts.length < MAX_TUFTS && surface.blockId !== 'stone' && tuftRoll < densities.tuft) {
+      if (tufts.length < maxTufts && surface.blockId !== 'stone' && tuftRoll < densities.tuft * safeDensityScale) {
         const height = 0.24 + hashCell(manifest.seed, x, z, 0x77) * 0.28;
         const radius = 0.055 + hashCell(manifest.seed, x, z, 0x78) * 0.045;
         tufts.push({
@@ -217,7 +225,7 @@ function createDressingSet(manifest: VoxelMapManifest): DressingSet {
         });
       }
 
-      if (pebbles.length < MAX_PEBBLES && pebbleRoll < densities.pebble) {
+      if (pebbles.length < maxPebbles && pebbleRoll < densities.pebble * safeDensityScale) {
         const radius = 0.07 + hashCell(manifest.seed, x, z, 0x91) * 0.12;
         pebbles.push({
           position: [worldX, worldY + radius * 0.42, worldZ],
@@ -231,9 +239,9 @@ function createDressingSet(manifest: VoxelMapManifest): DressingSet {
       }
 
       if (
-        crystals.length < MAX_CRYSTALS &&
+        crystals.length < maxCrystals &&
         (surface.blockId === 'stone' || manifest.theme.id === 'crystal' || manifest.theme.id === 'frost') &&
-        crystalRoll < densities.crystal
+        crystalRoll < densities.crystal * safeDensityScale
       ) {
         const height = 0.18 + hashCell(manifest.seed, x, z, 0xd1) * 0.34;
         const radius = 0.045 + hashCell(manifest.seed, x, z, 0xd2) * 0.055;
@@ -303,9 +311,19 @@ function InstancedDressingMesh({
   );
 }
 
-export function WorldDressing({ manifest }: { manifest: VoxelMapManifest }) {
+export function WorldDressing({
+  manifest,
+  densityScale,
+  shadowsEnabled,
+  reflectionIntensity,
+}: {
+  manifest: VoxelMapManifest;
+  densityScale: number;
+  shadowsEnabled: boolean;
+  reflectionIntensity: number;
+}) {
   const palette = useMemo(() => getDressingPalette(manifest.theme), [manifest.theme]);
-  const dressing = useMemo(() => createDressingSet(manifest), [manifest]);
+  const dressing = useMemo(() => createDressingSet(manifest, densityScale), [densityScale, manifest]);
   const resources = useMemo(() => {
     const tuftMaterial = new THREE.MeshStandardMaterial({
       color: palette.tuft,
@@ -326,6 +344,10 @@ export function WorldDressing({ manifest }: { manifest: VoxelMapManifest }) {
       metalness: 0.04,
     });
 
+    tuftMaterial.envMapIntensity = reflectionIntensity * 0.15;
+    pebbleMaterial.envMapIntensity = reflectionIntensity * 0.45;
+    crystalMaterial.envMapIntensity = reflectionIntensity * 1.15;
+
     return {
       tuftGeometry: new THREE.ConeGeometry(1, 1, 5),
       pebbleGeometry: new THREE.DodecahedronGeometry(1, 0),
@@ -334,7 +356,7 @@ export function WorldDressing({ manifest }: { manifest: VoxelMapManifest }) {
       pebbleMaterial,
       crystalMaterial,
     };
-  }, [palette]);
+  }, [palette, reflectionIntensity]);
 
   useEffect(
     () => () => {
@@ -355,18 +377,23 @@ export function WorldDressing({ manifest }: { manifest: VoxelMapManifest }) {
         instances={dressing.tufts}
         geometry={resources.tuftGeometry}
         material={resources.tuftMaterial}
+        receiveShadow={shadowsEnabled}
       />
       <InstancedDressingMesh
         name="surface-pebbles"
         instances={dressing.pebbles}
         geometry={resources.pebbleGeometry}
         material={resources.pebbleMaterial}
+        castShadow={shadowsEnabled}
+        receiveShadow={shadowsEnabled}
       />
       <InstancedDressingMesh
         name="surface-crystal-glints"
         instances={dressing.crystals}
         geometry={resources.crystalGeometry}
         material={resources.crystalMaterial}
+        castShadow={shadowsEnabled}
+        receiveShadow={shadowsEnabled}
       />
     </group>
   );

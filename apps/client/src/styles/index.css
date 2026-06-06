@@ -465,6 +465,222 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
+/* ===== NON-GAME SCREEN RESPONSIVENESS ===== */
+:root {
+  --menu-safe-x: clamp(1rem, 2.3vw, 4rem);
+  --menu-nav-h: clamp(4.25rem, 7.5vh, 6.25rem);
+  --menu-bottom-pad: clamp(1rem, 4vh, 3.5rem);
+  --menu-bottom-pad-lg: clamp(4rem, 7vh, 6rem);
+  --menu-scale: 1;
+}
+
+.menu-screen {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.menu-nav {
+  min-height: var(--menu-nav-h);
+  padding: clamp(0.65rem, 1.2vh, 1rem) var(--menu-safe-x);
+}
+
+.menu-main {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  min-height: 0;
+  padding: var(--menu-nav-h) var(--menu-safe-x) var(--menu-bottom-pad);
+}
+
+.menu-main-play {
+  padding-bottom: var(--menu-bottom-pad-lg);
+}
+
+.menu-content {
+  width: 100%;
+  max-width: min(1920px, calc(100vw - (var(--menu-safe-x) * 2)));
+  margin-inline: auto;
+}
+
+.menu-content-wide {
+  width: 100%;
+  max-width: min(2160px, calc(100vw - (var(--menu-safe-x) * 2)));
+  margin-inline: auto;
+}
+
+.menu-compact-scale {
+  transform: scale(var(--menu-scale));
+  transform-origin: center;
+}
+
+.menu-scroll-y {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.play-tab-stage {
+  width: min(100%, clamp(42rem, 50vw, 72rem));
+}
+
+.heroes-page-layout {
+  display: grid;
+  grid-template-columns:
+    clamp(10rem, 13vw, 18rem)
+    minmax(22rem, 1fr)
+    clamp(18rem, 23vw, 31rem);
+  align-items: stretch;
+  gap: clamp(1rem, 2vw, 3.25rem);
+  height: 100%;
+  padding-block: clamp(0.35rem, 1.2vh, 1.4rem) clamp(0.9rem, 2vh, 2.5rem);
+}
+
+.lobby-layout {
+  display: grid;
+  grid-template-columns:
+    minmax(16.5rem, 1fr)
+    clamp(18rem, 22vw, 28rem)
+    minmax(16.5rem, 1fr);
+  align-items: center;
+  gap: clamp(1.25rem, 3vw, 5rem);
+  height: 100%;
+}
+
+.lobby-team-panel {
+  width: 100%;
+  min-width: 0;
+  height: clamp(22rem, 54vh, 42rem);
+}
+
+.lobby-center-panel {
+  width: 100%;
+  min-width: 0;
+  max-height: 100%;
+}
+
+.dialog-page {
+  max-height: calc(100vh - 3rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.game-dialog {
+  --dialog-font-xs: clamp(0.75rem, 0.71rem + 0.12vw, 0.84375rem);
+  --dialog-font-sm: clamp(0.875rem, 0.82rem + 0.14vw, 0.96875rem);
+  --dialog-font-base: clamp(0.9375rem, 0.88rem + 0.14vw, 1.03125rem);
+  --dialog-font-lg: clamp(1.0625rem, 0.98rem + 0.22vw, 1.1875rem);
+  --dialog-font-xl: clamp(1.375rem, 1.2rem + 0.35vw, 1.625rem);
+  --dialog-font-2xl: clamp(1.55rem, 1.3rem + 0.5vw, 1.9rem);
+  font-size: var(--dialog-font-base);
+}
+
+.game-dialog .font-display {
+  letter-spacing: 0.055em;
+}
+
+.game-dialog .text-\[8px\],
+.game-dialog .text-\[9px\],
+.game-dialog .text-\[10px\],
+.game-dialog .text-\[11px\],
+.game-dialog .text-xs {
+  font-size: var(--dialog-font-xs);
+  line-height: 1.35;
+}
+
+.game-dialog .text-sm {
+  font-size: var(--dialog-font-sm);
+  line-height: 1.4;
+}
+
+.game-dialog .text-base {
+  font-size: var(--dialog-font-base);
+  line-height: 1.4;
+}
+
+.game-dialog .text-lg {
+  font-size: var(--dialog-font-lg);
+  line-height: 1.2;
+}
+
+.game-dialog .text-xl {
+  font-size: var(--dialog-font-xl);
+  line-height: 1;
+}
+
+.game-dialog .text-2xl {
+  font-size: var(--dialog-font-2xl);
+  line-height: 1;
+}
+
+.game-dialog input[type="range"] {
+  min-height: 1.25rem;
+}
+
+.game-dialog input[type="range"]::-webkit-slider-thumb {
+  width: clamp(1rem, 0.9rem + 0.25vw, 1.25rem);
+  height: clamp(1rem, 0.9rem + 0.25vw, 1.25rem);
+}
+
+.game-dialog input[type="range"]::-moz-range-thumb {
+  width: clamp(1rem, 0.9rem + 0.25vw, 1.25rem);
+  height: clamp(1rem, 0.9rem + 0.25vw, 1.25rem);
+}
+
+@media (min-width: 2200px) {
+  :root {
+    --menu-safe-x: clamp(4rem, 5vw, 12rem);
+    --menu-scale: 1.06;
+  }
+}
+
+@media (min-width: 3200px) {
+  :root {
+    --menu-scale: 1.12;
+  }
+}
+
+@media (max-width: 1180px) {
+  :root {
+    --menu-safe-x: clamp(0.75rem, 1.6vw, 1.25rem);
+  }
+
+  .heroes-page-layout {
+    grid-template-columns: minmax(9.5rem, 0.82fr) minmax(20rem, 1.15fr) minmax(15.5rem, 1fr);
+    gap: 0.85rem;
+  }
+
+  .lobby-layout {
+    grid-template-columns: minmax(15rem, 1fr) minmax(17rem, 0.92fr) minmax(15rem, 1fr);
+    gap: 0.9rem;
+  }
+}
+
+@media (max-height: 820px) {
+  :root {
+    --menu-nav-h: 4.35rem;
+    --menu-bottom-pad: 0.75rem;
+    --menu-bottom-pad-lg: 3.5rem;
+    --menu-scale: 0.92;
+  }
+
+  .heroes-page-layout {
+    gap: clamp(0.75rem, 1.4vw, 1.5rem);
+    padding-block: 0.2rem 0.65rem;
+  }
+
+  .lobby-team-panel {
+    height: clamp(19rem, 55vh, 30rem);
+  }
+}
+
+@media (max-height: 700px) {
+  :root {
+    --menu-nav-h: 4rem;
+    --menu-scale: 0.84;
+  }
+}
+
 /* ===== Z-INDEX LAYERS ===== */
 .z-hud {
   z-index: 50;
@@ -683,6 +899,19 @@ input[type="color"]::-webkit-color-swatch {
   }
 }
 
+/* Ultra-wide desktops */
+@media (min-width: 2400px) {
+  .hero-svg-container {
+    transform: scale(1.08);
+  }
+}
+
+@media (min-width: 3200px) {
+  .hero-svg-container {
+    transform: scale(1.16);
+  }
+}
+
 /* Height-based adjustments (override width-based when height is constrained) */
 @media (max-height: 800px) {
   .hero-svg-container {
@@ -740,6 +969,18 @@ input[type="color"]::-webkit-color-swatch {
 @media (max-height: 600px) {
   .responsive-scale-container {
     transform: scale(0.7);
+  }
+}
+
+@media (min-width: 2200px) and (min-height: 1000px) {
+  .responsive-scale-container {
+    transform: scale(1.08);
+  }
+}
+
+@media (min-width: 3200px) and (min-height: 1400px) {
+  .responsive-scale-container {
+    transform: scale(1.16);
   }
 }
 

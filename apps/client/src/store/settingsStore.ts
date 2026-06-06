@@ -1,10 +1,17 @@
 import { create } from 'zustand';
 
 export type GraphicsQuality = 'low' | 'medium' | 'high' | 'ultra';
+export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
+export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 
 export interface ClientSettings {
-  quality: GraphicsQuality;
+  resolutionScale: GraphicsQuality;
+  antialiasing: boolean;
+  materialQuality: MaterialQuality;
+  shadowQuality: GraphicsFeatureQuality;
+  reflectionQuality: GraphicsFeatureQuality;
+  environmentQuality: GraphicsFeatureQuality;
   fov: number;
   showFPS: boolean;
   masterVolume: number;
@@ -23,7 +30,12 @@ export interface ClientSettings {
 export const SETTINGS_STORAGE_KEY = 'voxel-strike-settings';
 
 export const defaultSettings: ClientSettings = {
-  quality: 'high',
+  resolutionScale: 'high',
+  antialiasing: true,
+  materialQuality: 'high',
+  shadowQuality: 'high',
+  reflectionQuality: 'high',
+  environmentQuality: 'high',
   fov: 90,
   showFPS: false,
   masterVolume: 80,
@@ -58,11 +70,31 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function materialQualityFromLegacyPreset(quality: GraphicsQuality): MaterialQuality {
+  if (quality === 'low') return 'low';
+  if (quality === 'medium') return 'medium';
+  return 'high';
+}
+
 export function sanitizeSettings(value: unknown): ClientSettings {
-  const raw = typeof value === 'object' && value !== null ? value as Partial<ClientSettings> : {};
+  const raw = typeof value === 'object' && value !== null
+    ? value as Partial<ClientSettings> & { quality?: unknown }
+    : {};
+  const qualityOptions = ['low', 'medium', 'high', 'ultra'] as const;
+  const featureQualityOptions = ['off', 'low', 'medium', 'high', 'ultra'] as const;
+  const legacyQuality = pickOption(raw.quality, qualityOptions, defaultSettings.resolutionScale);
 
   return {
-    quality: pickOption(raw.quality, ['low', 'medium', 'high', 'ultra'] as const, defaultSettings.quality),
+    resolutionScale: pickOption(raw.resolutionScale, qualityOptions, legacyQuality),
+    antialiasing: pickBoolean(raw.antialiasing, legacyQuality === 'high' || legacyQuality === 'ultra'),
+    materialQuality: pickOption(
+      raw.materialQuality,
+      ['low', 'medium', 'high'] as const,
+      materialQualityFromLegacyPreset(legacyQuality)
+    ),
+    shadowQuality: pickOption(raw.shadowQuality, featureQualityOptions, defaultSettings.shadowQuality),
+    reflectionQuality: pickOption(raw.reflectionQuality, featureQualityOptions, defaultSettings.reflectionQuality),
+    environmentQuality: pickOption(raw.environmentQuality, featureQualityOptions, defaultSettings.environmentQuality),
     fov: clamp(raw.fov, 60, 120, defaultSettings.fov),
     showFPS: pickBoolean(raw.showFPS, defaultSettings.showFPS),
     masterVolume: clamp(raw.masterVolume, 0, 100, defaultSettings.masterVolume),

@@ -2,10 +2,12 @@ import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
+import type { EnvironmentQualityConfig } from './visualQuality';
 
 interface WorldAtmosphereProps {
   theme: VoxelMapTheme;
   seed: number;
+  config: EnvironmentQualityConfig;
 }
 
 type AtmosphereKind = 'snow' | 'rain' | 'sand' | 'ash' | 'glimmer' | 'mist';
@@ -702,6 +704,37 @@ function getAtmosphereProfiles(theme: VoxelMapTheme, seed: number): AtmospherePr
   ]);
 }
 
+function scaleAtmosphereProfile(
+  profile: AtmosphereProfile,
+  config: EnvironmentQualityConfig
+): AtmosphereProfile | null {
+  if (config.particleDensity <= 0) return null;
+
+  const minCount = profile.kind === 'mist' || profile.kind === 'sand' ? 48 : 36;
+  const count = Math.max(minCount, Math.round(profile.count * config.particleDensity));
+  const opacityScale = config.particleDensity < 1 ? 0.85 + config.particleDensity * 0.15 : 1;
+  const devilCount =
+    profile.devilCount && config.dustDevilDensity > 0
+      ? Math.max(1, Math.round(profile.devilCount * config.dustDevilDensity))
+      : undefined;
+
+  return {
+    ...profile,
+    count,
+    opacity: Math.min(0.92, profile.opacity * opacityScale),
+    devilCount,
+  };
+}
+
+function scaleAtmosphereProfiles(
+  profiles: AtmosphereProfile[],
+  config: EnvironmentQualityConfig
+): AtmosphereProfile[] {
+  return profiles
+    .map((profile) => scaleAtmosphereProfile(profile, config))
+    .filter((profile): profile is AtmosphereProfile => Boolean(profile));
+}
+
 function createPointParticleSet(profile: AtmosphereProfile, seed: number): PointParticleSet {
   const positions = new Float32Array(profile.count * 3);
   const speeds = new Float32Array(profile.count);
@@ -1090,8 +1123,11 @@ function SandDevils({ profile, seed }: { profile: AtmosphereProfile; seed: numbe
   );
 }
 
-export function WorldAtmosphere({ theme, seed }: WorldAtmosphereProps) {
-  const atmosphereProfiles = useMemo(() => getAtmosphereProfiles(theme, seed), [theme, seed]);
+export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
+  const atmosphereProfiles = useMemo(
+    () => scaleAtmosphereProfiles(getAtmosphereProfiles(theme, seed), config),
+    [config, theme, seed]
+  );
   const skyMaterial = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -1116,11 +1152,11 @@ export function WorldAtmosphere({ theme, seed }: WorldAtmosphereProps) {
   return (
     <group name="world-atmosphere">
       <mesh frustumCulled={false} renderOrder={-100}>
-        <sphereGeometry args={[420, 48, 32]} />
+        <sphereGeometry args={[420, ...config.skySegments]} />
         <primitive object={skyMaterial} attach="material" />
       </mesh>
       <mesh position={[92, 118, -76]} frustumCulled={false} renderOrder={-90}>
-        <sphereGeometry args={[7.5, 32, 16]} />
+        <sphereGeometry args={[7.5, ...config.sunSegments]} />
         <meshBasicMaterial color={sunColor} toneMapped={false} fog={false} />
       </mesh>
       {atmosphereProfiles.map((profile, index) => {

@@ -1,12 +1,33 @@
 import { VoxelMap } from './procedural';
+import type { VoxelMaterialDetail } from './visualQuality';
 
 // Fallback floor size (invisible, catches players who fall through)
 const FALLBACK_FLOOR_SIZE = 500;
 
-export function VoxelWorld() {
+interface VoxelWorldProps {
+  shadowsEnabled: boolean;
+  dressingShadows: boolean;
+  dressingDensity: number;
+  reflectionIntensity: number;
+  materialDetail: VoxelMaterialDetail;
+}
+
+export function VoxelWorld({
+  shadowsEnabled,
+  dressingShadows,
+  dressingDensity,
+  reflectionIntensity,
+  materialDetail,
+}: VoxelWorldProps) {
   return (
     <group>
-      <VoxelMap />
+      <VoxelMap
+        shadowsEnabled={shadowsEnabled}
+        dressingShadows={dressingShadows}
+        dressingDensity={dressingDensity}
+        reflectionIntensity={reflectionIntensity}
+        materialDetail={materialDetail}
+      />
 
       {/* Fallback ground plane far below the map - invisible safety net */}
       <Ground />

@@ -620,11 +620,35 @@ export function PlayerController() {
     movement.handleLanding(velocity, movement.refs.wasGrounded.current, movement.refs.isGrounded.current);
     movement.refs.wasGrounded.current = movement.refs.isGrounded.current;
 
-    // Jump
-    if (frameInput.jump && movement.refs.canJump.current && movement.refs.isGrounded.current && !shadowStepTargeting) {
+    const willJumpThisFrame = frameInput.jump && movement.refs.canJump.current && movement.refs.isGrounded.current && !shadowStepTargeting;
+
+    // Horizontal movement with step-up
+    const { didFollowTerrain, newSmoothedY, hitTerrain } = physics.applyHorizontalMovement(
+      position,
+      velocity,
+      movement.refs.isGrounded.current,
+      movement.refs.smoothedY.current,
+      glacierAbilities.iceWallRushActiveRef.current,
+      dt,
+      playerBodyHeight,
+      willJumpThisFrame
+    );
+
+    if (newSmoothedY !== null) {
+      movement.refs.smoothedY.current = newSmoothedY;
+    }
+    if (heroId === 'hookshot' && hitTerrain) {
+      hookshotAbilities.handleSwingTerrainContact();
+    }
+
+    let didJumpThisFrame = false;
+    if (willJumpThisFrame) {
       velocity.y = heroStats.jumpForce;
       movement.refs.canJump.current = false;
       movement.refs.isGrounded.current = false;
+      movement.refs.wasGrounded.current = false;
+      movement.refs.smoothedY.current = null;
+      didJumpThisFrame = true;
     }
 
     // Gravity (reduced during grapple, skipped during swing, skipped when grounded)
@@ -636,26 +660,8 @@ export function PlayerController() {
       dt
     );
 
-    // Horizontal movement with step-up
-    const { didFollowTerrain, newSmoothedY, hitTerrain } = physics.applyHorizontalMovement(
-      position,
-      velocity,
-      movement.refs.isGrounded.current,
-      movement.refs.smoothedY.current,
-      glacierAbilities.iceWallRushActiveRef.current,
-      dt,
-      playerBodyHeight
-    );
-
-    if (newSmoothedY !== null) {
-      movement.refs.smoothedY.current = newSmoothedY;
-    }
-    if (heroId === 'hookshot' && hitTerrain) {
-      hookshotAbilities.handleSwingTerrainContact();
-    }
-
     // Vertical movement (skip when terrain following already placed the body)
-    if (!didFollowTerrain) {
+    if (!didFollowTerrain || didJumpThisFrame) {
       const { hitCeiling } = physics.applyVerticalMovement(position, velocity, dt, playerBodyHeight);
       if (hitCeiling && heroId === 'hookshot') {
         hookshotAbilities.handleSwingTerrainContact();

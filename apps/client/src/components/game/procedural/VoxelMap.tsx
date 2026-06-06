@@ -6,11 +6,26 @@ import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
 import { useVoxelMaterial } from './materials';
 import { VoxelChunkMesh } from './VoxelChunkMesh';
 import { WorldDressing } from './WorldDressing';
+import type { VoxelMaterialDetail } from '../visualQuality';
 
-export function VoxelMap() {
+interface VoxelMapProps {
+  shadowsEnabled: boolean;
+  dressingShadows: boolean;
+  dressingDensity: number;
+  reflectionIntensity: number;
+  materialDetail: VoxelMaterialDetail;
+}
+
+export function VoxelMap({
+  shadowsEnabled,
+  dressingShadows,
+  dressingDensity,
+  reflectionIntensity,
+  materialDetail,
+}: VoxelMapProps) {
   const mapSeed = useGameStore((state) => state.mapSeed);
   const manifest = useMemo(() => generateProceduralVoxelMap(mapSeed), [mapSeed]);
-  const material = useVoxelMaterial(manifest.theme);
+  const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
   const collidersLoadedRef = useRef(false);
 
   useEffect(() => {
@@ -52,9 +67,15 @@ export function VoxelMap() {
           chunk={chunk}
           manifest={manifest}
           material={material}
+          shadowsEnabled={shadowsEnabled}
         />
       ))}
-      <WorldDressing manifest={manifest} />
+      <WorldDressing
+        manifest={manifest}
+        densityScale={dressingDensity}
+        shadowsEnabled={dressingShadows}
+        reflectionIntensity={reflectionIntensity}
+      />
     </group>
   );
 }
