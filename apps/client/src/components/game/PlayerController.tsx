@@ -664,7 +664,8 @@ export function PlayerController() {
 
     // Update camera
     cameraControl.updateCameraRotation(camera, isSliding, movement.refs.isCrouching.current, dt);
-    camera.position.set(position.x, position.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
+    const cameraBodyY = movement.refs.smoothedY.current ?? position.y;
+    camera.position.set(position.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
 
     // Update game store with movement state ONLY (position/rotation go to visualStore below)
     // Position/velocity/rotation data flows ONLY to visualStore (non-reactive) to avoid React re-renders

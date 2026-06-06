@@ -12,7 +12,7 @@ export interface ProceduralCTFLayout {
 }
 
 export const PROCEDURAL_MAP_WORLD_SIZE: VoxelSize = { x: 72, y: 20, z: 60 };
-export const PROCEDURAL_VOXEL_SIZE: VoxelSize = { x: 0.5, y: 0.5, z: 0.5 };
+export const PROCEDURAL_VOXEL_SIZE: VoxelSize = { x: 0.25, y: 0.25, z: 0.25 };
 export const PROCEDURAL_MAP_SIZE: VoxelSize = {
   x: Math.round(PROCEDURAL_MAP_WORLD_SIZE.x / PROCEDURAL_VOXEL_SIZE.x),
   y: Math.round(PROCEDURAL_MAP_WORLD_SIZE.y / PROCEDURAL_VOXEL_SIZE.y),

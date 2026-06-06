@@ -173,22 +173,24 @@ export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
         const heightDiff = targetGroundY - currentFeetY;
 
         if (heightDiff > 0.05 && heightDiff <= STEP_HEIGHT * 1.2) {
-          ctx.position.y = smoothY(
+          const targetY = targetGroundY + PLAYER_HEIGHT / 2;
+          smoothedY.current = smoothY(
             smoothedY.current ?? ctx.position.y,
-            targetGroundY + PLAYER_HEIGHT / 2,
+            targetY,
             TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35,
             ctx.dt
           );
-          smoothedY.current = ctx.position.y;
+          ctx.position.y = targetY;
           ctx.velocity.y = 0;
         } else if (heightDiff < -0.1 && heightDiff > -STEP_HEIGHT) {
-          ctx.position.y = smoothY(
+          const targetY = targetGroundY + PLAYER_HEIGHT / 2;
+          smoothedY.current = smoothY(
             smoothedY.current ?? ctx.position.y,
-            targetGroundY + PLAYER_HEIGHT / 2,
+            targetY,
             TERRAIN_RAMP_DOWN_SMOOTH_SPEED * 1.35,
             ctx.dt
           );
-          smoothedY.current = ctx.position.y;
+          ctx.position.y = targetY;
           ctx.velocity.y = 0;
         } else if (Math.abs(heightDiff) <= 0.05) {
           ctx.velocity.y = -1;

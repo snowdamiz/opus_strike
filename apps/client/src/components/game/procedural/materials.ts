@@ -9,20 +9,20 @@ export function useVoxelMaterial(theme: VoxelMapTheme): THREE.MeshStandardMateri
     const material = new THREE.MeshStandardMaterial({
       map: atlas.color,
       bumpMap: atlas.bump,
-      bumpScale: 0.055,
-      roughness: 1,
+      bumpScale: 0.08,
+      roughness: 0.96,
       roughnessMap: atlas.roughness,
       metalness: 1,
       metalnessMap: atlas.metalness,
       emissive: '#ffffff',
       emissiveMap: atlas.emissive,
-      emissiveIntensity: 0.85,
+      emissiveIntensity: 1.08,
       aoMap: atlas.ao,
-      aoMapIntensity: 0.62,
+      aoMapIntensity: 0.82,
       color: '#ffffff',
     });
 
-    material.envMapIntensity = 0.72;
+    material.envMapIntensity = 0.9;
     material.name = 'procedural-voxel-atlas-material';
     return material;
   }, [theme]);

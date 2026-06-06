@@ -17,7 +17,7 @@ export const EYE_HEIGHT = 0.6;
 // ============================================================================
 
 export const GROUND_SNAP_DISTANCE = 0.3;
-export const STEP_HEIGHT = 0.8;
+export const STEP_HEIGHT = 0.9;
 
 // Smoothing for camera over bumps
 export const SMALL_BUMP_THRESHOLD = 0.15;

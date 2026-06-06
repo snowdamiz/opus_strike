@@ -47,7 +47,7 @@ export interface UsePlayerPhysicsReturn {
     position: THREE.Vector3, 
     velocity: THREE.Vector3, 
     smoothedY: number | null,
-    wasGrounded: boolean,
+    _wasGrounded: boolean,
     dt: number
   ) => {
     isGrounded: boolean;
@@ -89,6 +89,17 @@ function smoothY(currentY: number, targetY: number, speed: number, dt: number): 
 const MAX_GROUND_HIT_ABOVE_FEET = STEP_HEIGHT + 0.12;
 const CEILING_CLEARANCE = 0.04;
 const CEILING_PROBE_RADIUS = PLAYER_RADIUS * 0.65;
+const GROUND_PROBE_RADIUS = PLAYER_RADIUS * 0.45;
+const STEP_UP_MIN_HEIGHT = 0.08;
+const STEP_UP_PROBE_SIDE_OFFSETS = [0, -PLAYER_RADIUS * 0.72, PLAYER_RADIUS * 0.72];
+const MAX_STEP_DOWN_HEIGHT = STEP_HEIGHT + 0.1;
+const GROUND_PROBE_OFFSETS = [
+  { x: 0, z: 0 },
+  { x: GROUND_PROBE_RADIUS, z: 0 },
+  { x: -GROUND_PROBE_RADIUS, z: 0 },
+  { x: 0, z: GROUND_PROBE_RADIUS },
+  { x: 0, z: -GROUND_PROBE_RADIUS },
+];
 const CEILING_PROBE_OFFSETS = [
   { x: 0, z: 0 },
   { x: CEILING_PROBE_RADIUS, z: 0 },
@@ -145,6 +156,72 @@ function canOccupyPlayerBody(x: number, y: number, z: number): boolean {
   return hasPlayerBodyClearance(x, y, z, PLAYER_RADIUS, PLAYER_HEIGHT);
 }
 
+function getWalkableGroundAt(x: number, y: number, z: number, maxDist: number): GroundInfo | null {
+  const ground = checkGroundWithNormal(x, y, z, maxDist);
+  return ground?.isWalkable ? ground : null;
+}
+
+function getCurrentPlayerGround(position: THREE.Vector3, maxDist: number): GroundInfo | null {
+  const originY = position.y + 0.5;
+  const centerGround = getWalkableGroundAt(position.x, originY, position.z, maxDist);
+  if (centerGround) return centerGround;
+
+  let fallbackGround: GroundInfo | null = null;
+
+  for (let i = 1; i < GROUND_PROBE_OFFSETS.length; i++) {
+    const offset = GROUND_PROBE_OFFSETS[i];
+    const ground = getWalkableGroundAt(position.x + offset.x, originY, position.z + offset.z, maxDist);
+    if (!ground) continue;
+
+    if (!fallbackGround || ground.groundY > fallbackGround.groundY) {
+      fallbackGround = ground;
+    }
+  }
+
+  return fallbackGround;
+}
+
+function findGroundedTerrainMove(
+  position: THREE.Vector3,
+  moveX: number,
+  moveZ: number,
+  effectiveStepHeight: number
+): { ground: GroundInfo; heightDiff: number } | null {
+  const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
+  if (moveDist <= 0.0001) return null;
+
+  const dirX = moveX / moveDist;
+  const dirZ = moveZ / moveDist;
+  const sideX = -dirZ;
+  const sideZ = dirX;
+  const currentFeetY = position.y - PLAYER_HEIGHT / 2;
+  const probeOriginY = position.y + effectiveStepHeight + 1;
+  const probeMaxDistance = effectiveStepHeight + MAX_STEP_DOWN_HEIGHT + 2;
+  let best: { ground: GroundInfo; heightDiff: number } | null = null;
+
+  const samples = [
+    { x: position.x + moveX, z: position.z + moveZ },
+    ...STEP_UP_PROBE_SIDE_OFFSETS.map((sideOffset) => ({
+      x: position.x + dirX * (PLAYER_RADIUS + Math.max(moveDist, 0.04)) + sideX * sideOffset,
+      z: position.z + dirZ * (PLAYER_RADIUS + Math.max(moveDist, 0.04)) + sideZ * sideOffset,
+    })),
+  ];
+
+  for (const sample of samples) {
+    const ground = getWalkableGroundAt(sample.x, probeOriginY, sample.z, probeMaxDistance);
+    if (!ground) continue;
+
+    const heightDiff = ground.groundY - currentFeetY;
+    if (heightDiff > effectiveStepHeight || heightDiff < -MAX_STEP_DOWN_HEIGHT) continue;
+
+    if (!best || heightDiff > best.heightDiff) {
+      best = { ground, heightDiff };
+    }
+  }
+
+  return best;
+}
+
 export function usePlayerPhysics(): UsePlayerPhysicsReturn {
   // Check ground and handle landing
   const checkGround = useCallback((
@@ -163,7 +240,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
       return { isGrounded: false, canJump: false, newSmoothedY: null, groundInfo: null };
     }
 
-    const groundInfo = checkGroundWithNormal(position.x, position.y + 0.5, position.z, 50);
+    const groundInfo = getCurrentPlayerGround(position, 50);
 
     if (!groundInfo) {
       return { isGrounded: false, canJump: false, newSmoothedY: null, groundInfo: null };
@@ -197,7 +274,8 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
           : SMOOTH_SPEED_LARGE;
         const newY = smoothY(currentY, targetY, smoothSpeed, dt);
 
-        position.y = newY;
+        // Keep the collision body on the true ground; smooth only the camera height.
+        position.y = targetY;
         velocity.y = 0;
 
         return {
@@ -207,18 +285,11 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
           groundInfo
         };
       } else {
-        // Too steep - slide
-        const slideForce = 15 * dt;
-        velocity.x += groundInfo.normal.x * slideForce;
-        velocity.z += groundInfo.normal.z * slideForce;
-        position.y = targetY;
-        velocity.y = 0;
-
-        return { 
-          isGrounded: false, 
-          canJump: false, 
-          newSmoothedY: targetY,
-          groundInfo 
+        return {
+          isGrounded: false,
+          canJump: false,
+          newSmoothedY: null,
+          groundInfo
         };
       }
     }
@@ -260,46 +331,50 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     if (effectivelyGrounded) {
       const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
       if (moveDist > 0) {
-        const speedScale = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z) / 10;
-        const lookAheadDist = Math.max(moveDist * 3, 0.5, speedScale * 0.5);
-        const aheadX = position.x + (moveX / moveDist) * lookAheadDist;
-        const aheadZ = position.z + (moveZ / moveDist) * lookAheadDist;
+        const effectiveStepHeight = isIceWallRushing ? STEP_HEIGHT * 1.25 : STEP_HEIGHT;
+        const terrainMove = findGroundedTerrainMove(position, moveX, moveZ, effectiveStepHeight);
 
-        const groundAhead = checkGroundWithNormal(aheadX, position.y + STEP_HEIGHT + 1, aheadZ, STEP_HEIGHT + 3);
-
-        if (groundAhead && groundAhead.isWalkable) {
+        if (terrainMove) {
           const currentFeetY = position.y - PLAYER_HEIGHT / 2;
-          const targetGroundY = groundAhead.groundY;
+          const targetGroundY = terrainMove.ground.groundY;
           const heightDiff = targetGroundY - currentFeetY;
-
-          const effectiveStepHeight = isIceWallRushing ? STEP_HEIGHT * 1.25 : STEP_HEIGHT;
+          const isStepUp = heightDiff > STEP_UP_MIN_HEIGHT;
+          const isStepDown = heightDiff < -0.02;
+          const canTraverseWithoutSweep = isStepDown || Math.abs(heightDiff) <= STEP_UP_MIN_HEIGHT;
+          let canTraverse = canTraverseWithoutSweep;
           
-          if (heightDiff > 0.1 && heightDiff <= effectiveStepHeight) {
-            // Check ceiling clearance
-            const ceilingCheck = checkGroundWithNormal(aheadX, targetGroundY + PLAYER_HEIGHT + 0.5, aheadZ, 1);
-            const hasCeiling = ceilingCheck && ceilingCheck.groundY < targetGroundY + PLAYER_HEIGHT;
+          if (isStepUp) {
+            const targetY = targetGroundY + PLAYER_HEIGHT / 2;
+            const upwardMove = targetY - position.y;
+            const ceilingAllowance = getAllowedUpwardMoveBeforeCeiling(position, upwardMove);
+            const hasCeilingClearance = ceilingAllowance === null || ceilingAllowance >= upwardMove - CEILING_CLEARANCE;
 
-            if (!hasCeiling) {
-              const targetY = targetGroundY + PLAYER_HEIGHT / 2;
-              const hasBodyClearance = canOccupyPlayerBody(targetX, targetY, targetZ);
-
-              if (hasBodyClearance) {
-                const currentY = smoothedY ?? position.y;
-                const smoothSpeed = isIceWallRushing
-                  ? TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35
-                  : TERRAIN_RAMP_UP_SMOOTH_SPEED;
-
-                position.x += moveX;
-                position.z += moveZ;
-                position.y = smoothY(currentY, targetY, smoothSpeed, dt);
-                newSmoothedY = position.y;
-                velocity.y = 0;
-                didStepUp = true;
-                hitTerrain = true;
-              } else {
-                hitTerrain = true;
-              }
+            if (hasCeilingClearance) {
+              const raisedPosition = new THREE.Vector3(position.x, targetY, position.z);
+              canTraverse =
+                canOccupyPlayerBody(targetX, targetY, targetZ) &&
+                canMovePlayerBody(raisedPosition, moveX, moveZ);
             }
+          }
+
+          if (canTraverse) {
+            const targetY = targetGroundY + PLAYER_HEIGHT / 2;
+            const currentY = smoothedY ?? position.y;
+            const smoothSpeed = isStepUp
+              ? isIceWallRushing
+                ? TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35
+                : TERRAIN_RAMP_UP_SMOOTH_SPEED
+              : TERRAIN_RAMP_DOWN_SMOOTH_SPEED;
+
+            position.x += moveX;
+            position.z += moveZ;
+            position.y = targetY;
+            newSmoothedY = smoothY(currentY, targetY, smoothSpeed, dt);
+            velocity.y = 0;
+            didStepUp = isStepUp;
+            hitTerrain = isStepUp;
+
+            return { didStepUp, newSmoothedY, hitTerrain };
           }
         }
       }
