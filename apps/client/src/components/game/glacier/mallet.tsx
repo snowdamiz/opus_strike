@@ -3,7 +3,6 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type IceMalletSwingData } from '../../../store/gameStore';
 import { raycastDirection } from '../../../hooks/usePhysics';
-import { damageNpc } from '../../ui/GameConsole';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import {
@@ -212,7 +211,6 @@ export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
         
         if (Math.abs(angleDiff) <= 0.5) {
           hitPlayersRef.current.add(playerId);
-          if (playerId.startsWith('npc_')) damageNpc(playerId, MALLET_DAMAGE);
         }
       }
       

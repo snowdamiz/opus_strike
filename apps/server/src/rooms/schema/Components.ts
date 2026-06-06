@@ -1,4 +1,4 @@
-import { Schema, MapSchema, ArraySchema, defineTypes } from '@colyseus/schema';
+import { Schema, defineTypes } from '@colyseus/schema';
 
 export class Vec3Schema extends Schema {
   x: number = 0;

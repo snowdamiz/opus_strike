@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
-import { damageNpc } from '../../ui/GameConsole';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 
 interface DireBallProps {
@@ -362,10 +361,6 @@ export const DireBall = React.memo(({ id, position, velocity, startTime, ownerId
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
       
       if (distance <= NPC_HIT_RADIUS) {
-        // Apply damage - NPCs use damageNpc, real players would use server damage
-        if (playerId.startsWith('npc_')) {
-          damageNpc(playerId, PROJECTILE_DAMAGE);
-        }
         
         // Mark as collided and remove
         hasCollided.current = true;

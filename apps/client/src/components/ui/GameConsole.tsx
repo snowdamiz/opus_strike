@@ -115,13 +115,22 @@ export function isGameConsoleOpen(): boolean {
 }
 
 let devFlyModeGlobal = false;
+let devImmuneModeGlobal = false;
 
 export function isDevFlyMode(): boolean {
   return config.isDev && devFlyModeGlobal;
 }
 
+function isDevImmuneMode(): boolean {
+  return config.isDev && devImmuneModeGlobal;
+}
+
 function setDevFlyMode(enabled: boolean) {
   devFlyModeGlobal = config.isDev && enabled;
+}
+
+function setDevImmuneMode(enabled: boolean) {
+  devImmuneModeGlobal = config.isDev && enabled;
 }
 
 function normalizeHeroName(value: string): string {
@@ -213,7 +222,7 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /fly | /hero <hero>'
+        ? 'Developer Console - /fly | /immune | /hero <hero>'
         : 'Developer commands are disabled in this build',
       type: 'info',
     },
@@ -228,6 +237,8 @@ export function GameConsole() {
     damageNpc: networkDamageNpcFn,
     killNpc: networkKillNpcFn,
     devSetHero,
+    setDevFly,
+    setDevImmune,
   } = useNetwork();
 
   // Set the network functions for projectiles to use
@@ -308,10 +319,25 @@ export function GameConsole() {
 
         const nextFlyMode = !isDevFlyMode();
         setDevFlyMode(nextFlyMode);
+        setDevFly(nextFlyMode);
         if (nextFlyMode) {
           disableActiveSkillState();
         }
-        addMessage(`Fly mode ${nextFlyMode ? 'ON' : 'OFF'}`, 'info');
+        addMessage(`Fly mode ${nextFlyMode ? 'ON - invulnerable' : 'OFF'}`, 'info');
+        setTimeout(() => setIsOpen(false), 100);
+        break;
+      }
+
+      case '/immune': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        const nextImmuneMode = !isDevImmuneMode();
+        setDevImmuneMode(nextImmuneMode);
+        setDevImmune(nextImmuneMode);
+        addMessage(`Immune mode ${nextImmuneMode ? 'ON - damage ignored' : 'OFF'}`, 'info');
         setTimeout(() => setIsOpen(false), 100);
         break;
       }
@@ -343,9 +369,9 @@ export function GameConsole() {
       }
 
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /fly, /hero <hero>`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>`, 'error');
     }
-  }, [addMessage, devSetHero]);
+  }, [addMessage, devSetHero, setDevFly, setDevImmune]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -415,7 +441,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /fly or /hero <hero>...' : 'Developer commands disabled'}
+            placeholder={config.isDev ? 'Type /fly, /immune, or /hero <hero>...' : 'Developer commands disabled'}
             autoComplete="off"
             spellCheck={false}
           />

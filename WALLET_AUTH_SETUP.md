@@ -1,6 +1,6 @@
 # Phantom Wallet Authentication Setup
 
-This guide explains how to set up and run the Phantom wallet authentication system for Voxel Strike.
+This guide explains how to set up and run the Phantom wallet authentication system for Slop Heroes.
 
 ## Prerequisites
 
@@ -155,4 +155,3 @@ Make sure you're signing the message when Phantom prompts you. If you reject the
 1. Make sure Docker Desktop is running
 2. Verify the PostgreSQL container is running: `docker-compose ps`
 3. Check the DATABASE_URL in your `.env` file matches the docker-compose settings
-

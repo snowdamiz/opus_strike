@@ -41,6 +41,52 @@ function PhantomIcon({ className }: { className?: string }) {
   );
 }
 
+function SlopHeroesMark({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="slop-core" x1="10" y1="8" x2="48" y2="49" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#b8ff4d" />
+          <stop offset="0.46" stopColor="#20d389" />
+          <stop offset="1" stopColor="#f97316" />
+        </linearGradient>
+        <linearGradient id="slop-side" x1="16" y1="42" x2="49" y2="18" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#0f8f68" />
+          <stop offset="1" stopColor="#0d5f5a" />
+        </linearGradient>
+        <linearGradient id="slop-slash" x1="18" y1="5" x2="35" y2="51" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#fff7ad" />
+          <stop offset="0.52" stopColor="#ffffff" />
+          <stop offset="1" stopColor="#48f0ff" />
+        </linearGradient>
+        <filter id="slop-glow" x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur stdDeviation="2.4" result="blur" />
+          <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.30 0 0 0 0 1 0 0 0 0 0.54 0 0 0 0.52 0" />
+          <feBlend in="SourceGraphic" />
+        </filter>
+      </defs>
+
+      <g filter="url(#slop-glow)">
+        <path d="M28 4L47 14.5V36.5L28 47L9 36.5V14.5L28 4Z" fill="url(#slop-core)" />
+        <path d="M28 25L47 14.5V36.5L28 47V25Z" fill="url(#slop-side)" opacity="0.82" />
+        <path d="M9 14.5L28 25V47L9 36.5V14.5Z" fill="#16895f" opacity="0.78" />
+        <path d="M28 4L47 14.5L28 25L9 14.5L28 4Z" fill="#caff5b" opacity="0.92" />
+        <path d="M16 37C16 42 20 40.5 20 46.5C20 49.5 16.5 51 14.5 48.5C12.6 46.1 14.5 42.5 12 38.5L16 37Z" fill="#20d389" />
+        <path d="M38.5 35C37.5 39.5 41.8 40.5 40.2 45.4C39.2 48.2 35.3 48.2 34.4 45.2C33.6 42.3 36.1 39.9 35.3 36.5L38.5 35Z" fill="#f97316" />
+        <path
+          d="M33.5 7L20.8 28.2H28.1L20.5 50L38 22.7H29.6L33.5 7Z"
+          fill="url(#slop-slash)"
+          stroke="#0a0a12"
+          strokeWidth="1.2"
+          strokeLinejoin="round"
+        />
+        <circle cx="16" cy="11" r="1.5" fill="#fff7ad" />
+        <circle cx="45" cy="25" r="1.2" fill="#48f0ff" />
+      </g>
+    </svg>
+  );
+}
+
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'loadout';
 
@@ -283,73 +329,11 @@ export function MainLobby() {
           {/* Logo & Tabs */}
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
-              {/* Logo Icon - Stylized voxel with energy bolt */}
               <div className="w-12 h-12 relative flex items-center justify-center">
-                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
-                  <defs>
-                    {/* Cube face gradients */}
-                    <linearGradient id="frontFace" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#f97316" />
-                      <stop offset="100%" stopColor="#dc2626" />
-                    </linearGradient>
-                    <linearGradient id="sideFace" x1="100%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="#b91c1c" />
-                      <stop offset="100%" stopColor="#7f1d1d" />
-                    </linearGradient>
-                    <linearGradient id="topFace" x1="0%" y1="100%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#fb923c" />
-                      <stop offset="100%" stopColor="#fbbf24" />
-                    </linearGradient>
-                    {/* Bolt gradient */}
-                    <linearGradient id="boltMain" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="#fef3c7" />
-                      <stop offset="50%" stopColor="#fde047" />
-                      <stop offset="100%" stopColor="#f59e0b" />
-                    </linearGradient>
-                  </defs>
-
-                  {/* Isometric Cube - clean geometry */}
-                  <g>
-                    {/* Left face (darker) */}
-                    <path d="M24 22 L10 14 L10 30 L24 38 Z" fill="url(#sideFace)" />
-                    {/* Right face (medium) */}
-                    <path d="M24 22 L38 14 L38 30 L24 38 Z" fill="url(#frontFace)" />
-                    {/* Top face (brightest) */}
-                    <path d="M24 6 L38 14 L24 22 L10 14 Z" fill="url(#topFace)" />
-                  </g>
-
-                  {/* Edge highlights */}
-                  <path d="M24 22 L24 38" stroke="rgba(0,0,0,0.3)" strokeWidth="0.5" />
-                  <path d="M24 6 L24 22" stroke="rgba(255,255,255,0.4)" strokeWidth="0.75" />
-                  <path d="M10 14 L24 22 L38 14" stroke="rgba(255,255,255,0.2)" strokeWidth="0.5" fill="none" />
-
-                  {/* Lightning bolt - sharp & dynamic */}
-                  <g>
-                    <path
-                      d="M28 2 L20 19 L26 19 L18 40 L22 40 L30 21 L24 21 L30 2 Z"
-                      fill="url(#boltMain)"
-                      stroke="#fff"
-                      strokeWidth="0.5"
-                      strokeLinejoin="round"
-                    />
-                    {/* Inner highlight */}
-                    <path
-                      d="M27 6 L22 17 L25 17 L21 32"
-                      stroke="rgba(255,255,255,0.9)"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      fill="none"
-                    />
-                  </g>
-
-                  {/* Subtle sparkle accents */}
-                  <circle cx="15" cy="10" r="0.8" fill="#fef3c7" opacity="0.7" />
-                  <circle cx="33" cy="8" r="0.6" fill="#fef3c7" opacity="0.5" />
-                </svg>
+                <SlopHeroesMark className="w-full h-full" />
               </div>
               <div>
-                <h1 className="font-display text-xl text-white tracking-wider">VOXEL STRIKE</h1>
+                <h1 className="font-display text-xl text-white tracking-wider">SLOP HEROES</h1>
                 <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
               </div>
             </div>

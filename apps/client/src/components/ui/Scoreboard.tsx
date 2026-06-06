@@ -265,6 +265,11 @@ function PlayerRow({ player, isLocal, faction }: PlayerRowProps) {
                 YOU
               </span>
             )}
+            {player.isBot && (
+              <span className="px-1.5 py-0.5 text-[8px] font-display rounded shrink-0 bg-cyan-500/15 text-cyan-300 border border-cyan-500/25">
+                AI
+              </span>
+            )}
           </div>
           {player.hasFlag && (
             <span className="text-[9px] text-amber-400 font-display flex items-center gap-1">

@@ -3,7 +3,7 @@ import { Client, Room } from 'colyseus.js';
 import { useGameStore, LobbyPlayer, LobbyInfo } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
-import type { HeroId, Team, PlayerInput } from '@voxel-strike/shared';
+import type { BotDifficulty, HeroId, Team, PlayerInput } from '@voxel-strike/shared';
 
 // Import extracted handlers
 import {
@@ -24,11 +24,19 @@ interface NetworkContextType {
   // Lobby operations
   fetchLobbies: () => Promise<LobbyInfo[]>;
   watchLobbies: () => () => void;
-  createLobby: (playerName: string, lobbyName?: string, isPrivate?: boolean) => Promise<void>;
+  createLobby: (
+    playerName: string,
+    lobbyName?: string,
+    isPrivate?: boolean,
+    options?: { initialBotCount?: number; botFillMode?: 'manual' | 'fill_even' | 'fill_empty'; defaultBotDifficulty?: BotDifficulty }
+  ) => Promise<void>;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
+  addLobbyBot: (options?: { difficulty?: BotDifficulty; team?: string; name?: string }) => void;
+  removeLobbyBot: (botId: string) => void;
+  updateLobbyBotTeam: (botId: string, team: string) => void;
   startGame: () => void;
   kickPlayer: (playerId: string) => void;
 
@@ -39,6 +47,8 @@ interface NetworkContextType {
   sendInput: (input: PlayerInput) => void;
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
+  setDevFly: (enabled: boolean) => void;
+  setDevImmune: (enabled: boolean) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
 
@@ -168,19 +178,37 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           isHost: p.isHost,
           isReady: p.isReady,
           team: p.team,
+          heroId: p.heroId || '',
+          isBot: Boolean(p.isBot),
+          botDifficulty: p.botDifficulty || '',
+          botProfileId: p.botProfileId,
         });
       }
       setLobbyPlayers(playersMap);
     });
 
-    room.onMessage('playerJoined', (data: { playerId: string; playerName: string; isHost: boolean }) => {
+    room.onMessage('playerJoined', (data: {
+      playerId: string;
+      playerName: string;
+      isHost: boolean;
+      isReady?: boolean;
+      team?: string;
+      heroId?: HeroId | '';
+      isBot?: boolean;
+      botDifficulty?: BotDifficulty | '';
+      botProfileId?: string;
+    }) => {
       console.log('Player joined lobby:', data.playerName);
       updateLobbyPlayer(data.playerId, {
         id: data.playerId,
         name: data.playerName,
         isHost: data.isHost,
-        isReady: false,
-        team: '',
+        isReady: data.isReady ?? false,
+        team: data.team || '',
+        heroId: data.heroId || '',
+        isBot: Boolean(data.isBot),
+        botDifficulty: data.botDifficulty || '',
+        botProfileId: data.botProfileId,
       });
     });
 
@@ -218,7 +246,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     let isJoiningGame = false;
-    room.onMessage('gameStarting', async (data: { gameRoomId: string; players: { playerId: string; playerName: string; team: string }[] }) => {
+    room.onMessage('gameStarting', async (data: { gameRoomId: string; players: { playerId: string; playerName: string; team: string; isBot?: boolean }[] }) => {
       if (isJoiningGame) {
         console.log('[Lobby] Ignoring duplicate gameStarting message');
         return;
@@ -260,7 +288,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
   }, [setCurrentLobby, setIsLobbyHost, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, resetLobby]);
 
-  const createLobby = useCallback(async (playerName: string, lobbyName?: string, isPrivate?: boolean) => {
+  const createLobby = useCallback(async (
+    playerName: string,
+    lobbyName?: string,
+    isPrivate?: boolean,
+    options?: { initialBotCount?: number; botFillMode?: 'manual' | 'fill_even' | 'fill_empty'; defaultBotDifficulty?: BotDifficulty }
+  ) => {
     setLoading(true);
 
     try {
@@ -276,6 +309,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         lobbyName: lobbyName || `${playerName}'s Lobby`,
         isPrivate: isPrivate || false,
         clientId,
+        initialBotCount: options?.initialBotCount || 0,
+        botFillMode: options?.botFillMode || 'manual',
+        defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -343,6 +379,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const setLobbyTeam = useCallback((team: string) => {
     lobbyRoomRef.current?.send('setTeam', { team });
+  }, []);
+
+  const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string }) => {
+    lobbyRoomRef.current?.send('addBot', options || {});
+  }, []);
+
+  const removeLobbyBot = useCallback((botId: string) => {
+    lobbyRoomRef.current?.send('removeBot', { botId });
+  }, []);
+
+  const updateLobbyBotTeam = useCallback((botId: string, team: string) => {
+    lobbyRoomRef.current?.send('updateBotTeam', { botId, team });
   }, []);
 
   const startGame = useCallback(() => {
@@ -539,6 +587,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('selectHero', { heroId });
   }, []);
 
+  const setDevFly = useCallback((enabled: boolean) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('setDevFly', { enabled });
+  }, []);
+
+  const setDevImmune = useCallback((enabled: boolean) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('setDevImmune', { enabled });
+  }, []);
+
   const selectTeam = useCallback((team: Team) => {
     console.log('Sending selectTeam:', team);
     gameRoomRef.current?.send('selectTeam', { team });
@@ -582,6 +640,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       leaveLobby,
       setLobbyReady,
       setLobbyTeam,
+      addLobbyBot,
+      removeLobbyBot,
+      updateLobbyBotTeam,
       startGame,
       kickPlayer,
       joinGameRoom,
@@ -590,6 +651,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       sendInput,
       selectHero,
       devSetHero,
+      setDevFly,
+      setDevImmune,
       selectTeam,
       setReady,
       spawnNpc,

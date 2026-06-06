@@ -3,7 +3,6 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
-import { damageNpc } from '../../ui/GameConsole';
 
 interface VoidZoneProps {
   position: { x: number; y: number; z: number };
@@ -477,9 +476,6 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
         if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
           lastDamageTickRef.current.set(playerId, now);
           
-          if (playerId.startsWith('npc_')) {
-            damageNpc(playerId, VOID_ZONE_DAMAGE);
-          }
         }
       }
     }
@@ -623,4 +619,3 @@ export function VoidZones({ zones }: VoidZonesProps) {
     </>
   );
 }
-

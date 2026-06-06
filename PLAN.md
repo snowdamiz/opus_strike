@@ -1,4 +1,4 @@
-# Voxel Strike - Movement-Based CTF Game
+# Slop Heroes - Movement-Based CTF Game
 
 ## Tech Stack
 

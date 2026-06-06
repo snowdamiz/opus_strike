@@ -8,12 +8,21 @@ import {
   TICK_INTERVAL_MS,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
-  GRAVITY,
   getHeroStats,
+  ALL_HERO_IDS,
   createRandomSeed,
-  getProceduralCTFPositions,
   PROCEDURAL_MAP_ORIGIN,
   PROCEDURAL_MAP_WORLD_SIZE,
+  generateProceduralVoxelMap,
+  isInsideBoundaryPolygon,
+  constrainToBoundaryPolygon,
+  clampToBoundaryPolygon,
+  isSolidBlock,
+  FLAG_CAPTURE_RADIUS,
+  FLAG_PICKUP_RADIUS,
+  ULTIMATE_CHARGE_PER_CAPTURE,
+  ULTIMATE_CHARGE_PER_KILL,
+  ULTIMATE_CHARGE_PER_SECOND,
   BLAZE_FLAMETHROWER_MAX_FUEL,
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
   BLAZE_FLAMETHROWER_FUEL_REGEN,
@@ -26,10 +35,14 @@ import {
   BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
 } from '@voxel-strike/shared';
 import type { 
+  BotDifficulty,
   HeroId, 
   Team, 
   PlayerInput,
+  VoxelChunk,
+  VoxelMapManifest,
 } from '@voxel-strike/shared';
+import { simulateSharedMovement, type MovementTerrainAdapter } from '@voxel-strike/physics';
 
 // Import extracted ability handlers
 import {
@@ -49,6 +62,7 @@ import {
 interface CreateOptions {
   lobbyId?: string;
   lobbyName?: string;
+  botAssignments?: BotAssignment[];
 }
 
 interface JoinOptions {
@@ -57,13 +71,87 @@ interface JoinOptions {
   clientId?: string;
 }
 
-// Track last ability press state to detect key press (not hold)
-const playerAbilityPressState = new Map<string, { ability1: boolean; ability2: boolean; ultimate: boolean }>();
+interface BotAssignment {
+  playerId: string;
+  playerName: string;
+  team: Team;
+  isBot: true;
+  botDifficulty?: BotDifficulty;
+  botProfileId?: string;
+}
+
+interface BotBrain {
+  nextThinkAt: number;
+  intent: BotIntent;
+  stuckTime: number;
+  lastPosition: { x: number; y: number; z: number };
+  strafeDirection: -1 | 1;
+  reverseUntil: number;
+}
+
+interface BotBlackboard {
+  nearestEnemy: Player | null;
+  enemyCarrier: Player | null;
+  nearestAlly: Player | null;
+  alliedCarrier: Player | null;
+  droppedFriendlyFlag: { x: number; y: number; z: number } | null;
+  enemyFlagPosition: { x: number; y: number; z: number };
+  ownBasePosition: { x: number; y: number; z: number };
+  nearbyEnemyCount: number;
+  nearbyAllyCount: number;
+}
+
+interface AttackConfig {
+  damage: number;
+  range: number;
+  cooldownMs: number;
+  coneDot: number;
+  radius?: number;
+  damageType: string;
+}
+
+type BotIntent =
+  | 'selecting'
+  | 'seek_enemy_flag'
+  | 'carry_flag_home'
+  | 'return_friendly_flag'
+  | 'defend_carrier'
+  | 'chase_enemy_carrier'
+  | 'fight_enemy'
+  | 'retreat_or_reposition'
+  | 'respawning';
+
+// Track previous press state to detect edges for both humans and server-owned bots.
+const playerPressState = new Map<string, {
+  primaryFire: boolean;
+  secondaryFire: boolean;
+  ability1: boolean;
+  ability2: boolean;
+  ultimate: boolean;
+}>();
 const MAP_MIN_X = PROCEDURAL_MAP_ORIGIN.x;
 const MAP_MAX_X = PROCEDURAL_MAP_ORIGIN.x + PROCEDURAL_MAP_WORLD_SIZE.x;
 const MAP_MIN_Z = PROCEDURAL_MAP_ORIGIN.z;
 const MAP_MAX_Z = PROCEDURAL_MAP_ORIGIN.z + PROCEDURAL_MAP_WORLD_SIZE.z;
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
+const BOT_THINK_INTERVAL_MS = 200;
+const DAMAGE_HISTORY_WINDOW_MS = 10000;
+const PRIMARY_ATTACKS: Record<HeroId, AttackConfig> = {
+  phantom: { damage: 18, range: 30, cooldownMs: 550, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
+  hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
+  blaze: { damage: 28, range: 36, cooldownMs: 850, coneDot: Math.cos(0.22), damageType: 'rocket' },
+  glacier: { damage: 42, range: 3.4, cooldownMs: 750, coneDot: Math.cos(0.72), damageType: 'ice_mallet' },
+  pulse: { damage: 16, range: 30, cooldownMs: 360, coneDot: Math.cos(0.16), damageType: 'pulse_burst' },
+  sentinel: { damage: 20, range: 26, cooldownMs: 650, coneDot: Math.cos(0.2), damageType: 'sentinel_bolt' },
+};
+const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
+  phantom: { damage: 34, range: 42, cooldownMs: 1200, coneDot: Math.cos(0.12), damageType: 'void_ray' },
+  hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
+  blaze: { damage: 34, range: 35, cooldownMs: 2600, coneDot: Math.cos(0.32), radius: 4, damageType: 'bomb' },
+  glacier: { damage: 12, range: 6, cooldownMs: 1200, coneDot: Math.cos(0.8), damageType: 'frost_storm' },
+  pulse: { damage: 14, range: 18, cooldownMs: 900, coneDot: Math.cos(0.24), damageType: 'pulse_dash_hit' },
+  sentinel: { damage: 10, range: 8, cooldownMs: 1400, coneDot: Math.cos(0.9), damageType: 'barrier_bash' },
+};
 
 export class GameRoom extends Room<GameState> {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
@@ -76,6 +164,17 @@ export class GameRoom extends Room<GameState> {
   private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
   private authoritativePositionUntil: Map<string, number> = new Map();
   private flamethrowerLastDamageTick: Map<string, number> = new Map();
+  private botBrains: Map<string, BotBrain> = new Map();
+  private attackCooldownUntil: Map<string, number> = new Map();
+  private damageHistory: Map<string, Map<string, { damage: number; timestamp: number }>> = new Map();
+  private devInvulnerablePlayers: Set<string> = new Set();
+  private devImmunePlayers: Set<string> = new Set();
+  private mapManifest: VoxelMapManifest | null = null;
+  private mapChunkLookup: Map<string, VoxelChunk> = new Map();
+  private movementTerrain: MovementTerrainAdapter = {
+    getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralGroundY(position),
+    clampPosition: (position: { x: number; y: number; z: number }) => this.clampToPlayableMap(position),
+  };
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -91,7 +190,10 @@ export class GameRoom extends Room<GameState> {
     this.state.roomId = this.roomId;
     this.state.config = this.config;
     this.state.mapSeed = createRandomSeed();
+    this.refreshMapManifest();
     console.log(`[GameRoom] Map seed: ${this.state.mapSeed}`);
+    this.resetFlags();
+    this.createBotsFromAssignments(options.botAssignments || []);
 
     // Set up tick loop
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
@@ -131,22 +233,32 @@ export class GameRoom extends Room<GameState> {
       this.handleChat(client, data.message, data.teamOnly);
     });
 
-    // NPC/Bot commands for testing
-    this.onMessage('spawnNpc', (client, data: { heroId: HeroId; team: Team; position?: { x: number; y: number; z: number }; name?: string }) => {
-      this.handleSpawnNpc(client, data);
-    });
+    if (this.isDevelopmentMode()) {
+      // Development-only entity helpers. Production bots are lobby participants.
+      this.onMessage('spawnNpc', (client, data: { heroId: HeroId; team: Team; position?: { x: number; y: number; z: number }; name?: string }) => {
+        this.handleSpawnNpc(client, data);
+      });
 
-    this.onMessage('damageNpc', (client, data: { npcId: string; damage: number }) => {
-      this.handleDamageNpc(client, data);
-    });
+      this.onMessage('damageNpc', (client, data: { npcId: string; damage: number }) => {
+        this.handleDamageNpc(client, data);
+      });
 
-    this.onMessage('killNpc', (client, data: { npcId: string }) => {
-      this.handleKillNpc(client, data);
-    });
+      this.onMessage('killNpc', (client, data: { npcId: string }) => {
+        this.handleKillNpc(client, data);
+      });
 
-    this.onMessage('killAllNpcs', (client) => {
-      this.handleKillAllNpcs(client);
-    });
+      this.onMessage('killAllNpcs', (client) => {
+        this.handleKillAllNpcs(client);
+      });
+
+      this.onMessage('setDevFly', (client, data: { enabled: boolean }) => {
+        this.handleSetDevFly(client, Boolean(data.enabled));
+      });
+
+      this.onMessage('setDevImmune', (client, data: { enabled: boolean }) => {
+        this.handleSetDevImmune(client, Boolean(data.enabled));
+      });
+    }
   }
 
   onJoin(client: Client, options: JoinOptions) {
@@ -175,7 +287,7 @@ export class GameRoom extends Room<GameState> {
           this.dropFlag(oldPlayer);
         }
         this.state.players.delete(existingSessionId);
-        playerAbilityPressState.delete(existingSessionId);
+        playerPressState.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
         // Broadcast that old player left
@@ -188,7 +300,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     // Initialize ability press state tracking
-    playerAbilityPressState.set(client.sessionId, { ability1: false, ability2: false, ultimate: false });
+    this.initializePressState(client.sessionId);
 
     // Send existing players to the new client BEFORE adding the new player
     this.state.players.forEach((existingPlayer, id) => {
@@ -197,6 +309,10 @@ export class GameRoom extends Room<GameState> {
         playerName: existingPlayer.name,
         team: existingPlayer.team,
         heroId: existingPlayer.heroId,
+        isReady: existingPlayer.isReady,
+        isBot: existingPlayer.isBot,
+        botDifficulty: existingPlayer.botDifficulty,
+        botProfileId: existingPlayer.botProfileId,
         position: {
           x: existingPlayer.position.x,
           y: existingPlayer.position.y,
@@ -211,6 +327,9 @@ export class GameRoom extends Room<GameState> {
     player.name = options.playerName || `Player${this.state.players.size + 1}`;
     player.team = this.assignTeam(options.preferredTeam);
     player.state = 'selecting';
+    player.isBot = false;
+    player.botDifficulty = '';
+    player.botProfileId = '';
 
     // Set spawn position
     this.placePlayerAtSpawn(player);
@@ -222,6 +341,9 @@ export class GameRoom extends Room<GameState> {
       playerId: client.sessionId,
       playerName: player.name,
       team: player.team,
+      heroId: player.heroId,
+      isReady: player.isReady,
+      isBot: player.isBot,
       position: {
         x: player.position.x,
         y: player.position.y,
@@ -249,8 +371,10 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.delete(client.sessionId);
-    playerAbilityPressState.delete(client.sessionId);
+    playerPressState.delete(client.sessionId);
     this.authoritativePositionUntil.delete(client.sessionId);
+    this.devInvulnerablePlayers.delete(client.sessionId);
+    this.devImmunePlayers.delete(client.sessionId);
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -281,6 +405,8 @@ export class GameRoom extends Room<GameState> {
   private tick() {
     this.state.tick++;
     this.state.serverTime = Date.now();
+    const dt = TICK_INTERVAL_MS / 1000;
+    this.updateBots(this.state.serverTime, dt);
 
     // Update based on phase
     switch (this.state.phase) {
@@ -337,17 +463,14 @@ export class GameRoom extends Room<GameState> {
       // Update ability cooldowns
       updateAbilityCooldowns(player, dt);
 
-      // Passive ultimate charge (2% per second)
+      // Passive ultimate charge
       if (player.ultimateCharge < 100) {
-        player.ultimateCharge = Math.min(100, player.ultimateCharge + 2 * dt);
+        player.ultimateCharge = Math.min(100, player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt);
       }
 
       // Process active abilities (like Phantom Veil)
       updateActiveAbilities(player, now);
     });
-
-    // Check flag returns
-    this.checkFlagReturns();
 
     // Update void zones (damage enemies inside)
     this.updateVoidZones(now);
@@ -357,6 +480,9 @@ export class GameRoom extends Room<GameState> {
 
     // Update physics simulation (simplified)
     this.updatePhysics();
+
+    // Update CTF objective interactions after movement.
+    this.updateCTFObjectives(now);
 
     // Broadcast player positions/states via message (workaround for schema sync issues)
     this.broadcastPlayerStates();
@@ -385,6 +511,10 @@ export class GameRoom extends Room<GameState> {
         team: player.team,
         heroId: player.heroId,
         state: player.state,
+        isReady: player.isReady,
+        isBot: player.isBot,
+        botDifficulty: player.botDifficulty,
+        botProfileId: player.botProfileId,
         position: {
           x: player.position.x,
           y: player.position.y,
@@ -402,11 +532,26 @@ export class GameRoom extends Room<GameState> {
         ultimateCharge: player.ultimateCharge,
         hasFlag: player.hasFlag,
         abilities, // Include abilities in state sync
+        stats: {
+          kills: player.kills,
+          deaths: player.deaths,
+          assists: player.assists,
+          flagCaptures: player.flagCaptures,
+          flagReturns: player.flagReturns,
+        },
       });
     });
 
     if (playerStates.length > 0) {
-      this.broadcast('playerStates', { players: playerStates, mapSeed: this.state.mapSeed });
+      this.broadcast('playerStates', {
+        players: playerStates,
+        mapSeed: this.state.mapSeed,
+        redScore: this.state.redTeam.score,
+        blueScore: this.state.blueTeam.score,
+        redFlag: this.getFlagSync('red'),
+        blueFlag: this.getFlagSync('blue'),
+        roundTimeRemaining: this.state.roundTimeRemaining,
+      });
     }
   }
 
@@ -463,26 +608,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     // Handle ability inputs (detect key press, not hold)
-    const prevState = playerAbilityPressState.get(client.sessionId);
-    if (prevState) {
-      // Ability 1 (E key)
-      if (input.ability1 && !prevState.ability1) {
-        this.handleAbilityUse(player, 'ability1');
-      }
-      // Ability 2 (Q key)
-      if (input.ability2 && !prevState.ability2) {
-        this.handleAbilityUse(player, 'ability2');
-      }
-      // Ultimate (F key)
-      if (input.ultimate && !prevState.ultimate) {
-        this.handleAbilityUse(player, 'ultimate');
-      }
-
-      // Update press state
-      prevState.ability1 = input.ability1;
-      prevState.ability2 = input.ability2;
-      prevState.ultimate = input.ultimate;
-    }
+    this.processPlayerInput(player, input);
   }
 
   private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
@@ -506,6 +632,665 @@ export class GameRoom extends Room<GameState> {
         pitch: player.lookPitch 
       },
     });
+  }
+
+  private createBotsFromAssignments(assignments: BotAssignment[]): void {
+    assignments.forEach((assignment, index) => {
+      const bot = new Player();
+      bot.id = assignment.playerId;
+      bot.name = assignment.playerName;
+      bot.team = assignment.team;
+      bot.state = 'selecting';
+      bot.isReady = false;
+      bot.isBot = true;
+      bot.botDifficulty = assignment.botDifficulty || 'normal';
+      bot.botProfileId = assignment.botProfileId || '';
+
+      this.placePlayerAtSpawn(bot);
+
+      this.state.players.set(bot.id, bot);
+      this.initializePressState(bot.id);
+      this.botBrains.set(bot.id, {
+        nextThinkAt: 0,
+        intent: 'selecting',
+        stuckTime: 0,
+        lastPosition: { x: bot.position.x, y: bot.position.y, z: bot.position.z },
+        strafeDirection: index % 2 === 0 ? 1 : -1,
+        reverseUntil: 0,
+      });
+    });
+  }
+
+  private initializePressState(playerId: string): void {
+    playerPressState.set(playerId, {
+      primaryFire: false,
+      secondaryFire: false,
+      ability1: false,
+      ability2: false,
+      ultimate: false,
+    });
+  }
+
+  private processPlayerInput(player: Player, input: PlayerInput): void {
+    if (player.state !== 'alive') return;
+
+    const pressState = playerPressState.get(player.id);
+    if (!pressState) {
+      this.initializePressState(player.id);
+    }
+    const previous = playerPressState.get(player.id)!;
+
+    if (input.primaryFire) {
+      this.tryResolveAttack(player, 'primary');
+    }
+    if (input.secondaryFire && !previous.secondaryFire) {
+      this.tryResolveAttack(player, 'secondary');
+    }
+
+    if (input.ability1 && !previous.ability1) {
+      this.handleAbilityUse(player, 'ability1');
+    }
+    if (input.ability2 && !previous.ability2) {
+      this.handleAbilityUse(player, 'ability2');
+    }
+    if (input.ultimate && !previous.ultimate) {
+      this.handleAbilityUse(player, 'ultimate');
+    }
+
+    previous.primaryFire = input.primaryFire;
+    previous.secondaryFire = input.secondaryFire;
+    previous.ability1 = input.ability1;
+    previous.ability2 = input.ability2;
+    previous.ultimate = input.ultimate;
+  }
+
+  private tryResolveAttack(player: Player, mode: 'primary' | 'secondary'): void {
+    const heroId = player.heroId as HeroId;
+    if (!heroId) return;
+
+    const attack = mode === 'primary' ? PRIMARY_ATTACKS[heroId] : SECONDARY_ATTACKS[heroId];
+    if (!attack) return;
+
+    const cooldownKey = `${player.id}:${mode}`;
+    const now = Date.now();
+    if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) return;
+    this.attackCooldownUntil.set(cooldownKey, now + attack.cooldownMs);
+
+    const veil = player.abilities.get('phantom_veil');
+    if (veil?.isActive) {
+      veil.isActive = false;
+    }
+
+    const primaryTarget = this.findTargetInAimCone(player, attack.range, attack.coneDot);
+    if (!primaryTarget) return;
+
+    if (attack.radius && attack.radius > 0) {
+      this.applyAreaDamage(player, primaryTarget.position, attack.radius, attack.damage, attack.damageType);
+    } else {
+      this.applyDamage(primaryTarget, attack.damage, player.id, attack.damageType);
+    }
+
+    if (heroId === 'hookshot' && mode === 'secondary') {
+      this.pullTargetTowardSource(primaryTarget, player, 2.5);
+    }
+  }
+
+  private findTargetInAimCone(source: Player, range: number, minDot: number): Player | null {
+    const origin = {
+      x: source.position.x,
+      y: source.position.y + 1.2,
+      z: source.position.z,
+    };
+    const cosPitch = Math.cos(source.lookPitch);
+    const forward = {
+      x: -Math.sin(source.lookYaw) * cosPitch,
+      y: Math.sin(source.lookPitch),
+      z: -Math.cos(source.lookYaw) * cosPitch,
+    };
+    let bestTarget: Player | null = null;
+    let bestDistance = range;
+
+    this.state.players.forEach((target) => {
+      if (target.state !== 'alive') return;
+      if (target.id === source.id) return;
+      if (target.team === source.team) return;
+
+      const toTarget = {
+        x: target.position.x - origin.x,
+        y: target.position.y + 0.9 - origin.y,
+        z: target.position.z - origin.z,
+      };
+      const distance = Math.sqrt(toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z);
+      if (distance <= 0.0001 || distance > range) return;
+
+      const dot = (toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z) / distance;
+      if (dot < minDot) return;
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestTarget = target;
+      }
+    });
+
+    return bestTarget;
+  }
+
+  private applyAreaDamage(source: Player, center: { x: number; y: number; z: number }, radius: number, damage: number, damageType: string): void {
+    const radiusSq = radius * radius;
+    this.state.players.forEach((target) => {
+      if (target.state !== 'alive') return;
+      if (target.id === source.id) return;
+      if (target.team === source.team) return;
+
+      const dx = target.position.x - center.x;
+      const dy = target.position.y - center.y;
+      const dz = target.position.z - center.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq > radiusSq) return;
+
+      const falloff = 1 - Math.sqrt(distSq) / radius * 0.45;
+      this.applyDamage(target, Math.max(1, Math.round(damage * falloff)), source.id, damageType);
+    });
+  }
+
+  private applyDamage(target: Player, rawDamage: number, sourceId: string | null, damageType: string): boolean {
+    if (target.state !== 'alive' || rawDamage <= 0) return false;
+
+    const source = sourceId ? this.state.players.get(sourceId) : null;
+    if (source && source.id !== target.id && source.team === target.team) return false;
+
+    const now = Date.now();
+    if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) return false;
+    if (
+      this.isDevelopmentMode()
+      && (this.devInvulnerablePlayers.has(target.id) || this.devImmunePlayers.has(target.id))
+    ) {
+      return false;
+    }
+
+    const damage = Math.max(1, Math.round(rawDamage * this.getDamageTakenMultiplier(target)));
+    target.health = Math.max(0, target.health - damage);
+
+    if (source && source.id !== target.id) {
+      source.ultimateCharge = Math.min(100, source.ultimateCharge + damage / Math.max(1, target.maxHealth) * 12);
+      this.recordDamage(target.id, source.id, damage, now);
+    }
+
+    this.broadcast('playerDamaged', {
+      targetId: target.id,
+      damage,
+      sourceId,
+      damageType,
+      newHealth: target.health,
+      sourcePosition: source ? this.vec3SchemaToPlain(source.position) : null,
+      targetPosition: this.vec3SchemaToPlain(target.position),
+      sourceHeroId: source?.heroId || null,
+      targetHeroId: target.heroId || null,
+    });
+
+    if (target.health <= 0) {
+      this.handlePlayerDeath(target, sourceId || '');
+      return true;
+    }
+
+    return false;
+  }
+
+  private recordDamage(targetId: string, sourceId: string, damage: number, timestamp: number): void {
+    let history = this.damageHistory.get(targetId);
+    if (!history) {
+      history = new Map();
+      this.damageHistory.set(targetId, history);
+    }
+    const existing = history.get(sourceId);
+    history.set(sourceId, {
+      damage: (existing?.damage || 0) + damage,
+      timestamp,
+    });
+  }
+
+  private getDamageTakenMultiplier(player: Player): number {
+    let multiplier = 1;
+
+    if (player.abilities.get('sentinel_fortify')?.isActive) {
+      multiplier *= 0.5;
+    }
+    if (player.abilities.get('glacier_frostshield')?.isActive) {
+      multiplier *= 0.75;
+    }
+    if (player.abilities.get('glacier_fortress')?.isActive) {
+      multiplier *= 0.5;
+    }
+
+    return multiplier;
+  }
+
+  private pullTargetTowardSource(target: Player, source: Player, distance: number): void {
+    const dx = source.position.x - target.position.x;
+    const dz = source.position.z - target.position.z;
+    const len = Math.sqrt(dx * dx + dz * dz);
+    if (len <= 0.001) return;
+
+    target.position.x += dx / len * distance;
+    target.position.z += dz / len * distance;
+  }
+
+  private getActiveSpeedMultiplier(player: Player): number {
+    let multiplier = 1;
+    if (player.abilities.get('phantom_veil')?.isActive) multiplier *= 1.3;
+    if (player.abilities.get('pulse_speedboost')?.isActive) multiplier *= 1.3;
+    if (player.abilities.get('pulse_haste')?.isActive) multiplier *= 1.5;
+    return multiplier;
+  }
+
+  private updateCTFObjectives(now: number): void {
+    this.updateCarriedFlagPositions();
+    this.checkFlagReturns();
+
+    this.state.players.forEach((player) => {
+      if (player.state !== 'alive') return;
+
+      const playerTeam = player.team as Team;
+      const enemyTeam = playerTeam === 'red' ? 'blue' : 'red';
+      const ownFlag = this.getFlagByTeam(playerTeam);
+      const enemyFlag = this.getFlagByTeam(enemyTeam);
+
+      if (!ownFlag.isAtBase && !ownFlag.carrierId && this.distance2D(player.position, ownFlag.position) <= FLAG_PICKUP_RADIUS) {
+        this.returnFlagToBase(playerTeam, player.id);
+        player.flagReturns++;
+        player.ultimateCharge = Math.min(100, player.ultimateCharge + 10);
+      }
+
+      if (!player.hasFlag && !enemyFlag.carrierId && this.distance2D(player.position, enemyFlag.position) <= FLAG_PICKUP_RADIUS) {
+        enemyFlag.carrierId = player.id;
+        enemyFlag.isAtBase = false;
+        enemyFlag.droppedAt = 0;
+        player.hasFlag = true;
+        this.broadcast('flagPickup', {
+          team: enemyTeam,
+          playerId: player.id,
+          position: this.vec3SchemaToPlain(player.position),
+          timestamp: now,
+        });
+      }
+
+      if (player.hasFlag && ownFlag.isAtBase && this.distance2D(player.position, ownFlag.basePosition) <= FLAG_CAPTURE_RADIUS) {
+        this.captureFlag(player, enemyTeam, now);
+      }
+    });
+  }
+
+  private updateCarriedFlagPositions(): void {
+    for (const team of ['red', 'blue'] as const) {
+      const flag = this.getFlagByTeam(team);
+      if (!flag.carrierId) continue;
+      const carrier = this.state.players.get(flag.carrierId);
+      if (!carrier || carrier.state !== 'alive') {
+        flag.carrierId = '';
+        continue;
+      }
+      flag.position.x = carrier.position.x;
+      flag.position.y = carrier.position.y + 1.4;
+      flag.position.z = carrier.position.z;
+    }
+  }
+
+  private captureFlag(player: Player, capturedTeam: Team, now: number): void {
+    const flag = this.getFlagByTeam(capturedTeam);
+    flag.position.x = flag.basePosition.x;
+    flag.position.y = flag.basePosition.y;
+    flag.position.z = flag.basePosition.z;
+    flag.carrierId = '';
+    flag.isAtBase = true;
+    flag.droppedAt = 0;
+
+    player.hasFlag = false;
+    player.flagCaptures++;
+    player.ultimateCharge = Math.min(100, player.ultimateCharge + ULTIMATE_CHARGE_PER_CAPTURE);
+
+    if (player.team === 'red') {
+      this.state.redTeam.score++;
+    } else {
+      this.state.blueTeam.score++;
+    }
+
+    this.broadcast('flagCapture', {
+      team: capturedTeam,
+      playerId: player.id,
+      position: this.vec3SchemaToPlain(player.position),
+      redScore: this.state.redTeam.score,
+      blueScore: this.state.blueTeam.score,
+      timestamp: now,
+    });
+
+    if (this.state.redTeam.score >= this.config.scoreToWin || this.state.blueTeam.score >= this.config.scoreToWin) {
+      this.endRound();
+    } else {
+      this.returnFlagToBase(capturedTeam, player.id, false);
+    }
+  }
+
+  private returnFlagToBase(team: Team, playerId = '', broadcast = true): void {
+    const flag = this.getFlagByTeam(team);
+    flag.position.x = flag.basePosition.x;
+    flag.position.y = flag.basePosition.y;
+    flag.position.z = flag.basePosition.z;
+    flag.carrierId = '';
+    flag.isAtBase = true;
+    flag.droppedAt = 0;
+
+    if (broadcast) {
+      this.broadcast('flagReturn', {
+        team,
+        playerId,
+        position: this.vec3SchemaToPlain(flag.position),
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  private updateBots(now: number, dt: number): void {
+    this.botBrains.forEach((brain, botId) => {
+      const bot = this.state.players.get(botId);
+      if (!bot?.isBot) {
+        this.botBrains.delete(botId);
+        return;
+      }
+
+      if (this.state.phase === 'hero_select' && bot.state === 'selecting') {
+        let changedSelectionState = false;
+        if (!bot.heroId) {
+          this.setPlayerHero(bot, this.selectRandomBotHero());
+          changedSelectionState = true;
+        }
+        if (!bot.isReady) {
+          bot.isReady = true;
+          changedSelectionState = true;
+        }
+        brain.intent = 'selecting';
+        if (changedSelectionState) {
+          this.checkPhaseTransition();
+        }
+      }
+
+      if (this.state.phase !== 'playing' && this.state.phase !== 'countdown') {
+        return;
+      }
+
+      if (bot.state !== 'alive') {
+        bot.lastInput = this.createEmptyBotInput(bot, now);
+        brain.intent = bot.state === 'dead' ? 'respawning' : brain.intent;
+        return;
+      }
+
+      const botInput = this.createBotInput(bot, brain, now, dt);
+      bot.lastInput = botInput;
+      bot.lookYaw = botInput.lookYaw;
+      bot.lookPitch = botInput.lookPitch;
+      this.processPlayerInput(bot, botInput);
+    });
+  }
+
+  private createBotInput(bot: Player, brain: BotBrain, now: number, dt: number): PlayerInput {
+    const blackboard = this.getBotBlackboard(bot);
+    if (now >= brain.nextThinkAt) {
+      brain.intent = this.chooseBotIntent(bot, blackboard);
+      brain.nextThinkAt = now + BOT_THINK_INTERVAL_MS;
+
+      const moved = this.distance2D(bot.position, brain.lastPosition);
+      brain.stuckTime = moved < 0.08 ? brain.stuckTime + BOT_THINK_INTERVAL_MS / 1000 : 0;
+      brain.lastPosition = { x: bot.position.x, y: bot.position.y, z: bot.position.z };
+      if (brain.stuckTime > 0.9) {
+        brain.strafeDirection *= -1;
+        brain.reverseUntil = now + 500;
+        brain.stuckTime = 0;
+      }
+    }
+
+    const movementTarget = this.getBotMovementTarget(bot, brain.intent, blackboard);
+    const aimTarget = blackboard.nearestEnemy || blackboard.enemyCarrier;
+    const targetForLook = aimTarget || movementTarget || this.getEnemyFlagPosition(bot.team as Team);
+    const yawPitch = this.getYawPitchToward(bot, targetForLook);
+    const enemyDistance = aimTarget ? this.distance3D(bot.position, aimTarget.position) : Infinity;
+    const shouldFight = Boolean(aimTarget && enemyDistance <= this.getBotAttackRange(bot));
+    const isLongMove = movementTarget ? this.distance2D(bot.position, movementTarget) > 9 : false;
+    const recovering = now < brain.reverseUntil;
+
+    const input = this.createEmptyBotInput(bot, now);
+    input.lookYaw = yawPitch.yaw;
+    input.lookPitch = shouldFight ? yawPitch.pitch : 0;
+    input.moveForward = !recovering;
+    input.moveBackward = recovering;
+    input.moveLeft = recovering && brain.strafeDirection < 0;
+    input.moveRight = recovering && brain.strafeDirection > 0;
+    input.sprint = isLongMove || bot.hasFlag || brain.intent !== 'fight_enemy';
+    input.jump = recovering || brain.stuckTime > 0.45;
+    input.crouch = input.sprint && isLongMove && !shouldFight;
+    input.primaryFire = shouldFight;
+    input.secondaryFire = shouldFight && enemyDistance <= this.getBotSecondaryRange(bot) && now % 1500 < BOT_THINK_INTERVAL_MS;
+
+    this.applyBotAbilityHeuristics(bot, input, brain.intent, enemyDistance, blackboard, now);
+
+    if (dt <= 0) {
+      input.moveForward = false;
+    }
+
+    return input;
+  }
+
+  private applyBotAbilityHeuristics(
+    bot: Player,
+    input: PlayerInput,
+    intent: BotIntent,
+    enemyDistance: number,
+    blackboard: BotBlackboard,
+    now: number
+  ): void {
+    const heroId = bot.heroId as HeroId;
+    const objectiveIntent = intent === 'seek_enemy_flag' || intent === 'carry_flag_home' || intent === 'return_friendly_flag';
+    const underPressure = enemyDistance < 12 || bot.health / Math.max(1, bot.maxHealth) < 0.45;
+    const pulseAbility = now % 1200 < BOT_THINK_INTERVAL_MS;
+    const pulseUltimate = now % 1800 < BOT_THINK_INTERVAL_MS;
+
+    switch (heroId) {
+      case 'phantom':
+        input.ability1 = pulseAbility && (objectiveIntent || enemyDistance < 16);
+        input.ability2 = pulseAbility && underPressure && enemyDistance < 20;
+        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (bot.hasFlag || underPressure);
+        break;
+      case 'hookshot':
+        input.ability1 = pulseAbility && (objectiveIntent || enemyDistance < 24);
+        input.ability2 = pulseAbility && enemyDistance < 28;
+        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (objectiveIntent || enemyDistance < 12);
+        break;
+      case 'blaze':
+        input.ability1 = enemyDistance < BLAZE_FLAMETHROWER_RANGE;
+        input.ability2 = pulseAbility && (underPressure || intent === 'retreat_or_reposition');
+        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (blackboard.nearbyEnemyCount >= 2 || objectiveIntent);
+        break;
+      case 'glacier':
+        input.ability1 = pulseAbility && (objectiveIntent || input.jump);
+        input.ability2 = pulseAbility && underPressure;
+        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (underPressure || objectiveIntent);
+        break;
+      case 'pulse':
+        input.ability1 = pulseAbility && (objectiveIntent || Boolean(blackboard.nearestAlly));
+        input.ability2 = pulseAbility && (objectiveIntent || enemyDistance < 14);
+        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (bot.hasFlag || blackboard.nearbyAllyCount >= 1);
+        break;
+      case 'sentinel':
+        input.ability1 = pulseAbility && (underPressure || intent === 'return_friendly_flag');
+        input.ability2 = pulseAbility && (enemyDistance < 18 || intent === 'chase_enemy_carrier');
+        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (underPressure || intent === 'return_friendly_flag');
+        break;
+    }
+  }
+
+  private getBotBlackboard(bot: Player): BotBlackboard {
+    const botTeam = bot.team as Team;
+    const enemyTeam = botTeam === 'red' ? 'blue' : 'red';
+    let nearestEnemy: Player | null = null;
+    let nearestEnemyDistance = Infinity;
+    let nearestAlly: Player | null = null;
+    let nearestAllyDistance = Infinity;
+    let enemyCarrier: Player | null = null;
+    let alliedCarrier: Player | null = null;
+    let nearbyEnemyCount = 0;
+    let nearbyAllyCount = 0;
+
+    this.state.players.forEach((candidate) => {
+      if (candidate.id === bot.id || candidate.state !== 'alive') return;
+
+      const distance = this.distance3D(bot.position, candidate.position);
+      if (candidate.team === bot.team) {
+        if (distance < nearestAllyDistance) {
+          nearestAlly = candidate;
+          nearestAllyDistance = distance;
+        }
+        if (candidate.hasFlag) {
+          alliedCarrier = candidate;
+        }
+        if (distance <= 16) nearbyAllyCount++;
+      } else {
+        if (distance < nearestEnemyDistance) {
+          nearestEnemy = candidate;
+          nearestEnemyDistance = distance;
+        }
+        if (candidate.hasFlag) {
+          enemyCarrier = candidate;
+        }
+        if (distance <= 16) nearbyEnemyCount++;
+      }
+    });
+
+    const ownFlag = this.getFlagByTeam(botTeam);
+    const enemyFlag = this.getFlagByTeam(enemyTeam);
+
+    return {
+      nearestEnemy,
+      enemyCarrier,
+      nearestAlly,
+      alliedCarrier,
+      droppedFriendlyFlag: !ownFlag.isAtBase && !ownFlag.carrierId ? this.vec3SchemaToPlain(ownFlag.position) : null,
+      enemyFlagPosition: enemyFlag.carrierId
+        ? this.vec3SchemaToPlain(this.state.players.get(enemyFlag.carrierId)?.position || enemyFlag.position)
+        : this.vec3SchemaToPlain(enemyFlag.position),
+      ownBasePosition: this.vec3SchemaToPlain(ownFlag.basePosition),
+      nearbyEnemyCount,
+      nearbyAllyCount,
+    };
+  }
+
+  private chooseBotIntent(bot: Player, blackboard: BotBlackboard): BotIntent {
+    if (bot.state === 'dead') return 'respawning';
+    if (!bot.heroId || this.state.phase === 'hero_select') return 'selecting';
+    if (bot.health / Math.max(1, bot.maxHealth) < 0.28) return 'retreat_or_reposition';
+    if (bot.hasFlag) return 'carry_flag_home';
+    if (blackboard.enemyCarrier) return 'chase_enemy_carrier';
+    if (blackboard.droppedFriendlyFlag) return 'return_friendly_flag';
+    if (blackboard.nearestEnemy && this.distance3D(bot.position, blackboard.nearestEnemy.position) <= 18) return 'fight_enemy';
+    if (blackboard.alliedCarrier) return 'defend_carrier';
+    return 'seek_enemy_flag';
+  }
+
+  private getBotMovementTarget(bot: Player, intent: BotIntent, blackboard: BotBlackboard): { x: number; y: number; z: number } {
+    switch (intent) {
+      case 'carry_flag_home':
+      case 'retreat_or_reposition':
+        return blackboard.ownBasePosition;
+      case 'return_friendly_flag':
+        return blackboard.droppedFriendlyFlag || blackboard.ownBasePosition;
+      case 'defend_carrier':
+        return this.vec3SchemaToPlain(blackboard.alliedCarrier?.position || bot.position);
+      case 'chase_enemy_carrier':
+        return this.vec3SchemaToPlain(blackboard.enemyCarrier?.position || bot.position);
+      case 'fight_enemy':
+        return this.vec3SchemaToPlain(blackboard.nearestEnemy?.position || bot.position);
+      case 'seek_enemy_flag':
+      case 'selecting':
+      case 'respawning':
+      default:
+        return blackboard.enemyFlagPosition;
+    }
+  }
+
+  private getEnemyFlagPosition(team: Team): { x: number; y: number; z: number } {
+    const enemyTeam = team === 'red' ? 'blue' : 'red';
+    return this.vec3SchemaToPlain(this.getFlagByTeam(enemyTeam).position);
+  }
+
+  private getBotAttackRange(bot: Player): number {
+    const heroId = bot.heroId as HeroId;
+    return PRIMARY_ATTACKS[heroId]?.range ?? 18;
+  }
+
+  private getBotSecondaryRange(bot: Player): number {
+    const heroId = bot.heroId as HeroId;
+    return SECONDARY_ATTACKS[heroId]?.range ?? 0;
+  }
+
+  private getYawPitchToward(source: Player, target: Player | { x: number; y: number; z: number }): { yaw: number; pitch: number } {
+    const targetPosition = 'position' in target ? target.position : target;
+    const dx = targetPosition.x - source.position.x;
+    const dy = targetPosition.y + ('position' in target ? 0.9 : 0) - (source.position.y + 1.2);
+    const dz = targetPosition.z - source.position.z;
+    const horizontal = Math.sqrt(dx * dx + dz * dz);
+    return {
+      yaw: Math.atan2(-dx, -dz),
+      pitch: Math.max(-0.8, Math.min(0.8, Math.atan2(dy, horizontal))),
+    };
+  }
+
+  private createEmptyBotInput(bot: Player, now: number): PlayerInput {
+    return {
+      tick: this.state.tick,
+      moveForward: false,
+      moveBackward: false,
+      moveLeft: false,
+      moveRight: false,
+      jump: false,
+      crouch: false,
+      sprint: false,
+      primaryFire: false,
+      secondaryFire: false,
+      ability1: false,
+      ability2: false,
+      ultimate: false,
+      interact: false,
+      lookYaw: bot.lookYaw,
+      lookPitch: bot.lookPitch,
+      timestamp: now,
+    };
+  }
+
+  private getFlagByTeam(team: Team) {
+    return team === 'red' ? this.state.redTeam.flag : this.state.blueTeam.flag;
+  }
+
+  private getFlagSync(team: Team) {
+    const flag = this.getFlagByTeam(team);
+    return {
+      position: this.vec3SchemaToPlain(flag.position),
+      carrierId: flag.carrierId || null,
+      isAtBase: flag.isAtBase,
+    };
+  }
+
+  private vec3SchemaToPlain(position: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
+    return { x: position.x, y: position.y, z: position.z };
+  }
+
+  private distance2D(a: { x: number; z: number }, b: { x: number; z: number }): number {
+    const dx = a.x - b.x;
+    const dz = a.z - b.z;
+    return Math.sqrt(dx * dx + dz * dz);
+  }
+
+  private distance3D(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    const dz = a.z - b.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
   }
 
   private handleHeroSelect(client: Client, heroId: HeroId) {
@@ -586,8 +1371,200 @@ export class GameRoom extends Room<GameState> {
     return true;
   }
 
+  private selectRandomBotHero(): HeroId {
+    return ALL_HERO_IDS[Math.floor(Math.random() * ALL_HERO_IDS.length)] ?? 'phantom';
+  }
+
   private isDevelopmentMode(): boolean {
     return process.env.NODE_ENV !== 'production';
+  }
+
+  private handleSetDevFly(client: Client, enabled: boolean): void {
+    if (!this.isDevelopmentMode()) return;
+
+    if (enabled) {
+      this.devInvulnerablePlayers.add(client.sessionId);
+    } else {
+      this.devInvulnerablePlayers.delete(client.sessionId);
+    }
+  }
+
+  private handleSetDevImmune(client: Client, enabled: boolean): void {
+    if (!this.isDevelopmentMode()) return;
+
+    if (enabled) {
+      this.devImmunePlayers.add(client.sessionId);
+    } else {
+      this.devImmunePlayers.delete(client.sessionId);
+    }
+  }
+
+  private refreshMapManifest(): void {
+    this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed);
+    this.mapChunkLookup.clear();
+    for (const chunk of this.mapManifest.chunks) {
+      this.mapChunkLookup.set(this.getChunkKey(chunk.coord.x, chunk.coord.y, chunk.coord.z), chunk);
+    }
+  }
+
+  private getMapManifest(): VoxelMapManifest {
+    if (!this.mapManifest || this.mapManifest.seed !== this.state.mapSeed) {
+      this.refreshMapManifest();
+    }
+    return this.mapManifest!;
+  }
+
+  private getChunkKey(x: number, y: number, z: number): string {
+    return `${x}:${y}:${z}`;
+  }
+
+  private worldToGrid(value: number, origin: number, voxelSize: number): number {
+    return Math.floor((value - origin) / voxelSize);
+  }
+
+  private getBlockAtWorld(position: { x: number; y: number; z: number }): number {
+    const manifest = this.getMapManifest();
+    const gx = this.worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
+    const gy = this.worldToGrid(position.y, manifest.origin.y, manifest.voxelSize.y);
+    const gz = this.worldToGrid(position.z, manifest.origin.z, manifest.voxelSize.z);
+
+    if (gx < 0 || gx >= manifest.size.x || gy < 0 || gy >= manifest.size.y || gz < 0 || gz >= manifest.size.z) {
+      return 0;
+    }
+
+    const cx = Math.floor(gx / manifest.chunkSize.x);
+    const cy = Math.floor(gy / manifest.chunkSize.y);
+    const cz = Math.floor(gz / manifest.chunkSize.z);
+    const chunk = this.mapChunkLookup.get(this.getChunkKey(cx, cy, cz));
+    if (!chunk) return 0;
+
+    const lx = gx - cx * manifest.chunkSize.x;
+    const ly = gy - cy * manifest.chunkSize.y;
+    const lz = gz - cz * manifest.chunkSize.z;
+    return chunk.blocks[lx + chunk.size.x * (lz + chunk.size.z * ly)] || 0;
+  }
+
+  private getProceduralGroundY(position: { x: number; y: number; z: number }): number | null {
+    const manifest = this.getMapManifest();
+    const gx = this.worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
+    const gz = this.worldToGrid(position.z, manifest.origin.z, manifest.voxelSize.z);
+
+    if (gx < 0 || gx >= manifest.size.x || gz < 0 || gz >= manifest.size.z) {
+      return null;
+    }
+
+    const startY = Math.max(0, Math.min(
+      manifest.size.y - 1,
+      this.worldToGrid(position.y - 0.15, manifest.origin.y, manifest.voxelSize.y)
+    ));
+
+    for (let gy = startY; gy >= 0; gy--) {
+      const block = this.getBlockAtWorld({
+        x: position.x,
+        y: manifest.origin.y + (gy + 0.5) * manifest.voxelSize.y,
+        z: position.z,
+      });
+      if (isSolidBlock(block)) {
+        return manifest.origin.y + (gy + 1) * manifest.voxelSize.y;
+      }
+    }
+
+    return null;
+  }
+
+  private clampToPlayableMap(position: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
+    const manifest = this.getMapManifest();
+    const clampedBoundary = clampToBoundaryPolygon(position.x, position.z, manifest.boundary);
+
+    return {
+      x: Math.max(MAP_MIN_X, Math.min(MAP_MAX_X, clampedBoundary.x)),
+      y: Math.max(-20, Math.min(120, position.y)),
+      z: Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, clampedBoundary.z)),
+    };
+  }
+
+  private isBotSpaceBlocked(position: { x: number; y: number; z: number }): boolean {
+    const manifest = this.getMapManifest();
+    if (!isInsideBoundaryPolygon(position.x, position.z, manifest.boundary)) {
+      return true;
+    }
+
+    const radius = 0.45;
+    const diagonal = radius * 0.707;
+    const offsets = [
+      { x: 0, z: 0 },
+      { x: radius, z: 0 },
+      { x: -radius, z: 0 },
+      { x: 0, z: radius },
+      { x: 0, z: -radius },
+      { x: diagonal, z: diagonal },
+      { x: diagonal, z: -diagonal },
+      { x: -diagonal, z: diagonal },
+      { x: -diagonal, z: -diagonal },
+    ];
+    const ySamples = [position.y - 0.35, position.y + 0.15, position.y + 0.65];
+
+    for (const y of ySamples) {
+      for (const offset of offsets) {
+        if (isSolidBlock(this.getBlockAtWorld({
+          x: position.x + offset.x,
+          y,
+          z: position.z + offset.z,
+        }))) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private isBotPathBlocked(
+    previous: { x: number; y: number; z: number },
+    next: { x: number; y: number; z: number }
+  ): boolean {
+    const dx = next.x - previous.x;
+    const dz = next.z - previous.z;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+    const steps = Math.max(1, Math.ceil(distance / 0.25));
+
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      if (this.isBotSpaceBlocked({
+        x: previous.x + dx * t,
+        y: previous.y + (next.y - previous.y) * t,
+        z: previous.z + dz * t,
+      })) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private resolveBotCollision(
+    previous: { x: number; y: number; z: number },
+    desired: { x: number; y: number; z: number }
+  ): { position: { x: number; y: number; z: number }; blockedX: boolean; blockedZ: boolean } {
+    const manifest = this.getMapManifest();
+    const constrained = constrainToBoundaryPolygon(previous.x, previous.z, desired.x, desired.z, manifest.boundary);
+    const next = { ...desired, x: constrained.x, z: constrained.z };
+
+    if (!this.isBotPathBlocked(previous, next)) {
+      return { position: next, blockedX: false, blockedZ: false };
+    }
+
+    const xOnly = { ...next, z: previous.z };
+    if (!this.isBotPathBlocked(previous, xOnly)) {
+      return { position: xOnly, blockedX: false, blockedZ: true };
+    }
+
+    const zOnly = { ...next, x: previous.x };
+    if (!this.isBotPathBlocked(previous, zOnly)) {
+      return { position: zOnly, blockedX: true, blockedZ: false };
+    }
+
+    return { position: { ...previous, y: next.y }, blockedX: true, blockedZ: true };
   }
 
   private isFiniteVec3(position: { x: number; y: number; z: number }): boolean {
@@ -700,14 +1677,9 @@ export class GameRoom extends Room<GameState> {
 
         // Check timeout
         if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
-          // Assign default heroes to players without one
           this.state.players.forEach(p => {
             if (!p.heroId) {
-              p.heroId = 'phantom'; // Default hero
-              const def = HERO_DEFINITIONS.phantom;
-              p.maxHealth = def.stats.maxHealth;
-              p.health = p.maxHealth;
-              initializePlayerAbilities(p, 'phantom');
+              this.setPlayerHero(p, p.isBot ? this.selectRandomBotHero() : 'phantom');
             }
           });
           this.startCountdown();
@@ -719,6 +1691,16 @@ export class GameRoom extends Room<GameState> {
   private startHeroSelect() {
     this.state.phase = 'hero_select';
     this.state.phaseEndTime = Date.now() + this.config.heroSelectTimeSeconds * 1000;
+
+    this.state.players.forEach(player => {
+      if (player.isBot) {
+        player.state = 'selecting';
+        player.heroId = '';
+        player.isReady = false;
+        player.abilities.clear();
+        this.disablePlayerSkills(player);
+      }
+    });
 
     this.broadcast('phaseChange', {
       phase: 'hero_select',
@@ -742,6 +1724,7 @@ export class GameRoom extends Room<GameState> {
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
     });
+    this.broadcastPlayerStates();
   }
 
   private startPlaying() {
@@ -773,6 +1756,7 @@ export class GameRoom extends Room<GameState> {
       endTime: Date.now() + this.config.roundTimeSeconds * 1000,
       mapSeed: this.state.mapSeed,
     });
+    this.broadcastPlayerStates();
   }
 
   private endRound() {
@@ -808,6 +1792,7 @@ export class GameRoom extends Room<GameState> {
     setTimeout(() => {
       this.state.phase = 'waiting';
       this.state.mapSeed = createRandomSeed();
+      this.refreshMapManifest();
       this.state.redTeam.score = 0;
       this.state.blueTeam.score = 0;
       this.resetFlags();
@@ -828,13 +1813,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetFlags() {
-    const positions = getProceduralCTFPositions(this.state.mapSeed);
+    const positions = this.getMapManifest();
 
     this.state.redTeam.flag.position.x = positions.flagZones.red.x;
     this.state.redTeam.flag.position.y = positions.flagZones.red.y;
     this.state.redTeam.flag.position.z = positions.flagZones.red.z;
     this.state.redTeam.flag.isAtBase = true;
     this.state.redTeam.flag.carrierId = '';
+    this.state.redTeam.flag.droppedAt = 0;
 
     this.state.redTeam.flag.basePosition.x = positions.flagZones.red.x;
     this.state.redTeam.flag.basePosition.y = positions.flagZones.red.y;
@@ -845,6 +1831,7 @@ export class GameRoom extends Room<GameState> {
     this.state.blueTeam.flag.position.z = positions.flagZones.blue.z;
     this.state.blueTeam.flag.isAtBase = true;
     this.state.blueTeam.flag.carrierId = '';
+    this.state.blueTeam.flag.droppedAt = 0;
     this.state.blueTeam.flag.basePosition.x = positions.flagZones.blue.x;
     this.state.blueTeam.flag.basePosition.y = positions.flagZones.blue.y;
     this.state.blueTeam.flag.basePosition.z = positions.flagZones.blue.z;
@@ -882,22 +1869,8 @@ export class GameRoom extends Room<GameState> {
           // Check damage interval
           const lastDamage = zone.lastDamageTick.get(player.id) || 0;
           if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
-            // Apply damage
-            player.health -= zone.damage;
             zone.lastDamageTick.set(player.id, now);
-
-            // Broadcast damage event
-            this.broadcast('playerDamaged', {
-              targetId: player.id,
-              damage: zone.damage,
-              sourceId: zone.ownerId,
-              damageType: 'void_zone',
-            });
-
-            // Check for kill
-            if (player.health <= 0) {
-              this.handlePlayerDeath(player, zone.ownerId);
-            }
+            this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone');
           }
         }
       });
@@ -989,23 +1962,14 @@ export class GameRoom extends Room<GameState> {
 
       const falloff = 1 - (distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
       const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));
-      target.health = Math.max(0, target.health - damage);
       this.flamethrowerLastDamageTick.set(tickKey, now);
-
-      this.broadcast('playerDamaged', {
-        targetId: target.id,
-        damage,
-        sourceId: source.id,
-        damageType: 'flamethrower',
-      });
-
-      if (target.health <= 0) {
-        this.handlePlayerDeath(target, source.id);
-      }
+      this.applyDamage(target, damage, source.id, 'flamethrower');
     });
   }
 
   private handlePlayerDeath(player: Player, killerId: string) {
+    if (player.state === 'dead') return;
+
     const killer = this.state.players.get(killerId);
     
     player.state = 'dead';
@@ -1020,13 +1984,29 @@ export class GameRoom extends Room<GameState> {
 
     if (killer) {
       killer.kills++;
-      // Add ultimate charge for kill
-      killer.ultimateCharge = Math.min(100, killer.ultimateCharge + 20);
+      killer.ultimateCharge = Math.min(100, killer.ultimateCharge + ULTIMATE_CHARGE_PER_KILL);
+    }
+
+    const now = Date.now();
+    const assistIds: string[] = [];
+    const history = this.damageHistory.get(player.id);
+    if (history) {
+      history.forEach((entry, sourceId) => {
+        if (sourceId === killerId) return;
+        if (now - entry.timestamp > DAMAGE_HISTORY_WINDOW_MS) return;
+        const assister = this.state.players.get(sourceId);
+        if (!assister || assister.team === player.team) return;
+        assister.assists++;
+        assister.ultimateCharge = Math.min(100, assister.ultimateCharge + 8);
+        assistIds.push(sourceId);
+      });
+      this.damageHistory.delete(player.id);
     }
 
     this.broadcast('playerKilled', {
       victimId: player.id,
       killerId,
+      assistIds,
       position: { x: player.position.x, y: player.position.y, z: player.position.z },
     });
   }
@@ -1066,11 +2046,7 @@ export class GameRoom extends Room<GameState> {
     for (const flag of flags) {
       if (!flag.isAtBase && !flag.carrierId && flag.droppedAt) {
         if (Date.now() - flag.droppedAt >= this.config.flagReturnTimeSeconds * 1000) {
-          flag.position.x = flag.basePosition.x;
-          flag.position.y = flag.basePosition.y;
-          flag.position.z = flag.basePosition.z;
-          flag.isAtBase = true;
-          flag.droppedAt = 0;
+          this.returnFlagToBase(flag.team as Team);
         }
       }
     }
@@ -1124,76 +2100,76 @@ export class GameRoom extends Room<GameState> {
       const input = player.lastInput;
       if (this.isDevelopmentMode() && input.devFly) return;
 
+      const previousPosition = this.vec3SchemaToPlain(player.position);
       const heroId = player.heroId as HeroId;
-
-      // Get movement parameters from hero config
       const heroStats = getHeroStats(heroId);
-      let moveSpeed = heroStats.moveSpeed;
       const dt = TICK_INTERVAL_MS / 1000;
+      const result = simulateSharedMovement({
+        position: this.vec3SchemaToPlain(player.position),
+        velocity: this.vec3SchemaToPlain(player.velocity),
+        movement: {
+          isGrounded: player.movement.isGrounded,
+          isSprinting: player.movement.isSprinting,
+          isCrouching: player.movement.isCrouching,
+          isSliding: player.movement.isSliding,
+          slideTimeRemaining: player.movement.slideTimeRemaining,
+          isWallRunning: player.movement.isWallRunning,
+          wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
+            ? player.movement.wallRunSide
+            : null,
+          isGrappling: player.movement.isGrappling,
+          grapplePoint: null,
+          isJetpacking: player.movement.isJetpacking,
+          jetpackFuel: player.movement.jetpackFuel,
+          isGliding: player.movement.isGliding,
+        },
+        heroStats,
+        input,
+        lookYaw: player.lookYaw,
+        deltaTime: dt,
+        terrain: this.movementTerrain,
+        flagCarrier: player.hasFlag,
+        activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
+      });
 
-      // Check for active speed-modifying abilities
-      const veilAbility = player.abilities.get('phantom_veil');
-      if (veilAbility?.isActive) {
-        moveSpeed *= 1.3; // 30% speed boost during Phantom Veil
+      let nextPosition = result.position;
+      let nextVelocity = result.velocity;
+      if (player.isBot || this.spawnedNpcs.has(player.id)) {
+        if (this.isBotSpaceBlocked(previousPosition)) {
+          this.placePlayerAtSpawn(player);
+          return;
+        }
+
+        const resolved = this.resolveBotCollision(previousPosition, result.position);
+        nextPosition = resolved.position;
+        nextVelocity = {
+          ...result.velocity,
+          x: resolved.blockedX ? 0 : result.velocity.x,
+          z: resolved.blockedZ ? 0 : result.velocity.z,
+        };
       }
 
-      const speedBoostAbility = player.abilities.get('pulse_speedboost');
-      if (speedBoostAbility?.isActive) {
-        moveSpeed *= 1.3; // 30% speed boost
-      }
+      player.position.x = nextPosition.x;
+      player.position.y = nextPosition.y;
+      player.position.z = nextPosition.z;
+      player.velocity.x = nextVelocity.x;
+      player.velocity.y = nextVelocity.y;
+      player.velocity.z = nextVelocity.z;
+      player.movement.isGrounded = result.movement.isGrounded;
+      player.movement.isSprinting = result.movement.isSprinting;
+      player.movement.isCrouching = result.movement.isCrouching;
+      player.movement.isSliding = result.movement.isSliding;
+      player.movement.slideTimeRemaining = result.movement.slideTimeRemaining;
+      player.movement.isWallRunning = result.movement.isWallRunning;
+      player.movement.wallRunSide = result.movement.wallRunSide || '';
+      player.movement.isGrappling = result.movement.isGrappling;
+      player.movement.isJetpacking = result.movement.isJetpacking;
+      player.movement.jetpackFuel = result.movement.jetpackFuel;
+      player.movement.isGliding = result.movement.isGliding;
 
-      const hasteAbility = player.abilities.get('pulse_haste');
-      if (hasteAbility?.isActive) {
-        moveSpeed *= 1.5; // 50% speed boost
-      }
-
-      // Calculate move direction
-      let dx = 0, dz = 0;
-      if (input.moveForward) dz -= 1;
-      if (input.moveBackward) dz += 1;
-      if (input.moveLeft) dx -= 1;
-      if (input.moveRight) dx += 1;
-
-      // Normalize
-      const len = Math.sqrt(dx * dx + dz * dz);
-      if (len > 0) {
-        dx /= len;
-        dz /= len;
-      }
-
-      // Apply rotation
-      const cos = Math.cos(player.lookYaw);
-      const sin = Math.sin(player.lookYaw);
-      const moveX = dx * cos - dz * sin;
-      const moveZ = dx * sin + dz * cos;
-
-      // Apply speed
-      let speed = moveSpeed;
-      if (input.sprint) speed *= 1.4;
-      if (input.crouch) speed *= 0.5;
-      if (player.hasFlag) speed *= 0.85; // Flag carrier penalty
-
-      // Update velocity
-      player.velocity.x = moveX * speed;
-      player.velocity.z = moveZ * speed;
-
-      // Apply gravity
-      player.velocity.y += GRAVITY * dt;
-
-      // Update position
-      player.position.x += player.velocity.x * dt;
-      player.position.y += player.velocity.y * dt;
-      player.position.z += player.velocity.z * dt;
-
-      // Ground collision - basic fallback (client handles proper terrain collision)
       if (player.position.y < -10) {
-        // Respawn if fallen off the map
         this.placePlayerAtSpawn(player);
-        player.velocity.y = 0;
       }
-
-      player.position.x = Math.max(MAP_MIN_X, Math.min(MAP_MAX_X, player.position.x));
-      player.position.z = Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, player.position.z));
     });
   }
 
@@ -1223,7 +2199,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getSpawnPosition(team: Team): { x: number; y: number; z: number } {
-    const spawnPoints = getProceduralCTFPositions(this.state.mapSeed).spawnPoints[team];
+    const spawnPoints = this.getMapManifest().spawnPoints[team];
     const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
 
     return {
@@ -1383,6 +2359,12 @@ export class GameRoom extends Room<GameState> {
       sourceId: client.sessionId,
       damageType: 'console',
       newHealth: npc.health,
+      sourcePosition: this.state.players.get(client.sessionId)
+        ? this.vec3SchemaToPlain(this.state.players.get(client.sessionId)!.position)
+        : null,
+      targetPosition: this.vec3SchemaToPlain(npc.position),
+      sourceHeroId: this.state.players.get(client.sessionId)?.heroId || null,
+      targetHeroId: npc.heroId || null,
     });
 
     console.log(`NPC ${npc.name} took ${damage} damage: ${oldHealth} -> ${npc.health}`);

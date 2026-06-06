@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import React from 'react';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
-import { damageNpc } from '../../ui/GameConsole';
 import { TEMP_VECTORS } from '../effectResources';
 
 interface VoidRayProps {
@@ -557,9 +556,6 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       if (distance <= PLAYER_HIT_RADIUS + RAY_RADIUS) {
         hitPlayersRef.current.add(playerId);
 
-        if (playerId.startsWith('npc_')) {
-          damageNpc(playerId, RAY_DAMAGE);
-        }
       }
     }
   });

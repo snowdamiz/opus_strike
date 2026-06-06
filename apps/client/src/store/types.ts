@@ -5,6 +5,7 @@ import type {
   HeroId,
   Vec3,
   PlayerInput,
+  BotDifficulty,
 } from '@voxel-strike/shared';
 
 // Re-export VisualState from visualStore for central type access
@@ -20,6 +21,10 @@ export interface LobbyInfo {
   name: string;
   playerCount: number;
   maxPlayers: number;
+  humanCount?: number;
+  botCount?: number;
+  participantCount?: number;
+  maxParticipants?: number;
   status: string;
 }
 
@@ -29,6 +34,10 @@ export interface LobbyPlayer {
   isHost: boolean;
   isReady: boolean;
   team: string;
+  heroId?: HeroId | '';
+  isBot?: boolean;
+  botDifficulty?: BotDifficulty | '';
+  botProfileId?: string;
 }
 
 export interface UserStats {

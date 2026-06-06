@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import { useGameStore, type HookProjectileData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
-import { damageNpc } from '../../ui/GameConsole';
 import { getOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { 
@@ -157,9 +156,6 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
           
           if (pdx * pdx + pdy * pdy + pdz * pdz <= HOOK_HIT_RADIUS * HOOK_HIT_RADIUS) {
             hasHitRef.current = true;
-            if (playerId.startsWith('npc_')) {
-              damageNpc(playerId, HOOK_DAMAGE);
-            }
             hookStateRef.current = 'retracting';
             break;
           }

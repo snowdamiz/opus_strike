@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { DRAG_HOOK_MAX_DISTANCE, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
-import { damageNpc } from '../../ui/GameConsole';
 import { getOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { 
@@ -159,9 +158,6 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
           if (pdx * pdx + pdy * pdy + pdz * pdz <= DRAG_HOOK_HIT_RADIUS * DRAG_HOOK_HIT_RADIUS) {
             hasHitRef.current = true;
             hookedTargetIdRef.current = playerId;
-            if (playerId.startsWith('npc_')) {
-              damageNpc(playerId, DRAG_HOOK_DAMAGE);
-            }
             hookStateRef.current = 'retracting';
             break;
           }

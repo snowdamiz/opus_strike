@@ -1,5 +1,5 @@
 // World settings
-export const GRAVITY = -24; // Slightly heavier fall than the previous floaty tuning
+export const GRAVITY = -25; // Slightly heavier fall than the previous floaty tuning
 export const AIR_RESISTANCE = 0.01;
 export const GROUND_FRICTION = 0.9;
 

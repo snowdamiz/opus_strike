@@ -1,8 +1,10 @@
 import type { Room } from 'colyseus.js';
+import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setPlayerVisualPosition, setPlayerVisualRotation, visualStore } from '../store/visualStore';
-import type { HeroId, Team, Player } from '@voxel-strike/shared';
+import { addEffect } from '../components/game/Effects';
+import type { BotDifficulty, HeroId, Team, Player } from '@voxel-strike/shared';
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -52,6 +54,9 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     heroId: (schemaPlayer.heroId || null) as HeroId | null,
     state: (schemaPlayer.state || 'alive') as any,
     isReady: schemaPlayer.isReady || false,
+    isBot: Boolean(schemaPlayer.isBot),
+    botDifficulty: schemaPlayer.botDifficulty || undefined,
+    botProfileId: schemaPlayer.botProfileId || undefined,
     position: {
       x: schemaPlayer.position?.x ?? 0,
       y: schemaPlayer.position?.y ?? 1,
@@ -72,7 +77,13 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     hasFlag: schemaPlayer.hasFlag || false,
     respawnTime: null,
     spawnProtectionUntil: null,
-    stats: createDefaultStats(),
+    stats: schemaPlayer.stats || {
+      kills: schemaPlayer.kills ?? 0,
+      deaths: schemaPlayer.deaths ?? 0,
+      assists: schemaPlayer.assists ?? 0,
+      flagCaptures: schemaPlayer.flagCaptures ?? 0,
+      flagReturns: schemaPlayer.flagReturns ?? 0,
+    },
   };
 }
 
@@ -87,6 +98,7 @@ export function createDefaultLocalPlayer(sessionId: string, playerName: string):
     heroId: null,
     state: 'alive',
     isReady: false,
+    isBot: false,
     position: { x: 0, y: 1, z: 0 },
     velocity: { x: 0, y: 0, z: 0 },
     lookYaw: 0,
@@ -191,6 +203,9 @@ export function syncPlayerFromSchema(
         ...store.localPlayer,
         heroId: schemaPlayer.heroId || store.localPlayer.heroId,
         team: schemaPlayer.team || store.localPlayer.team,
+        isBot: Boolean(schemaPlayer.isBot ?? store.localPlayer.isBot),
+        botDifficulty: schemaPlayer.botDifficulty || store.localPlayer.botDifficulty,
+        botProfileId: schemaPlayer.botProfileId || store.localPlayer.botProfileId,
         health: schemaPlayer.health ?? store.localPlayer.health,
         maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
         state: nextState,
@@ -241,6 +256,9 @@ export function processPlayerDuringPoll(
         ...freshStore.localPlayer,
         heroId: schemaPlayer.heroId || freshStore.localPlayer.heroId,
         team: schemaPlayer.team || freshStore.localPlayer.team,
+        isBot: Boolean(schemaPlayer.isBot ?? freshStore.localPlayer.isBot),
+        botDifficulty: schemaPlayer.botDifficulty || freshStore.localPlayer.botDifficulty,
+        botProfileId: schemaPlayer.botProfileId || freshStore.localPlayer.botProfileId,
         health: schemaPlayer.health ?? freshStore.localPlayer.health,
         maxHealth: schemaPlayer.maxHealth ?? freshStore.localPlayer.maxHealth,
         state: nextState,
@@ -288,6 +306,15 @@ export function processPlayerDuringPoll(
       state: schemaPlayer.state || existingPlayer.state,
       heroId: schemaPlayer.heroId || existingPlayer.heroId,
       team: schemaPlayer.team || existingPlayer.team,
+      isReady: schemaPlayer.isReady ?? existingPlayer.isReady,
+      isBot: Boolean(schemaPlayer.isBot ?? existingPlayer.isBot),
+      botDifficulty: schemaPlayer.botDifficulty || existingPlayer.botDifficulty,
+      botProfileId: schemaPlayer.botProfileId || existingPlayer.botProfileId,
+      health: schemaPlayer.health ?? existingPlayer.health,
+      maxHealth: schemaPlayer.maxHealth ?? existingPlayer.maxHealth,
+      ultimateCharge: schemaPlayer.ultimateCharge ?? existingPlayer.ultimateCharge,
+      hasFlag: schemaPlayer.hasFlag ?? existingPlayer.hasFlag,
+      stats: schemaPlayer.stats || existingPlayer.stats,
     };
     actions.updatePlayer(id, positionUpdated);
   }
@@ -311,6 +338,9 @@ export function setupPlayerJoinedHandler(
     playerName: string;
     team?: string;
     heroId?: string;
+    isBot?: boolean;
+    botDifficulty?: BotDifficulty;
+    botProfileId?: string;
     position?: { x: number; y: number; z: number };
   }) => {
     console.log(`Player joined message: ${data.playerName} (${data.playerId})`);
@@ -331,6 +361,9 @@ export function setupPlayerJoinedHandler(
           heroId: (data.heroId || null) as HeroId | null,
           state: 'selecting',
           isReady: false,
+          isBot: Boolean(data.isBot),
+          botDifficulty: data.botDifficulty,
+          botProfileId: data.botProfileId,
           position: data.position || { x: 0, y: 1, z: 0 },
           velocity: { x: 0, y: 0, z: 0 },
           lookYaw: 0,
@@ -360,10 +393,26 @@ export function setupPlayerStatesHandler(
   localPlayerName: string,
   actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer'>
 ) {
-  room.onMessage('playerStates', (data: { players: any[]; mapSeed?: number }) => {
+  room.onMessage('playerStates', (data: {
+    players: any[];
+    mapSeed?: number;
+    redScore?: number;
+    blueScore?: number;
+    redFlag?: { position: { x: number; y: number; z: number }; carrierId: string | null; isAtBase: boolean };
+    blueFlag?: { position: { x: number; y: number; z: number }; carrierId: string | null; isAtBase: boolean };
+    roundTimeRemaining?: number;
+  }) => {
     if (typeof data.mapSeed === 'number') {
       useGameStore.getState().setMapSeed(data.mapSeed);
     }
+
+    useGameStore.setState({
+      redScore: data.redScore ?? useGameStore.getState().redScore,
+      blueScore: data.blueScore ?? useGameStore.getState().blueScore,
+      redFlag: data.redFlag ?? useGameStore.getState().redFlag,
+      blueFlag: data.blueFlag ?? useGameStore.getState().blueFlag,
+      roundTimeRemaining: data.roundTimeRemaining ?? useGameStore.getState().roundTimeRemaining,
+    });
 
     for (const serverPlayer of data.players) {
       // Skip ghost players
@@ -402,12 +451,16 @@ export function setupPlayerStatesHandler(
             state: nextState,
             heroId: serverPlayer.heroId || freshStore.localPlayer.heroId,
             team: serverPlayer.team || freshStore.localPlayer.team,
+            isBot: Boolean(serverPlayer.isBot ?? freshStore.localPlayer.isBot),
+            botDifficulty: serverPlayer.botDifficulty || freshStore.localPlayer.botDifficulty,
+            botProfileId: serverPlayer.botProfileId || freshStore.localPlayer.botProfileId,
             position: shouldSyncPosition ? nextPosition! : freshStore.localPlayer.position,
             velocity: shouldSyncPosition
               ? (serverPlayer.velocity ?? freshStore.localPlayer.velocity)
               : freshStore.localPlayer.velocity,
             hasFlag: serverPlayer.hasFlag ?? freshStore.localPlayer.hasFlag,
             abilities: serverPlayer.abilities || freshStore.localPlayer.abilities,
+            stats: serverPlayer.stats || freshStore.localPlayer.stats,
           };
           actions.setLocalPlayer(updated);
           if (shouldSyncPosition) {
@@ -425,6 +478,10 @@ export function setupPlayerStatesHandler(
             team: (serverPlayer.team || existingPlayer.team) as Team,
             heroId: (serverPlayer.heroId || existingPlayer.heroId) as HeroId | null,
             state: serverPlayer.state || existingPlayer.state,
+            isReady: serverPlayer.isReady ?? existingPlayer.isReady,
+            isBot: Boolean(serverPlayer.isBot ?? existingPlayer.isBot),
+            botDifficulty: serverPlayer.botDifficulty || existingPlayer.botDifficulty,
+            botProfileId: serverPlayer.botProfileId || existingPlayer.botProfileId,
             position: serverPlayer.position || existingPlayer.position,
             velocity: serverPlayer.velocity || existingPlayer.velocity,
             lookYaw: serverPlayer.lookYaw ?? existingPlayer.lookYaw,
@@ -434,6 +491,7 @@ export function setupPlayerStatesHandler(
             ultimateCharge: serverPlayer.ultimateCharge ?? existingPlayer.ultimateCharge,
             hasFlag: serverPlayer.hasFlag ?? existingPlayer.hasFlag,
             abilities: serverPlayer.abilities || existingPlayer.abilities,
+            stats: serverPlayer.stats || existingPlayer.stats,
           };
           actions.updatePlayer(serverPlayer.id, updatedPlayer);
         } else {
@@ -444,6 +502,9 @@ export function setupPlayerStatesHandler(
             heroId: (serverPlayer.heroId || null) as HeroId | null,
             state: serverPlayer.state || 'alive',
             isReady: false,
+            isBot: Boolean(serverPlayer.isBot),
+            botDifficulty: serverPlayer.botDifficulty || undefined,
+            botProfileId: serverPlayer.botProfileId || undefined,
             position: serverPlayer.position || { x: 0, y: 1, z: 0 },
             velocity: serverPlayer.velocity || { x: 0, y: 0, z: 0 },
             lookYaw: serverPlayer.lookYaw ?? 0,
@@ -456,7 +517,7 @@ export function setupPlayerStatesHandler(
             hasFlag: serverPlayer.hasFlag ?? false,
             respawnTime: null,
             spawnProtectionUntil: null,
-            stats: createDefaultStats(),
+            stats: serverPlayer.stats || createDefaultStats(),
           };
           actions.updatePlayer(serverPlayer.id, newPlayer);
         }
@@ -500,16 +561,41 @@ export function setupCombatHandlers(room: Room) {
   room.onMessage('playerDamaged', (data: {
     targetId: string;
     damage: number;
-    sourceId: string;
+    sourceId: string | null;
     damageType: string;
+    sourcePosition?: { x: number; y: number; z: number } | null;
+    targetPosition?: { x: number; y: number; z: number } | null;
   }) => {
     console.log(`Player ${data.targetId} took ${data.damage} damage from ${data.damageType}`);
 
     const store = useGameStore.getState();
-    if (data.sourceId === store.playerId) {
+    const localPlayerId = store.localPlayer?.id ?? store.playerId;
+    if (data.sourceId === localPlayerId) {
       useCombatFeedbackStore.getState().addDamageNumber({
         damage: data.damage,
         damageType: data.damageType,
+      });
+    }
+
+    const sourcePlayer = data.sourceId ? store.players.get(data.sourceId) : null;
+    const targetPlayer = store.players.get(data.targetId);
+    const sourcePosition = data.sourcePosition ?? sourcePlayer?.position ?? null;
+    const targetPosition = data.targetPosition ?? targetPlayer?.position ?? null;
+
+    if (data.sourceId && data.sourceId !== localPlayerId && sourcePosition && targetPosition) {
+      const start = new THREE.Vector3(sourcePosition.x, sourcePosition.y + 1.1, sourcePosition.z);
+      const end = new THREE.Vector3(targetPosition.x, targetPosition.y + 1.0, targetPosition.z);
+
+      addEffect({
+        type: 'grapple',
+        position: start,
+        endPosition: end,
+        duration: 180,
+      });
+      addEffect({
+        type: 'hit',
+        position: end,
+        duration: 260,
       });
     }
   });

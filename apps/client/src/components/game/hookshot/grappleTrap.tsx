@@ -3,7 +3,6 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type GrappleTrapData } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
-import { damageNpc } from '../../ui/GameConsole';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { 
   SHARED_GEOMETRIES, 
@@ -139,9 +138,6 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
         if (now - lastDamage > 1000) {
           lastDamageTimeRef.current.set(playerId, now);
           
-          if (playerId.startsWith('npc_')) {
-            damageNpc(playerId, GRAPPLE_TRAP_DOT_DAMAGE);
-          }
         }
       }
     }

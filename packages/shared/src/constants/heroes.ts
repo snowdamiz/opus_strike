@@ -6,7 +6,7 @@ import { FROST_STORM_DURATION, FROST_STORM_COOLDOWN } from './physics.js';
 export const DEFAULT_HERO_STATS: HeroStats = {
   maxHealth: 200,
   moveSpeed: 6.3,
-  jumpForce: 8.5,
+  jumpForce: 8.3,
   size: { width: 0.8, height: 1.8, depth: 0.8 },
 };
 
@@ -27,7 +27,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     stats: {
       maxHealth: 175,
       moveSpeed: 4.9,
-      jumpForce: 8.5,
+      jumpForce: 8.3,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
@@ -48,7 +48,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     stats: {
       maxHealth: 200,
       moveSpeed: 5.6,
-      jumpForce: 8.1,
+      jumpForce: 7.9,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
@@ -69,7 +69,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     stats: {
       maxHealth: 200,
       moveSpeed: 5.6,
-      jumpForce: 9.3,
+      jumpForce: 9.0,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
     passive: {
@@ -90,7 +90,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     stats: {
       maxHealth: 350,
       moveSpeed: 4.9,
-      jumpForce: 7.3,
+      jumpForce: 7.1,
       size: { width: 1.0, height: 2.0, depth: 1.0 },
     },
     passive: {
@@ -111,7 +111,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     stats: {
       maxHealth: 175,
       moveSpeed: 6.3,
-      jumpForce: 8.5,
+      jumpForce: 8.3,
       size: { width: 0.7, height: 1.7, depth: 0.7 },
     },
     passive: {
@@ -132,7 +132,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     stats: {
       maxHealth: 300,
       moveSpeed: 5.25,
-      jumpForce: 7.3,
+      jumpForce: 7.1,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
     passive: {

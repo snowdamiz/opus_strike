@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useGameStore, LobbyInfo } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import type { BotDifficulty } from '@voxel-strike/shared';
 
 export function LobbyBrowser() {
   const { playerName, availableLobbies, isLoading, setAppPhase } = useGameStore();
   const { watchLobbies, createLobby, joinLobby } = useNetwork();
   const [lobbyName, setLobbyName] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
+  const [initialBotCount, setInitialBotCount] = useState(0);
+  const [defaultBotDifficulty, setDefaultBotDifficulty] = useState<BotDifficulty>('normal');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -16,7 +19,11 @@ export function LobbyBrowser() {
   const handleCreateLobby = async () => {
     setError(null);
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate);
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate, {
+        initialBotCount,
+        botFillMode: 'manual',
+        defaultBotDifficulty,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
     }
@@ -150,6 +157,45 @@ export function LobbyBrowser() {
                   </svg>
                 </label>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-white/40 font-body uppercase tracking-wider mb-2">
+                      AI Bots
+                    </label>
+                    <div className="flex items-center overflow-hidden rounded-lg border border-white/10 bg-black/20">
+                      <button
+                        type="button"
+                        onClick={() => setInitialBotCount((count) => Math.max(0, count - 1))}
+                        className="w-10 h-10 text-white/50 hover:text-white hover:bg-white/10"
+                      >
+                        -
+                      </button>
+                      <div className="flex-1 text-center font-display text-white">{initialBotCount}</div>
+                      <button
+                        type="button"
+                        onClick={() => setInitialBotCount((count) => Math.min(9, count + 1))}
+                        className="w-10 h-10 text-white/50 hover:text-white hover:bg-white/10"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/40 font-body uppercase tracking-wider mb-2">
+                      Bot Skill
+                    </label>
+                    <select
+                      value={defaultBotDifficulty}
+                      onChange={(event) => setDefaultBotDifficulty(event.target.value as BotDifficulty)}
+                      className="input w-full px-3 py-2.5 h-10"
+                    >
+                      <option value="easy">Easy</option>
+                      <option value="normal">Normal</option>
+                      <option value="hard">Hard</option>
+                    </select>
+                  </div>
+                </div>
+
                 {error && (
                   <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
                     <p className="text-red-400 text-sm font-body">{error}</p>
@@ -202,7 +248,11 @@ interface LobbyRowProps {
 }
 
 function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
-  const isFull = lobby.playerCount >= lobby.maxPlayers;
+  const humanCount = lobby.humanCount ?? lobby.playerCount;
+  const botCount = lobby.botCount ?? 0;
+  const participantCount = lobby.participantCount ?? humanCount + botCount;
+  const maxParticipants = lobby.maxParticipants ?? lobby.maxPlayers;
+  const isFull = humanCount >= lobby.maxPlayers || participantCount >= maxParticipants;
   const isInGame = lobby.status === 'in_game' || lobby.status === 'starting';
   const canJoin = !isFull && !isInGame;
 
@@ -247,11 +297,11 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
               className={`h-full rounded-full ${
                 isFull ? 'bg-red-500' : isInGame ? 'bg-amber-500' : 'bg-orange-500'
               }`}
-              style={{ width: `${(lobby.playerCount / lobby.maxPlayers) * 100}%` }}
+              style={{ width: `${(participantCount / maxParticipants) * 100}%` }}
             />
           </div>
           <span className="text-xs text-white/40 font-mono">
-            {lobby.playerCount}/{lobby.maxPlayers}
+            {humanCount}H/{botCount}B
           </span>
         </div>
       </div>

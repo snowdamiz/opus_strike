@@ -1,4 +1,4 @@
-// Prisma schema for Voxel Strike
+// Prisma schema for Slop Heroes
 // PostgreSQL database for user persistence
 
 generator client {
@@ -26,4 +26,3 @@ model User {
 
   @@index([walletAddress])
 }
-

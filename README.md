@@ -1,4 +1,4 @@
-# Voxel Strike
+# Slop Heroes
 
 A browser-based 5v5 Capture the Flag game with Minecraft-style voxel graphics and movement-based hero abilities.
 

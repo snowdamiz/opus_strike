@@ -4,7 +4,6 @@ import * as THREE from 'three';
 import React from 'react';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
-import { damageNpc } from '../../ui/GameConsole';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import {
@@ -118,9 +117,6 @@ const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
       const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
       if (distance <= NPC_HIT_RADIUS) {
-        if (playerId.startsWith('npc_')) {
-          damageNpc(playerId, PROJECTILE_DAMAGE);
-        }
 
         hasCollided.current = true;
         groupRef.current.visible = false;

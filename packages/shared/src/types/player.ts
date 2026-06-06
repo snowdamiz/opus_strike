@@ -4,6 +4,8 @@ import type { AbilityState } from './ability.js';
 
 export type Team = 'red' | 'blue';
 
+export type BotDifficulty = 'easy' | 'normal' | 'hard';
+
 export type PlayerState = 
   | 'spectating'
   | 'selecting'     // Hero select
@@ -65,6 +67,9 @@ export interface Player {
   heroId: HeroId | null;
   state: PlayerState;
   isReady: boolean;
+  isBot: boolean;
+  botDifficulty?: BotDifficulty;
+  botProfileId?: string;
   
   // Transform
   position: Vec3;
@@ -97,13 +102,19 @@ export interface Player {
 
 export interface PlayerSnapshot {
   id: string;
+  name?: string;
+  team?: Team;
+  heroId?: HeroId | null;
   position: Vec3;
   velocity: Vec3;
   lookYaw: number;
   lookPitch: number;
   health: number;
+  maxHealth?: number;
   state: PlayerState;
   movement: PlayerMovementState;
   abilities: Record<string, AbilityState>;
   hasFlag: boolean;
+  isBot?: boolean;
+  stats?: PlayerStats;
 }

@@ -71,6 +71,10 @@ interface LobbySummary {
   name: string;
   playerCount: number;
   maxPlayers: number;
+  humanCount: number;
+  botCount: number;
+  participantCount: number;
+  maxParticipants: number;
   status: string;
 }
 
@@ -81,8 +85,12 @@ async function getPublicLobbies(): Promise<LobbySummary[]> {
     .map((room: any) => ({
       roomId: room.roomId,
       name: room.metadata?.name || `Lobby ${room.roomId.slice(0, 6)}`,
-      playerCount: room.clients,
-      maxPlayers: room.maxClients,
+      playerCount: room.metadata?.humanCount ?? room.clients,
+      maxPlayers: room.metadata?.maxPlayers ?? room.maxClients,
+      humanCount: room.metadata?.humanCount ?? room.clients,
+      botCount: room.metadata?.botCount ?? 0,
+      participantCount: room.metadata?.participantCount ?? room.clients,
+      maxParticipants: room.metadata?.maxParticipants ?? room.maxClients,
       status: room.metadata?.status || 'waiting',
     }));
 }
@@ -135,7 +143,7 @@ const PORT = parseInt(process.env.PORT || '2567', 10);
 httpServer.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
-║                    VOXEL STRIKE SERVER                     ║
+║                     SLOP HEROES SERVER                     ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  WebSocket:  ws://localhost:${PORT}                          ║
 ║  Health:     http://localhost:${PORT}/health                 ║

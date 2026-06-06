@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
+import type { BotDifficulty } from '@voxel-strike/shared';
+import type { LobbyPlayer } from '../../store/gameStore';
 
 // Faction definitions
 const FACTIONS = {
@@ -62,7 +64,16 @@ export function Lobby() {
     isLoading,
     setAppPhase,
   } = useGameStore();
-  const { leaveLobby, setLobbyReady, setLobbyTeam, startGame, kickPlayer } = useNetwork();
+  const {
+    leaveLobby,
+    setLobbyReady,
+    setLobbyTeam,
+    addLobbyBot,
+    removeLobbyBot,
+    updateLobbyBotTeam,
+    startGame,
+    kickPlayer,
+  } = useNetwork();
   const { playButtonClick } = useUISounds();
   const [pulseReady, setPulseReady] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -95,6 +106,8 @@ export function Lobby() {
   const handleKick = (targetId: string) => kickPlayer(targetId);
 
   const playerList = Array.from(lobbyPlayers.values());
+  const humanCount = playerList.filter(p => !p.isBot).length;
+  const botCount = playerList.length - humanCount;
   const readyCount = playerList.filter(p => p.isReady || p.isHost).length;
   const canStart = isLobbyHost && (playerList.length === 1 || readyCount === playerList.length);
 
@@ -107,6 +120,21 @@ export function Lobby() {
   const handleBack = () => {
     leaveLobby();
     setAppPhase('browsing_lobbies');
+  };
+
+  const handleAddBot = (difficulty: BotDifficulty = 'normal') => {
+    playButtonClick();
+    addLobbyBot({ difficulty });
+  };
+
+  const handleRemoveBot = (botId: string) => {
+    playButtonClick();
+    removeLobbyBot(botId);
+  };
+
+  const handleBotTeamChange = (botId: string, team: string) => {
+    playButtonClick();
+    updateLobbyBotTeam(botId, team);
   };
 
   return (
@@ -172,7 +200,7 @@ export function Lobby() {
               <div>
                 <h1 className="font-display text-2xl text-white tracking-wide">{currentLobbyName || 'Game Lobby'}</h1>
                 <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">
-                  {readyCount}/{playerList.length} Ready • Awaiting combatants
+                  {readyCount}/{playerList.length} Ready • {humanCount} human • {botCount} AI
                 </p>
               </div>
             </div>
@@ -230,6 +258,8 @@ export function Lobby() {
             playerId={playerId}
             isLobbyHost={isLobbyHost}
             onKick={handleKick}
+            onRemoveBot={handleRemoveBot}
+            onBotTeamChange={handleBotTeamChange}
           />
         </div>
 
@@ -354,6 +384,13 @@ export function Lobby() {
             </div>
 
             <div className="space-y-2.5">
+              {isLobbyHost && (
+                <BotHostControls
+                  botCount={botCount}
+                  onAddBot={handleAddBot}
+                />
+              )}
+
               {/* Ready / Start Button */}
               {isLobbyHost ? (
  <button
@@ -454,6 +491,8 @@ export function Lobby() {
                     isCurrentPlayer={player.id === playerId}
                     isLobbyHost={isLobbyHost}
                     onKick={() => handleKick(player.id)}
+                    onRemoveBot={() => handleRemoveBot(player.id)}
+                    onBotTeamChange={(team) => handleBotTeamChange(player.id, team)}
                     compact
                   />
                 ))}
@@ -470,6 +509,8 @@ export function Lobby() {
             playerId={playerId}
             isLobbyHost={isLobbyHost}
             onKick={handleKick}
+            onRemoveBot={handleRemoveBot}
+            onBotTeamChange={handleBotTeamChange}
             reverse
           />
         </div>
@@ -559,17 +600,66 @@ function FactionButton({ faction, isSelected, onClick }: FactionButtonProps) {
   );
 }
 
+interface BotHostControlsProps {
+  botCount: number;
+  onAddBot: (difficulty: BotDifficulty) => void;
+}
+
+function BotHostControls({ botCount, onAddBot }: BotHostControlsProps) {
+  const [difficulty, setDifficulty] = useState<BotDifficulty>('normal');
+
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="font-display text-[10px] uppercase tracking-wider text-white/60">AI Squad</p>
+          <p className="text-[9px] text-white/30 font-body">{botCount} active bots</p>
+        </div>
+        <select
+          value={difficulty}
+          onChange={(event) => setDifficulty(event.target.value as BotDifficulty)}
+          className="h-8 rounded-md bg-black/30 border border-white/10 px-2 text-[10px] text-white/70 font-body"
+        >
+          <option value="easy">Easy</option>
+          <option value="normal">Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+      </div>
+      <div className="mt-2">
+        <button
+          type="button"
+          onClick={() => onAddBot(difficulty)}
+          className="h-8 w-full rounded-md bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 font-display text-[10px]"
+        >
+          Add Bot
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Faction Panel Component
 interface FactionPanelProps {
   faction: typeof FACTIONS.red | typeof FACTIONS.blue;
-  players: { id: string; name: string; isHost: boolean; isReady: boolean; team: string }[];
+  players: LobbyPlayer[];
   playerId: string | null;
   isLobbyHost: boolean;
   onKick: (id: string) => void;
+  onRemoveBot: (id: string) => void;
+  onBotTeamChange: (id: string, team: string) => void;
   reverse?: boolean;
 }
 
-function FactionPanel({ faction, players, playerId, isLobbyHost, onKick, reverse }: FactionPanelProps) {
+function FactionPanel({
+  faction,
+  players,
+  playerId,
+  isLobbyHost,
+  onKick,
+  onRemoveBot,
+  onBotTeamChange,
+  reverse,
+}: FactionPanelProps) {
   const maxPlayers = 5;
   const emptySlots = Math.max(0, maxPlayers - players.length);
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
@@ -635,6 +725,8 @@ function FactionPanel({ faction, players, playerId, isLobbyHost, onKick, reverse
               isCurrentPlayer={player.id === playerId}
               isLobbyHost={isLobbyHost}
               onKick={() => onKick(player.id)}
+              onRemoveBot={() => onRemoveBot(player.id)}
+              onBotTeamChange={(team) => onBotTeamChange(player.id, team)}
               faction={faction}
             />
           ))}
@@ -684,15 +776,26 @@ function FactionPanel({ faction, players, playerId, isLobbyHost, onKick, reverse
 
 // Player Card Component
 interface PlayerCardProps {
-  player: { id: string; name: string; isHost: boolean; isReady: boolean; team: string };
+  player: LobbyPlayer;
   isCurrentPlayer: boolean;
   isLobbyHost: boolean;
   onKick: () => void;
+  onRemoveBot: () => void;
+  onBotTeamChange: (team: string) => void;
   faction?: typeof FACTIONS.red | typeof FACTIONS.blue;
   compact?: boolean;
 }
 
-function PlayerCard({ player, isCurrentPlayer, isLobbyHost, onKick, faction, compact }: PlayerCardProps) {
+function PlayerCard({
+  player,
+  isCurrentPlayer,
+  isLobbyHost,
+  onKick,
+  onRemoveBot,
+  onBotTeamChange,
+  faction,
+  compact,
+}: PlayerCardProps) {
   const color = faction?.primaryColor || '#f97316';
   const secondaryColor = faction?.secondaryColor || '#fbbf24';
   const { playButtonClick } = useUISounds();
@@ -731,12 +834,31 @@ function PlayerCard({ player, isCurrentPlayer, isLobbyHost, onKick, faction, com
               CMD
             </span>
           )}
+          {player.isBot && (
+            <span className="px-1.5 py-0.5 bg-cyan-500/15 text-cyan-300 text-[8px] font-display rounded border border-cyan-500/25 uppercase">
+              AI
+            </span>
+          )}
           {isCurrentPlayer && !player.isHost && (
             <span className="px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 text-[8px] font-display rounded border border-cyan-500/30 uppercase">
               You
             </span>
           )}
         </div>
+        {isLobbyHost && player.isBot && (
+          <div className="mt-1 flex items-center gap-1">
+            <span className="h-6 min-w-0 flex-1 rounded bg-black/20 border border-white/5 px-1.5 text-[9px] leading-6 text-white/35 font-body uppercase">
+              {player.botDifficulty || 'normal'}
+            </span>
+            <button
+              type="button"
+              onClick={() => onBotTeamChange(player.team === 'red' ? 'blue' : 'red')}
+              className="h-6 w-8 rounded bg-white/5 text-[9px] font-display text-white/40 hover:bg-white/10 hover:text-white/70"
+            >
+              {player.team === 'red' ? 'B' : 'R'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Ready Status */}
@@ -759,7 +881,7 @@ function PlayerCard({ player, isCurrentPlayer, isLobbyHost, onKick, faction, com
       {/* Kick Button */}
       {isLobbyHost && !isCurrentPlayer && !player.isHost && (
  <button
- onClick={() => { playButtonClick(); onKick(); }}
+ onClick={() => { playButtonClick(); player.isBot ? onRemoveBot() : onKick(); }}
  className="w-8 h-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20"
  >
  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

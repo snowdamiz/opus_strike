@@ -1,11 +1,15 @@
 import { useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import { HERO_DEFINITIONS } from '@voxel-strike/shared';
-import type { Player, Team } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, PLAYER_HEIGHT } from '@voxel-strike/shared';
+import type { HeroId, Player, Team } from '@voxel-strike/shared';
+import { HeroVoxelBody } from './HeroVoxelBody';
+import { HeroIcon } from '../ui/HeroIcons';
+import { HERO_COLORS as HERO_ICON_COLORS } from '../ui/hero-svgs/types';
 
 // Debug: track last logged state to avoid spam
 let lastLoggedPlayerCount = -1;
@@ -16,10 +20,11 @@ export function OtherPlayers() {
   // position updates because updateGameState() updates Map entries in-place (same Map
   // reference). The Map reference only changes when players are added/removed. Position
   // interpolation reads from visualStore in useFrame (non-reactive, 60fps).
-  const { players, playerId, gamePhase } = useGameStore(
+  const { players, playerId, localPlayerId, gamePhase } = useGameStore(
     useShallow(state => ({
       players: state.players,
       playerId: state.playerId,
+      localPlayerId: state.localPlayer?.id ?? null,
       gamePhase: state.gamePhase,
     }))
   );
@@ -28,7 +33,7 @@ export function OtherPlayers() {
 
   // Filter out local player, show all other players except dead ones (unless in respawn view)
   const otherPlayers = allPlayers.filter((p) => {
-    if (p.id === playerId) return false;
+    if (p.id === playerId || p.id === localPlayerId) return false;
     // Hide only dead players during active gameplay
     if (p.state === 'dead' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
       return false;
@@ -43,6 +48,7 @@ export function OtherPlayers() {
       totalInStore: players.size,
       otherPlayersToRender: otherPlayers.length,
       playerId,
+      localPlayerId,
       gamePhase,
       allPlayerIds: allPlayers.map(p => `${p.id.slice(0,6)}(${p.state})`),
       otherPlayerPositions: otherPlayers.map(p => ({ 
@@ -67,10 +73,21 @@ interface OtherPlayerProps {
   player: Player;
 }
 
+const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
+
+function setPlayerRenderOrigin(
+  target: THREE.Vector3,
+  position: { x: number; y: number; z: number }
+): THREE.Vector3 {
+  return target.set(position.x, position.y - PLAYER_CENTER_TO_FEET, position.z);
+}
+
 function OtherPlayer({ player }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const targetPosition = useRef(new THREE.Vector3(player.position.x, player.position.y, player.position.z));
-  const currentPosition = useRef(new THREE.Vector3(player.position.x, player.position.y, player.position.z));
+  const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
+  const playerHeight = heroStats?.size.height ?? 1.8;
+  const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
+  const currentPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const initializedRef = useRef(false);
   const hasLoggedRef = useRef(false);
   
@@ -90,11 +107,7 @@ function OtherPlayer({ player }: OtherPlayerProps) {
     if (!initializedRef.current) {
       const visualState = visualStore.getState();
       const initialPos = visualState.playerPositions.get(player.id);
-      currentPosition.current.set(
-        initialPos?.x ?? player.position.x,
-        initialPos?.y ?? player.position.y,
-        initialPos?.z ?? player.position.z
-      );
+      setPlayerRenderOrigin(currentPosition.current, initialPos ?? player.position);
       groupRef.current.position.copy(currentPosition.current);
       initializedRef.current = true;
     }
@@ -103,10 +116,10 @@ function OtherPlayer({ player }: OtherPlayerProps) {
     const visualState = visualStore.getState();
     const targetPos = visualState.playerPositions.get(player.id);
     if (targetPos) {
-      targetPosition.current.set(targetPos.x, targetPos.y, targetPos.z);
+      setPlayerRenderOrigin(targetPosition.current, targetPos);
     } else {
       // Fallback to prop position if visualStore doesn't have data yet
-      targetPosition.current.set(player.position.x, player.position.y, player.position.z);
+      setPlayerRenderOrigin(targetPosition.current, player.position);
     }
 
     // Lerp current position toward target
@@ -123,27 +136,29 @@ function OtherPlayer({ player }: OtherPlayerProps) {
     }
   });
 
-  const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
-  const playerHeight = heroStats?.size.height ?? 1.8;
-  const playerWidth = heroStats?.size.width ?? 0.8;
-
   return (
     <group ref={groupRef}>
       {/* Player body */}
-      <PlayerModel 
+      <HeroVoxelBody
+        heroId={player.heroId}
         team={player.team} 
         height={playerHeight}
-        width={playerWidth}
+        isBot={player.isBot}
+        isMoving={Math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z) > 0.5}
+        hasFlag={player.hasFlag}
       />
 
       {/* Nameplate */}
       <Nameplate 
+        heroId={player.heroId}
         name={player.name} 
         team={player.team}
         health={player.health}
         maxHealth={player.maxHealth}
         height={playerHeight}
       />
+
+      <PlayerVisibilityBeacon team={player.team} height={playerHeight} isBot={player.isBot} />
 
       {/* Flag indicator */}
       {player.hasFlag && (
@@ -153,63 +168,8 @@ function OtherPlayer({ player }: OtherPlayerProps) {
   );
 }
 
-interface PlayerModelProps {
-  team: Team;
-  height: number;
-  width: number;
-}
-
-const PlayerModel = ({ team, height, width }: PlayerModelProps) => {
-  const teamColor = team === 'red' ? '#ff4444' : '#4444ff';
-
-  return (
-    <group>
-      {/* Body (blocky Minecraft style) */}
-      <mesh position={[0, height / 2 - 0.3, 0]} castShadow>
-        <boxGeometry args={[width * 0.8, height * 0.5, width * 0.4]} />
-        <meshStandardMaterial color={teamColor} roughness={0.8} />
-      </mesh>
-
-      {/* Head */}
-      <mesh position={[0, height - 0.25, 0]} castShadow>
-        <boxGeometry args={[width * 0.5, width * 0.5, width * 0.5]} />
-        <meshStandardMaterial color="#ddc8a0" roughness={0.9} />
-      </mesh>
-
-      {/* Arms */}
-      <mesh position={[-width * 0.55, height / 2 - 0.1, 0]} castShadow>
-        <boxGeometry args={[width * 0.25, height * 0.4, width * 0.25]} />
-        <meshStandardMaterial color={teamColor} roughness={0.8} />
-      </mesh>
-      <mesh position={[width * 0.55, height / 2 - 0.1, 0]} castShadow>
-        <boxGeometry args={[width * 0.25, height * 0.4, width * 0.25]} />
-        <meshStandardMaterial color={teamColor} roughness={0.8} />
-      </mesh>
-
-      {/* Legs */}
-      <mesh position={[-width * 0.2, 0.35, 0]} castShadow>
-        <boxGeometry args={[width * 0.3, height * 0.4, width * 0.3]} />
-        <meshStandardMaterial color="#333344" roughness={0.9} />
-      </mesh>
-      <mesh position={[width * 0.2, 0.35, 0]} castShadow>
-        <boxGeometry args={[width * 0.3, height * 0.4, width * 0.3]} />
-        <meshStandardMaterial color="#333344" roughness={0.9} />
-      </mesh>
-
-      {/* Hero emblem on chest */}
-      <mesh position={[0, height / 2 - 0.2, width * 0.21]}>
-        <planeGeometry args={[0.3, 0.3]} />
-        <meshStandardMaterial 
-          color="#ffffff" 
-          emissive="#ffffff"
-          emissiveIntensity={0.3}
-        />
-      </mesh>
-    </group>
-  );
-};
-
 interface NameplateProps {
+  heroId: HeroId | null;
   name: string;
   team: Team;
   health: number;
@@ -217,31 +177,112 @@ interface NameplateProps {
   height: number;
 }
 
-function Nameplate({ name, team, health, maxHealth, height }: NameplateProps) {
+function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const parentWorldQuaternionRef = useRef(new THREE.Quaternion());
+  const cameraWorldQuaternionRef = useRef(new THREE.Quaternion());
+  const { camera } = useThree();
   const teamColor = team === 'red' ? '#ff4444' : '#4444ff';
-  const healthPercent = health / maxHealth;
+  const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
+  const heroColor = heroId ? HERO_ICON_COLORS[heroId].primary : teamColor;
+  const tagWidth = Math.max(112, Math.min(188, 58 + name.length * 7.2));
+
+  useFrame(() => {
+    if (!groupRef.current) return;
+    camera.getWorldQuaternion(cameraWorldQuaternionRef.current);
+    const parent = groupRef.current.parent;
+    if (!parent) {
+      groupRef.current.quaternion.copy(cameraWorldQuaternionRef.current);
+      return;
+    }
+
+    parent.getWorldQuaternion(parentWorldQuaternionRef.current);
+    groupRef.current.quaternion
+      .copy(parentWorldQuaternionRef.current)
+      .invert()
+      .multiply(cameraWorldQuaternionRef.current);
+  });
 
   return (
-    <group position={[0, height + 0.5, 0]}>
-      {/* Health bar background */}
-      <mesh position={[0, 0.15, 0]}>
-        <planeGeometry args={[1, 0.1]} />
-        <meshBasicMaterial color="#1a1a1a" transparent opacity={0.8} />
-      </mesh>
+    <group ref={groupRef} position={[0, height + 0.5, 0]}>
+      <Html
+        center
+        transform
+        occlude="raycast"
+        distanceFactor={8}
+        zIndexRange={[30, 0]}
+        style={{ pointerEvents: 'none', userSelect: 'none' }}
+      >
+        <div
+          className="flex flex-col items-center"
+          style={{
+            width: `${tagWidth}px`,
+          }}
+        >
+          <div className="flex h-5 max-w-full items-center gap-1.5">
+            <div
+              className="flex h-[17px] w-[17px] shrink-0 items-center justify-center"
+              style={{
+                color: heroColor,
+                filter: `drop-shadow(0 0 4px ${heroColor}) drop-shadow(0 1px 2px rgba(0,0,0,0.9))`,
+              }}
+            >
+              {heroId ? (
+                <HeroIcon heroId={heroId} size={15} color={heroColor} />
+              ) : (
+                <div className="h-2 w-2 rotate-45 rounded-[1px]" style={{ background: teamColor }} />
+              )}
+            </div>
+            <span
+              className="min-w-0 flex-1 truncate text-[10px] font-bold uppercase tracking-[0.08em] text-white"
+              style={{
+                textShadow: '0 1px 2px rgba(0,0,0,0.95), 0 0 5px rgba(0,0,0,0.9)',
+              }}
+            >
+              {name}
+            </span>
+          </div>
+          <div
+            className="mt-0.5 h-[3px] w-full overflow-hidden rounded-full"
+            style={{
+              filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.9))',
+            }}
+          >
+            <div
+              className="h-full"
+              style={{
+                width: `${healthPercent * 100}%`,
+                background: healthPercent > 0.3
+                  ? 'linear-gradient(90deg, #22c55e, #86efac)'
+                  : 'linear-gradient(90deg, #ef4444, #f97316)',
+                boxShadow: healthPercent > 0.3
+                  ? '0 0 5px rgba(34,197,94,0.75)'
+                  : '0 0 5px rgba(239,68,68,0.75)',
+              }}
+            />
+          </div>
+        </div>
+      </Html>
+    </group>
+  );
+}
 
-      {/* Health bar fill */}
-      <mesh position={[(healthPercent - 1) * 0.5, 0.15, 0.001]}>
-        <planeGeometry args={[healthPercent, 0.08]} />
-        <meshBasicMaterial 
-          color={healthPercent > 0.3 ? '#00ff88' : '#ff4444'} 
-        />
-      </mesh>
+function PlayerVisibilityBeacon({ team, height, isBot }: { team: Team; height: number; isBot?: boolean }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const color = team === 'red' ? '#ff6b35' : '#38bdf8';
 
-      {/* Name background */}
-      <mesh position={[0, 0, 0]}>
-        <planeGeometry args={[name.length * 0.12 + 0.2, 0.25]} />
-        <meshBasicMaterial color={teamColor} transparent opacity={0.8} />
+  useFrame((state) => {
+    if (!groupRef.current) return;
+    groupRef.current.rotation.y = state.clock.elapsedTime * 1.6;
+  });
+
+  return (
+    <group ref={groupRef} position={[0, height + 0.18, 0]}>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.42, 0.018, 6, 24]} />
+        <meshBasicMaterial color={color} transparent opacity={isBot ? 0.95 : 0.75} />
       </mesh>
+      <pointLight color={color} intensity={isBot ? 1.1 : 0.75} distance={4} />
     </group>
   );
 }
@@ -274,4 +315,3 @@ function FlagCarrierIndicator({ team }: FlagCarrierIndicatorProps) {
     </group>
   );
 }
-

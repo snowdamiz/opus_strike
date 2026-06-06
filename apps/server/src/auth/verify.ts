@@ -48,6 +48,5 @@ export function generateNonce(): string {
  * Create a message for the user to sign
  */
 export function createSignMessage(nonce: string): string {
-  return `Sign this message to authenticate with Voxel Strike.\n\nNonce: ${nonce}\n\nThis signature will not trigger any blockchain transaction or cost any fees.`;
+  return `Sign this message to authenticate with Slop Heroes.\n\nNonce: ${nonce}\n\nThis signature will not trigger any blockchain transaction or cost any fees.`;
 }
-

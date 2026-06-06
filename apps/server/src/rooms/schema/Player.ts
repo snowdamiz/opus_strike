@@ -9,6 +9,9 @@ export class Player extends Schema {
   heroId: string = '';
   state: string = 'spectating';
   isReady: boolean = false;
+  isBot: boolean = false;
+  botDifficulty: string = 'normal';
+  botProfileId: string = '';
 
   // Transform
   position: Vec3Schema = new Vec3Schema();
@@ -52,6 +55,9 @@ defineTypes(Player, {
   heroId: 'string',
   state: 'string',
   isReady: 'boolean',
+  isBot: 'boolean',
+  botDifficulty: 'string',
+  botProfileId: 'string',
   position: Vec3Schema,
   velocity: Vec3Schema,
   lookYaw: 'number',
