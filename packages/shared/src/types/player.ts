@@ -47,6 +47,7 @@ export interface PlayerInput {
   // Client position/velocity for sync (server-authoritative games should validate)
   position?: Vec3;
   velocity?: Vec3;
+  devFly?: boolean;
 }
 
 export interface PlayerStats {
@@ -106,4 +107,3 @@ export interface PlayerSnapshot {
   abilities: Record<string, AbilityState>;
   hasFlag: boolean;
 }
-

@@ -23,6 +23,7 @@ import {
 interface NetworkContextType {
   // Lobby operations
   fetchLobbies: () => Promise<LobbyInfo[]>;
+  watchLobbies: () => () => void;
   createLobby: (playerName: string, lobbyName?: string, isPrivate?: boolean) => Promise<void>;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
@@ -37,6 +38,7 @@ interface NetworkContextType {
   disconnect: () => void;
   sendInput: (input: PlayerInput) => void;
   selectHero: (heroId: HeroId) => void;
+  devSetHero: (heroId: HeroId) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
 
@@ -105,6 +107,33 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       return [];
     }
   }, [setAvailableLobbies]);
+
+  const watchLobbies = useCallback(() => {
+    if (typeof EventSource === 'undefined') {
+      fetchLobbies();
+      return () => {};
+    }
+
+    const httpUrl = config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+    const events = new EventSource(`${httpUrl}/lobbies/stream`);
+
+    events.addEventListener('lobbies', (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        setAvailableLobbies(data.lobbies || []);
+      } catch (error) {
+        console.error('Failed to parse lobby stream event:', error);
+      }
+    });
+
+    events.addEventListener('error', () => {
+      if (events.readyState === EventSource.CLOSED) {
+        fetchLobbies();
+      }
+    });
+
+    return () => events.close();
+  }, [fetchLobbies, setAvailableLobbies]);
 
   const cleanupExistingConnections = useCallback(() => {
     if (lobbyRoomRef.current) {
@@ -388,6 +417,23 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       console.log('Duplicate session detected:', data.reason);
     });
 
+    room.onMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
+      console.log('Developer hero switch confirmed:', data.heroId);
+      const store = useGameStore.getState();
+      if (store.localPlayer) {
+        setLocalPlayer({
+          ...store.localPlayer,
+          heroId: data.heroId,
+          health: data.health,
+          maxHealth: data.maxHealth,
+        });
+      }
+    });
+
+    room.onMessage('devCommandError', (data: { message: string }) => {
+      console.error('Developer command error:', data.message);
+    });
+
     room.onError((code, message) => {
       console.error('Room error:', code, message);
     });
@@ -487,6 +533,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('selectHero', { heroId });
   }, []);
 
+  const devSetHero = useCallback((heroId: HeroId) => {
+    if (!config.isDev) return;
+    console.log('Sending development selectHero:', heroId);
+    gameRoomRef.current?.send('selectHero', { heroId });
+  }, []);
+
   const selectTeam = useCallback((team: Team) => {
     console.log('Sending selectTeam:', team);
     gameRoomRef.current?.send('selectTeam', { team });
@@ -524,6 +576,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   return (
     <NetworkContext.Provider value={{
       fetchLobbies,
+      watchLobbies,
       createLobby,
       joinLobby,
       leaveLobby,
@@ -536,6 +589,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       disconnect,
       sendInput,
       selectHero,
+      devSetHero,
       selectTeam,
       setReady,
       spawnNpc,

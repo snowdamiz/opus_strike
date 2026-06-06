@@ -2,10 +2,12 @@ import { useEffect, useCallback, useRef, useState } from 'react';
 import { createEmptyInputState, DEFAULT_KEYBINDINGS } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
 import { isGameConsoleOpen } from '../components/ui/GameConsole';
+import { useSettingsStore } from '../store/settingsStore';
 
 interface UseInputReturn {
   inputState: InputState;
   isPointerLocked: boolean;
+  isControlPressed: boolean;
   requestPointerLock: () => void;
   exitPointerLock: () => void;
 }
@@ -14,9 +16,18 @@ export function useInput(): UseInputReturn {
   const inputStateRef = useRef<InputState>(createEmptyInputState());
   const [inputState, setInputState] = useState<InputState>(createEmptyInputState());
   const [isPointerLocked, setIsPointerLocked] = useState(false);
+  const [isControlPressed, setIsControlPressed] = useState(false);
+  const toggleCrouch = useSettingsStore(state => state.settings.toggleCrouch);
+  const toggleSprint = useSettingsStore(state => state.settings.toggleSprint);
 
   // Create key to action mapping
   const keyToAction = useRef<Map<string, keyof InputState>>(new Map());
+  const pressedKeysRef = useRef<Set<string>>(new Set());
+  const toggleSettingsRef = useRef({ toggleCrouch, toggleSprint });
+
+  useEffect(() => {
+    toggleSettingsRef.current = { toggleCrouch, toggleSprint };
+  }, [toggleCrouch, toggleSprint]);
 
   useEffect(() => {
     // Build reverse mapping
@@ -35,12 +46,45 @@ export function useInput(): UseInputReturn {
         return;
       }
 
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+        setIsControlPressed(true);
+      }
+
       // Prevent default for game keys
       if (keyToAction.current.has(e.code)) {
         e.preventDefault();
       }
 
       const action = keyToAction.current.get(e.code);
+      const wasPressed = pressedKeysRef.current.has(e.code);
+      pressedKeysRef.current.add(e.code);
+
+      if (
+        action === 'crouch' &&
+        toggleSettingsRef.current.toggleCrouch &&
+        !wasPressed
+      ) {
+        inputStateRef.current = {
+          ...inputStateRef.current,
+          crouch: !inputStateRef.current.crouch,
+        };
+        setInputState({ ...inputStateRef.current });
+        return;
+      }
+
+      if (
+        action === 'sprint' &&
+        toggleSettingsRef.current.toggleSprint &&
+        !wasPressed
+      ) {
+        inputStateRef.current = {
+          ...inputStateRef.current,
+          sprint: !inputStateRef.current.sprint,
+        };
+        setInputState({ ...inputStateRef.current });
+        return;
+      }
+
       if (action && !inputStateRef.current[action]) {
         inputStateRef.current = {
           ...inputStateRef.current,
@@ -51,8 +95,21 @@ export function useInput(): UseInputReturn {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+        setIsControlPressed(false);
+      }
+
+      pressedKeysRef.current.delete(e.code);
+
       // Always handle key up to prevent stuck keys
       const action = keyToAction.current.get(e.code);
+      if (
+        (action === 'crouch' && toggleSettingsRef.current.toggleCrouch) ||
+        (action === 'sprint' && toggleSettingsRef.current.toggleSprint)
+      ) {
+        return;
+      }
+
       if (action && inputStateRef.current[action]) {
         inputStateRef.current = {
           ...inputStateRef.current,
@@ -137,6 +194,8 @@ export function useInput(): UseInputReturn {
     if (!isPointerLocked) {
       inputStateRef.current = createEmptyInputState();
       setInputState(createEmptyInputState());
+      setIsControlPressed(false);
+      pressedKeysRef.current.clear();
     }
   }, [isPointerLocked]);
 
@@ -157,8 +216,8 @@ export function useInput(): UseInputReturn {
   return {
     inputState,
     isPointerLocked,
+    isControlPressed,
     requestPointerLock,
     exitPointerLock,
   };
 }
-

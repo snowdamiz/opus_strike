@@ -21,6 +21,9 @@ import {
   BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
+  BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
+  BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+  BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
 } from '@voxel-strike/shared';
 import type { 
   HeroId, 
@@ -99,7 +102,21 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.onMessage('selectHero', (client, data: { heroId: HeroId }) => {
-      this.handleHeroSelect(client, data.heroId);
+      try {
+        this.handleHeroSelect(client, data.heroId);
+      } catch (error) {
+        console.error('[GameRoom] Failed to apply hero selection:', error);
+        client.send('devCommandError', { message: 'Failed to switch hero' });
+      }
+    });
+
+    this.onMessage('devSetHero', (client, data: { heroId: HeroId }) => {
+      try {
+        this.handleDevSetHero(client, data.heroId);
+      } catch (error) {
+        console.error('[GameRoom] Failed to apply dev hero switch:', error);
+        client.send('devCommandError', { message: 'Failed to switch hero' });
+      }
     });
 
     this.onMessage('selectTeam', (client, data: { team: Team }) => {
@@ -416,6 +433,21 @@ export class GameRoom extends Room<GameState> {
     player.lookYaw = input.lookYaw;
     player.lookPitch = input.lookPitch;
 
+    if (this.isDevelopmentMode() && input.devFly) {
+      this.disablePlayerSkills(player);
+      if (input.position && this.isFiniteVec3(input.position)) {
+        player.position.x = input.position.x;
+        player.position.y = input.position.y;
+        player.position.z = input.position.z;
+      }
+      if (input.velocity && this.isFiniteVec3(input.velocity)) {
+        player.velocity.x = input.velocity.x;
+        player.velocity.y = input.velocity.y;
+        player.velocity.z = input.velocity.z;
+      }
+      return;
+    }
+
     const shouldAcceptClientPosition = Date.now() >= (this.authoritativePositionUntil.get(client.sessionId) ?? 0);
 
     // Use client-reported position after server-side spawn placement has had time to sync.
@@ -480,24 +512,97 @@ export class GameRoom extends Room<GameState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
-    if (this.state.phase !== 'hero_select' && this.state.phase !== 'waiting') return;
+    const isSelectionPhase = this.state.phase === 'hero_select' || this.state.phase === 'waiting';
+    const isActiveDevRoom = this.isDevelopmentMode()
+      && (this.state.phase === 'countdown' || this.state.phase === 'playing' || this.state.phase === 'round_end');
 
+    if (!isSelectionPhase && !isActiveDevRoom) return;
+
+    if (!this.setPlayerHero(player, heroId)) {
+      if (this.isDevelopmentMode()) {
+        client.send('devCommandError', { message: `Invalid hero: ${heroId}` });
+      }
+      return;
+    }
+
+    if (isActiveDevRoom) {
+      client.send('devHeroChanged', {
+        heroId,
+        health: player.health,
+        maxHealth: player.maxHealth,
+      });
+    }
+  }
+
+  private handleDevSetHero(client: Client, heroId: HeroId) {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    if (!this.setPlayerHero(player, heroId)) {
+      client.send('devCommandError', { message: `Invalid hero: ${heroId}` });
+      return;
+    }
+
+    client.send('devHeroChanged', {
+      heroId,
+      health: player.health,
+      maxHealth: player.maxHealth,
+    });
+  }
+
+  private setPlayerHero(player: Player, heroId: HeroId): boolean {
     const heroDef = HERO_DEFINITIONS[heroId];
-    if (!heroDef) return;
+    if (!heroDef) return false;
 
     player.heroId = heroId;
     player.maxHealth = heroDef.stats.maxHealth;
     player.health = player.maxHealth;
     player.ultimateCharge = 0;
+    this.disablePlayerSkills(player);
+    if (player.lastInput) {
+      player.lastInput = {
+        ...player.lastInput,
+        primaryFire: false,
+        secondaryFire: false,
+        ability1: false,
+        ability2: false,
+        ultimate: false,
+      };
+    }
+
     if (heroId === 'blaze') {
       player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-      player.movement.isJetpacking = false;
     }
 
     // Initialize abilities for this hero
     initializePlayerAbilities(player, heroId);
 
     console.log(`${player.name} selected ${heroDef.name}`);
+    return true;
+  }
+
+  private isDevelopmentMode(): boolean {
+    return process.env.NODE_ENV !== 'production';
+  }
+
+  private isFiniteVec3(position: { x: number; y: number; z: number }): boolean {
+    return Number.isFinite(position.x) && Number.isFinite(position.y) && Number.isFinite(position.z);
+  }
+
+  private disablePlayerSkills(player: Player) {
+    player.abilities.forEach(ability => {
+      ability.isActive = false;
+    });
+    player.movement.isGrappling = false;
+    player.movement.isJetpacking = false;
+    player.movement.isGliding = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
   }
 
   private handleTeamSelect(client: Client, team: Team) {
@@ -837,11 +942,21 @@ export class GameRoom extends Room<GameState> {
       y: 0,
       z: -Math.sin(source.lookYaw),
     };
+    const horizontalForward = {
+      x: -Math.sin(source.lookYaw),
+      z: -Math.cos(source.lookYaw),
+    };
 
     const origin = {
-      x: source.position.x + forward.x * 0.7 + right.x * 0.22,
-      y: source.position.y + 0.5 + forward.y * 0.7,
-      z: source.position.z + forward.z * 0.7 + right.z * 0.22,
+      x:
+        source.position.x +
+        horizontalForward.x * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
+        right.x * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+      y: source.position.y + BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+      z:
+        source.position.z +
+        horizontalForward.z * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
+        right.z * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
     };
 
     const rangeSq = BLAZE_FLAMETHROWER_RANGE * BLAZE_FLAMETHROWER_RANGE;
@@ -1007,6 +1122,8 @@ export class GameRoom extends Room<GameState> {
       if (player.state !== 'alive' || !player.lastInput) return;
 
       const input = player.lastInput;
+      if (this.isDevelopmentMode() && input.devFly) return;
+
       const heroId = player.heroId as HeroId;
 
       // Get movement parameters from hero config

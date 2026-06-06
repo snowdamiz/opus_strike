@@ -110,6 +110,8 @@ export interface HookProjectileData {
   state: 'extending' | 'retracting';
   maxDistance: number;
   startPosition: { x: number; y: number; z: number };
+  launchSide?: -1 | 1; // -1 = left hand, 1 = right hand
+  launchYaw?: number; // Fallback orientation for resolving the launch socket
 }
 
 export interface DragHookData {
@@ -122,6 +124,8 @@ export interface DragHookData {
   state: 'flying' | 'attached' | 'pulling';
   targetId?: string; // Player ID if hooked
   startPosition: { x: number; y: number; z: number };
+  launchSide?: -1 | 1; // -1 = left hand, 1 = right hand
+  launchYaw?: number; // Fallback orientation for resolving the launch socket
 }
 
 export interface GrappleTrapData {
@@ -156,6 +160,8 @@ export interface GrappleLineData {
   startTime: number;
   ownerId: string;
   state: 'extending' | 'attached' | 'pulling' | 'retracting' | 'done';
+  launchSide?: -1 | 1; // -1 = left hand, 1 = right hand
+  launchYaw?: number; // Fallback orientation for resolving the launch socket
 }
 
 export interface EarthWallData {
@@ -211,4 +217,3 @@ export interface IceWallRushData {
 // ============================================================================
 
 export type { GamePhase, Player, Team, HeroId, Vec3, PlayerInput };
-

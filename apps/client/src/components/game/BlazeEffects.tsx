@@ -53,11 +53,7 @@ export function BlazeEffectsManager() {
       {/* Air strikes */}
       <AirStrikeEffects />
       
-      {flamethrowerActive && (
-        <FlamethrowerEffect
-          isActive={true}
-        />
-      )}
+      <FlamethrowerEffect isActive={flamethrowerActive} />
     </group>
   );
 }

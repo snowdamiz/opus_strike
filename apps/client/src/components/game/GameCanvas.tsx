@@ -1,5 +1,5 @@
-import { Canvas } from '@react-three/fiber';
-import { Suspense, useMemo } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
+import { Suspense, useEffect, useMemo } from 'react';
 import { OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { getVoxelMapTheme } from '@voxel-strike/shared';
@@ -18,9 +18,58 @@ import { HookshotEffectsManager } from './HookshotEffects';
 import { GlacierEffectsManager } from './GlacierEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
 import { useGameStore } from '../../store/gameStore';
+import { useSettingsStore, type GraphicsQuality } from '../../store/settingsStore';
+
+const QUALITY_CONFIG: Record<GraphicsQuality, {
+  dpr: [number, number];
+  shadows: boolean;
+  antialias: boolean;
+  exposure: number;
+}> = {
+  low: {
+    dpr: [0.75, 1],
+    shadows: false,
+    antialias: false,
+    exposure: 1,
+  },
+  medium: {
+    dpr: [1, 1.25],
+    shadows: true,
+    antialias: false,
+    exposure: 1.04,
+  },
+  high: {
+    dpr: [1, 1.75],
+    shadows: true,
+    antialias: true,
+    exposure: 1.08,
+  },
+  ultra: {
+    dpr: [1.25, 2],
+    shadows: true,
+    antialias: true,
+    exposure: 1.12,
+  },
+};
+
+function CameraSettingsApplier({ fov }: { fov: number }) {
+  const { camera } = useThree();
+
+  useEffect(() => {
+    if ('fov' in camera) {
+      (camera as THREE.PerspectiveCamera).fov = fov;
+      (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+    }
+  }, [camera, fov]);
+
+  return null;
+}
 
 export function GameCanvas() {
   const { gamePhase, voidZones, direBalls, voidRays, mapSeed } = useGameStore();
+  const quality = useSettingsStore(state => state.settings.quality);
+  const fov = useSettingsStore(state => state.settings.fov);
+  const qualityConfig = QUALITY_CONFIG[quality];
   const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
   const gridCellColor = useMemo(
     () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
@@ -34,21 +83,22 @@ export function GameCanvas() {
 
   return (
     <Canvas
-      shadows
-      dpr={[1, 1.75]}
+      key={quality}
+      shadows={qualityConfig.shadows}
+      dpr={qualityConfig.dpr}
       camera={{ 
-        fov: 90, 
+        fov, 
         near: 0.1, 
         far: 1000,
         position: [0, 2, 10], // Start at a reasonable height
       }}
       gl={{ 
-        antialias: true,
+        antialias: qualityConfig.antialias,
         powerPreference: 'high-performance',
       }}
       onCreated={({ gl }) => {
         gl.toneMapping = THREE.ACESFilmicToneMapping;
-        gl.toneMappingExposure = 1.08;
+        gl.toneMappingExposure = qualityConfig.exposure;
         gl.shadowMap.type = THREE.PCFSoftShadowMap;
       }}
       style={{
@@ -58,6 +108,7 @@ export function GameCanvas() {
       }}
     >
       <Suspense fallback={null}>
+        <CameraSettingsApplier fov={fov} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} />
 
         {/* Lighting follows the generated map theme. */}

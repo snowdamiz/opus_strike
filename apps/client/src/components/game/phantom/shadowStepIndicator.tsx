@@ -5,7 +5,7 @@ import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, validateTeleportDestination } from '../../../hooks/usePhysics';
 
 const PLAYER_HEIGHT = 1.8;
-const PLAYER_RADIUS = 0.4;
+const PLAYER_RADIUS = 0.48;
 
 // Maximum teleport range
 const MAX_RANGE = 25;

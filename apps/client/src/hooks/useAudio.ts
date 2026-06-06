@@ -1,4 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
+import { loadSettings, type ClientSettings } from '../store/settingsStore';
 
 interface AudioConfig {
   masterVolume: number;  // 0-100
@@ -20,18 +21,14 @@ const DEFAULT_CONFIG: AudioConfig = {
 };
 
 // Load settings from localStorage
-function loadAudioSettings(): AudioConfig {
+function loadAudioSettings(settings: Partial<ClientSettings> = loadSettings()): AudioConfig {
   try {
-    const saved = localStorage.getItem('voxel-strike-settings');
-    if (saved) {
-      const settings = JSON.parse(saved);
-      return {
-        masterVolume: settings.masterVolume ?? DEFAULT_CONFIG.masterVolume,
-        sfxVolume: settings.sfxVolume ?? DEFAULT_CONFIG.sfxVolume,
-        musicVolume: settings.musicVolume ?? DEFAULT_CONFIG.musicVolume,
-        muted: false,
-      };
-    }
+    return {
+      masterVolume: settings.masterVolume ?? DEFAULT_CONFIG.masterVolume,
+      sfxVolume: settings.sfxVolume ?? DEFAULT_CONFIG.sfxVolume,
+      musicVolume: settings.musicVolume ?? DEFAULT_CONFIG.musicVolume,
+      muted: false,
+    };
   } catch (e) {
     console.warn('[Audio] Failed to load settings:', e);
   }
@@ -43,7 +40,12 @@ let sharedAudioContext: AudioContext | null = null;
 const sharedConfig: AudioConfig = loadAudioSettings();
 const sharedSounds = new Map<string, SoundEffect>();
 const sharedSoundLoads = new Map<string, Promise<SoundEffect | null>>();
-const sharedLoops = new Map<string, { source: AudioBufferSourceNode; gain: GainNode; isMusic: boolean }>();
+const sharedLoops = new Map<string, {
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+  isMusic: boolean;
+  baseVolume: number;
+}>();
 
 // Calculate effective volume for SFX
 function getSfxVolume(): number {
@@ -266,23 +268,29 @@ export function useAudio() {
 
     // Use music volume for music tracks, SFX volume for other loops
     const volumeMultiplier = options?.isMusic ? getMusicVolume() : getSfxVolume();
+    const baseVolume = (options?.volume ?? 1) * sound.volume;
     const gainNode = ctx.createGain();
     
     if (options?.fadeIn) {
       gainNode.gain.value = 0;
       gainNode.gain.linearRampToValueAtTime(
-        (options.volume ?? 1) * sound.volume * volumeMultiplier,
+        baseVolume * volumeMultiplier,
         ctx.currentTime + options.fadeIn
       );
     } else {
-      gainNode.gain.value = (options?.volume ?? 1) * sound.volume * volumeMultiplier;
+      gainNode.gain.value = baseVolume * volumeMultiplier;
     }
 
     source.connect(gainNode);
     gainNode.connect(ctx.destination);
     source.start();
 
-    sharedLoops.set(id, { source, gain: gainNode, isMusic: options?.isMusic ?? false });
+    sharedLoops.set(id, {
+      source,
+      gain: gainNode,
+      isMusic: options?.isMusic ?? false,
+      baseVolume,
+    });
   }, [loadSound, initAudio]);
 
   // Stop looping sound
@@ -304,8 +312,8 @@ export function useAudio() {
   }, []);
 
   // Update audio settings from localStorage
-  const updateSettings = useCallback(() => {
-    const newSettings = loadAudioSettings();
+  const updateSettings = useCallback((settings?: Partial<ClientSettings>) => {
+    const newSettings = loadAudioSettings(settings);
     sharedConfig.masterVolume = newSettings.masterVolume;
     sharedConfig.sfxVolume = newSettings.sfxVolume;
     sharedConfig.musicVolume = newSettings.musicVolume;
@@ -313,7 +321,7 @@ export function useAudio() {
     // Update all currently playing loops with new volume
     for (const [, loop] of sharedLoops) {
       const volumeMultiplier = loop.isMusic ? getMusicVolume() : getSfxVolume();
-      loop.gain.gain.value = volumeMultiplier;
+      loop.gain.gain.value = loop.baseVolume * volumeMultiplier;
     }
   }, []);
 

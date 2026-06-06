@@ -193,7 +193,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'movement',
     targeting: 'direction',
     cooldown: 8,
-    duration: 3,
+    duration: 2.75,
     description: 'Fire a rope that lets you swing in an arc, building momentum.',
   },
   hookshot_grapple_trap: {

@@ -23,15 +23,16 @@ const _quat = new THREE.Quaternion();
 const _inverseQuat = new THREE.Quaternion();
 const _lag = new THREE.Vector3();
 const _localLag = new THREE.Vector3();
+const _smoothedLocalDirection = new THREE.Vector3();
 const OPEN_FLAME_GEOMETRY = new THREE.ConeGeometry(1, 1, 10, 1, true);
 
 const FLAME_SEGMENTS = [
-  { y: 0.55, radius: 0.1, length: 1.1, color: 0xffffff, opacity: 0.46, lag: 0.14 },
-  { y: 1.15, radius: 0.22, length: 1.65, color: 0xfff2a6, opacity: 0.4, lag: 0.24 },
-  { y: 2.0, radius: 0.4, length: 2.35, color: 0xffa000, opacity: 0.34, lag: 0.42 },
-  { y: 3.05, radius: 0.66, length: 3.0, color: 0xff4d00, opacity: 0.26, lag: 0.64 },
-  { y: 4.35, radius: 0.95, length: 3.6, color: 0xbb1f00, opacity: 0.18, lag: 0.86 },
-  { y: 5.9, radius: 1.24, length: 4.1, color: 0x6f1600, opacity: 0.12, lag: 1.08 },
+  { y: 0.55, radius: 0.1, length: 1.1, color: 0xffffff, opacity: 0.46, lag: 0 },
+  { y: 1.15, radius: 0.22, length: 1.65, color: 0xfff2a6, opacity: 0.4, lag: 0.12 },
+  { y: 2.0, radius: 0.4, length: 2.35, color: 0xffa000, opacity: 0.34, lag: 0.3 },
+  { y: 3.05, radius: 0.66, length: 3.0, color: 0xff4d00, opacity: 0.26, lag: 0.5 },
+  { y: 4.35, radius: 0.95, length: 3.6, color: 0xbb1f00, opacity: 0.18, lag: 0.72 },
+  { y: 5.9, radius: 1.24, length: 4.1, color: 0x6f1600, opacity: 0.12, lag: 0.95 },
 ];
 
 const FLAME_SPARKS = Array.from({ length: 14 }, (_, i) => ({
@@ -49,6 +50,12 @@ const SMOKE_PUFFS = Array.from({ length: 8 }, (_, i) => ({
   size: 0.1 + Math.random() * 0.12,
 }));
 
+const FLAMETHROWER_SPIN_UP_DURATION = 0.14;
+const FLAMETHROWER_SPIN_DOWN_DURATION = 0.18;
+
+const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+const easeOutCubic = (value: number): number => 1 - Math.pow(1 - clamp01(value), 3);
+
 export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -61,26 +68,49 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
   const smoothedOriginRef = useRef(new THREE.Vector3());
   const smoothedDirectionRef = useRef(new THREE.Vector3(0, 0, -1));
   const poseInitializedRef = useRef(false);
+  const rampRef = useRef(0);
+  const wasLiveRef = useRef(false);
 
   useFrame((state, delta) => {
-    if (!isActive || !groupRef.current) return;
+    if (!groupRef.current) return;
 
     const { flamethrowerOrigin, flamethrowerDirection } = visualStore.getState();
-    if (!flamethrowerOrigin) {
+    const hasLivePose = isActive && Boolean(flamethrowerOrigin);
+    const rampStep = delta / (hasLivePose ? FLAMETHROWER_SPIN_UP_DURATION : FLAMETHROWER_SPIN_DOWN_DURATION);
+    rampRef.current = hasLivePose
+      ? Math.min(1, rampRef.current + rampStep)
+      : Math.max(0, rampRef.current - rampStep);
+
+    if (!hasLivePose && (!poseInitializedRef.current || rampRef.current <= 0.001)) {
       groupRef.current.visible = false;
+      if (rampRef.current <= 0.001) {
+        poseInitializedRef.current = false;
+      }
+      wasLiveRef.current = false;
       return;
     }
     groupRef.current.visible = true;
 
-    _origin.set(flamethrowerOrigin.x, flamethrowerOrigin.y, flamethrowerOrigin.z);
-    _direction.set(flamethrowerDirection.x, flamethrowerDirection.y, flamethrowerDirection.z);
+    if (hasLivePose && flamethrowerOrigin) {
+      _origin.set(flamethrowerOrigin.x, flamethrowerOrigin.y, flamethrowerOrigin.z);
+      _direction.set(flamethrowerDirection.x, flamethrowerDirection.y, flamethrowerDirection.z);
+    } else {
+      _origin.copy(smoothedOriginRef.current);
+      _direction.copy(smoothedDirectionRef.current);
+    }
+
     if (_direction.lengthSq() < 0.0001) {
       _direction.set(0, 0, -1);
     }
     _direction.normalize();
 
     const now = Date.now();
-    if (now - lastTerrainImpactRef.current > 120) {
+    if (hasLivePose && !wasLiveRef.current) {
+      startTimeRef.current = now;
+    }
+    wasLiveRef.current = hasLivePose;
+
+    if (hasLivePose && rampRef.current > 0.35 && now - lastTerrainImpactRef.current > 120) {
       const hit = raycastDirection(
         _origin.x, _origin.y, _origin.z,
         _direction.x, _direction.y, _direction.z,
@@ -108,35 +138,68 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
     smoothedOriginRef.current.lerp(_origin, originAlpha);
     smoothedDirectionRef.current.lerp(_direction, directionAlpha).normalize();
 
-    groupRef.current.position.copy(smoothedOriginRef.current);
-    _quat.setFromUnitVectors(_defaultAxis, smoothedDirectionRef.current);
+    groupRef.current.position.copy(_origin);
+    _quat.setFromUnitVectors(_defaultAxis, _direction);
     groupRef.current.quaternion.copy(_quat);
     _inverseQuat.copy(_quat).invert();
     _lag.copy(smoothedOriginRef.current).sub(_origin);
     _localLag.copy(_lag).applyQuaternion(_inverseQuat);
+    _smoothedLocalDirection.copy(smoothedDirectionRef.current).applyQuaternion(_inverseQuat);
 
     const elapsed = (now - startTimeRef.current) / 1000;
     const time = state.clock.elapsedTime;
     const flicker = 0.88 + Math.sin(time * 34) * 0.08 + Math.sin(time * 71) * 0.04;
+    const plumeIntensity = easeOutCubic(rampRef.current);
+    const spin = time * (10 + plumeIntensity * 18);
 
     flameRefs.current.forEach((flame, i) => {
       if (!flame) return;
       const segment = FLAME_SEGMENTS[i];
       const pulse = flicker + Math.sin(time * (18 + i * 3) + i) * 0.06;
+      const segmentRamp = easeOutCubic(clamp01((rampRef.current - i * 0.06) / 0.7));
+      const trailLag = segment.lag * segmentRamp;
+      const trailX =
+        _localLag.x * trailLag +
+        _smoothedLocalDirection.x * segment.y * trailLag * 0.45;
+      const trailY = Math.max(-0.25, Math.min(0.2, _localLag.y * trailLag));
+      const trailZ =
+        _localLag.z * trailLag +
+        _smoothedLocalDirection.z * segment.y * trailLag * 0.45;
+      const spinAngle = spin + i * 0.75;
+      const spinWobble = Math.sin(spinAngle) * segment.radius * 0.08 * plumeIntensity;
+
+      flame.visible = segmentRamp > 0.01;
+      flame.rotation.y = spinAngle;
       flame.position.set(
-        _localLag.x * segment.lag + Math.sin(time * (9 + i) + i) * segment.radius * 0.14,
-        segment.y * pulse + Math.max(-0.35, Math.min(0.15, _localLag.y * segment.lag)),
-        _localLag.z * segment.lag + Math.cos(time * (7 + i) + i) * segment.radius * 0.14
+        trailX + spinWobble + Math.sin(time * (9 + i) + i) * segment.radius * 0.14,
+        segment.y * pulse * (0.28 + segmentRamp * 0.72) + trailY,
+        trailZ + Math.cos(spinAngle) * segment.radius * 0.08 * plumeIntensity +
+          Math.cos(time * (7 + i) + i) * segment.radius * 0.14
       );
-      flame.scale.set(segment.radius * pulse, segment.length * pulse, segment.radius * pulse);
-      (flame.material as THREE.MeshBasicMaterial).opacity = segment.opacity * Math.min(1, pulse + 0.05);
+      flame.scale.set(
+        Math.max(0.001, segment.radius * pulse * segmentRamp),
+        Math.max(0.001, segment.length * pulse * (0.2 + segmentRamp * 0.8)),
+        Math.max(0.001, segment.radius * pulse * segmentRamp)
+      );
+      (flame.material as THREE.MeshBasicMaterial).opacity =
+        segment.opacity * Math.min(1, pulse + 0.05) * segmentRamp;
     });
 
     if (glowRef.current) {
       const glowPulse = 1 + Math.sin(time * 28) * 0.12;
-      glowRef.current.position.set(_localLag.x * 0.45, BLAZE_FLAMETHROWER_RANGE * 0.32, _localLag.z * 0.45);
-      glowRef.current.scale.set(0.7 * glowPulse, BLAZE_FLAMETHROWER_RANGE * 0.48, 0.7 * glowPulse);
-      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.055 + flicker * 0.02;
+      glowRef.current.visible = plumeIntensity > 0.01;
+      glowRef.current.position.set(
+        _localLag.x * 0.32 + _smoothedLocalDirection.x * BLAZE_FLAMETHROWER_RANGE * 0.12,
+        BLAZE_FLAMETHROWER_RANGE * 0.32,
+        _localLag.z * 0.32 + _smoothedLocalDirection.z * BLAZE_FLAMETHROWER_RANGE * 0.12
+      );
+      glowRef.current.scale.set(
+        Math.max(0.001, 0.7 * glowPulse * plumeIntensity),
+        BLAZE_FLAMETHROWER_RANGE * 0.48 * (0.25 + plumeIntensity * 0.75),
+        Math.max(0.001, 0.7 * glowPulse * plumeIntensity)
+      );
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity =
+        (0.055 + flicker * 0.02) * plumeIntensity;
     }
 
     sparkRefs.current.forEach((spark, i) => {
@@ -145,13 +208,25 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
       const cycle = (elapsed * data.speed + data.phase) % 1;
       const distance = 0.5 + cycle * (BLAZE_FLAMETHROWER_RANGE * 0.85);
       const spread = cycle * cycle * 1.65;
+      const lag = 0.18 + cycle * 0.8;
+      const sparkRamp = easeOutCubic(clamp01((rampRef.current - 0.1) / 0.65));
+      const spinAngle = spin * 1.25 + i * 0.9 + cycle * Math.PI * 2;
+
+      spark.visible = sparkRamp > 0.01;
       spark.position.set(
-        _localLag.x * (0.25 + cycle * 0.75) + data.side * spread * data.drift + Math.sin(time * 14 + i) * 0.05,
-        distance,
-        _localLag.z * (0.25 + cycle * 0.75) + Math.cos(time * 11 + i) * spread * 0.12
+        _localLag.x * lag +
+          _smoothedLocalDirection.x * distance * lag * 0.35 +
+          data.side * spread * data.drift +
+          Math.cos(spinAngle) * spread * 0.18 * sparkRamp +
+          Math.sin(time * 14 + i) * 0.05,
+        distance * (0.3 + sparkRamp * 0.7),
+        _localLag.z * lag +
+          _smoothedLocalDirection.z * distance * lag * 0.35 +
+          Math.sin(spinAngle) * spread * 0.18 * sparkRamp +
+          Math.cos(time * 11 + i) * spread * 0.12
       );
-      spark.scale.setScalar(cycle < 0.85 ? data.size * (1 + cycle * 1.2) : 0);
-      (spark.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - cycle);
+      spark.scale.setScalar(cycle < 0.85 ? data.size * (1 + cycle * 1.2) * sparkRamp : 0);
+      (spark.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - cycle) * sparkRamp;
     });
 
     smokeRefs.current.forEach((smoke, i) => {
@@ -160,29 +235,36 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
       const cycle = (elapsed * 0.9 + data.phase) % 1;
       const distance = 2.4 + cycle * (BLAZE_FLAMETHROWER_RANGE * 0.45);
       const spread = cycle * 2.0;
+      const lag = 0.42 + cycle * 0.95;
+      const smokeRamp = easeOutCubic(clamp01((rampRef.current - 0.18) / 0.7));
+
+      smoke.visible = smokeRamp > 0.01;
       smoke.position.set(
-        _localLag.x * (0.45 + cycle) + data.drift * spread,
-        distance,
-        _localLag.z * (0.45 + cycle) + data.rise * spread
+        _localLag.x * lag +
+          _smoothedLocalDirection.x * distance * lag * 0.28 +
+          data.drift * spread,
+        distance * (0.45 + smokeRamp * 0.55),
+        _localLag.z * lag +
+          _smoothedLocalDirection.z * distance * lag * 0.28 +
+          data.rise * spread
       );
-      smoke.scale.setScalar(data.size + cycle * 0.28);
-      (smoke.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.28 - cycle * 0.28);
+      smoke.scale.setScalar((data.size + cycle * 0.28) * smokeRamp);
+      (smoke.material as THREE.MeshBasicMaterial).opacity =
+        Math.max(0, 0.28 - cycle * 0.28) * smokeRamp;
     });
 
     if (lightRef.current) {
       lightRef.current.position.y = BLAZE_FLAMETHROWER_RANGE * 0.35;
-      lightRef.current.intensity = 2 + flicker * 1.5;
+      lightRef.current.intensity = (2 + flicker * 1.5) * plumeIntensity;
     }
   });
-
-  if (!isActive) return null;
 
   if (Date.now() - startTimeRef.current > 5000) {
     startTimeRef.current = Date.now();
   }
 
   return (
-    <group ref={groupRef}>
+    <group ref={groupRef} visible={false}>
       {FLAME_SEGMENTS.map((segment, i) => (
         <mesh
           key={`flame-${i}`}

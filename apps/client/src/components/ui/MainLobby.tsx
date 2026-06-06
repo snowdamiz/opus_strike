@@ -4,6 +4,7 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
 import { SettingsModal } from './SettingsModal';
+import { GameDialog } from './GameDialog';
 import { HeroSVG } from './HeroSVG';
 import { useUISounds } from '../../hooks/useAudio';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
@@ -55,7 +56,7 @@ const HERO_COLORS: Record<HeroId, string> = {
 
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
-  const { fetchLobbies, createLobby, joinLobby } = useNetwork();
+  const { watchLobbies, createLobby, joinLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -76,7 +77,6 @@ export function MainLobby() {
 
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showBrowseGames, setShowBrowseGames] = useState(false);
@@ -205,17 +205,9 @@ export function MainLobby() {
 
   useEffect(() => {
     if (activeTab === 'play') {
-      fetchLobbies();
-      const interval = setInterval(fetchLobbies, 5000);
-      return () => clearInterval(interval);
+      return watchLobbies();
     }
-  }, [fetchLobbies, activeTab]);
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await fetchLobbies();
-    setTimeout(() => setIsRefreshing(false), 400);
-  };
+  }, [watchLobbies, activeTab]);
 
   const handleCreateLobby = async (lobbyName: string, isPrivate: boolean) => {
     setError(null);
@@ -393,21 +385,21 @@ export function MainLobby() {
 
             {/* Conditional: Show sign-in button or profile card */}
             {isAuthenticated && user ? (
-              <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-strike-surface/80 border border-white/5 group relative">
+              <div className="flex items-center gap-3 py-1 pl-1 pr-0 rounded-lg group">
                 <div
-                  className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-white"
+                  className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center font-display text-white"
                   style={{ background: heroColor }}
                 >
                   {playerName.charAt(0).toUpperCase()}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="font-display text-white text-sm">{playerName}</p>
                   <p className="text-[10px] text-white/40 font-body">Level 1</p>
                 </div>
                 {/* Disconnect button on hover */}
  <button
  onClick={handleDisconnect}
- className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/10"
+ className="w-8 h-8 shrink-0 opacity-60 group-hover:opacity-100 rounded-lg flex items-center justify-center hover:bg-white/10"
  title="Disconnect wallet"
  >
  <svg className="w-4 h-4 text-white/40 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -504,8 +496,6 @@ export function MainLobby() {
         <BrowseGamesModal
           availableLobbies={availableLobbies}
           isLoading={isLoading}
-          isRefreshing={isRefreshing}
-          onRefresh={handleRefresh}
           onJoinLobby={handleJoinLobby}
           onClose={() => setShowBrowseGames(false)}
         />
@@ -759,8 +749,6 @@ function PlayTab({
 interface BrowseGamesModalProps {
   availableLobbies: LobbyInfo[];
   isLoading: boolean;
-  isRefreshing: boolean;
-  onRefresh: () => void;
   onJoinLobby: (lobbyId: string) => void;
   onClose: () => void;
 }
@@ -768,93 +756,45 @@ interface BrowseGamesModalProps {
 function BrowseGamesModal({
   availableLobbies,
   isLoading,
-  isRefreshing,
-  onRefresh,
   onJoinLobby,
   onClose
 }: BrowseGamesModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80" onClick={onClose} />
-
-      {/* Modal */}
-      <div className="relative w-full max-w-2xl mx-4 bg-strike-surface border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-              <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="font-display text-2xl text-white">BROWSE GAMES</h2>
-              <p className="text-white/40 text-xs font-body">{availableLobbies.length} games available</p>
-            </div>
+    <GameDialog
+      title="BROWSE GAMES"
+      icon={(
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+      )}
+      iconClassName="bg-cyan-500/15 text-cyan-300"
+      size="lg"
+      onClose={onClose}
+      bodyClassName="max-h-[400px] overflow-y-auto"
+    >
+      {availableLobbies.length === 0 ? (
+        <div className="py-16 text-center">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-xl bg-white/5 flex items-center justify-center">
+            <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
           </div>
-          <div className="flex items-center gap-2">
- <button
- onClick={onRefresh}
- disabled={isRefreshing}
- className="flex items-center gap-2 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white/60 text-sm font-body hover:bg-white/10 hover:text-white"
- >
- <svg
- className={`w-4 h-4 ${isRefreshing ? '' : ''}`}
- fill="none" viewBox="0 0 24 24" stroke="currentColor"
- >
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
- </svg>
- Refresh
- </button>
- <button
- onClick={onClose}
- className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10"
- >
- <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
- </svg>
- </button>
-          </div>
+          <p className="font-display text-xl text-white/40">NO GAMES FOUND</p>
+          <p className="mt-2 text-white/20 text-sm font-body">Create one to get started!</p>
         </div>
-
-        {/* List */}
-        <div className="max-h-[400px] overflow-y-auto">
-          {availableLobbies.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-xl bg-white/5 flex items-center justify-center">
-                <svg className="w-8 h-8 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-              <p className="font-display text-xl text-white/40">NO GAMES FOUND</p>
-              <p className="mt-2 text-white/20 text-sm font-body">Create one to get started!</p>
-            </div>
-          ) : (
-            <div className="p-4 space-y-2">
-              {availableLobbies.map((lobby) => (
-                <LobbyRow
-                  key={lobby.roomId}
-                  lobby={lobby}
-                  onJoin={() => onJoinLobby(lobby.roomId)}
-                  disabled={isLoading}
-                />
-              ))}
-            </div>
-          )}
+      ) : (
+        <div className="p-4 space-y-2">
+          {availableLobbies.map((lobby) => (
+            <LobbyRow
+              key={lobby.roomId}
+              lobby={lobby}
+              onJoin={() => onJoinLobby(lobby.roomId)}
+              disabled={isLoading}
+            />
+          ))}
         </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-white/5 bg-strike-elevated/30">
- <button
- onClick={onClose}
- className="w-full py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
- >
- CLOSE
- </button>
-        </div>
-      </div>
-    </div>
+      )}
+    </GameDialog>
   );
 }
 
@@ -877,99 +817,81 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80" onClick={onClose} />
-
-      {/* Modal */}
-      <div className="relative w-full max-w-md mx-4 bg-strike-surface border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-white/5">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center">
-              <svg className="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-              </svg>
-            </div>
-            <h2 className="font-display text-2xl text-white">CREATE GAME</h2>
-          </div>
- <button
- onClick={onClose}
- className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10"
- >
- <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
- </svg>
- </button>
+    <GameDialog
+      title="CREATE GAME"
+      icon={(
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+        </svg>
+      )}
+      size="md"
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {/* Game Name */}
+        <div>
+          <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-2">
+            Game Name
+          </label>
+          <input
+            type="text"
+            value={lobbyName}
+            onChange={(e) => setLobbyName(e.target.value)}
+            placeholder={`${playerName}'s Lobby`}
+            maxLength={24}
+            className="input w-full px-4 py-3 text-lg rounded-xl"
+            autoFocus
+          />
+          <p className="mt-1.5 text-white/30 text-xs font-body">
+            Leave empty for default name
+          </p>
         </div>
 
-        {/* Content */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* Game Name */}
-          <div>
-            <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-2">
-              Game Name
-            </label>
-            <input
-              type="text"
-              value={lobbyName}
-              onChange={(e) => setLobbyName(e.target.value)}
-              placeholder={`${playerName}'s Lobby`}
-              maxLength={24}
-              className="input w-full px-4 py-3 text-lg rounded-xl"
-              autoFocus
-            />
-            <p className="mt-1.5 text-white/30 text-xs font-body">
-              Leave empty for default name
-            </p>
+        {/* Private Toggle */}
+        <div
+          className="flex items-center justify-between p-4 bg-white/[0.03] border border-white/5 rounded-xl cursor-pointer hover:border-white/10 transition-colors"
+          onClick={() => setIsPrivate(!isPrivate)}
+        >
+          <div className="flex items-center gap-3">
+            <svg className={`w-5 h-5 ${isPrivate ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <div>
+              <p className="font-body text-white">Private Game</p>
+              <p className="text-xs text-white/40">Invite only - won't appear in browser</p>
+            </div>
           </div>
+          <div className={`w-12 h-6 rounded-full transition-all relative ${isPrivate ? 'bg-orange-500' : 'bg-white/20'}`}>
+            <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${isPrivate ? 'left-7' : 'left-1'}`} />
+          </div>
+        </div>
 
-          {/* Private Toggle */}
-          <div
-            className="flex items-center justify-between p-4 bg-white/[0.03] border border-white/5 rounded-xl cursor-pointer hover:border-white/10 transition-colors"
-            onClick={() => setIsPrivate(!isPrivate)}
+        {/* Error */}
+        {error && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p className="text-red-400 text-sm font-body">{error}</p>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
           >
-            <div className="flex items-center gap-3">
-              <svg className={`w-5 h-5 ${isPrivate ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              <div>
-                <p className="font-body text-white">Private Game</p>
-                <p className="text-xs text-white/40">Invite only - won't appear in browser</p>
-              </div>
-            </div>
-            <div className={`w-12 h-6 rounded-full transition-all relative ${isPrivate ? 'bg-orange-500' : 'bg-white/20'}`}>
-              <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${isPrivate ? 'left-7' : 'left-1'}`} />
-            </div>
-          </div>
-
-          {/* Error */}
-          {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
-              <p className="text-red-400 text-sm font-body">{error}</p>
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex gap-3 pt-2">
- <button
- type="button"
- onClick={onClose}
- className="flex-1 py-3 rounded-xl font-display text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
- >
- CANCEL
- </button>
- <button
- type="submit"
- disabled={isLoading}
- className="flex-1 py-3 rounded-xl font-display text-white bg-orange-500 hover:bg-orange-400 disabled:opacity-50"
- >
- {isLoading ? 'CREATING...' : 'CREATE'}
- </button>
-          </div>
-        </form>
-      </div>
-    </div>
+            CANCEL
+          </button>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="flex-1 py-3 rounded-xl font-display text-white bg-orange-500 hover:bg-orange-400 disabled:opacity-50"
+          >
+            {isLoading ? 'CREATING...' : 'CREATE'}
+          </button>
+        </div>
+      </form>
+    </GameDialog>
   );
 }
 
@@ -1093,29 +1015,15 @@ function AuthModal({
   formatAddress,
 }: AuthModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/80" onClick={onClose} />
-
-      {/* Modal */}
-      <div className="relative w-full max-w-sm mx-4 bg-strike-surface border border-white/10 rounded-2xl overflow-hidden shadow-2xl animate-scale-in">
-        {/* Header */}
-        <div className="text-center p-6 pb-4">
-          <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/20 flex items-center justify-center">
-            <PhantomIcon className="w-8 h-8" />
-          </div>
-          <h2 className="font-display text-2xl text-white">
-            {showNameInput ? 'CREATE PROFILE' : 'CONNECT WALLET'}
-          </h2>
-          <p className="text-white/40 text-sm mt-1 font-body">
-            {showNameInput
-              ? 'Choose your callsign to continue'
-              : 'Sign in with your Phantom wallet'}
-          </p>
-        </div>
-
-        {/* Content */}
-        <div className="px-6 pb-6 space-y-4">
+    <GameDialog
+      title={showNameInput ? 'CREATE PROFILE' : 'CONNECT WALLET'}
+      description={showNameInput ? 'Choose your callsign to continue' : 'Sign in with your Phantom wallet'}
+      icon={<PhantomIcon className="w-6 h-6" />}
+      iconClassName="bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/20"
+      size="sm"
+      onClose={onClose}
+      bodyClassName="p-6 space-y-4"
+    >
           {/* Name input for new users */}
           {showNameInput ? (
             <>
@@ -1320,8 +1228,6 @@ function AuthModal({
  >
  CANCEL
  </button>
-        </div>
-      </div>
-    </div>
+    </GameDialog>
   );
 }

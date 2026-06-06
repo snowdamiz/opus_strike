@@ -108,11 +108,14 @@ export const JETPACK_MAX_VERTICAL_SPEED = 15;
 // Blaze Flamethrower
 export const BLAZE_FLAMETHROWER_MAX_FUEL = 100;
 export const BLAZE_FLAMETHROWER_FUEL_DRAIN = 50; // per second
-export const BLAZE_FLAMETHROWER_FUEL_REGEN = 15; // per second when grounded
+export const BLAZE_FLAMETHROWER_FUEL_REGEN = 18; // per second when grounded
 export const BLAZE_FLAMETHROWER_RANGE = 9;
 export const BLAZE_FLAMETHROWER_CONE_HALF_ANGLE = Math.PI / 5;
 export const BLAZE_FLAMETHROWER_DAMAGE = 8;
 export const BLAZE_FLAMETHROWER_DAMAGE_INTERVAL = 250; // ms between damage ticks
+export const BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT = 0.42;
+export const BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET = 0.18;
+export const BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET = 0.14;
 
 // Rocket Jump
 export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 11;
@@ -149,6 +152,6 @@ export const BLINK_COOLDOWN = 6;
 
 // Player collision
 export const PLAYER_HEIGHT = 1.8;
-export const PLAYER_RADIUS = 0.4;
+export const PLAYER_RADIUS = 0.48;
 export const PLAYER_CROUCH_HEIGHT = 1.0;
 export const PLAYER_MASS = 80;

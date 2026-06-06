@@ -8,6 +8,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { MOUSE_SENSITIVITY, PITCH_LIMIT } from '@voxel-strike/shared';
 import type { CameraRefs } from './types';
+import { useSettingsStore } from '../../store/settingsStore';
 
 export interface UseCameraOptions {
   isPointerLocked: boolean;
@@ -29,6 +30,9 @@ const EYE_HEIGHT = 0.6;
 
 export function useCamera(options: UseCameraOptions): UseCameraReturn {
   const { isPointerLocked } = options;
+  const fov = useSettingsStore(state => state.settings.fov);
+  const sensitivity = useSettingsStore(state => state.settings.sensitivity);
+  const invertY = useSettingsStore(state => state.settings.invertY);
 
   // Camera rotation state
   const yawRef = useRef(0);
@@ -45,14 +49,15 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isPointerLocked) return;
 
-      yawRef.current -= e.movementX * MOUSE_SENSITIVITY;
-      pitchRef.current -= e.movementY * MOUSE_SENSITIVITY;
+      const sensitivityMultiplier = sensitivity / 50;
+      yawRef.current -= e.movementX * MOUSE_SENSITIVITY * sensitivityMultiplier;
+      pitchRef.current += (invertY ? 1 : -1) * e.movementY * MOUSE_SENSITIVITY * sensitivityMultiplier;
       pitchRef.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitchRef.current));
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     return () => document.removeEventListener('mousemove', handleMouseMove);
-  }, [isPointerLocked]);
+  }, [invertY, isPointerLocked, sensitivity]);
 
   // Update camera rotation with slide/crouch effects
   const updateCameraRotation = useCallback((
@@ -77,7 +82,7 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
 
     // Apply FOV change (only for perspective camera)
     if ('fov' in camera) {
-      const baseFov = 75;
+      const baseFov = fov;
       (camera as THREE.PerspectiveCamera).fov = baseFov + slideFovRef.current;
       (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
     }
@@ -87,7 +92,7 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     camera.rotation.y = yawRef.current;
     camera.rotation.x = pitchRef.current + slidePitchRef.current;
     camera.rotation.z = slideRollRef.current;
-  }, []);
+  }, [fov]);
 
   // Get camera position with eye height and crouch offset
   const getCameraPosition = useCallback((position: THREE.Vector3, _crouchOffset?: number): THREE.Vector3 => {
@@ -108,5 +113,4 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     getCameraPosition,
   };
 }
-
 

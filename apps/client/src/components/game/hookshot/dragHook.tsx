@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
+import { DRAG_HOOK_MAX_DISTANCE, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
 import { damageNpc } from '../../ui/GameConsole';
 import { getOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
@@ -12,6 +13,13 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
+import {
+  HEAVY_HOOK_MAIN_ROPE_MATERIAL,
+  PLIABLE_ROPE_SEGMENT_COUNT,
+  createRopePoints,
+  updatePliableRopePoints,
+  updateRopeSegment,
+} from './rope';
 
 // ============================================================================
 // DRAG HOOK - Long range hook that pulls enemies (heavy attack / right click)
@@ -21,13 +29,9 @@ import {
 // ============================================================================
 
 const DRAG_HOOK_SPEED = 45;
-const DRAG_HOOK_MAX_DISTANCE = 30; // Increased for long-range pulls
 const DRAG_HOOK_DAMAGE = 40;
 const DRAG_HOOK_RETRACT_SPEED = 55;
 const DRAG_HOOK_HIT_RADIUS = 1.2;
-
-// Hand height for drag hook
-const DRAG_HOOK_HAND_HEIGHT = 0.3;
 
 // Get shared materials from centralized resources
 const getHookMaterials = () => getHookshotMaterials();
@@ -39,12 +43,13 @@ interface DragHookProps {
 export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
+  const muzzleRef = useRef<THREE.Group>(null);
   
   // Multi-layer rope refs for over-the-top chain effect
-  const chainMainRef = useRef<THREE.Mesh>(null);
-  const chainOuterRef = useRef<THREE.Mesh>(null);
-  const chainCoreRef = useRef<THREE.Mesh>(null);
-  const chainMegaGlowRef = useRef<THREE.Mesh>(null);
+  const chainMainRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const chainOuterRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const chainCoreRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const chainMegaGlowRefs = useRef<(THREE.Mesh | null)[]>([]);
   
   const glowRef = useRef<THREE.Mesh>(null);
   
@@ -55,7 +60,13 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   const hookStateRef = useRef<'extending' | 'retracting'>(hook.state === 'flying' ? 'extending' : 'retracting');
   const currentPosRef = useRef({ x: hook.position.x, y: hook.position.y, z: hook.position.z });
   const playerPosRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
+  const smoothedSocketRef = useRef(new THREE.Vector3(hook.startPosition.x, hook.startPosition.y, hook.startPosition.z));
+  const ropeLagRef = useRef(new THREE.Vector3());
+  const ropeControlARef = useRef(new THREE.Vector3());
+  const ropeControlBRef = useRef(new THREE.Vector3());
+  const ropePointsRef = useRef(createRopePoints());
   const isFirstFrameRef = useRef(true);
+  const socketInitializedRef = useRef(false);
   const shouldRemoveRef = useRef(false);
   const hasHitRef = useRef(false);
   const hookedTargetIdRef = useRef<string | null>(null);
@@ -68,6 +79,12 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   const dirX = velX / speed;
   const dirY = velY / speed;
   const dirZ = velZ / speed;
+  const launchSide = hook.launchSide ?? 1;
+  const launchSocketOffset = {
+    forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
+    sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
+    yaw: hook.launchYaw,
+  };
   
   const removeDragHook = useGameStore(state => state.removeDragHook);
   
@@ -80,17 +97,18 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     
     const targetPosition = getOwnerVisualPosition(
       hook.ownerId,
-      DRAG_HOOK_HAND_HEIGHT,
+      HOOKSHOT_CHAIN_SOCKET.handHeight,
       hook.startPosition,
       players,
-      localPlayer
+      localPlayer,
+      launchSocketOffset
     );
     const targetX = targetPosition.x;
     const targetY = targetPosition.y;
     const targetZ = targetPosition.z;
     
-    // Smooth lerp for player position (snap on first frame) - SAME AS LEFT CLICK
-    const lerpFactor = isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
+    const isLocalOwner = localPlayer?.id === hook.ownerId;
+    const lerpFactor = isLocalOwner || isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
     playerPosRef.current.x += (targetX - playerPosRef.current.x) * lerpFactor;
     playerPosRef.current.y += (targetY - playerPosRef.current.y) * lerpFactor;
     playerPosRef.current.z += (targetZ - playerPosRef.current.z) * lerpFactor;
@@ -109,9 +127,9 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
       curPos.z += velZ * delta;
       
       // Check max distance - if reached, start retracting
-      const dx = curPos.x - pX;
-      const dy = curPos.y - pY;
-      const dz = curPos.z - pZ;
+      const dx = curPos.x - hook.startPosition.x;
+      const dy = curPos.y - hook.startPosition.y;
+      const dz = curPos.z - hook.startPosition.z;
       if (dx * dx + dy * dy + dz * dz >= DRAG_HOOK_MAX_DISTANCE * DRAG_HOOK_MAX_DISTANCE) {
         hookStateRef.current = 'retracting';
       }
@@ -177,44 +195,57 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     const hdy = curPos.y - pY;
     const hdz = curPos.z - pZ;
     const hLen = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
+    const ropePoints = ropePointsRef.current;
+    ropePoints[0].set(pX, pY, pZ);
+    ropePoints[PLIABLE_ROPE_SEGMENT_COUNT].set(curPos.x, curPos.y, curPos.z);
+
+    if (!socketInitializedRef.current) {
+      smoothedSocketRef.current.copy(ropePoints[0]);
+      socketInitializedRef.current = true;
+    }
+
+    const socketAlpha = 1 - Math.exp(-delta * 7);
+    smoothedSocketRef.current.lerp(ropePoints[0], socketAlpha);
+    ropeLagRef.current.copy(smoothedSocketRef.current).sub(ropePoints[0]);
+    const maxLag = 1.35;
+    const lagLength = ropeLagRef.current.length();
+    if (lagLength > maxLag) {
+      ropeLagRef.current.multiplyScalar(maxLag / lagLength);
+    }
     
     if (hLen > 0.01) {
       TEMP_VECTORS.v1.set(hdx / hLen, hdy / hLen, hdz / hLen);
       TEMP_VECTORS.quat1.setFromUnitVectors(TEMP_VECTORS.forward, TEMP_VECTORS.v1);
       hookRef.current.quaternion.copy(TEMP_VECTORS.quat1);
     }
+
+    const ropeStart = ropePoints[0];
+    const ropeEnd = ropePoints[PLIABLE_ROPE_SEGMENT_COUNT];
+    updatePliableRopePoints(
+      ropePoints,
+      ropeControlARef.current,
+      ropeControlBRef.current,
+      ropeStart,
+      ropeEnd,
+      ropeLagRef.current,
+      hLen,
+      0.36
+    );
     
-    // Update chain meshes directly (no React state) - SAME PATTERN AS LEFT CLICK
-    TEMP_VECTORS.v2.set(curPos.x, curPos.y, curPos.z);
-    TEMP_VECTORS.v3.set((pX + curPos.x) * 0.5, (pY + curPos.y) * 0.5, (pZ + curPos.z) * 0.5);
-    
-    // Main energy layer (thicker than left click)
-    if (chainMainRef.current) {
-      chainMainRef.current.position.copy(TEMP_VECTORS.v3);
-      chainMainRef.current.scale.set(0.045, hLen, 0.045);
-      chainMainRef.current.lookAt(TEMP_VECTORS.v2);
-      chainMainRef.current.rotateX(Math.PI / 2);
+    for (let i = 0; i < PLIABLE_ROPE_SEGMENT_COUNT; i++) {
+      updateRopeSegment(chainMegaGlowRefs.current[i], ropePoints[i], ropePoints[i + 1], 0.1);
+      updateRopeSegment(chainOuterRefs.current[i], ropePoints[i], ropePoints[i + 1], 0.07);
+      updateRopeSegment(chainMainRefs.current[i], ropePoints[i], ropePoints[i + 1], 0.032);
+      updateRopeSegment(chainCoreRefs.current[i], ropePoints[i], ropePoints[i + 1], 0.018);
     }
-    // Outer glow layer (thicker than left click)
-    if (chainOuterRef.current) {
-      chainOuterRef.current.position.copy(TEMP_VECTORS.v3);
-      chainOuterRef.current.scale.set(0.08, hLen, 0.08);
-      chainOuterRef.current.lookAt(TEMP_VECTORS.v2);
-      chainOuterRef.current.rotateX(Math.PI / 2);
-    }
-    // Bright core (thicker than left click)
-    if (chainCoreRef.current) {
-      chainCoreRef.current.position.copy(TEMP_VECTORS.v3);
-      chainCoreRef.current.scale.set(0.02, hLen, 0.02);
-      chainCoreRef.current.lookAt(TEMP_VECTORS.v2);
-      chainCoreRef.current.rotateX(Math.PI / 2);
-    }
-    // Mega outer glow (extra layer for heavy attack)
-    if (chainMegaGlowRef.current) {
-      chainMegaGlowRef.current.position.copy(TEMP_VECTORS.v3);
-      chainMegaGlowRef.current.scale.set(0.12, hLen, 0.12);
-      chainMegaGlowRef.current.lookAt(TEMP_VECTORS.v2);
-      chainMegaGlowRef.current.rotateX(Math.PI / 2);
+
+    if (muzzleRef.current) {
+      const pulse = 1 + Math.sin(time * 28) * 0.08;
+      muzzleRef.current.position.copy(ropePoints[0]);
+      muzzleRef.current.scale.setScalar(pulse);
+      if (hLen > 0.01) {
+        muzzleRef.current.quaternion.copy(hookRef.current.quaternion);
+      }
     }
     
     // Animate hook glow effects
@@ -261,10 +292,24 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
       </group>
       
       {/* === HEAVY CHAIN - Multi-layer, thicker than left click === */}
-      <mesh ref={chainMainRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainMain} />
-      <mesh ref={chainOuterRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainOuter} />
-      <mesh ref={chainCoreRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainCore} />
-      <mesh ref={chainMegaGlowRef} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainMegaGlow} />
+      <group ref={muzzleRef} position={[hook.startPosition.x, hook.startPosition.y, hook.startPosition.z]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.05]} material={HOOK_MATERIALS.ring} />
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.16} material={HOOK_MATERIALS.glow} />
+        <pointLight color={HOOKSHOT_COLORS.energy} intensity={1.5} distance={3} decay={2} />
+      </group>
+
+      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+        <mesh key={`drag-mega-${i}`} ref={el => chainMegaGlowRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainMegaGlow} />
+      ))}
+      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+        <mesh key={`drag-outer-${i}`} ref={el => chainOuterRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainOuter} />
+      ))}
+      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+        <mesh key={`drag-main-${i}`} ref={el => chainMainRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_HOOK_MAIN_ROPE_MATERIAL} />
+      ))}
+      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+        <mesh key={`drag-core-${i}`} ref={el => chainCoreRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainCore} />
+      ))}
     </group>
   );
 }, (prev, next) => {

@@ -20,6 +20,7 @@ import { useInput } from '../../hooks/useInput';
 import { usePhysics, isPhysicsReady } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
+import { isDevFlyMode } from '../ui/GameConsole';
 import {
   useCamera,
   useMovement,
@@ -34,6 +35,7 @@ import {
 } from '../../hooks/player';
 import {
   TICK_RATE,
+  createEmptyInputState,
   getHeroStats,
   HERO_DEFINITIONS,
   type HeroId,
@@ -43,6 +45,11 @@ import {
 import { BombTargetingIndicator, AirStrikeTargetingIndicator } from './BlazeEffects';
 import { GrappleTrapTargetingIndicator } from './HookshotEffects';
 import { ShadowStepIndicator } from './phantom';
+
+const INACTIVE_INPUT_STATE = createEmptyInputState();
+const DEV_FLY_SPEED = 14;
+const DEV_FLY_FAST_MULTIPLIER = 1.8;
+const DEV_FLY_VERTICAL_SPEED = 10;
 
 // ============================================================================
 // PLAYER CONTROLLER COMPONENT
@@ -71,7 +78,7 @@ export function PlayerController() {
   const localPlayerForInit = useGameStore(state => state.localPlayer);
 
   // Input and network
-  const { inputState, isPointerLocked, requestPointerLock } = useInput();
+  const { inputState, isPointerLocked, isControlPressed, requestPointerLock } = useInput();
   const { world, playerBody } = usePhysics();
   const { sendInput } = useNetwork();
 
@@ -99,6 +106,7 @@ export function PlayerController() {
   const initializedRef = useRef(false);
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
+  const lastHeroIdRef = useRef<string | null>(null);
   const positionRef = useRef(new THREE.Vector3());
 
   // Hero stats cache
@@ -268,14 +276,28 @@ export function PlayerController() {
 
     if (!localPlayer) return;
 
-    // Keep camera at player position even when not pointer locked
-    if (!isPointerLocked) {
-      camera.position.set(localPlayer.position.x, localPlayer.position.y + EYE_HEIGHT, localPlayer.position.z);
-      return;
+    if (lastHeroIdRef.current !== localPlayer.heroId) {
+      lastHeroIdRef.current = localPlayer.heroId;
+      abilitySystem.abilityPressedRef.current = { ability1: false, ability2: false, ultimate: false };
+      abilitySystem.clientCooldownsRef.current = {};
+      abilitySystem.clientChargesRef.current = {};
+      abilitySystem.abilityActiveRef.current = {};
+      hookshotAbilities.secondaryFirePressedRef.current = false;
+      setShadowStepTargeting(false, false);
+      setBombTargeting(false, false);
+      setAirStrikeTargeting(false, false);
+      setGrappleTrapTargeting(false, false);
+      setFlamethrowerActive(false);
+      setIceWallRushActive(false);
+      stopFlamethrowerSound();
     }
 
     const dt = Math.min(delta, 0.1);
     const now = Date.now();
+    // ESC/menu releases pointer lock, but local physics still needs to keep
+    // grounding and server position sync alive instead of replaying stale input.
+    const frameInput = isPointerLocked ? inputState : INACTIVE_INPUT_STATE;
+    const devFlyMode = isDevFlyMode();
 
     if (!isPlaying || localPlayer.state !== 'alive') {
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
@@ -283,6 +305,94 @@ export function PlayerController() {
       camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
       setPlayerVisualPosition(localPlayer.id, visualPos);
       setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
+      return;
+    }
+
+    if (devFlyMode) {
+      const position = positionRef.current;
+      const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
+      if (visualPos) {
+        position.set(visualPos.x, visualPos.y, visualPos.z);
+      } else {
+        position.set(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z);
+      }
+
+      const moveDirection = movement.calculateMoveDirection(frameInput, cameraControl.refs.yaw.current);
+      const flySpeed = DEV_FLY_SPEED * (frameInput.sprint ? DEV_FLY_FAST_MULTIPLIER : 1);
+      const verticalInput = (frameInput.jump ? 1 : 0) - (frameInput.crouch || isControlPressed ? 1 : 0);
+      const velocity = movement.refs.velocity.current;
+
+      velocity.set(
+        moveDirection.x * flySpeed,
+        verticalInput * DEV_FLY_VERTICAL_SPEED,
+        moveDirection.z * flySpeed
+      );
+      position.x += velocity.x * dt;
+      position.y += velocity.y * dt;
+      position.z += velocity.z * dt;
+
+      movement.refs.isGrounded.current = false;
+      movement.refs.wasGrounded.current = false;
+      movement.refs.canJump.current = false;
+      movement.refs.isSliding.current = false;
+      movement.refs.slideTime.current = 0;
+      movement.refs.smoothedY.current = null;
+
+      abilitySystem.abilityPressedRef.current.ability1 = frameInput.ability1;
+      abilitySystem.abilityPressedRef.current.ability2 = frameInput.ability2;
+      abilitySystem.abilityPressedRef.current.ultimate = frameInput.ultimate;
+      abilitySystem.abilityActiveRef.current = {};
+      hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
+
+      cameraControl.updateCameraRotation(camera, false, false, dt);
+      camera.position.set(position.x, position.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
+
+      updateLocalPlayer({
+        movement: {
+          ...localPlayer.movement,
+          isGrounded: false,
+          isSprinting: frameInput.sprint,
+          isCrouching: frameInput.crouch || isControlPressed,
+          isSliding: false,
+          slideTimeRemaining: 0,
+          isGrappling: false,
+          grapplePoint: null,
+          isJetpacking: false,
+          isGliding: false,
+        },
+      });
+
+      setPlayerVisualPosition(localPlayer.id, { x: position.x, y: position.y, z: position.z });
+      setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
+      useGameStore.getState().setSlideIntensity(0);
+      updateWalkingSound(0, false, false, DEV_FLY_SPEED, false);
+
+      tickRef.current++;
+      if (now - lastSendRef.current >= 1000 / TICK_RATE) {
+        lastSendRef.current = now;
+        sendInput({
+          tick: tickRef.current,
+          moveForward: frameInput.moveForward,
+          moveBackward: frameInput.moveBackward,
+          moveLeft: frameInput.moveLeft,
+          moveRight: frameInput.moveRight,
+          jump: frameInput.jump,
+          crouch: frameInput.crouch || isControlPressed,
+          sprint: frameInput.sprint,
+          primaryFire: false,
+          secondaryFire: false,
+          ability1: false,
+          ability2: false,
+          ultimate: false,
+          interact: frameInput.interact,
+          lookYaw: cameraControl.refs.yaw.current,
+          lookPitch: cameraControl.refs.pitch.current,
+          timestamp: now,
+          position: { x: position.x, y: position.y, z: position.z },
+          velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+          devFly: true,
+        });
+      }
       return;
     }
 
@@ -296,11 +406,11 @@ export function PlayerController() {
 
     // Calculate movement
     const movementMultiplier = shadowStepTargeting ? 0.3 : 1;
-    const moveDirection = movement.calculateMoveDirection(inputState, cameraControl.refs.yaw.current);
+    const moveDirection = movement.calculateMoveDirection(frameInput, cameraControl.refs.yaw.current);
 
     // Update slide state
     const { isSliding, speed: modifiedSpeed } = movement.updateSlideState(
-      inputState,
+      frameInput,
       movement.refs.isGrounded.current,
       cameraControl.refs.yaw.current,
       heroStats.moveSpeed * movementMultiplier,
@@ -356,7 +466,7 @@ export function PlayerController() {
         position: localPlayer.position,
         ultimateCharge: localPlayer.ultimateCharge,
       },
-      inputState,
+      inputState: frameInput,
       dt,
       isGrounded: movement.refs.isGrounded.current,
     };
@@ -366,7 +476,7 @@ export function PlayerController() {
     if (heroDef) {
       // Handle ability input
       if (heroId !== 'blaze' && heroId !== 'glacier') {
-        if (inputState.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
+        if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
           if (!shadowStepTargeting && !grappleTrapTargeting && abilitySystem.canUseAbility(heroDef.ability1.abilityId, false, shadowStepTargeting)) {
             if (heroId === 'phantom') {
               phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge);
@@ -375,11 +485,11 @@ export function PlayerController() {
             }
           }
         }
-        abilitySystem.abilityPressedRef.current.ability1 = inputState.ability1;
+        abilitySystem.abilityPressedRef.current.ability1 = frameInput.ability1;
       }
 
       // Ability 2 (Q)
-      if (inputState.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
+      if (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
         if (heroId === 'phantom' && shadowStepTargeting) {
           if (phantomAbilities.shadowStepValidRef.current && phantomAbilities.shadowStepTargetRef.current) {
             phantomAbilities.executeShadowStepTeleport(
@@ -402,10 +512,10 @@ export function PlayerController() {
           }
         }
       }
-      abilitySystem.abilityPressedRef.current.ability2 = inputState.ability2;
+      abilitySystem.abilityPressedRef.current.ability2 = frameInput.ability2;
 
       // Ultimate (F)
-      if (inputState.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
+      if (frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
         if (!shadowStepTargeting && abilitySystem.canUseAbility(heroDef.ultimate.abilityId, true, shadowStepTargeting)) {
           if (heroId === 'phantom') {
             phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive);
@@ -418,18 +528,18 @@ export function PlayerController() {
           }
         }
       }
-      abilitySystem.abilityPressedRef.current.ultimate = inputState.ultimate;
+      abilitySystem.abilityPressedRef.current.ultimate = frameInput.ultimate;
 
       // Hero-specific primary/secondary fire and hold abilities
       if (heroId === 'phantom' && !shadowStepTargeting) {
-        if (inputState.primaryFire) {
+        if (frameInput.primaryFire) {
           phantomAbilities.fireDireBall(abilityCtx, playerSounds);
         }
         phantomAbilities.handleVoidRay(abilityCtx, playerSounds);
       }
 
       if (heroId === 'blaze') {
-        if (inputState.primaryFire && !bombTargeting) {
+        if (frameInput.primaryFire && !bombTargeting) {
           blazeAbilities.fireRocket(abilityCtx, playerSounds);
         }
         blazeAbilities.handleBombTargeting(abilityCtx, playerSounds);
@@ -455,13 +565,13 @@ export function PlayerController() {
       }
 
       if (heroId === 'hookshot' && !grappleTrapTargeting) {
-        if (inputState.primaryFire) {
+        if (frameInput.primaryFire) {
           hookshotAbilities.fireChainHook(abilityCtx);
         }
-        if (inputState.secondaryFire && !hookshotAbilities.secondaryFirePressedRef.current) {
+        if (frameInput.secondaryFire && !hookshotAbilities.secondaryFirePressedRef.current) {
           hookshotAbilities.fireDragHook(abilityCtx);
         }
-        hookshotAbilities.secondaryFirePressedRef.current = inputState.secondaryFire;
+        hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
 
         // Update grapple and swing physics
         hookshotAbilities.updateGrapplePhysics(abilityCtx);
@@ -483,6 +593,9 @@ export function PlayerController() {
     if (groundResult.newSmoothedY !== null) {
       movement.refs.smoothedY.current = groundResult.newSmoothedY;
     }
+    if (heroId === 'hookshot' && (groundResult.isGrounded || groundResult.newSmoothedY !== null)) {
+      hookshotAbilities.handleSwingTerrainContact();
+    }
 
     // Reset smoothedY when becoming airborne to prevent bounce-on-land from height
     // Without this, smoothedY retains the old ground level, causing the player to be
@@ -498,7 +611,7 @@ export function PlayerController() {
     movement.refs.wasGrounded.current = movement.refs.isGrounded.current;
 
     // Jump
-    if (inputState.jump && movement.refs.canJump.current && movement.refs.isGrounded.current && !shadowStepTargeting) {
+    if (frameInput.jump && movement.refs.canJump.current && movement.refs.isGrounded.current && !shadowStepTargeting) {
       velocity.y = heroStats.jumpForce;
       movement.refs.canJump.current = false;
       movement.refs.isGrounded.current = false;
@@ -514,7 +627,7 @@ export function PlayerController() {
     );
 
     // Horizontal movement with step-up
-    const { didStepUp, newSmoothedY } = physics.applyHorizontalMovement(
+    const { didStepUp, newSmoothedY, hitTerrain } = physics.applyHorizontalMovement(
       position,
       velocity,
       movement.refs.isGrounded.current,
@@ -526,10 +639,16 @@ export function PlayerController() {
     if (newSmoothedY !== null) {
       movement.refs.smoothedY.current = newSmoothedY;
     }
+    if (heroId === 'hookshot' && hitTerrain) {
+      hookshotAbilities.handleSwingTerrainContact();
+    }
 
     // Vertical movement (skip if stepped up)
     if (!didStepUp) {
-      position.y += velocity.y * dt;
+      const { hitCeiling } = physics.applyVerticalMovement(position, velocity, dt);
+      if (hitCeiling && heroId === 'hookshot') {
+        hookshotAbilities.handleSwingTerrainContact();
+      }
     }
 
     // Out of bounds check
@@ -576,19 +695,19 @@ export function PlayerController() {
 
       sendInput({
         tick: tickRef.current,
-        moveForward: inputState.moveForward,
-        moveBackward: inputState.moveBackward,
-        moveLeft: inputState.moveLeft,
-        moveRight: inputState.moveRight,
-        jump: inputState.jump,
-        crouch: inputState.crouch,
-        sprint: inputState.sprint,
-        primaryFire: inputState.primaryFire,
-        secondaryFire: inputState.secondaryFire,
-        ability1: inputState.ability1,
-        ability2: currentTargeting ? false : inputState.ability2,
-        ultimate: inputState.ultimate,
-        interact: inputState.interact,
+        moveForward: frameInput.moveForward,
+        moveBackward: frameInput.moveBackward,
+        moveLeft: frameInput.moveLeft,
+        moveRight: frameInput.moveRight,
+        jump: frameInput.jump,
+        crouch: frameInput.crouch,
+        sprint: frameInput.sprint,
+        primaryFire: frameInput.primaryFire,
+        secondaryFire: frameInput.secondaryFire,
+        ability1: frameInput.ability1,
+        ability2: currentTargeting ? false : frameInput.ability2,
+        ultimate: frameInput.ultimate,
+        interact: frameInput.interact,
         lookYaw: cameraControl.refs.yaw.current,
         lookPitch: cameraControl.refs.pitch.current,
         timestamp: now,

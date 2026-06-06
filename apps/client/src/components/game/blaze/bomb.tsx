@@ -150,6 +150,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         // Faster pulsing as bomb gets closer
         const pulseSpeed = 0.01 + fallProgress * 0.03;
         const pulse = 0.85 + Math.sin(elapsed * pulseSpeed) * 0.15;
+        warningRef.current.rotation.y = elapsed * 0.0018;
         warningRef.current.scale.setScalar(pulse);
       }
       
@@ -162,6 +163,8 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       
       if (explosionRef.current) explosionRef.current.visible = false;
       if (flashRef.current) flashRef.current.visible = false;
+      if (shockwaveRef.current) shockwaveRef.current.visible = false;
+      if (shockwave2Ref.current) shockwave2Ref.current.visible = false;
     } else if (fallProgress >= 1 && !hasExplodedRef.current) {
       hasExplodedRef.current = true;
     }
@@ -201,11 +204,13 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         
         // Shockwaves
         if (shockwaveRef.current) {
+          shockwaveRef.current.visible = true;
           const s = 1 + easeOutQuart * 10;
           shockwaveRef.current.scale.set(s, s, 1);
           animatedMaterials.shockwaveOuter.opacity = fadeOut * 0.8;
         }
         if (shockwave2Ref.current) {
+          shockwave2Ref.current.visible = true;
           const s = 0.5 + easeOutQuart * 8;
           shockwave2Ref.current.scale.set(s, s, 1);
           animatedMaterials.shockwaveInner.opacity = fadeOut * 0.5;
@@ -249,6 +254,8 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         }
       } else if (explosionProgress >= 1 && explosionRef.current) {
         explosionRef.current.visible = false;
+        if (shockwaveRef.current) shockwaveRef.current.visible = false;
+        if (shockwave2Ref.current) shockwave2Ref.current.visible = false;
       }
     }
   });
@@ -356,6 +363,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       {/* Ground shockwave */}
       <mesh 
         ref={shockwaveRef}
+        visible={false}
         position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.2, bomb.targetPosition.z]}
         rotation-x={-Math.PI / 2} 
         geometry={SHARED_GEOMETRIES.ring24}
@@ -365,6 +373,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       {/* Secondary inner shockwave */}
       <mesh 
         ref={shockwave2Ref}
+        visible={false}
         position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.25, bomb.targetPosition.z]}
         rotation-x={-Math.PI / 2} 
         geometry={SHARED_GEOMETRIES.ring16}
@@ -404,6 +413,13 @@ const _bombHorizDir = new THREE.Vector3();
 
 export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
+  const targetOuterRef = useRef<THREE.Mesh>(null);
+  const targetMiddleRef = useRef<THREE.Mesh>(null);
+  const targetInnerRef = useRef<THREE.Mesh>(null);
+  const targetCenterRef = useRef<THREE.Mesh>(null);
+  const targetFillRef = useRef<THREE.Mesh>(null);
+  const targetBeamRef = useRef<THREE.Mesh>(null);
+  const targetBeamTopRef = useRef<THREE.Mesh>(null);
   const isValidRef = useRef(false);
   const { camera } = useThree();
   
@@ -420,6 +436,8 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
   }), []);
   
   useFrame(() => {
+    const now = Date.now();
+
     if (!isActive) {
       if (indicatorRef.current) indicatorRef.current.visible = false;
       onTargetUpdate(null, false);
@@ -539,6 +557,46 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       indicatorRef.current.visible = true;
       indicatorRef.current.position.copy(_bombTargetPos);
     }
+
+    const time = now * 0.001;
+    const validity = isValid ? 1 : 0.45;
+    const pulse = 1 + Math.sin(time * 5.4) * 0.045 * validity;
+    const slowPulse = 1 + Math.sin(time * 2.2) * 0.08 * validity;
+
+    materials.ring1.opacity = 0.42 + validity * 0.32;
+    materials.ring2.opacity = 0.46 + validity * 0.34;
+    materials.ring3.opacity = 0.54 + validity * 0.36;
+    materials.fill.opacity = 0.06 + validity * 0.12;
+    materials.cross.opacity = 0.38 + validity * 0.28;
+    materials.beam.opacity = 0.14 + validity * 0.2;
+    materials.beamTop.opacity = 0.4 + validity * 0.35;
+
+    if (targetOuterRef.current) {
+      targetOuterRef.current.rotation.z = time * 0.75;
+      targetOuterRef.current.scale.set(5 * pulse, 5 * pulse, 1);
+    }
+    if (targetMiddleRef.current) {
+      targetMiddleRef.current.rotation.z = -time * 1.1;
+      targetMiddleRef.current.scale.set(3.15 * slowPulse, 3.15 * slowPulse, 1);
+    }
+    if (targetInnerRef.current) {
+      targetInnerRef.current.rotation.z = time * 1.8;
+      targetInnerRef.current.scale.set(1.45 * pulse, 1.45 * pulse, 1);
+    }
+    if (targetCenterRef.current) {
+      targetCenterRef.current.scale.setScalar(0.42 + validity * 0.18 + Math.sin(time * 7) * 0.04);
+    }
+    if (targetFillRef.current) {
+      const fillScale = 4.7 + Math.sin(time * 3.4) * 0.25 * validity;
+      targetFillRef.current.scale.set(fillScale, fillScale, 1);
+    }
+    if (targetBeamRef.current) {
+      const beamWidth = 0.045 + validity * 0.025 + Math.sin(time * 8) * 0.006;
+      targetBeamRef.current.scale.set(beamWidth, 34 + Math.sin(time * 3) * 2.5 * validity, beamWidth);
+    }
+    if (targetBeamTopRef.current) {
+      targetBeamTopRef.current.scale.setScalar(0.28 + validity * 0.18 + Math.sin(time * 6) * 0.025);
+    }
     
     onTargetUpdate(_bombTargetPos.clone(), isValid);
   });
@@ -547,15 +605,15 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
   
   return (
     <group ref={indicatorRef}>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]} material={materials.ring1} />
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]} material={materials.ring2} />
-      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]} material={materials.ring3} />
-      <mesh rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]} material={materials.center} />
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]} material={materials.fill} />
+      <mesh ref={targetOuterRef} rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[5, 5, 1]} material={materials.ring1} />
+      <mesh ref={targetMiddleRef} rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.ring16} scale={[3, 3, 1]} material={materials.ring2} />
+      <mesh ref={targetInnerRef} rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]} material={materials.ring3} />
+      <mesh ref={targetCenterRef} rotation-x={-Math.PI / 2} position-y={0.25} geometry={SHARED_GEOMETRIES.circle16} scale={[0.5, 0.5, 1]} material={materials.center} />
+      <mesh ref={targetFillRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[5, 5, 1]} material={materials.fill} />
       <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
       <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
-      <mesh position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]} material={materials.beam} />
-      <mesh position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4} material={materials.beamTop} />
+      <mesh ref={targetBeamRef} position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]} material={materials.beam} />
+      <mesh ref={targetBeamTopRef} position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4} material={materials.beamTop} />
       <pointLight color={0xff4400} intensity={2} distance={6} decay={2} position-y={0.5} />
     </group>
   );

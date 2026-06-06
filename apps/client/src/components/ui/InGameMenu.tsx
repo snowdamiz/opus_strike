@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { SettingsModal } from './SettingsModal';
+import { GameDialog } from './GameDialog';
 
 interface InGameMenuProps {
   onClose: () => void;
@@ -44,56 +45,47 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
   };
 
   return (
-    <div className="absolute inset-0 z-[100] flex items-center justify-center">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-        onClick={handleResume}
-      />
-      
-      {/* Menu panel */}
-      <div className="relative z-10 w-full max-w-sm animate-scale-in">
-        <div className="card overflow-hidden">
-          {/* Header */}
-          <div className="p-6 text-center border-b border-strike-border bg-strike-elevated/50">
-            <h2 className="font-display text-3xl text-orange-500">PAUSED</h2>
-            {currentLobbyName && (
-              <p className="font-body text-white/40 text-sm mt-1">{currentLobbyName}</p>
-            )}
-          </div>
-
-          {/* Menu options */}
-          <div className="p-4 space-y-2">
-            <MenuButton onClick={handleResume} primary>
-              RESUME
-            </MenuButton>
-            
-            <MenuButton onClick={() => setShowSettings(true)}>
-              SETTINGS
-            </MenuButton>
-            
-            <MenuButton onClick={() => {}}>
-              CONTROLS
-            </MenuButton>
-            
-            <div className="pt-2 border-t border-strike-border">
-              <MenuButton onClick={handleLeaveGame} danger>
-                LEAVE GAME
-              </MenuButton>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer hint */}
-        <div className="text-center mt-4">
+    <>
+      <GameDialog
+        title="PAUSED"
+        description={currentLobbyName ?? undefined}
+        icon={(
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 5h3v14H8V5zm5 0h3v14h-3V5z" />
+          </svg>
+        )}
+        size="sm"
+        onClose={handleResume}
+        showCloseButton={false}
+        bodyClassName="p-4 space-y-2"
+        footerClassName="px-6 py-4 border-t border-white/5 bg-strike-elevated/50 text-center"
+        footer={(
           <p className="font-body text-xs text-white/30">
             Press <span className="text-white/50">ESC</span> to resume
           </p>
+        )}
+      >
+        <MenuButton onClick={handleResume} primary>
+          RESUME
+        </MenuButton>
+
+        <MenuButton onClick={() => setShowSettings(true)}>
+          SETTINGS
+        </MenuButton>
+
+        <MenuButton onClick={() => {}}>
+          CONTROLS
+        </MenuButton>
+
+        <div className="pt-2 border-t border-strike-border">
+          <MenuButton onClick={handleLeaveGame} danger>
+            LEAVE GAME
+          </MenuButton>
         </div>
-      </div>
+      </GameDialog>
 
       {/* Player info */}
-      <div className="absolute bottom-4 left-4">
+      <div className="fixed bottom-4 left-4 z-modal">
         <div className="px-4 py-2 bg-strike-surface/90 border border-strike-border rounded-lg backdrop-blur-sm">
           <span className="font-body text-white/40 text-sm">Playing as </span>
           <span className="font-display text-orange-400">{playerName}</span>
@@ -102,7 +94,7 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
 
       {/* Settings Modal */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
-    </div>
+    </>
   );
 }
 

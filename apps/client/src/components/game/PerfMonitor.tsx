@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { PerfHeadless, usePerf } from 'r3f-perf';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
+import { useSettingsStore } from '../../store/settingsStore';
 
 /**
  * Custom Performance Monitor - Premium Debug UI
@@ -9,7 +10,6 @@ import { visualStore } from '../../store/visualStore';
  * Uses r3f-perf headless mode for data, with fully custom UI
  * matching the game's cyberpunk/neon aesthetic.
  * 
- * Toggle with /debug command in chat
  */
 
 interface PerfData {
@@ -180,8 +180,9 @@ function PerfDisplay() {
 
 export function PerfMonitor() {
   const debugMode = useGameStore((state) => state.debugMode);
+  const showFPS = useSettingsStore((state) => state.settings.showFPS);
 
-  if (!debugMode) return null;
+  if (!debugMode && !showFPS) return null;
 
   return <PerfHeadless />;
 }
@@ -189,11 +190,11 @@ export function PerfMonitor() {
 // Separate component to render outside Canvas context
 export function PerfMonitorOverlay() {
   const debugMode = useGameStore((state) => state.debugMode);
+  const showFPS = useSettingsStore((state) => state.settings.showFPS);
 
-  if (!debugMode) return null;
+  if (!debugMode && !showFPS) return null;
 
   return <PerfDisplay />;
 }
 
 export default PerfMonitor;
-

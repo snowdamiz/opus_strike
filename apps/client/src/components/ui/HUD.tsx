@@ -4,6 +4,8 @@ import { useShallow } from 'zustand/shallow';
 import { HERO_DEFINITIONS, ABILITY_DEFINITIONS, VOID_RAY_CHARGE_TIME } from '@voxel-strike/shared';
 import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
 import type { HeroId } from '@voxel-strike/shared';
+import { useCombatFeedbackStore, type DamageNumberEvent, type KillFeedEvent } from '../../store/combatFeedbackStore';
+import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
 
 // Hero color schemes for theming
 const HERO_COLORS: Record<string, { primary: string; glow: string; bg: string }> = {
@@ -123,6 +125,74 @@ function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
   );
 }
 
+function NormalCrosshair({ crosshairStyle, color }: { crosshairStyle: CrosshairStyle; color: string }) {
+  const lineOpacity = crosshairStyle === 'cross' ? 0.95 : 0.85;
+
+  return (
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+      {(crosshairStyle === 'default' || crosshairStyle === 'dot') && (
+        <circle cx="14" cy="14" r="2.2" fill={color} fillOpacity="0.95" />
+      )}
+
+      {crosshairStyle === 'circle' && (
+        <>
+          <circle cx="14" cy="14" r="5.5" stroke={color} strokeWidth="1.8" opacity="0.9" />
+          <circle cx="14" cy="14" r="1.6" fill={color} fillOpacity="0.9" />
+        </>
+      )}
+
+      {(crosshairStyle === 'default' || crosshairStyle === 'cross') && (
+        <>
+          <line x1="14" y1="3" x2="14" y2="8" stroke={color} strokeWidth="2" strokeLinecap="round" opacity={lineOpacity} />
+          <line x1="14" y1="20" x2="14" y2="25" stroke={color} strokeWidth="2" strokeLinecap="round" opacity={lineOpacity} />
+          <line x1="3" y1="14" x2="8" y2="14" stroke={color} strokeWidth="2" strokeLinecap="round" opacity={lineOpacity} />
+          <line x1="20" y1="14" x2="25" y2="14" stroke={color} strokeWidth="2" strokeLinecap="round" opacity={lineOpacity} />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function DamageNumberStack({ events }: { events: DamageNumberEvent[] }) {
+  if (events.length === 0) return null;
+
+  return (
+    <div className="absolute left-1/2 top-[43%] -translate-x-1/2 flex flex-col-reverse items-center gap-1 z-[120]">
+      {events.map((event, index) => (
+        <div
+          key={event.id}
+          className="font-display text-xl text-orange-300 drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)] animate-fade-in"
+          style={{
+            transform: `translateY(${-index * 6}px) scale(${1 - index * 0.08})`,
+            opacity: Math.max(0.35, 1 - index * 0.18),
+          }}
+        >
+          -{Math.round(event.damage)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function KillFeed({ events }: { events: KillFeedEvent[] }) {
+  if (events.length === 0) return null;
+
+  return (
+    <div className="absolute top-24 right-5 z-[120] flex flex-col gap-2 items-end">
+      {events.map((event) => (
+        <div
+          key={event.id}
+          className="px-3 py-2 rounded-lg bg-black/55 border border-white/10 backdrop-blur-sm font-body text-xs text-white/75 shadow-lg animate-fade-in"
+        >
+          <span className="text-orange-300">{event.killerName}</span>
+          <span className="mx-2 text-white/30">eliminated</span>
+          <span className="text-cyan-200">{event.victimName}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function HUD() {
   const {
     localPlayer,
@@ -165,6 +235,25 @@ export function HUD() {
       iceWallRushActive: state.iceWallRushActive,
       frostStormActive: state.frostStormActive,
       frostStormShield: state.frostStormShield,
+    }))
+  );
+  const {
+    crosshairStyle,
+    crosshairColor,
+    showDamageNumbers,
+    showKillFeed,
+  } = useSettingsStore(
+    useShallow(state => ({
+      crosshairStyle: state.settings.crosshairStyle,
+      crosshairColor: state.settings.crosshairColor,
+      showDamageNumbers: state.settings.showDamageNumbers,
+      showKillFeed: state.settings.showKillFeed,
+    }))
+  );
+  const { damageNumbers, killFeed } = useCombatFeedbackStore(
+    useShallow(state => ({
+      damageNumbers: state.damageNumbers,
+      killFeed: state.killFeed,
     }))
   );
 
@@ -238,16 +327,12 @@ export function HUD() {
             <line x1="34" y1="24" x2="42" y2="24" stroke={bombTargetValid ? "#ff6600" : "#ff3333"} strokeWidth="2" strokeLinecap="round" opacity="0.85" />
           </svg>
         ) : (
-          // Normal crosshair
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-            <circle cx="12" cy="12" r="2" fill="white" fillOpacity="0.95" />
-            <line x1="12" y1="4" x2="12" y2="8" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-            <line x1="12" y1="16" x2="12" y2="20" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-            <line x1="4" y1="12" x2="8" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-            <line x1="16" y1="12" x2="20" y2="12" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.85" />
-          </svg>
+          <NormalCrosshair crosshairStyle={crosshairStyle} color={crosshairColor} />
         )}
       </div>
+
+      {showDamageNumbers && <DamageNumberStack events={damageNumbers} />}
+      {showKillFeed && <KillFeed events={killFeed} />}
 
       {/* Bomb Targeting Instructions */}
       {bombTargeting && (

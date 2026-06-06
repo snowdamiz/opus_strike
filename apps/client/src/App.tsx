@@ -159,7 +159,7 @@ export function App() {
         {/* Developer console (Enter key) */}
         <GameConsole />
 
-        {/* Performance monitor overlay (toggle with /debug) */}
+        {/* Performance monitor overlay */}
         <PerfMonitorOverlay />
       </div>
     );

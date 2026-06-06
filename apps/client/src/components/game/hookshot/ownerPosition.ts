@@ -1,5 +1,6 @@
 import type { Player } from '@voxel-strike/shared';
 import { visualStore } from '../../../store/visualStore';
+import { calculatePlayerSocketPosition } from '../../../hooks/player/constants';
 
 interface Position {
   x: number;
@@ -7,30 +8,32 @@ interface Position {
   z: number;
 }
 
+interface OwnerVisualOffset {
+  forwardOffset?: number;
+  sideOffset?: number;
+  yaw?: number;
+}
+
 export function getOwnerVisualPosition(
   ownerId: string,
   handHeight: number,
   fallback: Position,
   players: Map<string, Player>,
-  localPlayer: Player | null
+  localPlayer: Player | null,
+  offset: OwnerVisualOffset = {}
 ): Position {
-  const visualPosition = visualStore.getState().playerPositions.get(ownerId);
-  if (visualPosition) {
-    return {
-      x: visualPosition.x,
-      y: visualPosition.y + handHeight,
-      z: visualPosition.z,
-    };
-  }
-
+  const visualState = visualStore.getState();
+  const visualPosition = visualState.playerPositions.get(ownerId);
   const owner = localPlayer?.id === ownerId ? localPlayer : players.get(ownerId);
-  if (owner) {
-    return {
-      x: owner.position.x,
-      y: owner.position.y + handHeight,
-      z: owner.position.z,
-    };
-  }
+  const basePosition = visualPosition ?? owner?.position;
 
-  return fallback;
+  if (!basePosition) return fallback;
+
+  const yaw = visualState.playerRotations.get(ownerId) ?? owner?.lookYaw ?? offset.yaw ?? 0;
+
+  return calculatePlayerSocketPosition(basePosition, yaw, {
+    handHeight,
+    forwardOffset: offset.forwardOffset ?? 0,
+    sideOffset: offset.sideOffset ?? 0,
+  });
 }

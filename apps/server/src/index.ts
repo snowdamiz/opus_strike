@@ -66,24 +66,68 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+interface LobbySummary {
+  roomId: string;
+  name: string;
+  playerCount: number;
+  maxPlayers: number;
+  status: string;
+}
+
+async function getPublicLobbies(): Promise<LobbySummary[]> {
+  const rooms = await matchMaker.query({ name: 'lobby_room' });
+  return rooms
+    .filter((room: any) => room.metadata?.isPublic !== false)
+    .map((room: any) => ({
+      roomId: room.roomId,
+      name: room.metadata?.name || `Lobby ${room.roomId.slice(0, 6)}`,
+      playerCount: room.clients,
+      maxPlayers: room.maxClients,
+      status: room.metadata?.status || 'waiting',
+    }));
+}
+
 // List available lobbies
 app.get('/lobbies', async (_req, res) => {
   try {
-    const rooms = await matchMaker.query({ name: 'lobby_room' });
-    const lobbies = rooms
-      .filter((room: any) => room.metadata?.isPublic !== false)
-      .map((room: any) => ({
-        roomId: room.roomId,
-        name: room.metadata?.name || `Lobby ${room.roomId.slice(0, 6)}`,
-        playerCount: room.clients,
-        maxPlayers: room.maxClients,
-        status: room.metadata?.status || 'waiting',
-      }));
-    res.json({ lobbies });
+    res.json({ lobbies: await getPublicLobbies() });
   } catch (error) {
     console.error('Failed to list lobbies:', error);
     res.status(500).json({ error: 'Failed to list lobbies' });
   }
+});
+
+// Push lobby list changes to clients so the browser does not need manual refreshes.
+app.get('/lobbies/stream', async (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+  });
+  res.write(': connected\n\n');
+
+  let lastPayload = '';
+
+  const pushIfChanged = async () => {
+    try {
+      const payload = JSON.stringify({ lobbies: await getPublicLobbies() });
+      if (payload !== lastPayload) {
+        lastPayload = payload;
+        res.write(`event: lobbies\ndata: ${payload}\n\n`);
+      }
+    } catch (error) {
+      console.error('Failed to stream lobbies:', error);
+      res.write(`event: error\ndata: ${JSON.stringify({ error: 'Failed to list lobbies' })}\n\n`);
+    }
+  };
+
+  await pushIfChanged();
+  const interval = setInterval(pushIfChanged, 1000);
+
+  req.on('close', () => {
+    clearInterval(interval);
+    res.end();
+  });
 });
 
 const PORT = parseInt(process.env.PORT || '2567', 10);
@@ -109,4 +153,3 @@ process.on('SIGINT', () => {
   console.log('Shutting down...');
   gameServer.gracefullyShutdown();
 });
-

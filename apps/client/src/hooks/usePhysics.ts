@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GRAVITY, type VoxelMapManifest } from '@voxel-strike/shared';
+import { GRAVITY, PLAYER_HEIGHT, PLAYER_RADIUS, type VoxelMapManifest } from '@voxel-strike/shared';
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -10,6 +10,7 @@ interface PhysicsContext {
 
 let rapierInstance: typeof RAPIER | null = null;
 let worldInstance: RAPIER.World | null = null;
+let playerColliderInstance: RAPIER.Collider | null = null;
 let physicsReady = false;
 
 export async function initPhysics(): Promise<typeof RAPIER> {
@@ -61,9 +62,12 @@ export function usePhysics(): PhysicsContext {
         playerBodyRef.current = worldRef.current.createRigidBody(playerDesc);
 
         // Create player collider
-        const playerColliderDesc = RAPIER.ColliderDesc.capsule(0.5, 0.4)
-          .setTranslation(0, 0.9, 0);
-        worldRef.current.createCollider(playerColliderDesc, playerBodyRef.current);
+        const playerColliderDesc = RAPIER.ColliderDesc.capsule(
+          PLAYER_HEIGHT / 2 - PLAYER_RADIUS,
+          PLAYER_RADIUS
+        )
+          .setTranslation(0, PLAYER_HEIGHT / 2, 0);
+        playerColliderInstance = worldRef.current.createCollider(playerColliderDesc, playerBodyRef.current);
 
         // IMPORTANT: Step the world to initialize collision structures
         // This is required for raycasts to work in Rapier
@@ -90,6 +94,7 @@ export function usePhysics(): PhysicsContext {
       if (worldInstance === worldRef.current) {
         physicsReady = false;
         worldInstance = null;
+        playerColliderInstance = null;
         loadedProceduralMapId = null;
         mapColliderBodies = [];
       }
@@ -320,14 +325,150 @@ export function checkGroundBelow(x: number, y: number, z: number, maxDist: numbe
   return info ? info.groundY : null;
 }
 
+const PLAYER_BODY_FLOOR_CLEARANCE = 0.08;
+const PLAYER_BODY_HEAD_CLEARANCE = 0.04;
+const PLAYER_BODY_CAST_SKIN = 0.02;
+const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+
+function isSolidCollisionCollider(collider: RAPIER.Collider): boolean {
+  return collider !== playerColliderInstance && !collider.isSensor();
+}
+
+function createPlayerBodyQuery(
+  x: number,
+  y: number,
+  z: number,
+  playerRadius: number,
+  playerHeight: number
+): { position: { x: number; y: number; z: number }; shape: RAPIER.Capsule } | null {
+  if (!rapierInstance) return null;
+
+  const queryHeight = Math.max(
+    playerRadius * 2 + 0.02,
+    playerHeight - PLAYER_BODY_FLOOR_CLEARANCE - PLAYER_BODY_HEAD_CLEARANCE
+  );
+  const halfHeight = Math.max(0.01, queryHeight / 2 - playerRadius);
+  const centerOffsetY = (PLAYER_BODY_FLOOR_CLEARANCE - PLAYER_BODY_HEAD_CLEARANCE) / 2;
+
+  return {
+    position: { x, y: y + centerOffsetY, z },
+    shape: new rapierInstance.Capsule(halfHeight, playerRadius),
+  };
+}
+
+export function hasPlayerBodyClearance(
+  x: number,
+  y: number,
+  z: number,
+  playerRadius: number = PLAYER_RADIUS,
+  playerHeight: number = PLAYER_HEIGHT
+): boolean {
+  if (!rapierInstance || !worldInstance) return true;
+
+  try {
+    const query = createPlayerBodyQuery(x, y, z, playerRadius, playerHeight);
+    if (!query) return true;
+
+    const hit = worldInstance.intersectionWithShape(
+      query.position,
+      IDENTITY_ROTATION,
+      query.shape,
+      undefined,
+      undefined,
+      playerColliderInstance ?? undefined,
+      undefined,
+      isSolidCollisionCollider
+    );
+
+    return hit === null;
+  } catch (e) {
+    console.error('[Physics] hasPlayerBodyClearance error:', e);
+    return false;
+  }
+}
+
+export function checkPlayerBodyMovement(
+  x: number,
+  y: number,
+  z: number,
+  moveX: number,
+  moveZ: number,
+  playerRadius: number = PLAYER_RADIUS,
+  playerHeight: number = PLAYER_HEIGHT
+): {
+  blocked: boolean;
+  normal: { x: number; y: number; z: number };
+  timeOfImpact: number;
+} {
+  if (!rapierInstance || !worldInstance) {
+    return { blocked: false, normal: { x: 0, y: 0, z: 0 }, timeOfImpact: Infinity };
+  }
+
+  try {
+    const query = createPlayerBodyQuery(x, y, z, playerRadius, playerHeight);
+    if (!query) {
+      return { blocked: false, normal: { x: 0, y: 0, z: 0 }, timeOfImpact: Infinity };
+    }
+
+    const moveLength = Math.sqrt(moveX * moveX + moveZ * moveZ);
+    if (moveLength <= 0.0001) {
+      return {
+        blocked: !hasPlayerBodyClearance(x, y, z, playerRadius, playerHeight),
+        normal: { x: 0, y: 0, z: 0 },
+        timeOfImpact: 0,
+      };
+    }
+
+    const hit = worldInstance.castShape(
+      query.position,
+      IDENTITY_ROTATION,
+      { x: moveX, y: 0, z: moveZ },
+      query.shape,
+      PLAYER_BODY_CAST_SKIN,
+      1,
+      false,
+      undefined,
+      undefined,
+      playerColliderInstance ?? undefined,
+      undefined,
+      isSolidCollisionCollider
+    );
+
+    if (hit && hit.time_of_impact <= 1) {
+      return {
+        blocked: true,
+        normal: { x: hit.normal2.x, y: hit.normal2.y, z: hit.normal2.z },
+        timeOfImpact: hit.time_of_impact,
+      };
+    }
+
+    const targetHasClearance = hasPlayerBodyClearance(
+      x + moveX,
+      y,
+      z + moveZ,
+      playerRadius,
+      playerHeight
+    );
+
+    return {
+      blocked: !targetHasClearance,
+      normal: { x: 0, y: 0, z: 0 },
+      timeOfImpact: targetHasClearance ? Infinity : 1,
+    };
+  } catch (e) {
+    console.error('[Physics] checkPlayerBodyMovement error:', e);
+    return { blocked: true, normal: { x: 0, y: 0, z: 0 }, timeOfImpact: 0 };
+  }
+}
+
 // Check if a teleport destination is valid (not inside geometry)
 // Returns: { valid: boolean, adjustedPosition?: { x, y, z }, reason?: string }
 export function validateTeleportDestination(
   targetX: number, 
   targetY: number, 
   targetZ: number,
-  playerHeight: number = 1.8,
-  playerRadius: number = 0.4
+  playerHeight: number = PLAYER_HEIGHT,
+  playerRadius: number = PLAYER_RADIUS
 ): { valid: boolean; adjustedPosition?: { x: number; y: number; z: number }; reason?: string } {
   if (!rapierInstance || !worldInstance) {
     return { valid: true }; // Allow if physics not ready
@@ -336,8 +477,6 @@ export function validateTeleportDestination(
   try {
     const playerHalfHeight = playerHeight / 2;
     const feetY = targetY - playerHalfHeight;
-    const headY = targetY + playerHalfHeight;
-    const centerY = targetY;
 
     // 1. Check if there's solid ground below the target
     const groundCheck = checkGroundWithNormal(targetX, targetY + 5, targetZ, playerHeight + 10);
@@ -348,39 +487,13 @@ export function validateTeleportDestination(
     // Use ground-adjusted Y for all further checks
     const adjustedFeetY = groundCheck.groundY;
     const adjustedCenterY = groundCheck.groundY + playerHalfHeight;
-    const adjustedHeadY = groundCheck.groundY + playerHeight;
 
-    // 2. Check for geometry at CENTER and HEAD heights only (skip feet to avoid ground hits)
-    const checkPoints = [
-      { y: adjustedCenterY, label: 'center' },
-      { y: adjustedHeadY - 0.3, label: 'head' },
-    ];
-
-    // 8 directions for coverage
-    const directions: { x: number; z: number }[] = [];
-    for (let i = 0; i < 8; i++) {
-      const angle = (i / 8) * Math.PI * 2;
-      directions.push({ x: Math.cos(angle), z: Math.sin(angle) });
-    }
-
-    // Cast rays FROM the target position OUTWARD
-    // Only reject if VERY close hit (definitely inside solid geometry)
-    for (const point of checkPoints) {
-      for (const dir of directions) {
-        const ray = new rapierInstance.Ray(
-          { x: targetX, y: point.y, z: targetZ },
-          { x: dir.x, y: 0, z: dir.z }
-        );
-        const hit = worldInstance.castRay(ray, playerRadius + 0.3, true);
-        
-        // Only reject if extremely close (less than 20cm) - definitely inside
-        if (hit && hit.timeOfImpact < 0.2) {
-          return { 
-            valid: false, 
-            reason: `Inside solid geometry at ${point.label}` 
-          };
-        }
-      }
+    // 2. Check that the full standing hero body fits at the destination.
+    if (!hasPlayerBodyClearance(targetX, adjustedCenterY, targetZ, playerRadius, playerHeight)) {
+      return {
+        valid: false,
+        reason: 'Not enough body clearance'
+      };
     }
 
     // 3. Simple up ray check - make sure there's headroom
@@ -415,7 +528,7 @@ export function validateTeleportDestination(
 export function checkWallCollision(
   x: number, y: number, z: number,
   dirX: number, dirZ: number,
-  radius: number = 0.4
+  radius: number = PLAYER_RADIUS
 ): { hit: boolean; distance: number; normal: { x: number; y: number; z: number }; pushBack: { x: number; z: number } } {
   if (!rapierInstance || !worldInstance) {
     return { hit: false, distance: Infinity, normal: { x: 0, y: 0, z: 0 }, pushBack: { x: 0, z: 0 } };
@@ -494,7 +607,7 @@ export function moveWithCollision(
   x: number, y: number, z: number,
   velX: number, velZ: number,
   dt: number,
-  playerRadius: number = 0.4,
+  playerRadius: number = PLAYER_RADIUS,
   isGrounded: boolean = true
 ): { newX: number; newZ: number; newY: number; velX: number; velZ: number; stepped: boolean } {
   if (!rapierInstance || !worldInstance) {

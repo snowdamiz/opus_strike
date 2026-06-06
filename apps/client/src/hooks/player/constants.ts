@@ -9,7 +9,7 @@
 // ============================================================================
 
 export const PLAYER_HEIGHT = 1.8;
-export const PLAYER_RADIUS = 0.4;
+export const PLAYER_RADIUS = 0.48;
 export const EYE_HEIGHT = 0.6;
 
 // ============================================================================
@@ -54,6 +54,7 @@ export const HOOKSHOT_SPEED = 38;
 export const HOOKSHOT_MAX_DISTANCE = 14;
 export const DRAG_HOOK_COOLDOWN = 4000;
 export const DRAG_HOOK_SPEED = 50;
+export const DRAG_HOOK_MAX_DISTANCE = 30;
 export const GRAPPLE_MAX_RANGE = 40;
 export const GRAPPLE_TRAP_MAX_RANGE = 30;
 export const GRAPPLE_TRAP_THROW_SPEED = 30;
@@ -79,10 +80,34 @@ export interface SpawnOffset {
   forwardOffset: number;
 }
 
+export interface PlayerSocketOffset {
+  handHeight: number;
+  forwardOffset: number;
+  sideOffset: number;
+}
+
 export const DEFAULT_SPAWN_OFFSET: SpawnOffset = {
   eyeHeight: 0.6,
   handDrop: 0.3,
   forwardOffset: 0.8,
+};
+
+export const HOOKSHOT_CHAIN_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.16,
+  forwardOffset: 0.62,
+  sideOffset: 0.24,
+};
+
+export const PHANTOM_DIRE_BALL_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.2,
+  forwardOffset: 0.62,
+  sideOffset: 0.22,
+};
+
+export const PHANTOM_VOID_RAY_SOCKET: PlayerSocketOffset = {
+  handHeight: -0.08,
+  forwardOffset: 0.52,
+  sideOffset: 0,
 };
 
 /**
@@ -97,6 +122,30 @@ export function calculateProjectileSpawn(
     x: position.x + direction.x * offset.forwardOffset,
     y: position.y + offset.eyeHeight - offset.handDrop + direction.y * offset.forwardOffset,
     z: position.z + direction.z * offset.forwardOffset,
+  };
+}
+
+/**
+ * Calculate a stable player-relative socket position.
+ *
+ * Unlike projectile spawn, this uses yaw-only forward/side axes so the socket
+ * stays attached to the player's body while the projectile can still aim with
+ * full pitch via its velocity.
+ */
+export function calculatePlayerSocketPosition(
+  position: { x: number; y: number; z: number },
+  yaw: number,
+  offset: PlayerSocketOffset
+): { x: number; y: number; z: number } {
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+  const rightX = Math.cos(yaw);
+  const rightZ = -Math.sin(yaw);
+
+  return {
+    x: position.x + forwardX * offset.forwardOffset + rightX * offset.sideOffset,
+    y: position.y + offset.handHeight,
+    z: position.z + forwardZ * offset.forwardOffset + rightZ * offset.sideOffset,
   };
 }
 

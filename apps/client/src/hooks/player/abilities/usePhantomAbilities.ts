@@ -15,19 +15,24 @@ import { ABILITY_DEFINITIONS, VOID_RAY_CHARGE_TIME } from '@voxel-strike/shared'
 import { useGameStore } from '../../../store/gameStore';
 import {
   checkWallCollision,
+  isPhysicsReady,
+  raycastDirection,
   validateTeleportDestination,
 } from '../../usePhysics';
 import { triggerTeleportEffect } from '../../../components/ui/TeleportEffects';
 import { triggerBlinkEffect, triggerShadowArrival } from '../../../components/game/PhantomEffects';
 import {
+  EYE_HEIGHT,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   PHANTOM_FIRE_INTERVAL,
   PHANTOM_PROJECTILE_SPEED,
-  calculateProjectileSpawn,
+  PHANTOM_DIRE_BALL_SOCKET,
+  PHANTOM_VOID_RAY_SOCKET,
+  calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
-import type { AbilityContext, PlayerSounds, TargetingRefs } from '../types';
+import type { AbilityContext, PlayerSounds } from '../types';
 
 export interface UsePhantomAbilitiesReturn {
   // State refs
@@ -65,6 +70,62 @@ export interface UsePhantomAbilitiesReturn {
   handleShadowStepTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
+const PHANTOM_DIRE_BALL_AIM_DISTANCE = 120;
+const PHANTOM_VOID_RAY_AIM_DISTANCE = 100;
+
+function calculatePhantomLaunch(
+  ctx: AbilityContext,
+  launchSide: -1 | 1,
+  maxDistance: number,
+  socket = PHANTOM_DIRE_BALL_SOCKET
+) {
+  const lookDirection = calculateLookDirection(ctx.yaw, ctx.pitch);
+  const spawnPos = calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+    ...socket,
+    sideOffset: socket.sideOffset * launchSide,
+  });
+  const aimOrigin = {
+    x: ctx.position.x,
+    y: ctx.position.y + EYE_HEIGHT,
+    z: ctx.position.z,
+  };
+  const aimPoint = {
+    x: aimOrigin.x + lookDirection.x * maxDistance,
+    y: aimOrigin.y + lookDirection.y * maxDistance,
+    z: aimOrigin.z + lookDirection.z * maxDistance,
+  };
+
+  if (isPhysicsReady()) {
+    const hit = raycastDirection(
+      aimOrigin.x, aimOrigin.y, aimOrigin.z,
+      lookDirection.x, lookDirection.y, lookDirection.z,
+      maxDistance
+    );
+
+    if (hit?.hit) {
+      aimPoint.x = hit.point.x;
+      aimPoint.y = hit.point.y;
+      aimPoint.z = hit.point.z;
+    }
+  }
+
+  const aimDelta = {
+    x: aimPoint.x - spawnPos.x,
+    y: aimPoint.y - spawnPos.y,
+    z: aimPoint.z - spawnPos.z,
+  };
+  const aimLength = Math.sqrt(aimDelta.x ** 2 + aimDelta.y ** 2 + aimDelta.z ** 2) || 1;
+
+  return {
+    spawnPos,
+    direction: {
+      x: aimDelta.x / aimLength,
+      y: aimDelta.y / aimLength,
+      z: aimDelta.z / aimLength,
+    },
+  };
+}
+
 export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   // Fire state
   const lastFireTimeRef = useRef(0);
@@ -86,10 +147,10 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     if (now - lastFireTimeRef.current < PHANTOM_FIRE_INTERVAL) return;
 
     lastFireTimeRef.current = now;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
-    const spawnPos = calculateProjectileSpawn(ctx.position, direction);
 
     direBallIdRef.current++;
+    const launchSide = direBallIdRef.current % 2 === 1 ? 1 : -1;
+    const { spawnPos, direction } = calculatePhantomLaunch(ctx, launchSide, PHANTOM_DIRE_BALL_AIM_DISTANCE);
     const ballId = `dire_${ctx.localPlayer.id}_${direBallIdRef.current}`;
 
     useGameStore.getState().addDireBall({
@@ -123,8 +184,12 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
 
       if (chargeProgress >= 1) {
         // Fully charged - FIRE!
-        const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
-        const spawnPos = calculateProjectileSpawn(ctx.position, direction);
+        const { spawnPos, direction } = calculatePhantomLaunch(
+          ctx,
+          1,
+          PHANTOM_VOID_RAY_AIM_DISTANCE,
+          PHANTOM_VOID_RAY_SOCKET
+        );
 
         voidRayIdRef.current++;
         const rayId = `voidray_${ctx.localPlayer.id}_${voidRayIdRef.current}`;
@@ -444,5 +509,3 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     handleShadowStepTargetUpdate,
   };
 }
-
-

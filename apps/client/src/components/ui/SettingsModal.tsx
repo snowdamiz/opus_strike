@@ -1,52 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAudio } from '../../hooks/useAudio';
+import {
+  defaultSettings,
+  type ClientSettings,
+  useSettingsStore,
+} from '../../store/settingsStore';
+import { GameDialog } from './GameDialog';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay';
-
-interface Settings {
-  // Video
-  quality: 'low' | 'medium' | 'high' | 'ultra';
-  fov: number;
-  vsync: boolean;
-  showFPS: boolean;
-  
-  // Audio
-  masterVolume: number;
-  sfxVolume: number;
-  musicVolume: number;
-  voiceVolume: number;
-  
-  // Controls
-  sensitivity: number;
-  invertY: boolean;
-  toggleCrouch: boolean;
-  toggleSprint: boolean;
-  
-  // Gameplay
-  showDamageNumbers: boolean;
-  showKillFeed: boolean;
-  crosshairStyle: 'default' | 'dot' | 'circle' | 'cross';
-  crosshairColor: string;
-}
-
-const defaultSettings: Settings = {
-  quality: 'high',
-  fov: 90,
-  vsync: false,
-  showFPS: false,
-  masterVolume: 80,
-  sfxVolume: 100,
-  musicVolume: 50,
-  voiceVolume: 100,
-  sensitivity: 50,
-  invertY: false,
-  toggleCrouch: false,
-  toggleSprint: false,
-  showDamageNumbers: true,
-  showKillFeed: true,
-  crosshairStyle: 'default',
-  crosshairColor: '#ffffff',
-};
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -54,22 +15,20 @@ interface SettingsModalProps {
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
-  const [settings, setSettings] = useState<Settings>(() => {
-    const saved = localStorage.getItem('voxel-strike-settings');
-    return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
-  });
+  const savedSettings = useSettingsStore(state => state.settings);
+  const applySettings = useSettingsStore(state => state.applySettings);
+  const [settings, setSettings] = useState<ClientSettings>(savedSettings);
   const [hasChanges, setHasChanges] = useState(false);
   const { updateSettings: applyAudioSettings } = useAudio();
 
-  const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
+  const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
     setHasChanges(true);
   };
 
   const handleSave = () => {
-    localStorage.setItem('voxel-strike-settings', JSON.stringify(settings));
-    // Apply audio settings immediately
-    applyAudioSettings();
+    applySettings(settings);
+    applyAudioSettings(settings);
     setHasChanges(false);
   };
 
@@ -119,41 +78,48 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div className="relative w-full max-w-xl lg:max-w-2xl xl:max-w-3xl 2xl:max-w-4xl max-h-[85vh] mx-4 flex flex-col bg-strike-surface border border-white/10 rounded-xl overflow-hidden shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+    <GameDialog
+      title="SETTINGS"
+      description="Configure your game experience"
+      icon={(
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      )}
+      size="xl"
+      onClose={onClose}
+      bodyClassName="flex-1 flex overflow-hidden"
+      footer={(
+        <>
+          <button
+            onClick={handleReset}
+            className="px-4 py-2 rounded-lg text-white/50 font-display hover:text-white hover:bg-white/5 "
+          >
+            RESET DEFAULTS
+          </button>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-orange-500/20 flex items-center justify-center">
-              <svg className="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </div>
-            <div>
-              <h2 className="font-display text-2xl text-white">SETTINGS</h2>
-              <p className="text-white/40 text-sm font-body">Configure your game experience</p>
-            </div>
+            <button
+              onClick={onClose}
+              className="px-6 py-2 rounded-lg bg-white/5 text-white/70 font-display hover:bg-white/10 hover:text-white "
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!hasChanges}
+              className={`px-6 py-2 rounded-lg font-display ${
+                hasChanges
+                  ? 'bg-orange-500 text-white hover:bg-orange-400'
+                  : 'bg-white/5 text-white/30 cursor-not-allowed'
+              }`}
+            >
+              SAVE CHANGES
+            </button>
           </div>
- <button
- onClick={onClose}
- className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 "
- >
- <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
- </svg>
- </button>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 flex overflow-hidden">
+        </>
+      )}
+    >
           {/* Sidebar */}
           <div className="w-36 lg:w-40 xl:w-48 border-r border-white/5 p-2 lg:p-3 space-y-1">
             {tabs.map((tab) => (
@@ -179,7 +145,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 <SettingRow label="Graphics Quality" description="Overall visual quality preset">
                   <SelectInput
                     value={settings.quality}
-                    onChange={(v) => updateSetting('quality', v as Settings['quality'])}
+                    onChange={(v) => updateSetting('quality', v as ClientSettings['quality'])}
                     options={[
                       { value: 'low', label: 'Low' },
                       { value: 'medium', label: 'Medium' },
@@ -196,13 +162,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     min={60}
                     max={120}
                     step={1}
-                  />
-                </SettingRow>
-
-                <SettingRow label="V-Sync" description="Synchronize frame rate with monitor">
-                  <ToggleInput
-                    value={settings.vsync}
-                    onChange={(v) => updateSetting('vsync', v)}
                   />
                 </SettingRow>
 
@@ -247,15 +206,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Voice Chat" description={`${settings.voiceVolume}%`}>
-                  <SliderInput
-                    value={settings.voiceVolume}
-                    onChange={(v) => updateSetting('voiceVolume', v)}
-                    min={0}
-                    max={100}
-                    step={1}
-                  />
-                </SettingRow>
               </div>
             )}
 
@@ -341,7 +291,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 <SettingRow label="Crosshair Style" description="Choose your crosshair appearance">
                   <SelectInput
                     value={settings.crosshairStyle}
-                    onChange={(v) => updateSetting('crosshairStyle', v as Settings['crosshairStyle'])}
+                    onChange={(v) => updateSetting('crosshairStyle', v as ClientSettings['crosshairStyle'])}
                     options={[
                       { value: 'default', label: 'Default' },
                       { value: 'dot', label: 'Dot' },
@@ -365,38 +315,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
             )}
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-white/5 bg-strike-elevated/50">
- <button
- onClick={handleReset}
- className="px-4 py-2 rounded-lg text-white/50 font-display hover:text-white hover:bg-white/5 "
- >
- RESET DEFAULTS
- </button>
-          <div className="flex items-center gap-3">
- <button
- onClick={onClose}
- className="px-6 py-2 rounded-lg bg-white/5 text-white/70 font-display hover:bg-white/10 hover:text-white "
- >
- CANCEL
- </button>
- <button
- onClick={handleSave}
- disabled={!hasChanges}
- className={`px-6 py-2 rounded-lg font-display ${
- hasChanges
- ? 'bg-orange-500 text-white hover:bg-orange-400'
- : 'bg-white/5 text-white/30 cursor-not-allowed'
- }`}
- >
- SAVE CHANGES
- </button>
-          </div>
-        </div>
-      </div>
-    </div>
+    </GameDialog>
   );
 }
 
@@ -470,24 +389,100 @@ function SelectInput({ value, onChange, options }: {
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
 }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selectedOption = options.find((option) => option.value === value) ?? options[0];
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isOpen]);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Escape') {
+      setIsOpen(false);
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      setIsOpen((open) => !open);
+      return;
+    }
+
+    const currentIndex = options.findIndex((option) => option.value === value);
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const nextIndex = (currentIndex + direction + options.length) % options.length;
+      onChange(options[nextIndex].value);
+    }
+  };
+
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="px-4 py-2 rounded-lg bg-white/10 border border-white/10 text-white font-body cursor-pointer appearance-none pr-10 focus:outline-none focus:border-orange-500"
-      style={{
-        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E")`,
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'right 0.5rem center',
-        backgroundSize: '1.25rem',
-      }}
-    >
-      {options.map((option) => (
-        <option key={option.value} value={option.value} className="bg-strike-surface">
-          {option.label}
-        </option>
-      ))}
-    </select>
+    <div ref={containerRef} className="relative min-w-36">
+      <button
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+        onKeyDown={handleKeyDown}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        className="w-full h-10 px-3.5 rounded-lg bg-white/[0.07] border border-white/10 text-white font-body cursor-pointer focus:outline-none focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.1] flex items-center justify-between gap-3"
+      >
+        <span>{selectedOption.label}</span>
+        <svg
+          className={`w-4 h-4 text-white/50 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div
+          role="listbox"
+          className="absolute right-0 top-12 z-50 w-full overflow-hidden rounded-xl border border-white/15 bg-[#171720]/95 shadow-2xl backdrop-blur-md"
+        >
+          {options.map((option) => {
+            const isSelected = option.value === value;
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => {
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+                className={`w-full px-3.5 py-2.5 text-left font-body flex items-center gap-2 hover:bg-white/10 ${
+                  isSelected ? 'text-orange-300 bg-orange-500/15' : 'text-white/70'
+                }`}
+              >
+                <span className="w-4 text-orange-300">
+                  {isSelected && (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </span>
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
-

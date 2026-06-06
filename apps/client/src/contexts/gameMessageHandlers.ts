@@ -1,5 +1,6 @@
 import type { Room } from 'colyseus.js';
 import { useGameStore } from '../store/gameStore';
+import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setPlayerVisualPosition, setPlayerVisualRotation, visualStore } from '../store/visualStore';
 import type { HeroId, Team, Player } from '@voxel-strike/shared';
 
@@ -503,6 +504,14 @@ export function setupCombatHandlers(room: Room) {
     damageType: string;
   }) => {
     console.log(`Player ${data.targetId} took ${data.damage} damage from ${data.damageType}`);
+
+    const store = useGameStore.getState();
+    if (data.sourceId === store.playerId) {
+      useCombatFeedbackStore.getState().addDamageNumber({
+        damage: data.damage,
+        damageType: data.damageType,
+      });
+    }
   });
 
   room.onMessage('playerKilled', (data: {
@@ -511,6 +520,12 @@ export function setupCombatHandlers(room: Room) {
     position: { x: number; y: number; z: number };
   }) => {
     console.log(`Player ${data.victimId} killed by ${data.killerId}`);
+
+    const players = useGameStore.getState().players;
+    useCombatFeedbackStore.getState().addKillFeedEvent({
+      killerName: players.get(data.killerId)?.name ?? 'Unknown',
+      victimName: players.get(data.victimId)?.name ?? 'Unknown',
+    });
   });
 
   room.onMessage('abilityUsed', (data: {

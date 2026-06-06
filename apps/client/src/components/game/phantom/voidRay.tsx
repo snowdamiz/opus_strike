@@ -29,6 +29,10 @@ const RAY_DAMAGE = 80;
 const PLAYER_HIT_RADIUS = 1.5;
 const SPIRAL_COUNT = 5;
 const PARTICLE_COUNT = 200;
+const LOCAL_ORIGIN_HALO_INNER_RADIUS = RAY_RADIUS * 5.5;
+const LOCAL_ORIGIN_HALO_OUTER_RADIUS = RAY_RADIUS * 7.5;
+const LOCAL_ORIGIN_HALO_SECONDARY_INNER_RADIUS = RAY_RADIUS * 8.5;
+const LOCAL_ORIGIN_HALO_SECONDARY_OUTER_RADIUS = RAY_RADIUS * 11;
 
 // Main spiral ribbon shader - thick glowing energy ribbons
 let sharedSpiralMaterial: THREE.ShaderMaterial | null = null;
@@ -264,6 +268,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   const currentLengthRef = useRef(0);
   const hasLoggedRef = useRef(false);
   
+  const isLocalOwner = useGameStore(state => state.localPlayer?.id === ownerId);
   const removeVoidRay = useGameStore(state => state.removeVoidRay);
   
   // Create individual spiral materials (each needs its own uniforms)
@@ -603,25 +608,56 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
         <primitive object={sparkMaterial} />
       </points>
       
-      {/* ===== ORIGIN BURST ===== */}
-      <mesh>
-        <sphereGeometry args={[RAY_RADIUS * 1.8, 24, 24]} />
-        <meshBasicMaterial 
-          color={0xc084fc}
-          transparent
-          opacity={0.95}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-      <mesh>
-        <sphereGeometry args={[RAY_RADIUS * 2.5, 16, 16]} />
-        <meshBasicMaterial 
-          color={0x7c3aed}
-          transparent
-          opacity={0.4}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
+      {/* ===== ORIGIN HALO ===== */}
+      {isLocalOwner ? (
+        <>
+          <mesh rotation-x={-Math.PI / 2}>
+            <ringGeometry args={[LOCAL_ORIGIN_HALO_INNER_RADIUS, LOCAL_ORIGIN_HALO_OUTER_RADIUS, 48]} />
+            <meshBasicMaterial
+              color={0xd8b4fe}
+              transparent
+              opacity={0.32}
+              side={THREE.DoubleSide}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+          <mesh rotation-x={-Math.PI / 2} position-y={0.03}>
+            <ringGeometry args={[LOCAL_ORIGIN_HALO_SECONDARY_INNER_RADIUS, LOCAL_ORIGIN_HALO_SECONDARY_OUTER_RADIUS, 64]} />
+            <meshBasicMaterial
+              color={0x22d3ee}
+              transparent
+              opacity={0.18}
+              side={THREE.DoubleSide}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+        </>
+      ) : (
+        <>
+          <mesh>
+            <sphereGeometry args={[RAY_RADIUS * 1.8, 24, 24]} />
+            <meshBasicMaterial
+              color={0xc084fc}
+              transparent
+              opacity={0.95}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[RAY_RADIUS * 2.5, 16, 16]} />
+            <meshBasicMaterial
+              color={0x7c3aed}
+              transparent
+              opacity={0.4}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        </>
+      )}
       
       {/* ===== IMPACT EFFECT ===== */}
       <group ref={impactRef}>
@@ -712,4 +748,3 @@ export function VoidRays({ rays }: VoidRaysProps) {
     </>
   );
 }
-

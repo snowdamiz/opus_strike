@@ -20,6 +20,10 @@ interface AirStrikeData {
 
 const airStrikes: AirStrikeData[] = [];
 let airStrikeIdCounter = 0;
+const AIR_STRIKE_AREA_RADIUS = 7.75;
+const AIR_STRIKE_INNER_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.34;
+const AIR_STRIKE_MIDDLE_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.58;
+const AIR_STRIKE_OUTER_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.86;
 
 export function triggerAirStrike(position: { x: number; y: number; z: number }) {
   const bombs: { x: number; z: number; delay: number; groundY: number; size: number }[] = [];
@@ -27,7 +31,7 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
   // Wave 1: Inner ring (4 bombs) - starts immediately
   for (let i = 0; i < 4; i++) {
     const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.3;
-    const r = 3 + Math.random() * 2;
+    const r = AIR_STRIKE_INNER_RADIUS + Math.random() * 1.0;
     const bx = position.x + Math.cos(angle) * r;
     const bz = position.z + Math.sin(angle) * r;
     
@@ -42,7 +46,7 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
   // Wave 2: Middle ring (6 bombs) - starts at 400ms
   for (let i = 0; i < 6; i++) {
     const angle = (i / 6) * Math.PI * 2 + Math.random() * 0.4;
-    const r = 6 + Math.random() * 3;
+    const r = AIR_STRIKE_MIDDLE_RADIUS + Math.random() * 1.6;
     const bx = position.x + Math.cos(angle) * r;
     const bz = position.z + Math.sin(angle) * r;
     
@@ -57,7 +61,7 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
   // Wave 3: Outer ring (8 bombs) - starts at 900ms
   for (let i = 0; i < 8; i++) {
     const angle = (i / 8) * Math.PI * 2 + Math.random() * 0.3;
-    const r = 10 + Math.random() * 4;
+    const r = AIR_STRIKE_OUTER_RADIUS + Math.random() * 2.4;
     const bx = position.x + Math.cos(angle) * r;
     const bz = position.z + Math.sin(angle) * r;
     
@@ -128,9 +132,13 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
         if (warningElapsed > 0 && warningMesh && warningFill) {
           warningMesh.visible = true;
           warningFill.visible = true;
-          const pulse = 0.7 + Math.sin(warningElapsed * 0.03) * 0.3;
-          warningMesh.scale.setScalar(pulse * bomb.size);
-          warningFill.scale.setScalar(pulse * bomb.size);
+          const warningProgress = Math.min(1, warningElapsed / 500);
+          const pulse = 0.86 + Math.sin(warningElapsed * 0.035) * 0.16;
+          warningMesh.rotation.z = warningElapsed * 0.006;
+          warningMesh.scale.setScalar((0.65 + warningProgress * 0.45) * pulse * bomb.size);
+          warningFill.scale.setScalar((0.6 + warningProgress * 0.34) * bomb.size);
+          (warningMesh.material as THREE.MeshBasicMaterial).opacity = 0.35 + warningProgress * 0.35;
+          (warningFill.material as THREE.MeshBasicMaterial).opacity = 0.08 + warningProgress * 0.13;
         } else {
           if (warningMesh) warningMesh.visible = false;
           if (warningFill) warningFill.visible = false;
@@ -149,23 +157,31 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
           bombMesh.position.set(bomb.x, y, bomb.z);
           bombMesh.rotation.x += 0.15;
           bombMesh.rotation.z += 0.1;
-          bombMesh.scale.setScalar(0.25 * bomb.size);
+          bombMesh.scale.set(0.18 * bomb.size, 0.34 * bomb.size, 0.18 * bomb.size);
         }
         if (trailMesh) {
           trailMesh.visible = true;
           const startY = bomb.groundY + 55;
           const y = startY - (startY - bomb.groundY) * fallProgress * fallProgress;
           trailMesh.position.set(bomb.x, y + 0.8 * bomb.size, bomb.z);
-          trailMesh.scale.set(0.2 * bomb.size, 1.2 * bomb.size, 0.2 * bomb.size);
+          trailMesh.scale.set(
+            0.16 * bomb.size * (1 - fallProgress * 0.25),
+            1.5 * bomb.size * (0.75 + fallProgress * 0.35),
+            0.16 * bomb.size * (1 - fallProgress * 0.25)
+          );
+          (trailMesh.material as THREE.MeshBasicMaterial).opacity = 0.45 + fallProgress * 0.4;
         }
         if (warningMesh) {
           warningMesh.visible = true;
-          const pulse = 0.8 + Math.sin(bombElapsed * 0.025) * 0.2;
-          warningMesh.scale.setScalar(pulse * bomb.size);
+          const pulse = 0.94 + Math.sin(bombElapsed * 0.03) * 0.08;
+          warningMesh.rotation.z = bombElapsed * 0.01;
+          warningMesh.scale.setScalar((1 + fallProgress * 0.18) * pulse * bomb.size);
+          (warningMesh.material as THREE.MeshBasicMaterial).opacity = 0.75;
         }
         if (warningFill) {
           warningFill.visible = true;
-          warningFill.scale.setScalar(bomb.size);
+          warningFill.scale.setScalar((0.92 + fallProgress * 0.16) * bomb.size);
+          (warningFill.material as THREE.MeshBasicMaterial).opacity = 0.16 + fallProgress * 0.12;
         }
         if (explosionGroup) explosionGroup.visible = false;
       } else {
@@ -187,7 +203,7 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
           activeExplosions++;
           const easeOut = 1 - Math.pow(1 - explosionProgress, 2);
           const fadeOut = Math.max(0, 1 - explosionProgress * 1.2);
-          const scale = (0.5 + easeOut * 3) * bomb.size;
+          const scale = (0.28 + easeOut * 1.35) * bomb.size;
           explosionGroup.scale.setScalar(scale);
           
           // Track light position
@@ -197,8 +213,38 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
           
           // Update opacity on all children
           explosionGroup.children.forEach((child, ci) => {
-            if ((child as THREE.Mesh).material) {
-              ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = fadeOut * (1 - ci * 0.15);
+            const mesh = child as THREE.Mesh;
+            if (mesh.material) {
+              const material = mesh.material as THREE.MeshBasicMaterial;
+              material.opacity = Math.max(0, fadeOut * (1 - ci * 0.09));
+            }
+
+            switch (ci) {
+              case 0:
+                mesh.scale.setScalar(0.55 + (1 - explosionProgress) * 0.35);
+                break;
+              case 1:
+                mesh.scale.setScalar(0.78 + easeOut * 0.34);
+                break;
+              case 2:
+                mesh.scale.setScalar(1.02 + easeOut * 0.46);
+                break;
+              case 3:
+                mesh.scale.setScalar(1.18 + easeOut * 0.54);
+                break;
+              case 4: {
+                const ringScale = 0.8 + easeOut * 0.85;
+                mesh.scale.set(ringScale, ringScale, 1);
+                break;
+              }
+              case 5: {
+                const shockScale = 0.92 + easeOut * 1.08;
+                mesh.scale.set(shockScale, shockScale, 1);
+                break;
+              }
+              case 6:
+                mesh.scale.setScalar(0.95 + easeOut * 0.72);
+                break;
             }
           });
         } else if (explosionGroup) {
@@ -210,7 +256,7 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
     // Update dynamic light
     if (lightRef.current) {
       lightRef.current.position.set(lightX, lightY, lightZ);
-      lightRef.current.intensity = activeExplosions > 0 ? Math.min(activeExplosions * 12, 40) : 5;
+      lightRef.current.intensity = activeExplosions > 0 ? Math.min(activeExplosions * 8, 26) : 3;
     }
   });
   
@@ -272,23 +318,31 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
           >
             {/* Core flash */}
             <mesh geometry={SHARED_GEOMETRIES.sphere8}>
-              <meshBasicMaterial color={0xffffcc} transparent opacity={1} />
+              <meshBasicMaterial color={0xffffcc} transparent opacity={1} depthWrite={false} blending={THREE.AdditiveBlending} />
             </mesh>
             {/* Inner fire */}
             <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.3}>
-              <meshBasicMaterial color={0xffaa00} transparent opacity={0.9} />
+              <meshBasicMaterial color={0xffcc44} transparent opacity={0.9} depthWrite={false} blending={THREE.AdditiveBlending} />
             </mesh>
             {/* Outer fire */}
             <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.6}>
-              <meshBasicMaterial color={0xff5500} transparent opacity={0.7} />
+              <meshBasicMaterial color={0xff5a00} transparent opacity={0.7} depthWrite={false} blending={THREE.AdditiveBlending} />
             </mesh>
             {/* Smoke ring */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={2.0}>
-              <meshBasicMaterial color={0xff2200} transparent opacity={0.4} />
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.4}>
+              <meshBasicMaterial color={0x6b2a12} transparent opacity={0.34} depthWrite={false} />
             </mesh>
             {/* Ground ring */}
-            <mesh rotation-x={-Math.PI / 2} position-y={-0.5} geometry={SHARED_GEOMETRIES.ring16} scale={[1.5, 1.5, 1]}>
-              <meshBasicMaterial color={0xff6600} transparent opacity={0.6} side={THREE.DoubleSide} />
+            <mesh rotation-x={-Math.PI / 2} position-y={-0.5} geometry={SHARED_GEOMETRIES.ring16} scale={[1.1, 1.1, 1]}>
+              <meshBasicMaterial color={0xff7a00} transparent opacity={0.6} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
+            </mesh>
+            {/* Shockwave */}
+            <mesh rotation-x={-Math.PI / 2} position-y={-0.46} geometry={SHARED_GEOMETRIES.ring24} scale={[1.35, 1.35, 1]}>
+              <meshBasicMaterial color={0xffffaa} transparent opacity={0.42} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
+            </mesh>
+            {/* Lingering smoke dome */}
+            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.55}>
+              <meshBasicMaterial color={0x2a211c} transparent opacity={0.24} depthWrite={false} />
             </mesh>
           </group>
         </group>
@@ -300,7 +354,7 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
         position={[strike.centerPosition.x, strike.centerPosition.y + 3, strike.centerPosition.z]}
         color={0xff4400} 
         intensity={10} 
-        distance={35} 
+        distance={24} 
         decay={2} 
       />
     </group>
@@ -465,35 +519,38 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
   if (!isActive) return null;
   
   const baseColor = isValidRef.current ? 0xff2200 : 0x880000;
+  const middleRadius = AIR_STRIKE_AREA_RADIUS * 0.68;
+  const innerRadius = AIR_STRIKE_AREA_RADIUS * 0.38;
+  const crossLength = AIR_STRIKE_AREA_RADIUS * 2.08;
   
   return (
     <group ref={indicatorRef}>
       {/* Large danger zone indicator */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[10, 10, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[AIR_STRIKE_AREA_RADIUS, AIR_STRIKE_AREA_RADIUS, 1]}>
+        <meshBasicMaterial color={0xff2200} transparent opacity={0.62} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.12} geometry={SHARED_GEOMETRIES.ring24} scale={[7, 7, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.7} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.12} geometry={SHARED_GEOMETRIES.ring24} scale={[middleRadius, middleRadius, 1]}>
+        <meshBasicMaterial color={baseColor} transparent opacity={0.72} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.14} geometry={SHARED_GEOMETRIES.ring16} scale={[4, 4, 1]}>
-        <meshBasicMaterial color={0xff4400} transparent opacity={0.8} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.14} geometry={SHARED_GEOMETRIES.ring16} scale={[innerRadius, innerRadius, 1]}>
+        <meshBasicMaterial color={0xffaa00} transparent opacity={0.82} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.circle16} scale={[0.8, 0.8, 1]}>
-        <meshBasicMaterial color={0xffff00} transparent opacity={1} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.circle16} scale={[0.65, 0.65, 1]}>
+        <meshBasicMaterial color={0xffff66} transparent opacity={1} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[10, 10, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.1} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[AIR_STRIKE_AREA_RADIUS, AIR_STRIKE_AREA_RADIUS, 1]}>
+        <meshBasicMaterial color={0xff3300} transparent opacity={0.08} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
       
       {/* Cross */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 22, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.16, crossLength, 1]}>
+        <meshBasicMaterial color={0xff3300} transparent opacity={0.58} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.2, 22, 1]}>
-        <meshBasicMaterial color={0xff0000} transparent opacity={0.6} side={THREE.DoubleSide} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.16, crossLength, 1]}>
+        <meshBasicMaterial color={0xff3300} transparent opacity={0.58} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
       
-      <pointLight color={0xff2200} intensity={3} distance={12} decay={2} position-y={1} />
+      <pointLight color={0xff3300} intensity={2.6} distance={10} decay={2} position-y={1} />
     </group>
   );
 }
@@ -528,4 +585,3 @@ export function AirStrikeEffects() {
     </>
   );
 }
-

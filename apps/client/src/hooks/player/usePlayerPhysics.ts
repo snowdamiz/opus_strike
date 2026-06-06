@@ -8,9 +8,11 @@ import { useCallback } from 'react';
 import * as THREE from 'three';
 import { GRAVITY } from '@voxel-strike/shared';
 import {
+  checkPlayerBodyMovement,
   checkGroundWithNormal,
-  checkWallCollision,
+  hasPlayerBodyClearance,
   isPhysicsReady,
+  raycastDirection,
   type GroundInfo,
 } from '../usePhysics';
 import {
@@ -61,9 +63,15 @@ export interface UsePlayerPhysicsReturn {
     smoothedY: number | null,
     isIceWallRushing: boolean,
     dt: number
-  ) => { didStepUp: boolean; newSmoothedY: number | null };
+  ) => { didStepUp: boolean; newSmoothedY: number | null; hitTerrain: boolean };
   
   applyGravity: (velocity: THREE.Vector3, isGrounded: boolean, isGrappling: boolean, isSwinging: boolean, dt: number) => void;
+
+  applyVerticalMovement: (
+    position: THREE.Vector3,
+    velocity: THREE.Vector3,
+    dt: number
+  ) => { hitCeiling: boolean };
   
   checkOutOfBounds: (position: THREE.Vector3, velocity: THREE.Vector3, isGrounded: boolean) => void;
   
@@ -76,6 +84,65 @@ export interface UsePlayerPhysicsReturn {
 function smoothY(currentY: number, targetY: number, speed: number, dt: number): number {
   const t = 1 - Math.exp(-speed * dt);
   return currentY + (targetY - currentY) * t;
+}
+
+const MAX_GROUND_HIT_ABOVE_FEET = STEP_HEIGHT + 0.12;
+const CEILING_CLEARANCE = 0.04;
+const CEILING_PROBE_RADIUS = PLAYER_RADIUS * 0.65;
+const CEILING_PROBE_OFFSETS = [
+  { x: 0, z: 0 },
+  { x: CEILING_PROBE_RADIUS, z: 0 },
+  { x: -CEILING_PROBE_RADIUS, z: 0 },
+  { x: 0, z: CEILING_PROBE_RADIUS },
+  { x: 0, z: -CEILING_PROBE_RADIUS },
+];
+
+function isGroundHitAboveStepRange(position: THREE.Vector3, groundY: number): boolean {
+  const playerFeetY = position.y - PLAYER_HEIGHT / 2;
+  return groundY - playerFeetY > MAX_GROUND_HIT_ABOVE_FEET;
+}
+
+function getAllowedUpwardMoveBeforeCeiling(position: THREE.Vector3, upwardMove: number): number | null {
+  if (upwardMove <= 0 || !isPhysicsReady()) return null;
+
+  const headY = position.y + PLAYER_HEIGHT / 2;
+  const castDistance = upwardMove + CEILING_CLEARANCE * 2;
+  let nearestAllowedMove = Infinity;
+
+  for (const offset of CEILING_PROBE_OFFSETS) {
+    const hit = raycastDirection(
+      position.x + offset.x,
+      headY - CEILING_CLEARANCE,
+      position.z + offset.z,
+      0,
+      1,
+      0,
+      castDistance
+    );
+
+    if (hit?.hit) {
+      const allowedMove = Math.max(0, hit.distance - CEILING_CLEARANCE * 2);
+      nearestAllowedMove = Math.min(nearestAllowedMove, allowedMove);
+    }
+  }
+
+  return nearestAllowedMove === Infinity ? null : nearestAllowedMove;
+}
+
+function canMovePlayerBody(position: THREE.Vector3, moveX: number, moveZ: number): boolean {
+  return !checkPlayerBodyMovement(
+    position.x,
+    position.y,
+    position.z,
+    moveX,
+    moveZ,
+    PLAYER_RADIUS,
+    PLAYER_HEIGHT
+  ).blocked;
+}
+
+function canOccupyPlayerBody(x: number, y: number, z: number): boolean {
+  return hasPlayerBodyClearance(x, y, z, PLAYER_RADIUS, PLAYER_HEIGHT);
 }
 
 export function usePlayerPhysics(): UsePlayerPhysicsReturn {
@@ -106,6 +173,15 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     const playerFeetY = position.y - PLAYER_HEIGHT / 2;
     const distToGround = playerFeetY - groundInfo.groundY;
     const snapDistance = distToGround >= 0 ? STEP_HEIGHT : 0.15;
+
+    if (isGroundHitAboveStepRange(position, groundInfo.groundY)) {
+      return {
+        isGrounded: false,
+        canJump: false,
+        newSmoothedY: null,
+        groundInfo
+      };
+    }
 
     // Close to or below ground
     if (distToGround <= snapDistance && velocity.y <= 0) {
@@ -163,16 +239,19 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     smoothedY: number | null,
     isIceWallRushing: boolean,
     dt: number
-  ): { didStepUp: boolean; newSmoothedY: number | null } => {
+  ): { didStepUp: boolean; newSmoothedY: number | null; hitTerrain: boolean } => {
     const moveX = velocity.x * dt;
     const moveZ = velocity.z * dt;
+    const targetX = position.x + moveX;
+    const targetZ = position.z + moveZ;
     let didStepUp = false;
+    let hitTerrain = false;
     let newSmoothedY = smoothedY;
 
     if (!isPhysicsReady() || (Math.abs(moveX) <= 0.001 && Math.abs(moveZ) <= 0.001)) {
       position.x += moveX;
       position.z += moveZ;
-      return { didStepUp: false, newSmoothedY };
+      return { didStepUp: false, newSmoothedY, hitTerrain: false };
     }
 
     // Step-up logic for stairs
@@ -202,17 +281,24 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
             if (!hasCeiling) {
               const targetY = targetGroundY + PLAYER_HEIGHT / 2;
-              const currentY = smoothedY ?? position.y;
-              const smoothSpeed = isIceWallRushing
-                ? TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35
-                : TERRAIN_RAMP_UP_SMOOTH_SPEED;
+              const hasBodyClearance = canOccupyPlayerBody(targetX, targetY, targetZ);
 
-              position.x += moveX;
-              position.z += moveZ;
-              position.y = smoothY(currentY, targetY, smoothSpeed, dt);
-              newSmoothedY = position.y;
-              velocity.y = 0;
-              didStepUp = true;
+              if (hasBodyClearance) {
+                const currentY = smoothedY ?? position.y;
+                const smoothSpeed = isIceWallRushing
+                  ? TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35
+                  : TERRAIN_RAMP_UP_SMOOTH_SPEED;
+
+                position.x += moveX;
+                position.z += moveZ;
+                position.y = smoothY(currentY, targetY, smoothSpeed, dt);
+                newSmoothedY = position.y;
+                velocity.y = 0;
+                didStepUp = true;
+                hitTerrain = true;
+              } else {
+                hitTerrain = true;
+              }
             }
           }
         }
@@ -221,36 +307,27 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
     // Normal movement if didn't step up
     if (!didStepUp) {
-      const moveDirX = Math.abs(moveX) > 0.001 ? Math.sign(moveX) : 0;
-      const moveDirZ = Math.abs(moveZ) > 0.001 ? Math.sign(moveZ) : 0;
-
-      let blockedX = false;
-      let blockedZ = false;
-
-      if (Math.abs(moveX) > 0.001) {
-        const wallX = checkWallCollision(position.x, position.y, position.z, moveDirX, 0, PLAYER_RADIUS);
-        blockedX = wallX.hit && wallX.distance < PLAYER_RADIUS + Math.abs(moveX) + 0.05;
-      }
-
-      if (Math.abs(moveZ) > 0.001) {
-        const wallZ = checkWallCollision(position.x, position.y, position.z, 0, moveDirZ, PLAYER_RADIUS);
-        blockedZ = wallZ.hit && wallZ.distance < PLAYER_RADIUS + Math.abs(moveZ) + 0.05;
-      }
-
-      if (blockedX) {
-        velocity.x = 0;
-      } else {
+      if (canMovePlayerBody(position, moveX, moveZ)) {
         position.x += moveX;
-      }
-
-      if (blockedZ) {
-        velocity.z = 0;
-      } else {
         position.z += moveZ;
+      } else {
+        hitTerrain = true;
+
+        if (Math.abs(moveX) > 0.001 && canMovePlayerBody(position, moveX, 0)) {
+          position.x += moveX;
+        } else {
+          velocity.x = 0;
+        }
+
+        if (Math.abs(moveZ) > 0.001 && canMovePlayerBody(position, 0, moveZ)) {
+          position.z += moveZ;
+        } else {
+          velocity.z = 0;
+        }
       }
     }
 
-    return { didStepUp, newSmoothedY };
+    return { didStepUp, newSmoothedY, hitTerrain };
   }, []);
 
   // Apply gravity
@@ -270,6 +347,29 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
     const gravityMult = isGrappling ? 0.1 : 1.0;
     velocity.y += GRAVITY * dt * gravityMult;
+  }, []);
+
+  const applyVerticalMovement = useCallback((
+    position: THREE.Vector3,
+    velocity: THREE.Vector3,
+    dt: number
+  ): { hitCeiling: boolean } => {
+    const verticalMove = velocity.y * dt;
+
+    if (verticalMove <= 0) {
+      position.y += verticalMove;
+      return { hitCeiling: false };
+    }
+
+    const allowedMove = getAllowedUpwardMoveBeforeCeiling(position, verticalMove);
+    if (allowedMove !== null && allowedMove <= verticalMove) {
+      position.y += allowedMove;
+      velocity.y = 0;
+      return { hitCeiling: true };
+    }
+
+    position.y += verticalMove;
+    return { hitCeiling: false };
   }, []);
 
   // Check and handle out of bounds
@@ -307,8 +407,8 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     checkGround,
     applyHorizontalMovement,
     applyGravity,
+    applyVerticalMovement,
     checkOutOfBounds,
     constrainToMapBoundary,
   };
 }
-

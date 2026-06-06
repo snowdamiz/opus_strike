@@ -24,6 +24,11 @@ interface FeatureAnchor {
   radius: number;
 }
 
+interface GridDirection {
+  dx: -1 | 0 | 1;
+  dz: -1 | 0 | 1;
+}
+
 const SPAWN_CLEARANCE = 0.05;
 const SPAWN_PAD_RADIUS = 1.35;
 const SPAWN_BLEND_RADIUS = 3.35;
@@ -33,6 +38,10 @@ const SIGHTLINE_BARRIER_BASE_HEIGHT = 9;
 const SIGHTLINE_BARRIER_EXTRA_HEIGHT = 7;
 const TERRAIN_SMOOTHING_PASSES = 2;
 const MAX_NAVIGATION_STEP_ROWS = 2;
+const FEATURE_ENTRANCE_CLEARANCE_ROWS = 5;
+const STRUCTURE_ENTRANCE_HALF_WIDTH_CELLS = 3;
+const CAVE_ENTRANCE_HALF_WIDTH_CELLS = 3;
+const FEATURE_APPROACH_WORLD_LENGTH = 4.5;
 
 function chunkIndex(x: number, y: number, z: number, size: VoxelSize): number {
   return x + size.x * (z + size.z * y);
@@ -390,6 +399,111 @@ function limitHeightDeltas(heightMap: Uint8Array, size: VoxelSize, maxStepRows: 
   }
 }
 
+function getAveragePoint(points: { x: number; z: number }[]): { x: number; z: number } {
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    z: points.reduce((sum, point) => sum + point.z, 0) / points.length,
+  };
+}
+
+function distanceToSegment(
+  pointX: number,
+  pointZ: number,
+  startX: number,
+  startZ: number,
+  endX: number,
+  endZ: number
+): { distance: number; t: number } {
+  const dx = endX - startX;
+  const dz = endZ - startZ;
+  const lengthSq = dx * dx + dz * dz;
+
+  if (lengthSq <= 0.0001) {
+    return {
+      distance: Math.sqrt(distanceSq(pointX, pointZ, startX, startZ)),
+      t: 0,
+    };
+  }
+
+  const t = clamp(((pointX - startX) * dx + (pointZ - startZ) * dz) / lengthSq, 0, 1);
+  const closestX = startX + dx * t;
+  const closestZ = startZ + dz * t;
+
+  return {
+    distance: Math.sqrt(distanceSq(pointX, pointZ, closestX, closestZ)),
+    t,
+  };
+}
+
+function blendHeightCorridor(
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  start: { x: number; z: number },
+  end: { x: number; z: number },
+  width: number,
+  strength: number
+): void {
+  const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(
+    origin,
+    size,
+    Math.min(start.x, end.x) - width,
+    Math.max(start.x, end.x) + width,
+    Math.min(start.z, end.z) - width,
+    Math.max(start.z, end.z) + width
+  );
+  const startHeight = getHeightAt(heightMap, origin, size, start.x, start.z);
+  const endHeight = getHeightAt(heightMap, origin, size, end.x, end.z);
+  const centerWidth = width * 0.42;
+  const falloffWidth = Math.max(PROCEDURAL_VOXEL_SIZE.x, width - centerWidth);
+
+  for (let x = gx0; x <= gx1; x++) {
+    for (let z = gz0; z <= gz1; z++) {
+      const worldX = gridToWorldCenter(x, origin.x);
+      const worldZ = gridToWorldCenter(z, origin.z);
+      const { distance, t } = distanceToSegment(worldX, worldZ, start.x, start.z, end.x, end.z);
+      if (distance > width) continue;
+
+      const index = x + z * size.x;
+      const centerBlend = distance <= centerWidth ? 1 : 1 - (distance - centerWidth) / falloffWidth;
+      const targetHeight = lerp(startHeight, endHeight, t);
+      heightMap[index] = clamp(
+        Math.round(lerp(heightMap[index], targetHeight, clamp(centerBlend * strength, 0, 1))),
+        1,
+        size.y - 1
+      );
+    }
+  }
+}
+
+function shapeGameplayRouteTerrain(
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>
+): void {
+  const redSpawnCenter = getAveragePoint(layout.spawnPoints.red);
+  const blueSpawnCenter = getAveragePoint(layout.spawnPoints.blue);
+  const midfield = { x: 0, z: 0 };
+
+  blendHeightCorridor(heightMap, origin, size, redSpawnCenter, layout.flagZones.red, 4.5, 0.9);
+  blendHeightCorridor(heightMap, origin, size, blueSpawnCenter, layout.flagZones.blue, 4.5, 0.9);
+  blendHeightCorridor(heightMap, origin, size, layout.flagZones.red, midfield, 5.6, 0.82);
+  blendHeightCorridor(heightMap, origin, size, layout.flagZones.blue, midfield, 5.6, 0.82);
+
+  for (const laneX of [-18, 18]) {
+    blendHeightCorridor(
+      heightMap,
+      origin,
+      size,
+      { x: laneX, z: redSpawnCenter.z },
+      { x: laneX, z: blueSpawnCenter.z },
+      4.2,
+      0.68
+    );
+  }
+}
+
 function fillColumnToHeight(
   setBlock: BlockSetter,
   heightMap: Uint8Array,
@@ -404,6 +518,161 @@ function fillColumnToHeight(
 
   for (let y = currentHeight; y <= topY; y++) {
     setBlock(x, y, z, blockId);
+  }
+}
+
+function stampWalkableColumn(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  size: VoxelSize,
+  x: number,
+  z: number,
+  topY: number,
+  floorBlock: VoxelBlockId,
+  clearanceRows = FEATURE_ENTRANCE_CLEARANCE_ROWS
+): void {
+  if (x < 1 || x >= size.x - 1 || z < 1 || z >= size.z - 1) return;
+
+  const safeTopY = clamp(topY, 1, size.y - clearanceRows - 2);
+  const terrainHeight = heightMap[x + z * size.x];
+  const fillStart = Math.min(terrainHeight, safeTopY);
+
+  for (let y = fillStart; y <= safeTopY; y++) {
+    setBlock(x, y, z, y === safeTopY ? floorBlock : 'stone');
+  }
+
+  for (let y = safeTopY + 1; y <= safeTopY + clearanceRows; y++) {
+    setBlock(x, y, z, 'air');
+  }
+}
+
+function stampWalkableEntrancePath(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  centerX: number,
+  centerZ: number,
+  direction: GridDirection,
+  insideDistance: number,
+  approachDistance: number,
+  halfWidthCells: number,
+  floorY: number,
+  floorBlock: VoxelBlockId,
+  clearanceRows = FEATURE_ENTRANCE_CLEARANCE_ROWS
+): void {
+  const sideX = -direction.dz;
+  const sideZ = direction.dx;
+  const totalDistance = insideDistance + approachDistance;
+  const steps = Math.max(1, Math.ceil(totalDistance / PROCEDURAL_VOXEL_SIZE.x));
+
+  for (let step = 0; step <= steps; step++) {
+    const distance = step * PROCEDURAL_VOXEL_SIZE.x;
+    const outsideT = clamp((distance - insideDistance) / Math.max(PROCEDURAL_VOXEL_SIZE.x, approachDistance), 0, 1);
+
+    for (let side = -halfWidthCells; side <= halfWidthCells; side++) {
+      const worldX =
+        centerX +
+        direction.dx * distance +
+        sideX * side * PROCEDURAL_VOXEL_SIZE.x;
+      const worldZ =
+        centerZ +
+        direction.dz * distance +
+        sideZ * side * PROCEDURAL_VOXEL_SIZE.z;
+      const x = clamp(worldToGrid(worldX, origin.x), 1, size.x - 2);
+      const z = clamp(worldToGrid(worldZ, origin.z), 1, size.z - 2);
+      const baseTopY = Math.max(1, heightMap[x + z * size.x] - 1);
+      const topY = Math.round(lerp(floorY, baseTopY, outsideT));
+
+      stampWalkableColumn(setBlock, heightMap, size, x, z, topY, floorBlock, clearanceRows);
+    }
+  }
+}
+
+function getFeatureEntranceDirections(radiusX: number, radiusZ: number, featureSeed: number): GridDirection[] {
+  const primary: GridDirection[] =
+    radiusX >= radiusZ
+      ? [{ dx: 1, dz: 0 }, { dx: -1, dz: 0 }]
+      : [{ dx: 0, dz: 1 }, { dx: 0, dz: -1 }];
+  const secondary: GridDirection[] =
+    radiusX >= radiusZ
+      ? [{ dx: 0, dz: featureSeed % 2 === 0 ? 1 : -1 }]
+      : [{ dx: featureSeed % 2 === 0 ? 1 : -1, dz: 0 }];
+
+  return [...primary, ...secondary];
+}
+
+function stampStructureEntrances(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  centerX: number,
+  centerZ: number,
+  radiusX: number,
+  radiusZ: number,
+  floorY: number,
+  featureSeed: number
+): void {
+  for (const direction of getFeatureEntranceDirections(radiusX, radiusZ, featureSeed)) {
+    const insideDistance =
+      Math.abs(direction.dx) * radiusX +
+      Math.abs(direction.dz) * radiusZ +
+      PROCEDURAL_VOXEL_SIZE.x * 1.5;
+
+    stampWalkableEntrancePath(
+      setBlock,
+      heightMap,
+      origin,
+      size,
+      centerX,
+      centerZ,
+      direction,
+      insideDistance,
+      FEATURE_APPROACH_WORLD_LENGTH,
+      STRUCTURE_ENTRANCE_HALF_WIDTH_CELLS,
+      floorY,
+      'metal'
+    );
+  }
+}
+
+function stampCaveEntrances(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  centerX: number,
+  centerZ: number,
+  width: number,
+  depth: number,
+  floorY: number,
+  featureSeed: number
+): void {
+  const radiusX = width / 2;
+  const radiusZ = depth / 2;
+
+  for (const direction of getFeatureEntranceDirections(radiusX, radiusZ, featureSeed)) {
+    const insideDistance =
+      Math.abs(direction.dx) * radiusX +
+      Math.abs(direction.dz) * radiusZ +
+      PROCEDURAL_VOXEL_SIZE.x * 2;
+
+    stampWalkableEntrancePath(
+      setBlock,
+      heightMap,
+      origin,
+      size,
+      centerX,
+      centerZ,
+      direction,
+      insideDistance,
+      FEATURE_APPROACH_WORLD_LENGTH,
+      CAVE_ENTRANCE_HALF_WIDTH_CELLS,
+      floorY,
+      'stone',
+      FEATURE_ENTRANCE_CLEARANCE_ROWS + 1
+    );
   }
 }
 
@@ -613,7 +882,6 @@ function stampProceduralStructure(
   const mask = new Uint8Array(footprintWidth * footprintDepth);
   const heights = new Uint8Array(footprintWidth * footprintDepth);
   const minCellHeight = Math.min(maxHeight, worldHeightToGridRows(3));
-  const lowGapHeight = worldHeightToGridRows(2);
   const windowHeight = worldHeightToGridRows(3);
 
   const localIndex = (x: number, z: number): number => x + z * footprintWidth;
@@ -678,14 +946,11 @@ function stampProceduralStructure(
 
       for (let y = floorY + 1; y <= floorY + cellHeight; y++) {
         const isRoof = y === floorY + cellHeight;
-        const hasLowGap = isWall && openingNoise > 0.84 && y <= floorY + lowGapHeight;
         const hasWindow = isWall && openingNoise > 0.64 && y === floorY + windowHeight;
         const wallBlock =
           trimNoise > 0.74 && y > floorY + 1 ? accentBlock : trimNoise > 0.42 ? 'metal' : 'stone';
 
-        if (hasLowGap) {
-          setBlock(x, y, z, 'air');
-        } else if (isRoof) {
+        if (isRoof) {
           const roofNoise = fractalNoise2(featureSeed ^ 0xc2b2ae35, worldX * 0.53, worldZ * 0.53, 2);
           setBlock(x, y, z, roofNoise > 0.72 ? 'glass' : 'metal');
         } else if (isWall) {
@@ -696,6 +961,8 @@ function stampProceduralStructure(
       }
     }
   }
+
+  stampStructureEntrances(setBlock, heightMap, origin, size, centerX, centerZ, radiusX, radiusZ, floorY, featureSeed);
 }
 
 function stampTerracedPlatform(
@@ -921,57 +1188,8 @@ function stampProceduralCave(
       }
     }
   }
-}
 
-function stampBridge(
-  setBlock: BlockSetter,
-  heightMap: Uint8Array,
-  origin: { x: number; z: number },
-  size: VoxelSize,
-  centerX: number,
-  centerZ: number,
-  length: number,
-  width: number,
-  clearanceRows: number,
-  direction: 'x' | 'z',
-  accentBlock: VoxelBlockId
-): void {
-  const halfLength = length / 2;
-  const halfWidth = width / 2;
-  const minX = direction === 'x' ? centerX - halfLength : centerX - halfWidth;
-  const maxX = direction === 'x' ? centerX + halfLength : centerX + halfWidth;
-  const minZ = direction === 'z' ? centerZ - halfLength : centerZ - halfWidth;
-  const maxZ = direction === 'z' ? centerZ + halfLength : centerZ + halfWidth;
-  const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(origin, size, minX, maxX, minZ, maxZ);
-  const floorY = getMaxHeightInRect(heightMap, origin, size, minX, maxX, minZ, maxZ);
-  const deckY = clamp(floorY + clearanceRows, 2, size.y - 3);
-
-  for (let x = gx0; x <= gx1; x++) {
-    for (let z = gz0; z <= gz1; z++) {
-      const worldX = gridToWorldCenter(x, origin.x);
-      const worldZ = gridToWorldCenter(z, origin.z);
-      const along = direction === 'x' ? worldX - centerX : worldZ - centerZ;
-      const across = direction === 'x' ? worldZ - centerZ : worldX - centerX;
-      if (Math.abs(along) > halfLength || Math.abs(across) > halfWidth) continue;
-
-      const edge = Math.abs(across) > halfWidth - PROCEDURAL_VOXEL_SIZE.x * 1.8;
-      const supportSpacing = 5;
-      const supportCenter = Math.round(along / supportSpacing) * supportSpacing;
-      const isSupport = Math.abs(along - supportCenter) < PROCEDURAL_VOXEL_SIZE.x * 0.75 && edge;
-
-      setBlock(x, deckY, z, edge ? accentBlock : 'metal');
-      if (edge) {
-        setBlock(x, deckY + 1, z, accentBlock);
-      }
-
-      if (isSupport) {
-        const surfaceY = heightMap[x + z * size.x];
-        for (let y = surfaceY; y < deckY; y++) {
-          setBlock(x, y, z, y % 4 === 0 ? 'metal' : 'stone');
-        }
-      }
-    }
-  }
+  stampCaveEntrances(setBlock, heightMap, origin, size, centerX, centerZ, width, depth, floorY, featureSeed);
 }
 
 function stampTunnelPassage(
@@ -1387,7 +1605,7 @@ function canPlaceFeature(
     return false;
   }
   if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) return false;
-  if (distanceToBoundary(worldX, worldZ, layout.boundary) < radius + 1.8) return false;
+  if (distanceToBoundary(worldX, worldZ, layout.boundary) < radius + FEATURE_APPROACH_WORLD_LENGTH + 1.8) return false;
   if (isNearProtectedGameplayArea(layout, worldX, worldZ, radius)) return false;
 
   for (const feature of accepted) {
@@ -1429,7 +1647,7 @@ function stampGuaranteedLandmarks(
     if (!canPlaceFeature(layout, accepted, centerX, centerZ, radius)) continue;
 
     const styleRoll = random();
-    if (styleRoll < 0.2) {
+    if (styleRoll < 0.22) {
       stampProceduralStructure(
         setBlock,
         heightMap,
@@ -1443,7 +1661,7 @@ function stampGuaranteedLandmarks(
         accentBlock,
         featureSeed
       );
-    } else if (styleRoll < 0.36) {
+    } else if (styleRoll < 0.4) {
       stampTerracedPlatform(
         setBlock,
         heightMap,
@@ -1457,7 +1675,7 @@ function stampGuaranteedLandmarks(
         accentBlock,
         featureSeed
       );
-    } else if (styleRoll < 0.5) {
+    } else if (styleRoll < 0.55) {
       stampPylonCluster(
         setBlock,
         heightMap,
@@ -1471,7 +1689,7 @@ function stampGuaranteedLandmarks(
         accentBlock,
         featureSeed
       );
-    } else if (styleRoll < 0.64) {
+    } else if (styleRoll < 0.7) {
       stampBrokenWall(
         setBlock,
         heightMap,
@@ -1485,7 +1703,7 @@ function stampGuaranteedLandmarks(
         accentBlock,
         featureSeed
       );
-    } else if (styleRoll < 0.78) {
+    } else if (styleRoll < 0.86) {
       stampTunnelPassage(
         setBlock,
         heightMap,
@@ -1498,20 +1716,6 @@ function stampGuaranteedLandmarks(
         worldHeightToGridRows(lerp(2.8, 4.2, random())),
         random() > 0.5 ? 'x' : 'z',
         featureSeed
-      );
-    } else if (styleRoll < 0.9) {
-      stampBridge(
-        setBlock,
-        heightMap,
-        origin,
-        size,
-        centerX,
-        centerZ,
-        lerp(12, 28, random()),
-        lerp(2.2, 3.6, random()),
-        worldHeightToGridRows(lerp(2.8, 5.2, random())),
-        random() > 0.5 ? 'x' : 'z',
-        accentBlock
       );
     } else {
       stampProceduralCave(
@@ -1968,6 +2172,30 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
   );
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.red);
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.blue);
+  shapeGameplayRouteTerrain(heightMap, origin, size, layout);
+  limitHeightDeltas(heightMap, size, MAX_NAVIGATION_STEP_ROWS, 2);
+  shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.red);
+  shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.blue);
+  flattenRect(
+    heightMap,
+    origin,
+    size,
+    layout.flagZones.red.x - 3,
+    layout.flagZones.red.x + 3,
+    layout.flagZones.red.z - 2,
+    layout.flagZones.red.z + 2,
+    redFlagHeight
+  );
+  flattenRect(
+    heightMap,
+    origin,
+    size,
+    layout.flagZones.blue.x - 3,
+    layout.flagZones.blue.x + 3,
+    layout.flagZones.blue.z - 2,
+    layout.flagZones.blue.z + 2,
+    blueFlagHeight
+  );
 
   for (let x = 0; x < size.x; x++) {
     for (let z = 0; z < size.z; z++) {

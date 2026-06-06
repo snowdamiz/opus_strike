@@ -17,6 +17,9 @@ import {
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
   BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_MAX_FUEL,
+  BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
+  BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+  BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { triggerRocketJumpExplosion, triggerAirStrike } from '../../../components/game/BlazeEffects';
@@ -26,10 +29,17 @@ import {
   BLAZE_BOMB_COOLDOWN,
   BLAZE_BOMB_FALL_DURATION,
   calculateProjectileSpawn,
+  calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import type { AbilityContext, PlayerSounds } from '../types';
+
+const BLAZE_FLAMETHROWER_SOCKET = {
+  handHeight: BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+  forwardOffset: BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
+  sideOffset: BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+};
 
 export interface UseBlazeAbilitiesReturn {
   // State refs
@@ -195,16 +205,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       }
 
       const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
-      const right = {
-        x: Math.cos(ctx.yaw),
-        y: 0,
-        z: -Math.sin(ctx.yaw),
-      };
-      const origin = {
-        x: ctx.position.x + direction.x * 0.7 + right.x * 0.22,
-        y: ctx.position.y + 0.5 + direction.y * 0.7,
-        z: ctx.position.z + direction.z * 0.7 + right.z * 0.22,
-      };
+      const origin = calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_FLAMETHROWER_SOCKET);
       setFlamethrowerVisualPose(origin, direction);
 
       // Consume fuel

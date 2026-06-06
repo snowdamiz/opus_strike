@@ -8,6 +8,7 @@ import type { AbilityCast } from './ability.js';
 export type ClientMessage = 
   | { type: 'input'; payload: PlayerInput }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
+  | { type: 'devSetHero'; payload: { heroId: HeroId } }
   | { type: 'selectTeam'; payload: { team: Team } }
   | { type: 'chat'; payload: { message: string; teamOnly: boolean } }
   | { type: 'ready'; payload: { ready: boolean } }
@@ -27,6 +28,8 @@ export type ServerMessage =
   | { type: 'roundEnd'; payload: RoundEndEvent }
   | { type: 'gameEnd'; payload: GameEndEvent }
   | { type: 'chat'; payload: ChatMessage }
+  | { type: 'devHeroChanged'; payload: { heroId: HeroId; health: number; maxHealth: number } }
+  | { type: 'devCommandError'; payload: { message: string } }
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
   | { type: 'damage'; payload: DamageEvent };
 
