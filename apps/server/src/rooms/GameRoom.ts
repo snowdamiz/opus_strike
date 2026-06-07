@@ -80,23 +80,44 @@ interface BotAssignment {
   botProfileId?: string;
 }
 
+type BotStrategicRole = 'runner' | 'fighter' | 'defender' | 'support';
+type PlainVec3 = { x: number; y: number; z: number };
+type PlainVec2 = { x: number; z: number };
+
 interface BotBrain {
   nextThinkAt: number;
   intent: BotIntent;
   stuckTime: number;
   lastPosition: { x: number; y: number; z: number };
   strafeDirection: -1 | 1;
+  strafeUntil: number;
   reverseUntil: number;
+  targetId: string;
+  aimYaw: number;
+  aimPitch: number;
+  aimJitterYaw: number;
+  aimJitterPitch: number;
+  nextAimJitterAt: number;
+  fireUntil: number;
+  nextFireDecisionAt: number;
+  nextSecondaryAt: number;
+  nextAbilityAt: number;
+  nextUltimateAt: number;
 }
 
 interface BotBlackboard {
+  enemies: Player[];
+  allies: Player[];
   nearestEnemy: Player | null;
+  weakestEnemy: Player | null;
   enemyCarrier: Player | null;
   nearestAlly: Player | null;
   alliedCarrier: Player | null;
   droppedFriendlyFlag: { x: number; y: number; z: number } | null;
   enemyFlagPosition: { x: number; y: number; z: number };
   ownBasePosition: { x: number; y: number; z: number };
+  ownFlagAtBase: boolean;
+  enemyFlagAtBase: boolean;
   nearbyEnemyCount: number;
   nearbyAllyCount: number;
 }
@@ -110,9 +131,29 @@ interface AttackConfig {
   damageType: string;
 }
 
+interface BotSkillProfile {
+  thinkIntervalMs: number;
+  reactionMs: number;
+  turnRateRadians: number;
+  aimLeadSeconds: number;
+  aimErrorRadians: number;
+  aimJitterRefreshMs: [number, number];
+  aimFireToleranceScale: number;
+  fireChance: number;
+  secondaryChance: number;
+  fireDecisionMs: [number, number];
+  burstDurationMs: [number, number];
+  abilityCadenceMs: [number, number];
+  ultimateCadenceMs: [number, number];
+  preferredRangeScale: number;
+  aggression: number;
+  retreatHealthRatio: number;
+}
+
 type BotIntent =
   | 'selecting'
   | 'seek_enemy_flag'
+  | 'guard_own_flag'
   | 'carry_flag_home'
   | 'return_friendly_flag'
   | 'defend_carrier'
@@ -135,7 +176,66 @@ const MAP_MIN_Z = PROCEDURAL_MAP_ORIGIN.z;
 const MAP_MAX_Z = PROCEDURAL_MAP_ORIGIN.z + PROCEDURAL_MAP_WORLD_SIZE.z;
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 const BOT_THINK_INTERVAL_MS = 200;
+const BOT_AWARENESS_RANGE = 58;
+const BOT_CLOSE_REVEAL_RANGE = 8;
+const BOT_LOS_SAMPLE_STEP = 0.55;
 const DAMAGE_HISTORY_WINDOW_MS = 10000;
+const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
+  easy: {
+    thinkIntervalMs: 360,
+    reactionMs: 360,
+    turnRateRadians: 4.8,
+    aimLeadSeconds: 0.05,
+    aimErrorRadians: 0.14,
+    aimJitterRefreshMs: [480, 900],
+    aimFireToleranceScale: 1.4,
+    fireChance: 0.48,
+    secondaryChance: 0.28,
+    fireDecisionMs: [360, 720],
+    burstDurationMs: [180, 420],
+    abilityCadenceMs: [1500, 2600],
+    ultimateCadenceMs: [2200, 3800],
+    preferredRangeScale: 0.92,
+    aggression: 0.75,
+    retreatHealthRatio: 0.38,
+  },
+  normal: {
+    thinkIntervalMs: 220,
+    reactionMs: 210,
+    turnRateRadians: 8.5,
+    aimLeadSeconds: 0.16,
+    aimErrorRadians: 0.075,
+    aimJitterRefreshMs: [360, 720],
+    aimFireToleranceScale: 1.18,
+    fireChance: 0.68,
+    secondaryChance: 0.46,
+    fireDecisionMs: [260, 540],
+    burstDurationMs: [240, 620],
+    abilityCadenceMs: [1100, 2100],
+    ultimateCadenceMs: [1600, 3000],
+    preferredRangeScale: 1,
+    aggression: 1,
+    retreatHealthRatio: 0.3,
+  },
+  hard: {
+    thinkIntervalMs: 150,
+    reactionMs: 110,
+    turnRateRadians: 12.5,
+    aimLeadSeconds: 0.24,
+    aimErrorRadians: 0.038,
+    aimJitterRefreshMs: [260, 520],
+    aimFireToleranceScale: 1.02,
+    fireChance: 0.82,
+    secondaryChance: 0.68,
+    fireDecisionMs: [190, 420],
+    burstDurationMs: [300, 760],
+    abilityCadenceMs: [850, 1700],
+    ultimateCadenceMs: [1200, 2400],
+    preferredRangeScale: 1.05,
+    aggression: 1.2,
+    retreatHealthRatio: 0.24,
+  },
+};
 const PRIMARY_ATTACKS: Record<HeroId, AttackConfig> = {
   phantom: { damage: 18, range: 30, cooldownMs: 550, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
@@ -670,7 +770,19 @@ export class GameRoom extends Room<GameState> {
         stuckTime: 0,
         lastPosition: { x: bot.position.x, y: bot.position.y, z: bot.position.z },
         strafeDirection: index % 2 === 0 ? 1 : -1,
+        strafeUntil: 0,
         reverseUntil: 0,
+        targetId: '',
+        aimYaw: bot.lookYaw,
+        aimPitch: bot.lookPitch,
+        aimJitterYaw: 0,
+        aimJitterPitch: 0,
+        nextAimJitterAt: 0,
+        fireUntil: 0,
+        nextFireDecisionAt: 0,
+        nextSecondaryAt: 0,
+        nextAbilityAt: 0,
+        nextUltimateAt: 0,
       });
     });
   }
@@ -750,17 +862,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   private findTargetInAimCone(source: Player, range: number, minDot: number): Player | null {
-    const origin = {
-      x: source.position.x,
-      y: source.position.y + 1.2,
-      z: source.position.z,
-    };
-    const cosPitch = Math.cos(source.lookPitch);
-    const forward = {
-      x: -Math.sin(source.lookYaw) * cosPitch,
-      y: Math.sin(source.lookPitch),
-      z: -Math.cos(source.lookYaw) * cosPitch,
-    };
+    const origin = this.getPlayerEyePosition(source);
+    const forward = this.getForwardVector(source.lookYaw, source.lookPitch);
     let bestTarget: Player | null = null;
     let bestDistance = range;
 
@@ -769,13 +872,15 @@ export class GameRoom extends Room<GameState> {
       if (target.id === source.id) return;
       if (target.team === source.team) return;
 
+      const targetPoint = this.getPlayerBodyAimPosition(target);
       const toTarget = {
-        x: target.position.x - origin.x,
-        y: target.position.y + 0.9 - origin.y,
-        z: target.position.z - origin.z,
+        x: targetPoint.x - origin.x,
+        y: targetPoint.y - origin.y,
+        z: targetPoint.z - origin.z,
       };
       const distance = Math.sqrt(toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z);
       if (distance <= 0.0001 || distance > range) return;
+      if (!this.hasLineOfSight(origin, targetPoint)) return;
 
       const dot = (toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z) / distance;
       if (dot < minDot) return;
@@ -1046,47 +1151,92 @@ export class GameRoom extends Room<GameState> {
   }
 
   private createBotInput(bot: Player, brain: BotBrain, now: number, dt: number): PlayerInput {
+    const skill = this.getBotSkillProfile(bot);
     const blackboard = this.getBotBlackboard(bot);
     if (now >= brain.nextThinkAt) {
       brain.intent = this.chooseBotIntent(bot, blackboard);
-      brain.nextThinkAt = now + BOT_THINK_INTERVAL_MS;
+      brain.nextThinkAt = now + this.randomBetween(skill.thinkIntervalMs * 0.75, skill.thinkIntervalMs * 1.25);
 
       const moved = this.distance2D(bot.position, brain.lastPosition);
       brain.stuckTime = moved < 0.08 ? brain.stuckTime + BOT_THINK_INTERVAL_MS / 1000 : 0;
       brain.lastPosition = { x: bot.position.x, y: bot.position.y, z: bot.position.z };
-      if (brain.stuckTime > 0.9) {
+      if (now >= brain.strafeUntil) {
+        brain.strafeDirection = Math.random() < 0.5 ? -1 : 1;
+        brain.strafeUntil = now + this.randomBetween(900, 2600);
+      }
+      if (brain.stuckTime > 0.7) {
         brain.strafeDirection *= -1;
-        brain.reverseUntil = now + 500;
+        brain.reverseUntil = now + this.randomBetween(380, 760);
         brain.stuckTime = 0;
       }
     }
 
     const movementTarget = this.getBotMovementTarget(bot, brain.intent, blackboard);
-    const aimTarget = blackboard.nearestEnemy || blackboard.enemyCarrier;
-    const targetForLook = aimTarget || movementTarget || this.getEnemyFlagPosition(bot.team as Team);
-    const yawPitch = this.getYawPitchToward(bot, targetForLook);
-    const enemyDistance = aimTarget ? this.distance3D(bot.position, aimTarget.position) : Infinity;
-    const shouldFight = Boolean(aimTarget && enemyDistance <= this.getBotAttackRange(bot));
+    const combatTarget = this.chooseBotCombatTarget(bot, brain.intent, blackboard);
+    brain.targetId = combatTarget?.id || '';
+
+    const aimPoint = combatTarget
+      ? this.getBotAimPoint(bot, combatTarget, skill)
+      : movementTarget || this.getEnemyFlagPosition(bot.team as Team);
+    const desiredAim = this.getYawPitchTowardPosition(bot, aimPoint);
+    const aim = this.updateBotAim(bot, brain, desiredAim, combatTarget, skill, now, dt);
+    const enemyDistance = combatTarget ? this.distance3D(bot.position, combatTarget.position) : Infinity;
+    const attackRange = this.getBotAttackRange(bot);
+    const shouldFight = Boolean(
+      combatTarget
+      && enemyDistance <= attackRange
+      && this.hasClearShot(bot, combatTarget)
+      && !this.isProtectedSpawnTarget(combatTarget, now)
+    );
+    const aimReady = Boolean(
+      shouldFight
+      && combatTarget
+      && this.isBotAimReady(bot, combatTarget, PRIMARY_ATTACKS[bot.heroId as HeroId], skill, aim.yaw, aim.pitch)
+    );
     const isLongMove = movementTarget ? this.distance2D(bot.position, movementTarget) > 9 : false;
     const recovering = now < brain.reverseUntil;
+    const desiredMove = this.getBotMoveDirection(bot, brain, brain.intent, movementTarget, combatTarget, blackboard);
 
     const input = this.createEmptyBotInput(bot, now);
-    input.lookYaw = yawPitch.yaw;
-    input.lookPitch = shouldFight ? yawPitch.pitch : 0;
-    input.moveForward = !recovering;
-    input.moveBackward = recovering;
-    input.moveLeft = recovering && brain.strafeDirection < 0;
-    input.moveRight = recovering && brain.strafeDirection > 0;
-    input.sprint = isLongMove || bot.hasFlag || brain.intent !== 'fight_enemy';
-    input.jump = recovering || brain.stuckTime > 0.45;
-    input.crouch = input.sprint && isLongMove && !shouldFight;
-    input.primaryFire = shouldFight;
-    input.secondaryFire = shouldFight && enemyDistance <= this.getBotSecondaryRange(bot) && now % 1500 < BOT_THINK_INTERVAL_MS;
+    input.lookYaw = aim.yaw;
+    input.lookPitch = combatTarget ? aim.pitch : 0;
+    this.applyBotMovementInput(input, input.lookYaw, desiredMove, recovering, brain);
+    input.sprint = isLongMove || bot.hasFlag || (brain.intent !== 'fight_enemy' && brain.intent !== 'guard_own_flag');
+    input.jump = recovering || brain.stuckTime > 0.35 || (input.sprint && !combatTarget && bot.movement.isGrounded && Math.random() < 0.015);
+    input.crouch = input.sprint && isLongMove && !combatTarget && Math.random() < 0.1;
 
-    this.applyBotAbilityHeuristics(bot, input, brain.intent, enemyDistance, blackboard, now);
+    if (now >= brain.nextFireDecisionAt) {
+      brain.nextFireDecisionAt = now + this.randomBetween(skill.fireDecisionMs[0], skill.fireDecisionMs[1]);
+      if (aimReady && Math.random() < skill.fireChance) {
+        brain.fireUntil = now + this.randomBetween(skill.burstDurationMs[0], skill.burstDurationMs[1]);
+      }
+    }
+    input.primaryFire = aimReady && now < brain.fireUntil;
+
+    input.secondaryFire = false;
+    const secondaryAttack = SECONDARY_ATTACKS[bot.heroId as HeroId];
+    if (
+      shouldFight
+      && combatTarget
+      && secondaryAttack
+      && enemyDistance <= secondaryAttack.range
+      && this.isBotAimReady(bot, combatTarget, secondaryAttack, skill, aim.yaw, aim.pitch)
+      && now >= brain.nextSecondaryAt
+    ) {
+      const firedSecondary = Math.random() < skill.secondaryChance;
+      input.secondaryFire = firedSecondary;
+      brain.nextSecondaryAt = now + (firedSecondary
+        ? this.randomBetween(secondaryAttack.cooldownMs * 0.85, secondaryAttack.cooldownMs * 1.3)
+        : this.randomBetween(350, 900));
+    }
+
+    this.applyBotAbilityHeuristics(bot, input, brain, skill, brain.intent, enemyDistance, blackboard, combatTarget, now);
 
     if (dt <= 0) {
       input.moveForward = false;
+      input.moveBackward = false;
+      input.moveLeft = false;
+      input.moveRight = false;
     }
 
     return input;
@@ -1095,41 +1245,50 @@ export class GameRoom extends Room<GameState> {
   private applyBotAbilityHeuristics(
     bot: Player,
     input: PlayerInput,
+    brain: BotBrain,
+    skill: BotSkillProfile,
     intent: BotIntent,
     enemyDistance: number,
     blackboard: BotBlackboard,
+    combatTarget: Player | null,
     now: number
   ): void {
     const heroId = bot.heroId as HeroId;
-    const objectiveIntent = intent === 'seek_enemy_flag' || intent === 'carry_flag_home' || intent === 'return_friendly_flag';
+    const objectiveIntent = intent === 'seek_enemy_flag'
+      || intent === 'carry_flag_home'
+      || intent === 'return_friendly_flag'
+      || intent === 'guard_own_flag';
     const underPressure = enemyDistance < 12 || bot.health / Math.max(1, bot.maxHealth) < 0.45;
-    const pulseAbility = now % 1200 < BOT_THINK_INTERVAL_MS;
-    const pulseUltimate = now % 1800 < BOT_THINK_INTERVAL_MS;
+    const safeMobilityUse = !combatTarget || enemyDistance > this.getBotPreferredCombatRange(bot) + 7;
+    const pulseAbility = now >= brain.nextAbilityAt;
+    const pulseUltimate = now >= brain.nextUltimateAt;
 
     switch (heroId) {
       case 'phantom':
-        input.ability1 = pulseAbility && (objectiveIntent || enemyDistance < 16);
+        input.ability1 = pulseAbility && safeMobilityUse && (objectiveIntent || enemyDistance < 16);
         input.ability2 = pulseAbility && underPressure && enemyDistance < 20;
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (bot.hasFlag || underPressure);
         break;
       case 'hookshot':
-        input.ability1 = pulseAbility && (objectiveIntent || enemyDistance < 24);
-        input.ability2 = pulseAbility && enemyDistance < 28;
+        input.ability1 = pulseAbility && safeMobilityUse && (objectiveIntent || enemyDistance < 24);
+        input.ability2 = pulseAbility && enemyDistance < 28 && Boolean(combatTarget);
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (objectiveIntent || enemyDistance < 12);
         break;
       case 'blaze':
-        input.ability1 = enemyDistance < BLAZE_FLAMETHROWER_RANGE;
+        input.ability1 = Boolean(combatTarget)
+          && enemyDistance < BLAZE_FLAMETHROWER_RANGE
+          && this.hasClearShot(bot, combatTarget!);
         input.ability2 = pulseAbility && (underPressure || intent === 'retreat_or_reposition');
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (blackboard.nearbyEnemyCount >= 2 || objectiveIntent);
         break;
       case 'glacier':
-        input.ability1 = pulseAbility && (objectiveIntent || input.jump);
+        input.ability1 = pulseAbility && safeMobilityUse && (objectiveIntent || input.jump);
         input.ability2 = pulseAbility && underPressure;
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (underPressure || objectiveIntent);
         break;
       case 'pulse':
         input.ability1 = pulseAbility && (objectiveIntent || Boolean(blackboard.nearestAlly));
-        input.ability2 = pulseAbility && (objectiveIntent || enemyDistance < 14);
+        input.ability2 = pulseAbility && safeMobilityUse && (objectiveIntent || enemyDistance < 14);
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (bot.hasFlag || blackboard.nearbyAllyCount >= 1);
         break;
       case 'sentinel':
@@ -1138,13 +1297,24 @@ export class GameRoom extends Room<GameState> {
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (underPressure || intent === 'return_friendly_flag');
         break;
     }
+
+    if (input.ability1 || input.ability2) {
+      brain.nextAbilityAt = now + this.randomBetween(skill.abilityCadenceMs[0], skill.abilityCadenceMs[1]);
+    }
+    if (input.ultimate) {
+      brain.nextUltimateAt = now + this.randomBetween(skill.ultimateCadenceMs[0], skill.ultimateCadenceMs[1]);
+    }
   }
 
   private getBotBlackboard(bot: Player): BotBlackboard {
     const botTeam = bot.team as Team;
     const enemyTeam = botTeam === 'red' ? 'blue' : 'red';
+    const enemies: Player[] = [];
+    const allies: Player[] = [];
     let nearestEnemy: Player | null = null;
     let nearestEnemyDistance = Infinity;
+    let weakestEnemy: Player | null = null;
+    let weakestEnemyHealthRatio = Infinity;
     let nearestAlly: Player | null = null;
     let nearestAllyDistance = Infinity;
     let enemyCarrier: Player | null = null;
@@ -1157,6 +1327,7 @@ export class GameRoom extends Room<GameState> {
 
       const distance = this.distance3D(bot.position, candidate.position);
       if (candidate.team === bot.team) {
+        allies.push(candidate);
         if (distance < nearestAllyDistance) {
           nearestAlly = candidate;
           nearestAllyDistance = distance;
@@ -1166,9 +1337,16 @@ export class GameRoom extends Room<GameState> {
         }
         if (distance <= 16) nearbyAllyCount++;
       } else {
+        if (!this.canBotPerceiveEnemy(bot, candidate, distance)) return;
+        enemies.push(candidate);
         if (distance < nearestEnemyDistance) {
           nearestEnemy = candidate;
           nearestEnemyDistance = distance;
+        }
+        const healthRatio = candidate.health / Math.max(1, candidate.maxHealth);
+        if (healthRatio < weakestEnemyHealthRatio && distance <= BOT_AWARENESS_RANGE) {
+          weakestEnemy = candidate;
+          weakestEnemyHealthRatio = healthRatio;
         }
         if (candidate.hasFlag) {
           enemyCarrier = candidate;
@@ -1181,7 +1359,10 @@ export class GameRoom extends Room<GameState> {
     const enemyFlag = this.getFlagByTeam(enemyTeam);
 
     return {
+      enemies,
+      allies,
       nearestEnemy,
+      weakestEnemy,
       enemyCarrier,
       nearestAlly,
       alliedCarrier,
@@ -1190,6 +1371,8 @@ export class GameRoom extends Room<GameState> {
         ? this.vec3SchemaToPlain(this.state.players.get(enemyFlag.carrierId)?.position || enemyFlag.position)
         : this.vec3SchemaToPlain(enemyFlag.position),
       ownBasePosition: this.vec3SchemaToPlain(ownFlag.basePosition),
+      ownFlagAtBase: ownFlag.isAtBase,
+      enemyFlagAtBase: enemyFlag.isAtBase,
       nearbyEnemyCount,
       nearbyAllyCount,
     };
@@ -1198,12 +1381,18 @@ export class GameRoom extends Room<GameState> {
   private chooseBotIntent(bot: Player, blackboard: BotBlackboard): BotIntent {
     if (bot.state === 'dead') return 'respawning';
     if (!bot.heroId || this.state.phase === 'hero_select') return 'selecting';
-    if (bot.health / Math.max(1, bot.maxHealth) < 0.28) return 'retreat_or_reposition';
     if (bot.hasFlag) return 'carry_flag_home';
+    const skill = this.getBotSkillProfile(bot);
+    const healthRatio = bot.health / Math.max(1, bot.maxHealth);
+    const nearestEnemyDistance = blackboard.nearestEnemy ? this.distance3D(bot.position, blackboard.nearestEnemy.position) : Infinity;
+    if (healthRatio < skill.retreatHealthRatio && nearestEnemyDistance < 20 && !blackboard.enemyCarrier) {
+      return 'retreat_or_reposition';
+    }
     if (blackboard.enemyCarrier) return 'chase_enemy_carrier';
     if (blackboard.droppedFriendlyFlag) return 'return_friendly_flag';
-    if (blackboard.nearestEnemy && this.distance3D(bot.position, blackboard.nearestEnemy.position) <= 18) return 'fight_enemy';
     if (blackboard.alliedCarrier) return 'defend_carrier';
+    if (blackboard.nearestEnemy && nearestEnemyDistance <= this.getBotEngageRange(bot, skill)) return 'fight_enemy';
+    if (this.shouldBotGuardObjective(bot, blackboard)) return 'guard_own_flag';
     return 'seek_enemy_flag';
   }
 
@@ -1220,6 +1409,8 @@ export class GameRoom extends Room<GameState> {
         return this.vec3SchemaToPlain(blackboard.enemyCarrier?.position || bot.position);
       case 'fight_enemy':
         return this.vec3SchemaToPlain(blackboard.nearestEnemy?.position || bot.position);
+      case 'guard_own_flag':
+        return blackboard.ownBasePosition;
       case 'seek_enemy_flag':
       case 'selecting':
       case 'respawning':
@@ -1243,16 +1434,449 @@ export class GameRoom extends Room<GameState> {
     return SECONDARY_ATTACKS[heroId]?.range ?? 0;
   }
 
-  private getYawPitchToward(source: Player, target: Player | { x: number; y: number; z: number }): { yaw: number; pitch: number } {
-    const targetPosition = 'position' in target ? target.position : target;
+  private getBotSkillProfile(bot: Player): BotSkillProfile {
+    const difficulty = this.normalizeBotDifficulty(bot.botDifficulty);
+    return BOT_SKILL_PROFILES[difficulty];
+  }
+
+  private normalizeBotDifficulty(difficulty?: string): BotDifficulty {
+    if (difficulty === 'easy' || difficulty === 'hard') {
+      return difficulty;
+    }
+    return 'normal';
+  }
+
+  private getBotStrategicRole(bot: Player): BotStrategicRole {
+    const heroId = bot.heroId as HeroId;
+    if (heroId === 'sentinel' || heroId === 'glacier') return 'defender';
+    if (heroId === 'pulse') return 'support';
+    if (heroId === 'phantom' || heroId === 'hookshot') return 'runner';
+    const bucket = this.hashString(bot.botProfileId || bot.id || bot.name) % 10;
+    if (bucket < 2) return 'defender';
+    if (bucket < 5) return 'fighter';
+    return 'runner';
+  }
+
+  private getBotEngageRange(bot: Player, skill: BotSkillProfile): number {
+    const primaryRange = this.getBotAttackRange(bot);
+    const preferredRange = this.getBotPreferredCombatRange(bot);
+    return Math.min(
+      BOT_AWARENESS_RANGE,
+      Math.max(18, primaryRange * (1.05 + skill.aggression * 0.18), preferredRange + 8)
+    );
+  }
+
+  private getBotPreferredCombatRange(bot: Player): number {
+    switch (bot.heroId as HeroId) {
+      case 'glacier':
+        return 3.2;
+      case 'blaze':
+        return 12;
+      case 'hookshot':
+        return 15;
+      case 'phantom':
+        return 18;
+      case 'pulse':
+        return 17;
+      case 'sentinel':
+        return 14;
+      default:
+        return 13;
+    }
+  }
+
+  private chooseBotCombatTarget(bot: Player, intent: BotIntent, blackboard: BotBlackboard): Player | null {
+    const skill = this.getBotSkillProfile(bot);
+    const primaryRange = this.getBotAttackRange(bot);
+    let bestTarget: Player | null = null;
+    let bestScore = -Infinity;
+
+    for (const enemy of blackboard.enemies) {
+      const distance = this.distance3D(bot.position, enemy.position);
+      if (distance > BOT_AWARENESS_RANGE && !enemy.hasFlag) continue;
+
+      const hasShot = this.hasClearShot(bot, enemy);
+      const enemyHealthRatio = enemy.health / Math.max(1, enemy.maxHealth);
+      let score = 0;
+
+      if (enemy.hasFlag) score += 950;
+      if (bot.hasFlag && distance < 24) score += 420;
+      if (intent === 'chase_enemy_carrier' && enemy === blackboard.enemyCarrier) score += 520;
+      if (intent === 'fight_enemy' && enemy === blackboard.nearestEnemy) score += 130;
+      if (enemy === blackboard.weakestEnemy) score += 90;
+      if (hasShot) score += 120;
+      if (this.isProtectedSpawnTarget(enemy, this.state.serverTime)) score -= 260;
+
+      score += (1 - enemyHealthRatio) * 180;
+      score += Math.max(0, 28 - distance) * 4.5;
+      score -= Math.max(0, distance - primaryRange) * (enemy.hasFlag ? 2 : 6);
+      score *= skill.aggression;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestTarget = enemy;
+      }
+    }
+
+    return bestScore > 20 ? bestTarget : null;
+  }
+
+  private canBotPerceiveEnemy(bot: Player, enemy: Player, distance: number): boolean {
+    if (distance > BOT_AWARENESS_RANGE && !enemy.hasFlag) return false;
+
+    const veil = enemy.abilities.get('phantom_veil');
+    if (veil?.isActive && !enemy.hasFlag && distance > BOT_CLOSE_REVEAL_RANGE) {
+      return false;
+    }
+
+    if (distance <= 18 || enemy.hasFlag) return true;
+    return this.hasClearShot(bot, enemy);
+  }
+
+  private shouldBotGuardObjective(bot: Player, blackboard: BotBlackboard): boolean {
+    if (!blackboard.ownFlagAtBase || blackboard.alliedCarrier) return false;
+
+    const enemyNearBase = blackboard.enemies.some((enemy) => (
+      this.distance2D(enemy.position, blackboard.ownBasePosition) < 22
+    ));
+    if (enemyNearBase) return true;
+
+    const role = this.getBotStrategicRole(bot);
+    if (role !== 'defender') return false;
+
+    const ownBaseDistance = this.distance2D(bot.position, blackboard.ownBasePosition);
+    const enemyFlagDistance = this.distance2D(bot.position, blackboard.enemyFlagPosition);
+    return ownBaseDistance > 7 && enemyFlagDistance > 18 && blackboard.enemyFlagAtBase;
+  }
+
+  private getBotAimPoint(bot: Player, target: Player, skill: BotSkillProfile): PlainVec3 {
+    const targetDistance = this.distance3D(bot.position, target.position);
+    const reactionLag = skill.reactionMs / 1000;
+    const leadSeconds = Math.max(-0.22, Math.min(0.42, skill.aimLeadSeconds + targetDistance / 160 - reactionLag * 0.45));
+
+    return {
+      x: target.position.x + target.velocity.x * leadSeconds,
+      y: target.position.y + 0.9 + target.velocity.y * leadSeconds,
+      z: target.position.z + target.velocity.z * leadSeconds,
+    };
+  }
+
+  private updateBotAim(
+    bot: Player,
+    brain: BotBrain,
+    desiredAim: { yaw: number; pitch: number },
+    target: Player | null,
+    skill: BotSkillProfile,
+    now: number,
+    dt: number
+  ): { yaw: number; pitch: number } {
+    if (!Number.isFinite(brain.aimYaw)) brain.aimYaw = bot.lookYaw;
+    if (!Number.isFinite(brain.aimPitch)) brain.aimPitch = bot.lookPitch;
+
+    if (target && now >= brain.nextAimJitterAt) {
+      const distance = this.distance3D(bot.position, target.position);
+      const distanceScale = Math.max(0.55, Math.min(1.35, distance / 24));
+      brain.aimJitterYaw = this.randomSigned(skill.aimErrorRadians * distanceScale);
+      brain.aimJitterPitch = this.randomSigned(skill.aimErrorRadians * 0.55 * distanceScale);
+      brain.nextAimJitterAt = now + this.randomBetween(skill.aimJitterRefreshMs[0], skill.aimJitterRefreshMs[1]);
+    } else if (!target) {
+      brain.aimJitterYaw *= 0.82;
+      brain.aimJitterPitch *= 0.82;
+    }
+
+    const targetYaw = this.normalizeAngle(desiredAim.yaw + brain.aimJitterYaw);
+    const targetPitch = this.clamp(desiredAim.pitch + brain.aimJitterPitch, -0.8, 0.8);
+    const maxStep = skill.turnRateRadians * Math.max(0.016, Math.min(0.1, dt));
+
+    brain.aimYaw = this.rotateAngleToward(brain.aimYaw, targetYaw, maxStep);
+    const pitchDelta = this.clamp(targetPitch - brain.aimPitch, -maxStep, maxStep);
+    brain.aimPitch = this.clamp(brain.aimPitch + pitchDelta, -0.8, 0.8);
+
+    return { yaw: brain.aimYaw, pitch: brain.aimPitch };
+  }
+
+  private isBotAimReady(
+    bot: Player,
+    target: Player,
+    attack: AttackConfig | undefined,
+    skill: BotSkillProfile,
+    yaw: number,
+    pitch: number
+  ): boolean {
+    if (!attack) return false;
+
+    const origin = this.getPlayerEyePosition(bot);
+    const targetPoint = this.getPlayerBodyAimPosition(target);
+    const toTarget = {
+      x: targetPoint.x - origin.x,
+      y: targetPoint.y - origin.y,
+      z: targetPoint.z - origin.z,
+    };
+    const distance = Math.sqrt(toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z);
+    if (distance <= 0.001 || distance > attack.range) return false;
+
+    const forward = this.getForwardVector(yaw, pitch);
+    const dot = this.clamp(
+      (toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z) / distance,
+      -1,
+      1
+    );
+    const aimAngle = Math.acos(dot);
+    const allowedAngle = Math.acos(this.clamp(attack.coneDot, -1, 1)) * skill.aimFireToleranceScale;
+    return aimAngle <= allowedAngle;
+  }
+
+  private getBotMoveDirection(
+    bot: Player,
+    brain: BotBrain,
+    intent: BotIntent,
+    movementTarget: PlainVec3,
+    combatTarget: Player | null,
+    blackboard: BotBlackboard
+  ): PlainVec2 | null {
+    const skill = this.getBotSkillProfile(bot);
+    const objectiveDir = this.direction2DFromTo(bot.position, movementTarget);
+    let move: PlainVec2 = objectiveDir ? { ...objectiveDir } : { x: 0, z: 0 };
+
+    if (intent === 'guard_own_flag' && !combatTarget && this.distance2D(bot.position, movementTarget) < 5) {
+      const orbit = this.direction2DFromTo(movementTarget, bot.position) || this.forward2D(bot.lookYaw);
+      move = { x: -orbit.z * brain.strafeDirection, z: orbit.x * brain.strafeDirection };
+    }
+
+    if (combatTarget) {
+      const toEnemy = this.direction2DFromTo(bot.position, combatTarget.position) || this.forward2D(bot.lookYaw);
+      const awayFromEnemy = { x: -toEnemy.x, z: -toEnemy.z };
+      const strafe = { x: -toEnemy.z * brain.strafeDirection, z: toEnemy.x * brain.strafeDirection };
+      const distance = this.distance2D(bot.position, combatTarget.position);
+      const preferredRange = this.getBotPreferredCombatRange(bot) * skill.preferredRangeScale;
+      let rangeMove: PlainVec2 = { x: 0, z: 0 };
+
+      if (distance > preferredRange + 3) {
+        rangeMove = toEnemy;
+      } else if (distance < Math.max(2.2, preferredRange - 2)) {
+        rangeMove = awayFromEnemy;
+      } else if (bot.heroId === 'glacier') {
+        rangeMove = toEnemy;
+      }
+
+      if (intent === 'carry_flag_home' || intent === 'return_friendly_flag') {
+        move = this.mix2D(move, 1.35, rangeMove, 0.45);
+        move = this.mix2D(move, 1, strafe, 0.25);
+      } else if (intent === 'retreat_or_reposition') {
+        move = this.mix2D(move, 1.2, awayFromEnemy, 0.65);
+        move = this.mix2D(move, 1, strafe, 0.25);
+      } else if (intent === 'defend_carrier') {
+        move = this.mix2D(move, 0.95, rangeMove, 0.55);
+        move = this.mix2D(move, 1, strafe, 0.35);
+      } else if (intent === 'chase_enemy_carrier') {
+        move = this.mix2D(toEnemy, 1.25, strafe, 0.18);
+      } else {
+        move = this.mix2D(rangeMove, 1, strafe, distance < preferredRange + 6 ? 0.7 : 0.28);
+      }
+    }
+
+    for (const ally of blackboard.allies) {
+      const distance = this.distance2D(bot.position, ally.position);
+      if (distance <= 0.001 || distance > 2.4) continue;
+      const away = this.direction2DFromTo(ally.position, bot.position);
+      if (away) {
+        move = this.mix2D(move, 1, away, (2.4 - distance) * 0.35);
+      }
+    }
+
+    for (const enemy of blackboard.enemies) {
+      const distance = this.distance2D(bot.position, enemy.position);
+      if (distance <= 0.001 || distance > 1.6) continue;
+      const away = this.direction2DFromTo(enemy.position, bot.position);
+      if (away) {
+        move = this.mix2D(move, 1, away, (1.6 - distance) * 0.45);
+      }
+    }
+
+    return this.normalize2D(move);
+  }
+
+  private applyBotMovementInput(
+    input: PlayerInput,
+    lookYaw: number,
+    desiredMove: PlainVec2 | null,
+    recovering: boolean,
+    brain: BotBrain
+  ): void {
+    input.moveForward = false;
+    input.moveBackward = false;
+    input.moveLeft = false;
+    input.moveRight = false;
+
+    if (recovering) {
+      input.moveBackward = true;
+      input.moveLeft = brain.strafeDirection < 0;
+      input.moveRight = brain.strafeDirection > 0;
+      return;
+    }
+
+    if (!desiredMove) return;
+
+    const local = this.worldDirectionToLocalMove(desiredMove, lookYaw);
+    const threshold = 0.22;
+    input.moveForward = local.z < -threshold;
+    input.moveBackward = local.z > threshold;
+    input.moveLeft = local.x < -threshold;
+    input.moveRight = local.x > threshold;
+
+    if (!input.moveForward && !input.moveBackward && !input.moveLeft && !input.moveRight) {
+      if (Math.abs(local.x) > Math.abs(local.z)) {
+        input.moveLeft = local.x < 0;
+        input.moveRight = local.x >= 0;
+      } else {
+        input.moveForward = local.z <= 0;
+        input.moveBackward = local.z > 0;
+      }
+    }
+  }
+
+  private getYawPitchTowardPosition(source: Player, targetPosition: PlainVec3): { yaw: number; pitch: number } {
     const dx = targetPosition.x - source.position.x;
-    const dy = targetPosition.y + ('position' in target ? 0.9 : 0) - (source.position.y + 1.2);
+    const dy = targetPosition.y - (source.position.y + 1.2);
     const dz = targetPosition.z - source.position.z;
     const horizontal = Math.sqrt(dx * dx + dz * dz);
     return {
       yaw: Math.atan2(-dx, -dz),
-      pitch: Math.max(-0.8, Math.min(0.8, Math.atan2(dy, horizontal))),
+      pitch: this.clamp(Math.atan2(dy, horizontal), -0.8, 0.8),
     };
+  }
+
+  private getYawPitchToward(source: Player, target: Player | { x: number; y: number; z: number }): { yaw: number; pitch: number } {
+    const targetPosition = 'position' in target ? target.position : target;
+    return this.getYawPitchTowardPosition(source, {
+      x: targetPosition.x,
+      y: targetPosition.y + ('position' in target ? 0.9 : 0),
+      z: targetPosition.z,
+    });
+  }
+
+  private hasClearShot(source: Player, target: Player): boolean {
+    return this.hasLineOfSight(this.getPlayerEyePosition(source), this.getPlayerBodyAimPosition(target));
+  }
+
+  private hasLineOfSight(start: PlainVec3, end: PlainVec3): boolean {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const dz = end.z - start.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const steps = Math.max(1, Math.ceil(distance / BOT_LOS_SAMPLE_STEP));
+
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (isSolidBlock(this.getBlockAtWorld({
+        x: start.x + dx * t,
+        y: start.y + dy * t,
+        z: start.z + dz * t,
+      }))) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private getPlayerEyePosition(player: Player): PlainVec3 {
+    return {
+      x: player.position.x,
+      y: player.position.y + 1.2,
+      z: player.position.z,
+    };
+  }
+
+  private getPlayerBodyAimPosition(player: Player): PlainVec3 {
+    return {
+      x: player.position.x,
+      y: player.position.y + 0.9,
+      z: player.position.z,
+    };
+  }
+
+  private getForwardVector(yaw: number, pitch: number): PlainVec3 {
+    const cosPitch = Math.cos(pitch);
+    return {
+      x: -Math.sin(yaw) * cosPitch,
+      y: Math.sin(pitch),
+      z: -Math.cos(yaw) * cosPitch,
+    };
+  }
+
+  private isProtectedSpawnTarget(target: Player, now: number): boolean {
+    return Boolean(target.spawnProtectionUntil && now < target.spawnProtectionUntil);
+  }
+
+  private direction2DFromTo(from: { x: number; z: number }, to: { x: number; z: number }): PlainVec2 | null {
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    const length = Math.sqrt(dx * dx + dz * dz);
+    if (length <= 0.001) return null;
+    return { x: dx / length, z: dz / length };
+  }
+
+  private forward2D(yaw: number): PlainVec2 {
+    return {
+      x: -Math.sin(yaw),
+      z: -Math.cos(yaw),
+    };
+  }
+
+  private normalize2D(vector: PlainVec2): PlainVec2 | null {
+    const length = Math.sqrt(vector.x * vector.x + vector.z * vector.z);
+    if (length <= 0.001) return null;
+    return { x: vector.x / length, z: vector.z / length };
+  }
+
+  private mix2D(a: PlainVec2, aWeight: number, b: PlainVec2, bWeight: number): PlainVec2 {
+    return {
+      x: a.x * aWeight + b.x * bWeight,
+      z: a.z * aWeight + b.z * bWeight,
+    };
+  }
+
+  private worldDirectionToLocalMove(direction: PlainVec2, lookYaw: number): PlainVec2 {
+    const cos = Math.cos(lookYaw);
+    const sin = Math.sin(lookYaw);
+    return {
+      x: direction.x * cos + direction.z * sin,
+      z: -direction.x * sin + direction.z * cos,
+    };
+  }
+
+  private rotateAngleToward(current: number, target: number, maxStep: number): number {
+    const delta = this.normalizeAngle(target - current);
+    if (Math.abs(delta) <= maxStep) return this.normalizeAngle(target);
+    return this.normalizeAngle(current + Math.sign(delta) * maxStep);
+  }
+
+  private normalizeAngle(angle: number): number {
+    let normalized = angle;
+    while (normalized > Math.PI) normalized -= Math.PI * 2;
+    while (normalized < -Math.PI) normalized += Math.PI * 2;
+    return normalized;
+  }
+
+  private clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  private randomBetween(min: number, max: number): number {
+    return min + Math.random() * (max - min);
+  }
+
+  private randomSigned(amount: number): number {
+    return (Math.random() * 2 - 1) * amount;
+  }
+
+  private hashString(value: string): number {
+    let hash = 0;
+    for (let i = 0; i < value.length; i++) {
+      hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash);
   }
 
   private createEmptyBotInput(bot: Player, now: number): PlayerInput {
@@ -1961,6 +2585,7 @@ export class GameRoom extends Room<GameState> {
       };
       const distSq = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
       if (distSq > rangeSq || distSq <= 0.0001) return;
+      if (!this.hasLineOfSight(origin, this.getPlayerBodyAimPosition(target))) return;
 
       const distance = Math.sqrt(distSq);
       const dot = (

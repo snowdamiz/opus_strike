@@ -6,36 +6,7 @@ import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
 import type { HeroId } from '@voxel-strike/shared';
 import { useCombatFeedbackStore, type DamageNumberEvent, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
-
-// Hero color schemes for theming
-const HERO_COLORS: Record<string, { primary: string; glow: string; bg: string }> = {
-  phantom: { primary: '#a855f7', glow: 'rgba(168, 85, 247, 0.4)', bg: 'rgba(168, 85, 247, 0.15)' },
-  hookshot: { primary: '#06b6d4', glow: 'rgba(6, 182, 212, 0.4)', bg: 'rgba(6, 182, 212, 0.15)' },
-  blaze: { primary: '#f97316', glow: 'rgba(249, 115, 22, 0.5)', bg: 'rgba(249, 115, 22, 0.15)' },
-  glacier: { primary: '#3b82f6', glow: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.15)' },
-  pulse: { primary: '#22c55e', glow: 'rgba(34, 197, 94, 0.4)', bg: 'rgba(34, 197, 94, 0.15)' },
-  sentinel: { primary: '#eab308', glow: 'rgba(234, 179, 8, 0.4)', bg: 'rgba(234, 179, 8, 0.15)' },
-};
-
-// Faction definitions matching lobby
-const FACTIONS = {
-  red: {
-    name: 'SOLAR',
-    fullName: 'SOLAR VANGUARD',
-    primaryColor: '#f97316',
-    secondaryColor: '#fbbf24',
-    glowColor: 'rgba(249, 115, 22, 0.5)',
-    gradient: 'linear-gradient(180deg, rgba(249, 115, 22, 0.5) 0%, rgba(234, 88, 12, 0.6) 100%)',
-  },
-  blue: {
-    name: 'VOID',
-    fullName: 'VOID LEGION',
-    primaryColor: '#06b6d4',
-    secondaryColor: '#8b5cf6',
-    glowColor: 'rgba(6, 182, 212, 0.5)',
-    gradient: 'linear-gradient(180deg, rgba(6, 182, 212, 0.5) 0%, rgba(139, 92, 246, 0.5) 100%)',
-  },
-} as const;
+import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
 
 // Solar Icon - Small version for HUD
 function SolarIconSmall({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -364,7 +335,7 @@ export function HUD() {
           <div
             className="flex items-stretch rounded-b-2xl overflow-hidden backdrop-blur-md"
             style={{
-              background: 'linear-gradient(180deg, rgba(10, 10, 15, 0.95) 0%, rgba(15, 15, 25, 0.9) 100%)',
+              background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
               boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), inset 0 -1px 0 rgba(255,255,255,0.05)',
             }}
           >
@@ -380,14 +351,14 @@ export function HUD() {
                 <div
                   className="absolute inset-0 opacity-50"
                   style={{
-                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.glowColor} 0%, transparent 70%)`,
+                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.hudGlowColor} 0%, transparent 70%)`,
                   }}
                 />
 
                 <SolarIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-5 lg:h-5 text-white/80 relative z-10" />
                 <span
                   className="font-display text-2xl sm:text-3xl lg:text-4xl text-white tabular-nums drop-shadow-lg relative z-10"
-                  style={{ textShadow: `0 0 20px ${FACTIONS.red.glowColor}` }}
+                  style={{ textShadow: `0 0 20px ${FACTIONS.red.hudGlowColor}` }}
                 >
                   {redScore}
                 </span>
@@ -406,7 +377,12 @@ export function HUD() {
                 className="absolute -bottom-4 sm:-bottom-5 left-0 right-0 h-4 sm:h-5 flex items-center justify-center"
                 style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
               >
-                <span className="text-[6px] sm:text-[7px] lg:text-[8px] font-display tracking-[0.25em] text-orange-300/70">SOLAR</span>
+                <span
+                  className="text-[6px] sm:text-[7px] lg:text-[8px] font-display tracking-[0.25em]"
+                  style={{ color: `${FACTIONS.red.primaryColor}b3` }}
+                >
+                  SOLAR
+                </span>
               </div>
             </div>
 
@@ -449,13 +425,13 @@ export function HUD() {
                 <div
                   className="absolute inset-0 opacity-50"
                   style={{
-                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.glowColor} 0%, transparent 70%)`,
+                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.hudGlowColor} 0%, transparent 70%)`,
                   }}
                 />
 
                 <span
                   className="font-display text-2xl sm:text-3xl lg:text-4xl text-white tabular-nums drop-shadow-lg relative z-10"
-                  style={{ textShadow: `0 0 20px ${FACTIONS.blue.glowColor}` }}
+                  style={{ textShadow: `0 0 20px ${FACTIONS.blue.hudGlowColor}` }}
                 >
                   {blueScore}
                 </span>
@@ -499,7 +475,7 @@ export function HUD() {
             <div
               className="absolute -inset-1 rounded-xl opacity-60"
               style={{
-                background: `radial-gradient(circle, ${playerFaction.glowColor} 0%, transparent 70%)`,
+                background: `radial-gradient(circle, ${playerFaction.hudGlowColor} 0%, transparent 70%)`,
               }}
             />
 
@@ -871,10 +847,10 @@ function AbilitySlotApex({
               ? isUltimate
                 ? 'linear-gradient(180deg, rgba(251, 191, 36, 0.35) 0%, rgba(180, 83, 9, 0.45) 100%)'
                 : `linear-gradient(180deg, ${heroColor}40 0%, ${heroColor}25 100%)`
-              : 'linear-gradient(180deg, rgba(30, 30, 40, 0.95) 0%, rgba(20, 20, 30, 0.98) 100%)',
+              : 'linear-gradient(180deg, rgb(var(--color-strike-ability-disabled-start) / 0.95) 0%, rgb(var(--color-strike-ability-disabled-end) / 0.98) 100%)',
             border: isUsable
               ? `2px solid ${isUltimate ? 'rgba(251, 191, 36, 0.8)' : heroColor}`
-              : '2px solid rgba(60, 60, 70, 0.5)',
+              : '2px solid rgb(var(--color-strike-ability-disabled-border) / 0.5)',
             boxShadow: isUsable
               ? isUltimate
                 ? '0 0 20px rgba(251, 191, 36, 0.3), inset 0 0 15px rgba(251, 191, 36, 0.1)'

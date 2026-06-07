@@ -20,7 +20,7 @@ interface SpawnIndicatorProps {
 // Shared materials for performance (single GPU resource per team)
 const redIndicatorMaterial = new THREE.MeshStandardMaterial({
   color: 0x1a0a0a,
-  emissive: 0xff4400,
+  emissive: 0xef4444,
   emissiveIntensity: 0.3,
   transparent: true,
   opacity: 0.6,

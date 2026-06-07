@@ -27,7 +27,7 @@ interface HeroVoxelBodyProps {
 }
 
 const TEAM_COLORS: Record<Team, string> = {
-  red: '#f97316',
+  red: '#ef4444',
   blue: '#06b6d4',
 };
 

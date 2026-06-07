@@ -3,15 +3,7 @@ import { HERO_DEFINITIONS, ALL_HERO_IDS, ABILITY_DEFINITIONS } from '@voxel-stri
 import type { AbilityDefinition, HeroId } from '@voxel-strike/shared';
 import { HeroSVG } from './HeroSVG';
 import { HeroIcon, AbilityIcon, getAbilityIconType, type AbilityIconType } from './HeroIcons';
-
-const HERO_COLORS: Record<HeroId, string> = {
-  phantom: '#a855f7',
-  hookshot: '#06b6d4',
-  blaze: '#f97316',
-  glacier: '#3b82f6',
-  pulse: '#22c55e',
-  sentinel: '#eab308',
-};
+import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
 
 const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
   phantom: [
@@ -183,8 +175,8 @@ export function HeroesPage() {
                 className="group w-full relative overflow-hidden rounded-lg text-left transition-transform hover:-translate-y-0.5"
                 style={{
                   background: isSelected
-                    ? `linear-gradient(135deg, ${color}24, rgba(12,12,20,0.88) 58%)`
-                    : 'rgba(12,12,20,0.76)',
+                    ? `linear-gradient(135deg, ${color}24, rgb(var(--color-strike-surface) / 0.88) 58%)`
+                    : 'rgb(var(--color-strike-surface) / 0.76)',
                   border: isSelected ? `1px solid ${color}aa` : '1px solid rgba(255,255,255,0.1)',
                   boxShadow: isSelected ? `0 0 22px ${color}22, inset 0 1px 0 rgba(255,255,255,0.08)` : 'none',
                 }}
@@ -305,7 +297,7 @@ function toAbilityItem(input: string, abilityId: string, tone?: 'ultimate'): Kit
 
 function QuickStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-[#0d0d17]/75 px-3 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+    <div className="rounded-lg border border-white/10 bg-strike-surface/75 px-3 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
       <span className="block font-display text-2xl text-white leading-none">{value}</span>
       <span className="mt-0.5 block text-[9px] text-white/45 font-mono uppercase tracking-[0.22em]">{label}</span>
     </div>
@@ -321,26 +313,26 @@ function AbilityCard({ item, color }: { item: KitItem; color: string }) {
   const cooldown = 'ability' in item ? item.ability.cooldown : item.cooldown;
   const duration = 'ability' in item ? item.ability.duration : item.duration;
   const charges = 'ability' in item ? item.ability.charges : item.charges;
-  const borderColor = isUltimate ? 'rgba(245,158,11,0.62)' : isPassive ? 'rgba(255,255,255,0.15)' : `${color}66`;
+  const borderColor = isUltimate ? ABILITY_COLORS.ultimateBorder : isPassive ? 'rgba(255,255,255,0.15)' : `${color}66`;
 
   return (
     <div
       className="relative overflow-hidden rounded-lg"
       style={{
         background: isUltimate
-          ? 'linear-gradient(135deg, rgba(180, 83, 9, 0.2), rgba(13,13,23,0.86) 62%)'
+          ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimatePanelStart}, rgb(var(--color-strike-surface) / 0.86) 62%)`
           : isClick
-            ? `linear-gradient(135deg, ${color}18, rgba(13,13,23,0.86) 54%)`
-            : 'rgba(13,13,23,0.84)',
+            ? `linear-gradient(135deg, ${color}18, rgb(var(--color-strike-surface) / 0.86) 54%)`
+            : 'rgb(var(--color-strike-surface) / 0.84)',
         border: `1px solid ${borderColor}`,
-        boxShadow: isUltimate ? '0 0 22px rgba(245,158,11,0.12)' : `0 0 18px ${color}12`,
+        boxShadow: isUltimate ? `0 0 22px ${ABILITY_COLORS.ultimateGlow}` : `0 0 18px ${color}12`,
       }}
     >
       <div
         className="absolute inset-x-0 top-0 h-px opacity-75"
         style={{
           background: isUltimate
-            ? 'linear-gradient(90deg, transparent, #f59e0b, transparent)'
+            ? `linear-gradient(90deg, transparent, ${ABILITY_COLORS.ultimate}, transparent)`
             : `linear-gradient(90deg, transparent, ${color}, transparent)`,
         }}
       />
@@ -350,7 +342,7 @@ function AbilityCard({ item, color }: { item: KitItem; color: string }) {
             className="w-9 h-9 rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden"
             style={{
               background: isUltimate
-                ? 'linear-gradient(135deg, #f59e0b, #b45309)'
+                ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimate}, ${ABILITY_COLORS.ultimateDarker})`
                 : isPassive
                   ? 'rgba(255,255,255,0.12)'
                   : color,
@@ -361,7 +353,7 @@ function AbilityCard({ item, color }: { item: KitItem; color: string }) {
 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <InputTag color={isUltimate ? '#f59e0b' : color}>{item.input}</InputTag>
+              <InputTag color={isUltimate ? ABILITY_COLORS.ultimate : color}>{item.input}</InputTag>
               <h4 className="font-display text-white text-[15px] leading-none truncate">{abilityName}</h4>
             </div>
             <p className="mt-1 text-white/70 text-[11px] font-body leading-snug">{abilityDesc}</p>
@@ -369,10 +361,10 @@ function AbilityCard({ item, color }: { item: KitItem; color: string }) {
             {(cooldown !== undefined || duration || charges) && (
               <div className="flex flex-wrap items-center gap-1.5 mt-2">
                 {cooldown !== undefined && cooldown > 0 && (
-                  <MetaPill color={isUltimate ? '#f59e0b' : color}>{formatSeconds(cooldown)}</MetaPill>
+                  <MetaPill color={isUltimate ? ABILITY_COLORS.ultimate : color}>{formatSeconds(cooldown)}</MetaPill>
                 )}
-                {duration && <MetaPill color={isUltimate ? '#f59e0b' : color}>{duration}s active</MetaPill>}
-                {charges && <MetaPill color={isUltimate ? '#f59e0b' : color}>x{charges}</MetaPill>}
+                {duration && <MetaPill color={isUltimate ? ABILITY_COLORS.ultimate : color}>{duration}s active</MetaPill>}
+                {charges && <MetaPill color={isUltimate ? ABILITY_COLORS.ultimate : color}>x{charges}</MetaPill>}
               </div>
             )}
           </div>

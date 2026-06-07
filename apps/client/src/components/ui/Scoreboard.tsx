@@ -1,28 +1,7 @@
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import type { Team, Player } from '@voxel-strike/shared';
-
-// Faction definitions
-const FACTIONS = {
-  red: {
-    name: 'SOLAR',
-    fullName: 'SOLAR VANGUARD',
-    primaryColor: '#f97316',
-    secondaryColor: '#fbbf24',
-    glowColor: 'rgba(249, 115, 22, 0.4)',
-    bgColor: 'rgba(249, 115, 22, 0.1)',
-    borderColor: 'rgba(249, 115, 22, 0.3)',
-  },
-  blue: {
-    name: 'VOID',
-    fullName: 'VOID LEGION',
-    primaryColor: '#06b6d4',
-    secondaryColor: '#8b5cf6',
-    glowColor: 'rgba(6, 182, 212, 0.4)',
-    bgColor: 'rgba(6, 182, 212, 0.1)',
-    borderColor: 'rgba(6, 182, 212, 0.3)',
-  },
-} as const;
+import { FACTIONS } from '../../styles/colorTokens';
 
 // Solar Icon
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -65,7 +44,7 @@ export function Scoreboard() {
       <div
         className="w-full max-w-2xl lg:max-w-3xl xl:max-w-4xl mx-4 lg:mx-6 xl:mx-8 rounded-2xl overflow-hidden animate-scale-in"
         style={{
-          background: 'linear-gradient(180deg, rgba(15, 15, 25, 0.98) 0%, rgba(10, 10, 18, 0.98) 100%)',
+          background: 'linear-gradient(180deg, rgb(var(--color-strike-elevated) / 0.98) 0%, rgb(var(--color-strike-bg) / 0.98) 100%)',
           border: '1px solid rgba(255, 255, 255, 0.1)',
           boxShadow: '0 25px 80px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255,255,255,0.05)',
         }}
@@ -74,7 +53,7 @@ export function Scoreboard() {
         <div 
           className="flex items-center justify-between px-6 py-4"
           style={{
-            background: 'linear-gradient(90deg, rgba(249, 115, 22, 0.15) 0%, rgba(15,15,25,0.9) 50%, rgba(6, 182, 212, 0.15) 100%)',
+            background: 'linear-gradient(90deg, rgb(var(--color-accent-primary) / 0.15) 0%, rgb(var(--color-strike-elevated) / 0.9) 50%, rgb(var(--color-accent-secondary) / 0.15) 100%)',
             borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
           }}
         >
@@ -284,7 +263,7 @@ function PlayerRow({ player, isLocal, faction }: PlayerRowProps) {
       <span className="font-mono text-sm text-center text-white/50">{stats.assists}</span>
       <span 
         className="font-mono text-sm text-center font-medium"
-        style={{ color: stats.flagCaptures > 0 ? '#fbbf24' : 'rgba(255,255,255,0.3)' }}
+        style={{ color: stats.flagCaptures > 0 ? FACTIONS.red.secondaryColor : 'rgba(255,255,255,0.3)' }}
       >
         {stats.flagCaptures}
       </span>

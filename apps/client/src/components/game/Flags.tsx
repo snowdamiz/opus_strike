@@ -38,8 +38,8 @@ function Flag({ position, team, isAtBase }: FlagProps) {
   const clothRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
 
-  const flagColor = team === 'red' ? '#ff4444' : '#4444ff';
-  const glowColor = team === 'red' ? '#ff6666' : '#6666ff';
+  const flagColor = team === 'red' ? '#ef4444' : '#4444ff';
+  const glowColor = team === 'red' ? '#f87171' : '#6666ff';
 
   useFrame((state) => {
     if (!groupRef.current) return;
@@ -123,4 +123,3 @@ function Flag({ position, team, isAtBase }: FlagProps) {
     </group>
   );
 }
-

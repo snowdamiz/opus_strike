@@ -189,7 +189,7 @@ function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateP
   const parentWorldQuaternionRef = useRef(new THREE.Quaternion());
   const cameraWorldQuaternionRef = useRef(new THREE.Quaternion());
   const { camera } = useThree();
-  const teamColor = team === 'red' ? '#ff4444' : '#4444ff';
+  const teamColor = team === 'red' ? '#ef4444' : '#4444ff';
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
   const heroColor = heroId ? HERO_ICON_COLORS[heroId].primary : teamColor;
   const tagWidth = Math.max(112, Math.min(188, 58 + name.length * 7.2));
@@ -276,7 +276,7 @@ function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateP
 
 function PlayerVisibilityBeacon({ team, height, isBot }: { team: Team; height: number; isBot?: boolean }) {
   const groupRef = useRef<THREE.Group>(null);
-  const color = team === 'red' ? '#ff6b35' : '#38bdf8';
+  const color = team === 'red' ? '#ef4444' : '#38bdf8';
 
   useFrame((state) => {
     if (!groupRef.current) return;
@@ -299,7 +299,7 @@ interface FlagCarrierIndicatorProps {
 }
 
 function FlagCarrierIndicator({ team }: FlagCarrierIndicatorProps) {
-  const flagColor = team === 'red' ? '#ff4444' : '#4444ff';
+  const flagColor = team === 'red' ? '#ef4444' : '#4444ff';
 
   return (
     <group position={[0, 2.5, 0]}>

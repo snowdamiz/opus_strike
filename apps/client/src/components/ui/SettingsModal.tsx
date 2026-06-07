@@ -430,7 +430,7 @@ function SliderInput({ value, onChange, min, max, step }: {
         step={step}
         className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
         style={{
-          background: `linear-gradient(to right, #f97316 0%, #f97316 ${percent}%, rgba(255,255,255,0.2) ${percent}%, rgba(255,255,255,0.2) 100%)`,
+          background: `linear-gradient(to right, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary)) ${percent}%, rgba(255,255,255,0.2) ${percent}%, rgba(255,255,255,0.2) 100%)`,
         }}
       />
       <span className="w-9 text-right text-white/60 font-mono text-xs">{value}</span>
@@ -506,7 +506,7 @@ function SelectInput({ value, onChange, options }: {
       {isOpen && (
         <div
           role="listbox"
-          className="absolute right-0 top-12 z-50 w-full overflow-hidden rounded-lg border border-white/15 bg-[#171720]/95 shadow-2xl backdrop-blur-md"
+          className="absolute right-0 top-12 z-50 w-full overflow-hidden rounded-lg border border-white/15 bg-strike-elevated/95 shadow-2xl backdrop-blur-md"
         >
           {options.map((option) => {
             const isSelected = option.value === value;

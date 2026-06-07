@@ -9,6 +9,7 @@ import { HeroSVG } from './HeroSVG';
 import { useUISounds } from '../../hooks/useAudio';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
+import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 
 // Phantom wallet icon component
 function PhantomIcon({ className }: { className?: string }) {
@@ -73,16 +74,6 @@ function SlopHeroesMark({ className }: { className?: string }) {
 
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'loadout';
-
-// Hero colors for display
-const HERO_COLORS: Record<HeroId, string> = {
-  phantom: '#a855f7',
-  hookshot: '#06b6d4',
-  blaze: '#f97316',
-  glacier: '#3b82f6',
-  pulse: '#22c55e',
-  sentinel: '#eab308',
-};
 
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
@@ -284,18 +275,28 @@ export function MainLobby() {
         />
 
         {/* Dark overlay gradient for readability - stronger to let heroes pop */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a12]/80 via-[#0f0f1a]/75 to-[#08080c]/90" />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: 'linear-gradient(to bottom, rgb(var(--color-strike-page-top) / 0.8), rgb(var(--color-strike-page-mid) / 0.75), rgb(var(--color-strike-page-bottom) / 0.9))',
+          }}
+        />
 
         {/* Center darkening for hero contrast */}
         <div
           className="absolute inset-0"
           style={{
-            background: 'radial-gradient(ellipse 60% 70% at 50% 45%, rgba(10,10,18,0.5) 0%, transparent 70%)'
+            background: 'radial-gradient(ellipse 60% 70% at 50% 45%, rgb(var(--color-strike-page-top) / 0.5) 0%, transparent 70%)'
           }}
         />
 
         <div className="absolute inset-0 pattern-grid opacity-10" />
-        <div className="absolute bottom-0 left-0 right-0 h-2/5 bg-gradient-to-t from-[#0a0a12] to-transparent" />
+        <div
+          className="absolute bottom-0 left-0 right-0 h-2/5"
+          style={{
+            background: 'linear-gradient(to top, rgb(var(--color-strike-page-top)), transparent)',
+          }}
+        />
 
         {/* Extra vignette for edges */}
         <div
@@ -381,15 +382,15 @@ export function MainLobby() {
  disabled={isConnecting}
  className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl font-display text-sm text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
  style={{
- background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
- boxShadow: '0 0 30px rgba(153, 69, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)',
+ background: WALLET_AUTH_COLORS.gradient,
+ boxShadow: WALLET_AUTH_COLORS.subtleGlow,
  }}
  >
  {/* Button shimmer */}
  <div
  className="absolute inset-0 opacity-0 group-hover:opacity-100"
  style={{
- background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
+ background: WALLET_AUTH_COLORS.shimmer,
  }}
  />
  <span className="relative flex items-center gap-2">
@@ -611,7 +612,7 @@ function PlayTab({
  style={{
  background: isActive ? dotColor : 'rgba(255,255,255,0.3)',
  boxShadow: isActive
- ? `0 0 12px ${dotColor}80, 0 0 0 2px rgba(10,10,18,1), 0 0 0 4px ${dotColor}`
+ ? `0 0 12px ${dotColor}80, 0 0 0 2px rgb(var(--color-strike-page-top)), 0 0 0 4px ${dotColor}`
  : 'none',
  }}
  />
@@ -639,17 +640,17 @@ function PlayTab({
  style={{
  background: isAuthenticated
  ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
- : 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
+ : WALLET_AUTH_COLORS.gradient,
  boxShadow: isAuthenticated
  ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
- : '0 0 60px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+ : WALLET_AUTH_COLORS.glow,
  }}
  >
  {/* Button shimmer effect */}
  <div
  className="absolute inset-0 opacity-0 group-hover:opacity-100"
  style={{
- background: `linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)`,
+ background: WALLET_AUTH_COLORS.shimmer,
  }}
  />
  <span className="relative flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
@@ -1131,15 +1132,15 @@ function AuthModal({
  disabled={isConnecting}
  className="w-full py-3 rounded-lg font-display text-base text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
  style={{
- background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
- boxShadow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+ background: WALLET_AUTH_COLORS.gradient,
+ boxShadow: WALLET_AUTH_COLORS.glow,
  }}
  >
  {/* Button shimmer */}
  <div
  className="absolute inset-0 opacity-0 group-hover:opacity-100"
  style={{
- background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
+ background: WALLET_AUTH_COLORS.shimmer,
  }}
  />
  <span className="relative flex items-center justify-center gap-2.5">

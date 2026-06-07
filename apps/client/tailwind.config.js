@@ -1,3 +1,5 @@
+const colorVar = (name) => `rgb(var(${name}) / <alpha-value>)`;
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -9,31 +11,35 @@ export default {
       colors: {
         // Core palette
         'strike': {
-          'bg': '#0c0c10',
-          'surface': '#12121a',
-          'elevated': '#1a1a24',
-          'border': 'rgba(255, 255, 255, 0.08)',
-          'border-light': 'rgba(255, 255, 255, 0.12)',
+          'bg': colorVar('--color-strike-bg'),
+          'surface': colorVar('--color-strike-surface'),
+          'elevated': colorVar('--color-strike-elevated'),
+          'canvas': colorVar('--color-strike-canvas'),
+          'chrome': colorVar('--color-strike-chrome'),
+          'panel': colorVar('--color-strike-panel'),
+          'panel-raised': colorVar('--color-strike-panel-raised'),
+          'border': 'rgb(var(--color-strike-border) / 0.08)',
+          'border-light': 'rgb(var(--color-strike-border) / 0.12)',
         },
         // Accent colors
         'accent': {
-          'primary': '#f97316',    // Orange - main accent
-          'secondary': '#06b6d4',   // Cyan - secondary accent
-          'tertiary': '#8b5cf6',    // Purple - tertiary
+          'primary': colorVar('--color-accent-primary'),    // Orange - main accent
+          'secondary': colorVar('--color-accent-secondary'),   // Cyan - secondary accent
+          'tertiary': colorVar('--color-accent-tertiary'),    // Purple - tertiary
         },
         // Team colors
         'team': {
-          'red': '#ef4444',
-          'red-light': '#fca5a5',
-          'blue': '#3b82f6',
-          'blue-light': '#93c5fd',
+          'red': colorVar('--color-team-red'),
+          'red-light': colorVar('--color-team-red-light'),
+          'blue': colorVar('--color-team-blue'),
+          'blue-light': colorVar('--color-team-blue-light'),
         },
         // UI states
         'ui': {
-          'success': '#22c55e',
-          'warning': '#eab308',
-          'danger': '#ef4444',
-          'info': '#06b6d4',
+          'success': colorVar('--color-ui-success'),
+          'warning': colorVar('--color-ui-warning'),
+          'danger': colorVar('--color-ui-danger'),
+          'info': colorVar('--color-ui-info'),
         }
       },
       fontFamily: {
@@ -82,13 +88,13 @@ export default {
       },
       backgroundImage: {
         'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'hero-pattern': 'linear-gradient(135deg, rgba(249, 115, 22, 0.03) 0%, transparent 50%, rgba(6, 182, 212, 0.03) 100%)',
+        'hero-pattern': 'linear-gradient(135deg, rgb(var(--color-accent-primary) / 0.03) 0%, transparent 50%, rgb(var(--color-accent-secondary) / 0.03) 100%)',
       },
       boxShadow: {
-        'glow-orange': '0 0 20px rgba(249, 115, 22, 0.3)',
-        'glow-cyan': '0 0 20px rgba(6, 182, 212, 0.3)',
-        'glow-red': '0 0 20px rgba(239, 68, 68, 0.3)',
-        'glow-blue': '0 0 20px rgba(59, 130, 246, 0.3)',
+        'glow-orange': '0 0 20px rgb(var(--color-accent-primary) / 0.3)',
+        'glow-cyan': '0 0 20px rgb(var(--color-accent-secondary) / 0.3)',
+        'glow-red': '0 0 20px rgb(var(--color-ui-danger) / 0.3)',
+        'glow-blue': '0 0 20px rgb(var(--color-team-blue) / 0.3)',
       },
     },
   },

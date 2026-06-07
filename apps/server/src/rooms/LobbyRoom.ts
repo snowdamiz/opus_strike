@@ -90,6 +90,10 @@ export class LobbyRoom extends Room<LobbyState> {
       this.handleUpdateBotTeam(client, data.botId, data.team);
     });
 
+    this.onMessage('updateBotDifficulty', (client, data: { botId: string; difficulty: BotDifficulty }) => {
+      this.handleUpdateBotDifficulty(client, data.botId, data.difficulty);
+    });
+
     this.onMessage('chat', (client, data: { message: string }) => {
       this.handleChat(client, data.message);
     });
@@ -234,6 +238,11 @@ export class LobbyRoom extends Room<LobbyState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
+    if (ready && !this.isTeam(player.team)) {
+      client.send('error', { message: 'Choose a team before readying up' });
+      return;
+    }
+
     player.isReady = ready;
 
     this.broadcast('playerReady', {
@@ -247,16 +256,14 @@ export class LobbyRoom extends Room<LobbyState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
-    if (team !== 'red' && team !== 'blue' && team !== '') return;
+    if (!this.isTeam(team)) return;
 
     // Check team balance
-    if (team) {
-      const teamCount = this.getTeamCountExcluding(team, client.sessionId);
-      const maxPerTeam = Math.ceil(this.state.maxParticipants / 2);
-      if (teamCount >= maxPerTeam) {
-        client.send('error', { message: 'Team is full' });
-        return;
-      }
+    const teamCount = this.getTeamCountExcluding(team, client.sessionId);
+    const maxPerTeam = Math.ceil(this.state.maxParticipants / 2);
+    if (teamCount >= maxPerTeam) {
+      client.send('error', { message: 'Team is full' });
+      return;
     }
 
     player.team = team;
@@ -283,6 +290,11 @@ export class LobbyRoom extends Room<LobbyState> {
 
     if (this.state.players.size < 1) {
       client.send('error', { message: 'Need at least 1 player to start' });
+      return;
+    }
+
+    if (this.hasUnassignedPlayers()) {
+      client.send('error', { message: 'All players must choose a team' });
       return;
     }
 
@@ -424,22 +436,31 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private handleUpdateBotTeam(client: Client, botId: string, team: string): void {
     if (!this.isHost(client)) return;
-    if (team !== 'red' && team !== 'blue' && team !== '') return;
+    if (!this.isTeam(team)) return;
 
     const bot = this.state.players.get(botId);
     if (!bot?.isBot) return;
 
-    if (team) {
-      const teamCount = this.getTeamCountExcluding(team, botId);
-      const maxPerTeam = Math.ceil(this.state.maxParticipants / 2);
-      if (teamCount >= maxPerTeam) {
-        client.send('error', { message: 'Team is full' });
-        return;
-      }
+    const teamCount = this.getTeamCountExcluding(team, botId);
+    const maxPerTeam = Math.ceil(this.state.maxParticipants / 2);
+    if (teamCount >= maxPerTeam) {
+      client.send('error', { message: 'Team is full' });
+      return;
     }
 
     bot.team = team;
     this.broadcast('playerTeamChanged', { playerId: botId, team });
+    this.updateMetadata();
+  }
+
+  private handleUpdateBotDifficulty(client: Client, botId: string, difficulty: BotDifficulty): void {
+    if (!this.isHost(client)) return;
+
+    const bot = this.state.players.get(botId);
+    if (!bot?.isBot) return;
+
+    bot.botDifficulty = this.normalizeDifficulty(difficulty);
+    this.broadcast('botDifficultyChanged', { playerId: botId, difficulty: bot.botDifficulty });
     this.updateMetadata();
   }
 
@@ -494,10 +515,9 @@ export class LobbyRoom extends Room<LobbyState> {
     let blueCount = 0;
 
     this.state.players.forEach((p) => {
-      let team = p.team as Team | '';
-      if (!team) {
-        team = redCount <= blueCount ? 'red' : 'blue';
-        p.team = team;
+      const team = p.team;
+      if (!this.isTeam(team)) {
+        throw new Error('Cannot create assignments with unassigned players');
       }
 
       if (team === 'red') redCount++;
@@ -520,6 +540,20 @@ export class LobbyRoom extends Room<LobbyState> {
     const redCount = this.getTeamCount('red');
     const blueCount = this.getTeamCount('blue');
     return redCount <= blueCount ? 'red' : 'blue';
+  }
+
+  private isTeam(team: string): team is Team {
+    return team === 'red' || team === 'blue';
+  }
+
+  private hasUnassignedPlayers(): boolean {
+    let hasUnassigned = false;
+    this.state.players.forEach((player) => {
+      if (!this.isTeam(player.team)) {
+        hasUnassigned = true;
+      }
+    });
+    return hasUnassigned;
   }
 
   private getTeamCountExcluding(team: string, excludedPlayerId: string): number {

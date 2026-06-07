@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useWallet } from '../../contexts/WalletContext';
+import { WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 
 // Phantom wallet icon component
 function PhantomIcon({ className }: { className?: string }) {
@@ -360,15 +361,15 @@ export function MainMenu() {
  disabled={isConnecting}
  className="w-full py-4 rounded-xl font-display text-xl text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
  style={{
- background: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
- boxShadow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
+ background: WALLET_AUTH_COLORS.gradient,
+ boxShadow: WALLET_AUTH_COLORS.glow,
  }}
  >
  {/* Button shimmer */}
  <div
  className="absolute inset-0 opacity-0 group-hover:opacity-100"
  style={{
- background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
+ background: WALLET_AUTH_COLORS.shimmer,
  }}
  />
  <span className="relative flex items-center justify-center gap-3">

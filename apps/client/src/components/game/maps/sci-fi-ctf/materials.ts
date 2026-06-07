@@ -346,11 +346,11 @@ const platformTextures = createSurfaceTextures({
 });
 
 const teamATextures = createSurfaceTextures({
-  base: '#22100f',
-  light: '#5a2418',
+  base: '#210909',
+  light: '#5c1515',
   dark: '#090302',
-  accent: '#ff5c2a',
-  glow: '#ff6f2f',
+  accent: '#ef4444',
+  glow: '#f87171',
   kind: 'team',
   repeat: 2,
   roughness: 0.32,
@@ -358,11 +358,11 @@ const teamATextures = createSurfaceTextures({
 });
 
 const teamAGlowTextures = createSurfaceTextures({
-  base: '#250805',
-  light: '#71301f',
+  base: '#260707',
+  light: '#7f1d1d',
   dark: '#070100',
-  accent: '#ff7442',
-  glow: '#ff8a47',
+  accent: '#ef4444',
+  glow: '#fca5a5',
   kind: 'glow',
   repeat: 2,
   roughness: 0.26,
@@ -479,11 +479,11 @@ export const platformMaterial = applyTextureSet({
 }, platformTextures, 0.06, 0.42);
 
 // =============================================================================
-// TEAM A MATERIALS - Red/orange warm accents
+// TEAM A MATERIALS - Red faction accents
 // =============================================================================
 
 /**
- * Team A accent - warm red/orange emissive for team identity
+ * Team A accent - red emissive for team identity
  */
 export const teamAAccent = applyTextureSet({
   metalness: 0.62,

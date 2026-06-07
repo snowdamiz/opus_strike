@@ -6,16 +6,7 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
 import { HeroSVG } from './HeroSVG';
 import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
-
-// Hero colors
-const HERO_COLORS: Record<HeroId, string> = {
-  phantom: '#a855f7',
-  hookshot: '#06b6d4',
-  blaze: '#f97316',
-  glacier: '#3b82f6',
-  pulse: '#22c55e',
-  sentinel: '#eab308',
-};
+import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
 
 export function HeroSelect() {
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId);
@@ -42,7 +33,7 @@ export function HeroSelect() {
 
   const displayHero = selectedHero;
   const heroInfo = displayHero ? HERO_DEFINITIONS[displayHero] : null;
-  const accentColor = displayHero ? HERO_COLORS[displayHero] : '#f97316';
+  const accentColor = displayHero ? HERO_COLORS[displayHero] : HERO_COLORS.blaze;
 
   const handleSelectHero = useCallback((heroId: HeroId) => {
     if (isLockedIn || heroId === selectedHero) return;
@@ -68,7 +59,7 @@ export function HeroSelect() {
   }, [handleSelectHero, playButtonClick]);
 
   return (
-    <div className="absolute inset-0 bg-[#06060a] flex flex-col overflow-hidden">
+    <div className="absolute inset-0 bg-strike-canvas flex flex-col overflow-hidden">
       {/* Animated background */}
       <div className="absolute inset-0 pointer-events-none">
         <div
@@ -83,7 +74,7 @@ export function HeroSelect() {
       </div>
 
       {/* Top Bar */}
-      <div className="relative z-10 flex items-center justify-between gap-4 px-[var(--menu-safe-x)] py-2 md:py-3 xl:py-4 2xl:py-5 border-b border-white/5 bg-[#08080c]/80">
+      <div className="relative z-10 flex items-center justify-between gap-4 px-[var(--menu-safe-x)] py-2 md:py-3 xl:py-4 2xl:py-5 border-b border-white/5 bg-strike-chrome/80">
         <div className="flex min-w-0 items-center gap-4 xl:gap-6">
  <button
  onClick={() => { playButtonClick(); leaveGame(); }}
@@ -170,7 +161,7 @@ export function HeroSelect() {
         </div>
 
         {/* Hero Details - Right Side */}
-        <div className="w-[48%] lg:w-[45%] xl:w-[42%] border-l border-white/5 flex flex-col bg-[#08080c]/50 min-h-0">
+        <div className="w-[48%] lg:w-[45%] xl:w-[42%] border-l border-white/5 flex flex-col bg-strike-chrome/50 min-h-0">
           {heroInfo ? (
             <div className="flex-1 flex flex-col min-h-0">
               {/* Hero Header with large display */}
@@ -369,8 +360,8 @@ const HeroCard = memo(function HeroCard({
  `}
  style={{
  background: isSelected
- ? `linear-gradient(160deg, ${color}25, ${color}08 50%, #0a0a10)`
- : 'linear-gradient(160deg, #14141c, #0a0a10)',
+ ? `linear-gradient(160deg, ${color}25, ${color}08 50%, rgb(var(--color-strike-canvas)))`
+ : 'linear-gradient(160deg, rgb(var(--color-strike-elevated)), rgb(var(--color-strike-canvas)))',
  boxShadow: isSelected
  ? `0 0 36px ${color}28, 0 16px 32px rgba(0,0,0,0.46), inset 0 1px 0 ${color}30`
  : '0 10px 24px rgba(0,0,0,0.28)',
@@ -401,7 +392,7 @@ const HeroCard = memo(function HeroCard({
  <HeroSVG heroId={heroId} size={220} animated={isSelected} />
  </div>
 
- <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#08080c] via-[#08080c]/80 to-transparent" />
+ <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-strike-chrome via-strike-chrome/80 to-transparent" />
 
  <div className="absolute inset-0 flex flex-col justify-between p-4">
  <div className="flex items-start justify-between">
@@ -513,12 +504,12 @@ const AbilityCard = memo(function AbilityCard({
           className="w-8 md:w-9 xl:w-10 2xl:w-12 h-8 md:h-9 xl:h-10 2xl:h-12 rounded-lg xl:rounded-xl flex items-center justify-center flex-shrink-0"
           style={{
             background: isUltimate
-              ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+              ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimate}, ${ABILITY_COLORS.ultimateDeep})`
               : isPassive
                 ? 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))'
                 : `linear-gradient(135deg, ${color}, ${color}bb)`,
             boxShadow: isUltimate
-              ? '0 4px 20px rgba(245, 158, 11, 0.4)'
+              ? ABILITY_COLORS.ultimateIconGlow
               : isPassive
                 ? 'none'
                 : `0 4px 20px ${color}30`,
@@ -533,8 +524,8 @@ const AbilityCard = memo(function AbilityCard({
               <span
                 className="text-[8px] md:text-[9px] xl:text-[10px] px-1 md:px-1.5 xl:px-2 py-0.5 rounded font-mono font-bold"
                 style={{
-                  background: isUltimate ? 'rgba(245, 158, 11, 0.3)' : `${color}30`,
-                  color: isUltimate ? '#fbbf24' : color,
+                  background: isUltimate ? ABILITY_COLORS.ultimateBadgeBg : `${color}30`,
+                  color: isUltimate ? ABILITY_COLORS.ultimateText : color,
                 }}
               >
                 {keybind}
@@ -555,8 +546,8 @@ const AbilityCard = memo(function AbilityCard({
               <span
                 className="text-[8px] md:text-[9px] xl:text-[10px] font-mono px-1 md:px-1.5 xl:px-2 py-0.5 xl:py-1 rounded"
                 style={{
-                  background: isUltimate ? 'rgba(245, 158, 11, 0.2)' : `${color}15`,
-                  color: isUltimate ? '#fbbf24' : `${color}cc`,
+                  background: isUltimate ? ABILITY_COLORS.ultimateMetaBg : `${color}15`,
+                  color: isUltimate ? ABILITY_COLORS.ultimateText : `${color}cc`,
                 }}
               >
                 ⏱ {ability.cooldown}s

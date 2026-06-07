@@ -1,7 +1,7 @@
 /**
  * Team A Base Geometry - Tech/Platform Aesthetic
  *
- * Elevated platforms with red/orange glowing accents representing
+ * Elevated platforms with red glowing accents representing
  * the high-tech faction's spawn area and flag zone.
  */
 

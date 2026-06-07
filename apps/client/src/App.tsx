@@ -191,7 +191,7 @@ function CountdownOverlay() {
       <div className="text-center">
         <div
           className="font-display text-[200px] text-voxel-primary animate-pulse"
-          style={{ textShadow: '0 0 60px rgba(0, 255, 136, 0.8)' }}
+          style={{ textShadow: '0 0 60px rgb(var(--color-ui-objective) / 0.8)' }}
         >
           {countdown}
         </div>

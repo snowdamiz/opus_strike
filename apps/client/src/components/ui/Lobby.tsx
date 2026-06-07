@@ -4,32 +4,7 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
 import type { BotDifficulty } from '@voxel-strike/shared';
 import type { LobbyPlayer } from '../../store/gameStore';
-
-// Faction definitions
-const FACTIONS = {
-  red: {
-    id: 'red',
-    name: 'SOLAR',
-    fullName: 'SOLAR VANGUARD',
-    tagline: 'Warriors of Light',
-    primaryColor: '#f97316', // Orange
-    secondaryColor: '#fbbf24', // Gold/Amber
-    glowColor: 'rgba(249,115,22,0.4)',
-    bgGradient: 'rgba(249,115,22,0.08)',
-    borderColor: 'rgba(249,115,22,0.15)',
-  },
-  blue: {
-    id: 'blue',
-    name: 'VOID',
-    fullName: 'VOID LEGION',
-    tagline: 'Masters of Shadow',
-    primaryColor: '#06b6d4', // Cyan
-    secondaryColor: '#8b5cf6', // Purple
-    glowColor: 'rgba(6,182,212,0.4)',
-    bgGradient: 'rgba(6,182,212,0.08)',
-    borderColor: 'rgba(6,182,212,0.15)',
-  },
-} as const;
+import { FACTIONS } from '../../styles/colorTokens';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -54,6 +29,125 @@ function VoidIcon({ className, style }: { className?: string; style?: React.CSSP
   );
 }
 
+function CrownIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 8l4.5 4L12 5l3.5 7L20 8l-1.5 10h-13L4 8z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M6.5 18h11" />
+    </svg>
+  );
+}
+
+function BotIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 5V3" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M8 5h8a4 4 0 014 4v5a4 4 0 01-4 4H8a4 4 0 01-4-4V9a4 4 0 014-4z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M9 11h.01M15 11h.01M9.5 15h5" />
+    </svg>
+  );
+}
+
+type LobbyTeam = 'red' | 'blue';
+
+type InlinePickerOption<T extends string> = {
+  value: T;
+  label: string;
+};
+
+const BOT_DIFFICULTY_OPTIONS = [
+  { value: 'easy', label: 'Easy' },
+  { value: 'normal', label: 'Norm' },
+  { value: 'hard', label: 'Hard' },
+] satisfies readonly InlinePickerOption<BotDifficulty>[];
+
+const BOT_TEAM_OPTIONS = [
+  { value: 'red', label: 'Sol' },
+  { value: 'blue', label: 'Void' },
+] satisfies readonly InlinePickerOption<LobbyTeam>[];
+
+interface InlinePickerProps<T extends string> {
+  label: string;
+  value: T;
+  options: readonly InlinePickerOption<T>[];
+  accentColor: string;
+  widthClass: string;
+  onChange: (value: T) => void;
+}
+
+function InlinePicker<T extends string>({
+  label,
+  value,
+  options,
+  accentColor,
+  widthClass,
+  onChange,
+}: InlinePickerProps<T>) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+
+  return (
+    <div className="relative shrink-0" onClick={(event) => event.stopPropagation()}>
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsOpen((open) => !open);
+        }}
+        className={`flex h-5 ${widthClass} items-center justify-between gap-1 rounded-md border px-1.5 font-body text-[9px] uppercase outline-none transition-all hover:bg-white/[0.06] focus-visible:ring-1 focus-visible:ring-white/30`}
+        style={{
+          background: isOpen ? `${accentColor}1f` : 'rgba(0,0,0,0.25)',
+          borderColor: isOpen ? `${accentColor}80` : `${accentColor}35`,
+          color: isOpen ? accentColor : 'rgba(255,255,255,0.62)',
+        }}
+      >
+        <span className="min-w-0 truncate">{selected.label}</span>
+        <svg className={`h-2.5 w-2.5 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div
+          role="listbox"
+          className="absolute left-0 top-[calc(100%+0.25rem)] z-40 min-w-full overflow-hidden rounded-md border bg-[#101012]/95 p-0.5 shadow-2xl backdrop-blur-xl"
+          style={{
+            borderColor: `${accentColor}42`,
+            boxShadow: `0 14px 30px rgba(0,0,0,0.45), 0 0 18px ${accentColor}24`,
+          }}
+        >
+          {options.map((option) => {
+            const isSelected = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onChange(option.value);
+                  setIsOpen(false);
+                }}
+                className="flex h-6 w-full items-center rounded px-1.5 text-left font-body text-[9px] uppercase tracking-wide transition-colors hover:bg-white/[0.07]"
+                style={{
+                  background: isSelected ? `${accentColor}20` : 'transparent',
+                  color: isSelected ? accentColor : 'rgba(255,255,255,0.58)',
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Lobby() {
   const { 
     playerName, 
@@ -71,6 +165,7 @@ export function Lobby() {
     addLobbyBot,
     removeLobbyBot,
     updateLobbyBotTeam,
+    updateLobbyBotDifficulty,
     startGame,
     kickPlayer,
   } = useNetwork();
@@ -79,6 +174,8 @@ export function Lobby() {
   const [countdown, setCountdown] = useState<number | null>(null);
 
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
+  const currentTeam = currentPlayer?.team;
+  const hasChosenTeam = currentTeam === 'red' || currentTeam === 'blue';
   const isReady = currentPlayer?.isReady || false;
 
   useEffect(() => {
@@ -87,8 +184,14 @@ export function Lobby() {
     setPulseReady(allReady);
   }, [lobbyPlayers]);
 
-  const handleToggleReady = () => setLobbyReady(!isReady);
-  const handleTeamChange = (team: string) => setLobbyTeam(team);
+  const handleToggleReady = () => {
+    if (!hasChosenTeam) return;
+    setLobbyReady(!isReady);
+  };
+  const handleTeamChange = (team: LobbyTeam) => {
+    if (currentTeam === team) return;
+    setLobbyTeam(team);
+  };
   const handleStartGame = () => {
     if (countdown !== null) return;
     setCountdown(3);
@@ -109,11 +212,12 @@ export function Lobby() {
   const humanCount = playerList.filter(p => !p.isBot).length;
   const botCount = playerList.length - humanCount;
   const readyCount = playerList.filter(p => p.isReady || p.isHost).length;
-  const canStart = isLobbyHost && (playerList.length === 1 || readyCount === playerList.length);
+  const assignedCount = playerList.filter(p => p.team === 'red' || p.team === 'blue').length;
+  const allPlayersAssigned = playerList.length > 0 && assignedCount === playerList.length;
+  const canStart = isLobbyHost && allPlayersAssigned && (playerList.length === 1 || readyCount === playerList.length);
 
   const solarPlayers = playerList.filter(p => p.team === 'red');
   const voidPlayers = playerList.filter(p => p.team === 'blue');
-  const unassignedPlayers = playerList.filter(p => !p.team);
 
   const currentFaction = currentPlayer?.team === 'red' ? FACTIONS.red : currentPlayer?.team === 'blue' ? FACTIONS.blue : null;
 
@@ -122,9 +226,9 @@ export function Lobby() {
     setAppPhase('browsing_lobbies');
   };
 
-  const handleAddBot = (difficulty: BotDifficulty = 'normal') => {
+  const handleAddBot = (team: LobbyTeam) => {
     playButtonClick();
-    addLobbyBot({ difficulty });
+    addLobbyBot({ difficulty: 'normal', team });
   };
 
   const handleRemoveBot = (botId: string) => {
@@ -132,9 +236,12 @@ export function Lobby() {
     removeLobbyBot(botId);
   };
 
-  const handleBotTeamChange = (botId: string, team: string) => {
-    playButtonClick();
+  const handleBotTeamChange = (botId: string, team: LobbyTeam) => {
     updateLobbyBotTeam(botId, team);
+  };
+
+  const handleBotDifficultyChange = (botId: string, difficulty: BotDifficulty) => {
+    updateLobbyBotDifficulty(botId, difficulty);
   };
 
   return (
@@ -148,7 +255,12 @@ export function Lobby() {
         />
         
         {/* Dark overlay gradient */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0a0a12]/85 via-[#0f0f1a]/80 to-[#08080c]/95" />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: 'linear-gradient(to bottom, rgb(var(--color-strike-page-top) / 0.85), rgb(var(--color-strike-page-mid) / 0.8), rgb(var(--color-strike-page-bottom) / 0.95))',
+          }}
+        />
         
         {/* Faction color glows */}
         <div 
@@ -168,7 +280,12 @@ export function Lobby() {
         <div className="absolute inset-0 pattern-grid opacity-10" />
         
         {/* Bottom gradient */}
-        <div className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-[#0a0a12] to-transparent" />
+        <div
+          className="absolute bottom-0 left-0 right-0 h-1/3"
+          style={{
+            background: 'linear-gradient(to top, rgb(var(--color-strike-page-top)), transparent)',
+          }}
+        />
         
         {/* Vignette */}
         <div 
@@ -206,22 +323,13 @@ export function Lobby() {
             </div>
           </div>
 
-          {/* Right side - Host badge & Player info */}
+          {/* Right side - Player info */}
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
-            {isLobbyHost && (
-              <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500/20 to-orange-500/10 border border-amber-500/30">
-                <svg className="w-4 h-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                </svg>
-                <span className="font-display text-sm text-amber-300">COMMANDER</span>
-              </div>
-            )}
-            
             <div 
-              className="flex items-center gap-3 px-4 py-2 rounded-xl border"
+              className="flex items-center gap-3 py-2 pl-2 pr-4 rounded-xl border"
               style={{
                 background: currentFaction 
-                  ? `linear-gradient(135deg, ${currentFaction.bgGradient}, rgba(15,15,26,0.9))`
+                  ? `linear-gradient(135deg, ${currentFaction.bgGradient}, rgb(var(--color-strike-panel-raised) / 0.9))`
                   : 'rgba(255,255,255,0.03)',
                 borderColor: currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
               }}
@@ -257,249 +365,15 @@ export function Lobby() {
             faction={FACTIONS.red}
             players={solarPlayers}
             playerId={playerId}
+            isSelected={currentTeam === 'red'}
             isLobbyHost={isLobbyHost}
+            onSelect={() => handleTeamChange('red')}
+            onAddBot={handleAddBot}
             onKick={handleKick}
             onRemoveBot={handleRemoveBot}
             onBotTeamChange={handleBotTeamChange}
+            onBotDifficultyChange={handleBotDifficultyChange}
           />
-        </div>
-
-        {/* Center Battle Arena */}
-        <div className="lobby-center-panel menu-compact-scale menu-scroll-y custom-scrollbar flex flex-col items-center justify-center relative">
-          {/* Epic VS Section */}
-          <div className="relative mb-3 xl:mb-6">
-            {/* Outer glow ring */}
-            <div 
-              className={`absolute -inset-8 rounded-full transition-all duration-700 ${
-                pulseReady ? 'opacity-100' : 'opacity-0'
-              }`}
-              style={{
-                background: 'radial-gradient(circle, rgba(34,197,94,0.15) 0%, transparent 70%)',
-              }}
-            />
-            
-            {/* Battle emblem */}
-            <div 
-              className={`relative w-24 h-24 xl:w-28 xl:h-28 rounded-2xl flex items-center justify-center transition-all duration-500 ${
-                pulseReady ? 'scale-105' : 'scale-100'
-              }`}
-              style={{
-                background: pulseReady 
-                  ? 'linear-gradient(135deg, rgba(34,197,94,0.25) 0%, rgba(15,15,26,0.95) 100%)'
-                  : 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(15,15,26,0.95) 100%)',
-                border: pulseReady ? '2px solid rgba(34,197,94,0.4)' : '1px solid rgba(255,255,255,0.12)',
-                boxShadow: pulseReady 
-                  ? '0 0 60px rgba(34,197,94,0.25), inset 0 0 40px rgba(34,197,94,0.08)' 
-                  : '0 0 40px rgba(0,0,0,0.4), inset 0 0 30px rgba(255,255,255,0.02)',
-              }}
-            >
-              {/* Crossed swords or battle icon */}
-              <div className="flex flex-col items-center gap-1">
-                <div className="flex items-center gap-3">
-                  <SolarIcon className="w-5 h-5 text-orange-400" />
-                  <span className={`font-display text-2xl transition-colors ${pulseReady ? 'text-green-400' : 'text-white/80'}`}>⚔</span>
-                  <VoidIcon className="w-5 h-5 text-cyan-400" />
-                </div>
-                <span className={`font-display text-lg tracking-[0.2em] transition-colors ${pulseReady ? 'text-green-400' : 'text-white/60'}`}>
-                  BATTLE
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Faction Selection */}
-          <div 
-            className="w-full rounded-xl p-4 backdrop-blur-xl mb-3"
-            style={{
-              background: 'linear-gradient(180deg, rgba(15,15,26,0.95) 0%, rgba(15,15,26,0.9) 100%)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              boxShadow: '0 15px 40px rgba(0,0,0,0.4)',
-            }}
-          >
-            <p className="text-[10px] text-white/40 font-body uppercase tracking-[0.2em] text-center mb-3">
-              Choose Your Faction
-            </p>
-            <div className="flex gap-2">
-              <FactionButton
-                faction={FACTIONS.red}
-                isSelected={currentPlayer?.team === 'red'}
-                onClick={() => handleTeamChange('red')}
-              />
- <button
- onClick={() => { playButtonClick(); handleTeamChange(''); }}
- className={`flex-1 py-3 rounded-lg font-display text-xs ${
- !currentPlayer?.team
- ? 'bg-white/15 text-white ring-1 ring-white/30'
- : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white/60'
- }`}
- >
- AUTO
- </button>
-              <FactionButton
-                faction={FACTIONS.blue}
-                isSelected={currentPlayer?.team === 'blue'}
-                onClick={() => handleTeamChange('blue')}
-              />
-            </div>
-          </div>
-
-          {/* Ready Status & Main Actions */}
-          <div 
-            className="w-full rounded-xl p-4 backdrop-blur-xl"
-            style={{
-              background: 'linear-gradient(180deg, rgba(15,15,26,0.95) 0%, rgba(15,15,26,0.9) 100%)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              boxShadow: '0 15px 40px rgba(0,0,0,0.4)',
-            }}
-          >
-            {/* Ready indicator */}
-            <div className="flex items-center justify-between mb-4 pb-4 border-b border-white/5">
-              <div className="flex items-center gap-2.5">
-                <div className={`w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
-                  readyCount === playerList.length
-                    ? 'bg-green-500/20'
-                    : 'bg-white/5'
-                }`}>
-                  <span className={`font-display text-base ${
-                    readyCount === playerList.length ? 'text-green-400' : 'text-white/50'
-                  }`}>{readyCount}</span>
-                </div>
-                <div>
-                  <p className="font-display text-white text-xs">Combat Ready</p>
-                  <p className="text-[9px] text-white/30 font-body">of {playerList.length} warriors</p>
-                </div>
-              </div>
-              
-              <div className="flex gap-1.5">
-                {playerList.map((p, i) => (
-                  <div 
-                    key={i}
-                    className={`w-2.5 h-2.5 rounded-full transition-all ${
-                      p.isReady || p.isHost 
-                        ? 'bg-green-400 shadow-sm shadow-green-400/50' 
-                        : 'bg-white/15'
-                    }`}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
-              {isLobbyHost && (
-                <BotHostControls
-                  botCount={botCount}
-                  onAddBot={handleAddBot}
-                />
-              )}
-
-              {/* Ready / Start Button */}
-              {isLobbyHost ? (
- <button
- onClick={() => { playButtonClick(); handleStartGame(); }}
- disabled={!canStart || isLoading || countdown !== null}
- className={`w-full py-4 rounded-lg font-display text-base relative overflow-hidden group ${
- canStart
- ? 'text-white'
- : 'bg-white/5 text-white/25 cursor-not-allowed'
- }`}
- style={canStart ? {
- background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
- boxShadow: '0 0 40px rgba(34,197,94,0.3)',
- } : undefined}
- >
- <span className="relative flex items-center justify-center gap-2">
- {countdown !== null ? (
- <span className="text-3xl font-bold">{countdown}</span>
- ) : isLoading ? (
- <>
- <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24">
- <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
- <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
- </svg>
- INITIATING...
- </>
- ) : (
- <>
- <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
- </svg>
- COMMENCE BATTLE
- </>
- )}
- </span>
- </button>
-              ) : (
- <button
- onClick={() => { playButtonClick(); handleToggleReady(); }}
- className="w-full py-4 rounded-lg font-display text-base relative overflow-hidden group text-white"
- style={{
- background: isReady
- ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
- : 'linear-gradient(135deg, #f97316 0%, #ea580c 100%)',
- boxShadow: isReady
- ? '0 0 40px rgba(34,197,94,0.3)'
- : '0 0 40px rgba(249,115,22,0.3)',
- }}
- >
- <span className="relative flex items-center justify-center gap-2">
- {isReady ? (
- <>
- <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
- </svg>
- BATTLE READY!
- </>
- ) : (
- <>
- <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
- </svg>
- READY FOR COMBAT
- </>
- )}
- </span>
- </button>
-              )}
-
-              {/* Leave Lobby Button */}
- <button
- onClick={() => { playButtonClick(); leaveLobby(); }}
- className="w-full py-2.5 rounded-lg font-display text-xs text-white/40 hover:bg-red-500/10 hover:text-red-400 flex items-center justify-center gap-1.5"
- >
- <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
- </svg>
- Abandon Mission
- </button>
-            </div>
-          </div>
-
-          {/* Unassigned Players */}
-          {unassignedPlayers.length > 0 && (
-            <div 
-              className="w-full rounded-xl p-3 backdrop-blur-xl mt-3"
-              style={{
-                background: 'rgba(15,15,26,0.8)',
-                border: '1px solid rgba(255,255,255,0.05)',
-              }}
-            >
-              <p className="text-[9px] text-white/30 font-body uppercase tracking-[0.15em] mb-2 px-1">Awaiting Assignment</p>
-              <div className="space-y-1.5">
-                {unassignedPlayers.map(player => (
-                  <PlayerCard 
-                    key={player.id} 
-                    player={player} 
-                    isCurrentPlayer={player.id === playerId}
-                    isLobbyHost={isLobbyHost}
-                    onKick={() => handleKick(player.id)}
-                    onRemoveBot={() => handleRemoveBot(player.id)}
-                    onBotTeamChange={(team) => handleBotTeamChange(player.id, team)}
-                    compact
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Void Legion Panel */}
@@ -508,10 +382,14 @@ export function Lobby() {
             faction={FACTIONS.blue}
             players={voidPlayers}
             playerId={playerId}
+            isSelected={currentTeam === 'blue'}
             isLobbyHost={isLobbyHost}
+            onSelect={() => handleTeamChange('blue')}
+            onAddBot={handleAddBot}
             onKick={handleKick}
             onRemoveBot={handleRemoveBot}
             onBotTeamChange={handleBotTeamChange}
+            onBotDifficultyChange={handleBotDifficultyChange}
             reverse
           />
         </div>
@@ -519,14 +397,14 @@ export function Lobby() {
       </div>
 
       {/* Bottom Status Bar */}
-      <div 
-        className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none"
+      <div
+        className="absolute bottom-0 left-0 right-0 z-20"
         style={{
-          background: 'linear-gradient(to top, rgba(10,10,18,0.95), rgba(10,10,18,0.6), transparent)',
+          background: 'linear-gradient(to top, rgb(var(--color-strike-page-top) / 0.95), rgb(var(--color-strike-page-top) / 0.6), transparent)',
         }}
       >
         <div className="flex items-center justify-center py-2 xl:py-4">
-          <div className="flex items-center gap-5 xl:gap-8 px-5 xl:px-6 py-2 xl:py-2.5 rounded-full bg-white/[0.03] border border-white/5">
+          <div className="flex items-center gap-3 xl:gap-4 px-4 xl:px-5 py-2 rounded-full bg-white/[0.035] border border-white/5 backdrop-blur-xl shadow-2xl shadow-black/30">
             {/* Solar count */}
             <div className="flex items-center gap-2.5">
               <div 
@@ -541,15 +419,101 @@ export function Lobby() {
               </div>
             </div>
             
-            <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${pulseReady ? 'bg-green-400 animate-pulse' : 'bg-white/20'}`} />
-              <span className="text-[10px] text-white/40 font-body">
-                {isLobbyHost 
-                  ? canStart ? 'Ready for battle' : 'Awaiting warriors'
-                  : isReady ? 'Awaiting commander' : 'Prepare for combat'
-                }
-              </span>
-            </div>
+            {isLobbyHost ? (
+              <button
+                type="button"
+                onClick={() => { playButtonClick(); handleStartGame(); }}
+                disabled={!canStart || isLoading || countdown !== null}
+                className={`h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
+                  canStart
+                    ? 'text-white hover:brightness-110 active:scale-[0.98]'
+                    : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
+                }`}
+                style={canStart ? {
+                  background: 'linear-gradient(135deg, rgb(var(--color-ui-success)) 0%, rgb(var(--color-ui-success-deep)) 100%)',
+                  boxShadow: '0 0 32px rgb(var(--color-ui-success) / 0.28)',
+                } : undefined}
+              >
+                <span className="flex items-center justify-center gap-2">
+                  {countdown !== null ? (
+                    <span className="text-base">{countdown}</span>
+                  ) : isLoading ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Initiating
+                    </>
+                  ) : !allPlayersAssigned ? (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
+                      </svg>
+                      Awaiting Teams
+                    </>
+                  ) : !canStart ? (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Awaiting Warriors
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      Commence Battle
+                    </>
+                  )}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { playButtonClick(); handleToggleReady(); }}
+                disabled={!hasChosenTeam || isLoading}
+                className={`h-10 min-w-[12.5rem] rounded-full px-5 font-display text-xs uppercase tracking-wide transition-all ${
+                  hasChosenTeam
+                    ? 'text-white hover:brightness-110 active:scale-[0.98]'
+                    : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
+                }`}
+                style={hasChosenTeam ? {
+                  background: isReady
+                    ? 'linear-gradient(135deg, rgb(var(--color-ui-success)) 0%, rgb(var(--color-ui-success-deep)) 100%)'
+                    : 'linear-gradient(135deg, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary-deep)) 100%)',
+                  boxShadow: isReady
+                    ? '0 0 32px rgb(var(--color-ui-success) / 0.28)'
+                    : '0 0 32px rgb(var(--color-accent-primary) / 0.28)',
+                } : undefined}
+              >
+                <span className="flex items-center justify-center gap-2">
+                  {!hasChosenTeam ? (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
+                      </svg>
+                      Team Unassigned
+                    </>
+                  ) : isReady ? (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Battle Ready
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                      </svg>
+                      Ready For Combat
+                    </>
+                  )}
+                </span>
+              </button>
+            )}
             
             {/* Void count */}
             <div className="flex items-center gap-2.5">
@@ -571,84 +535,19 @@ export function Lobby() {
   );
 }
 
-// Faction Button Component
-interface FactionButtonProps {
-  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
-  isSelected: boolean;
-  onClick: () => void;
-}
-
-function FactionButton({ faction, isSelected, onClick }: FactionButtonProps) {
-  const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
-  const { playButtonClick } = useUISounds();
-  
-  return (
- <button
- onClick={() => { playButtonClick(); onClick(); }}
- className={`flex-1 py-3 rounded-lg font-display text-xs flex items-center justify-center gap-1.5 ${
- isSelected ? 'text-white' : 'hover:text-white'
- }`}
- style={isSelected ? {
- background: `linear-gradient(135deg, ${faction.primaryColor}, ${faction.secondaryColor})`,
- boxShadow: `0 0 30px ${faction.glowColor}`,
- } : {
- background: `${faction.primaryColor}15`,
- color: `${faction.primaryColor}aa`,
- }}
- >
- <Icon className="w-3.5 h-3.5" />
- {faction.name}
- </button>
-  );
-}
-
-interface BotHostControlsProps {
-  botCount: number;
-  onAddBot: (difficulty: BotDifficulty) => void;
-}
-
-function BotHostControls({ botCount, onAddBot }: BotHostControlsProps) {
-  const [difficulty, setDifficulty] = useState<BotDifficulty>('normal');
-
-  return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="font-display text-[10px] uppercase tracking-wider text-white/60">AI Squad</p>
-          <p className="text-[9px] text-white/30 font-body">{botCount} active bots</p>
-        </div>
-        <select
-          value={difficulty}
-          onChange={(event) => setDifficulty(event.target.value as BotDifficulty)}
-          className="h-8 rounded-md bg-black/30 border border-white/10 px-2 text-[10px] text-white/70 font-body"
-        >
-          <option value="easy">Easy</option>
-          <option value="normal">Normal</option>
-          <option value="hard">Hard</option>
-        </select>
-      </div>
-      <div className="mt-2">
-        <button
-          type="button"
-          onClick={() => onAddBot(difficulty)}
-          className="h-8 w-full rounded-md bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 font-display text-[10px]"
-        >
-          Add Bot
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // Faction Panel Component
 interface FactionPanelProps {
   faction: typeof FACTIONS.red | typeof FACTIONS.blue;
   players: LobbyPlayer[];
   playerId: string | null;
+  isSelected: boolean;
   isLobbyHost: boolean;
+  onSelect: () => void;
+  onAddBot: (team: LobbyTeam) => void;
   onKick: (id: string) => void;
   onRemoveBot: (id: string) => void;
-  onBotTeamChange: (id: string, team: string) => void;
+  onBotTeamChange: (id: string, team: LobbyTeam) => void;
+  onBotDifficultyChange: (id: string, difficulty: BotDifficulty) => void;
   reverse?: boolean;
 }
 
@@ -656,122 +555,155 @@ function FactionPanel({
   faction,
   players,
   playerId,
+  isSelected,
   isLobbyHost,
+  onSelect,
+  onAddBot,
   onKick,
   onRemoveBot,
   onBotTeamChange,
+  onBotDifficultyChange,
   reverse,
 }: FactionPanelProps) {
   const maxPlayers = 5;
   const emptySlots = Math.max(0, maxPlayers - players.length);
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
+  const canJoin = !isSelected && emptySlots > 0;
+  const canAddBot = isLobbyHost && emptySlots > 0;
+  const factionTeam = faction.id as LobbyTeam;
 
   return (
     <div className="h-full flex flex-col">
       {/* Faction Header */}
       <div className={`flex items-center gap-2 xl:gap-3 mb-3 xl:mb-4 ${reverse ? 'flex-row-reverse' : ''}`}>
         <div 
-          className="w-10 h-10 xl:w-12 xl:h-12 rounded-xl flex shrink-0 items-center justify-center shadow-lg"
+          className="w-10 h-10 xl:w-12 xl:h-12 rounded-xl border flex shrink-0 items-center justify-center"
           style={{
-            background: `linear-gradient(135deg, ${faction.primaryColor}, ${faction.secondaryColor})`,
-            boxShadow: `0 4px 20px ${faction.glowColor}`,
+            background: isSelected ? `${faction.primaryColor}28` : `${faction.primaryColor}16`,
+            borderColor: isSelected ? `${faction.primaryColor}70` : `${faction.primaryColor}35`,
           }}
         >
-          <Icon className="w-5 h-5 xl:w-6 xl:h-6 text-white" />
+          <Icon className="w-5 h-5 xl:w-6 xl:h-6" style={{ color: faction.primaryColor }} />
         </div>
         <div className={`min-w-0 ${reverse ? 'text-right flex-1' : 'flex-1'}`}>
-          <h2 className="font-display text-lg xl:text-xl 2xl:text-2xl tracking-wide truncate" style={{ color: faction.primaryColor }}>
-            {faction.fullName}
-          </h2>
-          <div className={`flex items-center gap-2 mt-0.5 ${reverse ? 'justify-end' : ''}`}>
-            <p className="min-w-0 truncate text-[10px] text-white/30 font-body italic">{faction.tagline}</p>
-            <span className="text-white/20">•</span>
-            <div className="flex gap-1">
-              {[...Array(maxPlayers)].map((_, i) => (
-                <div 
-                  key={i} 
-                  className="w-1.5 h-1.5 rounded-full transition-all"
-                  style={{ 
-                    background: i < players.length ? faction.primaryColor : 'rgba(255,255,255,0.15)'
-                  }} 
-                />
-              ))}
-            </div>
+          <div className={`flex items-center gap-2 ${reverse ? 'justify-end' : ''}`}>
+            <h2 className="min-w-0 font-display text-lg xl:text-xl 2xl:text-2xl tracking-wide truncate" style={{ color: faction.primaryColor }}>
+              {faction.fullName}
+            </h2>
+            {isSelected && (
+              <span className="w-5 h-5 rounded-full bg-green-500/15 text-green-400 flex shrink-0 items-center justify-center">
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+            )}
+          </div>
+          <div className={`flex gap-1 mt-1.5 ${reverse ? 'justify-end' : ''}`}>
+            {[...Array(maxPlayers)].map((_, i) => (
+              <div
+                key={i}
+                className="w-1.5 h-1.5 rounded-full transition-all"
+                style={{
+                  background: i < players.length ? faction.primaryColor : 'rgba(255,255,255,0.15)'
+                }}
+              />
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Faction Container */}
-      <div 
-        className="flex-1 rounded-2xl overflow-hidden backdrop-blur-xl relative"
-        style={{
-          background: `linear-gradient(180deg, ${faction.bgGradient} 0%, rgba(15,15,26,0.95) 40%)`,
-          border: `1px solid ${faction.borderColor}`,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.03)',
-        }}
-      >
-        {/* Top glow accent */}
-        <div 
-          className="absolute top-0 left-0 right-0 h-px"
-          style={{
-            background: `linear-gradient(90deg, transparent, ${faction.primaryColor}60, transparent)`
-          }}
-        />
-        
-        <div className="p-3 xl:p-4 h-full overflow-y-auto custom-scrollbar space-y-2">
-          {/* Players */}
-          {players.map((player) => (
-            <PlayerCard 
-              key={player.id} 
-              player={player} 
-              isCurrentPlayer={player.id === playerId}
-              isLobbyHost={isLobbyHost}
-              onKick={() => onKick(player.id)}
-              onRemoveBot={() => onRemoveBot(player.id)}
-              onBotTeamChange={(team) => onBotTeamChange(player.id, team)}
-              faction={faction}
-            />
-          ))}
+      <div className="flex-1 space-y-1.5 px-1 py-1">
+        {players.map((player) => (
+          <PlayerCard
+            key={player.id}
+            player={player}
+            isCurrentPlayer={player.id === playerId}
+            isLobbyHost={isLobbyHost}
+            onKick={() => onKick(player.id)}
+            onRemoveBot={() => onRemoveBot(player.id)}
+            onBotTeamChange={(team) => onBotTeamChange(player.id, team)}
+            onBotDifficultyChange={(difficulty) => onBotDifficultyChange(player.id, difficulty)}
+            faction={faction}
+          />
+        ))}
 
-          {/* Empty state */}
-          {players.length === 0 && emptySlots === maxPlayers && (
-            <div className="h-full flex flex-col items-center justify-center text-center py-8">
-              <div 
-                className="w-16 h-16 rounded-xl flex items-center justify-center mb-4"
-                style={{ 
-                  background: `${faction.primaryColor}10`,
-                  border: `1px solid ${faction.primaryColor}20`,
-                }}
-              >
-                <Icon className="w-8 h-8" style={{ color: `${faction.primaryColor}30` }} />
-              </div>
-              <p className="font-display text-sm" style={{ color: `${faction.primaryColor}40` }}>
-                Awaiting Warriors
-              </p>
-              <p className="text-white/20 text-[10px] font-body mt-1">Join to represent {faction.name}</p>
-            </div>
-          )}
-
-          {/* Empty slots - only show if there are some players */}
-          {players.length > 0 && [...Array(emptySlots)].map((_, i) => (
-            <div 
-              key={i} 
-              className="h-12 rounded-lg border border-dashed flex items-center justify-center"
-              style={{ 
-                borderColor: `${faction.primaryColor}15`,
-                background: `${faction.primaryColor}02`,
-              }}
-            >
-              <span 
-                className="text-[9px] uppercase tracking-widest font-body"
-                style={{ color: `${faction.primaryColor}20` }}
-              >
-                Recruit
-              </span>
-            </div>
-          ))}
-        </div>
+        {(canJoin || canAddBot) && (
+          <JoinTeamCard
+            faction={faction}
+            reverse={reverse}
+            canJoin={canJoin}
+            canAddBot={canAddBot}
+            onJoin={onSelect}
+            onAddBot={() => onAddBot(factionTeam)}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+interface JoinTeamCardProps {
+  faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  reverse?: boolean;
+  canJoin: boolean;
+  canAddBot: boolean;
+  onJoin: () => void;
+  onAddBot: () => void;
+}
+
+function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot }: JoinTeamCardProps) {
+  const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
+  const { playButtonClick } = useUISounds();
+
+  return (
+    <div className={`flex h-14 w-full items-stretch gap-2 ${reverse ? 'flex-row-reverse' : ''}`}>
+      {canJoin && (
+        <button
+          type="button"
+          onClick={() => { playButtonClick(); onJoin(); }}
+          className={`group flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-dashed p-2 transition-all hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 ${
+            reverse ? 'flex-row-reverse text-right' : ''
+          }`}
+          style={{
+            background: 'rgb(var(--color-strike-panel-raised) / 0.16)',
+            borderColor: `${faction.primaryColor}30`,
+          }}
+        >
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition-colors group-hover:bg-white/[0.04]"
+            style={{
+              borderColor: `${faction.primaryColor}32`,
+              color: faction.primaryColor,
+            }}
+          >
+            <Icon className="h-5 w-5 opacity-80" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="font-display text-sm uppercase tracking-wide" style={{ color: faction.primaryColor }}>
+              Join
+            </p>
+            <p className="mt-0.5 text-[9px] font-body uppercase tracking-widest text-white/25">
+              {faction.name}
+            </p>
+          </div>
+        </button>
+      )}
+
+      {canAddBot && (
+        <button
+          type="button"
+          onClick={() => { playButtonClick(); onAddBot(); }}
+          aria-label={`Add ${faction.name} bot`}
+          title="Add bot"
+          className="group relative flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40"
+          style={{
+            borderColor: `${faction.primaryColor}28`,
+          }}
+        >
+          <BotIcon className="h-5 w-5" />
+          <span className="absolute right-2 top-1.5 font-display text-[11px] leading-none">+</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -783,7 +715,8 @@ interface PlayerCardProps {
   isLobbyHost: boolean;
   onKick: () => void;
   onRemoveBot: () => void;
-  onBotTeamChange: (team: string) => void;
+  onBotTeamChange?: (team: LobbyTeam) => void;
+  onBotDifficultyChange?: (difficulty: BotDifficulty) => void;
   faction?: typeof FACTIONS.red | typeof FACTIONS.blue;
   compact?: boolean;
 }
@@ -795,34 +728,38 @@ function PlayerCard({
   onKick,
   onRemoveBot,
   onBotTeamChange,
+  onBotDifficultyChange,
   faction,
   compact,
 }: PlayerCardProps) {
-  const color = faction?.primaryColor || '#f97316';
-  const secondaryColor = faction?.secondaryColor || '#fbbf24';
+  const color = faction?.primaryColor || FACTIONS.red.primaryColor;
+  const secondaryColor = faction?.secondaryColor || FACTIONS.red.secondaryColor;
   const { playButtonClick } = useUISounds();
+  const cardClass = compact ? 'h-12 p-2' : 'h-14 p-2';
+  const avatarClass = compact ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-base';
+  const readyClass = compact ? 'w-8 h-8' : 'w-9 h-9';
+  const botDifficulty: BotDifficulty =
+    player.botDifficulty === 'easy' || player.botDifficulty === 'hard'
+      ? player.botDifficulty
+      : 'normal';
+  const botTeam: LobbyTeam = player.team === 'blue' ? 'blue' : 'red';
 
   return (
-    <div 
-      className={`flex items-center gap-3 ${compact ? 'p-2.5' : 'p-3'} rounded-xl transition-all group ${
+    <div
+      className={`group relative flex w-full min-w-0 items-center gap-3 ${cardClass} rounded-xl transition-all ${
         isCurrentPlayer 
-          ? 'bg-white/[0.08] ring-1 ring-white/20' 
+          ? 'bg-white/[0.08] ring-1 ring-inset ring-white/20'
           : 'bg-white/[0.02] hover:bg-white/[0.05]'
       }`}
     >
-      {/* Avatar with faction glow */}
-      <div className="relative">
-        <div 
-          className={`${compact ? 'w-9 h-9 text-sm' : 'w-10 h-10 text-base'} rounded-lg flex items-center justify-center font-display text-white`}
-          style={{
-            background: `linear-gradient(135deg, ${color}, ${secondaryColor})`,
-            boxShadow: `0 4px 15px ${color}40`,
-          }}
-        >
-          {player.name.charAt(0).toUpperCase()}
-        </div>
-        {/* Online indicator */}
-        <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-[#0f0f1a]" />
+      <div
+        className={`${avatarClass} rounded-lg flex shrink-0 items-center justify-center font-display text-white`}
+        style={{
+          background: `linear-gradient(135deg, ${color}, ${secondaryColor})`,
+          boxShadow: `0 4px 15px ${color}40`,
+        }}
+      >
+        {player.name.charAt(0).toUpperCase()}
       </div>
 
       {/* Info */}
@@ -832,14 +769,40 @@ function PlayerCard({
             {player.name}
           </span>
           {player.isHost && (
-            <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 text-[8px] font-display rounded border border-amber-500/30 uppercase">
-              CMD
+            <span
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/15 text-amber-300"
+              title="Commander"
+            >
+              <CrownIcon className="h-3.5 w-3.5" />
             </span>
           )}
-          {player.isBot && (
-            <span className="px-1.5 py-0.5 bg-cyan-500/15 text-cyan-300 text-[8px] font-display rounded border border-cyan-500/25 uppercase">
-              AI
+          {!player.isHost && player.isBot && (
+            <span
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-cyan-500/30 bg-cyan-500/15 text-cyan-300"
+              title="Bot"
+            >
+              <BotIcon className="h-3.5 w-3.5" />
             </span>
+          )}
+          {!player.isHost && player.isBot && isLobbyHost && (
+            <div className="flex shrink-0 items-center gap-1">
+              <InlinePicker
+                label={`${player.name} difficulty`}
+                value={botDifficulty}
+                options={BOT_DIFFICULTY_OPTIONS}
+                accentColor="#06b6d4"
+                widthClass="w-[3.65rem]"
+                onChange={(difficulty) => onBotDifficultyChange?.(difficulty)}
+              />
+              <InlinePicker
+                label={`${player.name} team`}
+                value={botTeam}
+                options={BOT_TEAM_OPTIONS}
+                accentColor={color}
+                widthClass="w-[3.35rem]"
+                onChange={(team) => onBotTeamChange?.(team)}
+              />
+            </div>
           )}
           {isCurrentPlayer && !player.isHost && (
             <span className="px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 text-[8px] font-display rounded border border-cyan-500/30 uppercase">
@@ -847,44 +810,31 @@ function PlayerCard({
             </span>
           )}
         </div>
-        {isLobbyHost && player.isBot && (
-          <div className="mt-1 flex items-center gap-1">
-            <span className="h-6 min-w-0 flex-1 rounded bg-black/20 border border-white/5 px-1.5 text-[9px] leading-6 text-white/35 font-body uppercase">
-              {player.botDifficulty || 'normal'}
-            </span>
-            <button
-              type="button"
-              onClick={() => onBotTeamChange(player.team === 'red' ? 'blue' : 'red')}
-              className="h-6 w-8 rounded bg-white/5 text-[9px] font-display text-white/40 hover:bg-white/10 hover:text-white/70"
-            >
-              {player.team === 'red' ? 'B' : 'R'}
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Ready Status */}
-      <div 
-        className={`${compact ? 'w-8 h-8' : 'w-8 h-8'} rounded-lg flex items-center justify-center transition-all ${
-          player.isReady || player.isHost 
-            ? 'bg-green-500/15' 
-            : 'bg-white/5'
-        }`}
-      >
-        {player.isReady || player.isHost ? (
-          <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-          </svg>
-        ) : (
-          <div className="w-2 h-2 bg-white/20 rounded-full animate-pulse" />
-        )}
-      </div>
+      {!player.isBot && (
+        <div
+          className={`${readyClass} rounded-lg flex shrink-0 items-center justify-center transition-all ${
+            player.isReady || player.isHost
+              ? 'bg-green-500/15'
+              : 'bg-white/5'
+          }`}
+        >
+          {player.isReady || player.isHost ? (
+            <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+          ) : (
+            <div className="w-2 h-2 bg-white/20 rounded-full animate-pulse" />
+          )}
+        </div>
+      )}
 
       {/* Kick Button */}
       {isLobbyHost && !isCurrentPlayer && !player.isHost && (
  <button
- onClick={() => { playButtonClick(); player.isBot ? onRemoveBot() : onKick(); }}
- className="w-8 h-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20"
+ onClick={(event) => { event.stopPropagation(); playButtonClick(); player.isBot ? onRemoveBot() : onKick(); }}
+ className="absolute right-2 top-1/2 z-10 h-8 w-8 -translate-y-1/2 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 bg-red-500/10 text-red-400/60 hover:text-red-400 hover:bg-red-500/20"
  >
  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

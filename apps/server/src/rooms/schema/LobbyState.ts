@@ -5,7 +5,7 @@ export class LobbyPlayer extends Schema {
   name: string = '';
   isHost: boolean = false;
   isReady: boolean = false;
-  team: string = ''; // empty = auto-assign
+  team: string = ''; // empty = awaiting selection
   heroId: string = '';
   isBot: boolean = false;
   botDifficulty: string = 'normal';

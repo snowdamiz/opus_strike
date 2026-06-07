@@ -26,7 +26,7 @@ interface FlagZoneProps {
 // Shared materials - created once, reused across instances
 const redZoneMaterial = new THREE.MeshStandardMaterial({
   color: 0x1a0a0a,
-  emissive: 0xff4400,
+  emissive: 0xef4444,
   emissiveIntensity: 0.5,
   transparent: true,
   opacity: 0.7,
