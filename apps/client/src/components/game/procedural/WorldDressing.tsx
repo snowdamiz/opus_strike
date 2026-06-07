@@ -39,6 +39,14 @@ const MAX_TUFTS = 520;
 const MAX_PEBBLES = 260;
 const MAX_CRYSTALS = 140;
 
+const DRESSING_GEOMETRIES = {
+  tuft: new THREE.ConeGeometry(1, 1, 5),
+  pebble: new THREE.DodecahedronGeometry(1, 0),
+  crystal: new THREE.OctahedronGeometry(1, 0),
+};
+
+const dressingMatrixDummy = new THREE.Object3D();
+
 function chunkIndex(x: number, y: number, z: number, chunk: VoxelChunk): number {
   return x + chunk.size.x * (z + chunk.size.z * y);
 }
@@ -266,13 +274,13 @@ function useInstancedMatrices(ref: RefObject<THREE.InstancedMesh>, instances: Dr
     const mesh = ref.current;
     if (!mesh) return;
 
-    const dummy = new THREE.Object3D();
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     instances.forEach((instance, index) => {
-      dummy.position.set(...instance.position);
-      dummy.rotation.set(...instance.rotation);
-      dummy.scale.set(...instance.scale);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(index, dummy.matrix);
+      dressingMatrixDummy.position.set(...instance.position);
+      dressingMatrixDummy.rotation.set(...instance.rotation);
+      dressingMatrixDummy.scale.set(...instance.scale);
+      dressingMatrixDummy.updateMatrix();
+      mesh.setMatrixAt(index, dressingMatrixDummy.matrix);
     });
 
     mesh.instanceMatrix.needsUpdate = true;
@@ -305,6 +313,7 @@ function InstancedDressingMesh({
       ref={ref}
       name={name}
       args={[geometry, material, instances.length]}
+      matrixAutoUpdate={false}
       castShadow={castShadow}
       receiveShadow={receiveShadow}
     />
@@ -349,9 +358,6 @@ export function WorldDressing({
     crystalMaterial.envMapIntensity = reflectionIntensity * 1.15;
 
     return {
-      tuftGeometry: new THREE.ConeGeometry(1, 1, 5),
-      pebbleGeometry: new THREE.DodecahedronGeometry(1, 0),
-      crystalGeometry: new THREE.OctahedronGeometry(1, 0),
       tuftMaterial,
       pebbleMaterial,
       crystalMaterial,
@@ -360,9 +366,6 @@ export function WorldDressing({
 
   useEffect(
     () => () => {
-      resources.tuftGeometry.dispose();
-      resources.pebbleGeometry.dispose();
-      resources.crystalGeometry.dispose();
       resources.tuftMaterial.dispose();
       resources.pebbleMaterial.dispose();
       resources.crystalMaterial.dispose();
@@ -375,14 +378,14 @@ export function WorldDressing({
       <InstancedDressingMesh
         name="surface-tufts"
         instances={dressing.tufts}
-        geometry={resources.tuftGeometry}
+        geometry={DRESSING_GEOMETRIES.tuft}
         material={resources.tuftMaterial}
         receiveShadow={shadowsEnabled}
       />
       <InstancedDressingMesh
         name="surface-pebbles"
         instances={dressing.pebbles}
-        geometry={resources.pebbleGeometry}
+        geometry={DRESSING_GEOMETRIES.pebble}
         material={resources.pebbleMaterial}
         castShadow={shadowsEnabled}
         receiveShadow={shadowsEnabled}
@@ -390,7 +393,7 @@ export function WorldDressing({
       <InstancedDressingMesh
         name="surface-crystal-glints"
         instances={dressing.crystals}
-        geometry={resources.crystalGeometry}
+        geometry={DRESSING_GEOMETRIES.crystal}
         material={resources.crystalMaterial}
         castShadow={shadowsEnabled}
         receiveShadow={shadowsEnabled}

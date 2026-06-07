@@ -35,6 +35,7 @@ export const VoxelChunkMesh = memo(function VoxelChunkMesh({
     <mesh
       geometry={geometry}
       material={material}
+      matrixAutoUpdate={false}
       receiveShadow={shadowsEnabled}
       castShadow={shadowsEnabled && chunk.coord.y > 0}
     />
@@ -56,6 +57,7 @@ export const VoxelRegionMesh = memo(function VoxelRegionMesh({
     <mesh
       geometry={geometry}
       material={material}
+      matrixAutoUpdate={false}
       receiveShadow={shadowsEnabled}
       castShadow={shadowsEnabled && region.castShadow}
     />

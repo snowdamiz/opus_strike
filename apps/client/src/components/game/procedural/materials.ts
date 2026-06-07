@@ -17,21 +17,30 @@ export function useVoxelMaterial(
     const atlas = createVoxelAtlasTextures(theme);
     const useSurfaceResponseMaps = detail !== 'low';
     const useFineDetailMaps = detail === 'high';
-    const material = new THREE.MeshStandardMaterial({
+
+    const parameters: THREE.MeshStandardMaterialParameters = {
       map: atlas.color,
-      bumpMap: useFineDetailMaps ? atlas.bump : undefined,
       bumpScale: useFineDetailMaps ? 0.08 : 0,
       roughness: detail === 'low' ? 0.92 : 0.96,
-      roughnessMap: useSurfaceResponseMaps ? atlas.roughness : undefined,
       metalness: detail === 'low' ? 0.35 : 1,
-      metalnessMap: useSurfaceResponseMaps ? atlas.metalness : undefined,
       emissive: '#ffffff',
       emissiveMap: atlas.emissive,
       emissiveIntensity: detail === 'low' ? 0.92 : 1.08,
-      aoMap: useFineDetailMaps ? atlas.ao : undefined,
       aoMapIntensity: useFineDetailMaps ? 0.82 : 0,
       color: '#ffffff',
-    });
+    };
+
+    if (useSurfaceResponseMaps) {
+      parameters.roughnessMap = atlas.roughness;
+      parameters.metalnessMap = atlas.metalness;
+    }
+
+    if (useFineDetailMaps) {
+      parameters.bumpMap = atlas.bump;
+      parameters.aoMap = atlas.ao;
+    }
+
+    const material = new THREE.MeshStandardMaterial(parameters);
 
     material.envMapIntensity = reflectionIntensity;
     material.name = 'procedural-voxel-atlas-material';

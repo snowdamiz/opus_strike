@@ -927,7 +927,7 @@ function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: nu
   );
 
   return (
-    <points frustumCulled={false} renderOrder={-60}>
+    <points frustumCulled={false} matrixAutoUpdate={false} renderOrder={-60}>
       <primitive object={particleSet.geometry} attach="geometry" />
       <primitive object={material} attach="material" />
     </points>
@@ -1013,7 +1013,7 @@ function RainStreaks({ profile, seed }: { profile: AtmosphereProfile; seed: numb
   );
 
   return (
-    <lineSegments frustumCulled={false} renderOrder={-55}>
+    <lineSegments frustumCulled={false} matrixAutoUpdate={false} renderOrder={-55}>
       <primitive object={streakSet.geometry} attach="geometry" />
       <primitive object={material} attach="material" />
     </lineSegments>
@@ -1151,7 +1151,7 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
 
   return (
     <group name="world-atmosphere">
-      <mesh frustumCulled={false} renderOrder={-100}>
+      <mesh frustumCulled={false} matrixAutoUpdate={false} renderOrder={-100}>
         <sphereGeometry args={[420, ...config.skySegments]} />
         <primitive object={skyMaterial} attach="material" />
       </mesh>
