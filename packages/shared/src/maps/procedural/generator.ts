@@ -29,7 +29,7 @@ interface GridDirection {
   dz: -1 | 0 | 1;
 }
 
-const SPAWN_CLEARANCE = 0.05;
+const SPAWN_CLEARANCE = 0;
 const SPAWN_PAD_RADIUS = 1.35;
 const SPAWN_BLEND_RADIUS = 3.35;
 const SPAWN_CLEAR_RADIUS = 2.2;

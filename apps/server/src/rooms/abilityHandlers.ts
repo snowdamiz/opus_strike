@@ -251,6 +251,12 @@ export function executeAbility(
       break;
     }
 
+    case 'hookshot_anchor_wall': {
+      abilityState.isActive = true;
+      abilityState.activatedAt = now;
+      break;
+    }
+
     case 'hookshot_grapple_trap': {
       abilityState.isActive = true;
       abilityState.activatedAt = now;

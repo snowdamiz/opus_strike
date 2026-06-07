@@ -178,12 +178,12 @@ export interface EarthWallData {
   startPosition: { x: number; y: number; z: number };
   direction: { x: number; y: number; z: number }; // Horizontal direction of travel
   startTime: number;
-  duration: number; // How long the wall stays up (3 seconds)
+  duration: number; // How long the anchor wall stays solid
   ownerId: string;
   ownerTeam: 'red' | 'blue';
   maxDistance: number; // How far the hook travels
   hookProgress: number; // 0-1, how far the hook has traveled
-  wallSegments: { x: number; y: number; z: number; height: number }[]; // Wall segments created
+  wallSegments: { x: number; y: number; z: number; height: number }[]; // Legacy visual segment data
 }
 
 // ============================================================================

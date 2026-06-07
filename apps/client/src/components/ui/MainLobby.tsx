@@ -5,7 +5,9 @@ import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
-import { HeroSVG } from './HeroSVG';
+import { HeroPreviewCanvas } from './HeroPreviewCanvas';
+import { LobbyBackdrop } from './LobbyBackdrop';
+import type { HeroAnimationMode } from '../game/HeroVoxelBody';
 import { useUISounds } from '../../hooks/useAudio';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
@@ -75,6 +77,15 @@ function SlopHeroesMark({ className }: { className?: string }) {
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'loadout';
 
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
   const { watchLobbies, createLobby, joinLobby } = useNetwork();
@@ -102,6 +113,7 @@ export function MainLobby() {
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showBrowseGames, setShowBrowseGames] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
+  const [heroAnimationMode, setHeroAnimationMode] = useState<HeroAnimationMode>('idle');
 
   // Authentication states
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -225,6 +237,42 @@ export function MainLobby() {
   };
 
   useEffect(() => {
+    const handleHeroAnimationKey = (event: KeyboardEvent) => {
+      if (
+        activeTab !== 'play' ||
+        showSettings ||
+        showCreateLobby ||
+        showBrowseGames ||
+        showAuthModal ||
+        event.defaultPrevented ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isTextEntryTarget(event.target)
+      ) {
+        return;
+      }
+
+      if (event.key === '1') {
+        setHeroAnimationMode('walk');
+      } else if (event.key === '2') {
+        setHeroAnimationMode('jump');
+      } else if (event.key === '3') {
+        setHeroAnimationMode('crouchWalkLoop');
+      } else if (event.key === '4') {
+        setHeroAnimationMode('run');
+      } else if (event.key === '5') {
+        setHeroAnimationMode('slide');
+      } else if (event.key === '0') {
+        setHeroAnimationMode('idle');
+      }
+    };
+
+    window.addEventListener('keydown', handleHeroAnimationKey);
+    return () => window.removeEventListener('keydown', handleHeroAnimationKey);
+  }, [activeTab, showAuthModal, showBrowseGames, showCreateLobby, showSettings]);
+
+  useEffect(() => {
     if (activeTab === 'play') {
       return watchLobbies();
     }
@@ -266,47 +314,7 @@ export function MainLobby() {
 
   return (
     <div className="menu-screen bg-strike-bg">
-      {/* Cinematic Background */}
-      <div className="absolute inset-0">
-        {/* Background Image */}
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: 'url(/bg.jpg)' }}
-        />
-
-        {/* Dark overlay gradient for readability - stronger to let heroes pop */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'linear-gradient(to bottom, rgb(var(--color-strike-page-top) / 0.8), rgb(var(--color-strike-page-mid) / 0.75), rgb(var(--color-strike-page-bottom) / 0.9))',
-          }}
-        />
-
-        {/* Center darkening for hero contrast */}
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'radial-gradient(ellipse 60% 70% at 50% 45%, rgb(var(--color-strike-page-top) / 0.5) 0%, transparent 70%)'
-          }}
-        />
-
-        <div className="absolute inset-0 pattern-grid opacity-10" />
-        <div
-          className="absolute bottom-0 left-0 right-0 h-2/5"
-          style={{
-            background: 'linear-gradient(to top, rgb(var(--color-strike-page-top)), transparent)',
-          }}
-        />
-
-        {/* Extra vignette for edges */}
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            boxShadow: 'inset 0 0 200px 80px rgba(0,0,0,0.7)'
-          }}
-        />
-
-      </div>
+      <LobbyBackdrop />
 
       {/* Top Navigation Bar */}
       <nav className="absolute top-0 left-0 right-0 z-20">
@@ -424,6 +432,7 @@ export function MainLobby() {
             featuredHero={featuredHero}
             heroInfo={heroInfo}
             heroColor={heroColor}
+            heroAnimationMode={heroAnimationMode}
             lobbyCount={availableLobbies.length}
             isAuthenticated={isAuthenticated}
             onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
@@ -505,6 +514,7 @@ interface PlayTabProps {
   featuredHero: HeroId;
   heroInfo: (typeof HERO_DEFINITIONS)[HeroId];
   heroColor: string;
+  heroAnimationMode: HeroAnimationMode;
   lobbyCount: number;
   isAuthenticated: boolean;
   onQuickPlay: () => void;
@@ -521,6 +531,7 @@ function PlayTab({
   featuredHero,
   heroInfo,
   heroColor,
+  heroAnimationMode,
   lobbyCount,
   isAuthenticated,
   onQuickPlay,
@@ -531,6 +542,12 @@ function PlayTab({
   onSelectHero,
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
+  const featuredPreviewClassName =
+    heroAnimationMode === 'jump'
+      ? 'relative -mt-[clamp(5rem,14vh,10rem)] h-[clamp(22rem,56vh,40rem)] w-[clamp(15rem,32vw,30rem)]'
+      : heroAnimationMode === 'slide'
+        ? 'relative h-[clamp(18rem,44vh,32rem)] w-[clamp(18rem,36vw,34rem)]'
+      : 'relative h-[clamp(17rem,42vh,30rem)] w-[clamp(15rem,32vw,30rem)]';
 
   return (
     <div className="h-full flex items-center justify-center menu-content">
@@ -560,15 +577,14 @@ function PlayTab({
               }}
             />
 
-            {/* Hero SVG */}
-            <div
-              className="relative hero-svg-container scale-[0.55] sm:scale-[0.6] md:scale-[0.68] lg:scale-[0.8] xl:scale-90 2xl:scale-100"
-            >
-              <HeroSVG
-                heroId={featuredHero}
-                size={440}
-              />
-            </div>
+            <HeroPreviewCanvas
+              heroId={featuredHero}
+              accentColor={heroColor}
+              size="featured"
+              initialYaw={Math.PI - 0.18}
+              animationMode={heroAnimationMode}
+              className={featuredPreviewClassName}
+            />
           </div>
 
           {/* Next Arrow */}
@@ -583,8 +599,8 @@ function PlayTab({
  </button>
         </div>
 
-        {/* Hero info - below the SVG with proper spacing */}
-        <div className="text-center w-[clamp(17rem,24vw,32rem)] -mt-10 sm:-mt-8 md:-mt-6 lg:-mt-4 xl:-mt-2 2xl:mt-0">
+        {/* Hero info - below the preview with proper spacing */}
+        <div className="text-center w-[clamp(17rem,24vw,32rem)] mt-2 sm:mt-3 lg:mt-4 xl:mt-5">
           <h2
             className="font-display text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-0.5 lg:mb-1 xl:mb-2"
             style={{ textShadow: `0 0 30px ${heroColor}50, 0 2px 10px rgba(0,0,0,0.5)` }}

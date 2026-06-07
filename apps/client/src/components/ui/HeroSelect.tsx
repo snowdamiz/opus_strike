@@ -1,12 +1,12 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { HERO_DEFINITIONS, ALL_HERO_IDS, ABILITY_DEFINITIONS } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
-import { HeroSVG } from './HeroSVG';
-import { HeroIcon, AbilityIcon, getAbilityIconType } from './HeroIcons';
-import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
+import { HeroPreviewCanvas } from './HeroPreviewCanvas';
+import { HeroIcon } from './HeroIcons';
+import { HERO_COLORS } from '../../styles/colorTokens';
 
 export function HeroSelect() {
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId);
@@ -31,9 +31,8 @@ export function HeroSelect() {
     }
   }, [localHeroId, selectHero]);
 
-  const displayHero = selectedHero;
-  const heroInfo = displayHero ? HERO_DEFINITIONS[displayHero] : null;
-  const accentColor = displayHero ? HERO_COLORS[displayHero] : HERO_COLORS.blaze;
+  const heroInfo = HERO_DEFINITIONS[selectedHero];
+  const accentColor = HERO_COLORS[selectedHero];
 
   const handleSelectHero = useCallback((heroId: HeroId) => {
     if (isLockedIn || heroId === selectedHero) return;
@@ -59,221 +58,130 @@ export function HeroSelect() {
   }, [handleSelectHero, playButtonClick]);
 
   return (
-    <div className="absolute inset-0 bg-strike-canvas flex flex-col overflow-hidden">
-      {/* Animated background */}
+    <div className="menu-screen bg-strike-bg">
+      {/* Cinematic Background */}
       <div className="absolute inset-0 pointer-events-none">
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: 'url(/bg.jpg)' }}
+        />
         <div
           className="absolute inset-0"
           style={{
-            background: displayHero
-              ? `radial-gradient(ellipse at 70% 50%, ${accentColor}15, transparent 50%)`
-              : 'none',
+            background: 'linear-gradient(to bottom, rgb(var(--color-strike-page-top) / 0.86), rgb(var(--color-strike-page-mid) / 0.82), rgb(var(--color-strike-page-bottom) / 0.95))',
+          }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: `radial-gradient(ellipse 58% 48% at 50% 54%, ${accentColor}24 0%, transparent 72%)`,
           }}
         />
         <div className="absolute inset-0 pattern-grid opacity-10" />
+        <div
+          className="absolute bottom-0 left-0 right-0 h-2/5"
+          style={{
+            background: 'linear-gradient(to top, rgb(var(--color-strike-page-top)), transparent)',
+          }}
+        />
+        <div
+          className="absolute inset-0"
+          style={{ boxShadow: 'inset 0 0 200px 80px rgba(0,0,0,0.7)' }}
+        />
       </div>
 
-      {/* Top Bar */}
-      <div className="relative z-10 flex items-center justify-between gap-4 px-[var(--menu-safe-x)] py-2 md:py-3 xl:py-4 2xl:py-5 border-b border-white/5 bg-strike-chrome/80">
-        <div className="flex min-w-0 items-center gap-4 xl:gap-6">
- <button
- onClick={() => { playButtonClick(); leaveGame(); }}
- className="flex items-center gap-2 px-3 xl:px-4 py-2 xl:py-2.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white hover:border-white/20"
- >
- <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
- </svg>
- <span className="font-display text-xs xl:text-sm">LEAVE</span>
- </button>
+      {/* Top Navigation Bar */}
+      <nav className="absolute top-0 left-0 right-0 z-20">
+        <div className="menu-nav flex items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-3 xl:gap-4">
+            <button
+              type="button"
+              aria-label="Leave hero select"
+              title="Leave"
+              onClick={() => { playButtonClick(); leaveGame(); }}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/60 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
 
-          <div className="w-px h-6 xl:h-8 bg-white/10" />
+            <div className="min-w-0">
+              <h1 className="font-display text-xl leading-none text-white tracking-wide xl:text-2xl">
+                CHOOSE YOUR <span style={{ color: accentColor }}>HERO</span>
+              </h1>
+              <p className="mt-1 text-[10px] font-body uppercase tracking-widest text-white/40">
+                Select and lock in
+              </p>
+            </div>
+          </div>
 
-          <div className="min-w-0">
-            <h1 className="font-display text-lg md:text-xl xl:text-2xl 2xl:text-3xl text-white tracking-wide">
-              CHOOSE YOUR <span style={{ color: accentColor }}>HERO</span>
-            </h1>
-            <p className="text-white/30 text-[9px] md:text-[10px] xl:text-xs font-body mt-0.5">Select a hero and lock in to begin</p>
+          <div className="flex shrink-0 items-center gap-3 xl:gap-4">
+            <SelectedHeroPill heroId={selectedHero} hero={heroInfo} color={accentColor} />
+
+            <HeroSelectTimer
+              phaseEndTime={phaseEndTime}
+              isLockedIn={isLockedIn}
+              onExpired={handleTimerExpired}
+            />
+
+            <button
+              type="button"
+              onClick={() => { playButtonClick(); handleLockIn(); }}
+              disabled={isLockedIn}
+              className={`relative h-10 min-w-[7.5rem] overflow-hidden rounded-xl px-5 font-display text-sm uppercase tracking-wide transition-all ${
+                isLockedIn
+                  ? 'border border-green-500/30 bg-green-500/20 text-green-400'
+                  : 'border border-white/10 text-white hover:border-white/30'
+              }`}
+              style={!isLockedIn ? {
+                background: `linear-gradient(135deg, ${accentColor}, ${accentColor}dd)`,
+                boxShadow: `0 0 32px ${accentColor}34`,
+              } : undefined}
+            >
+              <span className="relative flex items-center justify-center gap-2">
+                {isLockedIn ? (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Locked
+                  </>
+                ) : (
+                  'Lock In'
+                )}
+              </span>
+            </button>
           </div>
         </div>
-
-        {/* Timer and Lock In */}
-        <div className="flex shrink-0 items-center gap-3 xl:gap-4">
-          <HeroSelectTimer
-            phaseEndTime={phaseEndTime}
-            isLockedIn={isLockedIn}
-            onExpired={handleTimerExpired}
-          />
-
-          {/* Lock In Button */}
- <button
- onClick={() => { playButtonClick(); handleLockIn(); }}
- disabled={!selectedHero || isLockedIn}
- className={`relative px-4 md:px-5 xl:px-6 py-2 md:py-2.5 xl:py-3 rounded-lg md:rounded-xl font-display text-xs md:text-sm xl:text-base overflow-hidden ${isLockedIn
- ? 'bg-green-500/20 border-2 border-green-500/50 text-green-400'
- : selectedHero
- ? 'text-white border border-white/10 hover:border-white/30'
- : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'
- }`}
- style={!isLockedIn && selectedHero ? {
- background: `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)`,
- boxShadow: `0 10px 40px ${accentColor}40`,
- } : {}}
- >
- <span className="relative flex items-center gap-2">
- {isLockedIn ? (
- <>
- <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
- </svg>
- LOCKED IN
- </>
- ) : (
- 'LOCK IN'
- )}
- </span>
- </button>
-        </div>
-      </div>
+      </nav>
 
       {/* Main Content */}
-      <div className="relative z-10 flex-1 flex overflow-hidden min-h-0 menu-content-wide">
-        {/* Hero Grid - Left Side */}
-        <div className="w-[52%] lg:w-[55%] xl:w-[58%] p-1.5 md:p-2 lg:p-3 xl:p-4 2xl:p-6 overflow-y-auto custom-scrollbar flex items-center justify-center">
-          <div className="grid grid-cols-3 gap-2 lg:gap-3 xl:gap-4 2xl:gap-5 w-full max-w-[min(46vw,960px)]">
-            {ALL_HERO_IDS.map((heroId) => {
-              const hero = HERO_DEFINITIONS[heroId];
-              const color = HERO_COLORS[heroId];
-              const isSelected = selectedHero === heroId;
+      <main className="menu-main">
+        <div className="menu-content-wide menu-scroll-y flex h-full items-center justify-center py-4">
+          <div className="hero-select-stage menu-compact-scale">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:gap-4 xl:gap-5">
+              {ALL_HERO_IDS.map((heroId) => {
+                const hero = HERO_DEFINITIONS[heroId];
+                const color = HERO_COLORS[heroId];
+                const isSelected = selectedHero === heroId;
 
-              return (
-                <HeroCard
-                  key={heroId}
-                  heroId={heroId}
-                  hero={hero}
-                  color={color}
-                  isSelected={isSelected}
-                  isLockedIn={isLockedIn}
-                  onSelect={handleHeroCardClick}
-                />
-              );
-            })}
+                return (
+                  <HeroCard
+                    key={heroId}
+                    heroId={heroId}
+                    hero={hero}
+                    color={color}
+                    isSelected={isSelected}
+                    isLockedIn={isLockedIn}
+                    onSelect={handleHeroCardClick}
+                  />
+                );
+              })}
+            </div>
           </div>
         </div>
-
-        {/* Hero Details - Right Side */}
-        <div className="w-[48%] lg:w-[45%] xl:w-[42%] border-l border-white/5 flex flex-col bg-strike-chrome/50 min-h-0">
-          {heroInfo ? (
-            <div className="flex-1 flex flex-col min-h-0">
-              {/* Hero Header with large display */}
-              <div
-                className="relative p-2.5 md:p-3 lg:p-4 xl:p-6 2xl:p-8 border-b border-white/5 overflow-hidden flex-shrink-0"
-                style={{ background: `linear-gradient(135deg, ${accentColor}12, transparent 60%)` }}
-              >
-                {/* Background hero silhouette */}
-                <div className="absolute -right-10 -top-10 opacity-10 hidden xl:block">
-                  <HeroSVG heroId={displayHero!} size={200} animated={false} />
-                </div>
-
-                <div className="relative z-10">
-                  <div className="flex items-center gap-2 md:gap-3 xl:gap-4 2xl:gap-5">
-                    <div
-                      className="w-10 md:w-12 xl:w-14 2xl:w-16 h-10 md:h-12 xl:h-14 2xl:h-16 rounded-lg md:rounded-xl flex items-center justify-center"
-                      style={{
-                        background: `linear-gradient(135deg, ${accentColor}, ${accentColor}bb)`,
-                        boxShadow: `0 8px 25px ${accentColor}40`,
-                      }}
-                    >
-                      <HeroIcon heroId={displayHero!} size={24} color="#ffffff" />
-                    </div>
-                    <div className="flex-1">
-                      <h2
-                        className="font-display text-xl md:text-2xl xl:text-3xl 2xl:text-4xl text-white tracking-wide"
-                        style={{ textShadow: `0 0 30px ${accentColor}50` }}
-                      >
-                        {heroInfo.name.toUpperCase()}
-                      </h2>
-                      <div className="flex items-center gap-1.5 md:gap-2 xl:gap-3 mt-0.5 md:mt-1 xl:mt-2">
-                        <span
-                          className="px-1.5 md:px-2 xl:px-3 py-0.5 xl:py-1 rounded-lg text-[9px] md:text-[10px] xl:text-xs font-display uppercase"
-                          style={{
-                            background: `${accentColor}25`,
-                            color: accentColor,
-                            border: `1px solid ${accentColor}30`,
-                          }}
-                        >
-                          {heroInfo.role}
-                        </span>
-                        <span className="text-white/30 text-xs">•</span>
-                        <span className="text-white/50 font-body text-[10px] md:text-xs xl:text-sm capitalize">{heroInfo.movementFocus}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <p className="mt-1.5 md:mt-2 xl:mt-3 2xl:mt-5 text-white/60 font-body text-[10px] md:text-xs xl:text-sm leading-relaxed max-w-md">
-                    {heroInfo.description}
-                  </p>
-                </div>
-              </div>
-
-              {/* Stats */}
-              <div className="p-2 md:p-2.5 lg:p-3 xl:p-4 2xl:p-6 border-b border-white/5 flex-shrink-0">
-                <h3 className="text-[9px] md:text-[10px] text-white/40 font-display uppercase tracking-widest mb-1.5 md:mb-2 xl:mb-3 2xl:mb-4">Combat Stats</h3>
-                <div className="grid grid-cols-3 gap-1.5 md:gap-2 xl:gap-3 2xl:gap-5">
-                  <StatCard label="Health" value={heroInfo.stats.maxHealth} icon="❤️" color={accentColor} />
-                  <StatCard label="Speed" value={heroInfo.stats.moveSpeed} icon="⚡" color={accentColor} />
-                  <StatCard label="Jump" value={heroInfo.stats.jumpForce} icon="🦘" color={accentColor} />
-                </div>
-              </div>
-
-              {/* Abilities */}
-              <div className="flex-1 p-2 md:p-2.5 lg:p-3 xl:p-4 2xl:p-6 overflow-y-auto min-h-0">
-                <h3 className="text-[9px] md:text-[10px] text-white/40 font-display uppercase tracking-widest mb-1.5 md:mb-2 xl:mb-3 2xl:mb-4 flex-shrink-0">Abilities</h3>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 md:gap-2 pb-2">
-                  {/* Passive */}
-                  <AbilityCard
-                    name={heroInfo.passive.name}
-                    description={heroInfo.passive.description}
-                    color={accentColor}
-                    isPassive
-                  />
-
-                  <AbilityCard
-                    ability={ABILITY_DEFINITIONS[heroInfo.ability1.abilityId]}
-                    abilityId={heroInfo.ability1.abilityId}
-                    color={accentColor}
-                    keybind="E"
-                  />
-                  <AbilityCard
-                    ability={ABILITY_DEFINITIONS[heroInfo.ability2.abilityId]}
-                    abilityId={heroInfo.ability2.abilityId}
-                    color={accentColor}
-                    keybind="Q"
-                  />
-                  <AbilityCard
-                    ability={ABILITY_DEFINITIONS[heroInfo.ultimate.abilityId]}
-                    abilityId={heroInfo.ultimate.abilityId}
-                    color={accentColor}
-                    keybind="F"
-                    isUltimate
-                  />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center">
-                <div className="w-20 h-20 mx-auto mb-5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                  <svg className="w-10 h-10 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 19l-7-7 7-7" />
-                  </svg>
-                </div>
-                <p className="font-display text-white/40 text-2xl">SELECT A HERO</p>
-                <p className="text-white/20 text-sm font-body mt-2">Click on a hero to view details</p>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      </main>
     </div>
   );
 }
@@ -284,6 +192,42 @@ const getRemainingSeconds = (phaseEndTime: number | null) => {
   if (!phaseEndTime) return 60;
   return Math.max(0, Math.ceil((phaseEndTime - Date.now()) / 1000));
 };
+
+const SelectedHeroPill = memo(function SelectedHeroPill({
+  heroId,
+  hero,
+  color,
+}: {
+  heroId: HeroId;
+  hero: HeroDefinition;
+  color: string;
+}) {
+  return (
+    <div
+      className="hidden items-center gap-3 rounded-xl border py-2 pl-2 pr-4 lg:flex"
+      style={{
+        background: `linear-gradient(135deg, ${color}18, rgb(var(--color-strike-panel-raised) / 0.78))`,
+        borderColor: `${color}35`,
+      }}
+    >
+      <div
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+        style={{
+          background: `linear-gradient(135deg, ${color}, ${color}bb)`,
+          boxShadow: `0 4px 15px ${color}38`,
+        }}
+      >
+        <HeroIcon heroId={heroId} size={20} color="#ffffff" />
+      </div>
+      <div className="min-w-0">
+        <p className="font-display text-sm leading-none text-white">{hero.name.toUpperCase()}</p>
+        <p className="mt-1 text-[10px] font-body uppercase tracking-widest" style={{ color }}>
+          {hero.role}
+        </p>
+      </div>
+    </div>
+  );
+});
 
 const HeroSelectTimer = memo(function HeroSelectTimer({
   phaseEndTime,
@@ -319,7 +263,7 @@ const HeroSelectTimer = memo(function HeroSelectTimer({
 
   return (
     <div
-      className={`flex items-center gap-2 xl:gap-3 px-3 xl:px-4 py-2 xl:py-2.5 rounded-lg xl:rounded-xl border ${timeRemaining < 10
+      className={`flex h-10 items-center gap-2 rounded-xl border px-3 xl:gap-3 xl:px-4 ${timeRemaining < 10
         ? 'bg-red-500/20 border-red-500/30'
         : 'bg-white/5 border-white/10'
         }`}
@@ -351,211 +295,83 @@ const HeroCard = memo(function HeroCard({
   onSelect: (heroId: HeroId) => void;
 }) {
   return (
- <button
- onClick={() => onSelect(heroId)}
- disabled={isLockedIn}
- className={`
- group relative w-full aspect-[3/4] rounded-2xl overflow-hidden
- ${isLockedIn && !isSelected ? 'opacity-30' : ''}
- `}
- style={{
- background: isSelected
- ? `linear-gradient(160deg, ${color}25, ${color}08 50%, rgb(var(--color-strike-canvas)))`
- : 'linear-gradient(160deg, rgb(var(--color-strike-elevated)), rgb(var(--color-strike-canvas)))',
- boxShadow: isSelected
- ? `0 0 36px ${color}28, 0 16px 32px rgba(0,0,0,0.46), inset 0 1px 0 ${color}30`
- : '0 10px 24px rgba(0,0,0,0.28)',
- }}
- >
- <div
- className="absolute inset-0 rounded-2xl"
- style={{
- border: isSelected ? `2px solid ${color}` : '1px solid rgba(255,255,255,0.06)',
- boxShadow: isSelected ? `inset 0 0 24px ${color}18` : 'none',
- }}
- />
- {!isSelected && (
- <div
- className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100"
- style={{ border: `1px solid ${color}50` }}
- />
- )}
- <div
- className={`absolute inset-0 ${isSelected ? 'opacity-60' : 'opacity-0 group-hover:opacity-30'}`}
- style={{ background: `radial-gradient(ellipse at center 30%, ${color}30, transparent 60%)` }}
- />
-
- <div
- className="absolute inset-0 flex items-center justify-center"
- style={{ filter: isSelected ? `drop-shadow(0 0 24px ${color}55)` : undefined }}
- >
- <HeroSVG heroId={heroId} size={220} animated={isSelected} />
- </div>
-
- <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-strike-chrome via-strike-chrome/80 to-transparent" />
-
- <div className="absolute inset-0 flex flex-col justify-between p-4">
- <div className="flex items-start justify-between">
- <div
- className="px-3 py-1.5 rounded-lg text-[10px] font-display uppercase tracking-wider"
- style={{
- background: `${color}25`,
- color,
- border: `1px solid ${color}30`,
- }}
- >
- {hero.role}
- </div>
-
- {isSelected && (
- <div
- className="w-8 h-8 rounded-lg flex items-center justify-center"
- style={{
- background: `linear-gradient(135deg, ${color}, ${color}cc)`,
- boxShadow: `0 4px 15px ${color}50`,
- }}
- >
- <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
- </svg>
- </div>
- )}
- </div>
-
- <div>
- <h3
- className="font-display text-2xl"
- style={{
- color: isSelected ? 'white' : color,
- textShadow: isSelected ? `0 0 20px ${color}80` : 'none',
- }}
- >
- {hero.name.toUpperCase()}
- </h3>
- <p className="text-white/40 text-xs font-body mt-1 capitalize">
- {hero.movementFocus} specialist
- </p>
- </div>
- </div>
- </button>
-  );
-});
-
-// Stat Card Component
-const StatCard = memo(function StatCard({ label, value, icon, color }: { label: string; value: number; icon: string; color: string }) {
-  return (
-    <div
-      className="p-1.5 md:p-2 xl:p-3 2xl:p-4 rounded-lg md:rounded-xl border border-white/5 bg-white/[0.02]"
-      style={{ background: `linear-gradient(135deg, ${color}08, transparent)` }}
+    <button
+      type="button"
+      aria-pressed={isSelected}
+      onClick={() => onSelect(heroId)}
+      disabled={isLockedIn}
+      className={`group relative aspect-[3/4] w-full overflow-hidden rounded-xl border text-left transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-default ${
+        isLockedIn && !isSelected ? 'opacity-30' : ''
+      }`}
+      style={{
+        background: isSelected
+          ? `linear-gradient(160deg, ${color}22, ${color}08 48%, rgb(var(--color-strike-canvas) / 0.96))`
+          : 'linear-gradient(160deg, rgb(var(--color-strike-panel-raised) / 0.78), rgb(var(--color-strike-canvas) / 0.9))',
+        borderColor: isSelected ? color : 'rgba(255,255,255,0.075)',
+        boxShadow: isSelected
+          ? `0 0 34px ${color}2f, 0 16px 36px rgba(0,0,0,0.42), inset 0 1px 0 ${color}32`
+          : '0 12px 30px rgba(0,0,0,0.32)',
+      }}
     >
-      <div className="flex items-center gap-1 md:gap-1.5 xl:gap-2 mb-0.5 md:mb-1 xl:mb-2">
-        <span className="text-xs md:text-sm xl:text-base 2xl:text-lg">{icon}</span>
-        <span className="text-[8px] md:text-[9px] xl:text-[10px] text-white/40 font-body uppercase">{label}</span>
+      <div
+        className={`absolute inset-0 transition-opacity ${isSelected ? 'opacity-70' : 'opacity-0 group-hover:opacity-30'}`}
+        style={{ background: `radial-gradient(ellipse at 50% 30%, ${color}34, transparent 62%)` }}
+      />
+
+      <div className="absolute inset-0 flex items-center justify-center">
+          <HeroPreviewCanvas
+            heroId={heroId}
+            accentColor={color}
+            size="card"
+            interactive={false}
+            idleRotation={false}
+            showShadow={isSelected}
+          className="h-full w-full"
+        />
       </div>
-      <span
-        className="font-display text-base md:text-xl xl:text-2xl 2xl:text-3xl text-white"
-        style={{ textShadow: `0 0 20px ${color}40` }}
-      >
-        {value}
-      </span>
-    </div>
-  );
-});
 
-// Ability Card Component
-const AbilityCard = memo(function AbilityCard({
-  ability,
-  abilityId,
-  name,
-  description,
-  color,
-  keybind,
-  isPassive,
-  isUltimate
-}: {
-  ability?: { name: string; description: string; cooldown: number };
-  abilityId?: string;
-  name?: string;
-  description?: string;
-  color: string;
-  keybind?: string;
-  isPassive?: boolean;
-  isUltimate?: boolean;
-}) {
-  const abilityName = ability?.name ?? name ?? '';
-  const abilityDesc = ability?.description ?? description ?? '';
-  const iconType = isPassive ? 'passive' : (abilityId ? getAbilityIconType(abilityId) : 'passive');
+      <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-strike-chrome via-strike-chrome/80 to-transparent" />
 
-  return (
-    <div
-      className={`p-2 md:p-2.5 xl:p-3 2xl:p-4 rounded-lg md:rounded-xl border ${isUltimate
-        ? 'border-amber-500/30 bg-gradient-to-r from-amber-500/15 to-amber-500/5'
-        : isPassive
-          ? 'border-white/10 bg-white/[0.03]'
-          : 'border-white/5 bg-white/[0.02]'
-        }`}
-      style={!isUltimate && !isPassive ? {
-        background: `linear-gradient(135deg, ${color}08, transparent)`,
-        borderColor: `${color}20`,
-      } : {}}
-    >
-      <div className="flex items-start gap-2 md:gap-2.5 xl:gap-3 2xl:gap-4">
-        <div
-          className="w-8 md:w-9 xl:w-10 2xl:w-12 h-8 md:h-9 xl:h-10 2xl:h-12 rounded-lg xl:rounded-xl flex items-center justify-center flex-shrink-0"
-          style={{
-            background: isUltimate
-              ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimate}, ${ABILITY_COLORS.ultimateDeep})`
-              : isPassive
-                ? 'linear-gradient(135deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05))'
-                : `linear-gradient(135deg, ${color}, ${color}bb)`,
-            boxShadow: isUltimate
-              ? ABILITY_COLORS.ultimateIconGlow
-              : isPassive
-                ? 'none'
-                : `0 4px 20px ${color}30`,
-          }}
-        >
-          <AbilityIcon type={iconType} size={16} color="#ffffff" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1 md:gap-1.5 xl:gap-2 mb-0.5 xl:mb-1">
-            <span className="font-display text-white text-xs md:text-sm xl:text-base">{abilityName}</span>
-            {keybind && !isPassive && (
-              <span
-                className="text-[8px] md:text-[9px] xl:text-[10px] px-1 md:px-1.5 xl:px-2 py-0.5 rounded font-mono font-bold"
-                style={{
-                  background: isUltimate ? ABILITY_COLORS.ultimateBadgeBg : `${color}30`,
-                  color: isUltimate ? ABILITY_COLORS.ultimateText : color,
-                }}
-              >
-                {keybind}
-              </span>
-            )}
-            {isPassive && (
-              <span className="text-[8px] md:text-[9px] xl:text-[10px] px-1 md:px-1.5 xl:px-2 py-0.5 rounded bg-white/10 text-white/50 font-body">
-                PASSIVE
-              </span>
-            )}
-            {isUltimate && (
-              <span className="text-amber-400 text-[9px] md:text-[10px] xl:text-xs">★ ULT</span>
-            )}
+      <div className="absolute inset-0 flex flex-col justify-between p-3.5 xl:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div
+            className="rounded-lg border px-2.5 py-1 font-display text-[10px] uppercase tracking-wider"
+            style={{
+              background: `${color}22`,
+              borderColor: `${color}35`,
+              color,
+            }}
+          >
+            {hero.role}
           </div>
-          <p className="text-white/50 text-[9px] md:text-[10px] xl:text-xs font-body leading-relaxed line-clamp-2">{abilityDesc}</p>
-          {ability && ability.cooldown > 0 && (
-            <div className="mt-0.5 md:mt-1 xl:mt-2">
-              <span
-                className="text-[8px] md:text-[9px] xl:text-[10px] font-mono px-1 md:px-1.5 xl:px-2 py-0.5 xl:py-1 rounded"
-                style={{
-                  background: isUltimate ? ABILITY_COLORS.ultimateMetaBg : `${color}15`,
-                  color: isUltimate ? ABILITY_COLORS.ultimateText : `${color}cc`,
-                }}
-              >
-                ⏱ {ability.cooldown}s
-              </span>
+
+          {isSelected && (
+            <div
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+              style={{
+                background: `linear-gradient(135deg, ${color}, ${color}cc)`,
+                boxShadow: `0 4px 15px ${color}50`,
+              }}
+            >
+              <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
             </div>
           )}
         </div>
+
+        <div>
+          <h3
+            className="font-display text-xl leading-none text-white xl:text-2xl"
+            style={{ textShadow: isSelected ? `0 0 20px ${color}80` : 'none' }}
+          >
+            {hero.name.toUpperCase()}
+          </h3>
+          <p className="mt-1 text-xs font-body capitalize text-white/40">
+            {hero.movementFocus} specialist
+          </p>
+        </div>
       </div>
-    </div>
+    </button>
   );
 });

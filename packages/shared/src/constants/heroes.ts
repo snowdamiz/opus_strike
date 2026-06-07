@@ -53,12 +53,12 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     },
     passive: {
       name: 'Momentum Master',
-      description: 'Gain 15% bonus speed after swinging for 2 seconds',
+      description: 'Gain 15% bonus speed after hook movement for 2 seconds',
     },
-    ability1: { abilityId: 'hookshot_swing', defaultKey: 'KeyE' },
-    ability2: { abilityId: 'hookshot_grapple', defaultKey: 'KeyQ' },
+    ability1: { abilityId: 'hookshot_grapple', defaultKey: 'KeyE' },
+    ability2: { abilityId: 'hookshot_anchor_wall', defaultKey: 'KeyQ' },
     ultimate: { abilityId: 'hookshot_grapple_trap', defaultKey: 'KeyF' },
-    description: 'A highly mobile fighter who uses grappling hooks to swing across the battlefield.',
+    description: 'A highly mobile fighter who uses grappling hooks and anchor walls to reshape fights.',
   },
 
   blaze: {
@@ -186,6 +186,15 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     targeting: 'direction',
     cooldown: 6,
     description: 'Fire a quick medium-range hook that grabs geometry and pulls you in.',
+  },
+  hookshot_anchor_wall: {
+    id: 'hookshot_anchor_wall',
+    name: 'Anchor Wall',
+    type: 'defensive',
+    targeting: 'direction',
+    cooldown: 8,
+    duration: 4.25,
+    description: 'Launch a ground anchor that raises a solid barricade in your aim direction.',
   },
   hookshot_swing: {
     id: 'hookshot_swing',

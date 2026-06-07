@@ -1,9 +1,47 @@
 import { useState, type ReactNode } from 'react';
 import { HERO_DEFINITIONS, ALL_HERO_IDS, ABILITY_DEFINITIONS } from '@voxel-strike/shared';
-import type { AbilityDefinition, HeroId } from '@voxel-strike/shared';
-import { HeroSVG } from './HeroSVG';
+import type { HeroId } from '@voxel-strike/shared';
+import { HeroPreviewCanvas } from './HeroPreviewCanvas';
 import { HeroIcon, AbilityIcon, getAbilityIconType, type AbilityIconType } from './HeroIcons';
 import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
+
+interface KitItem {
+  input: string;
+  name: string;
+  description: string;
+  iconType: AbilityIconType;
+  tone?: 'passive' | 'click' | 'ultimate';
+  cooldown?: number;
+  duration?: number;
+  charges?: number;
+}
+
+interface ClickSkill extends KitItem {
+  input: 'LMB' | 'RMB';
+  cooldown: number;
+  tone?: 'click';
+}
+
+const fromAbility = (
+  input: string,
+  abilityId: string,
+  tone?: KitItem['tone'],
+  overrides: Partial<Omit<KitItem, 'input'>> = {}
+): KitItem => {
+  const ability = ABILITY_DEFINITIONS[abilityId];
+
+  return {
+    input,
+    name: ability.name,
+    description: ability.description,
+    iconType: getAbilityIconType(abilityId),
+    tone,
+    cooldown: ability.cooldown,
+    duration: ability.duration,
+    charges: ability.charges,
+    ...overrides,
+  };
+};
 
 const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
   phantom: [
@@ -12,14 +50,14 @@ const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
       name: 'Dire Ball',
       description: 'Fire alternating shadow projectiles down your aim line.',
       cooldown: 0.55,
-      iconType: 'veil',
+      iconType: 'direball',
     },
     {
       input: 'RMB',
       name: 'Void Ray',
       description: 'Charge, then release a piercing beam at long range.',
       cooldown: 1.2,
-      iconType: 'shadowstep',
+      iconType: 'voidray',
     },
   ],
   hookshot: [
@@ -28,14 +66,14 @@ const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
       name: 'Chain Hooks',
       description: 'Launch short hooks that extend, snap back, and pressure close targets.',
       cooldown: 0.6,
-      iconType: 'grapple',
+      iconType: 'chainhooks',
     },
     {
       input: 'RMB',
       name: 'Drag Hook',
       description: 'Fire a heavier hook that catches enemy heroes and pulls them in.',
       cooldown: 3.6,
-      iconType: 'zipline',
+      iconType: 'draghook',
     },
   ],
   blaze: [
@@ -44,14 +82,14 @@ const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
       name: 'Rockets',
       description: 'Fire direct rockets with splash pressure at mid range.',
       cooldown: 0.85,
-      iconType: 'rocketjump',
+      iconType: 'rocket',
     },
     {
       input: 'RMB',
       name: 'Bomb',
       description: 'Pick a target zone, then drop an explosive payload.',
       cooldown: 2.6,
-      iconType: 'airstrike',
+      iconType: 'bomb',
     },
   ],
   glacier: [
@@ -60,14 +98,14 @@ const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
       name: 'Ice Mallet',
       description: 'Swing a heavy ice hammer through nearby enemies.',
       cooldown: 0.75,
-      iconType: 'fortress',
+      iconType: 'icemallet',
     },
     {
       input: 'RMB',
       name: 'Ice Shield',
       description: 'Hold up a frost guard to block pressure while advancing.',
       cooldown: 1.2,
-      iconType: 'frostshield',
+      iconType: 'iceshield',
     },
   ],
   pulse: [
@@ -76,14 +114,14 @@ const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
       name: 'Pulse Burst',
       description: 'Send quick energy bursts downrange with a rapid cadence.',
       cooldown: 0.36,
-      iconType: 'speedboost',
+      iconType: 'pulseburst',
     },
     {
       input: 'RMB',
       name: 'Dash Hit',
       description: 'Snap into close range and punish enemies caught in the lane.',
       cooldown: 0.9,
-      iconType: 'dash',
+      iconType: 'dashhit',
     },
   ],
   sentinel: [
@@ -92,44 +130,68 @@ const HERO_CLICK_SKILLS: Record<HeroId, ClickSkill[]> = {
       name: 'Sentinel Bolt',
       description: 'Fire steady defensive bolts from a guarded stance.',
       cooldown: 0.65,
-      iconType: 'fortify',
+      iconType: 'sentinelbolt',
     },
     {
       input: 'RMB',
       name: 'Barrier Bash',
       description: 'Shove nearby threats back with a short-range shield strike.',
       cooldown: 1.4,
-      iconType: 'barrier',
+      iconType: 'barrierbash',
     },
   ],
 };
 
-type KitItem =
-  | {
-      input: string;
-      name: string;
-      description: string;
-      iconType: AbilityIconType;
-      tone?: 'passive' | 'click' | 'ultimate';
-      cooldown?: number;
-      duration?: number;
-      charges?: number;
-    }
-  | {
-      input: string;
-      ability: AbilityDefinition;
-      abilityId: string;
-      iconType: AbilityIconType;
-      tone?: 'ultimate';
-    };
-
-interface ClickSkill {
-  input: 'LMB' | 'RMB';
-  name: string;
-  description: string;
-  cooldown: number;
-  iconType: AbilityIconType;
-}
+const HERO_ABILITY_SKILLS: Record<HeroId, KitItem[]> = {
+  phantom: [
+    fromAbility('E', 'phantom_blink'),
+    fromAbility('Q', 'phantom_shadowstep'),
+    fromAbility('F', 'phantom_veil', 'ultimate'),
+  ],
+  hookshot: [
+    fromAbility('E', 'hookshot_grapple'),
+    fromAbility('Q', 'hookshot_anchor_wall'),
+    fromAbility('F', 'hookshot_grapple_trap', 'ultimate'),
+  ],
+  blaze: [
+    fromAbility('E', 'blaze_flamethrower'),
+    fromAbility('Q', 'blaze_rocketjump'),
+    fromAbility('F', 'blaze_airstrike', 'ultimate'),
+  ],
+  glacier: [
+    fromAbility('E', 'glacier_iceslide', undefined, {
+      name: 'Ice Wall Rush',
+      description: 'Hold to surge forward while building an ice wall behind you.',
+      iconType: 'icewallrush',
+      cooldown: undefined,
+    }),
+    {
+      input: 'Q',
+      name: 'Ice Slide',
+      description: 'Burst forward in a fast ground slide.',
+      iconType: 'iceslide',
+      cooldown: ABILITY_DEFINITIONS.glacier_frostshield.cooldown,
+    },
+    {
+      input: 'F',
+      name: 'Frost Storm Shield',
+      description: 'Activate a protective blizzard and gain 75 shield for 8 seconds.',
+      iconType: 'froststorm',
+      tone: 'ultimate',
+      duration: ABILITY_DEFINITIONS.glacier_frostshield.duration,
+    },
+  ],
+  pulse: [
+    fromAbility('E', 'pulse_speedboost'),
+    fromAbility('Q', 'pulse_dash'),
+    fromAbility('F', 'pulse_haste', 'ultimate'),
+  ],
+  sentinel: [
+    fromAbility('E', 'sentinel_fortify'),
+    fromAbility('Q', 'sentinel_barrier'),
+    fromAbility('F', 'sentinel_dome', 'ultimate'),
+  ],
+};
 
 const SIDE_STACK_CLASS = 'flex flex-col gap-1.5 xl:gap-2';
 
@@ -149,9 +211,7 @@ export function HeroesPage() {
       ...skill,
       tone: 'click' as const,
     })),
-    toAbilityItem('E', heroInfo.ability1.abilityId),
-    toAbilityItem('Q', heroInfo.ability2.abilityId),
-    toAbilityItem('F', heroInfo.ultimate.abilityId, 'ultimate'),
+    ...HERO_ABILITY_SKILLS[selectedHero],
   ];
 
   return (
@@ -233,11 +293,15 @@ export function HeroesPage() {
         />
 
         <div className="relative flex flex-col items-center menu-compact-scale">
-          <div className="relative hero-svg-container scale-[0.82] lg:scale-90 xl:scale-95 2xl:scale-100">
-            <HeroSVG heroId={selectedHero} size={360} />
-          </div>
+          <HeroPreviewCanvas
+            heroId={selectedHero}
+            accentColor={heroColor}
+            size="detail"
+            initialYaw={Math.PI - 0.2}
+            className="relative h-[clamp(17rem,42vh,29rem)] w-[clamp(15rem,28vw,28rem)]"
+          />
 
-          <div className="text-center w-[clamp(18rem,24vw,34rem)] mt-1">
+          <div className="text-center w-[clamp(18rem,24vw,34rem)] mt-3 xl:mt-4">
             <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1 mb-2">
               <span
                 className="h-2 w-2 rounded-full"
@@ -272,7 +336,7 @@ export function HeroesPage() {
         <div className={`${SIDE_STACK_CLASS} max-h-full overflow-y-auto custom-scrollbar pr-1`}>
           {kitItems.map((item) => (
             <AbilityCard
-              key={`${item.input}-${'abilityId' in item ? item.abilityId : item.name}`}
+              key={`${item.input}-${item.name}`}
               item={item}
               color={heroColor}
             />
@@ -281,18 +345,6 @@ export function HeroesPage() {
       </div>
     </div>
   );
-}
-
-function toAbilityItem(input: string, abilityId: string, tone?: 'ultimate'): KitItem {
-  const ability = ABILITY_DEFINITIONS[abilityId];
-
-  return {
-    input,
-    ability,
-    abilityId,
-    iconType: getAbilityIconType(abilityId),
-    tone,
-  };
 }
 
 function QuickStat({ label, value }: { label: string; value: number }) {
@@ -305,15 +357,12 @@ function QuickStat({ label, value }: { label: string; value: number }) {
 }
 
 function AbilityCard({ item, color }: { item: KitItem; color: string }) {
-  const abilityName = 'ability' in item ? item.ability.name : item.name;
-  const abilityDesc = 'ability' in item ? item.ability.description : item.description;
   const isPassive = item.tone === 'passive';
   const isClick = item.tone === 'click';
   const isUltimate = item.tone === 'ultimate';
-  const cooldown = 'ability' in item ? item.ability.cooldown : item.cooldown;
-  const duration = 'ability' in item ? item.ability.duration : item.duration;
-  const charges = 'ability' in item ? item.ability.charges : item.charges;
-  const borderColor = isUltimate ? ABILITY_COLORS.ultimateBorder : isPassive ? 'rgba(255,255,255,0.15)' : `${color}66`;
+  const cooldown = item.cooldown;
+  const duration = item.duration;
+  const charges = item.charges;
 
   return (
     <div
@@ -324,17 +373,12 @@ function AbilityCard({ item, color }: { item: KitItem; color: string }) {
           : isClick
             ? `linear-gradient(135deg, ${color}18, rgb(var(--color-strike-surface) / 0.86) 54%)`
             : 'rgb(var(--color-strike-surface) / 0.84)',
-        border: `1px solid ${borderColor}`,
-        boxShadow: isUltimate ? `0 0 22px ${ABILITY_COLORS.ultimateGlow}` : `0 0 18px ${color}12`,
+        border: '1px solid rgba(255,255,255,0.1)',
+        boxShadow: isUltimate ? `0 0 22px ${ABILITY_COLORS.ultimateGlow}` : 'inset 0 1px 0 rgba(255,255,255,0.05)',
       }}
     >
       <div
-        className="absolute inset-x-0 top-0 h-px opacity-75"
-        style={{
-          background: isUltimate
-            ? `linear-gradient(90deg, transparent, ${ABILITY_COLORS.ultimate}, transparent)`
-            : `linear-gradient(90deg, transparent, ${color}, transparent)`,
-        }}
+        className="absolute inset-x-0 top-0 h-px bg-white/10"
       />
       <div className="relative p-2.5">
         <div className="flex items-start gap-2.5">
@@ -354,9 +398,9 @@ function AbilityCard({ item, color }: { item: KitItem; color: string }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <InputTag color={isUltimate ? ABILITY_COLORS.ultimate : color}>{item.input}</InputTag>
-              <h4 className="font-display text-white text-[15px] leading-none truncate">{abilityName}</h4>
+              <h4 className="font-display text-white text-[15px] leading-none truncate">{item.name}</h4>
             </div>
-            <p className="mt-1 text-white/70 text-[11px] font-body leading-snug">{abilityDesc}</p>
+            <p className="mt-1 text-white/70 text-[11px] font-body leading-snug">{item.description}</p>
 
             {(cooldown !== undefined || duration || charges) && (
               <div className="flex flex-wrap items-center gap-1.5 mt-2">

@@ -1,5 +1,5 @@
 import { Canvas, useThree } from '@react-three/fiber';
-import { Suspense, useEffect, useMemo } from 'react';
+import { Suspense, useEffect, useMemo, useRef } from 'react';
 import { Environment, OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { getVoxelMapTheme } from '@voxel-strike/shared';
@@ -58,6 +58,29 @@ function RendererSettingsApplier({
   return null;
 }
 
+function SceneReadySignal({ onReady }: { onReady?: () => void }) {
+  const didSignalRef = useRef(false);
+
+  useEffect(() => {
+    if (!onReady || didSignalRef.current) return;
+
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        didSignalRef.current = true;
+        onReady();
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [onReady]);
+
+  return null;
+}
+
 function ReflectionEnvironment({
   theme,
   config,
@@ -100,8 +123,16 @@ function ReflectionEnvironment({
   );
 }
 
-export function GameCanvas() {
-  const { gamePhase, voidZones, direBalls, voidRays, mapSeed } = useGameStore();
+interface GameCanvasProps {
+  onReady?: () => void;
+}
+
+export function GameCanvas({ onReady }: GameCanvasProps) {
+  const gamePhase = useGameStore((state) => state.gamePhase);
+  const voidZones = useGameStore((state) => state.voidZones);
+  const direBalls = useGameStore((state) => state.direBalls);
+  const voidRays = useGameStore((state) => state.voidRays);
+  const mapSeed = useGameStore((state) => state.mapSeed);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
   const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
@@ -230,6 +261,7 @@ export function GameCanvas() {
 
         <fogExp2 attach="fog" args={[mapTheme.fogColor, 0.0062]} />
         <color attach="background" args={[mapTheme.skyColor]} />
+        <SceneReadySignal onReady={onReady} />
       </Suspense>
     </Canvas>
   );

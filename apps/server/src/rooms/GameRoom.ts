@@ -2376,7 +2376,10 @@ export class GameRoom extends Room<GameState> {
       player.state = 'alive';
       player.health = player.maxHealth;
       player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
-      this.placePlayerAtSpawn(player);
+      this.authoritativePositionUntil.set(player.id, Date.now() + 1200);
+      player.velocity.x = 0;
+      player.velocity.y = 0;
+      player.velocity.z = 0;
       if (player.heroId === 'blaze') {
         player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
         player.movement.isJetpacking = false;

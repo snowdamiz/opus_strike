@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useGameStore } from './store/gameStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
@@ -6,6 +6,7 @@ import { GameCanvas } from './components/game/GameCanvas';
 import { HUD } from './components/ui/HUD';
 import { HeroSelect } from './components/ui/HeroSelect';
 import { LoadingScreen } from './components/ui/LoadingScreen';
+import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
 import { Scoreboard } from './components/ui/Scoreboard';
 import { InGameMenu } from './components/ui/InGameMenu';
 import { GameConsole } from './components/ui/GameConsole';
@@ -17,10 +18,18 @@ import { SlideEffects } from './components/ui/SlideEffects';
 import { useMusic } from './hooks/useAudio';
 
 export function App() {
-  const { appPhase, gamePhase, isLoading } = useGameStore();
+  const appPhase = useGameStore((state) => state.appPhase);
+  const gamePhase = useGameStore((state) => state.gamePhase);
+  const isLoading = useGameStore((state) => state.isLoading);
+  const mapSeed = useGameStore((state) => state.mapSeed);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
+  const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
+  const [isMatchSceneReady, setIsMatchSceneReady] = useState(false);
+  const [isMatchLoadingVisible, setIsMatchLoadingVisible] = useState(false);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
+  const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
+  const shouldLoadMatchWorld = appPhase === 'in_game' && !isPreGame;
 
   // Manage background music based on game phase
   useEffect(() => {
@@ -98,6 +107,45 @@ export function App() {
     }
   }, [appPhase]);
 
+  useEffect(() => {
+    if (!shouldLoadMatchWorld) {
+      setShouldMountMatchWorld(false);
+      setIsMatchSceneReady(false);
+      setIsMatchLoadingVisible(false);
+      return;
+    }
+
+    setShouldMountMatchWorld(false);
+    setIsMatchSceneReady(false);
+    setIsMatchLoadingVisible(true);
+
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        setShouldMountMatchWorld(true);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [mapSeed, shouldLoadMatchWorld]);
+
+  useEffect(() => {
+    if (!isMatchSceneReady) return;
+
+    const timeout = window.setTimeout(() => {
+      setIsMatchLoadingVisible(false);
+    }, 240);
+
+    return () => window.clearTimeout(timeout);
+  }, [isMatchSceneReady]);
+
+  const handleMatchSceneReady = useCallback(() => {
+    setIsMatchSceneReady(true);
+  }, []);
+
   if (isLoading) {
     return <LoadingScreen />;
   }
@@ -116,17 +164,20 @@ export function App() {
   if (appPhase === 'in_game') {
     // Determine what phase we're in
     const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
-    const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
 
     return (
       <div className="w-full h-full relative game-active">
-        <GameCanvas />
+        {shouldMountMatchWorld && <GameCanvas onReady={handleMatchSceneReady} />}
 
         {/* Show hero select during pre-game phases */}
         {isPreGame && <HeroSelect />}
 
+        {!isPreGame && isMatchLoadingVisible && (
+          <MatchLoadingScreen isComplete={isMatchSceneReady} />
+        )}
+
         {/* Show HUD during active gameplay */}
-        {isActiveGame && (
+        {isActiveGame && isMatchSceneReady && (
           <>
             <HUD />
             <ShadowStepOverlay />
@@ -138,7 +189,7 @@ export function App() {
         )}
 
         {/* Countdown overlay */}
-        {gamePhase === 'countdown' && <CountdownOverlay />}
+        {gamePhase === 'countdown' && isMatchSceneReady && <CountdownOverlay />}
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && (
@@ -160,7 +211,7 @@ export function App() {
         <GameConsole />
 
         {/* Performance monitor overlay */}
-        <PerfMonitorOverlay />
+        {isMatchSceneReady && <PerfMonitorOverlay />}
       </div>
     );
   }
@@ -170,7 +221,7 @@ export function App() {
 }
 
 function CountdownOverlay() {
-  const { phaseEndTime } = useGameStore();
+  const phaseEndTime = useGameStore((state) => state.phaseEndTime);
   const [countdown, setCountdown] = useState(5);
 
   useEffect(() => {

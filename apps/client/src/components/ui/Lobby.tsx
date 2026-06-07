@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
@@ -113,7 +113,7 @@ function InlinePicker<T extends string>({
       {isOpen && (
         <div
           role="listbox"
-          className="absolute left-0 top-[calc(100%+0.25rem)] z-40 min-w-full overflow-hidden rounded-md border bg-[#101012]/95 p-0.5 shadow-2xl backdrop-blur-xl"
+          className="absolute left-0 top-[calc(100%+0.25rem)] z-40 min-w-full overflow-hidden rounded-md border bg-strike-chrome/95 p-0.5 shadow-2xl backdrop-blur-xl"
           style={{
             borderColor: `${accentColor}42`,
             boxShadow: `0 14px 30px rgba(0,0,0,0.45), 0 0 18px ${accentColor}24`,
@@ -170,19 +170,12 @@ export function Lobby() {
     kickPlayer,
   } = useNetwork();
   const { playButtonClick } = useUISounds();
-  const [pulseReady, setPulseReady] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
   const currentTeam = currentPlayer?.team;
   const hasChosenTeam = currentTeam === 'red' || currentTeam === 'blue';
   const isReady = currentPlayer?.isReady || false;
-
-  useEffect(() => {
-    const playerList = Array.from(lobbyPlayers.values());
-    const allReady = playerList.length > 1 && playerList.every(p => p.isReady || p.isHost);
-    setPulseReady(allReady);
-  }, [lobbyPlayers]);
 
   const handleToggleReady = () => {
     if (!hasChosenTeam) return;
@@ -209,8 +202,6 @@ export function Lobby() {
   const handleKick = (targetId: string) => kickPlayer(targetId);
 
   const playerList = Array.from(lobbyPlayers.values());
-  const humanCount = playerList.filter(p => !p.isBot).length;
-  const botCount = playerList.length - humanCount;
   const readyCount = playerList.filter(p => p.isReady || p.isHost).length;
   const assignedCount = playerList.filter(p => p.team === 'red' || p.team === 'blue').length;
   const allPlayersAssigned = playerList.length > 0 && assignedCount === playerList.length;
@@ -299,27 +290,17 @@ export function Lobby() {
         <div className="menu-nav flex items-center justify-between gap-4">
           {/* Back button and lobby info */}
           <div className="flex min-w-0 items-center gap-3 xl:gap-4">
- <button
- onClick={() => { playButtonClick(); handleBack(); }}
- className="w-10 h-10 shrink-0 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 group"
- >
- <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
- </svg>
- </button>
+            <button
+              onClick={() => { playButtonClick(); handleBack(); }}
+              className="w-10 h-10 shrink-0 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 group"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
             
-            <div className="flex min-w-0 items-center gap-3">
-              <div className={`w-3 h-3 rounded-full transition-all ${
-                pulseReady 
-                  ? 'bg-green-400 shadow-lg shadow-green-400/50 animate-pulse' 
-                  : 'bg-orange-400 shadow-lg shadow-orange-400/30'
-              }`} />
-              <div className="min-w-0">
-                <h1 className="font-display text-xl xl:text-2xl text-white tracking-wide truncate">{currentLobbyName || 'Game Lobby'}</h1>
-                <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">
-                  {readyCount}/{playerList.length} Ready • {humanCount} human • {botCount} AI
-                </p>
-              </div>
+            <div className="flex h-10 min-w-0 items-center">
+              <h1 className="font-display translate-y-[0.08em] text-xl xl:text-2xl leading-none text-white tracking-wide truncate">{currentLobbyName || 'Game Lobby'}</h1>
             </div>
           </div>
 
@@ -790,7 +771,7 @@ function PlayerCard({
                 label={`${player.name} difficulty`}
                 value={botDifficulty}
                 options={BOT_DIFFICULTY_OPTIONS}
-                accentColor="#06b6d4"
+                accentColor={FACTIONS.blue.primaryColor}
                 widthClass="w-[3.65rem]"
                 onChange={(difficulty) => onBotDifficultyChange?.(difficulty)}
               />

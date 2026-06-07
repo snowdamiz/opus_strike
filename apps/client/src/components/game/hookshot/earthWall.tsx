@@ -1,153 +1,277 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type EarthWallData } from '../../../store/gameStore';
-import { checkGroundWithNormal, isPhysicsReady } from '../../../hooks/usePhysics';
+import {
+  addTemporaryWallCollider,
+  removeTemporaryWallCollider,
+} from '../../../hooks/usePhysics';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
-import { 
-  SHARED_GEOMETRIES, 
+import {
+  SHARED_GEOMETRIES,
   EARTH_COLORS,
+  HOOKSHOT_COLORS,
 } from '../effectResources';
 
 // ============================================================================
-// EARTH WALL - Hook slides on ground, wall of dirt rises behind (E ability)
+// ANCHOR WALL - Hookshot Q ability
+// A ground anchor tears forward and lifts a temporary solid barricade.
 // ============================================================================
 
-const EARTH_WALL_SPEED = 35; // Units per second
-const EARTH_WALL_SEGMENT_SPACING = 1.5; // Distance between wall segments
-const EARTH_WALL_MAX_HEIGHT = 4; // Maximum wall height
-const EARTH_WALL_WIDTH = 2.5; // Wall width
-const EARTH_WALL_RISE_SPEED = 8; // How fast segments rise
+const ANCHOR_WALL_SPEED = 42;
+const ANCHOR_WALL_SEGMENT_SPACING = 2.35;
+const ANCHOR_WALL_FIRST_SEGMENT_DISTANCE = 6.25;
+const ANCHOR_WALL_MAX_HEIGHT = 4.15;
+const ANCHOR_WALL_WIDTH = 3.25;
+const ANCHOR_WALL_DEPTH = 1.05;
+const ANCHOR_WALL_RISE_SPEED = 14;
+const ANCHOR_WALL_COLLAPSE_DURATION = 1.15;
+const ANCHOR_WALL_SEGMENT_BACKSET = 0.85;
+const ANCHOR_WALL_COLLIDER_PREFIX = 'anchorwall_';
 
-// Single dirt/rock wall segment
+const STUD_INDICES = [0, 1, 2, 3];
+const DEBRIS_INDICES = [0, 1, 2, 3, 4];
+
+const ANCHOR_WALL_MATERIALS = {
+  slab: new THREE.MeshStandardMaterial({
+    color: 0x2f3338,
+    roughness: 0.78,
+    metalness: 0.42,
+  }),
+  slabAlt: new THREE.MeshStandardMaterial({
+    color: 0x252b31,
+    roughness: 0.82,
+    metalness: 0.36,
+  }),
+  slabDark: new THREE.MeshStandardMaterial({
+    color: 0x191d22,
+    roughness: 0.88,
+    metalness: 0.25,
+  }),
+  edge: new THREE.MeshStandardMaterial({
+    color: 0x59616d,
+    roughness: 0.55,
+    metalness: 0.72,
+  }),
+  rock: new THREE.MeshStandardMaterial({
+    color: EARTH_COLORS.rock,
+    roughness: 0.94,
+    metalness: 0.08,
+  }),
+  glow: new THREE.MeshBasicMaterial({
+    color: HOOKSHOT_COLORS.energy,
+    transparent: true,
+    opacity: 0.58,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  }),
+  coreGlow: new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.72,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  }),
+  hookShaft: new THREE.MeshStandardMaterial({
+    color: HOOKSHOT_COLORS.metalLight,
+    metalness: 0.9,
+    roughness: 0.22,
+  }),
+  hookTip: new THREE.MeshStandardMaterial({
+    color: HOOKSHOT_COLORS.hookTip,
+    metalness: 0.96,
+    roughness: 0.12,
+  }),
+  ringGlow: new THREE.MeshBasicMaterial({
+    color: HOOKSHOT_COLORS.energy,
+    transparent: true,
+    opacity: 0.62,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  }),
+};
+
+interface AnchorWallSegmentData {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  height: number;
+  width: number;
+  depth: number;
+}
+
+function seededRange(index: number, salt: number, min: number, max: number): number {
+  const raw = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453;
+  const unit = raw - Math.floor(raw);
+  return min + unit * (max - min);
+}
+
+function releaseColliderSet(ids: Set<string>): void {
+  for (const id of ids) {
+    removeTemporaryWallCollider(id);
+  }
+  ids.clear();
+}
+
 const WallSegment = React.memo(function WallSegment({
-  position,
-  targetHeight,
-  creationTime,
+  segment,
   index,
-  rotationY, // Rotation to face perpendicular to travel direction
+  rotationY,
+  wallStartTime,
+  wallDuration,
 }: {
-  position: { x: number; y: number; z: number };
-  targetHeight: number;
-  creationTime: number;
+  segment: AnchorWallSegmentData;
   index: number;
   rotationY: number;
+  wallStartTime: number;
+  wallDuration: number;
 }) {
   const meshRef = useRef<THREE.Group>(null);
-  const currentHeightRef = useRef(0.1); // Start with small height so it renders
-  
-  // Vary colors and shapes based on index for natural look
-  const colorVariation = (index % 3);
-  const mainColor = colorVariation === 0 ? EARTH_COLORS.dirt : 
-                    colorVariation === 1 ? EARTH_COLORS.dirtDark : EARTH_COLORS.dirtLight;
-  
+  const currentHeightRef = useRef(0.05);
+
+  const faceInset = seededRange(index, 1, -0.14, 0.14);
+  const capTilt = seededRange(index, 2, -0.07, 0.07);
+  const ribShift = seededRange(index, 3, -0.18, 0.18);
+
   useFrame((_, delta) => {
     if (!meshRef.current) return;
-    
-    // Rise up from ground
-    if (currentHeightRef.current < targetHeight) {
+
+    const wallAge = (Date.now() - wallStartTime) / 1000;
+    const collapseProgress = Math.min(
+      Math.max((wallAge - wallDuration) / ANCHOR_WALL_COLLAPSE_DURATION, 0),
+      1
+    );
+    const liveHeight = segment.height * (1 - collapseProgress * collapseProgress);
+
+    if (collapseProgress > 0) {
+      currentHeightRef.current = Math.max(0.01, liveHeight);
+    } else if (currentHeightRef.current < segment.height) {
       currentHeightRef.current = Math.min(
-        currentHeightRef.current + EARTH_WALL_RISE_SPEED * delta, 
-        targetHeight
+        currentHeightRef.current + ANCHOR_WALL_RISE_SPEED * delta,
+        segment.height
       );
     }
-    
-    const h = currentHeightRef.current;
-    
-    // Update position - wall rises from ground
-    meshRef.current.position.set(position.x, position.y + h / 2, position.z);
-    meshRef.current.scale.set(1, Math.max(0.01, h), 1);
+
+    const height = currentHeightRef.current;
+    meshRef.current.position.set(
+      segment.x,
+      segment.y + height / 2 - collapseProgress * 0.28,
+      segment.z
+    );
+    meshRef.current.scale.set(1, Math.max(0.01, height), 1);
   });
-  
+
   return (
-    <group ref={meshRef} position={[position.x, position.y, position.z]} rotation={[0, rotationY, 0]}>
-      {/* Main dirt block - wide to block vision */}
-      <mesh geometry={SHARED_GEOMETRIES.box} scale={[EARTH_WALL_WIDTH, 1, 1]}>
-        <meshStandardMaterial 
-          color={mainColor} 
-          roughness={0.9} 
-          metalness={0.1}
+    <group ref={meshRef} position={[segment.x, segment.y, segment.z]} rotation={[0, rotationY, 0]}>
+      <mesh
+        geometry={SHARED_GEOMETRIES.box}
+        material={index % 2 === 0 ? ANCHOR_WALL_MATERIALS.slab : ANCHOR_WALL_MATERIALS.slabAlt}
+        scale={[segment.width, 1, segment.depth]}
+      />
+
+      <mesh
+        position={[faceInset, 0.03, segment.depth * 0.54]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.slabDark}
+        scale={[segment.width * 0.78, 0.74, 0.08]}
+      />
+
+      <mesh
+        position={[faceInset * -0.8, 0.04, -segment.depth * 0.54]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.slabDark}
+        scale={[segment.width * 0.72, 0.68, 0.08]}
+      />
+
+      <mesh
+        position={[0, 0.52, 0]}
+        rotation={[0, 0, capTilt]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.edge}
+        scale={[segment.width * 1.04, 0.13, segment.depth * 1.12]}
+      />
+
+      <mesh
+        position={[0, -0.5, 0]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.edge}
+        scale={[segment.width * 1.08, 0.16, segment.depth * 1.22]}
+      />
+
+      <mesh
+        position={[-segment.width * 0.46, 0, 0]}
+        rotation={[0, 0, 0.08]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.edge}
+        scale={[0.16, 1.12, segment.depth * 1.22]}
+      />
+      <mesh
+        position={[segment.width * 0.46, 0, 0]}
+        rotation={[0, 0, -0.08]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.edge}
+        scale={[0.16, 1.1, segment.depth * 1.22]}
+      />
+
+      <mesh
+        position={[ribShift, 0.18, segment.depth * 0.61]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.glow}
+        scale={[segment.width * 0.78, 0.035, 0.08]}
+      />
+      <mesh
+        position={[ribShift * -0.7, -0.12, -segment.depth * 0.61]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.glow}
+        scale={[segment.width * 0.62, 0.035, 0.08]}
+      />
+      <mesh
+        position={[0, 0.48, 0]}
+        geometry={SHARED_GEOMETRIES.box}
+        material={ANCHOR_WALL_MATERIALS.coreGlow}
+        scale={[segment.width * 0.24, 0.035, segment.depth * 1.28]}
+      />
+
+      {STUD_INDICES.map((studIndex) => {
+        const studX = -segment.width * 0.34 + studIndex * segment.width * 0.23;
+        return (
+          <mesh
+            key={studIndex}
+            position={[studX, 0.34, segment.depth * 0.66]}
+            geometry={SHARED_GEOMETRIES.box}
+            material={ANCHOR_WALL_MATERIALS.edge}
+            scale={[0.13, 0.13, 0.08]}
+          />
+        );
+      })}
+
+      {DEBRIS_INDICES.map((debrisIndex) => (
+        <mesh
+          key={debrisIndex}
+          position={[
+            seededRange(index, debrisIndex + 10, -segment.width * 0.45, segment.width * 0.45),
+            -0.48,
+            seededRange(index, debrisIndex + 20, -segment.depth * 0.92, segment.depth * 0.92),
+          ]}
+          rotation={[
+            seededRange(index, debrisIndex + 30, -0.45, 0.45),
+            seededRange(index, debrisIndex + 40, -0.9, 0.9),
+            seededRange(index, debrisIndex + 50, -0.45, 0.45),
+          ]}
+          geometry={SHARED_GEOMETRIES.box}
+          material={ANCHOR_WALL_MATERIALS.rock}
+          scale={[
+            seededRange(index, debrisIndex + 60, 0.13, 0.28),
+            seededRange(index, debrisIndex + 70, 0.07, 0.18),
+            seededRange(index, debrisIndex + 80, 0.13, 0.28),
+          ]}
         />
-      </mesh>
-      
-      {/* Rock chunks embedded in dirt */}
-      <mesh 
-        position={[0.4 * (index % 2 === 0 ? 1 : -1), 0.2, 0.35]} 
-        geometry={SHARED_GEOMETRIES.box} 
-        scale={[0.4, 0.3, 0.3]}
-        rotation={[0.2, 0.3, 0.1]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
-      </mesh>
-      
-      <mesh 
-        position={[-0.3 * (index % 2 === 0 ? 1 : -1), -0.15, 0.3]} 
-        geometry={SHARED_GEOMETRIES.box} 
-        scale={[0.35, 0.25, 0.25]}
-        rotation={[0.1, -0.2, 0.15]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
-      </mesh>
-      
-      {/* Back side rock */}
-      <mesh 
-        position={[0.2 * (index % 2 === 0 ? -1 : 1), 0, -0.35]} 
-        geometry={SHARED_GEOMETRIES.box} 
-        scale={[0.3, 0.35, 0.25]}
-        rotation={[-0.1, 0.2, 0.1]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.rock} roughness={0.95} metalness={0.05} />
-      </mesh>
-      
-      {/* Top grass/soil texture */}
-      <mesh 
-        position={[0, 0.51, 0]} 
-        geometry={SHARED_GEOMETRIES.box} 
-        scale={[EARTH_WALL_WIDTH * 0.95, 0.1, 0.9]}
-      >
-        <meshStandardMaterial color={EARTH_COLORS.grass} roughness={1} metalness={0} />
-      </mesh>
-      
-      {/* Dirt debris around base - front */}
-      {[0, 1, 2].map((i) => (
-        <mesh 
-          key={`front-${i}`}
-          position={[
-            (i - 1) * 0.7 + Math.sin(index + i) * 0.2, 
-            -0.45, 
-            0.6 + Math.cos(index + i) * 0.15
-          ]} 
-          geometry={SHARED_GEOMETRIES.sphere8} 
-          scale={[0.2, 0.12, 0.2]}
-        >
-          <meshStandardMaterial color={EARTH_COLORS.dirtDark} roughness={1} metalness={0} />
-        </mesh>
-      ))}
-      
-      {/* Dirt debris around base - back */}
-      {[0, 1].map((i) => (
-        <mesh 
-          key={`back-${i}`}
-          position={[
-            (i - 0.5) * 0.8, 
-            -0.45, 
-            -0.55 + Math.sin(index + i) * 0.1
-          ]} 
-          geometry={SHARED_GEOMETRIES.sphere8} 
-          scale={[0.18, 0.1, 0.18]}
-        >
-          <meshStandardMaterial color={EARTH_COLORS.dirtDark} roughness={1} metalness={0} />
-        </mesh>
       ))}
     </group>
   );
-}, (prev, next) => {
-  // Custom comparison: only re-render if index or position changes
-  return prev.index === next.index &&
-         prev.position.x === next.position.x &&
-         prev.position.y === next.position.y &&
-         prev.position.z === next.position.z;
-});
+}, (prev, next) => prev.segment.id === next.segment.id);
 
 interface EarthWallProps {
   wall: EarthWallData;
@@ -156,46 +280,78 @@ interface EarthWallProps {
 export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
-  
+
   const hookProgressRef = useRef(0);
   const lastSegmentDistRef = useRef(0);
-  const hookGroundYRef = useRef(wall.startPosition.y); // Track hook's ground level
+  const hookGroundYRef = useRef(wall.startPosition.y);
   const hasStartImpactRef = useRef(false);
   const hasEndImpactRef = useRef(false);
+  const wallColliderRegisteredRef = useRef(false);
+  const collidersReleasedRef = useRef(false);
+  const registeredCollidersRef = useRef<Set<string>>(new Set());
+  const wallSegmentsRef = useRef<AnchorWallSegmentData[]>([]);
 
-  // Use ref for wall segments to avoid setState in useFrame (prevents 60fps re-renders)
-  const wallSegmentsRef = useRef<{ x: number; y: number; z: number; height: number; time: number }[]>([]);
-
-  // Version counter to trigger re-renders when segments change (incremented only when segments added)
-  const [segmentsVersion, setSegmentsVersion] = useState(0);
+  const [, setSegmentsVersion] = useState(0);
 
   const removeEarthWall = useGameStore(state => state.removeEarthWall);
-  
+  const rotationY = Math.atan2(wall.direction.x, wall.direction.z) + Math.PI / 2;
+
+  useEffect(() => {
+    return () => releaseColliderSet(registeredCollidersRef.current);
+  }, []);
+
+  const registerWallCollider = () => {
+    if (wallColliderRegisteredRef.current) return;
+
+    const colliderStartDist = ANCHOR_WALL_FIRST_SEGMENT_DISTANCE - ANCHOR_WALL_SEGMENT_BACKSET - ANCHOR_WALL_DEPTH / 2;
+    const colliderEndDist = wall.maxDistance - ANCHOR_WALL_SEGMENT_BACKSET + ANCHOR_WALL_DEPTH / 2;
+    const colliderLength = Math.max(ANCHOR_WALL_DEPTH, colliderEndDist - colliderStartDist);
+    const colliderCenterDist = colliderStartDist + colliderLength / 2;
+    const colliderId = `${ANCHOR_WALL_COLLIDER_PREFIX}${wall.id}_solid`;
+    const colliderAdded = addTemporaryWallCollider(
+      colliderId,
+      wall.startPosition.x + wall.direction.x * colliderCenterDist,
+      wall.startPosition.y,
+      wall.startPosition.z + wall.direction.z * colliderCenterDist,
+      rotationY,
+      ANCHOR_WALL_WIDTH * 1.1,
+      ANCHOR_WALL_MAX_HEIGHT,
+      colliderLength
+    );
+
+    if (colliderAdded) {
+      wallColliderRegisteredRef.current = true;
+      registeredCollidersRef.current.add(colliderId);
+    }
+  };
+
   useFrame((state, delta) => {
     if (!groupRef.current || !hookRef.current) return;
-    
+
     const time = state.clock.elapsedTime;
     const elapsed = (Date.now() - wall.startTime) / 1000;
-    
-    // Check if wall should be removed (duration expired)
-    if (elapsed > wall.duration + 2) {
+
+    if (elapsed > wall.duration && !collidersReleasedRef.current) {
+      collidersReleasedRef.current = true;
+      releaseColliderSet(registeredCollidersRef.current);
+    }
+
+    if (elapsed > wall.duration + ANCHOR_WALL_COLLAPSE_DURATION) {
       removeEarthWall(wall.id);
       return;
     }
-    
-    // Calculate current hook XZ position (travels horizontally)
-    const currentDist = Math.min(hookProgressRef.current, wall.maxDistance);
+
+    if (hookProgressRef.current < wall.maxDistance) {
+      hookProgressRef.current = Math.min(
+        hookProgressRef.current + ANCHOR_WALL_SPEED * delta,
+        wall.maxDistance
+      );
+    }
+
+    const currentDist = hookProgressRef.current;
     const hookX = wall.startPosition.x + wall.direction.x * currentDist;
     const hookZ = wall.startPosition.z + wall.direction.z * currentDist;
-    
-    // Raycast to find ground level at hook position
-    if (isPhysicsReady()) {
-      const groundCheck = checkGroundWithNormal(hookX, wall.startPosition.y + 50, hookZ, 100);
-      if (groundCheck) {
-        hookGroundYRef.current = groundCheck.groundY;
-      }
-    }
-    
+
     const hookPos = {
       x: hookX,
       y: hookGroundYRef.current,
@@ -206,130 +362,103 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
       hasStartImpactRef.current = true;
       triggerTerrainImpact('earth_wall', hookPos, {
         direction: wall.direction,
-        scale: 0.9,
+        scale: 1.05,
       });
     }
-    
-    // Hook is still traveling
-    if (hookProgressRef.current < wall.maxDistance) {
-      hookProgressRef.current += EARTH_WALL_SPEED * delta;
-      
-      // Create new wall segments behind the hook
-      if (currentDist - lastSegmentDistRef.current >= EARTH_WALL_SEGMENT_SPACING && currentDist > 1) {
+
+    if (currentDist < wall.maxDistance) {
+      if (currentDist >= ANCHOR_WALL_FIRST_SEGMENT_DISTANCE) {
+        registerWallCollider();
+      }
+
+      if (
+        currentDist >= ANCHOR_WALL_FIRST_SEGMENT_DISTANCE &&
+        currentDist - lastSegmentDistRef.current >= ANCHOR_WALL_SEGMENT_SPACING
+      ) {
         lastSegmentDistRef.current = currentDist;
-        
-        // Calculate segment XZ position (slightly behind hook head)
-        const segmentX = hookPos.x - wall.direction.x * 1.5;
-        const segmentZ = hookPos.z - wall.direction.z * 1.5;
-        
-        // Raycast to find ground level at segment position
-        let segmentGroundY = hookGroundYRef.current;
-        if (isPhysicsReady()) {
-          const segmentGroundCheck = checkGroundWithNormal(segmentX, wall.startPosition.y + 50, segmentZ, 100);
-          if (segmentGroundCheck) {
-            segmentGroundY = segmentGroundCheck.groundY;
-          }
-        }
-        
-        // Vary height slightly for natural look
-        const heightVariation = 0.8 + Math.random() * 0.4;
 
-        // Add new segment directly to ref (no setState in useFrame - prevents 60fps re-renders)
-        wallSegmentsRef.current.push({
+        const segmentIndex = wallSegmentsRef.current.length;
+        const segmentX = hookPos.x - wall.direction.x * ANCHOR_WALL_SEGMENT_BACKSET;
+        const segmentZ = hookPos.z - wall.direction.z * ANCHOR_WALL_SEGMENT_BACKSET;
+
+        const segment: AnchorWallSegmentData = {
+          id: `${ANCHOR_WALL_COLLIDER_PREFIX}${wall.id}_${segmentIndex}`,
           x: segmentX,
-          y: segmentGroundY,
+          y: wall.startPosition.y,
           z: segmentZ,
-          height: EARTH_WALL_MAX_HEIGHT * heightVariation,
-          time: Date.now(),
-        });
+          height: ANCHOR_WALL_MAX_HEIGHT * seededRange(segmentIndex, 91, 0.86, 1.08),
+          width: ANCHOR_WALL_WIDTH * seededRange(segmentIndex, 92, 0.9, 1.08),
+          depth: ANCHOR_WALL_DEPTH * seededRange(segmentIndex, 93, 0.92, 1.16),
+        };
 
-        // Trigger re-render by incrementing version (only when segment added, not every frame)
+        wallSegmentsRef.current.push(segment);
         setSegmentsVersion(v => v + 1);
       }
-      
-      // Update hook visual - position on ground
+
       hookRef.current.visible = true;
-      hookRef.current.position.set(hookPos.x, hookPos.y + 0.5, hookPos.z);
-      
-      // Rotate hook to face direction of travel
-      const angle = Math.atan2(wall.direction.x, wall.direction.z);
-      hookRef.current.rotation.y = angle;
-      
-      // Bob the hook slightly as it travels
-      hookRef.current.position.y += Math.sin(time * 15) * 0.1;
+      hookRef.current.position.set(hookPos.x, hookPos.y + 0.58, hookPos.z);
+      hookRef.current.rotation.y = Math.atan2(wall.direction.x, wall.direction.z);
+      hookRef.current.position.y += Math.sin(time * 18) * 0.08;
     } else {
-      // Hook reached max distance - hide it
       hookRef.current.visible = false;
       if (!hasEndImpactRef.current) {
         hasEndImpactRef.current = true;
         triggerTerrainImpact('earth_wall', hookPos, {
           direction: wall.direction,
-          scale: 1.1,
+          scale: 1.2,
         });
       }
     }
   });
-  
+
   return (
     <group ref={groupRef}>
-      {/* THE GROUND HOOK - Large industrial hook that plows through ground */}
-      <group ref={hookRef} position={[wall.startPosition.x, wall.startPosition.y + 0.5, wall.startPosition.z]}>
-        {/* Main hook body - large and heavy */}
-        <mesh geometry={SHARED_GEOMETRIES.box} scale={[0.8, 0.6, 1.5]}>
-          <meshStandardMaterial color={EARTH_COLORS.hookMetal} metalness={0.85} roughness={0.3} />
-        </mesh>
-        
-        {/* Plow blade at front */}
-        <mesh position={[0, -0.1, -0.9]} rotation={[0.3, 0, 0]} geometry={SHARED_GEOMETRIES.box} scale={[1.2, 0.1, 0.5]}>
-          <meshStandardMaterial color={0x555555} metalness={0.9} roughness={0.2} />
-        </mesh>
-        
-        {/* Hook arm - curved down into ground */}
-        <mesh position={[0, -0.2, -0.5]} rotation={[-0.5, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.15, 0.8, 0.15]}>
-          <meshStandardMaterial color={EARTH_COLORS.hookMetal} metalness={0.85} roughness={0.3} />
-        </mesh>
-        
-        {/* Hook tip - buried in ground */}
-        <mesh position={[0, -0.6, -0.2]} rotation={[-1.2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.2, 0.4, 0.2]}>
-          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} />
-        </mesh>
-        
-        {/* Side fins for stability */}
-        <mesh position={[0.5, 0, 0]} rotation={[0, 0, 0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]}>
-          <meshStandardMaterial color={0x444444} metalness={0.8} roughness={0.35} />
-        </mesh>
-        <mesh position={[-0.5, 0, 0]} rotation={[0, 0, -0.3]} geometry={SHARED_GEOMETRIES.box} scale={[0.1, 0.4, 0.8]}>
-          <meshStandardMaterial color={0x444444} metalness={0.8} roughness={0.35} />
-        </mesh>
-        
-        {/* Orange energy glow */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere12} scale={0.4}>
-          <meshBasicMaterial color={EARTH_COLORS.hookGlow} transparent opacity={0.5} />
-        </mesh>
-        
-        {/* Dirt spray particles effect */}
-        <pointLight color={EARTH_COLORS.hookGlow} intensity={4} distance={5} decay={2} />
-        
-        {/* Ground disturbance - ring of dirt being pushed up */}
-        <mesh position={[0, -0.4, -0.3]} rotation={[-Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} scale={[1, 1, 0.3]}>
-          <meshBasicMaterial color={EARTH_COLORS.dirt} transparent opacity={0.7} side={THREE.DoubleSide} />
-        </mesh>
+      <group ref={hookRef} position={[wall.startPosition.x, wall.startPosition.y + 0.58, wall.startPosition.z]}>
+        <mesh geometry={SHARED_GEOMETRIES.box} material={ANCHOR_WALL_MATERIALS.edge} scale={[0.72, 0.42, 1.55]} />
+
+        <mesh
+          position={[0, -0.18, -0.88]}
+          rotation={[0.34, 0, 0]}
+          geometry={SHARED_GEOMETRIES.box}
+          material={ANCHOR_WALL_MATERIALS.slabDark}
+          scale={[1.52, 0.12, 0.54]}
+        />
+
+        <mesh
+          position={[0, -0.34, -0.42]}
+          rotation={[-0.55, 0, 0]}
+          geometry={SHARED_GEOMETRIES.cylinder8}
+          material={ANCHOR_WALL_MATERIALS.hookShaft}
+          scale={[0.14, 0.88, 0.14]}
+        />
+
+        <mesh
+          position={[0, -0.72, -0.13]}
+          rotation={[-1.18, 0, 0]}
+          geometry={SHARED_GEOMETRIES.cone8}
+          material={ANCHOR_WALL_MATERIALS.hookTip}
+          scale={[0.24, 0.46, 0.24]}
+        />
+
+        <mesh position={[0.58, 0.02, 0.04]} rotation={[0, 0, 0.28]} geometry={SHARED_GEOMETRIES.box} material={ANCHOR_WALL_MATERIALS.edge} scale={[0.12, 0.44, 0.9]} />
+        <mesh position={[-0.58, 0.02, 0.04]} rotation={[0, 0, -0.28]} geometry={SHARED_GEOMETRIES.box} material={ANCHOR_WALL_MATERIALS.edge} scale={[0.12, 0.44, 0.9]} />
+
+        <mesh geometry={SHARED_GEOMETRIES.sphere12} material={ANCHOR_WALL_MATERIALS.glow} scale={0.42} />
+        <mesh position={[0, -0.39, -0.3]} rotation={[-Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} material={ANCHOR_WALL_MATERIALS.ringGlow} scale={[1.12, 1.12, 0.3]} />
+
+        <pointLight color={HOOKSHOT_COLORS.energy} intensity={4.8} distance={5.8} decay={2} />
       </group>
-      
-      {/* WALL SEGMENTS - Rising dirt walls perpendicular to travel direction */}
+
       {wallSegmentsRef.current.map((segment, i) => (
         <WallSegment
-          key={`${wall.id}_seg_${i}_${segmentsVersion}`} // Include version to trigger re-render on add
-          position={segment}
-          targetHeight={segment.height}
-          creationTime={segment.time}
+          key={segment.id}
+          segment={segment}
           index={i}
-          rotationY={Math.atan2(wall.direction.x, wall.direction.z) + Math.PI / 2} // Perpendicular to travel
+          rotationY={rotationY}
+          wallStartTime={wall.startTime}
+          wallDuration={wall.duration}
         />
       ))}
     </group>
   );
-}, (prev, next) => {
-  // Custom comparison: only re-render if wall.id or startTime changes
-  return prev.wall.id === next.wall.id && prev.wall.startTime === next.wall.startTime;
-});
+}, (prev, next) => prev.wall.id === next.wall.id && prev.wall.startTime === next.wall.startTime);

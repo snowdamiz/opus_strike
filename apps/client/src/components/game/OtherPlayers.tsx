@@ -8,8 +8,9 @@ import { useShallow } from 'zustand/shallow';
 import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-strike/shared';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
+import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import { HeroIcon } from '../ui/HeroIcons';
-import { HERO_COLORS as HERO_ICON_COLORS } from '../ui/hero-svgs/types';
+import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 
 // Debug: track last logged state to avoid spam
 let lastLoggedPlayerCount = -1;
@@ -75,12 +76,65 @@ interface OtherPlayerProps {
 
 const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
 const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
+const NETWORK_MOVING_SPEED = 0.45;
+const VISUAL_MOVING_SPEED = 0.18;
+const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
 
 function setPlayerRenderOrigin(
   target: THREE.Vector3,
   position: { x: number; y: number; z: number }
 ): THREE.Vector3 {
   return target.set(position.x, position.y - PLAYER_CENTER_TO_FEET, position.z);
+}
+
+function getHorizontalSpeed(velocity: { x: number; z: number }): number {
+  return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+}
+
+function setWalkDirectionFromVelocity(
+  target: HeroWalkDirection,
+  velocity: { x: number; z: number },
+  yaw: number
+): void {
+  const speed = getHorizontalSpeed(velocity);
+  if (speed <= 0.001) {
+    target.forward = 1;
+    target.right = 0;
+    return;
+  }
+
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+  const rightX = Math.cos(yaw);
+  const rightZ = -Math.sin(yaw);
+
+  target.forward = (velocity.x * forwardX + velocity.z * forwardZ) / speed;
+  target.right = (velocity.x * rightX + velocity.z * rightZ) / speed;
+}
+
+function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
+  const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
+  const movement = player.movement;
+
+  if (player.state !== 'alive') {
+    return networkHorizontalSpeed > NETWORK_MOVING_SPEED || visualHorizontalSpeed > VISUAL_MOVING_SPEED;
+  }
+
+  return (
+    networkHorizontalSpeed > NETWORK_MOVING_SPEED ||
+    visualHorizontalSpeed > VISUAL_MOVING_SPEED ||
+    movement.isSliding ||
+    movement.isGrappling ||
+    movement.isJetpacking ||
+    movement.isGliding ||
+    (!movement.isGrounded && Math.abs(player.velocity.y) > AIRBORNE_IDLE_VERTICAL_SPEED)
+  );
+}
+
+function getPlayerMovementPose(player: Player, hasLoweredPosture: boolean, isMoving: boolean): HeroMovementPose {
+  if (player.movement.isSliding) return 'run';
+  if (hasLoweredPosture && isMoving) return 'crouchWalk';
+  return player.movement.isSprinting ? 'run' : 'walk';
 }
 
 function OtherPlayer({ player }: OtherPlayerProps) {
@@ -92,8 +146,17 @@ function OtherPlayer({ player }: OtherPlayerProps) {
     ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
     : playerHeight;
   const postureScaleY = visibleHeight / playerHeight;
+  const initialIsMoving = isPlayerMovingForAnimation(player);
+  const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving);
   const targetPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
   const currentPosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
+  const previousFramePosition = useRef(setPlayerRenderOrigin(new THREE.Vector3(), player.position));
+  const isMovingRef = useRef(initialIsMoving);
+  const isCrouchingRef = useRef(player.movement.isCrouching);
+  const isSlidingRef = useRef(player.movement.isSliding);
+  const movementPoseRef = useRef<HeroMovementPose>(initialMovementPose);
+  const postureScaleYRef = useRef(postureScaleY);
+  const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
   const hasLoggedRef = useRef(false);
   
@@ -132,14 +195,46 @@ function OtherPlayer({ player }: OtherPlayerProps) {
     currentPosition.current.lerp(targetPosition.current, Math.min(1, delta * 15));
     groupRef.current.position.copy(currentPosition.current);
 
+    const visualHorizontalSpeed = delta > 0
+      ? Math.sqrt(
+        (currentPosition.current.x - previousFramePosition.current.x) ** 2 +
+        (currentPosition.current.z - previousFramePosition.current.z) ** 2
+      ) / delta
+      : 0;
     // Read rotation from visualStore non-reactively
     const targetRot = visualState.playerRotations.get(player.id);
+    const renderYaw = targetRot ?? player.lookYaw;
     if (targetRot !== undefined) {
       groupRef.current.rotation.y = targetRot;
     } else {
       // Fallback to prop rotation if visualStore doesn't have data yet
       groupRef.current.rotation.y = player.lookYaw;
     }
+
+    if (visualHorizontalSpeed > VISUAL_MOVING_SPEED && delta > 0) {
+      setWalkDirectionFromVelocity(
+        walkDirectionRef.current,
+        {
+          x: (currentPosition.current.x - previousFramePosition.current.x) / delta,
+          z: (currentPosition.current.z - previousFramePosition.current.z) / delta,
+        },
+        renderYaw
+      );
+    } else {
+      setWalkDirectionFromVelocity(walkDirectionRef.current, player.velocity, renderYaw);
+    }
+
+    previousFramePosition.current.copy(currentPosition.current);
+    const frameHasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
+    const frameVisibleHeight = frameHasLoweredPosture
+      ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
+      : playerHeight;
+    const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
+    postureScaleYRef.current = frameVisibleHeight / playerHeight;
+    isCrouchingRef.current = player.movement.isCrouching;
+    isSlidingRef.current = player.movement.isSliding;
+    movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
+    isMovingRef.current = frameIsMoving;
   });
 
   return (
@@ -150,8 +245,17 @@ function OtherPlayer({ player }: OtherPlayerProps) {
         team={player.team} 
         height={playerHeight}
         postureScaleY={postureScaleY}
+        postureScaleYRef={postureScaleYRef}
         isBot={player.isBot}
-        isMoving={Math.sqrt(player.velocity.x * player.velocity.x + player.velocity.z * player.velocity.z) > 0.5}
+        isMoving={initialIsMoving}
+        isMovingRef={isMovingRef}
+        isCrouching={player.movement.isCrouching}
+        isCrouchingRef={isCrouchingRef}
+        isSliding={player.movement.isSliding}
+        isSlidingRef={isSlidingRef}
+        movementPose={initialMovementPose}
+        movementPoseRef={movementPoseRef}
+        walkDirectionRef={walkDirectionRef}
         hasFlag={player.hasFlag}
       />
 

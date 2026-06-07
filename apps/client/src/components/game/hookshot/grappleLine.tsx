@@ -20,7 +20,7 @@ import {
 } from './rope';
 
 // ============================================================================
-// GRAPPLE LINE - Quick grapple to geometry (Q ability)
+// GRAPPLE LINE - Quick grapple to geometry (E ability)
 // Shows a hook shooting out and rope connecting player to hook
 // OPTIMIZED: Uses same ref-based rope rendering as basic attack for smooth following
 // ============================================================================

@@ -491,7 +491,9 @@ export function PlayerController() {
             if (heroId === 'phantom') {
               phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge);
             } else if (heroId === 'hookshot') {
-              hookshotAbilities.executeGrapple(abilityCtx);
+              if (hookshotAbilities.executeGrapple(abilityCtx)) {
+                abilitySystem.startClientCooldown(heroDef.ability1.abilityId);
+              }
             }
           }
         }

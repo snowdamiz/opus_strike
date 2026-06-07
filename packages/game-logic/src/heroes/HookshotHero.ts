@@ -20,8 +20,9 @@ export class HookshotHero extends HeroBase {
     switch (abilityId) {
       case 'hookshot_grapple':
         return this.executeGrapple(context);
+      case 'hookshot_anchor_wall':
       case 'hookshot_swing':
-        return this.executeSwing(context);
+        return this.executeAnchorWall(context);
       case 'hookshot_grapple_trap':
         return this.executeGrappleTrap(context);
       default:
@@ -30,7 +31,7 @@ export class HookshotHero extends HeroBase {
   }
 
   private executeGrapple(context: AbilityContext): AbilityResult {
-    // Q ability - Quick grapple that pulls player toward geometry
+    // E ability - Quick grapple that pulls player toward geometry
     const direction = vec3Normalize(context.direction);
     const grappleTarget = vec3Add(
       context.position, 
@@ -47,8 +48,8 @@ export class HookshotHero extends HeroBase {
     };
   }
 
-  private executeSwing(context: AbilityContext): AbilityResult {
-    // E ability - Earth Wall: Hook slides on ground, wall of dirt rises behind
+  private executeAnchorWall(context: AbilityContext): AbilityResult {
+    // Q ability - Ground anchor raises a temporary solid barricade
     const direction = vec3Normalize(context.direction);
     // Use horizontal direction only (hook travels on ground)
     const horizontalDir = vec3Normalize({
@@ -63,8 +64,8 @@ export class HookshotHero extends HeroBase {
         type: 'earth_wall',
         position: context.position,
         direction: horizontalDir,
-        duration: 3, // Wall stays up for 3 seconds
-        maxDistance: 25,
+        duration: 4.25,
+        maxDistance: 22,
       },
     };
   }
@@ -134,4 +135,3 @@ export class HookshotHero extends HeroBase {
     return elapsed < this.activeGrappleTrap.duration;
   }
 }
-

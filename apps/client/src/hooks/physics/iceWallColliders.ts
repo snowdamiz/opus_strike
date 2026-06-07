@@ -1,23 +1,23 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 
 // ============================================================================
-// ICE WALL COLLIDERS - Dynamic colliders for Glacier's E ability
+// TEMPORARY WALL COLLIDERS - Dynamic colliders for deployable ability walls
 // ============================================================================
 
-interface IceWallColliderData {
+interface TemporaryWallColliderData {
   rigidBody: RAPIER.RigidBody;
   collider: RAPIER.Collider;
   createdAt: number;
 }
 
-const iceWallColliders = new Map<string, IceWallColliderData>();
+const temporaryWallColliders = new Map<string, TemporaryWallColliderData>();
 
 // These will be set by the main physics module
 let rapierInstance: typeof RAPIER | null = null;
 let worldInstance: RAPIER.World | null = null;
 
 /**
- * Initialize the ice wall collider system with physics instances
+ * Initialize the temporary wall collider system with physics instances
  */
 export function initIceWallSystem(rapier: typeof RAPIER, world: RAPIER.World): void {
   rapierInstance = rapier;
@@ -32,7 +32,7 @@ export function updateIceWallWorld(world: RAPIER.World | null): void {
 }
 
 /**
- * Add a collider for an ice wall segment
+ * Add a collider for a temporary wall segment
  * @param id - Unique identifier for this wall segment
  * @param x - X position (center of wall)
  * @param y - Y position (base of wall)
@@ -42,7 +42,7 @@ export function updateIceWallWorld(world: RAPIER.World | null): void {
  * @param height - Wall height
  * @param depth - Wall thickness
  */
-export function addIceWallCollider(
+export function addTemporaryWallCollider(
   id: string,
   x: number, y: number, z: number,
   rotation: number,
@@ -51,7 +51,7 @@ export function addIceWallCollider(
   if (!rapierInstance || !worldInstance) return false;
 
   // Don't add duplicate
-  if (iceWallColliders.has(id)) return true;
+  if (temporaryWallColliders.has(id)) return true;
 
   try {
     // Create fixed rigid body at wall position
@@ -70,7 +70,7 @@ export function addIceWallCollider(
     // Without this, dynamically added colliders are invisible to raycasts
     worldInstance.updateSceneQueries();
 
-    iceWallColliders.set(id, {
+    temporaryWallColliders.set(id, {
       rigidBody,
       collider,
       createdAt: Date.now(),
@@ -78,51 +78,55 @@ export function addIceWallCollider(
 
     return true;
   } catch (e) {
-    console.error('[Physics] Failed to add ice wall collider:', e);
+    console.error('[Physics] Failed to add temporary wall collider:', e);
     return false;
   }
 }
 
 /**
- * Remove an ice wall collider
+ * Remove a temporary wall collider
  */
-export function removeIceWallCollider(id: string): boolean {
+export function removeTemporaryWallCollider(id: string): boolean {
   if (!worldInstance) return false;
 
-  const data = iceWallColliders.get(id);
+  const data = temporaryWallColliders.get(id);
   if (!data) return false;
 
   try {
     worldInstance.removeCollider(data.collider, true);
     worldInstance.removeRigidBody(data.rigidBody);
-    iceWallColliders.delete(id);
+    temporaryWallColliders.delete(id);
     return true;
   } catch (e) {
-    console.error('[Physics] Failed to remove ice wall collider:', e);
+    console.error('[Physics] Failed to remove temporary wall collider:', e);
+    temporaryWallColliders.delete(id);
     return false;
   }
 }
 
 /**
- * Remove all expired ice wall colliders
+ * Remove all expired temporary wall colliders
  * @param maxAge - Maximum age in milliseconds before removal
+ * @param idPrefix - Optional ID prefix for cleaning a specific ability family
  */
-export function cleanupExpiredIceWallColliders(maxAge: number): number {
+export function cleanupExpiredTemporaryWallColliders(maxAge: number, idPrefix?: string): number {
   if (!worldInstance) return 0;
 
   const now = Date.now();
   let removed = 0;
 
-  for (const [id, data] of iceWallColliders) {
+  for (const [id, data] of temporaryWallColliders) {
+    if (idPrefix && !id.startsWith(idPrefix)) continue;
+
     if (now - data.createdAt > maxAge) {
       try {
         worldInstance.removeCollider(data.collider, true);
         worldInstance.removeRigidBody(data.rigidBody);
-        iceWallColliders.delete(id);
+        temporaryWallColliders.delete(id);
         removed++;
       } catch (e) {
         // Collider may already be removed
-        iceWallColliders.delete(id);
+        temporaryWallColliders.delete(id);
       }
     }
   }
@@ -131,29 +135,51 @@ export function cleanupExpiredIceWallColliders(maxAge: number): number {
 }
 
 /**
- * Remove all ice wall colliders (cleanup on game end)
+ * Remove all temporary wall colliders (cleanup on game end)
  */
-export function clearAllIceWallColliders(): void {
+export function clearAllTemporaryWallColliders(idPrefix?: string): void {
   if (!worldInstance) {
-    iceWallColliders.clear();
+    if (!idPrefix) {
+      temporaryWallColliders.clear();
+    } else {
+      for (const id of temporaryWallColliders.keys()) {
+        if (id.startsWith(idPrefix)) temporaryWallColliders.delete(id);
+      }
+    }
     return;
   }
 
-  for (const [_id, data] of iceWallColliders) {
+  for (const [id, data] of temporaryWallColliders) {
+    if (idPrefix && !id.startsWith(idPrefix)) continue;
+
     try {
       worldInstance.removeCollider(data.collider, true);
       worldInstance.removeRigidBody(data.rigidBody);
     } catch (e) {
       // Ignore errors during cleanup
     }
+    temporaryWallColliders.delete(id);
   }
-  iceWallColliders.clear();
 }
 
 /**
- * Get the number of active ice wall colliders
+ * Get the number of active temporary wall colliders
  */
-export function getIceWallColliderCount(): number {
-  return iceWallColliders.size;
+export function getTemporaryWallColliderCount(idPrefix?: string): number {
+  if (!idPrefix) return temporaryWallColliders.size;
+
+  let count = 0;
+  for (const id of temporaryWallColliders.keys()) {
+    if (id.startsWith(idPrefix)) count++;
+  }
+  return count;
 }
 
+export const addIceWallCollider = addTemporaryWallCollider;
+export const removeIceWallCollider = removeTemporaryWallCollider;
+export const cleanupExpiredIceWallColliders = (maxAge: number): number =>
+  cleanupExpiredTemporaryWallColliders(maxAge, 'icewall_');
+export const clearAllIceWallColliders = (): void =>
+  clearAllTemporaryWallColliders('icewall_');
+export const getIceWallColliderCount = (): number =>
+  getTemporaryWallColliderCount('icewall_');

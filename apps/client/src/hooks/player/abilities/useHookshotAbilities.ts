@@ -4,8 +4,8 @@
  * Handles Hookshot-specific abilities:
  * - Chain Hooks (primary fire)
  * - Drag Hook (secondary fire)
- * - Grapple (Q ability)
- * - Earth Wall (E ability)
+ * - Grapple (E ability)
+ * - Anchor Wall (Q ability)
  * - Grapple Trap (Ultimate)
  */
 
@@ -65,7 +65,7 @@ export interface UseHookshotAbilitiesReturn {
   // Methods
   fireChainHook: (ctx: AbilityContext) => void;
   fireDragHook: (ctx: AbilityContext) => void;
-  executeGrapple: (ctx: AbilityContext) => void;
+  executeGrapple: (ctx: AbilityContext) => boolean;
   executeEarthWall: (ctx: AbilityContext) => void;
   executeGrappleTrap: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => void;
   updateGrapplePhysics: (ctx: AbilityContext) => void;
@@ -229,11 +229,11 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     });
   }, []);
 
-  // Execute Grapple (Q ability)
+  // Execute Grapple (E ability)
   const executeGrapple = useCallback((ctx: AbilityContext) => {
     const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
 
-    if (!isPhysicsReady()) return;
+    if (!isPhysicsReady()) return false;
 
     // Raycast to find grapple point
     let grapplePoint = null;
@@ -263,7 +263,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       }
     }
 
-    if (!grapplePoint) return;
+    if (!grapplePoint) return false;
 
     // Create grapple line visual
     grappleLineIdRef.current++;
@@ -290,9 +290,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     activeGrappleLineIdRef.current = lineId;
     isGrapplingRef.current = false;
     swingWasAirborneRef.current = false;
+    return true;
   }, []);
 
-  // Execute Earth Wall (E ability)
+  // Execute Anchor Wall (Q ability)
   const executeEarthWall = useCallback((ctx: AbilityContext) => {
     const horizDir = calculateHorizontalLookDirection(ctx.yaw);
     const dirLen = Math.sqrt(horizDir.x * horizDir.x + horizDir.z * horizDir.z);
@@ -316,10 +317,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       startPosition: { x: ctx.position.x, y: groundY, z: ctx.position.z },
       direction: { x: normDirX, y: 0, z: normDirZ },
       startTime: Date.now(),
-      duration: 3,
+      duration: 4.25,
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
-      maxDistance: 25,
+      maxDistance: 22,
       hookProgress: 0,
       wallSegments: [],
     });

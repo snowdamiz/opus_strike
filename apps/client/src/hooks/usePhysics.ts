@@ -705,12 +705,17 @@ export function getColliderCount(): number {
 }
 
 // ============================================================================
-// ICE WALL COLLIDERS - Re-exported from separate module
+// TEMPORARY WALL COLLIDERS - Re-exported from separate module
 // ============================================================================
 
 import {
   initIceWallSystem,
   updateIceWallWorld,
+  addTemporaryWallCollider,
+  removeTemporaryWallCollider,
+  cleanupExpiredTemporaryWallColliders,
+  clearAllTemporaryWallColliders,
+  getTemporaryWallColliderCount,
   addIceWallCollider,
   removeIceWallCollider,
   cleanupExpiredIceWallColliders,
@@ -718,8 +723,13 @@ import {
   getIceWallColliderCount,
 } from './physics/iceWallColliders';
 
-// Re-export ice wall functions for backwards compatibility
+// Re-export wall collider functions for ability effects
 export {
+  addTemporaryWallCollider,
+  removeTemporaryWallCollider,
+  cleanupExpiredTemporaryWallColliders,
+  clearAllTemporaryWallColliders,
+  getTemporaryWallColliderCount,
   addIceWallCollider,
   removeIceWallCollider,
   cleanupExpiredIceWallColliders,
@@ -727,7 +737,7 @@ export {
   getIceWallColliderCount,
 };
 
-// Initialize ice wall system when physics is ready (called after world creation)
+// Initialize temporary wall collider system when physics is ready (called after world creation)
 function initializeIceWallSystem() {
   if (rapierInstance && worldInstance) {
     initIceWallSystem(rapierInstance, worldInstance);

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
+import { cleanupExpiredTemporaryWallColliders } from '../../hooks/usePhysics';
 import { 
   HookProjectile,
   DragHookEffect,
@@ -43,6 +44,7 @@ export function HookshotEffectsManager() {
       useGameStore.getState().clearExpiredSwingLines();
       useGameStore.getState().clearExpiredGrappleLines();
       useGameStore.getState().clearExpiredEarthWalls();
+      cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
     }, 150);
     
     return () => clearInterval(interval);
@@ -70,12 +72,12 @@ export function HookshotEffectsManager() {
         <SwingLineEffect key={line.id} line={line} />
       ))}
       
-      {/* Grapple lines (Q ability) */}
+      {/* Grapple lines (E ability) */}
       {grappleLines.map(line => (
         <GrappleLineEffect key={line.id} line={line} />
       ))}
       
-      {/* Earth Walls (E ability - hook slides on ground, wall rises behind) */}
+      {/* Anchor Walls (Q ability - ground hook raises a solid barricade) */}
       {earthWalls.map(wall => (
         <EarthWallEffect key={wall.id} wall={wall} />
       ))}
