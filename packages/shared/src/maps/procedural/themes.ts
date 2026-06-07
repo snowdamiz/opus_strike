@@ -1,4 +1,5 @@
 import type { VoxelMapTheme } from './types.js';
+import { hashSeed } from './rng.js';
 
 export const VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
@@ -104,5 +105,5 @@ export const VOXEL_MAP_THEMES: VoxelMapTheme[] = [
 ];
 
 export function getVoxelMapTheme(seed: number): VoxelMapTheme {
-  return VOXEL_MAP_THEMES[(seed >>> 0) % VOXEL_MAP_THEMES.length];
+  return VOXEL_MAP_THEMES[hashSeed(seed) % VOXEL_MAP_THEMES.length];
 }

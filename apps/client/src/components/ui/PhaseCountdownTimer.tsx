@@ -49,9 +49,9 @@ export const PhaseCountdownTimer = memo(function PhaseCountdownTimer({
   }, [disabled, onExpired, phaseEndTime]);
 
   return (
-    <div className="pointer-events-none absolute left-1/2 top-1/2 flex h-9 -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full border border-white/10 bg-black/[0.28] px-4 text-white/[0.72] shadow-xl shadow-black/25 backdrop-blur-md">
-      <ClockGlyph className="h-3.5 w-3.5 text-accent-secondary" />
-      <span className="font-display translate-y-[0.08em] text-base tabular-nums text-white">
+    <div className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-3 text-white drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)]">
+      <ClockGlyph className="h-5 w-5 text-accent-secondary" />
+      <span className="font-display translate-y-[0.08em] text-3xl leading-none tabular-nums text-white">
         {timeRemaining === null ? '...' : timeRemaining}
       </span>
     </div>

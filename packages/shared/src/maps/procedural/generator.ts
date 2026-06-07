@@ -1,5 +1,18 @@
 import { getBlockNumericId, isSolidBlock } from './blocks.js';
-import { PLAYER_HEIGHT } from '../../constants/physics.js';
+import { PLAYER_HEIGHT, STEP_HEIGHT } from '../../constants/physics.js';
+import {
+  BUILDING_DIRECTIONS,
+  BUILDING_INTENT_DEFINITIONS,
+  createBuildingPlan,
+  type BuildingDirection,
+  type BuildingFootprintCell,
+  type BuildingIntentId,
+  type BuildingOpening,
+  type BuildingPlan,
+  type BuildingPlanMetrics,
+  type BuildingValidationResult,
+  type BuildingVolume,
+} from './buildingPlans.js';
 import { getClosestBoundaryPoint, isInsideBoundaryPolygon } from './boundaries.js';
 import { generateVoxelColliders } from './colliders.js';
 import { createProceduralCTFLayout, PROCEDURAL_MAP_SCALE, PROCEDURAL_VOXEL_SIZE } from './ctfLayout.js';
@@ -29,25 +42,132 @@ interface GridDirection {
   dz: -1 | 0 | 1;
 }
 
+export interface ProceduralBuildingDiagnosticEntry {
+  seed: number;
+  intent: BuildingIntentId;
+  center: { x: number; z: number };
+  radius: number;
+  accepted: boolean;
+  reasons: string[];
+  signature: string;
+  metrics: BuildingPlanMetrics;
+}
+
+export interface ProceduralBuildingGenerationDiagnostics {
+  attempted: number;
+  accepted: number;
+  rejected: number;
+  byIntent: Record<BuildingIntentId, { attempted: number; accepted: number; rejected: number }>;
+  rejectionReasons: Record<string, number>;
+  acceptedPlans: ProceduralBuildingDiagnosticEntry[];
+  rejectedPlans: ProceduralBuildingDiagnosticEntry[];
+}
+
+export interface ProceduralVoxelMapDiagnostics {
+  seed: number;
+  themeId: VoxelMapTheme['id'];
+  buildings: ProceduralBuildingGenerationDiagnostics;
+}
+
+export interface ProceduralVoxelMapGenerationResult {
+  manifest: VoxelMapManifest;
+  diagnostics: ProceduralVoxelMapDiagnostics;
+}
+
 const SPAWN_CLEARANCE = 0;
-const SPAWN_PAD_RADIUS = 1.35;
-const SPAWN_BLEND_RADIUS = 3.35;
-const SPAWN_CLEAR_RADIUS = 2.2;
+const SPAWN_PAD_RADIUS = 1.45;
+const SPAWN_BLEND_RADIUS = 4.85;
+const SPAWN_CLEAR_RADIUS = 3.6;
+const FLAG_CLEAR_RADIUS = 4.3;
 const SPAWN_SIGHTLINE_EYE_OFFSET = PLAYER_HEIGHT / 2 + 0.75;
 const FEATURE_WORLD_SCALE = PROCEDURAL_MAP_SCALE;
-const FEATURE_COUNT_SCALE = 0.82;
+const FEATURE_COUNT_SCALE = 0.56;
 const SIGHTLINE_BARRIER_BASE_HEIGHT = 8;
 const SIGHTLINE_BARRIER_EXTRA_HEIGHT = 6;
 const TERRAIN_SMOOTHING_PASSES = 2;
 const MAX_NAVIGATION_STEP_ROWS = 2;
-const FEATURE_ENTRANCE_HEADROOM = 0.65;
+const BOUNDARY_WALL_THICKNESS = 3.1 * FEATURE_WORLD_SCALE;
+const BOUNDARY_SURFACE_THICKNESS = 3.8 * FEATURE_WORLD_SCALE;
+const FEATURE_ENTRANCE_HEADROOM = 1.1;
 const FEATURE_ENTRANCE_CLEARANCE_ROWS = Math.max(
   1,
-  Math.round((PLAYER_HEIGHT + FEATURE_ENTRANCE_HEADROOM) / PROCEDURAL_VOXEL_SIZE.y)
+  Math.ceil((PLAYER_HEIGHT + FEATURE_ENTRANCE_HEADROOM) / PROCEDURAL_VOXEL_SIZE.y)
 );
+const BUILDING_WALKTHROUGH_CLEARANCE_ROWS = FEATURE_ENTRANCE_CLEARANCE_ROWS + 2;
+const BUILDING_ENTRANCE_INWARD_CELLS = 6;
+const BUILDING_RAMP_MAX_STEP_ROWS = Math.max(1, Math.floor(STEP_HEIGHT / PROCEDURAL_VOXEL_SIZE.y) - 1);
 const STRUCTURE_ENTRANCE_HALF_WIDTH_CELLS = 3;
 const CAVE_ENTRANCE_HALF_WIDTH_CELLS = 3;
 const FEATURE_APPROACH_WORLD_LENGTH = 4.5 * FEATURE_WORLD_SCALE;
+const BUILDING_APPROACH_WORLD_LENGTH = FEATURE_APPROACH_WORLD_LENGTH * 1.35;
+const BUILDING_PLAN_RETRY_COUNT = 4;
+
+function createBuildingDiagnostics(): ProceduralBuildingGenerationDiagnostics {
+  const byIntent = Object.fromEntries(
+    (Object.keys(BUILDING_INTENT_DEFINITIONS) as BuildingIntentId[]).map((intent) => [
+      intent,
+      { attempted: 0, accepted: 0, rejected: 0 },
+    ])
+  ) as Record<BuildingIntentId, { attempted: number; accepted: number; rejected: number }>;
+
+  return {
+    attempted: 0,
+    accepted: 0,
+    rejected: 0,
+    byIntent,
+    rejectionReasons: {},
+    acceptedPlans: [],
+    rejectedPlans: [],
+  };
+}
+
+function createProceduralVoxelMapDiagnostics(seed: number, themeId: VoxelMapTheme['id']): ProceduralVoxelMapDiagnostics {
+  return {
+    seed,
+    themeId,
+    buildings: createBuildingDiagnostics(),
+  };
+}
+
+function recordBuildingDiagnostic(
+  diagnostics: ProceduralVoxelMapDiagnostics | undefined,
+  plan: BuildingPlan,
+  validation: BuildingValidationResult,
+  accepted: boolean
+): void {
+  if (!diagnostics) return;
+
+  const entry: ProceduralBuildingDiagnosticEntry = {
+    seed: plan.seed,
+    intent: plan.intent,
+    center: plan.center,
+    radius: plan.radius,
+    accepted,
+    reasons: validation.reasons,
+    signature: plan.signature,
+    metrics: validation.metrics,
+  };
+
+  diagnostics.buildings.attempted++;
+  diagnostics.buildings.byIntent[plan.intent].attempted++;
+
+  if (accepted) {
+    diagnostics.buildings.accepted++;
+    diagnostics.buildings.byIntent[plan.intent].accepted++;
+    diagnostics.buildings.acceptedPlans.push(entry);
+    return;
+  }
+
+  diagnostics.buildings.rejected++;
+  diagnostics.buildings.byIntent[plan.intent].rejected++;
+  if (diagnostics.buildings.rejectedPlans.length < 160) {
+    diagnostics.buildings.rejectedPlans.push(entry);
+  }
+
+  for (const reason of validation.reasons.length > 0 ? validation.reasons : ['unknown']) {
+    diagnostics.buildings.rejectionReasons[reason] = (diagnostics.buildings.rejectionReasons[reason] ?? 0) + 1;
+  }
+}
 
 function chunkIndex(x: number, y: number, z: number, size: VoxelSize): number {
   return x + size.x * (z + size.z * y);
@@ -141,6 +261,19 @@ function isNearProtectedGameplayArea(
 
   for (const spawn of [...layout.spawnPoints.red, ...layout.spawnPoints.blue]) {
     if (distanceSq(worldX, worldZ, spawn.x, spawn.z) < (radius + scaleWorld(7)) ** 2) return true;
+  }
+
+  return false;
+}
+
+function isNearFlagGameplayArea(
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  worldX: number,
+  worldZ: number,
+  radius: number
+): boolean {
+  for (const flag of [layout.flagZones.red, layout.flagZones.blue]) {
+    if (distanceSq(worldX, worldZ, flag.x, flag.z) < (radius + scaleWorld(7.5)) ** 2) return true;
   }
 
   return false;
@@ -505,13 +638,21 @@ function shapeGameplayRouteTerrain(
   blendHeightCorridor(heightMap, origin, size, layout.flagZones.red, midfield, scaleWorld(5.6), 0.82);
   blendHeightCorridor(heightMap, origin, size, layout.flagZones.blue, midfield, scaleWorld(5.6), 0.82);
 
-  for (const laneX of [scaleWorld(-18), scaleWorld(18)]) {
+  const teamAxisX = redSpawnCenter.x - blueSpawnCenter.x;
+  const teamAxisZ = redSpawnCenter.z - blueSpawnCenter.z;
+  const teamAxisLength = Math.hypot(teamAxisX, teamAxisZ) || 1;
+  const normal = {
+    x: -teamAxisZ / teamAxisLength,
+    z: teamAxisX / teamAxisLength,
+  };
+
+  for (const laneOffset of [scaleWorld(-18), scaleWorld(18)]) {
     blendHeightCorridor(
       heightMap,
       origin,
       size,
-      { x: laneX, z: redSpawnCenter.z },
-      { x: laneX, z: blueSpawnCenter.z },
+      { x: redSpawnCenter.x + normal.x * laneOffset, z: redSpawnCenter.z + normal.z * laneOffset },
+      { x: blueSpawnCenter.x + normal.x * laneOffset, z: blueSpawnCenter.z + normal.z * laneOffset },
       scaleWorld(4.2),
       0.68
     );
@@ -555,7 +696,7 @@ function stampWalkableColumn(
     setBlock(x, y, z, y === safeTopY ? floorBlock : 'stone');
   }
 
-  for (let y = safeTopY + 1; y <= safeTopY + clearanceRows; y++) {
+  for (let y = safeTopY + 1; y <= Math.min(size.y - 1, safeTopY + clearanceRows + 1); y++) {
     setBlock(x, y, z, 'air');
   }
 }
@@ -577,28 +718,46 @@ function stampWalkableEntrancePath(
 ): void {
   const sideX = -direction.dz;
   const sideZ = direction.dx;
-  const totalDistance = insideDistance + approachDistance;
+  const requestedTotalDistance = insideDistance + approachDistance;
+  const requestedEndX = centerX + direction.dx * requestedTotalDistance;
+  const requestedEndZ = centerZ + direction.dz * requestedTotalDistance;
+  const requestedEndGridX = clamp(worldToGrid(requestedEndX, origin.x), 1, size.x - 2);
+  const requestedEndGridZ = clamp(worldToGrid(requestedEndZ, origin.z), 1, size.z - 2);
+  const requestedEndTopY = Math.max(1, heightMap[requestedEndGridX + requestedEndGridZ * size.x] - 1);
+  const verticalDeltaRows = Math.abs(floorY - requestedEndTopY);
+  const effectiveApproachDistance = Math.max(
+    approachDistance,
+    Math.min(approachDistance * 2.1, verticalDeltaRows * PROCEDURAL_VOXEL_SIZE.x * 1.35)
+  );
+  const totalDistance = insideDistance + effectiveApproachDistance;
   const steps = Math.max(1, Math.ceil(totalDistance / PROCEDURAL_VOXEL_SIZE.x));
+  let previousTopY = floorY;
 
   for (let step = 0; step <= steps; step++) {
     const distance = step * PROCEDURAL_VOXEL_SIZE.x;
-    const outsideT = clamp((distance - insideDistance) / Math.max(PROCEDURAL_VOXEL_SIZE.x, approachDistance), 0, 1);
+    const outsideT = clamp((distance - insideDistance) / Math.max(PROCEDURAL_VOXEL_SIZE.x, effectiveApproachDistance), 0, 1);
+    const smoothT = outsideT * outsideT * (3 - outsideT * 2);
+    const centerWorldX = centerX + direction.dx * distance;
+    const centerWorldZ = centerZ + direction.dz * distance;
+    const centerGridX = clamp(worldToGrid(centerWorldX, origin.x), 1, size.x - 2);
+    const centerGridZ = clamp(worldToGrid(centerWorldZ, origin.z), 1, size.z - 2);
+    const baseTopY = Math.max(1, heightMap[centerGridX + centerGridZ * size.x] - 1);
+    const rawTopY = Math.round(lerp(floorY, baseTopY, smoothT));
+    const rampTopY = step === 0
+      ? floorY
+      : clamp(rawTopY, previousTopY - BUILDING_RAMP_MAX_STEP_ROWS, previousTopY + BUILDING_RAMP_MAX_STEP_ROWS);
+    previousTopY = rampTopY;
 
     for (let side = -halfWidthCells; side <= halfWidthCells; side++) {
       const worldX =
-        centerX +
-        direction.dx * distance +
+        centerWorldX +
         sideX * side * PROCEDURAL_VOXEL_SIZE.x;
       const worldZ =
-        centerZ +
-        direction.dz * distance +
+        centerWorldZ +
         sideZ * side * PROCEDURAL_VOXEL_SIZE.z;
       const x = clamp(worldToGrid(worldX, origin.x), 1, size.x - 2);
       const z = clamp(worldToGrid(worldZ, origin.z), 1, size.z - 2);
-      const baseTopY = Math.max(1, heightMap[x + z * size.x] - 1);
-      const topY = Math.round(lerp(floorY, baseTopY, outsideT));
-
-      stampWalkableColumn(setBlock, heightMap, size, x, z, topY, floorBlock, clearanceRows);
+      stampWalkableColumn(setBlock, heightMap, size, x, z, rampTopY, floorBlock, clearanceRows);
     }
   }
 }
@@ -1154,6 +1313,661 @@ function stampBrokenWall(
   }
 }
 
+function stampTieredCitadel(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  centerX: number,
+  centerZ: number,
+  radiusX: number,
+  radiusZ: number,
+  maxHeight: number,
+  accentBlock: VoxelBlockId,
+  featureSeed: number
+): void {
+  const minX = centerX - radiusX;
+  const maxX = centerX + radiusX;
+  const minZ = centerZ - radiusZ;
+  const maxZ = centerZ + radiusZ;
+  const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(origin, size, minX, maxX, minZ, maxZ);
+  const floorY = getMaxHeightInRect(heightMap, origin, size, minX, maxX, minZ, maxZ);
+  const swapAxes = (featureSeed & 1) === 1;
+  const wingOffset = (swapAxes ? radiusX : radiusZ) * 0.48;
+  const coreHalfX = radiusX * (swapAxes ? 0.44 : 0.38);
+  const coreHalfZ = radiusZ * (swapAxes ? 0.38 : 0.44);
+  const wingHalfX = radiusX * (swapAxes ? 0.34 : 0.78);
+  const wingHalfZ = radiusZ * (swapAxes ? 0.78 : 0.34);
+  const courtHalfX = radiusX * 0.18;
+  const courtHalfZ = radiusZ * 0.18;
+  const gateAxis = featureSeed % 3 === 0 ? -1 : 1;
+  const localVoxelX = swapAxes ? PROCEDURAL_VOXEL_SIZE.z : PROCEDURAL_VOXEL_SIZE.x;
+  const localVoxelZ = swapAxes ? PROCEDURAL_VOXEL_SIZE.x : PROCEDURAL_VOXEL_SIZE.z;
+
+  const getLocal = (worldX: number, worldZ: number): { x: number; z: number } => ({
+    x: swapAxes ? worldZ - centerZ : worldX - centerX,
+    z: swapAxes ? worldX - centerX : worldZ - centerZ,
+  });
+
+  const hasCitadelCell = (localX: number, localZ: number): boolean => {
+    const inCore = Math.abs(localX) <= coreHalfX && Math.abs(localZ) <= coreHalfZ;
+    const inCrossWing = Math.abs(localX) <= wingHalfX && Math.abs(localZ) <= wingHalfZ * 0.5;
+    const inGateWing =
+      Math.abs(localX) <= wingHalfX * 0.34 &&
+      Math.abs(localZ - gateAxis * wingOffset) <= wingHalfZ * 0.82;
+    const inBackWing =
+      Math.abs(localX) <= wingHalfX * 0.48 &&
+      Math.abs(localZ + gateAxis * wingOffset * 0.68) <= wingHalfZ * 0.54;
+
+    return inCore || inCrossWing || inGateWing || inBackWing;
+  };
+
+  for (let x = gx0; x <= gx1; x++) {
+    for (let z = gz0; z <= gz1; z++) {
+      const worldX = gridToWorldCenter(x, origin.x);
+      const worldZ = gridToWorldCenter(z, origin.z);
+      const local = getLocal(worldX, worldZ);
+      if (!hasCitadelCell(local.x, local.z)) continue;
+
+      fillColumnToHeight(setBlock, heightMap, origin, size, x, z, floorY, 'stone');
+
+      const inCourtyard = Math.abs(local.x) <= courtHalfX && Math.abs(local.z) <= courtHalfZ;
+      const inCore = Math.abs(local.x) <= coreHalfX && Math.abs(local.z) <= coreHalfZ;
+      const inGateWing =
+        Math.abs(local.x) <= wingHalfX * 0.34 &&
+        Math.abs(local.z - gateAxis * wingOffset) <= wingHalfZ * 0.82;
+      const chipNoise = fractalNoise2(featureSeed ^ 0x94d049bb, worldX * 0.58, worldZ * 0.58, 2);
+
+      if (inCourtyard) {
+        setBlock(x, floorY, z, chipNoise > 0.7 ? 'glass' : 'metal');
+        for (let y = floorY + 1; y <= floorY + maxHeight + worldHeightToGridRows(2); y++) {
+          setBlock(x, y, z, 'air');
+        }
+        continue;
+      }
+
+      const heightRows =
+        (inCore ? maxHeight + worldHeightToGridRows(scaleWorld(1.4 + chipNoise)) : Math.max(worldHeightToGridRows(3), Math.floor(maxHeight * (inGateWing ? 0.62 : 0.48)))) +
+        (chipNoise > 0.82 ? worldHeightToGridRows(1) : 0);
+      const hasNeighborX = hasCitadelCell(local.x + localVoxelX, local.z) && hasCitadelCell(local.x - localVoxelX, local.z);
+      const hasNeighborZ = hasCitadelCell(local.x, local.z + localVoxelZ) && hasCitadelCell(local.x, local.z - localVoxelZ);
+      const isWall = !hasNeighborX || !hasNeighborZ;
+      const cornerTrim =
+        (Math.abs(local.x) > coreHalfX * 0.86 && Math.abs(local.z) > coreHalfZ * 0.86) ||
+        chipNoise > 0.88;
+
+      setBlock(x, floorY, z, inCore && chipNoise > 0.62 ? 'glass' : 'metal');
+
+      for (let y = floorY + 1; y <= floorY + heightRows; y++) {
+        const isRoof = y === floorY + heightRows;
+        const yStep = Math.max(1, worldHeightToGridRows(scaleWorld(1.5)));
+        const hasWindow = isWall && y > floorY + 2 && y < floorY + heightRows - 1 && (x + z + y + featureSeed) % (yStep + 2) === 0;
+
+        if (isRoof) {
+          setBlock(x, y, z, inCore && chipNoise > 0.55 ? 'glass' : cornerTrim ? accentBlock : 'metal');
+        } else if (isWall) {
+          setBlock(x, y, z, hasWindow ? 'glass' : cornerTrim ? accentBlock : y % yStep === 0 ? 'metal' : 'stone');
+        } else {
+          setBlock(x, y, z, 'air');
+        }
+      }
+    }
+  }
+
+  stampStructureEntrances(setBlock, heightMap, origin, size, centerX, centerZ, radiusX, radiusZ, floorY, featureSeed);
+}
+
+function stampSkybridgeOutpost(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  centerX: number,
+  centerZ: number,
+  radiusX: number,
+  radiusZ: number,
+  maxHeight: number,
+  accentBlock: VoxelBlockId,
+  featureSeed: number
+): void {
+  const minX = centerX - radiusX * 1.2;
+  const maxX = centerX + radiusX * 1.2;
+  const minZ = centerZ - radiusZ * 1.2;
+  const maxZ = centerZ + radiusZ * 1.2;
+  const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(origin, size, minX, maxX, minZ, maxZ);
+  const floorY = getMaxHeightInRect(heightMap, origin, size, minX, maxX, minZ, maxZ);
+  const alongAxisX = (featureSeed & 1) === 0;
+  const halfSpan = Math.max(radiusX, radiusZ) * 1.05;
+  const halfWidth = Math.max(scaleWorld(1.15), Math.min(radiusX, radiusZ) * 0.28);
+  const deckY = clamp(floorY + worldHeightToGridRows(scaleWorld(2.1 + (featureSeed % 3) * 0.35)), 2, size.y - maxHeight - 4);
+  const podHalfAlong = Math.max(scaleWorld(1.3), halfSpan * 0.22);
+  const podHalfAcross = Math.max(halfWidth * 1.95, scaleWorld(2.2));
+  const podSpacing = halfSpan * 0.55;
+
+  const getLocal = (worldX: number, worldZ: number): { along: number; across: number } => ({
+    along: alongAxisX ? worldX - centerX : worldZ - centerZ,
+    across: alongAxisX ? worldZ - centerZ : worldX - centerX,
+  });
+  const localToWorld = (along: number, across: number): { x: number; z: number } => ({
+    x: alongAxisX ? centerX + along : centerX + across,
+    z: alongAxisX ? centerZ + across : centerZ + along,
+  });
+
+  const stampSupportColumn = (worldX: number, worldZ: number, supportHeight: number): void => {
+    const gx = clamp(worldToGrid(worldX, origin.x), 2, size.x - 3);
+    const gz = clamp(worldToGrid(worldZ, origin.z), 2, size.z - 3);
+
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        if (dx * dx + dz * dz > 2) continue;
+        fillColumnToHeight(setBlock, heightMap, origin, size, gx + dx, gz + dz, supportHeight, 'stone');
+        setBlock(gx + dx, supportHeight, gz + dz, featureSeed % 2 === 0 ? 'metal' : 'stone');
+      }
+    }
+  };
+
+  for (let x = gx0; x <= gx1; x++) {
+    for (let z = gz0; z <= gz1; z++) {
+      const worldX = gridToWorldCenter(x, origin.x);
+      const worldZ = gridToWorldCenter(z, origin.z);
+      const { along, across } = getLocal(worldX, worldZ);
+      const chipNoise = fractalNoise2(featureSeed ^ 0x3d20adea, worldX * 0.64, worldZ * 0.64, 2);
+      const bridgeWidth = halfWidth * lerp(0.86, 1.24, chipNoise);
+      const onBridge = Math.abs(along) <= halfSpan && Math.abs(across) <= bridgeWidth;
+      const inPod =
+        (Math.abs(along - podSpacing) <= podHalfAlong || Math.abs(along + podSpacing) <= podHalfAlong) &&
+        Math.abs(across) <= podHalfAcross;
+
+      if (!onBridge && !inPod) continue;
+
+      setBlock(x, deckY - 1, z, chipNoise > 0.76 ? accentBlock : 'stone');
+      setBlock(x, deckY, z, chipNoise > 0.72 ? 'glass' : 'metal');
+      for (let y = deckY + 1; y <= deckY + FEATURE_ENTRANCE_CLEARANCE_ROWS; y++) {
+        setBlock(x, y, z, 'air');
+      }
+
+      if (onBridge && Math.abs(across) > bridgeWidth - PROCEDURAL_VOXEL_SIZE.x * 1.5 && chipNoise < 0.78) {
+        setBlock(x, deckY + 1, z, chipNoise > 0.52 ? accentBlock : 'metal');
+      }
+
+      if (inPod) {
+        const podCenter = along > 0 ? podSpacing : -podSpacing;
+        const localAlong = along - podCenter;
+        const isWall = Math.abs(localAlong) > podHalfAlong - PROCEDURAL_VOXEL_SIZE.x * 1.5 || Math.abs(across) > podHalfAcross - PROCEDURAL_VOXEL_SIZE.z * 1.5;
+        const entranceCut = Math.abs(across) <= halfWidth * 0.85 && Math.abs(localAlong) > podHalfAlong - PROCEDURAL_VOXEL_SIZE.x * 2.8;
+        const podHeight = Math.max(worldHeightToGridRows(3), Math.floor(maxHeight * (along > 0 ? 0.72 : 0.58)));
+
+        for (let y = deckY + 1; y <= deckY + podHeight; y++) {
+          const isRoof = y === deckY + podHeight;
+          const window = isWall && !entranceCut && y === deckY + worldHeightToGridRows(2) && chipNoise > 0.46;
+
+          if (isRoof) {
+            setBlock(x, y, z, chipNoise > 0.62 ? 'glass' : 'metal');
+          } else if (isWall && !entranceCut) {
+            setBlock(x, y, z, window ? 'glass' : chipNoise > 0.72 ? accentBlock : 'stone');
+          } else {
+            setBlock(x, y, z, 'air');
+          }
+        }
+      }
+    }
+  }
+
+  for (const along of [-halfSpan * 0.72, -halfSpan * 0.18, halfSpan * 0.18, halfSpan * 0.72]) {
+    for (const across of [-halfWidth * 0.75, halfWidth * 0.75]) {
+      const support = localToWorld(along, across);
+      stampSupportColumn(support.x, support.z, deckY - 1);
+    }
+  }
+
+  const negativeEnd = localToWorld(-halfSpan, 0);
+  const positiveEnd = localToWorld(halfSpan, 0);
+  stampWalkableEntrancePath(
+    setBlock,
+    heightMap,
+    origin,
+    size,
+    negativeEnd.x,
+    negativeEnd.z,
+    alongAxisX ? { dx: -1, dz: 0 } : { dx: 0, dz: -1 },
+    scaleWorld(1.2),
+    FEATURE_APPROACH_WORLD_LENGTH * 0.9,
+    STRUCTURE_ENTRANCE_HALF_WIDTH_CELLS - 1,
+    deckY,
+    'metal'
+  );
+  stampWalkableEntrancePath(
+    setBlock,
+    heightMap,
+    origin,
+    size,
+    positiveEnd.x,
+    positiveEnd.z,
+    alongAxisX ? { dx: 1, dz: 0 } : { dx: 0, dz: 1 },
+    scaleWorld(1.2),
+    FEATURE_APPROACH_WORLD_LENGTH * 0.9,
+    STRUCTURE_ENTRANCE_HALF_WIDTH_CELLS - 1,
+    deckY,
+    'metal'
+  );
+}
+
+function buildingCellKey(x: number, z: number): string {
+  return `${x},${z}`;
+}
+
+function createBuildingCellMap(plan: BuildingPlan): Map<string, BuildingFootprintCell> {
+  return new Map(plan.footprint.map((cell) => [buildingCellKey(cell.x, cell.z), cell]));
+}
+
+function getBuildingVolume(plan: BuildingPlan, cell: BuildingFootprintCell): BuildingVolume | undefined {
+  if (!cell.volumeId) return undefined;
+  return plan.volumes.find((volume) => volume.id === cell.volumeId);
+}
+
+function isSolidBuildingCell(cells: Map<string, BuildingFootprintCell>, x: number, z: number): boolean {
+  const cell = cells.get(buildingCellKey(x, z));
+  return Boolean(cell && cell.zone !== 'courtyard');
+}
+
+function getBuildingCell(cells: Map<string, BuildingFootprintCell>, x: number, z: number): BuildingFootprintCell | undefined {
+  return cells.get(buildingCellKey(x, z));
+}
+
+function isBuildingExteriorEdge(cell: BuildingFootprintCell, cells: Map<string, BuildingFootprintCell>): boolean {
+  if (cell.zone === 'courtyard') return false;
+  return BUILDING_DIRECTIONS.some((direction) => !isSolidBuildingCell(cells, cell.x + direction.dx, cell.z + direction.dz));
+}
+
+function isAdjacentToCourtyard(cell: BuildingFootprintCell, cells: Map<string, BuildingFootprintCell>): boolean {
+  return BUILDING_DIRECTIONS.some((direction) => getBuildingCell(cells, cell.x + direction.dx, cell.z + direction.dz)?.zone === 'courtyard');
+}
+
+function isOpeningCoveringCell(opening: BuildingOpening, cell: BuildingFootprintCell): boolean {
+  const halfWidth = Math.floor(opening.widthCells / 2);
+  const sideX = -opening.direction.dz;
+  const sideZ = opening.direction.dx;
+  const relativeX = cell.x - opening.localPosition.x;
+  const relativeZ = cell.z - opening.localPosition.z;
+  const sideOffset = relativeX * sideX + relativeZ * sideZ;
+  const inwardOffset = -(relativeX * opening.direction.dx + relativeZ * opening.direction.dz);
+
+  return Math.abs(sideOffset) <= halfWidth && inwardOffset >= 0 && inwardOffset <= BUILDING_ENTRANCE_INWARD_CELLS;
+}
+
+function getOpeningForCell(plan: BuildingPlan, cell: BuildingFootprintCell): BuildingOpening | undefined {
+  return plan.openings.find((opening) => isOpeningCoveringCell(opening, cell));
+}
+
+function buildingRectContains(rect: { x0: number; x1: number; z0: number; z1: number }, x: number, z: number): boolean {
+  return x >= rect.x0 && x <= rect.x1 && z >= rect.z0 && z <= rect.z1;
+}
+
+function isConnectionCell(plan: BuildingPlan, cell: BuildingFootprintCell): boolean {
+  return plan.connections.some((connection) => buildingRectContains(connection.bounds, cell.x, cell.z));
+}
+
+function shouldCarveCourtyardAccess(plan: BuildingPlan, cell: BuildingFootprintCell, cells: Map<string, BuildingFootprintCell>): boolean {
+  if (!isAdjacentToCourtyard(cell, cells)) return false;
+  if (Math.abs(cell.x) <= 2 || Math.abs(cell.z) <= 2) return true;
+  return ((cell.x * 17 + cell.z * 31 + plan.seed) & 15) < 2;
+}
+
+function buildingLocalToGrid(plan: BuildingPlan, localX: number, localZ: number): { x: number; z: number } {
+  return {
+    x: plan.gridCenter.x + localX,
+    z: plan.gridCenter.z + localZ,
+  };
+}
+
+function buildingLocalToWorld(plan: BuildingPlan, origin: { x: number; z: number }, localX: number, localZ: number): { x: number; z: number } {
+  const grid = buildingLocalToGrid(plan, localX, localZ);
+  return {
+    x: gridToWorldCenter(grid.x, origin.x),
+    z: gridToWorldCenter(grid.z, origin.z),
+  };
+}
+
+function isBuildingWindow(plan: BuildingPlan, cell: BuildingFootprintCell, worldX: number, worldZ: number, row: number, heightRows: number): boolean {
+  if (row <= 2 || row >= heightRows - 1) return false;
+  if (cell.tags.includes('damaged') && row > heightRows * 0.6) return false;
+
+  const cadence =
+    cell.zone === 'tower' ? 5 :
+    cell.zone === 'shell' || cell.zone === 'balcony' ? 6 :
+    7;
+  const band = row % cadence === Math.floor(cadence * 0.52);
+  const noise = fractalNoise2(plan.seed ^ 0xb5297a4d, worldX * 0.72, (worldZ + row) * 0.72, 2);
+
+  return band && noise > (cell.zone === 'tower' ? 0.58 : 0.68);
+}
+
+function getBuildingWallBlock(
+  plan: BuildingPlan,
+  cell: BuildingFootprintCell,
+  worldX: number,
+  worldZ: number,
+  row: number,
+  material = plan.material
+): VoxelBlockId {
+  const trimNoise = fractalNoise2(plan.seed ^ 0x68bc21eb, worldX * 0.58, (worldZ + row) * 0.58, 2);
+  const roofBand = row > Math.max(2, cell.heightRows - 3);
+  const cornerBand = Math.abs(cell.x - plan.bounds.x0) <= 1 ||
+    Math.abs(cell.x - plan.bounds.x1) <= 1 ||
+    Math.abs(cell.z - plan.bounds.z0) <= 1 ||
+    Math.abs(cell.z - plan.bounds.z1) <= 1;
+
+  if (cornerBand && trimNoise > 0.82) return material.accent;
+  if (roofBand && trimNoise > 0.84) return material.roof;
+  if (row % 11 === 0 && trimNoise > 0.74) return 'metal';
+  return trimNoise > 0.94 ? material.accent : material.wall;
+}
+
+function stampBuildingVolumeSupports(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  plan: BuildingPlan
+): void {
+  for (const volume of plan.volumes) {
+    if (volume.floorRow <= plan.floorRow + 2) continue;
+
+    const width = volume.bounds.x1 - volume.bounds.x0 + 1;
+    const depth = volume.bounds.z1 - volume.bounds.z0 + 1;
+    const stepX = Math.max(5, Math.floor(width / 2));
+    const stepZ = Math.max(5, Math.floor(depth / 2));
+    const points: Array<{ x: number; z: number }> = [];
+
+    for (let x = volume.bounds.x0; x <= volume.bounds.x1; x += stepX) {
+      points.push({ x, z: volume.bounds.z0 }, { x, z: volume.bounds.z1 });
+    }
+    for (let z = volume.bounds.z0; z <= volume.bounds.z1; z += stepZ) {
+      points.push({ x: volume.bounds.x0, z }, { x: volume.bounds.x1, z });
+    }
+
+    for (const point of points) {
+      const grid = buildingLocalToGrid(plan, point.x, point.z);
+      if (grid.x < 1 || grid.x >= size.x - 1 || grid.z < 1 || grid.z >= size.z - 1) continue;
+      fillColumnToHeight(setBlock, heightMap, origin, size, grid.x, grid.z, volume.floorRow - 1, volume.material.support);
+    }
+  }
+}
+
+function stampBuildingPlanCell(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  plan: BuildingPlan,
+  cell: BuildingFootprintCell,
+  cells: Map<string, BuildingFootprintCell>
+): void {
+  const grid = buildingLocalToGrid(plan, cell.x, cell.z);
+  if (grid.x < 1 || grid.x >= size.x - 1 || grid.z < 1 || grid.z >= size.z - 1) return;
+
+  const volume = getBuildingVolume(plan, cell);
+  const material = volume?.material ?? plan.material;
+  const world = buildingLocalToWorld(plan, origin, cell.x, cell.z);
+  const opening = getOpeningForCell(plan, cell);
+  const exteriorEdge = isBuildingExteriorEdge(cell, cells);
+  const courtyardAccess = shouldCarveCourtyardAccess(plan, cell, cells);
+  const connectionCell = isConnectionCell(plan, cell);
+  const wallCell = exteriorEdge || (isAdjacentToCourtyard(cell, cells) && !courtyardAccess);
+  const elevated = cell.floorRow > plan.floorRow + 2;
+  const damaged = cell.tags.includes('damaged') || cell.tags.includes('eroded_edge');
+
+  if (cell.zone === 'courtyard') {
+    fillColumnToHeight(setBlock, heightMap, origin, size, grid.x, grid.z, cell.floorRow, material.support);
+    setBlock(grid.x, cell.floorRow, grid.z, material.floor);
+    for (let y = cell.floorRow + 1; y <= Math.min(size.y - 1, cell.floorRow + BUILDING_WALKTHROUGH_CLEARANCE_ROWS + 3); y++) {
+      setBlock(grid.x, y, grid.z, 'air');
+    }
+    return;
+  }
+
+  if (cell.zone === 'support') {
+    fillColumnToHeight(setBlock, heightMap, origin, size, grid.x, grid.z, cell.floorRow + cell.heightRows, material.support);
+    return;
+  }
+
+  if (!elevated) {
+    fillColumnToHeight(setBlock, heightMap, origin, size, grid.x, grid.z, cell.floorRow, material.support);
+  } else if (cell.zone === 'bridge') {
+    const supportColumn = ((cell.x * 13 + cell.z * 17 + plan.seed) & (exteriorEdge ? 5 : 7)) === 0;
+    if (supportColumn) {
+      fillColumnToHeight(setBlock, heightMap, origin, size, grid.x, grid.z, cell.floorRow - 1, material.support);
+    } else if (cell.floorRow > 0) {
+      setBlock(grid.x, cell.floorRow - 1, grid.z, material.support);
+    }
+  } else if (cell.zone === 'balcony' && exteriorEdge && ((cell.x * 11 + cell.z * 7 + plan.seed) & 7) === 0) {
+    fillColumnToHeight(setBlock, heightMap, origin, size, grid.x, grid.z, cell.floorRow - 1, material.support);
+  } else if (cell.floorRow > 0) {
+    setBlock(grid.x, cell.floorRow - 1, grid.z, material.support);
+  }
+
+  setBlock(grid.x, cell.floorRow, grid.z, cell.zone === 'bridge' && exteriorEdge ? material.accent : material.floor);
+
+  const roofY = cell.floorRow + cell.heightRows;
+  for (let y = cell.floorRow + 1; y <= roofY; y++) {
+    const row = y - cell.floorRow;
+    const roof = y === roofY;
+    const damageNoise = fractalNoise2(plan.seed ^ 0x85ebca6b, world.x * 0.91, (world.z + y) * 0.91, 2);
+    const brokenUpper = damaged && row > Math.max(3, cell.heightRows * 0.68) && damageNoise > (cell.tags.includes('eroded_edge') ? 0.86 : 0.92);
+
+    if (opening && row <= Math.max(opening.heightRows, BUILDING_WALKTHROUGH_CLEARANCE_ROWS)) {
+      setBlock(grid.x, y, grid.z, 'air');
+    } else if (cell.zone === 'bridge') {
+      const railing = exteriorEdge && row === 1 && !opening && damageNoise < 0.84;
+      setBlock(grid.x, y, grid.z, railing ? material.accent : 'air');
+    } else if (courtyardAccess && row <= BUILDING_WALKTHROUGH_CLEARANCE_ROWS + 1) {
+      setBlock(grid.x, y, grid.z, 'air');
+    } else if (connectionCell && row <= BUILDING_WALKTHROUGH_CLEARANCE_ROWS) {
+      setBlock(grid.x, y, grid.z, 'air');
+    } else if (roof) {
+      if (brokenUpper || (damaged && damageNoise > 0.94)) {
+        setBlock(grid.x, y, grid.z, 'air');
+      } else {
+        const glassRoof = (cell.zone === 'core' || cell.zone === 'tower' || plan.intent === 'arena_shell') && damageNoise > 0.58;
+        setBlock(grid.x, y, grid.z, glassRoof ? material.glass : material.roof);
+      }
+    } else if (wallCell) {
+      if (brokenUpper) {
+        setBlock(grid.x, y, grid.z, 'air');
+      } else {
+        setBlock(
+          grid.x,
+          y,
+          grid.z,
+          isBuildingWindow(plan, cell, world.x, world.z, row, cell.heightRows)
+            ? material.glass
+            : getBuildingWallBlock(plan, cell, world.x, world.z, row, material)
+        );
+      }
+    } else {
+      setBlock(grid.x, y, grid.z, 'air');
+    }
+  }
+}
+
+function getOpenExteriorDirections(cell: BuildingFootprintCell, cells: Map<string, BuildingFootprintCell>): BuildingDirection[] {
+  return BUILDING_DIRECTIONS.filter((direction) => !isSolidBuildingCell(cells, cell.x + direction.dx, cell.z + direction.dz));
+}
+
+function stampBuildingPlanDetails(
+  setBlock: BlockSetter,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  plan: BuildingPlan,
+  cells: Map<string, BuildingFootprintCell>
+): void {
+  for (const cell of plan.footprint) {
+    if (cell.zone === 'courtyard' || cell.zone === 'support') continue;
+
+    const grid = buildingLocalToGrid(plan, cell.x, cell.z);
+    if (grid.x < 1 || grid.x >= size.x - 1 || grid.z < 1 || grid.z >= size.z - 1) continue;
+
+    const world = buildingLocalToWorld(plan, origin, cell.x, cell.z);
+    const roofY = cell.floorRow + cell.heightRows;
+    const detailNoise = fractalNoise2(plan.seed ^ 0x94d049bb, world.x * 0.86, world.z * 0.86, 2);
+    const exteriorDirections = getOpenExteriorDirections(cell, cells);
+    const exteriorEdge = exteriorDirections.length > 0;
+    const opening = getOpeningForCell(plan, cell);
+
+    if (roofY + 1 < size.y && cell.zone !== 'bridge') {
+      if (exteriorEdge && !opening && detailNoise > (cell.zone === 'tower' ? 0.7 : 0.82)) {
+        setBlock(grid.x, roofY + 1, grid.z, plan.material.roof);
+      }
+    }
+
+    if (!exteriorEdge || opening || cell.heightRows <= BUILDING_WALKTHROUGH_CLEARANCE_ROWS + 4) continue;
+
+    const facadeY = cell.floorRow + Math.min(cell.heightRows - 2, BUILDING_WALKTHROUGH_CLEARANCE_ROWS + 2 + Math.floor(detailNoise * 4));
+    if (facadeY >= roofY || facadeY >= size.y) continue;
+
+    for (const direction of exteriorDirections) {
+      const directionNoise = fractalNoise2(
+        plan.seed ^ 0x3c6ef35f,
+        (world.x + direction.dx) * 1.1,
+        (world.z + direction.dz + facadeY) * 1.1,
+        2
+      );
+
+      if (directionNoise < (cell.zone === 'tower' || cell.zone === 'balcony' ? 0.93 : 0.97)) continue;
+
+      setBlock(grid.x, facadeY, grid.z, plan.material.roof);
+      if (facadeY + 1 < roofY && directionNoise > 0.985) {
+        setBlock(grid.x, facadeY + 1, grid.z, plan.material.roof);
+      }
+    }
+  }
+}
+
+function stampBuildingOpeningAndApproach(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  plan: BuildingPlan,
+  opening: BuildingOpening,
+  cells: Map<string, BuildingFootprintCell>
+): void {
+  const halfWidth = Math.floor(opening.widthCells / 2);
+  const sideX = -opening.direction.dz;
+  const sideZ = opening.direction.dx;
+  const openingWorld = buildingLocalToWorld(plan, origin, opening.localPosition.x, opening.localPosition.z);
+  const floorCell = getBuildingCell(cells, opening.localPosition.x, opening.localPosition.z);
+  const floorY = floorCell?.floorRow ?? plan.floorRow;
+  const clearanceRows = Math.max(opening.heightRows, BUILDING_WALKTHROUGH_CLEARANCE_ROWS);
+
+  for (let side = -halfWidth - 1; side <= halfWidth + 1; side++) {
+    for (let inward = 0; inward <= BUILDING_ENTRANCE_INWARD_CELLS; inward++) {
+      const localX = opening.localPosition.x + sideX * side - opening.direction.dx * inward;
+      const localZ = opening.localPosition.z + sideZ * side - opening.direction.dz * inward;
+      const grid = buildingLocalToGrid(plan, localX, localZ);
+      if (grid.x < 1 || grid.x >= size.x - 1 || grid.z < 1 || grid.z >= size.z - 1) continue;
+      const cell = getBuildingCell(cells, localX, localZ);
+      const topY = cell?.floorRow ?? floorY;
+
+      stampWalkableColumn(setBlock, heightMap, size, grid.x, grid.z, topY, plan.material.floor, clearanceRows);
+      for (let y = topY + 1; y <= Math.min(size.y - 1, topY + clearanceRows + 2); y++) {
+        setBlock(grid.x, y, grid.z, 'air');
+      }
+    }
+  }
+
+  stampWalkableEntrancePath(
+    setBlock,
+    heightMap,
+    origin,
+    size,
+    openingWorld.x,
+    openingWorld.z,
+    opening.direction,
+    PROCEDURAL_VOXEL_SIZE.x * 3,
+    BUILDING_APPROACH_WORLD_LENGTH,
+    Math.max(2, halfWidth),
+    floorY,
+    plan.material.floor,
+    clearanceRows
+  );
+}
+
+function stampBuildingPlan(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  plan: BuildingPlan
+): void {
+  const cells = createBuildingCellMap(plan);
+  stampBuildingVolumeSupports(setBlock, heightMap, origin, size, plan);
+
+  for (const cell of plan.footprint) {
+    stampBuildingPlanCell(setBlock, heightMap, origin, size, plan, cell, cells);
+  }
+
+  stampBuildingPlanDetails(setBlock, origin, size, plan, cells);
+
+  for (const opening of plan.openings) {
+    stampBuildingOpeningAndApproach(setBlock, heightMap, origin, size, plan, opening, cells);
+  }
+}
+
+function tryStampPlannedBuilding(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  theme: VoxelMapTheme,
+  centerX: number,
+  centerZ: number,
+  radiusX: number,
+  radiusZ: number,
+  maxHeightRows: number,
+  accentBlock: VoxelBlockId,
+  featureSeed: number,
+  diagnostics?: ProceduralVoxelMapDiagnostics
+): BuildingPlan | null {
+  const minX = centerX - radiusX * 1.18;
+  const maxX = centerX + radiusX * 1.18;
+  const minZ = centerZ - radiusZ * 1.18;
+  const maxZ = centerZ + radiusZ * 1.18;
+  const floorY = getMaxHeightInRect(heightMap, origin, size, minX, maxX, minZ, maxZ);
+
+  for (let retry = 0; retry < BUILDING_PLAN_RETRY_COUNT; retry++) {
+    const planSeed = (featureSeed ^ Math.imul(retry + 1, 0x9e3779b1)) >>> 0;
+    const result = createBuildingPlan({
+      seed: planSeed,
+      center: { x: centerX, z: centerZ },
+      radiusX,
+      radiusZ,
+      maxHeightRows,
+      floorRow: floorY,
+      theme,
+      accentBlock,
+      origin,
+      size,
+      boundary: layout.boundary,
+      spawnPoints: layout.spawnPoints,
+      flagZones: layout.flagZones,
+      approachDistance: BUILDING_APPROACH_WORLD_LENGTH,
+      minEntranceClearanceRows: BUILDING_WALKTHROUGH_CLEARANCE_ROWS,
+    });
+
+    if (result.validation.passed) {
+      stampBuildingPlan(setBlock, heightMap, origin, size, result.candidate);
+      recordBuildingDiagnostic(diagnostics, result.candidate, result.validation, true);
+      return result.candidate;
+    }
+
+    recordBuildingDiagnostic(diagnostics, result.candidate, result.validation, false);
+  }
+
+  return null;
+}
+
 function stampProceduralCave(
   setBlock: BlockSetter,
   heightMap: Uint8Array,
@@ -1304,6 +2118,8 @@ function stampMidfieldSightlineBreaker(
     for (let z = gz0; z <= gz1; z++) {
       const worldX = gridToWorldCenter(x, origin.x);
       const worldZ = gridToWorldCenter(z, origin.z);
+      if (isNearFlagGameplayArea(layout, worldX, worldZ, scaleWorld(3.2))) continue;
+
       const localX = (worldX - centerX) * normalX + (worldZ - centerZ) * normalZ;
       const localZ = (worldX - centerX) * dirX + (worldZ - centerZ) * dirZ;
       const bend =
@@ -1418,6 +2234,7 @@ function stampDirectSightlineBaffle(
   heightMap: Uint8Array,
   origin: { x: number; y: number; z: number },
   size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>,
   start: VoxelRayPoint,
   end: VoxelRayPoint,
   featureSeed: number,
@@ -1444,6 +2261,8 @@ function stampDirectSightlineBaffle(
     for (let thickness = -thicknessCells; thickness <= thicknessCells; thickness++) {
       const worldX = center.x + normalX * across * PROCEDURAL_VOXEL_SIZE.x + dirX * thickness * PROCEDURAL_VOXEL_SIZE.x;
       const worldZ = center.z + normalZ * across * PROCEDURAL_VOXEL_SIZE.z + dirZ * thickness * PROCEDURAL_VOXEL_SIZE.z;
+      if (isNearFlagGameplayArea(layout, worldX, worldZ, scaleWorld(3.2))) continue;
+
       const x = clamp(worldToGrid(worldX, origin.x), 1, size.x - 2);
       const z = clamp(worldToGrid(worldZ, origin.z), 1, size.z - 2);
       const acrossNorm = across / Math.max(1, widthCells);
@@ -1497,6 +2316,7 @@ function enforceSpawnSightlineOcclusion(
           heightMap,
           origin,
           size,
+          layout,
           redEye,
           blueEye,
           seed ^ Math.floor((redSpawn.x + 32) * 97) ^ Math.floor((blueSpawn.x + 32) * 193) ^ pass,
@@ -1631,6 +2451,68 @@ function canPlaceFeature(
   return true;
 }
 
+function canPlacePlannedBuildingFeature(
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  accepted: FeatureAnchor[],
+  worldX: number,
+  worldZ: number,
+  radius: number
+): boolean {
+  const boundaryRange = getBoundaryRange(layout.boundary);
+  if (
+    worldX < boundaryRange.minX + scaleWorld(1) ||
+    worldX > boundaryRange.maxX - scaleWorld(1) ||
+    worldZ < boundaryRange.minZ + scaleWorld(1) ||
+    worldZ > boundaryRange.maxZ - scaleWorld(1)
+  ) {
+    return false;
+  }
+  if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) return false;
+  if (distanceToBoundary(worldX, worldZ, layout.boundary) < Math.max(scaleWorld(1.2), radius * 0.38)) return false;
+  if (isNearFlagGameplayArea(layout, worldX, worldZ, radius)) return false;
+  if (isNearProtectedGameplayArea(layout, worldX, worldZ, Math.max(scaleWorld(1.2), radius * 0.36))) return false;
+
+  for (const feature of accepted) {
+    const relaxedSpacing = Math.max(scaleWorld(1.6), radius * 0.55 + feature.radius * 0.45);
+    if (distanceSq(worldX, worldZ, feature.x, feature.z) < relaxedSpacing ** 2) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function canPlaceFallbackBuildingFeature(
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  accepted: FeatureAnchor[],
+  worldX: number,
+  worldZ: number,
+  radius: number
+): boolean {
+  const boundaryRange = getBoundaryRange(layout.boundary);
+  if (
+    worldX < boundaryRange.minX + scaleWorld(2) ||
+    worldX > boundaryRange.maxX - scaleWorld(2) ||
+    worldZ < boundaryRange.minZ + scaleWorld(2) ||
+    worldZ > boundaryRange.maxZ - scaleWorld(2)
+  ) {
+    return false;
+  }
+  if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) return false;
+  if (distanceToBoundary(worldX, worldZ, layout.boundary) < Math.max(scaleWorld(1.1), radius * 0.35)) return false;
+  if (isNearFlagGameplayArea(layout, worldX, worldZ, radius)) return false;
+  if (isNearProtectedGameplayArea(layout, worldX, worldZ, radius)) return false;
+
+  for (const feature of accepted) {
+    const relaxedSpacing = Math.max(scaleWorld(1.4), radius * 0.45 + feature.radius * 0.36);
+    if (distanceSq(worldX, worldZ, feature.x, feature.z) < relaxedSpacing ** 2) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function stampGuaranteedLandmarks(
   setBlock: BlockSetter,
   heightMap: Uint8Array,
@@ -1639,16 +2521,18 @@ function stampGuaranteedLandmarks(
   layout: ReturnType<typeof createProceduralCTFLayout>,
   theme: VoxelMapTheme,
   seed: number,
-  accepted: FeatureAnchor[]
-): void {
+  accepted: FeatureAnchor[],
+  diagnostics?: ProceduralVoxelMapDiagnostics
+): number {
   const random = mulberry32(seed ^ 0xdecafbad);
   const boundaryRange = getBoundaryRange(layout.boundary);
   const halfPlayableX = Math.min(scaleWorld(30), Math.max(scaleWorld(12), (boundaryRange.maxX - boundaryRange.minX) * 0.5 - scaleWorld(4)));
   const halfPlayableZ = Math.min(scaleWorld(25), Math.max(scaleWorld(10), (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - scaleWorld(4)));
-  const targetLandmarks = scaleCount(5, 6, random, 3);
+  const targetLandmarks = 2 + Math.floor(random() * 2);
   let landmarksPlaced = 0;
+  let plannedBuildingsPlaced = 0;
 
-  for (let attempts = 0; attempts < 180 && landmarksPlaced < targetLandmarks; attempts++) {
+  for (let attempts = 0; attempts < 90 && landmarksPlaced < targetLandmarks; attempts++) {
     const centerBias = random() < 0.38;
     const centerX = centerBias ? scaleWorld(lerp(-12, 12, random())) : lerp(-halfPlayableX, halfPlayableX, random());
     const centerZ = lerp(-halfPlayableZ, halfPlayableZ, random());
@@ -1658,66 +2542,31 @@ function stampGuaranteedLandmarks(
     const featureSeed = seed ^ Math.floor(random() * 0xffffffff);
     const accentBlock: VoxelBlockId = random() > 0.5 ? 'neon_red' : 'neon_blue';
 
-    if (!canPlaceFeature(layout, accepted, centerX, centerZ, radius)) continue;
-
     const styleRoll = random();
-    if (styleRoll < 0.22) {
-      stampProceduralStructure(
+    if (styleRoll < 0.52) {
+      if (!canPlacePlannedBuildingFeature(layout, accepted, centerX, centerZ, radius)) continue;
+
+      const plan = tryStampPlannedBuilding(
         setBlock,
         heightMap,
         origin,
         size,
+        layout,
+        theme,
         centerX,
         centerZ,
         radiusX,
         radiusZ,
-        worldHeightToGridRows(scaleWorld(lerp(4.2, 7.2, random()))),
+        worldHeightToGridRows(scaleWorld(lerp(4.2, 8.0, random()))),
         accentBlock,
-        featureSeed
+        featureSeed,
+        diagnostics
       );
-    } else if (styleRoll < 0.4) {
-      stampTerracedPlatform(
-        setBlock,
-        heightMap,
-        origin,
-        size,
-        centerX,
-        centerZ,
-        radiusX,
-        radiusZ,
-        worldHeightToGridRows(scaleWorld(lerp(3.2, 5.8, random()))),
-        accentBlock,
-        featureSeed
-      );
-    } else if (styleRoll < 0.55) {
-      stampPylonCluster(
-        setBlock,
-        heightMap,
-        origin,
-        size,
-        centerX,
-        centerZ,
-        radiusX,
-        radiusZ,
-        worldHeightToGridRows(scaleWorld(lerp(3.6, 6.4, random()))),
-        accentBlock,
-        featureSeed
-      );
-    } else if (styleRoll < 0.7) {
-      stampBrokenWall(
-        setBlock,
-        heightMap,
-        origin,
-        size,
-        centerX,
-        centerZ,
-        radiusX,
-        radiusZ,
-        worldHeightToGridRows(scaleWorld(lerp(3.2, 6.2, random()))),
-        accentBlock,
-        featureSeed
-      );
-    } else if (styleRoll < 0.86) {
+      if (!plan) continue;
+      plannedBuildingsPlaced++;
+    } else if (styleRoll < 0.82) {
+      if (!canPlaceFeature(layout, accepted, centerX, centerZ, radius)) continue;
+
       stampTunnelPassage(
         setBlock,
         heightMap,
@@ -1732,6 +2581,8 @@ function stampGuaranteedLandmarks(
         featureSeed
       );
     } else {
+      if (!canPlaceFeature(layout, accepted, centerX, centerZ, radius)) continue;
+
       stampProceduralCave(
         setBlock,
         heightMap,
@@ -1746,7 +2597,7 @@ function stampGuaranteedLandmarks(
       );
     }
 
-    accepted.push({ x: centerX, z: centerZ, radius });
+    accepted.push({ x: centerX, z: centerZ, radius: radius + scaleWorld(2.4) });
     landmarksPlaced++;
   }
 
@@ -1754,6 +2605,62 @@ function stampGuaranteedLandmarks(
     stampMidfieldSightlineBreaker(setBlock, heightMap, origin, size, layout, seed ^ 0x91e10da5);
     accepted.push({ x: scaleWorld(lerp(-8, 8, random())), z: scaleWorld(lerp(-5, 5, random())), radius: scaleWorld(8) });
   }
+
+  return plannedBuildingsPlaced;
+}
+
+function stampFallbackPlannedBuilding(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  theme: VoxelMapTheme,
+  accepted: FeatureAnchor[],
+  halfPlayableX: number,
+  halfPlayableZ: number,
+  seed: number,
+  diagnostics?: ProceduralVoxelMapDiagnostics
+): boolean {
+  const radiusX = scaleWorld(2.9);
+  const radiusZ = scaleWorld(2.8);
+  const radius = Math.max(radiusX, radiusZ);
+  const candidates: Array<{ x: number; z: number }> = [];
+
+  for (const xFactor of [-0.55, 0.55, -0.32, 0.32, 0]) {
+    for (const zFactor of [-0.38, 0, 0.38]) {
+      candidates.push({ x: halfPlayableX * xFactor, z: halfPlayableZ * zFactor });
+    }
+  }
+
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[(index + (seed % candidates.length)) % candidates.length];
+    if (!canPlaceFallbackBuildingFeature(layout, accepted, candidate.x, candidate.z, radius)) continue;
+
+    const accentBlock: VoxelBlockId = (seed + index) % 2 === 0 ? 'neon_red' : 'neon_blue';
+    const plan = tryStampPlannedBuilding(
+      setBlock,
+      heightMap,
+      origin,
+      size,
+      layout,
+      theme,
+      candidate.x,
+      candidate.z,
+      radiusX,
+      radiusZ,
+      worldHeightToGridRows(scaleWorld(5.2 + (index % 3))),
+      accentBlock,
+      seed ^ Math.imul(index + 1, 0x632be59b),
+      diagnostics
+    );
+
+    if (!plan) continue;
+    accepted.push({ x: candidate.x, z: candidate.z, radius });
+    return true;
+  }
+
+  return false;
 }
 
 function stampProceduralFeatures(
@@ -1764,15 +2671,16 @@ function stampProceduralFeatures(
   layout: ReturnType<typeof createProceduralCTFLayout>,
   random: () => number,
   theme: VoxelMapTheme,
-  seed: number
+  seed: number,
+  diagnostics?: ProceduralVoxelMapDiagnostics
 ): void {
   const accepted: FeatureAnchor[] = [];
   const boundaryRange = getBoundaryRange(layout.boundary);
   const halfPlayableX = Math.min(scaleWorld(30), Math.max(scaleWorld(12), (boundaryRange.maxX - boundaryRange.minX) * 0.5 - scaleWorld(4)));
   const halfPlayableZ = Math.min(scaleWorld(25), Math.max(scaleWorld(10), (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - scaleWorld(4)));
-  stampGuaranteedLandmarks(setBlock, heightMap, origin, size, layout, theme, seed, accepted);
+  let plannedBuildingsPlaced = stampGuaranteedLandmarks(setBlock, heightMap, origin, size, layout, theme, seed, accepted, diagnostics);
 
-  const caveCount = scaleCount(2, 3, random, 1);
+  const caveCount = 1 + Math.floor(random() * 2);
 
   for (let i = 0; i < caveCount; i++) {
     const centerX = lerp(-halfPlayableX, halfPlayableX, random());
@@ -1786,13 +2694,13 @@ function stampProceduralFeatures(
     if (!canPlaceFeature(layout, accepted, centerX, centerZ, radius)) continue;
 
     stampProceduralCave(setBlock, heightMap, origin, size, centerX, centerZ, width, depth, height, featureSeed);
-    accepted.push({ x: centerX, z: centerZ, radius });
+    accepted.push({ x: centerX, z: centerZ, radius: radius + scaleWorld(1.4) });
   }
 
-  const structureCount = scaleCount(6, 4, random, 4);
+  const structureCount = 1 + Math.floor(random() * 2);
   let structuresPlaced = 0;
 
-  for (let attempts = 0; attempts < 120 && structuresPlaced < structureCount; attempts++) {
+  for (let attempts = 0; attempts < 70 && structuresPlaced < structureCount; attempts++) {
     const nearCenter = random() < 0.24;
     const baseX = nearCenter ? scaleWorld(lerp(-12, 12, random())) : (random() < 0.5 ? -1 : 1) * lerp(scaleWorld(7), halfPlayableX, random());
     const baseZ = lerp(-halfPlayableZ, halfPlayableZ, random());
@@ -1802,42 +2710,43 @@ function stampProceduralFeatures(
     const radius = Math.max(radiusX, radiusZ);
     const featureSeed = Math.floor(random() * 0xffffffff);
     const accentBlock = random() > 0.5 ? 'neon_red' : 'neon_blue';
-    const structureStyle = Math.floor(random() * 4);
 
-    if (!canPlaceFeature(layout, accepted, baseX, baseZ, radius)) {
+    if (!canPlacePlannedBuildingFeature(layout, accepted, baseX, baseZ, radius)) {
       continue;
     }
 
-    if (structureStyle === 0) {
-      stampProceduralStructure(
-        setBlock,
-        heightMap,
-        origin,
-        size,
-        baseX,
-        baseZ,
-        radiusX,
-        radiusZ,
-        height,
-        accentBlock,
-        featureSeed
-      );
-    } else if (structureStyle === 1) {
-      stampTerracedPlatform(setBlock, heightMap, origin, size, baseX, baseZ, radiusX, radiusZ, height, accentBlock, featureSeed);
-    } else if (structureStyle === 2) {
-      stampPylonCluster(setBlock, heightMap, origin, size, baseX, baseZ, radiusX, radiusZ, height, accentBlock, featureSeed);
-    } else {
-      stampBrokenWall(setBlock, heightMap, origin, size, baseX, baseZ, radiusX, radiusZ, height, accentBlock, featureSeed);
-    }
+    const plan = tryStampPlannedBuilding(
+      setBlock,
+      heightMap,
+      origin,
+      size,
+      layout,
+      theme,
+      baseX,
+      baseZ,
+      radiusX,
+      radiusZ,
+      height + worldHeightToGridRows(scaleWorld(1.2)),
+      accentBlock,
+      featureSeed,
+      diagnostics
+    );
 
-    accepted.push({ x: baseX, z: baseZ, radius });
+    if (!plan) continue;
+
+    accepted.push({ x: baseX, z: baseZ, radius: radius + scaleWorld(2.2) });
+    plannedBuildingsPlaced++;
     structuresPlaced++;
   }
 
-  const groveCount = scaleCount(7, 8, random, 4);
+  if (plannedBuildingsPlaced === 0 && stampFallbackPlannedBuilding(setBlock, heightMap, origin, size, layout, theme, accepted, halfPlayableX, halfPlayableZ, seed, diagnostics)) {
+    plannedBuildingsPlaced++;
+  }
+
+  const groveCount = scaleCount(4, 5, random, 2);
   let grovesPlaced = 0;
 
-  for (let attempts = 0; attempts < 130 && grovesPlaced < groveCount; attempts++) {
+  for (let attempts = 0; attempts < 90 && grovesPlaced < groveCount; attempts++) {
     const baseX = lerp(-halfPlayableX, halfPlayableX, random());
     const baseZ = lerp(-halfPlayableZ, halfPlayableZ, random());
     const radius = scaleWorld(lerp(2.8, 5.8, random()));
@@ -1849,14 +2758,14 @@ function stampProceduralFeatures(
     }
 
     stampThemedNaturalFeature(setBlock, heightMap, origin, size, theme, baseX, baseZ, trunkHeight, featureSeed);
-    accepted.push({ x: baseX, z: baseZ, radius });
+    accepted.push({ x: baseX, z: baseZ, radius: radius + scaleWorld(1.2) });
     grovesPlaced++;
   }
 
-  const coverCount = scaleCount(22, 18, random, 14);
+  const coverCount = scaleCount(12, 10, random, 7);
   let coverPlaced = 0;
 
-  for (let attempts = 0; attempts < 170 && coverPlaced < coverCount; attempts++) {
+  for (let attempts = 0; attempts < 120 && coverPlaced < coverCount; attempts++) {
     const baseX = lerp(-halfPlayableX, halfPlayableX, random());
     const baseZ = lerp(-halfPlayableZ, halfPlayableZ, random());
     const radiusX = scaleWorld(lerp(1.1, 3.4, random()));
@@ -1878,7 +2787,7 @@ function stampProceduralFeatures(
       stampThemedNaturalFeature(setBlock, heightMap, origin, size, theme, baseX, baseZ, trunkHeight, featureSeed);
     }
 
-    accepted.push({ x: baseX, z: baseZ, radius });
+    accepted.push({ x: baseX, z: baseZ, radius: radius + scaleWorld(0.8) });
     coverPlaced++;
   }
 }
@@ -2023,6 +2932,89 @@ function paintSpawnPoints(
   }
 }
 
+function clearFlagZone(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  flag: { x: number; z: number }
+): void {
+  const centerX = clamp(worldToGrid(flag.x, origin.x), 0, size.x - 1);
+  const centerZ = clamp(worldToGrid(flag.z, origin.z), 0, size.z - 1);
+  const targetSurfaceY = clamp(heightMap[centerX + centerZ * size.x] - 1, 1, size.y - 2);
+  const targetHeight = targetSurfaceY + 1;
+  const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(
+    origin,
+    size,
+    flag.x - FLAG_CLEAR_RADIUS,
+    flag.x + FLAG_CLEAR_RADIUS,
+    flag.z - FLAG_CLEAR_RADIUS,
+    flag.z + FLAG_CLEAR_RADIUS
+  );
+
+  for (let x = gx0; x <= gx1; x++) {
+    for (let z = gz0; z <= gz1; z++) {
+      const worldX = gridToWorldCenter(x, origin.x);
+      const worldZ = gridToWorldCenter(z, origin.z);
+      if (distanceSq(worldX, worldZ, flag.x, flag.z) > FLAG_CLEAR_RADIUS ** 2) continue;
+
+      const columnIndex = x + z * size.x;
+      heightMap[columnIndex] = targetHeight;
+      setBlock(x, 0, z, 'barrier');
+
+      for (let y = 1; y <= targetSurfaceY; y++) {
+        setBlock(x, y, z, 'stone');
+      }
+
+      for (let y = targetSurfaceY + 1; y < size.y; y++) {
+        setBlock(x, y, z, 'air');
+      }
+    }
+  }
+}
+
+function clearFlagZones(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  flags: { red: { x: number; z: number }; blue: { x: number; z: number } }
+): void {
+  clearFlagZone(setBlock, heightMap, origin, size, flags.red);
+  clearFlagZone(setBlock, heightMap, origin, size, flags.blue);
+}
+
+function paintFlagPads(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  flags: { red: { x: number; z: number }; blue: { x: number; z: number } }
+): void {
+  paintSurfaceRect(
+    setBlock,
+    heightMap,
+    origin,
+    size,
+    flags.red.x - 3,
+    flags.red.x + 3,
+    flags.red.z - 2,
+    flags.red.z + 2,
+    'flag_pad'
+  );
+  paintSurfaceRect(
+    setBlock,
+    heightMap,
+    origin,
+    size,
+    flags.blue.x - 3,
+    flags.blue.x + 3,
+    flags.blue.z - 2,
+    flags.blue.z + 2,
+    'flag_pad'
+  );
+}
+
 function clearSpawnPoint(
   setBlock: BlockSetter,
   heightMap: Uint8Array,
@@ -2072,7 +3064,10 @@ function clearSpawnPoints(
   }
 }
 
-export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): VoxelMapManifest {
+function generateProceduralVoxelMapInternal(
+  seed = DEFAULT_PROCEDURAL_MAP_SEED,
+  diagnostics?: ProceduralVoxelMapDiagnostics
+): VoxelMapManifest {
   const normalizedSeed = seed >>> 0;
   const layout = createProceduralCTFLayout(normalizedSeed);
   const theme = getVoxelMapTheme(normalizedSeed);
@@ -2218,7 +3213,18 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
       const worldZ = gridToWorldCenter(z, origin.z);
       const insideBoundary = isInsideBoundaryPolygon(worldX, worldZ, layout.boundary);
       const boundaryDistance = distanceToBoundary(worldX, worldZ, layout.boundary);
-      const boundarySurface = !insideBoundary || boundaryDistance < scaleWorld(2.2);
+      const boundaryWallShell = !insideBoundary && boundaryDistance < BOUNDARY_WALL_THICKNESS;
+      if (!insideBoundary && !boundaryWallShell) continue;
+
+      if (boundaryWallShell) {
+        const wallTopY = Math.min(size.y - 1, height + edgeWallRows + worldHeightToGridRows(scaleWorld(1.9)));
+        for (let y = 0; y <= wallTopY; y++) {
+          setBlock(x, y, z, y === 0 ? 'barrier' : 'stone');
+        }
+        continue;
+      }
+
+      const boundarySurface = boundaryDistance < BOUNDARY_SURFACE_THICKNESS;
       const rockPatch = fractalNoise2(normalizedSeed ^ 0xa11ce, worldX * 0.09, worldZ * 0.09, 3) > 0.76;
 
       for (let y = 0; y < height; y++) {
@@ -2236,8 +3242,7 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
       }
 
       if (boundarySurface) {
-        const wallRows = edgeWallRows + (!insideBoundary ? worldHeightToGridRows(scaleWorld(2)) : 0);
-        for (let y = height; y < Math.min(size.y, height + wallRows); y++) {
+        for (let y = height; y < Math.min(size.y, height + edgeWallRows); y++) {
           setBlock(x, y, z, 'stone');
         }
       }
@@ -2248,33 +3253,18 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
 
   paintSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.red, 'spawn_pad_red');
   paintSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
-  paintSurfaceRect(
-    setBlock,
-    heightMap,
-    origin,
-    size,
-    layout.flagZones.red.x - 3,
-    layout.flagZones.red.x + 3,
-    layout.flagZones.red.z - 2,
-    layout.flagZones.red.z + 2,
-    'flag_pad'
-  );
-  paintSurfaceRect(
-    setBlock,
-    heightMap,
-    origin,
-    size,
-    layout.flagZones.blue.x - 3,
-    layout.flagZones.blue.x + 3,
-    layout.flagZones.blue.z - 2,
-    layout.flagZones.blue.z + 2,
-    'flag_pad'
-  );
+  paintFlagPads(setBlock, heightMap, origin, size, layout.flagZones);
 
-  stampProceduralFeatures(setBlock, heightMap, origin, size, layout, random, theme, normalizedSeed);
+  stampProceduralFeatures(setBlock, heightMap, origin, size, layout, random, theme, normalizedSeed, diagnostics);
+  clearFlagZones(setBlock, heightMap, origin, size, layout.flagZones);
+  paintFlagPads(setBlock, heightMap, origin, size, layout.flagZones);
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.red, 'spawn_pad_red');
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
   enforceSpawnSightlineOcclusion(setBlock, blocks, heightMap, origin, size, layout, normalizedSeed);
+  clearFlagZones(setBlock, heightMap, origin, size, layout.flagZones);
+  paintFlagPads(setBlock, heightMap, origin, size, layout.flagZones);
+  clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.red, 'spawn_pad_red');
+  clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
 
   const chunks: VoxelChunk[] = [];
   for (let cy = 0; cy < Math.ceil(size.y / chunkSize.y); cy++) {
@@ -2366,6 +3356,23 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
       solidBlocks,
       colliderCount: colliders.length,
     },
+  };
+}
+
+export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): VoxelMapManifest {
+  return generateProceduralVoxelMapInternal(seed);
+}
+
+export function generateProceduralVoxelMapWithDiagnostics(seed = DEFAULT_PROCEDURAL_MAP_SEED): ProceduralVoxelMapGenerationResult {
+  const normalizedSeed = seed >>> 0;
+  const diagnostics = createProceduralVoxelMapDiagnostics(normalizedSeed, getVoxelMapTheme(normalizedSeed).id);
+  const manifest = generateProceduralVoxelMapInternal(normalizedSeed, diagnostics);
+
+  diagnostics.themeId = manifest.theme.id;
+
+  return {
+    manifest,
+    diagnostics,
   };
 }
 

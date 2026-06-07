@@ -11,6 +11,7 @@
     "build:server": "turbo run build --filter=@voxel-strike/server",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "smoke:procedural-buildings": "pnpm --filter @voxel-strike/shared smoke:buildings",
     "clean": "turbo run clean",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",

@@ -17,10 +17,10 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
+    "smoke:buildings": "pnpm build && node scripts/procedural-building-smoke.mjs",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
     "typescript": "^5.6.3"
   }
 }
-

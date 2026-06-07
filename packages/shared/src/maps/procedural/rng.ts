@@ -23,6 +23,13 @@ export function hash2(seed: number, x: number, z: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+export function hashSeed(seed: number): number {
+  let h = normalizeSeed(seed);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
 export function createRandomSeed(source = Date.now()): number {
   return normalizeSeed(Math.imul(source >>> 0, 0x9e3779b1) ^ Math.floor(Math.random() * 0xffffffff));
 }

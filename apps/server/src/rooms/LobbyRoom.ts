@@ -1,6 +1,6 @@
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { createRandomSeed, getVoxelMapTheme, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import { createRandomSeed, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { BotDifficulty, Team } from '@voxel-strike/shared';
 
 interface JoinOptions {
@@ -80,19 +80,15 @@ function getShuffledThemeIndices(source: number): number[] {
 }
 
 function createSeedForTheme(themeIndex: number, source: number): number {
-  const seed = createRandomSeed(source);
+  const seed = createRandomSeed(source ^ Math.imul(themeIndex + 1, 0x9e3779b1));
+  const stride = hashSeed(seed ^ source ^ 0xa5a5a5a5) | 1;
   const targetTheme = VOXEL_MAP_THEMES[themeIndex];
   if (!targetTheme) return seed;
 
-  for (let offset = 0; offset < VOXEL_MAP_THEMES.length; offset++) {
-    const higherSeed = (seed + offset) >>> 0;
-    if (getVoxelMapTheme(higherSeed).id === targetTheme.id) {
-      return higherSeed;
-    }
-
-    const lowerSeed = (seed - offset) >>> 0;
-    if (getVoxelMapTheme(lowerSeed).id === targetTheme.id) {
-      return lowerSeed;
+  for (let attempt = 0; attempt < 512; attempt++) {
+    const candidate = (seed + Math.imul(attempt, stride)) >>> 0;
+    if (getVoxelMapTheme(candidate).id === targetTheme.id) {
+      return candidate;
     }
   }
 
@@ -741,14 +737,14 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private createMapVoteOptions(): MapVoteOption[] {
-    const source = Date.now() + this.botIdCounter * 101;
+    const source = hashSeed(Date.now() ^ Math.imul(this.botIdCounter + 1, 0x632be59b));
     const themeIndices = getShuffledThemeIndices(source);
 
     return Array.from({ length: MAP_VOTE_OPTION_COUNT }, (_, index) => {
       const themeIndex = themeIndices[index % themeIndices.length];
-      const seed = createSeedForTheme(themeIndex, source + index * 9973);
+      const seed = createSeedForTheme(themeIndex, source ^ Math.imul(index + 1, 0x85ebca6b));
       const theme = getVoxelMapTheme(seed);
-      const suffix = MAP_NAME_SUFFIXES[(seed + index) % MAP_NAME_SUFFIXES.length];
+      const suffix = MAP_NAME_SUFFIXES[hashSeed(seed ^ index) % MAP_NAME_SUFFIXES.length];
 
       return {
         id: `map_${index + 1}`,
