@@ -30,6 +30,9 @@ interface ChunkLookupKey {
   z: number;
 }
 
+const blockAccessorCache = new Map<string, (x: number, y: number, z: number) => number>();
+const geometryCache = new Map<string, THREE.BufferGeometry>();
+
 function blockIndex(x: number, y: number, z: number, size: { x: number; y: number; z: number }): number {
   return x + size.x * (z + size.z * y);
 }
@@ -39,13 +42,16 @@ function chunkKey(coord: ChunkLookupKey): string {
 }
 
 function createBlockAccessor(manifest: VoxelMapManifest): (x: number, y: number, z: number) => number {
+  const cached = blockAccessorCache.get(manifest.id);
+  if (cached) return cached;
+
   const chunks = new Map<string, VoxelChunk>();
 
   for (const chunk of manifest.chunks) {
     chunks.set(chunkKey(chunk.coord), chunk);
   }
 
-  return (x, y, z) => {
+  const accessor = (x: number, y: number, z: number) => {
     if (x < 0 || x >= manifest.size.x || y < 0 || y >= manifest.size.y || z < 0 || z >= manifest.size.z) {
       return 0;
     }
@@ -65,6 +71,9 @@ function createBlockAccessor(manifest: VoxelMapManifest): (x: number, y: number,
       )
     ];
   };
+
+  blockAccessorCache.set(manifest.id, accessor);
+  return accessor;
 }
 
 function pushUv(buffers: MeshBuffers, blockId: VoxelBlockId, face: VoxelFaceDirection): void {
@@ -158,6 +167,10 @@ function greedyMask(
 }
 
 export function buildVoxelChunkGeometry(manifest: VoxelMapManifest, chunk: VoxelChunk): THREE.BufferGeometry {
+  const cacheKey = `${manifest.id}:${chunk.coord.x}:${chunk.coord.y}:${chunk.coord.z}`;
+  const cached = geometryCache.get(cacheKey);
+  if (cached) return cached;
+
   const buffers: MeshBuffers = { positions: [], normals: [], uvs: [], indices: [] };
   const getBlock = createBlockAccessor(manifest);
   const chunkOrigin = {
@@ -168,37 +181,85 @@ export function buildVoxelChunkGeometry(manifest: VoxelMapManifest, chunk: Voxel
 
   const isFaceVisible = (block: number, neighbor: number): boolean => isSolidBlock(block) && !isSolidBlock(neighbor);
 
-  for (let ly = 0; ly < chunk.size.y; ly++) {
-    for (let lz = 0; lz < chunk.size.z; lz++) {
-      for (let lx = 0; lx < chunk.size.x; lx++) {
-        const gx = chunkOrigin.x + lx;
+  for (let lx = 0; lx < chunk.size.x; lx++) {
+    const pxMask: (VoxelBlockId | null)[] = new Array(chunk.size.z * chunk.size.y).fill(null);
+    const nxMask: (VoxelBlockId | null)[] = new Array(chunk.size.z * chunk.size.y).fill(null);
+    const gx = chunkOrigin.x + lx;
+
+    for (let ly = 0; ly < chunk.size.y; ly++) {
+      for (let lz = 0; lz < chunk.size.z; lz++) {
         const gy = chunkOrigin.y + ly;
         const gz = chunkOrigin.z + lz;
         const block = getBlock(gx, gy, gz);
-
         if (!isSolidBlock(block)) continue;
 
         const blockId = getBlockId(block);
-        if (isFaceVisible(block, getBlock(gx + 1, gy, gz))) {
-          emitFace(buffers, 'px', { x: gx, y: gy, z: gz, width: 1, height: 1, blockId });
-        }
-        if (isFaceVisible(block, getBlock(gx - 1, gy, gz))) {
-          emitFace(buffers, 'nx', { x: gx, y: gy, z: gz, width: 1, height: 1, blockId });
-        }
-        if (isFaceVisible(block, getBlock(gx, gy + 1, gz))) {
-          emitFace(buffers, 'py', { x: gx, y: gy, z: gz, width: 1, height: 1, blockId });
-        }
-        if (isFaceVisible(block, getBlock(gx, gy - 1, gz))) {
-          emitFace(buffers, 'ny', { x: gx, y: gy, z: gz, width: 1, height: 1, blockId });
-        }
-        if (isFaceVisible(block, getBlock(gx, gy, gz + 1))) {
-          emitFace(buffers, 'pz', { x: gx, y: gy, z: gz, width: 1, height: 1, blockId });
-        }
-        if (isFaceVisible(block, getBlock(gx, gy, gz - 1))) {
-          emitFace(buffers, 'nz', { x: gx, y: gy, z: gz, width: 1, height: 1, blockId });
-        }
+        const index = lz + ly * chunk.size.z;
+        if (isFaceVisible(block, getBlock(gx + 1, gy, gz))) pxMask[index] = blockId;
+        if (isFaceVisible(block, getBlock(gx - 1, gy, gz))) nxMask[index] = blockId;
       }
     }
+
+    greedyMask(pxMask, chunk.size.z, chunk.size.y, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'px', { x: gx, y: chunkOrigin.y + v, z: chunkOrigin.z + u, width, height, blockId });
+    });
+    greedyMask(nxMask, chunk.size.z, chunk.size.y, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'nx', { x: gx, y: chunkOrigin.y + v, z: chunkOrigin.z + u, width, height, blockId });
+    });
+  }
+
+  for (let ly = 0; ly < chunk.size.y; ly++) {
+    const pyMask: (VoxelBlockId | null)[] = new Array(chunk.size.x * chunk.size.z).fill(null);
+    const nyMask: (VoxelBlockId | null)[] = new Array(chunk.size.x * chunk.size.z).fill(null);
+    const gy = chunkOrigin.y + ly;
+
+    for (let lz = 0; lz < chunk.size.z; lz++) {
+      for (let lx = 0; lx < chunk.size.x; lx++) {
+        const gx = chunkOrigin.x + lx;
+        const gz = chunkOrigin.z + lz;
+        const block = getBlock(gx, gy, gz);
+        if (!isSolidBlock(block)) continue;
+
+        const blockId = getBlockId(block);
+        const index = lx + lz * chunk.size.x;
+        if (isFaceVisible(block, getBlock(gx, gy + 1, gz))) pyMask[index] = blockId;
+        if (isFaceVisible(block, getBlock(gx, gy - 1, gz))) nyMask[index] = blockId;
+      }
+    }
+
+    greedyMask(pyMask, chunk.size.x, chunk.size.z, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'py', { x: chunkOrigin.x + u, y: gy, z: chunkOrigin.z + v, width, height, blockId });
+    });
+    greedyMask(nyMask, chunk.size.x, chunk.size.z, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'ny', { x: chunkOrigin.x + u, y: gy, z: chunkOrigin.z + v, width, height, blockId });
+    });
+  }
+
+  for (let lz = 0; lz < chunk.size.z; lz++) {
+    const pzMask: (VoxelBlockId | null)[] = new Array(chunk.size.x * chunk.size.y).fill(null);
+    const nzMask: (VoxelBlockId | null)[] = new Array(chunk.size.x * chunk.size.y).fill(null);
+    const gz = chunkOrigin.z + lz;
+
+    for (let ly = 0; ly < chunk.size.y; ly++) {
+      for (let lx = 0; lx < chunk.size.x; lx++) {
+        const gx = chunkOrigin.x + lx;
+        const gy = chunkOrigin.y + ly;
+        const block = getBlock(gx, gy, gz);
+        if (!isSolidBlock(block)) continue;
+
+        const blockId = getBlockId(block);
+        const index = lx + ly * chunk.size.x;
+        if (isFaceVisible(block, getBlock(gx, gy, gz + 1))) pzMask[index] = blockId;
+        if (isFaceVisible(block, getBlock(gx, gy, gz - 1))) nzMask[index] = blockId;
+      }
+    }
+
+    greedyMask(pzMask, chunk.size.x, chunk.size.y, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'pz', { x: chunkOrigin.x + u, y: chunkOrigin.y + v, z: gz, width, height, blockId });
+    });
+    greedyMask(nzMask, chunk.size.x, chunk.size.y, (u, v, width, height, blockId) => {
+      emitFace(buffers, 'nz', { x: chunkOrigin.x + u, y: chunkOrigin.y + v, z: gz, width, height, blockId });
+    });
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -211,5 +272,21 @@ export function buildVoxelChunkGeometry(manifest: VoxelMapManifest, chunk: Voxel
   geometry.translate(manifest.origin.x, manifest.origin.y, manifest.origin.z);
   geometry.computeBoundingSphere();
 
+  geometryCache.set(cacheKey, geometry);
   return geometry;
+}
+
+export function clearVoxelGeometryCache(manifestId?: string): void {
+  if (!manifestId) {
+    geometryCache.clear();
+    blockAccessorCache.clear();
+    return;
+  }
+
+  for (const key of geometryCache.keys()) {
+    if (key.startsWith(`${manifestId}:`)) {
+      geometryCache.delete(key);
+    }
+  }
+  blockAccessorCache.delete(manifestId);
 }

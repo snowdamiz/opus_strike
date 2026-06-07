@@ -1,7 +1,5 @@
-import { useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
-import { cleanupExpiredTemporaryWallColliders } from '../../hooks/usePhysics';
 import { 
   HookProjectile,
   DragHookEffect,
@@ -34,21 +32,6 @@ export function HookshotEffectsManager() {
     grappleLines: state.grappleLines,
     earthWalls: state.earthWalls,
   })));
-  
-  // Cleanup interval
-  useEffect(() => {
-    const interval = setInterval(() => {
-      useGameStore.getState().clearExpiredHookProjectiles();
-      useGameStore.getState().clearExpiredDragHooks();
-      useGameStore.getState().clearExpiredGrappleTraps();
-      useGameStore.getState().clearExpiredSwingLines();
-      useGameStore.getState().clearExpiredGrappleLines();
-      useGameStore.getState().clearExpiredEarthWalls();
-      cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
-    }, 150);
-    
-    return () => clearInterval(interval);
-  }, []);
   
   return (
     <group>

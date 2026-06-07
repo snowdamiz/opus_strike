@@ -7,6 +7,8 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { visualStore } from '../../../store/visualStore';
 import { raycastDirection } from '../../../hooks/usePhysics';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 
 // ============================================================================
 // FLAMETHROWER EFFECT - Held Blaze E ability
@@ -63,7 +65,7 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
   const sparkRefs = useRef<(THREE.Mesh | null)[]>([]);
   const smokeRefs = useRef<(THREE.Mesh | null)[]>([]);
   const lightRef = useRef<THREE.PointLight>(null);
-  const startTimeRef = useRef(Date.now());
+  const startTimeRef = useRef(getFrameClock().nowMs);
   const lastTerrainImpactRef = useRef(0);
   const smoothedOriginRef = useRef(new THREE.Vector3());
   const smoothedDirectionRef = useRef(new THREE.Vector3(0, 0, -1));
@@ -104,7 +106,7 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
     }
     _direction.normalize();
 
-    const now = Date.now();
+    const now = getFrameClock().nowMs;
     if (hasLivePose && !wasLiveRef.current) {
       startTimeRef.current = now;
     }
@@ -259,8 +261,8 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
     }
   });
 
-  if (Date.now() - startTimeRef.current > 5000) {
-    startTimeRef.current = Date.now();
+  if (getFrameClock().nowMs - startTimeRef.current > 5000) {
+    startTimeRef.current = getFrameClock().nowMs;
   }
 
   return (
@@ -307,7 +309,7 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
         </mesh>
       ))}
 
-      <pointLight ref={lightRef} color={0xff7a00} intensity={8} distance={10} decay={2} />
+      <BudgetedPointLight budgetPriority={4} ref={lightRef} color={0xff7a00} intensity={8} distance={10} decay={2} />
     </group>
   );
 }, (prev, next) => prev.isActive === next.isActive);

@@ -1,8 +1,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
-import { cleanupExpiredIceWallColliders } from '../../hooks/usePhysics';
-import { ICE_WALL_DURATION } from '@voxel-strike/shared';
 import {
   IceMalletSwing,
   IdleMallet,
@@ -70,16 +68,6 @@ export function GlacierEffectsManager() {
     }
     wasShieldActiveRef.current = glacierShieldActive;
   }, [glacierShieldActive]);
-  
-  useEffect(() => {
-    const interval = setInterval(() => {
-      useGameStore.getState().clearExpiredIceMalletSwings();
-      useGameStore.getState().clearExpiredIceWallRushes();
-      // Cleanup expired ice wall colliders (matches ICE_WALL_DURATION)
-      cleanupExpiredIceWallColliders(ICE_WALL_DURATION * 1000);
-    }, 100);
-    return () => clearInterval(interval);
-  }, []);
   
   return (
     <group>

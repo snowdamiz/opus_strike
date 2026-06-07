@@ -44,6 +44,10 @@ export interface VisualQualityConfig {
   shadows: ShadowQualityConfig;
   reflections: ReflectionQualityConfig;
   environment: EnvironmentQualityConfig;
+  dynamicLights: {
+    maxDynamicLights: number;
+    staticAccentLights: boolean;
+  };
 }
 
 const DEFAULT_RENDER_EXPOSURE = 1.08;
@@ -177,6 +181,29 @@ const ENVIRONMENT_QUALITY_CONFIG: Record<GraphicsFeatureQuality, EnvironmentQual
   },
 };
 
+const DYNAMIC_LIGHT_BUDGET: Record<GraphicsFeatureQuality, VisualQualityConfig['dynamicLights']> = {
+  off: {
+    maxDynamicLights: 0,
+    staticAccentLights: false,
+  },
+  low: {
+    maxDynamicLights: 4,
+    staticAccentLights: false,
+  },
+  medium: {
+    maxDynamicLights: 4,
+    staticAccentLights: true,
+  },
+  high: {
+    maxDynamicLights: 8,
+    staticAccentLights: true,
+  },
+  ultra: {
+    maxDynamicLights: 12,
+    staticAccentLights: true,
+  },
+};
+
 export function getVisualQualityConfig(settings: Pick<
   ClientSettings,
   | 'resolutionScale'
@@ -185,6 +212,7 @@ export function getVisualQualityConfig(settings: Pick<
   | 'shadowQuality'
   | 'reflectionQuality'
   | 'environmentQuality'
+  | 'graphicsPreset'
 >): VisualQualityConfig {
   const renderConfig = RESOLUTION_SCALE_CONFIG[settings.resolutionScale];
 
@@ -198,5 +226,6 @@ export function getVisualQualityConfig(settings: Pick<
     shadows: SHADOW_QUALITY_CONFIG[settings.shadowQuality],
     reflections: REFLECTION_QUALITY_CONFIG[settings.reflectionQuality],
     environment: ENVIRONMENT_QUALITY_CONFIG[settings.environmentQuality],
+    dynamicLights: DYNAMIC_LIGHT_BUDGET[settings.shadowQuality],
   };
 }

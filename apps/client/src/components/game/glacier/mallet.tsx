@@ -5,6 +5,8 @@ import { useGameStore, type IceMalletSwingData } from '../../../store/gameStore'
 import { raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 import {
   GLACIER_COLORS,
   tempVec3,
@@ -32,6 +34,9 @@ import {
 const MALLET_SWING_DURATION = 0.4;
 const MALLET_DAMAGE = 50;
 const MALLET_RANGE = 12;
+const FROST_PARTICLE_INDICES = [0, 1, 2, 3, 4, 5] as const;
+const ICE_SHARD_INDICES = [0, 1, 2, 3] as const;
+const IDLE_FROST_CRYSTAL_CONFIGS = FROST_CRYSTAL_CONFIGS.slice(0, 2);
 
 interface IceMalletSwingProps {
   swing: IceMalletSwingData;
@@ -51,7 +56,7 @@ export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
   const shouldRemoveRef = useRef(false);
   
   // Store initial values in refs to avoid re-renders
-  const startTimeRef = useRef(swing.startTime);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - swing.startTime));
   const ownerIdRef = useRef(swing.ownerId);
   const ownerTeamRef = useRef(swing.ownerTeam);
   const swingDirectionRef = useRef(swing.swingDirection);
@@ -69,8 +74,7 @@ export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
   useFrame(() => {
     if (!groupRef.current || !swingPivotRef.current || shouldRemoveRef.current) return;
     
-    const now = Date.now();
-    const elapsed = (now - startTimeRef.current) / 1000;
+    const elapsed = (getFrameClock().nowMs - startFrameTimeRef.current) / 1000;
     const progress = Math.min(elapsed / MALLET_SWING_DURATION, 1);
     
     if (progress >= 1) {
@@ -250,16 +254,16 @@ export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
           ))}
           
           {/* Frost particles - reduced count */}
-          {Array.from({ length: 6 }).map((_, i) => (
+          {FROST_PARTICLE_INDICES.map((i) => (
             <mesh key={i} ref={el => frostTrailRefs.current[i] = el} geometry={SHARED_GEOMETRIES.sphere4} material={frostParticleMaterial} position={[0, 0, -7.5]} />
           ))}
           
           {/* Ice shards - reduced count */}
-          {Array.from({ length: 4 }).map((_, i) => (
+          {ICE_SHARD_INDICES.map((i) => (
             <mesh key={i} ref={el => iceShardRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cone4} material={iceShardMaterial} position={[0, 0, -7.5]} scale={[0.08, 0.18, 0.08]} />
           ))}
           
-          <pointLight ref={lightRef} position={[0, 0, -7.5]} color={GLACIER_COLORS.iceLight} intensity={1.5} distance={6} decay={2} />
+          <BudgetedPointLight budgetPriority={3} ref={lightRef} position={[0, 0, -7.5]} color={GLACIER_COLORS.iceLight} intensity={1.5} distance={6} decay={2} />
         </group>
       </group>
     </group>
@@ -280,7 +284,7 @@ export const IdleMallet = React.memo(function IdleMallet() {
   const groupRef = useRef<THREE.Group>(null);
   const malletGroupRef = useRef<THREE.Group>(null);
   const bobRef = useRef(0);
-  const pulloutStartRef = useRef(Date.now());
+  const pulloutStartRef = useRef(getFrameClock().nowMs);
   
   initMaterials();
   const { malletHeadMainGeometry, malletHeadCapGeometry, malletHeadBevelGeometry, malletHandleGeometry } = getMalletGeometry();
@@ -291,7 +295,7 @@ export const IdleMallet = React.memo(function IdleMallet() {
     groupRef.current.position.copy(camera.position);
     groupRef.current.quaternion.copy(camera.quaternion);
     
-    const elapsed = (Date.now() - pulloutStartRef.current) / 1000;
+    const elapsed = (getFrameClock().nowMs - pulloutStartRef.current) / 1000;
     const pulloutProgress = Math.min(elapsed / IDLE_PULLOUT_DURATION, 1);
     const easedProgress = 1 - Math.pow(1 - pulloutProgress, 3);
     
@@ -330,11 +334,11 @@ export const IdleMallet = React.memo(function IdleMallet() {
           <mesh key={i} geometry={SHARED_GEOMETRIES.box} material={malletVeinMaterial} position={[x, 0, -7.5]} scale={[0.02, 0.5, 0.02]} />
         ))}
         
-        {FROST_CRYSTAL_CONFIGS.slice(0, 2).map((c, i) => (
+        {IDLE_FROST_CRYSTAL_CONFIGS.map((c, i) => (
           <mesh key={i} geometry={SHARED_GEOMETRIES.cone6} material={malletCrystalMaterial} position={c.pos as [number, number, number]} rotation={c.rot as [number, number, number]} scale={[c.scale[0] * 0.85, c.scale[1] * 0.85, c.scale[2] * 0.85]} />
         ))}
         
-        <pointLight position={[0, 0, -7.5]} color={GLACIER_COLORS.iceLight} intensity={0.8} distance={4} decay={2} />
+        <BudgetedPointLight budgetPriority={1} position={[0, 0, -7.5]} color={GLACIER_COLORS.iceLight} intensity={0.8} distance={4} decay={2} />
       </group>
     </group>
   );

@@ -3,6 +3,7 @@ import { PerfHeadless, usePerf } from 'r3f-perf';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { useSettingsStore } from '../../store/settingsStore';
+import { getClientPerfSnapshot, type ClientPerfSnapshot } from '../../utils/perfMarks';
 
 /**
  * Custom Performance Monitor - Premium Debug UI
@@ -21,12 +22,34 @@ interface PerfData {
   textures: number;
   shaders: number;
   calls: number;
+  client: ClientPerfSnapshot;
 }
+
+const EMPTY_CLIENT_SNAPSHOT: ClientPerfSnapshot = {
+  frame: {
+    frameMsP50: 0,
+    frameMsP95: 0,
+    frameMsP99: 0,
+    sampleCount: 0,
+  },
+  network: {
+    messagesPerSecond: {},
+    bytesPerSecond: {},
+  },
+  systems: [],
+  recentSpawns: [],
+  activeEffects: 0,
+  projectileCounts: {},
+  temporaryColliders: 0,
+  activeFrameSystems: 0,
+  activeLights: 0,
+};
 
 function PerfDisplay() {
   const [data, setData] = useState<PerfData>({
     fps: 0, gpu: 0, cpu: 0,
-    triangles: 0, geometries: 0, textures: 0, shaders: 0, calls: 0
+    triangles: 0, geometries: 0, textures: 0, shaders: 0, calls: 0,
+    client: EMPTY_CLIENT_SNAPSHOT,
   });
 
   // Get local player position from visualStore (polled for live updates)
@@ -58,6 +81,7 @@ function PerfDisplay() {
         textures: gl?.info?.memory?.textures || 0,
         shaders: gl?.info?.programs?.length || 0,
         calls: gl?.info?.render?.calls || 0,
+        client: getClientPerfSnapshot(),
       });
     }
   }, [log, gl]);
@@ -152,6 +176,56 @@ function PerfDisplay() {
           <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Shaders</span>
             <span className="text-white/70 tabular-nums text-right">{data.shaders}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Frame p95</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.frame.frameMsP95.toFixed(1)}ms</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Effects</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.activeEffects}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Lights</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.activeLights}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Systems</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.activeFrameSystems}</span>
+          </div>
+        </div>
+
+        <div className="mt-3 pt-2 border-t border-white/10">
+          <div className="text-white/40 text-[9px] uppercase mb-1.5">Effects</div>
+          <div className="grid grid-cols-1 gap-y-1.5 text-[10px]">
+            {data.client.systems.length === 0 && (
+              <div className="text-white/40">idle</div>
+            )}
+            {data.client.systems.map((system) => (
+              <div key={system.name} className="flex justify-between gap-3">
+                <span className="text-white/40 shrink-0">{system.name}</span>
+                <span className="text-white/70 tabular-nums text-right">
+                  {system.p95Ms.toFixed(2)}ms p95
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-3 pt-2 border-t border-white/10">
+          <div className="text-white/40 text-[9px] uppercase mb-1.5">Network</div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[10px]">
+            {Object.keys(data.client.network.messagesPerSecond).length === 0 && (
+              <div className="text-white/40">idle</div>
+            )}
+            {Object.entries(data.client.network.messagesPerSecond).map(([type, count]) => (
+              <div key={type} className="flex justify-between gap-3">
+                <span className="text-white/40 shrink-0">{type}</span>
+                <span className="text-white/70 tabular-nums text-right">
+                  {count}/s {Math.round(data.client.network.bytesPerSecond[type] ?? 0)}B
+                </span>
+              </div>
+            ))}
           </div>
         </div>
 

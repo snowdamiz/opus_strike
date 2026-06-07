@@ -103,6 +103,9 @@ const CEILING_PROBE_RADIUS = PLAYER_RADIUS * 0.65;
 const GROUND_PROBE_RADIUS = PLAYER_RADIUS * 0.45;
 const STEP_UP_MIN_HEIGHT = 0.08;
 const STEP_UP_PROBE_SIDE_OFFSETS = [0, -PLAYER_RADIUS * 0.72, PLAYER_RADIUS * 0.72];
+const WALL_PROBE_SIDE_OFFSETS = [0, -PLAYER_RADIUS * 0.65, PLAYER_RADIUS * 0.65];
+const WALL_PROBE_STEP_CLEARANCE = 0.12;
+const WALL_NORMAL_MAX_Y = 0.65;
 const MAX_STEP_DOWN_HEIGHT = STEP_HEIGHT + 0.1;
 const JUMP_EDGE_ASSIST_HEIGHT = 0.62;
 const GROUND_PROBE_OFFSETS = [
@@ -339,6 +342,44 @@ function findGroundedTerrainMove(
   return best;
 }
 
+function hasTallWallInMovePath(
+  position: THREE.Vector3,
+  moveX: number,
+  moveZ: number,
+  effectiveStepHeight: number,
+  playerHeight: number = PLAYER_HEIGHT
+): boolean {
+  const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
+  if (moveDist <= 0.0001) return false;
+
+  const dirX = moveX / moveDist;
+  const dirZ = moveZ / moveDist;
+  const sideX = -dirZ;
+  const sideZ = dirX;
+  const feetY = position.y - PLAYER_HEIGHT / 2;
+  const maxProbeY = getBodyTopY(position.y, playerHeight) - CEILING_CLEARANCE;
+  const probeY = Math.min(feetY + effectiveStepHeight + WALL_PROBE_STEP_CLEARANCE, maxProbeY);
+  const maxDistance = moveDist + PLAYER_RADIUS + 0.05;
+
+  for (const sideOffset of WALL_PROBE_SIDE_OFFSETS) {
+    const hit = raycastDirection(
+      position.x + sideX * sideOffset,
+      probeY,
+      position.z + sideZ * sideOffset,
+      dirX,
+      0,
+      dirZ,
+      maxDistance
+    );
+
+    if (hit?.hit && Math.abs(hit.normal.y) < WALL_NORMAL_MAX_Y) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function usePlayerPhysics(): UsePlayerPhysicsReturn {
   // Check ground and handle landing
   const checkGround = useCallback((
@@ -476,6 +517,8 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
             canTraverse = hasCeilingClearance;
           }
+
+          canTraverse = canTraverse && !hasTallWallInMovePath(position, moveX, moveZ, effectiveStepHeight, playerHeight);
 
           if (canTraverse && (!canUseAirborneStepAssist || isStepUp)) {
             const targetY = targetGroundY + PLAYER_HEIGHT / 2;

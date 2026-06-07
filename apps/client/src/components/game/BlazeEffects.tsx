@@ -1,4 +1,3 @@
-import { useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import {
@@ -28,15 +27,6 @@ export function BlazeEffectsManager() {
       flamethrowerActive: state.flamethrowerActive,
     }))
   );
-  
-  useEffect(() => {
-    const interval = setInterval(() => {
-      useGameStore.getState().clearExpiredRockets();
-      useGameStore.getState().clearExpiredBombs();
-    }, 150);
-    
-    return () => clearInterval(interval);
-  }, []);
   
   return (
     <group>

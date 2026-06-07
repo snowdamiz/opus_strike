@@ -4,7 +4,32 @@ import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setPlayerVisualPosition, setPlayerVisualRotation, visualStore } from '../store/visualStore';
 import { addEffect } from '../components/game/Effects';
-import type { BotDifficulty, HeroId, Team, Player, PlayerMovementState } from '@voxel-strike/shared';
+import { recordNetworkMessage } from '../utils/perfMarks';
+import { loggers } from '../utils/logger';
+import type {
+  BotDifficulty,
+  HeroId,
+  MatchSnapshotMessage,
+  Player,
+  PlayerMovementState,
+  PlayerTransformsMessage,
+  PlayerVitalsMessage,
+  PlayerVitalsSnapshot,
+  QuantizedPlayerTransform,
+  Team,
+} from '@voxel-strike/shared';
+
+const TRANSFORM_POSITION_SCALE = 100;
+const TRANSFORM_VELOCITY_SCALE = 100;
+const TRANSFORM_ANGLE_SCALE = 10000;
+const MOVEMENT_BIT_GROUNDED = 1 << 0;
+const MOVEMENT_BIT_SPRINTING = 1 << 1;
+const MOVEMENT_BIT_CROUCHING = 1 << 2;
+const MOVEMENT_BIT_SLIDING = 1 << 3;
+const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
+const MOVEMENT_BIT_GRAPPLING = 1 << 5;
+const MOVEMENT_BIT_JETPACKING = 1 << 6;
+const MOVEMENT_BIT_GLIDING = 1 << 7;
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -196,6 +221,68 @@ function syncLocalVisualPosition(player: Player): void {
   setPlayerVisualRotation(player.id, player.lookYaw);
 }
 
+function dequantizeTransform(transform: QuantizedPlayerTransform) {
+  return {
+    position: {
+      x: transform.px / TRANSFORM_POSITION_SCALE,
+      y: transform.py / TRANSFORM_POSITION_SCALE,
+      z: transform.pz / TRANSFORM_POSITION_SCALE,
+    },
+    velocity: {
+      x: transform.vx / TRANSFORM_VELOCITY_SCALE,
+      y: transform.vy / TRANSFORM_VELOCITY_SCALE,
+      z: transform.vz / TRANSFORM_VELOCITY_SCALE,
+    },
+    lookYaw: transform.yaw / TRANSFORM_ANGLE_SCALE,
+    lookPitch: transform.pitch / TRANSFORM_ANGLE_SCALE,
+  };
+}
+
+function movementFromBits(
+  transform: QuantizedPlayerTransform,
+  fallback: PlayerMovementState
+): PlayerMovementState {
+  return {
+    ...fallback,
+    isGrounded: Boolean(transform.movementBits & MOVEMENT_BIT_GROUNDED),
+    isSprinting: Boolean(transform.movementBits & MOVEMENT_BIT_SPRINTING),
+    isCrouching: Boolean(transform.movementBits & MOVEMENT_BIT_CROUCHING),
+    isSliding: Boolean(transform.movementBits & MOVEMENT_BIT_SLIDING),
+    isWallRunning: Boolean(transform.movementBits & MOVEMENT_BIT_WALL_RUNNING),
+    wallRunSide: transform.wallRunSide === -1 ? 'left' : transform.wallRunSide === 1 ? 'right' : null,
+    isGrappling: Boolean(transform.movementBits & MOVEMENT_BIT_GRAPPLING),
+    isJetpacking: Boolean(transform.movementBits & MOVEMENT_BIT_JETPACKING),
+    isGliding: Boolean(transform.movementBits & MOVEMENT_BIT_GLIDING),
+  };
+}
+
+function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, existing?: Player): Player {
+  return {
+    id: vitals.id,
+    name: vitals.name || existing?.name || 'Unknown',
+    team: vitals.team,
+    heroId: vitals.heroId,
+    state: vitals.state,
+    isReady: vitals.isReady,
+    isBot: Boolean(vitals.isBot),
+    botDifficulty: vitals.botDifficulty || existing?.botDifficulty,
+    botProfileId: vitals.botProfileId || existing?.botProfileId,
+    position: existing?.position || { x: 0, y: 1, z: 0 },
+    velocity: existing?.velocity || { x: 0, y: 0, z: 0 },
+    lookYaw: existing?.lookYaw ?? 0,
+    lookPitch: existing?.lookPitch ?? 0,
+    health: vitals.health,
+    maxHealth: vitals.maxHealth,
+    ultimateCharge: vitals.ultimateCharge,
+    movement: normalizeMovementState(vitals.movement, existing?.movement),
+    abilities: vitals.abilities || existing?.abilities || {},
+    hasFlag: vitals.hasFlag,
+    respawnTime: vitals.respawnTime,
+    spawnProtectionUntil: vitals.spawnProtectionUntil,
+    stats: vitals.stats || existing?.stats || createDefaultStats(),
+  };
+}
+
 // ============================================================================
 // STORE ACTION TYPES
 // ============================================================================
@@ -262,7 +349,7 @@ export function syncPlayerFromSchema(
   } else {
     // Skip ghost players: same name as us but different ID
     if (schemaPlayer.name === localPlayerName) {
-      console.log(`[SCHEMA SYNC] Ignoring ghost player: ${schemaPlayer.name} (${id})`);
+      loggers.network.sample('schema-ghost', 5000, 'ignoring ghost schema player', schemaPlayer.name, id);
       return;
     }
 
@@ -317,7 +404,7 @@ export function processPlayerDuringPoll(
 
   // Skip ghost players
   if (schemaPlayer.name === localPlayerName) {
-    console.log(`[POLL] Ignoring ghost player: ${schemaPlayer.name} (${id})`);
+    loggers.network.sample('poll-ghost', 5000, 'ignoring ghost polled player', schemaPlayer.name, id);
     return;
   }
 
@@ -383,12 +470,12 @@ export function setupPlayerJoinedHandler(
     botProfileId?: string;
     position?: { x: number; y: number; z: number };
   }) => {
-    console.log(`Player joined message: ${data.playerName} (${data.playerId})`);
+    loggers.network.debug('player joined message', data.playerName, data.playerId);
 
     if (data.playerId !== sessionId) {
       // Skip ghost players
       if (data.playerName === localPlayerName) {
-        console.log(`[JOIN MSG] Ignoring ghost player: ${data.playerName} (${data.playerId})`);
+        loggers.network.sample('join-ghost', 5000, 'ignoring ghost join', data.playerName, data.playerId);
         return;
       }
 
@@ -424,6 +511,123 @@ export function setupPlayerJoinedHandler(
   });
 }
 
+export function setupPlayerTransformsHandler(
+  room: Room,
+  sessionId: string,
+  localPlayerName: string,
+  actions: Pick<GameStoreActions, 'setLocalPlayer'>
+) {
+  room.onMessage('playerTransforms', (data: PlayerTransformsMessage) => {
+    recordNetworkMessage('playerTransforms', data);
+    useGameStore.setState({
+      tick: data.tick,
+      serverTime: data.serverTime,
+    });
+
+    const store = useGameStore.getState();
+
+    for (const transform of data.players) {
+      const decoded = dequantizeTransform(transform);
+
+      if (transform.id === sessionId) {
+        const localPlayer = useGameStore.getState().localPlayer;
+        if (!localPlayer) continue;
+
+        const shouldSyncPosition = shouldSyncLocalPosition(localPlayer, localPlayer.state, decoded.position);
+        if (!shouldSyncPosition) continue;
+
+        const updated: Player = {
+          ...localPlayer,
+          position: decoded.position,
+          velocity: decoded.velocity,
+          lookYaw: decoded.lookYaw,
+          lookPitch: decoded.lookPitch,
+          movement: movementFromBits(transform, localPlayer.movement),
+        };
+        actions.setLocalPlayer(updated);
+        syncLocalVisualPosition(updated);
+        loggers.network.sample('local-correction', 1500, 'server corrected local transform', transform.id);
+        continue;
+      }
+
+      const existingPlayer = store.players.get(transform.id);
+      if (!existingPlayer) continue;
+      if (existingPlayer.name === localPlayerName) {
+        loggers.network.sample('ghost-transform', 5000, 'ignoring ghost transform', transform.id);
+        continue;
+      }
+
+      existingPlayer.position = decoded.position;
+      existingPlayer.velocity = decoded.velocity;
+      existingPlayer.lookYaw = decoded.lookYaw;
+      existingPlayer.lookPitch = decoded.lookPitch;
+      existingPlayer.movement = movementFromBits(transform, existingPlayer.movement);
+      setPlayerVisualPosition(transform.id, decoded.position);
+      setPlayerVisualRotation(transform.id, decoded.lookYaw);
+    }
+  });
+}
+
+export function setupPlayerVitalsHandler(
+  room: Room,
+  sessionId: string,
+  localPlayerName: string,
+  actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer' | 'removePlayer'>
+) {
+  room.onMessage('playerVitals', (data: PlayerVitalsMessage) => {
+    recordNetworkMessage('playerVitals', data);
+    useGameStore.setState({
+      tick: data.tick,
+      serverTime: data.serverTime,
+    });
+
+    for (const removedId of data.removedPlayerIds || []) {
+      actions.removePlayer(removedId);
+    }
+
+    for (const vitals of data.players) {
+      if (vitals.id !== sessionId && vitals.name === localPlayerName) {
+        loggers.network.sample('ghost-vitals', 5000, 'ignoring ghost vitals', vitals.id);
+        continue;
+      }
+
+      const store = useGameStore.getState();
+      if (vitals.id === sessionId) {
+        const existing = store.localPlayer || store.players.get(vitals.id);
+        const next = createPlayerFromVitals(vitals, existing || undefined);
+        actions.setLocalPlayer(next);
+        if (!existing) {
+          syncLocalVisualPosition(next);
+        }
+        continue;
+      }
+
+      const existing = store.players.get(vitals.id);
+      const next = createPlayerFromVitals(vitals, existing);
+      actions.updatePlayer(vitals.id, next);
+    }
+  });
+}
+
+export function setupMatchSnapshotHandler(room: Room) {
+  room.onMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
+    recordNetworkMessage('matchSnapshot', data);
+    const store = useGameStore.getState();
+    useGameStore.setState({
+      tick: data.tick,
+      serverTime: data.serverTime,
+      mapSeed: data.mapSeed,
+      gamePhase: data.phase,
+      redScore: data.redScore,
+      blueScore: data.blueScore,
+      redFlag: data.redFlag ?? store.redFlag,
+      blueFlag: data.blueFlag ?? store.blueFlag,
+      roundTimeRemaining: data.roundTimeRemaining,
+      phaseEndTime: data.phaseEndTime,
+    });
+  });
+}
+
 /**
  * Sets up the playerStates message handler
  */
@@ -442,6 +646,7 @@ export function setupPlayerStatesHandler(
     blueFlag?: { position: { x: number; y: number; z: number }; carrierId: string | null; isAtBase: boolean };
     roundTimeRemaining?: number;
   }) => {
+    recordNetworkMessage('playerStates', data);
     if (typeof data.mapSeed === 'number') {
       useGameStore.getState().setMapSeed(data.mapSeed);
     }
@@ -457,7 +662,7 @@ export function setupPlayerStatesHandler(
     for (const serverPlayer of data.players) {
       // Skip ghost players
       if (serverPlayer.id !== sessionId && serverPlayer.name === localPlayerName) {
-        console.log(`[STATES MSG] Ignoring ghost player: ${serverPlayer.name} (${serverPlayer.id})`);
+        loggers.network.sample('ghost-playerStates', 5000, 'ignoring ghost playerStates', serverPlayer.name, serverPlayer.id);
         continue;
       }
 
@@ -583,15 +788,15 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
   }) => {
     // Skip if this is our own void zone (already created client-side)
     if (data.ownerId === sessionId) {
-      console.log(`Void zone from server (our own, skipping duplicate)`);
+      loggers.effects.debug('void zone from server skipped as duplicate');
       return;
     }
-    console.log(`Void zone created by ${data.ownerId}`);
+    loggers.effects.debug('void zone created by', data.ownerId);
     useGameStore.getState().addVoidZone(data);
   });
 
   room.onMessage('voidZoneExpired', (data: { id: string }) => {
-    console.log(`Void zone expired: ${data.id}`);
+    loggers.effects.debug('void zone expired', data.id);
     useGameStore.getState().removeVoidZone(data.id);
   });
 }
@@ -608,7 +813,7 @@ export function setupCombatHandlers(room: Room) {
     sourcePosition?: { x: number; y: number; z: number } | null;
     targetPosition?: { x: number; y: number; z: number } | null;
   }) => {
-    console.log(`Player ${data.targetId} took ${data.damage} damage from ${data.damageType}`);
+    loggers.network.sample('playerDamaged', 1000, 'player damaged', data.targetId, data.damage, data.damageType);
 
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
@@ -647,7 +852,7 @@ export function setupCombatHandlers(room: Room) {
     killerId: string;
     position: { x: number; y: number; z: number };
   }) => {
-    console.log(`Player ${data.victimId} killed by ${data.killerId}`);
+    loggers.network.debug('player killed', data.victimId, data.killerId);
 
     const players = useGameStore.getState().players;
     useCombatFeedbackStore.getState().addKillFeedEvent({
@@ -661,12 +866,12 @@ export function setupCombatHandlers(room: Room) {
     abilityId: string;
     success: boolean;
   }) => {
-    console.log(`Ability used: ${data.abilityId} by ${data.playerId}, success: ${data.success}`);
+    loggers.network.debug('ability used', data.abilityId, data.playerId, data.success);
   });
 }
 
 /**
- * Sets up polling interval for state sync
+ * Sets up low-rate schema polling as a development fallback for explicit message streams.
  */
 export function setupPollingSync(
   room: Room,
@@ -674,6 +879,8 @@ export function setupPollingSync(
   localPlayerName: string,
   actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer' | 'setGamePhase'>
 ): ReturnType<typeof setInterval> {
+  const FALLBACK_POLL_INTERVAL_MS = 250;
+  const GHOST_CLEANUP_EVERY_POLLS = 4;
   let lastLoggedPlayerCount = -1;
   let pollCount = 0;
 
@@ -689,7 +896,7 @@ export function setupPollingSync(
       }
 
       if (room.state.phase !== store.gamePhase) {
-        console.log('Phase synced:', room.state.phase);
+        loggers.network.debug('phase synced from fallback poll', room.state.phase);
         actions.setGamePhase(room.state.phase as any);
       }
     }
@@ -717,14 +924,14 @@ export function setupPollingSync(
       });
 
       if (serverPlayerCount !== lastLoggedPlayerCount || pollCount % 100 === 1) {
-        console.log(`POLL #${pollCount}: Server=${serverPlayerCount} players`);
+        loggers.network.sample('poll-count', 5000, `fallback poll #${pollCount}: server=${serverPlayerCount} players`);
         lastLoggedPlayerCount = serverPlayerCount;
       }
 
-      // Periodic ghost cleanup every 10 polls (500ms)
-      if (pollCount % 10 === 0) {
+      // Periodic ghost cleanup at roughly 1Hz while fallback polling is enabled.
+      if (pollCount % GHOST_CLEANUP_EVERY_POLLS === 0) {
         useGameStore.getState().cleanupGhostPlayers();
       }
     }
-  }, 50);
+  }, FALLBACK_POLL_INTERVAL_MS);
 }

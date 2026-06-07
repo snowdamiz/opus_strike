@@ -1,14 +1,24 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { visualizer } from 'rollup-plugin-visualizer';
 import path from 'path';
 
 // In Vite, command === 'build' indicates production build
 // The esbuild drop configuration strips console and debugger statements
 const isProduction = process.argv.includes('build');
 const dropOptions = isProduction ? ['console', 'debugger'] : [];
+const analyzeBundle = process.env.ANALYZE === 'true';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    analyzeBundle && visualizer({
+      filename: 'dist/bundle-stats.html',
+      gzipSize: true,
+      brotliSize: true,
+      template: 'treemap',
+    }),
+  ].filter(Boolean),
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -29,6 +39,29 @@ export default defineConfig({
     esbuild: {
       drop: dropOptions,
     },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('/three/') || id.includes('@react-three/fiber') || id.includes('@react-three/drei')) {
+            return 'three-vendor';
+          }
+          if (id.includes('@dimforge/rapier3d-compat')) {
+            return 'physics-vendor';
+          }
+          if (id.includes('colyseus.js')) {
+            return 'network-vendor';
+          }
+          if (id.includes('@solana/web3.js') || id.includes('/bs58/') || id.includes('/buffer/')) {
+            return 'wallet-vendor';
+          }
+          if (id.includes('/zustand/') || id.includes('/react/') || id.includes('/react-dom/')) {
+            return 'react-vendor';
+          }
+          return 'vendor';
+        },
+      },
+    },
   },
   optimizeDeps: {
     exclude: ['@dimforge/rapier3d-compat'],
@@ -46,4 +79,3 @@ export default defineConfig({
     global: 'globalThis',
   },
 });
-

@@ -1,5 +1,4 @@
-import { useRef } from 'react';
-import { Html } from '@react-three/drei';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
@@ -9,8 +8,8 @@ import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-st
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
-import { HeroIcon } from '../ui/HeroIcons';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
+import { loggers } from '../../utils/logger';
 
 // Debug: track last logged state to avoid spam
 let lastLoggedPlayerCount = -1;
@@ -45,7 +44,7 @@ export function OtherPlayers() {
 
   // Only log when counts change
   if (players.size !== lastLoggedPlayerCount || otherPlayers.length !== lastLoggedOtherCount) {
-    console.log('OtherPlayers:', {
+    loggers.effects.debug('OtherPlayers', {
       totalInStore: players.size,
       otherPlayersToRender: otherPlayers.length,
       playerId,
@@ -79,6 +78,11 @@ const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
 const NETWORK_MOVING_SPEED = 0.45;
 const VISUAL_MOVING_SPEED = 0.18;
 const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
+const LOD_NEAR_DISTANCE = 18;
+const LOD_MID_DISTANCE = 38;
+const LOD_UPDATE_INTERVAL = 0.25;
+
+type RemotePlayerLodTier = 0 | 1 | 2;
 
 function setPlayerRenderOrigin(
   target: THREE.Vector3,
@@ -139,6 +143,9 @@ function getPlayerMovementPose(player: Player, hasLoweredPosture: boolean, isMov
 
 function OtherPlayer({ player }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const { camera } = useThree();
+  const [lodTier, setLodTier] = useState<RemotePlayerLodTier>(0);
+  const lodAccumulatorRef = useRef(0);
   const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
   const playerHeight = heroStats?.size.height ?? 1.8;
   const hasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
@@ -162,7 +169,7 @@ function OtherPlayer({ player }: OtherPlayerProps) {
   
   // Debug log once when component first renders
   if (!hasLoggedRef.current) {
-    console.log('OtherPlayer mounted:', player.id.slice(0,6), player.name, 'at', player.position);
+    loggers.effects.debug('OtherPlayer mounted', player.id.slice(0,6), player.name, player.position);
     hasLoggedRef.current = true;
   }
 
@@ -235,46 +242,142 @@ function OtherPlayer({ player }: OtherPlayerProps) {
     isSlidingRef.current = player.movement.isSliding;
     movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
     isMovingRef.current = frameIsMoving;
+
+    lodAccumulatorRef.current += delta;
+    if (lodAccumulatorRef.current >= LOD_UPDATE_INTERVAL) {
+      lodAccumulatorRef.current = 0;
+      const distanceSq = camera.position.distanceToSquared(groupRef.current.position);
+      const nextTier: RemotePlayerLodTier = player.hasFlag
+        ? 0
+        : distanceSq < LOD_NEAR_DISTANCE * LOD_NEAR_DISTANCE
+          ? 0
+          : distanceSq < LOD_MID_DISTANCE * LOD_MID_DISTANCE
+            ? 1
+            : 2;
+      setLodTier((current) => current === nextTier ? current : nextTier);
+    }
   });
 
   return (
     <group ref={groupRef}>
       {/* Player body */}
-      <HeroVoxelBody
-        heroId={player.heroId}
-        team={player.team} 
-        height={playerHeight}
-        postureScaleY={postureScaleY}
-        postureScaleYRef={postureScaleYRef}
-        isBot={player.isBot}
-        isMoving={initialIsMoving}
-        isMovingRef={isMovingRef}
-        isCrouching={player.movement.isCrouching}
-        isCrouchingRef={isCrouchingRef}
-        isSliding={player.movement.isSliding}
-        isSlidingRef={isSlidingRef}
-        movementPose={initialMovementPose}
-        movementPoseRef={movementPoseRef}
-        walkDirectionRef={walkDirectionRef}
-        hasFlag={player.hasFlag}
-      />
+      {lodTier === 0 ? (
+        <HeroVoxelBody
+          heroId={player.heroId}
+          team={player.team}
+          height={playerHeight}
+          postureScaleY={postureScaleY}
+          postureScaleYRef={postureScaleYRef}
+          isBot={player.isBot}
+          isMoving={initialIsMoving}
+          isMovingRef={isMovingRef}
+          isCrouching={player.movement.isCrouching}
+          isCrouchingRef={isCrouchingRef}
+          isSliding={player.movement.isSliding}
+          isSlidingRef={isSlidingRef}
+          movementPose={initialMovementPose}
+          movementPoseRef={movementPoseRef}
+          walkDirectionRef={walkDirectionRef}
+          hasFlag={player.hasFlag}
+        />
+      ) : lodTier === 1 ? (
+        <SimplifiedRemoteBody
+          heroId={player.heroId}
+          team={player.team}
+          height={playerHeight}
+          postureScaleYRef={postureScaleYRef}
+          hasFlag={player.hasFlag}
+        />
+      ) : (
+        <RemotePlayerMarker team={player.team} isBot={player.isBot} hasFlag={player.hasFlag} />
+      )}
 
       {/* Nameplate */}
-      <Nameplate 
-        heroId={player.heroId}
-        name={player.name} 
-        team={player.team}
-        health={player.health}
-        maxHealth={player.maxHealth}
-        height={visibleHeight}
-      />
+      {lodTier <= 1 && (
+        <Nameplate
+          heroId={player.heroId}
+          name={player.name}
+          team={player.team}
+          health={player.health}
+          maxHealth={player.maxHealth}
+          height={visibleHeight}
+        />
+      )}
 
-      <PlayerVisibilityBeacon team={player.team} height={visibleHeight} isBot={player.isBot} />
+      {lodTier <= 1 && <PlayerVisibilityBeacon team={player.team} height={visibleHeight} isBot={player.isBot} />}
 
       {/* Flag indicator */}
       {player.hasFlag && (
         <FlagCarrierIndicator team={player.team === 'red' ? 'blue' : 'red'} />
       )}
+    </group>
+  );
+}
+
+function getTeamColor(team: Team): string {
+  return team === 'red' ? '#ef4444' : '#38bdf8';
+}
+
+function getHeroAccent(heroId: HeroId | null, team: Team): string {
+  return heroId ? HERO_ICON_COLORS[heroId].primary : getTeamColor(team);
+}
+
+function SimplifiedRemoteBody({
+  heroId,
+  team,
+  height,
+  postureScaleYRef,
+  hasFlag,
+}: {
+  heroId: HeroId | null;
+  team: Team;
+  height: number;
+  postureScaleYRef: MutableRefObject<number>;
+  hasFlag: boolean;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const teamColor = getTeamColor(team);
+  const accent = getHeroAccent(heroId, team);
+
+  useFrame(() => {
+    if (!groupRef.current) return;
+    groupRef.current.scale.y = postureScaleYRef.current;
+  });
+
+  return (
+    <group ref={groupRef} position={[0, height * 0.5, 0]}>
+      <mesh>
+        <boxGeometry args={[0.62, height * 0.72, 0.42]} />
+        <meshStandardMaterial color={teamColor} emissive={teamColor} emissiveIntensity={0.18} roughness={0.72} />
+      </mesh>
+      <mesh position={[0, height * 0.43, 0]}>
+        <boxGeometry args={[0.42, 0.34, 0.36]} />
+        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.25} roughness={0.66} />
+      </mesh>
+      {hasFlag && (
+        <mesh position={[0, height * 0.7, -0.28]}>
+          <boxGeometry args={[0.18, 0.42, 0.04]} />
+          <meshStandardMaterial color="#facc15" emissive="#facc15" emissiveIntensity={0.55} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function RemotePlayerMarker({ team, isBot, hasFlag }: { team: Team; isBot?: boolean; hasFlag: boolean }) {
+  const color = getTeamColor(team);
+  const scale = hasFlag ? 1.35 : isBot ? 1.1 : 1;
+
+  return (
+    <group position={[0, 1.1, 0]} scale={scale}>
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.24, 0.34, 18]} />
+        <meshBasicMaterial color={color} transparent opacity={0.86} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh position={[0, 0.18, 0]}>
+        <octahedronGeometry args={[0.28, 0]} />
+        <meshBasicMaterial color={hasFlag ? '#facc15' : color} />
+      </mesh>
     </group>
   );
 }
@@ -288,93 +391,136 @@ interface NameplateProps {
   height: number;
 }
 
+const NAMEPLATE_CANVAS_WIDTH = 256;
+const NAMEPLATE_CANVAS_HEIGHT = 72;
+
+function roundedRectPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+): void {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function trimTextToWidth(ctx: CanvasRenderingContext2D, value: string, maxWidth: number): string {
+  if (ctx.measureText(value).width <= maxWidth) return value;
+
+  let trimmed = value;
+  while (trimmed.length > 1 && ctx.measureText(`${trimmed}...`).width > maxWidth) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return `${trimmed}...`;
+}
+
+function drawNameplateTexture(
+  canvas: HTMLCanvasElement,
+  name: string,
+  teamColor: string,
+  heroColor: string,
+  healthPercent: number
+): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  ctx.clearRect(0, 0, NAMEPLATE_CANVAS_WIDTH, NAMEPLATE_CANVAS_HEIGHT);
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 2;
+  roundedRectPath(ctx, 8, 8, 240, 40, 8);
+  ctx.fillStyle = 'rgba(5, 10, 18, 0.62)';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = heroColor;
+  ctx.shadowColor = heroColor;
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.arc(28, 28, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 1;
+  ctx.fillText(trimTextToWidth(ctx, name.toUpperCase(), 178), 44, 27);
+
+  const barX = 30;
+  const barY = 52;
+  const barWidth = 196;
+  const barHeight = 6;
+  roundedRectPath(ctx, barX, barY, barWidth, barHeight, 3);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+  ctx.fill();
+
+  const fillWidth = Math.max(0, Math.min(barWidth, barWidth * healthPercent));
+  if (fillWidth > 0) {
+    roundedRectPath(ctx, barX, barY, fillWidth, barHeight, 3);
+    const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+    if (healthPercent > 0.3) {
+      gradient.addColorStop(0, '#22c55e');
+      gradient.addColorStop(1, '#86efac');
+    } else {
+      gradient.addColorStop(0, '#ef4444');
+      gradient.addColorStop(1, '#f97316');
+    }
+    ctx.fillStyle = gradient;
+    ctx.fill();
+  }
+
+  ctx.fillStyle = teamColor;
+  ctx.globalAlpha = 0.9;
+  roundedRectPath(ctx, 232, 14, 6, 42, 3);
+  ctx.fill();
+}
+
 function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateProps) {
-  const groupRef = useRef<THREE.Group>(null);
-  const parentWorldQuaternionRef = useRef(new THREE.Quaternion());
-  const cameraWorldQuaternionRef = useRef(new THREE.Quaternion());
-  const { camera } = useThree();
-  const teamColor = team === 'red' ? '#ef4444' : '#4444ff';
+  const teamColor = getTeamColor(team);
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
   const heroColor = heroId ? HERO_ICON_COLORS[heroId].primary : teamColor;
-  const tagWidth = Math.max(112, Math.min(188, 58 + name.length * 7.2));
+  const texture = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = NAMEPLATE_CANVAS_WIDTH;
+    canvas.height = NAMEPLATE_CANVAS_HEIGHT;
+    const nextTexture = new THREE.CanvasTexture(canvas);
+    nextTexture.colorSpace = THREE.SRGBColorSpace;
+    nextTexture.minFilter = THREE.LinearFilter;
+    nextTexture.magFilter = THREE.LinearFilter;
+    nextTexture.generateMipmaps = false;
+    return nextTexture;
+  }, []);
 
-  useFrame(() => {
-    if (!groupRef.current) return;
-    camera.getWorldQuaternion(cameraWorldQuaternionRef.current);
-    const parent = groupRef.current.parent;
-    if (!parent) {
-      groupRef.current.quaternion.copy(cameraWorldQuaternionRef.current);
-      return;
-    }
+  useEffect(() => {
+    drawNameplateTexture(texture.image as HTMLCanvasElement, name, teamColor, heroColor, healthPercent);
+    texture.needsUpdate = true;
+  }, [healthPercent, heroColor, name, teamColor, texture]);
 
-    parent.getWorldQuaternion(parentWorldQuaternionRef.current);
-    groupRef.current.quaternion
-      .copy(parentWorldQuaternionRef.current)
-      .invert()
-      .multiply(cameraWorldQuaternionRef.current);
-  });
+  useEffect(() => () => texture.dispose(), [texture]);
+
+  const width = Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045));
 
   return (
-    <group ref={groupRef} position={[0, height + 0.5, 0]}>
-      <Html
-        center
-        transform
-        occlude="raycast"
-        distanceFactor={8}
-        zIndexRange={[30, 0]}
-        style={{ pointerEvents: 'none', userSelect: 'none' }}
-      >
-        <div
-          className="flex flex-col items-center"
-          style={{
-            width: `${tagWidth}px`,
-          }}
-        >
-          <div className="flex h-5 max-w-full items-center gap-1.5">
-            <div
-              className="flex h-[17px] w-[17px] shrink-0 items-center justify-center"
-              style={{
-                color: heroColor,
-                filter: `drop-shadow(0 0 4px ${heroColor}) drop-shadow(0 1px 2px rgba(0,0,0,0.9))`,
-              }}
-            >
-              {heroId ? (
-                <HeroIcon heroId={heroId} size={15} color={heroColor} />
-              ) : (
-                <div className="h-2 w-2 rotate-45 rounded-[1px]" style={{ background: teamColor }} />
-              )}
-            </div>
-            <span
-              className="min-w-0 flex-1 truncate text-[10px] font-bold uppercase tracking-[0.08em] text-white"
-              style={{
-                textShadow: '0 1px 2px rgba(0,0,0,0.95), 0 0 5px rgba(0,0,0,0.9)',
-              }}
-            >
-              {name}
-            </span>
-          </div>
-          <div
-            className="mt-0.5 h-[3px] w-full overflow-hidden rounded-full"
-            style={{
-              filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.9))',
-            }}
-          >
-            <div
-              className="h-full"
-              style={{
-                width: `${healthPercent * 100}%`,
-                background: healthPercent > 0.3
-                  ? 'linear-gradient(90deg, #22c55e, #86efac)'
-                  : 'linear-gradient(90deg, #ef4444, #f97316)',
-                boxShadow: healthPercent > 0.3
-                  ? '0 0 5px rgba(34,197,94,0.75)'
-                  : '0 0 5px rgba(239,68,68,0.75)',
-              }}
-            />
-          </div>
-        </div>
-      </Html>
-    </group>
+    <sprite position={[0, height + 0.58, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
+      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} toneMapped={false} />
+    </sprite>
   );
 }
 
@@ -393,7 +539,6 @@ function PlayerVisibilityBeacon({ team, height, isBot }: { team: Team; height: n
         <torusGeometry args={[0.42, 0.018, 6, 24]} />
         <meshBasicMaterial color={color} transparent opacity={isBot ? 0.95 : 0.75} />
       </mesh>
-      <pointLight color={color} intensity={isBot ? 1.1 : 0.75} distance={4} />
     </group>
   );
 }

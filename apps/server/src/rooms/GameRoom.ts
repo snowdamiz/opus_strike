@@ -39,10 +39,17 @@ import type {
   HeroId, 
   Team, 
   PlayerInput,
+  MatchSnapshotMessage,
+  PlayerTransformsMessage,
+  PlayerVitalsMessage,
+  PlayerVitalsSnapshot,
+  QuantizedPlayerTransform,
   VoxelChunk,
   VoxelMapManifest,
 } from '@voxel-strike/shared';
 import { simulateSharedMovement, type MovementTerrainAdapter } from '@voxel-strike/physics';
+import { TickMetrics } from '../perf/tickMetrics';
+import { loggers } from '../utils/logger';
 
 // Import extracted ability handlers
 import {
@@ -86,6 +93,8 @@ type PlainVec2 = { x: number; z: number };
 
 interface BotBrain {
   nextThinkAt: number;
+  nextBlackboardAt: number;
+  blackboard: BotBlackboard | null;
   intent: BotIntent;
   stuckTime: number;
   lastPosition: { x: number; y: number; z: number };
@@ -129,6 +138,19 @@ interface AttackConfig {
   coneDot: number;
   radius?: number;
   damageType: string;
+}
+
+const BLAZE_ROCKET_DAMAGE = 28;
+const BLAZE_ROCKET_SPLASH_RADIUS = 3.2;
+const BLAZE_ROCKET_FIRE_RATE_REDUCTION = 0.7;
+const BLAZE_ROCKET_BOT_COOLDOWN_MS = Math.round(850 / BLAZE_ROCKET_FIRE_RATE_REDUCTION);
+const BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS = 300;
+const BLAZE_ROCKET_IMPACT_MAX_DISTANCE = 240;
+const BLAZE_ROCKET_IMPACT_DEDUP_MS = 5000;
+
+interface BlazeRocketImpactMessage {
+  rocketId: string;
+  position: PlainVec3;
 }
 
 interface BotSkillProfile {
@@ -180,6 +202,22 @@ const BOT_AWARENESS_RANGE = 58;
 const BOT_CLOSE_REVEAL_RANGE = 8;
 const BOT_LOS_SAMPLE_STEP = 0.55;
 const DAMAGE_HISTORY_WINDOW_MS = 10000;
+const BOT_AI_BUDGET_MS = 5;
+const LOS_CACHE_TTL_MS = 180;
+const TRANSFORM_POSITION_SCALE = 100;
+const TRANSFORM_VELOCITY_SCALE = 100;
+const TRANSFORM_ANGLE_SCALE = 10000;
+const PLAYER_VITALS_INTERVAL_MS = 125;
+const MATCH_SNAPSHOT_INTERVAL_MS = 500;
+const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
+const MOVEMENT_BIT_GROUNDED = 1 << 0;
+const MOVEMENT_BIT_SPRINTING = 1 << 1;
+const MOVEMENT_BIT_CROUCHING = 1 << 2;
+const MOVEMENT_BIT_SLIDING = 1 << 3;
+const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
+const MOVEMENT_BIT_GRAPPLING = 1 << 5;
+const MOVEMENT_BIT_JETPACKING = 1 << 6;
+const MOVEMENT_BIT_GLIDING = 1 << 7;
 const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   easy: {
     thinkIntervalMs: 360,
@@ -239,7 +277,7 @@ const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
 const PRIMARY_ATTACKS: Record<HeroId, AttackConfig> = {
   phantom: { damage: 18, range: 30, cooldownMs: 550, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
-  blaze: { damage: 28, range: 36, cooldownMs: 850, coneDot: Math.cos(0.22), damageType: 'rocket' },
+  blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_BOT_COOLDOWN_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
   glacier: { damage: 42, range: 3.4, cooldownMs: 750, coneDot: Math.cos(0.72), damageType: 'ice_mallet' },
   pulse: { damage: 16, range: 30, cooldownMs: 360, coneDot: Math.cos(0.16), damageType: 'pulse_burst' },
   sentinel: { damage: 20, range: 26, cooldownMs: 650, coneDot: Math.cos(0.2), damageType: 'sentinel_bolt' },
@@ -266,6 +304,8 @@ export class GameRoom extends Room<GameState> {
   private flamethrowerLastDamageTick: Map<string, number> = new Map();
   private botBrains: Map<string, BotBrain> = new Map();
   private attackCooldownUntil: Map<string, number> = new Map();
+  private blazeRocketImpactCooldownUntil: Map<string, number> = new Map();
+  private processedBlazeRocketImpacts: Map<string, number> = new Map();
   private damageHistory: Map<string, Map<string, { damage: number; timestamp: number }>> = new Map();
   private devInvulnerablePlayers: Set<string> = new Set();
   private devImmunePlayers: Set<string> = new Set();
@@ -279,11 +319,21 @@ export class GameRoom extends Room<GameState> {
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
   private sessionIdToClientId: Map<string, string> = new Map();
+  private metrics: TickMetrics | null = null;
+  private lastVitalsBroadcastAt = 0;
+  private lastMatchSnapshotBroadcastAt = 0;
+  private lastLowFrequencyStateAt = 0;
+  private playerVitalSignatures = new Map<string, PlayerVitalsSnapshot>();
+  private knownPlayerIds = new Set<string>();
+  private alivePlayers: Player[] = [];
+  private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
+  private losCache = new Map<string, { result: boolean; expiresAt: number }>();
 
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
-    console.log('Game room created:', this.roomId, 'from lobby:', this.lobbyId || 'direct');
+    this.metrics = new TickMetrics(this.roomId);
+    loggers.room.info('Game room created', this.roomId, 'from lobby', this.lobbyId || 'direct');
 
     // Initialize state
     this.setState(new GameState());
@@ -291,7 +341,7 @@ export class GameRoom extends Room<GameState> {
     this.state.config = this.config;
     this.state.mapSeed = createRandomSeed();
     this.refreshMapManifest();
-    console.log(`[GameRoom] Map seed: ${this.state.mapSeed}`);
+    loggers.room.info('Map seed', this.state.mapSeed);
     this.resetFlags();
     this.createBotsFromAssignments(options.botAssignments || []);
 
@@ -300,14 +350,20 @@ export class GameRoom extends Room<GameState> {
 
     // Handle messages
     this.onMessage('input', (client, input: PlayerInput) => {
-      this.handleInput(client, input);
+      this.metrics?.time('input', () => {
+        this.handleInput(client, input);
+      });
+    });
+
+    this.onMessage('blazeRocketImpact', (client, data: Partial<BlazeRocketImpactMessage> | null) => {
+      this.handleBlazeRocketImpact(client, data);
     });
 
     this.onMessage('selectHero', (client, data: { heroId: HeroId }) => {
       try {
         this.handleHeroSelect(client, data.heroId);
       } catch (error) {
-        console.error('[GameRoom] Failed to apply hero selection:', error);
+        loggers.room.error('Failed to apply hero selection:', error);
         client.send('devCommandError', { message: 'Failed to switch hero' });
       }
     });
@@ -316,7 +372,7 @@ export class GameRoom extends Room<GameState> {
       try {
         this.handleDevSetHero(client, data.heroId);
       } catch (error) {
-        console.error('[GameRoom] Failed to apply dev hero switch:', error);
+        loggers.room.error('Failed to apply dev hero switch:', error);
         client.send('devCommandError', { message: 'Failed to switch hero' });
       }
     });
@@ -359,19 +415,29 @@ export class GameRoom extends Room<GameState> {
         this.handleSetDevImmune(client, Boolean(data.enabled));
       });
     }
+
+    this.onMessage('requestPerfSnapshot', (client) => {
+      if (!this.isDevelopmentMode()) return;
+      client.send('perfSnapshot', this.metrics?.getDebugSnapshot() ?? null);
+    });
   }
 
   onJoin(client: Client, options: JoinOptions) {
-    console.log(`[GameRoom] Player joining: sessionId=${client.sessionId}, name=${options.playerName}, clientId=${options.clientId}`);
-    console.log(`[GameRoom] Current players in room: ${this.state.players.size}, clientId map size: ${this.clientIdToSessionId.size}`);
+    loggers.room.debug('Player joining', {
+      sessionId: client.sessionId,
+      name: options.playerName,
+      clientId: options.clientId,
+      players: this.state.players.size,
+      clientIds: this.clientIdToSessionId.size,
+    });
 
     // Handle reconnection: if same clientId exists, kick the old session
     if (options.clientId) {
       const existingSessionId = this.clientIdToSessionId.get(options.clientId);
-      console.log(`[GameRoom] Checking for existing session with clientId ${options.clientId}: found=${existingSessionId}`);
+      loggers.room.debug('Checking duplicate client id', options.clientId, existingSessionId);
       
       if (existingSessionId && existingSessionId !== client.sessionId) {
-        console.log(`[GameRoom] DUPLICATE DETECTED! Kicking old session: ${existingSessionId}`);
+        loggers.room.info('Duplicate session detected, kicking old session', existingSessionId);
         
         // Find and disconnect the old client
         const oldClient = this.clients.find(c => c.sessionId === existingSessionId);
@@ -435,6 +501,7 @@ export class GameRoom extends Room<GameState> {
     this.placePlayerAtSpawn(player);
 
     this.state.players.set(client.sessionId, player);
+    this.knownPlayerIds.add(client.sessionId);
 
     // Broadcast join to all clients (including the new one)
     this.broadcast('playerJoined', {
@@ -451,17 +518,19 @@ export class GameRoom extends Room<GameState> {
       },
     });
 
-    console.log(`[GameRoom] Player join complete. Total players now: ${this.state.players.size}`);
-    this.state.players.forEach((p, id) => {
-      console.log(`[GameRoom]   - ${p.name} (${id}) on team ${p.team}`);
+    loggers.room.info('Player join complete', {
+      sessionId: client.sessionId,
+      totalPlayers: this.state.players.size,
     });
+
+    this.sendCurrentSnapshots(client);
 
     // Check if we should start hero select
     this.checkPhaseTransition();
   }
 
   onLeave(client: Client, consented: boolean) {
-    console.log('Player left:', client.sessionId, 'consented:', consented);
+    loggers.room.info('Player left', client.sessionId, 'consented', consented);
 
     const player = this.state.players.get(client.sessionId);
     
@@ -471,8 +540,14 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.delete(client.sessionId);
+    this.knownPlayerIds.delete(client.sessionId);
+    this.playerVitalSignatures.delete(client.sessionId);
     playerPressState.delete(client.sessionId);
     this.authoritativePositionUntil.delete(client.sessionId);
+    this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
+    this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
+    this.blazeRocketImpactCooldownUntil.delete(client.sessionId);
+    this.deleteProcessedBlazeRocketImpactsForPlayer(client.sessionId);
     this.devInvulnerablePlayers.delete(client.sessionId);
     this.devImmunePlayers.delete(client.sessionId);
     
@@ -496,36 +571,71 @@ export class GameRoom extends Room<GameState> {
   }
 
   onDispose() {
-    console.log('Room disposing:', this.roomId);
+    loggers.room.info('Room disposing', this.roomId);
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
     }
   }
 
   private tick() {
+    const tickStart = this.metrics?.startTick() ?? 0;
     this.state.tick++;
     this.state.serverTime = Date.now();
     const dt = TICK_INTERVAL_MS / 1000;
-    this.updateBots(this.state.serverTime, dt);
+    this.rebuildPlayerSpatialIndex();
+    if (this.metrics) {
+      this.metrics.time('updateBots', () => this.updateBots(this.state.serverTime, dt));
+    } else {
+      this.updateBots(this.state.serverTime, dt);
+    }
 
     // Update based on phase
     switch (this.state.phase) {
       case 'hero_select':
-        // Broadcast player states so players can see each other in lobby
-        this.broadcastPlayerStates();
+        if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
+          this.lastLowFrequencyStateAt = this.state.serverTime;
+          this.broadcastStateStreams({ transforms: false });
+        }
         break;
       case 'countdown':
         this.updateCountdown();
-        // Broadcast player states during countdown
-        this.broadcastPlayerStates();
+        this.broadcastStateStreams({ transforms: true });
         break;
       case 'playing':
-        this.updatePlaying();
+        if (this.metrics) {
+          this.metrics.time('updatePlaying', () => this.updatePlaying());
+        } else {
+          this.updatePlaying();
+        }
         break;
       case 'round_end':
         this.updateRoundEnd();
+        if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
+          this.lastLowFrequencyStateAt = this.state.serverTime;
+          this.broadcastStateStreams({ transforms: false });
+        }
         break;
     }
+
+    this.metrics?.endTick(tickStart);
+  }
+
+  private rebuildPlayerSpatialIndex(): void {
+    this.alivePlayers = [];
+    this.alivePlayersByTeam.red = [];
+    this.alivePlayersByTeam.blue = [];
+
+    this.state.players.forEach((player) => {
+      if (player.state !== 'alive') return;
+      this.alivePlayers.push(player);
+      if (player.team === 'red' || player.team === 'blue') {
+        this.alivePlayersByTeam[player.team].push(player);
+      }
+    });
+  }
+
+  private getEnemyPlayers(team: Team): Player[] {
+    return this.alivePlayersByTeam[team === 'red' ? 'blue' : 'red'];
   }
 
   private updateCountdown() {
@@ -573,22 +683,328 @@ export class GameRoom extends Room<GameState> {
     });
 
     // Update void zones (damage enemies inside)
-    this.updateVoidZones(now);
+    if (this.metrics) {
+      this.metrics.time('updateVoidZones', () => this.updateVoidZones(now));
+    } else {
+      this.updateVoidZones(now);
+    }
 
     // Update held Blaze flamethrowers
-    this.updateBlazeFlamethrowers(now, dt);
+    if (this.metrics) {
+      this.metrics.time('updateBlazeFlamethrowers', () => this.updateBlazeFlamethrowers(now, dt));
+    } else {
+      this.updateBlazeFlamethrowers(now, dt);
+    }
 
     // Update physics simulation (simplified)
-    this.updatePhysics();
+    if (this.metrics) {
+      this.metrics.time('updatePhysics', () => this.updatePhysics());
+    } else {
+      this.updatePhysics();
+    }
 
     // Update CTF objective interactions after movement.
-    this.updateCTFObjectives(now);
+    if (this.metrics) {
+      this.metrics.time('updateCTFObjectives', () => this.updateCTFObjectives(now));
+    } else {
+      this.updateCTFObjectives(now);
+    }
 
-    // Broadcast player positions/states via message (workaround for schema sync issues)
-    this.broadcastPlayerStates();
+    this.broadcastStateStreams();
   }
 
   // Ability cooldown and active ability updates are now in abilityHandlers.ts
+
+  private quantize(value: number, scale: number): number {
+    return Math.round(value * scale);
+  }
+
+  private getMovementBits(player: Player): number {
+    let bits = 0;
+    if (player.movement.isGrounded) bits |= MOVEMENT_BIT_GROUNDED;
+    if (player.movement.isSprinting) bits |= MOVEMENT_BIT_SPRINTING;
+    if (player.movement.isCrouching) bits |= MOVEMENT_BIT_CROUCHING;
+    if (player.movement.isSliding) bits |= MOVEMENT_BIT_SLIDING;
+    if (player.movement.isWallRunning) bits |= MOVEMENT_BIT_WALL_RUNNING;
+    if (player.movement.isGrappling) bits |= MOVEMENT_BIT_GRAPPLING;
+    if (player.movement.isJetpacking) bits |= MOVEMENT_BIT_JETPACKING;
+    if (player.movement.isGliding) bits |= MOVEMENT_BIT_GLIDING;
+    return bits;
+  }
+
+  private buildPlayerTransform(id: string, player: Player): QuantizedPlayerTransform {
+    return {
+      id,
+      px: this.quantize(player.position.x, TRANSFORM_POSITION_SCALE),
+      py: this.quantize(player.position.y, TRANSFORM_POSITION_SCALE),
+      pz: this.quantize(player.position.z, TRANSFORM_POSITION_SCALE),
+      vx: this.quantize(player.velocity.x, TRANSFORM_VELOCITY_SCALE),
+      vy: this.quantize(player.velocity.y, TRANSFORM_VELOCITY_SCALE),
+      vz: this.quantize(player.velocity.z, TRANSFORM_VELOCITY_SCALE),
+      yaw: this.quantize(player.lookYaw, TRANSFORM_ANGLE_SCALE),
+      pitch: this.quantize(player.lookPitch, TRANSFORM_ANGLE_SCALE),
+      movementBits: this.getMovementBits(player),
+      wallRunSide: player.movement.wallRunSide === 'left' ? -1 : player.movement.wallRunSide === 'right' ? 1 : 0,
+    };
+  }
+
+  private buildPlayerVitals(id: string, player: Player): PlayerVitalsSnapshot {
+    const abilities: Record<string, any> = {};
+    player.abilities.forEach((ability, abilityId) => {
+      abilities[abilityId] = {
+        abilityId: ability.abilityId,
+        cooldownRemaining: ability.cooldownRemaining,
+        charges: ability.charges,
+        isActive: ability.isActive,
+      };
+    });
+
+    return {
+      id,
+      name: player.name,
+      team: player.team as Team,
+      heroId: (player.heroId || null) as HeroId | null,
+      state: player.state as PlayerVitalsSnapshot['state'],
+      isReady: player.isReady,
+      isBot: player.isBot,
+      botDifficulty: player.botDifficulty ? this.normalizeBotDifficulty(player.botDifficulty) : undefined,
+      botProfileId: player.botProfileId || undefined,
+      health: player.health,
+      maxHealth: player.maxHealth,
+      ultimateCharge: player.ultimateCharge,
+      hasFlag: player.hasFlag,
+      movement: {
+        isGrounded: player.movement.isGrounded,
+        isSprinting: player.movement.isSprinting,
+        isCrouching: player.movement.isCrouching,
+        isSliding: player.movement.isSliding,
+        slideTimeRemaining: player.movement.slideTimeRemaining,
+        isWallRunning: player.movement.isWallRunning,
+        wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
+          ? player.movement.wallRunSide
+          : null,
+        isGrappling: player.movement.isGrappling,
+        grapplePoint: null,
+        isJetpacking: player.movement.isJetpacking,
+        jetpackFuel: player.movement.jetpackFuel,
+        isGliding: player.movement.isGliding,
+      },
+      abilities,
+      stats: {
+        kills: player.kills,
+        deaths: player.deaths,
+        assists: player.assists,
+        flagCaptures: player.flagCaptures,
+        flagReturns: player.flagReturns,
+      },
+      respawnTime: player.respawnTime || null,
+      spawnProtectionUntil: player.spawnProtectionUntil || null,
+    };
+  }
+
+  private haveVitalsChanged(previous: PlayerVitalsSnapshot | undefined, next: PlayerVitalsSnapshot): boolean {
+    if (!previous) return true;
+
+    return (
+      previous.name !== next.name ||
+      previous.team !== next.team ||
+      previous.heroId !== next.heroId ||
+      previous.state !== next.state ||
+      previous.isReady !== next.isReady ||
+      previous.isBot !== next.isBot ||
+      previous.botDifficulty !== next.botDifficulty ||
+      previous.botProfileId !== next.botProfileId ||
+      previous.health !== next.health ||
+      previous.maxHealth !== next.maxHealth ||
+      Math.round(previous.ultimateCharge) !== Math.round(next.ultimateCharge) ||
+      previous.hasFlag !== next.hasFlag ||
+      this.haveMovementVitalsChanged(previous.movement, next.movement) ||
+      this.haveAbilityVitalsChanged(previous.abilities, next.abilities) ||
+      this.haveStatVitalsChanged(previous.stats, next.stats) ||
+      previous.respawnTime !== next.respawnTime ||
+      previous.spawnProtectionUntil !== next.spawnProtectionUntil
+    );
+  }
+
+  private haveMovementVitalsChanged(
+    previous: PlayerVitalsSnapshot['movement'],
+    next: PlayerVitalsSnapshot['movement']
+  ): boolean {
+    return (
+      previous.isGrounded !== next.isGrounded ||
+      previous.isSprinting !== next.isSprinting ||
+      previous.isCrouching !== next.isCrouching ||
+      previous.isSliding !== next.isSliding ||
+      previous.slideTimeRemaining !== next.slideTimeRemaining ||
+      previous.isWallRunning !== next.isWallRunning ||
+      previous.wallRunSide !== next.wallRunSide ||
+      previous.isGrappling !== next.isGrappling ||
+      previous.isJetpacking !== next.isJetpacking ||
+      previous.jetpackFuel !== next.jetpackFuel ||
+      previous.isGliding !== next.isGliding
+    );
+  }
+
+  private haveAbilityVitalsChanged(
+    previous: PlayerVitalsSnapshot['abilities'],
+    next: PlayerVitalsSnapshot['abilities']
+  ): boolean {
+    const previousKeys = Object.keys(previous);
+    const nextKeys = Object.keys(next);
+    if (previousKeys.length !== nextKeys.length) return true;
+
+    for (const abilityId of nextKeys) {
+      const previousAbility = previous[abilityId];
+      const nextAbility = next[abilityId];
+      if (!previousAbility || !nextAbility) return true;
+      if (
+        previousAbility.abilityId !== nextAbility.abilityId ||
+        previousAbility.cooldownRemaining !== nextAbility.cooldownRemaining ||
+        previousAbility.charges !== nextAbility.charges ||
+        previousAbility.isActive !== nextAbility.isActive ||
+        previousAbility.activatedAt !== nextAbility.activatedAt
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private haveStatVitalsChanged(
+    previous: PlayerVitalsSnapshot['stats'],
+    next: PlayerVitalsSnapshot['stats']
+  ): boolean {
+    return (
+      previous.kills !== next.kills ||
+      previous.deaths !== next.deaths ||
+      previous.assists !== next.assists ||
+      previous.flagCaptures !== next.flagCaptures ||
+      previous.flagReturns !== next.flagReturns
+    );
+  }
+
+  private buildMatchSnapshot(): MatchSnapshotMessage {
+    return {
+      tick: this.state.tick,
+      serverTime: this.state.serverTime,
+      phase: this.state.phase as MatchSnapshotMessage['phase'],
+      mapSeed: this.state.mapSeed,
+      redScore: this.state.redTeam.score,
+      blueScore: this.state.blueTeam.score,
+      redFlag: this.getFlagSync('red'),
+      blueFlag: this.getFlagSync('blue'),
+      roundTimeRemaining: this.state.roundTimeRemaining,
+      phaseEndTime: this.state.phaseEndTime || null,
+    };
+  }
+
+  private broadcastWithMetrics(type: string, payload: unknown): void {
+    this.metrics?.recordNetworkMessage(type, payload);
+    this.broadcast(type, payload);
+  }
+
+  private sendWithMetrics(client: Client, type: string, payload: unknown): void {
+    this.metrics?.recordNetworkMessage(type, payload);
+    client.send(type, payload);
+  }
+
+  private sendCurrentSnapshots(client: Client): void {
+    this.sendWithMetrics(client, 'matchSnapshot', this.buildMatchSnapshot());
+    this.sendWithMetrics(client, 'playerVitals', {
+      tick: this.state.tick,
+      serverTime: this.state.serverTime,
+      players: Array.from(this.state.players, ([id, player]) => this.buildPlayerVitals(id, player)),
+    } satisfies PlayerVitalsMessage);
+
+    const transformPayload = this.buildPlayerTransformsPayload();
+    if (transformPayload.players.length > 0) {
+      this.sendWithMetrics(client, 'playerTransforms', transformPayload);
+    }
+  }
+
+  private buildPlayerTransformsPayload(): PlayerTransformsMessage {
+    const players: QuantizedPlayerTransform[] = [];
+
+    this.state.players.forEach((player, id) => {
+      if (player.state !== 'alive' && player.state !== 'spawning') return;
+      players.push(this.buildPlayerTransform(id, player));
+    });
+
+    return {
+      tick: this.state.tick,
+      serverTime: this.state.serverTime,
+      players,
+    };
+  }
+
+  private broadcastPlayerTransforms(): void {
+    const payload = this.buildPlayerTransformsPayload();
+    if (payload.players.length > 0) {
+      this.broadcastWithMetrics('playerTransforms', payload);
+    }
+  }
+
+  private broadcastPlayerVitals(force = false): void {
+    const now = this.state.serverTime || Date.now();
+    if (!force && now - this.lastVitalsBroadcastAt < PLAYER_VITALS_INTERVAL_MS) return;
+
+    const players: PlayerVitalsSnapshot[] = [];
+    const currentIds = new Set<string>();
+
+    this.state.players.forEach((player, id) => {
+      currentIds.add(id);
+      this.knownPlayerIds.add(id);
+
+      const vitals = this.buildPlayerVitals(id, player);
+      if (force || this.haveVitalsChanged(this.playerVitalSignatures.get(id), vitals)) {
+        this.playerVitalSignatures.set(id, vitals);
+        players.push(vitals);
+      }
+    });
+
+    const removedPlayerIds: string[] = [];
+    this.knownPlayerIds.forEach((id) => {
+      if (!currentIds.has(id)) {
+        removedPlayerIds.push(id);
+        this.knownPlayerIds.delete(id);
+        this.playerVitalSignatures.delete(id);
+      }
+    });
+
+    if (players.length === 0 && removedPlayerIds.length === 0 && !force) return;
+
+    this.lastVitalsBroadcastAt = now;
+    this.broadcastWithMetrics('playerVitals', {
+      tick: this.state.tick,
+      serverTime: this.state.serverTime,
+      players,
+      removedPlayerIds,
+    } satisfies PlayerVitalsMessage);
+  }
+
+  private broadcastMatchSnapshot(force = false): void {
+    const now = this.state.serverTime || Date.now();
+    if (!force && now - this.lastMatchSnapshotBroadcastAt < MATCH_SNAPSHOT_INTERVAL_MS) return;
+
+    this.lastMatchSnapshotBroadcastAt = now;
+    this.broadcastWithMetrics('matchSnapshot', this.buildMatchSnapshot());
+  }
+
+  private broadcastStateStreams(options: { transforms?: boolean; vitals?: boolean; match?: boolean; forceVitals?: boolean; forceMatch?: boolean } = {}): void {
+    const shouldBroadcastTransforms = options.transforms ?? (this.state.phase === 'playing' || this.state.phase === 'countdown');
+    if (shouldBroadcastTransforms) {
+      this.metrics?.time('broadcastPlayerTransforms', () => this.broadcastPlayerTransforms());
+    }
+
+    if (options.vitals ?? true) {
+      this.metrics?.time('broadcastPlayerVitals', () => this.broadcastPlayerVitals(options.forceVitals));
+    }
+
+    if (options.match ?? true) {
+      this.metrics?.time('broadcastMatchSnapshot', () => this.broadcastMatchSnapshot(options.forceMatch));
+    }
+  }
 
   private broadcastPlayerStates() {
     const playerStates: any[] = [];
@@ -657,7 +1073,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     if (playerStates.length > 0) {
-      this.broadcast('playerStates', {
+      this.broadcastWithMetrics('playerStates', {
         players: playerStates,
         mapSeed: this.state.mapSeed,
         redScore: this.state.redTeam.score,
@@ -763,9 +1179,12 @@ export class GameRoom extends Room<GameState> {
       this.placePlayerAtSpawn(bot);
 
       this.state.players.set(bot.id, bot);
+      this.knownPlayerIds.add(bot.id);
       this.initializePressState(bot.id);
       this.botBrains.set(bot.id, {
         nextThinkAt: 0,
+        nextBlackboardAt: 0,
+        blackboard: null,
         intent: 'selecting',
         stuckTime: 0,
         lastPosition: { x: bot.position.x, y: bot.position.y, z: bot.position.z },
@@ -837,6 +1256,10 @@ export class GameRoom extends Room<GameState> {
     const attack = mode === 'primary' ? PRIMARY_ATTACKS[heroId] : SECONDARY_ATTACKS[heroId];
     if (!attack) return;
 
+    if (heroId === 'blaze' && mode === 'primary' && !player.isBot) {
+      return;
+    }
+
     const cooldownKey = `${player.id}:${mode}`;
     const now = Date.now();
     if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) return;
@@ -861,16 +1284,61 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private handleBlazeRocketImpact(client: Client, data: Partial<BlazeRocketImpactMessage> | null): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.state !== 'alive' || player.heroId !== 'blaze') return;
+    if (!data || typeof data.rocketId !== 'string' || data.rocketId.length === 0 || data.rocketId.length > 96) return;
+    if (!data.rocketId.startsWith(`rocket_${player.id}_`)) return;
+    if (!data.position || !this.isFiniteVec3(data.position)) return;
+
+    const now = Date.now();
+    this.cleanupProcessedBlazeRocketImpacts(now);
+
+    const impactKey = `${player.id}:${data.rocketId}`;
+    if (this.processedBlazeRocketImpacts.has(impactKey)) return;
+
+    const center = {
+      x: data.position.x,
+      y: data.position.y,
+      z: data.position.z,
+    };
+    if (this.distance3D(player.position, center) > BLAZE_ROCKET_IMPACT_MAX_DISTANCE) return;
+
+    const cooldownUntil = this.blazeRocketImpactCooldownUntil.get(player.id) || 0;
+    if (now < cooldownUntil) return;
+
+    this.blazeRocketImpactCooldownUntil.set(player.id, now + BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS);
+    this.processedBlazeRocketImpacts.set(impactKey, now + BLAZE_ROCKET_IMPACT_DEDUP_MS);
+    this.applyAreaDamage(player, center, BLAZE_ROCKET_SPLASH_RADIUS, BLAZE_ROCKET_DAMAGE, 'rocket');
+  }
+
+  private cleanupProcessedBlazeRocketImpacts(now: number): void {
+    if (this.processedBlazeRocketImpacts.size === 0) return;
+
+    for (const [impactKey, expiresAt] of this.processedBlazeRocketImpacts) {
+      if (expiresAt <= now) {
+        this.processedBlazeRocketImpacts.delete(impactKey);
+      }
+    }
+  }
+
+  private deleteProcessedBlazeRocketImpactsForPlayer(playerId: string): void {
+    const prefix = `${playerId}:`;
+    for (const impactKey of this.processedBlazeRocketImpacts.keys()) {
+      if (impactKey.startsWith(prefix)) {
+        this.processedBlazeRocketImpacts.delete(impactKey);
+      }
+    }
+  }
+
   private findTargetInAimCone(source: Player, range: number, minDot: number): Player | null {
     const origin = this.getPlayerEyePosition(source);
     const forward = this.getForwardVector(source.lookYaw, source.lookPitch);
     let bestTarget: Player | null = null;
     let bestDistance = range;
 
-    this.state.players.forEach((target) => {
-      if (target.state !== 'alive') return;
-      if (target.id === source.id) return;
-      if (target.team === source.team) return;
+    for (const target of this.getEnemyPlayers(source.team as Team)) {
+      if (target.id === source.id) continue;
 
       const targetPoint = this.getPlayerBodyAimPosition(target);
       const toTarget = {
@@ -879,37 +1347,35 @@ export class GameRoom extends Room<GameState> {
         z: targetPoint.z - origin.z,
       };
       const distance = Math.sqrt(toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z);
-      if (distance <= 0.0001 || distance > range) return;
-      if (!this.hasLineOfSight(origin, targetPoint)) return;
+      if (distance <= 0.0001 || distance > range) continue;
+      if (!this.hasLineOfSight(origin, targetPoint)) continue;
 
       const dot = (toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z) / distance;
-      if (dot < minDot) return;
+      if (dot < minDot) continue;
 
       if (distance < bestDistance) {
         bestDistance = distance;
         bestTarget = target;
       }
-    });
+    }
 
     return bestTarget;
   }
 
   private applyAreaDamage(source: Player, center: { x: number; y: number; z: number }, radius: number, damage: number, damageType: string): void {
     const radiusSq = radius * radius;
-    this.state.players.forEach((target) => {
-      if (target.state !== 'alive') return;
-      if (target.id === source.id) return;
-      if (target.team === source.team) return;
+    for (const target of this.getEnemyPlayers(source.team as Team)) {
+      if (target.id === source.id) continue;
 
       const dx = target.position.x - center.x;
       const dy = target.position.y - center.y;
       const dz = target.position.z - center.z;
       const distSq = dx * dx + dy * dy + dz * dz;
-      if (distSq > radiusSq) return;
+      if (distSq > radiusSq) continue;
 
       const falloff = 1 - Math.sqrt(distSq) / radius * 0.45;
       this.applyDamage(target, Math.max(1, Math.round(damage * falloff)), source.id, damageType);
-    });
+    }
   }
 
   private applyDamage(target: Player, rawDamage: number, sourceId: string | null, damageType: string): boolean {
@@ -1109,6 +1575,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updateBots(now: number, dt: number): void {
+    const budgetStart = performance.now();
     this.botBrains.forEach((brain, botId) => {
       const bot = this.state.players.get(botId);
       if (!bot?.isBot) {
@@ -1142,6 +1609,11 @@ export class GameRoom extends Room<GameState> {
         return;
       }
 
+      if (!bot.hasFlag && performance.now() - budgetStart > BOT_AI_BUDGET_MS) {
+        bot.lastInput = this.createEmptyBotInput(bot, now);
+        return;
+      }
+
       const botInput = this.createBotInput(bot, brain, now, dt);
       bot.lastInput = botInput;
       bot.lookYaw = botInput.lookYaw;
@@ -1152,7 +1624,12 @@ export class GameRoom extends Room<GameState> {
 
   private createBotInput(bot: Player, brain: BotBrain, now: number, dt: number): PlayerInput {
     const skill = this.getBotSkillProfile(bot);
-    const blackboard = this.getBotBlackboard(bot);
+    const shouldRefreshBlackboard = !brain.blackboard || now >= brain.nextBlackboardAt || now >= brain.nextThinkAt;
+    const blackboard = shouldRefreshBlackboard ? this.getBotBlackboard(bot) : brain.blackboard!;
+    if (shouldRefreshBlackboard) {
+      brain.blackboard = blackboard;
+      brain.nextBlackboardAt = now + Math.max(80, skill.thinkIntervalMs * 0.75);
+    }
     if (now >= brain.nextThinkAt) {
       brain.intent = this.chooseBotIntent(bot, blackboard);
       brain.nextThinkAt = now + this.randomBetween(skill.thinkIntervalMs * 0.75, skill.thinkIntervalMs * 1.25);
@@ -1322,8 +1799,8 @@ export class GameRoom extends Room<GameState> {
     let nearbyEnemyCount = 0;
     let nearbyAllyCount = 0;
 
-    this.state.players.forEach((candidate) => {
-      if (candidate.id === bot.id || candidate.state !== 'alive') return;
+    for (const candidate of this.alivePlayers) {
+      if (candidate.id === bot.id) continue;
 
       const distance = this.distance3D(bot.position, candidate.position);
       if (candidate.team === bot.team) {
@@ -1337,7 +1814,7 @@ export class GameRoom extends Room<GameState> {
         }
         if (distance <= 16) nearbyAllyCount++;
       } else {
-        if (!this.canBotPerceiveEnemy(bot, candidate, distance)) return;
+        if (!this.canBotPerceiveEnemy(bot, candidate, distance)) continue;
         enemies.push(candidate);
         if (distance < nearestEnemyDistance) {
           nearestEnemy = candidate;
@@ -1353,7 +1830,7 @@ export class GameRoom extends Room<GameState> {
         }
         if (distance <= 16) nearbyEnemyCount++;
       }
-    });
+    }
 
     const ownFlag = this.getFlagByTeam(botTeam);
     const enemyFlag = this.getFlagByTeam(enemyTeam);
@@ -1759,13 +2236,26 @@ export class GameRoom extends Room<GameState> {
     return this.hasLineOfSight(this.getPlayerEyePosition(source), this.getPlayerBodyAimPosition(target));
   }
 
+  private getLineOfSightCacheKey(start: PlainVec3, end: PlainVec3): string {
+    const q = (value: number) => Math.round(value * 2);
+    return `${q(start.x)}:${q(start.y)}:${q(start.z)}>${q(end.x)}:${q(end.y)}:${q(end.z)}`;
+  }
+
   private hasLineOfSight(start: PlainVec3, end: PlainVec3): boolean {
+    const now = this.state.serverTime || Date.now();
+    const cacheKey = this.getLineOfSightCacheKey(start, end);
+    const cached = this.losCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.result;
+    }
+
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const dz = end.z - start.z;
     const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
     const steps = Math.max(1, Math.ceil(distance / BOT_LOS_SAMPLE_STEP));
 
+    let result = true;
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
       if (isSolidBlock(this.getBlockAtWorld({
@@ -1773,11 +2263,19 @@ export class GameRoom extends Room<GameState> {
         y: start.y + dy * t,
         z: start.z + dz * t,
       }))) {
-        return false;
+        result = false;
+        break;
       }
     }
 
-    return true;
+    if (this.losCache.size > 1500) {
+      this.losCache.clear();
+    }
+    this.losCache.set(cacheKey, {
+      result,
+      expiresAt: now + LOS_CACHE_TTL_MS,
+    });
+    return result;
   }
 
   private getPlayerEyePosition(player: Player): PlainVec3 {
@@ -2005,7 +2503,7 @@ export class GameRoom extends Room<GameState> {
     // Initialize abilities for this hero
     initializePlayerAbilities(player, heroId);
 
-    console.log(`${player.name} selected ${heroDef.name}`);
+    loggers.room.debug('hero selected', player.name, heroDef.name);
     return true;
   }
 
@@ -2089,6 +2587,14 @@ export class GameRoom extends Room<GameState> {
 
     if (gx < 0 || gx >= manifest.size.x || gz < 0 || gz >= manifest.size.z) {
       return null;
+    }
+
+    const topRow = manifest.heightfield.topSolidRows[gx + gz * manifest.heightfield.size.x];
+    if (topRow > 0) {
+      const topY = manifest.origin.y + topRow * manifest.voxelSize.y;
+      if (position.y >= topY - 0.75) {
+        return topY;
+      }
     }
 
     const startY = Math.max(0, Math.min(
@@ -2242,7 +2748,7 @@ export class GameRoom extends Room<GameState> {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
-    console.log(`${player.name} ready: ${ready}, hero: ${player.heroId}`);
+    loggers.room.debug('player ready changed', player.name, ready, player.heroId);
     player.isReady = ready;
     this.checkPhaseTransition();
   }
@@ -2283,7 +2789,7 @@ export class GameRoom extends Room<GameState> {
 
   private checkPhaseTransition() {
     const playerCount = this.state.players.size;
-    console.log(`checkPhaseTransition: phase=${this.state.phase}, players=${playerCount}`);
+    loggers.room.debug('checkPhaseTransition', { phase: this.state.phase, players: playerCount });
 
     switch (this.state.phase) {
       case 'waiting':
@@ -2298,7 +2804,7 @@ export class GameRoom extends Room<GameState> {
         let allReady = true;
         let readyCount = 0;
         this.state.players.forEach(p => {
-          console.log(`  Player ${p.name}: heroId=${p.heroId}, isReady=${p.isReady}`);
+          loggers.room.debug('ready check player', p.name, p.heroId, p.isReady);
           if (!p.heroId || !p.isReady) {
             allReady = false;
           } else {
@@ -2306,10 +2812,10 @@ export class GameRoom extends Room<GameState> {
           }
         });
 
-        console.log(`  allReady=${allReady}, readyCount=${readyCount}/${playerCount}`);
+        loggers.room.debug('ready check summary', { allReady, readyCount, playerCount });
 
         if (allReady && playerCount >= 1) {
-          console.log('All players ready, starting countdown!');
+          loggers.room.info('all players ready, starting countdown');
           this.startCountdown();
         }
 
@@ -2345,6 +2851,7 @@ export class GameRoom extends Room<GameState> {
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
     });
+    this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
 
   private startCountdown() {
@@ -2362,7 +2869,7 @@ export class GameRoom extends Room<GameState> {
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
     });
-    this.broadcastPlayerStates();
+    this.broadcastStateStreams({ transforms: true, forceVitals: true, forceMatch: true });
   }
 
   private startPlaying() {
@@ -2397,7 +2904,7 @@ export class GameRoom extends Room<GameState> {
       endTime: Date.now() + this.config.roundTimeSeconds * 1000,
       mapSeed: this.state.mapSeed,
     });
-    this.broadcastPlayerStates();
+    this.broadcastStateStreams({ transforms: true, forceVitals: true, forceMatch: true });
   }
 
   private endRound() {
@@ -2492,46 +2999,39 @@ export class GameRoom extends Room<GameState> {
 
     // Apply damage to players in active void zones
     for (const zone of this.voidZones) {
-      this.state.players.forEach((player) => {
-        // Skip dead players, same team, and the zone owner
-        if (player.state !== 'alive') return;
-        if (player.team === zone.ownerTeam) return;
-        if (player.id === zone.ownerId) return;
+      const targets = this.alivePlayersByTeam[zone.ownerTeam === 'red' ? 'blue' : 'red'];
+      for (const player of targets) {
+        if (player.id === zone.ownerId) continue;
+        if (player.spawnProtectionUntil && now < player.spawnProtectionUntil) continue;
 
-        // Check spawn protection
-        if (player.spawnProtectionUntil && now < player.spawnProtectionUntil) return;
-
-        // Check if player is in the zone
         const dx = player.position.x - zone.position.x;
         const dz = player.position.z - zone.position.z;
         const distSq = dx * dx + dz * dz;
-        
-        if (distSq <= zone.radius * zone.radius) {
-          // Check damage interval
-          const lastDamage = zone.lastDamageTick.get(player.id) || 0;
-          if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
-            zone.lastDamageTick.set(player.id, now);
-            this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone');
-          }
+        if (distSq > zone.radius * zone.radius) continue;
+
+        const lastDamage = zone.lastDamageTick.get(player.id) || 0;
+        if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
+          zone.lastDamageTick.set(player.id, now);
+          this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone');
         }
-      });
+      }
     }
   }
 
   private updateBlazeFlamethrowers(now: number, dt: number) {
-    this.state.players.forEach((player) => {
-      if (player.heroId !== 'blaze') return;
+    for (const player of this.alivePlayers) {
+      if (player.heroId !== 'blaze') continue;
 
       player.movement.isJetpacking = false;
 
-      const isFiring = player.state === 'alive' && Boolean(player.lastInput?.ability1);
+      const isFiring = Boolean(player.lastInput?.ability1);
       if (isFiring && player.movement.jetpackFuel > 0) {
         player.movement.jetpackFuel = Math.max(
           0,
           player.movement.jetpackFuel - BLAZE_FLAMETHROWER_FUEL_DRAIN * dt
         );
         this.applyFlamethrowerDamage(player, now);
-        return;
+        continue;
       }
 
       if (player.movement.jetpackFuel < BLAZE_FLAMETHROWER_MAX_FUEL) {
@@ -2540,7 +3040,7 @@ export class GameRoom extends Room<GameState> {
           player.movement.jetpackFuel + BLAZE_FLAMETHROWER_FUEL_REGEN * dt
         );
       }
-    });
+    }
   }
 
   private applyFlamethrowerDamage(source: Player, now: number) {
@@ -2575,11 +3075,9 @@ export class GameRoom extends Room<GameState> {
 
     const rangeSq = BLAZE_FLAMETHROWER_RANGE * BLAZE_FLAMETHROWER_RANGE;
 
-    this.state.players.forEach((target) => {
-      if (target.state !== 'alive') return;
-      if (target.id === source.id) return;
-      if (target.team === source.team) return;
-      if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) return;
+    for (const target of this.getEnemyPlayers(source.team as Team)) {
+      if (target.id === source.id) continue;
+      if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) continue;
 
       const toTarget = {
         x: target.position.x - origin.x,
@@ -2587,8 +3085,8 @@ export class GameRoom extends Room<GameState> {
         z: target.position.z - origin.z,
       };
       const distSq = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
-      if (distSq > rangeSq || distSq <= 0.0001) return;
-      if (!this.hasLineOfSight(origin, this.getPlayerBodyAimPosition(target))) return;
+      if (distSq > rangeSq || distSq <= 0.0001) continue;
+      if (!this.hasLineOfSight(origin, this.getPlayerBodyAimPosition(target))) continue;
 
       const distance = Math.sqrt(distSq);
       const dot = (
@@ -2596,17 +3094,17 @@ export class GameRoom extends Room<GameState> {
         toTarget.y * forward.y +
         toTarget.z * forward.z
       ) / distance;
-      if (dot < BLAZE_FLAMETHROWER_CONE_DOT) return;
+      if (dot < BLAZE_FLAMETHROWER_CONE_DOT) continue;
 
       const tickKey = `${source.id}:${target.id}`;
       const lastDamage = this.flamethrowerLastDamageTick.get(tickKey) || 0;
-      if (now - lastDamage < BLAZE_FLAMETHROWER_DAMAGE_INTERVAL) return;
+      if (now - lastDamage < BLAZE_FLAMETHROWER_DAMAGE_INTERVAL) continue;
 
       const falloff = 1 - (distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
       const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));
       this.flamethrowerLastDamageTick.set(tickKey, now);
       this.applyDamage(target, damage, source.id, 'flamethrower');
-    });
+    }
   }
 
   private handlePlayerDeath(player: Player, killerId: string) {
@@ -2881,7 +3379,7 @@ export class GameRoom extends Room<GameState> {
       const requestingPlayer = this.state.players.get(client.sessionId);
       if (requestingPlayer) {
         team = requestingPlayer.team === 'red' ? 'blue' : 'red';
-        console.log(`NPC team defaulted to ${team} (opposite of ${requestingPlayer.name}'s team)`);
+        loggers.room.debug('NPC team defaulted', team, requestingPlayer.name);
       } else {
         team = 'blue'; // fallback
       }
@@ -2938,7 +3436,7 @@ export class GameRoom extends Room<GameState> {
     this.state.players.set(npcId, npc);
     this.spawnedNpcs.add(npcId);
 
-    console.log(`NPC spawned: ${npcName} (${heroId}) on ${team} team at (${npc.position.x.toFixed(1)}, ${npc.position.y.toFixed(1)}, ${npc.position.z.toFixed(1)})`);
+    loggers.room.debug('NPC spawned', npcName, heroId, team, this.vec3SchemaToPlain(npc.position));
 
     // Broadcast NPC spawn to all clients
     this.broadcast('playerJoined', {
@@ -3009,7 +3507,7 @@ export class GameRoom extends Room<GameState> {
       targetHeroId: npc.heroId || null,
     });
 
-    console.log(`NPC ${npc.name} took ${damage} damage: ${oldHealth} -> ${npc.health}`);
+    loggers.room.debug('NPC damaged', npc.name, damage, oldHealth, npc.health);
 
     // Check for death
     if (npc.health <= 0) {
@@ -3091,7 +3589,7 @@ export class GameRoom extends Room<GameState> {
       killer.ultimateCharge = Math.min(100, killer.ultimateCharge + 20);
     }
 
-    console.log(`NPC ${npc.name} eliminated by ${killer?.name || killerId}`);
+    loggers.room.debug('NPC eliminated', npc.name, killer?.name || killerId);
 
     // Remove NPC from game
     this.state.players.delete(npc.id);

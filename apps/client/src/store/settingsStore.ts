@@ -1,17 +1,21 @@
 import { create } from 'zustand';
+import { loggers } from '../utils/logger';
 
 export type GraphicsQuality = 'low' | 'medium' | 'high' | 'ultra';
 export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
 export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
+export type GraphicsPreset = 'competitive' | 'balanced' | 'cinematic';
 
 export interface ClientSettings {
+  graphicsPreset: GraphicsPreset;
   resolutionScale: GraphicsQuality;
   antialiasing: boolean;
   materialQuality: MaterialQuality;
   shadowQuality: GraphicsFeatureQuality;
   reflectionQuality: GraphicsFeatureQuality;
   environmentQuality: GraphicsFeatureQuality;
+  adaptiveQuality: boolean;
   fov: number;
   showFPS: boolean;
   masterVolume: number;
@@ -29,13 +33,48 @@ export interface ClientSettings {
 
 export const SETTINGS_STORAGE_KEY = 'voxel-strike-settings';
 
+export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
+  ClientSettings,
+  | 'resolutionScale'
+  | 'antialiasing'
+  | 'materialQuality'
+  | 'shadowQuality'
+  | 'reflectionQuality'
+  | 'environmentQuality'
+  | 'adaptiveQuality'
+>> = {
+  competitive: {
+    resolutionScale: 'medium',
+    antialiasing: false,
+    materialQuality: 'medium',
+    shadowQuality: 'low',
+    reflectionQuality: 'off',
+    environmentQuality: 'low',
+    adaptiveQuality: true,
+  },
+  balanced: {
+    resolutionScale: 'medium',
+    antialiasing: true,
+    materialQuality: 'medium',
+    shadowQuality: 'medium',
+    reflectionQuality: 'medium',
+    environmentQuality: 'medium',
+    adaptiveQuality: true,
+  },
+  cinematic: {
+    resolutionScale: 'high',
+    antialiasing: true,
+    materialQuality: 'high',
+    shadowQuality: 'high',
+    reflectionQuality: 'high',
+    environmentQuality: 'high',
+    adaptiveQuality: false,
+  },
+};
+
 export const defaultSettings: ClientSettings = {
-  resolutionScale: 'high',
-  antialiasing: true,
-  materialQuality: 'high',
-  shadowQuality: 'high',
-  reflectionQuality: 'high',
-  environmentQuality: 'high',
+  graphicsPreset: 'balanced',
+  ...graphicsPresetSettings.balanced,
   fov: 90,
   showFPS: false,
   masterVolume: 80,
@@ -83,18 +122,22 @@ export function sanitizeSettings(value: unknown): ClientSettings {
   const qualityOptions = ['low', 'medium', 'high', 'ultra'] as const;
   const featureQualityOptions = ['off', 'low', 'medium', 'high', 'ultra'] as const;
   const legacyQuality = pickOption(raw.quality, qualityOptions, defaultSettings.resolutionScale);
+  const graphicsPreset = pickOption(raw.graphicsPreset, ['competitive', 'balanced', 'cinematic'] as const, defaultSettings.graphicsPreset);
+  const preset = graphicsPresetSettings[graphicsPreset];
 
   return {
-    resolutionScale: pickOption(raw.resolutionScale, qualityOptions, legacyQuality),
-    antialiasing: pickBoolean(raw.antialiasing, legacyQuality === 'high' || legacyQuality === 'ultra'),
+    graphicsPreset,
+    resolutionScale: pickOption(raw.resolutionScale, qualityOptions, raw.quality ? legacyQuality : preset.resolutionScale),
+    antialiasing: pickBoolean(raw.antialiasing, raw.quality ? legacyQuality === 'high' || legacyQuality === 'ultra' : preset.antialiasing),
     materialQuality: pickOption(
       raw.materialQuality,
       ['low', 'medium', 'high'] as const,
-      materialQualityFromLegacyPreset(legacyQuality)
+      raw.quality ? materialQualityFromLegacyPreset(legacyQuality) : preset.materialQuality
     ),
-    shadowQuality: pickOption(raw.shadowQuality, featureQualityOptions, defaultSettings.shadowQuality),
-    reflectionQuality: pickOption(raw.reflectionQuality, featureQualityOptions, defaultSettings.reflectionQuality),
-    environmentQuality: pickOption(raw.environmentQuality, featureQualityOptions, defaultSettings.environmentQuality),
+    shadowQuality: pickOption(raw.shadowQuality, featureQualityOptions, preset.shadowQuality),
+    reflectionQuality: pickOption(raw.reflectionQuality, featureQualityOptions, preset.reflectionQuality),
+    environmentQuality: pickOption(raw.environmentQuality, featureQualityOptions, preset.environmentQuality),
+    adaptiveQuality: pickBoolean(raw.adaptiveQuality, preset.adaptiveQuality),
     fov: clamp(raw.fov, 60, 120, defaultSettings.fov),
     showFPS: pickBoolean(raw.showFPS, defaultSettings.showFPS),
     masterVolume: clamp(raw.masterVolume, 0, 100, defaultSettings.masterVolume),
@@ -118,7 +161,7 @@ export function loadSettings(): ClientSettings {
     const saved = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
     return saved ? sanitizeSettings(JSON.parse(saved)) : defaultSettings;
   } catch (error) {
-    console.warn('[Settings] Failed to load settings:', error);
+    loggers.perf.warn('failed to load settings', error);
     return defaultSettings;
   }
 }
@@ -131,6 +174,7 @@ function persistSettings(settings: ClientSettings): void {
 interface SettingsStore {
   settings: ClientSettings;
   applySettings: (settings: ClientSettings) => void;
+  applyGraphicsPreset: (preset: GraphicsPreset) => void;
   resetSettings: () => void;
 }
 
@@ -141,6 +185,15 @@ export const useSettingsStore = create<SettingsStore>((set) => ({
     persistSettings(nextSettings);
     set({ settings: nextSettings });
   },
+  applyGraphicsPreset: (preset) => set((state) => {
+    const nextSettings = sanitizeSettings({
+      ...state.settings,
+      graphicsPreset: preset,
+      ...graphicsPresetSettings[preset],
+    });
+    persistSettings(nextSettings);
+    return { settings: nextSettings };
+  }),
   resetSettings: () => {
     persistSettings(defaultSettings);
     set({ settings: defaultSettings });

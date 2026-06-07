@@ -1,10 +1,11 @@
-import { useRef, useMemo, useEffect } from 'react';
+import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { TEMP_VECTORS } from '../effectResources';
+import { getFrameClock } from '../../../utils/frameClock';
 
 interface VoidRayProps {
   id: string;
@@ -27,14 +28,40 @@ const RAY_LIFETIME = 0.65;
 const RAY_DAMAGE = 80;
 const PLAYER_HIT_RADIUS = 1.5;
 const SPIRAL_COUNT = 5;
-const PARTICLE_COUNT = 200;
+const PARTICLE_COUNT = 120;
+const SPARK_COUNT = 32;
 const LOCAL_ORIGIN_HALO_INNER_RADIUS = RAY_RADIUS * 5.5;
 const LOCAL_ORIGIN_HALO_OUTER_RADIUS = RAY_RADIUS * 7.5;
 const LOCAL_ORIGIN_HALO_SECONDARY_INNER_RADIUS = RAY_RADIUS * 8.5;
 const LOCAL_ORIGIN_HALO_SECONDARY_OUTER_RADIUS = RAY_RADIUS * 11;
+const VOID_RAY_IMPACT_SPARK_INDICES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+const RAY_GLOW_GEOMETRY = new THREE.CylinderGeometry(RAY_RADIUS * 2.0, RAY_RADIUS * 2.2, 1, 20, 1, true);
+const RAY_BEAM_GEOMETRY = new THREE.CylinderGeometry(RAY_RADIUS * 0.6, RAY_RADIUS * 0.7, 1, 16, 8, true);
+const RAY_CORE_GEOMETRY = new THREE.CylinderGeometry(RAY_RADIUS * 0.2, RAY_RADIUS * 0.25, 1, 12, 1, true);
+const LOCAL_ORIGIN_HALO_GEOMETRY = new THREE.RingGeometry(LOCAL_ORIGIN_HALO_INNER_RADIUS, LOCAL_ORIGIN_HALO_OUTER_RADIUS, 48);
+const LOCAL_ORIGIN_HALO_SECONDARY_GEOMETRY = new THREE.RingGeometry(
+  LOCAL_ORIGIN_HALO_SECONDARY_INNER_RADIUS,
+  LOCAL_ORIGIN_HALO_SECONDARY_OUTER_RADIUS,
+  64
+);
+const REMOTE_ORIGIN_CORE_GEOMETRY = new THREE.SphereGeometry(RAY_RADIUS * 1.8, 24, 24);
+const REMOTE_ORIGIN_GLOW_GEOMETRY = new THREE.SphereGeometry(RAY_RADIUS * 2.5, 16, 16);
+const VOID_RAY_IMPACT_INNER_RING_GEOMETRY = new THREE.RingGeometry(0.2, 0.6, 32);
+const VOID_RAY_IMPACT_OUTER_RING_GEOMETRY = new THREE.RingGeometry(0.6, 1.0, 32);
+const VOID_RAY_IMPACT_SPARK_GEOMETRY = new THREE.SphereGeometry(0.06, 8, 8);
+const VOID_RAY_IMPACT_SPARK_CONFIGS = VOID_RAY_IMPACT_SPARK_INDICES.map((i) => {
+  const angle = (i / VOID_RAY_IMPACT_SPARK_INDICES.length) * Math.PI * 2;
+  const radius = 0.4 + (i % 2) * 0.3;
+  return {
+    x: Math.cos(angle) * radius,
+    z: Math.sin(angle) * radius,
+    color: i % 2 === 0 ? 0x00ffff : 0xc084fc,
+  };
+});
 
 // Main spiral ribbon shader - thick glowing energy ribbons
 let sharedSpiralMaterial: THREE.ShaderMaterial | null = null;
+let sharedSpiralGeometries: THREE.TubeGeometry[] | null = null;
 
 function getSpiralMaterial(): THREE.ShaderMaterial {
   if (!sharedSpiralMaterial) {
@@ -121,6 +148,36 @@ function getSpiralMaterial(): THREE.ShaderMaterial {
     });
   }
   return sharedSpiralMaterial;
+}
+
+function getSharedSpiralGeometries(): THREE.TubeGeometry[] {
+  if (!sharedSpiralGeometries) {
+    sharedSpiralGeometries = [];
+
+    for (let s = 0; s < SPIRAL_COUNT; s++) {
+      const points: THREE.Vector3[] = [];
+      const segments = 80;
+
+      for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const y = t;
+        const angle = t * Math.PI * 12 + (s / SPIRAL_COUNT) * Math.PI * 2;
+        const radiusVariation = 1.0 + Math.sin(t * Math.PI * 3) * 0.25;
+        const radius = RAY_RADIUS * (1.1 + s * 0.1) * radiusVariation;
+
+        points.push(new THREE.Vector3(
+          Math.cos(angle) * radius,
+          y,
+          Math.sin(angle) * radius
+        ));
+      }
+
+      const curve = new THREE.CatmullRomCurve3(points);
+      sharedSpiralGeometries.push(new THREE.TubeGeometry(curve, 64, 0.07 + s * 0.01, 8, false));
+    }
+  }
+
+  return sharedSpiralGeometries;
 }
 
 // Inner beam core shader
@@ -251,7 +308,27 @@ if (typeof window !== 'undefined') {
     getSpiralMaterial();
     getCoreMaterial();
     getGlowMaterial();
+    getSharedSpiralGeometries();
   });
+}
+
+export function prewarmVoidRayResources(renderer?: THREE.WebGLRenderer): void {
+  const spiralMaterial = getSpiralMaterial();
+  const coreMaterial = getCoreMaterial();
+  const glowMaterial = getGlowMaterial();
+  const spiralGeometries = getSharedSpiralGeometries();
+
+  if (!renderer) return;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+  camera.position.z = 4;
+
+  const spiral = new THREE.Mesh(spiralGeometries[0], spiralMaterial);
+  const core = new THREE.Mesh(RAY_BEAM_GEOMETRY, coreMaterial);
+  const glow = new THREE.Mesh(RAY_GLOW_GEOMETRY, glowMaterial);
+  scene.add(spiral, core, glow);
+  renderer.compile(scene, camera);
 }
 
 export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId }: VoidRayProps) => {
@@ -266,6 +343,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   const hitPlayersRef = useRef<Set<string>>(new Set());
   const currentLengthRef = useRef(0);
   const hasLoggedRef = useRef(false);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
   
   const isLocalOwner = useGameStore(state => state.localPlayer?.id === ownerId);
   const removeVoidRay = useGameStore(state => state.removeVoidRay);
@@ -281,38 +359,12 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   
   const coreMaterial = useMemo(() => getCoreMaterial().clone(), []);
   const glowMaterial = useMemo(() => getGlowMaterial().clone(), []);
+  const normalizedDirection = useMemo(
+    () => new THREE.Vector3(direction.x, direction.y, direction.z).normalize(),
+    [direction.x, direction.y, direction.z]
+  );
   
-  // Create spiral geometries - thick tubes wrapping around beam
-  const spiralGeometries = useMemo(() => {
-    const geometries: THREE.TubeGeometry[] = [];
-    
-    for (let s = 0; s < SPIRAL_COUNT; s++) {
-      const points: THREE.Vector3[] = [];
-      const segments = 100;
-      
-      for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        const y = t; // Normalized 0-1
-        // More wraps, varying radius
-        const angle = t * Math.PI * 12 + (s / SPIRAL_COUNT) * Math.PI * 2;
-        const radiusVariation = 1.0 + Math.sin(t * Math.PI * 3) * 0.25;
-        const radius = RAY_RADIUS * (1.1 + s * 0.1) * radiusVariation;
-        
-        points.push(new THREE.Vector3(
-          Math.cos(angle) * radius,
-          y,
-          Math.sin(angle) * radius
-        ));
-      }
-      
-      const curve = new THREE.CatmullRomCurve3(points);
-      // Thick, visible tubes
-      const tubeGeo = new THREE.TubeGeometry(curve, 80, 0.07 + s * 0.01, 8, false);
-      geometries.push(tubeGeo);
-    }
-    
-    return geometries;
-  }, []);
+  const spiralGeometries = useMemo(() => getSharedSpiralGeometries(), []);
   
   // Main particle system - spiraling along beam
   const particleGeometry = useMemo(() => {
@@ -346,7 +398,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   // Spark particles - bright flashes
   const sparkGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
-    const count = 50;
+    const count = SPARK_COUNT;
     const positions = new Float32Array(count * 3);
     const randoms = new Float32Array(count);
     
@@ -395,7 +447,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   useFrame((state, delta) => {
     if (!groupRef.current) return;
     
-    const elapsed = (Date.now() - startTime) / 1000;
+    const elapsed = (getFrameClock().nowMs - startFrameTimeRef.current) / 1000;
     
     if (elapsed >= RAY_LIFETIME) {
       groupRef.current.visible = false;
@@ -516,7 +568,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       positions.needsUpdate = true;
       
       // Flicker opacity
-      sparkMaterial.opacity = 0.5 + Math.random() * 0.5;
+      sparkMaterial.opacity = 0.55 + Math.sin(time * 37.0) * 0.25 + Math.sin(time * 19.0 + 1.7) * 0.18;
     }
     
     // Impact effect
@@ -543,7 +595,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       // Use pooled temp vectors to avoid per-frame allocations
       const playerPos = TEMP_VECTORS.v5.set(player.position.x, player.position.y + 0.9, player.position.z);
       const rayStart = TEMP_VECTORS.v6.set(startPosition.x, startPosition.y, startPosition.z);
-      const rayDir = TEMP_VECTORS.v7.set(direction.x, direction.y, direction.z).normalize();
+      const rayDir = TEMP_VECTORS.v7.copy(normalizedDirection);
 
       const toPlayer = TEMP_VECTORS.v8.copy(playerPos).sub(rayStart);
       const projectionLength = toPlayer.dot(rayDir);
@@ -551,9 +603,9 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       if (projectionLength < 0 || projectionLength > currentLengthRef.current) continue;
 
       const closestPoint = TEMP_VECTORS.v9.copy(rayStart).add(TEMP_VECTORS.v10.copy(rayDir).multiplyScalar(projectionLength));
-      const distance = closestPoint.distanceTo(playerPos);
+      const distanceSq = closestPoint.distanceToSquared(playerPos);
 
-      if (distance <= PLAYER_HIT_RADIUS + RAY_RADIUS) {
+      if (distanceSq <= (PLAYER_HIT_RADIUS + RAY_RADIUS) * (PLAYER_HIT_RADIUS + RAY_RADIUS)) {
         hitPlayersRef.current.add(playerId);
 
       }
@@ -572,20 +624,17 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       </group>
       
       {/* ===== OUTER GLOW ===== */}
-      <mesh ref={glowRef}>
-        <cylinderGeometry args={[RAY_RADIUS * 2.0, RAY_RADIUS * 2.2, 1, 20, 1, true]} />
+      <mesh ref={glowRef} geometry={RAY_GLOW_GEOMETRY}>
         <primitive object={glowMaterial} />
       </mesh>
       
       {/* ===== MAIN BEAM ===== */}
-      <mesh ref={beamRef}>
-        <cylinderGeometry args={[RAY_RADIUS * 0.6, RAY_RADIUS * 0.7, 1, 16, 8, true]} />
+      <mesh ref={beamRef} geometry={RAY_BEAM_GEOMETRY}>
         <primitive object={coreMaterial} />
       </mesh>
       
       {/* ===== BRIGHT CORE ===== */}
-      <mesh ref={coreRef}>
-        <cylinderGeometry args={[RAY_RADIUS * 0.2, RAY_RADIUS * 0.25, 1, 12, 1, true]} />
+      <mesh ref={coreRef} geometry={RAY_CORE_GEOMETRY}>
         <meshBasicMaterial 
           color={0xffffff}
           transparent
@@ -607,8 +656,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       {/* ===== ORIGIN HALO ===== */}
       {isLocalOwner ? (
         <>
-          <mesh rotation-x={-Math.PI / 2}>
-            <ringGeometry args={[LOCAL_ORIGIN_HALO_INNER_RADIUS, LOCAL_ORIGIN_HALO_OUTER_RADIUS, 48]} />
+          <mesh rotation-x={-Math.PI / 2} geometry={LOCAL_ORIGIN_HALO_GEOMETRY}>
             <meshBasicMaterial
               color={0xd8b4fe}
               transparent
@@ -619,8 +667,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
               depthTest={false}
             />
           </mesh>
-          <mesh rotation-x={-Math.PI / 2} position-y={0.03}>
-            <ringGeometry args={[LOCAL_ORIGIN_HALO_SECONDARY_INNER_RADIUS, LOCAL_ORIGIN_HALO_SECONDARY_OUTER_RADIUS, 64]} />
+          <mesh rotation-x={-Math.PI / 2} position-y={0.03} geometry={LOCAL_ORIGIN_HALO_SECONDARY_GEOMETRY}>
             <meshBasicMaterial
               color={0x22d3ee}
               transparent
@@ -634,8 +681,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
         </>
       ) : (
         <>
-          <mesh>
-            <sphereGeometry args={[RAY_RADIUS * 1.8, 24, 24]} />
+          <mesh geometry={REMOTE_ORIGIN_CORE_GEOMETRY}>
             <meshBasicMaterial
               color={0xc084fc}
               transparent
@@ -643,8 +689,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
               blending={THREE.AdditiveBlending}
             />
           </mesh>
-          <mesh>
-            <sphereGeometry args={[RAY_RADIUS * 2.5, 16, 16]} />
+          <mesh geometry={REMOTE_ORIGIN_GLOW_GEOMETRY}>
             <meshBasicMaterial
               color={0x7c3aed}
               transparent
@@ -658,8 +703,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       {/* ===== IMPACT EFFECT ===== */}
       <group ref={impactRef}>
         {/* Inner ring */}
-        <mesh rotation-x={-Math.PI / 2}>
-          <ringGeometry args={[0.2, 0.6, 32]} />
+        <mesh rotation-x={-Math.PI / 2} geometry={VOID_RAY_IMPACT_INNER_RING_GEOMETRY}>
           <meshBasicMaterial
             color={0x00ffff}
             transparent
@@ -669,8 +713,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
           />
         </mesh>
         {/* Outer ring */}
-        <mesh rotation-x={-Math.PI / 2}>
-          <ringGeometry args={[0.6, 1.0, 32]} />
+        <mesh rotation-x={-Math.PI / 2} geometry={VOID_RAY_IMPACT_OUTER_RING_GEOMETRY}>
           <meshBasicMaterial
             color={0xc084fc}
             transparent
@@ -680,21 +723,16 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
           />
         </mesh>
         {/* Impact sparks */}
-        {[...Array(10)].map((_, i) => {
-          const angle = (i / 10) * Math.PI * 2;
-          const r = 0.4 + (i % 2) * 0.3;
-          return (
-            <mesh key={i} position={[Math.cos(angle) * r, 0, Math.sin(angle) * r]}>
-              <sphereGeometry args={[0.06, 8, 8]} />
-              <meshBasicMaterial
-                color={i % 2 === 0 ? 0x00ffff : 0xc084fc}
-                transparent
-                opacity={0.9}
-                blending={THREE.AdditiveBlending}
-              />
-            </mesh>
-          );
-        })}
+        {VOID_RAY_IMPACT_SPARK_CONFIGS.map((spark, i) => (
+          <mesh key={i} position={[spark.x, 0, spark.z]} geometry={VOID_RAY_IMPACT_SPARK_GEOMETRY}>
+            <meshBasicMaterial
+              color={spark.color}
+              transparent
+              opacity={0.9}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        ))}
       </group>
     </group>
   );
@@ -719,19 +757,9 @@ interface VoidRaysProps {
 }
 
 export function VoidRays({ rays }: VoidRaysProps) {
-  const clearExpiredVoidRays = useGameStore(state => state.clearExpiredVoidRays);
-  
-  useEffect(() => {
-    const interval = setInterval(clearExpiredVoidRays, 100);
-    return () => clearInterval(interval);
-  }, [clearExpiredVoidRays]);
-  
-  const now = Date.now();
-  const activeRays = rays.filter(ray => now - ray.startTime < 650);
-
   return (
     <>
-      {activeRays.map((ray) => (
+      {rays.map((ray) => (
         <VoidRay
           key={ray.id}
           id={ray.id}
@@ -743,4 +771,9 @@ export function VoidRays({ rays }: VoidRaysProps) {
       ))}
     </>
   );
+}
+
+export function VoidRaysManager() {
+  const rays = useGameStore(state => state.voidRays);
+  return <VoidRays rays={rays} />;
 }

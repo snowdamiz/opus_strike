@@ -5,7 +5,7 @@ import { FROST_STORM_DURATION, FROST_STORM_COOLDOWN } from './physics.js';
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
   maxHealth: 200,
-  moveSpeed: 6.3,
+  moveSpeed: 5.1,
   jumpForce: 8.3,
   size: { width: 0.8, height: 1.8, depth: 0.8 },
 };
@@ -26,7 +26,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'blink',
     stats: {
       maxHealth: 175,
-      moveSpeed: 4.9,
+      moveSpeed: 3.97,
       jumpForce: 8.3,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
@@ -47,7 +47,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'grapple',
     stats: {
       maxHealth: 200,
-      moveSpeed: 5.6,
+      moveSpeed: 4.54,
       jumpForce: 7.9,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
@@ -68,7 +68,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'aerial',
     stats: {
       maxHealth: 200,
-      moveSpeed: 5.6,
+      moveSpeed: 4.54,
       jumpForce: 9.0,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
@@ -89,7 +89,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'parkour',
     stats: {
       maxHealth: 350,
-      moveSpeed: 4.9,
+      moveSpeed: 3.97,
       jumpForce: 7.1,
       size: { width: 1.0, height: 2.0, depth: 1.0 },
     },
@@ -110,7 +110,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'speed',
     stats: {
       maxHealth: 175,
-      moveSpeed: 6.3,
+      moveSpeed: 5.1,
       jumpForce: 8.3,
       size: { width: 0.7, height: 1.7, depth: 0.7 },
     },
@@ -131,7 +131,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'grounded',
     stats: {
       maxHealth: 300,
-      moveSpeed: 5.25,
+      moveSpeed: 4.26,
       jumpForce: 7.1,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },

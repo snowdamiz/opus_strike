@@ -7,6 +7,7 @@
 
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { MAP_CONFIG } from '../config';
+import { loggers } from '../../../../../utils/logger';
 
 const { dimensions, wallHeight, platformHeight, teamABase, teamBBase } = MAP_CONFIG;
 
@@ -282,5 +283,5 @@ export function createMapColliders(world: RAPIER.World, rapier: typeof RAPIER): 
   createCuboidCollider(world, rapier, 0, platformHeight - 0.25, -15, 4, 0.25, 3);
   createCuboidCollider(world, rapier, 0, platformHeight - 0.25, 15, 4, 0.25, 3);
 
-  console.log('[MapColliders] Created all map colliders');
+  loggers.physics.debug('created static map colliders');
 }

@@ -57,6 +57,7 @@ export interface ProjectileActions {
   // Dire ball actions
   addDireBall: (ball: DireBallData) => void;
   removeDireBall: (id: string) => void;
+  removeDireBalls: (ids: readonly string[]) => void;
   clearExpiredDireBalls: () => void;
 
   // Void ray actions
@@ -68,6 +69,7 @@ export interface ProjectileActions {
   // Blaze rocket actions
   addRocket: (rocket: RocketData) => void;
   removeRocket: (id: string) => void;
+  removeRockets: (ids: readonly string[]) => void;
   clearExpiredRockets: () => void;
 
   // Blaze bomb actions
@@ -161,6 +163,85 @@ export const projectileInitialState: ProjectileState = {
 // SLICE CREATOR
 // ============================================================================
 
+const PROJECTILE_LIMITS = {
+  voidZones: 24,
+  direBalls: 96,
+  voidRays: 32,
+  rockets: 96,
+  bombs: 32,
+  hookProjectiles: 64,
+  dragHooks: 32,
+  grappleTraps: 32,
+  swingLines: 32,
+  grappleLines: 48,
+  earthWalls: 48,
+} as const;
+
+function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
+  for (const existing of items) {
+    if (existing.id === item.id) return items;
+  }
+
+  if (items.length >= limit) {
+    return [...items.slice(items.length - limit + 1), item];
+  }
+
+  return [...items, item];
+}
+
+function removeById<T extends { id: string }>(items: T[], id: string): T[] {
+  let changed = false;
+  const next = items.filter((item) => {
+    const keep = item.id !== id;
+    if (!keep) changed = true;
+    return keep;
+  });
+  return changed ? next : items;
+}
+
+function removeByIds<T extends { id: string }>(items: T[], ids: readonly string[]): T[] {
+  if (ids.length === 0) return items;
+
+  const idSet = new Set(ids);
+  let changed = false;
+  const next = items.filter((item) => {
+    const keep = !idSet.has(item.id);
+    if (!keep) changed = true;
+    return keep;
+  });
+  return changed ? next : items;
+}
+
+function updateById<T extends { id: string }>(items: T[], id: string, updates: Partial<T>): T[] {
+  let changed = false;
+  const next = items.map((item) => {
+    if (item.id !== id) return item;
+    changed = true;
+    return { ...item, ...updates };
+  });
+  return changed ? next : items;
+}
+
+function filterExpired<T>(items: T[], keep: (item: T, now: number) => boolean): T[] {
+  const now = Date.now();
+  let changed = false;
+  const next = items.filter((item) => {
+    const shouldKeep = keep(item, now);
+    if (!shouldKeep) changed = true;
+    return shouldKeep;
+  });
+  return changed ? next : items;
+}
+
+function sameVec3(
+  a: { x: number; y: number; z: number } | null,
+  b: { x: number; y: number; z: number } | null
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.x === b.x && a.y === b.y && a.z === b.z;
+}
+
 export const createProjectileSlice: StateCreator<
   ProjectileSlice,
   [],
@@ -170,261 +251,279 @@ export const createProjectileSlice: StateCreator<
   ...projectileInitialState,
 
   // ==================== VOID ZONES ====================
-  addVoidZone: (zone) => set((state) => ({
-    voidZones: [...state.voidZones, zone]
-  })),
+  addVoidZone: (zone) => set((state) => {
+    const voidZones = appendUnique(state.voidZones, zone, PROJECTILE_LIMITS.voidZones);
+    return voidZones === state.voidZones ? state : { voidZones };
+  }),
 
-  removeVoidZone: (id) => set((state) => ({
-    voidZones: state.voidZones.filter(z => z.id !== id)
-  })),
+  removeVoidZone: (id) => set((state) => {
+    const voidZones = removeById(state.voidZones, id);
+    return voidZones === state.voidZones ? state : { voidZones };
+  }),
 
   clearExpiredVoidZones: () => set((state) => {
-    const now = Date.now();
-    return {
-      voidZones: state.voidZones.filter(z => (now - z.startTime) / 1000 < z.duration)
-    };
+    const voidZones = filterExpired(state.voidZones, (z, now) => (now - z.startTime) / 1000 < z.duration);
+    return voidZones === state.voidZones ? state : { voidZones };
   }),
 
   // ==================== DIRE BALLS ====================
-  addDireBall: (ball) => set((state) => ({
-    direBalls: [...state.direBalls, ball]
-  })),
+  addDireBall: (ball) => set((state) => {
+    const direBalls = appendUnique(state.direBalls, ball, PROJECTILE_LIMITS.direBalls);
+    return direBalls === state.direBalls ? state : { direBalls };
+  }),
 
-  removeDireBall: (id) => set((state) => ({
-    direBalls: state.direBalls.filter(b => b.id !== id)
-  })),
+  removeDireBall: (id) => set((state) => {
+    const direBalls = removeById(state.direBalls, id);
+    return direBalls === state.direBalls ? state : { direBalls };
+  }),
+
+  removeDireBalls: (ids) => set((state) => {
+    const direBalls = removeByIds(state.direBalls, ids);
+    return direBalls === state.direBalls ? state : { direBalls };
+  }),
 
   clearExpiredDireBalls: () => set((state) => {
-    const now = Date.now();
     const LIFETIME = 3000;
-    return {
-      direBalls: state.direBalls.filter(b => now - b.startTime < LIFETIME)
-    };
+    const direBalls = filterExpired(state.direBalls, (b, now) => now - b.startTime < LIFETIME);
+    return direBalls === state.direBalls ? state : { direBalls };
   }),
 
   // ==================== VOID RAYS ====================
-  addVoidRay: (ray) => set((state) => ({
-    voidRays: [...state.voidRays, ray]
-  })),
-
-  removeVoidRay: (id) => set((state) => ({
-    voidRays: state.voidRays.filter(r => r.id !== id)
-  })),
-
-  clearExpiredVoidRays: () => set((state) => {
-    const now = Date.now();
-    const LIFETIME = 500;
-    return {
-      voidRays: state.voidRays.filter(r => now - r.startTime < LIFETIME)
-    };
+  addVoidRay: (ray) => set((state) => {
+    const voidRays = appendUnique(state.voidRays, ray, PROJECTILE_LIMITS.voidRays);
+    return voidRays === state.voidRays ? state : { voidRays };
   }),
 
-  setVoidRayCharging: (charging, startTime = 0) => set({
-    voidRayCharging: charging,
-    voidRayChargeStart: startTime,
+  removeVoidRay: (id) => set((state) => {
+    const voidRays = removeById(state.voidRays, id);
+    return voidRays === state.voidRays ? state : { voidRays };
+  }),
+
+  clearExpiredVoidRays: () => set((state) => {
+    const LIFETIME = 500;
+    const voidRays = filterExpired(state.voidRays, (r, now) => now - r.startTime < LIFETIME);
+    return voidRays === state.voidRays ? state : { voidRays };
+  }),
+
+  setVoidRayCharging: (charging, startTime = 0) => set((state) => {
+    if (state.voidRayCharging === charging && state.voidRayChargeStart === startTime) return state;
+    return {
+      voidRayCharging: charging,
+      voidRayChargeStart: startTime,
+    };
   }),
 
   // ==================== ROCKETS ====================
   addRocket: (rocket) => set((state) => {
-    if (state.rockets.some(r => r.id === rocket.id)) return state;
-    return { rockets: [...state.rockets, rocket] };
+    const rockets = appendUnique(state.rockets, rocket, PROJECTILE_LIMITS.rockets);
+    return rockets === state.rockets ? state : { rockets };
   }),
 
-  removeRocket: (id) => set((state) => ({
-    rockets: state.rockets.filter(r => r.id !== id)
-  })),
+  removeRocket: (id) => set((state) => {
+    const rockets = removeById(state.rockets, id);
+    return rockets === state.rockets ? state : { rockets };
+  }),
+
+  removeRockets: (ids) => set((state) => {
+    const rockets = removeByIds(state.rockets, ids);
+    return rockets === state.rockets ? state : { rockets };
+  }),
 
   clearExpiredRockets: () => set((state) => {
-    const now = Date.now();
     const LIFETIME = 3000;
-    return {
-      rockets: state.rockets.filter(r => now - r.startTime < LIFETIME)
-    };
+    const rockets = filterExpired(state.rockets, (r, now) => now - r.startTime < LIFETIME);
+    return rockets === state.rockets ? state : { rockets };
   }),
 
   // ==================== BOMBS ====================
   addBomb: (bomb) => set((state) => {
-    if (state.bombs.some(b => b.id === bomb.id)) return state;
-    return { bombs: [...state.bombs, bomb] };
+    const bombs = appendUnique(state.bombs, bomb, PROJECTILE_LIMITS.bombs);
+    return bombs === state.bombs ? state : { bombs };
   }),
 
-  removeBomb: (id) => set((state) => ({
-    bombs: state.bombs.filter(b => b.id !== id)
-  })),
+  removeBomb: (id) => set((state) => {
+    const bombs = removeById(state.bombs, id);
+    return bombs === state.bombs ? state : { bombs };
+  }),
 
   clearExpiredBombs: () => set((state) => {
-    const now = Date.now();
     const TOTAL_LIFETIME = 5000;
+    const bombs = filterExpired(state.bombs, (b, now) => now - b.startTime < TOTAL_LIFETIME);
+    return bombs === state.bombs ? state : { bombs };
+  }),
+
+  setBombTargeting: (targeting, valid = false) => set((state) => {
+    if (state.bombTargeting === targeting && state.bombTargetValid === valid) return state;
     return {
-      bombs: state.bombs.filter(b => now - b.startTime < TOTAL_LIFETIME)
+      bombTargeting: targeting,
+      bombTargetValid: valid,
     };
   }),
 
-  setBombTargeting: (targeting, valid = false) => set({
-    bombTargeting: targeting,
-    bombTargetValid: valid
-  }),
-
   // ==================== AIR STRIKE ====================
-  setAirStrikeTargeting: (targeting, valid = false) => set({
-    airStrikeTargeting: targeting,
-    airStrikeTargetValid: valid
+  setAirStrikeTargeting: (targeting, valid = false) => set((state) => {
+    if (state.airStrikeTargeting === targeting && state.airStrikeTargetValid === valid) return state;
+    return {
+      airStrikeTargeting: targeting,
+      airStrikeTargetValid: valid,
+    };
   }),
 
   // ==================== FLAMETHROWER ====================
-  setFlamethrowerActive: (active) => set({ flamethrowerActive: active }),
-  setFlamethrowerFuel: (fuel) => set({ flamethrowerFuel: Math.max(0, Math.min(100, fuel)) }),
-  setFlamethrowerPose: (origin, direction) => set({
-    flamethrowerOrigin: { ...origin },
-    flamethrowerDirection: { ...direction },
+  setFlamethrowerActive: (active) => set((state) => (
+    state.flamethrowerActive === active ? state : { flamethrowerActive: active }
+  )),
+  setFlamethrowerFuel: (fuel) => set((state) => {
+    const nextFuel = Math.max(0, Math.min(100, fuel));
+    return state.flamethrowerFuel === nextFuel ? state : { flamethrowerFuel: nextFuel };
+  }),
+  setFlamethrowerPose: (origin, direction) => set((state) => {
+    if (sameVec3(state.flamethrowerOrigin, origin) && sameVec3(state.flamethrowerDirection, direction)) {
+      return state;
+    }
+    return {
+      flamethrowerOrigin: { ...origin },
+      flamethrowerDirection: { ...direction },
+    };
   }),
 
   // ==================== HOOK PROJECTILES ====================
   addHookProjectile: (hook) => set((state) => {
-    if (state.hookProjectiles.some(h => h.id === hook.id)) return state;
-    return { hookProjectiles: [...state.hookProjectiles, hook] };
+    const hookProjectiles = appendUnique(state.hookProjectiles, hook, PROJECTILE_LIMITS.hookProjectiles);
+    return hookProjectiles === state.hookProjectiles ? state : { hookProjectiles };
   }),
 
-  updateHookProjectile: (id, updates) => set((state) => ({
-    hookProjectiles: state.hookProjectiles.map(h =>
-      h.id === id ? { ...h, ...updates } : h
-    )
-  })),
+  updateHookProjectile: (id, updates) => set((state) => {
+    const hookProjectiles = updateById(state.hookProjectiles, id, updates);
+    return hookProjectiles === state.hookProjectiles ? state : { hookProjectiles };
+  }),
 
-  removeHookProjectile: (id) => set((state) => ({
-    hookProjectiles: state.hookProjectiles.filter(h => h.id !== id)
-  })),
+  removeHookProjectile: (id) => set((state) => {
+    const hookProjectiles = removeById(state.hookProjectiles, id);
+    return hookProjectiles === state.hookProjectiles ? state : { hookProjectiles };
+  }),
 
   clearExpiredHookProjectiles: () => set((state) => {
-    const now = Date.now();
     const LIFETIME = 2000;
-    return {
-      hookProjectiles: state.hookProjectiles.filter(h => now - h.startTime < LIFETIME)
-    };
+    const hookProjectiles = filterExpired(state.hookProjectiles, (h, now) => now - h.startTime < LIFETIME);
+    return hookProjectiles === state.hookProjectiles ? state : { hookProjectiles };
   }),
 
   // ==================== DRAG HOOKS ====================
   addDragHook: (hook) => set((state) => {
-    if (state.dragHooks.some(h => h.id === hook.id)) return state;
-    return { dragHooks: [...state.dragHooks, hook] };
+    const dragHooks = appendUnique(state.dragHooks, hook, PROJECTILE_LIMITS.dragHooks);
+    return dragHooks === state.dragHooks ? state : { dragHooks };
   }),
 
-  updateDragHook: (id, updates) => set((state) => ({
-    dragHooks: state.dragHooks.map(h =>
-      h.id === id ? { ...h, ...updates } : h
-    )
-  })),
+  updateDragHook: (id, updates) => set((state) => {
+    const dragHooks = updateById(state.dragHooks, id, updates);
+    return dragHooks === state.dragHooks ? state : { dragHooks };
+  }),
 
-  removeDragHook: (id) => set((state) => ({
-    dragHooks: state.dragHooks.filter(h => h.id !== id)
-  })),
+  removeDragHook: (id) => set((state) => {
+    const dragHooks = removeById(state.dragHooks, id);
+    return dragHooks === state.dragHooks ? state : { dragHooks };
+  }),
 
   clearExpiredDragHooks: () => set((state) => {
-    const now = Date.now();
     const LIFETIME = 5000;
-    return {
-      dragHooks: state.dragHooks.filter(h => now - h.startTime < LIFETIME)
-    };
+    const dragHooks = filterExpired(state.dragHooks, (h, now) => now - h.startTime < LIFETIME);
+    return dragHooks === state.dragHooks ? state : { dragHooks };
   }),
 
   // ==================== GRAPPLE TRAPS ====================
   addGrappleTrap: (trap) => set((state) => {
-    if (state.grappleTraps.some(t => t.id === trap.id)) return state;
-    return { grappleTraps: [...state.grappleTraps, trap] };
+    const grappleTraps = appendUnique(state.grappleTraps, trap, PROJECTILE_LIMITS.grappleTraps);
+    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
   }),
 
-  updateGrappleTrap: (id, updates) => set((state) => ({
-    grappleTraps: state.grappleTraps.map(t =>
-      t.id === id ? { ...t, ...updates } : t
-    )
-  })),
+  updateGrappleTrap: (id, updates) => set((state) => {
+    const grappleTraps = updateById(state.grappleTraps, id, updates);
+    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
+  }),
 
-  removeGrappleTrap: (id) => set((state) => ({
-    grappleTraps: state.grappleTraps.filter(t => t.id !== id)
-  })),
+  removeGrappleTrap: (id) => set((state) => {
+    const grappleTraps = removeById(state.grappleTraps, id);
+    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
+  }),
 
   clearExpiredGrappleTraps: () => set((state) => {
-    const now = Date.now();
-    return {
-      grappleTraps: state.grappleTraps.filter(t => (now - t.startTime) / 1000 < t.duration)
-    };
+    const grappleTraps = filterExpired(state.grappleTraps, (t, now) => (now - t.startTime) / 1000 < t.duration);
+    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
   }),
 
-  setGrappleTrapTargeting: (targeting, valid = false) => set({
-    grappleTrapTargeting: targeting,
-    grappleTrapTargetValid: valid
+  setGrappleTrapTargeting: (targeting, valid = false) => set((state) => {
+    if (state.grappleTrapTargeting === targeting && state.grappleTrapTargetValid === valid) return state;
+    return {
+      grappleTrapTargeting: targeting,
+      grappleTrapTargetValid: valid,
+    };
   }),
 
   // ==================== SWING LINES ====================
   addSwingLine: (line) => set((state) => {
-    if (state.swingLines.some(l => l.id === line.id)) return state;
-    return { swingLines: [...state.swingLines, line] };
+    const swingLines = appendUnique(state.swingLines, line, PROJECTILE_LIMITS.swingLines);
+    return swingLines === state.swingLines ? state : { swingLines };
   }),
 
-  updateSwingLine: (id, updates) => set((state) => ({
-    swingLines: state.swingLines.map(l =>
-      l.id === id ? { ...l, ...updates } : l
-    )
-  })),
+  updateSwingLine: (id, updates) => set((state) => {
+    const swingLines = updateById(state.swingLines, id, updates);
+    return swingLines === state.swingLines ? state : { swingLines };
+  }),
 
-  removeSwingLine: (id) => set((state) => ({
-    swingLines: state.swingLines.filter(l => l.id !== id)
-  })),
+  removeSwingLine: (id) => set((state) => {
+    const swingLines = removeById(state.swingLines, id);
+    return swingLines === state.swingLines ? state : { swingLines };
+  }),
 
   clearExpiredSwingLines: () => set((state) => {
-    const now = Date.now();
-    return {
-      swingLines: state.swingLines.filter(l => (now - l.startTime) / 1000 < l.duration)
-    };
+    const swingLines = filterExpired(state.swingLines, (l, now) => (now - l.startTime) / 1000 < l.duration);
+    return swingLines === state.swingLines ? state : { swingLines };
   }),
 
   // ==================== GRAPPLE LINES ====================
   addGrappleLine: (line) => set((state) => {
-    if (state.grappleLines.some(l => l.id === line.id)) return state;
-    return { grappleLines: [...state.grappleLines, line] };
+    const grappleLines = appendUnique(state.grappleLines, line, PROJECTILE_LIMITS.grappleLines);
+    return grappleLines === state.grappleLines ? state : { grappleLines };
   }),
 
-  updateGrappleLine: (id, updates) => set((state) => ({
-    grappleLines: state.grappleLines.map(l =>
-      l.id === id ? { ...l, ...updates } : l
-    )
-  })),
+  updateGrappleLine: (id, updates) => set((state) => {
+    const grappleLines = updateById(state.grappleLines, id, updates);
+    return grappleLines === state.grappleLines ? state : { grappleLines };
+  }),
 
-  removeGrappleLine: (id) => set((state) => ({
-    grappleLines: state.grappleLines.filter(l => l.id !== id)
-  })),
+  removeGrappleLine: (id) => set((state) => {
+    const grappleLines = removeById(state.grappleLines, id);
+    return grappleLines === state.grappleLines ? state : { grappleLines };
+  }),
 
   clearExpiredGrappleLines: () => set((state) => {
-    const now = Date.now();
     const LIFETIME = 6000;
-    return {
-      grappleLines: state.grappleLines.filter(l => now - l.startTime < LIFETIME)
-    };
+    const grappleLines = filterExpired(state.grappleLines, (l, now) => now - l.startTime < LIFETIME);
+    return grappleLines === state.grappleLines ? state : { grappleLines };
   }),
 
   // ==================== EARTH WALLS ====================
   addEarthWall: (wall) => set((state) => {
-    if (state.earthWalls.some(w => w.id === wall.id)) return state;
-    return { earthWalls: [...state.earthWalls, wall] };
+    const earthWalls = appendUnique(state.earthWalls, wall, PROJECTILE_LIMITS.earthWalls);
+    return earthWalls === state.earthWalls ? state : { earthWalls };
   }),
 
-  updateEarthWall: (id, updates) => set((state) => ({
-    earthWalls: state.earthWalls.map(w =>
-      w.id === id ? { ...w, ...updates } : w
-    )
-  })),
+  updateEarthWall: (id, updates) => set((state) => {
+    const earthWalls = updateById(state.earthWalls, id, updates);
+    return earthWalls === state.earthWalls ? state : { earthWalls };
+  }),
 
-  removeEarthWall: (id) => set((state) => ({
-    earthWalls: state.earthWalls.filter(w => w.id !== id)
-  })),
+  removeEarthWall: (id) => set((state) => {
+    const earthWalls = removeById(state.earthWalls, id);
+    return earthWalls === state.earthWalls ? state : { earthWalls };
+  }),
 
   clearExpiredEarthWalls: () => set((state) => {
-    const now = Date.now();
-    return {
-      earthWalls: state.earthWalls.filter(w => {
-        const elapsed = (now - w.startTime) / 1000;
-        return elapsed < w.duration + 1.5;
-      })
-    };
+    const earthWalls = filterExpired(state.earthWalls, (w, now) => {
+      const elapsed = (now - w.startTime) / 1000;
+      return elapsed < w.duration + 1.5;
+    });
+    return earthWalls === state.earthWalls ? state : { earthWalls };
   }),
 });

@@ -1,11 +1,16 @@
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import type { Player } from '@voxel-strike/shared';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
+import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
+import { useNetwork } from '../../../contexts/NetworkContext';
 import {
   getRocketBodyMaterial,
   getRocketNoseMaterial,
@@ -19,213 +24,448 @@ import {
 // BLAZE PRIMARY PROJECTILE
 // ============================================================================
 
-const MAX_ROCKETS = 30;
+const MAX_ROCKETS = 50;
 const ROCKET_LIFETIME = 3000;
-const PROJECTILE_LIFETIME_SECONDS = ROCKET_LIFETIME / 1000;
 const PROJECTILE_RADIUS = 0.21;
-const PROJECTILE_DAMAGE = 35;
 const NPC_HIT_RADIUS = 1.2;
+const NPC_HIT_RADIUS_SQ = NPC_HIT_RADIUS * NPC_HIT_RADIUS;
+const ROCKET_IMPACT_SCALE = 1.15;
 
-// Pre-allocated vectors for rockets (local to avoid conflicts)
-const _rocketPos = new THREE.Vector3();
-const _rocketDir = new THREE.Vector3();
-const _rocketLookAt = new THREE.Vector3();
-
-interface RocketEffectProps {
-  rocket: RocketData;
+interface MutableVec3 {
+  x: number;
+  y: number;
+  z: number;
 }
 
-const RocketEffect = React.memo(({ rocket }: RocketEffectProps) => {
-  const groupRef = useRef<THREE.Group>(null);
-  const hasCollided = useRef(false);
-  const currentPos = useRef({
-    x: rocket.position.x,
-    y: rocket.position.y,
-    z: rocket.position.z,
-  });
-  const removeRocket = useGameStore(state => state.removeRocket);
+interface RocketRuntimeSlot {
+  active: boolean;
+  id: string;
+  ownerId: string;
+  ownerTeam: RocketData['ownerTeam'];
+  position: MutableVec3;
+  velocity: MutableVec3;
+  direction: MutableVec3;
+  speed: number;
+  expiresAtMs: number;
+}
 
-  // Get pre-cached materials once
-  const materials = useMemo(() => ({
-    body: getRocketBodyMaterial(),
-    nose: getRocketNoseMaterial(),
-    fireCore: getRocketFireCoreMaterial(),
-    fireInner: getRocketFireInnerMaterial(),
-    fireOuter: getRocketFireOuterMaterial(),
-    smoke: getRocketSmokeMaterial(),
-  }), []);
+const ZERO_VEC3 = { x: 0, y: 0, z: 0 };
+const ROCKET_FORWARD = new THREE.Vector3(0, 0, -1);
+const ROCKET_PART_ROTATION = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
 
-  useFrame((_, delta) => {
-    if (!groupRef.current) return;
+const ROCKET_PARTS = {
+  body: {
+    scale: new THREE.Vector3(0.08, 0.35, 0.08),
+    offset: null,
+  },
+  nose: {
+    scale: new THREE.Vector3(0.04, 0.08, 0.04),
+    offset: new THREE.Vector3(0, 0, -0.2),
+  },
+  fireCore: {
+    scale: new THREE.Vector3(0.05, 0.35, 0.05),
+    offset: new THREE.Vector3(0, 0, 0.22),
+  },
+  fireInner: {
+    scale: new THREE.Vector3(0.08, 0.45, 0.08),
+    offset: new THREE.Vector3(0, 0, 0.32),
+  },
+  fireOuter: {
+    scale: new THREE.Vector3(0.12, 0.5, 0.12),
+    offset: new THREE.Vector3(0, 0, 0.4),
+  },
+  smoke: {
+    scale: new THREE.Vector3(0.15, 0.4, 0.15),
+    offset: new THREE.Vector3(0, 0, 0.55),
+  },
+} as const;
 
-    if (hasCollided.current) {
-      groupRef.current.visible = false;
-      return;
+function normalizeInto(input: MutableVec3, output: MutableVec3): number {
+  const speed = Math.sqrt(input.x * input.x + input.y * input.y + input.z * input.z);
+  if (speed <= 0.0001) {
+    output.x = 0;
+    output.y = 0;
+    output.z = -1;
+    return 0;
+  }
+
+  output.x = input.x / speed;
+  output.y = input.y / speed;
+  output.z = input.z / speed;
+  return speed;
+}
+
+class RocketRuntimePool {
+  private readonly slots: RocketRuntimeSlot[];
+  private readonly freeList: number[];
+  private readonly idToSlot = new Map<string, number>();
+  private overflowCursor = 0;
+  activeCount = 0;
+
+  constructor(private readonly capacity = MAX_ROCKETS) {
+    this.slots = Array.from({ length: capacity }, () => ({
+      active: false,
+      id: '',
+      ownerId: '',
+      ownerTeam: 'red',
+      position: { ...ZERO_VEC3 },
+      velocity: { ...ZERO_VEC3 },
+      direction: { x: 0, y: 0, z: -1 },
+      speed: 0,
+      expiresAtMs: 0,
+    }));
+    this.freeList = Array.from({ length: capacity }, (_, i) => capacity - 1 - i);
+  }
+
+  add(rocket: RocketData, expiresAtMs: number): void {
+    if (this.idToSlot.has(rocket.id)) return;
+
+    const slotIndex = this.allocateSlot();
+    const slot = this.slots[slotIndex];
+    if (!slot.active) this.activeCount++;
+
+    slot.active = true;
+    slot.id = rocket.id;
+    slot.ownerId = rocket.ownerId;
+    slot.ownerTeam = rocket.ownerTeam;
+    slot.position.x = rocket.position.x;
+    slot.position.y = rocket.position.y;
+    slot.position.z = rocket.position.z;
+    slot.velocity.x = rocket.velocity.x;
+    slot.velocity.y = rocket.velocity.y;
+    slot.velocity.z = rocket.velocity.z;
+    slot.speed = normalizeInto(slot.velocity, slot.direction);
+    slot.expiresAtMs = expiresAtMs;
+
+    this.idToSlot.set(rocket.id, slotIndex);
+  }
+
+  removeMissing(activeIds: Set<string>): void {
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      if (slot.active && !activeIds.has(slot.id)) {
+        this.deactivate(i);
+      }
     }
+  }
 
-    const elapsed = (Date.now() - rocket.startTime) / 1000;
-
-    if (elapsed >= PROJECTILE_LIFETIME_SECONDS) {
-      groupRef.current.visible = false;
-      return;
+  forEachActive(callback: (slot: RocketRuntimeSlot, slotIndex: number) => void): void {
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      if (slot.active) callback(slot, i);
     }
+  }
 
-    const moveX = rocket.velocity.x * delta;
-    const moveY = rocket.velocity.y * delta;
-    const moveZ = rocket.velocity.z * delta;
-    const moveDistance = Math.sqrt(moveX * moveX + moveY * moveY + moveZ * moveZ);
+  deactivate(index: number): void {
+    const slot = this.slots[index];
+    if (!slot.active) return;
 
-    if (isPhysicsReady() && moveDistance > 0.001) {
-      const world = getPhysicsWorld();
-      if (world) {
-        const speed = Math.sqrt(
-          rocket.velocity.x * rocket.velocity.x +
-          rocket.velocity.y * rocket.velocity.y +
-          rocket.velocity.z * rocket.velocity.z
-        );
-        const direction = {
-          x: rocket.velocity.x / speed,
-          y: rocket.velocity.y / speed,
-          z: rocket.velocity.z / speed,
-        };
+    this.idToSlot.delete(slot.id);
+    slot.active = false;
+    slot.id = '';
+    slot.ownerId = '';
+    this.activeCount = Math.max(0, this.activeCount - 1);
+    this.freeList.push(index);
+  }
 
-        const hit = raycast(world, currentPos.current, direction, moveDistance + PROJECTILE_RADIUS);
+  private allocateSlot(): number {
+    const free = this.freeList.pop();
+    if (free !== undefined) return free;
 
-        if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
-          hasCollided.current = true;
-          groupRef.current.visible = false;
-          triggerTerrainImpact('blaze_rocket', hit.point, {
-            normal: hit.normal,
-            direction,
-          });
-          removeRocket(rocket.id);
-          return;
-        }
+    for (let i = 0; i < this.capacity; i++) {
+      const index = (this.overflowCursor + i) % this.capacity;
+      if (this.slots[index].active) {
+        this.idToSlot.delete(this.slots[index].id);
+        this.slots[index].active = false;
+        this.activeCount = Math.max(0, this.activeCount - 1);
+        this.overflowCursor = (index + 1) % this.capacity;
+        return index;
       }
     }
 
-    const { players, localPlayer } = useGameStore.getState();
+    return 0;
+  }
+}
 
-    for (const [playerId, player] of players) {
-      if (playerId === localPlayer?.id) continue;
-      if (player.state !== 'alive') continue;
-      if (localPlayer && player.team === localPlayer.team) continue;
+function setRocketPartInstance(
+  mesh: THREE.InstancedMesh | null,
+  dummy: THREE.Object3D,
+  offset: THREE.Vector3 | null,
+  rocketQuaternion: THREE.Quaternion,
+  slot: RocketRuntimeSlot,
+  index: number,
+  scale: THREE.Vector3,
+  scratchOffset: THREE.Vector3
+): void {
+  if (!mesh) return;
 
-      const dx = player.position.x - currentPos.current.x;
-      const dy = (player.position.y + 0.9) - currentPos.current.y;
-      const dz = player.position.z - currentPos.current.z;
-      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  dummy.position.set(slot.position.x, slot.position.y, slot.position.z);
+  if (offset) {
+    scratchOffset.copy(offset).applyQuaternion(rocketQuaternion);
+    dummy.position.add(scratchOffset);
+  }
+  dummy.quaternion.copy(rocketQuaternion).multiply(ROCKET_PART_ROTATION);
+  dummy.scale.copy(scale);
+  dummy.updateMatrix();
+  mesh.setMatrixAt(index, dummy.matrix);
+}
 
-      if (distance <= NPC_HIT_RADIUS) {
+export function prewarmRocketResources(renderer?: THREE.WebGLRenderer): void {
+  getRocketBodyMaterial();
+  getRocketNoseMaterial();
+  getRocketFireCoreMaterial();
+  getRocketFireInnerMaterial();
+  getRocketFireOuterMaterial();
+  getRocketSmokeMaterial();
 
-        hasCollided.current = true;
-        groupRef.current.visible = false;
-        removeRocket(rocket.id);
-        return;
-      }
-    }
+  if (!renderer) return;
 
-    currentPos.current.x += moveX;
-    currentPos.current.y += moveY;
-    currentPos.current.z += moveZ;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+  const matrix = new THREE.Matrix4().makeScale(0.1, 0.35, 0.1);
+  camera.position.z = 3;
 
-    _rocketPos.set(
-      currentPos.current.x,
-      currentPos.current.y,
-      currentPos.current.z
-    );
-    groupRef.current.position.copy(_rocketPos);
+  const meshes = [
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketBodyMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone6, getRocketNoseMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketFireCoreMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketFireInnerMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketFireOuterMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone6, getRocketSmokeMaterial(), 1),
+  ];
 
-    _rocketDir.set(rocket.velocity.x, rocket.velocity.y, rocket.velocity.z).normalize();
-    _rocketLookAt.copy(_rocketPos).add(_rocketDir);
-    groupRef.current.lookAt(_rocketLookAt);
-  });
+  for (const mesh of meshes) {
+    mesh.setMatrixAt(0, matrix);
+    scene.add(mesh);
+  }
 
-  return (
-    <group ref={groupRef} position={[rocket.position.x, rocket.position.y, rocket.position.z]}>
-      {/* Rocket body - dark metallic */}
-      <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.35, 0.08]} material={materials.body} />
-
-      {/* Rocket nose - glowing orange */}
-      <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.04, 0.08, 0.04]} material={materials.nose} />
-
-      {/* Fire core - bright white/yellow */}
-      <mesh position={[0, 0, 0.22]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.05, 0.35, 0.05]} material={materials.fireCore} />
-
-      {/* Fire inner - bright orange */}
-      <mesh position={[0, 0, 0.32]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.45, 0.08]} material={materials.fireInner} />
-
-      {/* Fire outer - red/orange */}
-      <mesh position={[0, 0, 0.4]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.5, 0.12]} material={materials.fireOuter} />
-
-      {/* Smoke trail hint */}
-      <mesh position={[0, 0, 0.55]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.15, 0.4, 0.15]} material={materials.smoke} />
-    </group>
-  );
-}, (prev, next) => {
-  // Custom comparison for object props (rocket)
-  return (
-    prev.rocket.id === next.rocket.id &&
-    prev.rocket.position.x === next.rocket.position.x &&
-    prev.rocket.position.y === next.rocket.position.y &&
-    prev.rocket.position.z === next.rocket.position.z &&
-    prev.rocket.velocity.x === next.rocket.velocity.x &&
-    prev.rocket.velocity.y === next.rocket.velocity.y &&
-    prev.rocket.velocity.z === next.rocket.velocity.z &&
-    prev.rocket.startTime === next.rocket.startTime &&
-    prev.rocket.ownerId === next.rocket.ownerId
-  );
-});
+  renderer.compile(scene, camera);
+}
 
 // ============================================================================
 // ROCKETS MANAGER
 // ============================================================================
 
 export function RocketsManager() {
-  const rockets = useGameStore(state => state.rockets);
+  const storeRockets = useGameStore(state => state.rockets);
+  const removeRockets = useGameStore(state => state.removeRockets);
+  const { reportBlazeRocketImpact } = useNetwork();
+  const poolRef = useRef<RocketRuntimePool>();
+  const removalsRef = useRef<string[]>([]);
+  const activeStoreIdsRef = useRef<Set<string>>(new Set());
+  const enemyPlayersRef = useRef<Player[]>([]);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const rocketQuaternion = useMemo(() => new THREE.Quaternion(), []);
+  const rocketDirection = useMemo(() => new THREE.Vector3(0, 0, -1), []);
+  const partOffset = useMemo(() => new THREE.Vector3(), []);
+
+  const bodyMeshRef = useRef<THREE.InstancedMesh>(null);
+  const noseMeshRef = useRef<THREE.InstancedMesh>(null);
+  const fireCoreMeshRef = useRef<THREE.InstancedMesh>(null);
+  const fireInnerMeshRef = useRef<THREE.InstancedMesh>(null);
+  const fireOuterMeshRef = useRef<THREE.InstancedMesh>(null);
+  const smokeMeshRef = useRef<THREE.InstancedMesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
 
-  // Update single shared light position
+  if (!poolRef.current) {
+    poolRef.current = new RocketRuntimePool(MAX_ROCKETS);
+  }
+
+  useEffect(() => registerFrameSystem('blaze-rockets'), []);
+
+  useEffect(() => {
+    const pool = poolRef.current;
+    if (!pool) return;
+
+    const activeIds = activeStoreIdsRef.current;
+    const nowDateMs = Date.now();
+    const frameNowMs = getFrameClock().nowMs;
+
+    activeIds.clear();
+    for (const rocket of storeRockets) {
+      activeIds.add(rocket.id);
+      const ageMs = Math.max(0, nowDateMs - rocket.startTime);
+      const expiresAtMs = frameNowMs + Math.max(0, ROCKET_LIFETIME - ageMs);
+      pool.add(rocket, expiresAtMs);
+    }
+    pool.removeMissing(activeIds);
+  }, [storeRockets]);
+
   useFrame(() => {
-    if (!lightRef.current || rockets.length === 0) {
-      if (lightRef.current) lightRef.current.intensity = 0;
-      return;
+    const pool = poolRef.current;
+    if (!pool) return;
+
+    const frameStart = performance.now();
+    const store = useGameStore.getState();
+    const clock = getFrameClock();
+    const delta = clock.clampedDeltaSeconds;
+    let physicsMs = 0;
+    let instanceIndex = 0;
+    let lightX = 0;
+    let lightY = 0;
+    let lightZ = 0;
+
+    const removals = removalsRef.current;
+    removals.length = 0;
+
+    const enemies = enemyPlayersRef.current;
+    enemies.length = 0;
+    for (const [, player] of store.players) {
+      if (player.state === 'alive') enemies.push(player);
     }
 
-    const now = Date.now();
-    let avgX = 0, avgY = 0, avgZ = 0;
-    let count = 0;
+    pool.forEachActive((slot, slotIndex) => {
+      if (clock.nowMs >= slot.expiresAtMs) {
+        removals.push(slot.id);
+        pool.deactivate(slotIndex);
+        return;
+      }
 
-    for (const rocket of rockets) {
-      if (now - rocket.startTime < ROCKET_LIFETIME) {
-        const elapsed = (now - rocket.startTime) / 1000;
-        avgX += rocket.position.x + rocket.velocity.x * elapsed;
-        avgY += rocket.position.y + rocket.velocity.y * elapsed;
-        avgZ += rocket.position.z + rocket.velocity.z * elapsed;
-        count++;
+      const moveDistance = slot.speed * delta;
+      if (moveDistance > 0.001 && isPhysicsReady()) {
+        const world = getPhysicsWorld();
+        if (world) {
+          const physicsStart = performance.now();
+          const hit = raycast(world, slot.position, slot.direction, moveDistance + PROJECTILE_RADIUS);
+          physicsMs += performance.now() - physicsStart;
+          if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
+            triggerTerrainImpact('blaze_rocket', hit.point, {
+              normal: hit.normal,
+              direction: slot.direction,
+              scale: ROCKET_IMPACT_SCALE,
+            });
+            reportBlazeRocketImpact(slot.id, { x: hit.point.x, y: hit.point.y, z: hit.point.z });
+            removals.push(slot.id);
+            pool.deactivate(slotIndex);
+            return;
+          }
+        }
+      }
+
+      for (let i = 0; i < enemies.length; i++) {
+        const player = enemies[i];
+        if (player.id === slot.ownerId) continue;
+        if (player.state !== 'alive') continue;
+        if (player.team === slot.ownerTeam) continue;
+
+        const dx = player.position.x - slot.position.x;
+        const dy = (player.position.y + 0.9) - slot.position.y;
+        const dz = player.position.z - slot.position.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+
+        if (distSq <= NPC_HIT_RADIUS_SQ) {
+          triggerTerrainImpact('blaze_rocket', slot.position, {
+            direction: slot.direction,
+            scale: ROCKET_IMPACT_SCALE,
+          });
+          reportBlazeRocketImpact(slot.id, { x: slot.position.x, y: slot.position.y, z: slot.position.z });
+          removals.push(slot.id);
+          pool.deactivate(slotIndex);
+          return;
+        }
+      }
+
+      slot.position.x += slot.velocity.x * delta;
+      slot.position.y += slot.velocity.y * delta;
+      slot.position.z += slot.velocity.z * delta;
+
+      rocketDirection.set(slot.direction.x, slot.direction.y, slot.direction.z);
+      rocketQuaternion.setFromUnitVectors(ROCKET_FORWARD, rocketDirection);
+
+      setRocketPartInstance(bodyMeshRef.current, dummy, ROCKET_PARTS.body.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.body.scale, partOffset);
+      setRocketPartInstance(noseMeshRef.current, dummy, ROCKET_PARTS.nose.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.nose.scale, partOffset);
+      setRocketPartInstance(fireCoreMeshRef.current, dummy, ROCKET_PARTS.fireCore.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.fireCore.scale, partOffset);
+      setRocketPartInstance(fireInnerMeshRef.current, dummy, ROCKET_PARTS.fireInner.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.fireInner.scale, partOffset);
+      setRocketPartInstance(fireOuterMeshRef.current, dummy, ROCKET_PARTS.fireOuter.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.fireOuter.scale, partOffset);
+      setRocketPartInstance(smokeMeshRef.current, dummy, ROCKET_PARTS.smoke.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.smoke.scale, partOffset);
+
+      lightX += slot.position.x;
+      lightY += slot.position.y;
+      lightZ += slot.position.z;
+      instanceIndex++;
+    });
+
+    const meshes = [
+      bodyMeshRef.current,
+      noseMeshRef.current,
+      fireCoreMeshRef.current,
+      fireInnerMeshRef.current,
+      fireOuterMeshRef.current,
+      smokeMeshRef.current,
+    ];
+    for (let i = 0; i < meshes.length; i++) {
+      const mesh = meshes[i];
+      if (!mesh) continue;
+      mesh.count = instanceIndex;
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    if (lightRef.current) {
+      if (instanceIndex > 0) {
+        lightRef.current.position.set(lightX / instanceIndex, lightY / instanceIndex, lightZ / instanceIndex);
+        lightRef.current.intensity = Math.min(instanceIndex * 2, 10);
+      } else {
+        lightRef.current.intensity = 0;
       }
     }
 
-    if (count > 0) {
-      lightRef.current.position.set(avgX / count, avgY / count, avgZ / count);
-      lightRef.current.intensity = Math.min(count * 2, 10);
-    } else {
-      lightRef.current.intensity = 0;
+    if (removals.length > 0) {
+      removeRockets(removals);
+      removals.length = 0;
     }
-  });
 
-  const now = Date.now();
-  const activeRockets = rockets
-    .filter(rocket => now - rocket.startTime < ROCKET_LIFETIME)
-    .slice(0, MAX_ROCKETS);
+    if (physicsMs > 0) {
+      recordSystemTime('physicsQueries', physicsMs);
+    }
+    recordSystemTime('blazeRockets', performance.now() - frameStart);
+  });
 
   return (
     <group>
-      {activeRockets.map(rocket => (
-        <RocketEffect key={rocket.id} rocket={rocket} />
-      ))}
-      {/* Single shared light for all rockets */}
-      <pointLight ref={lightRef} color={0xff6600} intensity={0} distance={12} decay={2} />
+      <instancedMesh
+        ref={bodyMeshRef}
+        args={[SHARED_GEOMETRIES.cone8, getRocketBodyMaterial(), MAX_ROCKETS]}
+        count={0}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={noseMeshRef}
+        args={[SHARED_GEOMETRIES.cone6, getRocketNoseMaterial(), MAX_ROCKETS]}
+        count={0}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={fireCoreMeshRef}
+        args={[SHARED_GEOMETRIES.cone8, getRocketFireCoreMaterial(), MAX_ROCKETS]}
+        count={0}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={fireInnerMeshRef}
+        args={[SHARED_GEOMETRIES.cone8, getRocketFireInnerMaterial(), MAX_ROCKETS]}
+        count={0}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={fireOuterMeshRef}
+        args={[SHARED_GEOMETRIES.cone8, getRocketFireOuterMaterial(), MAX_ROCKETS]}
+        count={0}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={smokeMeshRef}
+        args={[SHARED_GEOMETRIES.cone6, getRocketSmokeMaterial(), MAX_ROCKETS]}
+        count={0}
+        frustumCulled={false}
+      />
+      <BudgetedPointLight
+        budgetPriority={4}
+        ref={lightRef}
+        color={0xff6600}
+        intensity={0}
+        distance={12}
+        decay={2}
+      />
     </group>
   );
 }
@@ -238,17 +478,21 @@ interface RocketJumpExplosionData {
   id: string;
   position: { x: number; y: number; z: number };
   startTime: number;
+  frameStartTime: number;
 }
 
 const rocketJumpExplosions: RocketJumpExplosionData[] = [];
 let explosionIdCounter = 0;
+let rocketJumpExplosionRevision = 0;
 
 export function triggerRocketJumpExplosion(position: { x: number; y: number; z: number }) {
   rocketJumpExplosions.push({
     id: `rj_${explosionIdCounter++}`,
     position: { ...position },
     startTime: Date.now(),
+    frameStartTime: getFrameClock().nowMs,
   });
+  rocketJumpExplosionRevision++;
 }
 
 export const ROCKET_JUMP_DURATION = 900; // Longer for more dramatic effect
@@ -274,7 +518,7 @@ const RocketJumpExplosion = React.memo(({ explosion }: { explosion: RocketJumpEx
   const lightRef = useRef<THREE.PointLight>(null);
   
   useFrame(() => {
-    const elapsed = Date.now() - explosion.startTime;
+    const elapsed = getFrameClock().nowMs - explosion.frameStartTime;
     if (elapsed > ROCKET_JUMP_DURATION) return;
     
     const progress = elapsed / ROCKET_JUMP_DURATION;
@@ -354,7 +598,7 @@ const RocketJumpExplosion = React.memo(({ explosion }: { explosion: RocketJumpEx
     }
   });
   
-  const elapsed = Date.now() - explosion.startTime;
+  const elapsed = getFrameClock().nowMs - explosion.frameStartTime;
   if (elapsed > ROCKET_JUMP_DURATION) return null;
   
   return (
@@ -417,7 +661,7 @@ const RocketJumpExplosion = React.memo(({ explosion }: { explosion: RocketJumpEx
         <meshBasicMaterial color={0x331100} transparent opacity={0.4} side={THREE.DoubleSide} />
       </mesh>
       
-      <pointLight ref={lightRef} color={0xff5500} intensity={25} distance={15} decay={2} />
+      <BudgetedPointLight budgetPriority={7} ref={lightRef} color={0xff5500} intensity={25} distance={15} decay={2} />
     </group>
   );
 }, (prev, next) => {
@@ -434,18 +678,24 @@ const RocketJumpExplosion = React.memo(({ explosion }: { explosion: RocketJumpEx
 // Hook to manage rocket jump explosions
 export function useRocketJumpExplosions() {
   const [activeExplosions, setActiveExplosions] = useState<RocketJumpExplosionData[]>([]);
-  
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const active = rocketJumpExplosions.filter(e => now - e.startTime < ROCKET_JUMP_DURATION);
-      rocketJumpExplosions.length = 0;
-      rocketJumpExplosions.push(...active);
-      setActiveExplosions([...active]);
-    }, 150);
-    
-    return () => clearInterval(interval);
-  }, []);
+  const lastRevisionRef = useRef(-1);
+
+  useFrame(() => {
+    const now = getFrameClock().nowMs;
+    let changed = lastRevisionRef.current !== rocketJumpExplosionRevision;
+
+    for (let i = rocketJumpExplosions.length - 1; i >= 0; i--) {
+      if (now - rocketJumpExplosions[i].frameStartTime >= ROCKET_JUMP_DURATION) {
+        rocketJumpExplosions.splice(i, 1);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      lastRevisionRef.current = rocketJumpExplosionRevision;
+      setActiveExplosions([...rocketJumpExplosions]);
+    }
+  });
   
   return activeExplosions;
 }

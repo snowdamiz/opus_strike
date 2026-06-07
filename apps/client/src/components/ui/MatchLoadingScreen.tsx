@@ -59,7 +59,7 @@ export function MatchLoadingScreen({ isComplete = false }: MatchLoadingScreenPro
               className="absolute inset-y-0 left-0 rounded-md bg-gradient-to-r from-orange-500 via-amber-300 to-cyan-300 transition-[width] duration-200 ease-out"
               style={{
                 width: `${percent}%`,
-                boxShadow: '0 0 28px rgba(249,115,22,0.55)',
+                boxShadow: '0 0 28px rgb(var(--color-accent-primary) / 0.55)',
               }}
             />
             <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent" />

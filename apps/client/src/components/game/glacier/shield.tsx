@@ -1,9 +1,11 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 import {
   GLACIER_COLORS,
   tempVec3,
@@ -29,6 +31,7 @@ export const ICE_SHIELD_RAISE_DURATION = 0.3;
 export const ICE_SHIELD_LOWER_DURATION = 0.2;
 const ICE_SHIELD_DISTANCE = 2.5;
 const MAX_SHIELD_CRYSTALS = 27;
+const SHIELD_FROST_PARTICLE_INDICES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 
 interface IceShieldProps {
   isLowering: boolean;
@@ -50,23 +53,33 @@ export const IceShield = React.memo(({ isLowering, lowerStartTime }: IceShieldPr
   
   const shieldStartTime = useGameStore(state => state.glacierShieldStartTime);
   const localPlayer = useGameStore(state => state.localPlayer);
+  const shieldStartFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - shieldStartTime));
+  const lowerStartFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - lowerStartTime));
   
   initMaterials();
   const crystalGeometry = getShieldCrystalGeometry();
   const { shieldPanelGeometry, shieldGroundFrostGeometry } = getShieldGeometry();
+
+  useEffect(() => {
+    shieldStartFrameTimeRef.current = getFrameClock().nowMs - Math.max(0, Date.now() - shieldStartTime);
+  }, [shieldStartTime]);
+
+  useEffect(() => {
+    lowerStartFrameTimeRef.current = getFrameClock().nowMs - Math.max(0, Date.now() - lowerStartTime);
+  }, [lowerStartTime]);
   
   useFrame((_, delta) => {
     const mesh = instancedMeshRef.current;
     if (!groupRef.current || !mesh || !localPlayer) return;
     
-    const now = Date.now();
-    
+    const now = getFrameClock().nowMs;
+
     let raiseProgress: number;
     if (isLowering) {
-      const lowerElapsed = (now - lowerStartTime) / 1000;
+      const lowerElapsed = (now - lowerStartFrameTimeRef.current) / 1000;
       raiseProgress = 1 - Math.min(lowerElapsed / ICE_SHIELD_LOWER_DURATION, 1);
     } else {
-      const raiseElapsed = (now - shieldStartTime) / 1000;
+      const raiseElapsed = (now - shieldStartFrameTimeRef.current) / 1000;
       raiseProgress = Math.min(raiseElapsed / ICE_SHIELD_RAISE_DURATION, 1);
     }
     
@@ -168,12 +181,11 @@ export const IceShield = React.memo(({ isLowering, lowerStartTime }: IceShieldPr
       <mesh ref={frostGroundRef} geometry={shieldGroundFrostGeometry!} material={shieldGroundFrostMaterial} position={[0, 0.02, 0.1]} rotation={[-Math.PI / 2, 0, 0]} />
       
       {/* Frost particles - reduced to 8 */}
-      {Array.from({ length: 8 }).map((_, i) => (
+      {SHIELD_FROST_PARTICLE_INDICES.map((i) => (
         <mesh key={i} ref={el => frostParticleRefs.current[i] = el} geometry={SHARED_GEOMETRIES.sphere4} material={shieldFrostParticleMaterial} />
       ))}
       
-      <pointLight ref={lightRef} position={[0, 1.5, 0.5]} color={GLACIER_COLORS.iceLight} intensity={2} distance={6} decay={2} />
+      <BudgetedPointLight budgetPriority={3} ref={lightRef} position={[0, 1.5, 0.5]} color={GLACIER_COLORS.iceLight} intensity={2} distance={6} decay={2} />
     </group>
   );
 });
-

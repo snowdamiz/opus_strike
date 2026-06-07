@@ -1,52 +1,107 @@
-import { useRef, useMemo, useEffect } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import React from 'react';
-import { useGameStore } from '../../../store/gameStore';
+import type { Player, Team } from '@voxel-strike/shared';
+import { useGameStore, type DireBallData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
+import { getFrameClock } from '../../../utils/frameClock';
+import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
+import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 
-interface DireBallProps {
-  id: string;
-  position: { x: number; y: number; z: number };
-  velocity: { x: number; y: number; z: number };
-  startTime: number;
-  ownerId: string;
+const DIRE_BALL_LIFETIME_MS = 3000;
+const BALL_RADIUS = 0.21;
+const PARTICLES_PER_BALL = 30;
+const NPC_HIT_RADIUS = 1.2;
+const NPC_HIT_RADIUS_SQ = NPC_HIT_RADIUS * NPC_HIT_RADIUS;
+export const DIRE_BALL_CAPACITY = 96;
+
+interface MutableVec3 {
+  x: number;
+  y: number;
+  z: number;
 }
 
-// PERFORMANCE: Pre-compiled shared materials (cached across all DireBall instances)
-// This prevents shader compilation hitches when spawning new projectiles
+interface DireBallRuntimeSlot {
+  active: boolean;
+  id: string;
+  ownerId: string;
+  ownerTeam: Team | null;
+  position: MutableVec3;
+  velocity: MutableVec3;
+  direction: MutableVec3;
+  right: MutableVec3;
+  up: MutableVec3;
+  speed: number;
+  expiresAtMs: number;
+  particlePhase: number;
+}
+
+const WORLD_UP = { x: 0, y: 1, z: 0 };
+const ZERO_VEC3 = { x: 0, y: 0, z: 0 };
+
 let sharedCoreMaterial: THREE.ShaderMaterial | null = null;
 let sharedGlowMaterial: THREE.ShaderMaterial | null = null;
+let sharedInnerCoreMaterial: THREE.MeshBasicMaterial | null = null;
+let sharedSecondaryShellMaterial: THREE.MeshBasicMaterial | null = null;
 let sharedParticleMaterial: THREE.PointsMaterial | null = null;
+
+function normalizeInto(input: MutableVec3, output: MutableVec3): number {
+  const speed = Math.sqrt(input.x * input.x + input.y * input.y + input.z * input.z);
+  if (speed <= 0.0001) {
+    output.x = 1;
+    output.y = 0;
+    output.z = 0;
+    return 0;
+  }
+
+  output.x = input.x / speed;
+  output.y = input.y / speed;
+  output.z = input.z / speed;
+  return speed;
+}
+
+function crossInto(a: MutableVec3, b: MutableVec3, output: MutableVec3): void {
+  const x = a.y * b.z - a.z * b.y;
+  const y = a.z * b.x - a.x * b.z;
+  const z = a.x * b.y - a.y * b.x;
+  output.x = x;
+  output.y = y;
+  output.z = z;
+}
 
 function getSharedCoreMaterial(): THREE.ShaderMaterial {
   if (!sharedCoreMaterial) {
     sharedCoreMaterial = new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        color1: { value: new THREE.Color(0x0a0015) }, // Deep void
-        color2: { value: new THREE.Color(0x7c3aed) }, // Violet
-        color3: { value: new THREE.Color(0xc084fc) }, // Light purple
-        color4: { value: new THREE.Color(0x00ffff) }, // Cyan accent
+        color1: { value: new THREE.Color(0x0a0015) },
+        color2: { value: new THREE.Color(0x7c3aed) },
+        color3: { value: new THREE.Color(0xc084fc) },
+        color4: { value: new THREE.Color(0x00ffff) },
       },
       vertexShader: `
         varying vec3 vNormal;
         varying vec2 vUv;
         varying vec3 vPosition;
         uniform float time;
-        
+
         void main() {
           vNormal = normalize(normalMatrix * normal);
           vUv = uv;
           vPosition = position;
-          
-          // Subtle distortion
+
           vec3 pos = position;
           float wave = sin(position.x * 15.0 + time * 10.0) * 0.02;
           pos += normal * wave;
-          
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+
+          #ifdef USE_INSTANCING
+            vec4 instancePosition = instanceMatrix * vec4(pos, 1.0);
+          #else
+            vec4 instancePosition = vec4(pos, 1.0);
+          #endif
+
+          gl_Position = projectionMatrix * modelViewMatrix * instancePosition;
         }
       `,
       fragmentShader: `
@@ -58,11 +113,11 @@ function getSharedCoreMaterial(): THREE.ShaderMaterial {
         varying vec3 vNormal;
         varying vec2 vUv;
         varying vec3 vPosition;
-        
+
         float hash(vec3 p) {
           return fract(sin(dot(p, vec3(12.9898, 78.233, 45.5432))) * 43758.5453);
         }
-        
+
         float noise(vec3 p) {
           vec3 i = floor(p);
           vec3 f = fract(p);
@@ -74,59 +129,46 @@ function getSharedCoreMaterial(): THREE.ShaderMaterial {
                 mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z
           );
         }
-        
+
         void main() {
           vec3 viewDir = normalize(cameraPosition - vPosition);
           float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.5);
-          
-          // Swirling void patterns
-          float swirl1 = sin(vPosition.x * 12.0 + time * 8.0) * 
-                        cos(vPosition.y * 10.0 - time * 6.0) * 
+          float swirl1 = sin(vPosition.x * 12.0 + time * 8.0) *
+                        cos(vPosition.y * 10.0 - time * 6.0) *
                         sin(vPosition.z * 14.0 + time * 5.0);
           swirl1 = swirl1 * 0.5 + 0.5;
-          
-          float swirl2 = cos(vPosition.x * 8.0 - time * 7.0) * 
+
+          float swirl2 = cos(vPosition.x * 8.0 - time * 7.0) *
                         sin(vPosition.y * 12.0 + time * 4.0);
           swirl2 = swirl2 * 0.5 + 0.5;
-          
-          // Energy pulses
+
           float pulse = sin(time * 15.0 + vPosition.y * 20.0) * 0.3 + 0.7;
           float fastPulse = sin(time * 30.0) * 0.15 + 0.85;
-          
-          // Fractal noise for chaotic energy
           float n = noise(vPosition * 15.0 + time * 3.0);
           n += noise(vPosition * 30.0 - time * 5.0) * 0.5;
-          
-          // Build color layers
+
           vec3 baseColor = color1;
           baseColor = mix(baseColor, color2, swirl1 * 0.8);
           baseColor = mix(baseColor, color3, swirl2 * swirl1 * 0.6);
-          
-          // Cyan energy core
+
           float core = pow(1.0 - length(vPosition) * 3.0, 2.0);
           baseColor = mix(baseColor, color4, core * 0.5 * pulse);
-          
-          // Fresnel edge glow
           baseColor += color3 * fresnel * 1.8;
           baseColor += color4 * fresnel * n * 0.5;
-          
-          // Lightning crackle
+
           float lightning = step(0.85, noise(vPosition * 50.0 + time * 20.0));
           baseColor += color4 * lightning * 2.0;
-          
-          // Flickering
+
           float flicker = 0.8 + hash(vec3(time * 50.0, 0.0, 0.0)) * 0.2;
-          baseColor *= flicker * fastPulse;
-          
-          // Boost brightness
-          baseColor *= 1.3;
-          
+          baseColor *= flicker * fastPulse * 1.3;
+
           gl_FragColor = vec4(baseColor, 1.0);
         }
       `,
       side: THREE.FrontSide,
     });
   }
+
   return sharedCoreMaterial;
 }
 
@@ -143,17 +185,19 @@ function getSharedGlowMaterial(): THREE.ShaderMaterial {
         varying vec3 vNormal;
         varying vec3 vPosition;
         uniform float time;
-        
+
         void main() {
           vNormal = normalize(normalMatrix * normal);
           vPosition = position;
-          
-          // Breathing glow
-          vec3 pos = position;
-          float breathe = sin(time * 5.0) * 0.05 + 1.0;
-          pos *= breathe;
-          
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+          vec3 pos = position * (sin(time * 5.0) * 0.05 + 1.0);
+
+          #ifdef USE_INSTANCING
+            vec4 instancePosition = instanceMatrix * vec4(pos, 1.0);
+          #else
+            vec4 instancePosition = vec4(pos, 1.0);
+          #endif
+
+          gl_Position = projectionMatrix * modelViewMatrix * instancePosition;
         }
       `,
       fragmentShader: `
@@ -163,23 +207,18 @@ function getSharedGlowMaterial(): THREE.ShaderMaterial {
         uniform vec3 color3;
         varying vec3 vNormal;
         varying vec3 vPosition;
-        
+
         void main() {
-          // Multi-layer pulsing
           float pulse1 = sin(time * 10.0) * 0.2 + 0.8;
           float pulse2 = sin(time * 15.0 + vPosition.y * 10.0) * 0.15 + 0.85;
-          
-          // Fresnel glow
           float fresnel = pow(0.6 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
-          
-          // Swirling color
           float swirl = sin(vPosition.x * 10.0 + time * 8.0) * 0.5 + 0.5;
-          
+
           vec3 color = mix(color1, color2, swirl);
           color = mix(color, color3, fresnel * pulse2 * 0.3);
-          
           float alpha = fresnel * pulse1 * pulse2 * 0.7;
-          
+          alpha = min(alpha * 1.28, 0.92);
+
           gl_FragColor = vec4(color, alpha);
         }
       `,
@@ -189,338 +228,462 @@ function getSharedGlowMaterial(): THREE.ShaderMaterial {
       depthWrite: false,
     });
   }
+
   return sharedGlowMaterial;
+}
+
+function getSharedInnerCoreMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedInnerCoreMaterial) {
+    sharedInnerCoreMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00ffff,
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  }
+
+  return sharedInnerCoreMaterial;
+}
+
+function getSharedSecondaryShellMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedSecondaryShellMaterial) {
+    sharedSecondaryShellMaterial = new THREE.MeshBasicMaterial({
+      color: 0xc084fc,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  }
+
+  return sharedSecondaryShellMaterial;
 }
 
 function getSharedParticleMaterial(): THREE.PointsMaterial {
   if (!sharedParticleMaterial) {
     sharedParticleMaterial = new THREE.PointsMaterial({
-      color: 0x9333ea,
-      size: 0.08,
+      color: 0xffffff,
+      size: 0.1,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.95,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      sizeAttenuation: true,
+      vertexColors: true,
     });
   }
+
   return sharedParticleMaterial;
 }
 
-// Pre-compile shaders on module load (before any DireBall is spawned)
-if (typeof window !== 'undefined') {
-  // Defer shader compilation to after first frame
-  requestAnimationFrame(() => {
-    getSharedCoreMaterial();
-    getSharedGlowMaterial();
-    getSharedParticleMaterial();
-  });
+class DireBallRuntimePool {
+  private readonly slots: DireBallRuntimeSlot[];
+  private readonly freeList: number[];
+  private readonly idToSlot = new Map<string, number>();
+  private overflowCursor = 0;
+  activeCount = 0;
+
+  constructor(private readonly capacity = DIRE_BALL_CAPACITY) {
+    this.slots = Array.from({ length: capacity }, () => ({
+      active: false,
+      id: '',
+      ownerId: '',
+      ownerTeam: null,
+      position: { ...ZERO_VEC3 },
+      velocity: { ...ZERO_VEC3 },
+      direction: { x: 1, y: 0, z: 0 },
+      right: { x: 0, y: 0, z: 1 },
+      up: { x: 0, y: 1, z: 0 },
+      speed: 0,
+      expiresAtMs: 0,
+      particlePhase: 0,
+    }));
+    this.freeList = Array.from({ length: capacity }, (_, i) => capacity - 1 - i);
+  }
+
+  add(ball: DireBallData, expiresAtMs: number, ownerTeam: Team | null): void {
+    if (this.idToSlot.has(ball.id)) return;
+
+    const slotIndex = this.allocateSlot();
+    const slot = this.slots[slotIndex];
+    if (!slot.active) this.activeCount++;
+
+    slot.active = true;
+    slot.id = ball.id;
+    slot.ownerId = ball.ownerId;
+    slot.ownerTeam = ownerTeam;
+    slot.position.x = ball.position.x;
+    slot.position.y = ball.position.y;
+    slot.position.z = ball.position.z;
+    slot.velocity.x = ball.velocity.x;
+    slot.velocity.y = ball.velocity.y;
+    slot.velocity.z = ball.velocity.z;
+    slot.speed = normalizeInto(slot.velocity, slot.direction);
+    slot.expiresAtMs = expiresAtMs;
+    slot.particlePhase = ((slotIndex * 37) % 97) / 97;
+
+    crossInto(slot.direction, WORLD_UP, slot.right);
+    if (normalizeInto(slot.right, slot.right) <= 0.0001) {
+      slot.right.x = 0;
+      slot.right.y = 0;
+      slot.right.z = 1;
+    }
+    crossInto(slot.right, slot.direction, slot.up);
+    normalizeInto(slot.up, slot.up);
+
+    this.idToSlot.set(ball.id, slotIndex);
+  }
+
+  remove(id: string): void {
+    const index = this.idToSlot.get(id);
+    if (index === undefined) return;
+    this.deactivate(index);
+  }
+
+  removeMissing(activeIds: Set<string>): void {
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      if (slot.active && !activeIds.has(slot.id)) {
+        this.deactivate(i);
+      }
+    }
+  }
+
+  forEachActive(callback: (slot: DireBallRuntimeSlot, slotIndex: number) => void): void {
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      if (slot.active) callback(slot, i);
+    }
+  }
+
+  deactivate(index: number): void {
+    const slot = this.slots[index];
+    if (!slot.active) return;
+
+    this.idToSlot.delete(slot.id);
+    slot.active = false;
+    slot.id = '';
+    slot.ownerId = '';
+    slot.ownerTeam = null;
+    this.activeCount = Math.max(0, this.activeCount - 1);
+    this.freeList.push(index);
+  }
+
+  private allocateSlot(): number {
+    const free = this.freeList.pop();
+    if (free !== undefined) return free;
+
+    for (let i = 0; i < this.capacity; i++) {
+      const index = (this.overflowCursor + i) % this.capacity;
+      if (this.slots[index].active) {
+        this.idToSlot.delete(this.slots[index].id);
+        this.slots[index].active = false;
+        this.activeCount = Math.max(0, this.activeCount - 1);
+        this.overflowCursor = (index + 1) % this.capacity;
+        return index;
+      }
+    }
+
+    return 0;
+  }
 }
 
-const LIFETIME = 3;
-const BALL_RADIUS = 0.21; // Reduced 30% from 0.3 for better gameplay feel
-const PARTICLE_COUNT = 15; // Reduced from 30 for performance
-const PROJECTILE_DAMAGE = 35; // Damage dealt to NPCs on hit
-const NPC_HIT_RADIUS = 1.2; // Radius for NPC collision detection (accounts for player hitbox)
+function fillTrailParticles(
+  slot: DireBallRuntimeSlot,
+  elapsedSeconds: number,
+  positions: Float32Array,
+  particleOffset: number
+): number {
+  for (let i = 0; i < PARTICLES_PER_BALL; i++) {
+    const particleIndex = particleOffset + i;
+    const index = particleIndex * 3;
+    const phase = (slot.particlePhase + i * 0.071 + elapsedSeconds * 1.9) % 1;
+    const angle = i * 2.399963 + elapsedSeconds * (2.2 + (i % 4) * 0.17);
+    const trailDistance = 0.16 + phase * 2.35;
+    const radius = BALL_RADIUS * (0.36 + (1 - phase) * 0.86);
+    const orbitX = Math.cos(angle) * radius;
+    const orbitY = Math.sin(angle) * radius;
 
-/**
- * DireBall - A dark magic fireball projectile
- * Visual style: Purple/black flaming sphere with swirling dark energy
- * PERFORMANCE: Uses shared materials, no point lights, reduced particles
- * Wrapped in React.memo to prevent cascading re-renders from parent updates
- */
-export const DireBall = React.memo(({ id, position, velocity, startTime, ownerId }: DireBallProps) => {
-  const groupRef = useRef<THREE.Group>(null);
-  const coreRef = useRef<THREE.Mesh>(null);
-  const outerGlowRef = useRef<THREE.Mesh>(null);
-  const particlesRef = useRef<THREE.Points>(null);
-  const hasCollided = useRef(false);
-  const hasLoggedOnce = useRef(false);
-  
-  // Current position (updated each frame based on velocity)
-  const currentPos = useRef({ x: position.x, y: position.y, z: position.z });
-  const timeRef = useRef(0);
-  
-  // Get removeDireBall action from store
-  const removeDireBall = useGameStore(state => state.removeDireBall);
-  
-  
-  // Get shared materials (no shader compilation on spawn)
+    positions[index] =
+      slot.position.x -
+      slot.direction.x * trailDistance +
+      slot.right.x * orbitX +
+      slot.up.x * orbitY;
+    positions[index + 1] =
+      slot.position.y -
+      slot.direction.y * trailDistance +
+      slot.right.y * orbitX +
+      slot.up.y * orbitY;
+    positions[index + 2] =
+      slot.position.z -
+      slot.direction.z * trailDistance +
+      slot.right.z * orbitX +
+      slot.up.z * orbitY;
+  }
+
+  return particleOffset + PARTICLES_PER_BALL;
+}
+
+function setSphereInstance(
+  mesh: THREE.InstancedMesh,
+  dummy: THREE.Object3D,
+  index: number,
+  slot: DireBallRuntimeSlot,
+  scale: number
+): void {
+  dummy.position.set(slot.position.x, slot.position.y, slot.position.z);
+  dummy.quaternion.identity();
+  dummy.scale.setScalar(scale);
+  dummy.updateMatrix();
+  mesh.setMatrixAt(index, dummy.matrix);
+}
+
+export function prewarmDireBallResources(renderer?: THREE.WebGLRenderer): void {
   const coreMaterial = getSharedCoreMaterial();
   const glowMaterial = getSharedGlowMaterial();
-  const particleMaterial = getSharedParticleMaterial();
-  
-  // Trailing particles - reduced count
+  const innerCoreMaterial = getSharedInnerCoreMaterial();
+  const secondaryShellMaterial = getSharedSecondaryShellMaterial();
+  getSharedParticleMaterial();
+
+  if (!renderer) return;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+  camera.position.z = 3;
+
+  const matrix = new THREE.Matrix4().makeScale(BALL_RADIUS, BALL_RADIUS, BALL_RADIUS);
+  const core = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere16, coreMaterial, 1);
+  const glow = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere12, glowMaterial, 1);
+  const inner = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, innerCoreMaterial, 1);
+  const shell = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, secondaryShellMaterial, 1);
+
+  core.setMatrixAt(0, matrix);
+  glow.setMatrixAt(0, matrix);
+  inner.setMatrixAt(0, matrix);
+  shell.setMatrixAt(0, matrix);
+  scene.add(core, glow, inner, shell);
+  renderer.compile(scene, camera);
+}
+
+export function DireBallsManager() {
+  const storeBalls = useGameStore(state => state.direBalls);
+  const removeDireBalls = useGameStore(state => state.removeDireBalls);
+  const poolRef = useRef<DireBallRuntimePool>();
+  const activeStoreIdsRef = useRef<Set<string>>(new Set());
+  const enemyPlayersRef = useRef<Player[]>([]);
+  const removalsRef = useRef<string[]>([]);
+  const rayDirectionRef = useRef<MutableVec3>({ x: 1, y: 0, z: 0 });
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  const coreMeshRef = useRef<THREE.InstancedMesh>(null);
+  const glowMeshRef = useRef<THREE.InstancedMesh>(null);
+  const innerMeshRef = useRef<THREE.InstancedMesh>(null);
+  const secondaryShellMeshRef = useRef<THREE.InstancedMesh>(null);
+  const particlesRef = useRef<THREE.Points>(null);
+
+  if (!poolRef.current) {
+    poolRef.current = new DireBallRuntimePool(DIRE_BALL_CAPACITY);
+  }
+
   const particleGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(PARTICLE_COUNT * 3);
-    
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.random() * Math.PI;
-      const r = BALL_RADIUS * (0.5 + Math.random() * 1.5);
-      
-      positions[i * 3] = -Math.random() * 1.5;
-      positions[i * 3 + 1] = Math.sin(phi) * Math.cos(theta) * r * 0.5;
-      positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * r * 0.5;
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3), 3)
+    );
+    const colors = new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3);
+    const palette = [
+      new THREE.Color(0x00ffff),
+      new THREE.Color(0xc084fc),
+      new THREE.Color(0x9333ea),
+    ];
+    for (let i = 0; i < DIRE_BALL_CAPACITY * PARTICLES_PER_BALL; i++) {
+      const color = palette[i % palette.length];
+      colors[i * 3] = color.r;
+      colors[i * 3 + 1] = color.g;
+      colors[i * 3 + 2] = color.b;
     }
-    
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setDrawRange(0, 0);
     return geometry;
   }, []);
-  
-  // Track last particle update time for throttling
-  const lastParticleUpdateRef = useRef(0);
-  
-  // Update position and check lifetime
-  useFrame((_, delta) => {
-    if (!groupRef.current) return;
-    
-    // If already collided, hide and skip processing
-    if (hasCollided.current) {
-      groupRef.current.visible = false;
-      return;
+
+  useEffect(() => () => particleGeometry.dispose(), [particleGeometry]);
+  useEffect(() => registerFrameSystem('phantom-projectiles'), []);
+
+  useEffect(() => {
+    const pool = poolRef.current;
+    if (!pool) return;
+
+    const activeIds = activeStoreIdsRef.current;
+    const nowDateMs = Date.now();
+    const frameNowMs = getFrameClock().nowMs;
+    const state = useGameStore.getState();
+
+    activeIds.clear();
+    for (const ball of storeBalls) {
+      activeIds.add(ball.id);
+      const ageMs = Math.max(0, nowDateMs - ball.startTime);
+      const expiresAtMs = frameNowMs + Math.max(0, DIRE_BALL_LIFETIME_MS - ageMs);
+      const ownerTeam = ball.ownerTeam ?? state.players.get(ball.ownerId)?.team ?? null;
+      pool.add(ball, expiresAtMs, ownerTeam);
     }
-    
-    const elapsed = (Date.now() - startTime) / 1000;
-    
-    // Hide when expired (early exit for performance)
-    if (elapsed >= LIFETIME) {
-      groupRef.current.visible = false;
-      return;
+    pool.removeMissing(activeIds);
+  }, [storeBalls]);
+
+  useFrame(() => {
+    const pool = poolRef.current;
+    if (!pool) return;
+
+    const frameStart = performance.now();
+    const clock = getFrameClock();
+    const delta = clock.clampedDeltaSeconds;
+    const elapsedSeconds = clock.elapsedSeconds;
+
+    const coreMaterial = getSharedCoreMaterial();
+    const glowMaterial = getSharedGlowMaterial();
+    coreMaterial.uniforms.time.value = elapsedSeconds;
+    glowMaterial.uniforms.time.value = elapsedSeconds;
+
+    const store = useGameStore.getState();
+    const enemies = enemyPlayersRef.current;
+    enemies.length = 0;
+    for (const [, player] of store.players) {
+      if (player.state === 'alive') enemies.push(player);
     }
-    
-    timeRef.current += delta;
-    
-    // PERFORMANCE: Update shader uniforms (shared, so this affects all balls)
-    // Only update if this is the first ball being processed this frame
-    if (coreMaterial.uniforms) {
-      coreMaterial.uniforms.time.value = timeRef.current;
-    }
-    if (glowMaterial.uniforms) {
-      glowMaterial.uniforms.time.value = timeRef.current;
-    }
-    
-    // Calculate movement for this frame
-    const moveX = velocity.x * delta;
-    const moveY = velocity.y * delta;
-    const moveZ = velocity.z * delta;
-    const moveDistance = Math.sqrt(moveX * moveX + moveY * moveY + moveZ * moveZ);
-    
-    // Check for collision with terrain before moving
-    if (isPhysicsReady() && moveDistance > 0.001) {
-      const world = getPhysicsWorld();
-      if (world) {
-        // Normalize velocity for ray direction
-        const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y + velocity.z * velocity.z);
-        const direction = {
-          x: velocity.x / speed,
-          y: velocity.y / speed,
-          z: velocity.z / speed
-        };
-        
-        // Raycast from current position in direction of travel
-        const hit = raycast(world, currentPos.current, direction, moveDistance + BALL_RADIUS);
-        
-        if (hit && hit.distance <= moveDistance + BALL_RADIUS) {
-          // Hit terrain - mark as collided and remove from store
-          hasCollided.current = true;
-          groupRef.current.visible = false;
-          triggerTerrainImpact('phantom_dire_ball', hit.point, {
-            normal: hit.normal,
-            direction,
-          });
-          removeDireBall(id);
+
+    const removals = removalsRef.current;
+    removals.length = 0;
+    const positions = particleGeometry.attributes.position.array as Float32Array;
+    let instanceIndex = 0;
+    let particleOffset = 0;
+    let physicsMs = 0;
+
+    pool.forEachActive((slot, slotIndex) => {
+      if (clock.nowMs >= slot.expiresAtMs) {
+        removals.push(slot.id);
+        pool.deactivate(slotIndex);
+        return;
+      }
+
+      const moveDistance = slot.speed * delta;
+      if (moveDistance > 0.001 && isPhysicsReady()) {
+        const world = getPhysicsWorld();
+        if (world) {
+          const physicsStart = performance.now();
+          rayDirectionRef.current.x = slot.direction.x;
+          rayDirectionRef.current.y = slot.direction.y;
+          rayDirectionRef.current.z = slot.direction.z;
+          const hit = raycast(world, slot.position, rayDirectionRef.current, moveDistance + BALL_RADIUS);
+          physicsMs += performance.now() - physicsStart;
+
+          if (hit && hit.distance <= moveDistance + BALL_RADIUS) {
+            triggerTerrainImpact('phantom_dire_ball', hit.point, {
+              normal: hit.normal,
+              direction: slot.direction,
+            });
+            removals.push(slot.id);
+            pool.deactivate(slotIndex);
+            return;
+          }
+        }
+      }
+
+      for (let i = 0; i < enemies.length; i++) {
+        const player = enemies[i];
+        if (player.id === slot.ownerId) continue;
+        if (slot.ownerTeam && player.team === slot.ownerTeam) continue;
+
+        const dx = player.position.x - slot.position.x;
+        const dy = player.position.y + 0.9 - slot.position.y;
+        const dz = player.position.z - slot.position.z;
+        if (dx * dx + dy * dy + dz * dz <= NPC_HIT_RADIUS_SQ) {
+          removals.push(slot.id);
+          pool.deactivate(slotIndex);
           return;
         }
       }
-    }
-    
-    // Check for NPC/enemy player collision
-    const { players, localPlayer } = useGameStore.getState();
-    
-    // Mark as logged
-    hasLoggedOnce.current = true;
-    
-    // Check all players for collision (NPCs and real players)
-    for (const [playerId, player] of players) {
-      // Skip self
-      if (playerId === localPlayer?.id) continue;
-      
-      // Skip dead players
-      if (player.state !== 'alive') continue;
-      
-      // Skip same team (friendly fire off)
-      if (localPlayer && player.team === localPlayer.team) {
-        continue; // Same team, skip
+
+      slot.position.x += slot.velocity.x * delta;
+      slot.position.y += slot.velocity.y * delta;
+      slot.position.z += slot.velocity.z * delta;
+
+      const coreMesh = coreMeshRef.current;
+      const glowMesh = glowMeshRef.current;
+      const innerMesh = innerMeshRef.current;
+      const secondaryShellMesh = secondaryShellMeshRef.current;
+      if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
+        setSphereInstance(coreMesh, dummy, instanceIndex, slot, BALL_RADIUS);
+        setSphereInstance(glowMesh, dummy, instanceIndex, slot, BALL_RADIUS * 1.68);
+        setSphereInstance(innerMesh, dummy, instanceIndex, slot, BALL_RADIUS * 0.4);
+        setSphereInstance(secondaryShellMesh, dummy, instanceIndex, slot, BALL_RADIUS * 0.5);
       }
-      
-      // Calculate distance to player
-      const dx = player.position.x - currentPos.current.x;
-      const dy = (player.position.y + 0.9) - currentPos.current.y; // Aim at chest height
-      const dz = player.position.z - currentPos.current.z;
-      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      
-      if (distance <= NPC_HIT_RADIUS) {
-        
-        // Mark as collided and remove
-        hasCollided.current = true;
-        groupRef.current.visible = false;
-        removeDireBall(id);
-        return;
-      }
+
+      particleOffset = fillTrailParticles(slot, elapsedSeconds, positions, particleOffset);
+      instanceIndex++;
+    });
+
+    const coreMesh = coreMeshRef.current;
+    const glowMesh = glowMeshRef.current;
+    const innerMesh = innerMeshRef.current;
+    const secondaryShellMesh = secondaryShellMeshRef.current;
+    if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
+      coreMesh.count = instanceIndex;
+      glowMesh.count = instanceIndex;
+      innerMesh.count = instanceIndex;
+      secondaryShellMesh.count = instanceIndex;
+      coreMesh.instanceMatrix.needsUpdate = true;
+      glowMesh.instanceMatrix.needsUpdate = true;
+      innerMesh.instanceMatrix.needsUpdate = true;
+      secondaryShellMesh.instanceMatrix.needsUpdate = true;
     }
-    
-    // Move the projectile
-    currentPos.current.x += moveX;
-    currentPos.current.y += moveY;
-    currentPos.current.z += moveZ;
-    
-    // Update group position
-    groupRef.current.position.set(
-      currentPos.current.x,
-      currentPos.current.y,
-      currentPos.current.z
-    );
-    
-    // Rotate the ball for dynamic effect
-    if (coreRef.current) {
-      coreRef.current.rotation.x += delta * 3;
-      coreRef.current.rotation.y += delta * 5;
+
+    particleGeometry.setDrawRange(0, particleOffset);
+    const positionAttribute = particleGeometry.attributes.position as THREE.BufferAttribute;
+    positionAttribute.needsUpdate = particleOffset > 0;
+
+    if (removals.length > 0) {
+      removeDireBalls(removals);
+      removals.length = 0;
     }
-    
-    // PERFORMANCE: Throttle particle updates to every 50ms instead of every frame
-    const now = Date.now();
-    if (particlesRef.current && now - lastParticleUpdateRef.current > 50) {
-      lastParticleUpdateRef.current = now;
-      const positions = particlesRef.current.geometry.attributes.position;
-      const timeDelta = 0.05; // Fixed timestep for consistency
-      for (let i = 0; i < positions.count; i++) {
-        const x = positions.getX(i) - timeDelta * 8;
-        if (x < -2) {
-          positions.setX(i, -Math.random() * 0.3);
-          positions.setY(i, (Math.random() - 0.5) * BALL_RADIUS);
-          positions.setZ(i, (Math.random() - 0.5) * BALL_RADIUS);
-        } else {
-          positions.setX(i, x);
-        }
-      }
-      positions.needsUpdate = true;
+
+    if (physicsMs > 0) {
+      recordSystemTime('physicsQueries', physicsMs);
     }
+    recordSystemTime('phantomProjectiles', performance.now() - frameStart);
   });
-  
-  // Orient the projectile toward its velocity direction
-  const rotation = useMemo(() => {
-    const dir = new THREE.Vector3(velocity.x, velocity.y, velocity.z).normalize();
-    const quaternion = new THREE.Quaternion();
-    quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), dir);
-    const euler = new THREE.Euler().setFromQuaternion(quaternion);
-    return euler;
-  }, [velocity.x, velocity.y, velocity.z]);
-  
+
   return (
-    <group ref={groupRef} position={[position.x, position.y, position.z]} rotation={rotation}>
-      {/* Dark magic core sphere - reduced geometry for performance */}
-      <mesh ref={coreRef}>
-        <sphereGeometry args={[BALL_RADIUS, 16, 16]} />
-        <primitive object={coreMaterial} />
-      </mesh>
-      
-      {/* Outer glow sphere - reduced geometry */}
-      <mesh ref={outerGlowRef}>
-        <sphereGeometry args={[BALL_RADIUS * 1.5, 12, 12]} />
-        <primitive object={glowMaterial} />
-      </mesh>
-      
-      {/* Inner bright core - cyan energy center */}
-      <mesh>
-        <sphereGeometry args={[BALL_RADIUS * 0.35, 12, 12]} />
-        <meshBasicMaterial 
-          color={0x00ffff} 
-          transparent 
-          opacity={0.95}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-      
-      {/* Secondary glow ring */}
-      <mesh>
-        <sphereGeometry args={[BALL_RADIUS * 0.5, 8, 8]} />
-        <meshBasicMaterial 
-          color={0xc084fc} 
-          transparent 
-          opacity={0.4}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-      
-      {/* Trailing particles */}
-      <points ref={particlesRef} geometry={particleGeometry}>
-        <primitive object={particleMaterial} />
+    <group>
+      <instancedMesh
+        ref={coreMeshRef}
+        args={[SHARED_GEOMETRIES.sphere16, getSharedCoreMaterial(), DIRE_BALL_CAPACITY]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={glowMeshRef}
+        args={[SHARED_GEOMETRIES.sphere12, getSharedGlowMaterial(), DIRE_BALL_CAPACITY]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={innerMeshRef}
+        args={[SHARED_GEOMETRIES.sphere8, getSharedInnerCoreMaterial(), DIRE_BALL_CAPACITY]}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={secondaryShellMeshRef}
+        args={[SHARED_GEOMETRIES.sphere8, getSharedSecondaryShellMaterial(), DIRE_BALL_CAPACITY]}
+        frustumCulled={false}
+      />
+      <points ref={particlesRef} geometry={particleGeometry} frustumCulled={false}>
+        <primitive object={getSharedParticleMaterial()} />
       </points>
-      
-      {/* PERFORMANCE: Removed point lights - they caused major FPS drops
-          The shader materials provide enough visual glow effect */}
     </group>
   );
-}, (prev, next) => {
-  // Custom comparison for object props (position, velocity)
-  return (
-    prev.id === next.id &&
-    prev.position.x === next.position.x &&
-    prev.position.y === next.position.y &&
-    prev.position.z === next.position.z &&
-    prev.velocity.x === next.velocity.x &&
-    prev.velocity.y === next.velocity.y &&
-    prev.velocity.z === next.velocity.z &&
-    prev.startTime === next.startTime &&
-    prev.ownerId === next.ownerId
-  );
-});
-
-// Container component to render all active dire balls
-export interface DireBallData {
-  id: string;
-  position: { x: number; y: number; z: number };
-  velocity: { x: number; y: number; z: number };
-  startTime: number;
-  ownerId: string;
 }
 
-interface DireBallsProps {
-  balls: DireBallData[];
-}
-
-export function DireBalls({ balls }: DireBallsProps) {
-  const clearExpiredDireBalls = useGameStore(state => state.clearExpiredDireBalls);
-  
-  // Periodically clean up expired balls from the store
-  useEffect(() => {
-    const interval = setInterval(() => {
-      clearExpiredDireBalls();
-    }, 500); // Clean up every 500ms
-    
-    return () => clearInterval(interval);
-  }, [clearExpiredDireBalls]);
-  
-  // Filter out expired balls for rendering
-  const LIFETIME = 3000; // 3 seconds in ms
-  const now = Date.now();
-  const activeBalls = balls.filter(ball => {
-    return now - ball.startTime < LIFETIME;
+if (typeof window !== 'undefined') {
+  requestAnimationFrame(() => {
+    prewarmDireBallResources();
   });
-
-  return (
-    <>
-      {activeBalls.map((ball) => (
-        <DireBall
-          key={ball.id}
-          id={ball.id}
-          position={ball.position}
-          velocity={ball.velocity}
-          startTime={ball.startTime}
-          ownerId={ball.ownerId}
-        />
-      ))}
-    </>
-  );
 }

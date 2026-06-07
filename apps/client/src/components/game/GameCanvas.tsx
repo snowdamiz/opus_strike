@@ -1,4 +1,4 @@
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useEffect, useMemo, useRef } from 'react';
 import { Environment, OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
@@ -11,14 +11,18 @@ import { PerfMonitor } from './PerfMonitor';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
-import { VoidZones, DireBalls, VoidRays } from './phantom';
+import { VoidZonesManager, DireBallsManager, VoidRaysManager } from './phantom';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
 import { GlacierEffectsManager } from './GlacierEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
+import { prewarmBlazeEffects, prewarmPhantomEffects } from './effectResources';
+import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
+import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { useGameStore } from '../../store/gameStore';
 import { useSettingsStore } from '../../store/settingsStore';
+import { getClientPerfSnapshot, setActiveLightCount } from '../../utils/perfMarks';
 import {
   getVisualQualityConfig,
   type ReflectionQualityConfig,
@@ -81,6 +85,76 @@ function SceneReadySignal({ onReady }: { onReady?: () => void }) {
   return null;
 }
 
+function SceneLightCounter() {
+  const { scene } = useThree();
+  const accumulatorRef = useRef(0);
+
+  useFrame((_, delta) => {
+    accumulatorRef.current += delta;
+    if (accumulatorRef.current < 0.5) return;
+    accumulatorRef.current = 0;
+
+    let lights = 0;
+    scene.traverse((object) => {
+      if ((object as THREE.Light).isLight) lights++;
+    });
+    setActiveLightCount(lights);
+  });
+
+  return null;
+}
+
+const FEATURE_QUALITY_STEPS = ['off', 'low', 'medium', 'high', 'ultra'] as const;
+const RESOLUTION_QUALITY_STEPS = ['low', 'medium', 'high', 'ultra'] as const;
+
+function stepDown<T extends string>(value: T, steps: readonly T[]): T {
+  const index = steps.indexOf(value);
+  return steps[Math.max(0, index - 1)] ?? value;
+}
+
+function AdaptiveQualityController() {
+  const settings = useSettingsStore(state => state.settings);
+  const accumulatorRef = useRef(0);
+  const overBudgetSecondsRef = useRef(0);
+
+  useFrame((_, delta) => {
+    if (!settings.adaptiveQuality) return;
+
+    accumulatorRef.current += delta;
+    if (accumulatorRef.current < 2) return;
+    accumulatorRef.current = 0;
+
+    const p95 = getClientPerfSnapshot().frame.frameMsP95;
+    if (p95 < 22) {
+      overBudgetSecondsRef.current = Math.max(0, overBudgetSecondsRef.current - 2);
+      return;
+    }
+
+    overBudgetSecondsRef.current += 2;
+    if (overBudgetSecondsRef.current < 6) return;
+    overBudgetSecondsRef.current = 0;
+
+    const nextSettings = {
+      ...settings,
+      reflectionQuality: stepDown(settings.reflectionQuality, FEATURE_QUALITY_STEPS),
+      environmentQuality: stepDown(settings.environmentQuality, FEATURE_QUALITY_STEPS),
+      shadowQuality: stepDown(settings.shadowQuality, FEATURE_QUALITY_STEPS),
+      resolutionScale: stepDown(settings.resolutionScale, RESOLUTION_QUALITY_STEPS),
+    };
+
+    if (
+      nextSettings.reflectionQuality !== settings.reflectionQuality ||
+      nextSettings.environmentQuality !== settings.environmentQuality ||
+      nextSettings.shadowQuality !== settings.shadowQuality ||
+      nextSettings.resolutionScale !== settings.resolutionScale
+    ) {
+      useSettingsStore.getState().applySettings(nextSettings);
+    }
+  });
+
+  return null;
+}
+
 function ReflectionEnvironment({
   theme,
   config,
@@ -129,9 +203,6 @@ interface GameCanvasProps {
 
 export function GameCanvas({ onReady }: GameCanvasProps) {
   const gamePhase = useGameStore((state) => state.gamePhase);
-  const voidZones = useGameStore((state) => state.voidZones);
-  const direBalls = useGameStore((state) => state.direBalls);
-  const voidRays = useGameStore((state) => state.voidRays);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
@@ -166,6 +237,12 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         gl.toneMappingExposure = qualityConfig.render.exposure;
         gl.shadowMap.enabled = qualityConfig.shadows.enabled;
         gl.shadowMap.type = qualityConfig.shadows.type;
+        Promise.all([
+          prewarmPhantomEffects(gl),
+          prewarmBlazeEffects(gl),
+        ]).catch((error) => {
+          console.warn('[Effects] Prewarm failed', error);
+        });
       }}
       style={{
         position: 'absolute',
@@ -176,6 +253,10 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
       <Suspense fallback={null}>
         <CameraSettingsApplier fov={settings.fov} />
         <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
+        <GameplayFrameSystems />
+        <DynamicLightBudgetSystem maxLights={qualityConfig.dynamicLights.maxDynamicLights} />
+        <SceneLightCounter />
+        <AdaptiveQualityController />
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={qualityConfig.environment} />
 
@@ -201,9 +282,13 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
           intensity={0.75}
           color={mapTheme.structures.glass}
         />
-        <pointLight position={[0, 12, 0]} intensity={65} color={mapTheme.structures.accent} distance={80} decay={2} />
-        <pointLight position={[-40, 10, 0]} intensity={72} color="#ff5f46" distance={34} decay={2} />
-        <pointLight position={[40, 10, 0]} intensity={72} color="#4a9cff" distance={34} decay={2} />
+        {qualityConfig.dynamicLights.staticAccentLights && (
+          <>
+            <BudgetedPointLight budgetPriority={0.35} position={[0, 12, 0]} intensity={42} color={mapTheme.structures.accent} distance={72} decay={2} />
+            <BudgetedPointLight budgetPriority={0.3} position={[-40, 10, 0]} intensity={38} color="#ff5f46" distance={30} decay={2} />
+            <BudgetedPointLight budgetPriority={0.3} position={[40, 10, 0]} intensity={38} color="#4a9cff" distance={30} decay={2} />
+          </>
+        )}
 
         {/* Performance monitor */}
         <PerfMonitor />
@@ -245,9 +330,9 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
             <Flags />
             <Effects />
             <SlideSpeedLines />
-            <VoidZones zones={voidZones} />
-            <DireBalls balls={direBalls} />
-            <VoidRays rays={voidRays} />
+            <VoidZonesManager />
+            <DireBallsManager />
+            <VoidRaysManager />
             <PhantomEffectsManager />
             <BlazeEffectsManager />
             <HookshotEffectsManager />

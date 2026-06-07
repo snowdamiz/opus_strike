@@ -5,6 +5,8 @@ import React from 'react';
 import { useGameStore, type BombData } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 import {
   getBombBodyMaterial,
   getBombBandMaterial,
@@ -74,6 +76,8 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const debrisRefs = useRef<(THREE.Mesh | null)[]>([]);
   const lightRef = useRef<THREE.PointLight>(null);
   const hasExplodedRef = useRef(bomb.hasExploded);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - bomb.startTime));
+  const impactFrameTimeRef = useRef(startFrameTimeRef.current + Math.max(0, bomb.impactTime - bomb.startTime));
   
   // Get pre-cached static materials (shared across all bombs)
   const staticMaterials = useMemo(() => ({
@@ -114,8 +118,8 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   }), []);
   
   useFrame(() => {
-    const now = Date.now();
-    const elapsed = now - bomb.startTime;
+    const now = getFrameClock().nowMs;
+    const elapsed = now - startFrameTimeRef.current;
     const fallProgress = Math.min(1, elapsed / BOMB_FALL_DURATION);
     
     if (!hasExplodedRef.current && fallProgress < 1) {
@@ -176,7 +180,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       if (warningRef.current) warningRef.current.visible = false;
       if (warningPulseRef.current) warningPulseRef.current.visible = false;
       
-      const explosionElapsed = now - bomb.impactTime;
+      const explosionElapsed = now - impactFrameTimeRef.current;
       const explosionProgress = Math.min(1, explosionElapsed / EXPLOSION_DURATION);
       
       if (explosionProgress < 1 && explosionRef.current) {
@@ -279,7 +283,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         {/* Red warning stripe */}
         <mesh position={[0, -0.3, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.95, 0.1, 0.95]} material={staticMaterials.bombStripe} />
         {/* Bomb light */}
-        <pointLight color={0xff4400} intensity={5} distance={15} decay={2} />
+        <BudgetedPointLight budgetPriority={1.5} color={0xff4400} intensity={5} distance={15} decay={2} />
       </group>
       
       {/* Fire trail */}
@@ -357,7 +361,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
           />
         ))}
         
-        <pointLight ref={lightRef} color={0xff5500} intensity={60} distance={40} decay={2} />
+        <BudgetedPointLight budgetPriority={8} ref={lightRef} color={0xff5500} intensity={60} distance={40} decay={2} />
       </group>
       
       {/* Ground shockwave */}
@@ -405,6 +409,7 @@ interface BombTargetingIndicatorProps {
 
 const BOMB_MAX_RANGE = 60;
 const BOMB_MIN_RANGE = 3;
+const BOMB_TARGET_SAMPLE_FACTORS = [0.5, 1, 1.5] as const;
 
 // Pre-allocated vectors for bomb targeting (local to avoid conflicts)
 const _bombLookDir = new THREE.Vector3();
@@ -421,6 +426,11 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
   const targetBeamRef = useRef<THREE.Mesh>(null);
   const targetBeamTopRef = useRef<THREE.Mesh>(null);
   const isValidRef = useRef(false);
+  const reportedTargetRef = useRef(new THREE.Vector3());
+  const lastReportedTargetRef = useRef(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
+  const lastReportedValidRef = useRef(false);
+  const lastReportAtRef = useRef(0);
+  const wasActiveRef = useRef(false);
   const { camera } = useThree();
   
   // Get pre-cached targeting materials (targeting indicator is only one at a time, so safe to share)
@@ -436,17 +446,29 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
   }), []);
   
   useFrame(() => {
-    const now = Date.now();
+    const now = getFrameClock().nowMs;
 
     if (!isActive) {
       if (indicatorRef.current) indicatorRef.current.visible = false;
-      onTargetUpdate(null, false);
+      if (wasActiveRef.current) {
+        wasActiveRef.current = false;
+        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
+        lastReportedValidRef.current = false;
+        lastReportAtRef.current = now;
+        onTargetUpdate(null, false);
+      }
       return;
     }
+    wasActiveRef.current = true;
     
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer) {
-      onTargetUpdate(null, false);
+      if (lastReportedValidRef.current || lastReportedTargetRef.current.x !== Number.POSITIVE_INFINITY) {
+        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
+        lastReportedValidRef.current = false;
+        lastReportAtRef.current = now;
+        onTargetUpdate(null, false);
+      }
       return;
     }
     
@@ -484,9 +506,10 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       if (!foundTarget) {
         const pitch = Math.asin(Math.max(-1, Math.min(1, -_bombLookDir.y)));
         const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
-        const sampleDistances = [baseDist * 0.5, baseDist, baseDist * 1.5, BOMB_MAX_RANGE];
-        
-        for (const dist of sampleDistances) {
+        for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+          const dist = sampleIndex === 3
+            ? BOMB_MAX_RANGE
+            : baseDist * BOMB_TARGET_SAMPLE_FACTORS[sampleIndex];
           const sampleX = camera.position.x + _bombLookDir.x * dist;
           const sampleY = camera.position.y + _bombLookDir.y * dist;
           const sampleZ = camera.position.z + _bombLookDir.z * dist;
@@ -598,7 +621,17 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       targetBeamTopRef.current.scale.setScalar(0.28 + validity * 0.18 + Math.sin(time * 6) * 0.025);
     }
     
-    onTargetUpdate(_bombTargetPos.clone(), isValid);
+    const targetMoved = lastReportedTargetRef.current.distanceToSquared(_bombTargetPos) > 0.04;
+    const validityChanged = lastReportedValidRef.current !== isValid;
+    const cadenceElapsed = now - lastReportAtRef.current >= 100;
+
+    if (targetMoved || validityChanged || cadenceElapsed) {
+      reportedTargetRef.current.copy(_bombTargetPos);
+      lastReportedTargetRef.current.copy(_bombTargetPos);
+      lastReportedValidRef.current = isValid;
+      lastReportAtRef.current = now;
+      onTargetUpdate(reportedTargetRef.current, isValid);
+    }
   });
   
   if (!isActive) return null;
@@ -614,7 +647,7 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, 10, 1]} material={materials.cross} />
       <mesh ref={targetBeamRef} position-y={20} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 40, 0.06]} material={materials.beam} />
       <mesh ref={targetBeamTopRef} position-y={42} geometry={SHARED_GEOMETRIES.sphere8} scale={0.4} material={materials.beamTop} />
-      <pointLight color={0xff4400} intensity={2} distance={6} decay={2} position-y={0.5} />
+      <BudgetedPointLight budgetPriority={2} color={0xff4400} intensity={2} distance={6} decay={2} position-y={0.5} />
     </group>
   );
 }

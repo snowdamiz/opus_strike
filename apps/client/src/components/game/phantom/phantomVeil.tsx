@@ -12,6 +12,8 @@ interface PhantomVeilEffectProps {
   playerPosition: { x: number; y: number; z: number };
 }
 
+const PHANTOM_VEIL_GROUND_GEOMETRY = new THREE.CircleGeometry(0.8, 32);
+
 export function PhantomVeil3DEffect({ isActive, playerPosition }: PhantomVeilEffectProps) {
   const groupRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
@@ -128,8 +130,7 @@ export function PhantomVeil3DEffect({ isActive, playerPosition }: PhantomVeilEff
       </points>
       
       {/* Ground shadow */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.01}>
-        <circleGeometry args={[0.8, 32]} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.01} geometry={PHANTOM_VEIL_GROUND_GEOMETRY}>
         <meshBasicMaterial 
           color={0x1a0033}
           transparent
@@ -139,4 +140,3 @@ export function PhantomVeil3DEffect({ isActive, playerPosition }: PhantomVeilEff
     </group>
   );
 }
-

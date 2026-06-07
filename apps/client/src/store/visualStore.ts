@@ -82,11 +82,15 @@ export const setPlayerVisualPosition = (
   playerId: string,
   position: { x: number; y: number; z: number }
 ): void => {
-  visualStore.setState((state) => {
-    const newPositions = new Map(state.playerPositions);
-    newPositions.set(playerId, { ...position });
-    return { playerPositions: newPositions };
-  });
+  const positions = visualStore.getState().playerPositions;
+  const current = positions.get(playerId);
+  if (current) {
+    current.x = position.x;
+    current.y = position.y;
+    current.z = position.z;
+  } else {
+    positions.set(playerId, { x: position.x, y: position.y, z: position.z });
+  }
 };
 
 /**
@@ -96,11 +100,7 @@ export const setPlayerVisualPosition = (
  * @param rotation - LookYaw rotation in radians
  */
 export const setPlayerVisualRotation = (playerId: string, rotation: number): void => {
-  visualStore.setState((state) => {
-    const newRotations = new Map(state.playerRotations);
-    newRotations.set(playerId, rotation);
-    return { playerRotations: newRotations };
-  });
+  visualStore.getState().playerRotations.set(playerId, rotation);
 };
 
 /**
@@ -133,11 +133,15 @@ export const setInterpolationTarget = (
   playerId: string,
   position: { x: number; y: number; z: number }
 ): void => {
-  visualStore.setState((state) => {
-    const newTargets = new Map(state.interpolationTargets);
-    newTargets.set(playerId, { ...position });
-    return { interpolationTargets: newTargets };
-  });
+  const targets = visualStore.getState().interpolationTargets;
+  const current = targets.get(playerId);
+  if (current) {
+    current.x = position.x;
+    current.y = position.y;
+    current.z = position.z;
+  } else {
+    targets.set(playerId, { x: position.x, y: position.y, z: position.z });
+  }
 };
 
 /**
@@ -147,38 +151,48 @@ export const setInterpolationTarget = (
  * @param playerId - The player's unique ID to remove
  */
 export const removePlayerVisualState = (playerId: string): void => {
-  visualStore.setState((state) => {
-    const newPositions = new Map(state.playerPositions);
-    const newRotations = new Map(state.playerRotations);
-    const newTargets = new Map(state.interpolationTargets);
-
-    newPositions.delete(playerId);
-    newRotations.delete(playerId);
-    newTargets.delete(playerId);
-
-    return {
-      playerPositions: newPositions,
-      playerRotations: newRotations,
-      interpolationTargets: newTargets,
-    };
-  });
+  const state = visualStore.getState();
+  state.playerPositions.delete(playerId);
+  state.playerRotations.delete(playerId);
+  state.interpolationTargets.delete(playerId);
 };
 
 export const setFlamethrowerVisualPose = (
   origin: { x: number; y: number; z: number } | null,
   direction: { x: number; y: number; z: number }
 ): void => {
-  visualStore.setState({
-    flamethrowerOrigin: origin ? { ...origin } : null,
-    flamethrowerDirection: { ...direction },
-  });
+  const state = visualStore.getState();
+
+  if (origin) {
+    if (state.flamethrowerOrigin) {
+      state.flamethrowerOrigin.x = origin.x;
+      state.flamethrowerOrigin.y = origin.y;
+      state.flamethrowerOrigin.z = origin.z;
+    } else {
+      state.flamethrowerOrigin = { x: origin.x, y: origin.y, z: origin.z };
+    }
+  } else {
+    state.flamethrowerOrigin = null;
+  }
+
+  state.flamethrowerDirection.x = direction.x;
+  state.flamethrowerDirection.y = direction.y;
+  state.flamethrowerDirection.z = direction.z;
 };
 
 /**
  * Clear all visual state (e.g., on game reset or disconnect).
  */
 export const clearVisualState = (): void => {
-  visualStore.setState(() => initialVisualState);
+  visualStore.setState(() => ({
+    playerPositions: new Map(),
+    playerRotations: new Map(),
+    cameraShake: { intensity: 0, time: 0 },
+    slideFov: 0,
+    interpolationTargets: new Map(),
+    flamethrowerOrigin: null,
+    flamethrowerDirection: { x: 0, y: 0, z: -1 },
+  }));
 };
 
 // ============================================================================

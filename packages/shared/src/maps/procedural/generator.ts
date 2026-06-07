@@ -2,7 +2,7 @@ import { getBlockNumericId, isSolidBlock } from './blocks.js';
 import { PLAYER_HEIGHT } from '../../constants/physics.js';
 import { getClosestBoundaryPoint, isInsideBoundaryPolygon } from './boundaries.js';
 import { generateVoxelColliders } from './colliders.js';
-import { createProceduralCTFLayout, PROCEDURAL_VOXEL_SIZE } from './ctfLayout.js';
+import { createProceduralCTFLayout, PROCEDURAL_MAP_SCALE, PROCEDURAL_VOXEL_SIZE } from './ctfLayout.js';
 import { fractalNoise2 } from './noise.js';
 import { mulberry32 } from './rng.js';
 import { getVoxelMapTheme } from './themes.js';
@@ -34,8 +34,10 @@ const SPAWN_PAD_RADIUS = 1.35;
 const SPAWN_BLEND_RADIUS = 3.35;
 const SPAWN_CLEAR_RADIUS = 2.2;
 const SPAWN_SIGHTLINE_EYE_OFFSET = PLAYER_HEIGHT / 2 + 0.75;
-const SIGHTLINE_BARRIER_BASE_HEIGHT = 9;
-const SIGHTLINE_BARRIER_EXTRA_HEIGHT = 7;
+const FEATURE_WORLD_SCALE = PROCEDURAL_MAP_SCALE;
+const FEATURE_COUNT_SCALE = 0.82;
+const SIGHTLINE_BARRIER_BASE_HEIGHT = 8;
+const SIGHTLINE_BARRIER_EXTRA_HEIGHT = 6;
 const TERRAIN_SMOOTHING_PASSES = 2;
 const MAX_NAVIGATION_STEP_ROWS = 2;
 const FEATURE_ENTRANCE_HEADROOM = 0.65;
@@ -45,7 +47,7 @@ const FEATURE_ENTRANCE_CLEARANCE_ROWS = Math.max(
 );
 const STRUCTURE_ENTRANCE_HALF_WIDTH_CELLS = 3;
 const CAVE_ENTRANCE_HALF_WIDTH_CELLS = 3;
-const FEATURE_APPROACH_WORLD_LENGTH = 4.5;
+const FEATURE_APPROACH_WORLD_LENGTH = 4.5 * FEATURE_WORLD_SCALE;
 
 function chunkIndex(x: number, y: number, z: number, size: VoxelSize): number {
   return x + size.x * (z + size.z * y);
@@ -61,6 +63,14 @@ function clamp(value: number, min: number, max: number): number {
 
 function lerp(valueA: number, valueB: number, amount: number): number {
   return valueA + (valueB - valueA) * amount;
+}
+
+function scaleWorld(value: number): number {
+  return value * FEATURE_WORLD_SCALE;
+}
+
+function scaleCount(baseCount: number, randomBonus: number, random: () => number, minCount = 1): number {
+  return Math.max(minCount, Math.floor(baseCount * FEATURE_COUNT_SCALE) + Math.floor(random() * Math.max(1, Math.round(randomBonus * FEATURE_COUNT_SCALE))));
 }
 
 function gridToWorldCenter(value: number, origin: number): number {
@@ -126,11 +136,11 @@ function isNearProtectedGameplayArea(
   radius: number
 ): boolean {
   for (const flag of [layout.flagZones.red, layout.flagZones.blue]) {
-    if (distanceSq(worldX, worldZ, flag.x, flag.z) < (radius + 8) ** 2) return true;
+    if (distanceSq(worldX, worldZ, flag.x, flag.z) < (radius + scaleWorld(8)) ** 2) return true;
   }
 
   for (const spawn of [...layout.spawnPoints.red, ...layout.spawnPoints.blue]) {
-    if (distanceSq(worldX, worldZ, spawn.x, spawn.z) < (radius + 7) ** 2) return true;
+    if (distanceSq(worldX, worldZ, spawn.x, spawn.z) < (radius + scaleWorld(7)) ** 2) return true;
   }
 
   return false;
@@ -275,18 +285,18 @@ function applyTerrainLandforms(
   maxRows: number
 ): void {
   const boundaryRange = getBoundaryRange(layout.boundary);
-  const halfPlayableX = Math.min(29, Math.max(14, (boundaryRange.maxX - boundaryRange.minX) * 0.5 - 5));
-  const halfPlayableZ = Math.min(23, Math.max(11, (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - 5));
-  const hillCount = 5 + Math.floor(random() * 5);
-  const valleyCount = 3 + Math.floor(random() * 4);
-  const ravineCount = 1 + Math.floor(random() * 3);
+  const halfPlayableX = Math.min(scaleWorld(29), Math.max(scaleWorld(14), (boundaryRange.maxX - boundaryRange.minX) * 0.5 - scaleWorld(5)));
+  const halfPlayableZ = Math.min(scaleWorld(23), Math.max(scaleWorld(11), (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - scaleWorld(5)));
+  const hillCount = 4 + Math.floor(random() * 4);
+  const valleyCount = 2 + Math.floor(random() * 3);
+  const ravineCount = 1 + Math.floor(random() * 2);
 
   for (let i = 0; i < hillCount; i++) {
     const centerX = lerp(-halfPlayableX, halfPlayableX, random());
     const centerZ = lerp(-halfPlayableZ, halfPlayableZ, random());
-    const radiusX = lerp(6.5, 15.5, random());
-    const radiusZ = lerp(5.8, 14.5, random());
-    const deltaRows = worldHeightToGridRows(lerp(0.8, 2.8, random()));
+    const radiusX = scaleWorld(lerp(6.5, 15.5, random()));
+    const radiusZ = scaleWorld(lerp(5.8, 14.5, random()));
+    const deltaRows = worldHeightToGridRows(scaleWorld(lerp(0.8, 2.8, random())));
     const featureSeed = seed ^ Math.floor(random() * 0xffffffff);
 
     applyEllipticalHeightDelta(heightMap, origin, size, centerX, centerZ, radiusX, radiusZ, deltaRows, minRows, maxRows, featureSeed);
@@ -295,9 +305,9 @@ function applyTerrainLandforms(
   for (let i = 0; i < valleyCount; i++) {
     const centerX = lerp(-halfPlayableX, halfPlayableX, random());
     const centerZ = lerp(-halfPlayableZ, halfPlayableZ, random());
-    const radiusX = lerp(7, 16.5, random());
-    const radiusZ = lerp(6.5, 15, random());
-    const deltaRows = -worldHeightToGridRows(lerp(0.7, 2.4, random()));
+    const radiusX = scaleWorld(lerp(7, 16.5, random()));
+    const radiusZ = scaleWorld(lerp(6.5, 15, random()));
+    const deltaRows = -worldHeightToGridRows(scaleWorld(lerp(0.7, 2.4, random())));
     const featureSeed = seed ^ Math.floor(random() * 0xffffffff);
 
     applyEllipticalHeightDelta(heightMap, origin, size, centerX, centerZ, radiusX, radiusZ, deltaRows, minRows, maxRows, featureSeed);
@@ -311,8 +321,8 @@ function applyTerrainLandforms(
       lerp(-halfPlayableX, halfPlayableX, random()),
       lerp(-halfPlayableZ * 0.45, halfPlayableZ * 0.45, random()),
       lerp(halfPlayableZ * 0.55, halfPlayableZ * 1.15, random()),
-      lerp(4.8, 8.8, random()),
-      worldHeightToGridRows(lerp(0.8, 2.4, random())),
+      scaleWorld(lerp(4.8, 8.8, random())),
+      worldHeightToGridRows(scaleWorld(lerp(0.8, 2.4, random()))),
       minRows,
       seed ^ Math.floor(random() * 0xffffffff)
     );
@@ -338,7 +348,7 @@ function smoothHeightMap(
         const worldX = gridToWorldCenter(x, origin.x);
         const worldZ = gridToWorldCenter(z, origin.z);
         if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) continue;
-        if (distanceToBoundary(worldX, worldZ, layout.boundary) < 3) continue;
+        if (distanceToBoundary(worldX, worldZ, layout.boundary) < scaleWorld(3)) continue;
 
         const index = x + z * size.x;
         let total = heightMap[index] * 4;
@@ -490,19 +500,19 @@ function shapeGameplayRouteTerrain(
   const blueSpawnCenter = getAveragePoint(layout.spawnPoints.blue);
   const midfield = { x: 0, z: 0 };
 
-  blendHeightCorridor(heightMap, origin, size, redSpawnCenter, layout.flagZones.red, 4.5, 0.9);
-  blendHeightCorridor(heightMap, origin, size, blueSpawnCenter, layout.flagZones.blue, 4.5, 0.9);
-  blendHeightCorridor(heightMap, origin, size, layout.flagZones.red, midfield, 5.6, 0.82);
-  blendHeightCorridor(heightMap, origin, size, layout.flagZones.blue, midfield, 5.6, 0.82);
+  blendHeightCorridor(heightMap, origin, size, redSpawnCenter, layout.flagZones.red, scaleWorld(4.5), 0.9);
+  blendHeightCorridor(heightMap, origin, size, blueSpawnCenter, layout.flagZones.blue, scaleWorld(4.5), 0.9);
+  blendHeightCorridor(heightMap, origin, size, layout.flagZones.red, midfield, scaleWorld(5.6), 0.82);
+  blendHeightCorridor(heightMap, origin, size, layout.flagZones.blue, midfield, scaleWorld(5.6), 0.82);
 
-  for (const laneX of [-18, 18]) {
+  for (const laneX of [scaleWorld(-18), scaleWorld(18)]) {
     blendHeightCorridor(
       heightMap,
       origin,
       size,
       { x: laneX, z: redSpawnCenter.z },
       { x: laneX, z: blueSpawnCenter.z },
-      4.2,
+      scaleWorld(4.2),
       0.68
     );
   }
@@ -732,10 +742,10 @@ function stampTree(
   const z = clamp(worldToGrid(worldZ, origin.z), 1, size.z - 2);
   const baseY = heightMap[x + z * size.x];
   const style = featureSeed % 4;
-  const crownRadiusX = worldDistanceToGridCells(style === 1 ? 3 : style === 2 ? 1 : 2);
-  const crownRadiusZ = worldDistanceToGridCells(style === 2 ? 3 : style === 1 ? 1 : 2);
-  const crownHeight = worldHeightToGridRows(style === 3 ? 3 : 2);
-  const crownDroop = worldHeightToGridRows(2);
+  const crownRadiusX = worldDistanceToGridCells(scaleWorld(style === 1 ? 3 : style === 2 ? 1 : 2));
+  const crownRadiusZ = worldDistanceToGridCells(scaleWorld(style === 2 ? 3 : style === 1 ? 1 : 2));
+  const crownHeight = worldHeightToGridRows(scaleWorld(style === 3 ? 3 : 2));
+  const crownDroop = worldHeightToGridRows(scaleWorld(2));
 
   for (let y = baseY; y < baseY + trunkHeight; y++) {
     setBlock(x, y, z, 'wood');
@@ -852,11 +862,11 @@ function stampThemedNaturalFeature(
   featureSeed: number
 ): void {
   if (theme.id === 'desert') {
-    stampCactus(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(3), height + worldHeightToGridRows(1)), featureSeed);
+    stampCactus(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(3)), height + worldHeightToGridRows(scaleWorld(1))), featureSeed);
   } else if (theme.id === 'frost' || theme.id === 'crystal') {
-    stampCrystalCluster(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(2), height), featureSeed);
+    stampCrystalCluster(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(2)), height), featureSeed);
   } else if (theme.id === 'basalt') {
-    stampBasaltSpire(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(2), height));
+    stampBasaltSpire(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(2)), height));
   } else {
     stampTree(setBlock, heightMap, origin, size, worldX, worldZ, height, featureSeed);
   }
@@ -1281,13 +1291,13 @@ function stampMidfieldSightlineBreaker(
   const normalX = -dirZ;
   const normalZ = dirX;
   const t = lerp(0.38, 0.62, random());
-  const normalOffset = lerp(-5.5, 5.5, random());
+  const normalOffset = scaleWorld(lerp(-5.5, 5.5, random()));
   const centerX = lerp(blueCenter.x, redCenter.x, t) + normalX * normalOffset;
   const centerZ = lerp(blueCenter.z, redCenter.z, t) + normalZ * normalOffset;
-  const halfLength = lerp(9, 18, random());
-  const halfThickness = lerp(1.8, 4.2, random());
-  const boundsX = Math.abs(normalX) * halfLength + Math.abs(dirX) * halfThickness + 3;
-  const boundsZ = Math.abs(normalZ) * halfLength + Math.abs(dirZ) * halfThickness + 3;
+  const halfLength = scaleWorld(lerp(9, 18, random()));
+  const halfThickness = scaleWorld(lerp(1.8, 4.2, random()));
+  const boundsX = Math.abs(normalX) * halfLength + Math.abs(dirX) * halfThickness + scaleWorld(3);
+  const boundsZ = Math.abs(normalZ) * halfLength + Math.abs(dirZ) * halfThickness + scaleWorld(3);
   const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(origin, size, centerX - boundsX, centerX + boundsX, centerZ - boundsZ, centerZ + boundsZ);
 
   for (let x = gx0; x <= gx1; x++) {
@@ -1297,8 +1307,8 @@ function stampMidfieldSightlineBreaker(
       const localX = (worldX - centerX) * normalX + (worldZ - centerZ) * normalZ;
       const localZ = (worldX - centerX) * dirX + (worldZ - centerZ) * dirZ;
       const bend =
-        Math.sin((localX + featureSeed * 0.0009) * 0.22) * 1.35 +
-        (fractalNoise2(featureSeed ^ 0x41c64e6d, localX * 0.08, localZ * 0.08, 3) - 0.5) * 2.4;
+        Math.sin((localX + featureSeed * 0.0009) * 0.22) * scaleWorld(1.35) +
+        (fractalNoise2(featureSeed ^ 0x41c64e6d, localX * 0.08, localZ * 0.08, 3) - 0.5) * scaleWorld(2.4);
       const across = Math.abs(localX) / halfLength;
       const through = Math.abs(localZ - bend) / halfThickness;
       const ridgeNoise = fractalNoise2(featureSeed, worldX * 0.16, worldZ * 0.16, 3);
@@ -1310,10 +1320,10 @@ function stampMidfieldSightlineBreaker(
       const falloff = Math.pow(1 - clamp(footprint, 0, 1), 0.55);
       const spike = Math.max(0, 1 - Math.abs(Math.round((localX + random() * 4) / 7) * 7 - localX) / 1.8);
       const heightRows =
-        worldHeightToGridRows(3.5) +
+        worldHeightToGridRows(scaleWorld(3.5)) +
         heightBoostRows +
         Math.floor((SIGHTLINE_BARRIER_BASE_HEIGHT + ridgeNoise * SIGHTLINE_BARRIER_EXTRA_HEIGHT) * falloff) +
-        Math.floor(spike * worldHeightToGridRows(2.2));
+        Math.floor(spike * worldHeightToGridRows(scaleWorld(2.2)));
       const floorY = heightMap[x + z * size.x];
       const topY = clamp(floorY + heightRows, floorY + worldHeightToGridRows(4), size.y - 2);
 
@@ -1426,8 +1436,8 @@ function stampDirectSightlineBaffle(
     y: lerp(start.y, end.y, t),
     z: lerp(start.z, end.z, t),
   };
-  const widthCells = worldDistanceToGridCells(5 + pass * 1.5);
-  const thicknessCells = worldDistanceToGridCells(2.2 + pass * 0.75);
+  const widthCells = worldDistanceToGridCells(scaleWorld(5 + pass * 1.5));
+  const thicknessCells = worldDistanceToGridCells(scaleWorld(2.2 + pass * 0.75));
   const centerEyeRow = clamp(worldYToGridRow(center.y, origin.y), 1, size.y - 2);
 
   for (let across = -widthCells; across <= widthCells; across++) {
@@ -1446,13 +1456,13 @@ function stampDirectSightlineBaffle(
       const falloff = Math.pow(1 - clamp(footprint, 0, 1), 0.42);
       const topY = clamp(
         Math.max(
-          surfaceY + worldHeightToGridRows(3.5 + pass * 0.7 + falloff * 3.4 + noise * 1.6),
-          centerEyeRow + worldHeightToGridRows(2.25)
+          surfaceY + worldHeightToGridRows(scaleWorld(3.5 + pass * 0.7 + falloff * 3.4 + noise * 1.6)),
+          centerEyeRow + worldHeightToGridRows(scaleWorld(2.25))
         ),
         1,
         size.y - 2
       );
-      const bottomY = clamp(Math.min(surfaceY, centerEyeRow - worldHeightToGridRows(2.6)), 1, topY);
+      const bottomY = clamp(Math.min(surfaceY, centerEyeRow - worldHeightToGridRows(scaleWorld(2.6))), 1, topY);
 
       for (let y = bottomY; y <= topY; y++) {
         const cap = y >= topY - 1;
@@ -1540,15 +1550,15 @@ function carveProceduralCaves(
       const worldX = gridToWorldCenter(x, origin.x);
       const worldZ = gridToWorldCenter(z, origin.z);
       if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) continue;
-      if (isNearProtectedGameplayArea(layout, worldX, worldZ, 5.5)) continue;
+      if (isNearProtectedGameplayArea(layout, worldX, worldZ, scaleWorld(5.5))) continue;
 
       const surfaceY = heightMap[x + z * size.x] - 1;
-      for (let y = 3; y < surfaceY - worldHeightToGridRows(4); y++) {
+      for (let y = 3; y < surfaceY - worldHeightToGridRows(scaleWorld(4)); y++) {
         const depthFromSurface = surfaceY - y;
         const broadCave = fractalNoise2(seed ^ 0xc0a57, worldX * 0.07 + y * 0.09, worldZ * 0.07 - y * 0.05, 4);
         const tubeNoise = fractalNoise2(seed ^ 0x57a1ac7, worldX * 0.16 - y * 0.04, worldZ * 0.16 + y * 0.08, 3);
 
-        if (depthFromSurface > worldHeightToGridRows(5) && broadCave > caveThreshold && tubeNoise > 0.58) {
+        if (depthFromSurface > worldHeightToGridRows(scaleWorld(5)) && broadCave > caveThreshold && tubeNoise > 0.58) {
           setBlock(x, y, z, 'air');
           if (y > 3 && broadCave > 0.86) {
             setBlock(x, y - 1, z, tubeNoise > 0.76 ? 'metal' : 'stone');
@@ -1558,19 +1568,19 @@ function carveProceduralCaves(
     }
   }
 
-  const tunnelCount = 2 + Math.floor(random() * 4);
+  const tunnelCount = scaleCount(2, 4, random, 1);
   for (let tunnel = 0; tunnel < tunnelCount; tunnel++) {
     let x = clamp(Math.floor(lerp(8, size.x - 8, random())), 2, size.x - 3);
     let z = clamp(Math.floor(lerp(8, size.z - 8, random())), 2, size.z - 3);
     let angle = random() * Math.PI * 2;
-    const length = 20 + Math.floor(random() * 36);
+    const length = Math.max(8, Math.round((20 + Math.floor(random() * 36)) * FEATURE_WORLD_SCALE));
     const radius = 1;
-    let y = clamp(heightMap[x + z * size.x] - worldHeightToGridRows(5 + random() * 4), 4, size.y - 5);
+    let y = clamp(heightMap[x + z * size.x] - worldHeightToGridRows(scaleWorld(5 + random() * 4)), 4, size.y - 5);
 
     for (let step = 0; step < length; step++) {
       const worldX = gridToWorldCenter(x, origin.x);
       const worldZ = gridToWorldCenter(z, origin.z);
-      if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary) || isNearProtectedGameplayArea(layout, worldX, worldZ, 5)) {
+      if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary) || isNearProtectedGameplayArea(layout, worldX, worldZ, scaleWorld(5))) {
         angle += (random() - 0.5) * 1.2;
       } else {
         for (let dx = -radius; dx <= radius; dx++) {
@@ -1587,7 +1597,7 @@ function carveProceduralCaves(
       angle += (random() - 0.5) * 0.48;
       x = clamp(x + Math.round(Math.cos(angle)), 2, size.x - 3);
       z = clamp(z + Math.round(Math.sin(angle)), 2, size.z - 3);
-      y = clamp(y + Math.round((random() - 0.5) * 0.8), 4, Math.max(4, heightMap[x + z * size.x] - worldHeightToGridRows(4)));
+      y = clamp(y + Math.round((random() - 0.5) * 0.8), 4, Math.max(4, heightMap[x + z * size.x] - worldHeightToGridRows(scaleWorld(4))));
     }
   }
 }
@@ -1601,19 +1611,19 @@ function canPlaceFeature(
 ): boolean {
   const boundaryRange = getBoundaryRange(layout.boundary);
   if (
-    worldX < boundaryRange.minX + 2 ||
-    worldX > boundaryRange.maxX - 2 ||
-    worldZ < boundaryRange.minZ + 2 ||
-    worldZ > boundaryRange.maxZ - 2
+    worldX < boundaryRange.minX + scaleWorld(2) ||
+    worldX > boundaryRange.maxX - scaleWorld(2) ||
+    worldZ < boundaryRange.minZ + scaleWorld(2) ||
+    worldZ > boundaryRange.maxZ - scaleWorld(2)
   ) {
     return false;
   }
   if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) return false;
-  if (distanceToBoundary(worldX, worldZ, layout.boundary) < radius + FEATURE_APPROACH_WORLD_LENGTH + 1.8) return false;
+  if (distanceToBoundary(worldX, worldZ, layout.boundary) < radius + FEATURE_APPROACH_WORLD_LENGTH + scaleWorld(1.8)) return false;
   if (isNearProtectedGameplayArea(layout, worldX, worldZ, radius)) return false;
 
   for (const feature of accepted) {
-    if (distanceSq(worldX, worldZ, feature.x, feature.z) < (radius + feature.radius + 3) ** 2) {
+    if (distanceSq(worldX, worldZ, feature.x, feature.z) < (radius + feature.radius + scaleWorld(3)) ** 2) {
       return false;
     }
   }
@@ -1633,18 +1643,18 @@ function stampGuaranteedLandmarks(
 ): void {
   const random = mulberry32(seed ^ 0xdecafbad);
   const boundaryRange = getBoundaryRange(layout.boundary);
-  const halfPlayableX = Math.min(30, Math.max(12, (boundaryRange.maxX - boundaryRange.minX) * 0.5 - 4));
-  const halfPlayableZ = Math.min(25, Math.max(10, (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - 4));
-  const targetLandmarks = 5 + Math.floor(random() * 6);
+  const halfPlayableX = Math.min(scaleWorld(30), Math.max(scaleWorld(12), (boundaryRange.maxX - boundaryRange.minX) * 0.5 - scaleWorld(4)));
+  const halfPlayableZ = Math.min(scaleWorld(25), Math.max(scaleWorld(10), (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - scaleWorld(4)));
+  const targetLandmarks = scaleCount(5, 6, random, 3);
   let landmarksPlaced = 0;
 
   for (let attempts = 0; attempts < 180 && landmarksPlaced < targetLandmarks; attempts++) {
     const centerBias = random() < 0.38;
-    const centerX = centerBias ? lerp(-12, 12, random()) : lerp(-halfPlayableX, halfPlayableX, random());
+    const centerX = centerBias ? scaleWorld(lerp(-12, 12, random())) : lerp(-halfPlayableX, halfPlayableX, random());
     const centerZ = lerp(-halfPlayableZ, halfPlayableZ, random());
-    const radiusX = lerp(3.8, 8.6, random());
-    const radiusZ = lerp(3.6, 8.2, random());
-    const radius = Math.max(radiusX, radiusZ) + 1.5;
+    const radiusX = scaleWorld(lerp(3.8, 8.6, random()));
+    const radiusZ = scaleWorld(lerp(3.6, 8.2, random()));
+    const radius = Math.max(radiusX, radiusZ) + scaleWorld(1.5);
     const featureSeed = seed ^ Math.floor(random() * 0xffffffff);
     const accentBlock: VoxelBlockId = random() > 0.5 ? 'neon_red' : 'neon_blue';
 
@@ -1661,7 +1671,7 @@ function stampGuaranteedLandmarks(
         centerZ,
         radiusX,
         radiusZ,
-        worldHeightToGridRows(lerp(4.2, 7.2, random())),
+        worldHeightToGridRows(scaleWorld(lerp(4.2, 7.2, random()))),
         accentBlock,
         featureSeed
       );
@@ -1675,7 +1685,7 @@ function stampGuaranteedLandmarks(
         centerZ,
         radiusX,
         radiusZ,
-        worldHeightToGridRows(lerp(3.2, 5.8, random())),
+        worldHeightToGridRows(scaleWorld(lerp(3.2, 5.8, random()))),
         accentBlock,
         featureSeed
       );
@@ -1689,7 +1699,7 @@ function stampGuaranteedLandmarks(
         centerZ,
         radiusX,
         radiusZ,
-        worldHeightToGridRows(lerp(3.6, 6.4, random())),
+        worldHeightToGridRows(scaleWorld(lerp(3.6, 6.4, random()))),
         accentBlock,
         featureSeed
       );
@@ -1703,7 +1713,7 @@ function stampGuaranteedLandmarks(
         centerZ,
         radiusX,
         radiusZ,
-        worldHeightToGridRows(lerp(3.2, 6.2, random())),
+        worldHeightToGridRows(scaleWorld(lerp(3.2, 6.2, random()))),
         accentBlock,
         featureSeed
       );
@@ -1715,9 +1725,9 @@ function stampGuaranteedLandmarks(
         size,
         centerX,
         centerZ,
-        lerp(10, 22, random()),
-        lerp(4.6, 7.4, random()),
-        worldHeightToGridRows(lerp(2.8, 4.2, random())),
+        scaleWorld(lerp(10, 22, random())),
+        scaleWorld(lerp(4.6, 7.4, random())),
+        worldHeightToGridRows(scaleWorld(lerp(2.8, 4.2, random()))),
         random() > 0.5 ? 'x' : 'z',
         featureSeed
       );
@@ -1729,9 +1739,9 @@ function stampGuaranteedLandmarks(
         size,
         centerX,
         centerZ,
-        lerp(8, 15, random()),
-        lerp(6, 13, random()),
-        worldHeightToGridRows(lerp(3.2, 6, random())),
+        scaleWorld(lerp(8, 15, random())),
+        scaleWorld(lerp(6, 13, random())),
+        worldHeightToGridRows(scaleWorld(lerp(3.2, 6, random()))),
         featureSeed
       );
     }
@@ -1742,7 +1752,7 @@ function stampGuaranteedLandmarks(
 
   if (landmarksPlaced < 3) {
     stampMidfieldSightlineBreaker(setBlock, heightMap, origin, size, layout, seed ^ 0x91e10da5);
-    accepted.push({ x: lerp(-8, 8, random()), z: lerp(-5, 5, random()), radius: 8 });
+    accepted.push({ x: scaleWorld(lerp(-8, 8, random())), z: scaleWorld(lerp(-5, 5, random())), radius: scaleWorld(8) });
   }
 }
 
@@ -1758,18 +1768,18 @@ function stampProceduralFeatures(
 ): void {
   const accepted: FeatureAnchor[] = [];
   const boundaryRange = getBoundaryRange(layout.boundary);
-  const halfPlayableX = Math.min(30, Math.max(12, (boundaryRange.maxX - boundaryRange.minX) * 0.5 - 4));
-  const halfPlayableZ = Math.min(25, Math.max(10, (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - 4));
+  const halfPlayableX = Math.min(scaleWorld(30), Math.max(scaleWorld(12), (boundaryRange.maxX - boundaryRange.minX) * 0.5 - scaleWorld(4)));
+  const halfPlayableZ = Math.min(scaleWorld(25), Math.max(scaleWorld(10), (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - scaleWorld(4)));
   stampGuaranteedLandmarks(setBlock, heightMap, origin, size, layout, theme, seed, accepted);
 
-  const caveCount = 2 + Math.floor(random() * 3);
+  const caveCount = scaleCount(2, 3, random, 1);
 
   for (let i = 0; i < caveCount; i++) {
     const centerX = lerp(-halfPlayableX, halfPlayableX, random());
     const centerZ = lerp(-halfPlayableZ, halfPlayableZ, random());
-    const width = Math.floor(lerp(7, 14, random()));
-    const depth = Math.floor(lerp(5, 11, random()));
-    const height = worldHeightToGridRows(lerp(2.5, 5.8, random()));
+    const width = scaleWorld(lerp(7, 14, random()));
+    const depth = scaleWorld(lerp(5, 11, random()));
+    const height = worldHeightToGridRows(scaleWorld(lerp(2.5, 5.8, random())));
     const radius = Math.max(width, depth) / 2;
     const featureSeed = Math.floor(random() * 0xffffffff);
 
@@ -1779,16 +1789,16 @@ function stampProceduralFeatures(
     accepted.push({ x: centerX, z: centerZ, radius });
   }
 
-  const structureCount = 6 + Math.floor(random() * 4);
+  const structureCount = scaleCount(6, 4, random, 4);
   let structuresPlaced = 0;
 
   for (let attempts = 0; attempts < 120 && structuresPlaced < structureCount; attempts++) {
     const nearCenter = random() < 0.24;
-    const baseX = nearCenter ? lerp(-12, 12, random()) : (random() < 0.5 ? -1 : 1) * lerp(7, halfPlayableX, random());
+    const baseX = nearCenter ? scaleWorld(lerp(-12, 12, random())) : (random() < 0.5 ? -1 : 1) * lerp(scaleWorld(7), halfPlayableX, random());
     const baseZ = lerp(-halfPlayableZ, halfPlayableZ, random());
-    const radiusX = lerp(2.8, 6.8, random());
-    const radiusZ = lerp(2.8, 6.8, random());
-    const height = worldHeightToGridRows(3 + Math.floor(random() * 4));
+    const radiusX = scaleWorld(lerp(2.8, 6.8, random()));
+    const radiusZ = scaleWorld(lerp(2.8, 6.8, random()));
+    const height = worldHeightToGridRows(scaleWorld(3 + Math.floor(random() * 4)));
     const radius = Math.max(radiusX, radiusZ);
     const featureSeed = Math.floor(random() * 0xffffffff);
     const accentBlock = random() > 0.5 ? 'neon_red' : 'neon_blue';
@@ -1824,14 +1834,14 @@ function stampProceduralFeatures(
     structuresPlaced++;
   }
 
-  const groveCount = 7 + Math.floor(random() * 8);
+  const groveCount = scaleCount(7, 8, random, 4);
   let grovesPlaced = 0;
 
   for (let attempts = 0; attempts < 130 && grovesPlaced < groveCount; attempts++) {
     const baseX = lerp(-halfPlayableX, halfPlayableX, random());
     const baseZ = lerp(-halfPlayableZ, halfPlayableZ, random());
-    const radius = lerp(2.8, 5.8, random());
-    const trunkHeight = worldHeightToGridRows(3 + Math.floor(random() * 2));
+    const radius = scaleWorld(lerp(2.8, 5.8, random()));
+    const trunkHeight = worldHeightToGridRows(scaleWorld(3 + Math.floor(random() * 2)));
     const featureSeed = Math.floor(random() * 0xffffffff);
 
     if (!canPlaceFeature(layout, accepted, baseX, baseZ, radius)) {
@@ -1843,23 +1853,23 @@ function stampProceduralFeatures(
     grovesPlaced++;
   }
 
-  const coverCount = 22 + Math.floor(random() * 18);
+  const coverCount = scaleCount(22, 18, random, 14);
   let coverPlaced = 0;
 
   for (let attempts = 0; attempts < 170 && coverPlaced < coverCount; attempts++) {
     const baseX = lerp(-halfPlayableX, halfPlayableX, random());
     const baseZ = lerp(-halfPlayableZ, halfPlayableZ, random());
-    const radiusX = lerp(1.1, 3.4, random());
-    const radiusZ = lerp(1.1, 3.4, random());
-    const radius = Math.max(radiusX, radiusZ) + 2;
+    const radiusX = scaleWorld(lerp(1.1, 3.4, random()));
+    const radiusZ = scaleWorld(lerp(1.1, 3.4, random()));
+    const radius = Math.max(radiusX, radiusZ) + scaleWorld(2);
 
     if (!canPlaceFeature(layout, accepted, baseX, baseZ, radius)) {
       continue;
     }
 
-    const preferStone = Math.abs(baseZ) < 13 || random() < 0.38;
-    const boulderHeight = worldHeightToGridRows(2 + Math.floor(random() * 3));
-    const trunkHeight = worldHeightToGridRows(3 + Math.floor(random() * 2));
+    const preferStone = Math.abs(baseZ) < scaleWorld(13) || random() < 0.38;
+    const boulderHeight = worldHeightToGridRows(scaleWorld(2 + Math.floor(random() * 3)));
+    const trunkHeight = worldHeightToGridRows(scaleWorld(3 + Math.floor(random() * 2)));
     const featureSeed = Math.floor(random() * 0xffffffff);
 
     if (preferStone) {
@@ -2073,18 +2083,18 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
   let solidBlocks = 0;
   const terrainScale = 0.022 + random() * 0.026;
   const heightBias = Math.floor(random() * 2);
-  const hillStrength = 2.4 + random() * 2.4;
-  const ridgeStrength = 0.8 + random() * 1.2;
-  const sideLaneCenter = lerp(14, 22, random());
-  const sideLaneWidth = lerp(4, 7, random());
-  const centerLaneWidth = lerp(5.5, 9, random());
-  const ridgeBandWidth = lerp(9.5, 15.5, random());
-  const plateauStrength = random() < 0.5 ? lerp(0.6, 1.8, random()) : 0;
-  const basinStrength = random() < 0.5 ? lerp(0.5, 1.4, random()) : 0;
+  const hillStrength = scaleWorld(2.4 + random() * 2.4);
+  const ridgeStrength = scaleWorld(0.8 + random() * 1.2);
+  const sideLaneCenter = scaleWorld(lerp(14, 22, random()));
+  const sideLaneWidth = scaleWorld(lerp(4, 7, random()));
+  const centerLaneWidth = scaleWorld(lerp(5.5, 9, random()));
+  const ridgeBandWidth = scaleWorld(lerp(9.5, 15.5, random()));
+  const plateauStrength = random() < 0.5 ? scaleWorld(lerp(0.6, 1.8, random())) : 0;
+  const basinStrength = random() < 0.5 ? scaleWorld(lerp(0.5, 1.4, random())) : 0;
   const minTerrainRows = worldHeightToGridRows(4);
   const maxTerrainRows = size.y - worldHeightToGridRows(10);
   const dirtDepthRows = worldHeightToGridRows(4);
-  const edgeWallRows = worldHeightToGridRows(2.5 + random() * 2.5);
+  const edgeWallRows = worldHeightToGridRows(scaleWorld(2.5 + random() * 2.5));
   const rockySurfaceRows = worldHeightToGridRows(11);
 
   const setBlock: BlockSetter = (x, y, z, blockId) => {
@@ -2114,22 +2124,22 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
       const detailNoise = fractalNoise2(normalizedSeed ^ 0x9e3779b9, worldX * 0.12, worldZ * 0.12, 2);
       const plateauNoise = fractalNoise2(normalizedSeed ^ 0x632be59b, worldX * 0.035, worldZ * 0.035, 3);
       const centerBand = Math.max(0, 1 - absZ / ridgeBandWidth);
-      const centerWidth = Math.max(0, 1 - Math.max(0, absX - 5) / 24);
+      const centerWidth = Math.max(0, 1 - Math.max(0, absX - scaleWorld(5)) / scaleWorld(24));
       const midLaneCut = Math.max(0, 1 - absX / centerLaneWidth) * 0.78;
       const sideLaneCut = Math.max(0, 1 - Math.abs(absX - sideLaneCenter) / sideLaneWidth) * 0.58;
       const middleRidge =
         Math.pow(centerBand, 1.6) * centerWidth * (1 - Math.max(midLaneCut, sideLaneCut)) * (1.5 + ridgeNoise * 1.8);
-      const centerBasin = basinStrength * Math.max(0, 1 - absX / 30) * Math.max(0, 1 - absZ / 25);
+      const centerBasin = basinStrength * Math.max(0, 1 - absX / scaleWorld(30)) * Math.max(0, 1 - absZ / scaleWorld(25));
       const plateauStep = plateauStrength > 0 && plateauNoise > 0.66 ? plateauStrength : 0;
       const boundaryLift = insideBoundary
-        ? Math.max(0, 1 - boundaryDistance / 4.8) * (1.4 + ridgeNoise * 1.2)
-        : 3.5 + Math.min(boundaryDistance, 5) * 0.65;
+        ? Math.max(0, 1 - boundaryDistance / scaleWorld(4.8)) * scaleWorld(1.4 + ridgeNoise * 1.2)
+        : scaleWorld(3.5) + Math.min(boundaryDistance, scaleWorld(5)) * 0.65;
       const worldHeight = clamp(
-        4 +
+        scaleWorld(4) +
           heightBias +
           baseNoise * hillStrength +
           (ridgeNoise > 0.68 ? ridgeStrength : 0) +
-          detailNoise * 1.5 +
+          detailNoise * scaleWorld(1.5) +
           middleRidge +
           plateauStep -
           centerBasin +
@@ -2208,7 +2218,7 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
       const worldZ = gridToWorldCenter(z, origin.z);
       const insideBoundary = isInsideBoundaryPolygon(worldX, worldZ, layout.boundary);
       const boundaryDistance = distanceToBoundary(worldX, worldZ, layout.boundary);
-      const boundarySurface = !insideBoundary || boundaryDistance < 2.2;
+      const boundarySurface = !insideBoundary || boundaryDistance < scaleWorld(2.2);
       const rockPatch = fractalNoise2(normalizedSeed ^ 0xa11ce, worldX * 0.09, worldZ * 0.09, 3) > 0.76;
 
       for (let y = 0; y < height; y++) {
@@ -2226,7 +2236,7 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
       }
 
       if (boundarySurface) {
-        const wallRows = edgeWallRows + (!insideBoundary ? worldHeightToGridRows(2) : 0);
+        const wallRows = edgeWallRows + (!insideBoundary ? worldHeightToGridRows(scaleWorld(2)) : 0);
         for (let y = height; y < Math.min(size.y, height + wallRows); y++) {
           setBlock(x, y, z, 'stone');
         }
@@ -2297,6 +2307,18 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
     }
   }
 
+  const topSolidRows = new Uint16Array(size.x * size.z);
+  for (let x = 0; x < size.x; x++) {
+    for (let z = 0; z < size.z; z++) {
+      for (let y = size.y - 1; y >= 0; y--) {
+        if (isSolidBlock(blocks[chunkIndex(x, y, z, size)])) {
+          topSolidRows[x + z * size.x] = y + 1;
+          break;
+        }
+      }
+    }
+  }
+
   const partialManifest = {
     id: `procedural-ctf-${normalizedSeed}`,
     seed: normalizedSeed,
@@ -2326,6 +2348,12 @@ export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): 
       },
     },
     boundary: layout.boundary,
+    heightfield: {
+      origin,
+      voxelSize,
+      size: { x: size.x, z: size.z },
+      topSolidRows,
+    },
     chunks,
   };
   const colliders = generateVoxelColliders(partialManifest);

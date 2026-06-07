@@ -21,6 +21,7 @@ import {
 } from '../../usePhysics';
 import { triggerTeleportEffect } from '../../../components/ui/TeleportEffects';
 import { triggerBlinkEffect, triggerShadowArrival } from '../../../components/game/PhantomEffects';
+import { recordSpawnMarker } from '../../../utils/perfMarks';
 import {
   EYE_HEIGHT,
   PLAYER_HEIGHT,
@@ -147,6 +148,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     if (now - lastFireTimeRef.current < PHANTOM_FIRE_INTERVAL) return;
 
     lastFireTimeRef.current = now;
+    recordSpawnMarker('phantom:direBall');
 
     direBallIdRef.current++;
     const launchSide = direBallIdRef.current % 2 === 1 ? 1 : -1;
@@ -163,6 +165,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       },
       startTime: now,
       ownerId: ctx.localPlayer.id,
+      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
     });
 
     sounds.playPhantomBasic();

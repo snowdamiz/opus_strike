@@ -4,7 +4,7 @@ export const AIR_RESISTANCE = 0.01;
 export const GROUND_FRICTION = 0.9;
 
 // Movement multipliers (base speed/jump defined per-hero in heroes.ts)
-export const SPRINT_MULTIPLIER = 1.4;
+export const SPRINT_MULTIPLIER = 1.2;
 export const CROUCH_MULTIPLIER = 0.5;
 export const AIR_CONTROL = 0.3;
 export const MAX_JUMPS = 1;

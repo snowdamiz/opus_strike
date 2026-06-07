@@ -25,6 +25,7 @@ import {
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal } from '../../usePhysics';
 import { triggerTerrainImpact } from '../../../components/game/TerrainImpactEffects';
+import { getFrameClock } from '../../../utils/frameClock';
 import {
   GLACIER_MALLET_SWING_INTERVAL,
   FUEL_UPDATE_THRESHOLD,
@@ -215,6 +216,7 @@ export function useGlacierAbilities(): UseGlacierAbilitiesReturn {
           width: ICE_WALL_SEGMENT_WIDTH,
           rotation: wallRotation,
           createdAt: now,
+          createdFrameAt: getFrameClock().nowMs,
         };
 
         triggerTerrainImpact('glacier_ice_wall', newSegment.position, {

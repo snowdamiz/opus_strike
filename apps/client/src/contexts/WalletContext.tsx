@@ -1,14 +1,17 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { PublicKey } from '@solana/web3.js';
-import bs58 from 'bs58';
 import { config } from '../config/environment';
+import { loggers } from '../utils/logger';
 
 // Types for Phantom wallet provider
+interface WalletPublicKey {
+  toBase58: () => string;
+}
+
 interface PhantomProvider {
-  publicKey: PublicKey | null;
+  publicKey: WalletPublicKey | null;
   isConnected: boolean;
   isPhantom: boolean;
-  connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: PublicKey }>;
+  connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: WalletPublicKey }>;
   disconnect: () => Promise<void>;
   signMessage: (message: Uint8Array, encoding: string) => Promise<{ signature: Uint8Array }>;
   on: (event: string, handler: (...args: any[]) => void) => void;
@@ -127,7 +130,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       } catch (err) {
         // No valid session - this is expected for first-time visitors
-        console.log('No existing session found');
+        loggers.auth.debug('no existing session found');
       } finally {
         setIsSessionLoading(false);
       }
@@ -163,14 +166,14 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const provider = getPhantomProvider();
     if (!provider) return;
     
-    const handleConnect = (publicKey: PublicKey) => {
-      console.log('Wallet connected:', publicKey.toBase58());
+    const handleConnect = (publicKey: WalletPublicKey) => {
+      loggers.auth.debug('wallet connected', publicKey.toBase58());
       setIsConnected(true);
       setWalletAddress(publicKey.toBase58());
     };
     
     const handleDisconnect = () => {
-      console.log('Wallet disconnected');
+      loggers.auth.debug('wallet disconnected');
       setIsConnected(false);
       setWalletAddress(null);
       setIsAuthenticated(false);
@@ -178,9 +181,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsNewUser(false);
     };
     
-    const handleAccountChanged = (publicKey: PublicKey | null) => {
+    const handleAccountChanged = (publicKey: WalletPublicKey | null) => {
       if (publicKey) {
-        console.log('Account changed:', publicKey.toBase58());
+        loggers.auth.debug('account changed', publicKey.toBase58());
         setWalletAddress(publicKey.toBase58());
         // Reset auth state when account changes
         setIsAuthenticated(false);
@@ -221,7 +224,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setWalletAddress(publicKey.toBase58());
       setIsConnected(true);
     } catch (err: any) {
-      console.error('Failed to connect wallet:', err);
+      loggers.auth.error('failed to connect wallet:', err);
       if (err.code === 4001) {
         setError('Connection rejected. Please approve the connection request.');
       } else {
@@ -267,6 +270,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       // Sign the message
       const encodedMessage = new TextEncoder().encode(message);
       const { signature } = await provider.signMessage(encodedMessage, 'utf8');
+      const { default: bs58 } = await import('bs58');
       const signatureBase58 = bs58.encode(signature);
       
       // Verify with server
@@ -299,7 +303,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       
       throw new Error('Authentication failed');
     } catch (err: any) {
-      console.error('Authentication error:', err);
+      loggers.auth.error('authentication error:', err);
       if (err.code === 4001) {
         setError('Signature rejected. Please sign the message to authenticate.');
       } else {
@@ -337,7 +341,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       
       throw new Error('Registration failed');
     } catch (err: any) {
-      console.error('Registration error:', err);
+      loggers.auth.error('registration error:', err);
       setError(err.message || 'Registration failed');
       throw err;
     }
@@ -348,7 +352,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     try {
       await apiRequest('/auth/logout', { method: 'POST' });
     } catch (err) {
-      console.error('Logout error:', err);
+      loggers.auth.error('logout error:', err);
     }
     
     // Disconnect wallet if connected
@@ -404,4 +408,3 @@ export function useWallet() {
   }
   return context;
 }
-

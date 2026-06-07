@@ -15,6 +15,7 @@ import { useFrame } from '@react-three/fiber';
 import { Instance, Instances } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore } from '../../../../store/gameStore';
+import { getFrameClock } from '../../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../../effectResources';
 import {
   getRocketBodyMaterial,
@@ -74,7 +75,7 @@ export function InstancedRockets() {
 
   useFrame(() => {
     const rockets = useGameStore.getState().rockets;
-    const now = Date.now();
+    const now = getFrameClock().nowMs;
 
     // Initialize instance refs array if needed
     while (instanceRefs.current.length < MAX_ROCKETS) {
@@ -98,17 +99,17 @@ export function InstancedRockets() {
       const instances = instanceRefs.current[index];
       if (!instances) return;
 
-      // Calculate position with gravity
+      // Calculate position using the same straight-line path as the legacy rocket effect.
       _rocketPos.set(
         rocket.position.x + rocket.velocity.x * elapsed,
-        rocket.position.y + rocket.velocity.y * elapsed - elapsed * elapsed,
+        rocket.position.y + rocket.velocity.y * elapsed,
         rocket.position.z + rocket.velocity.z * elapsed
       );
 
       // Calculate rotation to face velocity direction
       _rocketDir.set(
         rocket.velocity.x,
-        rocket.velocity.y - 2 * elapsed,
+        rocket.velocity.y,
         rocket.velocity.z
       ).normalize();
       _rocketQuat.setFromUnitVectors(_rocketForward, _rocketDir);

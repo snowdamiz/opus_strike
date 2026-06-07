@@ -1,10 +1,12 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 
 // ============================================================================
 // AIR STRIKE EFFECT - DRAMATIC BOMBING RUN
@@ -15,11 +17,13 @@ interface AirStrikeData {
   id: string;
   centerPosition: { x: number; y: number; z: number };
   startTime: number;
+  frameStartTime: number;
   bombs: { x: number; z: number; delay: number; groundY: number; size: number }[];
 }
 
 const airStrikes: AirStrikeData[] = [];
 let airStrikeIdCounter = 0;
+let airStrikeRevision = 0;
 const AIR_STRIKE_AREA_RADIUS = 7.75;
 const AIR_STRIKE_INNER_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.34;
 const AIR_STRIKE_MIDDLE_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.58;
@@ -86,8 +90,10 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
     id: `airstrike_${airStrikeIdCounter++}`,
     centerPosition: { ...position },
     startTime: Date.now(),
+    frameStartTime: getFrameClock().nowMs,
     bombs,
   });
+  airStrikeRevision++;
 }
 
 export const AIR_STRIKE_DURATION = 4500; // Longer duration
@@ -105,8 +111,7 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
   const explodedFlags = useRef<boolean[]>(strike.bombs.map(() => false));
   
   useFrame(() => {
-    const now = Date.now();
-    const elapsed = now - strike.startTime;
+    const elapsed = getFrameClock().nowMs - strike.frameStartTime;
     
     let activeExplosions = 0;
     let lightX = strike.centerPosition.x;
@@ -260,7 +265,7 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
     }
   });
   
-  const elapsed = Date.now() - strike.startTime;
+  const elapsed = getFrameClock().nowMs - strike.frameStartTime;
   if (elapsed > AIR_STRIKE_DURATION) return null;
   
   return (
@@ -349,7 +354,8 @@ const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
       ))}
       
       {/* Dynamic light that follows active explosions */}
-      <pointLight 
+      <BudgetedPointLight
+        budgetPriority={7}
         ref={lightRef}
         position={[strike.centerPosition.x, strike.centerPosition.y + 3, strike.centerPosition.z]}
         color={0xff4400} 
@@ -381,6 +387,7 @@ interface AirStrikeTargetingIndicatorProps {
 
 const AIRSTRIKE_MAX_RANGE = 80;
 const AIRSTRIKE_MIN_RANGE = 10;
+const AIRSTRIKE_TARGET_SAMPLE_FACTORS = [0.5, 1, 1.5] as const;
 
 // Pre-allocated vectors for airstrike targeting (local to avoid conflicts)
 const _asLookDir = new THREE.Vector3();
@@ -390,18 +397,37 @@ const _asHorizDir = new THREE.Vector3();
 export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStrikeTargetingIndicatorProps) {
   const indicatorRef = useRef<THREE.Group>(null);
   const isValidRef = useRef(false);
+  const reportedTargetRef = useRef(new THREE.Vector3());
+  const lastReportedTargetRef = useRef(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
+  const lastReportedValidRef = useRef(false);
+  const lastReportAtRef = useRef(0);
+  const wasActiveRef = useRef(false);
   const { camera } = useThree();
   
   useFrame(() => {
+    const now = getFrameClock().nowMs;
+
     if (!isActive) {
       if (indicatorRef.current) indicatorRef.current.visible = false;
-      onTargetUpdate(null, false);
+      if (wasActiveRef.current) {
+        wasActiveRef.current = false;
+        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
+        lastReportedValidRef.current = false;
+        lastReportAtRef.current = now;
+        onTargetUpdate(null, false);
+      }
       return;
     }
+    wasActiveRef.current = true;
     
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer) {
-      onTargetUpdate(null, false);
+      if (lastReportedValidRef.current || lastReportedTargetRef.current.x !== Number.POSITIVE_INFINITY) {
+        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
+        lastReportedValidRef.current = false;
+        lastReportAtRef.current = now;
+        onTargetUpdate(null, false);
+      }
       return;
     }
     
@@ -439,9 +465,10 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
       if (!foundTarget) {
         const pitch = Math.asin(Math.max(-1, Math.min(1, -_asLookDir.y)));
         const baseDist = pitch > 0.3 ? 20 : (pitch > 0 ? 35 : 50);
-        const sampleDistances = [baseDist * 0.5, baseDist, baseDist * 1.5, AIRSTRIKE_MAX_RANGE];
-        
-        for (const dist of sampleDistances) {
+        for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+          const dist = sampleIndex === 3
+            ? AIRSTRIKE_MAX_RANGE
+            : baseDist * AIRSTRIKE_TARGET_SAMPLE_FACTORS[sampleIndex];
           const sampleX = camera.position.x + _asLookDir.x * dist;
           const sampleY = camera.position.y + _asLookDir.y * dist;
           const sampleZ = camera.position.z + _asLookDir.z * dist;
@@ -513,7 +540,17 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
       indicatorRef.current.position.copy(_asTargetPos);
     }
     
-    onTargetUpdate(_asTargetPos.clone(), isValid);
+    const targetMoved = lastReportedTargetRef.current.distanceToSquared(_asTargetPos) > 0.04;
+    const validityChanged = lastReportedValidRef.current !== isValid;
+    const cadenceElapsed = now - lastReportAtRef.current >= 100;
+
+    if (targetMoved || validityChanged || cadenceElapsed) {
+      reportedTargetRef.current.copy(_asTargetPos);
+      lastReportedTargetRef.current.copy(_asTargetPos);
+      lastReportedValidRef.current = isValid;
+      lastReportAtRef.current = now;
+      onTargetUpdate(reportedTargetRef.current, isValid);
+    }
   });
   
   if (!isActive) return null;
@@ -550,7 +587,7 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
         <meshBasicMaterial color={0xff3300} transparent opacity={0.58} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
       
-      <pointLight color={0xff3300} intensity={2.6} distance={10} decay={2} position-y={1} />
+      <BudgetedPointLight budgetPriority={2} color={0xff3300} intensity={2.6} distance={10} decay={2} position-y={1} />
     </group>
   );
 }
@@ -558,18 +595,24 @@ export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStr
 // Hook to manage air strikes
 export function useAirStrikes() {
   const [activeStrikes, setActiveStrikes] = useState<AirStrikeData[]>([]);
-  
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const active = airStrikes.filter(s => now - s.startTime < AIR_STRIKE_DURATION + 500);
-      airStrikes.length = 0;
-      airStrikes.push(...active);
-      setActiveStrikes([...active]);
-    }, 150);
-    
-    return () => clearInterval(interval);
-  }, []);
+  const lastRevisionRef = useRef(-1);
+
+  useFrame(() => {
+    const now = getFrameClock().nowMs;
+    let changed = lastRevisionRef.current !== airStrikeRevision;
+
+    for (let i = airStrikes.length - 1; i >= 0; i--) {
+      if (now - airStrikes[i].frameStartTime >= AIR_STRIKE_DURATION + 500) {
+        airStrikes.splice(i, 1);
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      lastRevisionRef.current = airStrikeRevision;
+      setActiveStrikes([...airStrikes]);
+    }
+  });
   
   return activeStrikes;
 }

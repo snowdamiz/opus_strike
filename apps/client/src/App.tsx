@@ -1,35 +1,75 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useGameStore } from './store/gameStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
-import { GameCanvas } from './components/game/GameCanvas';
 import { HUD } from './components/ui/HUD';
 import { HeroSelect } from './components/ui/HeroSelect';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
-import { Scoreboard } from './components/ui/Scoreboard';
-import { InGameMenu } from './components/ui/InGameMenu';
-import { GameConsole } from './components/ui/GameConsole';
-import { PerfMonitorOverlay } from './components/game/PerfMonitor';
 import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
-import { useMusic } from './hooks/useAudio';
+import { useAudio, useMusic } from './hooks/useAudio';
+import { prewarmBlazeEffects, prewarmPhantomEffects } from './components/game/effectResources';
+
+const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
+const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
+const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
+const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
+const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 
 export function App() {
   const appPhase = useGameStore((state) => state.appPhase);
   const gamePhase = useGameStore((state) => state.gamePhase);
   const isLoading = useGameStore((state) => state.isLoading);
   const mapSeed = useGameStore((state) => state.mapSeed);
+  const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
   const [isMatchSceneReady, setIsMatchSceneReady] = useState(false);
   const [isMatchLoadingVisible, setIsMatchLoadingVisible] = useState(false);
+  const [areMatchResourcesReady, setAreMatchResourcesReady] = useState(false);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
+  const { preloadSoundGroup, preloadHeroSounds } = useAudio();
   const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
   const shouldLoadMatchWorld = appPhase === 'in_game' && !isPreGame;
+
+  useEffect(() => {
+    preloadSoundGroup(appPhase === 'in_lobby' ? 'lobby' : 'menu');
+  }, [appPhase, preloadSoundGroup]);
+
+  useEffect(() => {
+    if (!shouldLoadMatchWorld) {
+      setAreMatchResourcesReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAreMatchResourcesReady(false);
+
+    (async () => {
+      try {
+        await Promise.all([
+          preloadSoundGroup('commonCombat'),
+          preloadHeroSounds(localHeroId),
+          localHeroId === 'phantom' ? prewarmPhantomEffects() : Promise.resolve(),
+          localHeroId === 'blaze' ? prewarmBlazeEffects() : Promise.resolve(),
+        ]);
+      } catch (error) {
+        console.warn('[App] Match resource preload failed', error);
+      } finally {
+        if (!cancelled) {
+          setAreMatchResourcesReady(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [localHeroId, preloadHeroSounds, preloadSoundGroup, shouldLoadMatchWorld]);
 
   // Manage background music based on game phase
   useEffect(() => {
@@ -119,6 +159,10 @@ export function App() {
     setIsMatchSceneReady(false);
     setIsMatchLoadingVisible(true);
 
+    if (!areMatchResourcesReady) {
+      return;
+    }
+
     let secondFrame = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
@@ -130,7 +174,7 @@ export function App() {
       window.cancelAnimationFrame(firstFrame);
       window.cancelAnimationFrame(secondFrame);
     };
-  }, [mapSeed, shouldLoadMatchWorld]);
+  }, [areMatchResourcesReady, mapSeed, shouldLoadMatchWorld]);
 
   useEffect(() => {
     if (!isMatchSceneReady) return;
@@ -167,7 +211,9 @@ export function App() {
 
     return (
       <div className="w-full h-full relative game-active">
-        {shouldMountMatchWorld && <GameCanvas onReady={handleMatchSceneReady} />}
+        <Suspense fallback={null}>
+          {shouldMountMatchWorld && <GameCanvas onReady={handleMatchSceneReady} />}
+        </Suspense>
 
         {/* Show hero select during pre-game phases */}
         {isPreGame && <HeroSelect />}
@@ -184,7 +230,9 @@ export function App() {
             <TeleportEffects />
             <UltimateEffects />
             <SlideEffects />
-            {showScoreboard && <Scoreboard />}
+            <Suspense fallback={null}>
+              {showScoreboard && <Scoreboard />}
+            </Suspense>
           </>
         )}
 
@@ -205,13 +253,19 @@ export function App() {
         )}
 
         {/* In-game menu (ESC) */}
-        {showInGameMenu && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
+        <Suspense fallback={null}>
+          {showInGameMenu && <InGameMenu onClose={() => setShowInGameMenu(false)} />}
+        </Suspense>
 
         {/* Developer console (Enter key) */}
-        <GameConsole />
+        <Suspense fallback={null}>
+          <GameConsole />
+        </Suspense>
 
         {/* Performance monitor overlay */}
-        {isMatchSceneReady && <PerfMonitorOverlay />}
+        <Suspense fallback={null}>
+          {isMatchSceneReady && <PerfMonitorOverlay />}
+        </Suspense>
       </div>
     );
   }

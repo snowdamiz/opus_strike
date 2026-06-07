@@ -81,6 +81,12 @@ export interface VoxelMapManifest {
   spawnPoints: { red: Vec3[]; blue: Vec3[] };
   flagZones: { red: Vec3; blue: Vec3 };
   boundary: BoundaryPoint[];
+  heightfield: {
+    origin: Vec3;
+    voxelSize: VoxelSize;
+    size: { x: number; z: number };
+    topSolidRows: Uint16Array;
+  };
   chunks: VoxelChunk[];
   colliders: VoxelCollider[];
   stats: {

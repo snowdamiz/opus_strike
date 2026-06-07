@@ -3,6 +3,8 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, validateTeleportDestination } from '../../../hooks/usePhysics';
+import { getFrameClock } from '../../../utils/frameClock';
+import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.48;
@@ -10,6 +12,14 @@ const PLAYER_RADIUS = 0.48;
 // Maximum teleport range
 const MAX_RANGE = 25;
 const MIN_RANGE = 2;
+const SHADOW_STEP_VORTEX_GEOMETRY = new THREE.CircleGeometry(1.5, 64);
+const SHADOW_STEP_RING_INNER_GEOMETRY = new THREE.RingGeometry(0.4, 0.6, 32);
+const SHADOW_STEP_RING_MIDDLE_GEOMETRY = new THREE.RingGeometry(0.7, 0.85, 32);
+const SHADOW_STEP_RING_OUTER_GEOMETRY = new THREE.RingGeometry(1.1, 1.25, 32);
+const SHADOW_STEP_PILLAR_GEOMETRY = new THREE.CylinderGeometry(0.3, 0.6, 2.4, 16, 4, true);
+const SHADOW_STEP_GHOST_GEOMETRY = new THREE.CapsuleGeometry(0.35, 1, 8, 16);
+const SHADOW_STEP_MARKER_GEOMETRY = new THREE.OctahedronGeometry(0.2);
+const SHADOW_STEP_GHOST_BASE_GEOMETRY = new THREE.CircleGeometry(0.3, 32);
 
 // Shared shader materials for better performance
 let sharedVortexMaterial: THREE.ShaderMaterial | null = null;
@@ -272,6 +282,14 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
   const innerRingsRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
   const targetPositionRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const reportedTargetRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const lastReportedTargetRef = useRef<THREE.Vector3>(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
+  const cameraPosRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const lookDirRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const horizontalDirRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const lastValidationAtRef = useRef(0);
+  const lastTargetReportAtRef = useRef(0);
+  const lastReportedValidRef = useRef(false);
   const isValidRef = useRef(false);
 
   // Get shared materials
@@ -313,33 +331,46 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
     sizeAttenuation: true,
   }), []);
 
+  useEffect(() => registerFrameSystem('shadow-step-targeting'), []);
+
   useFrame((state) => {
+    const frameStart = performance.now();
+    const frameClock = getFrameClock();
     if (!isActive || !localPlayer || !indicatorRef.current) {
       if (indicatorRef.current) {
         indicatorRef.current.visible = false;
       }
+      recordSystemTime('shadowStepTargeting', performance.now() - frameStart);
       return;
     }
 
     indicatorRef.current.visible = true;
 
-    // Get camera position and look direction
-    const cameraPos = camera.position.clone();
-    const lookDir = new THREE.Vector3(0, 0, -1);
-    lookDir.applyQuaternion(camera.quaternion);
-
     // Player feet position (for range calculation)
     const playerFeetY = localPlayer.position.y - 0.9;
 
-    // Use raycasting approach - find where the look ray hits a ground plane
-    let targetX = cameraPos.x;
-    let targetZ = cameraPos.z;
-    let targetY = playerFeetY;
-    let isValid = false;
-    let foundGround = false;
+    let targetX = targetPositionRef.current.x;
+    let targetZ = targetPositionRef.current.z;
+    let targetY = targetPositionRef.current.y || playerFeetY;
+    let isValid = isValidRef.current;
+    const shouldValidate = frameClock.nowMs - lastValidationAtRef.current >= 33;
 
-    if (isPhysicsReady()) {
-      const horizontalDir = new THREE.Vector3(lookDir.x, 0, lookDir.z);
+    if (shouldValidate) {
+      lastValidationAtRef.current = frameClock.nowMs;
+      cameraPosRef.current.copy(camera.position);
+      lookDirRef.current.set(0, 0, -1).applyQuaternion(camera.quaternion);
+
+      const cameraPos = cameraPosRef.current;
+      const lookDir = lookDirRef.current;
+      let foundGround = false;
+
+      targetX = cameraPos.x;
+      targetZ = cameraPos.z;
+      targetY = playerFeetY;
+      isValid = false;
+
+      if (isPhysicsReady()) {
+      const horizontalDir = horizontalDirRef.current.set(lookDir.x, 0, lookDir.z);
       const horizontalLength = horizontalDir.length();
       
       if (horizontalLength > 0.01) {
@@ -416,6 +447,7 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
           }
         }
       }
+      }
     }
 
     // Update indicator position
@@ -487,7 +519,18 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
     }
 
     // Report target to parent
-    onTargetUpdate(targetPositionRef.current.clone(), isValid);
+    const movedSinceReport = lastReportedTargetRef.current.distanceToSquared(targetPositionRef.current) > 0.04;
+    const validityChanged = lastReportedValidRef.current !== isValid;
+    const reportCadenceElapsed = frameClock.nowMs - lastTargetReportAtRef.current >= 100;
+    if (movedSinceReport || validityChanged || reportCadenceElapsed) {
+      reportedTargetRef.current.copy(targetPositionRef.current);
+      lastReportedTargetRef.current.copy(targetPositionRef.current);
+      lastReportedValidRef.current = isValid;
+      lastTargetReportAtRef.current = frameClock.nowMs;
+      onTargetUpdate(reportedTargetRef.current, isValid);
+    }
+
+    recordSystemTime('shadowStepTargeting', performance.now() - frameStart);
   });
 
   if (!isActive) return null;
@@ -495,15 +538,13 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
   return (
     <group ref={indicatorRef}>
       {/* Ground vortex portal */}
-      <mesh ref={vortexRef} rotation-x={-Math.PI / 2} position-y={0.05}>
-        <circleGeometry args={[1.5, 64]} />
+      <mesh ref={vortexRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHADOW_STEP_VORTEX_GEOMETRY}>
         <primitive object={vortexMaterial} />
       </mesh>
 
       {/* Inner rotating rings */}
       <group ref={innerRingsRef}>
-        <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
-          <ringGeometry args={[0.4, 0.6, 32]} />
+        <mesh rotation-x={-Math.PI / 2} position-y={0.08} geometry={SHADOW_STEP_RING_INNER_GEOMETRY}>
           <meshBasicMaterial 
             color={0x7c3aed}
             transparent
@@ -512,8 +553,7 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
             blending={THREE.AdditiveBlending}
           />
         </mesh>
-        <mesh rotation-x={-Math.PI / 2} position-y={0.1}>
-          <ringGeometry args={[0.7, 0.85, 32]} />
+        <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHADOW_STEP_RING_MIDDLE_GEOMETRY}>
           <meshBasicMaterial 
             color={0xc084fc}
             transparent
@@ -522,8 +562,7 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
             blending={THREE.AdditiveBlending}
           />
         </mesh>
-        <mesh rotation-x={-Math.PI / 2} position-y={0.12}>
-          <ringGeometry args={[1.1, 1.25, 32]} />
+        <mesh rotation-x={-Math.PI / 2} position-y={0.12} geometry={SHADOW_STEP_RING_OUTER_GEOMETRY}>
           <meshBasicMaterial 
             color={0x9333ea}
             transparent
@@ -535,14 +574,12 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
       </group>
 
       {/* Vertical energy pillar */}
-      <mesh ref={pillarRef} position-y={1.2}>
-        <cylinderGeometry args={[0.3, 0.6, 2.4, 16, 4, true]} />
+      <mesh ref={pillarRef} position-y={1.2} geometry={SHADOW_STEP_PILLAR_GEOMETRY}>
         <primitive object={pillarMaterial} />
       </mesh>
 
       {/* Ghost silhouette preview */}
-      <mesh ref={ghostRef} position-y={1.0}>
-        <capsuleGeometry args={[0.35, 1, 8, 16]} />
+      <mesh ref={ghostRef} position-y={1.0} geometry={SHADOW_STEP_GHOST_GEOMETRY}>
         <primitive object={ghostMaterial} />
       </mesh>
 
@@ -552,8 +589,7 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
       </points>
 
       {/* Top marker - floating diamond */}
-      <mesh position-y={2.5} rotation-y={Math.PI / 4}>
-        <octahedronGeometry args={[0.2]} />
+      <mesh position-y={2.5} rotation-y={Math.PI / 4} geometry={SHADOW_STEP_MARKER_GEOMETRY}>
         <meshBasicMaterial 
           color={0xc084fc}
           transparent
@@ -563,8 +599,7 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
       </mesh>
 
       {/* Dark center void */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.02}>
-        <circleGeometry args={[0.3, 32]} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.02} geometry={SHADOW_STEP_GHOST_BASE_GEOMETRY}>
         <meshBasicMaterial 
           color={0x0a0015}
           transparent

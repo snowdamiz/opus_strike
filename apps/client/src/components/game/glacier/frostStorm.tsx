@@ -7,6 +7,8 @@ import {
   GLACIER_COLORS,
   getFrostStormMaterials,
 } from './materials';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 
 // ============================================================================
 // FROST STORM EFFECT - Glacier Q ability visual (snow storm around player)
@@ -15,6 +17,23 @@ import {
 const FROST_STORM_PARTICLE_COUNT = 60;
 const FROST_STORM_RADIUS = 2.5;
 const FROST_STORM_HEIGHT = 3.5;
+const FROST_STORM_RING_GEOMETRY = new THREE.RingGeometry(FROST_STORM_RADIUS * 0.8, FROST_STORM_RADIUS * 1.2, 32);
+const FROST_STORM_INNER_GEOMETRY = new THREE.SphereGeometry(FROST_STORM_RADIUS * 0.6, 16, 16);
+const FROST_STORM_RING_MATERIAL = new THREE.MeshBasicMaterial({
+  color: GLACIER_COLORS.iceGlow,
+  transparent: true,
+  opacity: 0.15,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+});
+const FROST_STORM_INNER_MATERIAL = new THREE.MeshBasicMaterial({
+  color: GLACIER_COLORS.iceCrystal,
+  transparent: true,
+  opacity: 0.1,
+  blending: THREE.AdditiveBlending,
+  depthWrite: false,
+});
 
 // Particle initial positions
 interface FrostStormParticle {
@@ -37,6 +56,7 @@ export const FrostStormEffect = React.memo(function FrostStormEffect() {
   const frostStormStartTime = useGameStore(state => state.frostStormStartTime);
   const frostStormShield = useGameStore(state => state.frostStormShield);
   const localPlayer = useGameStore(state => state.localPlayer);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - frostStormStartTime));
   
   const { frostStormParticleMaterial, frostStormSnowMaterial } = getFrostStormMaterials();
   
@@ -58,8 +78,7 @@ export const FrostStormEffect = React.memo(function FrostStormEffect() {
   useFrame(() => {
     if (!groupRef.current || !localPlayer) return;
     
-    const now = Date.now();
-    const elapsed = (now - frostStormStartTime) / 1000;
+    const elapsed = (getFrameClock().nowMs - startFrameTimeRef.current) / 1000;
     
     // Follow player position (first person - use camera position)
     groupRef.current.position.set(
@@ -120,29 +139,19 @@ export const FrostStormEffect = React.memo(function FrostStormEffect() {
   return (
     <group ref={groupRef}>
       {/* Glow ring around player */}
-      <mesh ref={glowRingRef} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[FROST_STORM_RADIUS * 0.8, FROST_STORM_RADIUS * 1.2, 32]} />
-        <meshBasicMaterial
-          color={GLACIER_COLORS.iceGlow}
-          transparent
-          opacity={0.15}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
+      <mesh
+        ref={glowRingRef}
+        geometry={FROST_STORM_RING_GEOMETRY}
+        material={FROST_STORM_RING_MATERIAL}
+        rotation={[-Math.PI / 2, 0, 0]}
+      />
       
       {/* Inner glow sphere */}
-      <mesh ref={innerGlowRef}>
-        <sphereGeometry args={[FROST_STORM_RADIUS * 0.6, 16, 16]} />
-        <meshBasicMaterial
-          color={GLACIER_COLORS.iceCrystal}
-          transparent
-          opacity={0.1}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
+      <mesh
+        ref={innerGlowRef}
+        geometry={FROST_STORM_INNER_GEOMETRY}
+        material={FROST_STORM_INNER_MATERIAL}
+      />
       
       {/* Storm particles */}
       {particleConfigs.current.map((config, i) => (
@@ -155,7 +164,8 @@ export const FrostStormEffect = React.memo(function FrostStormEffect() {
       ))}
       
       {/* Light source */}
-      <pointLight
+      <BudgetedPointLight
+        budgetPriority={3}
         ref={lightRef}
         color={GLACIER_COLORS.iceLight}
         intensity={2}
@@ -166,4 +176,3 @@ export const FrostStormEffect = React.memo(function FrostStormEffect() {
     </group>
   );
 });
-

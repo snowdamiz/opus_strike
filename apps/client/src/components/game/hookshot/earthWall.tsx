@@ -7,11 +7,13 @@ import {
   removeTemporaryWallCollider,
 } from '../../../hooks/usePhysics';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import {
   SHARED_GEOMETRIES,
   EARTH_COLORS,
   HOOKSHOT_COLORS,
 } from '../effectResources';
+import { getFrameClock } from '../../../utils/frameClock';
 
 // ============================================================================
 // ANCHOR WALL - Hookshot Q ability
@@ -130,6 +132,7 @@ const WallSegment = React.memo(function WallSegment({
 }) {
   const meshRef = useRef<THREE.Group>(null);
   const currentHeightRef = useRef(0.05);
+  const wallStartFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - wallStartTime));
 
   const faceInset = seededRange(index, 1, -0.14, 0.14);
   const capTilt = seededRange(index, 2, -0.07, 0.07);
@@ -138,7 +141,7 @@ const WallSegment = React.memo(function WallSegment({
   useFrame((_, delta) => {
     if (!meshRef.current) return;
 
-    const wallAge = (Date.now() - wallStartTime) / 1000;
+    const wallAge = (getFrameClock().nowMs - wallStartFrameTimeRef.current) / 1000;
     const collapseProgress = Math.min(
       Math.max((wallAge - wallDuration) / ANCHOR_WALL_COLLAPSE_DURATION, 0),
       1
@@ -290,6 +293,7 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   const collidersReleasedRef = useRef(false);
   const registeredCollidersRef = useRef<Set<string>>(new Set());
   const wallSegmentsRef = useRef<AnchorWallSegmentData[]>([]);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - wall.startTime));
 
   const [, setSegmentsVersion] = useState(0);
 
@@ -329,7 +333,7 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
     if (!groupRef.current || !hookRef.current) return;
 
     const time = state.clock.elapsedTime;
-    const elapsed = (Date.now() - wall.startTime) / 1000;
+    const elapsed = (getFrameClock().nowMs - startFrameTimeRef.current) / 1000;
 
     if (elapsed > wall.duration && !collidersReleasedRef.current) {
       collidersReleasedRef.current = true;
@@ -446,7 +450,7 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
         <mesh geometry={SHARED_GEOMETRIES.sphere12} material={ANCHOR_WALL_MATERIALS.glow} scale={0.42} />
         <mesh position={[0, -0.39, -0.3]} rotation={[-Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring24} material={ANCHOR_WALL_MATERIALS.ringGlow} scale={[1.12, 1.12, 0.3]} />
 
-        <pointLight color={HOOKSHOT_COLORS.energy} intensity={4.8} distance={5.8} decay={2} />
+        <BudgetedPointLight budgetPriority={4} color={HOOKSHOT_COLORS.energy} intensity={4.8} distance={5.8} decay={2} />
       </group>
 
       {wallSegmentsRef.current.map((segment, i) => (

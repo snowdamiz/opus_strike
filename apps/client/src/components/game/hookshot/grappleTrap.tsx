@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import { useGameStore, type GrappleTrapData } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -19,6 +21,60 @@ import {
 const GRAPPLE_TRAP_RADIUS = 8;
 const GRAPPLE_TRAP_DOT_DAMAGE = 15;
 const GRAPPLE_TRAP_GRAVITY = 25; // Gravity affecting the thrown device
+const TRAP_ARM_INDICES = [0, 1, 2, 3] as const;
+const TRAP_TARGET_SAMPLE_FACTORS = [0.5, 1, 1.5] as const;
+
+const GRAPPLE_TRAP_MATERIALS = {
+  body: new THREE.MeshStandardMaterial({ color: 0x3a3a3a, metalness: 0.9, roughness: 0.2 }),
+  cap: new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.85, roughness: 0.25 }),
+  ring: new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.2, side: THREE.DoubleSide }),
+  arm: new THREE.MeshStandardMaterial({ color: 0x4a4a4a, metalness: 0.85, roughness: 0.25 }),
+  tip: new THREE.MeshStandardMaterial({
+    color: HOOKSHOT_COLORS.energyGlow,
+    metalness: 0.9,
+    roughness: 0.15,
+    emissive: HOOKSHOT_COLORS.energy,
+    emissiveIntensity: 0.3,
+  }),
+  core: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energy, transparent: true, opacity: 0.8 }),
+  coreGlow: new THREE.MeshBasicMaterial({ color: HOOKSHOT_COLORS.energyGlow, transparent: true, opacity: 0.3 }),
+  activeRing: new THREE.MeshBasicMaterial({
+    color: HOOKSHOT_COLORS.energy,
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide,
+  }),
+  targetRingValid: new THREE.MeshBasicMaterial({
+    color: HOOKSHOT_COLORS.energy,
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide,
+  }),
+  targetRingInvalid: new THREE.MeshBasicMaterial({
+    color: HOOKSHOT_COLORS.energyGlow,
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide,
+  }),
+  targetCenter: new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.9,
+    side: THREE.DoubleSide,
+  }),
+  targetLineValid: new THREE.MeshBasicMaterial({
+    color: HOOKSHOT_COLORS.energy,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+  }),
+  targetLineInvalid: new THREE.MeshBasicMaterial({
+    color: HOOKSHOT_COLORS.energyGlow,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+  }),
+};
 
 interface GrappleTrapProps {
   trap: GrappleTrapData;
@@ -44,6 +100,7 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
   });
   const landedPosRef = useRef({ x: trap.position.x, y: trap.position.y, z: trap.position.z });
   const landedTimeRef = useRef<number | null>(null);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - trap.startTime));
   
   const lastDamageTimeRef = useRef<Map<string, number>>(new Map());
   
@@ -51,10 +108,11 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
     if (!groupRef.current || !deviceRef.current) return;
     
     const time = state.clock.elapsedTime;
+    const frameNow = getFrameClock().nowMs;
     
     // Check if trap has expired
     if (landedTimeRef.current !== null) {
-      const landedElapsed = (Date.now() - landedTimeRef.current) / 1000;
+      const landedElapsed = (frameNow - landedTimeRef.current) / 1000;
       if (landedElapsed >= trap.duration) return;
     }
     
@@ -78,7 +136,7 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
           // Landed!
           isLandedRef.current = true;
           landedPosRef.current = { x: pos.x, y: groundCheck.groundY, z: pos.z };
-          landedTimeRef.current = Date.now();
+          landedTimeRef.current = frameNow;
           pos.y = groundCheck.groundY;
           triggerTerrainImpact('hookshot_trap', landedPosRef.current, {
             normal: groundCheck.normal,
@@ -89,7 +147,7 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
         // Fallback ground check
         isLandedRef.current = true;
         landedPosRef.current = { x: pos.x, y: 0, z: pos.z };
-        landedTimeRef.current = Date.now();
+        landedTimeRef.current = frameNow;
         pos.y = 0;
         triggerTerrainImpact('hookshot_trap', landedPosRef.current, { scale: 1.05 });
       }
@@ -129,14 +187,12 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
       
       const dx = player.position.x - landedPos.x;
       const dz = player.position.z - landedPos.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
       
-      if (dist <= trap.radius) {
+      if (dx * dx + dz * dz <= trap.radius * trap.radius) {
         const lastDamage = lastDamageTimeRef.current.get(playerId) || 0;
-        const now = Date.now();
         
-        if (now - lastDamage > 1000) {
-          lastDamageTimeRef.current.set(playerId, now);
+        if (frameNow - lastDamage > 1000) {
+          lastDamageTimeRef.current.set(playerId, frameNow);
           
         }
       }
@@ -153,7 +209,7 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
   });
   
   // Check if already expired on mount
-  const elapsed = (Date.now() - trap.startTime) / 1000;
+  const elapsed = (getFrameClock().nowMs - startFrameTimeRef.current) / 1000;
   if (elapsed >= trap.duration + 5) return null; // Extra time for flight
   
   return (
@@ -161,61 +217,43 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
       {/* === HOOK DEVICE - Central mechanical trap device === */}
       <group ref={deviceRef} position={[0, 0.4, 0]}>
         {/* Main body - cylindrical core */}
-        <mesh geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.2, 0.15, 0.2]}>
-          <meshStandardMaterial color={0x3a3a3a} metalness={0.9} roughness={0.2} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.2, 0.15, 0.2]} material={GRAPPLE_TRAP_MATERIALS.body} />
         
         {/* Top cap with hook ring */}
-        <mesh position={[0, 0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.25, 0.05, 0.25]}>
-          <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
-        </mesh>
+        <mesh position={[0, 0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.25, 0.05, 0.25]} material={GRAPPLE_TRAP_MATERIALS.cap} />
         
         {/* Hook attachment ring on top */}
-        <mesh position={[0, 0.15, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.12, 0.12, 0.04]}>
-          <meshStandardMaterial color={0x888888} metalness={0.9} roughness={0.2} side={THREE.DoubleSide} />
-        </mesh>
+        <mesh position={[0, 0.15, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.12, 0.12, 0.04]} material={GRAPPLE_TRAP_MATERIALS.ring} />
         
         {/* Four hook arms extending outward */}
-        {[0, 1, 2, 3].map(i => {
+        {TRAP_ARM_INDICES.map(i => {
           const angle = (i * Math.PI / 2);
           return (
             <group key={i} rotation={[0, angle, 0]}>
               {/* Arm */}
-              <mesh position={[0.18, -0.02, 0]} rotation={[0, 0, 0.6]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.04, 0.15, 0.04]}>
-                <meshStandardMaterial color={0x4a4a4a} metalness={0.85} roughness={0.25} />
-              </mesh>
+              <mesh position={[0.18, -0.02, 0]} rotation={[0, 0, 0.6]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.04, 0.15, 0.04]} material={GRAPPLE_TRAP_MATERIALS.arm} />
               {/* Hook tip */}
-              <mesh position={[0.28, -0.08, 0]} rotation={[0, 0, 1.8]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.035, 0.08, 0.035]}>
-                <meshStandardMaterial color={HOOKSHOT_COLORS.energyGlow} metalness={0.9} roughness={0.15} emissive={HOOKSHOT_COLORS.energy} emissiveIntensity={0.3} />
-              </mesh>
+              <mesh position={[0.28, -0.08, 0]} rotation={[0, 0, 1.8]} geometry={SHARED_GEOMETRIES.cone6} scale={[0.035, 0.08, 0.035]} material={GRAPPLE_TRAP_MATERIALS.tip} />
             </group>
           );
         })}
         
         {/* Bottom base */}
-        <mesh position={[0, -0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.22, 0.05, 0.22]}>
-          <meshStandardMaterial color={0x555555} metalness={0.85} roughness={0.25} />
-        </mesh>
+        <mesh position={[0, -0.1, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.22, 0.05, 0.22]} material={GRAPPLE_TRAP_MATERIALS.cap} />
         
         {/* Cyan energy core glow - matches hookshot theme */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.8} />
-        </mesh>
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.3} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12} material={GRAPPLE_TRAP_MATERIALS.core} />
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2} material={GRAPPLE_TRAP_MATERIALS.coreGlow} />
         
         {/* Device light */}
-        <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={4} decay={2} />
+        <BudgetedPointLight budgetPriority={2} color={HOOKSHOT_COLORS.energy} intensity={2} distance={4} decay={2} />
       </group>
       
       {/* === CYAN CIRCLE BORDER - AOE indicator matching hookshot theme === */}
-      <mesh ref={circleRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring24} scale={[trap.radius, trap.radius, 1]}>
-        <meshBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
+      <mesh ref={circleRef} rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.ring24} scale={[trap.radius, trap.radius, 1]} material={GRAPPLE_TRAP_MATERIALS.activeRing} />
       
       {/* Ground light when active */}
-      <pointLight ref={lightRef} color={HOOKSHOT_COLORS.energy} intensity={2} distance={trap.radius * 1.2} decay={2} position={[0, 0.5, 0]} />
+      <BudgetedPointLight budgetPriority={3} ref={lightRef} color={HOOKSHOT_COLORS.energy} intensity={2} distance={trap.radius * 1.2} decay={2} position={[0, 0.5, 0]} />
     </group>
   );
 }, (prev, next) => {
@@ -238,18 +276,37 @@ const TRAP_MIN_RANGE = 3;
 export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpdate }: GrappleTrapTargetingProps) => {
   const indicatorRef = useRef<THREE.Group>(null);
   const isValidRef = useRef(false);
+  const reportedTargetRef = useRef(new THREE.Vector3());
+  const lastReportedTargetRef = useRef(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
+  const lastReportedValidRef = useRef(false);
+  const lastReportAtRef = useRef(0);
+  const wasActiveRef = useRef(false);
   const { camera } = useThree();
   
   useFrame(() => {
+    const now = getFrameClock().nowMs;
+
     if (!isActive) {
       if (indicatorRef.current) indicatorRef.current.visible = false;
-      onTargetUpdate(null, false);
+      if (wasActiveRef.current) {
+        wasActiveRef.current = false;
+        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
+        lastReportedValidRef.current = false;
+        lastReportAtRef.current = now;
+        onTargetUpdate(null, false);
+      }
       return;
     }
+    wasActiveRef.current = true;
     
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer) {
-      onTargetUpdate(null, false);
+      if (lastReportedValidRef.current || lastReportedTargetRef.current.x !== Number.POSITIVE_INFINITY) {
+        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
+        lastReportedValidRef.current = false;
+        lastReportAtRef.current = now;
+        onTargetUpdate(null, false);
+      }
       return;
     }
     
@@ -287,9 +344,8 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
       if (!foundTarget) {
         const pitch = Math.asin(Math.max(-1, Math.min(1, -TEMP_VECTORS.v1.y)));
         const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 20 : 25);
-        const sampleDistances = [baseDist * 0.5, baseDist, baseDist * 1.5, TRAP_MAX_RANGE];
-        
-        for (const dist of sampleDistances) {
+        for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+          const dist = sampleIndex === 3 ? TRAP_MAX_RANGE : baseDist * TRAP_TARGET_SAMPLE_FACTORS[sampleIndex];
           const sampleX = camera.position.x + TEMP_VECTORS.v1.x * dist;
           const sampleY = camera.position.y + TEMP_VECTORS.v1.y * dist;
           const sampleZ = camera.position.z + TEMP_VECTORS.v1.z * dist;
@@ -338,33 +394,36 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
       indicatorRef.current.position.copy(TEMP_VECTORS.v4);
     }
     
-    onTargetUpdate(TEMP_VECTORS.v4.clone(), isValid);
+    const targetMoved = lastReportedTargetRef.current.distanceToSquared(TEMP_VECTORS.v4) > 0.04;
+    const validityChanged = lastReportedValidRef.current !== isValid;
+    const cadenceElapsed = now - lastReportAtRef.current >= 100;
+
+    if (targetMoved || validityChanged || cadenceElapsed) {
+      reportedTargetRef.current.copy(TEMP_VECTORS.v4);
+      lastReportedTargetRef.current.copy(TEMP_VECTORS.v4);
+      lastReportedValidRef.current = isValid;
+      lastReportAtRef.current = now;
+      onTargetUpdate(reportedTargetRef.current, isValid);
+    }
   });
   
   if (!isActive) return null;
   
   // Cyan color scheme for trap targeting - matches hookshot hero theme
-  const baseColor = isValidRef.current ? HOOKSHOT_COLORS.energy : HOOKSHOT_COLORS.energyGlow;
+  const targetRingMaterial = isValidRef.current ? GRAPPLE_TRAP_MATERIALS.targetRingValid : GRAPPLE_TRAP_MATERIALS.targetRingInvalid;
+  const targetLineMaterial = isValidRef.current ? GRAPPLE_TRAP_MATERIALS.targetLineValid : GRAPPLE_TRAP_MATERIALS.targetLineInvalid;
   
   return (
     <group ref={indicatorRef}>
       {/* Main AOE ring - cyan border matching hookshot theme */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[GRAPPLE_TRAP_RADIUS, GRAPPLE_TRAP_RADIUS, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.8} side={THREE.DoubleSide} />
-      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[GRAPPLE_TRAP_RADIUS, GRAPPLE_TRAP_RADIUS, 1]} material={targetRingMaterial} />
       {/* Center marker - white crosshair */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.circle16} scale={[0.4, 0.4, 1]}>
-        <meshBasicMaterial color={0xffffff} transparent opacity={0.9} side={THREE.DoubleSide} />
-      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.circle16} scale={[0.4, 0.4, 1]} material={GRAPPLE_TRAP_MATERIALS.targetCenter} />
       {/* Cross hairs */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.5} side={THREE.DoubleSide} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.5} side={THREE.DoubleSide} />
-      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]} material={targetLineMaterial} />
+      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.12, GRAPPLE_TRAP_RADIUS * 2, 1]} material={targetLineMaterial} />
       
-      <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={GRAPPLE_TRAP_RADIUS} decay={2} position-y={0.5} />
+      <BudgetedPointLight budgetPriority={2} color={HOOKSHOT_COLORS.energy} intensity={2} distance={GRAPPLE_TRAP_RADIUS} decay={2} position-y={0.5} />
     </group>
   );
 });

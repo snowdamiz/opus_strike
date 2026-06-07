@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { useGameStore, type HookProjectileData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
-import { getOwnerVisualPosition } from './ownerPosition';
+import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -15,6 +16,7 @@ import {
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
+  ROPE_SEGMENT_INDICES,
   createRopePoints,
   updatePliableRopePoints,
   updateRopeSegment,
@@ -55,6 +57,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
   const hookStateRef = useRef<'extending' | 'retracting'>(hook.state as 'extending' | 'retracting');
   const currentPosRef = useRef({ x: hook.position.x, y: hook.position.y, z: hook.position.z });
   const playerPosRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
+  const ownerVisualPositionRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
   const smoothedSocketRef = useRef(new THREE.Vector3(hook.startPosition.x, hook.startPosition.y, hook.startPosition.z));
   const ropeLagRef = useRef(new THREE.Vector3());
   const ropeControlARef = useRef(new THREE.Vector3());
@@ -90,7 +93,8 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
     const localPlayer = state.localPlayer;
     const players = state.players;
     
-    const targetPosition = getOwnerVisualPosition(
+    const targetPosition = writeOwnerVisualPosition(
+      ownerVisualPositionRef.current,
       hook.ownerId,
       HOOKSHOT_CHAIN_SOCKET.handHeight,
       hook.startPosition,
@@ -260,24 +264,24 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
         {/* Tip */}
         <mesh position={[0, 0, -0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.12, 0.08]} material={HOOK_MATERIALS.tip} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2} material={HOOK_MATERIALS.glow} />
-        <pointLight color={HOOKSHOT_COLORS.energy} intensity={2} distance={3} decay={2} />
+        <BudgetedPointLight budgetPriority={2} color={HOOKSHOT_COLORS.energy} intensity={2} distance={3} decay={2} />
       </group>
       
       {/* Local launcher flash so the hook has a visible source instead of appearing from empty air */}
       <group ref={muzzleRef} position={[hook.startPosition.x, hook.startPosition.y, hook.startPosition.z]}>
         <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.16, 0.16, 0.04]} material={HOOK_MATERIALS.ring} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12} material={HOOK_MATERIALS.glow} />
-        <pointLight color={HOOKSHOT_COLORS.energy} intensity={1.2} distance={2.5} decay={2} />
+        <BudgetedPointLight budgetPriority={1.5} color={HOOKSHOT_COLORS.energy} intensity={1.2} distance={2.5} decay={2} />
       </group>
 
       {/* Curved rope layers - segmented so source movement has velocity lag */}
-      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+      {ROPE_SEGMENT_INDICES.map(i => (
         <mesh key={`rope-glow-${i}`} ref={el => ropeGlowRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeGlow} />
       ))}
-      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+      {ROPE_SEGMENT_INDICES.map(i => (
         <mesh key={`rope-main-${i}`} ref={el => ropeMainRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MAIN_ROPE_MATERIAL} />
       ))}
-      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+      {ROPE_SEGMENT_INDICES.map(i => (
         <mesh key={`rope-core-${i}`} ref={el => ropeCoreRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.ropeCore} />
       ))}
     </group>

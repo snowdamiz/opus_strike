@@ -5,6 +5,7 @@ export {
   triggerRocketJumpExplosion, 
   RocketJumpExplosions,
   ROCKET_JUMP_DURATION,
+  prewarmRocketResources,
 } from './rockets';
 
 export { 

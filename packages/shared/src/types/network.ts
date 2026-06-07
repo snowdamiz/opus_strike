@@ -1,4 +1,4 @@
-import type { PlayerInput, PlayerSnapshot, Team } from './player.js';
+import type { BotDifficulty, PlayerInput, PlayerSnapshot, Team } from './player.js';
 import type { HeroId } from './hero.js';
 import type { GamePhase } from './game.js';
 import type { Vec3 } from './vector.js';
@@ -19,6 +19,9 @@ export type ClientMessage =
 // Server -> Client Messages
 export type ServerMessage = 
   | { type: 'gameState'; payload: GameStateSync }
+  | { type: 'playerTransforms'; payload: PlayerTransformsMessage }
+  | { type: 'playerVitals'; payload: PlayerVitalsMessage }
+  | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
   | { type: 'playerLeft'; payload: { playerId: string } }
   | { type: 'playerDied'; payload: PlayerDeathEvent }
@@ -46,6 +49,67 @@ export interface GameStateSync {
   redFlag: FlagSync;
   blueFlag: FlagSync;
   roundTimeRemaining: number;
+}
+
+export interface QuantizedPlayerTransform {
+  id: string;
+  px: number;
+  py: number;
+  pz: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  yaw: number;
+  pitch: number;
+  movementBits: number;
+  wallRunSide: -1 | 0 | 1;
+}
+
+export interface PlayerTransformsMessage {
+  tick: number;
+  serverTime: number;
+  players: QuantizedPlayerTransform[];
+}
+
+export interface PlayerVitalsSnapshot {
+  id: string;
+  name: string;
+  team: Team;
+  heroId: HeroId | null;
+  state: PlayerSnapshot['state'];
+  isReady: boolean;
+  isBot: boolean;
+  botDifficulty?: BotDifficulty;
+  botProfileId?: string;
+  health: number;
+  maxHealth: number;
+  ultimateCharge: number;
+  hasFlag: boolean;
+  movement: PlayerSnapshot['movement'];
+  abilities: PlayerSnapshot['abilities'];
+  stats: NonNullable<PlayerSnapshot['stats']>;
+  respawnTime: number | null;
+  spawnProtectionUntil: number | null;
+}
+
+export interface PlayerVitalsMessage {
+  tick: number;
+  serverTime: number;
+  players: PlayerVitalsSnapshot[];
+  removedPlayerIds?: string[];
+}
+
+export interface MatchSnapshotMessage {
+  tick: number;
+  serverTime: number;
+  phase: GamePhase;
+  mapSeed: number;
+  redScore: number;
+  blueScore: number;
+  redFlag: FlagSync;
+  blueFlag: FlagSync;
+  roundTimeRemaining: number;
+  phaseEndTime: number | null;
 }
 
 export interface FlagSync {

@@ -61,10 +61,11 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     const maxCharges = abilityDef.charges || 1;
     // Force 10s cooldown for blink
     const cooldownSeconds = abilityId === 'phantom_blink' ? 10 : (abilityDef.cooldown || 10);
+    const now = Date.now();
 
     // Check if on cooldown (charges depleted)
     const cooldownEnd = clientCooldownsRef.current[abilityId];
-    if (cooldownEnd && Date.now() < cooldownEnd) {
+    if (cooldownEnd && now < cooldownEnd) {
       return false;
     }
 
@@ -72,7 +73,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     let currentCharges = clientChargesRef.current[abilityId];
 
     // If charges undefined or cooldown just ended, reset to max
-    if (currentCharges === undefined || (cooldownEnd && Date.now() >= cooldownEnd && currentCharges === 0)) {
+    if (currentCharges === undefined || (cooldownEnd && now >= cooldownEnd && currentCharges === 0)) {
       currentCharges = maxCharges;
       clientChargesRef.current[abilityId] = maxCharges;
       setClientCharges(abilityId, maxCharges);
@@ -92,7 +93,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     // If no charges left, start cooldown to restore ALL charges
     if (newCharges === 0) {
       const cooldownMs = cooldownSeconds * 1000;
-      const endTime = Date.now() + cooldownMs;
+      const endTime = now + cooldownMs;
       clientCooldownsRef.current[abilityId] = endTime;
       setClientCooldown(abilityId, endTime);
     }
@@ -192,7 +193,9 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     const now = Date.now();
     let speedMultiplier = 1;
 
-    for (const [abilityId, state] of Object.entries(abilityActiveRef.current)) {
+    const activeAbilities = abilityActiveRef.current;
+    for (const abilityId in activeAbilities) {
+      const state = activeAbilities[abilityId];
       if (!state.active) continue;
 
       const abilityDef = ABILITY_DEFINITIONS[abilityId];
@@ -228,5 +231,4 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     updateActiveAbilities,
   };
 }
-
 

@@ -1851,7 +1851,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     <>
       <mesh
         key={`${resolvedHero}-${side}-knee-cap`}
-        position={[0, 0.015, -0.275]}
+        position={[0, 0.015, -0.185]}
         scale={[0.18, 0.08, 0.05]}
         castShadow={castShadow}
       >
@@ -1860,7 +1860,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       </mesh>
       <mesh
         key={`${resolvedHero}-${side}-knee-glow`}
-        position={[0, 0.018, -0.312]}
+        position={[0, 0.018, -0.222]}
         scale={[0.105, 0.028, 0.026]}
         castShadow={castShadow}
       >

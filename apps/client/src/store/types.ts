@@ -70,6 +70,7 @@ export interface DireBallData {
   velocity: { x: number; y: number; z: number };
   startTime: number;
   ownerId: string;
+  ownerTeam?: Team | null;
 }
 
 export interface VoidRayData {
@@ -209,6 +210,7 @@ export interface IceWallSegmentData {
   width: number;
   rotation: number; // Y rotation to face perpendicular to travel direction
   createdAt: number;
+  createdFrameAt?: number;
 }
 
 export interface IceWallRushData {

@@ -1,4 +1,6 @@
 // Phantom hero visual effects - split for maintainability
+import { BLINK_EFFECT_DURATION, SHADOW_ARRIVAL_DURATION } from './materials';
+import { getFrameClock } from '../../../utils/frameClock';
 
 // Core phantom effects
 export { BlinkTeleportEffect } from './blinkTeleport';
@@ -7,10 +9,10 @@ export { PhantomVeil3DEffect } from './phantomVeil';
 export { BLINK_EFFECT_DURATION, SHADOW_ARRIVAL_DURATION } from './materials';
 
 // Phantom abilities
-export { VoidRay, VoidRays } from './voidRay';
-export { VoidZone, VoidZones } from './voidZone';
+export { VoidRay, VoidRays, VoidRaysManager } from './voidRay';
+export { VoidZone, VoidZones, VoidZonesManager } from './voidZone';
 export { ShadowStepIndicator } from './shadowStepIndicator';
-export { DireBall, DireBalls } from './direBall';
+export { DireBallsManager, prewarmDireBallResources } from './direBall';
 
 // ============================================================================
 // EFFECT DATA TYPES
@@ -21,36 +23,139 @@ export interface BlinkEffectData {
   startPosition: { x: number; y: number; z: number };
   endPosition: { x: number; y: number; z: number };
   startTime: number;
+  startFrameTime: number;
 }
 
 export interface ShadowArrivalData {
   id: string;
   position: { x: number; y: number; z: number };
   startTime: number;
+  startFrameTime: number;
 }
 
 // ============================================================================
-// GLOBAL EFFECT STATE - accessible from PlayerController
+// FIXED EFFECT REGISTRY - accessible from PlayerController
 // ============================================================================
 
-export const blinkEffects: BlinkEffectData[] = [];
-export const shadowArrivals: ShadowArrivalData[] = [];
+interface EffectSlot<T> {
+  active: boolean;
+  endTime: number;
+  endFrameTime: number;
+  data: T;
+}
+
+const MAX_BLINK_EFFECTS = 16;
+const MAX_SHADOW_ARRIVALS = 24;
+
+const blinkEffectSlots: EffectSlot<BlinkEffectData>[] = Array.from({ length: MAX_BLINK_EFFECTS }, (_, i) => ({
+  active: false,
+  endTime: 0,
+  endFrameTime: 0,
+  data: {
+    id: `blink_slot_${i}`,
+    startPosition: { x: 0, y: 0, z: 0 },
+    endPosition: { x: 0, y: 0, z: 0 },
+    startTime: 0,
+    startFrameTime: 0,
+  },
+}));
+
+const shadowArrivalSlots: EffectSlot<ShadowArrivalData>[] = Array.from({ length: MAX_SHADOW_ARRIVALS }, (_, i) => ({
+  active: false,
+  endTime: 0,
+  endFrameTime: 0,
+  data: {
+    id: `shadow_slot_${i}`,
+    position: { x: 0, y: 0, z: 0 },
+    startTime: 0,
+    startFrameTime: 0,
+  },
+}));
+
 let effectIdCounter = 0;
+let nextBlinkSlot = 0;
+let nextShadowSlot = 0;
+let phantomEffectRevision = 0;
+
+function claimSlot<T>(slots: EffectSlot<T>[], cursor: number): { slot: EffectSlot<T>; nextCursor: number } {
+  for (let i = 0; i < slots.length; i++) {
+    const index = (cursor + i) % slots.length;
+    if (!slots[index].active) {
+      return { slot: slots[index], nextCursor: (index + 1) % slots.length };
+    }
+  }
+
+  return { slot: slots[cursor], nextCursor: (cursor + 1) % slots.length };
+}
 
 export function triggerBlinkEffect(start: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }) {
-  blinkEffects.push({
-    id: `blink_${effectIdCounter++}`,
-    startPosition: { ...start },
-    endPosition: { ...end },
-    startTime: Date.now(),
-  });
+  const now = Date.now();
+  const frameNow = getFrameClock().nowMs;
+  const claim = claimSlot(blinkEffectSlots, nextBlinkSlot);
+  nextBlinkSlot = claim.nextCursor;
+  claim.slot.active = true;
+  claim.slot.endTime = now + BLINK_EFFECT_DURATION;
+  claim.slot.endFrameTime = frameNow + BLINK_EFFECT_DURATION;
+  claim.slot.data.id = `blink_${effectIdCounter++}`;
+  claim.slot.data.startPosition.x = start.x;
+  claim.slot.data.startPosition.y = start.y;
+  claim.slot.data.startPosition.z = start.z;
+  claim.slot.data.endPosition.x = end.x;
+  claim.slot.data.endPosition.y = end.y;
+  claim.slot.data.endPosition.z = end.z;
+  claim.slot.data.startTime = now;
+  claim.slot.data.startFrameTime = frameNow;
+  phantomEffectRevision++;
 }
 
 export function triggerShadowArrival(position: { x: number; y: number; z: number }) {
-  shadowArrivals.push({
-    id: `shadow_${effectIdCounter++}`,
-    position: { ...position },
-    startTime: Date.now(),
-  });
+  const now = Date.now();
+  const frameNow = getFrameClock().nowMs;
+  const claim = claimSlot(shadowArrivalSlots, nextShadowSlot);
+  nextShadowSlot = claim.nextCursor;
+  claim.slot.active = true;
+  claim.slot.endTime = now + SHADOW_ARRIVAL_DURATION;
+  claim.slot.endFrameTime = frameNow + SHADOW_ARRIVAL_DURATION;
+  claim.slot.data.id = `shadow_${effectIdCounter++}`;
+  claim.slot.data.position.x = position.x;
+  claim.slot.data.position.y = position.y;
+  claim.slot.data.position.z = position.z;
+  claim.slot.data.startTime = now;
+  claim.slot.data.startFrameTime = frameNow;
+  phantomEffectRevision++;
 }
 
+export function collectActivePhantomEffects(
+  frameNow: number,
+  blinkOut: BlinkEffectData[],
+  shadowOut: ShadowArrivalData[]
+): { blinkCount: number; shadowCount: number; revision: number } {
+  blinkOut.length = 0;
+  shadowOut.length = 0;
+
+  for (const slot of blinkEffectSlots) {
+    if (!slot.active) continue;
+    if (frameNow >= slot.endFrameTime) {
+      slot.active = false;
+      phantomEffectRevision++;
+      continue;
+    }
+    blinkOut.push(slot.data);
+  }
+
+  for (const slot of shadowArrivalSlots) {
+    if (!slot.active) continue;
+    if (frameNow >= slot.endFrameTime) {
+      slot.active = false;
+      phantomEffectRevision++;
+      continue;
+    }
+    shadowOut.push(slot.data);
+  }
+
+  return {
+    blinkCount: blinkOut.length,
+    shadowCount: shadowOut.length,
+    revision: phantomEffectRevision,
+  };
+}

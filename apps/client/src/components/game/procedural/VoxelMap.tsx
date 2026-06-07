@@ -6,6 +6,7 @@ import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
 import { useVoxelMaterial } from './materials';
 import { VoxelChunkMesh } from './VoxelChunkMesh';
 import { WorldDressing } from './WorldDressing';
+import { clearVoxelGeometryCache } from './meshBuilder';
 import type { VoxelMaterialDetail } from '../visualQuality';
 
 interface VoxelMapProps {
@@ -27,6 +28,10 @@ export function VoxelMap({
   const manifest = useMemo(() => generateProceduralVoxelMap(mapSeed), [mapSeed]);
   const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
   const collidersLoadedRef = useRef(false);
+
+  useEffect(() => () => {
+    clearVoxelGeometryCache(manifest.id);
+  }, [manifest.id]);
 
   useEffect(() => {
     collidersLoadedRef.current = false;

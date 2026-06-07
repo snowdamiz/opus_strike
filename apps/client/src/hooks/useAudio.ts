@@ -1,5 +1,6 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { loadSettings, type ClientSettings } from '../store/settingsStore';
+import { recordSpawnMarker, recordSystemTime } from '../utils/perfMarks';
 
 interface AudioConfig {
   masterVolume: number;  // 0-100
@@ -115,7 +116,16 @@ const SOUND_EFFECTS = {
   gameMusic: { path: '/sounds/game.mp3', volume: 0.3 },
 } as const;
 
-type SoundName = keyof typeof SOUND_EFFECTS;
+export type SoundName = keyof typeof SOUND_EFFECTS;
+export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze';
+
+const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
+  menu: ['buttonHover', 'buttonClick'],
+  lobby: ['lobbyMusic', 'buttonHover', 'buttonClick'],
+  commonCombat: ['gameMusic', 'walk', 'slide', 'jetpack'],
+  phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomVoidRay'],
+  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
+};
 
 export function useAudio() {
   // Initialize audio context on first interaction
@@ -204,7 +214,18 @@ export function useAudio() {
       await ctx.resume();
     }
 
+    const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
+    if (name === 'phantomBasic') {
+      recordSpawnMarker('audio:phantomBasic');
+    }
+
+    const loadStart = hadLoadedBuffer ? 0 : performance.now();
     const sound = await loadSound(name);
+    if (!hadLoadedBuffer) {
+      recordSystemTime('audioLoads', performance.now() - loadStart);
+      recordSpawnMarker(`audioLoad:${name}`);
+    }
+
     if (!sound?.buffer) {
       console.warn(`[Audio] Cannot play ${name} - no buffer`);
       return;
@@ -346,6 +367,20 @@ export function useAudio() {
     await Promise.all(names.map(name => loadSound(name)));
   }, [initAudio, loadSound]);
 
+  const preloadSoundGroup = useCallback(async (group: SoundGroup) => {
+    await preloadSounds(SOUND_GROUPS[group]);
+  }, [preloadSounds]);
+
+  const preloadHeroSounds = useCallback(async (heroId: string | null | undefined) => {
+    if (heroId === 'phantom') {
+      await preloadSoundGroup('phantom');
+    } else if (heroId === 'blaze') {
+      await preloadSoundGroup('blaze');
+    } else {
+      await preloadSoundGroup('commonCombat');
+    }
+  }, [preloadSoundGroup]);
+
   // No cleanup on unmount - audio context is shared/singleton
 
   return {
@@ -356,6 +391,8 @@ export function useAudio() {
     updateSettings,
     toggleMute,
     preloadSounds,
+    preloadSoundGroup,
+    preloadHeroSounds,
     loadSound,
     isMuted: () => sharedConfig.muted,
     getMasterVolume: () => sharedConfig.masterVolume,

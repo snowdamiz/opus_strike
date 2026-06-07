@@ -156,6 +156,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const isGrapplingRef = useRef(false);
   const grappleTargetRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const activeGrappleLineIdRef = useRef<string | null>(null);
+  const activeGrappleStartTimeRef = useRef(0);
 
   // Swing state
   const isSwingingRef = useRef(false);
@@ -274,11 +275,12 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     });
 
+    const startTime = Date.now();
     useGameStore.getState().addGrappleLine({
       id: lineId,
       startPosition: startPos,
       endPosition: grapplePoint,
-      startTime: Date.now(),
+      startTime,
       ownerId: ctx.localPlayer.id,
       state: 'extending',
       launchSide,
@@ -288,6 +290,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     // Store target - pulling will start when hook reaches target
     grappleTargetRef.current = grapplePoint;
     activeGrappleLineIdRef.current = lineId;
+    activeGrappleStartTimeRef.current = startTime;
     isGrapplingRef.current = false;
     swingWasAirborneRef.current = false;
     return true;
@@ -443,6 +446,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     isSwingingRef.current = false;
     grappleTargetRef.current = null;
     activeGrappleLineIdRef.current = null;
+    activeGrappleStartTimeRef.current = 0;
     swingAttachPointRef.current = null;
     activeSwingLineIdRef.current = null;
     swingRopeLengthRef.current = 0;
@@ -475,6 +479,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       isSwingingRef.current = false;
       grappleTargetRef.current = null;
       activeGrappleLineIdRef.current = null;
+      activeGrappleStartTimeRef.current = 0;
       swingRopeLengthRef.current = 0;
       swingInitialRopeLengthRef.current = 0;
       swingWasAirborneRef.current = false;
@@ -490,43 +495,40 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     }
 
     const store = useGameStore.getState();
-    const activeLine = store.grappleLines.find(l => l.id === lineId);
-    if (!activeLine) {
-      releaseGrappleSwing(false);
-      return;
-    }
 
-    const toTarget = {
-      x: target.x - ctx.position.x,
-      y: target.y - ctx.position.y,
-      z: target.z - ctx.position.z,
-    };
-    const currentLength = Math.sqrt(toTarget.x ** 2 + toTarget.y ** 2 + toTarget.z ** 2);
+    const toTargetX = target.x - ctx.position.x;
+    const toTargetY = target.y - ctx.position.y;
+    const toTargetZ = target.z - ctx.position.z;
+    const currentLength = Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY + toTargetZ * toTargetZ);
     if (currentLength < WEB_SWING_ANCHOR_RELEASE_DISTANCE) {
       releaseGrappleSwing(true);
       return;
     }
 
-    const ropeDir = {
-      x: toTarget.x / currentLength,
-      y: toTarget.y / currentLength,
-      z: toTarget.z / currentLength,
-    };
+    const ropeDirX = toTargetX / currentLength;
+    const ropeDirY = toTargetY / currentLength;
+    const ropeDirZ = toTargetZ / currentLength;
 
     if (!isGrapplingRef.current) {
+      const activeLine = store.grappleLines.find(l => l.id === lineId);
+      if (!activeLine) {
+        releaseGrappleSwing(false);
+        return;
+      }
       if (activeLine.state !== 'attached' && activeLine.state !== 'pulling') return;
 
       isGrapplingRef.current = true;
       isSwingingRef.current = true;
+      activeGrappleStartTimeRef.current = activeLine.startTime;
       swingWasAirborneRef.current = !ctx.isGrounded;
       swingRopeLengthRef.current = Math.max(WEB_SWING_MIN_ROPE_LENGTH, currentLength * WEB_SWING_TAUTNESS);
       swingInitialRopeLengthRef.current = swingRopeLengthRef.current;
       swingMomentumRef.current = { x: ctx.velocity.x, y: ctx.velocity.y, z: ctx.velocity.z };
       store.updateGrappleLine(lineId, { state: 'pulling' });
 
-      ctx.velocity.x += ropeDir.x * WEB_SWING_INITIAL_PULL;
-      ctx.velocity.y += ropeDir.y * WEB_SWING_INITIAL_PULL;
-      ctx.velocity.z += ropeDir.z * WEB_SWING_INITIAL_PULL;
+      ctx.velocity.x += ropeDirX * WEB_SWING_INITIAL_PULL;
+      ctx.velocity.y += ropeDirY * WEB_SWING_INITIAL_PULL;
+      ctx.velocity.z += ropeDirZ * WEB_SWING_INITIAL_PULL;
       ctx.velocity.y = Math.max(ctx.velocity.y, 5);
     }
 
@@ -538,7 +540,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       swingWasAirborneRef.current = true;
     }
 
-    const elapsed = (Date.now() - activeLine.startTime) / 1000;
+    const elapsed = (Date.now() - activeGrappleStartTimeRef.current) / 1000;
     const duration = WEB_SWING_DURATION_SECONDS;
     if (elapsed >= duration || ctx.inputState.jump) {
       releaseGrappleSwing(ctx.inputState.jump);
@@ -546,47 +548,44 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     }
 
     const lookDir = calculateLookDirection(ctx.yaw, ctx.pitch);
-    const lookAlongRope = lookDir.x * ropeDir.x + lookDir.y * ropeDir.y + lookDir.z * ropeDir.z;
-    const lookPerp = {
-      x: lookDir.x - ropeDir.x * lookAlongRope,
-      y: lookDir.y - ropeDir.y * lookAlongRope,
-      z: lookDir.z - ropeDir.z * lookAlongRope,
-    };
-    const lookPerpLen = Math.sqrt(lookPerp.x ** 2 + lookPerp.y ** 2 + lookPerp.z ** 2);
+    const lookAlongRope = lookDir.x * ropeDirX + lookDir.y * ropeDirY + lookDir.z * ropeDirZ;
+    const lookPerpX = lookDir.x - ropeDirX * lookAlongRope;
+    const lookPerpY = lookDir.y - ropeDirY * lookAlongRope;
+    const lookPerpZ = lookDir.z - ropeDirZ * lookAlongRope;
+    const lookPerpLen = Math.sqrt(lookPerpX * lookPerpX + lookPerpY * lookPerpY + lookPerpZ * lookPerpZ);
 
     if (lookPerpLen > 0.05) {
       const lookInfluence = 0.35 + Math.min(lookPerpLen, 1) * 0.65;
       const lookForce = WEB_SWING_LOOK_STEER * lookInfluence * ctx.dt;
-      ctx.velocity.x += (lookPerp.x / lookPerpLen) * lookForce;
-      ctx.velocity.y += (lookPerp.y / lookPerpLen) * lookForce;
-      ctx.velocity.z += (lookPerp.z / lookPerpLen) * lookForce;
+      ctx.velocity.x += (lookPerpX / lookPerpLen) * lookForce;
+      ctx.velocity.y += (lookPerpY / lookPerpLen) * lookForce;
+      ctx.velocity.z += (lookPerpZ / lookPerpLen) * lookForce;
     }
 
     const isPureStrafing = ctx.inputState.moveLeft !== ctx.inputState.moveRight &&
       !ctx.inputState.moveForward &&
       !ctx.inputState.moveBackward;
-    const wishDir = { x: 0, y: 0, z: 0 };
-    if (isPureStrafing && ctx.inputState.moveLeft) { wishDir.x -= Math.cos(ctx.yaw); wishDir.z += Math.sin(ctx.yaw); }
-    if (isPureStrafing && ctx.inputState.moveRight) { wishDir.x += Math.cos(ctx.yaw); wishDir.z -= Math.sin(ctx.yaw); }
+    let wishDirX = 0;
+    let wishDirZ = 0;
+    if (isPureStrafing && ctx.inputState.moveLeft) { wishDirX -= Math.cos(ctx.yaw); wishDirZ += Math.sin(ctx.yaw); }
+    if (isPureStrafing && ctx.inputState.moveRight) { wishDirX += Math.cos(ctx.yaw); wishDirZ -= Math.sin(ctx.yaw); }
 
-    const wishLen = Math.sqrt(wishDir.x ** 2 + wishDir.z ** 2);
+    const wishLen = Math.sqrt(wishDirX * wishDirX + wishDirZ * wishDirZ);
     if (wishLen > 0.1) {
-      wishDir.x /= wishLen;
-      wishDir.z /= wishLen;
+      wishDirX /= wishLen;
+      wishDirZ /= wishLen;
 
-      const wishAlongRope = wishDir.x * ropeDir.x + wishDir.z * ropeDir.z;
-      const wishPerp = {
-        x: wishDir.x - ropeDir.x * wishAlongRope,
-        y: -ropeDir.y * wishAlongRope,
-        z: wishDir.z - ropeDir.z * wishAlongRope,
-      };
-      const wishPerpLen = Math.sqrt(wishPerp.x ** 2 + wishPerp.y ** 2 + wishPerp.z ** 2);
+      const wishAlongRope = wishDirX * ropeDirX + wishDirZ * ropeDirZ;
+      const wishPerpX = wishDirX - ropeDirX * wishAlongRope;
+      const wishPerpY = -ropeDirY * wishAlongRope;
+      const wishPerpZ = wishDirZ - ropeDirZ * wishAlongRope;
+      const wishPerpLen = Math.sqrt(wishPerpX * wishPerpX + wishPerpY * wishPerpY + wishPerpZ * wishPerpZ);
 
       if (wishPerpLen > 0.05) {
         const inputForce = WEB_SWING_INPUT_STEER * ctx.dt;
-        const tangentX = wishPerp.x / wishPerpLen;
-        const tangentY = wishPerp.y / wishPerpLen;
-        const tangentZ = wishPerp.z / wishPerpLen;
+        const tangentX = wishPerpX / wishPerpLen;
+        const tangentY = wishPerpY / wishPerpLen;
+        const tangentZ = wishPerpZ / wishPerpLen;
         ctx.velocity.x += tangentX * inputForce;
         ctx.velocity.y += tangentY * inputForce * 0.6;
         ctx.velocity.z += tangentZ * inputForce;
@@ -607,27 +606,27 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
 
     const ropeLength = swingRopeLengthRef.current || currentLength;
     if (currentLength > ropeLength) {
-      const awaySpeed = ctx.velocity.x * (-ropeDir.x) + ctx.velocity.y * (-ropeDir.y) + ctx.velocity.z * (-ropeDir.z);
+      const awaySpeed = ctx.velocity.x * -ropeDirX + ctx.velocity.y * -ropeDirY + ctx.velocity.z * -ropeDirZ;
       if (awaySpeed > 0) {
-        ctx.velocity.x += ropeDir.x * awaySpeed;
-        ctx.velocity.y += ropeDir.y * awaySpeed;
-        ctx.velocity.z += ropeDir.z * awaySpeed;
+        ctx.velocity.x += ropeDirX * awaySpeed;
+        ctx.velocity.y += ropeDirY * awaySpeed;
+        ctx.velocity.z += ropeDirZ * awaySpeed;
       }
 
       const overExtend = currentLength - ropeLength;
       const tensionForce = overExtend * WEB_SWING_TENSION_FORCE * ctx.dt;
-      ctx.velocity.x += ropeDir.x * tensionForce;
-      ctx.velocity.y += ropeDir.y * tensionForce;
-      ctx.velocity.z += ropeDir.z * tensionForce;
+      ctx.velocity.x += ropeDirX * tensionForce;
+      ctx.velocity.y += ropeDirY * tensionForce;
+      ctx.velocity.z += ropeDirZ * tensionForce;
 
-      ctx.position.x = target.x - ropeDir.x * ropeLength;
-      ctx.position.y = target.y - ropeDir.y * ropeLength;
-      ctx.position.z = target.z - ropeDir.z * ropeLength;
+      ctx.position.x = target.x - ropeDirX * ropeLength;
+      ctx.position.y = target.y - ropeDirY * ropeLength;
+      ctx.position.z = target.z - ropeDirZ * ropeLength;
     }
 
-    ctx.velocity.x += ropeDir.x * WEB_SWING_NATURAL_PULL * ctx.dt;
-    ctx.velocity.y += ropeDir.y * WEB_SWING_NATURAL_PULL * ctx.dt * 0.35;
-    ctx.velocity.z += ropeDir.z * WEB_SWING_NATURAL_PULL * ctx.dt;
+    ctx.velocity.x += ropeDirX * WEB_SWING_NATURAL_PULL * ctx.dt;
+    ctx.velocity.y += ropeDirY * WEB_SWING_NATURAL_PULL * ctx.dt * 0.35;
+    ctx.velocity.z += ropeDirZ * WEB_SWING_NATURAL_PULL * ctx.dt;
 
     if (ctx.position.y < target.y) {
       const heightDiff = target.y - ctx.position.y;

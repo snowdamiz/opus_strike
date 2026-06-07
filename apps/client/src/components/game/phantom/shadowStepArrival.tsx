@@ -1,7 +1,9 @@
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import { getFrameClock } from '../../../utils/frameClock';
+import { SHARED_GEOMETRIES } from '../effectResources';
 import { getShadowArrivalMaterial, SHADOW_ARRIVAL_DURATION } from './materials';
 
 // ============================================================================
@@ -18,8 +20,31 @@ export const ShadowStepArrivalEffect = React.memo(({ position, startTime }: Shad
   const groupRef = useRef<THREE.Group>(null);
   const shadowRef = useRef<THREE.Mesh>(null);
   const ringsRef = useRef<THREE.Group>(null);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
   
   const shadowMaterial = useMemo(() => getShadowArrivalMaterial().clone(), []);
+  const ringMaterials = useMemo(() => (
+    Array.from({ length: 3 }, () => new THREE.MeshBasicMaterial({
+      color: 0x7c3aed,
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    }))
+  ), []);
+  const groundMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: 0x1a0033,
+    transparent: true,
+    opacity: 0.7,
+    depthWrite: false,
+  }), []);
+
+  useEffect(() => () => {
+    shadowMaterial.dispose();
+    ringMaterials.forEach(material => material.dispose());
+    groundMaterial.dispose();
+  }, [groundMaterial, ringMaterials, shadowMaterial]);
   
   // Create multiple rising shadow tendrils
   const tendrilPositions = useMemo(() => {
@@ -36,7 +61,7 @@ export const ShadowStepArrivalEffect = React.memo(({ position, startTime }: Shad
   }, []);
   
   useFrame((_, delta) => {
-    const elapsed = Date.now() - startTime;
+    const elapsed = getFrameClock().nowMs - startFrameTimeRef.current;
     const progress = Math.min(1, elapsed / SHADOW_ARRIVAL_DURATION);
     
     if (shadowMaterial.uniforms) {
@@ -55,18 +80,11 @@ export const ShadowStepArrivalEffect = React.memo(({ position, startTime }: Shad
         const ringProgress = Math.max(0, progress - i * 0.15);
         const scale = 1 + ringProgress * 3;
         ring.scale.setScalar(scale);
-        (ring as THREE.Mesh).material = new THREE.MeshBasicMaterial({
-          color: 0x7c3aed,
-          transparent: true,
-          opacity: Math.max(0, 0.5 - ringProgress * 0.5),
-          side: THREE.DoubleSide,
-          blending: THREE.AdditiveBlending,
-        });
+        const material = (ring as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        material.opacity = Math.max(0, 0.5 - ringProgress * 0.5);
       });
     }
   });
-  
-  if ((Date.now() - startTime) > SHADOW_ARRIVAL_DURATION) return null;
   
   return (
     <group ref={groupRef} position={[position.x, position.y - 0.9, position.z]}>
@@ -76,43 +94,30 @@ export const ShadowStepArrivalEffect = React.memo(({ position, startTime }: Shad
           key={i}
           position={[t.x, 1, t.z]}
           rotation-y={t.rotation}
-          scale={[t.scale * 0.5, t.scale * 2, 1]}
+          scale={[t.scale * 0.25, t.scale * 4, 1]}
+          geometry={SHARED_GEOMETRIES.plane}
         >
-          <planeGeometry args={[0.5, 2]} />
           <primitive object={shadowMaterial} />
         </mesh>
       ))}
       
       {/* Central shadow column */}
-      <mesh ref={shadowRef}>
-        <cylinderGeometry args={[0.5, 0.8, 3, 16, 4, true]} />
+      <mesh ref={shadowRef} geometry={SHARED_GEOMETRIES.cylinderOpen16} scale={[0.65, 3, 0.65]}>
         <primitive object={shadowMaterial} />
       </mesh>
       
       {/* Expanding rings */}
       <group ref={ringsRef}>
         {[0, 1, 2].map(i => (
-          <mesh key={i} rotation-x={-Math.PI / 2} position-y={0.1 + i * 0.1}>
-            <ringGeometry args={[0.5, 0.7, 32]} />
-            <meshBasicMaterial 
-              color={0x7c3aed}
-              transparent
-              opacity={0.5}
-              side={THREE.DoubleSide}
-              blending={THREE.AdditiveBlending}
-            />
+          <mesh key={i} rotation-x={-Math.PI / 2} position-y={0.1 + i * 0.1} geometry={SHARED_GEOMETRIES.ring32}>
+            <primitive object={ringMaterials[i]} />
           </mesh>
         ))}
       </group>
       
       {/* Ground impact circle */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.02}>
-        <circleGeometry args={[1.5, 32]} />
-        <meshBasicMaterial 
-          color={0x1a0033}
-          transparent
-          opacity={0.7}
-        />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.02} geometry={SHARED_GEOMETRIES.circle32} scale={[1.5, 1.5, 1]}>
+        <primitive object={groundMaterial} />
       </mesh>
     </group>
   );
@@ -125,4 +130,3 @@ export const ShadowStepArrivalEffect = React.memo(({ position, startTime }: Shad
     prev.startTime === next.startTime
   );
 });
-

@@ -1,8 +1,9 @@
-import { useRef, useMemo, useEffect } from 'react';
+import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
+import { getFrameClock } from '../../../utils/frameClock';
 
 interface VoidZoneProps {
   position: { x: number; y: number; z: number };
@@ -21,6 +22,12 @@ let sharedVortexMaterial: THREE.ShaderMaterial | null = null;
 let sharedEventHorizonMaterial: THREE.ShaderMaterial | null = null;
 let sharedAccretionMaterial: THREE.ShaderMaterial | null = null;
 let sharedLightningMaterial: THREE.ShaderMaterial | null = null;
+const VOID_ZONE_VORTEX_GEOMETRY = new THREE.CircleGeometry(1, 128);
+const VOID_ZONE_EVENT_HORIZON_GEOMETRY = new THREE.CircleGeometry(1, 64);
+const VOID_ZONE_RING_INNER_GEOMETRY = new THREE.RingGeometry(0.28, 0.35, 64);
+const VOID_ZONE_RING_MIDDLE_GEOMETRY = new THREE.RingGeometry(0.45, 0.55, 64);
+const VOID_ZONE_RING_OUTER_GEOMETRY = new THREE.RingGeometry(0.7, 0.8, 64);
+const VOID_ZONE_BOUNDARY_RING_GEOMETRY = new THREE.RingGeometry(0.95, 1.05, 64);
 
 function getVortexMaterial(): THREE.ShaderMaterial {
   if (!sharedVortexMaterial) {
@@ -248,8 +255,25 @@ if (typeof window !== 'undefined') {
   });
 }
 
-const PARTICLE_COUNT = 60;
-const DEBRIS_COUNT = 20;
+export function prewarmVoidZoneResources(renderer?: THREE.WebGLRenderer): void {
+  const vortexMaterial = getVortexMaterial();
+  const eventHorizonMaterial = getEventHorizonMaterial();
+  const accretionMaterial = getAccretionMaterial();
+
+  if (!renderer) return;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+  camera.position.z = 4;
+  const vortex = new THREE.Mesh(VOID_ZONE_VORTEX_GEOMETRY, vortexMaterial);
+  const eventHorizon = new THREE.Mesh(VOID_ZONE_EVENT_HORIZON_GEOMETRY, eventHorizonMaterial);
+  const accretion = new THREE.Mesh(VOID_ZONE_RING_MIDDLE_GEOMETRY, accretionMaterial);
+  scene.add(vortex, eventHorizon, accretion);
+  renderer.compile(scene, camera);
+}
+
+const PARTICLE_COUNT = 40;
+const DEBRIS_COUNT = 12;
 const VOID_ZONE_DAMAGE = 15;
 const VOID_ZONE_DAMAGE_INTERVAL = 500;
 
@@ -262,11 +286,7 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
   const debrisRef = useRef<THREE.Points>(null);
   const lastDamageTickRef = useRef<Map<string, number>>(new Map());
   const timeRef = useRef(0);
-  
-  const getProgress = () => {
-    const elapsed = (Date.now() - startTime) / 1000;
-    return Math.min(1, elapsed / duration);
-  };
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
 
   const vortexMaterial = useMemo(() => getVortexMaterial().clone(), []);
   const eventHorizonMaterial = useMemo(() => getEventHorizonMaterial().clone(), []);
@@ -354,7 +374,8 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
   useFrame((_, delta) => {
     if (!groupRef.current) return;
 
-    const progress = getProgress();
+    const frameClock = getFrameClock();
+    const progress = Math.min(1, ((frameClock.nowMs - startFrameTimeRef.current) / 1000) / duration);
     
     if (progress >= 1) {
       groupRef.current.visible = false;
@@ -408,8 +429,8 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
         r -= delta * 0.3;
         
         if (r < 0.2) {
-          r = radius * (0.7 + Math.random() * 0.3);
-          angle = Math.random() * Math.PI * 2;
+          r = radius * (0.7 + ((i * 17) % 10) * 0.03);
+          angle += Math.PI * 1.381966;
         }
         
         (angleAttrs as THREE.BufferAttribute).setX(i, angle);
@@ -444,10 +465,10 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
         
         const dist = Math.sqrt(x * x + z * z);
         if (dist < 0.3 || y < 0) {
-          const angle = Math.random() * Math.PI * 2;
-          const r = radius * (0.8 + Math.random() * 0.3);
+          const angle = (i * 2.399963 + time * 0.37) % (Math.PI * 2);
+          const r = radius * (0.8 + ((i * 23) % 7) * 0.04);
           x = Math.cos(angle) * r;
-          y = 0.5 + Math.random() * 1.5;
+          y = 0.5 + ((i * 31) % 11) * 0.13;
           z = Math.sin(angle) * r;
         }
         
@@ -459,7 +480,7 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
       debrisMaterial.opacity = currentOpacity * 0.8;
     }
 
-    const now = Date.now();
+    const now = frameClock.nowMs;
     const { players, localPlayer } = useGameStore.getState();
     
     for (const [playerId, player] of players) {
@@ -483,19 +504,22 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
 
   return (
     <group ref={groupRef} position={[position.x, position.y + 0.02, position.z]}>
-      <mesh ref={vortexRef} rotation-x={-Math.PI / 2}>
-        <circleGeometry args={[radius, 128]} />
+      <mesh ref={vortexRef} rotation-x={-Math.PI / 2} geometry={VOID_ZONE_VORTEX_GEOMETRY} scale={[radius, radius, 1]}>
         <primitive object={vortexMaterial} />
       </mesh>
 
-      <mesh ref={eventHorizonRef} rotation-x={-Math.PI / 2} position-y={0.03}>
-        <circleGeometry args={[radius * 0.25, 64]} />
+      <mesh
+        ref={eventHorizonRef}
+        rotation-x={-Math.PI / 2}
+        position-y={0.03}
+        geometry={VOID_ZONE_EVENT_HORIZON_GEOMETRY}
+        scale={[radius * 0.25, radius * 0.25, 1]}
+      >
         <primitive object={eventHorizonMaterial} />
       </mesh>
 
       <group ref={innerRingsRef}>
-        <mesh rotation-x={-Math.PI / 2} position-y={0.04}>
-          <ringGeometry args={[radius * 0.28, radius * 0.35, 64]} />
+        <mesh rotation-x={-Math.PI / 2} position-y={0.04} geometry={VOID_ZONE_RING_INNER_GEOMETRY} scale={[radius, radius, 1]}>
           <meshBasicMaterial 
             color={0xc084fc}
             transparent
@@ -505,8 +529,7 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
           />
         </mesh>
         
-        <mesh rotation-x={-Math.PI / 2} position-y={0.05}>
-          <ringGeometry args={[radius * 0.45, radius * 0.55, 64]} />
+        <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={VOID_ZONE_RING_MIDDLE_GEOMETRY} scale={[radius, radius, 1]}>
           <meshBasicMaterial 
             color={0x7c3aed}
             transparent
@@ -516,8 +539,7 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
           />
         </mesh>
         
-        <mesh rotation-x={-Math.PI / 2} position-y={0.06}>
-          <ringGeometry args={[radius * 0.7, radius * 0.8, 64]} />
+        <mesh rotation-x={-Math.PI / 2} position-y={0.06} geometry={VOID_ZONE_RING_OUTER_GEOMETRY} scale={[radius, radius, 1]}>
           <meshBasicMaterial 
             color={0x9333ea}
             transparent
@@ -528,8 +550,7 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
         </mesh>
       </group>
 
-      <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
-        <ringGeometry args={[radius * 0.95, radius * 1.05, 64]} />
+      <mesh rotation-x={-Math.PI / 2} position-y={0.08} geometry={VOID_ZONE_BOUNDARY_RING_GEOMETRY} scale={[radius, radius, 1]}>
         <meshBasicMaterial 
           color={0xc084fc}
           transparent
@@ -588,25 +609,9 @@ interface VoidZonesProps {
 }
 
 export function VoidZones({ zones }: VoidZonesProps) {
-  const clearExpiredVoidZones = useGameStore(state => state.clearExpiredVoidZones);
-  
-  useEffect(() => {
-    const interval = setInterval(() => {
-      clearExpiredVoidZones();
-    }, 1000);
-    
-    return () => clearInterval(interval);
-  }, [clearExpiredVoidZones]);
-  
-  const now = Date.now();
-  const activeZones = zones.filter(zone => {
-    const elapsed = (now - zone.startTime) / 1000;
-    return elapsed < zone.duration;
-  });
-
   return (
     <>
-      {activeZones.map((zone) => (
+      {zones.map((zone) => (
         <VoidZone
           key={zone.id}
           position={zone.position}
@@ -618,4 +623,9 @@ export function VoidZones({ zones }: VoidZonesProps) {
       ))}
     </>
   );
+}
+
+export function VoidZonesManager() {
+  const zones = useGameStore(state => state.voidZones);
+  return <VoidZones zones={zones} />;
 }

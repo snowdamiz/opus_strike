@@ -1,18 +1,20 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
+import { recordSystemTime, registerFrameSystem } from '../../utils/perfMarks';
+import { getFrameClock } from '../../utils/frameClock';
+import { SHARED_GEOMETRIES } from './effectResources';
 import {
-  BlinkTeleportEffect,
   ShadowStepArrivalEffect,
   PhantomVeil3DEffect,
   BLINK_EFFECT_DURATION,
-  SHADOW_ARRIVAL_DURATION,
-  blinkEffects,
-  shadowArrivals,
+  collectActivePhantomEffects,
   type BlinkEffectData,
   type ShadowArrivalData,
 } from './phantom';
+import { getRiftMaterial } from './phantom/materials';
 
 // Re-export trigger functions for external use
 export { triggerBlinkEffect, triggerShadowArrival } from './phantom';
@@ -22,14 +24,261 @@ export { triggerBlinkEffect, triggerShadowArrival } from './phantom';
 // Tracks and renders active phantom effects
 // ============================================================================
 
+const POOLED_BLINK_EFFECTS = 16;
+const BLINK_TRAIL_PARTICLE_COUNT = 50;
+const BLINK_BURST_PARTICLE_COUNT = 30;
+const BLINK_SLOT_INDICES = Array.from({ length: POOLED_BLINK_EFFECTS }, (_, i) => i);
+const BLINK_PILLAR_MATERIAL = new THREE.MeshBasicMaterial({
+  color: 0x7c3aed,
+  transparent: true,
+  opacity: 0.4,
+  blending: THREE.AdditiveBlending,
+  side: THREE.DoubleSide,
+});
+
+interface BlinkRenderSlot {
+  effectId: string;
+  startFrameTime: number;
+  group: THREE.Group | null;
+  startGroup: THREE.Group | null;
+  endGroup: THREE.Group | null;
+  trail: THREE.Points | null;
+  trailGeometry: THREE.BufferGeometry;
+  burstGeometry: THREE.BufferGeometry;
+  startRiftMaterial: THREE.ShaderMaterial;
+  endRiftMaterial: THREE.ShaderMaterial;
+  particleMaterial: THREE.PointsMaterial;
+}
+
+function createBlinkTrailGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BLINK_TRAIL_PARTICLE_COUNT * 3), 3));
+  geometry.setAttribute('size', new THREE.BufferAttribute(new Float32Array(BLINK_TRAIL_PARTICLE_COUNT), 1));
+  geometry.setAttribute('random', new THREE.BufferAttribute(new Float32Array(BLINK_TRAIL_PARTICLE_COUNT), 1));
+  return geometry;
+}
+
+function createBlinkBurstGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BLINK_BURST_PARTICLE_COUNT * 3), 3));
+  geometry.setAttribute('velocity', new THREE.BufferAttribute(new Float32Array(BLINK_BURST_PARTICLE_COUNT * 3), 3));
+  geometry.setAttribute('size', new THREE.BufferAttribute(new Float32Array(BLINK_BURST_PARTICLE_COUNT), 1));
+  return geometry;
+}
+
+function createBlinkRenderSlot(): BlinkRenderSlot {
+  return {
+    effectId: '',
+    startFrameTime: 0,
+    group: null,
+    startGroup: null,
+    endGroup: null,
+    trail: null,
+    trailGeometry: createBlinkTrailGeometry(),
+    burstGeometry: createBlinkBurstGeometry(),
+    startRiftMaterial: getRiftMaterial().clone(),
+    endRiftMaterial: getRiftMaterial().clone(),
+    particleMaterial: new THREE.PointsMaterial({
+      color: 0xc084fc,
+      size: 0.15,
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      sizeAttenuation: true,
+    }),
+  };
+}
+
+function ensureBlinkRenderSlot(renderSlots: BlinkRenderSlot[], index: number): BlinkRenderSlot {
+  let slot = renderSlots[index];
+  if (!slot) {
+    slot = createBlinkRenderSlot();
+    renderSlots[index] = slot;
+  }
+  return slot;
+}
+
+function refillBlinkSlot(slot: BlinkRenderSlot, effect: BlinkEffectData): void {
+  const trailPositions = slot.trailGeometry.attributes.position as THREE.BufferAttribute;
+  const trailSizes = slot.trailGeometry.attributes.size as THREE.BufferAttribute;
+  const trailRandoms = slot.trailGeometry.attributes.random as THREE.BufferAttribute;
+  const dx = effect.endPosition.x - effect.startPosition.x;
+  const dy = effect.endPosition.y - effect.startPosition.y;
+  const dz = effect.endPosition.z - effect.startPosition.z;
+
+  for (let i = 0; i < BLINK_TRAIL_PARTICLE_COUNT; i++) {
+    const t = i / BLINK_TRAIL_PARTICLE_COUNT;
+    trailPositions.setXYZ(
+      i,
+      effect.startPosition.x + dx * t + (Math.random() - 0.5) * 0.5,
+      effect.startPosition.y + dy * t + (Math.random() - 0.5) * 0.5,
+      effect.startPosition.z + dz * t + (Math.random() - 0.5) * 0.5
+    );
+    trailSizes.setX(i, Math.random() * 0.15 + 0.05);
+    trailRandoms.setX(i, Math.random());
+  }
+
+  trailPositions.needsUpdate = true;
+  trailSizes.needsUpdate = true;
+  trailRandoms.needsUpdate = true;
+
+  const burstPositions = slot.burstGeometry.attributes.position as THREE.BufferAttribute;
+  const burstVelocities = slot.burstGeometry.attributes.velocity as THREE.BufferAttribute;
+  const burstSizes = slot.burstGeometry.attributes.size as THREE.BufferAttribute;
+
+  for (let i = 0; i < BLINK_BURST_PARTICLE_COUNT; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.random() * Math.PI;
+    const speed = Math.random() * 3 + 2;
+    burstPositions.setXYZ(i, 0, 0, 0);
+    burstVelocities.setXYZ(
+      i,
+      Math.sin(phi) * Math.cos(theta) * speed,
+      Math.cos(phi) * speed,
+      Math.sin(phi) * Math.sin(theta) * speed
+    );
+    burstSizes.setX(i, Math.random() * 0.2 + 0.1);
+  }
+
+  burstPositions.needsUpdate = true;
+  burstVelocities.needsUpdate = true;
+  burstSizes.needsUpdate = true;
+
+  slot.startGroup?.position.set(effect.startPosition.x, effect.startPosition.y, effect.startPosition.z);
+  slot.startGroup?.scale.setScalar(0.01);
+  slot.startGroup?.rotation.set(0, 0, 0);
+  slot.endGroup?.position.set(effect.endPosition.x, effect.endPosition.y, effect.endPosition.z);
+  slot.endGroup?.scale.setScalar(0.01);
+  slot.endGroup?.rotation.set(0, 0, 0);
+  if (slot.endGroup) slot.endGroup.visible = false;
+  slot.particleMaterial.opacity = 0.8;
+}
+
+function updatePooledBlinkEffects(
+  renderSlots: BlinkRenderSlot[],
+  effects: BlinkEffectData[],
+  frameNow: number,
+  delta: number,
+  elapsedSeconds: number
+): void {
+  for (let i = 0; i < POOLED_BLINK_EFFECTS; i++) {
+    const slot = renderSlots[i];
+    if (!slot) continue;
+
+    const effect = effects[i];
+    if (!effect) {
+      if (slot.group) slot.group.visible = false;
+      continue;
+    }
+
+    if (slot.effectId !== effect.id) {
+      slot.effectId = effect.id;
+      slot.startFrameTime = effect.startFrameTime;
+      refillBlinkSlot(slot, effect);
+    }
+
+    if (slot.group) slot.group.visible = true;
+
+    const elapsed = frameNow - slot.startFrameTime;
+    const progress = Math.min(1, elapsed / BLINK_EFFECT_DURATION);
+
+    if (slot.startRiftMaterial.uniforms) {
+      slot.startRiftMaterial.uniforms.time.value += delta;
+      slot.startRiftMaterial.uniforms.progress.value = progress;
+    }
+    if (slot.endRiftMaterial.uniforms) {
+      slot.endRiftMaterial.uniforms.time.value += delta;
+      slot.endRiftMaterial.uniforms.progress.value = progress;
+    }
+
+    if (slot.startGroup) {
+      const startScale = progress < 0.3 ? progress / 0.3 : 1 - (progress - 0.3) / 0.7;
+      slot.startGroup.scale.setScalar(Math.max(0.01, startScale * 2));
+      slot.startGroup.rotation.z += delta * 5;
+    }
+
+    if (slot.endGroup) {
+      const endProgress = Math.max(0, (progress - 0.2) / 0.8);
+      const endScale = endProgress < 0.4 ? endProgress / 0.4 : 1 - (endProgress - 0.4) / 0.6;
+      slot.endGroup.scale.setScalar(Math.max(0.01, endScale * 2));
+      slot.endGroup.rotation.z -= delta * 5;
+      slot.endGroup.visible = progress > 0.1;
+    }
+
+    if (slot.trail) {
+      const positions = slot.trail.geometry.attributes.position as THREE.BufferAttribute;
+      const randoms = slot.trail.geometry.attributes.random as THREE.BufferAttribute;
+
+      for (let particleIndex = 0; particleIndex < positions.count; particleIndex++) {
+        const random = randoms.getX(particleIndex);
+        positions.setY(
+          particleIndex,
+          positions.getY(particleIndex) + Math.sin(elapsedSeconds * 5 + random * 10) * 0.01
+        );
+      }
+
+      positions.needsUpdate = true;
+      slot.particleMaterial.opacity = (1 - progress) * 0.8;
+    }
+  }
+}
+
+function PooledBlinkTeleportSlots({ renderSlots }: { renderSlots: BlinkRenderSlot[] }) {
+  useEffect(() => () => {
+    for (const slot of renderSlots) {
+      slot.trailGeometry.dispose();
+      slot.burstGeometry.dispose();
+      slot.startRiftMaterial.dispose();
+      slot.endRiftMaterial.dispose();
+      slot.particleMaterial.dispose();
+    }
+  }, [renderSlots]);
+
+  return (
+    <>
+      {BLINK_SLOT_INDICES.map((slotIndex) => {
+        const slot = ensureBlinkRenderSlot(renderSlots, slotIndex);
+        return (
+          <group key={slotIndex} ref={el => { slot.group = el; }} visible={false}>
+            <group ref={el => { slot.startGroup = el; }}>
+              <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.circle32} scale={[1.5, 1.5, 1]}>
+                <primitive object={slot.startRiftMaterial} />
+              </mesh>
+              <mesh geometry={SHARED_GEOMETRIES.cylinderOpen16} scale={[0.4, 3, 0.4]} material={BLINK_PILLAR_MATERIAL} />
+            </group>
+
+            <group ref={el => { slot.endGroup = el; }}>
+              <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.circle32} scale={[1.5, 1.5, 1]}>
+                <primitive object={slot.endRiftMaterial} />
+              </mesh>
+              <points geometry={slot.burstGeometry}>
+                <primitive object={slot.particleMaterial} />
+              </points>
+            </group>
+
+            <points ref={el => { slot.trail = el; }} geometry={slot.trailGeometry}>
+              <primitive object={slot.particleMaterial} />
+            </points>
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
 export function PhantomEffectsManager() {
   // Use refs for effect arrays to avoid setState in useFrame (prevents 60fps re-renders)
   const activeBlinkEffectsRef = useRef<BlinkEffectData[]>([]);
   const activeShadowArrivalsRef = useRef<ShadowArrivalData[]>([]);
+  const blinkRenderSlotsRef = useRef<BlinkRenderSlot[]>([]);
 
   // Version counters to trigger re-renders only when effect counts change
-  const [blinkVersion, setBlinkVersion] = useState(0);
-  const [shadowVersion, setShadowVersion] = useState(0);
+  const [, setBlinkVersion] = useState(0);
+  const [, setShadowVersion] = useState(0);
+  const lastBlinkCountRef = useRef(0);
+  const lastShadowCountRef = useRef(0);
+  const lastRevisionRef = useRef(0);
 
   const { localPlayer, ultimateEffectActive, ultimateEffectType } = useGameStore(
     useShallow(state => ({
@@ -39,34 +288,42 @@ export function PhantomEffectsManager() {
     }))
   );
 
-  useFrame(() => {
-    const now = Date.now();
+  useEffect(() => registerFrameSystem('phantom-effects'), []);
 
-    // Clean up expired blink effects
-    const activeBlinks = blinkEffects.filter(e => now - e.startTime < BLINK_EFFECT_DURATION);
-    blinkEffects.length = 0;
-    blinkEffects.push(...activeBlinks);
+  useFrame((_, delta) => {
+    const frameStart = performance.now();
+    const frameClock = getFrameClock();
+    const snapshot = collectActivePhantomEffects(
+      frameClock.nowMs,
+      activeBlinkEffectsRef.current,
+      activeShadowArrivalsRef.current
+    );
+    updatePooledBlinkEffects(
+      blinkRenderSlotsRef.current,
+      activeBlinkEffectsRef.current,
+      frameClock.nowMs,
+      delta,
+      frameClock.elapsedSeconds
+    );
 
-    // Update ref directly (no re-render triggered)
-    activeBlinkEffectsRef.current = activeBlinks;
-
-    // Only trigger re-render if count changed
-    if (activeBlinks.length !== blinkVersion) {
-      setBlinkVersion(activeBlinks.length);
+    if (
+      snapshot.blinkCount !== lastBlinkCountRef.current ||
+      snapshot.revision !== lastRevisionRef.current
+    ) {
+      lastBlinkCountRef.current = snapshot.blinkCount;
+      setBlinkVersion(version => version + 1);
     }
 
-    // Clean up expired shadow arrivals
-    const activeArrivals = shadowArrivals.filter(e => now - e.startTime < SHADOW_ARRIVAL_DURATION);
-    shadowArrivals.length = 0;
-    shadowArrivals.push(...activeArrivals);
-
-    // Update ref directly (no re-render triggered)
-    activeShadowArrivalsRef.current = activeArrivals;
-
-    // Only trigger re-render if count changed
-    if (activeArrivals.length !== shadowVersion) {
-      setShadowVersion(activeArrivals.length);
+    if (
+      snapshot.shadowCount !== lastShadowCountRef.current ||
+      snapshot.revision !== lastRevisionRef.current
+    ) {
+      lastShadowCountRef.current = snapshot.shadowCount;
+      setShadowVersion(version => version + 1);
     }
+
+    lastRevisionRef.current = snapshot.revision;
+    recordSystemTime('phantomEffects', performance.now() - frameStart);
   });
   
   const showVeilEffect = ultimateEffectActive && ultimateEffectType === 'phantom_veil' && localPlayer;
@@ -74,19 +331,12 @@ export function PhantomEffectsManager() {
   return (
     <group>
       {/* Blink teleport effects */}
-      {activeBlinkEffectsRef.current.map(effect => (
-        <BlinkTeleportEffect
-          key={`${effect.id}_${blinkVersion}`}
-          startPosition={effect.startPosition}
-          endPosition={effect.endPosition}
-          startTime={effect.startTime}
-        />
-      ))}
+      <PooledBlinkTeleportSlots renderSlots={blinkRenderSlotsRef.current} />
 
       {/* Shadow Step arrival effects */}
       {activeShadowArrivalsRef.current.map(effect => (
         <ShadowStepArrivalEffect
-          key={`${effect.id}_${shadowVersion}`}
+          key={effect.id}
           position={effect.position}
           startTime={effect.startTime}
         />

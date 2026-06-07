@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { DRAG_HOOK_MAX_DISTANCE, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
-import { getOwnerVisualPosition } from './ownerPosition';
+import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -15,6 +16,7 @@ import {
 import {
   HEAVY_HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
+  ROPE_SEGMENT_INDICES,
   createRopePoints,
   updatePliableRopePoints,
   updateRopeSegment,
@@ -34,6 +36,11 @@ const DRAG_HOOK_HIT_RADIUS = 1.2;
 
 // Get shared materials from centralized resources
 const getHookMaterials = () => getHookshotMaterials();
+const DRAG_HOOK_OUTER_GLOW_MATERIAL = new THREE.MeshBasicMaterial({
+  color: HOOKSHOT_COLORS.energyGlow,
+  transparent: true,
+  opacity: 0.2,
+});
 
 interface DragHookProps {
   hook: DragHookData;
@@ -59,6 +66,7 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   const hookStateRef = useRef<'extending' | 'retracting'>(hook.state === 'flying' ? 'extending' : 'retracting');
   const currentPosRef = useRef({ x: hook.position.x, y: hook.position.y, z: hook.position.z });
   const playerPosRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
+  const ownerVisualPositionRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
   const smoothedSocketRef = useRef(new THREE.Vector3(hook.startPosition.x, hook.startPosition.y, hook.startPosition.z));
   const ropeLagRef = useRef(new THREE.Vector3());
   const ropeControlARef = useRef(new THREE.Vector3());
@@ -94,7 +102,8 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     const storeState = useGameStore.getState();
     const { players, localPlayer } = storeState;
     
-    const targetPosition = getOwnerVisualPosition(
+    const targetPosition = writeOwnerVisualPosition(
+      ownerVisualPositionRef.current,
       hook.ownerId,
       HOOKSHOT_CHAIN_SOCKET.handHeight,
       hook.startPosition,
@@ -278,32 +287,30 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
         
         {/* Energy glow - BIGGER and more intense */}
         <mesh ref={glowRef} geometry={SHARED_GEOMETRIES.sphere8} scale={0.35} material={HOOK_MATERIALS.glow} />
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.5}>
-          <meshBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.2} />
-        </mesh>
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.5} material={DRAG_HOOK_OUTER_GLOW_MATERIAL} />
         
         {/* Lights - MORE INTENSE */}
-        <pointLight color={HOOKSHOT_COLORS.energy} intensity={4} distance={5} decay={2} />
-        <pointLight color={0xffffff} intensity={2} distance={3} decay={2} position={[0, 0, -0.3]} />
+        <BudgetedPointLight budgetPriority={3} color={HOOKSHOT_COLORS.energy} intensity={4} distance={5} decay={2} />
+        <BudgetedPointLight budgetPriority={2} color={0xffffff} intensity={2} distance={3} decay={2} position={[0, 0, -0.3]} />
       </group>
       
       {/* === HEAVY CHAIN - Multi-layer, thicker than left click === */}
       <group ref={muzzleRef} position={[hook.startPosition.x, hook.startPosition.y, hook.startPosition.z]}>
         <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.05]} material={HOOK_MATERIALS.ring} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.16} material={HOOK_MATERIALS.glow} />
-        <pointLight color={HOOKSHOT_COLORS.energy} intensity={1.5} distance={3} decay={2} />
+        <BudgetedPointLight budgetPriority={2} color={HOOKSHOT_COLORS.energy} intensity={1.5} distance={3} decay={2} />
       </group>
 
-      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+      {ROPE_SEGMENT_INDICES.map(i => (
         <mesh key={`drag-mega-${i}`} ref={el => chainMegaGlowRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainMegaGlow} />
       ))}
-      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+      {ROPE_SEGMENT_INDICES.map(i => (
         <mesh key={`drag-outer-${i}`} ref={el => chainOuterRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainOuter} />
       ))}
-      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+      {ROPE_SEGMENT_INDICES.map(i => (
         <mesh key={`drag-main-${i}`} ref={el => chainMainRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HEAVY_HOOK_MAIN_ROPE_MATERIAL} />
       ))}
-      {Array.from({ length: PLIABLE_ROPE_SEGMENT_COUNT }, (_, i) => (
+      {ROPE_SEGMENT_INDICES.map(i => (
         <mesh key={`drag-core-${i}`} ref={el => chainCoreRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8} material={HOOK_MATERIALS.heavyChainCore} />
       ))}
     </group>

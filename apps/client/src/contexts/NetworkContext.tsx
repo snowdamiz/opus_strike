@@ -10,11 +10,15 @@ import {
   createDefaultLocalPlayer,
   syncPlayerFromSchema,
   setupPlayerJoinedHandler,
+  setupPlayerTransformsHandler,
+  setupPlayerVitalsHandler,
+  setupMatchSnapshotHandler,
   setupPlayerStatesHandler,
   setupVoidZoneHandlers,
   setupCombatHandlers,
   setupPollingSync,
 } from './gameMessageHandlers';
+import { loggers } from '../utils/logger';
 
 // ============================================================================
 // CONTEXT TYPE
@@ -46,6 +50,7 @@ interface NetworkContextType {
   leaveGame: () => void;
   disconnect: () => void;
   sendInput: (input: PlayerInput) => void;
+  reportBlazeRocketImpact: (rocketId: string, position: { x: number; y: number; z: number }) => void;
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
   setDevFly: (enabled: boolean) => void;
@@ -114,7 +119,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setAvailableLobbies(lobbies);
       return lobbies;
     } catch (error) {
-      console.error('Failed to fetch lobbies:', error);
+      loggers.network.error('failed to fetch lobbies', error);
       return [];
     }
   }, [setAvailableLobbies]);
@@ -133,7 +138,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         const data = JSON.parse((event as MessageEvent).data);
         setAvailableLobbies(data.lobbies || []);
       } catch (error) {
-        console.error('Failed to parse lobby stream event:', error);
+        loggers.network.error('failed to parse lobby stream event', error);
       }
     });
 
@@ -151,7 +156,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       try {
         lobbyRoomRef.current.leave(false);
       } catch (e) {
-        console.log('Error leaving old lobby room:', e);
+        loggers.network.debug('error leaving old lobby room', e);
       }
       lobbyRoomRef.current = null;
     }
@@ -159,7 +164,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       try {
         gameRoomRef.current.leave(false);
       } catch (e) {
-        console.log('Error leaving old game room:', e);
+        loggers.network.debug('error leaving old game room', e);
       }
       gameRoomRef.current = null;
     }
@@ -167,7 +172,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
     room.onMessage('lobbyState', (data: { lobbyId: string; name: string; hostId: string; status: string; players: any[] }) => {
-      console.log('Received lobby state:', data);
+      loggers.network.debug('received lobby state', data);
       setCurrentLobby(data.lobbyId, data.name);
       setIsLobbyHost(data.hostId === room.sessionId);
 
@@ -199,7 +204,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       botDifficulty?: BotDifficulty | '';
       botProfileId?: string;
     }) => {
-      console.log('Player joined lobby:', data.playerName);
+      loggers.network.debug('player joined lobby', data.playerName);
       updateLobbyPlayer(data.playerId, {
         id: data.playerId,
         name: data.playerName,
@@ -214,7 +219,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     room.onMessage('playerLeft', (data: { playerId: string }) => {
-      console.log('Player left lobby:', data.playerId);
+      loggers.network.debug('player left lobby', data.playerId);
       removeLobbyPlayer(data.playerId);
     });
 
@@ -243,7 +248,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     room.onMessage('hostChanged', (data: { newHostId: string; newHostName: string }) => {
-      console.log('Host changed to:', data.newHostName);
+      loggers.network.debug('host changed', data.newHostName);
       setIsLobbyHost(data.newHostId === room.sessionId);
 
       const store = useGameStore.getState();
@@ -257,42 +262,42 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     let isJoiningGame = false;
     room.onMessage('gameStarting', async (data: { gameRoomId: string; players: { playerId: string; playerName: string; team: string; isBot?: boolean }[] }) => {
       if (isJoiningGame) {
-        console.log('[Lobby] Ignoring duplicate gameStarting message');
+        loggers.network.debug('ignoring duplicate gameStarting message');
         return;
       }
       isJoiningGame = true;
 
-      console.log('Game starting! Room:', data.gameRoomId);
+      loggers.network.info('game starting', data.gameRoomId);
       const myAssignment = data.players.find(p => p.playerId === room.sessionId);
       const myTeam = myAssignment?.team || 'red';
 
       try {
         await joinGameRoom(data.gameRoomId, playerName, myTeam);
       } catch (error) {
-        console.error('Failed to join game room:', error);
+        loggers.network.error('failed to join game room', error);
         isJoiningGame = false;
       }
     });
 
     room.onMessage('kicked', (data: { reason: string }) => {
-      console.log('Kicked from lobby:', data.reason);
+      loggers.network.warn('kicked from lobby', data.reason);
       leaveLobby();
     });
 
     room.onMessage('duplicateSession', (data: { reason: string }) => {
-      console.log('Duplicate session detected in lobby:', data.reason);
+      loggers.network.warn('duplicate session detected in lobby', data.reason);
     });
 
     room.onMessage('error', (data: { message: string }) => {
-      console.error('Lobby error:', data.message);
+      loggers.network.error('lobby error', data.message);
     });
 
     room.onError((code, message) => {
-      console.error('Lobby room error:', code, message);
+      loggers.network.error('lobby room error', code, message);
     });
 
     room.onLeave((code) => {
-      console.log('Left lobby room:', code);
+      loggers.network.debug('left lobby room', code);
       resetLobby();
     });
   }, [setCurrentLobby, setIsLobbyHost, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, resetLobby]);
@@ -311,7 +316,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const client = getClient();
       const clientId = getClientId();
 
-      console.log('Creating lobby with clientId:', clientId);
+      loggers.network.debug('creating lobby with client id', clientId);
 
       lobbyRoomRef.current = await client.create('lobby_room', {
         playerName,
@@ -332,9 +337,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setConnected(true);
       setLoading(false);
 
-      console.log('Created lobby:', lobbyRoomRef.current.id);
+      loggers.network.info('created lobby', lobbyRoomRef.current.id);
     } catch (error) {
-      console.error('Failed to create lobby:', error);
+      loggers.network.error('failed to create lobby', error);
       setLoading(false);
       throw error;
     }
@@ -349,7 +354,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const client = getClient();
       const clientId = getClientId();
 
-      console.log('Joining lobby with clientId:', clientId);
+      loggers.network.debug('joining lobby with client id', clientId);
 
       lobbyRoomRef.current = await client.joinById(lobbyId, {
         playerName,
@@ -363,9 +368,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setConnected(true);
       setLoading(false);
 
-      console.log('Joined lobby:', lobbyRoomRef.current.id);
+      loggers.network.info('joined lobby', lobbyRoomRef.current.id);
     } catch (error) {
-      console.error('Failed to join lobby:', error);
+      loggers.network.error('failed to join lobby', error);
       setLoading(false);
       throw error;
     }
@@ -427,13 +432,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     useGameStore.getState().cleanupGhostPlayers();
 
     // Store actions for handlers
-    const actions = { setLocalPlayer, updatePlayer, setGamePhase };
+    const actions = { setLocalPlayer, updatePlayer, removePlayer, setGamePhase };
 
     // Set up MapSchema callbacks
     const playersMap = room.state.players as any;
     if (playersMap && typeof playersMap.onAdd === 'function') {
       playersMap.onAdd((schemaPlayer: any, id: string) => {
-        console.log('Player added via onAdd:', id, schemaPlayer?.name);
+        loggers.network.debug('player added via schema', id, schemaPlayer?.name);
         syncPlayerFromSchema(schemaPlayer, id, sessionId, localPlayerName, { setLocalPlayer, updatePlayer });
 
         if (typeof schemaPlayer?.onChange === 'function') {
@@ -444,19 +449,21 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       });
 
       playersMap.onRemove((_schemaPlayer: any, id: string) => {
-        console.log('Player removed via onRemove:', id);
+        loggers.network.debug('player removed via schema', id);
         if (id !== sessionId) {
           removePlayer(id);
         }
       });
     }
 
-    // Set up polling sync
-    const syncInterval = setupPollingSync(room, sessionId, localPlayerName, actions);
+    const enableFallbackPolling = import.meta.env.DEV && import.meta.env.VITE_ENABLE_SCHEMA_POLLING === '1';
+    const syncInterval = enableFallbackPolling
+      ? setupPollingSync(room, sessionId, localPlayerName, actions)
+      : null;
 
     // Set up message handlers
     room.onMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number }) => {
-      console.log('Phase change message:', data.phase);
+      loggers.network.debug('phase change message', data.phase);
       if (typeof data.mapSeed === 'number') {
         setMapSeed(data.mapSeed);
       }
@@ -465,21 +472,24 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
+    setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
+    setupPlayerVitalsHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer, removePlayer });
+    setupMatchSnapshotHandler(room);
     setupPlayerStatesHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer });
     setupVoidZoneHandlers(room, sessionId);
     setupCombatHandlers(room);
 
     room.onMessage('playerLeft', (data: { playerId: string }) => {
-      console.log(`Player left: ${data.playerId}`);
+      loggers.network.debug('player left', data.playerId);
       removePlayer(data.playerId);
     });
 
     room.onMessage('duplicateSession', (data: { reason: string }) => {
-      console.log('Duplicate session detected:', data.reason);
+      loggers.network.warn('duplicate session detected', data.reason);
     });
 
     room.onMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
-      console.log('Developer hero switch confirmed:', data.heroId);
+      loggers.network.debug('developer hero switch confirmed', data.heroId);
       const store = useGameStore.getState();
       if (store.localPlayer) {
         setLocalPlayer({
@@ -492,16 +502,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     room.onMessage('devCommandError', (data: { message: string }) => {
-      console.error('Developer command error:', data.message);
+      loggers.network.error('developer command error:', data.message);
     });
 
     room.onError((code, message) => {
-      console.error('Room error:', code, message);
+      loggers.network.error('room error:', code, message);
     });
 
     room.onLeave((code) => {
-      console.log('Left room:', code);
-      clearInterval(syncInterval);
+      loggers.network.debug('left room', code);
+      if (syncInterval) clearInterval(syncInterval);
       setConnected(false);
       setRoomId(null);
       setGamePhase('waiting' as any);
@@ -514,7 +524,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string) => {
     if (isJoiningGameRef.current) {
-      console.log('[joinGameRoom] Already joining a game room, ignoring duplicate call');
+      loggers.network.debug('already joining a game room, ignoring duplicate call');
       return;
     }
     isJoiningGameRef.current = true;
@@ -523,11 +533,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     try {
       if (gameRoomRef.current) {
-        console.log('Cleaning up existing game room');
+        loggers.network.debug('cleaning up existing game room');
         try {
           gameRoomRef.current.leave(false);
         } catch (e) {
-          console.log('Error leaving old game room:', e);
+          loggers.network.debug('error leaving old game room', e);
         }
         gameRoomRef.current = null;
       }
@@ -537,7 +547,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const client = getClient();
       const clientId = getClientId();
 
-      console.log('Joining game room with clientId:', clientId);
+      loggers.network.debug('joining game room with client id', clientId);
 
       gameRoomRef.current = await client.joinById(gameRoomId, {
         playerName,
@@ -551,9 +561,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setAppPhase('in_game');
       setLoading(false);
 
-      console.log('Joined game room:', gameRoomRef.current.id);
+      loggers.network.info('joined game room', gameRoomRef.current.id);
     } catch (error) {
-      console.error('Failed to join game room:', error);
+      loggers.network.error('failed to join game room', error);
       setLoading(false);
       isJoiningGameRef.current = false;
       throw error;
@@ -589,14 +599,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('input', input);
   }, []);
 
+  const reportBlazeRocketImpact = useCallback((rocketId: string, position: { x: number; y: number; z: number }) => {
+    gameRoomRef.current?.send('blazeRocketImpact', { rocketId, position });
+  }, []);
+
   const selectHero = useCallback((heroId: HeroId) => {
-    console.log('Sending selectHero:', heroId);
+    loggers.network.debug('sending selectHero', heroId);
     gameRoomRef.current?.send('selectHero', { heroId });
   }, []);
 
   const devSetHero = useCallback((heroId: HeroId) => {
     if (!config.isDev) return;
-    console.log('Sending development selectHero:', heroId);
+    loggers.network.debug('sending development selectHero', heroId);
     gameRoomRef.current?.send('selectHero', { heroId });
   }, []);
 
@@ -611,12 +625,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const selectTeam = useCallback((team: Team) => {
-    console.log('Sending selectTeam:', team);
+    loggers.network.debug('sending selectTeam', team);
     gameRoomRef.current?.send('selectTeam', { team });
   }, []);
 
   const setReady = useCallback((ready: boolean) => {
-    console.log('Sending ready:', ready);
+    loggers.network.debug('sending ready', ready);
     gameRoomRef.current?.send('ready', { ready });
   }, []);
 
@@ -663,6 +677,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       leaveGame,
       disconnect,
       sendInput,
+      reportBlazeRocketImpact,
       selectHero,
       devSetHero,
       setDevFly,

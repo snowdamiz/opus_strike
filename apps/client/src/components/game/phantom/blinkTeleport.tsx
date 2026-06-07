@@ -1,8 +1,10 @@
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { getRiftMaterial, getTrailMaterial, BLINK_EFFECT_DURATION } from './materials';
+import { getFrameClock } from '../../../utils/frameClock';
+import { SHARED_GEOMETRIES } from '../effectResources';
+import { getRiftMaterial, BLINK_EFFECT_DURATION } from './materials';
 
 // ============================================================================
 // PHANTOM BLINK TELEPORT EFFECT
@@ -19,9 +21,10 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
   const startGroupRef = useRef<THREE.Group>(null);
   const endGroupRef = useRef<THREE.Group>(null);
   const trailRef = useRef<THREE.Points>(null);
+  const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
   
-  const riftMaterial = useMemo(() => getRiftMaterial().clone(), []);
-  const trailMaterial = useMemo(() => getTrailMaterial().clone(), []);
+  const startRiftMaterial = useMemo(() => getRiftMaterial().clone(), []);
+  const endRiftMaterial = useMemo(() => getRiftMaterial().clone(), []);
   
   // Create particle geometry for energy trail
   const trailParticles = useMemo(() => {
@@ -31,23 +34,19 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
     const sizes = new Float32Array(particleCount);
     const randoms = new Float32Array(particleCount);
     
-    const start = new THREE.Vector3(startPosition.x, startPosition.y, startPosition.z);
-    const end = new THREE.Vector3(endPosition.x, endPosition.y, endPosition.z);
+    const dx = endPosition.x - startPosition.x;
+    const dy = endPosition.y - startPosition.y;
+    const dz = endPosition.z - startPosition.z;
     
     for (let i = 0; i < particleCount; i++) {
       const t = i / particleCount;
-      const pos = start.clone().lerp(end, t);
-      // Add some random offset for width
-      const offset = new THREE.Vector3(
-        (Math.random() - 0.5) * 0.5,
-        (Math.random() - 0.5) * 0.5,
-        (Math.random() - 0.5) * 0.5
-      );
-      pos.add(offset);
+      const offsetX = (Math.random() - 0.5) * 0.5;
+      const offsetY = (Math.random() - 0.5) * 0.5;
+      const offsetZ = (Math.random() - 0.5) * 0.5;
       
-      positions[i * 3] = pos.x;
-      positions[i * 3 + 1] = pos.y;
-      positions[i * 3 + 2] = pos.z;
+      positions[i * 3] = startPosition.x + dx * t + offsetX;
+      positions[i * 3 + 1] = startPosition.y + dy * t + offsetY;
+      positions[i * 3 + 2] = startPosition.z + dz * t + offsetZ;
       sizes[i] = Math.random() * 0.15 + 0.05;
       randoms[i] = Math.random();
     }
@@ -99,19 +98,27 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
     depthWrite: false,
     sizeAttenuation: true,
   }), []);
+
+  useEffect(() => () => {
+    startRiftMaterial.dispose();
+    endRiftMaterial.dispose();
+    trailParticles.dispose();
+    burstParticles.dispose();
+    particleMaterial.dispose();
+  }, [burstParticles, endRiftMaterial, particleMaterial, startRiftMaterial, trailParticles]);
   
   useFrame((_, delta) => {
-    const elapsed = (Date.now() - startTime);
+    const elapsed = getFrameClock().nowMs - startFrameTimeRef.current;
     const progress = Math.min(1, elapsed / BLINK_EFFECT_DURATION);
     
     // Update shader uniforms
-    if (riftMaterial.uniforms) {
-      riftMaterial.uniforms.time.value += delta;
-      riftMaterial.uniforms.progress.value = progress;
+    if (startRiftMaterial.uniforms) {
+      startRiftMaterial.uniforms.time.value += delta;
+      startRiftMaterial.uniforms.progress.value = progress;
     }
-    if (trailMaterial.uniforms) {
-      trailMaterial.uniforms.time.value += delta;
-      trailMaterial.uniforms.progress.value = progress;
+    if (endRiftMaterial.uniforms) {
+      endRiftMaterial.uniforms.time.value += delta;
+      endRiftMaterial.uniforms.progress.value = progress;
     }
     
     // Animate start rift - expand then collapse
@@ -138,7 +145,7 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
     if (trailRef.current) {
       const positions = trailRef.current.geometry.attributes.position;
       const randoms = trailRef.current.geometry.attributes.random;
-      const time = Date.now() * 0.001;
+      const time = getFrameClock().elapsedSeconds;
       
       for (let i = 0; i < positions.count; i++) {
         const r = (randoms as THREE.BufferAttribute).getX(i);
@@ -151,19 +158,15 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
     }
   });
   
-  if ((Date.now() - startTime) > BLINK_EFFECT_DURATION) return null;
-  
   return (
     <group>
       {/* Start position rift */}
       <group ref={startGroupRef} position={[startPosition.x, startPosition.y, startPosition.z]}>
-        <mesh rotation-x={-Math.PI / 2}>
-          <circleGeometry args={[1.5, 64]} />
-          <primitive object={riftMaterial} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.circle32} scale={[1.5, 1.5, 1]}>
+          <primitive object={startRiftMaterial} />
         </mesh>
         {/* Vertical energy pillar */}
-        <mesh>
-          <cylinderGeometry args={[0.3, 0.5, 3, 16, 1, true]} />
+        <mesh geometry={SHARED_GEOMETRIES.cylinderOpen16} scale={[0.4, 3, 0.4]}>
           <meshBasicMaterial 
             color={0x7c3aed}
             transparent
@@ -176,9 +179,8 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
       
       {/* End position rift */}
       <group ref={endGroupRef} position={[endPosition.x, endPosition.y, endPosition.z]}>
-        <mesh rotation-x={-Math.PI / 2}>
-          <circleGeometry args={[1.5, 64]} />
-          <primitive object={riftMaterial.clone()} />
+        <mesh rotation-x={-Math.PI / 2} geometry={SHARED_GEOMETRIES.circle32} scale={[1.5, 1.5, 1]}>
+          <primitive object={endRiftMaterial} />
         </mesh>
         {/* Arrival energy burst */}
         <points geometry={burstParticles}>
@@ -188,15 +190,7 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
       
       {/* Trail particles connecting start and end */}
       <points ref={trailRef} geometry={trailParticles}>
-        <pointsMaterial 
-          color={0xc084fc}
-          size={0.1}
-          transparent
-          opacity={0.8}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          sizeAttenuation
-        />
+        <primitive object={particleMaterial} />
       </points>
     </group>
   );
@@ -212,4 +206,3 @@ export const BlinkTeleportEffect = React.memo(({ startPosition, endPosition, sta
     prev.startTime === next.startTime
   );
 });
-

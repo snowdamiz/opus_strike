@@ -5,6 +5,7 @@ import { type IceWallRushData } from '../../../store/gameStore';
 import { isPhysicsReady, addIceWallCollider } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { ICE_WALL_DURATION, ICE_WALL_SEGMENT_DEPTH } from '@voxel-strike/shared';
+import { getFrameClock } from '../../../utils/frameClock';
 import {
   tempVec3,
   tempMatrix,
@@ -13,7 +14,6 @@ import {
   tempEuler,
   getWallCrystalGeometry,
   getWallMaterials,
-  wallCrystalMaterial,
   CRYSTALS_PER_SEGMENT,
   MAX_WALL_SEGMENTS,
   MAX_WALL_CRYSTALS,
@@ -27,9 +27,18 @@ import {
 
 const ICE_WALL_RISE_DURATION = 0.3;
 const ICE_WALL_FADE_DURATION = 1.0;
+const FRAME_TIME_ORIGIN =
+  typeof performance !== 'undefined' && typeof performance.timeOrigin === 'number'
+    ? performance.timeOrigin
+    : 0;
 
 interface IceWallRushProps {
   rush: IceWallRushData;
+}
+
+function getSegmentFrameCreatedAt(segment: IceWallRushData['segments'][number]): number {
+  if (segment.createdFrameAt !== undefined) return segment.createdFrameAt;
+  return FRAME_TIME_ORIGIN > 0 ? segment.createdAt - FRAME_TIME_ORIGIN : segment.createdAt;
 }
 
 export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
@@ -45,18 +54,23 @@ export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
     const mesh = instancedMeshRef.current;
     if (!mesh) return;
     
-    const now = Date.now();
-    const segments = rush.segments.slice(-MAX_WALL_SEGMENTS);
+    const now = getFrameClock().nowMs;
+    const sourceSegments = rush.segments;
+    const segmentStartIndex = Math.max(0, sourceSegments.length - MAX_WALL_SEGMENTS);
+    const visibleSegmentCount = sourceSegments.length - segmentStartIndex;
+    const fadeStart = ICE_WALL_DURATION - ICE_WALL_FADE_DURATION;
+    let fadeTotal = 0;
     
-    let instanceIdx = 0;
-    
-    segments.forEach((segment, segIdx) => {
-      const age = (now - segment.createdAt) / 1000;
+    for (let segIdx = 0; segIdx < visibleSegmentCount; segIdx++) {
+      const segment = sourceSegments[segmentStartIndex + segIdx];
+      const age = (now - getSegmentFrameCreatedAt(segment)) / 1000;
+      const fadeProgress = age > fadeStart ? Math.min((age - fadeStart) / ICE_WALL_FADE_DURATION, 1) : 0;
+      fadeTotal += fadeProgress;
       // Use createdAt for stable ID - segIdx shifts as array is sliced
       const segmentId = `${rush.id}_${segment.createdAt}`;
       
       // Register collider for new segments (if physics ready and not already registered)
-      if (!registeredCollidersRef.current.has(segmentId) && age < ICE_WALL_DURATION - ICE_WALL_FADE_DURATION) {
+      if (!registeredCollidersRef.current.has(segmentId) && age < fadeStart) {
         if (isPhysicsReady()) {
           // Add collision box for this wall segment
           const colliderAdded = addIceWallCollider(
@@ -81,17 +95,21 @@ export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
           tempMatrix.compose(tempVec3, tempQuaternion, tempScale);
           mesh.setMatrixAt(segIdx * CRYSTALS_PER_SEGMENT + c, tempMatrix);
         }
-        return;
+        const frostMesh = frostMeshesRef.current.get(segIdx);
+        if (frostMesh) {
+          frostMesh.scale.setScalar(0);
+          (frostMesh.material as THREE.MeshBasicMaterial).opacity = 0;
+        }
+        continue;
       }
       
-      const fadeStart = ICE_WALL_DURATION - ICE_WALL_FADE_DURATION;
-      const fadeProgress = age > fadeStart ? Math.min((age - fadeStart) / ICE_WALL_FADE_DURATION, 1) : 0;
       // Eased sink progress - starts slow, accelerates as it sinks (ease-in)
       const sinkProgress = fadeProgress > 0 ? Math.pow(fadeProgress, 2) : 0;
       
-      CRYSTAL_LAYOUT.forEach((config, crystalIdx) => {
+      for (let crystalIdx = 0; crystalIdx < CRYSTAL_LAYOUT.length; crystalIdx++) {
+        const config = CRYSTAL_LAYOUT[crystalIdx];
         const idx = segIdx * CRYSTALS_PER_SEGMENT + crystalIdx;
-        if (idx >= MAX_WALL_CRYSTALS) return;
+        if (idx >= MAX_WALL_CRYSTALS) continue;
         
         const crystalRiseProgress = Math.min(Math.max(0, (age - config.delay) / ICE_WALL_RISE_DURATION), 1);
         const crystalEasedRise = 1 - Math.pow(1 - crystalRiseProgress, 3);
@@ -119,8 +137,7 @@ export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
         
         tempMatrix.compose(tempVec3, tempQuaternion, tempScale);
         mesh.setMatrixAt(idx, tempMatrix);
-        instanceIdx++;
-      });
+      }
       
       const frostMesh = frostMeshesRef.current.get(segIdx);
       if (frostMesh) {
@@ -130,9 +147,10 @@ export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
         frostMesh.scale.setScalar(segment.width * 0.5 * frostScale);
         (frostMesh.material as THREE.MeshBasicMaterial).opacity = 0.35 * (1 - fadeProgress);
       }
-    });
+    }
     
-    for (let i = instanceIdx; i < MAX_WALL_CRYSTALS; i++) {
+    const usedCrystalSlots = visibleSegmentCount * CRYSTALS_PER_SEGMENT;
+    for (let i = usedCrystalSlots; i < MAX_WALL_CRYSTALS; i++) {
       tempScale.set(0, 0, 0);
       tempMatrix.compose(tempVec3, tempQuaternion, tempScale);
       mesh.setMatrixAt(i, tempMatrix);
@@ -141,28 +159,42 @@ export const IceWallRush = React.memo(({ rush }: IceWallRushProps) => {
     mesh.instanceMatrix.needsUpdate = true;
     
     // Update material opacity
-    const avgFade = segments.length > 0 ? segments.reduce((sum, s) => {
-      const age = (now - s.createdAt) / 1000;
-      const fadeStart = ICE_WALL_DURATION - ICE_WALL_FADE_DURATION;
-      return sum + (age > fadeStart ? Math.min((age - fadeStart) / ICE_WALL_FADE_DURATION, 1) : 0);
-    }, 0) / segments.length : 0;
+    const avgFade = visibleSegmentCount > 0 ? fadeTotal / visibleSegmentCount : 0;
     wallCrystalMaterial.opacity = 0.9 * (1 - avgFade * 0.3);
     wallCrystalMaterial.emissiveIntensity = 0.2 * (1 - avgFade * 0.5);
   });
   
-  const now = Date.now();
-  const activeSegments = rush.segments.slice(-MAX_WALL_SEGMENTS).filter(seg => (now - seg.createdAt) / 1000 < ICE_WALL_DURATION);
+  const now = getFrameClock().nowMs;
+  const renderedSegments: Array<{ segment: IceWallRushData['segments'][number]; segIdx: number }> = [];
+  const renderStartIndex = Math.max(0, rush.segments.length - MAX_WALL_SEGMENTS);
+  for (let i = renderStartIndex; i < rush.segments.length; i++) {
+    renderedSegments.push({ segment: rush.segments[i], segIdx: i - renderStartIndex });
+  }
   
   return (
     <group>
       <instancedMesh ref={instancedMeshRef} args={[crystalGeometry!, wallCrystalMaterial, MAX_WALL_CRYSTALS]} frustumCulled={false} />
-      {activeSegments.map((segment, segIdx) => (
-        <mesh key={segIdx} ref={el => { if (el) frostMeshesRef.current.set(segIdx, el); }} geometry={SHARED_GEOMETRIES.cylinder8} material={wallFrostMaterial} position={[segment.position.x, segment.position.y + 0.02, segment.position.z]} rotation={[Math.PI / 2, 0, 0]} scale={[segment.width * 0.5, 0.08, segment.width * 0.5]} />
+      {renderedSegments.map(({ segment, segIdx }) => (
+        <mesh
+          key={segIdx}
+          ref={el => {
+            if (el) frostMeshesRef.current.set(segIdx, el);
+            else frostMeshesRef.current.delete(segIdx);
+          }}
+          geometry={SHARED_GEOMETRIES.cylinder8}
+          material={wallFrostMaterial}
+          position={[segment.position.x, segment.position.y + 0.02, segment.position.z]}
+          rotation={[Math.PI / 2, 0, 0]}
+          scale={[segment.width * 0.5, 0.08, segment.width * 0.5]}
+          visible={(now - getSegmentFrameCreatedAt(segment)) / 1000 < ICE_WALL_DURATION}
+        />
       ))}
     </group>
   );
 }, (prev, next) => {
-  // Custom comparison: only re-render if rush.id changes
-  // Rush segments change internally via refs, so only ID comparison needed
-  return prev.rush.id === next.rush.id;
+  return (
+    prev.rush.id === next.rush.id &&
+    prev.rush.isActive === next.rush.isActive &&
+    prev.rush.segments.length === next.rush.segments.length
+  );
 });

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { createRandomSeed, type GameStateSync } from '@voxel-strike/shared';
-import { setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
+import { removePlayerVisualState, setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
 
 // Import types
 import type {
@@ -175,6 +175,8 @@ interface CoreActions {
 
 type GameStore = CoreState & CoreActions & ProjectileSlice & GlacierSlice;
 
+const MAX_PENDING_INPUTS = 128;
+
 // ============================================================================
 // INITIAL STATE
 // ============================================================================
@@ -239,17 +241,24 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   // ==================== CORE ACTIONS ====================
 
-  setWalletAddress: (address) => set({ walletAddress: address }),
-  setUser: (userId, name, stats) => set({ userId, playerName: name, userStats: stats }),
-  setConnected: (connected) => set({ isConnected: connected }),
-  setLoading: (loading) => set({ isLoading: loading }),
-  setRoomId: (roomId) => set({ roomId }),
-  setPlayerId: (playerId) => set({ playerId }),
-  setPlayerName: (name) => set({ playerName: name }),
-  setAppPhase: (phase) => set({ appPhase: phase }),
-  setGamePhase: (phase) => set({ gamePhase: phase }),
-  setPhaseEndTime: (time) => set({ phaseEndTime: time }),
-  setMapSeed: (seed) => set({ mapSeed: seed >>> 0 }),
+  setWalletAddress: (address) => set((state) => state.walletAddress === address ? state : { walletAddress: address }),
+  setUser: (userId, name, stats) => set((state) => (
+    state.userId === userId && state.playerName === name && state.userStats === stats
+      ? state
+      : { userId, playerName: name, userStats: stats }
+  )),
+  setConnected: (connected) => set((state) => state.isConnected === connected ? state : { isConnected: connected }),
+  setLoading: (loading) => set((state) => state.isLoading === loading ? state : { isLoading: loading }),
+  setRoomId: (roomId) => set((state) => state.roomId === roomId ? state : { roomId }),
+  setPlayerId: (playerId) => set((state) => state.playerId === playerId ? state : { playerId }),
+  setPlayerName: (name) => set((state) => state.playerName === name ? state : { playerName: name }),
+  setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
+  setGamePhase: (phase) => set((state) => state.gamePhase === phase ? state : { gamePhase: phase }),
+  setPhaseEndTime: (time) => set((state) => state.phaseEndTime === time ? state : { phaseEndTime: time }),
+  setMapSeed: (seed) => set((state) => {
+    const mapSeed = seed >>> 0;
+    return state.mapSeed === mapSeed ? state : { mapSeed };
+  }),
 
   updateGameState: (state) => {
     // NOTE: We update players Map entries in-place for position/rotation data to avoid
@@ -399,6 +408,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   updatePlayer: (playerId, player) => {
     const { players, localPlayer } = get();
+    if (players.get(playerId) === player) return;
+
     const updatedPlayers = new Map(players);
     updatedPlayers.set(playerId, player);
 
@@ -414,8 +425,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   removePlayer: (playerId) => {
     const { players } = get();
+    if (!players.has(playerId)) return;
+
     const updatedPlayers = new Map(players);
     updatedPlayers.delete(playerId);
+    removePlayerVisualState(playerId);
     set({ players: updatedPlayers });
   },
 
@@ -438,21 +452,41 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     });
 
     if (hasGhosts) {
+      players.forEach((player, id) => {
+        if (id !== localId && player.name === localName) {
+          removePlayerVisualState(id);
+        }
+      });
       set({ players: cleanedPlayers });
     }
   },
 
   addPendingInput: (input) => {
     set((state) => ({
-      pendingInputs: [...state.pendingInputs, input],
+      pendingInputs: state.pendingInputs.length >= MAX_PENDING_INPUTS
+        ? [...state.pendingInputs.slice(state.pendingInputs.length - MAX_PENDING_INPUTS + 1), input]
+        : [...state.pendingInputs, input],
     }));
   },
 
   clearProcessedInputs: (tick) => {
-    set((state) => ({
-      pendingInputs: state.pendingInputs.filter((i) => i.tick > tick),
-      lastProcessedTick: tick,
-    }));
+    set((state) => {
+      let firstUnprocessed = 0;
+      while (firstUnprocessed < state.pendingInputs.length && state.pendingInputs[firstUnprocessed].tick <= tick) {
+        firstUnprocessed++;
+      }
+
+      if (firstUnprocessed === 0 && state.lastProcessedTick === tick) {
+        return state;
+      }
+
+      return {
+        pendingInputs: firstUnprocessed === 0
+          ? state.pendingInputs
+          : state.pendingInputs.slice(firstUnprocessed),
+        lastProcessedTick: tick,
+      };
+    });
   },
 
   // ==================== LOBBY ACTIONS ====================
@@ -480,34 +514,48 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     set({ lobbyPlayers: updated });
   },
 
-  setIsLobbyHost: (isHost) => set({ isLobbyHost: isHost }),
+  setIsLobbyHost: (isHost) => set((state) => state.isLobbyHost === isHost ? state : { isLobbyHost: isHost }),
 
   // ==================== UI ACTIONS ====================
 
-  setShadowStepTargeting: (targeting, valid = false) => set({
-    shadowStepTargeting: targeting,
-    shadowStepValid: valid
-  }),
+  setShadowStepTargeting: (targeting, valid = false) => set((state) => (
+    state.shadowStepTargeting === targeting && state.shadowStepValid === valid
+      ? state
+      : {
+        shadowStepTargeting: targeting,
+        shadowStepValid: valid
+      }
+  )),
 
-  setUltimateEffect: (active, type = null, endTime = 0) => set({
-    ultimateEffectActive: active,
-    ultimateEffectType: type,
-    ultimateEffectEndTime: endTime,
-  }),
+  setUltimateEffect: (active, type = null, endTime = 0) => set((state) => (
+    state.ultimateEffectActive === active &&
+    state.ultimateEffectType === type &&
+    state.ultimateEffectEndTime === endTime
+      ? state
+      : {
+        ultimateEffectActive: active,
+        ultimateEffectType: type,
+        ultimateEffectEndTime: endTime,
+      }
+  )),
 
-  setClientCooldown: (abilityId, endTime) => set((state) => ({
-    clientCooldowns: { ...state.clientCooldowns, [abilityId]: endTime }
-  })),
+  setClientCooldown: (abilityId, endTime) => set((state) => (
+    state.clientCooldowns[abilityId] === endTime
+      ? state
+      : { clientCooldowns: { ...state.clientCooldowns, [abilityId]: endTime } }
+  )),
 
-  setClientCharges: (abilityId, charges) => set((state) => ({
-    clientCharges: { ...state.clientCharges, [abilityId]: charges }
-  })),
+  setClientCharges: (abilityId, charges) => set((state) => (
+    state.clientCharges[abilityId] === charges
+      ? state
+      : { clientCharges: { ...state.clientCharges, [abilityId]: charges } }
+  )),
 
   clearClientCooldowns: () => set({ clientCooldowns: {}, clientCharges: {} }),
 
-  setSlideIntensity: (intensity) => set({ slideIntensity: intensity }),
+  setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
 
-  setDebugMode: (enabled) => set({ debugMode: enabled }),
+  setDebugMode: (enabled) => set((state) => state.debugMode === enabled ? state : { debugMode: enabled }),
   toggleDebugMode: () => set((state) => ({ debugMode: !state.debugMode })),
 
   // ==================== RESET ACTIONS ====================
