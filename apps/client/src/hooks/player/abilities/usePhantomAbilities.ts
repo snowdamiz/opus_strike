@@ -23,6 +23,16 @@ import { triggerTeleportEffect } from '../../../components/ui/TeleportEffects';
 import { triggerBlinkEffect, triggerShadowArrival } from '../../../components/game/PhantomEffects';
 import { recordSpawnMarker } from '../../../utils/perfMarks';
 import {
+  PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
+  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  type PhantomPrimaryPoseSampleContext,
+} from '../../../viewmodel/phantomPrimaryPose';
+import {
+  assertViewmodelLaunchMatchesPose,
+  sampleViewmodelPose,
+  type ViewmodelSocketPose,
+} from '../../../viewmodel/viewmodelSocketRegistry';
+import {
   EYE_HEIGHT,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
@@ -78,13 +88,15 @@ function calculatePhantomLaunch(
   ctx: AbilityContext,
   launchSide: -1 | 1,
   maxDistance: number,
-  socket = PHANTOM_DIRE_BALL_SOCKET
+  socket = PHANTOM_DIRE_BALL_SOCKET,
+  spawnOverride?: { x: number; y: number; z: number }
 ) {
   const lookDirection = calculateLookDirection(ctx.yaw, ctx.pitch);
-  const spawnPos = calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+  const fallbackSpawnPos = calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
     ...socket,
     sideOffset: socket.sideOffset * launchSide,
   });
+  const spawnPos = spawnOverride ?? fallbackSpawnPos;
   const aimOrigin = {
     x: ctx.position.x,
     y: ctx.position.y + EYE_HEIGHT,
@@ -127,6 +139,35 @@ function calculatePhantomLaunch(
   };
 }
 
+function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
+  return {
+    x: vector.x,
+    y: vector.y,
+    z: vector.z,
+  };
+}
+
+function samplePhantomPrimaryPalmPose(
+  ctx: AbilityContext,
+  launchSide: -1 | 1,
+  nowMs: number
+): ViewmodelSocketPose | null {
+  if (!ctx.camera) return null;
+
+  ctx.camera.updateMatrixWorld();
+
+  return sampleViewmodelPose<PhantomPrimaryPoseSampleContext>(
+    PHANTOM_PRIMARY_PALM_SOCKET_NAMES[launchSide],
+    {
+      camera: ctx.camera,
+      elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+      side: launchSide,
+      actionTimeSeconds: PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
+      timestampMs: ctx.viewmodelNowMs ?? nowMs,
+    }
+  );
+}
+
 export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   // Fire state
   const lastFireTimeRef = useRef(0);
@@ -152,8 +193,21 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
 
     direBallIdRef.current++;
     const launchSide = direBallIdRef.current % 2 === 1 ? 1 : -1;
-    const { spawnPos, direction } = calculatePhantomLaunch(ctx, launchSide, PHANTOM_DIRE_BALL_AIM_DISTANCE);
     const ballId = `dire_${ctx.localPlayer.id}_${direBallIdRef.current}`;
+    const launchPose = samplePhantomPrimaryPalmPose(ctx, launchSide, now);
+    const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
+    const { spawnPos, direction } = calculatePhantomLaunch(
+      ctx,
+      launchSide,
+      PHANTOM_DIRE_BALL_AIM_DISTANCE,
+      PHANTOM_DIRE_BALL_SOCKET,
+      spawnOverride
+    );
+    assertViewmodelLaunchMatchesPose({
+      eventId: ballId,
+      launchPosition: spawnPos,
+      pose: launchPose,
+    });
 
     useGameStore.getState().addDireBall({
       id: ballId,
@@ -166,6 +220,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       startTime: now,
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      launchSide,
+      launchYaw: ctx.yaw,
+      viewmodelEventId: ballId,
     });
 
     sounds.playPhantomBasic();

@@ -1,9 +1,20 @@
-import { memo, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useShallow } from 'zustand/shallow';
 import type { HeroId } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
+import {
+  PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
+  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  getPhantomPrimaryAttackBlend,
+  type PhantomPrimaryPoseSampleContext,
+} from '../../viewmodel/phantomPrimaryPose';
+import {
+  registerViewmodelPoseSampler,
+  registerViewmodelSocket,
+  type ViewmodelSocketPoseDraft,
+} from '../../viewmodel/viewmodelSocketRegistry';
 import {
   BLAZE_COLORS,
   HOOKSHOT_COLORS,
@@ -36,6 +47,45 @@ interface HeroViewmodelProps {
 
 const VIEWMODEL_HEROES = new Set<HeroId>(['phantom', 'hookshot', 'blaze']);
 const materialCache = new Map<ViewmodelHeroId, ViewmodelMaterialSet>();
+
+interface MutableTransformTarget {
+  position: THREE.Vector3;
+  rotation: THREE.Euler;
+}
+
+interface PhantomPrimaryAttackState {
+  eventId: string;
+  side: -1 | 1;
+  startTimeMs: number;
+}
+
+interface PhantomHandPoseTargets {
+  arm: MutableTransformTarget;
+  wrist: MutableTransformTarget;
+  palm: MutableTransformTarget;
+  thumb: MutableTransformTarget;
+  fingers: MutableTransformTarget[];
+}
+
+const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
+const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
+const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.086);
+const PHANTOM_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
+
+const matrixPosition = new THREE.Vector3();
+const matrixQuaternion = new THREE.Quaternion();
+const matrixUnitScale = new THREE.Vector3(1, 1, 1);
+const phantomWorldScale = new THREE.Vector3(1, 1, 1);
+const matrixEuler = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
+const viewmodelRootMatrix = new THREE.Matrix4();
+const phantomOffsetMatrix = new THREE.Matrix4();
+const phantomArmMatrix = new THREE.Matrix4();
+const phantomWristMatrix = new THREE.Matrix4();
+const phantomPalmMatrix = new THREE.Matrix4();
+const phantomSocketMatrix = new THREE.Matrix4();
+const phantomWorldMatrix = new THREE.Matrix4();
+const phantomWorldPosition = new THREE.Vector3();
+const phantomWorldQuaternion = new THREE.Quaternion();
 
 const HERO_MATERIAL_COLORS: Record<ViewmodelHeroId, {
   armor: number;
@@ -149,6 +199,201 @@ function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
   }
 }
 
+function writeViewmodelRootTransform(
+  target: MutableTransformTarget,
+  elapsedSeconds: number,
+  actionBlend: number,
+  targetingBlend: number
+): void {
+  const bob = Math.sin(elapsedSeconds * 1.65) * 0.009;
+  const sway = Math.sin(elapsedSeconds * 0.92) * 0.006;
+
+  target.position.set(
+    sway * 0.16,
+    -0.055 + bob - targetingBlend * 0.09 + actionBlend * 0.025,
+    0.17 - targetingBlend * 0.035 - actionBlend * 0.05
+  );
+  target.rotation.set(
+    -0.025 + targetingBlend * 0.09 - actionBlend * 0.035,
+    sway * 0.07,
+    Math.sin(elapsedSeconds * 1.2) * 0.009
+  );
+}
+
+function composeTransformMatrix(
+  matrix: THREE.Matrix4,
+  position: THREE.Vector3,
+  rotation: THREE.Euler
+): THREE.Matrix4 {
+  matrixQuaternion.setFromEuler(rotation);
+  matrix.compose(position, matrixQuaternion, matrixUnitScale);
+  return matrix;
+}
+
+function writePhantomHandPose(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  attackBlend: number,
+  elapsedSeconds: number
+): void {
+  const sideSign = side;
+
+  targets.arm.position.set(
+    sideSign * (0.3 - attackBlend * 0.02),
+    -0.52 + attackBlend * 0.028,
+    -0.64 - attackBlend * 0.095
+  );
+  targets.arm.rotation.set(
+    0.18 - attackBlend * 0.5,
+    sideSign * (0.78 - attackBlend * 0.2),
+    sideSign * (-0.08 + attackBlend * 0.48)
+  );
+
+  targets.wrist.position.set(0, 0, 0);
+  targets.wrist.rotation.set(
+    -attackBlend * 0.18,
+    sideSign * -attackBlend * 0.22,
+    sideSign * attackBlend * 0.46
+  );
+
+  targets.palm.position.set(
+    sideSign * attackBlend * 0.006,
+    attackBlend * 0.004,
+    -attackBlend * 0.024
+  );
+  targets.palm.rotation.set(
+    -attackBlend * 0.08,
+    sideSign * -attackBlend * 0.08,
+    sideSign * attackBlend * 0.14
+  );
+
+  targets.thumb.position.set(sideSign * (0.072 + attackBlend * 0.01), -0.042 - attackBlend * 0.012, -0.004 - attackBlend * 0.018);
+  targets.thumb.rotation.set(
+    -attackBlend * 0.12,
+    sideSign * attackBlend * 0.22,
+    sideSign * (0.4 + attackBlend * 0.9)
+  );
+
+  for (let index = 0; index < targets.fingers.length; index++) {
+    const finger = targets.fingers[index];
+    const row = PHANTOM_FINGER_ROWS[index] ?? 0;
+    const stagger = (index - 1.5) * 0.025;
+    finger.position.set(
+      sideSign * (-0.006 + attackBlend * 0.01),
+      row + attackBlend * stagger,
+      -0.072 - attackBlend * (0.068 + Math.abs(stagger) * 0.45)
+    );
+    finger.rotation.set(
+      -attackBlend * 0.62,
+      sideSign * attackBlend * 0.08,
+      sideSign * attackBlend * (0.08 + stagger)
+    );
+  }
+}
+
+function writePhantomForearmPose(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  attackBlend: number,
+  elapsedSeconds: number
+): void {
+  void elapsedSeconds;
+  target.position.set(
+    side * (0.34 - attackBlend * 0.028),
+    -0.58 + attackBlend * 0.026,
+    -0.43 - attackBlend * 0.075
+  );
+  target.rotation.set(
+    0.22 - attackBlend * 0.42,
+    side * (-0.18 + attackBlend * 0.16),
+    side * (-0.06 + attackBlend * 0.42)
+  );
+}
+
+function composePhantomPrimaryPalmMatrix({
+  camera,
+  elapsedSeconds,
+  actionBlend,
+  targetingBlend,
+  side,
+  attackBlend,
+}: {
+  camera: THREE.Camera;
+  elapsedSeconds: number;
+  actionBlend: number;
+  targetingBlend: number;
+  side: -1 | 1;
+  attackBlend: number;
+}): THREE.Matrix4 {
+  const rootTransform = {
+    position: matrixPosition,
+    rotation: matrixEuler,
+  };
+  writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
+  composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
+
+  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixEuler.set(0, 0, 0);
+  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+
+  const poseTarget: PhantomHandPoseTargets = {
+    arm: { position: matrixPosition, rotation: matrixEuler },
+    wrist: { position: new THREE.Vector3(), rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER) },
+    palm: { position: new THREE.Vector3(), rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER) },
+    thumb: { position: new THREE.Vector3(), rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER) },
+    fingers: Array.from({ length: 4 }, () => ({
+      position: new THREE.Vector3(),
+      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+    })),
+  };
+  writePhantomHandPose(poseTarget, side, attackBlend, elapsedSeconds);
+
+  composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
+  composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
+  composeTransformMatrix(phantomPalmMatrix, poseTarget.palm.position, poseTarget.palm.rotation);
+
+  matrixPosition.copy(PHANTOM_PALM_SOCKET_OFFSET);
+  matrixEuler.set(0, 0, 0);
+  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+
+  camera.updateMatrixWorld();
+  phantomWorldMatrix
+    .copy(camera.matrixWorld)
+    .multiply(viewmodelRootMatrix)
+    .multiply(phantomOffsetMatrix)
+    .multiply(phantomArmMatrix)
+    .multiply(phantomWristMatrix)
+    .multiply(phantomPalmMatrix)
+    .multiply(phantomSocketMatrix);
+
+  return phantomWorldMatrix;
+}
+
+function samplePhantomPrimaryPalmSocket(
+  context: PhantomPrimaryPoseSampleContext,
+  actionBlend: number,
+  targetingBlend: number
+): ViewmodelSocketPoseDraft {
+  const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
+  const attackBlend = getPhantomPrimaryAttackBlend(attackTimeSeconds);
+  const worldMatrix = composePhantomPrimaryPalmMatrix({
+    camera: context.camera,
+    elapsedSeconds: context.elapsedSeconds,
+    actionBlend,
+    targetingBlend,
+    side: context.side,
+    attackBlend,
+  });
+
+  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
+
+  return {
+    position: phantomWorldPosition.clone(),
+    quaternion: phantomWorldQuaternion.clone(),
+    timestampMs: context.timestampMs,
+  };
+}
+
 function Forearm({
   side,
   materials,
@@ -174,63 +419,166 @@ function Forearm({
   );
 }
 
-function PhantomFist({
+function PhantomAnimatedForearm({
   side,
   materials,
+  primaryAttackRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
+  primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
 }) {
-  const fingerRows = [-0.066, -0.022, 0.022, 0.066] as const;
+  const forearmRef = useRef<THREE.Group>(null);
+  const length = 0.24;
+  const width = 0.068;
+  const thickness = 0.064;
+
+  useFrame((state) => {
+    const forearm = forearmRef.current;
+    if (!forearm) return;
+
+    const attack = primaryAttackRef.current;
+    const attackTimeSeconds = attack?.side === side
+      ? (Date.now() - attack.startTimeMs) / 1000
+      : Number.POSITIVE_INFINITY;
+    const attackBlend = getPhantomPrimaryAttackBlend(attackTimeSeconds);
+    writePhantomForearmPose(forearm, side, attackBlend, state.clock.elapsedTime);
+  });
 
   return (
-    <group position={[side * 0.3, -0.52, -0.64]} rotation={[0.18, side * 0.78, side * -0.08]}>
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.092, 0.124, 0.12]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.018, 0.006, 0.018]} scale={[0.076, 0.102, 0.074]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.052, 0, -0.014]} scale={[0.018, 0.105, 0.068]} />
-
-      {fingerRows.map((y, index) => (
-        <group key={y} position={[side * -0.006, y, -0.072]}>
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.106, 0.028, 0.052]} />
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.026, 0, -0.026]} scale={[0.04, 0.026, 0.034]} />
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[side * -0.028, 0, -0.034]} scale={[0.07, 0.026, 0.042]} />
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.058, 0, -0.06]} scale={[0.02, 0.018, 0.022]} />
-          {index === 1 && (
-            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * 0.052, 0, 0.012]} scale={[0.018, 0.019, 0.034]} />
-          )}
-        </group>
-      ))}
-
-      <mesh
-        geometry={SHARED_GEOMETRIES.box}
-        material={materials.metal}
-        position={[side * 0.072, -0.042, -0.004]}
-        rotation={[0, 0, side * 0.4]}
-        scale={[0.05, 0.1, 0.062]}
-      />
-      <mesh
-        geometry={SHARED_GEOMETRIES.box}
-        material={materials.dark}
-        position={[0, 0, 0.085]}
-        scale={[0.074, 0.088, 0.038]}
-      />
-      <mesh
-        geometry={SHARED_GEOMETRIES.sphere8}
-        material={materials.glow}
-        position={[side * -0.052, 0, -0.11]}
-        scale={0.034}
-      />
+    <group ref={forearmRef} position={[side * 0.34, -0.58, -0.43]} rotation={[0.22, side * -0.18, side * -0.06]}>
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[width * 0.72, thickness, length]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.27, -0.06]} scale={[width, thickness * 0.7, length * 0.7]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.005, -length * 0.5]} scale={[width * 0.86, thickness, 0.1]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.7, -0.09]} scale={[width * 0.56, Math.max(0.014, thickness * 0.2), length * 0.46]} />
     </group>
   );
 }
 
-function PhantomViewmodel({ materials }: { materials: ViewmodelMaterialSet }) {
+function PhantomPoseableHand({
+  side,
+  materials,
+  primaryAttackRef,
+}: {
+  side: -1 | 1;
+  materials: ViewmodelMaterialSet;
+  primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+}) {
+  const armRef = useRef<THREE.Group>(null);
+  const wristRef = useRef<THREE.Group>(null);
+  const palmRef = useRef<THREE.Group>(null);
+  const thumbRef = useRef<THREE.Group>(null);
+  const socketRef = useRef<THREE.Group>(null);
+  const fingerRefs = useRef<(THREE.Group | null)[]>([]);
+
+  useEffect(() => {
+    if (!socketRef.current) return undefined;
+    return registerViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef.current);
+  }, [side]);
+
+  useFrame((state) => {
+    const arm = armRef.current;
+    const wrist = wristRef.current;
+    const palm = palmRef.current;
+    const thumb = thumbRef.current;
+    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
+    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+
+    const attack = primaryAttackRef.current;
+    const attackTimeSeconds = attack?.side === side
+      ? (Date.now() - attack.startTimeMs) / 1000
+      : Number.POSITIVE_INFINITY;
+    const attackBlend = getPhantomPrimaryAttackBlend(attackTimeSeconds);
+
+    writePhantomHandPose(
+      {
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      attackBlend,
+      state.clock.elapsedTime
+    );
+  });
+
   return (
-    <group position={[0, 0.28, -0.04]}>
-      <Forearm side={-1} materials={materials} length={0.24} width={0.068} thickness={0.064} positionZ={-0.43} />
-      <Forearm side={1} materials={materials} length={0.24} width={0.068} thickness={0.064} positionZ={-0.43} />
-      <PhantomFist side={-1} materials={materials} />
-      <PhantomFist side={1} materials={materials} />
+    <group ref={armRef} position={[side * 0.3, -0.52, -0.64]} rotation={[0.18, side * 0.78, side * -0.08]}>
+      <group ref={wristRef}>
+        <group ref={palmRef}>
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.092, 0.124, 0.12]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.018, 0.006, 0.018]} scale={[0.076, 0.102, 0.074]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.052, 0, -0.014]} scale={[0.018, 0.105, 0.068]} />
+
+          {PHANTOM_FINGER_ROWS.map((row, index) => (
+            <group
+              key={row}
+              ref={(node) => {
+                fingerRefs.current[index] = node;
+              }}
+              position={[side * -0.006, row, -0.072]}
+            >
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.106, 0.028, 0.052]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.026, 0, -0.026]} scale={[0.04, 0.026, 0.034]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[side * -0.028, 0, -0.034]} scale={[0.07, 0.026, 0.042]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.058, 0, -0.06]} scale={[0.02, 0.018, 0.022]} />
+              {index === 1 && (
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * 0.052, 0, 0.012]} scale={[0.018, 0.019, 0.034]} />
+              )}
+            </group>
+          ))}
+
+          <group ref={thumbRef} position={[side * 0.072, -0.042, -0.004]} rotation={[0, 0, side * 0.4]}>
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.05, 0.1, 0.062]} />
+          </group>
+
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={materials.dark}
+            position={[0, 0, 0.085]}
+            scale={[0.074, 0.088, 0.038]}
+          />
+          <mesh
+            geometry={SHARED_GEOMETRIES.sphere8}
+            material={materials.glow}
+            position={[side * -0.052, 0, -0.11]}
+            scale={0.034}
+          />
+
+          <group
+            ref={socketRef}
+            name={PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side]}
+            position={[
+              PHANTOM_PALM_SOCKET_OFFSET.x,
+              PHANTOM_PALM_SOCKET_OFFSET.y,
+              PHANTOM_PALM_SOCKET_OFFSET.z,
+            ]}
+          />
+        </group>
+      </group>
+    </group>
+  );
+}
+
+function PhantomViewmodel({
+  materials,
+  primaryAttackRef,
+}: {
+  materials: ViewmodelMaterialSet;
+  primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+}) {
+  return (
+    <group position={[
+      PHANTOM_VIEWMODEL_OFFSET.x,
+      PHANTOM_VIEWMODEL_OFFSET.y,
+      PHANTOM_VIEWMODEL_OFFSET.z,
+    ]}>
+      <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} />
+      <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} />
+      <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} />
+      <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} />
     </group>
   );
 }
@@ -345,7 +693,35 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
   const rootRef = useRef<THREE.Group>(null);
   const actionBlendRef = useRef(action.active || action.charging ? 1 : 0);
   const targetingBlendRef = useRef(action.targeting ? 1 : 0);
+  const phantomPrimaryAttackRef = useRef<PhantomPrimaryAttackState | null>(null);
+  const processedPhantomPrimaryEventIdRef = useRef<string | null>(null);
   const materials = useMemo(() => getViewmodelMaterials(heroId), [heroId]);
+
+  useEffect(() => {
+    if (heroId !== 'phantom') return undefined;
+
+    const unregisterLeft = registerViewmodelPoseSampler<PhantomPrimaryPoseSampleContext>(
+      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
+      (context) => samplePhantomPrimaryPalmSocket(
+        { ...context, side: -1 },
+        actionBlendRef.current,
+        targetingBlendRef.current
+      )
+    );
+    const unregisterRight = registerViewmodelPoseSampler<PhantomPrimaryPoseSampleContext>(
+      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
+      (context) => samplePhantomPrimaryPalmSocket(
+        { ...context, side: 1 },
+        actionBlendRef.current,
+        targetingBlendRef.current
+      )
+    );
+
+    return () => {
+      unregisterLeft();
+      unregisterRight();
+    };
+  }, [heroId]);
 
   useFrame((state, delta) => {
     if (!groupRef.current || !rootRef.current) return;
@@ -368,27 +744,41 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
     groupRef.current.quaternion.copy(camera.quaternion);
 
     const t = state.clock.elapsedTime;
-    const bob = Math.sin(t * 1.65) * 0.009;
-    const sway = Math.sin(t * 0.92) * 0.006;
     const actionBlend = actionBlendRef.current;
     const targetingBlend = targetingBlendRef.current;
 
-    rootRef.current.position.set(
-      sway * 0.16,
-      -0.055 + bob - targetingBlend * 0.09 + actionBlend * 0.025,
-      0.17 - targetingBlend * 0.035 - actionBlend * 0.05
-    );
-    rootRef.current.rotation.set(
-      -0.025 + targetingBlend * 0.09 - actionBlend * 0.035,
-      sway * 0.07,
-      Math.sin(t * 1.2) * 0.009
-    );
+    if (heroId === 'phantom') {
+      const store = useGameStore.getState();
+      const localPlayerId = store.localPlayer?.id;
+      if (localPlayerId) {
+        for (let index = store.direBalls.length - 1; index >= 0; index--) {
+          const ball = store.direBalls[index];
+          if (ball.ownerId !== localPlayerId) continue;
+          if (ball.launchSide !== -1 && ball.launchSide !== 1) continue;
+
+          const eventId = ball.viewmodelEventId ?? ball.id;
+          if (processedPhantomPrimaryEventIdRef.current !== eventId) {
+            processedPhantomPrimaryEventIdRef.current = eventId;
+            phantomPrimaryAttackRef.current = {
+              eventId,
+              side: ball.launchSide,
+              startTimeMs: ball.startTime - PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS * 1000,
+            };
+          }
+          break;
+        }
+      }
+    }
+
+    writeViewmodelRootTransform(rootRef.current, t, actionBlend, targetingBlend);
   });
 
   return (
     <group ref={groupRef} frustumCulled={false} renderOrder={20}>
       <group ref={rootRef}>
-        {heroId === 'phantom' && <PhantomViewmodel materials={materials} />}
+        {heroId === 'phantom' && (
+          <PhantomViewmodel materials={materials} primaryAttackRef={phantomPrimaryAttackRef} />
+        )}
         {heroId === 'hookshot' && <HookshotViewmodel materials={materials} />}
         {heroId === 'blaze' && <BlazeViewmodel materials={materials} />}
       </group>

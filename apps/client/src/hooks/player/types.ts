@@ -174,6 +174,9 @@ export interface AbilityContext {
   inputState: InputState;
   dt: number;
   isGrounded: boolean;
+  camera?: THREE.Camera;
+  viewmodelElapsedSeconds?: number;
+  viewmodelNowMs?: number;
 }
 
 // ============================================================================
@@ -202,4 +205,3 @@ export interface MovementSounds {
   startSlide: () => void;
   stopSlide: () => void;
 }
-

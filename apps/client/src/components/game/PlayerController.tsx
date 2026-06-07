@@ -272,7 +272,7 @@ export function PlayerController() {
   }, [phantomAbilities, blazeAbilities, hookshotAbilities]);
 
   // Main game loop
-  useFrame((_, delta) => {
+  useFrame((frameState, delta) => {
     const localPlayer = useGameStore.getState().localPlayer;
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
 
@@ -479,6 +479,9 @@ export function PlayerController() {
       inputState: frameInput,
       dt,
       isGrounded: movement.refs.isGrounded.current,
+      camera,
+      viewmodelElapsedSeconds: frameState.clock.elapsedTime,
+      viewmodelNowMs: now,
     };
 
     // Handle hero-specific abilities
@@ -544,9 +547,6 @@ export function PlayerController() {
 
       // Hero-specific primary/secondary fire and hold abilities
       if (heroId === 'phantom' && !shadowStepTargeting) {
-        if (frameInput.primaryFire) {
-          phantomAbilities.fireDireBall(abilityCtx, playerSounds);
-        }
         phantomAbilities.handleVoidRay(abilityCtx, playerSounds);
       }
 
@@ -685,6 +685,11 @@ export function PlayerController() {
     cameraControl.updateCameraRotation(camera, isSliding, movement.refs.isCrouching.current, dt);
     const cameraBodyY = movement.refs.smoothedY.current ?? position.y;
     camera.position.set(position.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
+    camera.updateMatrixWorld();
+
+    if (heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire) {
+      phantomAbilities.fireDireBall(abilityCtx, playerSounds);
+    }
 
     // Update game store with movement state ONLY (position/rotation go to visualStore below)
     // Position/velocity/rotation data flows ONLY to visualStore (non-reactive) to avoid React re-renders

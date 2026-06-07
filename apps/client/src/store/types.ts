@@ -84,6 +84,9 @@ export interface DireBallData {
   startTime: number;
   ownerId: string;
   ownerTeam?: Team | null;
+  launchSide?: -1 | 1;
+  launchYaw?: number;
+  viewmodelEventId?: string;
 }
 
 export interface VoidRayData {
