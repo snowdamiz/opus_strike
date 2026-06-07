@@ -1,5 +1,6 @@
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
+import { createRandomSeed, getVoxelMapTheme, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { BotDifficulty, Team } from '@voxel-strike/shared';
 
 interface JoinOptions {
@@ -21,7 +22,39 @@ interface ParticipantAssignment {
   botProfileId?: string;
 }
 
+interface MapVoteOption {
+  id: string;
+  seed: number;
+  name: string;
+  themeId: string;
+  themeName: string;
+}
+
+interface MapVoteRecord {
+  playerId: string;
+  optionId: string;
+}
+
+interface MapVoteSession {
+  options: MapVoteOption[];
+  votes: Map<string, string>;
+  phaseEndTime: number | null;
+  previewReadyPlayerIds: Set<string>;
+}
+
 const MAX_PARTICIPANTS = 10;
+const MAP_VOTE_OPTION_COUNT = 3;
+const MAP_VOTE_DURATION_MS = 30000;
+const MAP_NAME_SUFFIXES = [
+  'Crucible',
+  'Relay',
+  'Bastion',
+  'Run',
+  'Vault',
+  'Array',
+  'Ridge',
+  'Gate',
+];
 const BOT_NAMES = [
   'Vector',
   'Cipher',
@@ -35,9 +68,42 @@ const BOT_NAMES = [
   'Axiom',
 ];
 
+function getShuffledThemeIndices(source: number): number[] {
+  const themeIndices = VOXEL_MAP_THEMES.map((_, index) => index);
+
+  for (let index = themeIndices.length - 1; index > 0; index--) {
+    const swapIndex = createRandomSeed(source + index * 0x9e3779b1) % (index + 1);
+    [themeIndices[index], themeIndices[swapIndex]] = [themeIndices[swapIndex], themeIndices[index]];
+  }
+
+  return themeIndices;
+}
+
+function createSeedForTheme(themeIndex: number, source: number): number {
+  const seed = createRandomSeed(source);
+  const targetTheme = VOXEL_MAP_THEMES[themeIndex];
+  if (!targetTheme) return seed;
+
+  for (let offset = 0; offset < VOXEL_MAP_THEMES.length; offset++) {
+    const higherSeed = (seed + offset) >>> 0;
+    if (getVoxelMapTheme(higherSeed).id === targetTheme.id) {
+      return higherSeed;
+    }
+
+    const lowerSeed = (seed - offset) >>> 0;
+    if (getVoxelMapTheme(lowerSeed).id === targetTheme.id) {
+      return lowerSeed;
+    }
+  }
+
+  return themeIndex >>> 0;
+}
+
 export class LobbyRoom extends Room<LobbyState> {
   maxClients = 10;
   private botIdCounter = 0;
+  private mapVoteSession: MapVoteSession | null = null;
+  private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -72,6 +138,18 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.onMessage('startGame', (client) => {
       this.handleStartGame(client);
+    });
+
+    this.onMessage('voteMap', (client, data: { optionId: string }) => {
+      this.handleMapVote(client, data.optionId);
+    });
+
+    this.onMessage('mapVotePreviewsReady', (client) => {
+      this.handleMapVotePreviewsReady(client);
+    });
+
+    this.onMessage('finalizeMapVote', (client) => {
+      this.handleFinalizeMapVote(client);
     });
 
     this.onMessage('kick', (client, data: { playerId: string }) => {
@@ -128,10 +206,15 @@ export class LobbyRoom extends Room<LobbyState> {
         const oldPlayer = this.state.players.get(existingSessionId);
         const wasHost = oldPlayer?.isHost;
         this.state.players.delete(existingSessionId);
+        const removedOldVote = this.mapVoteSession?.votes.delete(existingSessionId) ?? false;
+        this.mapVoteSession?.previewReadyPlayerIds.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
         // Broadcast that old player left
         this.broadcast('playerLeft', { playerId: existingSessionId });
+        if (removedOldVote) {
+          this.broadcastMapVoteUpdated();
+        }
         
         // If old player was host, we'll assign new host below when creating this player
       }
@@ -189,6 +272,10 @@ export class LobbyRoom extends Room<LobbyState> {
       humanCount: this.getHumanCount(),
       botCount: this.getBotCount(),
     });
+
+    if (this.state.status === 'map_vote' && this.mapVoteSession) {
+      this.sendMapVoteStarted(client);
+    }
     this.updateMetadata();
   }
 
@@ -199,6 +286,8 @@ export class LobbyRoom extends Room<LobbyState> {
     const wasHost = player?.isHost;
 
     this.state.players.delete(client.sessionId);
+    const removedVote = this.mapVoteSession?.votes.delete(client.sessionId) ?? false;
+    this.mapVoteSession?.previewReadyPlayerIds.delete(client.sessionId);
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -227,11 +316,16 @@ export class LobbyRoom extends Room<LobbyState> {
     this.broadcast('playerLeft', {
       playerId: client.sessionId,
     });
+    if (removedVote) {
+      this.broadcastMapVoteUpdated();
+    }
+    this.startMapVoteCountdownIfReady();
     this.updateMetadata();
   }
 
   onDispose() {
     console.log('Lobby room disposing:', this.roomId);
+    this.clearMapVoteTimer();
   }
 
   private handleReady(client: Client, ready: boolean) {
@@ -277,6 +371,11 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private async handleStartGame(client: Client) {
     // IMPORTANT: Prevent double-execution - check status FIRST before any async operations
+    if (this.state.status === 'map_vote') {
+      this.sendMapVoteStarted(client);
+      return;
+    }
+
     if (this.state.status === 'starting' || this.state.status === 'in_game') {
       console.log('[LobbyRoom] Game already starting/started, ignoring duplicate startGame request');
       return;
@@ -311,44 +410,172 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
-    // Set status to 'starting' IMMEDIATELY to prevent race conditions
+    this.beginMapVote();
+  }
+
+  private beginMapVote(): void {
+    this.clearMapVoteTimer();
+    this.state.status = 'map_vote';
+    this.mapVoteSession = {
+      options: this.createMapVoteOptions(),
+      votes: new Map(),
+      phaseEndTime: null,
+      previewReadyPlayerIds: new Set(),
+    };
+
+    this.state.players.forEach((player, playerId) => {
+      if (!player.isBot) return;
+      const option = this.mapVoteSession!.options[Math.floor(Math.random() * this.mapVoteSession!.options.length)];
+      this.mapVoteSession!.votes.set(playerId, option.id);
+    });
+
+    this.updateMetadata({ status: 'map_vote' });
+    this.broadcastMapVoteStarted();
+
+    console.log('[LobbyRoom] Map vote started');
+  }
+
+  private handleMapVotePreviewsReady(client: Client): void {
+    const session = this.mapVoteSession;
+    if (!session || this.state.status !== 'map_vote' || session.phaseEndTime) return;
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot) return;
+
+    session.previewReadyPlayerIds.add(client.sessionId);
+    this.startMapVoteCountdownIfReady();
+  }
+
+  private startMapVoteCountdownIfReady(): void {
+    const session = this.mapVoteSession;
+    if (!session || this.state.status !== 'map_vote' || session.phaseEndTime) return;
+
+    let hasHumans = false;
+    let allHumansReady = true;
+    this.state.players.forEach((player, playerId) => {
+      if (player.isBot) return;
+      hasHumans = true;
+      if (!session.previewReadyPlayerIds.has(playerId)) {
+        allHumansReady = false;
+      }
+    });
+
+    if (!hasHumans || !allHumansReady) return;
+
+    this.startMapVoteCountdown();
+  }
+
+  private startMapVoteCountdown(): void {
+    const session = this.mapVoteSession;
+    if (!session || session.phaseEndTime) return;
+
+    session.phaseEndTime = Date.now() + MAP_VOTE_DURATION_MS;
+    this.broadcast('mapVoteTimerStarted', {
+      phaseEndTime: session.phaseEndTime,
+    });
+
+    this.clearMapVoteTimer();
+    this.mapVoteFinalizeTimeout = setTimeout(() => {
+      this.finalizeMapVote().catch((error) => {
+        console.error('Failed to finalize map vote:', error);
+      });
+    }, MAP_VOTE_DURATION_MS);
+  }
+
+  private handleMapVote(client: Client, optionId: string): void {
+    if (!this.mapVoteSession || this.state.status !== 'map_vote') {
+      client.send('error', { message: 'Map vote is not active' });
+      return;
+    }
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot) return;
+
+    const optionExists = this.mapVoteSession.options.some((option) => option.id === optionId);
+    if (!optionExists) {
+      client.send('error', { message: 'Unknown map option' });
+      return;
+    }
+
+    this.mapVoteSession.votes.set(client.sessionId, optionId);
+    this.broadcastMapVoteUpdated();
+  }
+
+  private handleFinalizeMapVote(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player?.isHost) {
+      client.send('error', { message: 'Only the host can lock the map vote' });
+      return;
+    }
+
+    if (!this.mapVoteSession?.phaseEndTime) {
+      client.send('error', { message: 'Map vote is still preparing' });
+      return;
+    }
+
+    this.finalizeMapVote(client).catch((error) => {
+      console.error('Failed to finalize map vote:', error);
+      client.send('error', { message: 'Failed to start game' });
+    });
+  }
+
+  private async finalizeMapVote(errorClient?: Client): Promise<void> {
+    if (!this.mapVoteSession || this.state.status !== 'map_vote') return;
+
+    const selectedOption = this.getWinningMapOption();
+    this.clearMapVoteTimer();
     this.state.status = 'starting';
     this.updateMetadata({ status: 'starting' });
-    console.log('[LobbyRoom] Starting game, status set to starting');
+
+    this.broadcast('mapVoteFinalized', {
+      selectedOptionId: selectedOption.id,
+      mapSeed: selectedOption.seed,
+      votes: this.getMapVoteRecords(),
+    });
+
+    console.log('[LobbyRoom] Map vote finalized', selectedOption.id, selectedOption.seed);
 
     try {
-      const playerAssignments = this.createPlayerAssignments();
-
-      // Create the game room
-      const gameRoom = await matchMaker.createRoom('game_room', {
-        lobbyId: this.state.lobbyId,
-        lobbyName: this.state.name,
-        botAssignments: playerAssignments.filter((assignment) => assignment.isBot),
-      });
-
-      this.state.gameRoomId = gameRoom.roomId;
-      this.state.status = 'in_game';
-      this.updateMetadata({ status: 'in_game' });
-
-      // Tell all clients to join the game room
-      this.broadcast('gameStarting', {
-        gameRoomId: gameRoom.roomId,
-        players: playerAssignments,
-      });
-
-      console.log('Game room created:', gameRoom.roomId, 'from lobby:', this.roomId);
-
-      // Dispose this lobby after a short delay
-      setTimeout(() => {
-        this.disconnect();
-      }, 5000);
-
+      await this.createGameFromLobby(selectedOption.seed);
     } catch (error) {
       console.error('Failed to create game room:', error);
       this.state.status = 'waiting';
+      this.mapVoteSession = null;
       this.updateMetadata({ status: 'waiting' });
-      client.send('error', { message: 'Failed to start game' });
+      this.broadcast('mapVoteCancelled', { reason: 'Failed to start game' });
+      this.broadcastLobbyState();
+      errorClient?.send('error', { message: 'Failed to start game' });
     }
+  }
+
+  private async createGameFromLobby(mapSeed: number): Promise<void> {
+    const playerAssignments = this.createPlayerAssignments();
+
+    // Create the game room
+    const gameRoom = await matchMaker.createRoom('game_room', {
+      lobbyId: this.state.lobbyId,
+      lobbyName: this.state.name,
+      mapSeed,
+      botAssignments: playerAssignments.filter((assignment) => assignment.isBot),
+    });
+
+    this.state.gameRoomId = gameRoom.roomId;
+    this.state.status = 'in_game';
+    this.mapVoteSession = null;
+    this.updateMetadata({ status: 'in_game' });
+
+    // Tell all clients to join the game room
+    this.broadcast('gameStarting', {
+      gameRoomId: gameRoom.roomId,
+      players: playerAssignments,
+    });
+
+    console.log('Game room created:', gameRoom.roomId, 'from lobby:', this.roomId);
+
+    // Dispose this lobby after a short delay
+    setTimeout(() => {
+      this.disconnect();
+    }, 5000);
   }
 
   private handleKick(client: Client, playerId: string) {
@@ -505,8 +732,97 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!bot?.isBot) return;
 
     this.state.players.delete(botId);
+    const removedVote = this.mapVoteSession?.votes.delete(botId) ?? false;
     this.broadcast('playerLeft', { playerId: botId, isBot: true });
+    if (removedVote) {
+      this.broadcastMapVoteUpdated();
+    }
     this.updateMetadata();
+  }
+
+  private createMapVoteOptions(): MapVoteOption[] {
+    const source = Date.now() + this.botIdCounter * 101;
+    const themeIndices = getShuffledThemeIndices(source);
+
+    return Array.from({ length: MAP_VOTE_OPTION_COUNT }, (_, index) => {
+      const themeIndex = themeIndices[index % themeIndices.length];
+      const seed = createSeedForTheme(themeIndex, source + index * 9973);
+      const theme = getVoxelMapTheme(seed);
+      const suffix = MAP_NAME_SUFFIXES[(seed + index) % MAP_NAME_SUFFIXES.length];
+
+      return {
+        id: `map_${index + 1}`,
+        seed,
+        name: `${theme.name} ${suffix}`,
+        themeId: theme.id,
+        themeName: theme.name,
+      };
+    });
+  }
+
+  private getMapVoteRecords(): MapVoteRecord[] {
+    if (!this.mapVoteSession) return [];
+    return Array.from(this.mapVoteSession.votes, ([playerId, optionId]) => ({ playerId, optionId }));
+  }
+
+  private getWinningMapOption(): MapVoteOption {
+    const session = this.mapVoteSession;
+    if (!session) {
+      throw new Error('Cannot choose map without an active vote');
+    }
+
+    const voteCounts = new Map(session.options.map((option) => [option.id, 0]));
+    session.votes.forEach((optionId) => {
+      voteCounts.set(optionId, (voteCounts.get(optionId) || 0) + 1);
+    });
+
+    const hostVote = this.state.hostId ? session.votes.get(this.state.hostId) : null;
+    let bestOption = session.options[0];
+    let bestCount = voteCounts.get(bestOption.id) || 0;
+
+    for (const option of session.options.slice(1)) {
+      const count = voteCounts.get(option.id) || 0;
+      const hostBreaksTie = count === bestCount && hostVote === option.id && hostVote !== bestOption.id;
+
+      if (count > bestCount || hostBreaksTie) {
+        bestOption = option;
+        bestCount = count;
+      }
+    }
+
+    return bestOption;
+  }
+
+  private sendMapVoteStarted(client: Client): void {
+    if (!this.mapVoteSession) return;
+    client.send('mapVoteStarted', {
+      options: this.mapVoteSession.options,
+      votes: this.getMapVoteRecords(),
+      phaseEndTime: this.mapVoteSession.phaseEndTime,
+    });
+  }
+
+  private broadcastMapVoteStarted(): void {
+    if (!this.mapVoteSession) return;
+    this.broadcast('mapVoteStarted', {
+      options: this.mapVoteSession.options,
+      votes: this.getMapVoteRecords(),
+      phaseEndTime: this.mapVoteSession.phaseEndTime,
+    });
+  }
+
+  private broadcastMapVoteUpdated(): void {
+    if (!this.mapVoteSession) return;
+    this.broadcast('mapVoteUpdated', {
+      votes: this.getMapVoteRecords(),
+    });
+  }
+
+  private clearMapVoteTimer(): void {
+    if (this.mapVoteFinalizeTimeout) {
+      clearTimeout(this.mapVoteFinalizeTimeout);
+      this.mapVoteFinalizeTimeout = null;
+    }
   }
 
   private createPlayerAssignments(): ParticipantAssignment[] {

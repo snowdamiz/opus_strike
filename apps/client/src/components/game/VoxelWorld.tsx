@@ -5,6 +5,8 @@ import type { VoxelMaterialDetail } from './visualQuality';
 const FALLBACK_FLOOR_SIZE = 500;
 
 interface VoxelWorldProps {
+  seed?: number;
+  enablePhysics?: boolean;
   shadowsEnabled: boolean;
   dressingShadows: boolean;
   dressingDensity: number;
@@ -13,6 +15,8 @@ interface VoxelWorldProps {
 }
 
 export function VoxelWorld({
+  seed,
+  enablePhysics = true,
   shadowsEnabled,
   dressingShadows,
   dressingDensity,
@@ -22,6 +26,8 @@ export function VoxelWorld({
   return (
     <group>
       <VoxelMap
+        seed={seed}
+        enablePhysics={enablePhysics}
         shadowsEnabled={shadowsEnabled}
         dressingShadows={dressingShadows}
         dressingDensity={dressingDensity}

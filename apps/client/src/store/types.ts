@@ -40,6 +40,19 @@ export interface LobbyPlayer {
   botProfileId?: string;
 }
 
+export interface MapVoteOption {
+  id: string;
+  seed: number;
+  name: string;
+  themeId: string;
+  themeName: string;
+}
+
+export interface MapVoteRecord {
+  playerId: string;
+  optionId: string;
+}
+
 export interface UserStats {
   totalGames: number;
   totalWins: number;
@@ -48,7 +61,7 @@ export interface UserStats {
   totalCaptures: number;
 }
 
-export type AppPhase = 'menu' | 'browsing_lobbies' | 'in_lobby' | 'in_game';
+export type AppPhase = 'menu' | 'browsing_lobbies' | 'in_lobby' | 'map_vote' | 'in_game';
 
 // ============================================================================
 // PHANTOM PROJECTILE TYPES

@@ -11,8 +11,6 @@ import {
   getHeroStats,
   ALL_HERO_IDS,
   createRandomSeed,
-  PROCEDURAL_MAP_ORIGIN,
-  PROCEDURAL_MAP_WORLD_SIZE,
   generateProceduralVoxelMap,
   isInsideBoundaryPolygon,
   constrainToBoundaryPolygon,
@@ -69,6 +67,7 @@ import {
 interface CreateOptions {
   lobbyId?: string;
   lobbyName?: string;
+  mapSeed?: number;
   botAssignments?: BotAssignment[];
 }
 
@@ -192,10 +191,6 @@ const playerPressState = new Map<string, {
   ability2: boolean;
   ultimate: boolean;
 }>();
-const MAP_MIN_X = PROCEDURAL_MAP_ORIGIN.x;
-const MAP_MAX_X = PROCEDURAL_MAP_ORIGIN.x + PROCEDURAL_MAP_WORLD_SIZE.x;
-const MAP_MIN_Z = PROCEDURAL_MAP_ORIGIN.z;
-const MAP_MAX_Z = PROCEDURAL_MAP_ORIGIN.z + PROCEDURAL_MAP_WORLD_SIZE.z;
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 const BOT_THINK_INTERVAL_MS = 200;
 const BOT_AWARENESS_RANGE = 58;
@@ -339,7 +334,9 @@ export class GameRoom extends Room<GameState> {
     this.setState(new GameState());
     this.state.roomId = this.roomId;
     this.state.config = this.config;
-    this.state.mapSeed = createRandomSeed();
+    this.state.mapSeed = typeof options.mapSeed === 'number'
+      ? options.mapSeed >>> 0
+      : createRandomSeed();
     this.refreshMapManifest();
     loggers.room.info('Map seed', this.state.mapSeed);
     this.resetFlags();
@@ -1127,9 +1124,10 @@ export class GameRoom extends Room<GameState> {
 
     // Use client-reported position after server-side spawn placement has had time to sync.
     if (input.position && shouldAcceptClientPosition) {
-      player.position.x = Math.max(MAP_MIN_X, Math.min(MAP_MAX_X, input.position.x));
+      const bounds = this.getMapWorldBounds();
+      player.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, input.position.x));
       player.position.y = Math.max(-10, Math.min(100, input.position.y));
-      player.position.z = Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, input.position.z));
+      player.position.z = Math.max(bounds.minZ, Math.min(bounds.maxZ, input.position.z));
     }
     if (input.velocity && shouldAcceptClientPosition) {
       player.velocity.x = input.velocity.x;
@@ -2550,6 +2548,15 @@ export class GameRoom extends Room<GameState> {
     return this.mapManifest!;
   }
 
+  private getMapWorldBounds(manifest = this.getMapManifest()): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    return {
+      minX: manifest.origin.x,
+      maxX: manifest.origin.x + manifest.size.x * manifest.voxelSize.x,
+      minZ: manifest.origin.z,
+      maxZ: manifest.origin.z + manifest.size.z * manifest.voxelSize.z,
+    };
+  }
+
   private getChunkKey(x: number, y: number, z: number): string {
     return `${x}:${y}:${z}`;
   }
@@ -2618,12 +2625,13 @@ export class GameRoom extends Room<GameState> {
 
   private clampToPlayableMap(position: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
     const manifest = this.getMapManifest();
+    const bounds = this.getMapWorldBounds(manifest);
     const clampedBoundary = clampToBoundaryPolygon(position.x, position.z, manifest.boundary);
 
     return {
-      x: Math.max(MAP_MIN_X, Math.min(MAP_MAX_X, clampedBoundary.x)),
+      x: Math.max(bounds.minX, Math.min(bounds.maxX, clampedBoundary.x)),
       y: Math.max(-20, Math.min(120, position.y)),
-      z: Math.max(MAP_MIN_Z, Math.min(MAP_MAX_Z, clampedBoundary.z)),
+      z: Math.max(bounds.minZ, Math.min(bounds.maxZ, clampedBoundary.z)),
     };
   }
 

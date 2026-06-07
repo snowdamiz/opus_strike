@@ -31,7 +31,7 @@ export class LobbyState extends Schema {
   maxPlayers: number = 10;
   maxParticipants: number = 10;
   isPublic: boolean = true;
-  status: string = 'waiting'; // 'waiting' | 'starting' | 'in_game'
+  status: string = 'waiting'; // 'waiting' | 'map_vote' | 'starting' | 'in_game'
   gameRoomId: string = ''; // Set when game starts
   defaultBotDifficulty: string = 'normal';
   botFillMode: string = 'manual';

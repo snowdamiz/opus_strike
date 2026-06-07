@@ -1,37 +1,31 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
 import { HeroPreviewCanvas } from './HeroPreviewCanvas';
-import { HeroIcon } from './HeroIcons';
 import { HERO_COLORS } from '../../styles/colorTokens';
+import { PhaseCountdownTimer } from './PhaseCountdownTimer';
 
 export function HeroSelect() {
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId);
+  const localIsReady = useGameStore((state) => state.localPlayer?.isReady ?? false);
   const phaseEndTime = useGameStore((state) => state.phaseEndTime);
   const { selectHero, setReady, leaveGame } = useNetwork();
   const { playButtonClick } = useUISounds();
   const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
   const [isLockedIn, setIsLockedIn] = useState(false);
-  const didPreselectRef = useRef(false);
 
-  // Preselect Phantom on mount
   useEffect(() => {
-    if (localHeroId) {
-      didPreselectRef.current = true;
-      setSelectedHero(localHeroId);
-      return;
-    }
+    if (!localHeroId) return;
+    setSelectedHero((current) => (current === localHeroId ? current : localHeroId));
+  }, [localHeroId]);
 
-    if (!didPreselectRef.current) {
-      didPreselectRef.current = true;
-      selectHero('phantom');
-    }
-  }, [localHeroId, selectHero]);
+  useEffect(() => {
+    setIsLockedIn(localIsReady);
+  }, [localIsReady]);
 
-  const heroInfo = HERO_DEFINITIONS[selectedHero];
   const accentColor = HERO_COLORS[selectedHero];
 
   const handleSelectHero = useCallback((heroId: HeroId) => {
@@ -42,15 +36,17 @@ export function HeroSelect() {
 
   const handleLockIn = useCallback(() => {
     if (!selectedHero || isLockedIn) return;
+    selectHero(selectedHero);
     setIsLockedIn(true);
     setReady(true);
-  }, [isLockedIn, selectedHero, setReady]);
+  }, [isLockedIn, selectHero, selectedHero, setReady]);
 
   const handleTimerExpired = useCallback(() => {
     if (isLockedIn || !selectedHero) return;
+    selectHero(selectedHero);
     setIsLockedIn(true);
     setReady(true);
-  }, [isLockedIn, selectedHero, setReady]);
+  }, [isLockedIn, selectHero, selectedHero, setReady]);
 
   const handleHeroCardClick = useCallback((heroId: HeroId) => {
     handleSelectHero(heroId);
@@ -92,7 +88,7 @@ export function HeroSelect() {
 
       {/* Top Navigation Bar */}
       <nav className="absolute top-0 left-0 right-0 z-20">
-        <div className="menu-nav flex items-center justify-between gap-4">
+        <div className="menu-nav relative flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3 xl:gap-4">
             <button
               type="button"
@@ -110,21 +106,16 @@ export function HeroSelect() {
               <h1 className="font-display text-xl leading-none text-white tracking-wide xl:text-2xl">
                 CHOOSE YOUR <span style={{ color: accentColor }}>HERO</span>
               </h1>
-              <p className="mt-1 text-[10px] font-body uppercase tracking-widest text-white/40">
-                Select and lock in
-              </p>
             </div>
           </div>
 
+          <PhaseCountdownTimer
+            phaseEndTime={phaseEndTime}
+            disabled={isLockedIn}
+            onExpired={handleTimerExpired}
+          />
+
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
-            <SelectedHeroPill heroId={selectedHero} hero={heroInfo} color={accentColor} />
-
-            <HeroSelectTimer
-              phaseEndTime={phaseEndTime}
-              isLockedIn={isLockedIn}
-              onExpired={handleTimerExpired}
-            />
-
             <button
               type="button"
               onClick={() => { playButtonClick(); handleLockIn(); }}
@@ -187,97 +178,6 @@ export function HeroSelect() {
 }
 
 type HeroDefinition = (typeof HERO_DEFINITIONS)[HeroId];
-
-const getRemainingSeconds = (phaseEndTime: number | null) => {
-  if (!phaseEndTime) return 60;
-  return Math.max(0, Math.ceil((phaseEndTime - Date.now()) / 1000));
-};
-
-const SelectedHeroPill = memo(function SelectedHeroPill({
-  heroId,
-  hero,
-  color,
-}: {
-  heroId: HeroId;
-  hero: HeroDefinition;
-  color: string;
-}) {
-  return (
-    <div
-      className="hidden items-center gap-3 rounded-xl border py-2 pl-2 pr-4 lg:flex"
-      style={{
-        background: `linear-gradient(135deg, ${color}18, rgb(var(--color-strike-panel-raised) / 0.78))`,
-        borderColor: `${color}35`,
-      }}
-    >
-      <div
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-        style={{
-          background: `linear-gradient(135deg, ${color}, ${color}bb)`,
-          boxShadow: `0 4px 15px ${color}38`,
-        }}
-      >
-        <HeroIcon heroId={heroId} size={20} color="#ffffff" />
-      </div>
-      <div className="min-w-0">
-        <p className="font-display text-sm leading-none text-white">{hero.name.toUpperCase()}</p>
-        <p className="mt-1 text-[10px] font-body uppercase tracking-widest" style={{ color }}>
-          {hero.role}
-        </p>
-      </div>
-    </div>
-  );
-});
-
-const HeroSelectTimer = memo(function HeroSelectTimer({
-  phaseEndTime,
-  isLockedIn,
-  onExpired,
-}: {
-  phaseEndTime: number | null;
-  isLockedIn: boolean;
-  onExpired: () => void;
-}) {
-  const [timeRemaining, setTimeRemaining] = useState(() => getRemainingSeconds(phaseEndTime));
-  const didExpireRef = useRef(false);
-
-  useEffect(() => {
-    didExpireRef.current = false;
-  }, [phaseEndTime]);
-
-  useEffect(() => {
-    const updateTimer = () => {
-      const remaining = getRemainingSeconds(phaseEndTime);
-      setTimeRemaining((current) => (current === remaining ? current : remaining));
-
-      if (remaining <= 0 && !isLockedIn && !didExpireRef.current) {
-        didExpireRef.current = true;
-        onExpired();
-      }
-    };
-
-    updateTimer();
-    const interval = window.setInterval(updateTimer, 250);
-    return () => window.clearInterval(interval);
-  }, [phaseEndTime, isLockedIn, onExpired]);
-
-  return (
-    <div
-      className={`flex h-10 items-center gap-2 rounded-xl border px-3 xl:gap-3 xl:px-4 ${timeRemaining < 10
-        ? 'bg-red-500/20 border-red-500/30'
-        : 'bg-white/5 border-white/10'
-        }`}
-    >
-      <span className="text-[9px] xl:text-[10px] text-white/40 font-body uppercase tracking-wider">Time</span>
-      <span className={`font-mono text-lg xl:text-xl font-bold tracking-tight ${timeRemaining < 10 ? 'text-red-400' : 'text-white'}`}>
-        {timeRemaining.toString().padStart(2, '0')}
-      </span>
-      {timeRemaining < 10 && (
-        <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
-      )}
-    </div>
-  );
-});
 
 const HeroCard = memo(function HeroCard({
   heroId,

@@ -46,31 +46,13 @@ function PhantomIcon({ className }: { className?: string }) {
 
 function SlopHeroesMark({ className }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <defs>
-        <linearGradient id="slop-mark-cyan" x1="9" y1="8" x2="38" y2="33" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#65fbff" />
-          <stop offset="1" stopColor="#08a9ff" />
-        </linearGradient>
-        <linearGradient id="slop-mark-orange" x1="20" y1="24" x2="48" y2="47" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#ffd26a" />
-          <stop offset="1" stopColor="#f15a24" />
-        </linearGradient>
-        <linearGradient id="slop-mark-slash" x1="22" y1="7" x2="32" y2="49" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#f8ffff" />
-          <stop offset="0.52" stopColor="#7af3ff" />
-          <stop offset="1" stopColor="#1378ff" />
-        </linearGradient>
-      </defs>
-
-      <path d="M12.3 26.9C14 14.6 24.6 10.1 35.8 14" stroke="url(#slop-mark-cyan)" strokeWidth="5.6" strokeLinecap="round" />
-      <path d="M43.7 29.1C42 41.4 31.4 45.9 20.2 42" stroke="url(#slop-mark-orange)" strokeWidth="5.6" strokeLinecap="round" />
-      <path d="M25.2 6.7H31.4L24.1 49.3H17.9L25.2 6.7Z" fill="#05070b" />
-      <path d="M26.9 7.3H31.4L24.1 48.7H19.6L26.9 7.3Z" fill="url(#slop-mark-slash)" />
-      <path d="M33.6 10.6L44.2 15.7L35.3 21.8L39.8 28L29.7 23.5L33.6 10.6Z" fill="url(#slop-mark-orange)" stroke="#05070b" strokeWidth="1.7" strokeLinejoin="round" />
-      <circle cx="12.3" cy="15.1" r="1.7" fill="#65fbff" />
-      <circle cx="43.7" cy="40.9" r="1.7" fill="#f97316" />
-    </svg>
+    <img
+      className={className}
+      src="/voxel.svg"
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+    />
   );
 }
 

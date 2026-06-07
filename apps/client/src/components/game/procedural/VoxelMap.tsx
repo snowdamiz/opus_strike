@@ -10,6 +10,8 @@ import { clearVoxelGeometryCache } from './meshBuilder';
 import type { VoxelMaterialDetail } from '../visualQuality';
 
 interface VoxelMapProps {
+  seed?: number;
+  enablePhysics?: boolean;
   shadowsEnabled: boolean;
   dressingShadows: boolean;
   dressingDensity: number;
@@ -18,13 +20,16 @@ interface VoxelMapProps {
 }
 
 export function VoxelMap({
+  seed,
+  enablePhysics = true,
   shadowsEnabled,
   dressingShadows,
   dressingDensity,
   reflectionIntensity,
   materialDetail,
 }: VoxelMapProps) {
-  const mapSeed = useGameStore((state) => state.mapSeed);
+  const storeMapSeed = useGameStore((state) => state.mapSeed);
+  const mapSeed = seed ?? storeMapSeed;
   const manifest = useMemo(() => generateProceduralVoxelMap(mapSeed), [mapSeed]);
   const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
   const collidersLoadedRef = useRef(false);
@@ -34,6 +39,8 @@ export function VoxelMap({
   }, [manifest.id]);
 
   useEffect(() => {
+    if (!enablePhysics) return;
+
     collidersLoadedRef.current = false;
     setMapBoundaryPolygon(manifest.boundary);
 
@@ -62,7 +69,7 @@ export function VoxelMap({
 
       return () => window.clearInterval(interval);
     }
-  }, [manifest]);
+  }, [enablePhysics, manifest]);
 
   return (
     <group name="procedural-voxel-map">

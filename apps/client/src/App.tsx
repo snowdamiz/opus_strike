@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useGameStore } from './store/gameStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
+import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
 import { HeroSelect } from './components/ui/HeroSelect';
 import { LoadingScreen } from './components/ui/LoadingScreen';
@@ -37,7 +38,7 @@ export function App() {
   const shouldLoadMatchWorld = appPhase === 'in_game' && !isPreGame;
 
   useEffect(() => {
-    preloadSoundGroup(appPhase === 'in_lobby' ? 'lobby' : 'menu');
+    preloadSoundGroup(appPhase === 'in_lobby' || appPhase === 'map_vote' ? 'lobby' : 'menu');
   }, [appPhase, preloadSoundGroup]);
 
   useEffect(() => {
@@ -202,6 +203,10 @@ export function App() {
 
   if (appPhase === 'in_lobby') {
     return <Lobby />;
+  }
+
+  if (appPhase === 'map_vote') {
+    return <MapVoteScreen />;
   }
 
   // In game

@@ -10,6 +10,8 @@ import type {
   PlayerInput,
   LobbyInfo,
   LobbyPlayer,
+  MapVoteOption,
+  MapVoteRecord,
   UserStats,
   AppPhase,
 } from './types';
@@ -31,6 +33,8 @@ import {
 export type {
   LobbyInfo,
   LobbyPlayer,
+  MapVoteOption,
+  MapVoteRecord,
   UserStats,
   AppPhase,
 } from './types';
@@ -78,6 +82,10 @@ interface CoreState {
   currentLobbyName: string | null;
   lobbyPlayers: Map<string, LobbyPlayer>;
   isLobbyHost: boolean;
+  mapVoteOptions: MapVoteOption[];
+  mapVotes: Map<string, string>;
+  mapVotePhaseEndTime: number | null;
+  selectedMapOptionId: string | null;
 
   // Game state
   gamePhase: GamePhase;
@@ -151,6 +159,9 @@ interface CoreActions {
   updateLobbyPlayer: (playerId: string, player: LobbyPlayer) => void;
   removeLobbyPlayer: (playerId: string) => void;
   setIsLobbyHost: (isHost: boolean) => void;
+  setMapVoteState: (options: MapVoteOption[], votes: MapVoteRecord[], phaseEndTime: number | null, selectedOptionId?: string | null) => void;
+  setMapVotes: (votes: MapVoteRecord[], selectedOptionId?: string | null) => void;
+  clearMapVote: () => void;
 
   // UI Actions
   setShadowStepTargeting: (targeting: boolean, valid?: boolean) => void;
@@ -196,6 +207,10 @@ const coreInitialState: CoreState = {
   currentLobbyName: null,
   lobbyPlayers: new Map(),
   isLobbyHost: false,
+  mapVoteOptions: [],
+  mapVotes: new Map(),
+  mapVotePhaseEndTime: null,
+  selectedMapOptionId: null,
   gamePhase: 'waiting',
   tick: 0,
   serverTime: 0,
@@ -516,6 +531,25 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   setIsLobbyHost: (isHost) => set((state) => state.isLobbyHost === isHost ? state : { isLobbyHost: isHost }),
 
+  setMapVoteState: (options, votes, phaseEndTime, selectedOptionId = null) => set({
+    mapVoteOptions: options,
+    mapVotes: new Map(votes.map((vote) => [vote.playerId, vote.optionId])),
+    mapVotePhaseEndTime: phaseEndTime,
+    selectedMapOptionId: selectedOptionId,
+  }),
+
+  setMapVotes: (votes, selectedOptionId = null) => set({
+    mapVotes: new Map(votes.map((vote) => [vote.playerId, vote.optionId])),
+    selectedMapOptionId: selectedOptionId,
+  }),
+
+  clearMapVote: () => set({
+    mapVoteOptions: [],
+    mapVotes: new Map(),
+    mapVotePhaseEndTime: null,
+    selectedMapOptionId: null,
+  }),
+
   // ==================== UI ACTIONS ====================
 
   setShadowStepTargeting: (targeting, valid = false) => set((state) => (
@@ -567,5 +601,9 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     currentLobbyName: null,
     lobbyPlayers: new Map(),
     isLobbyHost: false,
+    mapVoteOptions: [],
+    mapVotes: new Map(),
+    mapVotePhaseEndTime: null,
+    selectedMapOptionId: null,
   }),
 }));

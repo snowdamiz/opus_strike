@@ -1,6 +1,6 @@
 import { createContext, useContext, useRef, useCallback, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore, LobbyPlayer, LobbyInfo } from '../store/gameStore';
+import { useGameStore, LobbyPlayer, LobbyInfo, MapVoteOption, MapVoteRecord } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
 import type { BotDifficulty, HeroId, Team, PlayerInput } from '@voxel-strike/shared';
@@ -43,6 +43,9 @@ interface NetworkContextType {
   updateLobbyBotTeam: (botId: string, team: string) => void;
   updateLobbyBotDifficulty: (botId: string, difficulty: BotDifficulty) => void;
   startGame: () => void;
+  voteMap: (optionId: string) => void;
+  reportMapVotePreviewsReady: () => void;
+  finalizeMapVote: () => void;
   kickPlayer: (playerId: string) => void;
 
   // Game operations
@@ -95,6 +98,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     updateLobbyPlayer,
     removeLobbyPlayer,
     setIsLobbyHost,
+    setMapVoteState,
+    setMapVotes,
+    clearMapVote,
     reset,
     resetLobby,
   } = useGameStore();
@@ -175,6 +181,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       loggers.network.debug('received lobby state', data);
       setCurrentLobby(data.lobbyId, data.name);
       setIsLobbyHost(data.hostId === room.sessionId);
+      if (data.status === 'map_vote') {
+        setAppPhase('map_vote');
+      }
 
       const playersMap = new Map<string, LobbyPlayer>();
       for (const p of data.players) {
@@ -191,6 +200,40 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         });
       }
       setLobbyPlayers(playersMap);
+    });
+
+    room.onMessage('mapVoteStarted', (data: {
+      options: MapVoteOption[];
+      votes: MapVoteRecord[];
+      phaseEndTime: number | null;
+    }) => {
+      loggers.network.info('map vote started', data.options.map((option) => option.seed));
+      setMapVoteState(data.options, data.votes, data.phaseEndTime);
+      setAppPhase('map_vote');
+    });
+
+    room.onMessage('mapVoteTimerStarted', (data: { phaseEndTime: number }) => {
+      useGameStore.setState({ mapVotePhaseEndTime: data.phaseEndTime });
+    });
+
+    room.onMessage('mapVoteUpdated', (data: { votes: MapVoteRecord[] }) => {
+      setMapVotes(data.votes);
+    });
+
+    room.onMessage('mapVoteFinalized', (data: {
+      selectedOptionId: string;
+      mapSeed: number;
+      votes: MapVoteRecord[];
+    }) => {
+      loggers.network.info('map vote finalized', data.mapSeed);
+      setMapVotes(data.votes, data.selectedOptionId);
+      setMapSeed(data.mapSeed);
+    });
+
+    room.onMessage('mapVoteCancelled', (data: { reason?: string }) => {
+      loggers.network.warn('map vote cancelled', data.reason || 'unknown');
+      clearMapVote();
+      setAppPhase('in_lobby');
     });
 
     room.onMessage('playerJoined', (data: {
@@ -300,7 +343,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       loggers.network.debug('left lobby room', code);
       resetLobby();
     });
-  }, [setCurrentLobby, setIsLobbyHost, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, resetLobby]);
+  }, [setCurrentLobby, setIsLobbyHost, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, clearMapVote, resetLobby]);
 
   const createLobby = useCallback(async (
     playerName: string,
@@ -415,6 +458,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('startGame');
   }, []);
 
+  const voteMap = useCallback((optionId: string) => {
+    lobbyRoomRef.current?.send('voteMap', { optionId });
+  }, []);
+
+  const reportMapVotePreviewsReady = useCallback(() => {
+    lobbyRoomRef.current?.send('mapVotePreviewsReady');
+  }, []);
+
+  const finalizeMapVote = useCallback(() => {
+    lobbyRoomRef.current?.send('finalizeMapVote');
+  }, []);
+
   const kickPlayer = useCallback((playerId: string) => {
     lobbyRoomRef.current?.send('kick', { playerId });
   }, []);
@@ -514,7 +569,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (syncInterval) clearInterval(syncInterval);
       setConnected(false);
       setRoomId(null);
-      setGamePhase('waiting' as any);
+      setGamePhase('waiting');
       resetLobby();
       setAppPhase('browsing_lobbies');
     });
@@ -543,6 +598,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
 
       useGameStore.getState().setPlayers(new Map());
+      setGamePhase('waiting');
+      setPhaseEndTime(null);
 
       const client = getClient();
       const clientId = getClientId();
@@ -672,6 +729,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       updateLobbyBotTeam,
       updateLobbyBotDifficulty,
       startGame,
+      voteMap,
+      reportMapVotePreviewsReady,
+      finalizeMapVote,
       kickPlayer,
       joinGameRoom,
       leaveGame,

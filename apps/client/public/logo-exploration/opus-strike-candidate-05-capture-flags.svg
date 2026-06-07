@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Opus Strike logo candidate 5 capture flags">
+  <defs>
+    <linearGradient id="flag-cyan" x1="28" y1="24" x2="88" y2="88" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#78fbff"/>
+      <stop offset="1" stop-color="#0b82ff"/>
+    </linearGradient>
+    <linearGradient id="flag-orange" x1="39" y1="18" x2="101" y2="86" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffe06f"/>
+      <stop offset="1" stop-color="#ff551d"/>
+    </linearGradient>
+    <linearGradient id="flag-center" x1="44" y1="42" x2="83" y2="83" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f8ffff"/>
+      <stop offset=".45" stop-color="#72fbff"/>
+      <stop offset="1" stop-color="#ffae48"/>
+    </linearGradient>
+    <filter id="flag-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#000000" flood-opacity=".55"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" fill="#111315"/>
+  <g filter="url(#flag-shadow)">
+    <path d="M36 20H46V108H36V20Z" fill="#05070b" transform="rotate(-23 41 64)"/>
+    <path d="M83 20H93V108H83V20Z" fill="#05070b" transform="rotate(23 88 64)"/>
+    <path d="M39 21H44V106H39V21Z" fill="url(#flag-cyan)" transform="rotate(-23 41.5 63.5)"/>
+    <path d="M86 21H91V106H86V21Z" fill="url(#flag-orange)" transform="rotate(23 88.5 63.5)"/>
+    <path d="M32 23L72 33L56 49L76 61L37 54L32 23Z" fill="#05070b"/>
+    <path d="M37 29L63 36L51 48L65 56L40 51L37 29Z" fill="url(#flag-cyan)"/>
+    <path d="M96 23L56 33L72 49L52 61L91 54L96 23Z" fill="#05070b"/>
+    <path d="M91 29L65 36L77 48L63 56L88 51L91 29Z" fill="url(#flag-orange)"/>
+  </g>
+  <path d="M64 40L85 64L64 88L43 64L64 40Z" fill="#05070b"/>
+  <path d="M64 48L78 64L64 80L50 64L64 48Z" fill="url(#flag-center)"/>
+  <path d="M64 54L72 64L64 74L56 64L64 54Z" fill="#111315"/>
+  <circle cx="25" cy="94" r="5" fill="#38eaff"/>
+  <circle cx="103" cy="94" r="5" fill="#ff6a1f"/>
+</svg>
