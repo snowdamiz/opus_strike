@@ -1,5 +1,4 @@
 import { useGameStore } from '../store/gameStore';
-import { getTemporaryWallColliderCount } from '../hooks/usePhysics';
 
 export interface FrameMetricSummary {
   frameMsP50: number;
@@ -26,11 +25,29 @@ export interface SpawnMetricSummary {
   count: number;
 }
 
+export interface VoxelWorldMetricSummary {
+  generationMs: number;
+  meshBuildMsP95: number;
+  meshBuildCount: number;
+  totalChunkSlots: number;
+  renderableChunks: number;
+  renderableRegions: number;
+  emptyChunkSlots: number;
+  colliders: number;
+}
+
+export interface PhysicsQueryMetricSummary {
+  countPerSecond: number;
+  msPerSecond: number;
+}
+
 export interface ClientPerfSnapshot {
   frame: FrameMetricSummary;
   network: NetworkMetricSummary;
   systems: SystemMetricSummary[];
   recentSpawns: SpawnMetricSummary[];
+  voxelWorld: VoxelWorldMetricSummary;
+  physicsQueries: PhysicsQueryMetricSummary;
   activeEffects: number;
   projectileCounts: Record<string, number>;
   temporaryColliders: number;
@@ -43,8 +60,27 @@ const SYSTEM_SAMPLE_LIMIT = 180;
 const SPAWN_WINDOW_MS = 3000;
 const NETWORK_WINDOW_MS = 1000;
 const frameSamples: number[] = [];
+const voxelMeshBuildSamples: number[] = [];
 const frameSystems = new Set<string>();
 let activeLights = 0;
+let voxelWorldMetrics: VoxelWorldMetricSummary = {
+  generationMs: 0,
+  meshBuildMsP95: 0,
+  meshBuildCount: 0,
+  totalChunkSlots: 0,
+  renderableChunks: 0,
+  renderableRegions: 0,
+  emptyChunkSlots: 0,
+  colliders: 0,
+};
+let physicsQueryWindowStartedAt = 0;
+let physicsQueryWindowCount = 0;
+let physicsQueryWindowMs = 0;
+let physicsQueryMetrics: PhysicsQueryMetricSummary = {
+  countPerSecond: 0,
+  msPerSecond: 0,
+};
+let temporaryColliderCountProvider: () => number = () => 0;
 
 interface SystemSamples {
   samples: number[];
@@ -122,6 +158,71 @@ export function recordSpawnMarker(name: string): void {
   pruneSpawnMarkers(now);
 }
 
+export function recordVoxelMapGenerated(metrics: {
+  generationMs: number;
+  totalChunkSlots: number;
+  renderableChunks: number;
+  emptyChunkSlots: number;
+  colliders: number;
+}): void {
+  voxelMeshBuildSamples.length = 0;
+  voxelWorldMetrics = {
+    ...voxelWorldMetrics,
+    ...metrics,
+    renderableRegions: 0,
+    meshBuildMsP95: 0,
+    meshBuildCount: 0,
+  };
+}
+
+export function recordVoxelWorldRegions(renderableRegions: number): void {
+  if (!Number.isFinite(renderableRegions) || renderableRegions < 0) return;
+
+  voxelWorldMetrics = {
+    ...voxelWorldMetrics,
+    renderableRegions,
+  };
+}
+
+export function recordVoxelMeshBuild(ms: number): void {
+  if (!Number.isFinite(ms) || ms < 0) return;
+
+  voxelMeshBuildSamples.push(ms);
+  if (voxelMeshBuildSamples.length > SYSTEM_SAMPLE_LIMIT) {
+    voxelMeshBuildSamples.shift();
+  }
+
+  voxelWorldMetrics = {
+    ...voxelWorldMetrics,
+    meshBuildMsP95: percentile(voxelMeshBuildSamples, 0.95),
+    meshBuildCount: voxelWorldMetrics.meshBuildCount + 1,
+  };
+}
+
+export function recordPhysicsQueryTime(ms: number): void {
+  if (!Number.isFinite(ms) || ms < 0) return;
+
+  const now = performance.now();
+  if (physicsQueryWindowStartedAt === 0) {
+    physicsQueryWindowStartedAt = now;
+  }
+
+  physicsQueryWindowCount++;
+  physicsQueryWindowMs += ms;
+
+  const elapsed = now - physicsQueryWindowStartedAt;
+  if (elapsed < NETWORK_WINDOW_MS) return;
+
+  const seconds = elapsed / 1000;
+  physicsQueryMetrics = {
+    countPerSecond: physicsQueryWindowCount / seconds,
+    msPerSecond: physicsQueryWindowMs / seconds,
+  };
+  physicsQueryWindowStartedAt = now;
+  physicsQueryWindowCount = 0;
+  physicsQueryWindowMs = 0;
+}
+
 export function registerFrameSystem(name: string): () => void {
   frameSystems.add(name);
   return () => {
@@ -137,6 +238,10 @@ export function recordNetworkMessage(type: string, payload: unknown): void {
 
 export function setActiveLightCount(count: number): void {
   activeLights = Math.max(0, count);
+}
+
+export function setTemporaryColliderCountProvider(provider: () => number): void {
+  temporaryColliderCountProvider = provider;
 }
 
 export function getClientPerfSnapshot(): ClientPerfSnapshot {
@@ -199,9 +304,11 @@ export function getClientPerfSnapshot(): ClientPerfSnapshot {
     },
     systems,
     recentSpawns,
+    voxelWorld: voxelWorldMetrics,
+    physicsQueries: physicsQueryMetrics,
     activeEffects: Object.values(projectileCounts).reduce((sum, count) => sum + count, 0),
     projectileCounts,
-    temporaryColliders: getTemporaryWallColliderCount(),
+    temporaryColliders: temporaryColliderCountProvider(),
     activeFrameSystems: frameSystems.size,
     activeLights,
   };

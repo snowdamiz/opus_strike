@@ -10,15 +10,17 @@ interface ColliderInput {
 }
 
 interface ColliderLookupInput extends ColliderInput {
-  chunkLookup: Map<string, VoxelChunk>;
+  chunkLookup: Map<number, VoxelChunk>;
+  chunksX: number;
+  chunksZ: number;
 }
 
 function index(x: number, y: number, z: number, size: VoxelSize): number {
   return x + size.x * (z + size.z * y);
 }
 
-function chunkKey(x: number, y: number, z: number): string {
-  return `${x}:${y}:${z}`;
+function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
+  return x + chunksX * (z + chunksZ * y);
 }
 
 function getGlobalBlock(input: ColliderLookupInput, x: number, y: number, z: number): number {
@@ -27,7 +29,7 @@ function getGlobalBlock(input: ColliderLookupInput, x: number, y: number, z: num
   const cx = Math.floor(x / input.chunkSize.x);
   const cy = Math.floor(y / input.chunkSize.y);
   const cz = Math.floor(z / input.chunkSize.z);
-  const chunk = input.chunkLookup.get(chunkKey(cx, cy, cz));
+  const chunk = input.chunkLookup.get(chunkLookupIndex(cx, cy, cz, input.chunksX, input.chunksZ));
   if (!chunk) return 0;
 
   const lx = x - cx * input.chunkSize.x;
@@ -60,11 +62,13 @@ function canFillCuboid(
 }
 
 export function generateVoxelColliders(input: ColliderInput): VoxelCollider[] {
-  const chunkLookup = new Map<string, VoxelChunk>();
+  const chunkLookup = new Map<number, VoxelChunk>();
+  const chunksX = Math.ceil(input.size.x / input.chunkSize.x);
+  const chunksZ = Math.ceil(input.size.z / input.chunkSize.z);
   for (const chunk of input.chunks) {
-    chunkLookup.set(chunkKey(chunk.coord.x, chunk.coord.y, chunk.coord.z), chunk);
+    chunkLookup.set(chunkLookupIndex(chunk.coord.x, chunk.coord.y, chunk.coord.z, chunksX, chunksZ), chunk);
   }
-  const lookupInput: ColliderLookupInput = { ...input, chunkLookup };
+  const lookupInput: ColliderLookupInput = { ...input, chunkLookup, chunksX, chunksZ };
   const solid = new Uint8Array(input.size.x * input.size.y * input.size.z);
   const visited = new Uint8Array(solid.length);
 

@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { generateProceduralVoxelMap } from '@voxel-strike/shared';
+import { generateProceduralVoxelMap, type VoxelChunk } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { areProceduralMapCollidersLoaded, isPhysicsReady, loadProceduralMapColliders } from '../../../hooks/usePhysics';
 import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
 import { useVoxelMaterial } from './materials';
-import { VoxelChunkMesh } from './VoxelChunkMesh';
+import { VoxelRegionMesh, type VoxelChunkRegion } from './VoxelChunkMesh';
 import { WorldDressing } from './WorldDressing';
 import { clearVoxelGeometryCache } from './meshBuilder';
 import type { VoxelMaterialDetail } from '../visualQuality';
+import { recordSystemTime, recordVoxelMapGenerated, recordVoxelWorldRegions } from '../../../utils/perfMarks';
+
+const VOXEL_REGION_CHUNK_SPAN = 4;
 
 interface VoxelMapProps {
   seed?: number;
@@ -17,6 +20,27 @@ interface VoxelMapProps {
   dressingDensity: number;
   reflectionIntensity: number;
   materialDetail: VoxelMaterialDetail;
+}
+
+function createVoxelChunkRegions(chunks: VoxelChunk[]): VoxelChunkRegion[] {
+  const regions = new Map<string, VoxelChunkRegion>();
+
+  for (const chunk of chunks) {
+    const regionX = Math.floor(chunk.coord.x / VOXEL_REGION_CHUNK_SPAN);
+    const regionZ = Math.floor(chunk.coord.z / VOXEL_REGION_CHUNK_SPAN);
+    const id = `${regionX}:${chunk.coord.y}:${regionZ}`;
+    let region = regions.get(id);
+
+    if (!region) {
+      region = { id, chunks: [], castShadow: chunk.coord.y > 0 };
+      regions.set(id, region);
+    }
+
+    region.chunks.push(chunk);
+    region.castShadow ||= chunk.coord.y > 0;
+  }
+
+  return Array.from(regions.values());
 }
 
 export function VoxelMap({
@@ -30,9 +54,33 @@ export function VoxelMap({
 }: VoxelMapProps) {
   const storeMapSeed = useGameStore((state) => state.mapSeed);
   const mapSeed = seed ?? storeMapSeed;
-  const manifest = useMemo(() => generateProceduralVoxelMap(mapSeed), [mapSeed]);
+  const manifest = useMemo(() => {
+    const start = performance.now();
+    const nextManifest = generateProceduralVoxelMap(mapSeed);
+    const generationMs = performance.now() - start;
+    recordSystemTime('voxelMapGenerate', generationMs);
+    recordVoxelMapGenerated({
+      generationMs,
+      totalChunkSlots: nextManifest.stats.totalChunkSlots ?? nextManifest.stats.chunkCount,
+      renderableChunks: nextManifest.stats.renderableChunkCount ?? nextManifest.stats.chunkCount,
+      emptyChunkSlots: nextManifest.stats.emptyChunkSlots ?? 0,
+      colliders: nextManifest.stats.colliderCount,
+    });
+    return nextManifest;
+  }, [mapSeed]);
+  const renderableRegions = useMemo(() => {
+    const start = performance.now();
+    const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);
+    const regions = createVoxelChunkRegions(renderableChunks);
+    recordSystemTime('voxelRegionBatch', performance.now() - start);
+    return regions;
+  }, [manifest]);
   const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
   const collidersLoadedRef = useRef(false);
+
+  useEffect(() => {
+    recordVoxelWorldRegions(renderableRegions.length);
+  }, [renderableRegions]);
 
   useEffect(() => () => {
     clearVoxelGeometryCache(manifest.id);
@@ -73,10 +121,10 @@ export function VoxelMap({
 
   return (
     <group name="procedural-voxel-map">
-      {manifest.chunks.map((chunk) => (
-        <VoxelChunkMesh
-          key={`${chunk.coord.x}:${chunk.coord.y}:${chunk.coord.z}`}
-          chunk={chunk}
+      {renderableRegions.map((region) => (
+        <VoxelRegionMesh
+          key={region.id}
+          region={region}
           manifest={manifest}
           material={material}
           shadowsEnabled={shadowsEnabled}

@@ -204,6 +204,7 @@ interface GameCanvasProps {
 export function GameCanvas({ onReady }: GameCanvasProps) {
   const gamePhase = useGameStore((state) => state.gamePhase);
   const mapSeed = useGameStore((state) => state.mapSeed);
+  const debugMode = useGameStore((state) => state.debugMode);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
   const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
@@ -216,6 +217,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
     [mapTheme]
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
+  const showPerfOverlay = debugMode || settings.showFPS;
 
   return (
     <Canvas
@@ -255,7 +257,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
         <GameplayFrameSystems />
         <DynamicLightBudgetSystem maxLights={qualityConfig.dynamicLights.maxDynamicLights} />
-        <SceneLightCounter />
+        {showPerfOverlay && <SceneLightCounter />}
         <AdaptiveQualityController />
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={qualityConfig.environment} />

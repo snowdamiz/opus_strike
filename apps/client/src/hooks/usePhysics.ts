@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GRAVITY, PLAYER_HEIGHT, PLAYER_RADIUS, type VoxelMapManifest } from '@voxel-strike/shared';
+import {
+  getBlockDefinition,
+  GRAVITY,
+  isCollisionBlock,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
+  type VoxelChunk,
+  type VoxelMapManifest,
+} from '@voxel-strike/shared';
+import { recordPhysicsQueryTime, recordSystemTime, setTemporaryColliderCountProvider } from '../utils/perfMarks';
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -38,6 +47,10 @@ export function usePhysics(): PhysicsContext {
         physicsReady = false;
         loadedProceduralMapId = null;
         mapColliderBodies = [];
+        activeProceduralMap = null;
+        activeProceduralChunkLookup = new Map();
+        activeProceduralChunksX = 0;
+        activeProceduralChunksZ = 0;
 
         // Create physics world with gravity
         const gravity = { x: 0, y: GRAVITY, z: 0 };
@@ -97,6 +110,10 @@ export function usePhysics(): PhysicsContext {
         playerColliderInstance = null;
         loadedProceduralMapId = null;
         mapColliderBodies = [];
+        activeProceduralMap = null;
+        activeProceduralChunkLookup = new Map();
+        activeProceduralChunksX = 0;
+        activeProceduralChunksZ = 0;
       }
       worldRef.current = null;
       playerBodyRef.current = null;
@@ -120,6 +137,46 @@ export function isPhysicsReady(): boolean {
 
 let loadedProceduralMapId: string | null = null;
 let mapColliderBodies: RAPIER.RigidBody[] = [];
+let activeProceduralMap: VoxelMapManifest | null = null;
+let activeProceduralChunkLookup = new Map<number, VoxelChunk>();
+let activeProceduralChunksX = 0;
+let activeProceduralChunksZ = 0;
+
+function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
+  return x + chunksX * (z + chunksZ * y);
+}
+
+function buildActiveProceduralChunkLookup(manifest: VoxelMapManifest): void {
+  activeProceduralChunksX = Math.ceil(manifest.size.x / manifest.chunkSize.x);
+  activeProceduralChunksZ = Math.ceil(manifest.size.z / manifest.chunkSize.z);
+  activeProceduralChunkLookup = new Map<number, VoxelChunk>();
+
+  for (const chunk of manifest.chunks) {
+    activeProceduralChunkLookup.set(
+      chunkLookupIndex(chunk.coord.x, chunk.coord.y, chunk.coord.z, activeProceduralChunksX, activeProceduralChunksZ),
+      chunk
+    );
+  }
+}
+
+function getActiveProceduralBlock(gx: number, gy: number, gz: number): number {
+  const manifest = activeProceduralMap;
+  if (!manifest) return 0;
+  if (gx < 0 || gx >= manifest.size.x || gy < 0 || gy >= manifest.size.y || gz < 0 || gz >= manifest.size.z) {
+    return 0;
+  }
+
+  const cx = Math.floor(gx / manifest.chunkSize.x);
+  const cy = Math.floor(gy / manifest.chunkSize.y);
+  const cz = Math.floor(gz / manifest.chunkSize.z);
+  const chunk = activeProceduralChunkLookup.get(chunkLookupIndex(cx, cy, cz, activeProceduralChunksX, activeProceduralChunksZ));
+  if (!chunk) return 0;
+
+  const lx = gx - cx * manifest.chunkSize.x;
+  const ly = gy - cy * manifest.chunkSize.y;
+  const lz = gz - cz * manifest.chunkSize.z;
+  return chunk.blocks[lx + chunk.size.x * (lz + chunk.size.z * ly)] ?? 0;
+}
 
 /**
  * Load fixed cuboid colliders generated from the shared procedural voxel map.
@@ -141,21 +198,26 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
   mapColliderBodies = [];
 
   console.log(`[Physics] Loading procedural map colliders for ${manifest.id}...`);
+  const loadStart = performance.now();
 
-  for (const collider of manifest.colliders) {
-    const bodyDesc = rapierInstance.RigidBodyDesc.fixed().setTranslation(
-      collider.center.x,
-      collider.center.y,
-      collider.center.z
-    );
-    const body = worldInstance.createRigidBody(bodyDesc);
-    const colliderDesc = rapierInstance.ColliderDesc.cuboid(
-      collider.halfExtents.x,
-      collider.halfExtents.y,
-      collider.halfExtents.z
-    );
-    worldInstance.createCollider(colliderDesc, body);
-    mapColliderBodies.push(body);
+  if (manifest.colliders.length > 0) {
+    const bodyDesc = rapierInstance.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
+    const mapBody = worldInstance.createRigidBody(bodyDesc);
+
+    for (const collider of manifest.colliders) {
+      const colliderDesc = rapierInstance.ColliderDesc.cuboid(
+        collider.halfExtents.x,
+        collider.halfExtents.y,
+        collider.halfExtents.z
+      ).setTranslation(
+        collider.center.x,
+        collider.center.y,
+        collider.center.z
+      );
+      worldInstance.createCollider(colliderDesc, mapBody);
+    }
+
+    mapColliderBodies.push(mapBody);
   }
 
   // Step the world to initialize the new colliders
@@ -163,6 +225,9 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
   worldInstance.updateSceneQueries();
 
   loadedProceduralMapId = manifest.id;
+  activeProceduralMap = manifest;
+  buildActiveProceduralChunkLookup(manifest);
+  recordSystemTime('mapColliderLoad', performance.now() - loadStart);
   console.log(`[Physics] Procedural map colliders loaded: ${manifest.colliders.length} colliders`);
 
   return true;
@@ -185,6 +250,7 @@ export function raycast(
   if (!rapierInstance || !world) {
     return null;
   }
+  const queryStart = performance.now();
   
   try {
     // Create ray - Rapier accepts plain objects
@@ -205,6 +271,8 @@ export function raycast(
     }
   } catch (error) {
     console.error('[Physics] Raycast error:', error);
+  } finally {
+    recordPhysicsQueryTime(performance.now() - queryStart);
   }
 
   return null;
@@ -226,6 +294,7 @@ export function raycastDirection(
   if (!rapierInstance || !worldInstance) {
     return null;
   }
+  const queryStart = performance.now();
   
   try {
     const origin = { x: originX, y: originY, z: originZ };
@@ -266,6 +335,8 @@ export function raycastDirection(
     }
   } catch (error) {
     console.error('[Physics] raycastDirection error:', error);
+  } finally {
+    recordPhysicsQueryTime(performance.now() - queryStart);
   }
   
   return null;
@@ -280,9 +351,47 @@ export interface GroundInfo {
 
 const MAX_SLOPE_ANGLE = 50; // degrees - max angle player can walk up
 const MAX_SLOPE_DOT = Math.cos((MAX_SLOPE_ANGLE * Math.PI) / 180); // ~0.64
+const HEIGHTFIELD_GROUND_EPSILON = 0.05;
+
+function checkProceduralHeightfieldGround(x: number, y: number, z: number, maxDist: number): GroundInfo | null {
+  const manifest = activeProceduralMap;
+  if (!manifest || getTemporaryWallColliderCount() > 0 || getIceWallColliderCount() > 0) {
+    return null;
+  }
+
+  const gx = Math.floor((x - manifest.heightfield.origin.x) / manifest.heightfield.voxelSize.x);
+  const gz = Math.floor((z - manifest.heightfield.origin.z) / manifest.heightfield.voxelSize.z);
+  if (gx < 0 || gx >= manifest.heightfield.size.x || gz < 0 || gz >= manifest.heightfield.size.z) {
+    return null;
+  }
+
+  const topRow = manifest.heightfield.topSolidRows[gx + gz * manifest.heightfield.size.x];
+  if (topRow === 0) return null;
+
+  const groundY = manifest.heightfield.origin.y + topRow * manifest.heightfield.voxelSize.y;
+  if (groundY > y + HEIGHTFIELD_GROUND_EPSILON || y - groundY > maxDist) {
+    return null;
+  }
+
+  const block = getActiveProceduralBlock(gx, topRow - 1, gz);
+  const blockDefinition = getBlockDefinition(block);
+  if (!blockDefinition.walkable || !isCollisionBlock(block)) {
+    return null;
+  }
+
+  return {
+    groundY,
+    normal: { x: 0, y: 1, z: 0 },
+    isWalkable: true,
+  };
+}
 
 export function checkGroundWithNormal(x: number, y: number, z: number, maxDist: number = 100): GroundInfo | null {
   if (!rapierInstance || !worldInstance) return null;
+  const heightfieldGround = checkProceduralHeightfieldGround(x, y, z, maxDist);
+  if (heightfieldGround) return heightfieldGround;
+
+  const queryStart = performance.now();
   
   try {
     const origin = { x, y, z };
@@ -315,6 +424,8 @@ export function checkGroundWithNormal(x: number, y: number, z: number, maxDist: 
     }
   } catch (e) {
     console.error('[Physics] checkGroundWithNormal error:', e);
+  } finally {
+    recordPhysicsQueryTime(performance.now() - queryStart);
   }
   return null;
 }
@@ -329,6 +440,7 @@ const PLAYER_BODY_FLOOR_CLEARANCE = 0.08;
 const PLAYER_BODY_HEAD_CLEARANCE = 0.04;
 const PLAYER_BODY_CAST_SKIN = 0.02;
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+const playerBodyShapeCache = new Map<string, RAPIER.Capsule>();
 
 function isSolidCollisionCollider(collider: RAPIER.Collider): boolean {
   return collider !== playerColliderInstance && !collider.isSensor();
@@ -349,10 +461,17 @@ function createPlayerBodyQuery(
   );
   const halfHeight = Math.max(0.01, queryHeight / 2 - playerRadius);
   const centerOffsetY = (PLAYER_BODY_FLOOR_CLEARANCE - PLAYER_BODY_HEAD_CLEARANCE) / 2;
+  const shapeKey = `${playerRadius}:${playerHeight}:${halfHeight}`;
+  let shape = playerBodyShapeCache.get(shapeKey);
+
+  if (!shape) {
+    shape = new rapierInstance.Capsule(halfHeight, playerRadius);
+    playerBodyShapeCache.set(shapeKey, shape);
+  }
 
   return {
     position: { x, y: y + centerOffsetY, z },
-    shape: new rapierInstance.Capsule(halfHeight, playerRadius),
+    shape,
   };
 }
 
@@ -364,6 +483,7 @@ export function hasPlayerBodyClearance(
   playerHeight: number = PLAYER_HEIGHT
 ): boolean {
   if (!rapierInstance || !worldInstance) return true;
+  const queryStart = performance.now();
 
   try {
     const query = createPlayerBodyQuery(x, y, z, playerRadius, playerHeight);
@@ -384,6 +504,8 @@ export function hasPlayerBodyClearance(
   } catch (e) {
     console.error('[Physics] hasPlayerBodyClearance error:', e);
     return false;
+  } finally {
+    recordPhysicsQueryTime(performance.now() - queryStart);
   }
 }
 
@@ -403,6 +525,7 @@ export function checkPlayerBodyMovement(
   if (!rapierInstance || !worldInstance) {
     return { blocked: false, normal: { x: 0, y: 0, z: 0 }, timeOfImpact: Infinity };
   }
+  const queryStart = performance.now();
 
   try {
     const query = createPlayerBodyQuery(x, y, z, playerRadius, playerHeight);
@@ -458,6 +581,8 @@ export function checkPlayerBodyMovement(
   } catch (e) {
     console.error('[Physics] checkPlayerBodyMovement error:', e);
     return { blocked: true, normal: { x: 0, y: 0, z: 0 }, timeOfImpact: 0 };
+  } finally {
+    recordPhysicsQueryTime(performance.now() - queryStart);
   }
 }
 
@@ -501,7 +626,9 @@ export function validateTeleportDestination(
       { x: targetX, y: adjustedFeetY + 0.3, z: targetZ },
       { x: 0, y: 1, z: 0 }
     );
+    const headroomQueryStart = performance.now();
     const hitUp = worldInstance.castRay(rayUp, playerHeight - 0.2, true);
+    recordPhysicsQueryTime(performance.now() - headroomQueryStart);
     if (hitUp && hitUp.timeOfImpact < playerHeight - 0.5) {
       return { valid: false, reason: 'Not enough headroom' };
     }
@@ -541,6 +668,7 @@ export function checkWallCollision(
   }
   const ndx = dirX / len;
   const ndz = dirZ / len;
+  const queryStart = performance.now();
   
   try {
     // Cast rays at multiple heights to detect walls
@@ -593,6 +721,8 @@ export function checkWallCollision(
     }
   } catch (e) {
     console.error('[Physics] checkWallCollision error:', e);
+  } finally {
+    recordPhysicsQueryTime(performance.now() - queryStart);
   }
   
   return { hit: false, distance: Infinity, normal: { x: 0, y: 0, z: 0 }, pushBack: { x: 0, z: 0 } };
@@ -741,5 +871,6 @@ export {
 function initializeIceWallSystem() {
   if (rapierInstance && worldInstance) {
     initIceWallSystem(rapierInstance, worldInstance);
+    setTemporaryColliderCountProvider(getTemporaryWallColliderCount);
   }
 }

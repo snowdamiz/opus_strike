@@ -40,14 +40,6 @@ export function useVoxelMaterial(
 
   useEffect(
     () => () => {
-      [
-        material.map,
-        material.bumpMap,
-        material.roughnessMap,
-        material.metalnessMap,
-        material.emissiveMap,
-        material.aoMap,
-      ].forEach((texture) => texture?.dispose());
       material.dispose();
     },
     [material]

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -15,6 +15,11 @@ interface Effect {
 // Global effect manager
 const effects: Effect[] = [];
 let effectIdCounter = 0;
+const EXPLOSION_PARTICLE_INDICES = Array.from({ length: 20 }, (_, i) => i);
+const DASH_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.5, 8, 8);
+const BLINK_RING_GEOMETRY = new THREE.RingGeometry(0.5, 0.7, 6);
+const EXPLOSION_BOX_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+const HIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.3, 8, 8);
 
 export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
   effects.push({
@@ -84,20 +89,19 @@ interface EffectProps {
 
 function GrappleLine({ effect }: EffectProps) {
   const lineRef = useRef<THREE.Line>(null!);
+  const lineObject = useMemo(() => new THREE.Line(), []);
+  const points = useMemo(() => [new THREE.Vector3(), new THREE.Vector3()], []);
 
   useFrame(() => {
     if (!lineRef.current || !effect.endPosition) return;
 
-    const points = [
-      effect.position.clone(),
-      effect.endPosition.clone(),
-    ];
-
+    points[0].copy(effect.position);
+    points[1].copy(effect.endPosition);
     lineRef.current.geometry.setFromPoints(points);
   });
 
   return (
-    <primitive object={new THREE.Line()} ref={lineRef}>
+    <primitive object={lineObject} ref={lineRef}>
       <bufferGeometry />
       <lineBasicMaterial color="#00ff88" linewidth={2} />
     </primitive>
@@ -123,8 +127,7 @@ function DashTrail({ effect }: EffectProps) {
   });
 
   return (
-    <mesh ref={meshRef} position={effect.position}>
-      <sphereGeometry args={[0.5, 8, 8]} />
+    <mesh ref={meshRef} position={effect.position} geometry={DASH_SPHERE_GEOMETRY}>
       <meshBasicMaterial 
         color="#7c3aed"
         transparent
@@ -159,8 +162,7 @@ function BlinkEffect({ effect }: EffectProps) {
   return (
     <group>
       {/* Start position effect */}
-      <mesh ref={startRef} position={effect.position}>
-        <ringGeometry args={[0.5, 0.7, 6]} />
+      <mesh ref={startRef} position={effect.position} geometry={BLINK_RING_GEOMETRY}>
         <meshBasicMaterial 
           color="#9f7aea"
           transparent
@@ -171,8 +173,7 @@ function BlinkEffect({ effect }: EffectProps) {
 
       {/* End position effect */}
       {effect.endPosition && (
-        <mesh ref={endRef} position={effect.endPosition}>
-          <ringGeometry args={[0.5, 0.7, 6]} />
+        <mesh ref={endRef} position={effect.endPosition} geometry={BLINK_RING_GEOMETRY}>
           <meshBasicMaterial 
             color="#9f7aea"
             transparent
@@ -221,9 +222,8 @@ function ExplosionEffect({ effect }: EffectProps) {
 
   return (
     <group ref={groupRef} position={effect.position}>
-      {Array.from({ length: 20 }).map((_, i) => (
-        <mesh key={i}>
-          <boxGeometry args={[0.2, 0.2, 0.2]} />
+      {EXPLOSION_PARTICLE_INDICES.map((i) => (
+        <mesh key={i} geometry={EXPLOSION_BOX_GEOMETRY}>
           <meshBasicMaterial 
             color="#ff6b35"
             transparent
@@ -251,8 +251,7 @@ function HitEffect({ effect }: EffectProps) {
   });
 
   return (
-    <mesh ref={meshRef} position={effect.position}>
-      <sphereGeometry args={[0.3, 8, 8]} />
+    <mesh ref={meshRef} position={effect.position} geometry={HIT_SPHERE_GEOMETRY}>
       <meshBasicMaterial 
         color="#ff4444"
         transparent
@@ -261,4 +260,3 @@ function HitEffect({ effect }: EffectProps) {
     </mesh>
   );
 }
-

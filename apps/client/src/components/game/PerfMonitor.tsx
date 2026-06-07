@@ -38,6 +38,20 @@ const EMPTY_CLIENT_SNAPSHOT: ClientPerfSnapshot = {
   },
   systems: [],
   recentSpawns: [],
+  voxelWorld: {
+    generationMs: 0,
+    meshBuildMsP95: 0,
+    meshBuildCount: 0,
+    totalChunkSlots: 0,
+    renderableChunks: 0,
+    renderableRegions: 0,
+    emptyChunkSlots: 0,
+    colliders: 0,
+  },
+  physicsQueries: {
+    countPerSecond: 0,
+    msPerSecond: 0,
+  },
   activeEffects: 0,
   projectileCounts: {},
   temporaryColliders: 0,
@@ -190,8 +204,26 @@ function PerfDisplay() {
             <span className="text-white/70 tabular-nums text-right">{data.client.activeLights}</span>
           </div>
           <div className="flex justify-between gap-3">
-            <span className="text-white/40 shrink-0">Systems</span>
-            <span className="text-white/70 tabular-nums text-right">{data.client.activeFrameSystems}</span>
+            <span className="text-white/40 shrink-0">Chunks</span>
+            <span className="text-white/70 tabular-nums text-right">
+              {data.client.voxelWorld.renderableChunks}/{data.client.voxelWorld.totalChunkSlots}
+            </span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Regions</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.voxelWorld.renderableRegions}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Colliders</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.voxelWorld.colliders}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Physics Q/s</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.physicsQueries.countPerSecond.toFixed(0)}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Mesh p95</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.voxelWorld.meshBuildMsP95.toFixed(1)}ms</span>
           </div>
         </div>
 

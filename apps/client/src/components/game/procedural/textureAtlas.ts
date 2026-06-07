@@ -30,6 +30,8 @@ interface AtlasContexts {
   ao: CanvasRenderingContext2D;
 }
 
+const atlasTextureCache = new Map<VoxelMapTheme['id'], VoxelAtlasTextures>();
+
 const TILE_MAP: Record<string, AtlasTile> = {
   grass_top: { x: 0, y: 0 },
   grass_side: { x: 1, y: 0 },
@@ -1172,6 +1174,9 @@ function createTexture(canvas: HTMLCanvasElement, colorSpace: THREE.ColorSpace):
 }
 
 export function createVoxelAtlasTextures(theme: VoxelMapTheme): VoxelAtlasTextures {
+  const cached = atlasTextureCache.get(theme.id);
+  if (cached) return cached;
+
   const color = createLayerContext();
   const bump = createLayerContext();
   const roughness = createLayerContext();
@@ -1208,7 +1213,7 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme): VoxelAtlasTextur
   paintLeavesTile(contexts, TILE_MAP.leaves, theme);
   paintCactusTile(contexts, TILE_MAP.cactus);
 
-  return {
+  const textures = {
     color: createTexture(color.canvas, THREE.SRGBColorSpace),
     bump: createTexture(bump.canvas, THREE.NoColorSpace),
     roughness: createTexture(roughness.canvas, THREE.NoColorSpace),
@@ -1216,6 +1221,9 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme): VoxelAtlasTextur
     emissive: createTexture(emissive.canvas, THREE.SRGBColorSpace),
     ao: createTexture(ao.canvas, THREE.NoColorSpace),
   };
+
+  atlasTextureCache.set(theme.id, textures);
+  return textures;
 }
 
 export function createVoxelAtlasTexture(theme: VoxelMapTheme): THREE.CanvasTexture {

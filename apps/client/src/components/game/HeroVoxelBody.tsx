@@ -802,14 +802,20 @@ const HERO_IDLE_PROFILES: Record<HeroId, HeroIdleProfile> = {
   },
 };
 
-function PartGeometry({ part }: { part: VoxelPart }) {
+const HERO_PART_GEOMETRIES = {
+  box: new THREE.BoxGeometry(1, 1, 1),
+  sphere: new THREE.SphereGeometry(0.5, 10, 8),
+  cylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 8),
+} satisfies Record<PartKind, THREE.BufferGeometry>;
+
+function getPartGeometry(part: VoxelPart): THREE.BufferGeometry {
   switch (part.kind) {
     case 'sphere':
-      return <sphereGeometry args={[0.5, 10, 8]} />;
+      return HERO_PART_GEOMETRIES.sphere;
     case 'cylinder':
-      return <cylinderGeometry args={[0.5, 0.5, 1, 8]} />;
+      return HERO_PART_GEOMETRIES.cylinder;
     default:
-      return <boxGeometry args={[1, 1, 1]} />;
+      return HERO_PART_GEOMETRIES.box;
   }
 }
 
@@ -1826,8 +1832,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           rotation={riggedPart.part.rotation}
           scale={riggedPart.part.scale}
           castShadow={castShadow}
+          geometry={getPartGeometry(riggedPart.part)}
         >
-          <PartGeometry part={riggedPart.part} />
           <primitive object={materials.get(riggedPart.part.material)!} attach="material" />
         </mesh>
       ))}
@@ -1839,8 +1845,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           rotation={riggedPart.part.rotation}
           scale={riggedPart.part.scale}
           castShadow={castShadow}
+          geometry={getPartGeometry(riggedPart.part)}
         >
-          <PartGeometry part={riggedPart.part} />
           <TeamAccentMaterial part={riggedPart.part as TeamAccentPart} teamColor={teamColor} />
         </mesh>
       ))}
@@ -1854,8 +1860,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         position={[0, 0.015, -0.185]}
         scale={[0.18, 0.08, 0.05]}
         castShadow={castShadow}
+        geometry={HERO_PART_GEOMETRIES.box}
       >
-        <boxGeometry args={[1, 1, 1]} />
         <primitive object={materials.get('edge')!} attach="material" />
       </mesh>
       <mesh
@@ -1863,8 +1869,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         position={[0, 0.018, -0.222]}
         scale={[0.105, 0.028, 0.026]}
         castShadow={castShadow}
+        geometry={HERO_PART_GEOMETRIES.box}
       >
-        <boxGeometry args={[1, 1, 1]} />
         <primitive object={materials.get('accent')!} attach="material" />
       </mesh>
     </>
@@ -1876,8 +1882,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       position={[0, -0.15, -0.018]}
       scale={[0.17, 0.3, 0.13]}
       castShadow={castShadow}
+      geometry={HERO_PART_GEOMETRIES.box}
     >
-      <boxGeometry args={[1, 1, 1]} />
       <primitive object={materials.get('dark')!} attach="material" />
     </mesh>
   );
@@ -1995,8 +2001,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       </group>
 
       {isBot && (
-        <mesh position={[0, 1.98, 0]} scale={[0.14, 0.04, 0.14]} castShadow={castShadow}>
-          <boxGeometry args={[1, 1, 1]} />
+        <mesh
+          position={[0, 1.98, 0]}
+          scale={[0.14, 0.04, 0.14]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.box}
+        >
           <meshStandardMaterial color={teamColor} emissive={teamColor} emissiveIntensity={0.75} />
         </mesh>
       )}

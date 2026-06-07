@@ -3267,15 +3267,21 @@ function generateProceduralVoxelMapInternal(
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
 
   const chunks: VoxelChunk[] = [];
-  for (let cy = 0; cy < Math.ceil(size.y / chunkSize.y); cy++) {
-    for (let cz = 0; cz < Math.ceil(size.z / chunkSize.z); cz++) {
-      for (let cx = 0; cx < Math.ceil(size.x / chunkSize.x); cx++) {
+  const chunkSlotsX = Math.ceil(size.x / chunkSize.x);
+  const chunkSlotsY = Math.ceil(size.y / chunkSize.y);
+  const chunkSlotsZ = Math.ceil(size.z / chunkSize.z);
+  const totalChunkSlots = chunkSlotsX * chunkSlotsY * chunkSlotsZ;
+
+  for (let cy = 0; cy < chunkSlotsY; cy++) {
+    for (let cz = 0; cz < chunkSlotsZ; cz++) {
+      for (let cx = 0; cx < chunkSlotsX; cx++) {
         const actualSize = {
           x: Math.min(chunkSize.x, size.x - cx * chunkSize.x),
           y: Math.min(chunkSize.y, size.y - cy * chunkSize.y),
           z: Math.min(chunkSize.z, size.z - cz * chunkSize.z),
         };
-        const chunkBlocks = new Uint8Array(actualSize.x * actualSize.y * actualSize.z);
+        let chunkBlocks: Uint8Array | null = null;
+        let chunkSolidBlocks = 0;
 
         for (let y = 0; y < actualSize.y; y++) {
           for (let z = 0; z < actualSize.z; z++) {
@@ -3283,15 +3289,30 @@ function generateProceduralVoxelMapInternal(
               const globalX = cx * chunkSize.x + x;
               const globalY = cy * chunkSize.y + y;
               const globalZ = cz * chunkSize.z + z;
-              chunkBlocks[chunkIndex(x, y, z, actualSize)] = blocks[chunkIndex(globalX, globalY, globalZ, size)];
+              const block = blocks[chunkIndex(globalX, globalY, globalZ, size)];
+              if (block === 0) continue;
+
+              if (!chunkBlocks) {
+                chunkBlocks = new Uint8Array(actualSize.x * actualSize.y * actualSize.z);
+              }
+
+              chunkBlocks[chunkIndex(x, y, z, actualSize)] = block;
+              if (isSolidBlock(block)) {
+                chunkSolidBlocks++;
+              }
             }
           }
+        }
+
+        if (!chunkBlocks || chunkSolidBlocks === 0) {
+          continue;
         }
 
         chunks.push({
           coord: { x: cx, y: cy, z: cz },
           size: actualSize,
           blocks: chunkBlocks,
+          solidBlockCount: chunkSolidBlocks,
         });
       }
     }
@@ -3353,6 +3374,9 @@ function generateProceduralVoxelMapInternal(
     colliders,
     stats: {
       chunkCount: chunks.length,
+      totalChunkSlots,
+      emptyChunkSlots: totalChunkSlots - chunks.length,
+      renderableChunkCount: chunks.length,
       solidBlocks,
       colliderCount: colliders.length,
     },

@@ -36,6 +36,7 @@ export interface VoxelChunk {
   coord: VoxelChunkCoord;
   size: VoxelSize;
   blocks: Uint8Array;
+  solidBlockCount: number;
 }
 
 export interface BoundaryPoint {
@@ -91,6 +92,9 @@ export interface VoxelMapManifest {
   colliders: VoxelCollider[];
   stats: {
     chunkCount: number;
+    totalChunkSlots: number;
+    emptyChunkSlots: number;
+    renderableChunkCount: number;
     solidBlocks: number;
     colliderCount: number;
   };
