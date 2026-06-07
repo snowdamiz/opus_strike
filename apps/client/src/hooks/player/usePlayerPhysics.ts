@@ -108,6 +108,12 @@ const WALL_PROBE_STEP_CLEARANCE = 0.12;
 const WALL_NORMAL_MAX_Y = 0.65;
 const MAX_STEP_DOWN_HEIGHT = STEP_HEIGHT + 0.1;
 const JUMP_EDGE_ASSIST_HEIGHT = 0.62;
+const FALL_CORNER_RECOVERY_MIN_FALL_SPEED = 2;
+const FALL_CORNER_RECOVERY_DISTANCES = [0.04, 0.08, 0.14, 0.2, 0.28, 0.38, 0.5, 0.62];
+const FALL_CORNER_RECOVERY_DIRECTIONS = Array.from({ length: 16 }, (_, i) => {
+  const angle = (i / 16) * Math.PI * 2;
+  return { x: Math.cos(angle), z: Math.sin(angle) };
+});
 const GROUND_PROBE_OFFSETS = [
   { x: 0, z: 0 },
   { x: GROUND_PROBE_RADIUS, z: 0 },
@@ -202,6 +208,50 @@ function canOccupyPlayerBody(
   playerHeight: number = PLAYER_HEIGHT
 ): boolean {
   return hasPlayerBodyClearance(x, getBodyCenterY(y, playerHeight), z, PLAYER_RADIUS, playerHeight);
+}
+
+function recoverDownwardCornerClip(
+  position: THREE.Vector3,
+  velocity: THREE.Vector3,
+  playerHeight: number = PLAYER_HEIGHT
+): boolean {
+  if (canOccupyPlayerBody(position.x, position.y, position.z, playerHeight)) {
+    return false;
+  }
+
+  const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+  const velocityDirX = horizontalSpeed > 0.05 ? velocity.x / horizontalSpeed : 0;
+  const velocityDirZ = horizontalSpeed > 0.05 ? velocity.z / horizontalSpeed : 0;
+
+  for (const distance of FALL_CORNER_RECOVERY_DISTANCES) {
+    let bestCandidate: { x: number; z: number; score: number } | null = null;
+
+    for (const dir of FALL_CORNER_RECOVERY_DIRECTIONS) {
+      const candidateX = position.x + dir.x * distance;
+      const candidateZ = position.z + dir.z * distance;
+
+      if (!canOccupyPlayerBody(candidateX, position.y, candidateZ, playerHeight)) {
+        continue;
+      }
+
+      const velocityAlignment = horizontalSpeed > 0.05
+        ? dir.x * velocityDirX + dir.z * velocityDirZ
+        : 0;
+      const score = -velocityAlignment;
+
+      if (!bestCandidate || score < bestCandidate.score) {
+        bestCandidate = { x: candidateX, z: candidateZ, score };
+      }
+    }
+
+    if (bestCandidate) {
+      position.x = bestCandidate.x;
+      position.z = bestCandidate.z;
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function canJumpClearLowTerrainEdge(
@@ -622,6 +672,9 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
     if (verticalMove <= 0) {
       position.y += verticalMove;
+      if (velocity.y <= -FALL_CORNER_RECOVERY_MIN_FALL_SPEED) {
+        recoverDownwardCornerClip(position, velocity, playerHeight);
+      }
       return { hitCeiling: false };
     }
 
