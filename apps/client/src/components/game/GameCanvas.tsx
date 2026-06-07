@@ -11,6 +11,7 @@ import { PerfMonitor } from './PerfMonitor';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
+import { HeroViewmodel } from './HeroViewmodel';
 import { VoidZonesManager, DireBallsManager, VoidRaysManager } from './phantom';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
@@ -332,6 +333,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
             <Flags />
             <Effects />
             <SlideSpeedLines />
+            <HeroViewmodel />
             <VoidZonesManager />
             <DireBallsManager />
             <VoidRaysManager />
