@@ -1248,31 +1248,6 @@ function samplePhantomVoidRayOrbSocket(
   };
 }
 
-function Forearm({
-  side,
-  materials,
-  length = 0.34,
-  width = 0.16,
-  thickness = 0.13,
-  positionZ = -0.24,
-}: {
-  side: -1 | 1;
-  materials: ViewmodelMaterialSet;
-  length?: number;
-  width?: number;
-  thickness?: number;
-  positionZ?: number;
-}) {
-  return (
-    <group position={[side * 0.34, -0.58, positionZ]} rotation={[0.22, side * -0.18, side * -0.06]}>
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[width * 0.72, thickness, length]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.27, -0.06]} scale={[width, thickness * 0.7, length * 0.7]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.005, -length * 0.5]} scale={[width * 0.86, thickness, 0.1]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.7, -0.09]} scale={[width * 0.56, Math.max(0.014, thickness * 0.2), length * 0.46]} />
-    </group>
-  );
-}
-
 function PhantomAnimatedForearm({
   side,
   materials,
@@ -1958,42 +1933,207 @@ function HookshotViewmodel({
   );
 }
 
-function RocketLauncher({
+function BlazePhantomForearm({
   side,
   materials,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
 }) {
+  const forearmRef = useRef<THREE.Group>(null);
+  const length = 0.32;
+  const rearLength = 0.38;
+  const rearCenterZ = length * 0.5 + rearLength * 0.5 - 0.018;
+  const width = 0.074;
+  const thickness = 0.066;
+
+  useFrame((state) => {
+    const forearm = forearmRef.current;
+    if (!forearm) return;
+    writePhantomForearmPose(forearm, side, side === 1 ? 0.025 : 0, 0, state.clock.elapsedTime);
+  });
+
   return (
-    <group position={[side * 0.33, -0.49, -0.55]} rotation={[0.07, side * -0.12, side * 0.05]}>
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -0.02, 0.12]} scale={[0.2, 0.14, 0.28]} />
-      <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.metal} position={[0, 0, -0.14]} rotation={[Math.PI / 2, 0, 0]} scale={[0.15, 0.46, 0.15]} />
-      <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.dark} position={[0, 0, -0.39]} rotation={[Math.PI / 2, 0, 0]} scale={[0.17, 0.06, 0.17]} />
-      <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.glow} position={[0, 0, -0.43]} rotation={[Math.PI / 2, 0, 0]} scale={[0.092, 0.03, 0.092]} />
+    <group
+      ref={forearmRef}
+      position={[side * 0.34, -0.58, -0.43]}
+      rotation={[0.22, side * -0.18, side * -0.06]}
+    >
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -thickness * 0.04, rearCenterZ]} scale={[width * 0.86, thickness * 1.08, rearLength]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.28, rearCenterZ - rearLength * 0.06]} scale={[width * 0.96, thickness * 0.58, rearLength * 0.72]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.64, rearCenterZ - rearLength * 0.05]} scale={[width * 0.56, Math.max(0.014, thickness * 0.18), rearLength * 0.38]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -thickness * 0.04, 0]} scale={[width * 0.78, thickness * 1.05, length]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.24, -0.02]} scale={[width, thickness * 0.66, length * 0.74]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.006, -length * 0.48]} scale={[width * 0.92, thickness * 0.94, 0.085]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.038, thickness * 0.69, -0.052]} scale={[0.034, Math.max(0.014, thickness * 0.2), length * 0.54]} />
+    </group>
+  );
+}
 
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, 0.12, -0.12]} scale={[0.27, 0.08, 0.45]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.16, 0, -0.12]} scale={[0.07, 0.19, 0.4]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, 0.17, -0.16]} scale={[0.16, 0.025, 0.26]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.18, 0, -0.27]} scale={[0.025, 0.11, 0.18]} />
-
-      {[-0.26, -0.12, 0.02].map(z => (
-        <mesh key={z} geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.15, z]} scale={[0.2, 0.028, 0.035]} />
+function BlazeWizardStaff({ materials }: { materials: ViewmodelMaterialSet }) {
+  return (
+    <group position={[0.006, -0.034, -0.088]} rotation={[-0.23, -0.075, 0.24]}>
+      <mesh
+        geometry={SHARED_GEOMETRIES.cylinder8}
+        material={materials.dark}
+        position={[0, 0.01, 0]}
+        scale={[0.023, 0.82, 0.023]}
+      />
+      <mesh
+        geometry={SHARED_GEOMETRIES.cylinder8}
+        material={materials.metal}
+        position={[0, 0.01, 0]}
+        scale={[0.014, 0.86, 0.014]}
+      />
+      {[-0.28, -0.06, 0.22, 0.38].map(y => (
+        <mesh
+          key={y}
+          geometry={SHARED_GEOMETRIES.cylinder12}
+          material={materials.accent}
+          position={[0, y, 0]}
+          scale={[0.032, 0.016, 0.032]}
+        />
       ))}
 
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -0.14, 0.12]} rotation={[0.28, 0, 0]} scale={[0.1, 0.18, 0.1]} />
-      <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, -0.02, -0.48]} rotation={[Math.PI, 0, 0]} scale={[0.07, 0.16, 0.07]} />
+      <group position={[0, 0.49, 0]}>
+        <mesh geometry={SHARED_GEOMETRIES.sphere12} material={materials.glass} scale={0.052} />
+        <mesh geometry={SHARED_GEOMETRIES.sphere16} material={materials.glow} scale={0.028} />
+        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.accent} rotation={[Math.PI / 2, 0, 0]} scale={[0.072, 0.072, 1]} />
+        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} rotation={[Math.PI / 2, 0, 0]} scale={[0.054, 0.054, 1]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, 0.066, 0]} scale={[0.03, 0.082, 0.03]} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0.041, -0.008, 0]} rotation={[0, 0, 0.28]} scale={[0.016, 0.096, 0.02]} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[-0.041, -0.008, 0]} rotation={[0, 0, -0.28]} scale={[0.016, 0.096, 0.02]} />
+      </group>
+
+      <group position={[0, -0.43, 0]}>
+        <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.accent} scale={[0.032, 0.032, 0.032]} />
+        <mesh geometry={SHARED_GEOMETRIES.sphere8} material={materials.metal} scale={0.034} />
+      </group>
+    </group>
+  );
+}
+
+function BlazePhantomHand({
+  side,
+  materials,
+}: {
+  side: -1 | 1;
+  materials: ViewmodelMaterialSet;
+}) {
+  const closedVisualRef = useRef<THREE.Group>(null);
+  const armRef = useRef<THREE.Group>(null);
+  const wristRef = useRef<THREE.Group>(null);
+  const palmRef = useRef<THREE.Group>(null);
+  const thumbRef = useRef<THREE.Group>(null);
+  const fingerRefs = useRef<(THREE.Group | null)[]>([]);
+
+  useFrame((state) => {
+    const closedHand = closedVisualRef.current;
+    const arm = armRef.current;
+    const wrist = wristRef.current;
+    const palm = palmRef.current;
+    const thumb = thumbRef.current;
+    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
+    if (!closedHand || !arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+
+    writePhantomHandPose(
+      {
+        closedHand,
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      side === 1 ? 0.035 : 0,
+      0,
+      state.clock.elapsedTime
+    );
+  });
+
+  return (
+    <group>
+      <group
+        ref={closedVisualRef}
+        position={[side * PHANTOM_IDLE_HAND_POSITION.x, PHANTOM_IDLE_HAND_POSITION.y, PHANTOM_IDLE_HAND_POSITION.z]}
+        rotation={[
+          PHANTOM_IDLE_HAND_ROTATION.x,
+          side * PHANTOM_IDLE_HAND_ROTATION.y,
+          side * PHANTOM_IDLE_HAND_ROTATION.z,
+        ]}
+      >
+        <group position={[0, 0, -PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z]}>
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.092, 0.124, 0.12]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.018, 0.006, 0.018]} scale={[0.076, 0.102, 0.074]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.052, 0, -0.014]} scale={[0.018, 0.105, 0.068]} />
+
+          {PHANTOM_CLOSED_FINGER_ROWS.map((row, index) => (
+            <group key={row} position={[side * -0.006, row, -0.072]}>
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.106, 0.028, 0.052]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.026, 0, -0.026]} scale={[0.04, 0.026, 0.034]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[side * -0.028, 0, -0.034]} scale={[0.07, 0.026, 0.042]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.058, 0, -0.06]} scale={[0.02, 0.018, 0.022]} />
+              {(index === 1 || index === 2) && (
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * 0.052, 0, 0.012]} scale={[0.014, 0.014, 0.028]} />
+              )}
+            </group>
+          ))}
+
+          <group position={[side * 0.076, -0.044, -0.014]} rotation={[0.06, side * -0.08, side * 0.28]}>
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.046, 0.09, 0.056]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.006, 0.002, 0.016]} scale={[0.034, 0.07, 0.034]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.014, 0.01, -0.02]} scale={[0.014, 0.046, 0.01]} />
+          </group>
+
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={materials.dark}
+            position={[0, 0, 0.085]}
+            scale={[0.074, 0.088, 0.038]}
+          />
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={materials.glow}
+            position={[side * -0.034, 0, -0.108]}
+            scale={[0.05, 0.014, 0.012]}
+          />
+          {side === 1 && <BlazeWizardStaff materials={materials} />}
+        </group>
+      </group>
+
+      <group ref={armRef} visible={false}>
+        <group ref={wristRef}>
+          <group ref={palmRef}>
+            <group ref={thumbRef} />
+            {PHANTOM_OPEN_FINGER_SLOTS.map((slot, index) => (
+              <group
+                key={slot}
+                ref={(node) => {
+                  fingerRefs.current[index] = node;
+                }}
+              />
+            ))}
+          </group>
+        </group>
+      </group>
     </group>
   );
 }
 
 function BlazeViewmodel({ materials }: { materials: ViewmodelMaterialSet }) {
   return (
-    <group>
-      <Forearm side={-1} materials={materials} length={0.34} width={0.18} />
-      <Forearm side={1} materials={materials} length={0.34} width={0.18} />
-      <RocketLauncher side={-1} materials={materials} />
-      <RocketLauncher side={1} materials={materials} />
+    <group position={[
+      PHANTOM_VIEWMODEL_OFFSET.x,
+      PHANTOM_VIEWMODEL_OFFSET.y,
+      PHANTOM_VIEWMODEL_OFFSET.z,
+    ]}>
+      <group position={[0.06, -0.035, 0.18]}>
+        <BlazePhantomForearm side={-1} materials={materials} />
+        <BlazePhantomHand side={-1} materials={materials} />
+      </group>
+      <BlazePhantomForearm side={1} materials={materials} />
+      <BlazePhantomHand side={1} materials={materials} />
     </group>
   );
 }
