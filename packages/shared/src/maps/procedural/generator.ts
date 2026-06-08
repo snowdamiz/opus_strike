@@ -3619,17 +3619,7 @@ function generateProceduralVoxelMapInternal(
     }
   }
 
-  const topSolidRows = new Uint16Array(size.x * size.z);
-  for (let x = 0; x < size.x; x++) {
-    for (let z = 0; z < size.z; z++) {
-      for (let y = size.y - 1; y >= 0; y--) {
-        if (isSolidBlock(blocks[chunkIndex(x, y, z, size)])) {
-          topSolidRows[x + z * size.x] = y + 1;
-          break;
-        }
-      }
-    }
-  }
+  const topSolidRows = buildCollisionTopRows(blocks, size);
 
   const partialManifest = {
     id: `procedural-ctf-${normalizedSeed}`,

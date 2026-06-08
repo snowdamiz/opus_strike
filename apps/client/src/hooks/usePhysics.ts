@@ -46,6 +46,7 @@ export function usePhysics(): PhysicsContext {
 
         physicsReady = false;
         loadedProceduralMapId = null;
+        loadedProceduralMapColliderSignature = null;
         mapColliderBodies = [];
         activeProceduralMap = null;
         activeProceduralChunkLookup = new Map();
@@ -109,6 +110,7 @@ export function usePhysics(): PhysicsContext {
         worldInstance = null;
         playerColliderInstance = null;
         loadedProceduralMapId = null;
+        loadedProceduralMapColliderSignature = null;
         mapColliderBodies = [];
         activeProceduralMap = null;
         activeProceduralChunkLookup = new Map();
@@ -136,6 +138,7 @@ export function isPhysicsReady(): boolean {
 }
 
 let loadedProceduralMapId: string | null = null;
+let loadedProceduralMapColliderSignature: string | null = null;
 let mapColliderBodies: RAPIER.RigidBody[] = [];
 let activeProceduralMap: VoxelMapManifest | null = null;
 let activeProceduralChunkLookup = new Map<number, VoxelChunk>();
@@ -178,6 +181,27 @@ function getActiveProceduralBlock(gx: number, gy: number, gz: number): number {
   return chunk.blocks[lx + chunk.size.x * (lz + chunk.size.z * ly)] ?? 0;
 }
 
+function getProceduralMapColliderSignature(manifest: VoxelMapManifest): string {
+  let hash = 2166136261 >>> 0;
+
+  const addValue = (value: number) => {
+    hash ^= Math.round(value * 1000);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  };
+
+  addValue(manifest.colliders.length);
+  for (const collider of manifest.colliders) {
+    addValue(collider.center.x);
+    addValue(collider.center.y);
+    addValue(collider.center.z);
+    addValue(collider.halfExtents.x);
+    addValue(collider.halfExtents.y);
+    addValue(collider.halfExtents.z);
+  }
+
+  return `${manifest.id}:${manifest.colliders.length}:${hash.toString(16)}`;
+}
+
 /**
  * Load fixed cuboid colliders generated from the shared procedural voxel map.
  */
@@ -187,7 +211,9 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
     return false;
   }
 
-  if (loadedProceduralMapId === manifest.id) {
+  const colliderSignature = getProceduralMapColliderSignature(manifest);
+
+  if (loadedProceduralMapId === manifest.id && loadedProceduralMapColliderSignature === colliderSignature) {
     console.log('[Physics] Procedural map colliders already loaded, skipping');
     return true;
   }
@@ -196,6 +222,8 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
     worldInstance.removeRigidBody(body);
   }
   mapColliderBodies = [];
+  loadedProceduralMapId = null;
+  loadedProceduralMapColliderSignature = null;
 
   console.log(`[Physics] Loading procedural map colliders for ${manifest.id}...`);
   const loadStart = performance.now();
@@ -225,6 +253,7 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
   worldInstance.updateSceneQueries();
 
   loadedProceduralMapId = manifest.id;
+  loadedProceduralMapColliderSignature = colliderSignature;
   activeProceduralMap = manifest;
   buildActiveProceduralChunkLookup(manifest);
   recordSystemTime('mapColliderLoad', performance.now() - loadStart);
@@ -236,8 +265,17 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
 /**
  * Check if the generated map colliders have been loaded.
  */
-export function areProceduralMapCollidersLoaded(mapId?: string): boolean {
-  return mapId ? loadedProceduralMapId === mapId : loadedProceduralMapId !== null;
+export function areProceduralMapCollidersLoaded(manifestOrMapId?: VoxelMapManifest | string): boolean {
+  if (!manifestOrMapId) return loadedProceduralMapId !== null;
+
+  if (typeof manifestOrMapId === 'string') {
+    return loadedProceduralMapId === manifestOrMapId;
+  }
+
+  return (
+    loadedProceduralMapId === manifestOrMapId.id &&
+    loadedProceduralMapColliderSignature === getProceduralMapColliderSignature(manifestOrMapId)
+  );
 }
 
 // Utility function for raycasting

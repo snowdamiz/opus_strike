@@ -15,7 +15,7 @@ import {
   isInsideBoundaryPolygon,
   constrainToBoundaryPolygon,
   clampToBoundaryPolygon,
-  isSolidBlock,
+  isCollisionBlock,
   FLAG_CAPTURE_RADIUS,
   FLAG_PICKUP_RADIUS,
   ULTIMATE_CHARGE_PER_CAPTURE,
@@ -2340,7 +2340,7 @@ export class GameRoom extends Room<GameState> {
     let result = true;
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
-      if (isSolidBlock(this.getBlockAtWorld({
+      if (isCollisionBlock(this.getBlockAtWorld({
         x: start.x + dx * t,
         y: start.y + dy * t,
         z: start.z + dz * t,
@@ -2706,7 +2706,7 @@ export class GameRoom extends Room<GameState> {
         y: manifest.origin.y + (gy + 0.5) * manifest.voxelSize.y,
         z: position.z,
       });
-      if (isSolidBlock(block)) {
+      if (isCollisionBlock(block)) {
         return manifest.origin.y + (gy + 1) * manifest.voxelSize.y;
       }
     }
@@ -2749,7 +2749,7 @@ export class GameRoom extends Room<GameState> {
 
     for (const y of ySamples) {
       for (const offset of offsets) {
-        if (isSolidBlock(this.getBlockAtWorld({
+        if (isCollisionBlock(this.getBlockAtWorld({
           x: position.x + offset.x,
           y,
           z: position.z + offset.z,

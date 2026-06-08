@@ -92,7 +92,7 @@ export function VoxelMap({
     collidersLoadedRef.current = false;
     setMapBoundaryPolygon(manifest.boundary);
 
-    if (collidersLoadedRef.current || areProceduralMapCollidersLoaded(manifest.id)) {
+    if (collidersLoadedRef.current || areProceduralMapCollidersLoaded(manifest)) {
       return;
     }
 

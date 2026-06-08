@@ -199,12 +199,6 @@ const HOOKSHOT_PARTS: VoxelPart[] = [
   { material: 'edge', position: [-0.14, 1.05, -0.225], scale: [0.065, 0.44, 0.034], rotation: [0, 0, -0.52] },
   { material: 'edge', position: [0.14, 1.05, -0.225], scale: [0.065, 0.44, 0.034], rotation: [0, 0, 0.52] },
   { material: 'void', position: [0, 0.91, 0.2], scale: [0.34, 0.5, 0.09] },
-  { material: 'dark', position: [0, 1.18, 0.34], scale: [0.38, 0.42, 0.16] },
-  { material: 'edge', kind: 'cylinder', position: [0, 1.2, 0.455], scale: [0.26, 0.1, 0.26], rotation: [Math.PI / 2, 0, 0] },
-  { material: 'accent', kind: 'cylinder', position: [0, 1.2, 0.515], scale: [0.15, 0.038, 0.15], rotation: [Math.PI / 2, 0, 0], emissive: true },
-  { material: 'glow', kind: 'cylinder', position: [0, 1.2, 0.548], scale: [0.065, 0.032, 0.065], rotation: [Math.PI / 2, 0, 0], emissive: true },
-  { material: 'edge', position: [-0.2, 1.34, 0.25], scale: [0.08, 0.22, 0.07], rotation: [0.55, 0, -0.28] },
-  { material: 'edge', position: [0.2, 1.34, 0.25], scale: [0.08, 0.22, 0.07], rotation: [0.55, 0, 0.28] },
 
   { material: 'edge', position: [0, 1.43, -0.01], scale: [0.58, 0.12, 0.38] },
   { material: 'armor', position: [-0.36, 1.32, -0.01], scale: [0.24, 0.22, 0.31], limb: 'static' },
@@ -341,10 +335,6 @@ const GLACIER_PARTS: VoxelPart[] = [
   { material: 'glass', position: [-0.34, 1.06, -0.26], scale: [0.09, 0.34, 0.035], rotation: [0, 0, -0.34], transparent: true },
   { material: 'glass', position: [0.34, 1.06, -0.26], scale: [0.09, 0.34, 0.035], rotation: [0, 0, 0.34], transparent: true },
   { material: 'void', position: [0, 1.0, 0.34], scale: [0.5, 0.56, 0.13] },
-  { material: 'glass', kind: 'cylinder', position: [-0.2, 1.12, 0.44], scale: [0.08, 0.4, 0.08], rotation: [Math.PI / 2, 0, 0], transparent: true },
-  { material: 'glass', kind: 'cylinder', position: [0.2, 1.12, 0.44], scale: [0.08, 0.4, 0.08], rotation: [Math.PI / 2, 0, 0], transparent: true },
-  { material: 'glow', position: [-0.2, 1.12, 0.53], scale: [0.045, 0.32, 0.034], emissive: true },
-  { material: 'glow', position: [0.2, 1.12, 0.53], scale: [0.045, 0.32, 0.034], emissive: true },
 
   { material: 'armor', position: [-0.48, 1.32, -0.02], scale: [0.22, 0.24, 0.34] },
   { material: 'armor', position: [0.48, 1.32, -0.02], scale: [0.22, 0.24, 0.34] },
@@ -1242,7 +1232,6 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
     teamAccentPart({ material: 'accent', position: [0.63, 0.68, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14 }),
     teamAccentPart({ material: 'accent', position: [-0.2, 0.2, -0.205], scale: [0.08, 0.05, 0.032], emissiveIntensity: 0.42, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0.2, 0.2, -0.205], scale: [0.08, 0.05, 0.032], emissiveIntensity: 0.42, roughness: 0.42, metalness: 0.12 }),
-    teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 1.2, 0.59], rotation: [Math.PI / 2, 0, 0], scale: [0.24, 0.014, 0.24], transparent: true, opacity: 0.28, emissiveIntensity: 0.34, roughness: 0.58, depthWrite: false, toneMapped: false }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.46, 0.014, 0.46], transparent: true, opacity: 0.16, emissiveIntensity: 0.22, roughness: 0.65, depthWrite: false }),
   ],
   blaze: [
@@ -1269,7 +1258,6 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
     teamAccentPart({ material: 'accent', position: [0.71, 0.86, -0.235], scale: [0.054, 0.22, 0.034], emissiveIntensity: 0.48, roughness: 0.35, metalness: 0.18, toneMapped: false }),
     teamAccentPart({ material: 'accent', position: [-0.25, 0.35, -0.235], scale: [0.11, 0.052, 0.034], emissiveIntensity: 0.44, roughness: 0.4, metalness: 0.14 }),
     teamAccentPart({ material: 'accent', position: [0.25, 0.35, -0.235], scale: [0.11, 0.052, 0.034], emissiveIntensity: 0.44, roughness: 0.4, metalness: 0.14 }),
-    teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 1.12, 0.575], rotation: [Math.PI / 2, 0, 0], scale: [0.3, 0.014, 0.3], transparent: true, opacity: 0.26, emissiveIntensity: 0.34, roughness: 0.58, depthWrite: false, toneMapped: false }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.62, 0.014, 0.62], transparent: true, opacity: 0.16, emissiveIntensity: 0.24, roughness: 0.65, depthWrite: false }),
   ],
 };
