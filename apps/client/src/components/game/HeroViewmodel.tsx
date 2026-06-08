@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useShallow } from 'zustand/shallow';
-import type { HeroId } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, SPRINT_MULTIPLIER, type HeroId } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
@@ -61,6 +61,7 @@ interface PhantomPrimaryAttackState {
 }
 
 interface PhantomHandPoseTargets {
+  closedHand?: MutableTransformTarget;
   arm: MutableTransformTarget;
   wrist: MutableTransformTarget;
   palm: MutableTransformTarget;
@@ -68,11 +69,36 @@ interface PhantomHandPoseTargets {
   fingers: MutableTransformTarget[];
 }
 
+interface PhantomLocomotionPose {
+  movementBlend: number;
+  runBlend: number;
+  slideBlend: number;
+  speedBlend: number;
+  cycleTime: number;
+}
+
+interface PhantomLocomotionRuntime extends PhantomLocomotionPose {
+  previousCameraPosition: THREE.Vector3;
+  hasPreviousCameraPosition: boolean;
+}
+
 const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
 const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
 const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.4);
 const PHANTOM_CLOSED_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
 const PHANTOM_OPEN_FINGER_SLOTS = [-0.056, -0.019, 0.019, 0.056] as const;
+const PHANTOM_WALK_SPEED = HERO_DEFINITIONS.phantom.stats.moveSpeed;
+const PHANTOM_RUN_SPEED = PHANTOM_WALK_SPEED * SPRINT_MULTIPLIER;
+const PHANTOM_LOCOMOTION_MOVE_START_SPEED = 0.18;
+const PHANTOM_LOCOMOTION_FULL_WALK_SPEED = 1.35;
+const PHANTOM_LOCOMOTION_RUN_START_SPEED = PHANTOM_WALK_SPEED * 0.92;
+const PHANTOM_LOCOMOTION_RUN_FULL_SPEED = PHANTOM_RUN_SPEED * 0.98;
+const PHANTOM_LOCOMOTION_TELEPORT_DISTANCE = 1.45;
+const PHANTOM_LOCOMOTION_WALK_CYCLE_SPEED = 7.35;
+const PHANTOM_LOCOMOTION_RUN_CYCLE_SPEED = 10.95;
+const PHANTOM_SLIDE_HAND_PULLBACK_Z = 0.11;
+const PHANTOM_SLIDE_FOREARM_PULLBACK_Z = 0.09;
+const PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z = 0.105;
 const PHANTOM_IDLE_HAND_POSITION = {
   x: 0.326,
   y: -0.52,
@@ -98,6 +124,15 @@ const phantomSocketMatrix = new THREE.Matrix4();
 const phantomWorldMatrix = new THREE.Matrix4();
 const phantomWorldPosition = new THREE.Vector3();
 const phantomWorldQuaternion = new THREE.Quaternion();
+const phantomClosedHandPivotOffset = new THREE.Vector3(0, 0, PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z);
+const phantomClosedHandPivotWorldOffset = new THREE.Vector3();
+const PHANTOM_STILL_LOCOMOTION_POSE: PhantomLocomotionPose = {
+  movementBlend: 0,
+  runBlend: 0,
+  slideBlend: 0,
+  speedBlend: 0,
+  cycleTime: 0,
+};
 
 const HERO_MATERIAL_COLORS: Record<ViewmodelHeroId, {
   armor: number;
@@ -247,29 +282,103 @@ function writePhantomHandPose(
   side: -1 | 1,
   holdBlend: number,
   shotPulse: number,
-  elapsedSeconds: number
+  elapsedSeconds: number,
+  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE
 ): void {
-  void elapsedSeconds;
   const sideSign = side;
   const thumbSide = -sideSign;
   const readyBlend = THREE.MathUtils.clamp(holdBlend, 0, 1);
+  const slideBlend = THREE.MathUtils.clamp(locomotion.slideBlend, 0, 1);
+  const locomotionBlend = THREE.MathUtils.clamp(
+    locomotion.movementBlend * (1 - readyBlend * 0.16 - shotPulse * 0.24) * (1 - slideBlend * 0.9),
+    0,
+    1
+  );
+  const runBlend = THREE.MathUtils.clamp(locomotion.runBlend * (1 - slideBlend), 0, 1);
+  const phase = locomotion.cycleTime + (side === 1 ? 0 : Math.PI);
+  const swing = Math.sin(phase);
+  const counterSwing = Math.cos(phase);
+  const lift = Math.max(0, swing);
+  const drop = Math.max(0, -swing);
+  const cadencePulse = 0.5 + 0.5 * Math.sin(phase * 2 + 0.25);
+  const breath = Math.sin(elapsedSeconds * 1.55 + sideSign * 0.35) * 0.0025;
+  const reachAmount = (0.04 + runBlend * 0.027) * locomotionBlend;
+  const liftAmount = (0.017 + runBlend * 0.014) * locomotionBlend;
+  const crossAmount = (0.011 + runBlend * 0.011) * locomotionBlend;
+  const pumpPitch = (0.06 + runBlend * 0.055) * locomotionBlend;
+  const pumpRoll = (0.032 + runBlend * 0.03) * locomotionBlend;
+  const runTuck = runBlend * locomotionBlend;
+  const inwardTuck = (0.018 + runBlend * 0.034) * locomotionBlend;
+  const handUpBias = (0.18 + locomotionBlend * 0.028) * (1 - readyBlend * 0.45 - shotPulse * 0.4);
+  const slidePullback = PHANTOM_SLIDE_HAND_PULLBACK_Z * slideBlend * (1 - readyBlend * 0.25 - shotPulse * 0.2);
 
   targets.arm.position.set(
-    sideSign * (PHANTOM_IDLE_HAND_POSITION.x - readyBlend * 0.03 - shotPulse * 0.006),
-    PHANTOM_IDLE_HAND_POSITION.y + readyBlend * 0.052 + shotPulse * 0.004,
-    PHANTOM_IDLE_HAND_POSITION.z - readyBlend * 0.032 - shotPulse * 0.014
+    sideSign * (
+      PHANTOM_IDLE_HAND_POSITION.x -
+      readyBlend * 0.03 -
+      shotPulse * 0.006 -
+      inwardTuck +
+      counterSwing * crossAmount
+    ),
+    PHANTOM_IDLE_HAND_POSITION.y +
+      readyBlend * 0.052 +
+      shotPulse * 0.004 +
+      lift * liftAmount -
+      drop * liftAmount * 0.28 +
+      cadencePulse * runTuck * 0.006 +
+      breath * (1 - locomotionBlend),
+    PHANTOM_IDLE_HAND_POSITION.z -
+      readyBlend * 0.032 -
+      shotPulse * 0.014 -
+      swing * reachAmount -
+      runTuck * 0.007 +
+      slidePullback
   );
   targets.arm.rotation.set(
-    PHANTOM_IDLE_HAND_ROTATION.x - readyBlend * 0.37 - shotPulse * 0.055,
-    sideSign * (PHANTOM_IDLE_HAND_ROTATION.y - readyBlend * 0.2 - shotPulse * 0.02),
-    sideSign * (PHANTOM_IDLE_HAND_ROTATION.z + readyBlend * 0.42 + shotPulse * 0.055)
+    PHANTOM_IDLE_HAND_ROTATION.x -
+      readyBlend * 0.37 -
+      shotPulse * 0.055 -
+      swing * pumpPitch -
+      runTuck * 0.045 +
+      handUpBias,
+    sideSign * (
+      PHANTOM_IDLE_HAND_ROTATION.y -
+      readyBlend * 0.2 -
+      shotPulse * 0.02 +
+      counterSwing * (0.026 + runBlend * 0.028) * locomotionBlend
+    ),
+    sideSign * (
+      PHANTOM_IDLE_HAND_ROTATION.z +
+      readyBlend * 0.42 +
+      shotPulse * 0.055 -
+      swing * pumpRoll +
+      counterSwing * 0.022 * locomotionBlend
+    )
   );
+
+  if (targets.closedHand) {
+    targets.closedHand.rotation.copy(targets.arm.rotation);
+    phantomClosedHandPivotWorldOffset
+      .copy(phantomClosedHandPivotOffset)
+      .applyEuler(targets.closedHand.rotation);
+    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
+  }
 
   targets.wrist.position.set(0, 0, 0);
   targets.wrist.rotation.set(
-    -readyBlend * 0.08 - shotPulse * 0.03,
-    sideSign * (-readyBlend * 0.06 - shotPulse * 0.018),
-    sideSign * (readyBlend * 0.24 + shotPulse * 0.04)
+    -readyBlend * 0.045 -
+      shotPulse * 0.018 -
+      swing * (0.008 + runBlend * 0.006) * locomotionBlend,
+    sideSign * (
+      -readyBlend * 0.036 -
+      shotPulse * 0.012 +
+      counterSwing * 0.005 * locomotionBlend
+    ),
+    sideSign * (
+      readyBlend * 0.14 +
+      shotPulse * 0.024 -
+      swing * 0.007 * locomotionBlend
+    )
   );
 
   targets.palm.position.set(
@@ -317,21 +426,170 @@ function writePhantomForearmPose(
   side: -1 | 1,
   holdBlend: number,
   shotPulse: number,
-  elapsedSeconds: number
+  elapsedSeconds: number,
+  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE
 ): void {
-  void elapsedSeconds;
+  const locomotionBlend = THREE.MathUtils.clamp(
+    locomotion.movementBlend * (1 - holdBlend * 0.08 - shotPulse * 0.18) * (1 - THREE.MathUtils.clamp(locomotion.slideBlend, 0, 1) * 0.9),
+    0,
+    1
+  );
+  const slideBlend = THREE.MathUtils.clamp(locomotion.slideBlend, 0, 1);
+  const runBlend = THREE.MathUtils.clamp(locomotion.runBlend * (1 - slideBlend), 0, 1);
+  const phase = locomotion.cycleTime + (side === 1 ? 0 : Math.PI);
+  const swing = Math.sin(phase);
+  const counterSwing = Math.cos(phase);
+  const lift = Math.max(0, swing);
+  const drop = Math.max(0, -swing);
+  const breath = Math.sin(elapsedSeconds * 1.35 + side * 0.45) * 0.002;
+  const reachAmount = (0.038 + runBlend * 0.029) * locomotionBlend;
+  const liftAmount = (0.013 + runBlend * 0.017) * locomotionBlend;
+  const crossAmount = (0.01 + runBlend * 0.012) * locomotionBlend;
+  const pumpPitch = (0.16 + runBlend * 0.2) * locomotionBlend;
+  const runTuck = runBlend * locomotionBlend;
+  const inwardTuck = (0.016 + runBlend * 0.035) * locomotionBlend;
+  const slidePullback = PHANTOM_SLIDE_FOREARM_PULLBACK_Z * slideBlend * (1 - holdBlend * 0.18 - shotPulse * 0.16);
+
   target.position.set(
-    side * (0.34 - holdBlend * 0.042 - shotPulse * 0.009),
-    -0.58 + holdBlend * 0.066 + shotPulse * 0.004,
-    -0.41 - holdBlend * 0.096 - shotPulse * 0.01
+    side * (
+      0.34 -
+      holdBlend * 0.042 -
+      shotPulse * 0.009 -
+      inwardTuck +
+      counterSwing * crossAmount
+    ),
+    -0.58 +
+      holdBlend * 0.066 +
+      shotPulse * 0.004 +
+      lift * liftAmount -
+      drop * liftAmount * 0.32 +
+      breath * (1 - locomotionBlend),
+    -0.41 -
+      holdBlend * 0.096 -
+      shotPulse * 0.01 -
+      swing * reachAmount -
+      runTuck * 0.006 +
+      slidePullback
   );
   target.rotation.set(
-    0.22 - holdBlend * 0.34 - shotPulse * 0.055,
-    side * (-0.1 + holdBlend * 0.08 + shotPulse * 0.014),
-    side * (-0.09 + holdBlend * 0.235 + shotPulse * 0.055)
+    0.22 -
+      holdBlend * 0.34 -
+      shotPulse * 0.055 -
+      runTuck * 0.035 +
+      swing * pumpPitch * 0.72,
+    side * (
+      -0.1 +
+      holdBlend * 0.08 +
+      shotPulse * 0.014 +
+      counterSwing * (0.026 + runBlend * 0.03) * locomotionBlend
+    ),
+    side * (
+      -0.09 +
+      holdBlend * 0.235 +
+      shotPulse * 0.055 -
+      swing * (0.055 + runBlend * 0.074) * locomotionBlend +
+      counterSwing * 0.018 * locomotionBlend
+    )
   );
 }
 
+function createPhantomLocomotionRuntime(): PhantomLocomotionRuntime {
+  return {
+    movementBlend: 0,
+    runBlend: 0,
+    slideBlend: 0,
+    speedBlend: 0,
+    cycleTime: 0,
+    previousCameraPosition: new THREE.Vector3(),
+    hasPreviousCameraPosition: false,
+  };
+}
+
+function updatePhantomLocomotionRuntime(
+  locomotion: PhantomLocomotionRuntime,
+  camera: THREE.Camera,
+  delta: number
+): void {
+  const previousPosition = locomotion.previousCameraPosition;
+  if (!locomotion.hasPreviousCameraPosition) {
+    previousPosition.copy(camera.position);
+    locomotion.hasPreviousCameraPosition = true;
+    return;
+  }
+
+  const dx = camera.position.x - previousPosition.x;
+  const dz = camera.position.z - previousPosition.z;
+  const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+  previousPosition.copy(camera.position);
+
+  const frameSeconds = Math.max(delta, 1 / 120);
+  const horizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
+    ? 0
+    : horizontalDistance / frameSeconds;
+  const store = useGameStore.getState();
+  const movementState = store.localPlayer?.movement;
+  const isGrounded = movementState?.isGrounded ?? true;
+  const isSliding = movementState?.isSliding ?? false;
+  const targetSlideBlend = THREE.MathUtils.clamp(
+    Math.max(isSliding ? 1 : 0, store.slideIntensity),
+    0,
+    1
+  );
+  const speedMoveBlend = THREE.MathUtils.smoothstep(
+    horizontalSpeed,
+    PHANTOM_LOCOMOTION_MOVE_START_SPEED,
+    PHANTOM_LOCOMOTION_FULL_WALK_SPEED
+  );
+  const targetMovementBlend = isGrounded && targetSlideBlend <= 0.02 ? speedMoveBlend : 0;
+  const speedRunBlend = THREE.MathUtils.smoothstep(
+    horizontalSpeed,
+    PHANTOM_LOCOMOTION_RUN_START_SPEED,
+    PHANTOM_LOCOMOTION_RUN_FULL_SPEED
+  );
+  const targetRunBlend = targetMovementBlend * Math.max(
+    speedRunBlend,
+    movementState?.isSprinting ? 1 : 0
+  );
+  const targetSpeedBlend = THREE.MathUtils.clamp(horizontalSpeed / PHANTOM_RUN_SPEED, 0, 1.35);
+
+  locomotion.movementBlend = THREE.MathUtils.damp(
+    locomotion.movementBlend,
+    targetMovementBlend,
+    targetMovementBlend > locomotion.movementBlend ? 12 : 8.5,
+    delta
+  );
+  locomotion.runBlend = THREE.MathUtils.damp(
+    locomotion.runBlend,
+    targetRunBlend,
+    10,
+    delta
+  );
+  locomotion.slideBlend = THREE.MathUtils.damp(
+    locomotion.slideBlend,
+    targetSlideBlend,
+    targetSlideBlend > locomotion.slideBlend ? 13 : 8,
+    delta
+  );
+  locomotion.speedBlend = THREE.MathUtils.damp(
+    locomotion.speedBlend,
+    targetSpeedBlend,
+    9,
+    delta
+  );
+
+  if (locomotion.movementBlend <= 0.002) return;
+
+  const cycleSpeed = THREE.MathUtils.lerp(
+    PHANTOM_LOCOMOTION_WALK_CYCLE_SPEED,
+    PHANTOM_LOCOMOTION_RUN_CYCLE_SPEED,
+    locomotion.runBlend
+  ) * THREE.MathUtils.lerp(
+    0.82,
+    1.14,
+    THREE.MathUtils.clamp(locomotion.speedBlend, 0, 1)
+  );
+  locomotion.cycleTime = (locomotion.cycleTime + delta * cycleSpeed) % (Math.PI * 2);
+}
 function composePhantomPrimaryPalmMatrix({
   camera,
   elapsedSeconds,
@@ -340,6 +598,7 @@ function composePhantomPrimaryPalmMatrix({
   side,
   holdBlend,
   shotPulse,
+  locomotion,
 }: {
   camera: THREE.Camera;
   elapsedSeconds: number;
@@ -348,6 +607,7 @@ function composePhantomPrimaryPalmMatrix({
   side: -1 | 1;
   holdBlend: number;
   shotPulse: number;
+  locomotion?: PhantomLocomotionPose;
 }): THREE.Matrix4 {
   const rootTransform = {
     position: matrixPosition,
@@ -370,7 +630,7 @@ function composePhantomPrimaryPalmMatrix({
       rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
     })),
   };
-  writePhantomHandPose(poseTarget, side, holdBlend, shotPulse, elapsedSeconds);
+  writePhantomHandPose(poseTarget, side, holdBlend, shotPulse, elapsedSeconds, locomotion);
 
   composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
   composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
@@ -396,7 +656,8 @@ function composePhantomPrimaryPalmMatrix({
 function samplePhantomPrimaryPalmSocket(
   context: PhantomPrimaryPoseSampleContext,
   actionBlend: number,
-  targetingBlend: number
+  targetingBlend: number,
+  locomotion?: PhantomLocomotionPose
 ): ViewmodelSocketPoseDraft {
   const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
   const timestampMs = context.timestampMs ?? Date.now();
@@ -410,6 +671,7 @@ function samplePhantomPrimaryPalmSocket(
     side: context.side,
     holdBlend,
     shotPulse,
+    locomotion,
   });
 
   worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
@@ -450,10 +712,12 @@ function PhantomAnimatedForearm({
   side,
   materials,
   primaryAttackRef,
+  locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -471,7 +735,14 @@ function PhantomAnimatedForearm({
       : Number.POSITIVE_INFINITY;
     const holdBlend = getPhantomPrimaryHeldBlend(nowMs);
     const shotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
-    writePhantomForearmPose(forearm, side, holdBlend, shotPulse, state.clock.elapsedTime);
+    writePhantomForearmPose(
+      forearm,
+      side,
+      holdBlend,
+      shotPulse,
+      state.clock.elapsedTime,
+      locomotionRef.current
+    );
   });
 
   return (
@@ -488,10 +759,12 @@ function PhantomPoseableHand({
   side,
   materials,
   primaryAttackRef,
+  locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const closedVisualRef = useRef<THREE.Group>(null);
   const armRef = useRef<THREE.Group>(null);
@@ -540,6 +813,7 @@ function PhantomPoseableHand({
 
     writePhantomHandPose(
       {
+        ...(closedVisual ? { closedHand: closedVisual } : {}),
         arm,
         wrist,
         palm,
@@ -549,7 +823,8 @@ function PhantomPoseableHand({
       side,
       holdBlend,
       shotPulse,
-      state.clock.elapsedTime
+      state.clock.elapsedTime,
+      locomotionRef.current
     );
   });
 
@@ -564,40 +839,42 @@ function PhantomPoseableHand({
           side * PHANTOM_IDLE_HAND_ROTATION.z,
         ]}
       >
-        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.092, 0.124, 0.12]} />
-        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.018, 0.006, 0.018]} scale={[0.076, 0.102, 0.074]} />
-        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.052, 0, -0.014]} scale={[0.018, 0.105, 0.068]} />
+        <group position={[0, 0, -PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z]}>
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.092, 0.124, 0.12]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.018, 0.006, 0.018]} scale={[0.076, 0.102, 0.074]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.052, 0, -0.014]} scale={[0.018, 0.105, 0.068]} />
 
-        {PHANTOM_CLOSED_FINGER_ROWS.map((row, index) => (
-          <group key={row} position={[side * -0.006, row, -0.072]}>
-            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.106, 0.028, 0.052]} />
-            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.026, 0, -0.026]} scale={[0.04, 0.026, 0.034]} />
-            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[side * -0.028, 0, -0.034]} scale={[0.07, 0.026, 0.042]} />
-            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.058, 0, -0.06]} scale={[0.02, 0.018, 0.022]} />
-            {(index === 1 || index === 2) && (
-              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * 0.052, 0, 0.012]} scale={[0.014, 0.014, 0.028]} />
-            )}
+          {PHANTOM_CLOSED_FINGER_ROWS.map((row, index) => (
+            <group key={row} position={[side * -0.006, row, -0.072]}>
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.106, 0.028, 0.052]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.026, 0, -0.026]} scale={[0.04, 0.026, 0.034]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[side * -0.028, 0, -0.034]} scale={[0.07, 0.026, 0.042]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.058, 0, -0.06]} scale={[0.02, 0.018, 0.022]} />
+              {(index === 1 || index === 2) && (
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * 0.052, 0, 0.012]} scale={[0.014, 0.014, 0.028]} />
+              )}
+            </group>
+          ))}
+
+          <group position={[side * 0.076, -0.044, -0.014]} rotation={[0.06, side * -0.08, side * 0.28]}>
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.046, 0.09, 0.056]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.006, 0.002, 0.016]} scale={[0.034, 0.07, 0.034]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.014, 0.01, -0.02]} scale={[0.014, 0.046, 0.01]} />
           </group>
-        ))}
 
-        <group position={[side * 0.076, -0.044, -0.014]} rotation={[0.06, side * -0.08, side * 0.28]}>
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.046, 0.09, 0.056]} />
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.006, 0.002, 0.016]} scale={[0.034, 0.07, 0.034]} />
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.014, 0.01, -0.02]} scale={[0.014, 0.046, 0.01]} />
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={materials.dark}
+            position={[0, 0, 0.085]}
+            scale={[0.074, 0.088, 0.038]}
+          />
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={materials.glow}
+            position={[side * -0.034, 0, -0.108]}
+            scale={[0.05, 0.014, 0.012]}
+          />
         </group>
-
-        <mesh
-          geometry={SHARED_GEOMETRIES.box}
-          material={materials.dark}
-          position={[0, 0, 0.085]}
-          scale={[0.074, 0.088, 0.038]}
-        />
-        <mesh
-          geometry={SHARED_GEOMETRIES.box}
-          material={materials.glow}
-          position={[side * -0.034, 0, -0.108]}
-          scale={[0.05, 0.014, 0.012]}
-        />
       </group>
 
       <group
@@ -677,9 +954,11 @@ function PhantomPoseableHand({
 function PhantomViewmodel({
   materials,
   primaryAttackRef,
+  locomotionRef,
 }: {
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   return (
     <group position={[
@@ -687,10 +966,10 @@ function PhantomViewmodel({
       PHANTOM_VIEWMODEL_OFFSET.y,
       PHANTOM_VIEWMODEL_OFFSET.z,
     ]}>
-      <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} />
-      <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} />
-      <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} />
-      <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} />
+      <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
+      <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
+      <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
+      <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
     </group>
   );
 }
@@ -806,6 +1085,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
   const actionBlendRef = useRef(action.active || action.charging ? 1 : 0);
   const targetingBlendRef = useRef(action.targeting ? 1 : 0);
   const phantomPrimaryAttackRef = useRef<PhantomPrimaryAttackState | null>(null);
+  const phantomLocomotionRef = useRef<PhantomLocomotionRuntime>(createPhantomLocomotionRuntime());
   const processedPhantomPrimaryEventIdRef = useRef<string | null>(null);
   const materials = useMemo(() => getViewmodelMaterials(heroId), [heroId]);
 
@@ -817,7 +1097,8 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
       (context) => samplePhantomPrimaryPalmSocket(
         { ...context, side: -1 },
         actionBlendRef.current,
-        targetingBlendRef.current
+        targetingBlendRef.current,
+        phantomLocomotionRef.current
       )
     );
     const unregisterRight = registerViewmodelPoseSampler<PhantomPrimaryPoseSampleContext>(
@@ -825,7 +1106,8 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
       (context) => samplePhantomPrimaryPalmSocket(
         { ...context, side: 1 },
         actionBlendRef.current,
-        targetingBlendRef.current
+        targetingBlendRef.current,
+        phantomLocomotionRef.current
       )
     );
 
@@ -860,6 +1142,8 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
     const targetingBlend = targetingBlendRef.current;
 
     if (heroId === 'phantom') {
+      updatePhantomLocomotionRuntime(phantomLocomotionRef.current, camera, delta);
+
       const store = useGameStore.getState();
       const localPlayerId = store.localPlayer?.id;
       if (localPlayerId) {
@@ -889,7 +1173,11 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
     <group ref={groupRef} frustumCulled={false} renderOrder={20}>
       <group ref={rootRef}>
         {heroId === 'phantom' && (
-          <PhantomViewmodel materials={materials} primaryAttackRef={phantomPrimaryAttackRef} />
+          <PhantomViewmodel
+            materials={materials}
+            primaryAttackRef={phantomPrimaryAttackRef}
+            locomotionRef={phantomLocomotionRef}
+          />
         )}
         {heroId === 'hookshot' && <HookshotViewmodel materials={materials} />}
         {heroId === 'blaze' && <BlazeViewmodel materials={materials} />}
