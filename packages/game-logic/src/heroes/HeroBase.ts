@@ -196,14 +196,7 @@ export async function createHero(heroId: HeroId): Promise<HeroBase> {
     case 'glacier':
       const { GlacierHero } = await import('./GlacierHero.js');
       return new GlacierHero();
-    case 'pulse':
-      const { PulseHero } = await import('./PulseHero.js');
-      return new PulseHero();
-    case 'sentinel':
-      const { SentinelHero } = await import('./SentinelHero.js');
-      return new SentinelHero();
     default:
       throw new Error(`Unknown hero: ${heroId}`);
   }
 }
-

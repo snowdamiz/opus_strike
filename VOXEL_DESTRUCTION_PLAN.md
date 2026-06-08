@@ -145,7 +145,6 @@ Suggested first pass:
 | Glacier mallet | medium | very small arc/sphere | Direct melee cover breaking. |
 | Phantom void ray | high line damage | tiny splash | Good later use case for voxel DDA along a beam. |
 | Hookshot heavy | medium direct | none or tiny | Lets hooks chip cover without carving craters. |
-| Sentinel/Pulse utility | none by default | none by default | Avoid every ability mutating terrain. |
 
 Use conservative values first. Destruction can become more dramatic after the rebuild and networking budgets are proven.
 

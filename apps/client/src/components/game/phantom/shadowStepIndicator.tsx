@@ -165,7 +165,7 @@ function getPillarMaterial(): THREE.ShaderMaterial {
           float energy = strand1 * strand2;
           color *= 0.5 + energy * 0.5;
           
-          // Pulse
+          // Energy shimmer
           float pulse = sin(time * 6.0) * 0.15 + 0.85;
           
           float alpha = fade * 0.4 * pulse;

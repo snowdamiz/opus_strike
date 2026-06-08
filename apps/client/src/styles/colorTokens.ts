@@ -19,10 +19,6 @@ const palette = {
   hookshotDeep: { hex: '#0891b2', rgb: [8, 145, 178] as const },
   glacier: { hex: '#3b82f6', rgb: [59, 130, 246] as const },
   glacierDeep: { hex: '#1d4ed8', rgb: [29, 78, 216] as const },
-  pulse: { hex: '#22c55e', rgb: [34, 197, 94] as const },
-  pulseDeep: { hex: '#16a34a', rgb: [22, 163, 74] as const },
-  sentinel: { hex: '#eab308', rgb: [234, 179, 8] as const },
-  sentinelDeep: { hex: '#ca8a04', rgb: [202, 138, 4] as const },
 } as const;
 
 export const HERO_COLORS = {
@@ -30,8 +26,6 @@ export const HERO_COLORS = {
   hookshot: palette.cyan.hex,
   blaze: palette.orange.hex,
   glacier: palette.glacier.hex,
-  pulse: palette.pulse.hex,
-  sentinel: palette.sentinel.hex,
 } satisfies Record<HeroId, string>;
 
 export const HERO_COLOR_SCHEMES = {
@@ -39,8 +33,6 @@ export const HERO_COLOR_SCHEMES = {
   hookshot: { primary: palette.cyan.hex, secondary: palette.hookshotDeep.hex, glow: rgba(palette.cyan.rgb, 0.6) },
   blaze: { primary: palette.orange.hex, secondary: palette.orangeDeep.hex, glow: rgba(palette.orange.rgb, 0.6) },
   glacier: { primary: palette.glacier.hex, secondary: palette.glacierDeep.hex, glow: rgba(palette.glacier.rgb, 0.6) },
-  pulse: { primary: palette.pulse.hex, secondary: palette.pulseDeep.hex, glow: rgba(palette.pulse.rgb, 0.6) },
-  sentinel: { primary: palette.sentinel.hex, secondary: palette.sentinelDeep.hex, glow: rgba(palette.sentinel.rgb, 0.6) },
 } satisfies Record<HeroId, { primary: string; secondary: string; glow: string }>;
 
 export const HUD_HERO_COLORS = {
@@ -48,8 +40,6 @@ export const HUD_HERO_COLORS = {
   hookshot: { primary: palette.cyan.hex, glow: rgba(palette.cyan.rgb, 0.4), bg: rgba(palette.cyan.rgb, 0.15) },
   blaze: { primary: palette.orange.hex, glow: rgba(palette.orange.rgb, 0.5), bg: rgba(palette.orange.rgb, 0.15) },
   glacier: { primary: palette.glacier.hex, glow: rgba(palette.glacier.rgb, 0.4), bg: rgba(palette.glacier.rgb, 0.15) },
-  pulse: { primary: palette.pulse.hex, glow: rgba(palette.pulse.rgb, 0.4), bg: rgba(palette.pulse.rgb, 0.15) },
-  sentinel: { primary: palette.sentinel.hex, glow: rgba(palette.sentinel.rgb, 0.4), bg: rgba(palette.sentinel.rgb, 0.15) },
 } satisfies Record<HeroId, { primary: string; glow: string; bg: string }>;
 
 export const FACTIONS = {

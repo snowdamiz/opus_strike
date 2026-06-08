@@ -628,7 +628,7 @@ body,
 }
 
 .hero-select-stage {
-  width: min(100%, 58rem, calc((100vh - var(--menu-nav-h) - 4.5rem) * 1.13));
+  width: min(100%, 76rem, calc((100vh - var(--menu-nav-h) - 4.5rem) * 2.9));
 }
 
 .heroes-page-layout {

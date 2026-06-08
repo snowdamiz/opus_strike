@@ -18,10 +18,6 @@ export function HeroIcon({ heroId, size = 24, color = 'currentColor', className 
       return <BlazeIcon size={size} color={color} className={className} />;
     case 'glacier':
       return <GlacierIcon size={size} color={color} className={className} />;
-    case 'pulse':
-      return <PulseIcon size={size} color={color} className={className} />;
-    case 'sentinel':
-      return <SentinelIcon size={size} color={color} className={className} />;
     default:
       return null;
   }
@@ -174,53 +170,6 @@ function GlacierIcon({ size, color, className }: IconProps) {
   );
 }
 
-// Pulse - Lightning/Energy
-function PulseIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      {/* Main lightning bolt */}
-      <path 
-        d="M13 2L4 14H11L10 22L20 9H13L13 2Z" 
-        fill={color}
-      />
-      {/* Inner highlight */}
-      <path 
-        d="M12 5L7 12H10L9 18L16 11H13L12 5Z" 
-        fill="#ffffff"
-        opacity="0.4"
-      />
-      {/* Energy sparks */}
-      <circle cx="3" cy="8" r="1" fill={color} opacity="0.5" />
-      <circle cx="21" cy="16" r="0.8" fill={color} opacity="0.4" />
-    </svg>
-  );
-}
-
-// Sentinel - Shield
-function SentinelIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      {/* Shield body */}
-      <path 
-        d="M12 2L4 5V11C4 16.5 7.5 21 12 22C16.5 21 20 16.5 20 11V5L12 2Z" 
-        fill={color}
-      />
-      {/* Shield inner */}
-      <path 
-        d="M12 4L6 6.5V11C6 15.5 9 19 12 20C15 19 18 15.5 18 11V6.5L12 4Z" 
-        fill="#0a0a0f"
-        opacity="0.3"
-      />
-      {/* Shield emblem - star */}
-      <path 
-        d="M12 8L13 11H16L13.5 13L14.5 16L12 14L9.5 16L10.5 13L8 11H11L12 8Z" 
-        fill={color}
-      />
-    </svg>
-  );
-}
-
-
 // ============= ABILITY ICONS =============
 
 export type AbilityIconType =
@@ -250,16 +199,6 @@ export type AbilityIconType =
   | 'wallclimb'
   | 'frostshield'
   | 'fortress'
-  | 'pulseburst'
-  | 'dashhit'
-  | 'speedboost'
-  | 'dash'
-  | 'haste'
-  | 'sentinelbolt'
-  | 'barrierbash'
-  | 'fortify'
-  | 'barrier'
-  | 'dome'
   | 'ultimate';
 
 export function AbilityIcon({ type, size = 24, color = 'currentColor', className = '' }: IconProps & { type: AbilityIconType }) {
@@ -282,7 +221,6 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
     case 'grapple':
       return <GrappleIcon size={size} color={color} className={className} />;
     case 'anchorwall':
-    case 'barrier':
       return <BarrierIcon size={size} color={color} className={className} />;
     case 'grappletrap':
       return <GrappleTrapIcon size={size} color={color} className={className} />;
@@ -312,24 +250,6 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <FrostStormIcon size={size} color={color} className={className} />;
     case 'fortress':
       return <FortressIcon size={size} color={color} className={className} />;
-    case 'pulseburst':
-      return <PulseBurstIcon size={size} color={color} className={className} />;
-    case 'dashhit':
-      return <DashHitIcon size={size} color={color} className={className} />;
-    case 'speedboost':
-      return <SpeedboostIcon size={size} color={color} className={className} />;
-    case 'dash':
-      return <DashIcon size={size} color={color} className={className} />;
-    case 'haste':
-      return <HasteIcon size={size} color={color} className={className} />;
-    case 'sentinelbolt':
-      return <SentinelBoltIcon size={size} color={color} className={className} />;
-    case 'barrierbash':
-      return <BarrierBashIcon size={size} color={color} className={className} />;
-    case 'fortify':
-      return <FortifyIcon size={size} color={color} className={className} />;
-    case 'dome':
-      return <DomeIcon size={size} color={color} className={className} />;
     case 'ultimate':
       return <UltimateIcon size={size} color={color} className={className} />;
     case 'passive':
@@ -354,12 +274,6 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     glacier_iceslide: 'icewallrush',
     glacier_frostshield: 'froststorm',
     glacier_fortress: 'fortress',
-    pulse_speedboost: 'speedboost',
-    pulse_dash: 'dash',
-    pulse_haste: 'haste',
-    sentinel_fortify: 'fortify',
-    sentinel_barrier: 'barrier',
-    sentinel_dome: 'dome',
   };
   return mapping[abilityId] || 'passive';
 }
@@ -616,102 +530,6 @@ function FortressIcon({ size, color, className }: IconProps) {
       <path d="M4 20V8L7 5L10 8L13 5L16 8L19 5L21 8V20H4Z" fill={color} opacity="0.3" />
       <path d="M4 20V8L7 5L10 8L13 5L16 8L19 5L21 8V20" stroke={color} strokeWidth="2" strokeLinejoin="round" />
       <path d="M8 20V15H11V20M14 20V15H17V20M4 12H21" stroke={color} strokeWidth="1.4" opacity="0.7" />
-    </svg>
-  );
-}
-
-function PulseBurstIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M3 12H7L9 7L13 17L16 9L18 12H21" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="6" cy="12" r="2.2" fill={color} opacity="0.35" />
-      <circle cx="18" cy="12" r="2.2" fill={color} />
-      <path d="M14 5L18 2M15.5 19L20 22" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
-    </svg>
-  );
-}
-
-function DashHitIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M3 12H12" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeDasharray="2 2" />
-      <path d="M11 7L17 12L11 17V7Z" fill={color} />
-      <path d="M17 12L21 8M17 12L21 12M17 12L21 16" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-      <circle cx="8" cy="12" r="2.2" fill={color} opacity="0.34" />
-    </svg>
-  );
-}
-
-function SpeedboostIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <circle cx="12" cy="12" r="4.2" fill={color} opacity="0.34" />
-      <circle cx="12" cy="12" r="2" fill={color} />
-      <path d="M12 4V2M12 22V20M4 12H2M22 12H20" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M5.5 8H10M5.5 16H10M14 8H18.5M14 16H18.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" opacity="0.8" />
-    </svg>
-  );
-}
-
-function DashIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M4 12H13" stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray="2 2" />
-      <path d="M12 6L20 12L12 18V14H7V10H12V6Z" fill={color} />
-    </svg>
-  );
-}
-
-function HasteIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M4 12L10 6V10H20V14H10V18L4 12Z" fill={color} />
-      <path d="M6 5.5L11 2V4.5H17V8H11V10L6 5.5Z" fill={color} opacity="0.48" />
-      <path d="M6 18.5L11 14V16H17V19.5H11V22L6 18.5Z" fill={color} opacity="0.48" />
-    </svg>
-  );
-}
-
-function SentinelBoltIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M4 12H15" stroke={color} strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M15 7L21 12L15 17V7Z" fill={color} />
-      <path d="M6 8L8 12L6 16L3.5 12L6 8Z" fill={color} opacity="0.5" />
-      <path d="M12 9.5H16M12 14.5H16" stroke="#0a0a0f" strokeWidth="1.2" strokeLinecap="round" opacity="0.45" />
-    </svg>
-  );
-}
-
-function BarrierBashIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M5 6.5L11 4V20L5 17.5V6.5Z" fill={color} opacity="0.42" />
-      <path d="M5 6.5L11 4V20L5 17.5V6.5Z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
-      <path d="M12.5 12H20M17 8.5L21 12L17 15.5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M15 6L18 3M15 18L18 21" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.62" />
-    </svg>
-  );
-}
-
-function FortifyIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M12 3L6 6V11.5C6 15.4 8.4 18.7 12 20.4C15.6 18.7 18 15.4 18 11.5V6L12 3Z" fill={color} opacity="0.28" />
-      <path d="M12 3L6 6V11.5C6 15.4 8.4 18.7 12 20.4C15.6 18.7 18 15.4 18 11.5V6L12 3Z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
-      <path d="M12 8V17M8.5 17H15.5M7 20H17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function DomeIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M4 18C4 11.4 7.3 7 12 7C16.7 7 20 11.4 20 18" fill={color} opacity="0.24" />
-      <path d="M4 18C4 11.4 7.3 7 12 7C16.7 7 20 11.4 20 18" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <path d="M7 18C7 13.3 9 10.2 12 10.2C15 10.2 17 13.3 17 18" stroke={color} strokeWidth="1.4" strokeLinecap="round" opacity="0.65" />
-      <path d="M2.5 18H21.5" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <circle cx="12" cy="15" r="1.8" fill={color} />
     </svg>
   );
 }

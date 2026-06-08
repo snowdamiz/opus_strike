@@ -81,7 +81,6 @@ const SOUND_EFFECTS = {
   wallRun: { path: '/sounds/wall_run.mp3', volume: 0.4 },
   
   // Abilities - Generic
-  dash: { path: '/sounds/dash.mp3', volume: 0.6 },
   blink: { path: '/sounds/blink.mp3', volume: 0.6 },
   grapple: { path: '/sounds/grapple.mp3', volume: 0.5 },
   jetpack: { path: '/sounds/jetpack.mp3', volume: 0.4 },

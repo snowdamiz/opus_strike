@@ -110,38 +110,6 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
       iconType: 'iceshield',
     },
   ],
-  pulse: [
-    {
-      input: 'LMB',
-      name: 'Pulse Burst',
-      description: 'Send quick energy bursts downrange with a rapid cadence.',
-      cooldown: 0.36,
-      iconType: 'pulseburst',
-    },
-    {
-      input: 'RMB',
-      name: 'Dash Hit',
-      description: 'Snap into close range and punish enemies caught in the lane.',
-      cooldown: 0.9,
-      iconType: 'dashhit',
-    },
-  ],
-  sentinel: [
-    {
-      input: 'LMB',
-      name: 'Sentinel Bolt',
-      description: 'Fire steady defensive bolts from a guarded stance.',
-      cooldown: 0.65,
-      iconType: 'sentinelbolt',
-    },
-    {
-      input: 'RMB',
-      name: 'Barrier Bash',
-      description: 'Shove nearby threats back with a short-range shield strike.',
-      cooldown: 1.4,
-      iconType: 'barrierbash',
-    },
-  ],
 };
 
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
@@ -178,16 +146,6 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
       iconType: 'froststorm',
       duration: ABILITY_DEFINITIONS.glacier_frostshield.duration,
     }),
-  ],
-  pulse: [
-    fromAbility('E', 'pulse_speedboost'),
-    fromAbility('Q', 'pulse_dash'),
-    fromAbility('F', 'pulse_haste', 'ultimate'),
-  ],
-  sentinel: [
-    fromAbility('E', 'sentinel_fortify'),
-    fromAbility('Q', 'sentinel_barrier'),
-    fromAbility('F', 'sentinel_dome', 'ultimate'),
   ],
 };
 

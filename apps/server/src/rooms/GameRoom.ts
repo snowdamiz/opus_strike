@@ -282,16 +282,12 @@ const PRIMARY_ATTACKS: Record<HeroId, AttackConfig> = {
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_BOT_COOLDOWN_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
   glacier: { damage: 42, range: 3.4, cooldownMs: 750, coneDot: Math.cos(0.72), damageType: 'ice_mallet' },
-  pulse: { damage: 16, range: 30, cooldownMs: 360, coneDot: Math.cos(0.16), damageType: 'pulse_burst' },
-  sentinel: { damage: 20, range: 26, cooldownMs: 650, coneDot: Math.cos(0.2), damageType: 'sentinel_bolt' },
 };
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 34, range: 42, cooldownMs: 1200, coneDot: Math.cos(0.12), damageType: 'void_ray' },
   hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
   blaze: { damage: 34, range: 35, cooldownMs: 2600, coneDot: Math.cos(0.32), radius: 4, damageType: 'bomb' },
   glacier: { damage: 12, range: 6, cooldownMs: 1200, coneDot: Math.cos(0.8), damageType: 'frost_storm' },
-  pulse: { damage: 14, range: 18, cooldownMs: 900, coneDot: Math.cos(0.24), damageType: 'pulse_dash_hit' },
-  sentinel: { damage: 10, range: 8, cooldownMs: 1400, coneDot: Math.cos(0.9), damageType: 'barrier_bash' },
 };
 
 export class GameRoom extends Room<GameState> {
@@ -1543,9 +1539,6 @@ export class GameRoom extends Room<GameState> {
   private getDamageTakenMultiplier(player: Player): number {
     let multiplier = 1;
 
-    if (player.abilities.get('sentinel_fortify')?.isActive) {
-      multiplier *= 0.5;
-    }
     if (player.abilities.get('glacier_frostshield')?.isActive) {
       multiplier *= 0.75;
     }
@@ -1569,8 +1562,6 @@ export class GameRoom extends Room<GameState> {
   private getActiveSpeedMultiplier(player: Player): number {
     let multiplier = 1;
     if (player.abilities.get('phantom_veil')?.isActive) multiplier *= 1.3;
-    if (player.abilities.get('pulse_speedboost')?.isActive) multiplier *= 1.3;
-    if (player.abilities.get('pulse_haste')?.isActive) multiplier *= 1.5;
     return multiplier;
   }
 
@@ -1869,16 +1860,6 @@ export class GameRoom extends Room<GameState> {
         input.ability2 = pulseAbility && underPressure;
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (underPressure || objectiveIntent);
         break;
-      case 'pulse':
-        input.ability1 = pulseAbility && (objectiveIntent || Boolean(blackboard.nearestAlly));
-        input.ability2 = pulseAbility && safeMobilityUse && (objectiveIntent || enemyDistance < 14);
-        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (bot.hasFlag || blackboard.nearbyAllyCount >= 1);
-        break;
-      case 'sentinel':
-        input.ability1 = pulseAbility && (underPressure || intent === 'return_friendly_flag');
-        input.ability2 = pulseAbility && (enemyDistance < 18 || intent === 'chase_enemy_carrier');
-        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (underPressure || intent === 'return_friendly_flag');
-        break;
     }
 
     if (input.ability1 || input.ability2) {
@@ -2031,8 +2012,7 @@ export class GameRoom extends Room<GameState> {
 
   private getBotStrategicRole(bot: Player): BotStrategicRole {
     const heroId = bot.heroId as HeroId;
-    if (heroId === 'sentinel' || heroId === 'glacier') return 'defender';
-    if (heroId === 'pulse') return 'support';
+    if (heroId === 'glacier') return 'defender';
     if (heroId === 'phantom' || heroId === 'hookshot') return 'runner';
     const bucket = this.hashString(bot.botProfileId || bot.id || bot.name) % 10;
     if (bucket < 2) return 'defender';
@@ -2059,10 +2039,6 @@ export class GameRoom extends Room<GameState> {
         return 15;
       case 'phantom':
         return 18;
-      case 'pulse':
-        return 17;
-      case 'sentinel':
-        return 14;
       default:
         return 13;
     }

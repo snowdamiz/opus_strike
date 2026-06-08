@@ -4,7 +4,7 @@ import * as THREE from 'three';
 
 interface Effect {
   id: string;
-  type: 'grapple' | 'dash' | 'blink' | 'explosion' | 'hit';
+  type: 'grapple' | 'blink' | 'explosion' | 'hit';
   position: THREE.Vector3;
   direction?: THREE.Vector3;
   endPosition?: THREE.Vector3;
@@ -16,7 +16,6 @@ interface Effect {
 const effects: Effect[] = [];
 let effectIdCounter = 0;
 const EXPLOSION_PARTICLE_INDICES = Array.from({ length: 20 }, (_, i) => i);
-const DASH_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.5, 8, 8);
 const BLINK_RING_GEOMETRY = new THREE.RingGeometry(0.5, 0.7, 6);
 const EXPLOSION_BOX_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
 const HIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.3, 8, 8);
@@ -67,8 +66,6 @@ export function Effects() {
         switch (effect.type) {
           case 'grapple':
             return <GrappleLine key={effect.id} effect={effect} />;
-          case 'dash':
-            return <DashTrail key={effect.id} effect={effect} />;
           case 'blink':
             return <BlinkEffect key={effect.id} effect={effect} />;
           case 'explosion':
@@ -105,35 +102,6 @@ function GrappleLine({ effect }: EffectProps) {
       <bufferGeometry />
       <lineBasicMaterial color="#00ff88" linewidth={2} />
     </primitive>
-  );
-}
-
-function DashTrail({ effect }: EffectProps) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const progress = useRef(0);
-
-  useFrame((_, delta) => {
-    if (!meshRef.current) return;
-
-    progress.current += delta / (effect.duration / 1000);
-    const t = Math.min(1, progress.current);
-
-    // Fade out
-    const material = meshRef.current.material as THREE.MeshBasicMaterial;
-    material.opacity = 1 - t;
-
-    // Scale up
-    meshRef.current.scale.setScalar(1 + t * 2);
-  });
-
-  return (
-    <mesh ref={meshRef} position={effect.position} geometry={DASH_SPHERE_GEOMETRY}>
-      <meshBasicMaterial 
-        color="#7c3aed"
-        transparent
-        opacity={1}
-      />
-    </mesh>
   );
 }
 

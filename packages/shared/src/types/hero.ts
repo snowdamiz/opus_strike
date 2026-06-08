@@ -2,13 +2,11 @@ export type HeroId =
   | 'phantom'
   | 'hookshot'
   | 'blaze'
-  | 'glacier'
-  | 'pulse'
-  | 'sentinel';
+  | 'glacier';
 
-export type HeroRole = 'flanker' | 'mobile' | 'assault' | 'tank' | 'support' | 'defense';
+export type HeroRole = 'flanker' | 'mobile' | 'assault' | 'tank';
 
-export type MovementFocus = 'blink' | 'grapple' | 'aerial' | 'parkour' | 'speed' | 'grounded';
+export type MovementFocus = 'blink' | 'grapple' | 'aerial' | 'parkour';
 
 export interface HeroStats {
   maxHealth: number;
@@ -39,4 +37,3 @@ export interface AbilitySlot {
   abilityId: string;
   defaultKey: string;
 }
-

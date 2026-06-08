@@ -192,7 +192,7 @@ export class MovementController {
   private canUseAbilityMovement(): boolean {
     // Ability-based movement for specific heroes
     if (!this.heroId) return false;
-    return ['phantom', 'pulse'].includes(this.heroId);
+    return this.heroId === 'phantom';
   }
 
   setPosition(position: Vec3): void {
@@ -222,10 +222,6 @@ export class MovementController {
 
   endGrapple(): void {
     this.aerialMovement.endGrapple();
-  }
-
-  executeDash(direction: Vec3): void {
-    this.abilityMovement.executeDash(direction);
   }
 
   executeBlink(targetPosition: Vec3): void {

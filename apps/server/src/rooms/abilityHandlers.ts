@@ -308,45 +308,6 @@ export function executeAbility(
       break;
     }
 
-    // ===== PULSE ABILITIES =====
-    case 'pulse_speedboost': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
-    case 'pulse_dash': {
-      const distance = 10;
-      const yaw = player.lookYaw;
-      player.position.x += -Math.sin(yaw) * distance;
-      player.position.z += -Math.cos(yaw) * distance;
-      break;
-    }
-
-    case 'pulse_haste': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
-    // ===== SENTINEL ABILITIES =====
-    case 'sentinel_fortify': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
-    case 'sentinel_barrier': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
-    case 'sentinel_dome': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
   }
 }
 

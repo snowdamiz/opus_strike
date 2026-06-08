@@ -143,10 +143,7 @@ export const GLIDE_FALL_SPEED = -4;
 export const GLIDE_FORWARD_BOOST = 1.3;
 export const GLIDE_TURN_SPEED = 2;
 
-// Dash / Blink
-export const DASH_DISTANCE = 8;
-export const DASH_DURATION = 0.15;
-export const DASH_COOLDOWN = 4;
+// Blink
 export const BLINK_MAX_DISTANCE = 12;
 export const BLINK_COOLDOWN = 6;
 

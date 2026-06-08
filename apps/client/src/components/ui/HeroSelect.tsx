@@ -151,7 +151,7 @@ export function HeroSelect() {
       <main className="menu-main">
         <div className="menu-content-wide menu-scroll-y flex h-full items-center justify-center py-4">
           <div className="hero-select-stage menu-compact-scale">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:gap-4 xl:gap-5">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:gap-4 xl:gap-5">
               {ALL_HERO_IDS.map((heroId) => {
                 const hero = HERO_DEFINITIONS[heroId];
                 const color = HERO_COLORS[heroId];
@@ -200,7 +200,7 @@ const HeroCard = memo(function HeroCard({
       aria-pressed={isSelected}
       onClick={() => onSelect(heroId)}
       disabled={isLockedIn}
-      className={`group relative aspect-[3/4] w-full overflow-hidden rounded-xl border text-left transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-default ${
+      className={`group relative aspect-[3/4] w-full overflow-hidden rounded-xl border text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:cursor-default ${
         isLockedIn && !isSelected ? 'opacity-30' : ''
       }`}
       style={{
@@ -214,7 +214,7 @@ const HeroCard = memo(function HeroCard({
       }}
     >
       <div
-        className={`absolute inset-0 transition-opacity ${isSelected ? 'opacity-70' : 'opacity-0 group-hover:opacity-30'}`}
+        className={`absolute inset-0 ${isSelected ? 'opacity-70' : 'opacity-0 group-hover:opacity-30'}`}
         style={{ background: `radial-gradient(ellipse at 50% 30%, ${color}34, transparent 62%)` }}
       />
 

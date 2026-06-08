@@ -911,71 +911,71 @@ function applyHookshotPrimaryRecoilToHand(
 function applyHookshotSecondaryPoseToForearm(
   target: MutableTransformTarget,
   side: -1 | 1,
-  pulse: number
+  poseAmount: number
 ): void {
-  if (pulse <= 0) return;
+  if (poseAmount <= 0) return;
 
   if (side === -1) {
-    target.position.x -= 0.045 * pulse;
-    target.position.y -= 0.01 * pulse;
-    target.position.z += 0.18 * pulse;
-    target.rotation.x += 0.11 * pulse;
-    target.rotation.y -= 0.18 * pulse;
-    target.rotation.z -= 0.08 * pulse;
+    target.position.x -= 0.045 * poseAmount;
+    target.position.y -= 0.01 * poseAmount;
+    target.position.z += 0.18 * poseAmount;
+    target.rotation.x += 0.11 * poseAmount;
+    target.rotation.y -= 0.18 * poseAmount;
+    target.rotation.z -= 0.08 * poseAmount;
     return;
   }
 
-  target.position.x -= 0.04 * pulse;
-  target.position.y += 0.006 * pulse;
-  target.position.z -= 0.075 * pulse;
-  target.rotation.x -= 0.055 * pulse;
-  target.rotation.y += 0.12 * pulse;
-  target.rotation.z -= 0.045 * pulse;
+  target.position.x -= 0.04 * poseAmount;
+  target.position.y += 0.006 * poseAmount;
+  target.position.z -= 0.075 * poseAmount;
+  target.rotation.x -= 0.055 * poseAmount;
+  target.rotation.y += 0.12 * poseAmount;
+  target.rotation.z -= 0.045 * poseAmount;
 }
 
 function applyHookshotSecondaryPoseToHand(
   targets: PhantomHandPoseTargets,
   side: -1 | 1,
-  pulse: number
+  poseAmount: number
 ): void {
-  if (pulse <= 0) return;
+  if (poseAmount <= 0) return;
 
   if (side === -1) {
-    targets.arm.position.x -= 0.045 * pulse;
-    targets.arm.position.y -= 0.01 * pulse;
-    targets.arm.position.z += 0.18 * pulse;
-    targets.arm.rotation.x += 0.11 * pulse;
-    targets.arm.rotation.y -= 0.18 * pulse;
-    targets.arm.rotation.z -= 0.08 * pulse;
+    targets.arm.position.x -= 0.045 * poseAmount;
+    targets.arm.position.y -= 0.01 * poseAmount;
+    targets.arm.position.z += 0.18 * poseAmount;
+    targets.arm.rotation.x += 0.11 * poseAmount;
+    targets.arm.rotation.y -= 0.18 * poseAmount;
+    targets.arm.rotation.z -= 0.08 * poseAmount;
 
-    targets.wrist.position.z += 0.018 * pulse;
-    targets.wrist.rotation.x += 0.045 * pulse;
-    targets.wrist.rotation.y -= 0.028 * pulse;
-    targets.wrist.rotation.z -= 0.026 * pulse;
+    targets.wrist.position.z += 0.018 * poseAmount;
+    targets.wrist.rotation.x += 0.045 * poseAmount;
+    targets.wrist.rotation.y -= 0.028 * poseAmount;
+    targets.wrist.rotation.z -= 0.026 * poseAmount;
 
-    targets.palm.position.z += 0.01 * pulse;
-    targets.palm.rotation.x += 0.032 * pulse;
-    targets.palm.rotation.y -= 0.026 * pulse;
-    targets.palm.rotation.z -= 0.02 * pulse;
+    targets.palm.position.z += 0.01 * poseAmount;
+    targets.palm.rotation.x += 0.032 * poseAmount;
+    targets.palm.rotation.y -= 0.026 * poseAmount;
+    targets.palm.rotation.z -= 0.02 * poseAmount;
     return;
   }
 
-  targets.arm.position.x -= 0.04 * pulse;
-  targets.arm.position.y += 0.006 * pulse;
-  targets.arm.position.z -= 0.075 * pulse;
-  targets.arm.rotation.x -= 0.055 * pulse;
-  targets.arm.rotation.y += 0.12 * pulse;
-  targets.arm.rotation.z -= 0.045 * pulse;
+  targets.arm.position.x -= 0.04 * poseAmount;
+  targets.arm.position.y += 0.006 * poseAmount;
+  targets.arm.position.z -= 0.075 * poseAmount;
+  targets.arm.rotation.x -= 0.055 * poseAmount;
+  targets.arm.rotation.y += 0.12 * poseAmount;
+  targets.arm.rotation.z -= 0.045 * poseAmount;
 
-  targets.wrist.position.z -= 0.012 * pulse;
-  targets.wrist.rotation.x -= 0.024 * pulse;
-  targets.wrist.rotation.y += 0.032 * pulse;
-  targets.wrist.rotation.z -= 0.014 * pulse;
+  targets.wrist.position.z -= 0.012 * poseAmount;
+  targets.wrist.rotation.x -= 0.024 * poseAmount;
+  targets.wrist.rotation.y += 0.032 * poseAmount;
+  targets.wrist.rotation.z -= 0.014 * poseAmount;
 
-  targets.palm.position.z -= 0.014 * pulse;
-  targets.palm.rotation.x -= 0.02 * pulse;
-  targets.palm.rotation.y += 0.026 * pulse;
-  targets.palm.rotation.z -= 0.01 * pulse;
+  targets.palm.position.z -= 0.014 * poseAmount;
+  targets.palm.rotation.x -= 0.02 * poseAmount;
+  targets.palm.rotation.y += 0.026 * poseAmount;
+  targets.palm.rotation.z -= 0.01 * poseAmount;
 }
 
 function isLocalHookshotHookDetached(side: -1 | 1): boolean {

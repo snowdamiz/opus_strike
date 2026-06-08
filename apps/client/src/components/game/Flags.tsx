@@ -63,7 +63,7 @@ function Flag({ position, team, isAtBase }: FlagProps) {
       posAttr.needsUpdate = true;
     }
 
-    // Pulse the glow
+    // Animate the glow
     if (glowRef.current) {
       const scale = 1 + Math.sin(state.clock.elapsedTime * 3) * 0.1;
       glowRef.current.scale.set(scale, scale, scale);

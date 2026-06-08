@@ -106,48 +106,6 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     ultimate: { abilityId: 'glacier_fortress', defaultKey: 'KeyF' },
     description: 'A tank who combines ice-powered parkour with defensive abilities.',
   },
-
-  pulse: {
-    id: 'pulse',
-    name: 'Pulse',
-    role: 'support',
-    movementFocus: 'speed',
-    stats: {
-      maxHealth: 175,
-      moveSpeed: 5.1,
-      jumpForce: 8.3,
-      size: { width: 0.7, height: 1.7, depth: 0.7 },
-    },
-    passive: {
-      name: 'Quick Recovery',
-      description: 'Health regeneration starts after 2 seconds instead of 5',
-    },
-    ability1: { abilityId: 'pulse_speedboost', defaultKey: 'KeyE' },
-    ability2: { abilityId: 'pulse_dash', defaultKey: 'KeyQ' },
-    ultimate: { abilityId: 'pulse_haste', defaultKey: 'KeyF' },
-    description: 'A support specialist who enhances team mobility with speed-boosting abilities.',
-  },
-
-  sentinel: {
-    id: 'sentinel',
-    name: 'Sentinel',
-    role: 'defense',
-    movementFocus: 'grounded',
-    stats: {
-      maxHealth: 300,
-      moveSpeed: 4.26,
-      jumpForce: 7.1,
-      size: { width: 0.9, height: 1.9, depth: 0.9 },
-    },
-    passive: {
-      name: 'Fortified',
-      description: 'Cannot be knocked back while standing still',
-    },
-    ability1: { abilityId: 'sentinel_fortify', defaultKey: 'KeyE' },
-    ability2: { abilityId: 'sentinel_barrier', defaultKey: 'KeyQ' },
-    ultimate: { abilityId: 'sentinel_dome', defaultKey: 'KeyF' },
-    description: 'A defensive anchor who excels at holding positions and protecting teammates.',
-  },
 };
 
 export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
@@ -310,66 +268,6 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     description: 'Create ice walls around yourself. Gain 50% damage reduction.',
   },
 
-  // Pulse Abilities
-  pulse_speedboost: {
-    id: 'pulse_speedboost',
-    name: 'Speed Aura',
-    type: 'utility',
-    targeting: 'self',
-    cooldown: 12,
-    duration: 4,
-    description: 'Boost movement speed of yourself and nearby allies by 30%.',
-  },
-  pulse_dash: {
-    id: 'pulse_dash',
-    name: 'Quick Dash',
-    type: 'movement',
-    targeting: 'direction',
-    cooldown: 5,
-    charges: 2,
-    chargeRegenTime: 5,
-    description: 'Dash quickly in your movement direction.',
-  },
-  pulse_haste: {
-    id: 'pulse_haste',
-    name: 'Team Haste',
-    type: 'ultimate',
-    targeting: 'self',
-    cooldown: 0,
-    duration: 8,
-    resourceCost: 100,
-    description: 'All teammates gain 50% movement speed and instant ability cooldowns.',
-  },
-
-  // Sentinel Abilities
-  sentinel_fortify: {
-    id: 'sentinel_fortify',
-    name: 'Fortify',
-    type: 'defensive',
-    targeting: 'self',
-    cooldown: 10,
-    duration: 4,
-    description: 'Root yourself in place. Gain 50% damage reduction and CC immunity.',
-  },
-  sentinel_barrier: {
-    id: 'sentinel_barrier',
-    name: 'Energy Barrier',
-    type: 'defensive',
-    targeting: 'direction',
-    cooldown: 15,
-    duration: 5,
-    description: 'Deploy a barrier that blocks enemy projectiles and movement.',
-  },
-  sentinel_dome: {
-    id: 'sentinel_dome',
-    name: 'Shield Dome',
-    type: 'ultimate',
-    targeting: 'instant',
-    cooldown: 0,
-    duration: 10,
-    resourceCost: 100,
-    description: 'Create a large dome shield. Allies inside regenerate health.',
-  },
 };
 
 export function getHeroDefinition(heroId: HeroId): HeroDefinition {

@@ -289,7 +289,6 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   const hookGroundYRef = useRef(wall.startPosition.y);
   const hasStartImpactRef = useRef(false);
   const hasEndImpactRef = useRef(false);
-  const wallColliderRegisteredRef = useRef(false);
   const collidersReleasedRef = useRef(false);
   const registeredCollidersRef = useRef<Set<string>>(new Set());
   const wallSegmentsRef = useRef<AnchorWallSegmentData[]>([]);
@@ -304,28 +303,22 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
     return () => releaseColliderSet(registeredCollidersRef.current);
   }, []);
 
-  const registerWallCollider = () => {
-    if (wallColliderRegisteredRef.current) return;
+  const registerSegmentCollider = (segment: AnchorWallSegmentData) => {
+    if (registeredCollidersRef.current.has(segment.id) || collidersReleasedRef.current) return;
 
-    const colliderStartDist = ANCHOR_WALL_FIRST_SEGMENT_DISTANCE - ANCHOR_WALL_SEGMENT_BACKSET - ANCHOR_WALL_DEPTH / 2;
-    const colliderEndDist = wall.maxDistance - ANCHOR_WALL_SEGMENT_BACKSET + ANCHOR_WALL_DEPTH / 2;
-    const colliderLength = Math.max(ANCHOR_WALL_DEPTH, colliderEndDist - colliderStartDist);
-    const colliderCenterDist = colliderStartDist + colliderLength / 2;
-    const colliderId = `${ANCHOR_WALL_COLLIDER_PREFIX}${wall.id}_solid`;
     const colliderAdded = addTemporaryWallCollider(
-      colliderId,
-      wall.startPosition.x + wall.direction.x * colliderCenterDist,
-      wall.startPosition.y,
-      wall.startPosition.z + wall.direction.z * colliderCenterDist,
+      segment.id,
+      segment.x,
+      segment.y,
+      segment.z,
       rotationY,
-      ANCHOR_WALL_WIDTH * 1.1,
-      ANCHOR_WALL_MAX_HEIGHT,
-      colliderLength
+      segment.width,
+      segment.height,
+      segment.depth
     );
 
     if (colliderAdded) {
-      wallColliderRegisteredRef.current = true;
-      registeredCollidersRef.current.add(colliderId);
+      registeredCollidersRef.current.add(segment.id);
     }
   };
 
@@ -371,10 +364,6 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
     }
 
     if (currentDist < wall.maxDistance) {
-      if (currentDist >= ANCHOR_WALL_FIRST_SEGMENT_DISTANCE) {
-        registerWallCollider();
-      }
-
       if (
         currentDist >= ANCHOR_WALL_FIRST_SEGMENT_DISTANCE &&
         currentDist - lastSegmentDistRef.current >= ANCHOR_WALL_SEGMENT_SPACING
@@ -396,6 +385,7 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
         };
 
         wallSegmentsRef.current.push(segment);
+        registerSegmentCollider(segment);
         setSegmentsVersion(v => v + 1);
       }
 
@@ -412,6 +402,10 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
           scale: 1.2,
         });
       }
+    }
+
+    for (const segment of wallSegmentsRef.current) {
+      registerSegmentCollider(segment);
     }
   });
 
