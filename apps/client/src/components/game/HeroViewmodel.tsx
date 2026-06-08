@@ -32,6 +32,7 @@ import {
   SHARED_GEOMETRIES,
   getHookshotMaterials,
 } from './effectResources';
+import { HookshotViewmodelArrow } from './hookshot/arrowHead';
 
 type ViewmodelHeroId = Extract<HeroId, 'phantom' | 'hookshot' | 'blaze'>;
 
@@ -1557,66 +1558,137 @@ function PhantomViewmodel({
   );
 }
 
-function HookHand({
+function HookshotPhantomForearm({
   side,
   materials,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
 }) {
-  const hookMaterials = getHookshotMaterials();
+  const forearmRef = useRef<THREE.Group>(null);
+  const length = 0.32;
+  const rearLength = 0.38;
+  const rearCenterZ = length * 0.5 + rearLength * 0.5 - 0.018;
+  const width = 0.074;
+  const thickness = 0.066;
+
+  useFrame((state) => {
+    const forearm = forearmRef.current;
+    if (!forearm) return;
+    writePhantomForearmPose(forearm, side, 0, 0, state.clock.elapsedTime);
+  });
 
   return (
-    <group position={[side * 0.34, -0.49, -0.54]} rotation={[0.08, side * -0.18, side * 0.06]}>
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, 0.01, 0.08]} scale={[0.2, 0.16, 0.22]} />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, 0.105, 0.04]} scale={[0.14, 0.03, 0.14]} />
-      <mesh geometry={SHARED_GEOMETRIES.ring16} material={hookMaterials.ring} position={[0, 0, -0.08]} rotation={[Math.PI / 2, 0, 0]} scale={[0.21, 0.21, 0.06]} />
-      <mesh geometry={SHARED_GEOMETRIES.sphere8} material={hookMaterials.glow} position={[0, 0, -0.08]} scale={0.11} />
+    <group
+      ref={forearmRef}
+      position={[side * 0.34, -0.58, -0.43]}
+      rotation={[0.22, side * -0.18, side * -0.06]}
+    >
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -thickness * 0.04, rearCenterZ]} scale={[width * 0.86, thickness * 1.08, rearLength]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.28, rearCenterZ - rearLength * 0.06]} scale={[width * 0.96, thickness * 0.58, rearLength * 0.72]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.64, rearCenterZ - rearLength * 0.05]} scale={[width * 0.56, Math.max(0.014, thickness * 0.18), rearLength * 0.38]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -thickness * 0.04, 0]} scale={[width * 0.78, thickness * 1.05, length]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.24, -0.02]} scale={[width, thickness * 0.66, length * 0.74]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.006, -length * 0.48]} scale={[width * 0.92, thickness * 0.94, 0.085]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.038, thickness * 0.69, -0.052]} scale={[0.034, Math.max(0.014, thickness * 0.2), length * 0.54]} />
+    </group>
+  );
+}
 
-      <mesh geometry={SHARED_GEOMETRIES.cylinder8} material={hookMaterials.shaft} position={[0, 0, -0.27]} rotation={[Math.PI / 2, 0, 0]} scale={[0.07, 0.34, 0.07]} />
-      <mesh geometry={SHARED_GEOMETRIES.cylinder8} material={hookMaterials.crown} position={[0, 0, -0.45]} rotation={[0, 0, Math.PI / 2]} scale={[0.052, 0.26, 0.052]} />
-      <mesh geometry={SHARED_GEOMETRIES.cone8} material={hookMaterials.tip} position={[0, 0, -0.64]} rotation={[Math.PI / 2, 0, 0]} scale={[0.08, 0.16, 0.08]} />
+function HookshotSimpleHookHand({
+  side,
+  materials,
+}: {
+  side: -1 | 1;
+  materials: ViewmodelMaterialSet;
+}) {
+  const armRef = useRef<THREE.Group>(null);
+  const wristRef = useRef<THREE.Group>(null);
+  const palmRef = useRef<THREE.Group>(null);
+  const thumbRef = useRef<THREE.Group>(null);
+  const fingerRefs = useRef<(THREE.Group | null)[]>([]);
+  const hookMaterials = getHookshotMaterials();
 
-      <mesh
-        geometry={SHARED_GEOMETRIES.cylinder8}
-        material={hookMaterials.fluke}
-        position={[side * 0.14, 0.01, -0.47]}
-        rotation={[0.52, 0, side * 0.72]}
-        scale={[0.048, 0.28, 0.048]}
-      />
-      <mesh
-        geometry={SHARED_GEOMETRIES.cone8}
-        material={hookMaterials.tip}
-        position={[side * 0.26, 0.035, -0.55]}
-        rotation={[0.78, 0, side * 1.18]}
-        scale={[0.07, 0.14, 0.052]}
-      />
-      <mesh
-        geometry={SHARED_GEOMETRIES.cylinder8}
-        material={hookMaterials.fluke}
-        position={[side * -0.13, -0.01, -0.47]}
-        rotation={[0.48, 0, side * -0.72]}
-        scale={[0.045, 0.24, 0.045]}
-      />
-      <mesh
-        geometry={SHARED_GEOMETRIES.cone8}
-        material={hookMaterials.tip}
-        position={[side * -0.23, 0.02, -0.54]}
-        rotation={[0.75, 0, side * -1.12]}
-        scale={[0.062, 0.12, 0.048]}
-      />
-      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[0, -0.105, -0.28]} scale={[0.035, 0.035, 0.28]} />
+  useFrame((state) => {
+    const arm = armRef.current;
+    const wrist = wristRef.current;
+    const palm = palmRef.current;
+    const thumb = thumbRef.current;
+    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
+    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+
+    writePhantomHandPose(
+      {
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      0,
+      0,
+      state.clock.elapsedTime
+    );
+  });
+
+  return (
+    <group
+      ref={armRef}
+      position={[
+        side * PHANTOM_IDLE_HAND_POSITION.x,
+        PHANTOM_IDLE_HAND_POSITION.y,
+        PHANTOM_IDLE_HAND_POSITION.z,
+      ]}
+      rotation={[
+        PHANTOM_IDLE_HAND_ROTATION.x,
+        side * PHANTOM_IDLE_HAND_ROTATION.y,
+        side * PHANTOM_IDLE_HAND_ROTATION.z,
+      ]}
+    >
+      <group ref={wristRef}>
+        <group ref={palmRef}>
+          <group ref={thumbRef} visible={false} />
+          {PHANTOM_OPEN_FINGER_SLOTS.map((slot, index) => (
+            <group
+              key={slot}
+              ref={(node) => {
+                fingerRefs.current[index] = node;
+              }}
+              visible={false}
+            />
+          ))}
+
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, 0, 0.048]} scale={[0.078, 0.104, 0.092]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.01, 0.006, 0.032]} scale={[0.064, 0.084, 0.064]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.048, 0, 0.006]} scale={[0.014, 0.074, 0.05]} />
+          <mesh geometry={SHARED_GEOMETRIES.cylinder8} material={hookMaterials.shaft} position={[0, 0.006, -0.078]} rotation={[Math.PI / 2, 0, 0]} scale={[0.028, 0.156, 0.028]} />
+          <HookshotViewmodelArrow
+            side={side}
+            materials={{
+              shaft: hookMaterials.shaft,
+              tip: materials.glow,
+              glow: hookMaterials.glow,
+            }}
+            lightIntensity={2.1}
+          />
+        </group>
+      </group>
     </group>
   );
 }
 
 function HookshotViewmodel({ materials }: { materials: ViewmodelMaterialSet }) {
   return (
-    <group>
-      <Forearm side={-1} materials={materials} length={0.32} width={0.17} />
-      <Forearm side={1} materials={materials} length={0.32} width={0.17} />
-      <HookHand side={-1} materials={materials} />
-      <HookHand side={1} materials={materials} />
+    <group position={[
+      PHANTOM_VIEWMODEL_OFFSET.x,
+      PHANTOM_VIEWMODEL_OFFSET.y,
+      PHANTOM_VIEWMODEL_OFFSET.z,
+    ]}>
+      <HookshotPhantomForearm side={-1} materials={materials} />
+      <HookshotPhantomForearm side={1} materials={materials} />
+      <HookshotSimpleHookHand side={-1} materials={materials} />
+      <HookshotSimpleHookHand side={1} materials={materials} />
     </group>
   );
 }
@@ -1827,7 +1899,11 @@ export function HeroViewmodel() {
           (
             (viewmodelHeroId === 'blaze' && state.flamethrowerActive) ||
             (viewmodelHeroId === 'phantom' && state.voidRays.some(ray => ray.ownerId === localPlayerId)) ||
-            (viewmodelHeroId === 'hookshot' && state.hookProjectiles.some(hook => hook.ownerId === localPlayerId))
+            (viewmodelHeroId === 'hookshot' && (
+              state.hookProjectiles.some(hook => hook.ownerId === localPlayerId) ||
+              state.dragHooks.some(hook => hook.ownerId === localPlayerId) ||
+              state.grappleLines.some(line => line.ownerId === localPlayerId)
+            ))
           )
         ),
         actionCharging: viewmodelHeroId === 'phantom' && state.voidRayCharging,

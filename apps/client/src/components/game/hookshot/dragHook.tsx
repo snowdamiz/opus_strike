@@ -21,6 +21,7 @@ import {
   updatePliableRopePoints,
   updateRopeSegment,
 } from './rope';
+import { HookshotProjectileArrowHead } from './arrowHead';
 
 // ============================================================================
 // DRAG HOOK - Long range hook that pulls enemies (heavy attack / right click)
@@ -263,34 +264,23 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   
   return (
     <group ref={groupRef}>
-      {/* === HEAVY HOOK - Bigger version of left click hook === */}
+      {/* === HEAVY GLOWING ARROW - Bigger version of left click head === */}
       <group ref={hookRef} position={[hook.position.x, hook.position.y, hook.position.z]}>
-        {/* Ring at back where rope attaches - BIGGER */}
-        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.22, 0.22, 0.08]} material={HOOK_MATERIALS.ring} />
-        
-        {/* Main shaft - THICKER */}
-        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.09, 0.75, 0.09]} material={HOOK_MATERIALS.shaft} />
-        
-        {/* Crown/crossbar - WIDER */}
-        <mesh position={[0, 0, 0.12]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.055, 0.45, 0.055]} material={HOOK_MATERIALS.crown} />
-        
-        {/* Left arm - BIGGER */}
-        <mesh position={[-0.14, 0, -0.25]} rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.32, 0.06]} material={HOOK_MATERIALS.shaft} />
-        <mesh position={[-0.32, 0, -0.38]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.18, 0.04]} material={HOOK_MATERIALS.fluke} />
-          
-        {/* Right arm - BIGGER */}
-        <mesh position={[0.14, 0, -0.25]} rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.32, 0.06]} material={HOOK_MATERIALS.shaft} />
-        <mesh position={[0.32, 0, -0.38]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.18, 0.04]} material={HOOK_MATERIALS.fluke} />
-        
-        {/* Tip - BIGGER */}
-        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.12, 0.18, 0.12]} material={HOOK_MATERIALS.tip} />
-        
-        {/* Energy glow - BIGGER and more intense */}
+        <HookshotProjectileArrowHead
+          materials={{
+            shaft: HOOK_MATERIALS.shaft,
+            tip: HOOK_MATERIALS.tip,
+            glow: HOOK_MATERIALS.glow,
+            core: HOOK_MATERIALS.heavyChainCore,
+            ring: HOOK_MATERIALS.ring,
+          }}
+          scale={1.22}
+          lightPriority={3}
+          lightIntensity={4.5}
+          lightDistance={5.8}
+        />
         <mesh ref={glowRef} geometry={SHARED_GEOMETRIES.sphere8} scale={0.35} material={HOOK_MATERIALS.glow} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.5} material={DRAG_HOOK_OUTER_GLOW_MATERIAL} />
-        
-        {/* Lights - MORE INTENSE */}
-        <BudgetedPointLight budgetPriority={3} color={HOOKSHOT_COLORS.energy} intensity={4} distance={5} decay={2} />
         <BudgetedPointLight budgetPriority={2} color={0xffffff} intensity={2} distance={3} decay={2} position={[0, 0, -0.3]} />
       </group>
       

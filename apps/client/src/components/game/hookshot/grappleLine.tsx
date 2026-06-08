@@ -21,6 +21,7 @@ import {
   updatePliableRopePoints,
   updateRopeSegment,
 } from './rope';
+import { HookshotProjectileArrowHead } from './arrowHead';
 
 // ============================================================================
 // GRAPPLE LINE - Quick grapple to geometry (E ability)
@@ -227,42 +228,21 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
   
   return (
     <group ref={groupRef}>
-      {/* ANCHOR-STYLE GRAPPLING HOOK */}
+      {/* Glowing arrow-style grappling head */}
       <group ref={hookRef} position={[line.startPosition.x, line.startPosition.y, line.startPosition.z]}>
-        {/* === ANCHOR RING (top) - where rope attaches === */}
-        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.08]} material={HOOK_MATERIALS.ring} />
-        
-        {/* === MAIN SHAFT (vertical bar) === */}
-        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.8, 0.08]} material={HOOK_MATERIALS.shaft} />
-        
-        {/* === CROWN/STOCK (horizontal bar near top) === */}
-        <mesh position={[0, 0, 0.15]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.05, 0.5, 0.05]} material={HOOK_MATERIALS.crown} />
-        
-        {/* === ANCHOR ARMS/FLUKES (curved hooks at bottom) === */}
-        {/* Left arm */}
-        <group position={[-0.15, 0, -0.3]}>
-          {/* Arm going outward and down */}
-          <mesh rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]} material={HOOK_MATERIALS.shaft} />
-          {/* Curved fluke tip */}
-          <mesh position={[-0.2, 0, -0.15]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]} material={HOOK_MATERIALS.fluke} />
-        </group>
-        
-        {/* Right arm */}
-        <group position={[0.15, 0, -0.3]}>
-          {/* Arm going outward and down */}
-          <mesh rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.35, 0.06]} material={HOOK_MATERIALS.shaft} />
-          {/* Curved fluke tip */}
-          <mesh position={[0.2, 0, -0.15]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.2, 0.04]} material={HOOK_MATERIALS.fluke} />
-        </group>
-        
-        {/* === BOTTOM POINT === */}
-        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.15, 0.1]} material={HOOK_MATERIALS.tip} />
-        
-        {/* Energy glow around hook */}
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.25} material={HOOK_MATERIALS.glow} />
-        
-        {/* Small point light so the hook is visible */}
-        <BudgetedPointLight budgetPriority={3} color={HOOKSHOT_COLORS.energy} intensity={3} distance={5} decay={2} />
+        <HookshotProjectileArrowHead
+          materials={{
+            shaft: HOOK_MATERIALS.shaft,
+            tip: HOOK_MATERIALS.tip,
+            glow: HOOK_MATERIALS.glow,
+            core: HOOK_MATERIALS.ropeCore,
+            ring: HOOK_MATERIALS.ring,
+          }}
+          scale={1.05}
+          lightPriority={3}
+          lightIntensity={3.2}
+          lightDistance={5}
+        />
       </group>
       
       {/* ENERGY ROPE - Using cylinder meshes updated via refs (same as basic attack) */}

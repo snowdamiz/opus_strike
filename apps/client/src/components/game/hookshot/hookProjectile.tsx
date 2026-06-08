@@ -21,6 +21,7 @@ import {
   updatePliableRopePoints,
   updateRopeSegment,
 } from './rope';
+import { HookshotProjectileArrowHead } from './arrowHead';
 
 // ============================================================================
 // HOOK PROJECTILE - Short range chain hooks (basic attack)
@@ -250,21 +251,21 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
   
   return (
     <group ref={groupRef}>
-      {/* Hook head - uses shared materials */}
+      {/* Glowing arrow head - uses shared materials */}
       <group ref={hookRef} position={[hook.position.x, hook.position.y, hook.position.z]}>
-        <mesh position={[0, 0, 0.25]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.15, 0.15, 0.06]} material={HOOK_MATERIALS.ring} />
-        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.06, 0.6, 0.06]} material={HOOK_MATERIALS.shaft} />
-        <mesh position={[0, 0, 0.1]} rotation={[0, 0, Math.PI / 2]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.04, 0.35, 0.04]} material={HOOK_MATERIALS.crown} />
-        {/* Left arm */}
-        <mesh position={[-0.1, 0, -0.2]} rotation={[0.3, 0, -0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.045, 0.25, 0.045]} material={HOOK_MATERIALS.shaft} />
-        <mesh position={[-0.24, 0, -0.3]} rotation={[0.5, 0, -1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.14, 0.03]} material={HOOK_MATERIALS.fluke} />
-        {/* Right arm */}
-        <mesh position={[0.1, 0, -0.2]} rotation={[0.3, 0, 0.8]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.045, 0.25, 0.045]} material={HOOK_MATERIALS.shaft} />
-        <mesh position={[0.24, 0, -0.3]} rotation={[0.5, 0, 1.2]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.06, 0.14, 0.03]} material={HOOK_MATERIALS.fluke} />
-        {/* Tip */}
-        <mesh position={[0, 0, -0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.08, 0.12, 0.08]} material={HOOK_MATERIALS.tip} />
-        <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.2} material={HOOK_MATERIALS.glow} />
-        <BudgetedPointLight budgetPriority={2} color={HOOKSHOT_COLORS.energy} intensity={2} distance={3} decay={2} />
+        <HookshotProjectileArrowHead
+          materials={{
+            shaft: HOOK_MATERIALS.shaft,
+            tip: HOOK_MATERIALS.tip,
+            glow: HOOK_MATERIALS.glow,
+            core: HOOK_MATERIALS.ropeCore,
+            ring: HOOK_MATERIALS.ring,
+          }}
+          scale={0.82}
+          lightPriority={2}
+          lightIntensity={2.4}
+          lightDistance={3.2}
+        />
       </group>
       
       {/* Local launcher flash so the hook has a visible source instead of appearing from empty air */}

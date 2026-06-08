@@ -4,14 +4,13 @@ import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, type SwingLineData } from '../../../store/gameStore';
 import { writeOwnerVisualPosition } from './ownerPosition';
-import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import {
-  SHARED_GEOMETRIES,
   HOOKSHOT_COLORS,
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
+import { HookshotProjectileArrowHead } from './arrowHead';
 
 // ============================================================================
 // SWING LINE - Kept for backwards compatibility but now unused for Hookshot E
@@ -138,10 +137,19 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
   return (
     <group ref={groupRef}>
       <group ref={hookRef} position={[line.startPosition.x, line.startPosition.y, line.startPosition.z]}>
-        <mesh position={[0, 0, 0.35]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.08]} material={HOOK_MATERIALS.ring} />
-        <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cylinder8} scale={[0.08, 0.8, 0.08]} material={HOOK_MATERIALS.shaft} />
-        <mesh position={[0, 0, -0.45]} rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.cone8} scale={[0.1, 0.15, 0.1]} material={HOOK_MATERIALS.tip} />
-        <BudgetedPointLight budgetPriority={2} color={0xffffff} intensity={2} distance={4} decay={2} />
+        <HookshotProjectileArrowHead
+          materials={{
+            shaft: HOOK_MATERIALS.shaft,
+            tip: HOOK_MATERIALS.tip,
+            glow: HOOK_MATERIALS.glow,
+            core: HOOK_MATERIALS.ropeCore,
+            ring: HOOK_MATERIALS.ring,
+          }}
+          scale={1.05}
+          lightPriority={2}
+          lightIntensity={2.6}
+          lightDistance={4}
+        />
       </group>
 
       <Line points={ropePointsRef.current} color={HOOKSHOT_COLORS.energy} lineWidth={8} transparent opacity={1} />
