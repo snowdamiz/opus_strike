@@ -17,7 +17,7 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore, setPlayerVisualPosition, setPlayerVisualRotation } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
-import { usePhysics, isPhysicsReady } from '../../hooks/usePhysics';
+import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
@@ -47,7 +47,6 @@ import {
 // Component imports for targeting indicators
 import { BombTargetingIndicator, AirStrikeTargetingIndicator } from './BlazeEffects';
 import { GrappleTrapTargetingIndicator } from './HookshotEffects';
-import { ShadowStepIndicator } from './phantom';
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
 const DEV_FLY_SPEED = 14;
@@ -88,6 +87,7 @@ export function PlayerController() {
   // Audio hooks
   const {
     playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
+    startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
     playBlazeRocket, playBlazeBombTarget, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
     startFlamethrowerSound, stopFlamethrowerSound,
   } = useAbilitySounds();
@@ -139,6 +139,7 @@ export function PlayerController() {
   // Create sound objects for passing to ability hooks
   const playerSounds = {
     playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
+    startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
     playBlazeRocket, playBlazeBombTarget, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
     startFlamethrowerSound, stopFlamethrowerSound,
   };
@@ -153,29 +154,6 @@ export function PlayerController() {
   const handleClick = useCallback(() => {
     if (!isPointerLocked) {
       requestPointerLock();
-    } else if (shadowStepTargeting && phantomAbilities.shadowStepValidRef.current && phantomAbilities.shadowStepTargetRef.current) {
-      const localPlayer = useGameStore.getState().localPlayer;
-      if (localPlayer) {
-        const ctx = {
-          position: new THREE.Vector3(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z),
-          velocity: new THREE.Vector3(),
-          yaw: cameraControl.refs.yaw.current,
-          pitch: cameraControl.refs.pitch.current,
-          heroId: localPlayer.heroId as HeroId,
-          localPlayer: {
-            id: localPlayer.id,
-            team: localPlayer.team,
-            position: localPlayer.position,
-            ultimateCharge: localPlayer.ultimateCharge,
-          },
-          inputState,
-          dt: 0,
-          isGrounded: movement.refs.isGrounded.current,
-        };
-        phantomAbilities.executeShadowStepTeleport(
-          ctx, playerSounds, abilitySystem.startClientCooldown, sendInput, updateLocalPlayer, camera
-        );
-      }
     } else if (bombTargeting && blazeAbilities.bombValidRef.current && blazeAbilities.bombTargetRef.current) {
       blazeAbilities.executeBombDrop(playerSounds);
     } else if (airStrikeTargeting && blazeAbilities.airStrikeValidRef.current && blazeAbilities.airStrikeTargetRef.current) {
@@ -234,9 +212,6 @@ export function PlayerController() {
 
         if (isShadowStepTargeting) {
           store.setShadowStepTargeting(false, false);
-          phantomAbilities.shadowStepTargetRef.current = null;
-          phantomAbilities.shadowStepValidRef.current = false;
-          phantomAbilities.teleportingRef.current = false;
         }
         if (isBombTargeting) {
           store.setBombTargeting(false, false);
@@ -544,15 +519,15 @@ export function PlayerController() {
 
       // Ability 2 (Q)
       if (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
-        if (heroId === 'phantom' && shadowStepTargeting) {
-          if (phantomAbilities.shadowStepValidRef.current && phantomAbilities.shadowStepTargetRef.current) {
-            phantomAbilities.executeShadowStepTeleport(
-              abilityCtx, playerSounds, abilitySystem.startClientCooldown, sendInput, updateLocalPlayer, camera
-            );
-          }
-        } else if (abilitySystem.canUseAbility(heroDef.ability2.abilityId, false, shadowStepTargeting)) {
+        if (abilitySystem.canUseAbility(heroDef.ability2.abilityId, false, shadowStepTargeting)) {
           if (heroId === 'phantom') {
-            setShadowStepTargeting(true);
+            phantomAbilities.executePersonalShield(
+              abilityCtx,
+              playerSounds,
+              abilitySystem.setAbilityActive,
+              abilitySystem.startClientCooldown,
+              updateLocalPlayer
+            );
           } else if (heroId === 'blaze') {
             // Blaze Q is Rocket Jump
             blazeAbilities.executeRocketJump(abilityCtx, playerSounds);
@@ -787,10 +762,6 @@ export function PlayerController() {
   // Render targeting indicators
   return (
     <>
-      <ShadowStepIndicator
-        isActive={shadowStepTargeting}
-        onTargetUpdate={phantomAbilities.handleShadowStepTargetUpdate}
-      />
       <BombTargetingIndicator
         isActive={bombTargeting}
         onTargetUpdate={blazeAbilities.handleBombTargetUpdate}

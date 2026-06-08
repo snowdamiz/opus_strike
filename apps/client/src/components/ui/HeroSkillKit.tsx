@@ -147,7 +147,7 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   phantom: [
     fromAbility('E', 'phantom_blink'),
-    fromAbility('Q', 'phantom_shadowstep'),
+    fromAbility('Q', 'phantom_personal_shield'),
     fromAbility('F', 'phantom_veil', 'ultimate'),
   ],
   hookshot: [

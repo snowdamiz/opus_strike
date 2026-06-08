@@ -122,7 +122,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     if (!localPlayer) return false;
 
     // Don't allow using abilities while targeting mode is active
-    if (isTargetingActive && abilityId !== 'phantom_shadowstep' && abilityId !== 'hookshot_grapple_trap') {
+    if (isTargetingActive && abilityId !== 'hookshot_grapple_trap') {
       return false;
     }
 
@@ -231,4 +231,3 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     updateActiveAbilities,
   };
 }
-

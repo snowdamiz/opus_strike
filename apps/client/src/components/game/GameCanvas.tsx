@@ -12,7 +12,7 @@ import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
 import { HeroViewmodel } from './HeroViewmodel';
-import { VoidZonesManager, DireBallsManager, VoidRaysManager } from './phantom';
+import { VoidZonesManager, DireBallsManager, VoidRaysManager, PhantomPersonalShieldsManager } from './phantom';
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
@@ -336,6 +336,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
             <HeroViewmodel />
             <VoidZonesManager />
             <DireBallsManager />
+            <PhantomPersonalShieldsManager />
             <VoidRaysManager />
             <PhantomEffectsManager />
             <BlazeEffectsManager />

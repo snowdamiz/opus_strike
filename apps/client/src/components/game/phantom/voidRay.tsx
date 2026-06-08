@@ -21,10 +21,13 @@ interface VoidRayProps {
 // lightning effects, and dramatic impact visuals
 // ============================================================================
 
-const RAY_SPEED = 200;
+const RAY_SPEED = 420;
 const RAY_LENGTH = 100;
 const RAY_RADIUS = 0.45;
-const RAY_LIFETIME = 0.65;
+const RAY_SPIN_UP_TIME = 0.24;
+const RAY_SUSTAIN_TIME = 0.44;
+const RAY_SPIN_DOWN_TIME = 0.32;
+const RAY_LIFETIME = RAY_SPIN_UP_TIME + RAY_SUSTAIN_TIME + RAY_SPIN_DOWN_TIME;
 const RAY_DAMAGE = 80;
 const PLAYER_HIT_RADIUS = 1.5;
 const SPIRAL_COUNT = 5;
@@ -62,6 +65,63 @@ const VOID_RAY_IMPACT_SPARK_CONFIGS = VOID_RAY_IMPACT_SPARK_INDICES.map((i) => {
     color: i % 2 === 0 ? 0x00ffff : 0xc084fc,
   };
 });
+
+function clamp01(value: number): number {
+  return THREE.MathUtils.clamp(value, 0, 1);
+}
+
+function easeOutCubic(value: number): number {
+  const t = clamp01(value);
+  return 1 - (1 - t) ** 3;
+}
+
+function easeInCubic(value: number): number {
+  const t = clamp01(value);
+  return t ** 3;
+}
+
+function applyOpacityEnvelope(root: THREE.Object3D | null, opacityEnvelope: number): void {
+  if (!root) return;
+
+  root.traverse((object) => {
+    const material = (object as THREE.Mesh).material;
+    if (!material) return;
+
+    const materials = Array.isArray(material) ? material : [material];
+    for (const mat of materials) {
+      const materialWithOpacity = mat as THREE.Material & { opacity?: number };
+      if (typeof materialWithOpacity.opacity !== 'number') continue;
+
+      const baseOpacity = typeof mat.userData.voidRayBaseOpacity === 'number'
+        ? mat.userData.voidRayBaseOpacity
+        : materialWithOpacity.opacity;
+      mat.userData.voidRayBaseOpacity = baseOpacity;
+      materialWithOpacity.opacity = baseOpacity * opacityEnvelope;
+    }
+  });
+}
+
+function getVoidRayAnimationEnvelope(elapsed: number) {
+  const spinUp = clamp01(elapsed / RAY_SPIN_UP_TIME);
+  const spinDown = clamp01((elapsed - RAY_SPIN_UP_TIME - RAY_SUSTAIN_TIME) / RAY_SPIN_DOWN_TIME);
+  const spinUpEase = easeOutCubic(spinUp);
+  const spinDownEase = THREE.MathUtils.smootherstep(spinDown, 0, 1);
+  const intensity = spinUpEase * (1 - spinDownEase);
+  const lengthScale = spinUpEase * (1 - easeInCubic(spinDown) * 0.82);
+
+  return {
+    spinUp,
+    spinDown,
+    spinUpEase,
+    spinDownEase,
+    intensity,
+    lengthScale,
+    beamWidth: THREE.MathUtils.lerp(0.18, 1.08, intensity) * (1 + spinDownEase * 0.18),
+    glowWidth: THREE.MathUtils.lerp(0.35, 1.18, intensity) * (1 + spinDownEase * 0.32),
+    originScale: (0.12 + spinUpEase * 0.94) * (1 - spinDownEase * 0.95),
+    spinSpeed: THREE.MathUtils.lerp(4.5, 23, spinUpEase) * (1 - spinDownEase * 0.72),
+  };
+}
 
 // Main spiral ribbon shader - thick glowing energy ribbons
 let sharedSpiralMaterial: THREE.ShaderMaterial | null = null;
@@ -348,9 +408,14 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   const originEnergyGlowRef = useRef<THREE.Mesh>(null);
   const originEnergyShellRef = useRef<THREE.Mesh>(null);
   const originEnergyRingRef = useRef<THREE.Mesh>(null);
+  const localOriginHaloRef = useRef<THREE.Mesh>(null);
+  const localOriginHaloSecondaryRef = useRef<THREE.Mesh>(null);
+  const remoteOriginCoreRef = useRef<THREE.Mesh>(null);
+  const remoteOriginGlowRef = useRef<THREE.Mesh>(null);
   const hitPlayersRef = useRef<Set<string>>(new Set());
   const currentLengthRef = useRef(0);
   const hasLoggedRef = useRef(false);
+  const hasRequestedRemovalRef = useRef(false);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - startTime));
   
   const isLocalOwner = useGameStore(state => state.localPlayer?.id === ownerId);
@@ -427,7 +492,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     color: 0xc084fc,
     size: 0.1,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     sizeAttenuation: true,
@@ -437,7 +502,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     color: 0x00ffff,
     size: 0.15,
     transparent: true,
-    opacity: 1.0,
+    opacity: 0,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     sizeAttenuation: true,
@@ -459,14 +524,19 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     
     if (elapsed >= RAY_LIFETIME) {
       groupRef.current.visible = false;
+      if (!hasRequestedRemovalRef.current) {
+        hasRequestedRemovalRef.current = true;
+        removeVoidRay(id);
+      }
       return;
     }
     
     const time = state.clock.elapsedTime;
+    const envelope = getVoidRayAnimationEnvelope(elapsed);
+    groupRef.current.visible = envelope.intensity > 0.002;
     
     // Calculate beam length
-    let targetLength = Math.min(RAY_LENGTH, elapsed * RAY_SPEED);
-    currentLengthRef.current = targetLength;
+    let targetLength = Math.min(RAY_LENGTH, elapsed * RAY_SPEED) * envelope.lengthScale;
     
     // Terrain collision
     if (isPhysicsReady()) {
@@ -478,59 +548,84 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
         }
       }
     }
-    
-    // Fade in/out
-    const progress = elapsed < 0.06 ? elapsed / 0.06 : 
-                     elapsed > RAY_LIFETIME - 0.12 ? (RAY_LIFETIME - elapsed) / 0.12 : 1;
+
+    currentLengthRef.current = targetLength;
+    const safeTargetLength = Math.max(targetLength, 0.001);
     
     // Update core beam
     if (beamRef.current) {
-      beamRef.current.scale.y = targetLength;
+      beamRef.current.scale.set(envelope.beamWidth, targetLength, envelope.beamWidth);
       beamRef.current.position.y = targetLength / 2;
     }
     
     if (coreRef.current) {
-      coreRef.current.scale.y = targetLength;
+      const coreWidth = envelope.beamWidth * 0.86;
+      coreRef.current.scale.set(coreWidth, targetLength, coreWidth);
       coreRef.current.position.y = targetLength / 2;
+      applyOpacityEnvelope(coreRef.current, envelope.intensity);
     }
     
     if (glowRef.current) {
-      glowRef.current.scale.y = targetLength;
+      glowRef.current.scale.set(envelope.glowWidth, targetLength, envelope.glowWidth);
       glowRef.current.position.y = targetLength / 2;
     }
     
     // Update materials
     if (coreMaterial.uniforms) {
       coreMaterial.uniforms.time.value = time;
-      coreMaterial.uniforms.progress.value = progress;
+      coreMaterial.uniforms.progress.value = envelope.intensity;
     }
     
     if (glowMaterial.uniforms) {
       glowMaterial.uniforms.time.value = time;
-      glowMaterial.uniforms.progress.value = progress;
+      glowMaterial.uniforms.progress.value = envelope.intensity;
     }
 
     if (originEnergyCoreRef.current && originEnergyGlowRef.current && originEnergyShellRef.current && originEnergyRingRef.current) {
       const originPulse = 1 + Math.sin(time * 18.5) * 0.08 + Math.sin(time * 31.0) * 0.035;
-      const originScale = THREE.MathUtils.clamp(progress, 0, 1) * originPulse;
+      const originScale = envelope.originScale * originPulse;
       originEnergyCoreRef.current.scale.setScalar(originScale);
       originEnergyGlowRef.current.scale.setScalar(originScale * 1.28);
       originEnergyShellRef.current.scale.setScalar(originScale * 1.1);
       originEnergyRingRef.current.scale.setScalar(originScale * (1.08 + Math.sin(time * 12.0) * 0.04));
-      originEnergyRingRef.current.rotation.z += delta * 4.8;
+      originEnergyRingRef.current.rotation.z += delta * (4.8 + envelope.spinSpeed * 0.28);
+      applyOpacityEnvelope(originEnergyCoreRef.current, envelope.intensity);
+      applyOpacityEnvelope(originEnergyGlowRef.current, envelope.intensity);
+      applyOpacityEnvelope(originEnergyShellRef.current, envelope.intensity);
+      applyOpacityEnvelope(originEnergyRingRef.current, envelope.intensity);
+    }
+
+    if (localOriginHaloRef.current) {
+      localOriginHaloRef.current.scale.setScalar(Math.max(0.001, envelope.originScale));
+      localOriginHaloRef.current.rotation.z -= delta * envelope.spinSpeed * 0.42;
+      applyOpacityEnvelope(localOriginHaloRef.current, envelope.intensity);
+    }
+
+    if (localOriginHaloSecondaryRef.current) {
+      localOriginHaloSecondaryRef.current.scale.setScalar(Math.max(0.001, envelope.originScale * 1.08));
+      localOriginHaloSecondaryRef.current.rotation.z += delta * envelope.spinSpeed * 0.3;
+      applyOpacityEnvelope(localOriginHaloSecondaryRef.current, envelope.intensity);
+    }
+
+    if (remoteOriginCoreRef.current && remoteOriginGlowRef.current) {
+      const remotePulse = 1 + Math.sin(time * 16.0) * 0.07;
+      remoteOriginCoreRef.current.scale.setScalar(Math.max(0.001, envelope.originScale * remotePulse));
+      remoteOriginGlowRef.current.scale.setScalar(Math.max(0.001, envelope.originScale * 1.22 * remotePulse));
+      applyOpacityEnvelope(remoteOriginCoreRef.current, envelope.intensity);
+      applyOpacityEnvelope(remoteOriginGlowRef.current, envelope.intensity);
     }
     
     // Update spirals - fast rotation and scale
     if (spiralsRef.current) {
-      spiralsRef.current.rotation.y += delta * 15; // Very fast spin!
+      spiralsRef.current.rotation.y += delta * envelope.spinSpeed;
       
       spiralsRef.current.children.forEach((mesh, i) => {
-        mesh.scale.y = targetLength;
+        mesh.scale.set(envelope.beamWidth, targetLength, envelope.beamWidth);
         
         const mat = spiralMaterials[i];
         if (mat && mat.uniforms) {
           mat.uniforms.time.value = time;
-          mat.uniforms.progress.value = progress;
+          mat.uniforms.progress.value = envelope.intensity;
           mat.uniforms.beamLength.value = targetLength;
         }
       });
@@ -551,7 +646,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
         const wobble = Math.sin(time * 20 + r * 30) * 0.08;
         const radius = baseRadius + wobble;
         
-        let t = positions.getY(i) / targetLength;
+        let t = positions.getY(i) / safeTargetLength;
         t = (t + delta * speed * 2.5) % 1;
         
         positions.setX(i, Math.cos(angle) * radius);
@@ -563,7 +658,8 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       // Color shift purple->cyan
       const hue = 0.75 + Math.sin(time * 8) * 0.1;
       particleMaterial.color.setHSL(hue, 0.85, 0.65);
-      particleMaterial.opacity = progress * 0.9;
+      particleMaterial.opacity = envelope.intensity * 0.9;
+      particleMaterial.size = THREE.MathUtils.lerp(0.035, 0.11, envelope.intensity);
     }
     
     // Animate spark particles - random flashes
@@ -586,16 +682,24 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       positions.needsUpdate = true;
       
       // Flicker opacity
-      sparkMaterial.opacity = 0.55 + Math.sin(time * 37.0) * 0.25 + Math.sin(time * 19.0 + 1.7) * 0.18;
+      sparkMaterial.opacity = THREE.MathUtils.clamp(
+        envelope.intensity * (0.55 + Math.sin(time * 37.0) * 0.25 + Math.sin(time * 19.0 + 1.7) * 0.18),
+        0,
+        1
+      );
+      sparkMaterial.size = THREE.MathUtils.lerp(0.045, 0.16, envelope.intensity);
     }
     
     // Impact effect
     if (impactRef.current) {
+      const impactEnvelope = envelope.intensity * THREE.MathUtils.smoothstep(targetLength, 8, 28);
       impactRef.current.position.y = targetLength;
-      impactRef.current.rotation.y += delta * 20;
+      impactRef.current.visible = impactEnvelope > 0.02;
+      impactRef.current.rotation.y += delta * (10 + envelope.spinSpeed * 0.65);
       
       const impactPulse = 0.8 + Math.sin(time * 30) * 0.3;
-      impactRef.current.scale.setScalar(impactPulse);
+      impactRef.current.scale.setScalar(Math.max(0.001, impactPulse * (0.24 + impactEnvelope * 0.92)));
+      applyOpacityEnvelope(impactRef.current, impactEnvelope);
     }
     
     // Player collision
@@ -642,17 +746,17 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       </group>
       
       {/* ===== OUTER GLOW ===== */}
-      <mesh ref={glowRef} geometry={RAY_GLOW_GEOMETRY}>
+      <mesh ref={glowRef} geometry={RAY_GLOW_GEOMETRY} scale={[0.001, 0.001, 0.001]}>
         <primitive object={glowMaterial} />
       </mesh>
       
       {/* ===== MAIN BEAM ===== */}
-      <mesh ref={beamRef} geometry={RAY_BEAM_GEOMETRY}>
+      <mesh ref={beamRef} geometry={RAY_BEAM_GEOMETRY} scale={[0.001, 0.001, 0.001]}>
         <primitive object={coreMaterial} />
       </mesh>
       
       {/* ===== BRIGHT CORE ===== */}
-      <mesh ref={coreRef} geometry={RAY_CORE_GEOMETRY}>
+      <mesh ref={coreRef} geometry={RAY_CORE_GEOMETRY} scale={[0.001, 0.001, 0.001]}>
         <meshBasicMaterial 
           color={0xffffff}
           transparent
@@ -716,7 +820,12 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
               depthTest={false}
             />
           </mesh>
-          <mesh rotation-x={-Math.PI / 2} geometry={LOCAL_ORIGIN_HALO_GEOMETRY}>
+          <mesh
+            ref={localOriginHaloRef}
+            rotation-x={-Math.PI / 2}
+            geometry={LOCAL_ORIGIN_HALO_GEOMETRY}
+            scale={0.001}
+          >
             <meshBasicMaterial
               color={0xd8b4fe}
               transparent
@@ -727,7 +836,13 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
               depthTest={false}
             />
           </mesh>
-          <mesh rotation-x={-Math.PI / 2} position-y={0.03} geometry={LOCAL_ORIGIN_HALO_SECONDARY_GEOMETRY}>
+          <mesh
+            ref={localOriginHaloSecondaryRef}
+            rotation-x={-Math.PI / 2}
+            position-y={0.03}
+            geometry={LOCAL_ORIGIN_HALO_SECONDARY_GEOMETRY}
+            scale={0.001}
+          >
             <meshBasicMaterial
               color={0x22d3ee}
               transparent
@@ -741,7 +856,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
         </>
       ) : (
         <>
-          <mesh geometry={REMOTE_ORIGIN_CORE_GEOMETRY}>
+          <mesh ref={remoteOriginCoreRef} geometry={REMOTE_ORIGIN_CORE_GEOMETRY} scale={0.001}>
             <meshBasicMaterial
               color={0xc084fc}
               transparent
@@ -749,7 +864,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
               blending={THREE.AdditiveBlending}
             />
           </mesh>
-          <mesh geometry={REMOTE_ORIGIN_GLOW_GEOMETRY}>
+          <mesh ref={remoteOriginGlowRef} geometry={REMOTE_ORIGIN_GLOW_GEOMETRY} scale={0.001}>
             <meshBasicMaterial
               color={0x7c3aed}
               transparent
@@ -761,7 +876,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       )}
       
       {/* ===== IMPACT EFFECT ===== */}
-      <group ref={impactRef}>
+      <group ref={impactRef} scale={0.001} visible={false}>
         {/* Inner ring */}
         <mesh rotation-x={-Math.PI / 2} geometry={VOID_RAY_IMPACT_INNER_RING_GEOMETRY}>
           <meshBasicMaterial

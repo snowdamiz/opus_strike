@@ -14,6 +14,18 @@ interface SoundEffect {
   volume: number;
 }
 
+interface PlaySoundOptions {
+  volume?: number;
+  pitch?: number;
+  position?: { x: number; y: number; z: number };
+  durationMs?: number;
+  signal?: AbortSignal;
+}
+
+interface SoundPlayback {
+  stop: () => void;
+}
+
 const DEFAULT_CONFIG: AudioConfig = {
   masterVolume: 80,
   sfxVolume: 100,
@@ -62,10 +74,10 @@ function getMusicVolume(): number {
 const SOUND_EFFECTS = {
   // Movement
   footstep: { path: '/sounds/footstep.mp3', volume: 0.3 },
-  walk: { path: '/sounds/walk.mp3', volume: 0.8 },
+  walk: { path: '/sounds/walk.mp3', volume: 1.04 },
   jump: { path: '/sounds/jump.mp3', volume: 0.5 },
   land: { path: '/sounds/land.mp3', volume: 0.4 },
-  slide: { path: '/sounds/slide.mp3', volume: 0.15 },
+  slide: { path: '/sounds/slide.mp3', volume: 0.18 },
   wallRun: { path: '/sounds/wall_run.mp3', volume: 0.4 },
   
   // Abilities - Generic
@@ -78,8 +90,9 @@ const SOUND_EFFECTS = {
   phantomBlink: { path: '/sounds/blink_short.mp3', volume: 0.4 },
   phantomShadowStep: { path: '/sounds/shadow_step_short.mp3', volume: 0.4 },
   phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
-  phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1 },
+  phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1872 },
   phantomVoidRay: { path: '/sounds/phantom_strong.mp3', volume: 0.6 },
+  phantomVoidRayCharge: { path: '/sounds/phantom_right_click_charge.mp3', volume: 0.45 },
   
   // Blaze Abilities (using existing sounds as fallbacks)
   blazeRocket: { path: '/sounds/rocket_fire.mp3', volume: 0.4 },
@@ -123,7 +136,7 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['lobbyMusic', 'buttonHover', 'buttonClick'],
   commonCombat: ['gameMusic', 'walk', 'slide', 'jetpack'],
-  phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomVoidRay'],
+  phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
 };
 
@@ -194,9 +207,10 @@ export function useAudio() {
   // Play a sound effect
   const playSound = useCallback(async (
     name: SoundName, 
-    options?: { volume?: number; pitch?: number; position?: { x: number; y: number; z: number } }
-  ) => {
+    options?: PlaySoundOptions
+  ): Promise<SoundPlayback | undefined> => {
     if (sharedConfig.muted) return;
+    if (options?.signal?.aborted) return;
 
     // Ensure audio context exists and is running
     if (!sharedAudioContext) {
@@ -213,6 +227,7 @@ export function useAudio() {
     if (ctx.state === 'suspended') {
       await ctx.resume();
     }
+    if (options?.signal?.aborted) return;
 
     const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
     if (name === 'phantomBasic') {
@@ -225,6 +240,7 @@ export function useAudio() {
       recordSystemTime('audioLoads', performance.now() - loadStart);
       recordSpawnMarker(`audioLoad:${name}`);
     }
+    if (options?.signal?.aborted) return;
 
     if (!sound?.buffer) {
       console.warn(`[Audio] Cannot play ${name} - no buffer`);
@@ -257,7 +273,40 @@ export function useAudio() {
       gainNode.connect(ctx.destination);
     }
 
+    let stopped = false;
+    let durationTimeout: number | null = null;
+
+    function cleanup() {
+      if (durationTimeout !== null) {
+        window.clearTimeout(durationTimeout);
+        durationTimeout = null;
+      }
+      options?.signal?.removeEventListener('abort', stop);
+    }
+
+    function stop() {
+      if (stopped) return;
+      stopped = true;
+      cleanup();
+      try {
+        source.stop();
+      } catch {
+        // Source may already have ended or been stopped by the scheduled duration.
+      }
+    }
+
+    options?.signal?.addEventListener('abort', stop, { once: true });
+    source.onended = () => {
+      stopped = true;
+      cleanup();
+    };
+
     source.start();
+    if (options?.durationMs !== undefined) {
+      durationTimeout = window.setTimeout(stop, Math.max(0, options.durationMs));
+    }
+
+    return { stop };
   }, [loadSound, initAudio]);
 
   // Play looping sound
@@ -565,9 +614,23 @@ export function useMovementSounds() {
   };
 }
 
+const PHANTOM_VOID_RAY_CHARGE_MIN_DURATION_MS = 1;
+
 // Ability sound effects hook
 export function useAbilitySounds() {
   const { playSound, playLoop, stopLoop } = useAudio();
+  const phantomVoidRayChargeAbortRef = useRef<AbortController | null>(null);
+  const phantomVoidRayChargeTimeoutRef = useRef<number | null>(null);
+
+  const stopPhantomVoidRayCharge = useCallback(() => {
+    if (phantomVoidRayChargeTimeoutRef.current !== null) {
+      window.clearTimeout(phantomVoidRayChargeTimeoutRef.current);
+      phantomVoidRayChargeTimeoutRef.current = null;
+    }
+
+    phantomVoidRayChargeAbortRef.current?.abort();
+    phantomVoidRayChargeAbortRef.current = null;
+  }, []);
 
   // Phantom abilities - sounds are loaded on first play, then cached
   const playPhantomBlink = useCallback(() => {
@@ -589,6 +652,28 @@ export function useAbilitySounds() {
   const playPhantomVoidRay = useCallback(() => {
     playSound('phantomVoidRay');
   }, [playSound]);
+
+  const startPhantomVoidRayCharge = useCallback((durationMs: number) => {
+    stopPhantomVoidRayCharge();
+
+    const clippedDurationMs = Math.max(PHANTOM_VOID_RAY_CHARGE_MIN_DURATION_MS, durationMs);
+    const controller = new AbortController();
+    phantomVoidRayChargeAbortRef.current = controller;
+
+    void playSound('phantomVoidRayCharge', {
+      durationMs: clippedDurationMs,
+      signal: controller.signal,
+    });
+
+    phantomVoidRayChargeTimeoutRef.current = window.setTimeout(() => {
+      if (phantomVoidRayChargeAbortRef.current !== controller) return;
+      controller.abort();
+      phantomVoidRayChargeAbortRef.current = null;
+      phantomVoidRayChargeTimeoutRef.current = null;
+    }, clippedDurationMs);
+  }, [playSound, stopPhantomVoidRayCharge]);
+
+  useEffect(() => stopPhantomVoidRayCharge, [stopPhantomVoidRayCharge]);
   
   // Blaze abilities
   const playBlazeRocket = useCallback(() => {
@@ -632,6 +717,8 @@ export function useAbilitySounds() {
     playPhantomVeil,
     playPhantomBasic,
     playPhantomVoidRay,
+    startPhantomVoidRayCharge,
+    stopPhantomVoidRayCharge,
     // Blaze
     playBlazeRocket,
     playBlazeBombTarget,

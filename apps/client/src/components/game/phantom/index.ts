@@ -13,6 +13,7 @@ export { VoidRay, VoidRays, VoidRaysManager } from './voidRay';
 export { VoidZone, VoidZones, VoidZonesManager } from './voidZone';
 export { ShadowStepIndicator } from './shadowStepIndicator';
 export { DireBallsManager, prewarmDireBallResources } from './direBall';
+export { PhantomPersonalShieldsManager } from './personalShield';
 
 // ============================================================================
 // EFFECT DATA TYPES

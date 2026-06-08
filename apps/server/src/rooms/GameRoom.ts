@@ -771,6 +771,7 @@ export class GameRoom extends Room<GameState> {
         cooldownRemaining: ability.cooldownRemaining,
         charges: ability.charges,
         isActive: ability.isActive,
+        activatedAt: ability.activatedAt,
       };
     });
 
@@ -1033,6 +1034,7 @@ export class GameRoom extends Room<GameState> {
           cooldownRemaining: ability.cooldownRemaining,
           charges: ability.charges,
           isActive: ability.isActive,
+          activatedAt: ability.activatedAt,
         };
       });
 
@@ -1477,6 +1479,13 @@ export class GameRoom extends Room<GameState> {
       this.isDevelopmentMode()
       && (this.devInvulnerablePlayers.has(target.id) || this.devImmunePlayers.has(target.id))
     ) {
+      return false;
+    }
+
+    const phantomShield = target.abilities.get('phantom_personal_shield');
+    if (phantomShield?.isActive) {
+      phantomShield.isActive = false;
+      phantomShield.activatedAt = 0;
       return false;
     }
 

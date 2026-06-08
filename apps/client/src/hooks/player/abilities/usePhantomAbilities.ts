@@ -5,7 +5,7 @@
  * - Dire Ball (primary fire)
  * - Void Ray (secondary fire - charged)
  * - Blink (E ability)
- * - Shadow Step (Q ability - targeting)
+ * - Shadow Bubble (Q ability - personal shield)
  * - Phantom Veil (Ultimate)
  */
 
@@ -25,7 +25,7 @@ import {
   validateTeleportDestination,
 } from '../../usePhysics';
 import { triggerTeleportEffect } from '../../../components/ui/TeleportEffects';
-import { triggerBlinkEffect, triggerShadowArrival } from '../../../components/game/PhantomEffects';
+import { triggerBlinkEffect } from '../../../components/game/PhantomEffects';
 import { recordSpawnMarker } from '../../../utils/perfMarks';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
@@ -63,9 +63,6 @@ export interface UsePhantomAbilitiesReturn {
   voidRayChargingRef: React.MutableRefObject<boolean>;
   voidRayChargeStartRef: React.MutableRefObject<number>;
   voidRayIdRef: React.MutableRefObject<number>;
-  shadowStepTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
-  shadowStepValidRef: React.MutableRefObject<boolean>;
-  teleportingRef: React.MutableRefObject<boolean>;
 
   // Methods
   updatePhantomPrimaryReload: (now?: number) => void;
@@ -78,26 +75,25 @@ export interface UsePhantomAbilitiesReturn {
     sounds: PlayerSounds,
     useAbilityCharge: (id: string) => boolean
   ) => boolean;
-  executeShadowStepTeleport: (
+  executePersonalShield: (
     ctx: AbilityContext,
     sounds: PlayerSounds,
+    setAbilityActive: (id: string, active: boolean) => void,
     startClientCooldown: (id: string) => void,
-    sendInput: (input: any) => void,
-    updateLocalPlayer: (data: any) => void,
-    camera: THREE.Camera
-  ) => void;
+    updateLocalPlayer: (data: any) => void
+  ) => boolean;
   executePhantomVeil: (
     ctx: AbilityContext,
     sounds: PlayerSounds,
     updateLocalPlayer: (data: any) => void,
     setAbilityActive: (id: string, active: boolean) => void
   ) => void;
-  handleShadowStepTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
 const PHANTOM_DIRE_BALL_AIM_DISTANCE = 120;
 const PHANTOM_VOID_RAY_AIM_DISTANCE = 100;
 const PHANTOM_PRIMARY_FIRE_READY_BLEND = 0.86;
+const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
 
 function calculatePhantomLaunch(
   ctx: AbilityContext,
@@ -216,11 +212,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const voidRayChargingRef = useRef(false);
   const voidRayChargeStartRef = useRef(0);
   const voidRayIdRef = useRef(0);
-
-  // Shadow Step state
-  const shadowStepTargetRef = useRef<THREE.Vector3 | null>(null);
-  const shadowStepValidRef = useRef(false);
-  const teleportingRef = useRef(false);
+  const voidRayAwaitingReleaseRef = useRef(false);
 
   const completePhantomPrimaryReload = useCallback(() => {
     phantomPrimaryAmmoRef.current = PHANTOM_PRIMARY_MAGAZINE_SIZE;
@@ -330,51 +322,129 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const handleVoidRay = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const now = Date.now();
 
-    if (ctx.inputState.secondaryFire) {
-      if (!voidRayChargingRef.current) {
-        voidRayChargingRef.current = true;
-        voidRayChargeStartRef.current = now;
-        useGameStore.getState().setVoidRayCharging(true, now);
-      }
-    } else if (voidRayChargingRef.current) {
-      const chargeTime = now - voidRayChargeStartRef.current;
-      const chargeProgress = chargeTime / VOID_RAY_CHARGE_TIME;
-
-      if (chargeProgress >= 1) {
-        // Fully charged - FIRE!
-        voidRayIdRef.current++;
-        const rayId = `voidray_${ctx.localPlayer.id}_${voidRayIdRef.current}`;
-        const launchPose = samplePhantomVoidRayOrbPose(ctx, now);
-        const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
-        const { spawnPos, direction } = calculatePhantomLaunch(
-          ctx,
-          1,
-          PHANTOM_VOID_RAY_AIM_DISTANCE,
-          PHANTOM_VOID_RAY_SOCKET,
-          spawnOverride
-        );
-        assertViewmodelLaunchMatchesPose({
-          eventId: rayId,
-          launchPosition: spawnPos,
-          pose: launchPose,
-        });
-
-        useGameStore.getState().addVoidRay({
-          id: rayId,
-          startPosition: spawnPos,
-          direction,
-          startTime: now,
-          ownerId: ctx.localPlayer.id,
-          ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
-        });
-
-        sounds.playPhantomVoidRay();
-      }
-
+    const finishVoidRayCharge = () => {
       voidRayChargingRef.current = false;
       voidRayChargeStartRef.current = 0;
       useGameStore.getState().setVoidRayCharging(false, 0);
+      sounds.stopPhantomVoidRayCharge();
+    };
+
+    const fireVoidRay = () => {
+      voidRayIdRef.current++;
+      const rayId = `voidray_${ctx.localPlayer.id}_${voidRayIdRef.current}`;
+      const launchPose = samplePhantomVoidRayOrbPose(ctx, now);
+      const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
+      const { spawnPos, direction } = calculatePhantomLaunch(
+        ctx,
+        1,
+        PHANTOM_VOID_RAY_AIM_DISTANCE,
+        PHANTOM_VOID_RAY_SOCKET,
+        spawnOverride
+      );
+      assertViewmodelLaunchMatchesPose({
+        eventId: rayId,
+        launchPosition: spawnPos,
+        pose: launchPose,
+      });
+
+      useGameStore.getState().addVoidRay({
+        id: rayId,
+        startPosition: spawnPos,
+        direction,
+        startTime: now,
+        ownerId: ctx.localPlayer.id,
+        ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
+      });
+
+      finishVoidRayCharge();
+      sounds.playPhantomVoidRay();
+    };
+
+    if (!ctx.inputState.secondaryFire) {
+      if (voidRayChargingRef.current) {
+        const chargeTime = now - voidRayChargeStartRef.current;
+        if (chargeTime >= VOID_RAY_CHARGE_TIME) {
+          fireVoidRay();
+        } else {
+          finishVoidRayCharge();
+        }
+      }
+      voidRayAwaitingReleaseRef.current = false;
+      return;
     }
+
+    if (voidRayAwaitingReleaseRef.current) return;
+
+    if (!voidRayChargingRef.current) {
+      voidRayChargingRef.current = true;
+      voidRayChargeStartRef.current = now;
+      useGameStore.getState().setVoidRayCharging(true, now);
+      sounds.startPhantomVoidRayCharge(VOID_RAY_CHARGE_TIME);
+      return;
+    }
+
+    const chargeTime = now - voidRayChargeStartRef.current;
+    if (chargeTime >= VOID_RAY_CHARGE_TIME) {
+      fireVoidRay();
+      voidRayAwaitingReleaseRef.current = true;
+    }
+  }, []);
+
+  // Activate Shadow Bubble (Q): a short personal shield around Phantom.
+  const executePersonalShield = useCallback((
+    ctx: AbilityContext,
+    sounds: PlayerSounds,
+    setAbilityActive: (id: string, active: boolean) => void,
+    startClientCooldown: (id: string) => void,
+    updateLocalPlayer: (data: any) => void
+  ): boolean => {
+    const now = Date.now();
+    const store = useGameStore.getState();
+    const clientCooldowns = store.clientCooldowns || {};
+    const cooldownEnd = clientCooldowns[PHANTOM_PERSONAL_SHIELD_ABILITY_ID];
+    if (cooldownEnd && now < cooldownEnd) return false;
+
+    const abilityDef = ABILITY_DEFINITIONS[PHANTOM_PERSONAL_SHIELD_ABILITY_ID];
+    const durationMs = (abilityDef?.duration ?? 6) * 1000;
+    const currentAbilities = store.localPlayer?.id === ctx.localPlayer.id
+      ? store.localPlayer.abilities
+      : {};
+    setAbilityActive(PHANTOM_PERSONAL_SHIELD_ABILITY_ID, true);
+    updateLocalPlayer({
+      abilities: {
+        ...currentAbilities,
+        [PHANTOM_PERSONAL_SHIELD_ABILITY_ID]: {
+          abilityId: PHANTOM_PERSONAL_SHIELD_ABILITY_ID,
+          cooldownRemaining: abilityDef?.cooldown ?? 10,
+          charges: 1,
+          isActive: true,
+          activatedAt: now,
+        },
+      },
+    });
+
+    recordSpawnMarker('phantom:personalShield');
+    sounds.playPhantomVeil();
+    startClientCooldown(PHANTOM_PERSONAL_SHIELD_ABILITY_ID);
+
+    window.setTimeout(() => {
+      const currentPlayer = useGameStore.getState().localPlayer;
+      const currentAbility = currentPlayer?.abilities?.[PHANTOM_PERSONAL_SHIELD_ABILITY_ID];
+      if (!currentPlayer || !currentAbility?.isActive || currentAbility.activatedAt !== now) return;
+
+      setAbilityActive(PHANTOM_PERSONAL_SHIELD_ABILITY_ID, false);
+      updateLocalPlayer({
+        abilities: {
+          ...currentPlayer.abilities,
+          [PHANTOM_PERSONAL_SHIELD_ABILITY_ID]: {
+            ...currentAbility,
+            isActive: false,
+          },
+        },
+      });
+    }, durationMs);
+
+    return true;
   }, []);
 
   // Execute Blink ability (E)
@@ -508,131 +578,6 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     return true;
   }, []);
 
-  // Execute Shadow Step teleport (Q)
-  const executeShadowStepTeleport = useCallback((
-    ctx: AbilityContext,
-    sounds: PlayerSounds,
-    startClientCooldown: (id: string) => void,
-    sendInput: (input: any) => void,
-    updateLocalPlayer: (data: any) => void,
-    camera: THREE.Camera
-  ) => {
-    if (teleportingRef.current) return;
-
-    // Check cooldown
-    const store = useGameStore.getState();
-    const clientCooldowns = store.clientCooldowns || {};
-    const cooldownEnd = clientCooldowns['phantom_shadowstep'];
-    if (cooldownEnd && Date.now() < cooldownEnd) {
-      store.setShadowStepTargeting(false, false);
-      shadowStepTargetRef.current = null;
-      shadowStepValidRef.current = false;
-      return;
-    }
-
-    if (!shadowStepTargetRef.current || !shadowStepValidRef.current) {
-      if (!shadowStepTargetRef.current) {
-        store.setShadowStepTargeting(false, false);
-      }
-      return;
-    }
-
-    teleportingRef.current = true;
-
-    const target = shadowStepTargetRef.current.clone();
-    let teleportX = target.x;
-    let teleportY = target.y + PLAYER_HEIGHT / 2 + 0.1;
-    let teleportZ = target.z;
-
-    // Check for walls
-    const dx = teleportX - ctx.localPlayer.position.x;
-    const dz = teleportZ - ctx.localPlayer.position.z;
-    const distToTarget = Math.sqrt(dx * dx + dz * dz);
-    const dirX = dx / distToTarget;
-    const dirZ = dz / distToTarget;
-
-    const playerFeetY = ctx.localPlayer.position.y - PLAYER_HEIGHT / 2;
-    const elevationDiff = target.y - playerFeetY;
-    const isElevatedTarget = elevationDiff > 0.3;
-
-    let wallBlocking = false;
-
-    if (!isElevatedTarget) {
-      const checkHeights = [0.9, 1.5];
-      for (const h of checkHeights) {
-        const wallCheck = checkWallCollision(
-          ctx.localPlayer.position.x,
-          ctx.localPlayer.position.y - PLAYER_HEIGHT / 2 + h,
-          ctx.localPlayer.position.z,
-          dirX, dirZ, distToTarget
-        );
-        const normalY = Math.abs(wallCheck.normal.y);
-        if (wallCheck.hit && wallCheck.distance < distToTarget - 1.5 && normalY < 0.5) {
-          wallBlocking = true;
-          break;
-        }
-      }
-    }
-
-    if (wallBlocking) {
-      teleportingRef.current = false;
-      store.setShadowStepTargeting(false, false);
-      shadowStepTargetRef.current = null;
-      shadowStepValidRef.current = false;
-      return;
-    }
-
-    // Validate destination
-    const validation = validateTeleportDestination(teleportX, teleportY, teleportZ, PLAYER_HEIGHT, PLAYER_RADIUS);
-
-    if (!validation.valid && !isElevatedTarget) {
-      teleportingRef.current = false;
-      store.setShadowStepTargeting(false, false);
-      shadowStepTargetRef.current = null;
-      shadowStepValidRef.current = false;
-      return;
-    } else if (validation.adjustedPosition) {
-      teleportX = validation.adjustedPosition.x;
-      teleportY = validation.adjustedPosition.y;
-      teleportZ = validation.adjustedPosition.z;
-    }
-
-    // Trigger effects
-    triggerTeleportEffect('shadowstep');
-    triggerShadowArrival({ x: teleportX, y: teleportY, z: teleportZ });
-    sounds.playPhantomShadowStep();
-
-    // Exit targeting mode
-    store.setShadowStepTargeting(false, false);
-    shadowStepTargetRef.current = null;
-    shadowStepValidRef.current = false;
-
-    // Update player position
-    updateLocalPlayer({
-      position: { x: teleportX, y: teleportY, z: teleportZ },
-      velocity: { x: 0, y: 0, z: 0 },
-    });
-
-    camera.position.set(teleportX, teleportY + 0.6, teleportZ);
-
-    // Start cooldown
-    startClientCooldown('phantom_shadowstep');
-
-    // Send to server
-    sendInput({
-      tick: 0,
-      reload: false,
-      ability2: true,
-      timestamp: Date.now(),
-      position: { x: target.x, y: teleportY, z: target.z },
-      velocity: { x: 0, y: 0, z: 0 },
-    });
-
-    setTimeout(() => {
-      teleportingRef.current = false;
-    }, 100);
-  }, []);
-
   // Execute Phantom Veil (Ultimate)
   const executePhantomVeil = useCallback((
     _ctx: AbilityContext,
@@ -647,17 +592,6 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     sounds.playPhantomVeil();
   }, []);
 
-  // Handle Shadow Step target updates
-  const handleShadowStepTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
-    shadowStepTargetRef.current = position;
-    shadowStepValidRef.current = isValid;
-
-    const store = useGameStore.getState();
-    if (store.shadowStepTargeting && store.shadowStepValid !== isValid) {
-      store.setShadowStepTargeting(true, isValid);
-    }
-  }, []);
-
   return {
     lastFireTimeRef,
     direBallIdRef,
@@ -667,17 +601,13 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     voidRayChargingRef,
     voidRayChargeStartRef,
     voidRayIdRef,
-    shadowStepTargetRef,
-    shadowStepValidRef,
-    teleportingRef,
     updatePhantomPrimaryReload,
     reloadPhantomPrimary,
     resetPhantomPrimaryMagazine,
     fireDireBall,
     handleVoidRay,
     executeBlink,
-    executeShadowStepTeleport,
+    executePersonalShield,
     executePhantomVeil,
-    handleShadowStepTargetUpdate,
   };
 }

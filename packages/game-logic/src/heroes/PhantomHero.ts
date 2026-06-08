@@ -20,6 +20,8 @@ export class PhantomHero extends HeroBase {
         return this.executeBlink(context);
       case 'phantom_shadowstep':
         return this.executeShadowStep(context);
+      case 'phantom_personal_shield':
+        return this.executePersonalShield(context);
       case 'phantom_veil':
         return this.executeVeil(context);
       default:
@@ -61,6 +63,18 @@ export class PhantomHero extends HeroBase {
     }
 
     return { success: false, message: 'No target position' };
+  }
+
+  private executePersonalShield(context: AbilityContext): AbilityResult {
+    return {
+      success: true,
+      effect: {
+        type: 'personal_shield',
+        position: context.position,
+        direction: context.direction,
+        duration: 10,
+      },
+    };
   }
 
   private executeVeil(context: AbilityContext): AbilityResult {
@@ -127,4 +141,3 @@ export class PhantomHero extends HeroBase {
     return this.shadowStepTarget;
   }
 }
-

@@ -342,6 +342,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
   const mapping: Record<string, AbilityIconType> = {
     phantom_blink: 'blink',
     phantom_shadowstep: 'shadowstep',
+    phantom_personal_shield: 'frostshield',
     phantom_veil: 'veil',
     hookshot_grapple: 'grapple',
     hookshot_anchor_wall: 'anchorwall',

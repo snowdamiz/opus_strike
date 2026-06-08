@@ -191,6 +191,8 @@ export interface PlayerSounds {
   playPhantomVeil: () => void;
   playPhantomBasic: () => void;
   playPhantomVoidRay: () => void;
+  startPhantomVoidRayCharge: (durationMs: number) => void;
+  stopPhantomVoidRayCharge: () => void;
   playBlazeRocket: () => void;
   playBlazeBombTarget: () => void;
   playBlazeBombExplode: () => void;

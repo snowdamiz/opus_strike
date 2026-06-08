@@ -192,6 +192,8 @@ const PROJECTILE_LIMITS = {
   earthWalls: 48,
 } as const;
 
+const VOID_RAY_VISUAL_RETENTION_MS = 1200;
+
 function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
   for (const existing of items) {
     if (existing.id === item.id) return items;
@@ -354,8 +356,7 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredVoidRays: () => set((state) => {
-    const LIFETIME = 500;
-    const voidRays = filterExpired(state.voidRays, (r, now) => now - r.startTime < LIFETIME);
+    const voidRays = filterExpired(state.voidRays, (r, now) => now - r.startTime < VOID_RAY_VISUAL_RETENTION_MS);
     return voidRays === state.voidRays ? state : { voidRays };
   }),
 
