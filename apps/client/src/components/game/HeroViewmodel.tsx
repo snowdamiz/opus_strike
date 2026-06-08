@@ -20,6 +20,7 @@ import {
   type PhantomPrimaryPoseSampleContext,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
 import {
   registerViewmodelPoseSampler,
   registerViewmodelSocket,
@@ -1606,8 +1607,14 @@ function HookshotSimpleHookHand({
   const wristRef = useRef<THREE.Group>(null);
   const palmRef = useRef<THREE.Group>(null);
   const thumbRef = useRef<THREE.Group>(null);
+  const hookSocketRef = useRef<THREE.Group>(null);
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
   const hookMaterials = getHookshotMaterials();
+
+  useEffect(() => {
+    if (!hookSocketRef.current) return undefined;
+    return registerViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[side], hookSocketRef.current);
+  }, [side]);
 
   useFrame((state) => {
     const arm = armRef.current;
@@ -1672,6 +1679,7 @@ function HookshotSimpleHookHand({
             }}
             lightIntensity={2.1}
           />
+          <group ref={hookSocketRef} name={HOOKSHOT_HOOK_SOCKET_NAMES[side]} position={[0, 0.006, -0.165]} />
         </group>
       </group>
     </group>

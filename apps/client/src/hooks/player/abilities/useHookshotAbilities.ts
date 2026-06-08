@@ -32,6 +32,8 @@ import {
   calculateHorizontalLookDirection,
 } from '../constants';
 import type { AbilityContext } from '../types';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
+import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
 
 export interface UseHookshotAbilitiesReturn {
   // State refs
@@ -90,12 +92,31 @@ const WEB_SWING_MAX_SPEED = 72;
 const WEB_SWING_RELEASE_BOOST = 7;
 const WEB_SWING_RELEASE_UPWARD = 8;
 
-function calculateHookshotLaunch(ctx: AbilityContext, launchSide: -1 | 1, maxDistance: number) {
+function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
+  return {
+    x: vector.x,
+    y: vector.y,
+    z: vector.z,
+  };
+}
+
+function readHookshotHookSocketPosition(launchSide: -1 | 1): { x: number; y: number; z: number } | null {
+  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
+  return socketPose ? vectorToPlainPosition(socketPose.position) : null;
+}
+
+function calculateHookshotLaunch(
+  ctx: AbilityContext,
+  launchSide: -1 | 1,
+  maxDistance: number,
+  spawnOverride?: { x: number; y: number; z: number } | null
+) {
   const lookDirection = calculateLookDirection(ctx.yaw, ctx.pitch);
-  const spawnPos = calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+  const fallbackSpawnPos = calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
     ...HOOKSHOT_CHAIN_SOCKET,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
   });
+  const spawnPos = spawnOverride ?? fallbackSpawnPos;
   const aimOrigin = {
     x: ctx.position.x,
     y: ctx.position.y + EYE_HEIGHT,
@@ -179,7 +200,13 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     lastHookTimeRef.current = now;
     hookProjectileIdRef.current++;
     const launchSide = hookProjectileIdRef.current % 2 === 1 ? 1 : -1;
-    const { spawnPos, direction } = calculateHookshotLaunch(ctx, launchSide, HOOKSHOT_MAX_DISTANCE);
+    const socketSpawnPos = readHookshotHookSocketPosition(launchSide);
+    const { spawnPos, direction } = calculateHookshotLaunch(
+      ctx,
+      launchSide,
+      HOOKSHOT_MAX_DISTANCE,
+      socketSpawnPos
+    );
     const hookId = `hook_${ctx.localPlayer.id}_${hookProjectileIdRef.current}`;
 
     useGameStore.getState().addHookProjectile({

@@ -13,6 +13,8 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
+import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -37,6 +39,16 @@ const HOOK_RETRACT_SPEED = 50;
 
 // Get shared materials from centralized resources
 const getHookMaterials = () => getHookshotMaterials();
+
+function writeLocalHookSocketPosition(out: { x: number; y: number; z: number }, launchSide: -1 | 1): boolean {
+  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
+  if (!socketPose) return false;
+
+  out.x = socketPose.position.x;
+  out.y = socketPose.position.y;
+  out.z = socketPose.position.z;
+  return true;
+}
 
 interface HookProjectileProps {
   hook: HookProjectileData;
@@ -85,6 +97,8 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
   
   // Get store actions once (not in useFrame)
   const removeHookProjectile = useGameStore(state => state.removeHookProjectile);
+  const localPlayerId = useGameStore(state => state.localPlayer?.id);
+  const isLocalOwnerForRender = localPlayerId === hook.ownerId;
   
   useFrame((frameState, delta) => {
     if (!hookRef.current || shouldRemoveRef.current) return;
@@ -94,22 +108,24 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
     const localPlayer = state.localPlayer;
     const players = state.players;
     
-    const targetPosition = writeOwnerVisualPosition(
-      ownerVisualPositionRef.current,
-      hook.ownerId,
-      HOOKSHOT_CHAIN_SOCKET.handHeight,
-      hook.startPosition,
-      players,
-      localPlayer,
-      launchSocketOffset
-    );
+    const isLocalOwner = localPlayer?.id === hook.ownerId;
+    const targetPosition = isLocalOwner && writeLocalHookSocketPosition(ownerVisualPositionRef.current, launchSide)
+      ? ownerVisualPositionRef.current
+      : writeOwnerVisualPosition(
+          ownerVisualPositionRef.current,
+          hook.ownerId,
+          HOOKSHOT_CHAIN_SOCKET.handHeight,
+          hook.startPosition,
+          players,
+          localPlayer,
+          launchSocketOffset
+        );
     const targetX = targetPosition.x;
     const targetY = targetPosition.y;
     const targetZ = targetPosition.z;
     
     // Local hooks should feel hard-attached to the hand. Remote owners keep a
     // short visual smoothing step to hide network position jumps.
-    const isLocalOwner = localPlayer?.id === hook.ownerId;
     const lerpFactor = isLocalOwner || isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
     playerPosRef.current.x += (targetX - playerPosRef.current.x) * lerpFactor;
     playerPosRef.current.y += (targetY - playerPosRef.current.y) * lerpFactor;
@@ -269,7 +285,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
       </group>
       
       {/* Local launcher flash so the hook has a visible source instead of appearing from empty air */}
-      <group ref={muzzleRef} position={[hook.startPosition.x, hook.startPosition.y, hook.startPosition.z]}>
+      <group ref={muzzleRef} position={[hook.startPosition.x, hook.startPosition.y, hook.startPosition.z]} visible={!isLocalOwnerForRender}>
         <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.16, 0.16, 0.04]} material={HOOK_MATERIALS.ring} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12} material={HOOK_MATERIALS.glow} />
         <BudgetedPointLight budgetPriority={1.5} color={HOOKSHOT_COLORS.energy} intensity={1.2} distance={2.5} decay={2} />
