@@ -20,6 +20,7 @@ import { useInput } from '../../hooks/useInput';
 import { usePhysics, isPhysicsReady } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
+import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
 import { isDevFlyMode } from '../ui/GameConsole';
 import {
   useCamera,
@@ -276,7 +277,10 @@ export function PlayerController() {
     const localPlayer = useGameStore.getState().localPlayer;
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
 
-    if (!localPlayer) return;
+    if (!localPlayer) {
+      setPhantomPrimaryHeld(false);
+      return;
+    }
 
     if (lastHeroIdRef.current !== localPlayer.heroId) {
       lastHeroIdRef.current = localPlayer.heroId;
@@ -302,6 +306,7 @@ export function PlayerController() {
     const devFlyMode = isDevFlyMode();
 
     if (!isPlaying || localPlayer.state !== 'alive') {
+      setPhantomPrimaryHeld(false, now);
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
       camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
@@ -311,6 +316,7 @@ export function PlayerController() {
     }
 
     if (devFlyMode) {
+      setPhantomPrimaryHeld(false, now);
       const position = positionRef.current;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
       if (visualPos) {
@@ -486,6 +492,7 @@ export function PlayerController() {
 
     // Handle hero-specific abilities
     const heroDef = HERO_DEFINITIONS[heroId];
+    setPhantomPrimaryHeld(heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire, now);
     if (heroDef) {
       // Handle ability input
       if (heroId !== 'blaze' && heroId !== 'glacier') {

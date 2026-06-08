@@ -25,6 +25,7 @@ import { recordSpawnMarker } from '../../../utils/perfMarks';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  getPhantomPrimaryHeldBlend,
   type PhantomPrimaryPoseSampleContext,
 } from '../../../viewmodel/phantomPrimaryPose';
 import {
@@ -83,6 +84,7 @@ export interface UsePhantomAbilitiesReturn {
 
 const PHANTOM_DIRE_BALL_AIM_DISTANCE = 120;
 const PHANTOM_VOID_RAY_AIM_DISTANCE = 100;
+const PHANTOM_PRIMARY_FIRE_READY_BLEND = 0.86;
 
 function calculatePhantomLaunch(
   ctx: AbilityContext,
@@ -150,7 +152,8 @@ function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z
 function samplePhantomPrimaryPalmPose(
   ctx: AbilityContext,
   launchSide: -1 | 1,
-  nowMs: number
+  nowMs: number,
+  holdBlend: number
 ): ViewmodelSocketPose | null {
   if (!ctx.camera) return null;
 
@@ -163,6 +166,8 @@ function samplePhantomPrimaryPalmPose(
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
       side: launchSide,
       actionTimeSeconds: PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
+      holdBlend,
+      shotPulse: 1,
       timestampMs: ctx.viewmodelNowMs ?? nowMs,
     }
   );
@@ -186,6 +191,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   // Fire Dire Ball (primary fire)
   const fireDireBall = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const now = Date.now();
+    const poseTimestampMs = ctx.viewmodelNowMs ?? now;
+    const holdBlend = getPhantomPrimaryHeldBlend(poseTimestampMs);
+    if (holdBlend < PHANTOM_PRIMARY_FIRE_READY_BLEND) return;
     if (now - lastFireTimeRef.current < PHANTOM_FIRE_INTERVAL) return;
 
     lastFireTimeRef.current = now;
@@ -194,7 +202,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     direBallIdRef.current++;
     const launchSide = direBallIdRef.current % 2 === 1 ? 1 : -1;
     const ballId = `dire_${ctx.localPlayer.id}_${direBallIdRef.current}`;
-    const launchPose = samplePhantomPrimaryPalmPose(ctx, launchSide, now);
+    const launchPose = samplePhantomPrimaryPalmPose(ctx, launchSide, now, holdBlend);
     const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
     const { spawnPos, direction } = calculatePhantomLaunch(
       ctx,

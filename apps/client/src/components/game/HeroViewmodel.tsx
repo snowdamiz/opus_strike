@@ -7,7 +7,8 @@ import { useGameStore } from '../../store/gameStore';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
-  getPhantomPrimaryAttackBlend,
+  getPhantomPrimaryHeldBlend,
+  getPhantomPrimaryShotPulse,
   type PhantomPrimaryPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
 import {
@@ -69,8 +70,9 @@ interface PhantomHandPoseTargets {
 
 const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
 const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
-const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.086);
-const PHANTOM_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
+const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.074);
+const PHANTOM_CLOSED_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
+const PHANTOM_OPEN_FINGER_SLOTS = [-0.056, -0.019, 0.019, 0.056] as const;
 
 const matrixPosition = new THREE.Vector3();
 const matrixQuaternion = new THREE.Quaternion();
@@ -233,60 +235,69 @@ function composeTransformMatrix(
 function writePhantomHandPose(
   targets: PhantomHandPoseTargets,
   side: -1 | 1,
-  attackBlend: number,
+  holdBlend: number,
+  shotPulse: number,
   elapsedSeconds: number
 ): void {
+  void elapsedSeconds;
   const sideSign = side;
+  const thumbSide = -sideSign;
+  const readyBlend = THREE.MathUtils.clamp(holdBlend, 0, 1);
 
   targets.arm.position.set(
-    sideSign * (0.3 - attackBlend * 0.02),
-    -0.52 + attackBlend * 0.028,
-    -0.64 - attackBlend * 0.095
+    sideSign * (0.3 - readyBlend * 0.026 - shotPulse * 0.009),
+    -0.52 + readyBlend * 0.058 + shotPulse * 0.006,
+    -0.64 - readyBlend * 0.054 - shotPulse * 0.034
   );
   targets.arm.rotation.set(
-    0.18 - attackBlend * 0.5,
-    sideSign * (0.78 - attackBlend * 0.2),
-    sideSign * (-0.08 + attackBlend * 0.48)
+    0.18 - readyBlend * 0.26 - shotPulse * 0.08,
+    sideSign * (0.78 - readyBlend * 0.24 - shotPulse * 0.03),
+    sideSign * (-0.08 + readyBlend * 0.34 + shotPulse * 0.08)
   );
 
   targets.wrist.position.set(0, 0, 0);
   targets.wrist.rotation.set(
-    -attackBlend * 0.18,
-    sideSign * -attackBlend * 0.22,
-    sideSign * attackBlend * 0.46
+    -readyBlend * 0.1 - shotPulse * 0.045,
+    sideSign * (-readyBlend * 0.08 - shotPulse * 0.025),
+    sideSign * (readyBlend * 0.28 + shotPulse * 0.06)
   );
 
   targets.palm.position.set(
-    sideSign * attackBlend * 0.006,
-    attackBlend * 0.004,
-    -attackBlend * 0.024
+    sideSign * readyBlend * 0.006,
+    readyBlend * 0.004,
+    -readyBlend * 0.014 - shotPulse * 0.01
   );
   targets.palm.rotation.set(
-    -attackBlend * 0.08,
-    sideSign * -attackBlend * 0.08,
-    sideSign * attackBlend * 0.14
+    -readyBlend * 0.055 - shotPulse * 0.032,
+    sideSign * -readyBlend * 0.06,
+    sideSign * readyBlend * 0.035
   );
 
-  targets.thumb.position.set(sideSign * (0.072 + attackBlend * 0.01), -0.042 - attackBlend * 0.012, -0.004 - attackBlend * 0.018);
+  targets.thumb.position.set(
+    thumbSide * (0.074 + readyBlend * 0.006),
+    -0.02 + readyBlend * 0.002,
+    -0.042 - shotPulse * 0.002
+  );
   targets.thumb.rotation.set(
-    -attackBlend * 0.12,
-    sideSign * attackBlend * 0.22,
-    sideSign * (0.4 + attackBlend * 0.9)
+    -0.015 - readyBlend * 0.015,
+    thumbSide * (0.1 + readyBlend * 0.08),
+    thumbSide * (0.04 + readyBlend * 0.04)
   );
 
   for (let index = 0; index < targets.fingers.length; index++) {
     const finger = targets.fingers[index];
-    const row = PHANTOM_FINGER_ROWS[index] ?? 0;
-    const stagger = (index - 1.5) * 0.025;
+    const slot = PHANTOM_OPEN_FINGER_SLOTS[index] ?? 0;
+    const fingerIndexOffset = index - 1.5;
+    const lengthBias = index === 1 || index === 2 ? 0.006 : -0.004;
     finger.position.set(
-      sideSign * (-0.006 + attackBlend * 0.01),
-      row + attackBlend * stagger,
-      -0.072 - attackBlend * (0.068 + Math.abs(stagger) * 0.45)
+      slot + readyBlend * fingerIndexOffset * 0.006,
+      0.056 + lengthBias,
+      -0.038 + Math.abs(fingerIndexOffset) * 0.001 - shotPulse * 0.002
     );
     finger.rotation.set(
-      -attackBlend * 0.62,
-      sideSign * attackBlend * 0.08,
-      sideSign * attackBlend * (0.08 + stagger)
+      -0.04 - shotPulse * 0.028,
+      -fingerIndexOffset * 0.018,
+      -fingerIndexOffset * (0.16 + readyBlend * 0.08)
     );
   }
 }
@@ -294,19 +305,20 @@ function writePhantomHandPose(
 function writePhantomForearmPose(
   target: MutableTransformTarget,
   side: -1 | 1,
-  attackBlend: number,
+  holdBlend: number,
+  shotPulse: number,
   elapsedSeconds: number
 ): void {
   void elapsedSeconds;
   target.position.set(
-    side * (0.34 - attackBlend * 0.028),
-    -0.58 + attackBlend * 0.026,
-    -0.43 - attackBlend * 0.075
+    side * (0.34 - holdBlend * 0.05 - shotPulse * 0.014),
+    -0.58 + holdBlend * 0.078 + shotPulse * 0.006,
+    -0.43 - holdBlend * 0.128 - shotPulse * 0.022
   );
   target.rotation.set(
-    0.22 - attackBlend * 0.42,
-    side * (-0.18 + attackBlend * 0.16),
-    side * (-0.06 + attackBlend * 0.42)
+    0.22 - holdBlend * 0.42 - shotPulse * 0.09,
+    side * (-0.18 + holdBlend * 0.14 + shotPulse * 0.025),
+    side * (-0.06 + holdBlend * 0.28 + shotPulse * 0.12)
   );
 }
 
@@ -316,14 +328,16 @@ function composePhantomPrimaryPalmMatrix({
   actionBlend,
   targetingBlend,
   side,
-  attackBlend,
+  holdBlend,
+  shotPulse,
 }: {
   camera: THREE.Camera;
   elapsedSeconds: number;
   actionBlend: number;
   targetingBlend: number;
   side: -1 | 1;
-  attackBlend: number;
+  holdBlend: number;
+  shotPulse: number;
 }): THREE.Matrix4 {
   const rootTransform = {
     position: matrixPosition,
@@ -346,7 +360,7 @@ function composePhantomPrimaryPalmMatrix({
       rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
     })),
   };
-  writePhantomHandPose(poseTarget, side, attackBlend, elapsedSeconds);
+  writePhantomHandPose(poseTarget, side, holdBlend, shotPulse, elapsedSeconds);
 
   composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
   composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
@@ -375,14 +389,17 @@ function samplePhantomPrimaryPalmSocket(
   targetingBlend: number
 ): ViewmodelSocketPoseDraft {
   const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
-  const attackBlend = getPhantomPrimaryAttackBlend(attackTimeSeconds);
+  const timestampMs = context.timestampMs ?? Date.now();
+  const holdBlend = context.holdBlend ?? getPhantomPrimaryHeldBlend(timestampMs);
+  const shotPulse = context.shotPulse ?? getPhantomPrimaryShotPulse(attackTimeSeconds);
   const worldMatrix = composePhantomPrimaryPalmMatrix({
     camera: context.camera,
     elapsedSeconds: context.elapsedSeconds,
     actionBlend,
     targetingBlend,
     side: context.side,
-    attackBlend,
+    holdBlend,
+    shotPulse,
   });
 
   worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
@@ -390,7 +407,7 @@ function samplePhantomPrimaryPalmSocket(
   return {
     position: phantomWorldPosition.clone(),
     quaternion: phantomWorldQuaternion.clone(),
-    timestampMs: context.timestampMs,
+    timestampMs,
   };
 }
 
@@ -429,20 +446,22 @@ function PhantomAnimatedForearm({
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
-  const length = 0.24;
-  const width = 0.068;
-  const thickness = 0.064;
+  const length = 0.32;
+  const width = 0.074;
+  const thickness = 0.066;
 
   useFrame((state) => {
     const forearm = forearmRef.current;
     if (!forearm) return;
 
+    const nowMs = Date.now();
     const attack = primaryAttackRef.current;
     const attackTimeSeconds = attack?.side === side
-      ? (Date.now() - attack.startTimeMs) / 1000
+      ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const attackBlend = getPhantomPrimaryAttackBlend(attackTimeSeconds);
-    writePhantomForearmPose(forearm, side, attackBlend, state.clock.elapsedTime);
+    const holdBlend = getPhantomPrimaryHeldBlend(nowMs);
+    const shotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
+    writePhantomForearmPose(forearm, side, holdBlend, shotPulse, state.clock.elapsedTime);
   });
 
   return (
@@ -464,12 +483,15 @@ function PhantomPoseableHand({
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
 }) {
+  const closedVisualRef = useRef<THREE.Group>(null);
   const armRef = useRef<THREE.Group>(null);
   const wristRef = useRef<THREE.Group>(null);
   const palmRef = useRef<THREE.Group>(null);
+  const openVisualRef = useRef<THREE.Group>(null);
   const thumbRef = useRef<THREE.Group>(null);
   const socketRef = useRef<THREE.Group>(null);
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
+  const thumbSide = -side;
 
   useEffect(() => {
     if (!socketRef.current) return undefined;
@@ -477,18 +499,34 @@ function PhantomPoseableHand({
   }, [side]);
 
   useFrame((state) => {
+    const closedVisual = closedVisualRef.current;
     const arm = armRef.current;
     const wrist = wristRef.current;
     const palm = palmRef.current;
+    const openVisual = openVisualRef.current;
     const thumb = thumbRef.current;
     const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
     if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
 
+    const nowMs = Date.now();
     const attack = primaryAttackRef.current;
     const attackTimeSeconds = attack?.side === side
-      ? (Date.now() - attack.startTimeMs) / 1000
+      ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const attackBlend = getPhantomPrimaryAttackBlend(attackTimeSeconds);
+    const holdBlend = getPhantomPrimaryHeldBlend(nowMs);
+    const shotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
+    const openVisualBlend = THREE.MathUtils.smoothstep(holdBlend, 0.02, 0.72);
+    const closedVisualBlend = 1 - THREE.MathUtils.smoothstep(holdBlend, 0, 0.5);
+
+    if (closedVisual) {
+      closedVisual.visible = closedVisualBlend > 0.025;
+      closedVisual.scale.setScalar(Math.max(0.001, closedVisualBlend));
+    }
+
+    if (openVisual) {
+      openVisual.visible = openVisualBlend > 0.025;
+      openVisual.scale.setScalar(Math.max(0.001, openVisualBlend));
+    }
 
     writePhantomHandPose(
       {
@@ -499,63 +537,113 @@ function PhantomPoseableHand({
         fingers,
       },
       side,
-      attackBlend,
+      holdBlend,
+      shotPulse,
       state.clock.elapsedTime
     );
   });
 
   return (
-    <group ref={armRef} position={[side * 0.3, -0.52, -0.64]} rotation={[0.18, side * 0.78, side * -0.08]}>
-      <group ref={wristRef}>
-        <group ref={palmRef}>
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.092, 0.124, 0.12]} />
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.018, 0.006, 0.018]} scale={[0.076, 0.102, 0.074]} />
-          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.052, 0, -0.014]} scale={[0.018, 0.105, 0.068]} />
+    <group>
+      <group
+        ref={closedVisualRef}
+        position={[side * 0.3, -0.52, -0.64]}
+        rotation={[0.18, side * 0.78, side * -0.08]}
+      >
+        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.092, 0.124, 0.12]} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.018, 0.006, 0.018]} scale={[0.076, 0.102, 0.074]} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.052, 0, -0.014]} scale={[0.018, 0.105, 0.068]} />
 
-          {PHANTOM_FINGER_ROWS.map((row, index) => (
-            <group
-              key={row}
-              ref={(node) => {
-                fingerRefs.current[index] = node;
-              }}
-              position={[side * -0.006, row, -0.072]}
-            >
-              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.106, 0.028, 0.052]} />
-              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.026, 0, -0.026]} scale={[0.04, 0.026, 0.034]} />
-              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[side * -0.028, 0, -0.034]} scale={[0.07, 0.026, 0.042]} />
-              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.058, 0, -0.06]} scale={[0.02, 0.018, 0.022]} />
-              {index === 1 && (
-                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * 0.052, 0, 0.012]} scale={[0.018, 0.019, 0.034]} />
-              )}
-            </group>
-          ))}
-
-          <group ref={thumbRef} position={[side * 0.072, -0.042, -0.004]} rotation={[0, 0, side * 0.4]}>
-            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.05, 0.1, 0.062]} />
+        {PHANTOM_CLOSED_FINGER_ROWS.map((row, index) => (
+          <group key={row} position={[side * -0.006, row, -0.072]}>
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.106, 0.028, 0.052]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.026, 0, -0.026]} scale={[0.04, 0.026, 0.034]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[side * -0.028, 0, -0.034]} scale={[0.07, 0.026, 0.042]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.058, 0, -0.06]} scale={[0.02, 0.018, 0.022]} />
+            {index === 1 && (
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * 0.052, 0, 0.012]} scale={[0.018, 0.019, 0.034]} />
+            )}
           </group>
+        ))}
 
-          <mesh
-            geometry={SHARED_GEOMETRIES.box}
-            material={materials.dark}
-            position={[0, 0, 0.085]}
-            scale={[0.074, 0.088, 0.038]}
-          />
-          <mesh
-            geometry={SHARED_GEOMETRIES.sphere8}
-            material={materials.glow}
-            position={[side * -0.052, 0, -0.11]}
-            scale={0.034}
-          />
+        <group position={[side * 0.072, -0.042, -0.004]} rotation={[0, 0, side * 0.4]}>
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} scale={[0.05, 0.1, 0.062]} />
+        </group>
 
-          <group
-            ref={socketRef}
-            name={PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side]}
-            position={[
-              PHANTOM_PALM_SOCKET_OFFSET.x,
-              PHANTOM_PALM_SOCKET_OFFSET.y,
-              PHANTOM_PALM_SOCKET_OFFSET.z,
-            ]}
-          />
+        <mesh
+          geometry={SHARED_GEOMETRIES.box}
+          material={materials.dark}
+          position={[0, 0, 0.085]}
+          scale={[0.074, 0.088, 0.038]}
+        />
+        <mesh
+          geometry={SHARED_GEOMETRIES.sphere8}
+          material={materials.glow}
+          position={[side * -0.052, 0, -0.11]}
+          scale={0.034}
+        />
+      </group>
+
+      <group ref={armRef} position={[side * 0.3, -0.52, -0.64]} rotation={[0.18, side * 0.78, side * -0.08]}>
+        <group ref={wristRef}>
+          <group ref={palmRef}>
+            <group ref={openVisualRef} visible={false} scale={[0.001, 0.001, 0.001]}>
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -0.072, 0.086]} scale={[0.07, 0.062, 0.084]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.104, 0.142]} scale={[0.058, 0.044, 0.104]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.028, -0.094, 0.082]} scale={[0.016, 0.044, 0.058]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.104, 0.128, 0.052]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.014, 0.002, 0.012]} scale={[0.084, 0.104, 0.036]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.056, -0.004, -0.018]} scale={[0.018, 0.088, 0.028]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[0, 0.012, -0.048]} scale={[0.058, 0.074, 0.014]} />
+
+              {PHANTOM_OPEN_FINGER_SLOTS.map((slot, index) => {
+                const isLongFinger = index === 1 || index === 2;
+                const segmentLength = isLongFinger ? 0.08 : 0.068;
+                const tipY = segmentLength + 0.014;
+                return (
+                  <group
+                    key={slot}
+                    ref={(node) => {
+                      fingerRefs.current[index] = node;
+                    }}
+                    position={[slot, 0.056, -0.038]}
+                    rotation={[-0.04, 0, -(index - 1.5) * 0.22]}
+                  >
+                    <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.006, 0.012]} scale={[0.028, 0.024, 0.024]} />
+                    <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, segmentLength * 0.5, 0]} scale={[0.024, segmentLength, 0.024]} />
+                    <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, segmentLength * 0.35, 0.006]} scale={[0.027, segmentLength * 0.42, 0.026]} />
+                    <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[0, segmentLength * 0.5, -0.012]} scale={[0.013, segmentLength * 0.62, 0.011]} />
+                    <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, tipY, -0.001]} scale={[0.023, 0.03, 0.024]} />
+                  </group>
+                );
+              })}
+
+              <group ref={thumbRef} position={[thumbSide * 0.074, -0.02, -0.042]} rotation={[-0.015, thumbSide * 0.1, thumbSide * 0.04]}>
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[thumbSide * -0.004, 0, 0.008]} scale={[0.024, 0.028, 0.022]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[thumbSide * 0.04, 0.016, 0]} scale={[0.064, 0.028, 0.024]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[thumbSide * 0.04, 0.022, 0.007]} scale={[0.046, 0.018, 0.024]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[thumbSide * 0.042, 0.018, -0.01]} scale={[0.042, 0.012, 0.01]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[thumbSide * 0.086, 0.018, -0.001]} scale={[0.028, 0.026, 0.022]} />
+              </group>
+
+              <mesh
+                geometry={SHARED_GEOMETRIES.box}
+                material={materials.dark}
+                position={[0, 0, 0.058]}
+                scale={[0.074, 0.088, 0.032]}
+              />
+            </group>
+
+            <group
+              ref={socketRef}
+              name={PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side]}
+              position={[
+                PHANTOM_PALM_SOCKET_OFFSET.x,
+                PHANTOM_PALM_SOCKET_OFFSET.y,
+                PHANTOM_PALM_SOCKET_OFFSET.z,
+              ]}
+            />
+          </group>
         </group>
       </group>
     </group>

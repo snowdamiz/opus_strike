@@ -604,10 +604,6 @@ export function DireBallsManager() {
         }
       }
 
-      slot.position.x += slot.velocity.x * delta;
-      slot.position.y += slot.velocity.y * delta;
-      slot.position.z += slot.velocity.z * delta;
-
       const coreMesh = coreMeshRef.current;
       const glowMesh = glowMeshRef.current;
       const innerMesh = innerMeshRef.current;
@@ -620,6 +616,11 @@ export function DireBallsManager() {
       }
 
       particleOffset = fillTrailParticles(slot, elapsedSeconds, positions, particleOffset);
+
+      slot.position.x += slot.velocity.x * delta;
+      slot.position.y += slot.velocity.y * delta;
+      slot.position.z += slot.velocity.z * delta;
+
       instanceIndex++;
     });
 
