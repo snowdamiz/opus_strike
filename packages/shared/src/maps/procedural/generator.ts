@@ -1,5 +1,5 @@
-import { getBlockNumericId, isSolidBlock } from './blocks.js';
-import { PLAYER_HEIGHT, STEP_HEIGHT } from '../../constants/physics.js';
+import { getBlockId, getBlockNumericId, isCollisionBlock, isSolidBlock } from './blocks.js';
+import { PLAYER_HEIGHT, PLAYER_RADIUS, STEP_HEIGHT } from '../../constants/physics.js';
 import {
   BUILDING_DIRECTIONS,
   BUILDING_INTENT_DEFINITIONS,
@@ -86,6 +86,11 @@ const SIGHTLINE_BARRIER_BASE_HEIGHT = 8;
 const SIGHTLINE_BARRIER_EXTRA_HEIGHT = 6;
 const TERRAIN_SMOOTHING_PASSES = 2;
 const MAX_NAVIGATION_STEP_ROWS = 2;
+const UNSAFE_GROOVE_MAX_WIDTH_CELLS = Math.max(
+  1,
+  Math.ceil((PLAYER_RADIUS * 2) / Math.min(PROCEDURAL_VOXEL_SIZE.x, PROCEDURAL_VOXEL_SIZE.z)) - 1
+);
+const UNSAFE_GROOVE_SEAL_PASSES = Math.max(8, UNSAFE_GROOVE_MAX_WIDTH_CELLS * 6);
 const BOUNDARY_WALL_THICKNESS = 3.1 * FEATURE_WORLD_SCALE;
 const BOUNDARY_SURFACE_THICKNESS = 3.8 * FEATURE_WORLD_SCALE;
 const FEATURE_ENTRANCE_HEADROOM = 1.1;
@@ -3064,6 +3069,301 @@ function clearSpawnPoints(
   }
 }
 
+function buildCollisionTopRows(blocks: Uint8Array, size: VoxelSize): Uint16Array {
+  const topRows = new Uint16Array(size.x * size.z);
+
+  for (let x = 0; x < size.x; x++) {
+    for (let z = 0; z < size.z; z++) {
+      for (let y = size.y - 1; y >= 0; y--) {
+        if (isCollisionBlock(blocks[chunkIndex(x, y, z, size)])) {
+          topRows[x + z * size.x] = y + 1;
+          break;
+        }
+      }
+    }
+  }
+
+  return topRows;
+}
+
+function getCollisionSurfaceBlock(
+  blocks: Uint8Array,
+  size: VoxelSize,
+  x: number,
+  z: number,
+  preferredTopRow: number
+): VoxelBlockId {
+  for (let y = clamp(preferredTopRow - 1, 0, size.y - 1); y >= 0; y--) {
+    const block = blocks[chunkIndex(x, y, z, size)];
+    if (!isCollisionBlock(block)) continue;
+
+    const blockId = getBlockId(block);
+    return blockId === 'barrier' ? 'stone' : blockId;
+  }
+
+  return 'stone';
+}
+
+function chooseGrooveSurfaceBlock(
+  blocks: Uint8Array,
+  size: VoxelSize,
+  sideA: { x: number; z: number },
+  sideB: { x: number; z: number },
+  targetTopRow: number
+): VoxelBlockId {
+  const blockA = getCollisionSurfaceBlock(blocks, size, sideA.x, sideA.z, targetTopRow);
+  const blockB = getCollisionSurfaceBlock(blocks, size, sideB.x, sideB.z, targetTopRow);
+
+  if (blockA === blockB) return blockA;
+  if (blockA === 'grass' || blockB === 'grass') return 'grass';
+  if (blockA === 'dirt' || blockB === 'dirt') return 'dirt';
+  if (blockA === 'stone' || blockB === 'stone') return 'stone';
+
+  return blockA;
+}
+
+function getGrooveFillBlock(surfaceBlock: VoxelBlockId, y: number, surfaceY: number): VoxelBlockId {
+  if (y === 0) return 'barrier';
+  if (y === surfaceY) return surfaceBlock;
+  if (surfaceBlock === 'grass') return 'dirt';
+  if (
+    surfaceBlock === 'spawn_pad' ||
+    surfaceBlock === 'spawn_pad_red' ||
+    surfaceBlock === 'spawn_pad_blue' ||
+    surfaceBlock === 'flag_pad'
+  ) {
+    return 'stone';
+  }
+
+  if (surfaceBlock === 'dirt') return 'dirt';
+  return 'stone';
+}
+
+function shouldSealGrooveColumn(
+  origin: { x: number; z: number },
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  x: number,
+  z: number
+): boolean {
+  const worldX = gridToWorldCenter(x, origin.x);
+  const worldZ = gridToWorldCenter(z, origin.z);
+
+  return (
+    isInsideBoundaryPolygon(worldX, worldZ, layout.boundary) ||
+    distanceToBoundary(worldX, worldZ, layout.boundary) < BOUNDARY_WALL_THICKNESS
+  );
+}
+
+function sealGrooveRun(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  cells: { x: number; z: number }[],
+  sideA: { x: number; z: number },
+  sideB: { x: number; z: number },
+  targetTopRow: number
+): boolean {
+  const surfaceY = targetTopRow - 1;
+  const surfaceBlock = chooseGrooveSurfaceBlock(blocks, size, sideA, sideB, targetTopRow);
+  let sealed = false;
+
+  for (const cell of cells) {
+    if (!shouldSealGrooveColumn(origin, layout, cell.x, cell.z)) continue;
+
+    const topIndex = cell.x + cell.z * size.x;
+    const currentTopRow = topRows[topIndex];
+    if (currentTopRow >= targetTopRow) continue;
+
+    for (let y = currentTopRow; y < targetTopRow; y++) {
+      setBlock(cell.x, y, cell.z, getGrooveFillBlock(surfaceBlock, y, surfaceY));
+    }
+
+    topRows[topIndex] = targetTopRow;
+    sealed = true;
+  }
+
+  return sealed;
+}
+
+function sealNarrowGrooveRunsForAxis(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  axis: 'x' | 'z'
+): boolean {
+  const movingLimit = axis === 'x' ? size.x : size.z;
+  const fixedLimit = axis === 'x' ? size.z : size.x;
+  let sealedAny = false;
+  const toCell = (moving: number, fixed: number): { x: number; z: number } =>
+    axis === 'x' ? { x: moving, z: fixed } : { x: fixed, z: moving };
+  const getTopRow = (moving: number, fixed: number): number => {
+    const cell = toCell(moving, fixed);
+    return topRows[cell.x + cell.z * size.x];
+  };
+  const scanDirection = (direction: -1 | 1): void => {
+    for (let fixed = 1; fixed < fixedLimit - 1; fixed++) {
+      let moving = direction === 1 ? 1 : movingLimit - 2;
+
+      while (moving > 0 && moving < movingLimit - 1) {
+        const openingSideMoving = moving - direction;
+        const openingSideTopRow = getTopRow(openingSideMoving, fixed);
+        const currentTopRow = getTopRow(moving, fixed);
+
+        if (openingSideTopRow === 0 || openingSideTopRow - currentTopRow <= MAX_NAVIGATION_STEP_ROWS) {
+          moving += direction;
+          continue;
+        }
+
+        const cells: { x: number; z: number }[] = [];
+        let maxRunTopRow = 0;
+        let cursor = moving;
+
+        while (
+          cursor > 0 &&
+          cursor < movingLimit - 1 &&
+          openingSideTopRow - getTopRow(cursor, fixed) > MAX_NAVIGATION_STEP_ROWS
+        ) {
+          const cell = toCell(cursor, fixed);
+          cells.push(cell);
+          maxRunTopRow = Math.max(maxRunTopRow, topRows[cell.x + cell.z * size.x]);
+          cursor += direction;
+        }
+
+        const closingSideTopRow = getTopRow(cursor, fixed);
+        const targetTopRow = Math.min(openingSideTopRow, closingSideTopRow);
+
+        if (
+          closingSideTopRow > 0 &&
+          cells.length <= UNSAFE_GROOVE_MAX_WIDTH_CELLS &&
+          targetTopRow - maxRunTopRow > MAX_NAVIGATION_STEP_ROWS &&
+          sealGrooveRun(
+            setBlock,
+            blocks,
+            topRows,
+            origin,
+            size,
+            layout,
+            cells,
+            toCell(openingSideMoving, fixed),
+            toCell(cursor, fixed),
+            targetTopRow
+          )
+        ) {
+          sealedAny = true;
+        }
+
+        moving = cursor;
+      }
+    }
+  };
+
+  scanDirection(1);
+  scanDirection(-1);
+
+  return sealedAny;
+}
+
+function sealUnsafeCornerPockets(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>
+): boolean {
+  const directions: GridDirection[] = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+  ];
+  const pockets: Array<{
+    cell: { x: number; z: number };
+    sides: [{ x: number; z: number }, { x: number; z: number }];
+    targetTopRow: number;
+  }> = [];
+
+  for (let x = 1; x < size.x - 1; x++) {
+    for (let z = 1; z < size.z - 1; z++) {
+      const currentTopRow = topRows[x + z * size.x];
+      if (currentTopRow === 0 || !shouldSealGrooveColumn(origin, layout, x, z)) continue;
+
+      const blockingSides: Array<{ x: number; z: number; topRow: number }> = [];
+
+      for (const direction of directions) {
+        const neighborX = x + direction.dx;
+        const neighborZ = z + direction.dz;
+        const neighborTopRow = topRows[neighborX + neighborZ * size.x];
+
+        if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+          blockingSides.push({ x: neighborX, z: neighborZ, topRow: neighborTopRow });
+        }
+      }
+
+      if (blockingSides.length < 3) continue;
+
+      const targetTopRow = Math.min(...blockingSides.map((side) => side.topRow));
+      if (targetTopRow - currentTopRow <= MAX_NAVIGATION_STEP_ROWS) continue;
+
+      pockets.push({
+        cell: { x, z },
+        sides: [
+          { x: blockingSides[0].x, z: blockingSides[0].z },
+          { x: blockingSides[1].x, z: blockingSides[1].z },
+        ],
+        targetTopRow,
+      });
+    }
+  }
+
+  let sealedAny = false;
+
+  for (const pocket of pockets) {
+    if (
+      sealGrooveRun(
+        setBlock,
+        blocks,
+        topRows,
+        origin,
+        size,
+        layout,
+        [pocket.cell],
+        pocket.sides[0],
+        pocket.sides[1],
+        pocket.targetTopRow
+      )
+    ) {
+      sealedAny = true;
+    }
+  }
+
+  return sealedAny;
+}
+
+function sealUnsafeNarrowGrooves(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>
+): void {
+  const topRows = buildCollisionTopRows(blocks, size);
+
+  for (let pass = 0; pass < UNSAFE_GROOVE_SEAL_PASSES; pass++) {
+    const sealedX = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'x');
+    const sealedZ = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'z');
+    const sealedPockets = sealUnsafeCornerPockets(setBlock, blocks, topRows, origin, size, layout);
+
+    if (!sealedX && !sealedZ && !sealedPockets) return;
+  }
+}
+
 function generateProceduralVoxelMapInternal(
   seed = DEFAULT_PROCEDURAL_MAP_SEED,
   diagnostics?: ProceduralVoxelMapDiagnostics
@@ -3265,6 +3565,7 @@ function generateProceduralVoxelMapInternal(
   paintFlagPads(setBlock, heightMap, origin, size, layout.flagZones);
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.red, 'spawn_pad_red');
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
+  sealUnsafeNarrowGrooves(setBlock, blocks, origin, size, layout);
 
   const chunks: VoxelChunk[] = [];
   const chunkSlotsX = Math.ceil(size.x / chunkSize.x);

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { getBlockNumericId, isSolidBlock } from '../dist/maps/procedural/blocks.js';
+import { getBlockNumericId, isCollisionBlock, isSolidBlock } from '../dist/maps/procedural/blocks.js';
 import { DEFAULT_GAME_CONFIG } from '../dist/constants/game.js';
+import { PLAYER_RADIUS } from '../dist/constants/physics.js';
 import { generateProceduralVoxelMapWithDiagnostics } from '../dist/maps/procedural/generator.js';
 
 const DEFAULT_SEQUENTIAL_SEEDS = 20;
@@ -9,6 +10,7 @@ const DEFAULT_RANDOM_SEEDS = 8;
 const DEFAULT_MAX_COLLIDERS = 48_000;
 const DEFAULT_MAX_FAILURE_RATE = 0.95;
 const DEFAULT_MIN_SIGNATURE_VARIETY = 0.58;
+const MAX_NAVIGATION_STEP_ROWS = 2;
 const FLAG_DISTANCE_AUDIT_CLEARANCE = 8.7;
 const SPAWN_DISTANCE_AUDIT_CLEARANCE = 5;
 const SPAWN_DISTANCE_AUDIT_BASE_RADIUS = 4.41;
@@ -135,6 +137,151 @@ function getManifestBlock(manifest, x, y, z) {
   const localZ = z - chunkCoord.z * chunkSize.z;
 
   return chunk.blocks[chunkIndex(localX, localY, localZ, chunk.size)];
+}
+
+function getCollisionTopRows(manifest) {
+  const topRows = new Uint16Array(manifest.size.x * manifest.size.z);
+
+  for (const chunk of manifest.chunks) {
+    const originX = chunk.coord.x * manifest.chunkSize.x;
+    const originY = chunk.coord.y * manifest.chunkSize.y;
+    const originZ = chunk.coord.z * manifest.chunkSize.z;
+
+    for (let y = 0; y < chunk.size.y; y++) {
+      for (let z = 0; z < chunk.size.z; z++) {
+        for (let x = 0; x < chunk.size.x; x++) {
+          const block = chunk.blocks[chunkIndex(x, y, z, chunk.size)];
+          if (!isCollisionBlock(block)) continue;
+
+          const globalX = originX + x;
+          const globalY = originY + y;
+          const globalZ = originZ + z;
+          const topIndex = globalX + globalZ * manifest.size.x;
+          topRows[topIndex] = Math.max(topRows[topIndex], globalY + 1);
+        }
+      }
+    }
+  }
+
+  return topRows;
+}
+
+function countUnsafeNarrowGrooveColumns(manifest) {
+  const topRows = getCollisionTopRows(manifest);
+  const counted = new Uint8Array(manifest.size.x * manifest.size.z);
+  const maxUnsafeWidthCells = Math.max(
+    1,
+    Math.ceil((PLAYER_RADIUS * 2) / Math.min(manifest.voxelSize.x, manifest.voxelSize.z)) - 1
+  );
+  const markRun = (cells) => {
+    for (const cell of cells) {
+      const worldX = manifest.origin.x + (cell.x + 0.5) * manifest.voxelSize.x;
+      const worldZ = manifest.origin.z + (cell.z + 0.5) * manifest.voxelSize.z;
+      if (!isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary)) continue;
+
+      counted[cell.x + cell.z * manifest.size.x] = 1;
+    }
+  };
+  const scanAxis = (axis) => {
+    const movingLimit = axis === 'x' ? manifest.size.x : manifest.size.z;
+    const fixedLimit = axis === 'x' ? manifest.size.z : manifest.size.x;
+    const toCell = (moving, fixed) => axis === 'x' ? { x: moving, z: fixed } : { x: fixed, z: moving };
+    const getTopRow = (moving, fixed) => {
+      const cell = toCell(moving, fixed);
+      return topRows[cell.x + cell.z * manifest.size.x];
+    };
+    const scanDirection = (direction) => {
+      for (let fixed = 1; fixed < fixedLimit - 1; fixed++) {
+        let moving = direction === 1 ? 1 : movingLimit - 2;
+
+        while (moving > 0 && moving < movingLimit - 1) {
+          const openingSideTopRow = getTopRow(moving - direction, fixed);
+          const currentTopRow = getTopRow(moving, fixed);
+
+          if (openingSideTopRow === 0 || openingSideTopRow - currentTopRow <= MAX_NAVIGATION_STEP_ROWS) {
+            moving += direction;
+            continue;
+          }
+
+          const cells = [];
+          let maxRunTopRow = 0;
+          let cursor = moving;
+
+          while (
+            cursor > 0 &&
+            cursor < movingLimit - 1 &&
+            openingSideTopRow - getTopRow(cursor, fixed) > MAX_NAVIGATION_STEP_ROWS
+          ) {
+            const cell = toCell(cursor, fixed);
+            cells.push(cell);
+            maxRunTopRow = Math.max(maxRunTopRow, topRows[cell.x + cell.z * manifest.size.x]);
+            cursor += direction;
+          }
+
+          const closingSideTopRow = getTopRow(cursor, fixed);
+          const targetTopRow = Math.min(openingSideTopRow, closingSideTopRow);
+
+          if (
+            closingSideTopRow > 0 &&
+            cells.length <= maxUnsafeWidthCells &&
+            targetTopRow - maxRunTopRow > MAX_NAVIGATION_STEP_ROWS
+          ) {
+            markRun(cells);
+          }
+
+          moving = cursor;
+        }
+      }
+    };
+
+    scanDirection(1);
+    scanDirection(-1);
+  };
+
+  scanAxis('x');
+  scanAxis('z');
+
+  return counted.reduce((count, value) => count + value, 0);
+}
+
+function countUnsafeCornerPocketColumns(manifest) {
+  const topRows = getCollisionTopRows(manifest);
+  const directions = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+  ];
+  let count = 0;
+
+  for (let x = 1; x < manifest.size.x - 1; x++) {
+    for (let z = 1; z < manifest.size.z - 1; z++) {
+      const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
+      const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
+      if (!isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary)) continue;
+
+      const currentTopRow = topRows[x + z * manifest.size.x];
+      if (currentTopRow === 0) continue;
+
+      let blockingSides = 0;
+      let targetTopRow = Number.POSITIVE_INFINITY;
+
+      for (const direction of directions) {
+        const neighborTopRow = topRows[x + direction.dx + (z + direction.dz) * manifest.size.x];
+
+        if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+          blockingSides++;
+          targetTopRow = Math.min(targetTopRow, neighborTopRow);
+        }
+      }
+
+      if (blockingSides >= 3 && targetTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+        count++;
+      }
+    }
+  }
+
+  return count;
 }
 
 function worldToGrid(value, origin, voxelSize, max) {
@@ -479,6 +626,8 @@ function inspectMap(seed, options) {
   const gameplayBoundaryStats = getGameplayBoundaryStats(manifest);
   const spawnArcStats = getSpawnArcStats(manifest);
   const flagObstructions = countFlagObstructions(manifest, manifest.flagZones.red) + countFlagObstructions(manifest, manifest.flagZones.blue);
+  const unsafeGrooveColumns = countUnsafeNarrowGrooveColumns(manifest);
+  const unsafeCornerPocketColumns = countUnsafeCornerPocketColumns(manifest);
   const acceptedBuildings = diagnostics.buildings.acceptedPlans;
   const mediumEntranceFailures = acceptedBuildings.filter(
     (entry) => entry.metrics.footprintCellCount >= 90 && entry.metrics.entranceCount < 2
@@ -514,6 +663,8 @@ function inspectMap(seed, options) {
   assertCondition(spawnArcStats.flagDistance >= spawnArcStats.bestSpawnSafeFlagDistance * 0.96, failures, `seed ${seed}: flag distance ${spawnArcStats.flagDistance.toFixed(2)} left too much safe separation unused (${spawnArcStats.bestSpawnSafeFlagDistance.toFixed(2)} possible)`);
   assertCondition(spawnArcStats.teamCenterDistance >= spawnArcStats.mapLongAxis * 0.68, failures, `seed ${seed}: team spawn centers are not far enough apart`);
   assertCondition(flagObstructions === 0, failures, `seed ${seed}: ${flagObstructions} solid blocks obstruct flag zones`);
+  assertCondition(unsafeGrooveColumns === 0, failures, `seed ${seed}: ${unsafeGrooveColumns} unsafe narrow groove columns remain`);
+  assertCondition(unsafeCornerPocketColumns === 0, failures, `seed ${seed}: ${unsafeCornerPocketColumns} unsafe corner pocket columns remain`);
   assertCondition(structureBlocks > 0, failures, `seed ${seed}: no structure blocks generated`);
   assertCondition(structureBlocks < 11_000, failures, `seed ${seed}: structure block count ${structureBlocks} is too cluttered`);
   assertCondition(diagnostics.buildings.attempted > 0, failures, `seed ${seed}: no building plans attempted`);
