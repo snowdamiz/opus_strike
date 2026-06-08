@@ -70,7 +70,7 @@ interface PhantomHandPoseTargets {
 
 const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
 const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
-const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.074);
+const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.4);
 const PHANTOM_CLOSED_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
 const PHANTOM_OPEN_FINGER_SLOTS = [-0.056, -0.019, 0.019, 0.056] as const;
 
