@@ -23,16 +23,29 @@ import {
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { triggerRocketJumpExplosion, triggerAirStrike } from '../../../components/game/BlazeEffects';
+import { isPhysicsReady, raycastDirection } from '../../usePhysics';
 import {
   BLAZE_ROCKET_FIRE_INTERVAL,
   BLAZE_ROCKET_SPEED,
   BLAZE_BOMB_COOLDOWN,
   BLAZE_BOMB_FALL_DURATION,
-  calculateProjectileSpawn,
+  EYE_HEIGHT,
   calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
+import {
+  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+  getBlazeRocketHeldBlend,
+  setBlazeBombTargetHeld,
+  triggerBlazeStaffShockwave,
+  type BlazeRocketStaffPoseSampleContext,
+} from '../../../viewmodel/blazePose';
+import {
+  assertViewmodelLaunchMatchesPose,
+  sampleViewmodelPose,
+  type ViewmodelSocketPose,
+} from '../../../viewmodel/viewmodelSocketRegistry';
 import type { AbilityContext, PlayerSounds } from '../types';
 
 const BLAZE_FLAMETHROWER_SOCKET = {
@@ -40,6 +53,98 @@ const BLAZE_FLAMETHROWER_SOCKET = {
   forwardOffset: BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
   sideOffset: BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
 };
+const BLAZE_ROCKET_AIM_DISTANCE = 120;
+const BLAZE_ROCKET_STAFF_FALLBACK_SOCKET = {
+  handHeight: 0.24,
+  forwardOffset: 0.64,
+  sideOffset: 0.22,
+};
+const BLAZE_ROCKET_FIRE_READY_BLEND = 0.86;
+
+function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
+  return {
+    x: vector.x,
+    y: vector.y,
+    z: vector.z,
+  };
+}
+
+function sampleBlazeRocketStaffTipPose(
+  ctx: AbilityContext,
+  nowMs: number,
+  holdBlend: number
+): ViewmodelSocketPose | null {
+  if (!ctx.camera) return null;
+
+  ctx.camera.updateMatrixWorld();
+
+  return sampleViewmodelPose<BlazeRocketStaffPoseSampleContext>(
+    BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+    {
+      camera: ctx.camera,
+      elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+      holdBlend,
+      timestampMs: ctx.viewmodelNowMs ?? nowMs,
+    }
+  );
+}
+
+function calculateBlazeRocketLaunch(
+  ctx: AbilityContext,
+  spawnOverride?: { x: number; y: number; z: number }
+) {
+  const lookDirection = calculateLookDirection(ctx.yaw, ctx.pitch);
+  const fallbackSpawnPos = calculatePlayerSocketPosition(
+    ctx.position,
+    ctx.yaw,
+    BLAZE_ROCKET_STAFF_FALLBACK_SOCKET
+  );
+  const spawnPos = spawnOverride ?? fallbackSpawnPos;
+  const aimOrigin = {
+    x: ctx.position.x,
+    y: ctx.position.y + EYE_HEIGHT,
+    z: ctx.position.z,
+  };
+  const aimPoint = {
+    x: aimOrigin.x + lookDirection.x * BLAZE_ROCKET_AIM_DISTANCE,
+    y: aimOrigin.y + lookDirection.y * BLAZE_ROCKET_AIM_DISTANCE,
+    z: aimOrigin.z + lookDirection.z * BLAZE_ROCKET_AIM_DISTANCE,
+  };
+
+  if (isPhysicsReady()) {
+    const hit = raycastDirection(
+      aimOrigin.x,
+      aimOrigin.y,
+      aimOrigin.z,
+      lookDirection.x,
+      lookDirection.y,
+      lookDirection.z,
+      BLAZE_ROCKET_AIM_DISTANCE
+    );
+
+    if (hit?.hit) {
+      aimPoint.x = hit.point.x;
+      aimPoint.y = hit.point.y;
+      aimPoint.z = hit.point.z;
+    }
+  }
+
+  const aimDelta = {
+    x: aimPoint.x - spawnPos.x,
+    y: aimPoint.y - spawnPos.y,
+    z: aimPoint.z - spawnPos.z,
+  };
+  const aimLength = Math.sqrt(aimDelta.x ** 2 + aimDelta.y ** 2 + aimDelta.z ** 2) || 1;
+
+  return {
+    spawnPos,
+    direction: {
+      x: aimDelta.x / aimLength,
+      y: aimDelta.y / aimLength,
+      z: aimDelta.z / aimLength,
+    },
+  };
+}
 
 export interface UseBlazeAbilitiesReturn {
   // State refs
@@ -97,14 +202,21 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   // Fire Rocket (primary fire)
   const fireRocket = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const now = Date.now();
+    const holdBlend = getBlazeRocketHeldBlend(ctx.viewmodelNowMs ?? now);
+    if (holdBlend < BLAZE_ROCKET_FIRE_READY_BLEND) return;
     if (now - lastRocketTimeRef.current < BLAZE_ROCKET_FIRE_INTERVAL) return;
 
     lastRocketTimeRef.current = now;
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
-    const spawnPos = calculateProjectileSpawn(ctx.position, direction);
-
     rocketIdRef.current++;
     const rocketId = `rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
+    const launchPose = sampleBlazeRocketStaffTipPose(ctx, now, holdBlend);
+    const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
+    const { spawnPos, direction } = calculateBlazeRocketLaunch(ctx, spawnOverride);
+    assertViewmodelLaunchMatchesPose({
+      eventId: rocketId,
+      launchPosition: spawnPos,
+      pose: launchPose,
+    });
 
     useGameStore.getState().addRocket({
       id: rocketId,
@@ -126,23 +238,41 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const handleBombTargeting = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const store = useGameStore.getState();
     const bombTargeting = store.bombTargeting;
+    const now = Date.now();
+    const timestampMs = ctx.viewmodelNowMs ?? now;
+    const isHoldingSecondary = ctx.inputState.secondaryFire;
+    const wasHoldingSecondary = secondaryFirePressedRef.current;
 
-    if (ctx.inputState.secondaryFire && !secondaryFirePressedRef.current) {
-      if (bombTargeting) {
-        // Already targeting - confirm bomb drop
-        if (bombValidRef.current && bombTargetRef.current) {
-          executeBombDrop(sounds);
-        }
-      } else {
-        // Enter targeting mode
-        const now = Date.now();
+    if (isHoldingSecondary) {
+      if (!bombTargeting) {
         if (now - lastBombTimeRef.current >= BLAZE_BOMB_COOLDOWN) {
           store.setBombTargeting(true);
+          setBlazeBombTargetHeld(true, timestampMs);
           sounds.playBlazeBombTarget();
+        } else {
+          setBlazeBombTargetHeld(false, timestampMs);
         }
+      } else {
+        setBlazeBombTargetHeld(true, timestampMs);
       }
+    } else if (wasHoldingSecondary) {
+      if (bombTargeting) {
+        if (bombValidRef.current && bombTargetRef.current) {
+          executeBombDrop(sounds);
+        } else {
+          store.setBombTargeting(false, false);
+          bombTargetRef.current = null;
+          bombValidRef.current = false;
+          setBlazeBombTargetHeld(false, timestampMs);
+        }
+      } else {
+        setBlazeBombTargetHeld(false, timestampMs);
+      }
+    } else if (!bombTargeting) {
+      setBlazeBombTargetHeld(false, timestampMs);
     }
-    secondaryFirePressedRef.current = ctx.inputState.secondaryFire;
+
+    secondaryFirePressedRef.current = isHoldingSecondary;
   }, []);
 
   // Execute bomb drop
@@ -177,6 +307,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     });
 
     sounds.playBlazeBombTarget();
+    triggerBlazeStaffShockwave(now);
 
     setTimeout(() => {
       sounds.playBlazeBombExplode();
@@ -188,6 +319,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     useGameStore.getState().setBombTargeting(false, false);
     bombTargetRef.current = null;
     bombValidRef.current = false;
+    setBlazeBombTargetHeld(false, now);
   }, []);
 
   // Handle flamethrower (E ability - hold)

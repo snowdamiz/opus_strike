@@ -20,6 +20,12 @@ import {
   type PhantomPrimaryPoseSampleContext,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
+import {
+  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+  getBlazeStaffHeldBlend,
+  getBlazeStaffShockwaveEvent,
+  type BlazeRocketStaffPoseSampleContext,
+} from '../../viewmodel/blazePose';
 import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
 import {
   registerViewmodelPoseSampler,
@@ -174,6 +180,11 @@ const HOOKSHOT_LAUNCHER_TUBE_LENGTH = 0.096;
 const HOOKSHOT_LAUNCHER_TUBE_CENTER_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH * 0.5;
 const HOOKSHOT_LAUNCHER_TUBE_FRONT_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH;
 const HOOKSHOT_LAUNCHER_RING_Z = HOOKSHOT_LAUNCHER_TUBE_FRONT_Z - 0.003;
+const BLAZE_RIGHT_FOREARM_READY_BLEND = 0.025;
+const BLAZE_RIGHT_HAND_READY_BLEND = 0.035;
+const BLAZE_STAFF_POSITION = new THREE.Vector3(0.006, -0.034, -0.088);
+const BLAZE_STAFF_ROTATION = new THREE.Euler(-0.23, -0.075, 0.24, VIEWMODEL_ROOT_EULER_ORDER);
+const BLAZE_STAFF_TIP_LOCAL_POSITION = new THREE.Vector3(0, 0.592, 0);
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -213,6 +224,11 @@ const phantomSocketMatrix = new THREE.Matrix4();
 const phantomWorldMatrix = new THREE.Matrix4();
 const phantomWorldPosition = new THREE.Vector3();
 const phantomWorldQuaternion = new THREE.Quaternion();
+const blazeClosedHandInnerMatrix = new THREE.Matrix4();
+const blazeStaffMatrix = new THREE.Matrix4();
+const blazeStaffTipMatrix = new THREE.Matrix4();
+const blazeStaffPositionScratch = new THREE.Vector3();
+const blazeStaffRotationScratch = new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER);
 const phantomClosedHandPivotOffset = new THREE.Vector3(0, 0, PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z);
 const phantomClosedHandPivotWorldOffset = new THREE.Vector3();
 const PHANTOM_STILL_LOCOMOTION_POSE: PhantomLocomotionPose = {
@@ -1933,6 +1949,203 @@ function HookshotViewmodel({
   );
 }
 
+function applyBlazeRocketPoseToForearm(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  holdBlend: number
+): void {
+  if (side !== 1 || holdBlend <= 0) return;
+
+  target.position.x += side * -0.014 * holdBlend;
+  target.position.y += 0.014 * holdBlend;
+  target.position.z -= 0.076 * holdBlend;
+  target.rotation.x -= 0.088 * holdBlend;
+  target.rotation.y += side * -0.024 * holdBlend;
+  target.rotation.z += side * 0.046 * holdBlend;
+}
+
+function applyBlazeRocketPoseToHand(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  holdBlend: number
+): void {
+  if (side !== 1 || holdBlend <= 0) return;
+
+  targets.arm.position.x += side * -0.018 * holdBlend;
+  targets.arm.position.y += 0.018 * holdBlend;
+  targets.arm.position.z -= 0.092 * holdBlend;
+  targets.arm.rotation.x -= 0.095 * holdBlend;
+  targets.arm.rotation.y += side * -0.024 * holdBlend;
+  targets.arm.rotation.z += side * 0.058 * holdBlend;
+
+  targets.wrist.position.z -= 0.014 * holdBlend;
+  targets.wrist.rotation.x -= 0.128 * holdBlend;
+  targets.wrist.rotation.y += side * -0.03 * holdBlend;
+  targets.wrist.rotation.z += side * 0.034 * holdBlend;
+
+  targets.palm.position.y += 0.004 * holdBlend;
+  targets.palm.position.z -= 0.018 * holdBlend;
+  targets.palm.rotation.x -= 0.088 * holdBlend;
+  targets.palm.rotation.y += side * -0.018 * holdBlend;
+  targets.palm.rotation.z += side * 0.02 * holdBlend;
+
+  if (targets.closedHand) {
+    targets.closedHand.position.x += side * -0.018 * holdBlend;
+    targets.closedHand.position.y += 0.018 * holdBlend;
+    targets.closedHand.position.z -= 0.1 * holdBlend;
+    targets.closedHand.rotation.x -= 0.145 * holdBlend;
+    targets.closedHand.rotation.y += side * -0.034 * holdBlend;
+    targets.closedHand.rotation.z += side * 0.052 * holdBlend;
+  }
+}
+
+function writeBlazeStaffPose(
+  target: MutableTransformTarget,
+  holdBlend: number
+): void {
+  target.position.copy(BLAZE_STAFF_POSITION);
+  target.position.y += 0.006 * holdBlend;
+  target.position.z -= 0.026 * holdBlend;
+  target.rotation.copy(BLAZE_STAFF_ROTATION);
+  target.rotation.x -= 0.18 * holdBlend;
+  target.rotation.y -= 0.032 * holdBlend;
+  target.rotation.z += 0.018 * holdBlend;
+}
+
+function createBlazeRocketHandPoseTargets(): PhantomHandPoseTargets & {
+  closedHand: MutableTransformTarget;
+} {
+  return {
+    closedHand: {
+      position: new THREE.Vector3(),
+      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+    },
+    arm: {
+      position: new THREE.Vector3(),
+      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+    },
+    wrist: {
+      position: new THREE.Vector3(),
+      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+    },
+    palm: {
+      position: new THREE.Vector3(),
+      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+    },
+    thumb: {
+      position: new THREE.Vector3(),
+      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+    },
+    fingers: Array.from({ length: 4 }, () => ({
+      position: new THREE.Vector3(),
+      rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
+    })),
+  };
+}
+
+function composeBlazeRocketStaffTipMatrix({
+  camera,
+  elapsedSeconds,
+  actionBlend,
+  targetingBlend,
+  holdBlend,
+}: {
+  camera: THREE.Camera;
+  elapsedSeconds: number;
+  actionBlend: number;
+  targetingBlend: number;
+  holdBlend: number;
+}): THREE.Matrix4 {
+  const rootTransform = {
+    position: matrixPosition,
+    rotation: matrixEuler,
+  };
+  writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
+  composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
+
+  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixEuler.set(0, 0, 0);
+  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+
+  const poseTarget = createBlazeRocketHandPoseTargets();
+  writePhantomHandPose(
+    poseTarget,
+    1,
+    BLAZE_RIGHT_HAND_READY_BLEND,
+    0,
+    elapsedSeconds
+  );
+  applyBlazeRocketPoseToHand(poseTarget, 1, holdBlend);
+  composeTransformMatrix(
+    phantomArmMatrix,
+    poseTarget.closedHand.position,
+    poseTarget.closedHand.rotation
+  );
+
+  matrixPosition.set(0, 0, -PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z);
+  matrixEuler.set(0, 0, 0);
+  composeTransformMatrix(blazeClosedHandInnerMatrix, matrixPosition, matrixEuler);
+
+  writeBlazeStaffPose({
+    position: blazeStaffPositionScratch,
+    rotation: blazeStaffRotationScratch,
+  }, holdBlend);
+  composeTransformMatrix(blazeStaffMatrix, blazeStaffPositionScratch, blazeStaffRotationScratch);
+
+  matrixPosition.copy(BLAZE_STAFF_TIP_LOCAL_POSITION);
+  matrixEuler.set(0, 0, 0);
+  composeTransformMatrix(blazeStaffTipMatrix, matrixPosition, matrixEuler);
+
+  camera.updateMatrixWorld();
+  phantomWorldMatrix
+    .copy(camera.matrixWorld)
+    .multiply(viewmodelRootMatrix)
+    .multiply(phantomOffsetMatrix)
+    .multiply(phantomArmMatrix)
+    .multiply(blazeClosedHandInnerMatrix)
+    .multiply(blazeStaffMatrix)
+    .multiply(blazeStaffTipMatrix);
+
+  return phantomWorldMatrix;
+}
+
+function sampleBlazeRocketStaffTipSocket(
+  context: BlazeRocketStaffPoseSampleContext,
+  actionBlend: number,
+  targetingBlend: number
+): ViewmodelSocketPoseDraft {
+  const timestampMs = context.timestampMs ?? Date.now();
+  const holdBlend = context.holdBlend ?? getBlazeStaffHeldBlend(timestampMs);
+  const worldMatrix = composeBlazeRocketStaffTipMatrix({
+    camera: context.camera,
+    elapsedSeconds: context.elapsedSeconds,
+    actionBlend,
+    targetingBlend,
+    holdBlend,
+  });
+
+  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
+
+  return {
+    position: phantomWorldPosition.clone(),
+    quaternion: phantomWorldQuaternion.clone(),
+    timestampMs,
+  };
+}
+
+function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+const BLAZE_STAFF_SHOCKWAVE_DURATION_MS = 460;
+
 function BlazePhantomForearm({
   side,
   materials,
@@ -1950,7 +2163,15 @@ function BlazePhantomForearm({
   useFrame((state) => {
     const forearm = forearmRef.current;
     if (!forearm) return;
-    writePhantomForearmPose(forearm, side, side === 1 ? 0.025 : 0, 0, state.clock.elapsedTime);
+    const staffHoldBlend = getBlazeStaffHeldBlend(Date.now());
+    writePhantomForearmPose(
+      forearm,
+      side,
+      side === 1 ? BLAZE_RIGHT_FOREARM_READY_BLEND : 0,
+      0,
+      state.clock.elapsedTime
+    );
+    applyBlazeRocketPoseToForearm(forearm, side, staffHoldBlend);
   });
 
   return (
@@ -1970,9 +2191,114 @@ function BlazePhantomForearm({
   );
 }
 
-function BlazeWizardStaff({ materials }: { materials: ViewmodelMaterialSet }) {
+function BlazeWizardStaff({
+  materials,
+}: {
+  materials: ViewmodelMaterialSet;
+}) {
+  const staffRef = useRef<THREE.Group>(null);
+  const socketRef = useRef<THREE.Group>(null);
+  const chargeGlowRef = useRef<THREE.Group>(null);
+  const chargeCoreRef = useRef<THREE.Mesh>(null);
+  const chargeHaloRef = useRef<THREE.Mesh>(null);
+  const chargeRingRef = useRef<THREE.Mesh>(null);
+  const shockwaveRef = useRef<THREE.Group>(null);
+  const shockwaveShellRef = useRef<THREE.Mesh>(null);
+  const shockwaveRingRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const shockwaveStartMsRef = useRef(0);
+  const processedShockwaveRevisionRef = useRef(0);
+  const chargeCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff4a16), []);
+  const chargeHaloMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6f1f), []);
+  const shockwaveMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
+
+  useEffect(() => {
+    if (!socketRef.current) return undefined;
+    return registerViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef.current);
+  }, []);
+
+  useEffect(() => () => {
+    chargeCoreMaterial.dispose();
+    chargeHaloMaterial.dispose();
+    shockwaveMaterial.dispose();
+  }, [chargeCoreMaterial, chargeHaloMaterial, shockwaveMaterial]);
+
+  useFrame((state) => {
+    const staff = staffRef.current;
+    if (!staff) return;
+
+    const nowMs = Date.now();
+    const holdBlend = getBlazeStaffHeldBlend(nowMs);
+    writeBlazeStaffPose(staff, holdBlend);
+
+    const chargeGlow = chargeGlowRef.current;
+    if (!chargeGlow) return;
+
+    const visible = holdBlend > 0.012;
+    chargeGlow.visible = visible;
+    if (!visible) {
+      chargeCoreMaterial.opacity = 0;
+      chargeHaloMaterial.opacity = 0;
+    } else {
+      const pulse = 1 + Math.sin(state.clock.elapsedTime * 14.5) * 0.06 * holdBlend;
+      const coreScale = THREE.MathUtils.lerp(0.02, 0.058, holdBlend) * pulse;
+      const haloScale = THREE.MathUtils.lerp(0.045, 0.132, holdBlend) * (1 + Math.sin(state.clock.elapsedTime * 9.5) * 0.045 * holdBlend);
+      const ringScale = THREE.MathUtils.lerp(0.058, 0.15, holdBlend);
+
+      chargeCoreRef.current?.scale.setScalar(coreScale);
+      chargeHaloRef.current?.scale.setScalar(haloScale);
+      chargeRingRef.current?.scale.set(ringScale, ringScale, 1);
+      chargeCoreMaterial.opacity = THREE.MathUtils.clamp(holdBlend * 0.9, 0, 0.9);
+      chargeHaloMaterial.opacity = THREE.MathUtils.clamp(holdBlend * 0.48, 0, 0.48);
+    }
+
+    const shockwaveEvent = getBlazeStaffShockwaveEvent();
+    if (
+      shockwaveEvent.revision > 0 &&
+      shockwaveEvent.revision !== processedShockwaveRevisionRef.current
+    ) {
+      processedShockwaveRevisionRef.current = shockwaveEvent.revision;
+      shockwaveStartMsRef.current = shockwaveEvent.startedAtMs || nowMs;
+    }
+
+    const shockwave = shockwaveRef.current;
+    if (!shockwave || shockwaveStartMsRef.current <= 0) return;
+
+    const progress = THREE.MathUtils.clamp(
+      (nowMs - shockwaveStartMsRef.current) / BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
+      0,
+      1
+    );
+    const shockwaveVisible = progress < 1;
+    shockwave.visible = shockwaveVisible;
+    if (!shockwaveVisible) {
+      shockwaveMaterial.opacity = 0;
+      return;
+    }
+
+    const easedProgress = 1 - Math.pow(1 - progress, 3);
+    const shockwaveScale = THREE.MathUtils.lerp(0.06, 0.74, easedProgress);
+    const shockwaveOpacity = (1 - THREE.MathUtils.smoothstep(progress, 0.18, 1)) * 0.62;
+    shockwaveShellRef.current?.scale.setScalar(shockwaveScale);
+    shockwaveRingRefs.current.forEach((ring) => {
+      ring?.scale.set(shockwaveScale, shockwaveScale, 1);
+    });
+    shockwaveMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity, 0, 0.62);
+  });
+
   return (
-    <group position={[0.006, -0.034, -0.088]} rotation={[-0.23, -0.075, 0.24]}>
+    <group
+      ref={staffRef}
+      position={[
+        BLAZE_STAFF_POSITION.x,
+        BLAZE_STAFF_POSITION.y,
+        BLAZE_STAFF_POSITION.z,
+      ]}
+      rotation={[
+        BLAZE_STAFF_ROTATION.x,
+        BLAZE_STAFF_ROTATION.y,
+        BLAZE_STAFF_ROTATION.z,
+      ]}
+    >
       <mesh
         geometry={SHARED_GEOMETRIES.cylinder8}
         material={materials.dark}
@@ -2001,6 +2327,30 @@ function BlazeWizardStaff({ materials }: { materials: ViewmodelMaterialSet }) {
         <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.accent} rotation={[Math.PI / 2, 0, 0]} scale={[0.072, 0.072, 1]} />
         <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} rotation={[Math.PI / 2, 0, 0]} scale={[0.054, 0.054, 1]} />
         <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, 0.066, 0]} scale={[0.03, 0.082, 0.03]} />
+        <group ref={chargeGlowRef} visible={false}>
+          <mesh ref={chargeCoreRef} geometry={SHARED_GEOMETRIES.sphere16} material={chargeCoreMaterial} scale={0.001} />
+          <mesh ref={chargeHaloRef} geometry={SHARED_GEOMETRIES.sphere16} material={chargeHaloMaterial} scale={0.001} />
+          <mesh ref={chargeRingRef} geometry={SHARED_GEOMETRIES.ring24} material={chargeHaloMaterial} rotation={[Math.PI / 2, 0, 0]} scale={[0.001, 0.001, 1]} />
+        </group>
+        <group ref={shockwaveRef} visible={false}>
+          <mesh ref={shockwaveShellRef} geometry={SHARED_GEOMETRIES.sphere16} material={shockwaveMaterial} scale={0.001} />
+          {[
+            [Math.PI / 2, 0, 0],
+            [0, Math.PI / 2, 0],
+            [0, 0, Math.PI / 2],
+          ].map((rotation, index) => (
+            <mesh
+              key={index}
+              ref={(node) => {
+                shockwaveRingRefs.current[index] = node;
+              }}
+              geometry={SHARED_GEOMETRIES.ring24}
+              material={shockwaveMaterial}
+              rotation={rotation as [number, number, number]}
+              scale={[0.001, 0.001, 1]}
+            />
+          ))}
+        </group>
         <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0.041, -0.008, 0]} rotation={[0, 0, 0.28]} scale={[0.016, 0.096, 0.02]} />
         <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[-0.041, -0.008, 0]} rotation={[0, 0, -0.28]} scale={[0.016, 0.096, 0.02]} />
       </group>
@@ -2009,6 +2359,16 @@ function BlazeWizardStaff({ materials }: { materials: ViewmodelMaterialSet }) {
         <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.accent} scale={[0.032, 0.032, 0.032]} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} material={materials.metal} scale={0.034} />
       </group>
+
+      <group
+        ref={socketRef}
+        name={BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME}
+        position={[
+          BLAZE_STAFF_TIP_LOCAL_POSITION.x,
+          BLAZE_STAFF_TIP_LOCAL_POSITION.y,
+          BLAZE_STAFF_TIP_LOCAL_POSITION.z,
+        ]}
+      />
     </group>
   );
 }
@@ -2036,6 +2396,7 @@ function BlazePhantomHand({
     const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
     if (!closedHand || !arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
 
+    const staffHoldBlend = getBlazeStaffHeldBlend(Date.now());
     writePhantomHandPose(
       {
         closedHand,
@@ -2046,9 +2407,21 @@ function BlazePhantomHand({
         fingers,
       },
       side,
-      side === 1 ? 0.035 : 0,
+      side === 1 ? BLAZE_RIGHT_HAND_READY_BLEND : 0,
       0,
       state.clock.elapsedTime
+    );
+    applyBlazeRocketPoseToHand(
+      {
+        closedHand,
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      staffHoldBlend
     );
   });
 
@@ -2121,7 +2494,11 @@ function BlazePhantomHand({
   );
 }
 
-function BlazeViewmodel({ materials }: { materials: ViewmodelMaterialSet }) {
+function BlazeViewmodel({
+  materials,
+}: {
+  materials: ViewmodelMaterialSet;
+}) {
   return (
     <group position={[
       PHANTOM_VIEWMODEL_OFFSET.x,
@@ -2190,6 +2567,19 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
       unregisterRight();
       unregisterVoidRayOrb();
     };
+  }, [heroId]);
+
+  useEffect(() => {
+    if (heroId !== 'blaze') return undefined;
+
+    return registerViewmodelPoseSampler<BlazeRocketStaffPoseSampleContext>(
+      BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+      (context) => sampleBlazeRocketStaffTipSocket(
+        context,
+        actionBlendRef.current,
+        targetingBlendRef.current
+      )
+    );
   }, [heroId]);
 
   useFrame((state, delta) => {

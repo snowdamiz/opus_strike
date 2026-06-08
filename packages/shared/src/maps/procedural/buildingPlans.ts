@@ -496,7 +496,7 @@ function createMaterialProfile(theme: VoxelMapTheme, accentBlock: VoxelBlockId, 
     roof: theme.id === 'crystal' && random() > 0.72 ? 'glass' : random() > 0.5 ? 'metal' : 'stone',
     accent: accentBlock,
     glass: 'glass',
-    support: theme.id === 'verdant' && random() > 0.72 ? 'wood' : 'stone',
+    support: 'stone',
   };
 }
 

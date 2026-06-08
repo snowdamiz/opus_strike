@@ -42,6 +42,28 @@ interface GridDirection {
   dz: -1 | 0 | 1;
 }
 
+interface TreeLeafCluster {
+  centerX: number;
+  centerY: number;
+  centerZ: number;
+  radiusX: number;
+  radiusY: number;
+  radiusZ: number;
+  seed: number;
+  minY: number;
+}
+
+const TREE_BRANCH_DIRECTIONS: GridDirection[] = [
+  { dx: 1, dz: 0 },
+  { dx: 1, dz: 1 },
+  { dx: 0, dz: 1 },
+  { dx: -1, dz: 1 },
+  { dx: -1, dz: 0 },
+  { dx: -1, dz: -1 },
+  { dx: 0, dz: -1 },
+  { dx: 1, dz: -1 },
+];
+
 export interface ProceduralBuildingDiagnosticEntry {
   seed: number;
   intent: BuildingIntentId;
@@ -176,6 +198,40 @@ function recordBuildingDiagnostic(
 
 function chunkIndex(x: number, y: number, z: number, size: VoxelSize): number {
   return x + size.x * (z + size.z * y);
+}
+
+function isTreeBlock(blockId: number): boolean {
+  const block = getBlockId(blockId);
+  return block === 'wood' || block === 'leaves';
+}
+
+function hasTreeBlockNearColumn(
+  blocks: Uint8Array,
+  size: VoxelSize,
+  centerX: number,
+  centerZ: number,
+  minY: number,
+  maxY: number,
+  radius: number
+): boolean {
+  const x0 = clamp(centerX - radius, 0, size.x - 1);
+  const x1 = clamp(centerX + radius, 0, size.x - 1);
+  const z0 = clamp(centerZ - radius, 0, size.z - 1);
+  const z1 = clamp(centerZ + radius, 0, size.z - 1);
+  const y0 = clamp(minY, 0, size.y - 1);
+  const y1 = clamp(maxY, 0, size.y - 1);
+
+  for (let x = x0; x <= x1; x++) {
+    for (let z = z0; z <= z1; z++) {
+      for (let y = y0; y <= y1; y++) {
+        if (isTreeBlock(blocks[chunkIndex(x, y, z, size)])) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 function worldToGrid(value: number, origin: number): number {
@@ -892,6 +948,62 @@ function stampBoulder(
   }
 }
 
+function stampTreeTrunk(
+  setBlock: BlockSetter,
+  x: number,
+  baseY: number,
+  z: number,
+  trunkHeight: number
+): void {
+  const trunkTopY = baseY + trunkHeight;
+
+  for (let y = baseY; y <= trunkTopY; y++) {
+    setBlock(x, y, z, 'wood');
+  }
+}
+
+function getStepToward(value: number): -1 | 0 | 1 {
+  return value === 0 ? 0 : value > 0 ? 1 : -1;
+}
+
+function stampTreeBranchStub(setBlock: BlockSetter, trunkX: number, trunkZ: number, cluster: TreeLeafCluster): void {
+  const dx = getStepToward(cluster.centerX - trunkX);
+  const dz = getStepToward(cluster.centerZ - trunkZ);
+  if (dx === 0 && dz === 0) return;
+
+  const y = Math.max(cluster.minY, cluster.centerY - Math.max(1, cluster.radiusY));
+  setBlock(trunkX + dx, y, trunkZ + dz, 'wood');
+}
+
+function stampLeafCluster(setBlock: BlockSetter, cluster: TreeLeafCluster): void {
+  for (let dy = -cluster.radiusY; dy <= cluster.radiusY; dy++) {
+    const leafY = cluster.centerY + dy;
+    if (leafY < cluster.minY) continue;
+
+    for (let dx = -cluster.radiusX; dx <= cluster.radiusX; dx++) {
+      for (let dz = -cluster.radiusZ; dz <= cluster.radiusZ; dz++) {
+        const nx = dx / Math.max(1, cluster.radiusX);
+        const ny = dy / Math.max(1, cluster.radiusY);
+        const nz = dz / Math.max(1, cluster.radiusZ);
+        const distance = nx * nx + nz * nz + ny * ny * 0.82;
+        const leafNoise = fractalNoise2(
+          cluster.seed,
+          (cluster.centerX + dx) * 0.47,
+          (cluster.centerZ + dz + leafY * 0.19) * 0.47,
+          2
+        );
+        const core = distance < 0.62;
+        const edge = distance < 1.02 + leafNoise * 0.22 && leafNoise > 0.24;
+        const lowerTuft = dy < 0 && distance < 0.92 && leafNoise > 0.18;
+
+        if (!core && !edge && !lowerTuft) continue;
+
+        setBlock(cluster.centerX + dx, leafY, cluster.centerZ + dz, 'leaves');
+      }
+    }
+  }
+}
+
 function stampTree(
   setBlock: BlockSetter,
   heightMap: Uint8Array,
@@ -906,33 +1018,108 @@ function stampTree(
   const z = clamp(worldToGrid(worldZ, origin.z), 1, size.z - 2);
   const baseY = heightMap[x + z * size.x];
   const style = featureSeed % 4;
-  const crownRadiusX = worldDistanceToGridCells(scaleWorld(style === 1 ? 3 : style === 2 ? 1 : 2));
-  const crownRadiusZ = worldDistanceToGridCells(scaleWorld(style === 2 ? 3 : style === 1 ? 1 : 2));
-  const crownHeight = worldHeightToGridRows(scaleWorld(style === 3 ? 3 : 2));
-  const crownDroop = worldHeightToGridRows(scaleWorld(2));
+  const random = mulberry32(featureSeed ^ 0xa511e9b3);
+  const trunkTopY = baseY + trunkHeight;
+  const minLeafY = baseY + Math.ceil((PLAYER_HEIGHT + 0.45) / PROCEDURAL_VOXEL_SIZE.y);
+  const branchStartOffset = Math.max(
+    2,
+    Math.min(
+      trunkHeight - 2,
+      Math.max(Math.floor(trunkHeight * 0.52), minLeafY - baseY)
+    )
+  );
+  const branchVerticalSpan = Math.max(1, trunkHeight - branchStartOffset - 1);
+  const baseBranchLength = worldDistanceToGridCells(scaleWorld(style === 3 ? 1.35 : 1.15));
+  const branchCount = 3 + (featureSeed % 2) + (style === 3 ? 1 : 0);
+  const directionOffset = Math.floor(random() * TREE_BRANCH_DIRECTIONS.length);
+  const clusters: TreeLeafCluster[] = [];
 
-  for (let y = baseY; y < baseY + trunkHeight; y++) {
-    setBlock(x, y, z, 'wood');
+  for (let i = 0; i < branchCount; i++) {
+    const verticalAmount = branchCount === 1 ? 0 : i / (branchCount - 1);
+    const direction = TREE_BRANCH_DIRECTIONS[(directionOffset + i * 2 + Math.floor(i / 3)) % TREE_BRANCH_DIRECTIONS.length];
+    const diagonal = direction.dx !== 0 && direction.dz !== 0;
+    const styleStretch =
+      style === 1 && direction.dx !== 0 ? 2 :
+      style === 2 && direction.dz !== 0 ? 2 :
+      style === 3 ? 1 :
+      0;
+    const branchLength = Math.max(
+      3,
+      baseBranchLength +
+        styleStretch +
+        Math.floor(random() * 3) -
+        (diagonal ? 1 : 0) -
+        Math.floor(verticalAmount * 1.5)
+    );
+    const lateralJitter = random() < 0.52 ? (random() < 0.5 ? -1 : 1) : 0;
+    const startY = baseY + branchStartOffset + Math.floor(verticalAmount * branchVerticalSpan);
+    const endX = x + direction.dx * branchLength + (direction.dz !== 0 ? lateralJitter : 0);
+    const endZ = z + direction.dz * branchLength + (direction.dx !== 0 ? -lateralJitter : 0);
+    const endY = startY + 1 + Math.floor(random() * 3) + Math.floor(verticalAmount * 2);
+    const branchSeed = featureSeed ^ Math.imul(i + 1, 0x7feb352d);
+
+    clusters.push({
+      centerX: endX,
+      centerY: endY + Math.floor(random() * 2),
+      centerZ: endZ,
+      radiusX: worldDistanceToGridCells(scaleWorld(0.58 + random() * 0.24 + (direction.dx !== 0 ? 0.08 : 0))),
+      radiusY: worldHeightToGridRows(scaleWorld(0.5 + random() * 0.2)),
+      radiusZ: worldDistanceToGridCells(scaleWorld(0.58 + random() * 0.24 + (direction.dz !== 0 ? 0.08 : 0))),
+      seed: branchSeed,
+      minY: minLeafY,
+    });
+
+    if (branchLength <= 4 || random() > 0.58) continue;
+
+    const side = random() < 0.5 ? -1 : 1;
+    const forkDirection: GridDirection = {
+      dx: (direction.dz * side) as -1 | 0 | 1,
+      dz: (-direction.dx * side) as -1 | 0 | 1,
+    };
+    const forkLength = Math.max(2, Math.floor(branchLength * 0.44));
+    const forkStartX = Math.round(lerp(x, endX, 0.58));
+    const forkStartY = Math.round(lerp(startY, endY, 0.58));
+    const forkStartZ = Math.round(lerp(z, endZ, 0.58));
+    const forkEndX = forkStartX + forkDirection.dx * forkLength;
+    const forkEndZ = forkStartZ + forkDirection.dz * forkLength;
+    const forkEndY = forkStartY + 1 + Math.floor(random() * 2);
+
+    clusters.push({
+      centerX: forkEndX,
+      centerY: forkEndY,
+      centerZ: forkEndZ,
+      radiusX: worldDistanceToGridCells(scaleWorld(0.48 + random() * 0.16)),
+      radiusY: worldHeightToGridRows(scaleWorld(0.44 + random() * 0.16)),
+      radiusZ: worldDistanceToGridCells(scaleWorld(0.48 + random() * 0.16)),
+      seed: branchSeed ^ 0x632be59b,
+      minY: minLeafY,
+    });
   }
 
-  const crownY = baseY + trunkHeight;
-  for (let dy = -crownDroop; dy <= crownHeight; dy++) {
-    for (let dx = -crownRadiusX; dx <= crownRadiusX; dx++) {
-      for (let dz = -crownRadiusZ; dz <= crownRadiusZ; dz++) {
-        const leafNoise = fractalNoise2(featureSeed, (x + dx) * 0.9, (z + dz + dy * 3) * 0.9, 2);
-        const nx = dx / Math.max(1, crownRadiusX);
-        const nz = dz / Math.max(1, crownRadiusZ);
-        const ny = dy / Math.max(1, crownHeight);
-        const blob = nx * nx + nz * nz + ny * ny * 0.55;
-        const keep = style === 3 ? blob < 1.2 + leafNoise * 0.35 : blob < 1.05 + leafNoise * 0.28;
-        if (!keep) continue;
+  const leaderHeight = worldHeightToGridRows(scaleWorld(style === 3 ? 1.0 : 0.7));
+  const topRadius = worldDistanceToGridCells(scaleWorld(style === 3 ? 0.95 : 0.78));
+  clusters.push({
+    centerX: x,
+    centerY: trunkTopY + leaderHeight,
+    centerZ: z,
+    radiusX: topRadius,
+    radiusY: worldHeightToGridRows(scaleWorld(style === 3 ? 0.82 : 0.62)),
+    radiusZ: topRadius,
+    seed: featureSeed ^ 0x9e3779b9,
+    minY: minLeafY,
+  });
 
-        const leafY = crownY + dy;
-        if (leafY <= baseY + 1) continue;
-        setBlock(x + dx, leafY, z + dz, 'leaves');
-      }
-    }
+  stampTreeTrunk(setBlock, x, baseY, z, trunkHeight);
+
+  for (const cluster of clusters) {
+    stampTreeBranchStub(setBlock, x, z, cluster);
   }
+
+  for (const cluster of clusters) {
+    stampLeafCluster(setBlock, cluster);
+  }
+
+  stampTreeTrunk(setBlock, x, baseY, z, trunkHeight);
 }
 
 function stampCactus(
@@ -2093,7 +2280,8 @@ function stampMidfieldSightlineBreaker(
   size: VoxelSize,
   layout: ReturnType<typeof createProceduralCTFLayout>,
   featureSeed: number,
-  heightBoostRows = 0
+  heightBoostRows = 0,
+  blocks?: Uint8Array
 ): void {
   const averageSpawn = (spawns: { x: number; z: number }[]) => ({
     x: spawns.reduce((sum, spawn) => sum + spawn.x, 0) / spawns.length,
@@ -2147,6 +2335,20 @@ function stampMidfieldSightlineBreaker(
         Math.floor(spike * worldHeightToGridRows(scaleWorld(2.2)));
       const floorY = heightMap[x + z * size.x];
       const topY = clamp(floorY + heightRows, floorY + worldHeightToGridRows(4), size.y - 2);
+      if (
+        blocks &&
+        hasTreeBlockNearColumn(
+          blocks,
+          size,
+          x,
+          z,
+          floorY,
+          topY + worldHeightToGridRows(scaleWorld(1.2)),
+          worldDistanceToGridCells(scaleWorld(1.45))
+        )
+      ) {
+        continue;
+      }
 
       for (let y = floorY; y <= topY; y++) {
         const nearTop = y >= topY - 1;
@@ -2236,6 +2438,7 @@ function hasVoxelLineOfSight(
 
 function stampDirectSightlineBaffle(
   setBlock: BlockSetter,
+  blocks: Uint8Array,
   heightMap: Uint8Array,
   origin: { x: number; y: number; z: number },
   size: VoxelSize,
@@ -2287,6 +2490,19 @@ function stampDirectSightlineBaffle(
         size.y - 2
       );
       const bottomY = clamp(Math.min(surfaceY, centerEyeRow - worldHeightToGridRows(scaleWorld(2.6))), 1, topY);
+      if (
+        hasTreeBlockNearColumn(
+          blocks,
+          size,
+          x,
+          z,
+          bottomY,
+          topY + worldHeightToGridRows(scaleWorld(1.2)),
+          worldDistanceToGridCells(scaleWorld(1.25))
+        )
+      ) {
+        continue;
+      }
 
       for (let y = bottomY; y <= topY; y++) {
         const cap = y >= topY - 1;
@@ -2318,6 +2534,7 @@ function enforceSpawnSightlineOcclusion(
 
         stampDirectSightlineBaffle(
           setBlock,
+          blocks,
           heightMap,
           origin,
           size,
@@ -2349,7 +2566,8 @@ function enforceSpawnSightlineOcclusion(
     size,
     layout,
     seed ^ 0xa11ce5ee,
-    worldHeightToGridRows(5)
+    worldHeightToGridRows(5),
+    blocks
   );
 
   for (let pass = 7; pass < 10; pass++) {
@@ -2755,15 +2973,16 @@ function stampProceduralFeatures(
     const baseX = lerp(-halfPlayableX, halfPlayableX, random());
     const baseZ = lerp(-halfPlayableZ, halfPlayableZ, random());
     const radius = scaleWorld(lerp(2.8, 5.8, random()));
+    const placementRadius = theme.id === 'verdant' ? Math.max(radius, scaleWorld(6.2)) : radius;
     const trunkHeight = worldHeightToGridRows(scaleWorld(3 + Math.floor(random() * 2)));
     const featureSeed = Math.floor(random() * 0xffffffff);
 
-    if (!canPlaceFeature(layout, accepted, baseX, baseZ, radius)) {
+    if (!canPlaceFeature(layout, accepted, baseX, baseZ, placementRadius)) {
       continue;
     }
 
     stampThemedNaturalFeature(setBlock, heightMap, origin, size, theme, baseX, baseZ, trunkHeight, featureSeed);
-    accepted.push({ x: baseX, z: baseZ, radius: radius + scaleWorld(1.2) });
+    accepted.push({ x: baseX, z: baseZ, radius: placementRadius + scaleWorld(1.8) });
     grovesPlaced++;
   }
 
@@ -2776,12 +2995,16 @@ function stampProceduralFeatures(
     const radiusX = scaleWorld(lerp(1.1, 3.4, random()));
     const radiusZ = scaleWorld(lerp(1.1, 3.4, random()));
     const radius = Math.max(radiusX, radiusZ) + scaleWorld(2);
+    const preferStone = Math.abs(baseZ) < scaleWorld(13) || random() < 0.38;
+    const placementRadius =
+      !preferStone && theme.id === 'verdant'
+        ? Math.max(radius, scaleWorld(5.8))
+        : radius;
 
-    if (!canPlaceFeature(layout, accepted, baseX, baseZ, radius)) {
+    if (!canPlaceFeature(layout, accepted, baseX, baseZ, placementRadius)) {
       continue;
     }
 
-    const preferStone = Math.abs(baseZ) < scaleWorld(13) || random() < 0.38;
     const boulderHeight = worldHeightToGridRows(scaleWorld(2 + Math.floor(random() * 3)));
     const trunkHeight = worldHeightToGridRows(scaleWorld(3 + Math.floor(random() * 2)));
     const featureSeed = Math.floor(random() * 0xffffffff);
@@ -2792,7 +3015,7 @@ function stampProceduralFeatures(
       stampThemedNaturalFeature(setBlock, heightMap, origin, size, theme, baseX, baseZ, trunkHeight, featureSeed);
     }
 
-    accepted.push({ x: baseX, z: baseZ, radius: radius + scaleWorld(0.8) });
+    accepted.push({ x: baseX, z: baseZ, radius: placementRadius + scaleWorld(1.4) });
     coverPlaced++;
   }
 }

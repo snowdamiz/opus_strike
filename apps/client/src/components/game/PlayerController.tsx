@@ -21,6 +21,7 @@ import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
+import { setBlazeBombTargetHeld, setBlazeRocketHeld } from '../../viewmodel/blazePose';
 import { isDevFlyMode } from '../ui/GameConsole';
 import {
   useCamera,
@@ -207,23 +208,26 @@ export function PlayerController() {
 
       if (!isShadowStepTargeting && !isBombTargeting && !isAirStrikeTargeting && !isGrappleTrapTargeting) return;
 
-      if ((e instanceof MouseEvent && e.button === 2) || (e instanceof KeyboardEvent && e.code === 'Escape')) {
+      const isRightClick = e instanceof MouseEvent && e.button === 2;
+      const isEscape = e instanceof KeyboardEvent && e.code === 'Escape';
+      if (isRightClick || isEscape) {
         e.preventDefault();
 
-        if (isShadowStepTargeting) {
+        if (isShadowStepTargeting && (isRightClick || isEscape)) {
           store.setShadowStepTargeting(false, false);
         }
-        if (isBombTargeting) {
+        if (isBombTargeting && isEscape) {
           store.setBombTargeting(false, false);
           blazeAbilities.bombTargetRef.current = null;
           blazeAbilities.bombValidRef.current = false;
+          setBlazeBombTargetHeld(false);
         }
-        if (isAirStrikeTargeting) {
+        if (isAirStrikeTargeting && (isRightClick || isEscape)) {
           store.setAirStrikeTargeting(false, false);
           blazeAbilities.airStrikeTargetRef.current = null;
           blazeAbilities.airStrikeValidRef.current = false;
         }
-        if (isGrappleTrapTargeting) {
+        if (isGrappleTrapTargeting && (isRightClick || isEscape)) {
           store.setGrappleTrapTargeting(false, false);
           hookshotAbilities.grappleTrapTargetRef.current = null;
           hookshotAbilities.grappleTrapValidRef.current = false;
@@ -253,9 +257,12 @@ export function PlayerController() {
   useFrame((frameState, delta) => {
     const localPlayer = useGameStore.getState().localPlayer;
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
+    const now = Date.now();
 
     if (!localPlayer) {
-      setPhantomPrimaryHeld(false);
+      setPhantomPrimaryHeld(false, now);
+      setBlazeRocketHeld(false, now);
+      setBlazeBombTargetHeld(false, now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       phantomAbilities.resetPhantomPrimaryMagazine();
@@ -278,11 +285,13 @@ export function PlayerController() {
       setFlamethrowerActive(false);
       setIceWallRushActive(false);
       phantomAbilities.resetPhantomPrimaryMagazine();
+      setPhantomPrimaryHeld(false, now);
+      setBlazeRocketHeld(false, now);
+      setBlazeBombTargetHeld(false, now);
       stopFlamethrowerSound();
     }
 
     const dt = Math.min(delta, 0.1);
-    const now = Date.now();
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
     const frameInput = isPointerLocked ? inputState : INACTIVE_INPUT_STATE;
@@ -290,6 +299,8 @@ export function PlayerController() {
 
     if (!isPlaying || localPlayer.state !== 'alive') {
       setPhantomPrimaryHeld(false, now);
+      setBlazeRocketHeld(false, now);
+      setBlazeBombTargetHeld(false, now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
@@ -302,6 +313,8 @@ export function PlayerController() {
 
     if (devFlyMode) {
       setPhantomPrimaryHeld(false, now);
+      setBlazeRocketHeld(false, now);
+      setBlazeBombTargetHeld(false, now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       const position = positionRef.current;
@@ -498,6 +511,10 @@ export function PlayerController() {
       : frameInput.primaryFire;
     setPhantomPrimaryHeld(
       heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire && !phantomPrimaryReloading,
+      now
+    );
+    setBlazeRocketHeld(
+      heroId === 'blaze' && !bombTargeting && frameInput.primaryFire,
       now
     );
     if (heroDef) {
