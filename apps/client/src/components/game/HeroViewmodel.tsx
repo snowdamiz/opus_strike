@@ -6,6 +6,7 @@ import {
   HERO_DEFINITIONS,
   PHANTOM_PRIMARY_RELOAD_MS,
   SPRINT_MULTIPLIER,
+  VOID_RAY_CHARGE_TIME,
   type HeroId,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
@@ -65,6 +66,11 @@ interface PhantomPrimaryAttackState {
   startTimeMs: number;
 }
 
+interface PhantomVoidRayReleaseState {
+  eventId: string;
+  startTimeMs: number;
+}
+
 interface PhantomHandPoseTargets {
   closedHand?: MutableTransformTarget;
   arm: MutableTransformTarget;
@@ -100,6 +106,19 @@ interface PhantomReloadPose {
   shakeRotZ: number;
 }
 
+interface PhantomVoidRayChargePose {
+  active: boolean;
+  progress: number;
+  blend: number;
+  energy: number;
+  glowOpacity: number;
+  orbOpacity: number;
+  orbScale: number;
+  shakeX: number;
+  shakeY: number;
+  shakeZ: number;
+}
+
 const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
 const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
 const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.4);
@@ -130,6 +149,8 @@ const PHANTOM_IDLE_HAND_ROTATION = {
 const PHANTOM_RELOAD_PULLBACK_Z = 0.092;
 const PHANTOM_RELOAD_INWARD_X = 0.034;
 const PHANTOM_RELOAD_LIFT_Y = 0.018;
+const PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS = 0.5;
+const PHANTOM_VOID_RAY_ORB_POSITION = new THREE.Vector3(0, -0.472, -0.72);
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -141,6 +162,18 @@ const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   shakeRotX: 0,
   shakeRotY: 0,
   shakeRotZ: 0,
+};
+const PHANTOM_VOID_RAY_IDLE_CHARGE_POSE: PhantomVoidRayChargePose = {
+  active: false,
+  progress: 0,
+  blend: 0,
+  energy: 0,
+  glowOpacity: 0,
+  orbOpacity: 0,
+  orbScale: 0,
+  shakeX: 0,
+  shakeY: 0,
+  shakeZ: 0,
 };
 
 const matrixPosition = new THREE.Vector3();
@@ -338,6 +371,31 @@ function getPhantomReloadPose(nowMs: number, elapsedSeconds: number, side: -1 | 
   };
 }
 
+function getPhantomVoidRayChargePose(nowMs: number, elapsedSeconds: number): PhantomVoidRayChargePose {
+  const store = useGameStore.getState();
+  if (!store.voidRayCharging) return PHANTOM_VOID_RAY_IDLE_CHARGE_POSE;
+
+  const start = store.voidRayChargeStart || nowMs;
+  const progress = THREE.MathUtils.clamp((nowMs - start) / VOID_RAY_CHARGE_TIME, 0, 1);
+  const blend = THREE.MathUtils.smoothstep(progress, 0, 0.32);
+  const energy = THREE.MathUtils.smoothstep(progress, 0.08, 1);
+  const pulse = 0.66 + Math.sin(elapsedSeconds * 15.5) * 0.16 + Math.sin(elapsedSeconds * 29.0) * 0.08;
+  const shakeStrength = blend * THREE.MathUtils.lerp(0.2, 1, energy);
+
+  return {
+    active: true,
+    progress,
+    blend,
+    energy,
+    glowOpacity: THREE.MathUtils.clamp(blend * (0.22 + energy * 0.68) * pulse, 0, 0.88),
+    orbOpacity: THREE.MathUtils.clamp(blend * (0.18 + energy * 0.72), 0, 0.92),
+    orbScale: THREE.MathUtils.lerp(0.025, 0.142, energy) * (1 + Math.sin(elapsedSeconds * 9.5) * 0.035 * blend),
+    shakeX: Math.sin(elapsedSeconds * 43) * 0.0019 * shakeStrength,
+    shakeY: Math.sin(elapsedSeconds * 51 + 0.7) * 0.0017 * shakeStrength,
+    shakeZ: Math.sin(elapsedSeconds * 47 + 1.2) * 0.0021 * shakeStrength,
+  };
+}
+
 function applyPhantomReloadMotion(
   target: MutableTransformTarget,
   side: -1 | 1,
@@ -353,6 +411,178 @@ function applyPhantomReloadMotion(
   target.rotation.x += reloadPose.shakeRotX * intensity - 0.028 * blend;
   target.rotation.y += reloadPose.shakeRotY * intensity + side * 0.018 * blend;
   target.rotation.z += reloadPose.shakeRotZ * intensity + side * -0.026 * blend;
+}
+
+function getPhantomVoidRayReleasePulse(
+  release: PhantomVoidRayReleaseState | null,
+  nowMs: number
+): number {
+  if (!release) return 0;
+  return getPhantomPrimaryShotPulse((nowMs - release.startTimeMs) / 1000);
+}
+
+function getPhantomVoidRayReleaseExtensionBlend(
+  release: PhantomVoidRayReleaseState | null,
+  nowMs: number
+): number {
+  if (!release) return 0;
+
+  const elapsedSeconds = (nowMs - release.startTimeMs) / 1000;
+  const releaseElapsedSeconds = elapsedSeconds - PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
+  if (releaseElapsedSeconds < 0) {
+    return THREE.MathUtils.smoothstep(
+      elapsedSeconds,
+      0,
+      PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS
+    );
+  }
+  if (releaseElapsedSeconds < 0.32) return 1;
+  if (releaseElapsedSeconds < PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS) {
+    return 1 - THREE.MathUtils.smoothstep(
+      releaseElapsedSeconds,
+      0.32,
+      PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS
+    );
+  }
+  return 0;
+}
+
+function applyPhantomVoidRayChargeForearmPose(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  chargePose: PhantomVoidRayChargePose,
+  intensity = 1
+): void {
+  if (!chargePose.active || chargePose.blend <= 0) return;
+
+  const blend = chargePose.blend * intensity;
+  const energy = chargePose.energy;
+  target.position.x += side * (-0.048 * blend + chargePose.shakeX * intensity);
+  target.position.y += (0.018 + energy * 0.01) * blend + chargePose.shakeY * intensity;
+  target.position.z += (-0.018 - energy * 0.006) * blend + chargePose.shakeZ * intensity;
+  target.rotation.x += (-0.078 - energy * 0.024) * blend;
+  target.rotation.y += side * (0.032 + energy * 0.018) * blend;
+  target.rotation.z += side * (0.12 + energy * 0.032) * blend;
+}
+
+function applyPhantomVoidRayReleaseForearmPose(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  releaseBlend: number
+): void {
+  if (releaseBlend <= 0) return;
+
+  target.position.x += side * -0.034 * releaseBlend;
+  target.position.y += 0.022 * releaseBlend;
+  target.position.z += -0.052 * releaseBlend;
+  target.rotation.x += -0.06 * releaseBlend;
+  target.rotation.y += side * -0.016 * releaseBlend;
+  target.rotation.z += side * 0.07 * releaseBlend;
+}
+
+function applyPhantomVoidRayChargeHandPose(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  chargePose: PhantomVoidRayChargePose,
+  elapsedSeconds: number
+): void {
+  if (!chargePose.active || chargePose.blend <= 0) return;
+
+  const blend = chargePose.blend;
+  const energy = chargePose.energy;
+  const sideSign = side;
+  const thumbSide = -sideSign;
+  const breathingLift = Math.sin(elapsedSeconds * 7.4 + sideSign * 0.6) * 0.0025 * blend;
+
+  targets.arm.position.x += sideSign * (-0.062 * blend + chargePose.shakeX);
+  targets.arm.position.y += (0.022 + energy * 0.012) * blend + breathingLift + chargePose.shakeY;
+  targets.arm.position.z += (-0.022 - energy * 0.008) * blend + chargePose.shakeZ;
+  targets.arm.rotation.x += (-0.048 - energy * 0.022) * blend;
+  targets.arm.rotation.y += sideSign * (-0.072 - energy * 0.018) * blend;
+  targets.arm.rotation.z += sideSign * (0.13 + energy * 0.032) * blend;
+
+  targets.wrist.rotation.x += (-0.03 - energy * 0.018) * blend;
+  targets.wrist.rotation.y += sideSign * (0.032 + energy * 0.018) * blend;
+  targets.wrist.rotation.z += sideSign * (0.075 + energy * 0.022) * blend;
+
+  targets.palm.position.x += sideSign * -0.012 * blend;
+  targets.palm.position.y += 0.01 * blend;
+  targets.palm.position.z += -0.018 * blend;
+  targets.palm.rotation.x += 0.05 * blend;
+  targets.palm.rotation.y += sideSign * -0.028 * blend;
+  targets.palm.rotation.z += sideSign * 0.026 * blend;
+
+  targets.thumb.position.x += thumbSide * (0.022 + energy * 0.01) * blend;
+  targets.thumb.position.y += 0.012 * blend;
+  targets.thumb.position.z += -0.012 * blend;
+  targets.thumb.rotation.x += (-0.048 - energy * 0.015) * blend;
+  targets.thumb.rotation.y += thumbSide * (0.095 + energy * 0.02) * blend;
+  targets.thumb.rotation.z += thumbSide * (-0.12 - energy * 0.03) * blend;
+
+  for (let index = 0; index < targets.fingers.length; index++) {
+    const finger = targets.fingers[index];
+    const fingerIndexOffset = index - 1.5;
+    const outsideBias = Math.abs(fingerIndexOffset);
+    finger.position.x += fingerIndexOffset * 0.01 * blend;
+    finger.position.y += (0.014 + energy * 0.006 - outsideBias * 0.001) * blend;
+    finger.position.z += (-0.012 - energy * 0.005) * blend;
+    finger.rotation.x += (-0.075 - energy * 0.026) * blend;
+    finger.rotation.y += -fingerIndexOffset * (0.025 + energy * 0.01) * blend;
+    finger.rotation.z += -fingerIndexOffset * (0.13 + energy * 0.04) * blend;
+  }
+
+  if (targets.closedHand) {
+    targets.closedHand.rotation.copy(targets.arm.rotation);
+    phantomClosedHandPivotWorldOffset
+      .copy(phantomClosedHandPivotOffset)
+      .applyEuler(targets.closedHand.rotation);
+    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
+  }
+}
+
+function applyPhantomVoidRayReleaseHandPose(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  releaseBlend: number
+): void {
+  if (releaseBlend <= 0) return;
+
+  const sideSign = side;
+  const thumbSide = -sideSign;
+
+  targets.arm.position.x += sideSign * -0.046 * releaseBlend;
+  targets.arm.position.y += 0.032 * releaseBlend;
+  targets.arm.position.z += -0.064 * releaseBlend;
+  targets.arm.rotation.x += -0.056 * releaseBlend;
+  targets.arm.rotation.y += sideSign * -0.036 * releaseBlend;
+  targets.arm.rotation.z += sideSign * 0.078 * releaseBlend;
+
+  targets.wrist.rotation.x += -0.026 * releaseBlend;
+  targets.wrist.rotation.y += sideSign * 0.018 * releaseBlend;
+  targets.wrist.rotation.z += sideSign * 0.026 * releaseBlend;
+
+  targets.palm.position.z += -0.012 * releaseBlend;
+  targets.palm.rotation.x += 0.035 * releaseBlend;
+  targets.palm.rotation.y += sideSign * -0.018 * releaseBlend;
+
+  targets.thumb.position.x += thumbSide * 0.012 * releaseBlend;
+  targets.thumb.rotation.y += thumbSide * 0.035 * releaseBlend;
+  targets.thumb.rotation.z += thumbSide * -0.048 * releaseBlend;
+
+  for (let index = 0; index < targets.fingers.length; index++) {
+    const finger = targets.fingers[index];
+    const fingerIndexOffset = index - 1.5;
+    finger.rotation.x += -0.038 * releaseBlend;
+    finger.rotation.z += -fingerIndexOffset * 0.045 * releaseBlend;
+  }
+
+  if (targets.closedHand) {
+    targets.closedHand.rotation.copy(targets.arm.rotation);
+    phantomClosedHandPivotWorldOffset
+      .copy(phantomClosedHandPivotOffset)
+      .applyEuler(targets.closedHand.rotation);
+    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
+  }
 }
 
 function composeTransformMatrix(
@@ -800,15 +1030,19 @@ function PhantomAnimatedForearm({
   side,
   materials,
   primaryAttackRef,
+  voidRayReleaseRef,
   locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+  voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
   locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
+  const rearLength = 0.38;
+  const rearCenterZ = length * 0.5 + rearLength * 0.5 - 0.018;
   const width = 0.074;
   const thickness = 0.066;
   const reloadGlowMaterial = useMemo(createPhantomReloadGlowMaterial, []);
@@ -827,8 +1061,17 @@ function PhantomAnimatedForearm({
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
-    const holdBlend = reloadPose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
-    const shotPulse = reloadPose.active ? 0 : getPhantomPrimaryShotPulse(attackTimeSeconds);
+    const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const voidRayReleasePulse = reloadPose.active
+      ? 0
+      : getPhantomVoidRayReleasePulse(voidRayReleaseRef.current, nowMs);
+    const voidRayReleaseExtensionBlend = reloadPose.active
+      ? 0
+      : getPhantomVoidRayReleaseExtensionBlend(voidRayReleaseRef.current, nowMs);
+    const baseHoldBlend = reloadPose.active || chargePose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
+    const holdBlend = Math.max(baseHoldBlend, voidRayReleasePulse, voidRayReleaseExtensionBlend * 0.78);
+    const primaryShotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
+    const shotPulse = reloadPose.active ? 0 : Math.max(primaryShotPulse, voidRayReleasePulse);
     writePhantomForearmPose(
       forearm,
       side,
@@ -837,12 +1080,22 @@ function PhantomAnimatedForearm({
       state.clock.elapsedTime,
       locomotionRef.current
     );
+    applyPhantomVoidRayChargeForearmPose(forearm, side, chargePose, 0.92);
+    applyPhantomVoidRayReleaseForearmPose(forearm, side, voidRayReleaseExtensionBlend);
     applyPhantomReloadMotion(forearm, side, reloadPose, 0.82);
-    reloadGlowMaterial.opacity = reloadPose.glowOpacity * 0.42;
+    reloadGlowMaterial.opacity = Math.max(
+      reloadPose.glowOpacity * 0.42,
+      chargePose.glowOpacity * 0.58,
+      voidRayReleasePulse * 0.36,
+      voidRayReleaseExtensionBlend * 0.24
+    );
   });
 
   return (
     <group ref={forearmRef} position={[side * 0.34, -0.58, -0.43]} rotation={[0.22, side * -0.18, side * -0.06]}>
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -thickness * 0.04, rearCenterZ]} scale={[width * 0.86, thickness * 1.08, rearLength]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.28, rearCenterZ - rearLength * 0.06]} scale={[width * 0.96, thickness * 0.58, rearLength * 0.72]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.64, rearCenterZ - rearLength * 0.05]} scale={[width * 0.56, Math.max(0.014, thickness * 0.18), rearLength * 0.38]} />
       <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[width * 0.72, thickness, length]} />
       <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.27, -0.06]} scale={[width, thickness * 0.7, length * 0.7]} />
       <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.005, -length * 0.5]} scale={[width * 0.86, thickness, 0.1]} />
@@ -857,11 +1110,13 @@ function PhantomPoseableHand({
   side,
   materials,
   primaryAttackRef,
+  voidRayReleaseRef,
   locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+  voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
   locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const closedVisualRef = useRef<THREE.Group>(null);
@@ -900,10 +1155,28 @@ function PhantomPoseableHand({
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
-    const holdBlend = reloadPose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
-    const shotPulse = reloadPose.active ? 0 : getPhantomPrimaryShotPulse(attackTimeSeconds);
-    const openVisualBlend = THREE.MathUtils.smoothstep(holdBlend, 0.02, 0.72);
-    const closedVisualBlend = 1 - THREE.MathUtils.smoothstep(holdBlend, 0, 0.5);
+    const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const voidRayReleasePulse = reloadPose.active
+      ? 0
+      : getPhantomVoidRayReleasePulse(voidRayReleaseRef.current, nowMs);
+    const voidRayReleaseExtensionBlend = reloadPose.active
+      ? 0
+      : getPhantomVoidRayReleaseExtensionBlend(voidRayReleaseRef.current, nowMs);
+    const baseHoldBlend = reloadPose.active || chargePose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
+    const holdBlend = Math.max(baseHoldBlend, voidRayReleasePulse, voidRayReleaseExtensionBlend * 0.82);
+    const primaryShotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
+    const shotPulse = reloadPose.active ? 0 : Math.max(primaryShotPulse, voidRayReleasePulse);
+    const chargeOpenBlend = reloadPose.active ? 0 : chargePose.blend;
+    const openVisualBlend = THREE.MathUtils.smoothstep(
+      Math.max(holdBlend, chargeOpenBlend),
+      0.02,
+      0.72
+    );
+    const closedVisualBlend = 1 - THREE.MathUtils.smoothstep(
+      Math.max(holdBlend, chargeOpenBlend),
+      0,
+      0.5
+    );
 
     if (closedVisual) {
       closedVisual.visible = closedVisualBlend > 0.025;
@@ -930,11 +1203,41 @@ function PhantomPoseableHand({
       state.clock.elapsedTime,
       locomotionRef.current
     );
+    applyPhantomVoidRayChargeHandPose(
+      {
+        ...(closedVisual ? { closedHand: closedVisual } : {}),
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      chargePose,
+      state.clock.elapsedTime
+    );
+    applyPhantomVoidRayReleaseHandPose(
+      {
+        ...(closedVisual ? { closedHand: closedVisual } : {}),
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      voidRayReleaseExtensionBlend
+    );
     applyPhantomReloadMotion(arm, side, reloadPose);
     if (closedVisual) {
       applyPhantomReloadMotion(closedVisual, side, reloadPose);
     }
-    reloadGlowMaterial.opacity = reloadPose.glowOpacity * 0.62;
+    reloadGlowMaterial.opacity = Math.max(
+      reloadPose.glowOpacity * 0.62,
+      chargePose.glowOpacity * 0.86,
+      voidRayReleasePulse * 0.5,
+      voidRayReleaseExtensionBlend * 0.34
+    );
   });
 
   return (
@@ -1054,6 +1357,24 @@ function PhantomPoseableHand({
                 position={[0, 0, 0.058]}
                 scale={[0.074, 0.088, 0.032]}
               />
+              <mesh
+                geometry={SHARED_GEOMETRIES.box}
+                material={reloadGlowMaterial}
+                position={[0, 0.018, -0.012]}
+                scale={[0.126, 0.15, 0.072]}
+              />
+              <mesh
+                geometry={SHARED_GEOMETRIES.box}
+                material={reloadGlowMaterial}
+                position={[0, 0.096, -0.034]}
+                scale={[0.126, 0.112, 0.048]}
+              />
+              <mesh
+                geometry={SHARED_GEOMETRIES.box}
+                material={reloadGlowMaterial}
+                position={[thumbSide * 0.058, 0.01, -0.032]}
+                scale={[0.062, 0.05, 0.044]}
+              />
             </group>
 
             <group
@@ -1072,13 +1393,91 @@ function PhantomPoseableHand({
   );
 }
 
+function createPhantomVoidRayChargeOrbMaterial(color: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+function PhantomVoidRayChargeOrb() {
+  const groupRef = useRef<THREE.Group>(null);
+  const coreRef = useRef<THREE.Mesh>(null);
+  const shellRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const coreMaterial = useMemo(() => createPhantomVoidRayChargeOrbMaterial(PHANTOM_COLORS.white), []);
+  const shellMaterial = useMemo(() => createPhantomVoidRayChargeOrbMaterial(PHANTOM_COLORS.lightPurple), []);
+  const haloMaterial = useMemo(() => createPhantomVoidRayChargeOrbMaterial(PHANTOM_COLORS.cyan), []);
+
+  useEffect(() => () => {
+    coreMaterial.dispose();
+    shellMaterial.dispose();
+    haloMaterial.dispose();
+  }, [coreMaterial, haloMaterial, shellMaterial]);
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    const core = coreRef.current;
+    const shell = shellRef.current;
+    const halo = haloRef.current;
+    if (!group || !core || !shell || !halo) return;
+
+    const chargePose = getPhantomVoidRayChargePose(Date.now(), state.clock.elapsedTime);
+    const visible = chargePose.active && chargePose.blend > 0.015;
+    group.visible = visible;
+
+    if (!visible) {
+      coreMaterial.opacity = 0;
+      shellMaterial.opacity = 0;
+      haloMaterial.opacity = 0;
+      return;
+    }
+
+    const orbScale = Math.max(0.001, chargePose.orbScale);
+    const energyPulse = 1 + Math.sin(state.clock.elapsedTime * 18.5) * 0.045 * chargePose.blend;
+
+    group.position.copy(PHANTOM_VOID_RAY_ORB_POSITION);
+    group.rotation.set(
+      state.clock.elapsedTime * 0.22,
+      state.clock.elapsedTime * 0.5,
+      state.clock.elapsedTime * 0.34
+    );
+
+    core.scale.setScalar(orbScale * energyPulse);
+    shell.scale.setScalar(orbScale * 1.72);
+    halo.scale.set(orbScale * 2.7, orbScale * 2.7, orbScale * 0.18);
+
+    coreMaterial.opacity = chargePose.orbOpacity;
+    shellMaterial.opacity = chargePose.orbOpacity * 0.48;
+    haloMaterial.opacity = chargePose.orbOpacity * 0.36;
+  });
+
+  return (
+    <group ref={groupRef} position={[
+      PHANTOM_VOID_RAY_ORB_POSITION.x,
+      PHANTOM_VOID_RAY_ORB_POSITION.y,
+      PHANTOM_VOID_RAY_ORB_POSITION.z,
+    ]} visible={false}>
+      <mesh ref={coreRef} geometry={SHARED_GEOMETRIES.sphere12} material={coreMaterial} scale={0.001} />
+      <mesh ref={shellRef} geometry={SHARED_GEOMETRIES.sphere16} material={shellMaterial} scale={0.001} />
+      <mesh ref={haloRef} geometry={SHARED_GEOMETRIES.ring24} material={haloMaterial} scale={0.001} />
+    </group>
+  );
+}
+
 function PhantomViewmodel({
   materials,
   primaryAttackRef,
+  voidRayReleaseRef,
   locomotionRef,
 }: {
   materials: ViewmodelMaterialSet;
   primaryAttackRef: MutableRefObject<PhantomPrimaryAttackState | null>;
+  voidRayReleaseRef: MutableRefObject<PhantomVoidRayReleaseState | null>;
   locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   return (
@@ -1087,10 +1486,11 @@ function PhantomViewmodel({
       PHANTOM_VIEWMODEL_OFFSET.y,
       PHANTOM_VIEWMODEL_OFFSET.z,
     ]}>
-      <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
-      <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
-      <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
-      <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} locomotionRef={locomotionRef} />
+      <PhantomAnimatedForearm side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomAnimatedForearm side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
+      <PhantomVoidRayChargeOrb />
     </group>
   );
 }
@@ -1203,11 +1603,13 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const rootRef = useRef<THREE.Group>(null);
-  const actionBlendRef = useRef(action.active || action.charging ? 1 : 0);
+  const actionBlendRef = useRef(action.active ? 1 : 0);
   const targetingBlendRef = useRef(action.targeting ? 1 : 0);
   const phantomPrimaryAttackRef = useRef<PhantomPrimaryAttackState | null>(null);
+  const phantomVoidRayReleaseRef = useRef<PhantomVoidRayReleaseState | null>(null);
   const phantomLocomotionRef = useRef<PhantomLocomotionRuntime>(createPhantomLocomotionRuntime());
   const processedPhantomPrimaryEventIdRef = useRef<string | null>(null);
+  const processedPhantomVoidRayEventIdRef = useRef<string | null>(null);
   const materials = useMemo(() => getViewmodelMaterials(heroId), [heroId]);
 
   useEffect(() => {
@@ -1244,7 +1646,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
     const liveAction = getActionState(heroId);
     actionBlendRef.current = THREE.MathUtils.damp(
       actionBlendRef.current,
-      liveAction.active || liveAction.charging ? 1 : 0,
+      liveAction.active ? 1 : 0,
       9,
       delta
     );
@@ -1268,6 +1670,15 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
       const store = useGameStore.getState();
       const localPlayerId = store.localPlayer?.id;
       if (localPlayerId) {
+        const release = phantomVoidRayReleaseRef.current;
+        if (
+          release &&
+          Date.now() - release.startTimeMs >
+            (PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS + PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS) * 1000
+        ) {
+          phantomVoidRayReleaseRef.current = null;
+        }
+
         for (let index = store.direBalls.length - 1; index >= 0; index--) {
           const ball = store.direBalls[index];
           if (ball.ownerId !== localPlayerId) continue;
@@ -1280,6 +1691,20 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
               eventId,
               side: ball.launchSide,
               startTimeMs: ball.startTime - PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS * 1000,
+            };
+          }
+          break;
+        }
+
+        for (let index = store.voidRays.length - 1; index >= 0; index--) {
+          const ray = store.voidRays[index];
+          if (ray.ownerId !== localPlayerId) continue;
+
+          if (processedPhantomVoidRayEventIdRef.current !== ray.id) {
+            processedPhantomVoidRayEventIdRef.current = ray.id;
+            phantomVoidRayReleaseRef.current = {
+              eventId: ray.id,
+              startTimeMs: ray.startTime - PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS * 1000,
             };
           }
           break;
@@ -1297,6 +1722,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
           <PhantomViewmodel
             materials={materials}
             primaryAttackRef={phantomPrimaryAttackRef}
+            voidRayReleaseRef={phantomVoidRayReleaseRef}
             locomotionRef={phantomLocomotionRef}
           />
         )}
