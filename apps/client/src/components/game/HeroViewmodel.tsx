@@ -2159,18 +2159,36 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
           break;
         }
 
+        let latestSecondaryEvent: { id: string; startTime: number } | null = null;
+
         for (let index = store.dragHooks.length - 1; index >= 0; index--) {
           const hook = store.dragHooks[index];
           if (hook.ownerId !== localPlayerId) continue;
 
-          if (processedHookshotSecondaryEventIdRef.current !== hook.id) {
-            processedHookshotSecondaryEventIdRef.current = hook.id;
-            hookshotSecondaryFireRef.current = {
-              eventId: hook.id,
-              startTimeMs: hook.startTime,
-            };
+          latestSecondaryEvent = { id: hook.id, startTime: hook.startTime };
+          break;
+        }
+
+        for (let index = store.grappleLines.length - 1; index >= 0; index--) {
+          const line = store.grappleLines[index];
+          if (line.ownerId !== localPlayerId) continue;
+          if (line.state === 'done') continue;
+
+          if (!latestSecondaryEvent || line.startTime > latestSecondaryEvent.startTime) {
+            latestSecondaryEvent = { id: line.id, startTime: line.startTime };
           }
           break;
+        }
+
+        if (
+          latestSecondaryEvent &&
+          processedHookshotSecondaryEventIdRef.current !== latestSecondaryEvent.id
+        ) {
+          processedHookshotSecondaryEventIdRef.current = latestSecondaryEvent.id;
+          hookshotSecondaryFireRef.current = {
+            eventId: latestSecondaryEvent.id,
+            startTimeMs: latestSecondaryEvent.startTime,
+          };
         }
       }
     }

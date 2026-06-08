@@ -302,7 +302,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     // Create grapple line visual
     grappleLineIdRef.current++;
     const lineId = `grapple_${ctx.localPlayer.id}_${grappleLineIdRef.current}`;
-    const launchSide = grappleLineIdRef.current % 2 === 1 ? 1 : -1;
+    const launchSide = 1;
     const startPos = readHookshotHookSocketPosition(launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
       ...HOOKSHOT_CHAIN_SOCKET,
       sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
