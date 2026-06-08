@@ -38,10 +38,11 @@ interface NetworkContextType {
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
   setLobbyTeam: (team: string) => void;
-  addLobbyBot: (options?: { difficulty?: BotDifficulty; team?: string; name?: string }) => void;
+  addLobbyBot: (options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => void;
   removeLobbyBot: (botId: string) => void;
   updateLobbyBotTeam: (botId: string, team: string) => void;
   updateLobbyBotDifficulty: (botId: string, difficulty: BotDifficulty) => void;
+  updateLobbyBotHero: (botId: string, heroId: HeroId | '') => void;
   startGame: () => void;
   voteMap: (optionId: string) => void;
   reportMapVotePreviewsReady: () => void;
@@ -290,6 +291,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    room.onMessage('botHeroChanged', (data: { playerId: string; heroId: HeroId | '' }) => {
+      const store = useGameStore.getState();
+      const player = store.lobbyPlayers.get(data.playerId);
+      if (player) {
+        updateLobbyPlayer(data.playerId, { ...player, heroId: data.heroId });
+      }
+    });
+
     room.onMessage('hostChanged', (data: { newHostId: string; newHostName: string }) => {
       loggers.network.debug('host changed', data.newHostName);
       setIsLobbyHost(data.newHostId === room.sessionId);
@@ -438,7 +447,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('setTeam', { team });
   }, []);
 
-  const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string }) => {
+  const addLobbyBot = useCallback((options?: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }) => {
     lobbyRoomRef.current?.send('addBot', options || {});
   }, []);
 
@@ -452,6 +461,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const updateLobbyBotDifficulty = useCallback((botId: string, difficulty: BotDifficulty) => {
     lobbyRoomRef.current?.send('updateBotDifficulty', { botId, difficulty });
+  }, []);
+
+  const updateLobbyBotHero = useCallback((botId: string, heroId: HeroId | '') => {
+    lobbyRoomRef.current?.send('updateBotHero', { botId, heroId });
   }, []);
 
   const startGame = useCallback(() => {
@@ -728,6 +741,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       removeLobbyBot,
       updateLobbyBotTeam,
       updateLobbyBotDifficulty,
+      updateLobbyBotHero,
       startGame,
       voteMap,
       reportMapVotePreviewsReady,

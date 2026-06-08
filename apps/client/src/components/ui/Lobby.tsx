@@ -2,9 +2,15 @@ import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
-import { DEFAULT_GAME_CONFIG, type BotDifficulty } from '@voxel-strike/shared';
+import {
+  ALL_HERO_IDS,
+  DEFAULT_GAME_CONFIG,
+  HERO_DEFINITIONS,
+  type BotDifficulty,
+  type HeroId,
+} from '@voxel-strike/shared';
 import type { LobbyPlayer } from '../../store/gameStore';
-import { FACTIONS } from '../../styles/colorTokens';
+import { FACTIONS, HERO_COLORS } from '../../styles/colorTokens';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -49,6 +55,7 @@ function BotIcon({ className }: { className?: string }) {
 }
 
 type LobbyTeam = 'red' | 'blue';
+type LobbyBotHero = HeroId | '';
 
 type InlinePickerOption<T extends string> = {
   value: T;
@@ -65,6 +72,18 @@ const BOT_TEAM_OPTIONS = [
   { value: 'red', label: 'Sol' },
   { value: 'blue', label: 'Void' },
 ] satisfies readonly InlinePickerOption<LobbyTeam>[];
+
+const BOT_HERO_OPTIONS: readonly InlinePickerOption<LobbyBotHero>[] = [
+  { value: '', label: 'Random' },
+  ...ALL_HERO_IDS.map((heroId) => ({
+    value: heroId,
+    label: HERO_DEFINITIONS[heroId].name,
+  })),
+];
+
+function isHeroId(value: string | undefined): value is HeroId {
+  return ALL_HERO_IDS.includes(value as HeroId);
+}
 
 interface InlinePickerProps<T extends string> {
   label: string;
@@ -123,7 +142,7 @@ function InlinePicker<T extends string>({
             const isSelected = option.value === value;
             return (
               <button
-                key={option.value}
+                key={option.value || option.label}
                 type="button"
                 role="option"
                 aria-selected={isSelected}
@@ -132,7 +151,7 @@ function InlinePicker<T extends string>({
                   onChange(option.value);
                   setIsOpen(false);
                 }}
-                className="flex h-6 w-full items-center rounded px-1.5 text-left font-body text-[9px] uppercase tracking-wide transition-colors hover:bg-white/[0.07]"
+                className="flex h-6 w-full items-center whitespace-nowrap rounded px-1.5 text-left font-body text-[9px] uppercase tracking-wide transition-colors hover:bg-white/[0.07]"
                 style={{
                   background: isSelected ? `${accentColor}20` : 'transparent',
                   color: isSelected ? accentColor : 'rgba(255,255,255,0.58)',
@@ -167,6 +186,7 @@ export function Lobby() {
     removeLobbyBot,
     updateLobbyBotTeam,
     updateLobbyBotDifficulty,
+    updateLobbyBotHero,
     startGame,
     kickPlayer,
   } = useNetwork();
@@ -224,6 +244,10 @@ export function Lobby() {
 
   const handleBotDifficultyChange = (botId: string, difficulty: BotDifficulty) => {
     updateLobbyBotDifficulty(botId, difficulty);
+  };
+
+  const handleBotHeroChange = (botId: string, heroId: LobbyBotHero) => {
+    updateLobbyBotHero(botId, heroId);
   };
 
   return (
@@ -345,6 +369,7 @@ export function Lobby() {
             onRemoveBot={handleRemoveBot}
             onBotTeamChange={handleBotTeamChange}
             onBotDifficultyChange={handleBotDifficultyChange}
+            onBotHeroChange={handleBotHeroChange}
           />
         </div>
 
@@ -362,6 +387,7 @@ export function Lobby() {
             onRemoveBot={handleRemoveBot}
             onBotTeamChange={handleBotTeamChange}
             onBotDifficultyChange={handleBotDifficultyChange}
+            onBotHeroChange={handleBotHeroChange}
             reverse
           />
         </div>
@@ -518,6 +544,7 @@ interface FactionPanelProps {
   onRemoveBot: (id: string) => void;
   onBotTeamChange: (id: string, team: LobbyTeam) => void;
   onBotDifficultyChange: (id: string, difficulty: BotDifficulty) => void;
+  onBotHeroChange: (id: string, heroId: LobbyBotHero) => void;
   reverse?: boolean;
 }
 
@@ -533,6 +560,7 @@ function FactionPanel({
   onRemoveBot,
   onBotTeamChange,
   onBotDifficultyChange,
+  onBotHeroChange,
   reverse,
 }: FactionPanelProps) {
   const maxPlayers = DEFAULT_GAME_CONFIG.teamSize;
@@ -593,6 +621,7 @@ function FactionPanel({
             onRemoveBot={() => onRemoveBot(player.id)}
             onBotTeamChange={(team) => onBotTeamChange(player.id, team)}
             onBotDifficultyChange={(difficulty) => onBotDifficultyChange(player.id, difficulty)}
+            onBotHeroChange={(heroId) => onBotHeroChange(player.id, heroId)}
             faction={faction}
           />
         ))}
@@ -687,6 +716,7 @@ interface PlayerCardProps {
   onRemoveBot: () => void;
   onBotTeamChange?: (team: LobbyTeam) => void;
   onBotDifficultyChange?: (difficulty: BotDifficulty) => void;
+  onBotHeroChange?: (heroId: LobbyBotHero) => void;
   faction?: typeof FACTIONS.red | typeof FACTIONS.blue;
   compact?: boolean;
 }
@@ -699,13 +729,15 @@ function PlayerCard({
   onRemoveBot,
   onBotTeamChange,
   onBotDifficultyChange,
+  onBotHeroChange,
   faction,
   compact,
 }: PlayerCardProps) {
   const color = faction?.primaryColor || FACTIONS.red.primaryColor;
   const secondaryColor = faction?.secondaryColor || FACTIONS.red.secondaryColor;
   const { playButtonClick } = useUISounds();
-  const cardClass = compact ? 'h-12 p-2' : 'h-14 p-2';
+  const showBotControls = !player.isHost && Boolean(player.isBot) && isLobbyHost;
+  const cardClass = compact ? 'h-12 p-2' : showBotControls ? 'h-16 p-2' : 'h-14 p-2';
   const avatarClass = compact ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-base';
   const readyClass = compact ? 'w-8 h-8' : 'w-9 h-9';
   const botDifficulty: BotDifficulty =
@@ -713,6 +745,8 @@ function PlayerCard({
       ? player.botDifficulty
       : 'normal';
   const botTeam: LobbyTeam = player.team === 'blue' ? 'blue' : 'red';
+  const botHero: LobbyBotHero = isHeroId(player.heroId) ? player.heroId : '';
+  const botHeroColor = botHero ? HERO_COLORS[botHero] : color;
 
   return (
     <div
@@ -733,7 +767,7 @@ function PlayerCard({
       </div>
 
       {/* Info */}
-      <div className="flex-1 min-w-0">
+      <div className={`flex-1 min-w-0 ${showBotControls ? 'pr-8' : ''}`}>
         <div className="flex items-center gap-1.5">
           <span className={`font-display ${compact ? 'text-sm' : 'text-sm'} truncate ${isCurrentPlayer ? 'text-white' : 'text-white/80'}`}>
             {player.name}
@@ -754,32 +788,40 @@ function PlayerCard({
               <BotIcon className="h-3.5 w-3.5" />
             </span>
           )}
-          {!player.isHost && player.isBot && isLobbyHost && (
-            <div className="flex shrink-0 items-center gap-1">
-              <InlinePicker
-                label={`${player.name} difficulty`}
-                value={botDifficulty}
-                options={BOT_DIFFICULTY_OPTIONS}
-                accentColor={FACTIONS.blue.primaryColor}
-                widthClass="w-[3.65rem]"
-                onChange={(difficulty) => onBotDifficultyChange?.(difficulty)}
-              />
-              <InlinePicker
-                label={`${player.name} team`}
-                value={botTeam}
-                options={BOT_TEAM_OPTIONS}
-                accentColor={color}
-                widthClass="w-[3.35rem]"
-                onChange={(team) => onBotTeamChange?.(team)}
-              />
-            </div>
-          )}
           {isCurrentPlayer && !player.isHost && (
             <span className="px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 text-[8px] font-display rounded border border-cyan-500/30 uppercase">
               You
             </span>
           )}
         </div>
+        {showBotControls && (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1">
+            <InlinePicker
+              label={`${player.name} hero`}
+              value={botHero}
+              options={BOT_HERO_OPTIONS}
+              accentColor={botHeroColor}
+              widthClass="w-[4.65rem]"
+              onChange={(heroId) => onBotHeroChange?.(heroId)}
+            />
+            <InlinePicker
+              label={`${player.name} difficulty`}
+              value={botDifficulty}
+              options={BOT_DIFFICULTY_OPTIONS}
+              accentColor={FACTIONS.blue.primaryColor}
+              widthClass="w-[3.65rem]"
+              onChange={(difficulty) => onBotDifficultyChange?.(difficulty)}
+            />
+            <InlinePicker
+              label={`${player.name} team`}
+              value={botTeam}
+              options={BOT_TEAM_OPTIONS}
+              accentColor={color}
+              widthClass="w-[3.35rem]"
+              onChange={(team) => onBotTeamChange?.(team)}
+            />
+          </div>
+        )}
       </div>
 
       {!player.isBot && (

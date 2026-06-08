@@ -13,6 +13,8 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
+import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -31,6 +33,16 @@ import { HookshotProjectileArrowHead } from './arrowHead';
 
 // Get shared materials from centralized resources
 const getHookMaterials = () => getHookshotMaterials();
+
+function writeLocalGrappleSocketPosition(out: { x: number; y: number; z: number }, launchSide: -1 | 1): boolean {
+  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
+  if (!socketPose) return false;
+
+  out.x = socketPose.position.x;
+  out.y = socketPose.position.y;
+  out.z = socketPose.position.z;
+  return true;
+}
 
 interface GrappleLineProps {
   line: GrappleLineData;
@@ -74,6 +86,8 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
   };
   
   const removeGrappleLine = useGameStore(state => state.removeGrappleLine);
+  const localPlayerId = useGameStore(state => state.localPlayer?.id);
+  const isLocalOwnerForRender = localPlayerId === line.ownerId;
   
   useFrame((frameState, delta) => {
     if (!hookRef.current || shouldRemoveRef.current) return;
@@ -84,20 +98,25 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
     const localPlayer = state.localPlayer;
     const players = state.players;
     
-    const targetPosition = writeOwnerVisualPosition(
-      ownerVisualPositionRef.current,
-      line.ownerId,
-      HOOKSHOT_CHAIN_SOCKET.handHeight,
-      line.startPosition,
-      players,
-      localPlayer,
-      launchSocketOffset
-    );
+    const isLocalOwner = localPlayer?.id === line.ownerId;
+    const targetPosition = ownerVisualPositionRef.current;
+    if (isLocalOwner) {
+      writeLocalGrappleSocketPosition(targetPosition, launchSide);
+    } else {
+      writeOwnerVisualPosition(
+        targetPosition,
+        line.ownerId,
+        HOOKSHOT_CHAIN_SOCKET.handHeight,
+        line.startPosition,
+        players,
+        localPlayer,
+        launchSocketOffset
+      );
+    }
     const targetX = targetPosition.x;
     const targetY = targetPosition.y;
     const targetZ = targetPosition.z;
     
-    const isLocalOwner = localPlayer?.id === line.ownerId;
     const lerpFactor = isLocalOwner || isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
     playerPosRef.current.x += (targetX - playerPosRef.current.x) * lerpFactor;
     playerPosRef.current.y += (targetY - playerPosRef.current.y) * lerpFactor;
@@ -246,7 +265,7 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
       </group>
       
       {/* ENERGY ROPE - Using cylinder meshes updated via refs (same as basic attack) */}
-      <group ref={muzzleRef} position={[line.startPosition.x, line.startPosition.y, line.startPosition.z]}>
+      <group ref={muzzleRef} position={[line.startPosition.x, line.startPosition.y, line.startPosition.z]} visible={!isLocalOwnerForRender}>
         <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.16, 0.16, 0.04]} material={HOOK_MATERIALS.ring} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.12} material={HOOK_MATERIALS.glow} />
         <BudgetedPointLight budgetPriority={1.5} color={HOOKSHOT_COLORS.energy} intensity={1.2} distance={2.5} decay={2} />

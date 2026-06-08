@@ -1,7 +1,7 @@
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { DEFAULT_GAME_CONFIG, createRandomSeed, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
-import type { BotDifficulty, Team } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, HERO_DEFINITIONS, createRandomSeed, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import type { BotDifficulty, HeroId, Team } from '@voxel-strike/shared';
 
 interface JoinOptions {
   playerName?: string;
@@ -18,6 +18,7 @@ interface ParticipantAssignment {
   playerName: string;
   team: Team;
   isBot: boolean;
+  heroId?: HeroId;
   botDifficulty?: BotDifficulty;
   botProfileId?: string;
 }
@@ -153,7 +154,7 @@ export class LobbyRoom extends Room<LobbyState> {
       this.handleKick(client, data.playerId);
     });
 
-    this.onMessage('addBot', (client, data: { difficulty?: BotDifficulty; team?: string; name?: string } = {}) => {
+    this.onMessage('addBot', (client, data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' } = {}) => {
       this.handleAddBot(client, data);
     });
 
@@ -167,6 +168,10 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.onMessage('updateBotDifficulty', (client, data: { botId: string; difficulty: BotDifficulty }) => {
       this.handleUpdateBotDifficulty(client, data.botId, data.difficulty);
+    });
+
+    this.onMessage('updateBotHero', (client, data: { botId: string; heroId: HeroId | '' }) => {
+      this.handleUpdateBotHero(client, data.botId, data.heroId);
     });
 
     this.onMessage('chat', (client, data: { message: string }) => {
@@ -643,7 +648,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private handleAddBot(
     client: Client,
-    data: { difficulty?: BotDifficulty; team?: string; name?: string }
+    data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }
   ): void {
     if (!this.isHost(client)) return;
 
@@ -688,7 +693,18 @@ export class LobbyRoom extends Room<LobbyState> {
     this.updateMetadata();
   }
 
-  private createBot(data: { difficulty?: BotDifficulty; team?: string; name?: string }): LobbyPlayer | null {
+  private handleUpdateBotHero(client: Client, botId: string, heroId: HeroId | ''): void {
+    if (!this.isHost(client)) return;
+
+    const bot = this.state.players.get(botId);
+    if (!bot?.isBot) return;
+
+    bot.heroId = this.normalizeHeroId(heroId);
+    this.broadcast('botHeroChanged', { playerId: botId, heroId: bot.heroId });
+    this.updateMetadata();
+  }
+
+  private createBot(data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }): LobbyPlayer | null {
     if (this.state.players.size >= this.state.maxParticipants) {
       return null;
     }
@@ -703,7 +719,7 @@ export class LobbyRoom extends Room<LobbyState> {
     bot.team = data.team === 'red' || data.team === 'blue'
       ? data.team
       : this.assignBalancedTeam();
-    bot.heroId = '';
+    bot.heroId = this.normalizeHeroId(data.heroId);
     bot.isBot = true;
     bot.botDifficulty = this.normalizeDifficulty(data.difficulty);
     bot.botProfileId = profileName.toLowerCase();
@@ -841,6 +857,7 @@ export class LobbyRoom extends Room<LobbyState> {
         playerName: p.name,
         team,
         isBot: p.isBot,
+        heroId: p.isBot ? this.normalizeHeroId(p.heroId) || undefined : undefined,
         botDifficulty: p.isBot ? this.normalizeDifficulty(p.botDifficulty) : undefined,
         botProfileId: p.botProfileId || undefined,
       });
@@ -907,6 +924,10 @@ export class LobbyRoom extends Room<LobbyState> {
       return difficulty;
     }
     return 'normal';
+  }
+
+  private normalizeHeroId(heroId?: HeroId | string): HeroId | '' {
+    return heroId && HERO_DEFINITIONS[heroId as HeroId] ? (heroId as HeroId) : '';
   }
 
   private broadcastLobbyState(): void {

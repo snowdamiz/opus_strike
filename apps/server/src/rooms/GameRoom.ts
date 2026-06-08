@@ -84,6 +84,7 @@ interface BotAssignment {
   playerName: string;
   team: Team;
   isBot: true;
+  heroId?: HeroId;
   botDifficulty?: BotDifficulty;
   botProfileId?: string;
 }
@@ -333,6 +334,7 @@ export class GameRoom extends Room<GameState> {
   private alivePlayers: Player[] = [];
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
   private losCache = new Map<string, { result: boolean; expiresAt: number }>();
+  private preferredBotHeroes: Map<string, HeroId> = new Map();
 
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
@@ -1195,6 +1197,14 @@ export class GameRoom extends Room<GameState> {
       bot.botProfileId = assignment.botProfileId || '';
 
       this.placePlayerAtSpawn(bot);
+
+      const preferredHero = assignment.heroId && HERO_DEFINITIONS[assignment.heroId]
+        ? assignment.heroId
+        : null;
+      if (preferredHero) {
+        this.preferredBotHeroes.set(bot.id, preferredHero);
+        this.setPlayerHero(bot, preferredHero);
+      }
 
       this.state.players.set(bot.id, bot);
       this.knownPlayerIds.add(bot.id);
@@ -2952,10 +2962,15 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach(player => {
       if (player.isBot) {
         player.state = 'selecting';
-        player.heroId = '';
         player.isReady = false;
-        player.abilities.clear();
-        this.disablePlayerSkills(player);
+        const preferredHero = this.preferredBotHeroes.get(player.id);
+        if (preferredHero) {
+          this.setPlayerHero(player, preferredHero);
+        } else {
+          player.heroId = '';
+          player.abilities.clear();
+          this.disablePlayerSkills(player);
+        }
       }
     });
 

@@ -82,6 +82,11 @@ interface HookshotPrimaryFireState {
   startTimeMs: number;
 }
 
+interface HookshotSecondaryFireState {
+  eventId: string;
+  startTimeMs: number;
+}
+
 interface PhantomHandPoseTargets {
   closedHand?: MutableTransformTarget;
   arm: MutableTransformTarget;
@@ -164,6 +169,7 @@ const PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS = 0.5;
 const PHANTOM_VOID_RAY_ORB_POSITION = new THREE.Vector3(0, -0.472, -0.72);
 const PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION = new THREE.Vector3(0, -0.38, -2.15);
 const HOOKSHOT_PRIMARY_RECOIL_DURATION_SECONDS = 0.26;
+const HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS = 1.25;
 const HOOKSHOT_LAUNCHER_TUBE_LENGTH = 0.096;
 const HOOKSHOT_LAUNCHER_TUBE_CENTER_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH * 0.5;
 const HOOKSHOT_LAUNCHER_TUBE_FRONT_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH;
@@ -846,6 +852,24 @@ function getHookshotPrimaryRecoilPulse(
   return kickIn * settle;
 }
 
+function getHookshotSecondaryPosePulse(
+  fireState: HookshotSecondaryFireState | null,
+  nowMs: number
+): number {
+  if (!fireState) return 0;
+
+  const elapsedSeconds = (nowMs - fireState.startTimeMs) / 1000;
+  if (elapsedSeconds < 0 || elapsedSeconds > HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS) return 0;
+
+  const kickIn = THREE.MathUtils.smoothstep(elapsedSeconds, 0, 0.055);
+  const settle = 1 - THREE.MathUtils.smoothstep(
+    elapsedSeconds,
+    0.82,
+    HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS
+  );
+  return kickIn * settle;
+}
+
 function applyHookshotPrimaryRecoilToForearm(
   target: MutableTransformTarget,
   side: -1 | 1,
@@ -882,6 +906,98 @@ function applyHookshotPrimaryRecoilToHand(
   targets.palm.position.z += 0.018 * recoil;
   targets.palm.rotation.x += 0.032 * recoil;
   targets.palm.rotation.z += side * -0.018 * recoil;
+}
+
+function applyHookshotSecondaryPoseToForearm(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  pulse: number
+): void {
+  if (pulse <= 0) return;
+
+  if (side === -1) {
+    target.position.x -= 0.045 * pulse;
+    target.position.y -= 0.01 * pulse;
+    target.position.z += 0.18 * pulse;
+    target.rotation.x += 0.11 * pulse;
+    target.rotation.y -= 0.18 * pulse;
+    target.rotation.z -= 0.08 * pulse;
+    return;
+  }
+
+  target.position.x -= 0.04 * pulse;
+  target.position.y += 0.006 * pulse;
+  target.position.z -= 0.075 * pulse;
+  target.rotation.x -= 0.055 * pulse;
+  target.rotation.y += 0.12 * pulse;
+  target.rotation.z -= 0.045 * pulse;
+}
+
+function applyHookshotSecondaryPoseToHand(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  pulse: number
+): void {
+  if (pulse <= 0) return;
+
+  if (side === -1) {
+    targets.arm.position.x -= 0.045 * pulse;
+    targets.arm.position.y -= 0.01 * pulse;
+    targets.arm.position.z += 0.18 * pulse;
+    targets.arm.rotation.x += 0.11 * pulse;
+    targets.arm.rotation.y -= 0.18 * pulse;
+    targets.arm.rotation.z -= 0.08 * pulse;
+
+    targets.wrist.position.z += 0.018 * pulse;
+    targets.wrist.rotation.x += 0.045 * pulse;
+    targets.wrist.rotation.y -= 0.028 * pulse;
+    targets.wrist.rotation.z -= 0.026 * pulse;
+
+    targets.palm.position.z += 0.01 * pulse;
+    targets.palm.rotation.x += 0.032 * pulse;
+    targets.palm.rotation.y -= 0.026 * pulse;
+    targets.palm.rotation.z -= 0.02 * pulse;
+    return;
+  }
+
+  targets.arm.position.x -= 0.04 * pulse;
+  targets.arm.position.y += 0.006 * pulse;
+  targets.arm.position.z -= 0.075 * pulse;
+  targets.arm.rotation.x -= 0.055 * pulse;
+  targets.arm.rotation.y += 0.12 * pulse;
+  targets.arm.rotation.z -= 0.045 * pulse;
+
+  targets.wrist.position.z -= 0.012 * pulse;
+  targets.wrist.rotation.x -= 0.024 * pulse;
+  targets.wrist.rotation.y += 0.032 * pulse;
+  targets.wrist.rotation.z -= 0.014 * pulse;
+
+  targets.palm.position.z -= 0.014 * pulse;
+  targets.palm.rotation.x -= 0.02 * pulse;
+  targets.palm.rotation.y += 0.026 * pulse;
+  targets.palm.rotation.z -= 0.01 * pulse;
+}
+
+function isLocalHookshotHookDetached(side: -1 | 1): boolean {
+  const state = useGameStore.getState();
+  const localPlayerId = state.localPlayer?.id;
+  if (!localPlayerId) return false;
+
+  return (
+    state.hookProjectiles.some(hook => (
+      hook.ownerId === localPlayerId &&
+      (hook.launchSide ?? 1) === side
+    )) ||
+    state.dragHooks.some(hook => (
+      hook.ownerId === localPlayerId &&
+      (hook.launchSide ?? 1) === side
+    )) ||
+    state.grappleLines.some(line => (
+      line.ownerId === localPlayerId &&
+      line.state !== 'done' &&
+      (line.launchSide ?? 1) === side
+    ))
+  );
 }
 
 function createPhantomLocomotionRuntime(): PhantomLocomotionRuntime {
@@ -1630,10 +1746,12 @@ function HookshotPhantomForearm({
   side,
   materials,
   primaryFireRef,
+  secondaryFireRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
+  secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -1650,6 +1768,11 @@ function HookshotPhantomForearm({
       forearm,
       side,
       getHookshotPrimaryRecoilPulse(primaryFireRef.current, side, Date.now())
+    );
+    applyHookshotSecondaryPoseToForearm(
+      forearm,
+      side,
+      getHookshotSecondaryPosePulse(secondaryFireRef.current, Date.now())
     );
   });
 
@@ -1674,16 +1797,19 @@ function HookshotSimpleHookHand({
   side,
   materials,
   primaryFireRef,
+  secondaryFireRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
+  secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
 }) {
   const armRef = useRef<THREE.Group>(null);
   const wristRef = useRef<THREE.Group>(null);
   const palmRef = useRef<THREE.Group>(null);
   const thumbRef = useRef<THREE.Group>(null);
   const hookSocketRef = useRef<THREE.Group>(null);
+  const hookVisualRef = useRef<THREE.Group>(null);
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
   const hookMaterials = getHookshotMaterials();
 
@@ -1695,8 +1821,10 @@ function HookshotSimpleHookHand({
   const isHookProjectileDetached = useGameStore(
     useShallow(state => {
       const localPlayerId = state.localPlayer?.id;
-      return Boolean(localPlayerId && state.hookProjectiles.some(
-        hook => hook.ownerId === localPlayerId && hook.launchSide === side
+      return Boolean(localPlayerId && (
+        state.hookProjectiles.some(hook => hook.ownerId === localPlayerId && (hook.launchSide ?? 1) === side) ||
+        state.dragHooks.some(hook => hook.ownerId === localPlayerId && (hook.launchSide ?? 1) === side) ||
+        state.grappleLines.some(line => line.ownerId === localPlayerId && line.state !== 'done' && (line.launchSide ?? 1) === side)
       ));
     })
   );
@@ -1708,6 +1836,11 @@ function HookshotSimpleHookHand({
     const thumb = thumbRef.current;
     const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
     if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+
+    const secondaryPulse = getHookshotSecondaryPosePulse(secondaryFireRef.current, Date.now());
+    if (hookVisualRef.current) {
+      hookVisualRef.current.visible = !isLocalHookshotHookDetached(side) && secondaryPulse <= 0.01;
+    }
 
     const targets = {
       arm,
@@ -1727,6 +1860,11 @@ function HookshotSimpleHookHand({
       targets,
       side,
       getHookshotPrimaryRecoilPulse(primaryFireRef.current, side, Date.now())
+    );
+    applyHookshotSecondaryPoseToHand(
+      targets,
+      side,
+      secondaryPulse
     );
   });
 
@@ -1779,7 +1917,7 @@ function HookshotSimpleHookHand({
             position={[0, 0.006, HOOKSHOT_LAUNCHER_RING_Z - 0.001]}
             scale={[0.054, 0.054, 1]}
           />
-          <group visible={!isHookProjectileDetached}>
+          <group ref={hookVisualRef} visible={!isHookProjectileDetached}>
             <HookshotViewmodelArrow
               side={side}
               materials={{
@@ -1800,9 +1938,11 @@ function HookshotSimpleHookHand({
 function HookshotViewmodel({
   materials,
   primaryFireRef,
+  secondaryFireRef,
 }: {
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
+  secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
 }) {
   return (
     <group position={[
@@ -1810,10 +1950,10 @@ function HookshotViewmodel({
       PHANTOM_VIEWMODEL_OFFSET.y,
       PHANTOM_VIEWMODEL_OFFSET.z,
     ]}>
-      <HookshotPhantomForearm side={-1} materials={materials} primaryFireRef={primaryFireRef} />
-      <HookshotPhantomForearm side={1} materials={materials} primaryFireRef={primaryFireRef} />
-      <HookshotSimpleHookHand side={-1} materials={materials} primaryFireRef={primaryFireRef} />
-      <HookshotSimpleHookHand side={1} materials={materials} primaryFireRef={primaryFireRef} />
+      <HookshotPhantomForearm side={-1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
+      <HookshotPhantomForearm side={1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
+      <HookshotSimpleHookHand side={-1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
+      <HookshotSimpleHookHand side={1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
     </group>
   );
 }
@@ -1867,10 +2007,12 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
   const phantomPrimaryAttackRef = useRef<PhantomPrimaryAttackState | null>(null);
   const phantomVoidRayReleaseRef = useRef<PhantomVoidRayReleaseState | null>(null);
   const hookshotPrimaryFireRef = useRef<HookshotPrimaryFireState | null>(null);
+  const hookshotSecondaryFireRef = useRef<HookshotSecondaryFireState | null>(null);
   const phantomLocomotionRef = useRef<PhantomLocomotionRuntime>(createPhantomLocomotionRuntime());
   const processedPhantomPrimaryEventIdRef = useRef<string | null>(null);
   const processedPhantomVoidRayEventIdRef = useRef<string | null>(null);
   const processedHookshotPrimaryEventIdRef = useRef<string | null>(null);
+  const processedHookshotSecondaryEventIdRef = useRef<string | null>(null);
   const materials = useMemo(() => getViewmodelMaterials(heroId), [heroId]);
 
   useEffect(() => {
@@ -1986,11 +2128,18 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
       const store = useGameStore.getState();
       const localPlayerId = store.localPlayer?.id;
       const activeRecoil = hookshotPrimaryFireRef.current;
+      const activeSecondaryPose = hookshotSecondaryFireRef.current;
       if (
         activeRecoil &&
         Date.now() - activeRecoil.startTimeMs > HOOKSHOT_PRIMARY_RECOIL_DURATION_SECONDS * 1000
       ) {
         hookshotPrimaryFireRef.current = null;
+      }
+      if (
+        activeSecondaryPose &&
+        Date.now() - activeSecondaryPose.startTimeMs > HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS * 1000
+      ) {
+        hookshotSecondaryFireRef.current = null;
       }
 
       if (localPlayerId) {
@@ -2004,6 +2153,20 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
             hookshotPrimaryFireRef.current = {
               eventId: hook.id,
               side: hook.launchSide,
+              startTimeMs: hook.startTime,
+            };
+          }
+          break;
+        }
+
+        for (let index = store.dragHooks.length - 1; index >= 0; index--) {
+          const hook = store.dragHooks[index];
+          if (hook.ownerId !== localPlayerId) continue;
+
+          if (processedHookshotSecondaryEventIdRef.current !== hook.id) {
+            processedHookshotSecondaryEventIdRef.current = hook.id;
+            hookshotSecondaryFireRef.current = {
+              eventId: hook.id,
               startTimeMs: hook.startTime,
             };
           }
@@ -2030,6 +2193,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
           <HookshotViewmodel
             materials={materials}
             primaryFireRef={hookshotPrimaryFireRef}
+            secondaryFireRef={hookshotSecondaryFireRef}
           />
         )}
         {heroId === 'blaze' && <BlazeViewmodel materials={materials} />}

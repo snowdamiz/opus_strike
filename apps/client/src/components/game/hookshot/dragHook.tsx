@@ -13,6 +13,8 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
+import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
 import {
   HEAVY_HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -42,6 +44,16 @@ const DRAG_HOOK_OUTER_GLOW_MATERIAL = new THREE.MeshBasicMaterial({
   transparent: true,
   opacity: 0.2,
 });
+
+function writeLocalDragHookSocketPosition(out: { x: number; y: number; z: number }, launchSide: -1 | 1): boolean {
+  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
+  if (!socketPose) return false;
+
+  out.x = socketPose.position.x;
+  out.y = socketPose.position.y;
+  out.z = socketPose.position.z;
+  return true;
+}
 
 interface DragHookProps {
   hook: DragHookData;
@@ -95,6 +107,8 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   };
   
   const removeDragHook = useGameStore(state => state.removeDragHook);
+  const localPlayerId = useGameStore(state => state.localPlayer?.id);
+  const isLocalOwnerForRender = localPlayerId === hook.ownerId;
   
   useFrame((state, delta) => {
     if (!hookRef.current || shouldRemoveRef.current) return;
@@ -103,20 +117,25 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     const storeState = useGameStore.getState();
     const { players, localPlayer } = storeState;
     
-    const targetPosition = writeOwnerVisualPosition(
-      ownerVisualPositionRef.current,
-      hook.ownerId,
-      HOOKSHOT_CHAIN_SOCKET.handHeight,
-      hook.startPosition,
-      players,
-      localPlayer,
-      launchSocketOffset
-    );
+    const isLocalOwner = localPlayer?.id === hook.ownerId;
+    const targetPosition = ownerVisualPositionRef.current;
+    if (isLocalOwner) {
+      writeLocalDragHookSocketPosition(targetPosition, launchSide);
+    } else {
+      writeOwnerVisualPosition(
+        targetPosition,
+        hook.ownerId,
+        HOOKSHOT_CHAIN_SOCKET.handHeight,
+        hook.startPosition,
+        players,
+        localPlayer,
+        launchSocketOffset
+      );
+    }
     const targetX = targetPosition.x;
     const targetY = targetPosition.y;
     const targetZ = targetPosition.z;
     
-    const isLocalOwner = localPlayer?.id === hook.ownerId;
     const lerpFactor = isLocalOwner || isFirstFrameRef.current ? 1 : Math.min(1, 20 * delta);
     playerPosRef.current.x += (targetX - playerPosRef.current.x) * lerpFactor;
     playerPosRef.current.y += (targetY - playerPosRef.current.y) * lerpFactor;
@@ -285,7 +304,7 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
       </group>
       
       {/* === HEAVY CHAIN - Multi-layer, thicker than left click === */}
-      <group ref={muzzleRef} position={[hook.startPosition.x, hook.startPosition.y, hook.startPosition.z]}>
+      <group ref={muzzleRef} position={[hook.startPosition.x, hook.startPosition.y, hook.startPosition.z]} visible={!isLocalOwnerForRender}>
         <mesh rotation={[Math.PI / 2, 0, 0]} geometry={SHARED_GEOMETRIES.ring16} scale={[0.2, 0.2, 0.05]} material={HOOK_MATERIALS.ring} />
         <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={0.16} material={HOOK_MATERIALS.glow} />
         <BudgetedPointLight budgetPriority={2} color={HOOKSHOT_COLORS.energy} intensity={1.5} distance={3} decay={2} />

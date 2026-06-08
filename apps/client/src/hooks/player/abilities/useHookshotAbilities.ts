@@ -235,8 +235,14 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
 
     lastDragHookTimeRef.current = now;
     dragHookIdRef.current++;
-    const launchSide = dragHookIdRef.current % 2 === 1 ? 1 : -1;
-    const { spawnPos, direction } = calculateHookshotLaunch(ctx, launchSide, DRAG_HOOK_MAX_DISTANCE);
+    const launchSide = 1;
+    const socketSpawnPos = readHookshotHookSocketPosition(launchSide);
+    const { spawnPos, direction } = calculateHookshotLaunch(
+      ctx,
+      launchSide,
+      DRAG_HOOK_MAX_DISTANCE,
+      socketSpawnPos
+    );
     const hookId = `draghook_${ctx.localPlayer.id}_${dragHookIdRef.current}`;
 
     useGameStore.getState().addDragHook({
@@ -297,7 +303,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleLineIdRef.current++;
     const lineId = `grapple_${ctx.localPlayer.id}_${grappleLineIdRef.current}`;
     const launchSide = grappleLineIdRef.current % 2 === 1 ? 1 : -1;
-    const startPos = calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+    const startPos = readHookshotHookSocketPosition(launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
       ...HOOKSHOT_CHAIN_SOCKET,
       sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     });
