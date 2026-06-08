@@ -277,7 +277,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
             core: HOOK_MATERIALS.ropeCore,
             ring: HOOK_MATERIALS.ring,
           }}
-          scale={0.82}
+          scale={1}
           lightPriority={2}
           lightIntensity={2.4}
           lightDistance={3.2}

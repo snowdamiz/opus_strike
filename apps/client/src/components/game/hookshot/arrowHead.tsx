@@ -10,17 +10,23 @@ export interface HookshotArrowMaterials {
   ring?: THREE.Material;
 }
 
-const HOOKSHOT_VIEWMODEL_CHEVRON_GLOW_GEOMETRY = createHookshotForwardChevronGeometry(0.026);
-const HOOKSHOT_VIEWMODEL_CHEVRON_CORE_GEOMETRY = createHookshotForwardChevronGeometry(0.012);
+export const HOOKSHOT_ARROW_TIP_Z = -0.15;
+
+const HOOKSHOT_ARROW_REAR_Z = -0.052;
+const HOOKSHOT_ARROW_MID_Z = -0.112;
+const HOOKSHOT_ARROW_LIGHT_Z = -0.132;
+
+const HOOKSHOT_VIEWMODEL_CHEVRON_GLOW_GEOMETRY = createHookshotForwardChevronGeometry(0.03);
+const HOOKSHOT_VIEWMODEL_CHEVRON_CORE_GEOMETRY = createHookshotForwardChevronGeometry(0.022);
 
 function createHookshotForwardChevronGeometry(radius: number): THREE.TubeGeometry {
   const curve = new THREE.CatmullRomCurve3(
     [
-      new THREE.Vector3(-0.145, 0, -0.025),
-      new THREE.Vector3(-0.036, 0, -0.122),
-      new THREE.Vector3(0, 0, -0.165),
-      new THREE.Vector3(0.036, 0, -0.122),
-      new THREE.Vector3(0.145, 0, -0.025),
+      new THREE.Vector3(-0.132, 0, HOOKSHOT_ARROW_REAR_Z),
+      new THREE.Vector3(-0.032, 0, HOOKSHOT_ARROW_MID_Z),
+      new THREE.Vector3(0, 0, HOOKSHOT_ARROW_TIP_Z),
+      new THREE.Vector3(0.032, 0, HOOKSHOT_ARROW_MID_Z),
+      new THREE.Vector3(0.132, 0, HOOKSHOT_ARROW_REAR_Z),
     ],
     false,
     'centripetal',
@@ -59,8 +65,8 @@ export function HookshotViewmodelArrow({
       />
       <mesh
         geometry={SHARED_GEOMETRIES.sphere8}
-        material={materials.glow}
-        position={[0, 0, -0.165]}
+        material={materials.tip}
+        position={[0, 0, HOOKSHOT_ARROW_TIP_Z]}
         scale={0.052}
       />
       <BudgetedPointLight
@@ -69,7 +75,7 @@ export function HookshotViewmodelArrow({
         intensity={lightIntensity * 1.35}
         distance={2.8}
         decay={2}
-        position={[0, 0, -0.145]}
+        position={[0, 0, HOOKSHOT_ARROW_LIGHT_Z]}
       />
     </group>
   );
@@ -122,8 +128,8 @@ export function HookshotProjectileArrowHead({
       />
       <mesh
         geometry={SHARED_GEOMETRIES.sphere8}
-        material={materials.glow}
-        position={[0, 0, -0.165]}
+        material={materials.tip}
+        position={[0, 0, HOOKSHOT_ARROW_TIP_Z]}
         scale={0.052}
       />
       <BudgetedPointLight
@@ -132,7 +138,7 @@ export function HookshotProjectileArrowHead({
         intensity={lightIntensity}
         distance={lightDistance}
         decay={2}
-        position={[0, 0, -0.145]}
+        position={[0, 0, HOOKSHOT_ARROW_LIGHT_Z]}
       />
     </group>
   );
