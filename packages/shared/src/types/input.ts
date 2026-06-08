@@ -8,6 +8,7 @@ export interface InputState {
   sprint: boolean;
   primaryFire: boolean;
   secondaryFire: boolean;
+  reload: boolean;
   ability1: boolean;
   ability2: boolean;
   ultimate: boolean;
@@ -20,7 +21,7 @@ export interface MouseState {
   buttons: number;
 }
 
-export const DEFAULT_KEYBINDINGS: Record<string, string> = {
+export const DEFAULT_KEYBINDINGS = {
   moveForward: 'KeyW',
   moveBackward: 'KeyS',
   moveLeft: 'KeyA',
@@ -30,11 +31,12 @@ export const DEFAULT_KEYBINDINGS: Record<string, string> = {
   sprint: 'ShiftLeft',
   primaryFire: 'Mouse0',
   secondaryFire: 'Mouse1',
+  reload: 'KeyR',
   ability1: 'KeyE',
   ability2: 'KeyQ',
   ultimate: 'KeyF',
-  interact: 'KeyR',
-};
+  interact: 'KeyX',
+} as const satisfies Record<keyof InputState, string>;
 
 export function createEmptyInputState(): InputState {
   return {
@@ -47,10 +49,10 @@ export function createEmptyInputState(): InputState {
     sprint: false,
     primaryFire: false,
     secondaryFire: false,
+    reload: false,
     ability1: false,
     ability2: false,
     ultimate: false,
     interact: false,
   };
 }
-

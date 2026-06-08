@@ -39,6 +39,7 @@ export interface PlayerInput {
   sprint: boolean;
   primaryFire: boolean;
   secondaryFire: boolean;
+  reload: boolean;
   ability1: boolean;
   ability2: boolean;
   ultimate: boolean;

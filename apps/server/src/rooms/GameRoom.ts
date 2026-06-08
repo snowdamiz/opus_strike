@@ -193,6 +193,7 @@ type BotIntent =
 const playerPressState = new Map<string, {
   primaryFire: boolean;
   secondaryFire: boolean;
+  reload: boolean;
   ability1: boolean;
   ability2: boolean;
   ultimate: boolean;
@@ -1225,6 +1226,7 @@ export class GameRoom extends Room<GameState> {
     playerPressState.set(playerId, {
       primaryFire: false,
       secondaryFire: false,
+      reload: false,
       ability1: false,
       ability2: false,
       ultimate: false,
@@ -1270,6 +1272,30 @@ export class GameRoom extends Room<GameState> {
     return true;
   }
 
+  private reloadHeroPrimary(player: Player, now: number): boolean {
+    if (player.heroId !== 'phantom') return false;
+
+    let magazine = this.phantomPrimaryMagazines.get(player.id);
+    if (!magazine) {
+      magazine = {
+        ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+        reloadUntil: 0,
+      };
+      this.phantomPrimaryMagazines.set(player.id, magazine);
+    }
+
+    if (magazine.reloadUntil > 0 && now >= magazine.reloadUntil) {
+      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+      magazine.reloadUntil = 0;
+    }
+
+    if (magazine.reloadUntil > now) return false;
+    if (magazine.ammo >= PHANTOM_PRIMARY_MAGAZINE_SIZE) return false;
+
+    magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
+    return true;
+  }
+
   private processPlayerInput(player: Player, input: PlayerInput): void {
     if (player.state !== 'alive') return;
 
@@ -1278,7 +1304,12 @@ export class GameRoom extends Room<GameState> {
       this.initializePressState(player.id);
     }
     const previous = playerPressState.get(player.id)!;
+    const now = Date.now();
+    const reloadPressed = Boolean(input.reload);
 
+    if (reloadPressed && !previous.reload) {
+      this.reloadHeroPrimary(player, now);
+    }
     if (input.primaryFire) {
       this.tryResolveAttack(player, 'primary');
     }
@@ -1298,6 +1329,7 @@ export class GameRoom extends Room<GameState> {
 
     previous.primaryFire = input.primaryFire;
     previous.secondaryFire = input.secondaryFire;
+    previous.reload = reloadPressed;
     previous.ability1 = input.ability1;
     previous.ability2 = input.ability2;
     previous.ultimate = input.ultimate;
@@ -2444,6 +2476,7 @@ export class GameRoom extends Room<GameState> {
       sprint: false,
       primaryFire: false,
       secondaryFire: false,
+      reload: false,
       ability1: false,
       ability2: false,
       ultimate: false,
@@ -2550,6 +2583,7 @@ export class GameRoom extends Room<GameState> {
         ...player.lastInput,
         primaryFire: false,
         secondaryFire: false,
+        reload: false,
         ability1: false,
         ability2: false,
         ultimate: false,

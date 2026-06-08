@@ -44,6 +44,10 @@ const LOCAL_ORIGIN_HALO_SECONDARY_GEOMETRY = new THREE.RingGeometry(
   LOCAL_ORIGIN_HALO_SECONDARY_OUTER_RADIUS,
   64
 );
+const LOCAL_ORIGIN_ENERGY_CORE_GEOMETRY = new THREE.SphereGeometry(RAY_RADIUS * 0.9, 16, 16);
+const LOCAL_ORIGIN_ENERGY_GLOW_GEOMETRY = new THREE.SphereGeometry(RAY_RADIUS * 1.55, 18, 18);
+const LOCAL_ORIGIN_ENERGY_SHELL_GEOMETRY = new THREE.SphereGeometry(RAY_RADIUS * 1.15, 12, 12);
+const LOCAL_ORIGIN_ENERGY_RING_GEOMETRY = new THREE.RingGeometry(RAY_RADIUS * 1.45, RAY_RADIUS * 2.35, 32);
 const REMOTE_ORIGIN_CORE_GEOMETRY = new THREE.SphereGeometry(RAY_RADIUS * 1.8, 24, 24);
 const REMOTE_ORIGIN_GLOW_GEOMETRY = new THREE.SphereGeometry(RAY_RADIUS * 2.5, 16, 16);
 const VOID_RAY_IMPACT_INNER_RING_GEOMETRY = new THREE.RingGeometry(0.2, 0.6, 32);
@@ -340,6 +344,10 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
   const particlesRef = useRef<THREE.Points>(null);
   const sparkParticlesRef = useRef<THREE.Points>(null);
   const impactRef = useRef<THREE.Group>(null);
+  const originEnergyCoreRef = useRef<THREE.Mesh>(null);
+  const originEnergyGlowRef = useRef<THREE.Mesh>(null);
+  const originEnergyShellRef = useRef<THREE.Mesh>(null);
+  const originEnergyRingRef = useRef<THREE.Mesh>(null);
   const hitPlayersRef = useRef<Set<string>>(new Set());
   const currentLengthRef = useRef(0);
   const hasLoggedRef = useRef(false);
@@ -501,6 +509,16 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       glowMaterial.uniforms.time.value = time;
       glowMaterial.uniforms.progress.value = progress;
     }
+
+    if (originEnergyCoreRef.current && originEnergyGlowRef.current && originEnergyShellRef.current && originEnergyRingRef.current) {
+      const originPulse = 1 + Math.sin(time * 18.5) * 0.08 + Math.sin(time * 31.0) * 0.035;
+      const originScale = THREE.MathUtils.clamp(progress, 0, 1) * originPulse;
+      originEnergyCoreRef.current.scale.setScalar(originScale);
+      originEnergyGlowRef.current.scale.setScalar(originScale * 1.28);
+      originEnergyShellRef.current.scale.setScalar(originScale * 1.1);
+      originEnergyRingRef.current.scale.setScalar(originScale * (1.08 + Math.sin(time * 12.0) * 0.04));
+      originEnergyRingRef.current.rotation.z += delta * 4.8;
+    }
     
     // Update spirals - fast rotation and scale
     if (spiralsRef.current) {
@@ -656,6 +674,48 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       {/* ===== ORIGIN HALO ===== */}
       {isLocalOwner ? (
         <>
+          <mesh ref={originEnergyGlowRef} geometry={LOCAL_ORIGIN_ENERGY_GLOW_GEOMETRY} scale={0.001}>
+            <meshBasicMaterial
+              color={0xc084fc}
+              transparent
+              opacity={0.42}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+          <mesh ref={originEnergyCoreRef} geometry={LOCAL_ORIGIN_ENERGY_CORE_GEOMETRY} scale={0.001}>
+            <meshBasicMaterial
+              color={0xffffff}
+              transparent
+              opacity={0.96}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+          <mesh ref={originEnergyShellRef} geometry={LOCAL_ORIGIN_ENERGY_SHELL_GEOMETRY} scale={0.001}>
+            <meshBasicMaterial
+              color={0xd8b4fe}
+              transparent
+              opacity={0.28}
+              blending={THREE.AdditiveBlending}
+              wireframe
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+          <mesh ref={originEnergyRingRef} rotation-x={-Math.PI / 2} position-y={0.02} geometry={LOCAL_ORIGIN_ENERGY_RING_GEOMETRY} scale={0.001}>
+            <meshBasicMaterial
+              color={0x22d3ee}
+              transparent
+              opacity={0.36}
+              side={THREE.DoubleSide}
+              blending={THREE.AdditiveBlending}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
           <mesh rotation-x={-Math.PI / 2} geometry={LOCAL_ORIGIN_HALO_GEOMETRY}>
             <meshBasicMaterial
               color={0xd8b4fe}

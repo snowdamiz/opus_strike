@@ -5,9 +5,13 @@ export const PHANTOM_PRIMARY_PALM_SOCKET_NAMES = {
   [1]: 'phantom.primary.rightPalm',
 } as const satisfies Record<-1 | 1, string>;
 
-export const PHANTOM_PRIMARY_READY_TRANSITION_SECONDS = 0.14;
-export const PHANTOM_PRIMARY_SHOT_PULSE_DURATION_SECONDS = 0.16;
-export const PHANTOM_PRIMARY_SHOT_PULSE_PEAK_TIME_SECONDS = 0.04;
+export const PHANTOM_VOID_RAY_ORB_SOCKET_NAME = 'phantom.voidRay.orb';
+
+export const PHANTOM_PRIMARY_READY_TRANSITION_SECONDS = 0.24;
+export const PHANTOM_PRIMARY_SHOT_PULSE_DURATION_SECONDS = 0.24;
+export const PHANTOM_PRIMARY_SHOT_PULSE_PEAK_TIME_SECONDS = 0.085;
+export const PHANTOM_PRIMARY_SHOT_PULSE_HOLD_END_SECONDS = 0.13;
+export const PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS = 0.02;
 export const PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS = PHANTOM_PRIMARY_SHOT_PULSE_PEAK_TIME_SECONDS;
 
 export interface PhantomPrimaryPoseSampleContext {
@@ -17,6 +21,12 @@ export interface PhantomPrimaryPoseSampleContext {
   actionTimeSeconds?: number;
   holdBlend?: number;
   shotPulse?: number;
+  timestampMs?: number;
+}
+
+export interface PhantomVoidRayOrbPoseSampleContext {
+  camera: THREE.Camera;
+  elapsedSeconds: number;
   timestampMs?: number;
 }
 
@@ -44,9 +54,13 @@ export function getPhantomPrimaryShotPulse(timeSeconds: number): number {
   if (timeSeconds < PHANTOM_PRIMARY_SHOT_PULSE_PEAK_TIME_SECONDS) {
     return smoothstep(0, PHANTOM_PRIMARY_SHOT_PULSE_PEAK_TIME_SECONDS, timeSeconds);
   }
-  if (timeSeconds < 0.08) return 1;
+  if (timeSeconds < PHANTOM_PRIMARY_SHOT_PULSE_HOLD_END_SECONDS) return 1;
   if (timeSeconds < PHANTOM_PRIMARY_SHOT_PULSE_DURATION_SECONDS) {
-    return 1 - smoothstep(0.08, PHANTOM_PRIMARY_SHOT_PULSE_DURATION_SECONDS, timeSeconds);
+    return 1 - smoothstep(
+      PHANTOM_PRIMARY_SHOT_PULSE_HOLD_END_SECONDS,
+      PHANTOM_PRIMARY_SHOT_PULSE_DURATION_SECONDS,
+      timeSeconds
+    );
   }
   return 0;
 }

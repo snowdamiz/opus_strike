@@ -13,9 +13,12 @@ import { useGameStore } from '../../store/gameStore';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS,
+  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   getPhantomPrimaryHeldBlend,
   getPhantomPrimaryShotPulse,
   type PhantomPrimaryPoseSampleContext,
+  type PhantomVoidRayOrbPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
 import {
   registerViewmodelPoseSampler,
@@ -151,6 +154,7 @@ const PHANTOM_RELOAD_INWARD_X = 0.034;
 const PHANTOM_RELOAD_LIFT_Y = 0.018;
 const PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS = 0.5;
 const PHANTOM_VOID_RAY_ORB_POSITION = new THREE.Vector3(0, -0.472, -0.72);
+const PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION = new THREE.Vector3(0, -0.38, -2.15);
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -1001,6 +1005,64 @@ function samplePhantomPrimaryPalmSocket(
   };
 }
 
+function composePhantomVoidRayOrbMatrix({
+  camera,
+  elapsedSeconds,
+  actionBlend,
+  targetingBlend,
+}: {
+  camera: THREE.Camera;
+  elapsedSeconds: number;
+  actionBlend: number;
+  targetingBlend: number;
+}): THREE.Matrix4 {
+  const rootTransform = {
+    position: matrixPosition,
+    rotation: matrixEuler,
+  };
+  writeViewmodelRootTransform(rootTransform, elapsedSeconds, actionBlend, targetingBlend);
+  composeTransformMatrix(viewmodelRootMatrix, rootTransform.position, rootTransform.rotation);
+
+  matrixPosition.copy(PHANTOM_VIEWMODEL_OFFSET);
+  matrixEuler.set(0, 0, 0);
+  composeTransformMatrix(phantomOffsetMatrix, matrixPosition, matrixEuler);
+
+  matrixPosition.copy(PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION);
+  matrixEuler.set(0, 0, 0);
+  composeTransformMatrix(phantomSocketMatrix, matrixPosition, matrixEuler);
+
+  camera.updateMatrixWorld();
+  phantomWorldMatrix
+    .copy(camera.matrixWorld)
+    .multiply(viewmodelRootMatrix)
+    .multiply(phantomOffsetMatrix)
+    .multiply(phantomSocketMatrix);
+
+  return phantomWorldMatrix;
+}
+
+function samplePhantomVoidRayOrbSocket(
+  context: PhantomVoidRayOrbPoseSampleContext,
+  actionBlend: number,
+  targetingBlend: number
+): ViewmodelSocketPoseDraft {
+  const timestampMs = context.timestampMs ?? Date.now();
+  const worldMatrix = composePhantomVoidRayOrbMatrix({
+    camera: context.camera,
+    elapsedSeconds: context.elapsedSeconds,
+    actionBlend,
+    targetingBlend,
+  });
+
+  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
+
+  return {
+    position: phantomWorldPosition.clone(),
+    quaternion: phantomWorldQuaternion.clone(),
+    timestampMs,
+  };
+}
+
 function Forearm({
   side,
   materials,
@@ -1633,10 +1695,19 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
         phantomLocomotionRef.current
       )
     );
+    const unregisterVoidRayOrb = registerViewmodelPoseSampler<PhantomVoidRayOrbPoseSampleContext>(
+      PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+      (context) => samplePhantomVoidRayOrbSocket(
+        context,
+        actionBlendRef.current,
+        targetingBlendRef.current
+      )
+    );
 
     return () => {
       unregisterLeft();
       unregisterRight();
+      unregisterVoidRayOrb();
     };
   }, [heroId]);
 
@@ -1690,7 +1761,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
             phantomPrimaryAttackRef.current = {
               eventId,
               side: ball.launchSide,
-              startTimeMs: ball.startTime - PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS * 1000,
+              startTimeMs: ball.startTime - PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS * 1000,
             };
           }
           break;

@@ -110,6 +110,8 @@ export function PlayerController() {
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
   const lastHeroIdRef = useRef<string | null>(null);
+  const reloadPressedRef = useRef(false);
+  const pendingReloadInputRef = useRef(false);
   const positionRef = useRef(new THREE.Vector3());
 
   // Hero stats cache
@@ -279,6 +281,8 @@ export function PlayerController() {
 
     if (!localPlayer) {
       setPhantomPrimaryHeld(false);
+      reloadPressedRef.current = false;
+      pendingReloadInputRef.current = false;
       phantomAbilities.resetPhantomPrimaryMagazine();
       return;
     }
@@ -289,6 +293,8 @@ export function PlayerController() {
       abilitySystem.clientCooldownsRef.current = {};
       abilitySystem.clientChargesRef.current = {};
       abilitySystem.abilityActiveRef.current = {};
+      reloadPressedRef.current = false;
+      pendingReloadInputRef.current = false;
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setShadowStepTargeting(false, false);
       setBombTargeting(false, false);
@@ -309,6 +315,8 @@ export function PlayerController() {
 
     if (!isPlaying || localPlayer.state !== 'alive') {
       setPhantomPrimaryHeld(false, now);
+      reloadPressedRef.current = frameInput.reload;
+      pendingReloadInputRef.current = false;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
       camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
@@ -319,6 +327,8 @@ export function PlayerController() {
 
     if (devFlyMode) {
       setPhantomPrimaryHeld(false, now);
+      reloadPressedRef.current = frameInput.reload;
+      pendingReloadInputRef.current = false;
       const position = positionRef.current;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
       if (visualPos) {
@@ -391,6 +401,7 @@ export function PlayerController() {
           sprint: frameInput.sprint,
           primaryFire: false,
           secondaryFire: false,
+          reload: false,
           ability1: false,
           ability2: false,
           ultimate: false,
@@ -494,8 +505,16 @@ export function PlayerController() {
 
     // Handle hero-specific abilities
     const heroDef = HERO_DEFINITIONS[heroId];
+    const reloadPressed = frameInput.reload && !reloadPressedRef.current;
+    reloadPressedRef.current = frameInput.reload;
+    if (reloadPressed) {
+      pendingReloadInputRef.current = true;
+    }
     if (heroId === 'phantom') {
       phantomAbilities.updatePhantomPrimaryReload(now);
+      if (reloadPressed) {
+        phantomAbilities.reloadPhantomPrimary(now);
+      }
     }
 
     const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
@@ -737,6 +756,7 @@ export function PlayerController() {
     if (now - lastSendRef.current >= 1000 / TICK_RATE) {
       lastSendRef.current = now;
       const currentTargeting = useGameStore.getState().shadowStepTargeting;
+      const reloadForServer = frameInput.reload || pendingReloadInputRef.current;
 
       sendInput({
         tick: tickRef.current,
@@ -749,6 +769,7 @@ export function PlayerController() {
         sprint: frameInput.sprint,
         primaryFire: primaryFireForServer,
         secondaryFire: frameInput.secondaryFire,
+        reload: reloadForServer,
         ability1: frameInput.ability1,
         ability2: currentTargeting ? false : frameInput.ability2,
         ultimate: frameInput.ultimate,
@@ -759,6 +780,7 @@ export function PlayerController() {
         position: { x: position.x, y: position.y, z: position.z },
         velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
       });
+      pendingReloadInputRef.current = false;
     }
   });
 

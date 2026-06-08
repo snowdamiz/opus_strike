@@ -30,8 +30,10 @@ import { recordSpawnMarker } from '../../../utils/perfMarks';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   getPhantomPrimaryHeldBlend,
   type PhantomPrimaryPoseSampleContext,
+  type PhantomVoidRayOrbPoseSampleContext,
 } from '../../../viewmodel/phantomPrimaryPose';
 import {
   assertViewmodelLaunchMatchesPose,
@@ -67,6 +69,7 @@ export interface UsePhantomAbilitiesReturn {
 
   // Methods
   updatePhantomPrimaryReload: (now?: number) => void;
+  reloadPhantomPrimary: (now?: number) => boolean;
   resetPhantomPrimaryMagazine: () => void;
   fireDireBall: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   handleVoidRay: (ctx: AbilityContext, sounds: PlayerSounds) => void;
@@ -183,6 +186,24 @@ function samplePhantomPrimaryPalmPose(
   );
 }
 
+function samplePhantomVoidRayOrbPose(
+  ctx: AbilityContext,
+  nowMs: number
+): ViewmodelSocketPose | null {
+  if (!ctx.camera) return null;
+
+  ctx.camera.updateMatrixWorld();
+
+  return sampleViewmodelPose<PhantomVoidRayOrbPoseSampleContext>(
+    PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+    {
+      camera: ctx.camera,
+      elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+      timestampMs: ctx.viewmodelNowMs ?? nowMs,
+    }
+  );
+}
+
 export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   // Fire state
   const lastFireTimeRef = useRef(0);
@@ -225,6 +246,15 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
 
     completePhantomPrimaryReload();
   }, [completePhantomPrimaryReload]);
+
+  const reloadPhantomPrimary = useCallback((now = Date.now()): boolean => {
+    updatePhantomPrimaryReload(now);
+    if (phantomPrimaryReloadingRef.current) return false;
+    if (phantomPrimaryAmmoRef.current >= PHANTOM_PRIMARY_MAGAZINE_SIZE) return false;
+
+    startPhantomPrimaryReload(now);
+    return true;
+  }, [startPhantomPrimaryReload, updatePhantomPrimaryReload]);
 
   const resetPhantomPrimaryMagazine = useCallback(() => {
     lastFireTimeRef.current = 0;
@@ -312,15 +342,22 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
 
       if (chargeProgress >= 1) {
         // Fully charged - FIRE!
+        voidRayIdRef.current++;
+        const rayId = `voidray_${ctx.localPlayer.id}_${voidRayIdRef.current}`;
+        const launchPose = samplePhantomVoidRayOrbPose(ctx, now);
+        const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
         const { spawnPos, direction } = calculatePhantomLaunch(
           ctx,
           1,
           PHANTOM_VOID_RAY_AIM_DISTANCE,
-          PHANTOM_VOID_RAY_SOCKET
+          PHANTOM_VOID_RAY_SOCKET,
+          spawnOverride
         );
-
-        voidRayIdRef.current++;
-        const rayId = `voidray_${ctx.localPlayer.id}_${voidRayIdRef.current}`;
+        assertViewmodelLaunchMatchesPose({
+          eventId: rayId,
+          launchPosition: spawnPos,
+          pose: launchPose,
+        });
 
         useGameStore.getState().addVoidRay({
           id: rayId,
@@ -584,6 +621,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     // Send to server
     sendInput({
       tick: 0,
+      reload: false,
       ability2: true,
       timestamp: Date.now(),
       position: { x: target.x, y: teleportY, z: target.z },
@@ -633,6 +671,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     shadowStepValidRef,
     teleportingRef,
     updatePhantomPrimaryReload,
+    reloadPhantomPrimary,
     resetPhantomPrimaryMagazine,
     fireDireBall,
     handleVoidRay,

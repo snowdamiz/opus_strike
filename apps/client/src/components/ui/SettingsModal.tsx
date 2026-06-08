@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { DEFAULT_KEYBINDINGS, type InputState } from '@voxel-strike/shared';
 import { useAudio } from '../../hooks/useAudio';
 import {
   defaultSettings,
@@ -8,6 +9,7 @@ import {
 import { GameDialog } from './GameDialog';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay';
+type KeybindRowAction = keyof InputState | 'scoreboard';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -39,6 +41,41 @@ const fpsDisplayModeOptions = [
   { value: 'fps', label: 'FPS Only' },
   { value: 'full', label: 'Full' },
 ];
+
+const keybindRows: { action: KeybindRowAction; label: string }[] = [
+  { action: 'moveForward', label: 'Move Forward' },
+  { action: 'moveBackward', label: 'Move Back' },
+  { action: 'moveLeft', label: 'Move Left' },
+  { action: 'moveRight', label: 'Move Right' },
+  { action: 'jump', label: 'Jump' },
+  { action: 'crouch', label: 'Crouch' },
+  { action: 'sprint', label: 'Sprint' },
+  { action: 'primaryFire', label: 'Primary Fire' },
+  { action: 'secondaryFire', label: 'Secondary Fire' },
+  { action: 'reload', label: 'Reload' },
+  { action: 'ability1', label: 'Ability 1' },
+  { action: 'ability2', label: 'Ability 2' },
+  { action: 'ultimate', label: 'Ultimate' },
+  { action: 'interact', label: 'Interact' },
+  { action: 'scoreboard', label: 'Scoreboard' },
+];
+
+function formatKeybind(code: string): string {
+  if (code === 'Mouse0') return 'LMB';
+  if (code === 'Mouse1') return 'RMB';
+  if (code === 'Mouse2') return 'MMB';
+  if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
+  if (code === 'ControlLeft' || code === 'ControlRight') return 'Ctrl';
+  if (code === 'AltLeft' || code === 'AltRight') return 'Alt';
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  return code;
+}
+
+function getKeybindDisplay(action: KeybindRowAction): string {
+  if (action === 'scoreboard') return 'Tab';
+  return formatKeybind(DEFAULT_KEYBINDINGS[action]);
+}
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
@@ -308,24 +345,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 <div className="pt-4 border-t border-white/5">
                   <h3 className="font-display text-base text-white mb-4">KEYBINDS</h3>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
-                    {[
-                      { action: 'Move Forward', key: 'W' },
-                      { action: 'Move Back', key: 'S' },
-                      { action: 'Move Left', key: 'A' },
-                      { action: 'Move Right', key: 'D' },
-                      { action: 'Jump', key: 'Space' },
-                      { action: 'Crouch', key: 'Ctrl' },
-                      { action: 'Sprint', key: 'Shift' },
-                      { action: 'Ability 1', key: 'E' },
-                      { action: 'Ability 2', key: 'Q' },
-                      { action: 'Ultimate', key: 'F' },
-                      { action: 'Interact', key: 'R' },
-                      { action: 'Scoreboard', key: 'Tab' },
-                    ].map((bind) => (
+                    {keybindRows.map((bind) => (
                       <div key={bind.action} className="flex items-center justify-between gap-3 px-3.5 py-2 rounded bg-white/5">
-                        <span className="text-white/60 font-body text-sm">{bind.action}</span>
+                        <span className="text-white/60 font-body text-sm">{bind.label}</span>
                         <span className="px-2.5 py-1 bg-white/10 rounded text-white font-mono text-xs">
-                          {bind.key}
+                          {getKeybindDisplay(bind.action)}
                         </span>
                       </div>
                     ))}
