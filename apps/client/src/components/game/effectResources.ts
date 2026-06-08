@@ -277,6 +277,7 @@ export function getHookshotMaterials() {
         emissiveIntensity: 0.58,
         metalness: 0.18,
         roughness: 0.26,
+        side: THREE.DoubleSide,
         toneMapped: false,
       }),
       glow: new THREE.MeshBasicMaterial({

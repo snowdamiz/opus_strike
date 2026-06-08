@@ -13,26 +13,79 @@ export interface HookshotArrowMaterials {
 export const HOOKSHOT_ARROW_TIP_Z = -0.15;
 
 const HOOKSHOT_ARROW_REAR_Z = -0.052;
-const HOOKSHOT_ARROW_MID_Z = -0.112;
 const HOOKSHOT_ARROW_LIGHT_Z = -0.132;
+const HOOKSHOT_ARROW_HALF_WIDTH = 0.132;
 
-const HOOKSHOT_VIEWMODEL_CHEVRON_GLOW_GEOMETRY = createHookshotForwardChevronGeometry(0.03);
-const HOOKSHOT_VIEWMODEL_CHEVRON_CORE_GEOMETRY = createHookshotForwardChevronGeometry(0.022);
+const HOOKSHOT_CHEVRON_POINTS = [
+  new THREE.Vector3(-HOOKSHOT_ARROW_HALF_WIDTH, 0, HOOKSHOT_ARROW_REAR_Z),
+  new THREE.Vector3(0, 0, HOOKSHOT_ARROW_TIP_Z),
+  new THREE.Vector3(HOOKSHOT_ARROW_HALF_WIDTH, 0, HOOKSHOT_ARROW_REAR_Z),
+] as const;
 
-function createHookshotForwardChevronGeometry(radius: number): THREE.TubeGeometry {
-  const curve = new THREE.CatmullRomCurve3(
-    [
-      new THREE.Vector3(-0.132, 0, HOOKSHOT_ARROW_REAR_Z),
-      new THREE.Vector3(-0.032, 0, HOOKSHOT_ARROW_MID_Z),
-      new THREE.Vector3(0, 0, HOOKSHOT_ARROW_TIP_Z),
-      new THREE.Vector3(0.032, 0, HOOKSHOT_ARROW_MID_Z),
-      new THREE.Vector3(0.132, 0, HOOKSHOT_ARROW_REAR_Z),
-    ],
-    false,
-    'centripetal',
-    0.5
+const HOOKSHOT_CHEVRON_SEGMENTS = createHookshotChevronSegments();
+
+function createHookshotChevronSegments() {
+  const pairs = [
+    [HOOKSHOT_CHEVRON_POINTS[0], HOOKSHOT_CHEVRON_POINTS[1]],
+    [HOOKSHOT_CHEVRON_POINTS[1], HOOKSHOT_CHEVRON_POINTS[2]],
+  ] as const;
+
+  return pairs.map(([start, end]) => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const dz = end.z - start.z;
+    const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    return {
+      length,
+      position: [
+        (start.x + end.x) * 0.5,
+        (start.y + end.y) * 0.5,
+        (start.z + end.z) * 0.5,
+      ] as [number, number, number],
+      rotation: [0, Math.atan2(dx, dz), 0] as [number, number, number],
+    };
+  });
+}
+
+function HookshotChevronBars({
+  material,
+  thickness,
+}: {
+  material: THREE.Material;
+  thickness: number;
+}) {
+  return (
+    <>
+      {HOOKSHOT_CHEVRON_SEGMENTS.map((segment, index) => (
+        <mesh
+          key={index}
+          geometry={SHARED_GEOMETRIES.box}
+          material={material}
+          position={segment.position}
+          rotation={segment.rotation}
+          scale={[thickness, thickness, segment.length]}
+        />
+      ))}
+    </>
   );
-  return new THREE.TubeGeometry(curve, 24, radius, 8, false);
+}
+
+function HookshotChevronCross({
+  material,
+  thickness,
+}: {
+  material: THREE.Material;
+  thickness: number;
+}) {
+  return (
+    <>
+      <HookshotChevronBars material={material} thickness={thickness} />
+      <group rotation={[0, 0, Math.PI / 2]}>
+        <HookshotChevronBars material={material} thickness={thickness} />
+      </group>
+    </>
+  );
 }
 
 export function HookshotViewmodelArrow({
@@ -45,30 +98,8 @@ export function HookshotViewmodelArrow({
 }) {
   return (
     <group>
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_GLOW_GEOMETRY}
-        material={materials.glow}
-      />
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_GLOW_GEOMETRY}
-        material={materials.glow}
-        rotation={[0, 0, Math.PI / 2]}
-      />
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_CORE_GEOMETRY}
-        material={materials.tip}
-      />
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_CORE_GEOMETRY}
-        material={materials.tip}
-        rotation={[0, 0, Math.PI / 2]}
-      />
-      <mesh
-        geometry={SHARED_GEOMETRIES.sphere8}
-        material={materials.tip}
-        position={[0, 0, HOOKSHOT_ARROW_TIP_Z]}
-        scale={0.052}
-      />
+      <HookshotChevronCross material={materials.glow} thickness={0.036} />
+      <HookshotChevronCross material={materials.tip} thickness={0.026} />
       <BudgetedPointLight
         budgetPriority={1.3}
         color={HOOKSHOT_COLORS.energy}
@@ -108,30 +139,8 @@ export function HookshotProjectileArrowHead({
         />
       )}
 
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_GLOW_GEOMETRY}
-        material={materials.glow}
-      />
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_GLOW_GEOMETRY}
-        material={materials.glow}
-        rotation={[0, 0, Math.PI / 2]}
-      />
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_CORE_GEOMETRY}
-        material={materials.tip}
-      />
-      <mesh
-        geometry={HOOKSHOT_VIEWMODEL_CHEVRON_CORE_GEOMETRY}
-        material={materials.tip}
-        rotation={[0, 0, Math.PI / 2]}
-      />
-      <mesh
-        geometry={SHARED_GEOMETRIES.sphere8}
-        material={materials.tip}
-        position={[0, 0, HOOKSHOT_ARROW_TIP_Z]}
-        scale={0.052}
-      />
+      <HookshotChevronCross material={materials.glow} thickness={0.036} />
+      <HookshotChevronCross material={materials.tip} thickness={0.026} />
       <BudgetedPointLight
         budgetPriority={lightPriority}
         color={HOOKSHOT_COLORS.energy}

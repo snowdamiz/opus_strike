@@ -167,6 +167,7 @@ const HOOKSHOT_PRIMARY_RECOIL_DURATION_SECONDS = 0.26;
 const HOOKSHOT_LAUNCHER_TUBE_LENGTH = 0.096;
 const HOOKSHOT_LAUNCHER_TUBE_CENTER_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH * 0.5;
 const HOOKSHOT_LAUNCHER_TUBE_FRONT_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH;
+const HOOKSHOT_LAUNCHER_RING_Z = HOOKSHOT_LAUNCHER_TUBE_FRONT_Z - 0.003;
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -1765,6 +1766,18 @@ function HookshotSimpleHookHand({
             position={[0, 0.006, HOOKSHOT_LAUNCHER_TUBE_CENTER_Z]}
             rotation={[Math.PI / 2, 0, 0]}
             scale={[0.028, HOOKSHOT_LAUNCHER_TUBE_LENGTH, 0.028]}
+          />
+          <mesh
+            geometry={SHARED_GEOMETRIES.ring16}
+            material={hookMaterials.ring}
+            position={[0, 0.006, HOOKSHOT_LAUNCHER_RING_Z]}
+            scale={[0.044, 0.044, 1]}
+          />
+          <mesh
+            geometry={SHARED_GEOMETRIES.ring16}
+            material={hookMaterials.glow}
+            position={[0, 0.006, HOOKSHOT_LAUNCHER_RING_Z - 0.001]}
+            scale={[0.054, 0.054, 1]}
           />
           <group visible={!isHookProjectileDetached}>
             <HookshotViewmodelArrow
