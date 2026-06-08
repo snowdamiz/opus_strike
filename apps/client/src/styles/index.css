@@ -237,6 +237,74 @@ body,
   animation: scan 3s linear infinite;
 }
 
+.slide-effects-overlay {
+  --slide-blur: 0px;
+  --slide-edge-opacity: 0;
+  --slide-haze-opacity: 0;
+  --slide-haze-side-opacity: 0;
+  contain: layout paint style;
+  opacity: 0;
+  visibility: hidden;
+  will-change: opacity;
+}
+
+.slide-edge-blur {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.006);
+  backdrop-filter: blur(var(--slide-blur)) saturate(1.08);
+  -webkit-backdrop-filter: blur(var(--slide-blur)) saturate(1.08);
+  opacity: var(--slide-edge-opacity);
+}
+
+.slide-edge-blur-left {
+  left: 0;
+  top: 0;
+  width: min(18vw, 220px);
+  height: 100%;
+  mask-image: linear-gradient(to right, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
+}
+
+.slide-edge-blur-right {
+  right: 0;
+  top: 0;
+  width: min(18vw, 220px);
+  height: 100%;
+  mask-image: linear-gradient(to left, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to left, black 0%, rgba(0, 0, 0, 0.78) 42%, transparent 100%);
+}
+
+.slide-edge-blur-top {
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: min(13vh, 120px);
+  mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.62) 32%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 0.62) 32%, transparent 100%);
+}
+
+.slide-edge-blur-bottom {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: min(14vh, 132px);
+  mask-image: linear-gradient(to top, black 0%, rgba(0, 0, 0, 0.66) 34%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, black 0%, rgba(0, 0, 0, 0.66) 34%, transparent 100%);
+}
+
+.slide-motion-haze {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+      transparent 0%,
+      rgba(180, 246, 255, var(--slide-haze-opacity)) 11%,
+      transparent 29%,
+      transparent 71%,
+      rgba(255, 255, 255, var(--slide-haze-side-opacity)) 89%,
+      transparent 100%);
+  mix-blend-mode: screen;
+}
+
 /* ===== GAME STATES ===== */
 .game-active {
   user-select: none;
