@@ -11,7 +11,12 @@
 
 import { useRef, useCallback } from 'react';
 import * as THREE from 'three';
-import { ABILITY_DEFINITIONS, VOID_RAY_CHARGE_TIME } from '@voxel-strike/shared';
+import {
+  ABILITY_DEFINITIONS,
+  PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  PHANTOM_PRIMARY_RELOAD_MS,
+  VOID_RAY_CHARGE_TIME,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import {
   checkWallCollision,
@@ -50,6 +55,9 @@ export interface UsePhantomAbilitiesReturn {
   // State refs
   lastFireTimeRef: React.MutableRefObject<number>;
   direBallIdRef: React.MutableRefObject<number>;
+  phantomPrimaryAmmoRef: React.MutableRefObject<number>;
+  phantomPrimaryReloadingRef: React.MutableRefObject<boolean>;
+  phantomPrimaryReloadStartRef: React.MutableRefObject<number>;
   voidRayChargingRef: React.MutableRefObject<boolean>;
   voidRayChargeStartRef: React.MutableRefObject<number>;
   voidRayIdRef: React.MutableRefObject<number>;
@@ -58,6 +66,8 @@ export interface UsePhantomAbilitiesReturn {
   teleportingRef: React.MutableRefObject<boolean>;
 
   // Methods
+  updatePhantomPrimaryReload: (now?: number) => void;
+  resetPhantomPrimaryMagazine: () => void;
   fireDireBall: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   handleVoidRay: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   executeBlink: (
@@ -177,6 +187,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   // Fire state
   const lastFireTimeRef = useRef(0);
   const direBallIdRef = useRef(0);
+  const phantomPrimaryAmmoRef = useRef(PHANTOM_PRIMARY_MAGAZINE_SIZE);
+  const phantomPrimaryReloadingRef = useRef(false);
+  const phantomPrimaryReloadStartRef = useRef(0);
 
   // Void Ray state
   const voidRayChargingRef = useRef(false);
@@ -188,9 +201,49 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const shadowStepValidRef = useRef(false);
   const teleportingRef = useRef(false);
 
+  const completePhantomPrimaryReload = useCallback(() => {
+    phantomPrimaryAmmoRef.current = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+    phantomPrimaryReloadingRef.current = false;
+    phantomPrimaryReloadStartRef.current = 0;
+
+    const store = useGameStore.getState();
+    store.setPhantomPrimaryAmmo(PHANTOM_PRIMARY_MAGAZINE_SIZE);
+    store.setPhantomPrimaryReload(false, 0, 0);
+  }, []);
+
+  const startPhantomPrimaryReload = useCallback((now: number) => {
+    if (phantomPrimaryReloadingRef.current) return;
+
+    phantomPrimaryReloadingRef.current = true;
+    phantomPrimaryReloadStartRef.current = now;
+    useGameStore.getState().setPhantomPrimaryReload(true, now, now + PHANTOM_PRIMARY_RELOAD_MS);
+  }, []);
+
+  const updatePhantomPrimaryReload = useCallback((now = Date.now()) => {
+    if (!phantomPrimaryReloadingRef.current) return;
+    if (now - phantomPrimaryReloadStartRef.current < PHANTOM_PRIMARY_RELOAD_MS) return;
+
+    completePhantomPrimaryReload();
+  }, [completePhantomPrimaryReload]);
+
+  const resetPhantomPrimaryMagazine = useCallback(() => {
+    lastFireTimeRef.current = 0;
+    phantomPrimaryAmmoRef.current = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+    phantomPrimaryReloadingRef.current = false;
+    phantomPrimaryReloadStartRef.current = 0;
+    useGameStore.getState().resetPhantomPrimaryMagazine();
+  }, []);
+
   // Fire Dire Ball (primary fire)
   const fireDireBall = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const now = Date.now();
+    updatePhantomPrimaryReload(now);
+    if (phantomPrimaryReloadingRef.current) return;
+    if (phantomPrimaryAmmoRef.current <= 0) {
+      startPhantomPrimaryReload(now);
+      return;
+    }
+
     const poseTimestampMs = ctx.viewmodelNowMs ?? now;
     const holdBlend = getPhantomPrimaryHeldBlend(poseTimestampMs);
     if (holdBlend < PHANTOM_PRIMARY_FIRE_READY_BLEND) return;
@@ -198,6 +251,8 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
 
     lastFireTimeRef.current = now;
     recordSpawnMarker('phantom:direBall');
+    const nextAmmo = Math.max(0, phantomPrimaryAmmoRef.current - 1);
+    phantomPrimaryAmmoRef.current = nextAmmo;
 
     direBallIdRef.current++;
     const launchSide = direBallIdRef.current % 2 === 1 ? 1 : -1;
@@ -217,7 +272,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       pose: launchPose,
     });
 
-    useGameStore.getState().addDireBall({
+    const store = useGameStore.getState();
+    store.setPhantomPrimaryAmmo(nextAmmo);
+    store.addDireBall({
       id: ballId,
       position: spawnPos,
       velocity: {
@@ -234,7 +291,10 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     });
 
     sounds.playPhantomBasic();
-  }, []);
+    if (nextAmmo === 0) {
+      startPhantomPrimaryReload(now);
+    }
+  }, [startPhantomPrimaryReload, updatePhantomPrimaryReload]);
 
   // Handle Void Ray charge and fire (secondary fire)
   const handleVoidRay = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
@@ -563,12 +623,17 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   return {
     lastFireTimeRef,
     direBallIdRef,
+    phantomPrimaryAmmoRef,
+    phantomPrimaryReloadingRef,
+    phantomPrimaryReloadStartRef,
     voidRayChargingRef,
     voidRayChargeStartRef,
     voidRayIdRef,
     shadowStepTargetRef,
     shadowStepValidRef,
     teleportingRef,
+    updatePhantomPrimaryReload,
+    resetPhantomPrimaryMagazine,
     fireDireBall,
     handleVoidRay,
     executeBlink,

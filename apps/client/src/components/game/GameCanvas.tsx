@@ -218,7 +218,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
     [mapTheme]
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
-  const showPerfOverlay = debugMode || settings.showFPS;
+  const showFullPerfOverlay = debugMode || settings.showFPS === 'full';
 
   return (
     <Canvas
@@ -258,7 +258,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
         <GameplayFrameSystems />
         <DynamicLightBudgetSystem maxLights={qualityConfig.dynamicLights.maxDynamicLights} />
-        {showPerfOverlay && <SceneLightCounter />}
+        {showFullPerfOverlay && <SceneLightCounter />}
         <AdaptiveQualityController />
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={qualityConfig.environment} />

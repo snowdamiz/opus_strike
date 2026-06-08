@@ -300,7 +300,12 @@ export function useMovement(): UseMovementReturn {
       const slideSpeedMultiplier = hasGlacierPassive
         ? SLIDE_INITIAL_BOOST * GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER
         : SLIDE_INITIAL_BOOST;
-      const slideSpeed = heroMoveSpeed * SPRINT_MULTIPLIER * slideSpeedMultiplier;
+      const currentHorizontalSpeed = Math.sqrt(
+        velocityRef.current.x * velocityRef.current.x +
+        velocityRef.current.z * velocityRef.current.z
+      );
+      const slideEntrySpeed = Math.max(currentHorizontalSpeed, heroMoveSpeed * SPRINT_MULTIPLIER);
+      const slideSpeed = slideEntrySpeed * slideSpeedMultiplier;
       velocityRef.current.x = slideDir.x * slideSpeed;
       velocityRef.current.z = slideDir.z * slideSpeed;
     }
@@ -402,4 +407,3 @@ export function useMovement(): UseMovementReturn {
     getSlideIntensity,
   };
 }
-

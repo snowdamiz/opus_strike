@@ -33,19 +33,17 @@ export const MAP_CONFIG = {
   spawnPoints: {
     teamA: [
       // T spawn - south side
-      { x: -6, y: 1, z: 32 },
-      { x: 0, y: 1, z: 32 },
-      { x: 6, y: 1, z: 32 },
-      { x: -3, y: 1, z: 35 },
-      { x: 3, y: 1, z: 35 },
+      { x: -4, y: 1, z: 32 },
+      { x: 4, y: 1, z: 32 },
+      { x: -4, y: 1, z: 35 },
+      { x: 4, y: 1, z: 35 },
     ],
     teamB: [
       // CT spawn - north side
-      { x: -6, y: 1, z: -35 },
-      { x: 0, y: 1, z: -35 },
-      { x: 6, y: 1, z: -35 },
-      { x: -3, y: 1, z: -38 },
-      { x: 3, y: 1, z: -38 },
+      { x: -4, y: 1, z: -35 },
+      { x: 4, y: 1, z: -35 },
+      { x: -4, y: 1, z: -38 },
+      { x: 4, y: 1, z: -38 },
     ],
   },
 

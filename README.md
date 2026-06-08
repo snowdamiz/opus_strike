@@ -1,6 +1,6 @@
 # Slop Heroes
 
-A browser-based 5v5 Capture the Flag game with Minecraft-style voxel graphics and movement-based hero abilities.
+A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics and movement-based hero abilities.
 
 ## Features
 
@@ -21,7 +21,7 @@ A browser-based 5v5 Capture the Flag game with Minecraft-style voxel graphics an
   - Gliding
 
 - **Capture the Flag Mode**:
-  - 5v5 team battles
+  - 4v4 team battles
   - Flag pickup, carry, and capture mechanics
   - Score-to-win gameplay
   - Spawn protection

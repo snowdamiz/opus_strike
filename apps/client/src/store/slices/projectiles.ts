@@ -1,4 +1,8 @@
 import type { StateCreator } from 'zustand';
+import {
+  PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  PHANTOM_PRIMARY_RELOAD_MS,
+} from '@voxel-strike/shared';
 import type {
   VoidZoneData,
   DireBallData,
@@ -24,6 +28,10 @@ export interface ProjectileState {
   voidRays: VoidRayData[];
   voidRayCharging: boolean;
   voidRayChargeStart: number;
+  phantomPrimaryAmmo: number;
+  phantomPrimaryReloading: boolean;
+  phantomPrimaryReloadStart: number;
+  phantomPrimaryReloadEnd: number;
 
   // Blaze projectiles
   rockets: RocketData[];
@@ -59,6 +67,9 @@ export interface ProjectileActions {
   removeDireBall: (id: string) => void;
   removeDireBalls: (ids: readonly string[]) => void;
   clearExpiredDireBalls: () => void;
+  setPhantomPrimaryAmmo: (ammo: number) => void;
+  setPhantomPrimaryReload: (reloading: boolean, startTime?: number, endTime?: number) => void;
+  resetPhantomPrimaryMagazine: () => void;
 
   // Void ray actions
   addVoidRay: (ray: VoidRayData) => void;
@@ -139,6 +150,10 @@ export const projectileInitialState: ProjectileState = {
   voidRays: [],
   voidRayCharging: false,
   voidRayChargeStart: 0,
+  phantomPrimaryAmmo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  phantomPrimaryReloading: false,
+  phantomPrimaryReloadStart: 0,
+  phantomPrimaryReloadEnd: 0,
   rockets: [],
   bombs: [],
   bombTargeting: false,
@@ -286,6 +301,45 @@ export const createProjectileSlice: StateCreator<
     const LIFETIME = 3000;
     const direBalls = filterExpired(state.direBalls, (b, now) => now - b.startTime < LIFETIME);
     return direBalls === state.direBalls ? state : { direBalls };
+  }),
+
+  setPhantomPrimaryAmmo: (ammo) => set((state) => {
+    const nextAmmo = Math.max(0, Math.min(PHANTOM_PRIMARY_MAGAZINE_SIZE, ammo));
+    return state.phantomPrimaryAmmo === nextAmmo ? state : { phantomPrimaryAmmo: nextAmmo };
+  }),
+
+  setPhantomPrimaryReload: (reloading, startTime = 0, endTime = startTime + PHANTOM_PRIMARY_RELOAD_MS) => set((state) => {
+    if (
+      state.phantomPrimaryReloading === reloading &&
+      state.phantomPrimaryReloadStart === startTime &&
+      state.phantomPrimaryReloadEnd === endTime
+    ) {
+      return state;
+    }
+
+    return {
+      phantomPrimaryReloading: reloading,
+      phantomPrimaryReloadStart: reloading ? startTime : 0,
+      phantomPrimaryReloadEnd: reloading ? endTime : 0,
+    };
+  }),
+
+  resetPhantomPrimaryMagazine: () => set((state) => {
+    if (
+      state.phantomPrimaryAmmo === PHANTOM_PRIMARY_MAGAZINE_SIZE &&
+      !state.phantomPrimaryReloading &&
+      state.phantomPrimaryReloadStart === 0 &&
+      state.phantomPrimaryReloadEnd === 0
+    ) {
+      return state;
+    }
+
+    return {
+      phantomPrimaryAmmo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+      phantomPrimaryReloading: false,
+      phantomPrimaryReloadStart: 0,
+      phantomPrimaryReloadEnd: 0,
+    };
   }),
 
   // ==================== VOID RAYS ====================

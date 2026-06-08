@@ -2,7 +2,12 @@ import { memo, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useShallow } from 'zustand/shallow';
-import { HERO_DEFINITIONS, SPRINT_MULTIPLIER, type HeroId } from '@voxel-strike/shared';
+import {
+  HERO_DEFINITIONS,
+  PHANTOM_PRIMARY_RELOAD_MS,
+  SPRINT_MULTIPLIER,
+  type HeroId,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
@@ -82,6 +87,19 @@ interface PhantomLocomotionRuntime extends PhantomLocomotionPose {
   hasPreviousCameraPosition: boolean;
 }
 
+interface PhantomReloadPose {
+  active: boolean;
+  progress: number;
+  blend: number;
+  glowOpacity: number;
+  shakeX: number;
+  shakeY: number;
+  shakeZ: number;
+  shakeRotX: number;
+  shakeRotY: number;
+  shakeRotZ: number;
+}
+
 const VIEWMODEL_ROOT_EULER_ORDER = 'XYZ';
 const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
 const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.4);
@@ -109,6 +127,21 @@ const PHANTOM_IDLE_HAND_ROTATION = {
   y: 0.38,
   z: -0.14,
 } as const;
+const PHANTOM_RELOAD_PULLBACK_Z = 0.092;
+const PHANTOM_RELOAD_INWARD_X = 0.034;
+const PHANTOM_RELOAD_LIFT_Y = 0.018;
+const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
+  active: false,
+  progress: 0,
+  blend: 0,
+  glowOpacity: 0,
+  shakeX: 0,
+  shakeY: 0,
+  shakeZ: 0,
+  shakeRotX: 0,
+  shakeRotY: 0,
+  shakeRotZ: 0,
+};
 
 const matrixPosition = new THREE.Vector3();
 const matrixQuaternion = new THREE.Quaternion();
@@ -265,6 +298,61 @@ function writeViewmodelRootTransform(
     sway * 0.07,
     Math.sin(elapsedSeconds * 1.2) * 0.009
   );
+}
+
+function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: PHANTOM_COLORS.lightPurple,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+function getPhantomReloadPose(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {
+  const store = useGameStore.getState();
+  if (!store.phantomPrimaryReloading) return PHANTOM_RELOAD_IDLE_POSE;
+
+  const start = store.phantomPrimaryReloadStart || nowMs;
+  const duration = Math.max(1, store.phantomPrimaryReloadEnd - start || PHANTOM_PRIMARY_RELOAD_MS);
+  const progress = THREE.MathUtils.clamp((nowMs - start) / duration, 0, 1);
+  const fadeIn = THREE.MathUtils.smoothstep(progress, 0, 0.18);
+  const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, 0.76, 1);
+  const blend = fadeIn * fadeOut;
+  const glowPulse = 0.54 + Math.sin(elapsedSeconds * 16.5 + side * 0.7) * 0.22 + Math.sin(elapsedSeconds * 31.0) * 0.1;
+  const shakeStrength = blend * (0.56 + THREE.MathUtils.smoothstep(progress, 0.08, 0.4) * 0.44);
+
+  return {
+    active: true,
+    progress,
+    blend,
+    glowOpacity: THREE.MathUtils.clamp(blend * glowPulse, 0, 0.82),
+    shakeX: Math.sin(elapsedSeconds * 53 + side * 1.7) * 0.0032 * shakeStrength,
+    shakeY: Math.sin(elapsedSeconds * 61 + side * 0.9) * 0.0026 * shakeStrength,
+    shakeZ: Math.sin(elapsedSeconds * 47 + side * 2.1) * 0.0034 * shakeStrength,
+    shakeRotX: Math.sin(elapsedSeconds * 71 + side * 1.3) * 0.016 * shakeStrength,
+    shakeRotY: Math.sin(elapsedSeconds * 57 + side * 2.4) * 0.012 * shakeStrength,
+    shakeRotZ: Math.sin(elapsedSeconds * 67 + side * 0.4) * 0.014 * shakeStrength,
+  };
+}
+
+function applyPhantomReloadMotion(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  reloadPose: PhantomReloadPose,
+  intensity = 1
+): void {
+  if (!reloadPose.active || reloadPose.blend <= 0) return;
+
+  const blend = reloadPose.blend * intensity;
+  target.position.x += side * (-PHANTOM_RELOAD_INWARD_X * blend + reloadPose.shakeX * intensity);
+  target.position.y += PHANTOM_RELOAD_LIFT_Y * blend + reloadPose.shakeY * intensity;
+  target.position.z += PHANTOM_RELOAD_PULLBACK_Z * blend + reloadPose.shakeZ * intensity;
+  target.rotation.x += reloadPose.shakeRotX * intensity - 0.028 * blend;
+  target.rotation.y += reloadPose.shakeRotY * intensity + side * 0.018 * blend;
+  target.rotation.z += reloadPose.shakeRotZ * intensity + side * -0.026 * blend;
 }
 
 function composeTransformMatrix(
@@ -723,6 +811,11 @@ function PhantomAnimatedForearm({
   const length = 0.32;
   const width = 0.074;
   const thickness = 0.066;
+  const reloadGlowMaterial = useMemo(createPhantomReloadGlowMaterial, []);
+
+  useEffect(() => () => {
+    reloadGlowMaterial.dispose();
+  }, [reloadGlowMaterial]);
 
   useFrame((state) => {
     const forearm = forearmRef.current;
@@ -733,8 +826,9 @@ function PhantomAnimatedForearm({
     const attackTimeSeconds = attack?.side === side
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const holdBlend = getPhantomPrimaryHeldBlend(nowMs);
-    const shotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
+    const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
+    const holdBlend = reloadPose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
+    const shotPulse = reloadPose.active ? 0 : getPhantomPrimaryShotPulse(attackTimeSeconds);
     writePhantomForearmPose(
       forearm,
       side,
@@ -743,6 +837,8 @@ function PhantomAnimatedForearm({
       state.clock.elapsedTime,
       locomotionRef.current
     );
+    applyPhantomReloadMotion(forearm, side, reloadPose, 0.82);
+    reloadGlowMaterial.opacity = reloadPose.glowOpacity * 0.42;
   });
 
   return (
@@ -751,6 +847,8 @@ function PhantomAnimatedForearm({
       <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.27, -0.06]} scale={[width, thickness * 0.7, length * 0.7]} />
       <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.005, -length * 0.5]} scale={[width * 0.86, thickness, 0.1]} />
       <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.7, -0.09]} scale={[width * 0.56, Math.max(0.014, thickness * 0.2), length * 0.46]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={reloadGlowMaterial} position={[0, thickness * 0.32, -0.08]} scale={[width * 1.08, thickness * 0.84, length * 0.84]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={reloadGlowMaterial} position={[0, thickness * 0.82, -0.1]} scale={[width * 0.7, Math.max(0.018, thickness * 0.28), length * 0.58]} />
     </group>
   );
 }
@@ -775,11 +873,16 @@ function PhantomPoseableHand({
   const socketRef = useRef<THREE.Group>(null);
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
   const thumbSide = -side;
+  const reloadGlowMaterial = useMemo(createPhantomReloadGlowMaterial, []);
 
   useEffect(() => {
     if (!socketRef.current) return undefined;
     return registerViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef.current);
   }, [side]);
+
+  useEffect(() => () => {
+    reloadGlowMaterial.dispose();
+  }, [reloadGlowMaterial]);
 
   useFrame((state) => {
     const closedVisual = closedVisualRef.current;
@@ -796,8 +899,9 @@ function PhantomPoseableHand({
     const attackTimeSeconds = attack?.side === side
       ? (nowMs - attack.startTimeMs) / 1000
       : Number.POSITIVE_INFINITY;
-    const holdBlend = getPhantomPrimaryHeldBlend(nowMs);
-    const shotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
+    const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
+    const holdBlend = reloadPose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
+    const shotPulse = reloadPose.active ? 0 : getPhantomPrimaryShotPulse(attackTimeSeconds);
     const openVisualBlend = THREE.MathUtils.smoothstep(holdBlend, 0.02, 0.72);
     const closedVisualBlend = 1 - THREE.MathUtils.smoothstep(holdBlend, 0, 0.5);
 
@@ -826,6 +930,11 @@ function PhantomPoseableHand({
       state.clock.elapsedTime,
       locomotionRef.current
     );
+    applyPhantomReloadMotion(arm, side, reloadPose);
+    if (closedVisual) {
+      applyPhantomReloadMotion(closedVisual, side, reloadPose);
+    }
+    reloadGlowMaterial.opacity = reloadPose.glowOpacity * 0.62;
   });
 
   return (
@@ -873,6 +982,18 @@ function PhantomPoseableHand({
             material={materials.glow}
             position={[side * -0.034, 0, -0.108]}
             scale={[0.05, 0.014, 0.012]}
+          />
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={reloadGlowMaterial}
+            position={[0, 0, -0.012]}
+            scale={[0.132, 0.154, 0.132]}
+          />
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={reloadGlowMaterial}
+            position={[side * -0.048, 0, -0.078]}
+            scale={[0.052, 0.122, 0.042]}
           />
         </group>
       </group>

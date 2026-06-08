@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
-import { ABILITY_DEFINITIONS, VOID_RAY_CHARGE_TIME } from '@voxel-strike/shared';
+import {
+  ABILITY_DEFINITIONS,
+  PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  PHANTOM_PRIMARY_RELOAD_MS,
+  VOID_RAY_CHARGE_TIME,
+} from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { useCombatFeedbackStore, type DamageNumberEvent, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
@@ -163,6 +168,120 @@ function KillFeed({ events }: { events: KillFeedEvent[] }) {
   );
 }
 
+function PhantomAmmoCounter({
+  ammo,
+  reloading,
+  reloadStart,
+  reloadEnd,
+}: {
+  ammo: number;
+  reloading: boolean;
+  reloadStart: number;
+  reloadEnd: number;
+}) {
+  const now = Date.now();
+  const maxAmmo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+  const shownAmmo = Math.max(0, Math.min(maxAmmo, Math.round(ammo)));
+  const reloadDuration = Math.max(1, reloadEnd - reloadStart || PHANTOM_PRIMARY_RELOAD_MS);
+  const reloadProgress = reloading
+    ? Math.max(0, Math.min(1, (now - reloadStart) / reloadDuration))
+    : 1;
+  const reloadRemainingSeconds = Math.max(0, (reloadEnd - now) / 1000);
+  const status = reloading ? `${reloadRemainingSeconds.toFixed(1)}s` : 'ready';
+
+  return (
+    <div
+      className="relative w-[clamp(9rem,12vw,11.75rem)] rounded-md overflow-hidden backdrop-blur-sm animate-fade-in"
+      style={{
+        background: reloading
+          ? 'linear-gradient(135deg, rgba(54, 36, 83, 0.7), rgba(10, 8, 18, 0.72))'
+          : 'linear-gradient(135deg, rgba(38, 24, 60, 0.64), rgba(8, 7, 13, 0.62))',
+        border: reloading
+          ? '1px solid rgba(168, 85, 247, 0.72)'
+          : '1px solid rgba(168, 85, 247, 0.38)',
+        boxShadow: reloading
+          ? '0 0 24px rgba(168, 85, 247, 0.28), inset 0 0 18px rgba(168, 85, 247, 0.1)'
+          : '0 8px 22px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.06)',
+      }}
+    >
+      <div
+        className="absolute inset-y-0 left-0 transition-[width] duration-100"
+        style={{
+          width: `${reloadProgress * 100}%`,
+          background: reloading
+            ? 'linear-gradient(90deg, rgba(168, 85, 247, 0.22), rgba(34, 211, 238, 0.12))'
+            : 'linear-gradient(90deg, rgba(168, 85, 247, 0.14), transparent)',
+        }}
+      />
+
+      <div className="relative px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[9px] uppercase text-violet-200/80">dire</span>
+          <span className={`font-mono text-[9px] uppercase ${reloading ? 'text-cyan-200' : 'text-white/45'}`}>
+            {status}
+          </span>
+        </div>
+
+        <div className="mt-0.5 flex items-end justify-between gap-3">
+          <div className="flex items-baseline gap-1">
+            <span
+              className={`font-mono text-[clamp(2rem,3vw,2.7rem)] font-bold leading-none tabular-nums ${reloading ? 'text-violet-100' : 'text-white'}`}
+              style={{ textShadow: reloading ? '0 0 14px rgba(168, 85, 247, 0.75)' : '0 2px 10px rgba(0,0,0,0.9)' }}
+            >
+              {shownAmmo.toString().padStart(2, '0')}
+            </span>
+            <span className="font-mono text-[11px] text-white/42 tabular-nums">/{maxAmmo}</span>
+          </div>
+
+          <div
+            className="h-9 w-9 rounded-md border flex items-center justify-center"
+            style={{
+              borderColor: reloading ? 'rgba(34, 211, 238, 0.62)' : 'rgba(255, 255, 255, 0.14)',
+              background: 'rgba(0, 0, 0, 0.28)',
+            }}
+          >
+            <svg width="28" height="28" viewBox="0 0 28 28" className="-rotate-90">
+              <circle cx="14" cy="14" r="10.5" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="3" />
+              <circle
+                cx="14"
+                cy="14"
+                r="10.5"
+                fill="none"
+                stroke={reloading ? '#22d3ee' : '#a855f7'}
+                strokeWidth="3"
+                strokeDasharray={`${reloadProgress * 66} 66`}
+                strokeLinecap="round"
+                style={{ filter: reloading ? 'drop-shadow(0 0 5px rgba(34, 211, 238, 0.9))' : 'none' }}
+              />
+            </svg>
+          </div>
+        </div>
+
+        <div
+          className="mt-2 grid gap-[3px]"
+          style={{ gridTemplateColumns: `repeat(${maxAmmo}, minmax(0, 1fr))` }}
+        >
+          {Array.from({ length: maxAmmo }, (_, index) => {
+            const filled = index < shownAmmo;
+            return (
+              <div
+                key={index}
+                className="h-1.5 rounded-[2px] transition-colors duration-100"
+                style={{
+                  background: filled
+                    ? 'linear-gradient(180deg, #d8b4fe, #7c3aed)'
+                    : 'rgba(255, 255, 255, 0.12)',
+                  boxShadow: filled ? '0 0 8px rgba(168, 85, 247, 0.62)' : 'none',
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HUD() {
   const {
     localPlayer,
@@ -184,6 +303,10 @@ export function HUD() {
     iceWallRushActive,
     frostStormActive,
     frostStormShield,
+    phantomPrimaryAmmo,
+    phantomPrimaryReloading,
+    phantomPrimaryReloadStart,
+    phantomPrimaryReloadEnd,
   } = useGameStore(
     useShallow(state => ({
       localPlayer: state.localPlayer,
@@ -205,6 +328,10 @@ export function HUD() {
       iceWallRushActive: state.iceWallRushActive,
       frostStormActive: state.frostStormActive,
       frostStormShield: state.frostStormShield,
+      phantomPrimaryAmmo: state.phantomPrimaryAmmo,
+      phantomPrimaryReloading: state.phantomPrimaryReloading,
+      phantomPrimaryReloadStart: state.phantomPrimaryReloadStart,
+      phantomPrimaryReloadEnd: state.phantomPrimaryReloadEnd,
     }))
   );
   const {
@@ -555,6 +682,14 @@ export function HUD() {
 
       {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
       <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2">
+        {localPlayer.heroId === 'phantom' && (
+          <PhantomAmmoCounter
+            ammo={phantomPrimaryAmmo}
+            reloading={phantomPrimaryReloading}
+            reloadStart={phantomPrimaryReloadStart}
+            reloadEnd={phantomPrimaryReloadEnd}
+          />
+        )}
 
         {/* Movement indicators container */}
         <div className="flex flex-col items-end gap-1.5">

@@ -34,6 +34,12 @@ const featureQualityOptions = [
   { value: 'ultra', label: 'Ultra' },
 ];
 
+const fpsDisplayModeOptions = [
+  { value: 'off', label: 'Off' },
+  { value: 'fps', label: 'FPS Only' },
+  { value: 'full', label: 'Full' },
+];
+
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
   const savedSettings = useSettingsStore(state => state.settings);
@@ -220,10 +226,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Show FPS" description="Display frame rate counter">
-                  <ToggleInput
+                <SettingRow label="Show FPS" description="Display frame rate counter or diagnostics panel">
+                  <SelectInput
                     value={settings.showFPS}
-                    onChange={(v) => updateSetting('showFPS', v)}
+                    onChange={(v) => updateSetting('showFPS', v as ClientSettings['showFPS'])}
+                    options={fpsDisplayModeOptions}
                   />
                 </SettingRow>
               </div>

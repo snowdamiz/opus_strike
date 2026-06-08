@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { getBlockNumericId, isSolidBlock } from '../dist/maps/procedural/blocks.js';
+import { DEFAULT_GAME_CONFIG } from '../dist/constants/game.js';
 import { generateProceduralVoxelMapWithDiagnostics } from '../dist/maps/procedural/generator.js';
 
 const DEFAULT_SEQUENTIAL_SEEDS = 20;
@@ -14,7 +15,8 @@ const SPAWN_DISTANCE_AUDIT_BASE_RADIUS = 4.41;
 const SPAWN_DISTANCE_AUDIT_MIN_RADIUS = 3.24;
 const SPAWN_DISTANCE_AUDIT_GRID_STEP = 1.75;
 const SPAWN_DISTANCE_AUDIT_PAIR_LIMIT = 128;
-const SPAWN_DISTANCE_AUDIT_ARC_ANGLES = [-62, -31, 0, 31, 62];
+const SPAWN_POINT_COUNT = DEFAULT_GAME_CONFIG.teamSize;
+const SPAWN_DISTANCE_AUDIT_ARC_ANGLES = [-54, -18, 18, 54];
 
 function parseArgs(argv) {
   const options = {
@@ -254,9 +256,10 @@ function canFitSpawnArcAudit(boundary, flag, outward) {
     const arcAngle = SPAWN_DISTANCE_AUDIT_ARC_ANGLES[index];
 
     for (let attempts = 0; attempts < 28; attempts++) {
+      const centerBias = Math.abs(arcAngle) < 1 ? 0.27 : 0.63;
       const radius = Math.max(
         SPAWN_DISTANCE_AUDIT_MIN_RADIUS,
-        SPAWN_DISTANCE_AUDIT_BASE_RADIUS + (index === 2 ? 0.27 : 0.63) - attempts * 0.108
+        SPAWN_DISTANCE_AUDIT_BASE_RADIUS + centerBias - attempts * 0.108
       );
       const candidate = getSpawnArcAuditCandidate(flag, outward, arcAngle, radius);
       const flagOffset = { x: candidate.x - flag.x, z: candidate.z - flag.z };
@@ -270,7 +273,7 @@ function canFitSpawnArcAudit(boundary, flag, outward) {
     }
   }
 
-  for (let offset = 0; spawns.length < 5 && offset < 18; offset++) {
+  for (let offset = 0; spawns.length < SPAWN_POINT_COUNT && offset < 18; offset++) {
     const direction = offset % 2 === 0 ? 1 : -1;
     const radius = Math.max(SPAWN_DISTANCE_AUDIT_MIN_RADIUS, SPAWN_DISTANCE_AUDIT_BASE_RADIUS - offset * 0.135);
     const candidate = getSpawnArcAuditCandidate(flag, outward, direction * (28 + offset * 4), radius);
@@ -283,7 +286,7 @@ function canFitSpawnArcAudit(boundary, flag, outward) {
     spawns.push(candidate);
   }
 
-  return spawns.length === 5;
+  return spawns.length === SPAWN_POINT_COUNT;
 }
 
 function getSpawnSafeFlagCandidateDistance(manifest) {
@@ -489,8 +492,8 @@ function inspectMap(seed, options) {
   const protectedFailures = acceptedBuildings.filter((entry) => entry.metrics.minProtectedZoneDistance < 0);
   const heightFailures = acceptedBuildings.filter((entry) => entry.metrics.maxFloorRow + entry.metrics.maxHeightRows >= manifest.size.y - 2);
 
-  assertCondition(manifest.spawnPoints.red.length === 5, failures, `seed ${seed}: expected 5 red spawns`);
-  assertCondition(manifest.spawnPoints.blue.length === 5, failures, `seed ${seed}: expected 5 blue spawns`);
+  assertCondition(manifest.spawnPoints.red.length === SPAWN_POINT_COUNT, failures, `seed ${seed}: expected ${SPAWN_POINT_COUNT} red spawns`);
+  assertCondition(manifest.spawnPoints.blue.length === SPAWN_POINT_COUNT, failures, `seed ${seed}: expected ${SPAWN_POINT_COUNT} blue spawns`);
   assertCondition(Boolean(manifest.flagZones.red && manifest.flagZones.blue), failures, `seed ${seed}: missing flag zones`);
   assertCondition(manifest.stats.colliderCount > 0, failures, `seed ${seed}: no colliders generated`);
   assertCondition(manifest.stats.colliderCount <= options.maxColliders, failures, `seed ${seed}: collider count ${manifest.stats.colliderCount} > ${options.maxColliders}`);

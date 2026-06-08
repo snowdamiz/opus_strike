@@ -31,6 +31,8 @@ import {
   BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
   BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
   BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+  PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  PHANTOM_PRIMARY_RELOAD_MS,
 } from '@voxel-strike/shared';
 import type { 
   BotDifficulty,
@@ -89,6 +91,10 @@ interface BotAssignment {
 type BotStrategicRole = 'runner' | 'fighter' | 'defender' | 'support';
 type PlainVec3 = { x: number; y: number; z: number };
 type PlainVec2 = { x: number; z: number };
+interface PhantomPrimaryMagazineState {
+  ammo: number;
+  reloadUntil: number;
+}
 
 interface BotBrain {
   nextThinkAt: number;
@@ -287,11 +293,14 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
 };
 
 export class GameRoom extends Room<GameState> {
+  maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
+
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private readonly config = DEFAULT_GAME_CONFIG;
   private lobbyId: string | null = null;
   private lobbyName: string | null = null;
   private voidZones: VoidZone[] = [];
+  private phantomPrimaryMagazines: Map<string, PhantomPrimaryMagazineState> = new Map();
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
   private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
@@ -451,6 +460,7 @@ export class GameRoom extends Room<GameState> {
         }
         this.state.players.delete(existingSessionId);
         playerPressState.delete(existingSessionId);
+        this.phantomPrimaryMagazines.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
         // Broadcast that old player left
@@ -460,6 +470,12 @@ export class GameRoom extends Room<GameState> {
       // Register this client's ID mapping
       this.clientIdToSessionId.set(options.clientId, client.sessionId);
       this.sessionIdToClientId.set(client.sessionId, options.clientId);
+    }
+
+    if (this.state.players.size >= this.config.maxPlayers) {
+      client.send('error', { message: 'Game room is full' });
+      client.leave();
+      return;
     }
 
     // Initialize ability press state tracking
@@ -540,6 +556,7 @@ export class GameRoom extends Room<GameState> {
     this.knownPlayerIds.delete(client.sessionId);
     this.playerVitalSignatures.delete(client.sessionId);
     playerPressState.delete(client.sessionId);
+    this.phantomPrimaryMagazines.delete(client.sessionId);
     this.authoritativePositionUntil.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
@@ -1214,6 +1231,45 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private resetPhantomPrimaryMagazine(playerId: string): void {
+    this.phantomPrimaryMagazines.set(playerId, {
+      ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+      reloadUntil: 0,
+    });
+  }
+
+  private consumePhantomPrimaryShot(player: Player, now: number): boolean {
+    if (player.heroId !== 'phantom') return true;
+
+    let magazine = this.phantomPrimaryMagazines.get(player.id);
+    if (!magazine) {
+      magazine = {
+        ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+        reloadUntil: 0,
+      };
+      this.phantomPrimaryMagazines.set(player.id, magazine);
+    }
+
+    if (magazine.reloadUntil > 0 && now >= magazine.reloadUntil) {
+      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+      magazine.reloadUntil = 0;
+    }
+
+    if (magazine.reloadUntil > now) return false;
+
+    if (magazine.ammo <= 0) {
+      magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
+      return false;
+    }
+
+    magazine.ammo--;
+    if (magazine.ammo === 0) {
+      magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
+    }
+
+    return true;
+  }
+
   private processPlayerInput(player: Player, input: PlayerInput): void {
     if (player.state !== 'alive') return;
 
@@ -1261,6 +1317,7 @@ export class GameRoom extends Room<GameState> {
     const cooldownKey = `${player.id}:${mode}`;
     const now = Date.now();
     if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) return;
+    if (mode === 'primary' && !this.consumePhantomPrimaryShot(player, now)) return;
     this.attackCooldownUntil.set(cooldownKey, now + attack.cooldownMs);
 
     const veil = player.abilities.get('phantom_veil');
@@ -2482,6 +2539,11 @@ export class GameRoom extends Room<GameState> {
     player.maxHealth = heroDef.stats.maxHealth;
     player.health = player.maxHealth;
     player.ultimateCharge = 0;
+    if (heroId === 'phantom') {
+      this.resetPhantomPrimaryMagazine(player.id);
+    } else {
+      this.phantomPrimaryMagazines.delete(player.id);
+    }
     this.disablePlayerSkills(player);
     if (player.lastInput) {
       player.lastInput = {
@@ -2739,10 +2801,10 @@ export class GameRoom extends Room<GameState> {
     if (!player) return;
 
     // Check team balance
-    const teamCount = this.getTeamCount(team);
-    const otherTeamCount = this.getTeamCount(team === 'red' ? 'blue' : 'red');
+    const teamCount = this.getTeamCountExcluding(team, client.sessionId);
+    const otherTeamCount = this.getTeamCountExcluding(team === 'red' ? 'blue' : 'red', client.sessionId);
 
-    if (teamCount > otherTeamCount) {
+    if (teamCount >= this.config.teamSize || teamCount > otherTeamCount) {
       // Team is full
       return;
     }
@@ -2898,6 +2960,9 @@ export class GameRoom extends Room<GameState> {
       if (player.heroId === 'blaze') {
         player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
         player.movement.isJetpacking = false;
+      }
+      if (player.heroId === 'phantom') {
+        this.resetPhantomPrimaryMagazine(player.id);
       }
       
       // Reset ability cooldowns
@@ -3236,6 +3301,9 @@ export class GameRoom extends Room<GameState> {
       player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
       player.movement.isJetpacking = false;
     }
+    if (player.heroId === 'phantom') {
+      this.resetPhantomPrimaryMagazine(player.id);
+    }
 
     // Reset ability cooldowns on respawn
     resetAbilityCooldowns(player);
@@ -3342,6 +3410,14 @@ export class GameRoom extends Room<GameState> {
     let count = 0;
     this.state.players.forEach(p => {
       if (p.team === team) count++;
+    });
+    return count;
+  }
+
+  private getTeamCountExcluding(team: Team, excludedPlayerId: string): number {
+    let count = 0;
+    this.state.players.forEach((p, id) => {
+      if (id !== excludedPlayerId && p.team === team) count++;
     });
     return count;
   }

@@ -870,7 +870,12 @@ interface LobbyRowProps {
 }
 
 function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
-  const isFull = lobby.playerCount >= lobby.maxPlayers;
+  const humanCount = lobby.humanCount ?? lobby.playerCount;
+  const botCount = lobby.botCount ?? 0;
+  const participantCount = lobby.participantCount ?? humanCount + botCount;
+  const maxParticipants = lobby.maxParticipants ?? lobby.maxPlayers;
+  const capacityPercent = Math.min(100, (participantCount / Math.max(1, maxParticipants)) * 100);
+  const isFull = humanCount >= lobby.maxPlayers || participantCount >= maxParticipants;
   const isInGame = lobby.status === 'in_game' || lobby.status === 'starting';
   const canJoin = !isFull && !isInGame;
 
@@ -913,11 +918,11 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
             <div
               className={`h-full rounded-full transition-all ${isFull ? 'bg-red-500' : isInGame ? 'bg-amber-500' : 'bg-orange-500'
                 }`}
-              style={{ width: `${(lobby.playerCount / lobby.maxPlayers) * 100}%` }}
+              style={{ width: `${capacityPercent}%` }}
             />
           </div>
           <span className="text-xs text-white/50 font-mono">
-            {lobby.playerCount}/{lobby.maxPlayers}
+            {participantCount}/{maxParticipants}
           </span>
         </div>
       </div>

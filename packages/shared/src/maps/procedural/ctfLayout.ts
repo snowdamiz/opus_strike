@@ -1,6 +1,7 @@
 import type { BoundaryPoint, VoxelMapManifest, VoxelSize } from './types.js';
 import { isInsideBoundaryPolygon } from './boundaries.js';
 import { mulberry32 } from './rng.js';
+import { DEFAULT_GAME_CONFIG } from '../../constants/game.js';
 
 export interface ProceduralCTFLayout {
   origin: { x: number; y: number; z: number };
@@ -49,7 +50,8 @@ interface FlagPair {
 
 const FLAG_BOUNDARY_DISTANCE = scaleMap(9.7);
 const SPAWN_BOUNDARY_DISTANCE = 5;
-const SPAWN_ARC_ANGLES = [-62, -31, 0, 31, 62];
+const SPAWN_POINT_COUNT = DEFAULT_GAME_CONFIG.teamSize;
+const SPAWN_ARC_ANGLES = [-54, -18, 18, 54];
 const SPAWN_BASE_RADIUS = scaleMap(4.9);
 const SPAWN_MIN_RADIUS = scaleMap(3.6);
 const FLAG_CANDIDATE_GRID_STEP = scaleMap(1.9);
@@ -257,8 +259,9 @@ function collectSpawnArc(
 
     for (let attempts = 0; attempts < 28; attempts++) {
       const jitterDegrees = random && attempts > 0 ? lerp(-5.5, 5.5, random()) : 0;
+      const centerBias = Math.abs(arcAngle) < 1 ? 0.3 : 0.7;
       const radius =
-        Math.max(SPAWN_MIN_RADIUS, SPAWN_BASE_RADIUS + scaleMap(index === 2 ? 0.3 : 0.7) - scaleMap(attempts * 0.12));
+        Math.max(SPAWN_MIN_RADIUS, SPAWN_BASE_RADIUS + scaleMap(centerBias) - scaleMap(attempts * 0.12));
       const candidate = getSpawnArcCandidate(flag, outward, arcAngle + jitterDegrees, radius);
       const flagOffset = {
         x: candidate.x - flag.x,
@@ -274,7 +277,7 @@ function collectSpawnArc(
     }
   }
 
-  for (let offset = 0; spawns.length < 5 && offset < 18; offset++) {
+  for (let offset = 0; spawns.length < SPAWN_POINT_COUNT && offset < 18; offset++) {
     const direction = offset % 2 === 0 ? 1 : -1;
     const radius = Math.max(SPAWN_MIN_RADIUS, SPAWN_BASE_RADIUS - scaleMap(offset * 0.15));
     const candidate = getSpawnArcCandidate(flag, outward, direction * (28 + offset * 4), radius);
@@ -294,7 +297,7 @@ function collectSpawnArc(
 }
 
 function canFitSpawnArc(boundary: BoundaryPoint[], flag: Point2, outward: Point2): boolean {
-  return collectSpawnArc(null, boundary, flag, outward).length === 5;
+  return collectSpawnArc(null, boundary, flag, outward).length === SPAWN_POINT_COUNT;
 }
 
 function rankFlagPairs(candidates: Point2[], random: () => number): Array<{ a: Point2; b: Point2; score: number }> {

@@ -279,6 +279,7 @@ export function PlayerController() {
 
     if (!localPlayer) {
       setPhantomPrimaryHeld(false);
+      phantomAbilities.resetPhantomPrimaryMagazine();
       return;
     }
 
@@ -295,6 +296,7 @@ export function PlayerController() {
       setGrappleTrapTargeting(false, false);
       setFlamethrowerActive(false);
       setIceWallRushActive(false);
+      phantomAbilities.resetPhantomPrimaryMagazine();
       stopFlamethrowerSound();
     }
 
@@ -492,7 +494,18 @@ export function PlayerController() {
 
     // Handle hero-specific abilities
     const heroDef = HERO_DEFINITIONS[heroId];
-    setPhantomPrimaryHeld(heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire, now);
+    if (heroId === 'phantom') {
+      phantomAbilities.updatePhantomPrimaryReload(now);
+    }
+
+    const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
+    const primaryFireForServer = heroId === 'phantom'
+      ? frameInput.primaryFire && !phantomPrimaryReloading && phantomAbilities.phantomPrimaryAmmoRef.current > 0
+      : frameInput.primaryFire;
+    setPhantomPrimaryHeld(
+      heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire && !phantomPrimaryReloading,
+      now
+    );
     if (heroDef) {
       // Handle ability input
       if (heroId !== 'blaze' && heroId !== 'glacier') {
@@ -734,7 +747,7 @@ export function PlayerController() {
         jump: frameInput.jump,
         crouch: frameInput.crouch || movement.refs.isCrouching.current,
         sprint: frameInput.sprint,
-        primaryFire: frameInput.primaryFire,
+        primaryFire: primaryFireForServer,
         secondaryFire: frameInput.secondaryFire,
         ability1: frameInput.ability1,
         ability2: currentTargeting ? false : frameInput.ability2,

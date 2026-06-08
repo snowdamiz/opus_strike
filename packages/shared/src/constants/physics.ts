@@ -52,17 +52,17 @@ export const GROUND_NORMAL_THRESHOLD = 0.7;
 export const STEP_HEIGHT = 0.5;
 
 // Slide
-export const SLIDE_SPEED_BOOST = 1.8; // Speed multiplier during slide
+export const SLIDE_SPEED_BOOST = 2.25; // Speed multiplier during slide
 export const SLIDE_DURATION = 0.6; // Duration of slide in seconds
 export const SLIDE_COOLDOWN = 0.8; // Cooldown before next slide
-export const SLIDE_FRICTION = 0.96; // Friction applied during slide (higher = less slowdown)
+export const SLIDE_FRICTION = 0.982; // Friction applied during slide (higher = less slowdown)
 export const MIN_SLIDE_SPEED = 5; // Minimum speed to initiate slide
-export const SLIDE_INITIAL_BOOST = 1.8; // Initial speed boost when entering slide (ensures faster than sprint)
+export const SLIDE_INITIAL_BOOST = 2.25; // Initial speed boost when entering slide (ensures faster than sprint)
 
 // Glacier Passive - Frozen Momentum (team slide boost when Glacier is on the team)
 export const GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER = 1.4; // 40% faster slides
 export const GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER = 1.5; // 50% longer slides (further distance)
-export const GLACIER_PASSIVE_SLIDE_FRICTION = 0.975; // Less friction = slides further
+export const GLACIER_PASSIVE_SLIDE_FRICTION = 0.99; // Less friction = slides further
 
 // Crouch
 export const CROUCH_TRANSITION_SPEED = 12; // How fast to transition camera height

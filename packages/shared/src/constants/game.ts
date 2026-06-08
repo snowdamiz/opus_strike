@@ -1,8 +1,8 @@
 import type { GameConfig } from '../types/game.js';
 
 export const DEFAULT_GAME_CONFIG: GameConfig = {
-  maxPlayers: 10,
-  teamSize: 5,
+  maxPlayers: 8,
+  teamSize: 4,
   scoreToWin: 3,
   roundTimeSeconds: 600, // 10 minutes
   respawnTimeSeconds: 5,
@@ -35,4 +35,3 @@ export const DAMAGE_FALLOFF_MIN_MULTIPLIER = 0.5;
 
 export const KILL_ASSIST_WINDOW_MS = 10000; // 10 seconds
 export const ASSIST_DAMAGE_THRESHOLD = 0.25; // 25% of max health
-

@@ -1,6 +1,6 @@
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { createRandomSeed, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, createRandomSeed, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { BotDifficulty, Team } from '@voxel-strike/shared';
 
 interface JoinOptions {
@@ -42,7 +42,8 @@ interface MapVoteSession {
   previewReadyPlayerIds: Set<string>;
 }
 
-const MAX_PARTICIPANTS = 10;
+const MAX_PARTICIPANTS = DEFAULT_GAME_CONFIG.maxPlayers;
+const MAX_PLAYERS_PER_TEAM = DEFAULT_GAME_CONFIG.teamSize;
 const MAP_VOTE_OPTION_COUNT = 3;
 const MAP_VOTE_DURATION_MS = 30000;
 const MAP_NAME_SUFFIXES = [
@@ -96,7 +97,7 @@ function createSeedForTheme(themeIndex: number, source: number): number {
 }
 
 export class LobbyRoom extends Room<LobbyState> {
-  maxClients = 10;
+  maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
   private botIdCounter = 0;
   private mapVoteSession: MapVoteSession | null = null;
   private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -350,7 +351,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
     // Check team balance
     const teamCount = this.getTeamCountExcluding(team, client.sessionId);
-    const maxPerTeam = Math.ceil(this.state.maxParticipants / 2);
+    const maxPerTeam = MAX_PLAYERS_PER_TEAM;
     if (teamCount >= maxPerTeam) {
       client.send('error', { message: 'Team is full' });
       return;
@@ -665,7 +666,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!bot?.isBot) return;
 
     const teamCount = this.getTeamCountExcluding(team, botId);
-    const maxPerTeam = Math.ceil(this.state.maxParticipants / 2);
+    const maxPerTeam = MAX_PLAYERS_PER_TEAM;
     if (teamCount >= maxPerTeam) {
       client.send('error', { message: 'Team is full' });
       return;

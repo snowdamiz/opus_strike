@@ -18,6 +18,10 @@ export function getHeroStats(heroId: HeroId | null | undefined): HeroStats {
   return DEFAULT_HERO_STATS;
 }
 
+export const PHANTOM_PRIMARY_MAGAZINE_SIZE = 12;
+export const PHANTOM_PRIMARY_RELOAD_SECONDS = 2;
+export const PHANTOM_PRIMARY_RELOAD_MS = PHANTOM_PRIMARY_RELOAD_SECONDS * 1000;
+
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
     id: 'phantom',

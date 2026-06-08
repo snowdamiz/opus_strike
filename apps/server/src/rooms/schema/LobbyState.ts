@@ -1,4 +1,5 @@
 import { Schema, MapSchema, defineTypes } from '@colyseus/schema';
+import { DEFAULT_GAME_CONFIG } from '@voxel-strike/shared';
 
 export class LobbyPlayer extends Schema {
   id: string = '';
@@ -28,8 +29,8 @@ export class LobbyState extends Schema {
   lobbyId: string = '';
   name: string = '';
   hostId: string = '';
-  maxPlayers: number = 10;
-  maxParticipants: number = 10;
+  maxPlayers: number = DEFAULT_GAME_CONFIG.maxPlayers;
+  maxParticipants: number = DEFAULT_GAME_CONFIG.maxPlayers;
   isPublic: boolean = true;
   status: string = 'waiting'; // 'waiting' | 'map_vote' | 'starting' | 'in_game'
   gameRoomId: string = ''; // Set when game starts

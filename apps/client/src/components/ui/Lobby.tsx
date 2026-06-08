@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
-import type { BotDifficulty } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, type BotDifficulty } from '@voxel-strike/shared';
 import type { LobbyPlayer } from '../../store/gameStore';
 import { FACTIONS } from '../../styles/colorTokens';
 
@@ -535,7 +535,7 @@ function FactionPanel({
   onBotDifficultyChange,
   reverse,
 }: FactionPanelProps) {
-  const maxPlayers = 5;
+  const maxPlayers = DEFAULT_GAME_CONFIG.teamSize;
   const emptySlots = Math.max(0, maxPlayers - players.length);
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const canJoin = !isSelected && emptySlots > 0;

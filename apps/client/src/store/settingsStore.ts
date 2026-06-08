@@ -6,6 +6,7 @@ export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
 export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 export type GraphicsPreset = 'competitive' | 'balanced' | 'cinematic';
+export type FpsDisplayMode = 'off' | 'fps' | 'full';
 
 export interface ClientSettings {
   graphicsPreset: GraphicsPreset;
@@ -17,7 +18,7 @@ export interface ClientSettings {
   environmentQuality: GraphicsFeatureQuality;
   adaptiveQuality: boolean;
   fov: number;
-  showFPS: boolean;
+  showFPS: FpsDisplayMode;
   masterVolume: number;
   sfxVolume: number;
   musicVolume: number;
@@ -76,7 +77,7 @@ export const defaultSettings: ClientSettings = {
   graphicsPreset: 'balanced',
   ...graphicsPresetSettings.balanced,
   fov: 90,
-  showFPS: false,
+  showFPS: 'off',
   masterVolume: 80,
   sfxVolume: 100,
   musicVolume: 50,
@@ -109,6 +110,12 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+function pickFpsDisplayMode(value: unknown, fallback: FpsDisplayMode): FpsDisplayMode {
+  if (value === true) return 'full';
+  if (value === false) return 'off';
+  return pickOption(value, ['off', 'fps', 'full'] as const, fallback);
+}
+
 function materialQualityFromLegacyPreset(quality: GraphicsQuality): MaterialQuality {
   if (quality === 'low') return 'low';
   if (quality === 'medium') return 'medium';
@@ -139,7 +146,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     environmentQuality: pickOption(raw.environmentQuality, featureQualityOptions, preset.environmentQuality),
     adaptiveQuality: pickBoolean(raw.adaptiveQuality, preset.adaptiveQuality),
     fov: clamp(raw.fov, 60, 120, defaultSettings.fov),
-    showFPS: pickBoolean(raw.showFPS, defaultSettings.showFPS),
+    showFPS: pickFpsDisplayMode(raw.showFPS, defaultSettings.showFPS),
     masterVolume: clamp(raw.masterVolume, 0, 100, defaultSettings.masterVolume),
     sfxVolume: clamp(raw.sfxVolume, 0, 100, defaultSettings.sfxVolume),
     musicVolume: clamp(raw.musicVolume, 0, 100, defaultSettings.musicVolume),

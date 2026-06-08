@@ -284,11 +284,46 @@ function PerfDisplay() {
   );
 }
 
+function FpsOnlyDisplay() {
+  const [fps, setFps] = useState(0);
+
+  useEffect(() => {
+    let frameCount = 0;
+    let lastSampleAt = performance.now();
+    let rafId = 0;
+
+    const update = (now: number) => {
+      frameCount++;
+      const elapsed = now - lastSampleAt;
+
+      if (elapsed >= 250) {
+        setFps(Math.round((frameCount * 1000) / elapsed));
+        frameCount = 0;
+        lastSampleAt = now;
+      }
+
+      rafId = window.requestAnimationFrame(update);
+    };
+
+    rafId = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(rafId);
+  }, []);
+
+  return (
+    <div
+      aria-label={`FPS ${fps}`}
+      className="fixed top-2.5 right-3 z-[9000] select-none pointer-events-none font-mono text-sm font-semibold leading-none text-white tabular-nums drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]"
+    >
+      {fps}
+    </div>
+  );
+}
+
 export function PerfMonitor() {
   const debugMode = useGameStore((state) => state.debugMode);
   const showFPS = useSettingsStore((state) => state.settings.showFPS);
 
-  if (!debugMode && !showFPS) return null;
+  if (!debugMode && showFPS !== 'full') return null;
 
   return <PerfHeadless />;
 }
@@ -298,9 +333,10 @@ export function PerfMonitorOverlay() {
   const debugMode = useGameStore((state) => state.debugMode);
   const showFPS = useSettingsStore((state) => state.settings.showFPS);
 
-  if (!debugMode && !showFPS) return null;
+  if (debugMode || showFPS === 'full') return <PerfDisplay />;
+  if (showFPS === 'fps') return <FpsOnlyDisplay />;
 
-  return <PerfDisplay />;
+  return null;
 }
 
 export default PerfMonitor;
