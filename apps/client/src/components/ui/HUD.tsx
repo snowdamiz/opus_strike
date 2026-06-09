@@ -751,6 +751,7 @@ interface AbilityState {
   cooldownRemaining: number;
   charges: number;
   isActive: boolean;
+  activatedAt?: number;
 }
 
 function HUDSkillSlot({
@@ -776,15 +777,32 @@ function HUDSkillSlot({
   const canTrackAbility = Boolean(abilityId && abilityDef);
   const maxCharges = abilityDef?.charges || 1;
   const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef?.cooldown || skill.cooldown || 0);
+  const cooldownStartsAfterActive = abilityId === 'chronos_timebreak';
 
   const now = Date.now();
+  const isActive = canTrackAbility
+    ? isUltimate ? (ultimateEffectActive ?? false) : (abilityState?.isActive ?? false)
+    : false;
+  const activeDuration = abilityDef?.duration ?? 0;
+  const activeElapsed = abilityState?.activatedAt
+    ? Math.max(0, (now - abilityState.activatedAt) / 1000)
+    : 0;
+  const activeRemaining = isActive && !isUltimate && activeDuration > 0
+    ? Math.max(0, activeDuration - activeElapsed)
+    : 0;
+  const showActiveTimer = cooldownStartsAfterActive && activeRemaining > 0;
+  const activeProgress = activeDuration > 0
+    ? Math.max(0, Math.min(1, activeRemaining / activeDuration))
+    : 0;
   const clientCooldownRemaining = clientCooldownEnd && clientCooldownEnd > now
     ? Math.ceil((clientCooldownEnd - now) / 1000)
     : 0;
 
   const serverCooldown = abilityState?.cooldownRemaining ?? 0;
   // Ultimates use the charge system, not cooldowns - ignore any cooldown values
-  const cooldown = isUltimate || !canTrackAbility ? 0 : (clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown);
+  const cooldown = isUltimate || !canTrackAbility || showActiveTimer
+    ? 0
+    : (clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown);
 
   const serverCharges = abilityState?.charges ?? maxCharges;
   let charges = clientCharges !== undefined ? clientCharges : serverCharges;
@@ -793,16 +811,12 @@ function HUDSkillSlot({
     charges = maxCharges;
   }
 
-  // For ultimates, use client-side effect state to avoid server sync flickering
-  const isActive = canTrackAbility
-    ? isUltimate ? (ultimateEffectActive ?? false) : (abilityState?.isActive ?? false)
-    : false;
   const onCooldown = cooldown > 0;
   const isUltReady = isUltimate && ultimateCharge >= 100;
   const isUltCharging = isUltimate && ultimateCharge < 100;
   const hasCharges = maxCharges > 1;
   const noChargesLeft = hasCharges && charges === 0;
-  const isUsable = !onCooldown && !noChargesLeft && (!isUltimate || isUltReady);
+  const isUsable = !showActiveTimer && !onCooldown && !noChargesLeft && (!isUltimate || isUltReady);
   const inputLabel = skill.input === 'PASSIVE' ? 'P' : skill.input;
   const isWideInput = inputLabel.length > 1;
 
@@ -822,12 +836,46 @@ function HUDSkillSlot({
           item={skill}
           color={heroColor}
           size="hud"
-          muted={!isUsable}
+          muted={!isUsable && !showActiveTimer}
           active={isActive || isUltReady}
         />
 
         {(onCooldown || noChargesLeft || isUltCharging) && (
           <div className="absolute inset-0 bg-black/50 rounded-md z-10" />
+        )}
+
+        {showActiveTimer && (
+          <div
+            className="absolute inset-0 rounded-md z-10"
+            style={{
+              background: `radial-gradient(circle at center, ${heroColor}44 0%, rgba(22, 163, 74, 0.22) 46%, transparent 72%)`,
+              boxShadow: `inset 0 0 0 1px ${heroColor}99, 0 0 16px ${heroColor}66`,
+            }}
+          />
+        )}
+
+        {showActiveTimer && (
+          <svg className="absolute inset-0 w-full h-full z-20 -rotate-90" viewBox="0 0 100 100">
+            <circle
+              cx="50"
+              cy="50"
+              r="44"
+              fill="none"
+              stroke="rgba(16,185,129,0.18)"
+              strokeWidth="8"
+            />
+            <circle
+              cx="50"
+              cy="50"
+              r="44"
+              fill="none"
+              stroke={heroColor}
+              strokeWidth="8"
+              strokeLinecap="round"
+              strokeDasharray={`${activeProgress * 276} 276`}
+              className="transition-all duration-100"
+            />
+          </svg>
         )}
 
         {onCooldown && maxCooldown > 0 && (
@@ -864,6 +912,14 @@ function HUDSkillSlot({
           </div>
         )}
 
+        {showActiveTimer && (
+          <div className="absolute inset-0 flex items-center justify-center z-30">
+            <span className="font-mono text-base sm:text-lg font-bold text-emerald-100 drop-shadow-[0_2px_7px_rgba(5,46,22,1)]">
+              {Math.ceil(activeRemaining)}
+            </span>
+          </div>
+        )}
+
         {isUltCharging && !onCooldown && (
           <div className="absolute inset-0 flex items-center justify-center z-30">
             <span className="font-mono text-xs sm:text-sm font-bold text-violet-200 drop-shadow-lg">
@@ -886,7 +942,7 @@ function HUDSkillSlot({
           </div>
         )}
 
-        {isActive && (
+        {isActive && !showActiveTimer && (
           <div
             className="absolute inset-0 rounded-md z-10 animate-pulse"
             style={{

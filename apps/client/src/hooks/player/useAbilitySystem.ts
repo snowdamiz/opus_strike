@@ -7,7 +7,11 @@
 import { useRef, useCallback } from 'react';
 import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
+import { recordSystemTime } from '../../utils/perfMarks';
 import type { AbilityActiveState } from './types';
+import { getLocalChronosTimebreakTempoMultiplier } from './chronosTimebreakTempo';
+
+const CLIENT_COOLDOWN_SYNC_INTERVAL_MS = 100;
 
 export interface UseAbilitySystemReturn {
   // Refs
@@ -22,7 +26,11 @@ export interface UseAbilitySystemReturn {
   startClientCooldown: (abilityId: string) => void;
   canUseAbility: (abilityId: string, isUltimate: boolean, isTargetingActive?: boolean) => boolean;
   isAbilityActive: (abilityId: string) => boolean;
-  setAbilityActive: (abilityId: string, active: boolean) => void;
+  setAbilityActive: (
+    abilityId: string,
+    active: boolean,
+    options?: { startTime?: number; startCooldownOnEnd?: boolean }
+  ) => void;
   updateActiveAbilities: (dt: number) => { speedMultiplier: number };
 }
 
@@ -36,6 +44,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
   const clientCooldownsRef = useRef<Record<string, number>>({});
   const clientChargesRef = useRef<Record<string, number>>({});
   const abilityActiveRef = useRef<Record<string, AbilityActiveState>>({});
+  const lastClientCooldownSyncRef = useRef(0);
 
   // Get current charges for an ability (initializes to max if not set)
   const getClientCharges = useCallback((abilityId: string): number => {
@@ -129,10 +138,19 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
     const maxCharges = abilityDef?.charges || 1;
     const hasCharges = maxCharges > 1;
+    const durationMs = (abilityDef?.duration ?? 0) * 1000;
 
     // Check client-side cooldown
     const clientCooldownEnd = clientCooldownsRef.current[abilityId];
     const now = Date.now();
+
+    const clientActiveState = abilityActiveRef.current[abilityId];
+    if (
+      clientActiveState?.active &&
+      (durationMs <= 0 || now < clientActiveState.startTime || now - clientActiveState.startTime < durationMs)
+    ) {
+      return false;
+    }
 
     if (clientCooldownEnd && clientCooldownEnd > 0 && now < clientCooldownEnd) {
       return false;
@@ -158,6 +176,13 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     // For non-charge abilities, check server state as fallback
     const abilityState = localPlayer.abilities?.[abilityId];
     if (abilityState) {
+      const activatedAt = abilityState.activatedAt ?? now;
+      if (
+        abilityState.isActive &&
+        (durationMs <= 0 || now < activatedAt || now - activatedAt < durationMs)
+      ) {
+        return false;
+      }
       if (abilityState.cooldownRemaining > 0) return false;
     }
 
@@ -181,19 +206,26 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
   }, []);
 
   // Set ability active state
-  const setAbilityActive = useCallback((abilityId: string, active: boolean) => {
+  const setAbilityActive = useCallback((
+    abilityId: string,
+    active: boolean,
+    options: { startTime?: number; startCooldownOnEnd?: boolean } = {}
+  ) => {
     abilityActiveRef.current[abilityId] = {
       active,
-      startTime: active ? Date.now() : 0,
+      startTime: active ? (options.startTime ?? Date.now()) : 0,
+      startCooldownOnEnd: active ? options.startCooldownOnEnd : false,
     };
   }, []);
 
   // Update active abilities and return speed multiplier
-  const updateActiveAbilities = useCallback((_dt: number): { speedMultiplier: number } => {
+  const updateActiveAbilities = useCallback((dt: number): { speedMultiplier: number } => {
+    const frameStart = performance.now();
     const now = Date.now();
     let speedMultiplier = 1;
 
     const activeAbilities = abilityActiveRef.current;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now, activeAbilities);
     for (const abilityId in activeAbilities) {
       const state = activeAbilities[abilityId];
       if (!state.active) continue;
@@ -204,6 +236,27 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
       // Check if ability has expired
       if (now - state.startTime >= duration) {
         state.active = false;
+        if (state.startCooldownOnEnd) {
+          state.startCooldownOnEnd = false;
+          startClientCooldown(abilityId);
+
+          const store = useGameStore.getState();
+          const currentPlayer = store.localPlayer;
+          const currentAbility = currentPlayer?.abilities?.[abilityId];
+          if (currentPlayer && currentAbility?.isActive) {
+            store.updateLocalPlayer({
+              abilities: {
+                ...currentPlayer.abilities,
+                [abilityId]: {
+                  ...currentAbility,
+                  cooldownRemaining: abilityDef?.cooldown ?? 0,
+                  isActive: false,
+                  activatedAt: now,
+                },
+              },
+            });
+          }
+        }
         continue;
       }
 
@@ -211,8 +264,43 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
       if (abilityId === 'phantom_veil') speedMultiplier *= 1.3;
     }
 
+    const cooldownAdjustmentMs = (tempoMultiplier - 1) * Math.max(0, dt) * 1000;
+    let syncCooldownStore = now - lastClientCooldownSyncRef.current >= CLIENT_COOLDOWN_SYNC_INTERVAL_MS;
+    for (const abilityId in clientCooldownsRef.current) {
+      const cooldownEnd = clientCooldownsRef.current[abilityId];
+      if (!cooldownEnd || cooldownEnd <= 0) continue;
+
+      const nextCooldownEnd = cooldownEnd - cooldownAdjustmentMs;
+      if (nextCooldownEnd <= now) {
+        clientCooldownsRef.current[abilityId] = 0;
+        syncCooldownStore = true;
+
+        const abilityDef = ABILITY_DEFINITIONS[abilityId];
+        const maxCharges = abilityDef?.charges || 1;
+        if (maxCharges > 1 && (clientChargesRef.current[abilityId] ?? maxCharges) <= 0) {
+          clientChargesRef.current[abilityId] = maxCharges;
+          setClientCharges(abilityId, maxCharges);
+        }
+
+        if (syncCooldownStore) setClientCooldown(abilityId, 0);
+        continue;
+      }
+
+      clientCooldownsRef.current[abilityId] = nextCooldownEnd;
+      if (syncCooldownStore) {
+        setClientCooldown(abilityId, nextCooldownEnd);
+      }
+    }
+    if (syncCooldownStore) {
+      lastClientCooldownSyncRef.current = now;
+    }
+
+    speedMultiplier *= tempoMultiplier;
+
+    recordSystemTime('abilitySystem', performance.now() - frameStart);
+
     return { speedMultiplier };
-  }, []);
+  }, [setClientCharges, setClientCooldown, startClientCooldown]);
 
   return {
     abilityPressedRef,

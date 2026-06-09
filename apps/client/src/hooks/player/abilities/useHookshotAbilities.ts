@@ -31,6 +31,7 @@ import {
   calculateLookDirection,
   calculateHorizontalLookDirection,
 } from '../constants';
+import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import type { AbilityContext } from '../types';
 import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
 import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
@@ -195,7 +196,8 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   // Fire Chain Hook (primary fire)
   const fireChainHook = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
-    if (now - lastHookTimeRef.current < HOOKSHOT_FIRE_INTERVAL) return;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (now - lastHookTimeRef.current < HOOKSHOT_FIRE_INTERVAL / tempoMultiplier) return;
 
     lastHookTimeRef.current = now;
     hookProjectileIdRef.current++;
@@ -231,7 +233,8 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   // Fire Drag Hook (secondary fire)
   const fireDragHook = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
-    if (now - lastDragHookTimeRef.current < DRAG_HOOK_COOLDOWN) return;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (now - lastDragHookTimeRef.current < DRAG_HOOK_COOLDOWN / tempoMultiplier) return;
 
     lastDragHookTimeRef.current = now;
     dragHookIdRef.current++;

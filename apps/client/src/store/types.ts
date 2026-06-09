@@ -135,6 +135,17 @@ export interface ChronosPulseData {
   ownerTeam: 'red' | 'blue';
 }
 
+export interface ChronosTimebreakData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  startTime: number;
+  releaseTime: number;
+  duration: number;
+  radius: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+}
+
 // ============================================================================
 // HOOKSHOT PROJECTILE TYPES
 // ============================================================================

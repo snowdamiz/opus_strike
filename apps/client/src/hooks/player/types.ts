@@ -68,6 +68,7 @@ export interface CameraRefs {
 export interface AbilityActiveState {
   active: boolean;
   startTime: number;
+  startCooldownOnEnd?: boolean;
 }
 
 export interface AbilityRefs {

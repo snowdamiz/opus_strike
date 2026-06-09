@@ -17,7 +17,7 @@ import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
-import { ChronosAegisManager, ChronosPulsesManager } from './chronos';
+import { ChronosAegisManager, ChronosPulsesManager, ChronosTimebreakManager } from './chronos';
 import { prewarmBlazeEffects, prewarmPhantomEffects } from './effectResources';
 import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
@@ -343,6 +343,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
             <HookshotEffectsManager />
             <ChronosAegisManager />
             <ChronosPulsesManager />
+            <ChronosTimebreakManager />
             <TerrainImpactEffectsManager />
           </>
         )}

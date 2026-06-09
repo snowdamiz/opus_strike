@@ -1,9 +1,12 @@
 import { useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import {
+  ABILITY_DEFINITIONS,
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
+  CHRONOS_TIMEBREAK_RADIUS,
+  CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   type Player,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -21,6 +24,7 @@ import {
   CHRONOS_PRIMARY_FIRE_READY_BLEND,
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   getChronosPrimaryHeldBlend,
+  triggerChronosTimebreakPose,
   triggerChronosLifelineConduitPose,
   triggerChronosPrimaryShotGlow,
   type ChronosPrimaryOrbPoseSampleContext,
@@ -32,18 +36,32 @@ import {
   type ViewmodelSocketPose,
 } from '../../../viewmodel/viewmodelSocketRegistry';
 import { addChronosLifelineEffects } from '../../../components/game/chronos/lifeline';
+import { addChronosTimebreakEffect } from '../../../components/game/chronos/timebreak';
+import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import type { AbilityContext } from '../types';
 
 export interface UseChronosAbilitiesReturn {
   lastPulseTimeRef: React.MutableRefObject<number>;
   pulseIdRef: React.MutableRefObject<number>;
+  timebreakIdRef: React.MutableRefObject<number>;
   executeLifelineConduit: (ctx: AbilityContext, useAbilityCharge: (abilityId: string) => boolean) => boolean;
+  executeTimebreak: (
+    ctx: AbilityContext,
+    setAbilityActive: (
+      abilityId: string,
+      active: boolean,
+      options?: { startTime?: number; startCooldownOnEnd?: boolean }
+    ) => void,
+    updateLocalPlayer: (data: Partial<Player>) => void
+  ) => boolean;
   fireVerdantPulse: (ctx: AbilityContext) => void;
 }
 
 const CHRONOS_PRIMARY_AIM_DISTANCE = 120;
 const CHRONOS_PRIMARY_PULSE_SPAWN_FORWARD_OFFSET = 0.82;
 const CHRONOS_LIFELINE_ABILITY_ID = 'chronos_lifeline_conduit';
+const CHRONOS_TIMEBREAK_ABILITY_ID = 'chronos_timebreak';
+const CHRONOS_TIMEBREAK_FALLBACK_SOURCE_HEIGHT = 1.18;
 
 interface LifelineTargetCandidate {
   player: Player;
@@ -240,6 +258,7 @@ function emitLifelineConduitBeam(ctx: AbilityContext, targets: readonly Player[]
 export function useChronosAbilities(): UseChronosAbilitiesReturn {
   const lastPulseTimeRef = useRef(0);
   const pulseIdRef = useRef(0);
+  const timebreakIdRef = useRef(0);
 
   const executeLifelineConduit = useCallback((
     ctx: AbilityContext,
@@ -264,7 +283,8 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
     const poseTimestampMs = ctx.viewmodelNowMs ?? now;
     const holdBlend = getChronosPrimaryHeldBlend(poseTimestampMs);
     if (holdBlend < CHRONOS_PRIMARY_FIRE_READY_BLEND) return;
-    if (now - lastPulseTimeRef.current < CHRONOS_PRIMARY_FIRE_INTERVAL) return;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (now - lastPulseTimeRef.current < CHRONOS_PRIMARY_FIRE_INTERVAL / tempoMultiplier) return;
 
     lastPulseTimeRef.current = now;
     pulseIdRef.current++;
@@ -298,10 +318,73 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
     });
   }, []);
 
+  const executeTimebreak = useCallback((
+    ctx: AbilityContext,
+    setAbilityActive: (
+      abilityId: string,
+      active: boolean,
+      options?: { startTime?: number; startCooldownOnEnd?: boolean }
+    ) => void,
+    updateLocalPlayer: (data: Partial<Player>) => void
+  ): boolean => {
+    const now = Date.now();
+    const releaseAt = now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
+    const duration = ABILITY_DEFINITIONS[CHRONOS_TIMEBREAK_ABILITY_ID]?.duration ?? 5;
+
+    timebreakIdRef.current++;
+    const timebreakId = `chronos_timebreak_${ctx.localPlayer.id}_${timebreakIdRef.current}`;
+
+    const currentAbilities = useGameStore.getState().localPlayer?.abilities ?? {};
+    setAbilityActive(CHRONOS_TIMEBREAK_ABILITY_ID, true, {
+      startTime: releaseAt,
+      startCooldownOnEnd: true,
+    });
+    updateLocalPlayer({
+      abilities: {
+        ...currentAbilities,
+        [CHRONOS_TIMEBREAK_ABILITY_ID]: {
+          abilityId: CHRONOS_TIMEBREAK_ABILITY_ID,
+          cooldownRemaining: 0,
+          charges: 1,
+          isActive: true,
+          activatedAt: releaseAt,
+        },
+      },
+    });
+    triggerChronosTimebreakPose(now);
+
+    window.setTimeout(() => {
+      const releasedAt = Date.now();
+      const sourcePose = sampleChronosPrimaryOrbPose(ctx, releasedAt);
+      const sourcePosition = sourcePose
+        ? vectorToPlainPosition(sourcePose.position)
+        : {
+          x: ctx.position.x,
+          y: ctx.position.y + CHRONOS_TIMEBREAK_FALLBACK_SOURCE_HEIGHT,
+          z: ctx.position.z,
+        };
+
+      addChronosTimebreakEffect({
+        id: timebreakId,
+        position: sourcePosition,
+        ownerId: ctx.localPlayer.id,
+        ownerTeam: ctx.localPlayer.team as 'red' | 'blue' | undefined,
+        startTime: now,
+        releaseTime: releasedAt,
+        duration,
+        radius: CHRONOS_TIMEBREAK_RADIUS,
+      });
+    }, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS);
+
+    return true;
+  }, []);
+
   return {
     lastPulseTimeRef,
     pulseIdRef,
+    timebreakIdRef,
     executeLifelineConduit,
+    executeTimebreak,
     fireVerdantPulse,
   };
 }

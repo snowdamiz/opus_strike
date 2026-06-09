@@ -33,6 +33,7 @@ import {
   calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
+import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
   BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS,
@@ -229,7 +230,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     const now = Date.now();
     const holdBlend = getBlazeRocketHeldBlend(ctx.viewmodelNowMs ?? now);
     if (holdBlend < BLAZE_ROCKET_FIRE_READY_BLEND) return;
-    if (now - lastRocketTimeRef.current < BLAZE_ROCKET_FIRE_INTERVAL) return;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (now - lastRocketTimeRef.current < BLAZE_ROCKET_FIRE_INTERVAL / tempoMultiplier) return;
 
     lastRocketTimeRef.current = now;
     rocketIdRef.current++;
@@ -270,7 +272,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
     if (isHoldingSecondary) {
       if (!bombTargeting) {
-        if (now - lastBombTimeRef.current >= BLAZE_BOMB_COOLDOWN) {
+        const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+        if (now - lastBombTimeRef.current >= BLAZE_BOMB_COOLDOWN / tempoMultiplier) {
           store.setBombTargeting(true);
           setBlazeBombTargetHeld(true, timestampMs);
           sounds.playBlazeBombTarget();
@@ -305,7 +308,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     if (!bombTargetRef.current || !bombValidRef.current) return;
 
     const now = Date.now();
-    if (now - lastBombTimeRef.current < BLAZE_BOMB_COOLDOWN) return;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (now - lastBombTimeRef.current < BLAZE_BOMB_COOLDOWN / tempoMultiplier) return;
 
     const target = bombTargetRef.current.clone();
     const localPlayer = useGameStore.getState().localPlayer;
@@ -356,6 +360,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   ) => {
     const now = Date.now();
     const timestampMs = ctx.viewmodelNowMs ?? now;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
     const isHoldingFlamethrower = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
     setBlazeFlamethrowerHeld(isHoldingFlamethrower, timestampMs);
 
@@ -373,7 +378,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       setFlamethrowerVisualPose(origin, direction);
 
       // Consume fuel
-      flamethrowerFuelRef.current -= BLAZE_FLAMETHROWER_FUEL_DRAIN * ctx.dt;
+      flamethrowerFuelRef.current -= BLAZE_FLAMETHROWER_FUEL_DRAIN * ctx.dt * tempoMultiplier;
       if (flamethrowerFuelRef.current <= 0) {
         flamethrowerFuelRef.current = 0;
         flamethrowerActiveRef.current = false;
@@ -395,7 +400,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       if (ctx.isGrounded && flamethrowerFuelRef.current < BLAZE_FLAMETHROWER_MAX_FUEL) {
         flamethrowerFuelRef.current = Math.min(
           BLAZE_FLAMETHROWER_MAX_FUEL,
-          flamethrowerFuelRef.current + BLAZE_FLAMETHROWER_FUEL_REGEN * ctx.dt
+          flamethrowerFuelRef.current + BLAZE_FLAMETHROWER_FUEL_REGEN * ctx.dt * tempoMultiplier
         );
         setFlamethrowerFuel(flamethrowerFuelRef.current);
       }

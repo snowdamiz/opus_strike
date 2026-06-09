@@ -40,6 +40,7 @@ export type {
   RocketData,
   BombData,
   ChronosPulseData,
+  ChronosTimebreakData,
   HookProjectileData,
   DragHookData,
   GrappleTrapData,

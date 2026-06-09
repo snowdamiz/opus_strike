@@ -51,6 +51,7 @@ import {
   calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
+import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import type { AbilityContext, PlayerSounds } from '../types';
 
 export interface UsePhantomAbilitiesReturn {
@@ -227,14 +228,17 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   const startPhantomPrimaryReload = useCallback((now: number) => {
     if (phantomPrimaryReloadingRef.current) return;
 
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    const reloadDurationMs = PHANTOM_PRIMARY_RELOAD_MS / tempoMultiplier;
     phantomPrimaryReloadingRef.current = true;
     phantomPrimaryReloadStartRef.current = now;
-    useGameStore.getState().setPhantomPrimaryReload(true, now, now + PHANTOM_PRIMARY_RELOAD_MS);
+    useGameStore.getState().setPhantomPrimaryReload(true, now, now + reloadDurationMs);
   }, []);
 
   const updatePhantomPrimaryReload = useCallback((now = Date.now()) => {
     if (!phantomPrimaryReloadingRef.current) return;
-    if (now - phantomPrimaryReloadStartRef.current < PHANTOM_PRIMARY_RELOAD_MS) return;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (now - phantomPrimaryReloadStartRef.current < PHANTOM_PRIMARY_RELOAD_MS / tempoMultiplier) return;
 
     completePhantomPrimaryReload();
   }, [completePhantomPrimaryReload]);
@@ -269,7 +273,8 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     const poseTimestampMs = ctx.viewmodelNowMs ?? now;
     const holdBlend = getPhantomPrimaryHeldBlend(poseTimestampMs);
     if (holdBlend < PHANTOM_PRIMARY_FIRE_READY_BLEND) return;
-    if (now - lastFireTimeRef.current < PHANTOM_FIRE_INTERVAL) return;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (now - lastFireTimeRef.current < PHANTOM_FIRE_INTERVAL / tempoMultiplier) return;
 
     lastFireTimeRef.current = now;
     recordSpawnMarker('phantom:direBall');
@@ -363,7 +368,8 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     if (!ctx.inputState.secondaryFire) {
       if (voidRayChargingRef.current) {
         const chargeTime = now - voidRayChargeStartRef.current;
-        if (chargeTime >= VOID_RAY_CHARGE_TIME) {
+        const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+        if (chargeTime >= VOID_RAY_CHARGE_TIME / tempoMultiplier) {
           fireVoidRay();
         } else {
           finishVoidRayCharge();
@@ -376,15 +382,17 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     if (voidRayAwaitingReleaseRef.current) return;
 
     if (!voidRayChargingRef.current) {
+      const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
       voidRayChargingRef.current = true;
       voidRayChargeStartRef.current = now;
       useGameStore.getState().setVoidRayCharging(true, now);
-      sounds.startPhantomVoidRayCharge(VOID_RAY_CHARGE_TIME);
+      sounds.startPhantomVoidRayCharge(VOID_RAY_CHARGE_TIME / tempoMultiplier);
       return;
     }
 
     const chargeTime = now - voidRayChargeStartRef.current;
-    if (chargeTime >= VOID_RAY_CHARGE_TIME) {
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (chargeTime >= VOID_RAY_CHARGE_TIME / tempoMultiplier) {
       fireVoidRay();
       voidRayAwaitingReleaseRef.current = true;
     }

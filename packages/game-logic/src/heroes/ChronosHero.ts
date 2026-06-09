@@ -3,6 +3,7 @@ import {
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
+  CHRONOS_TIMEBREAK_RADIUS,
 } from '@voxel-strike/shared';
 
 export class ChronosHero extends HeroBase {
@@ -15,6 +16,7 @@ export class ChronosHero extends HeroBase {
       case 'chronos_lifeline_conduit':
         return this.executeLifelineConduit(context);
       case 'chronos_timebreak':
+        return this.executeTimebreak(context);
       case 'chronos_ascendant_paradox':
         return { success: false, message: 'Chronos abilities are metadata-only for now' };
       default:
@@ -31,6 +33,17 @@ export class ChronosHero extends HeroBase {
         radius: CHRONOS_LIFELINE_RADIUS,
         value: CHRONOS_LIFELINE_HEAL,
         maxDistance: CHRONOS_LIFELINE_MAX_TARGETS,
+      },
+    };
+  }
+
+  private executeTimebreak(context: AbilityContext): AbilityResult {
+    return {
+      success: true,
+      effect: {
+        type: 'timebreak',
+        position: context.position,
+        radius: CHRONOS_TIMEBREAK_RADIUS,
       },
     };
   }

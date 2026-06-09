@@ -1,5 +1,6 @@
 import type { Room } from 'colyseus.js';
 import * as THREE from 'three';
+import { CHRONOS_TIMEBREAK_RELEASE_DELAY_MS } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import {
@@ -11,6 +12,7 @@ import {
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike } from '../components/game/BlazeEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
+import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
 import type {
@@ -917,12 +919,41 @@ export function setupCombatHandlers(room: Room) {
     abilityId: string;
     success?: boolean;
     position?: { x: number; y: number; z: number };
+    releaseAt?: number;
+    radius?: number;
+    duration?: number;
   }) => {
     loggers.network.debug('ability used', data.abilityId, data.playerId, data.success);
 
+    const store = useGameStore.getState();
+    const localPlayerId = store.localPlayer?.id ?? store.playerId;
+
+    if (data.abilityId === 'chronos_timebreak') {
+      if (data.playerId === localPlayerId) return;
+
+      const caster = store.players.get(data.playerId);
+      const casterPosition = data.position ?? store.players.get(data.playerId)?.position;
+      if (casterPosition) {
+        const now = Date.now();
+        addChronosTimebreakEffect({
+          id: `chronos_timebreak_remote_${data.playerId}_${data.releaseAt ?? now}`,
+          position: {
+            x: casterPosition.x,
+            y: casterPosition.y + 1.18,
+            z: casterPosition.z,
+          },
+          ownerId: data.playerId,
+          ownerTeam: caster?.team as Team | undefined,
+          startTime: now,
+          releaseTime: data.releaseAt ?? now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+          duration: data.duration,
+          radius: data.radius,
+        });
+      }
+      return;
+    }
+
     if (data.abilityId === 'blaze_airstrike') {
-      const store = useGameStore.getState();
-      const localPlayerId = store.localPlayer?.id ?? store.playerId;
       if (data.playerId === localPlayerId) return;
 
       const casterPosition = data.position ?? store.players.get(data.playerId)?.position;

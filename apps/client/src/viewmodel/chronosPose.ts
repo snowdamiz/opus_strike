@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import { CHRONOS_TIMEBREAK_RELEASE_DELAY_MS } from '@voxel-strike/shared';
 
 export const CHRONOS_PRIMARY_ORB_SOCKET_NAME = 'chronos.primary.orb';
 export const CHRONOS_PRIMARY_READY_TRANSITION_SECONDS = 0.18;
@@ -11,6 +12,10 @@ const CHRONOS_LIFELINE_POSE_ATTACK_SECONDS = 0.18;
 const CHRONOS_LIFELINE_POSE_RELEASE_SECONDS = CHRONOS_LIFELINE_RELEASE_DELAY_MS / 1000;
 const CHRONOS_LIFELINE_POSE_FADE_START_SECONDS = 0.34;
 const CHRONOS_LIFELINE_POSE_FADE_END_SECONDS = 0.78;
+const CHRONOS_TIMEBREAK_POSE_ATTACK_SECONDS = CHRONOS_LIFELINE_POSE_ATTACK_SECONDS;
+const CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS = CHRONOS_TIMEBREAK_RELEASE_DELAY_MS / 1000;
+const CHRONOS_TIMEBREAK_POSE_FADE_START_SECONDS = CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS + 0.08;
+const CHRONOS_TIMEBREAK_POSE_FADE_END_SECONDS = CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS + 0.56;
 
 export interface ChronosPrimaryOrbPoseSampleContext {
   camera: THREE.Camera;
@@ -23,6 +28,7 @@ let chronosPrimaryHoldChangedAtMs = 0;
 let chronosPrimaryHoldBlendAtChange = 0;
 let chronosPrimaryShotGlowStartedAtMs = -Infinity;
 let chronosLifelineConduitStartedAtMs = -Infinity;
+let chronosTimebreakStartedAtMs = -Infinity;
 
 export function setChronosPrimaryHeld(held: boolean, timestampMs = Date.now()): void {
   if (chronosPrimaryHeld === held) return;
@@ -62,6 +68,10 @@ export function triggerChronosLifelineConduitPose(timestampMs = Date.now()): voi
   chronosLifelineConduitStartedAtMs = timestampMs;
 }
 
+export function triggerChronosTimebreakPose(timestampMs = Date.now()): void {
+  chronosTimebreakStartedAtMs = timestampMs;
+}
+
 export function getChronosLifelineConduitPose(timestampMs = Date.now()): { glow: number; spread: number } {
   const elapsedSeconds = (timestampMs - chronosLifelineConduitStartedAtMs) / 1000;
   if (elapsedSeconds < 0 || elapsedSeconds > CHRONOS_LIFELINE_POSE_FADE_END_SECONDS) {
@@ -81,6 +91,34 @@ export function getChronosLifelineConduitPose(timestampMs = Date.now()): { glow:
     smoothstep(
       CHRONOS_LIFELINE_POSE_RELEASE_SECONDS,
       CHRONOS_LIFELINE_POSE_RELEASE_SECONDS + 0.28,
+      elapsedSeconds
+    );
+
+  return {
+    glow: Math.max(charge * fade, releaseFlash * charge),
+    spread: charge * fade,
+  };
+}
+
+export function getChronosTimebreakPose(timestampMs = Date.now()): { glow: number; spread: number } {
+  const elapsedSeconds = (timestampMs - chronosTimebreakStartedAtMs) / 1000;
+  if (elapsedSeconds < 0 || elapsedSeconds > CHRONOS_TIMEBREAK_POSE_FADE_END_SECONDS) {
+    return { glow: 0, spread: 0 };
+  }
+
+  const charge = smoothstep(0, CHRONOS_TIMEBREAK_POSE_ATTACK_SECONDS, elapsedSeconds);
+  const fade =
+    1 -
+    smoothstep(
+      CHRONOS_TIMEBREAK_POSE_FADE_START_SECONDS,
+      CHRONOS_TIMEBREAK_POSE_FADE_END_SECONDS,
+      elapsedSeconds
+    );
+  const releaseFlash =
+    1 -
+    smoothstep(
+      CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS,
+      CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS + 0.24,
       elapsedSeconds
     );
 

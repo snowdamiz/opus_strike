@@ -33,6 +33,7 @@ import {
   getChronosLifelineConduitPose,
   getChronosPrimaryHeldBlend,
   getChronosPrimaryShotGlowBlend,
+  getChronosTimebreakPose,
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../viewmodel/chronosPose';
 import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
@@ -3820,10 +3821,11 @@ function ChronosViewmodel({
       CHRONOS_AEGIS_SPREAD_END
     );
     const lifelinePose = getChronosLifelineConduitPose(now);
+    const timebreakPose = getChronosTimebreakPose(now);
 
-    aegisPose.active = active || lifelinePose.glow > 0.01;
-    aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow);
-    aegisPose.spread = Math.max(aegisSpread, lifelinePose.spread);
+    aegisPose.active = active || lifelinePose.glow > 0.01 || timebreakPose.glow > 0.01;
+    aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow, timebreakPose.glow);
+    aegisPose.spread = Math.max(aegisSpread, lifelinePose.spread, timebreakPose.spread);
     aegisPose.shield = THREE.MathUtils.smoothstep(
       aegisPose.aegisBlend,
       CHRONOS_AEGIS_SHIELD_START,

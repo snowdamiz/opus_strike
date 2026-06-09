@@ -661,6 +661,12 @@ export function PlayerController() {
           } else if (heroId === 'hookshot') {
             hookshotAbilities.executeEarthWall(abilityCtx);
             abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
+          } else if (heroId === 'chronos') {
+            chronosAbilities.executeTimebreak(
+              abilityCtx,
+              abilitySystem.setAbilityActive,
+              updateLocalPlayer
+            );
           }
         }
       }

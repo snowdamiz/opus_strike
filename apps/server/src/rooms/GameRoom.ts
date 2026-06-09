@@ -34,6 +34,10 @@ import {
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
+  CHRONOS_TIMEBREAK_ALLY_SPEED_MULTIPLIER,
+  CHRONOS_TIMEBREAK_ENEMY_SPEED_MULTIPLIER,
+  CHRONOS_TIMEBREAK_RADIUS,
+  CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   UNSTUCK_COOLDOWN_MS,
@@ -102,6 +106,13 @@ type PlainVec2 = { x: number; z: number };
 interface PhantomPrimaryMagazineState {
   ammo: number;
   reloadUntil: number;
+}
+
+interface ActiveChronosTimebreakSource {
+  team: Team;
+  x: number;
+  y: number;
+  z: number;
 }
 
 interface BotBrain {
@@ -348,6 +359,8 @@ export class GameRoom extends Room<GameState> {
   private knownPlayerIds = new Set<string>();
   private alivePlayers: Player[] = [];
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
+  private activeChronosTimebreakSources: ActiveChronosTimebreakSource[] = [];
+  private chronosTimebreakTempoByPlayerId = new Map<string, number>();
   private losCache = new Map<string, { result: boolean; expiresAt: number }>();
   private preferredBotHeroes: Map<string, HeroId> = new Map();
 
@@ -633,6 +646,7 @@ export class GameRoom extends Room<GameState> {
     this.state.serverTime = Date.now();
     const dt = TICK_INTERVAL_MS / 1000;
     this.rebuildPlayerSpatialIndex();
+    this.rebuildChronosTimebreakTempoCache(this.state.serverTime);
     if (this.metrics) {
       this.metrics.time('updateBots', () => this.updateBots(this.state.serverTime, dt));
     } else {
@@ -719,12 +733,18 @@ export class GameRoom extends Room<GameState> {
 
       if (player.state !== 'alive') return;
 
+      const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+
       // Update ability cooldowns
-      updateAbilityCooldowns(player, dt);
+      updateAbilityCooldowns(player, dt, tempoMultiplier);
+      this.updateTimeScaledSkillTimers(player, dt, tempoMultiplier, now);
 
       // Passive ultimate charge
       if (player.ultimateCharge < 100) {
-        player.ultimateCharge = Math.min(100, player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt);
+        player.ultimateCharge = Math.min(
+          100,
+          player.ultimateCharge + ULTIMATE_CHARGE_PER_SECOND * dt * tempoMultiplier
+        );
       }
 
       // Process active abilities (like Phantom Veil)
@@ -1302,7 +1322,7 @@ export class GameRoom extends Room<GameState> {
       ? this.getChronosLifelineTargets(player)
       : null;
 
-    if (player.heroId === 'chronos' && slot !== 'ability1') {
+    if (player.heroId === 'chronos' && slot === 'ultimate') {
       return;
     }
 
@@ -1333,6 +1353,15 @@ export class GameRoom extends Room<GameState> {
         yaw: player.lookYaw, 
         pitch: player.lookPitch 
       },
+      releaseAt: result.abilityId === 'chronos_timebreak'
+        ? result.abilityState.activatedAt
+        : undefined,
+      radius: result.abilityId === 'chronos_timebreak'
+        ? CHRONOS_TIMEBREAK_RADIUS
+        : undefined,
+      duration: result.abilityId === 'chronos_timebreak'
+        ? result.abilityDef.duration
+        : undefined,
     });
   }
 
@@ -1804,7 +1833,96 @@ export class GameRoom extends Room<GameState> {
   private getActiveSpeedMultiplier(player: Player): number {
     let multiplier = 1;
     if (player.abilities.get('phantom_veil')?.isActive) multiplier *= 1.3;
+    multiplier *= this.getChronosTimebreakTempoMultiplier(player);
     return multiplier;
+  }
+
+  private getChronosTimebreakTempoMultiplier(player: Player): number {
+    return this.chronosTimebreakTempoByPlayerId.get(player.id) ?? 1;
+  }
+
+  private rebuildChronosTimebreakTempoCache(now: number): void {
+    this.activeChronosTimebreakSources.length = 0;
+    this.chronosTimebreakTempoByPlayerId.clear();
+
+    const radiusSq = CHRONOS_TIMEBREAK_RADIUS * CHRONOS_TIMEBREAK_RADIUS;
+    const durationMs = (ABILITY_DEFINITIONS.chronos_timebreak?.duration ?? 0) * 1000;
+
+    for (const caster of this.alivePlayers) {
+      if (caster.state !== 'alive' || caster.heroId !== 'chronos') continue;
+
+      const timebreak = caster.abilities.get('chronos_timebreak');
+      const activatedAt = timebreak?.activatedAt ?? 0;
+      if (!timebreak?.isActive || now < activatedAt) continue;
+      if (durationMs > 0 && now - activatedAt >= durationMs) continue;
+
+      if (caster.team !== 'red' && caster.team !== 'blue') continue;
+      this.activeChronosTimebreakSources.push({
+        team: caster.team,
+        x: caster.position.x,
+        y: caster.position.y,
+        z: caster.position.z,
+      });
+    }
+
+    if (this.activeChronosTimebreakSources.length === 0) return;
+
+    for (const player of this.alivePlayers) {
+      let multiplier = 1;
+
+      for (const source of this.activeChronosTimebreakSources) {
+        const dx = player.position.x - source.x;
+        const dy = player.position.y - source.y;
+        const dz = player.position.z - source.z;
+        if (dx * dx + dy * dy + dz * dz > radiusSq) continue;
+
+        multiplier *= source.team === player.team
+          ? CHRONOS_TIMEBREAK_ALLY_SPEED_MULTIPLIER
+          : CHRONOS_TIMEBREAK_ENEMY_SPEED_MULTIPLIER;
+      }
+
+      const clamped = Math.max(0.35, Math.min(1.65, multiplier));
+      if (clamped !== 1) {
+        this.chronosTimebreakTempoByPlayerId.set(player.id, clamped);
+      }
+    }
+  }
+
+  private updateTimeScaledSkillTimers(
+    player: Player,
+    dt: number,
+    tempoMultiplier: number,
+    now: number
+  ): void {
+    const adjustmentMs = (tempoMultiplier - 1) * Math.max(0, dt) * 1000;
+    if (Math.abs(adjustmentMs) <= 0.001) return;
+
+    this.adjustCooldownUntil(`${player.id}:primary`, this.attackCooldownUntil, adjustmentMs, now);
+    this.adjustCooldownUntil(`${player.id}:secondary`, this.attackCooldownUntil, adjustmentMs, now);
+    this.adjustCooldownUntil(player.id, this.blazeRocketImpactCooldownUntil, adjustmentMs, now);
+
+    const magazine = this.phantomPrimaryMagazines.get(player.id);
+    if (magazine?.reloadUntil && magazine.reloadUntil > now) {
+      magazine.reloadUntil = Math.max(now, magazine.reloadUntil - adjustmentMs);
+    }
+  }
+
+  private adjustCooldownUntil(
+    key: string,
+    cooldowns: Map<string, number>,
+    adjustmentMs: number,
+    now: number
+  ): void {
+    const cooldownUntil = cooldowns.get(key);
+    if (!cooldownUntil || cooldownUntil <= now) return;
+
+    const nextCooldownUntil = cooldownUntil - adjustmentMs;
+    if (nextCooldownUntil <= now) {
+      cooldowns.delete(key);
+      return;
+    }
+
+    cooldowns.set(key, nextCooldownUntil);
   }
 
   private updateCTFObjectives(now: number): void {
@@ -2017,6 +2135,7 @@ export class GameRoom extends Room<GameState> {
     const isLongMove = movementTarget ? this.distance2D(bot.position, movementTarget) > 9 : false;
     const recovering = now < brain.reverseUntil;
     const desiredMove = this.getBotMoveDirection(bot, brain, brain.intent, movementTarget, combatTarget, blackboard);
+    const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(bot);
 
     const input = this.createEmptyBotInput(bot, now);
     input.lookYaw = aim.yaw;
@@ -2027,9 +2146,9 @@ export class GameRoom extends Room<GameState> {
     input.crouch = input.sprint && isLongMove && !combatTarget && Math.random() < 0.1;
 
     if (now >= brain.nextFireDecisionAt) {
-      brain.nextFireDecisionAt = now + this.randomBetween(skill.fireDecisionMs[0], skill.fireDecisionMs[1]);
+      brain.nextFireDecisionAt = now + this.randomBetween(skill.fireDecisionMs[0], skill.fireDecisionMs[1]) / tempoMultiplier;
       if (aimReady && Math.random() < skill.fireChance) {
-        brain.fireUntil = now + this.randomBetween(skill.burstDurationMs[0], skill.burstDurationMs[1]);
+        brain.fireUntil = now + this.randomBetween(skill.burstDurationMs[0], skill.burstDurationMs[1]) / tempoMultiplier;
       }
     }
     input.primaryFire = aimReady && now < brain.fireUntil;
@@ -2046,12 +2165,24 @@ export class GameRoom extends Room<GameState> {
     ) {
       const firedSecondary = Math.random() < skill.secondaryChance;
       input.secondaryFire = firedSecondary;
-      brain.nextSecondaryAt = now + (firedSecondary
+      const secondaryDelayMs = firedSecondary
         ? this.randomBetween(secondaryAttack.cooldownMs * 0.85, secondaryAttack.cooldownMs * 1.3)
-        : this.randomBetween(350, 900));
+        : this.randomBetween(350, 900);
+      brain.nextSecondaryAt = now + secondaryDelayMs / tempoMultiplier;
     }
 
-    this.applyBotAbilityHeuristics(bot, input, brain, skill, brain.intent, enemyDistance, blackboard, combatTarget, now);
+    this.applyBotAbilityHeuristics(
+      bot,
+      input,
+      brain,
+      skill,
+      brain.intent,
+      enemyDistance,
+      blackboard,
+      combatTarget,
+      now,
+      tempoMultiplier
+    );
 
     if (dt <= 0) {
       input.moveForward = false;
@@ -2072,7 +2203,8 @@ export class GameRoom extends Room<GameState> {
     enemyDistance: number,
     blackboard: BotBlackboard,
     combatTarget: Player | null,
-    now: number
+    now: number,
+    tempoMultiplier: number
   ): void {
     const heroId = bot.heroId as HeroId;
     const objectiveIntent = intent === 'seek_enemy_flag'
@@ -2104,16 +2236,16 @@ export class GameRoom extends Room<GameState> {
         break;
       case 'chronos':
         input.ability1 = pulseAbility && this.getChronosLifelineTargets(bot).length > 0;
-        input.ability2 = false;
+        input.ability2 = pulseAbility && (underPressure || blackboard.nearbyEnemyCount >= 2);
         input.ultimate = false;
         break;
     }
 
     if (input.ability1 || input.ability2) {
-      brain.nextAbilityAt = now + this.randomBetween(skill.abilityCadenceMs[0], skill.abilityCadenceMs[1]);
+      brain.nextAbilityAt = now + this.randomBetween(skill.abilityCadenceMs[0], skill.abilityCadenceMs[1]) / tempoMultiplier;
     }
     if (input.ultimate) {
-      brain.nextUltimateAt = now + this.randomBetween(skill.ultimateCadenceMs[0], skill.ultimateCadenceMs[1]);
+      brain.nextUltimateAt = now + this.randomBetween(skill.ultimateCadenceMs[0], skill.ultimateCadenceMs[1]) / tempoMultiplier;
     }
   }
 
@@ -3549,27 +3681,28 @@ export class GameRoom extends Room<GameState> {
       if (player.heroId !== 'blaze') continue;
 
       player.movement.isJetpacking = false;
+      const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
 
       const isFiring = Boolean(player.lastInput?.ability1);
       if (isFiring && player.movement.jetpackFuel > 0) {
         player.movement.jetpackFuel = Math.max(
           0,
-          player.movement.jetpackFuel - BLAZE_FLAMETHROWER_FUEL_DRAIN * dt
+          player.movement.jetpackFuel - BLAZE_FLAMETHROWER_FUEL_DRAIN * dt * tempoMultiplier
         );
-        this.applyFlamethrowerDamage(player, now);
+        this.applyFlamethrowerDamage(player, now, tempoMultiplier);
         continue;
       }
 
       if (player.movement.jetpackFuel < BLAZE_FLAMETHROWER_MAX_FUEL) {
         player.movement.jetpackFuel = Math.min(
           BLAZE_FLAMETHROWER_MAX_FUEL,
-          player.movement.jetpackFuel + BLAZE_FLAMETHROWER_FUEL_REGEN * dt
+          player.movement.jetpackFuel + BLAZE_FLAMETHROWER_FUEL_REGEN * dt * tempoMultiplier
         );
       }
     }
   }
 
-  private applyFlamethrowerDamage(source: Player, now: number) {
+  private applyFlamethrowerDamage(source: Player, now: number, tempoMultiplier: number) {
     const pitch = source.lookPitch;
     const cosPitch = Math.cos(pitch);
     const forward = {
@@ -3624,7 +3757,7 @@ export class GameRoom extends Room<GameState> {
 
       const tickKey = `${source.id}:${target.id}`;
       const lastDamage = this.flamethrowerLastDamageTick.get(tickKey) || 0;
-      if (now - lastDamage < BLAZE_FLAMETHROWER_DAMAGE_INTERVAL) continue;
+      if (now - lastDamage < BLAZE_FLAMETHROWER_DAMAGE_INTERVAL / tempoMultiplier) continue;
 
       const falloff = 1 - (distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
       const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));

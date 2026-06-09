@@ -10,6 +10,7 @@ import type {
   RocketData,
   BombData,
   ChronosPulseData,
+  ChronosTimebreakData,
   HookProjectileData,
   DragHookData,
   GrappleTrapData,
@@ -48,6 +49,7 @@ export interface ProjectileState {
 
   // Chronos projectiles
   chronosPulses: ChronosPulseData[];
+  chronosTimebreaks: ChronosTimebreakData[];
 
   // Hookshot projectiles
   hookProjectiles: HookProjectileData[];
@@ -109,6 +111,9 @@ export interface ProjectileActions {
   removeChronosPulse: (id: string) => void;
   removeChronosPulses: (ids: readonly string[]) => void;
   clearExpiredChronosPulses: () => void;
+  addChronosTimebreak: (timebreak: ChronosTimebreakData) => void;
+  removeChronosTimebreak: (id: string) => void;
+  clearExpiredChronosTimebreaks: () => void;
 
   // Hook projectile actions
   addHookProjectile: (hook: HookProjectileData) => void;
@@ -175,6 +180,7 @@ export const projectileInitialState: ProjectileState = {
   flamethrowerOrigin: null,
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
   chronosPulses: [],
+  chronosTimebreaks: [],
   hookProjectiles: [],
   dragHooks: [],
   grappleTraps: [],
@@ -196,6 +202,7 @@ const PROJECTILE_LIMITS = {
   rockets: 96,
   bombs: 32,
   chronosPulses: 96,
+  chronosTimebreaks: 24,
   hookProjectiles: 64,
   dragHooks: 32,
   grappleTraps: 32,
@@ -205,6 +212,7 @@ const PROJECTILE_LIMITS = {
 } as const;
 
 const VOID_RAY_VISUAL_RETENTION_MS = 1200;
+const CHRONOS_TIMEBREAK_VISUAL_LIFETIME_MS = 1400;
 
 function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
   for (const existing of items) {
@@ -474,6 +482,28 @@ export const createProjectileSlice: StateCreator<
     const LIFETIME = 3000;
     const chronosPulses = filterExpired(state.chronosPulses, (pulse, now) => now - pulse.startTime < LIFETIME);
     return chronosPulses === state.chronosPulses ? state : { chronosPulses };
+  }),
+
+  addChronosTimebreak: (timebreak) => set((state) => {
+    const chronosTimebreaks = appendUnique(
+      state.chronosTimebreaks,
+      timebreak,
+      PROJECTILE_LIMITS.chronosTimebreaks
+    );
+    return chronosTimebreaks === state.chronosTimebreaks ? state : { chronosTimebreaks };
+  }),
+
+  removeChronosTimebreak: (id) => set((state) => {
+    const chronosTimebreaks = removeById(state.chronosTimebreaks, id);
+    return chronosTimebreaks === state.chronosTimebreaks ? state : { chronosTimebreaks };
+  }),
+
+  clearExpiredChronosTimebreaks: () => set((state) => {
+    const chronosTimebreaks = filterExpired(
+      state.chronosTimebreaks,
+      (timebreak, now) => now - timebreak.releaseTime < CHRONOS_TIMEBREAK_VISUAL_LIFETIME_MS
+    );
+    return chronosTimebreaks === state.chronosTimebreaks ? state : { chronosTimebreaks };
   }),
 
   // ==================== HOOK PROJECTILES ====================

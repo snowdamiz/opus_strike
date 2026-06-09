@@ -4,8 +4,11 @@ import {
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
+
+const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set(['chronos_timebreak']);
 
 // ============================================================================
 // VOID ZONE CONFIGURATION
@@ -138,6 +141,12 @@ export function tryUseAbility(
   }
 
   const hasMultipleCharges = Boolean(abilityDef.charges && abilityDef.charges > 1);
+  const cooldownStartsAfterActive = COOLDOWN_AFTER_ACTIVE_ABILITIES.has(abilityId);
+
+  if (abilityState.isActive) {
+    console.log(`${player.name} tried to use ${abilityDef.name} but it's already active`);
+    return { success: false, reason: 'Active' };
+  }
 
   // Check if on cooldown
   if (!hasMultipleCharges && abilityState.cooldownRemaining > 0) {
@@ -173,7 +182,7 @@ export function tryUseAbility(
       abilityState.cooldownRemaining = abilityDef.chargeRegenTime || abilityDef.cooldown;
     }
   } else {
-    abilityState.cooldownRemaining = abilityDef.cooldown;
+    abilityState.cooldownRemaining = cooldownStartsAfterActive ? 0 : abilityDef.cooldown;
   }
 
   return { success: true, abilityId, abilityDef, abilityState };
@@ -291,6 +300,13 @@ export function executeAbility(
       break;
     }
 
+    // ===== CHRONOS ABILITIES =====
+    case 'chronos_timebreak': {
+      abilityState.isActive = true;
+      abilityState.activatedAt = now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
+      break;
+    }
+
   }
 }
 
@@ -301,11 +317,12 @@ export function executeAbility(
 /**
  * Updates ability cooldowns for a player
  */
-export function updateAbilityCooldowns(player: Player, dt: number): void {
+export function updateAbilityCooldowns(player: Player, dt: number, tempoMultiplier = 1): void {
+  const scaledDt = dt * Math.max(0.01, tempoMultiplier);
   player.abilities.forEach((ability) => {
     const def = ABILITY_DEFINITIONS[ability.abilityId];
     if (ability.cooldownRemaining > 0) {
-      ability.cooldownRemaining = Math.max(0, ability.cooldownRemaining - dt);
+      ability.cooldownRemaining = Math.max(0, ability.cooldownRemaining - scaledDt);
       if (ability.cooldownRemaining <= 0 && def?.charges && ability.charges < def.charges) {
         ability.charges = def.charges;
       }
@@ -326,6 +343,9 @@ export function updateActiveAbilities(player: Player, now: number): void {
     const elapsedMs = now - ability.activatedAt;
     if (elapsedMs >= abilityDef.duration * 1000) {
       ability.isActive = false;
+      if (COOLDOWN_AFTER_ACTIVE_ABILITIES.has(ability.abilityId) && ability.cooldownRemaining <= 0) {
+        ability.cooldownRemaining = abilityDef.cooldown;
+      }
     }
   });
 }
