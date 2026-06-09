@@ -52,7 +52,6 @@ import {
 import {
   ABILITY_DEFINITIONS,
   CROUCH_MULTIPLIER,
-  PHANTOM_PRIMARY_FIRE_READY_MS,
   TICK_RATE,
   createEmptyInputState,
   findUnstuckTerrainTeleport,
@@ -128,7 +127,6 @@ export function PlayerController() {
   const pendingReloadInputRef = useRef(false);
   const lastUnstuckRequestIdRef = useRef(0);
   const pendingUnstuckInputRef = useRef(false);
-  const phantomPrimaryHoldStartedAtRef = useRef(0);
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
@@ -313,7 +311,6 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
-      phantomPrimaryHoldStartedAtRef.current = 0;
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
       return;
@@ -327,7 +324,6 @@ export function PlayerController() {
       abilitySystem.abilityActiveRef.current = {};
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
-      phantomPrimaryHoldStartedAtRef.current = 0;
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setChronosAegisVisualState(localPlayer.id, false, now);
       setShadowStepTargeting(false, false);
@@ -371,7 +367,6 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
-      phantomPrimaryHoldStartedAtRef.current = 0;
       blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
@@ -389,7 +384,6 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
-      phantomPrimaryHoldStartedAtRef.current = 0;
       blazeAbilities.resetRocketJump();
       const position = positionRef.current;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
@@ -635,17 +629,6 @@ export function PlayerController() {
       frameInput.primaryFire &&
       !phantomPrimaryReloading
     );
-    if (phantomPrimaryHeldForPose) {
-      if (phantomPrimaryHoldStartedAtRef.current <= 0) {
-        phantomPrimaryHoldStartedAtRef.current = now;
-      }
-    } else {
-      phantomPrimaryHoldStartedAtRef.current = 0;
-    }
-    const phantomPrimaryReady = (
-      phantomPrimaryHoldStartedAtRef.current > 0 &&
-      now - phantomPrimaryHoldStartedAtRef.current >= PHANTOM_PRIMARY_FIRE_READY_MS
-    );
     setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
     setBlazeRocketHeld(
       heroId === 'blaze' && !bombTargeting && frameInput.primaryFire,
@@ -656,7 +639,7 @@ export function PlayerController() {
       now
     );
     const primaryFireForServer = heroId === 'phantom'
-      ? phantomPrimaryHeldForPose && phantomPrimaryReady && phantomAbilities.phantomPrimaryAmmoRef.current > 0
+      ? phantomPrimaryHeldForPose && phantomAbilities.phantomPrimaryAmmoRef.current > 0
       : heroId === 'chronos'
         ? frameInput.primaryFire && getChronosPrimaryHeldBlend(now) >= CHRONOS_PRIMARY_FIRE_READY_BLEND
         : frameInput.primaryFire;
