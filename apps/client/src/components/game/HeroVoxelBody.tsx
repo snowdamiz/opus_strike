@@ -136,6 +136,53 @@ const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   },
 };
 
+function createPhantomCastingArmParts(side: -1 | 1): VoxelPart[] {
+  const limb: HeroBoneName = side < 0 ? 'leftArm' : 'rightArm';
+  const upperYaw = side * -0.12;
+  const forearmYaw = side * -0.18;
+  const handRoll = side * 0.08;
+
+  return [
+    {
+      material: 'dark',
+      position: [side * 0.42, 1.17, -0.16],
+      scale: [0.13, 0.34, 0.16],
+      rotation: [-0.82, upperYaw, side * 0.06],
+      limb,
+    },
+    {
+      material: 'armor',
+      position: [side * 0.36, 1.07, -0.43],
+      scale: [0.12, 0.38, 0.14],
+      rotation: [-1.42, forearmYaw, handRoll],
+      limb,
+    },
+    {
+      material: 'glow',
+      position: [side * 0.34, 1.08, -0.55],
+      scale: [0.052, 0.26, 0.034],
+      rotation: [-1.42, forearmYaw, handRoll],
+      emissive: true,
+      limb,
+    },
+    {
+      material: 'glow',
+      position: [side * 0.31, 1.04, -0.68],
+      scale: [0.086, 0.07, 0.05],
+      rotation: [-1.5, side * -0.12, side * 0.14],
+      emissive: true,
+      limb,
+    },
+    {
+      material: 'edge',
+      position: [side * 0.38, 1.12, -0.28],
+      scale: [0.15, 0.09, 0.16],
+      rotation: [-1.12, side * -0.14, side * 0.08],
+      limb,
+    },
+  ];
+}
+
 const PHANTOM_PARTS: VoxelPart[] = [
   { material: 'mist', kind: 'cylinder', position: [0, 0.015, 0], scale: [0.5, 0.024, 0.5], transparent: true },
   { material: 'void', position: [-0.14, 0.36, 0], scale: [0.14, 0.64, 0.17] },
@@ -159,14 +206,8 @@ const PHANTOM_PARTS: VoxelPart[] = [
   { material: 'edge', position: [0, 1.39, -0.01], scale: [0.56, 0.13, 0.38] },
   { material: 'armor', position: [-0.35, 1.3, -0.01], scale: [0.24, 0.22, 0.32], limb: 'static' },
   { material: 'armor', position: [0.35, 1.3, -0.01], scale: [0.24, 0.22, 0.32], limb: 'static' },
-  { material: 'dark', position: [-0.43, 0.98, 0], scale: [0.13, 0.44, 0.16] },
-  { material: 'dark', position: [0.43, 0.98, 0], scale: [0.13, 0.44, 0.16] },
-  { material: 'armor', position: [-0.44, 0.66, -0.01], scale: [0.12, 0.32, 0.14] },
-  { material: 'armor', position: [0.44, 0.66, -0.01], scale: [0.12, 0.32, 0.14] },
-  { material: 'glow', position: [-0.44, 0.82, -0.12], scale: [0.05, 0.28, 0.034], emissive: true },
-  { material: 'glow', position: [0.44, 0.82, -0.12], scale: [0.05, 0.28, 0.034], emissive: true },
-  { material: 'glow', position: [-0.44, 0.46, -0.11], scale: [0.065, 0.065, 0.038], emissive: true },
-  { material: 'glow', position: [0.44, 0.46, -0.11], scale: [0.065, 0.065, 0.038], emissive: true },
+  ...createPhantomCastingArmParts(-1),
+  ...createPhantomCastingArmParts(1),
   { material: 'void', position: [0, 1.64, 0.01], scale: [0.34, 0.3, 0.3] },
   { material: 'dark', position: [0, 1.64, -0.18], scale: [0.3, 0.18, 0.044] },
   { material: 'eye', position: [-0.09, 1.68, -0.215], scale: [0.07, 0.038, 0.032], emissive: true },
@@ -1243,8 +1284,8 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
   phantom: [
     teamAccentPart({ material: 'accent', position: [-0.19, 1.37, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.2 }),
     teamAccentPart({ material: 'accent', position: [0.19, 1.37, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.2 }),
-    teamAccentPart({ material: 'accent', position: [-0.5, 0.66, -0.14], scale: [0.05, 0.18, 0.032], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [0.5, 0.66, -0.14], scale: [0.05, 0.18, 0.032], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false }),
+    teamAccentPart({ material: 'accent', position: [-0.35, 1.08, -0.6], scale: [0.044, 0.18, 0.032], rotation: [-1.42, 0.18, -0.08], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'leftArm' }),
+    teamAccentPart({ material: 'accent', position: [0.35, 1.08, -0.6], scale: [0.044, 0.18, 0.032], rotation: [-1.42, -0.18, 0.08], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'rightArm' }),
     teamAccentPart({ material: 'accent', position: [-0.16, 0.18, -0.19], scale: [0.075, 0.055, 0.032], emissiveIntensity: 0.45, roughness: 0.4, metalness: 0.1 }),
     teamAccentPart({ material: 'accent', position: [0.16, 0.18, -0.19], scale: [0.075, 0.055, 0.032], emissiveIntensity: 0.45, roughness: 0.4, metalness: 0.1 }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.44, 0.014, 0.44], transparent: true, opacity: 0.16, emissiveIntensity: 0.22, roughness: 0.65, depthWrite: false }),

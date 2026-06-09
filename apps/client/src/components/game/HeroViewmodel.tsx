@@ -148,12 +148,8 @@ const PHANTOM_VIEWMODEL_OFFSET = new THREE.Vector3(0, 0.28, -0.04);
 const PHANTOM_PALM_SOCKET_OFFSET = new THREE.Vector3(0, 0.012, -0.4);
 const PHANTOM_CLOSED_FINGER_ROWS = [-0.066, -0.022, 0.022, 0.066] as const;
 const PHANTOM_OPEN_FINGER_SLOTS = [-0.056, -0.019, 0.019, 0.056] as const;
-const PHANTOM_WALK_SPEED = HERO_DEFINITIONS.phantom.stats.moveSpeed;
-const PHANTOM_RUN_SPEED = PHANTOM_WALK_SPEED * SPRINT_MULTIPLIER;
 const PHANTOM_LOCOMOTION_MOVE_START_SPEED = 0.18;
 const PHANTOM_LOCOMOTION_FULL_WALK_SPEED = 1.35;
-const PHANTOM_LOCOMOTION_RUN_START_SPEED = PHANTOM_WALK_SPEED * 0.92;
-const PHANTOM_LOCOMOTION_RUN_FULL_SPEED = PHANTOM_RUN_SPEED * 0.98;
 const PHANTOM_LOCOMOTION_TELEPORT_DISTANCE = 1.45;
 const PHANTOM_LOCOMOTION_WALK_CYCLE_SPEED = 7.35;
 const PHANTOM_LOCOMOTION_RUN_CYCLE_SPEED = 10.95;
@@ -1033,7 +1029,8 @@ function createPhantomLocomotionRuntime(): PhantomLocomotionRuntime {
 function updatePhantomLocomotionRuntime(
   locomotion: PhantomLocomotionRuntime,
   camera: THREE.Camera,
-  delta: number
+  delta: number,
+  heroId: ViewmodelHeroId = 'phantom'
 ): void {
   const previousPosition = locomotion.previousCameraPosition;
   if (!locomotion.hasPreviousCameraPosition) {
@@ -1051,6 +1048,8 @@ function updatePhantomLocomotionRuntime(
   const horizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
     ? 0
     : horizontalDistance / frameSeconds;
+  const walkSpeed = HERO_DEFINITIONS[heroId].stats.moveSpeed;
+  const runSpeed = walkSpeed * SPRINT_MULTIPLIER;
   const store = useGameStore.getState();
   const movementState = store.localPlayer?.movement;
   const isGrounded = movementState?.isGrounded ?? true;
@@ -1068,14 +1067,14 @@ function updatePhantomLocomotionRuntime(
   const targetMovementBlend = isGrounded && targetSlideBlend <= 0.02 ? speedMoveBlend : 0;
   const speedRunBlend = THREE.MathUtils.smoothstep(
     horizontalSpeed,
-    PHANTOM_LOCOMOTION_RUN_START_SPEED,
-    PHANTOM_LOCOMOTION_RUN_FULL_SPEED
+    walkSpeed * 0.92,
+    runSpeed * 0.98
   );
   const targetRunBlend = targetMovementBlend * Math.max(
     speedRunBlend,
     movementState?.isSprinting ? 1 : 0
   );
-  const targetSpeedBlend = THREE.MathUtils.clamp(horizontalSpeed / PHANTOM_RUN_SPEED, 0, 1.35);
+  const targetSpeedBlend = THREE.MathUtils.clamp(horizontalSpeed / runSpeed, 0, 1.35);
 
   locomotion.movementBlend = THREE.MathUtils.damp(
     locomotion.movementBlend,
@@ -1740,11 +1739,13 @@ function HookshotPhantomForearm({
   materials,
   primaryFireRef,
   secondaryFireRef,
+  locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -1756,7 +1757,14 @@ function HookshotPhantomForearm({
   useFrame((state) => {
     const forearm = forearmRef.current;
     if (!forearm) return;
-    writePhantomForearmPose(forearm, side, 0, 0, state.clock.elapsedTime);
+    writePhantomForearmPose(
+      forearm,
+      side,
+      0,
+      0,
+      state.clock.elapsedTime,
+      locomotionRef.current
+    );
     applyHookshotPrimaryRecoilToForearm(
       forearm,
       side,
@@ -1791,11 +1799,13 @@ function HookshotSimpleHookHand({
   materials,
   primaryFireRef,
   secondaryFireRef,
+  locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const armRef = useRef<THREE.Group>(null);
   const wristRef = useRef<THREE.Group>(null);
@@ -1832,7 +1842,8 @@ function HookshotSimpleHookHand({
 
     const secondaryPulse = getHookshotSecondaryPosePulse(secondaryFireRef.current, Date.now());
     if (hookVisualRef.current) {
-      hookVisualRef.current.visible = !isLocalHookshotHookDetached(side) && secondaryPulse <= 0.01;
+      const isSecondaryShotHookHidden = side === 1 && secondaryPulse > 0.01;
+      hookVisualRef.current.visible = !isLocalHookshotHookDetached(side) && !isSecondaryShotHookHidden;
     }
 
     const targets = {
@@ -1847,7 +1858,8 @@ function HookshotSimpleHookHand({
       side,
       0,
       0,
-      state.clock.elapsedTime
+      state.clock.elapsedTime,
+      locomotionRef.current
     );
     applyHookshotPrimaryRecoilToHand(
       targets,
@@ -1932,10 +1944,12 @@ function HookshotViewmodel({
   materials,
   primaryFireRef,
   secondaryFireRef,
+  locomotionRef,
 }: {
   materials: ViewmodelMaterialSet;
   primaryFireRef: MutableRefObject<HookshotPrimaryFireState | null>;
   secondaryFireRef: MutableRefObject<HookshotSecondaryFireState | null>;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   return (
     <group position={[
@@ -1943,10 +1957,34 @@ function HookshotViewmodel({
       PHANTOM_VIEWMODEL_OFFSET.y,
       PHANTOM_VIEWMODEL_OFFSET.z,
     ]}>
-      <HookshotPhantomForearm side={-1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
-      <HookshotPhantomForearm side={1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
-      <HookshotSimpleHookHand side={-1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
-      <HookshotSimpleHookHand side={1} materials={materials} primaryFireRef={primaryFireRef} secondaryFireRef={secondaryFireRef} />
+      <HookshotPhantomForearm
+        side={-1}
+        materials={materials}
+        primaryFireRef={primaryFireRef}
+        secondaryFireRef={secondaryFireRef}
+        locomotionRef={locomotionRef}
+      />
+      <HookshotPhantomForearm
+        side={1}
+        materials={materials}
+        primaryFireRef={primaryFireRef}
+        secondaryFireRef={secondaryFireRef}
+        locomotionRef={locomotionRef}
+      />
+      <HookshotSimpleHookHand
+        side={-1}
+        materials={materials}
+        primaryFireRef={primaryFireRef}
+        secondaryFireRef={secondaryFireRef}
+        locomotionRef={locomotionRef}
+      />
+      <HookshotSimpleHookHand
+        side={1}
+        materials={materials}
+        primaryFireRef={primaryFireRef}
+        secondaryFireRef={secondaryFireRef}
+        locomotionRef={locomotionRef}
+      />
     </group>
   );
 }
@@ -2147,6 +2185,7 @@ function composeBlazeRocketStaffTipMatrix({
   targetingBlend,
   holdBlend,
   rocketJumpPose,
+  locomotion,
 }: {
   camera: THREE.Camera;
   elapsedSeconds: number;
@@ -2154,6 +2193,7 @@ function composeBlazeRocketStaffTipMatrix({
   targetingBlend: number;
   holdBlend: number;
   rocketJumpPose: BlazeRocketJumpStaffSlamPose;
+  locomotion?: PhantomLocomotionPose;
 }): THREE.Matrix4 {
   const adjustedHoldBlend = holdBlend * (1 - getBlazeRocketJumpPoseAmount(rocketJumpPose));
   const rootTransform = {
@@ -2173,7 +2213,8 @@ function composeBlazeRocketStaffTipMatrix({
     1,
     BLAZE_RIGHT_HAND_READY_BLEND,
     0,
-    elapsedSeconds
+    elapsedSeconds,
+    locomotion
   );
   applyBlazeRocketPoseToHand(poseTarget, 1, adjustedHoldBlend);
   applyBlazeRocketJumpPoseToHand(poseTarget, 1, rocketJumpPose);
@@ -2213,7 +2254,8 @@ function composeBlazeRocketStaffTipMatrix({
 function sampleBlazeRocketStaffTipSocket(
   context: BlazeRocketStaffPoseSampleContext,
   actionBlend: number,
-  targetingBlend: number
+  targetingBlend: number,
+  locomotion?: PhantomLocomotionPose
 ): ViewmodelSocketPoseDraft {
   const timestampMs = context.timestampMs ?? Date.now();
   const holdBlend = context.holdBlend ?? getBlazeStaffHeldBlend(timestampMs);
@@ -2225,6 +2267,7 @@ function sampleBlazeRocketStaffTipSocket(
     targetingBlend,
     holdBlend,
     rocketJumpPose,
+    locomotion,
   });
 
   worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
@@ -2252,9 +2295,11 @@ const BLAZE_STAFF_SHOCKWAVE_DURATION_MS = 460;
 function BlazePhantomForearm({
   side,
   materials,
+  locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -2274,7 +2319,8 @@ function BlazePhantomForearm({
       side,
       side === 1 ? BLAZE_RIGHT_FOREARM_READY_BLEND : 0,
       0,
-      state.clock.elapsedTime
+      state.clock.elapsedTime,
+      locomotionRef.current
     );
     applyBlazeRocketPoseToForearm(forearm, side, staffHoldBlend);
     applyBlazeRocketJumpPoseToForearm(forearm, side, rocketJumpPose);
@@ -2483,9 +2529,11 @@ function BlazeWizardStaff({
 function BlazePhantomHand({
   side,
   materials,
+  locomotionRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const closedVisualRef = useRef<THREE.Group>(null);
   const armRef = useRef<THREE.Group>(null);
@@ -2518,7 +2566,8 @@ function BlazePhantomHand({
       side,
       side === 1 ? BLAZE_RIGHT_HAND_READY_BLEND : 0,
       0,
-      state.clock.elapsedTime
+      state.clock.elapsedTime,
+      locomotionRef.current
     );
     applyBlazeRocketPoseToHand(
       {
@@ -2617,8 +2666,10 @@ function BlazePhantomHand({
 
 function BlazeViewmodel({
   materials,
+  locomotionRef,
 }: {
   materials: ViewmodelMaterialSet;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   return (
     <group position={[
@@ -2627,11 +2678,27 @@ function BlazeViewmodel({
       PHANTOM_VIEWMODEL_OFFSET.z,
     ]}>
       <group position={[0.06, -0.035, 0.18]}>
-        <BlazePhantomForearm side={-1} materials={materials} />
-        <BlazePhantomHand side={-1} materials={materials} />
+        <BlazePhantomForearm
+          side={-1}
+          materials={materials}
+          locomotionRef={locomotionRef}
+        />
+        <BlazePhantomHand
+          side={-1}
+          materials={materials}
+          locomotionRef={locomotionRef}
+        />
       </group>
-      <BlazePhantomForearm side={1} materials={materials} />
-      <BlazePhantomHand side={1} materials={materials} />
+      <BlazePhantomForearm
+        side={1}
+        materials={materials}
+        locomotionRef={locomotionRef}
+      />
+      <BlazePhantomHand
+        side={1}
+        materials={materials}
+        locomotionRef={locomotionRef}
+      />
     </group>
   );
 }
@@ -2698,7 +2765,8 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
       (context) => sampleBlazeRocketStaffTipSocket(
         context,
         actionBlendRef.current,
-        targetingBlendRef.current
+        targetingBlendRef.current,
+        phantomLocomotionRef.current
       )
     );
   }, [heroId]);
@@ -2727,9 +2795,9 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
     const actionBlend = actionBlendRef.current;
     const targetingBlend = targetingBlendRef.current;
 
-    if (heroId === 'phantom') {
-      updatePhantomLocomotionRuntime(phantomLocomotionRef.current, camera, delta);
+    updatePhantomLocomotionRuntime(phantomLocomotionRef.current, camera, delta, heroId);
 
+    if (heroId === 'phantom') {
       const store = useGameStore.getState();
       const localPlayerId = store.localPlayer?.id;
       if (localPlayerId) {
@@ -2863,9 +2931,15 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
             materials={materials}
             primaryFireRef={hookshotPrimaryFireRef}
             secondaryFireRef={hookshotSecondaryFireRef}
+            locomotionRef={phantomLocomotionRef}
           />
         )}
-        {heroId === 'blaze' && <BlazeViewmodel materials={materials} />}
+        {heroId === 'blaze' && (
+          <BlazeViewmodel
+            materials={materials}
+            locomotionRef={phantomLocomotionRef}
+          />
+        )}
       </group>
     </group>
   );

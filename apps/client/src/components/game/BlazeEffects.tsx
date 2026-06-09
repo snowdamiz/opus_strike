@@ -30,7 +30,7 @@ export function BlazeEffectsManager() {
   
   return (
     <group>
-      {/* Rockets with shared light */}
+      {/* Fireballs with shared light */}
       <RocketsManager />
       
       {bombs.map(bomb => (

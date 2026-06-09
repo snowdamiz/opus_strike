@@ -1,11 +1,11 @@
 /**
  * INSTANCED ROCKETS RENDERER
  * =========================
- * Renders all active rockets using InstancedMesh for single-draw-call performance.
- * Each rocket = 6 instances (body, nose, fireCore, fireInner, fireOuter, smoke)
+ * Renders Blaze primary fireballs using InstancedMesh for single-draw-call performance.
+ * Each projectile = 6 instances (3 flame spheres, 3 trail lobes)
  *
  * PERFORMANCE BENEFITS:
- * - 30 rockets render in ~6 draw calls (one per rocket part) instead of 180+
+ * - 30 projectiles render in ~6 draw calls (one per fireball layer) instead of 180+
  * - Position/rotation updates at 60fps without React re-renders
  * - Uses Instance scale prop (1 = visible, 0 = hidden) for lifecycle
  */
@@ -18,12 +18,12 @@ import { useGameStore } from '../../../../store/gameStore';
 import { getFrameClock } from '../../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../../effectResources';
 import {
-  getRocketBodyMaterial,
-  getRocketNoseMaterial,
-  getRocketFireCoreMaterial,
-  getRocketFireInnerMaterial,
-  getRocketFireOuterMaterial,
-  getRocketSmokeMaterial,
+  getFireballCoreMaterial,
+  getFireballInnerMaterial,
+  getFireballOuterMaterial,
+  getFireballTrailCoreMaterial,
+  getFireballTrailInnerMaterial,
+  getFireballTrailOuterMaterial,
 } from '../../blaze/materials';
 
 const MAX_ROCKETS = 50;
@@ -40,19 +40,19 @@ const _partOffset = new THREE.Vector3();
 
 // Instance data cache for updating refs
 interface InstanceData {
-  body: THREE.Object3D | null;
-  nose: THREE.Object3D | null;
-  fireCore: THREE.Object3D | null;
-  fireInner: THREE.Object3D | null;
-  fireOuter: THREE.Object3D | null;
-  smoke: THREE.Object3D | null;
+  trailOuter: THREE.Object3D | null;
+  trailInner: THREE.Object3D | null;
+  trailCore: THREE.Object3D | null;
+  outer: THREE.Object3D | null;
+  inner: THREE.Object3D | null;
+  core: THREE.Object3D | null;
 }
 
 /**
- * InstancedRockets - Renders all rockets in single draw calls using InstancedMesh
+ * InstancedRockets - Renders Blaze fireballs in single draw calls using InstancedMesh
  *
- * Uses Drei's Instances API for declarative instancing. Each rocket is composed
- * of 6 separate instances (body, nose, 3 fire parts, smoke), so 30 active rockets
+ * Uses Drei's Instances API for declarative instancing. Each projectile is composed
+ * of 6 separate instances (3 fireball layers and 3 flame-trail lobes), so 30 active projectiles
  * render in 6 total draw calls instead of 180+ individual mesh calls.
  *
  * The component renders MAX_ROCKETS instances for each part (total 6 * 50 = 300 instances).
@@ -62,12 +62,12 @@ interface InstanceData {
 export function InstancedRockets() {
   // Pre-cached materials (created once, reused)
   const materials = useMemo(() => ({
-    body: getRocketBodyMaterial(),
-    nose: getRocketNoseMaterial(),
-    fireCore: getRocketFireCoreMaterial(),
-    fireInner: getRocketFireInnerMaterial(),
-    fireOuter: getRocketFireOuterMaterial(),
-    smoke: getRocketSmokeMaterial(),
+    trailOuter: getFireballTrailOuterMaterial(),
+    trailInner: getFireballTrailInnerMaterial(),
+    trailCore: getFireballTrailCoreMaterial(),
+    outer: getFireballOuterMaterial(),
+    inner: getFireballInnerMaterial(),
+    core: getFireballCoreMaterial(),
   }), []);
 
   // Store instance refs for per-frame updates
@@ -80,12 +80,12 @@ export function InstancedRockets() {
     // Initialize instance refs array if needed
     while (instanceRefs.current.length < MAX_ROCKETS) {
       instanceRefs.current.push({
-        body: null,
-        nose: null,
-        fireCore: null,
-        fireInner: null,
-        fireOuter: null,
-        smoke: null,
+        trailOuter: null,
+        trailInner: null,
+        trailCore: null,
+        outer: null,
+        inner: null,
+        core: null,
       });
     }
 
@@ -114,13 +114,13 @@ export function InstancedRockets() {
       ).normalize();
       _rocketQuat.setFromUnitVectors(_rocketForward, _rocketDir);
 
-      // Update all instances for this rocket
-      updateInstance(instances.body, _rocketPos, _rocketQuat, [0.08, 0.35, 0.08], alive, [Math.PI / 2, 0, 0]);
-      updateInstance(instances.nose, _rocketPos, _rocketQuat, [0.04, 0.08, 0.04], alive, [Math.PI / 2, 0, 0], [0, 0, -0.2]);
-      updateInstance(instances.fireCore, _rocketPos, _rocketQuat, [0.05, 0.35, 0.05], alive, [Math.PI / 2, 0, 0], [0, 0, 0.22]);
-      updateInstance(instances.fireInner, _rocketPos, _rocketQuat, [0.08, 0.45, 0.08], alive, [Math.PI / 2, 0, 0], [0, 0, 0.32]);
-      updateInstance(instances.fireOuter, _rocketPos, _rocketQuat, [0.12, 0.5, 0.12], alive, [Math.PI / 2, 0, 0], [0, 0, 0.4]);
-      updateInstance(instances.smoke, _rocketPos, _rocketQuat, [0.15, 0.4, 0.15], alive, [Math.PI / 2, 0, 0], [0, 0, 0.55]);
+      // Update all instances for this fireball
+      updateInstance(instances.trailOuter, _rocketPos, _rocketQuat, [0.22, 0.88, 0.22], alive, [Math.PI / 2, 0, 0], [0, 0, 0.72]);
+      updateInstance(instances.trailInner, _rocketPos, _rocketQuat, [0.14, 0.66, 0.14], alive, [Math.PI / 2, 0, 0], [0, 0, 0.48]);
+      updateInstance(instances.trailCore, _rocketPos, _rocketQuat, [0.08, 0.48, 0.08], alive, [Math.PI / 2, 0, 0], [0, 0, 0.25]);
+      updateInstance(instances.outer, _rocketPos, _rocketQuat, [0.32, 0.32, 0.32], alive, [0, 0, 0]);
+      updateInstance(instances.inner, _rocketPos, _rocketQuat, [0.23, 0.23, 0.23], alive, [0, 0, 0], [0, 0, -0.02]);
+      updateInstance(instances.core, _rocketPos, _rocketQuat, [0.14, 0.14, 0.14], alive, [0, 0, 0], [0, 0, -0.04]);
     });
 
     // Hide unused instances (beyond current rocket count)
@@ -129,12 +129,12 @@ export function InstancedRockets() {
       if (!instances) continue;
 
       // Hide all parts for unused slots
-      if (instances.body) instances.body.scale.setScalar(0);
-      if (instances.nose) instances.nose.scale.setScalar(0);
-      if (instances.fireCore) instances.fireCore.scale.setScalar(0);
-      if (instances.fireInner) instances.fireInner.scale.setScalar(0);
-      if (instances.fireOuter) instances.fireOuter.scale.setScalar(0);
-      if (instances.smoke) instances.smoke.scale.setScalar(0);
+      if (instances.trailOuter) instances.trailOuter.scale.setScalar(0);
+      if (instances.trailInner) instances.trailInner.scale.setScalar(0);
+      if (instances.trailCore) instances.trailCore.scale.setScalar(0);
+      if (instances.outer) instances.outer.scale.setScalar(0);
+      if (instances.inner) instances.inner.scale.setScalar(0);
+      if (instances.core) instances.core.scale.setScalar(0);
     }
   });
 
@@ -144,104 +144,104 @@ export function InstancedRockets() {
 
   return (
     <group>
-      {/* Rocket bodies - dark metallic */}
-      <Instances limit={MAX_ROCKETS} castShadow receiveShadow>
+      {/* Outer flame trail */}
+      <Instances limit={MAX_ROCKETS}>
         <primitive object={SHARED_GEOMETRIES.cone8} />
-        <primitive object={materials.body} />
+        <primitive object={materials.trailOuter} />
         {instanceSlots.map((index) => (
           <Instance
-            key={`body-${index}`}
+            key={`trailOuter-${index}`}
             ref={(el) => {
               if (!instanceRefs.current[index]) {
                 instanceRefs.current[index] = {
-                  body: null,
-                  nose: null,
-                  fireCore: null,
-                  fireInner: null,
-                  fireOuter: null,
-                  smoke: null,
+                  trailOuter: null,
+                  trailInner: null,
+                  trailCore: null,
+                  outer: null,
+                  inner: null,
+                  core: null,
                 };
               }
-              instanceRefs.current[index].body = el as THREE.Object3D | null;
+              instanceRefs.current[index].trailOuter = el as THREE.Object3D | null;
             }}
           />
         ))}
       </Instances>
 
-      {/* Rocket noses - glowing orange */}
-      <Instances limit={MAX_ROCKETS} castShadow>
-        <primitive object={SHARED_GEOMETRIES.cone6} />
-        <primitive object={materials.nose} />
-        {instanceSlots.map((index) => (
-          <Instance
-            key={`nose-${index}`}
-            ref={(el) => {
-              if (instanceRefs.current[index]) {
-                instanceRefs.current[index].nose = el as THREE.Object3D | null;
-              }
-            }}
-          />
-        ))}
-      </Instances>
-
-      {/* Fire core - bright white/yellow */}
+      {/* Mid flame trail */}
       <Instances limit={MAX_ROCKETS}>
         <primitive object={SHARED_GEOMETRIES.cone8} />
-        <primitive object={materials.fireCore} />
+        <primitive object={materials.trailInner} />
         {instanceSlots.map((index) => (
           <Instance
-            key={`fireCore-${index}`}
+            key={`trailInner-${index}`}
             ref={(el) => {
               if (instanceRefs.current[index]) {
-                instanceRefs.current[index].fireCore = el as THREE.Object3D | null;
+                instanceRefs.current[index].trailInner = el as THREE.Object3D | null;
               }
             }}
           />
         ))}
       </Instances>
 
-      {/* Fire inner - bright orange */}
+      {/* Inner flame trail */}
       <Instances limit={MAX_ROCKETS}>
         <primitive object={SHARED_GEOMETRIES.cone8} />
-        <primitive object={materials.fireInner} />
+        <primitive object={materials.trailCore} />
         {instanceSlots.map((index) => (
           <Instance
-            key={`fireInner-${index}`}
+            key={`trailCore-${index}`}
             ref={(el) => {
               if (instanceRefs.current[index]) {
-                instanceRefs.current[index].fireInner = el as THREE.Object3D | null;
+                instanceRefs.current[index].trailCore = el as THREE.Object3D | null;
               }
             }}
           />
         ))}
       </Instances>
 
-      {/* Fire outer - red/orange */}
+      {/* Outer fireball glow */}
       <Instances limit={MAX_ROCKETS}>
-        <primitive object={SHARED_GEOMETRIES.cone8} />
-        <primitive object={materials.fireOuter} />
+        <primitive object={SHARED_GEOMETRIES.sphere12} />
+        <primitive object={materials.outer} />
         {instanceSlots.map((index) => (
           <Instance
-            key={`fireOuter-${index}`}
+            key={`outer-${index}`}
             ref={(el) => {
               if (instanceRefs.current[index]) {
-                instanceRefs.current[index].fireOuter = el as THREE.Object3D | null;
+                instanceRefs.current[index].outer = el as THREE.Object3D | null;
               }
             }}
           />
         ))}
       </Instances>
 
-      {/* Smoke trail */}
+      {/* Inner fireball */}
       <Instances limit={MAX_ROCKETS}>
-        <primitive object={SHARED_GEOMETRIES.cone6} />
-        <primitive object={materials.smoke} />
+        <primitive object={SHARED_GEOMETRIES.sphere8} />
+        <primitive object={materials.inner} />
         {instanceSlots.map((index) => (
           <Instance
-            key={`smoke-${index}`}
+            key={`inner-${index}`}
             ref={(el) => {
               if (instanceRefs.current[index]) {
-                instanceRefs.current[index].smoke = el as THREE.Object3D | null;
+                instanceRefs.current[index].inner = el as THREE.Object3D | null;
+              }
+            }}
+          />
+        ))}
+      </Instances>
+
+      {/* Bright core */}
+      <Instances limit={MAX_ROCKETS}>
+        <primitive object={SHARED_GEOMETRIES.sphere6} />
+        <primitive object={materials.core} />
+        {instanceSlots.map((index) => (
+          <Instance
+            key={`core-${index}`}
+            ref={(el) => {
+              if (instanceRefs.current[index]) {
+                instanceRefs.current[index].core = el as THREE.Object3D | null;
               }
             }}
           />
@@ -253,7 +253,7 @@ export function InstancedRockets() {
 
 /**
  * Update instance position, rotation, and scale
- * Hides dead rockets by setting scale to 0
+ * Hides dead projectiles by setting scale to 0
  */
 function updateInstance(
   instance: THREE.Object3D | null,

@@ -187,6 +187,7 @@ export type AbilityIconType =
   | 'swing'
   | 'zipline'
   | 'flamethrower'
+  | 'fireball'
   | 'rocket'
   | 'bomb'
   | 'rocketjump'
@@ -229,6 +230,8 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <SwingLineIcon size={size} color={color} className={className} />;
     case 'flamethrower':
       return <FlamethrowerIcon size={size} color={color} className={className} />;
+    case 'fireball':
+      return <FireballIcon size={size} color={color} className={className} />;
     case 'rocket':
       return <RocketIcon size={size} color={color} className={className} />;
     case 'bomb':
@@ -424,6 +427,20 @@ function FlamethrowerIcon({ size, color, className }: IconProps) {
       <rect x="7" y="10" width="6.5" height="6" rx="1.5" fill={color} />
       <path d="M13 13C15.1 7.8 19.1 6.2 21.5 5.8C20.2 8.3 21.1 9.9 18.3 12C21 13.2 20.5 16.1 19.5 18.1C17.9 15.9 15.3 16.2 13 13Z" fill={color} />
       <path d="M15.1 13C16 10.9 17.8 9.8 19.2 9.3C18.6 10.7 18.9 11.5 17.5 12.7C18.8 13.4 18.8 14.6 18.3 15.6C17.2 14.5 16 14.7 15.1 13Z" fill="#fff7d6" opacity="0.9" />
+    </svg>
+  );
+}
+
+function FireballIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M3.5 16.5C6.3 15.5 8.6 13.7 10.8 11.5" stroke={color} strokeWidth="2.1" strokeLinecap="round" opacity="0.42" />
+      <path d="M2.8 20C6.4 18.2 9.3 16.2 12.3 13" stroke={color} strokeWidth="2.4" strokeLinecap="round" opacity="0.7" />
+      <path d="M6.7 21.2C9.3 19.6 11.2 17.6 13.1 14.7" stroke={color} strokeWidth="1.7" strokeLinecap="round" opacity="0.5" />
+      <path d="M13.8 4.1C17.2 4.8 20.2 7.7 20.9 11.2C21.6 15 18.5 18.8 14.6 18.2C11.7 17.7 9.5 15.6 9.1 12.8C8.6 9.2 10.7 7.7 13.8 4.1Z" fill={color} />
+      <path d="M14.2 8C16.1 8.4 17.7 10 18 11.9C18.3 14 16.7 16 14.7 15.8C13.1 15.6 12 14.4 11.8 12.9C11.5 10.9 12.7 9.7 14.2 8Z" fill="#fff7d6" opacity="0.92" />
+      <circle cx="18.7" cy="5.4" r="0.9" fill={color} opacity="0.62" />
+      <circle cx="21" cy="8.1" r="0.55" fill={color} opacity="0.48" />
     </svg>
   );
 }

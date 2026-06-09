@@ -2,7 +2,7 @@
  * Blaze Hero Abilities Hook
  * 
  * Handles Blaze-specific abilities:
- * - Rockets (primary fire)
+ * - Fireballs (primary fire)
  * - Bomb (secondary fire - targeting)
  * - Flamethrower (E ability - hold)
  * - Rocket Jump (Q ability)

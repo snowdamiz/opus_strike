@@ -425,72 +425,66 @@ export function getTargetBeamTopMaterial(): THREE.MeshBasicMaterial {
 }
 
 // ============================================================================
-// SHARED ROCKET MATERIALS
+// SHARED FIREBALL MATERIALS
 // ============================================================================
 
-let sharedRocketBodyMaterial: THREE.MeshBasicMaterial | null = null;
-let sharedRocketNoseMaterial: THREE.MeshBasicMaterial | null = null;
-let sharedRocketFireCoreMaterial: THREE.MeshBasicMaterial | null = null;
-let sharedRocketFireInnerMaterial: THREE.MeshBasicMaterial | null = null;
-let sharedRocketFireOuterMaterial: THREE.MeshBasicMaterial | null = null;
-let sharedRocketSmokeMaterial: THREE.MeshBasicMaterial | null = null;
+let sharedFireballCoreMaterial: THREE.MeshBasicMaterial | null = null;
+let sharedFireballInnerMaterial: THREE.MeshBasicMaterial | null = null;
+let sharedFireballOuterMaterial: THREE.MeshBasicMaterial | null = null;
+let sharedFireballTrailCoreMaterial: THREE.MeshBasicMaterial | null = null;
+let sharedFireballTrailInnerMaterial: THREE.MeshBasicMaterial | null = null;
+let sharedFireballTrailOuterMaterial: THREE.MeshBasicMaterial | null = null;
 
-export function getRocketBodyMaterial(): THREE.MeshBasicMaterial {
-  if (!sharedRocketBodyMaterial) {
-    sharedRocketBodyMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 });
-  }
-  return sharedRocketBodyMaterial;
+function createFireballMaterial(color: number, opacity: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
 }
 
-export function getRocketNoseMaterial(): THREE.MeshBasicMaterial {
-  if (!sharedRocketNoseMaterial) {
-    sharedRocketNoseMaterial = new THREE.MeshBasicMaterial({ color: 0xff6600 });
+export function getFireballCoreMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedFireballCoreMaterial) {
+    sharedFireballCoreMaterial = createFireballMaterial(0xffffee, 0.98);
   }
-  return sharedRocketNoseMaterial;
+  return sharedFireballCoreMaterial;
 }
 
-export function getRocketFireCoreMaterial(): THREE.MeshBasicMaterial {
-  if (!sharedRocketFireCoreMaterial) {
-    sharedRocketFireCoreMaterial = new THREE.MeshBasicMaterial({ 
-      color: 0xffffcc, 
-      transparent: true, 
-      opacity: 0.95 
-    });
+export function getFireballInnerMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedFireballInnerMaterial) {
+    sharedFireballInnerMaterial = createFireballMaterial(0xffcc33, 0.86);
   }
-  return sharedRocketFireCoreMaterial;
+  return sharedFireballInnerMaterial;
 }
 
-export function getRocketFireInnerMaterial(): THREE.MeshBasicMaterial {
-  if (!sharedRocketFireInnerMaterial) {
-    sharedRocketFireInnerMaterial = new THREE.MeshBasicMaterial({ 
-      color: 0xffaa00, 
-      transparent: true, 
-      opacity: 0.9 
-    });
+export function getFireballOuterMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedFireballOuterMaterial) {
+    sharedFireballOuterMaterial = createFireballMaterial(0xff4a16, 0.58);
   }
-  return sharedRocketFireInnerMaterial;
+  return sharedFireballOuterMaterial;
 }
 
-export function getRocketFireOuterMaterial(): THREE.MeshBasicMaterial {
-  if (!sharedRocketFireOuterMaterial) {
-    sharedRocketFireOuterMaterial = new THREE.MeshBasicMaterial({ 
-      color: 0xff5500, 
-      transparent: true, 
-      opacity: 0.7 
-    });
+export function getFireballTrailCoreMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedFireballTrailCoreMaterial) {
+    sharedFireballTrailCoreMaterial = createFireballMaterial(0xfff0a0, 0.76);
   }
-  return sharedRocketFireOuterMaterial;
+  return sharedFireballTrailCoreMaterial;
 }
 
-export function getRocketSmokeMaterial(): THREE.MeshBasicMaterial {
-  if (!sharedRocketSmokeMaterial) {
-    sharedRocketSmokeMaterial = new THREE.MeshBasicMaterial({ 
-      color: 0xff3300, 
-      transparent: true, 
-      opacity: 0.4 
-    });
+export function getFireballTrailInnerMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedFireballTrailInnerMaterial) {
+    sharedFireballTrailInnerMaterial = createFireballMaterial(0xff8a00, 0.62);
   }
-  return sharedRocketSmokeMaterial;
+  return sharedFireballTrailInnerMaterial;
+}
+
+export function getFireballTrailOuterMaterial(): THREE.MeshBasicMaterial {
+  if (!sharedFireballTrailOuterMaterial) {
+    sharedFireballTrailOuterMaterial = createFireballMaterial(0xff2200, 0.42);
+  }
+  return sharedFireballTrailOuterMaterial;
 }
 
 // ============================================================================
@@ -547,11 +541,11 @@ export function prewarmBlazeMaterials(): void {
   getTargetBeamMaterial();
   getTargetBeamTopMaterial();
   
-  // Rocket materials
-  getRocketBodyMaterial();
-  getRocketNoseMaterial();
-  getRocketFireCoreMaterial();
-  getRocketFireInnerMaterial();
-  getRocketFireOuterMaterial();
-  getRocketSmokeMaterial();
+  // Fireball materials
+  getFireballCoreMaterial();
+  getFireballInnerMaterial();
+  getFireballOuterMaterial();
+  getFireballTrailCoreMaterial();
+  getFireballTrailInnerMaterial();
+  getFireballTrailOuterMaterial();
 }

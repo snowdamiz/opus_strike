@@ -12,12 +12,12 @@ import { getFrameClock } from '../../../utils/frameClock';
 import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 import { useNetwork } from '../../../contexts/NetworkContext';
 import {
-  getRocketBodyMaterial,
-  getRocketNoseMaterial,
-  getRocketFireCoreMaterial,
-  getRocketFireInnerMaterial,
-  getRocketFireOuterMaterial,
-  getRocketSmokeMaterial,
+  getFireballCoreMaterial,
+  getFireballInnerMaterial,
+  getFireballOuterMaterial,
+  getFireballTrailCoreMaterial,
+  getFireballTrailInnerMaterial,
+  getFireballTrailOuterMaterial,
 } from './materials';
 
 // ============================================================================
@@ -30,6 +30,8 @@ const PROJECTILE_RADIUS = 0.21;
 const NPC_HIT_RADIUS = 1.2;
 const NPC_HIT_RADIUS_SQ = NPC_HIT_RADIUS * NPC_HIT_RADIUS;
 const ROCKET_IMPACT_SCALE = 1.15;
+const FIREBALL_FLICKER_RATE = 0.018;
+const FIREBALL_TRAIL_FLICKER_RATE = 0.024;
 
 interface MutableVec3 {
   x: number;
@@ -50,33 +52,36 @@ interface RocketRuntimeSlot {
 }
 
 const ZERO_VEC3 = { x: 0, y: 0, z: 0 };
-const ROCKET_FORWARD = new THREE.Vector3(0, 0, -1);
-const ROCKET_PART_ROTATION = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+const PROJECTILE_FORWARD = new THREE.Vector3(0, 0, -1);
+const FLAME_TRAIL_ROTATION = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
 
-const ROCKET_PARTS = {
-  body: {
-    scale: new THREE.Vector3(0.08, 0.35, 0.08),
+const FIREBALL_PARTS = {
+  outer: {
+    scale: new THREE.Vector3(0.32, 0.32, 0.32),
     offset: null,
   },
-  nose: {
-    scale: new THREE.Vector3(0.04, 0.08, 0.04),
-    offset: new THREE.Vector3(0, 0, -0.2),
+  inner: {
+    scale: new THREE.Vector3(0.23, 0.23, 0.23),
+    offset: new THREE.Vector3(0, 0, -0.02),
   },
-  fireCore: {
-    scale: new THREE.Vector3(0.05, 0.35, 0.05),
-    offset: new THREE.Vector3(0, 0, 0.22),
+  core: {
+    scale: new THREE.Vector3(0.14, 0.14, 0.14),
+    offset: new THREE.Vector3(0, 0, -0.04),
   },
-  fireInner: {
-    scale: new THREE.Vector3(0.08, 0.45, 0.08),
-    offset: new THREE.Vector3(0, 0, 0.32),
+  trailCore: {
+    scale: new THREE.Vector3(0.08, 0.48, 0.08),
+    offset: new THREE.Vector3(0, 0, 0.25),
+    rotation: FLAME_TRAIL_ROTATION,
   },
-  fireOuter: {
-    scale: new THREE.Vector3(0.12, 0.5, 0.12),
-    offset: new THREE.Vector3(0, 0, 0.4),
+  trailInner: {
+    scale: new THREE.Vector3(0.14, 0.66, 0.14),
+    offset: new THREE.Vector3(0, 0, 0.48),
+    rotation: FLAME_TRAIL_ROTATION,
   },
-  smoke: {
-    scale: new THREE.Vector3(0.15, 0.4, 0.15),
-    offset: new THREE.Vector3(0, 0, 0.55),
+  trailOuter: {
+    scale: new THREE.Vector3(0.22, 0.88, 0.22),
+    offset: new THREE.Vector3(0, 0, 0.72),
+    rotation: FLAME_TRAIL_ROTATION,
   },
 } as const;
 
@@ -187,51 +192,58 @@ class RocketRuntimePool {
   }
 }
 
-function setRocketPartInstance(
+function setFireballPartInstance(
   mesh: THREE.InstancedMesh | null,
   dummy: THREE.Object3D,
   offset: THREE.Vector3 | null,
-  rocketQuaternion: THREE.Quaternion,
+  projectileQuaternion: THREE.Quaternion,
   slot: RocketRuntimeSlot,
   index: number,
   scale: THREE.Vector3,
-  scratchOffset: THREE.Vector3
+  scratchOffset: THREE.Vector3,
+  scratchScale: THREE.Vector3,
+  scaleMultiplier = 1,
+  rotation?: THREE.Quaternion
 ): void {
   if (!mesh) return;
 
   dummy.position.set(slot.position.x, slot.position.y, slot.position.z);
   if (offset) {
-    scratchOffset.copy(offset).applyQuaternion(rocketQuaternion);
+    scratchOffset.copy(offset).applyQuaternion(projectileQuaternion);
     dummy.position.add(scratchOffset);
   }
-  dummy.quaternion.copy(rocketQuaternion).multiply(ROCKET_PART_ROTATION);
-  dummy.scale.copy(scale);
+  dummy.quaternion.copy(projectileQuaternion);
+  if (rotation) {
+    dummy.quaternion.multiply(rotation);
+  }
+  scratchScale.copy(scale).multiplyScalar(scaleMultiplier);
+  dummy.scale.copy(scratchScale);
   dummy.updateMatrix();
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
 export function prewarmRocketResources(renderer?: THREE.WebGLRenderer): void {
-  getRocketBodyMaterial();
-  getRocketNoseMaterial();
-  getRocketFireCoreMaterial();
-  getRocketFireInnerMaterial();
-  getRocketFireOuterMaterial();
-  getRocketSmokeMaterial();
+  getFireballCoreMaterial();
+  getFireballInnerMaterial();
+  getFireballOuterMaterial();
+  getFireballTrailCoreMaterial();
+  getFireballTrailInnerMaterial();
+  getFireballTrailOuterMaterial();
 
   if (!renderer) return;
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  const matrix = new THREE.Matrix4().makeScale(0.1, 0.35, 0.1);
+  const matrix = new THREE.Matrix4().makeScale(0.25, 0.25, 0.25);
   camera.position.z = 3;
 
   const meshes = [
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketBodyMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone6, getRocketNoseMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketFireCoreMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketFireInnerMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getRocketFireOuterMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone6, getRocketSmokeMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere12, getFireballOuterMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, getFireballInnerMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere6, getFireballCoreMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getFireballTrailOuterMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getFireballTrailInnerMaterial(), 1),
+    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getFireballTrailCoreMaterial(), 1),
   ];
 
   for (const mesh of meshes) {
@@ -243,7 +255,7 @@ export function prewarmRocketResources(renderer?: THREE.WebGLRenderer): void {
 }
 
 // ============================================================================
-// ROCKETS MANAGER
+// FIREBALLS MANAGER
 // ============================================================================
 
 export function RocketsManager() {
@@ -258,13 +270,14 @@ export function RocketsManager() {
   const rocketQuaternion = useMemo(() => new THREE.Quaternion(), []);
   const rocketDirection = useMemo(() => new THREE.Vector3(0, 0, -1), []);
   const partOffset = useMemo(() => new THREE.Vector3(), []);
+  const partScale = useMemo(() => new THREE.Vector3(), []);
 
-  const bodyMeshRef = useRef<THREE.InstancedMesh>(null);
-  const noseMeshRef = useRef<THREE.InstancedMesh>(null);
-  const fireCoreMeshRef = useRef<THREE.InstancedMesh>(null);
-  const fireInnerMeshRef = useRef<THREE.InstancedMesh>(null);
-  const fireOuterMeshRef = useRef<THREE.InstancedMesh>(null);
-  const smokeMeshRef = useRef<THREE.InstancedMesh>(null);
+  const fireballOuterMeshRef = useRef<THREE.InstancedMesh>(null);
+  const fireballInnerMeshRef = useRef<THREE.InstancedMesh>(null);
+  const fireballCoreMeshRef = useRef<THREE.InstancedMesh>(null);
+  const trailOuterMeshRef = useRef<THREE.InstancedMesh>(null);
+  const trailInnerMeshRef = useRef<THREE.InstancedMesh>(null);
+  const trailCoreMeshRef = useRef<THREE.InstancedMesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
 
   if (!poolRef.current) {
@@ -370,14 +383,17 @@ export function RocketsManager() {
       slot.position.z += slot.velocity.z * delta;
 
       rocketDirection.set(slot.direction.x, slot.direction.y, slot.direction.z);
-      rocketQuaternion.setFromUnitVectors(ROCKET_FORWARD, rocketDirection);
+      rocketQuaternion.setFromUnitVectors(PROJECTILE_FORWARD, rocketDirection);
 
-      setRocketPartInstance(bodyMeshRef.current, dummy, ROCKET_PARTS.body.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.body.scale, partOffset);
-      setRocketPartInstance(noseMeshRef.current, dummy, ROCKET_PARTS.nose.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.nose.scale, partOffset);
-      setRocketPartInstance(fireCoreMeshRef.current, dummy, ROCKET_PARTS.fireCore.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.fireCore.scale, partOffset);
-      setRocketPartInstance(fireInnerMeshRef.current, dummy, ROCKET_PARTS.fireInner.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.fireInner.scale, partOffset);
-      setRocketPartInstance(fireOuterMeshRef.current, dummy, ROCKET_PARTS.fireOuter.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.fireOuter.scale, partOffset);
-      setRocketPartInstance(smokeMeshRef.current, dummy, ROCKET_PARTS.smoke.offset, rocketQuaternion, slot, instanceIndex, ROCKET_PARTS.smoke.scale, partOffset);
+      const headPulse = 1 + Math.sin(clock.nowMs * FIREBALL_FLICKER_RATE + slotIndex * 1.7) * 0.07;
+      const trailPulse = 1 + Math.cos(clock.nowMs * FIREBALL_TRAIL_FLICKER_RATE + slotIndex * 2.3) * 0.11;
+
+      setFireballPartInstance(trailOuterMeshRef.current, dummy, FIREBALL_PARTS.trailOuter.offset, rocketQuaternion, slot, instanceIndex, FIREBALL_PARTS.trailOuter.scale, partOffset, partScale, trailPulse, FIREBALL_PARTS.trailOuter.rotation);
+      setFireballPartInstance(trailInnerMeshRef.current, dummy, FIREBALL_PARTS.trailInner.offset, rocketQuaternion, slot, instanceIndex, FIREBALL_PARTS.trailInner.scale, partOffset, partScale, trailPulse * 0.96, FIREBALL_PARTS.trailInner.rotation);
+      setFireballPartInstance(trailCoreMeshRef.current, dummy, FIREBALL_PARTS.trailCore.offset, rocketQuaternion, slot, instanceIndex, FIREBALL_PARTS.trailCore.scale, partOffset, partScale, trailPulse * 1.04, FIREBALL_PARTS.trailCore.rotation);
+      setFireballPartInstance(fireballOuterMeshRef.current, dummy, FIREBALL_PARTS.outer.offset, rocketQuaternion, slot, instanceIndex, FIREBALL_PARTS.outer.scale, partOffset, partScale, headPulse);
+      setFireballPartInstance(fireballInnerMeshRef.current, dummy, FIREBALL_PARTS.inner.offset, rocketQuaternion, slot, instanceIndex, FIREBALL_PARTS.inner.scale, partOffset, partScale, headPulse * 0.98);
+      setFireballPartInstance(fireballCoreMeshRef.current, dummy, FIREBALL_PARTS.core.offset, rocketQuaternion, slot, instanceIndex, FIREBALL_PARTS.core.scale, partOffset, partScale, headPulse * 1.05);
 
       lightX += slot.position.x;
       lightY += slot.position.y;
@@ -386,12 +402,12 @@ export function RocketsManager() {
     });
 
     const meshes = [
-      bodyMeshRef.current,
-      noseMeshRef.current,
-      fireCoreMeshRef.current,
-      fireInnerMeshRef.current,
-      fireOuterMeshRef.current,
-      smokeMeshRef.current,
+      fireballOuterMeshRef.current,
+      fireballInnerMeshRef.current,
+      fireballCoreMeshRef.current,
+      trailOuterMeshRef.current,
+      trailInnerMeshRef.current,
+      trailCoreMeshRef.current,
     ];
     for (let i = 0; i < meshes.length; i++) {
       const mesh = meshes[i];
@@ -403,7 +419,7 @@ export function RocketsManager() {
     if (lightRef.current) {
       if (instanceIndex > 0) {
         lightRef.current.position.set(lightX / instanceIndex, lightY / instanceIndex, lightZ / instanceIndex);
-        lightRef.current.intensity = Math.min(instanceIndex * 2, 10);
+        lightRef.current.intensity = Math.min(instanceIndex * 2.6, 12);
       } else {
         lightRef.current.intensity = 0;
       }
@@ -423,47 +439,47 @@ export function RocketsManager() {
   return (
     <group>
       <instancedMesh
-        ref={bodyMeshRef}
-        args={[SHARED_GEOMETRIES.cone8, getRocketBodyMaterial(), MAX_ROCKETS]}
+        ref={trailOuterMeshRef}
+        args={[SHARED_GEOMETRIES.cone8, getFireballTrailOuterMaterial(), MAX_ROCKETS]}
         count={0}
         frustumCulled={false}
       />
       <instancedMesh
-        ref={noseMeshRef}
-        args={[SHARED_GEOMETRIES.cone6, getRocketNoseMaterial(), MAX_ROCKETS]}
+        ref={trailInnerMeshRef}
+        args={[SHARED_GEOMETRIES.cone8, getFireballTrailInnerMaterial(), MAX_ROCKETS]}
         count={0}
         frustumCulled={false}
       />
       <instancedMesh
-        ref={fireCoreMeshRef}
-        args={[SHARED_GEOMETRIES.cone8, getRocketFireCoreMaterial(), MAX_ROCKETS]}
+        ref={trailCoreMeshRef}
+        args={[SHARED_GEOMETRIES.cone8, getFireballTrailCoreMaterial(), MAX_ROCKETS]}
         count={0}
         frustumCulled={false}
       />
       <instancedMesh
-        ref={fireInnerMeshRef}
-        args={[SHARED_GEOMETRIES.cone8, getRocketFireInnerMaterial(), MAX_ROCKETS]}
+        ref={fireballOuterMeshRef}
+        args={[SHARED_GEOMETRIES.sphere12, getFireballOuterMaterial(), MAX_ROCKETS]}
         count={0}
         frustumCulled={false}
       />
       <instancedMesh
-        ref={fireOuterMeshRef}
-        args={[SHARED_GEOMETRIES.cone8, getRocketFireOuterMaterial(), MAX_ROCKETS]}
+        ref={fireballInnerMeshRef}
+        args={[SHARED_GEOMETRIES.sphere8, getFireballInnerMaterial(), MAX_ROCKETS]}
         count={0}
         frustumCulled={false}
       />
       <instancedMesh
-        ref={smokeMeshRef}
-        args={[SHARED_GEOMETRIES.cone6, getRocketSmokeMaterial(), MAX_ROCKETS]}
+        ref={fireballCoreMeshRef}
+        args={[SHARED_GEOMETRIES.sphere6, getFireballCoreMaterial(), MAX_ROCKETS]}
         count={0}
         frustumCulled={false}
       />
       <BudgetedPointLight
         budgetPriority={4}
         ref={lightRef}
-        color={0xff6600}
+        color={0xff9a33}
         intensity={0}
-        distance={12}
+        distance={14}
         decay={2}
       />
     </group>

@@ -81,10 +81,10 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
   blaze: [
     {
       input: 'LMB',
-      name: 'Rockets',
-      description: 'Fire direct rockets with splash pressure at mid range.',
+      name: 'Fireballs',
+      description: 'Launch flaming fireballs that burst with splash pressure at mid range.',
       cooldown: 0.85,
-      iconType: 'rocket',
+      iconType: 'fireball',
     },
     {
       input: 'RMB',
