@@ -43,7 +43,7 @@ import {
 } from './effectResources';
 import { HookshotViewmodelArrow } from './hookshot/arrowHead';
 
-type ViewmodelHeroId = Extract<HeroId, 'phantom' | 'hookshot' | 'blaze'>;
+type ViewmodelHeroId = Extract<HeroId, 'phantom' | 'hookshot' | 'blaze' | 'chronos'>;
 
 interface ViewmodelActionState {
   active: boolean;
@@ -65,7 +65,7 @@ interface HeroViewmodelProps {
   action: ViewmodelActionState;
 }
 
-const VIEWMODEL_HEROES = new Set<HeroId>(['phantom', 'hookshot', 'blaze']);
+const VIEWMODEL_HEROES = new Set<HeroId>(['phantom', 'hookshot', 'blaze', 'chronos']);
 const materialCache = new Map<ViewmodelHeroId, ViewmodelMaterialSet>();
 
 interface MutableTransformTarget {
@@ -183,6 +183,8 @@ const BLAZE_RIGHT_HAND_READY_BLEND = 0.035;
 const BLAZE_STAFF_POSITION = new THREE.Vector3(0.006, -0.034, -0.088);
 const BLAZE_STAFF_ROTATION = new THREE.Euler(-0.23, -0.075, 0.24, VIEWMODEL_ROOT_EULER_ORDER);
 const BLAZE_STAFF_TIP_LOCAL_POSITION = new THREE.Vector3(0, 0.592, 0);
+const CHRONOS_FOREARM_READY_BLEND = 0.52;
+const CHRONOS_HAND_READY_BLEND = 0.62;
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -269,6 +271,14 @@ const HERO_MATERIAL_COLORS: Record<ViewmodelHeroId, {
     glow: BLAZE_COLORS.fireYellow,
     glass: 0xfb923c,
   },
+  chronos: {
+    armor: 0x123b2d,
+    dark: 0x07130f,
+    metal: 0x9b7a34,
+    accent: 0x22c55e,
+    glow: 0xa7f3d0,
+    glass: 0xb91c1c,
+  },
 };
 
 function isViewmodelHero(heroId: HeroId | '' | null | undefined): heroId is ViewmodelHeroId {
@@ -344,6 +354,12 @@ function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
         active: store.flamethrowerActive || store.rockets.some(rocket => rocket.ownerId === localPlayerId),
         charging: false,
         targeting: store.bombTargeting || store.airStrikeTargeting,
+      };
+    case 'chronos':
+      return {
+        active: false,
+        charging: false,
+        targeting: false,
       };
   }
 }
@@ -2705,6 +2721,284 @@ function BlazeViewmodel({
   );
 }
 
+function writeChronosTriangleForearmPose(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  elapsedSeconds: number,
+  locomotion: PhantomLocomotionPose
+): void {
+  writePhantomForearmPose(
+    target,
+    side,
+    CHRONOS_FOREARM_READY_BLEND,
+    0,
+    elapsedSeconds,
+    locomotion
+  );
+
+  const breath = Math.sin(elapsedSeconds * 1.2 + side * 0.65) * 0.002;
+  target.position.x += side * -0.062;
+  target.position.y += 0.018 + breath;
+  target.position.z -= 0.04;
+  target.rotation.x -= 0.062;
+  target.rotation.y += side * 0.018;
+  target.rotation.z += side * 0.18;
+}
+
+function writeChronosTriangleHandPose(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  elapsedSeconds: number,
+  locomotion: PhantomLocomotionPose
+): void {
+  writePhantomHandPose(
+    targets,
+    side,
+    CHRONOS_HAND_READY_BLEND,
+    0,
+    elapsedSeconds,
+    locomotion
+  );
+
+  const innerSide = -side;
+  const breath = Math.sin(elapsedSeconds * 1.42 + side * 0.58) * 0.0025;
+  targets.arm.position.x += side * -0.074;
+  targets.arm.position.y += 0.024 + breath;
+  targets.arm.position.z -= 0.058;
+  targets.arm.rotation.x -= 0.074;
+  targets.arm.rotation.y += side * 0.026;
+  targets.arm.rotation.z += side * 0.19;
+
+  targets.wrist.position.z -= 0.004;
+  targets.wrist.rotation.x -= 0.012;
+  targets.wrist.rotation.y += side * 0.016;
+  targets.wrist.rotation.z += side * 0.04;
+
+  targets.palm.position.x += side * -0.002;
+  targets.palm.position.y += 0.002;
+  targets.palm.position.z -= 0.01;
+  targets.palm.rotation.x -= 0.028;
+  targets.palm.rotation.y += side * -0.01;
+  targets.palm.rotation.z += side * 0.018;
+
+  targets.thumb.position.set(innerSide * 0.064, -0.026, -0.032);
+  targets.thumb.rotation.set(0.035, innerSide * 0.05, innerSide * 0.48);
+
+  for (let index = 0; index < targets.fingers.length; index++) {
+    const finger = targets.fingers[index];
+    const fingerSpread = index - 1.5;
+    const heldFingerSlot = fingerSpread * 0.034;
+    const fanRotation = fingerSpread * 0.04;
+    finger.position.set(
+      heldFingerSlot,
+      0.056,
+      -0.032
+    );
+    finger.rotation.set(
+      -0.05,
+      innerSide * 0.012,
+      -innerSide * 0.18 + fanRotation
+    );
+  }
+}
+
+function ChronosPhantomForearm({
+  side,
+  materials,
+  locomotionRef,
+}: {
+  side: -1 | 1;
+  materials: ViewmodelMaterialSet;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+}) {
+  const forearmRef = useRef<THREE.Group>(null);
+  const length = 0.32;
+  const rearLength = 0.38;
+  const rearCenterZ = length * 0.5 + rearLength * 0.5 - 0.018;
+  const width = 0.074;
+  const thickness = 0.066;
+
+  useFrame((state) => {
+    const forearm = forearmRef.current;
+    if (!forearm) return;
+    writeChronosTriangleForearmPose(
+      forearm,
+      side,
+      state.clock.elapsedTime,
+      locomotionRef.current
+    );
+  });
+
+  return (
+    <group
+      ref={forearmRef}
+      position={[side * 0.34, -0.58, -0.43]}
+      rotation={[0.22, side * -0.18, side * -0.06]}
+    >
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -thickness * 0.04, rearCenterZ]} scale={[width * 0.86, thickness * 1.08, rearLength]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.28, rearCenterZ - rearLength * 0.06]} scale={[width * 0.96, thickness * 0.58, rearLength * 0.72]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[0, thickness * 0.64, rearCenterZ - rearLength * 0.05]} scale={[width * 0.56, Math.max(0.014, thickness * 0.18), rearLength * 0.38]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -thickness * 0.04, 0]} scale={[width * 0.78, thickness * 1.05, length]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, thickness * 0.24, -0.02]} scale={[width, thickness * 0.66, length * 0.74]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.006, -length * 0.48]} scale={[width * 0.92, thickness * 0.94, 0.085]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.038, thickness * 0.69, -0.052]} scale={[0.034, Math.max(0.014, thickness * 0.2), length * 0.54]} />
+      <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[side * -0.024, thickness * 0.76, -0.104]} scale={[0.026, Math.max(0.012, thickness * 0.16), length * 0.34]} />
+    </group>
+  );
+}
+
+function ChronosTriangleHand({
+  side,
+  materials,
+  locomotionRef,
+}: {
+  side: -1 | 1;
+  materials: ViewmodelMaterialSet;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+}) {
+  const armRef = useRef<THREE.Group>(null);
+  const wristRef = useRef<THREE.Group>(null);
+  const palmRef = useRef<THREE.Group>(null);
+  const thumbRef = useRef<THREE.Group>(null);
+  const fingerRefs = useRef<(THREE.Group | null)[]>([]);
+  const innerSide = -side;
+
+  useFrame((state) => {
+    const arm = armRef.current;
+    const wrist = wristRef.current;
+    const palm = palmRef.current;
+    const thumb = thumbRef.current;
+    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
+    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+
+    writeChronosTriangleHandPose(
+      {
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      state.clock.elapsedTime,
+      locomotionRef.current
+    );
+  });
+
+  return (
+    <group
+      ref={armRef}
+      position={[
+        side * PHANTOM_IDLE_HAND_POSITION.x,
+        PHANTOM_IDLE_HAND_POSITION.y,
+        PHANTOM_IDLE_HAND_POSITION.z,
+      ]}
+      rotation={[
+        PHANTOM_IDLE_HAND_ROTATION.x,
+        side * PHANTOM_IDLE_HAND_ROTATION.y,
+        side * PHANTOM_IDLE_HAND_ROTATION.z,
+      ]}
+    >
+      <group ref={wristRef}>
+        <group ref={palmRef}>
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, -0.07, 0.088]} scale={[0.07, 0.062, 0.084]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.104, 0.142]} scale={[0.058, 0.044, 0.104]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.028, -0.094, 0.082]} scale={[0.016, 0.044, 0.058]} />
+
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} scale={[0.108, 0.132, 0.054]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[side * 0.014, 0.002, 0.012]} scale={[0.088, 0.106, 0.038]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.058, -0.004, -0.018]} scale={[0.018, 0.09, 0.03]} />
+          <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[0, 0.012, -0.05]} scale={[0.06, 0.076, 0.014]} />
+          <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} position={[0, 0.006, -0.062]} scale={[0.062, 0.062, 1]} />
+
+          {PHANTOM_OPEN_FINGER_SLOTS.map((slot, index) => {
+            const segmentLength = 0.094;
+            const fingerSpread = index - 1.5;
+            const heldFingerSlot = fingerSpread * 0.034;
+            const fanRotation = fingerSpread * 0.04;
+
+            return (
+              <group
+                key={slot}
+                ref={(node) => {
+                  fingerRefs.current[index] = node;
+                }}
+                position={[heldFingerSlot, 0.056, -0.032]}
+                rotation={[-0.05, innerSide * 0.012, -innerSide * 0.18 + fanRotation]}
+              >
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, -0.006, 0.012]} scale={[0.028, 0.024, 0.024]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[0, segmentLength * 0.5, 0]} scale={[0.025, segmentLength, 0.024]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[0, segmentLength * 0.36, 0.006]} scale={[0.028, segmentLength * 0.42, 0.026]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[0, segmentLength * 0.5, -0.012]} scale={[0.013, segmentLength * 0.62, 0.011]} />
+                <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, segmentLength + 0.014, -0.001]} scale={[0.023, 0.028, 0.024]} />
+              </group>
+            );
+          })}
+
+          <group
+            ref={thumbRef}
+            position={[innerSide * 0.064, -0.026, -0.032]}
+            rotation={[0.035, innerSide * 0.05, innerSide * 0.48]}
+          >
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[0, 0, 0.006]} scale={[0.026, 0.03, 0.022]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[innerSide * 0.034, 0.002, 0]} scale={[0.066, 0.026, 0.024]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.armor} position={[innerSide * 0.036, 0.008, 0.007]} scale={[0.048, 0.017, 0.024]} />
+            <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[innerSide * 0.038, 0.004, -0.01]} scale={[0.04, 0.01, 0.01]} />
+            <group position={[innerSide * 0.066, 0.006, 0]} rotation={[0, 0, innerSide * 0.04]}>
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.dark} position={[innerSide * 0.02, 0, 0]} scale={[0.04, 0.022, 0.023]} />
+              <mesh geometry={SHARED_GEOMETRIES.box} material={materials.metal} position={[innerSide * 0.044, 0, -0.001]} scale={[0.02, 0.02, 0.022]} />
+            </group>
+          </group>
+
+          <mesh
+            geometry={SHARED_GEOMETRIES.box}
+            material={materials.dark}
+            position={[0, 0, 0.06]}
+            scale={[0.076, 0.09, 0.032]}
+          />
+        </group>
+      </group>
+    </group>
+  );
+}
+
+function ChronosViewmodel({
+  materials,
+  locomotionRef,
+}: {
+  materials: ViewmodelMaterialSet;
+  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+}) {
+  return (
+    <group position={[
+      PHANTOM_VIEWMODEL_OFFSET.x,
+      PHANTOM_VIEWMODEL_OFFSET.y,
+      PHANTOM_VIEWMODEL_OFFSET.z,
+    ]}>
+      <ChronosPhantomForearm
+        side={-1}
+        materials={materials}
+        locomotionRef={locomotionRef}
+      />
+      <ChronosPhantomForearm
+        side={1}
+        materials={materials}
+        locomotionRef={locomotionRef}
+      />
+      <ChronosTriangleHand
+        side={-1}
+        materials={materials}
+        locomotionRef={locomotionRef}
+      />
+      <ChronosTriangleHand
+        side={1}
+        materials={materials}
+        locomotionRef={locomotionRef}
+      />
+    </group>
+  );
+}
+
 const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: HeroViewmodelProps) {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
@@ -2938,6 +3232,12 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
         )}
         {heroId === 'blaze' && (
           <BlazeViewmodel
+            materials={materials}
+            locomotionRef={phantomLocomotionRef}
+          />
+        )}
+        {heroId === 'chronos' && (
+          <ChronosViewmodel
             materials={materials}
             locomotionRef={phantomLocomotionRef}
           />

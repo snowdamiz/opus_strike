@@ -89,7 +89,7 @@ export const MANTLE_DURATION = 0.4;
 export const MANTLE_HEIGHT_BOOST = 0.5;
 
 // Grapple
-export const GRAPPLE_MAX_DISTANCE = 40;
+export const GRAPPLE_MAX_DISTANCE = 28;
 export const GRAPPLE_SPEED = 80;
 export const GRAPPLE_PULL_FORCE = 35;
 export const GRAPPLE_SWING_FORCE = 20;

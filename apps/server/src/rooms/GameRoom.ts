@@ -35,6 +35,8 @@ import {
   PHANTOM_PRIMARY_RELOAD_MS,
   UNSTUCK_COOLDOWN_MS,
   UNSTUCK_VERTICAL_VELOCITY,
+  applyUnstuckHorizontalShove,
+  findUnstuckTerrainShove,
 } from '@voxel-strike/shared';
 import type { 
   BotDifficulty,
@@ -1178,6 +1180,15 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.unstuckCooldownUntil.set(player.id, now + UNSTUCK_COOLDOWN_MS);
+    const terrainShove = findUnstuckTerrainShove(this.getMapManifest(), this.vec3SchemaToPlain(player.position));
+    if (terrainShove) {
+      const shovedVelocity = applyUnstuckHorizontalShove(
+        this.vec3SchemaToPlain(player.velocity),
+        terrainShove.direction
+      );
+      player.velocity.x = shovedVelocity.x;
+      player.velocity.z = shovedVelocity.z;
+    }
     player.velocity.y = Math.max(player.velocity.y, UNSTUCK_VERTICAL_VELOCITY);
     player.movement.isGrounded = false;
     player.movement.isSliding = false;

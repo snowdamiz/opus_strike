@@ -22,7 +22,7 @@ import {
   setFlamethrowerVisualPose,
 } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
-import { usePhysics } from '../../hooks/usePhysics';
+import { getActiveProceduralMap, usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
@@ -44,7 +44,9 @@ import {
   CROUCH_MULTIPLIER,
   TICK_RATE,
   UNSTUCK_VERTICAL_VELOCITY,
+  applyUnstuckHorizontalShove,
   createEmptyInputState,
+  findUnstuckTerrainShove,
   getHeroStats,
   HERO_DEFINITIONS,
   type HeroId,
@@ -467,6 +469,16 @@ export function PlayerController() {
     if (unstuckRequestId !== lastUnstuckRequestIdRef.current) {
       lastUnstuckRequestIdRef.current = unstuckRequestId;
       pendingUnstuckInputRef.current = true;
+      const activeMap = getActiveProceduralMap();
+      const terrainShove = activeMap ? findUnstuckTerrainShove(activeMap, position) : null;
+      if (terrainShove) {
+        const shovedVelocity = applyUnstuckHorizontalShove(
+          { x: velocity.x, y: velocity.y, z: velocity.z },
+          terrainShove.direction
+        );
+        velocity.x = shovedVelocity.x;
+        velocity.z = shovedVelocity.z;
+      }
       velocity.y = Math.max(velocity.y, UNSTUCK_VERTICAL_VELOCITY);
       movement.refs.isGrounded.current = false;
       movement.refs.wasGrounded.current = false;

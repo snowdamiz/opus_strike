@@ -145,6 +145,10 @@ let activeProceduralChunkLookup = new Map<number, VoxelChunk>();
 let activeProceduralChunksX = 0;
 let activeProceduralChunksZ = 0;
 
+export function getActiveProceduralMap(): VoxelMapManifest | null {
+  return activeProceduralMap;
+}
+
 function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
   return x + chunksX * (z + chunksZ * y);
 }
