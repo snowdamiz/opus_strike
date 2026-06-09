@@ -216,6 +216,20 @@ const CHRONOS_FOREARM_SLIDE_CAMERA_PULLBACK_Z = 0.055;
 const CHRONOS_HAND_SLIDE_CAMERA_PULLBACK_Z = 0.075;
 const CHRONOS_SLIDE_PULLBACK_IN_SPEED = 10;
 const CHRONOS_SLIDE_PULLBACK_OUT_SPEED = 7;
+const CHRONOS_WEAPON_IDLE_POSITION = {
+  x: 0,
+  y: -0.365,
+  z: -0.715,
+} as const;
+const CHRONOS_WEAPON_SOCKET_INWARD_X = 0.122;
+const CHRONOS_WEAPON_SOCKET_Y = 0.018;
+const CHRONOS_WEAPON_SOCKET_Z = -0.072;
+const CHRONOS_WEAPON_BIND_LIFT_Y = 0.096;
+const CHRONOS_WEAPON_BIND_FORWARD_Z = -0.062;
+const CHRONOS_WEAPON_ORB_BASE_Y = -0.026;
+const CHRONOS_WEAPON_ORB_HOVER_Y = 0.0032;
+const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
+const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -3003,10 +3017,12 @@ function ChronosTriangleHand({
   side,
   materials,
   movementBobRef,
+  weaponSocketRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   movementBobRef: MutableRefObject<ChronosMovementBobOffset>;
+  weaponSocketRef?: MutableRefObject<THREE.Group | null>;
 }) {
   const armRef = useRef<THREE.Group>(null);
   const wristRef = useRef<THREE.Group>(null);
@@ -3062,6 +3078,14 @@ function ChronosTriangleHand({
           <mesh geometry={SHARED_GEOMETRIES.box} material={materials.accent} position={[side * -0.058, -0.004, -0.018]} scale={[0.018, 0.09, 0.03]} />
           <mesh geometry={SHARED_GEOMETRIES.box} material={materials.glow} position={[0, 0.012, -0.05]} scale={[0.06, 0.076, 0.014]} />
           <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} position={[0, 0.006, -0.062]} scale={[0.062, 0.062, 1]} />
+          <group
+            ref={weaponSocketRef}
+            position={[
+              innerSide * CHRONOS_WEAPON_SOCKET_INWARD_X,
+              CHRONOS_WEAPON_SOCKET_Y,
+              CHRONOS_WEAPON_SOCKET_Z,
+            ]}
+          />
 
           {PHANTOM_OPEN_FINGER_SLOTS.map((slot, index) => {
             const segmentLength = 0.094;
@@ -3114,6 +3138,134 @@ function ChronosTriangleHand({
   );
 }
 
+function ChronosFloatingPyramidWeapon({
+  rootRef,
+  leftSocketRef,
+  rightSocketRef,
+}: {
+  rootRef: MutableRefObject<THREE.Group | null>;
+  leftSocketRef: MutableRefObject<THREE.Group | null>;
+  rightSocketRef: MutableRefObject<THREE.Group | null>;
+}) {
+  const weaponRef = useRef<THREE.Group>(null);
+  const pyramidRef = useRef<THREE.Group>(null);
+  const orbRef = useRef<THREE.Group>(null);
+  const leftSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
+  const rightSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
+  const weaponWorldPosition = useMemo(() => new THREE.Vector3(), []);
+  const weaponLocalPosition = useMemo(() => new THREE.Vector3(), []);
+  const pyramidFaceMaterial = useMemo(() => new THREE.MeshStandardMaterial({
+    color: 0x123b2d,
+    emissive: HERO_MATERIAL_COLORS.chronos.accent,
+    emissiveIntensity: 0.2,
+    transparent: true,
+    opacity: 0.3,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    metalness: 0.12,
+    roughness: 0.24,
+  }), []);
+  const pyramidWireMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: HERO_MATERIAL_COLORS.chronos.glow,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false,
+    toneMapped: false,
+  }), []);
+  const orbCoreMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: HERO_MATERIAL_COLORS.chronos.glow,
+    toneMapped: false,
+  }), []);
+  const orbGlowMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: HERO_MATERIAL_COLORS.chronos.accent,
+    transparent: true,
+    opacity: 0.38,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  }), []);
+
+  useFrame((state) => {
+    const weapon = weaponRef.current;
+    const root = rootRef.current;
+    const leftSocket = leftSocketRef.current;
+    const rightSocket = rightSocketRef.current;
+    if (!weapon || !root || !leftSocket || !rightSocket) return;
+
+    const t = state.clock.elapsedTime;
+    root.updateMatrixWorld(true);
+    leftSocket.getWorldPosition(leftSocketWorldPosition);
+    rightSocket.getWorldPosition(rightSocketWorldPosition);
+    weaponWorldPosition
+      .copy(leftSocketWorldPosition)
+      .add(rightSocketWorldPosition)
+      .multiplyScalar(0.5);
+    weaponLocalPosition.copy(weaponWorldPosition);
+    root.worldToLocal(weaponLocalPosition);
+    weaponLocalPosition.y += CHRONOS_WEAPON_BIND_LIFT_Y;
+    weaponLocalPosition.z += CHRONOS_WEAPON_BIND_FORWARD_Z;
+    weapon.position.copy(weaponLocalPosition);
+    weapon.rotation.set(
+      Math.sin(t * 0.74) * 0.024,
+      Math.sin(t * 0.51) * 0.034,
+      Math.sin(t * 0.88) * 0.026
+    );
+
+    if (pyramidRef.current) {
+      pyramidRef.current.rotation.set(
+        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X + Math.sin(t * 0.42) * 0.02,
+        Math.PI / 4 + t * CHRONOS_WEAPON_PYRAMID_SPIN_SPEED,
+        Math.sin(t * 0.5) * 0.018
+      );
+    }
+
+    if (orbRef.current) {
+      const orbPulse = 1 + Math.sin(t * 2.6) * 0.065;
+      orbRef.current.position.y =
+        CHRONOS_WEAPON_ORB_BASE_Y + Math.sin(t * 1.55 + 0.6) * CHRONOS_WEAPON_ORB_HOVER_Y;
+      orbRef.current.scale.setScalar(orbPulse);
+    }
+  });
+
+  return (
+    <group
+      ref={weaponRef}
+      position={[
+        CHRONOS_WEAPON_IDLE_POSITION.x,
+        CHRONOS_WEAPON_IDLE_POSITION.y,
+        CHRONOS_WEAPON_IDLE_POSITION.z,
+      ]}
+    >
+      <group ref={pyramidRef} rotation={[0, Math.PI / 4, 0]}>
+        <mesh
+          geometry={SHARED_GEOMETRIES.cone4}
+          material={pyramidFaceMaterial}
+          scale={[0.135, 0.205, 0.135]}
+        />
+        <mesh
+          geometry={SHARED_GEOMETRIES.cone4}
+          material={pyramidWireMaterial}
+          scale={[0.143, 0.213, 0.143]}
+        />
+      </group>
+
+      <group ref={orbRef} position={[0, CHRONOS_WEAPON_ORB_BASE_Y, 0.048]}>
+        <mesh
+          geometry={SHARED_GEOMETRIES.sphere16}
+          material={orbGlowMaterial}
+          scale={0.04}
+        />
+        <mesh
+          geometry={SHARED_GEOMETRIES.sphere12}
+          material={orbCoreMaterial}
+          scale={0.022}
+        />
+      </group>
+    </group>
+  );
+}
+
 function ChronosViewmodel({
   materials,
   locomotionRef,
@@ -3122,6 +3274,9 @@ function ChronosViewmodel({
   locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
   const { camera } = useThree();
+  const rootRef = useRef<THREE.Group>(null);
+  const leftWeaponSocketRef = useRef<THREE.Group>(null);
+  const rightWeaponSocketRef = useRef<THREE.Group>(null);
   const bobRuntimeRef = useRef<ChronosMovementBobRuntime>(createChronosMovementBobRuntime());
   const movementBobRef = useRef<ChronosMovementBobOffset>({
     horizontalX: 0,
@@ -3142,11 +3297,14 @@ function ChronosViewmodel({
   });
 
   return (
-    <group position={[
-      PHANTOM_VIEWMODEL_OFFSET.x,
-      PHANTOM_VIEWMODEL_OFFSET.y,
-      PHANTOM_VIEWMODEL_OFFSET.z,
-    ]}>
+    <group
+      ref={rootRef}
+      position={[
+        PHANTOM_VIEWMODEL_OFFSET.x,
+        PHANTOM_VIEWMODEL_OFFSET.y,
+        PHANTOM_VIEWMODEL_OFFSET.z,
+      ]}
+    >
       <ChronosPhantomForearm
         side={-1}
         materials={materials}
@@ -3161,11 +3319,18 @@ function ChronosViewmodel({
         side={-1}
         materials={materials}
         movementBobRef={movementBobRef}
+        weaponSocketRef={leftWeaponSocketRef}
       />
       <ChronosTriangleHand
         side={1}
         materials={materials}
         movementBobRef={movementBobRef}
+        weaponSocketRef={rightWeaponSocketRef}
+      />
+      <ChronosFloatingPyramidWeapon
+        rootRef={rootRef}
+        leftSocketRef={leftWeaponSocketRef}
+        rightSocketRef={rightWeaponSocketRef}
       />
     </group>
   );
