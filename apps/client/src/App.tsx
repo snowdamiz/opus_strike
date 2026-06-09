@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useGameStore } from './store/gameStore';
+import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { MapVoteScreen } from './components/ui/MapVoteScreen';
@@ -13,6 +14,7 @@ import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { useAudio, useMusic } from './hooks/useAudio';
 import { prewarmBlazeEffects, prewarmPhantomEffects } from './components/game/effectResources';
+import { mouseButtonToKeybindCode } from './utils/keybindings';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
@@ -26,6 +28,7 @@ export function App() {
   const isLoading = useGameStore((state) => state.isLoading);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
+  const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const [showScoreboard, setShowScoreboard] = useState(false);
   const [showInGameMenu, setShowInGameMenu] = useState(false);
   const [shouldMountMatchWorld, setShouldMountMatchWorld] = useState(false);
@@ -97,10 +100,23 @@ export function App() {
   }, [showInGameMenu, appPhase, gamePhase, pauseMusic, resumeMusic]);
 
   useEffect(() => {
+    const showScoreboardForCode = (code: string) => {
+      if (code !== scoreboardKeybind) return false;
+
+      setShowScoreboard(true);
+      return true;
+    };
+
+    const hideScoreboardForCode = (code: string) => {
+      if (code !== scoreboardKeybind) return false;
+
+      setShowScoreboard(false);
+      return true;
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Tab') {
+      if (showScoreboardForCode(e.code)) {
         e.preventDefault();
-        setShowScoreboard(true);
       }
       // ESC handling - only when menu is already open (to close it)
       // When pointer is locked, browser will exit pointer lock on ESC,
@@ -117,8 +133,20 @@ export function App() {
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Tab') {
-        setShowScoreboard(false);
+      if (hideScoreboardForCode(e.code)) {
+        e.preventDefault();
+      }
+    };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (showScoreboardForCode(mouseButtonToKeybindCode(e.button))) {
+        e.preventDefault();
+      }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (hideScoreboardForCode(mouseButtonToKeybindCode(e.button))) {
+        e.preventDefault();
       }
     };
 
@@ -132,14 +160,18 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
 
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
     };
-  }, [appPhase, showInGameMenu]);
+  }, [appPhase, scoreboardKeybind, showInGameMenu]);
 
   // Close menu when leaving the game
   useEffect(() => {

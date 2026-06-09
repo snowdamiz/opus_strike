@@ -12,8 +12,12 @@ import {
   GRAVITY,
   SLIDE_COOLDOWN,
   SLIDE_DURATION,
+  SLIDE_ENTRY_SPEED_CAP_MULTIPLIER,
   SLIDE_FRICTION,
   SLIDE_INITIAL_BOOST,
+  SLIDE_JUMP_MAX_SPEED_MULTIPLIER,
+  SLIDE_JUMP_SPEED_RETENTION,
+  SLIDE_MAX_SPEED_MULTIPLIER,
   SPRINT_MULTIPLIER,
 } from '@voxel-strike/shared';
 
@@ -65,6 +69,20 @@ function accelerate(velocity: Vec3, wishDir: Vec3, wishSpeed: number, accelerati
 
 function horizontalSpeed(velocity: Vec3): number {
   return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+}
+
+function clampHorizontalSpeed(velocity: Vec3, maxSpeed: number): Vec3 {
+  const speed = horizontalSpeed(velocity);
+  if (speed <= maxSpeed || speed <= 0.0001) {
+    return velocity;
+  }
+
+  const scale = maxSpeed / speed;
+  return {
+    x: velocity.x * scale,
+    y: velocity.y,
+    z: velocity.z * scale,
+  };
 }
 
 function normalizeHorizontal(vector: Vec3): Vec3 {
@@ -135,12 +153,21 @@ export function simulateSharedMovement(input: SharedMovementSimulationInput): Sh
   if (canStartSlide) {
     movement.isSliding = true;
     movement.slideTimeRemaining = SLIDE_DURATION;
-    const slideSpeed = Math.max(horizontalSpeed(velocity), input.heroStats.moveSpeed * SPRINT_MULTIPLIER) * SLIDE_INITIAL_BOOST;
+    const sprintSpeed = input.heroStats.moveSpeed * SPRINT_MULTIPLIER;
+    const slideEntrySpeed = Math.min(
+      Math.max(horizontalSpeed(velocity), sprintSpeed),
+      sprintSpeed * SLIDE_ENTRY_SPEED_CAP_MULTIPLIER
+    );
+    const slideSpeed = Math.min(
+      slideEntrySpeed * SLIDE_INITIAL_BOOST,
+      sprintSpeed * SLIDE_MAX_SPEED_MULTIPLIER
+    );
     velocity.x = wishDir.x * slideSpeed;
     velocity.z = wishDir.z * slideSpeed;
   }
 
   if (movement.isSliding) {
+    const sprintSpeed = input.heroStats.moveSpeed * SPRINT_MULTIPLIER;
     const friction = Math.pow(SLIDE_FRICTION, dt * 60);
     velocity.x *= friction;
     velocity.z *= friction;
@@ -151,7 +178,15 @@ export function simulateSharedMovement(input: SharedMovementSimulationInput): Sh
       velocity.z += wishDir.z * steer;
     }
 
-    if (movement.slideTimeRemaining <= 0 || input.input.jump || horizontalSpeed(velocity) < 2) {
+    velocity = clampHorizontalSpeed(velocity, sprintSpeed * SLIDE_MAX_SPEED_MULTIPLIER);
+
+    const slideJumpRequested = input.input.jump;
+    if (movement.slideTimeRemaining <= 0 || slideJumpRequested || horizontalSpeed(velocity) < 2) {
+      if (slideJumpRequested) {
+        velocity.x *= SLIDE_JUMP_SPEED_RETENTION;
+        velocity.z *= SLIDE_JUMP_SPEED_RETENTION;
+        velocity = clampHorizontalSpeed(velocity, sprintSpeed * SLIDE_JUMP_MAX_SPEED_MULTIPLIER);
+      }
       movement.isSliding = false;
       movement.slideTimeRemaining = SLIDE_COOLDOWN;
     }

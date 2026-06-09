@@ -72,14 +72,107 @@ let airStrikeRevision = 0;
 export const AIR_STRIKE_DURATION = 5200;
 
 const GEARSTORM_RADIUS = BLAZE_GEARSTORM_RADIUS;
-const GEARSTORM_COG_COUNT = 18;
-const GEARSTORM_BURN_PATCH_COUNT = 72;
-const GEARSTORM_GROUND_FLAME_COUNT = 64;
-const COG_TEETH = 16;
+const GEARSTORM_COG_COUNT = 60;
+const GEARSTORM_BURN_PATCH_COUNT = 112;
+const GEARSTORM_GROUND_FLAME_COUNT = 112;
+const GEARSTORM_GROUND_RAY_START_HEIGHT = 96;
+const GEARSTORM_GROUND_RAY_DISTANCE = 220;
+const GROUND_FILL_OFFSET = 0.09;
+const GROUND_RING_OFFSET = 0.13;
+const GROUND_HOT_CORE_OFFSET = 0.16;
+const GROUND_PATCH_OFFSET = 0.18;
+const GROUND_FLAME_OFFSET = 0.12;
+const COG_TEETH = 18;
+const COG_DEPTH = 0.34;
 const COG_FIRE_ORANGE = 0xff6a00;
-const COG_TOOTH_INDEXES = Array.from({ length: COG_TEETH }, (_, index) => index);
+const GROUND_FLAME_PLANE_ANGLES = [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4];
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+function createGearShape(teeth: number, rootRadius: number, outerRadius: number, innerRadius: number): THREE.Shape {
+  const shape = new THREE.Shape();
+  const sector = (Math.PI * 2) / teeth;
+  const points: THREE.Vector2[] = [];
+
+  for (let tooth = 0; tooth < teeth; tooth++) {
+    const baseAngle = tooth * sector;
+    const toothPoints: Array<[number, number]> = [
+      [0.02, rootRadius],
+      [0.16, outerRadius],
+      [0.46, outerRadius],
+      [0.6, rootRadius],
+      [0.96, rootRadius],
+    ];
+
+    toothPoints.forEach(([sectorPosition, radius]) => {
+      const angle = baseAngle + sectorPosition * sector;
+      points.push(new THREE.Vector2(Math.cos(angle) * radius, Math.sin(angle) * radius));
+    });
+  }
+
+  points.forEach((point, index) => {
+    if (index === 0) {
+      shape.moveTo(point.x, point.y);
+      return;
+    }
+    shape.lineTo(point.x, point.y);
+  });
+  shape.closePath();
+
+  const hole = new THREE.Path();
+  hole.absarc(0, 0, innerRadius, 0, Math.PI * 2, true);
+  shape.holes.push(hole);
+
+  return shape;
+}
+
+function createRingShape(innerRadius: number, outerRadius: number): THREE.Shape {
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, outerRadius, 0, Math.PI * 2, false);
+
+  const hole = new THREE.Path();
+  hole.absarc(0, 0, innerRadius, 0, Math.PI * 2, true);
+  shape.holes.push(hole);
+
+  return shape;
+}
+
+function createDiscShape(radius: number): THREE.Shape {
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, radius, 0, Math.PI * 2, false);
+  return shape;
+}
+
+function createExtrudedGeometry(shape: THREE.Shape, depth: number): THREE.ExtrudeGeometry {
+  const geometry = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: false,
+    curveSegments: 4,
+    steps: 1,
+  });
+  geometry.translate(0, 0, -depth / 2);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createFlameShape(tipLean: number): THREE.Shape {
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0);
+  shape.bezierCurveTo(-0.48, 0.08, -0.52, 0.34, -0.28, 0.56);
+  shape.bezierCurveTo(-0.2, 0.72, -0.12, 0.86, tipLean, 1);
+  shape.bezierCurveTo(0.2, 0.8, 0.5, 0.62, 0.34, 0.36);
+  shape.bezierCurveTo(0.5, 0.18, 0.36, 0.04, 0, 0);
+  return shape;
+}
+
+const COG_BODY_GEOMETRY = createExtrudedGeometry(
+  createGearShape(COG_TEETH, 0.86, 1.16, 0.42),
+  COG_DEPTH
+);
+const COG_INNER_RING_GEOMETRY = createExtrudedGeometry(createRingShape(0.36, 0.58), COG_DEPTH * 1.12);
+const COG_HUB_GEOMETRY = createExtrudedGeometry(createDiscShape(0.2), COG_DEPTH * 1.28);
+const GROUND_FLAME_OUTER_GEOMETRY = new THREE.ShapeGeometry(createFlameShape(-0.04));
+const GROUND_FLAME_INNER_GEOMETRY = new THREE.ShapeGeometry(createFlameShape(0.12));
 
 function randomSigned(amount: number): number {
   return (Math.random() * 2 - 1) * amount;
@@ -97,8 +190,14 @@ function randomInRadius(radius: number): { x: number; z: number } {
 function resolveGroundY(x: number, z: number, fallbackY: number): number {
   if (!isPhysicsReady()) return fallbackY;
 
-  const groundCheck = checkGroundWithNormal(x, fallbackY + 42, z, 96);
-  return groundCheck?.isWalkable ? groundCheck.groundY + 0.08 : fallbackY;
+  const groundCheck = checkGroundWithNormal(
+    x,
+    fallbackY + GEARSTORM_GROUND_RAY_START_HEIGHT,
+    z,
+    GEARSTORM_GROUND_RAY_DISTANCE
+  );
+
+  return groundCheck ? groundCheck.groundY : fallbackY;
 }
 
 export function triggerAirStrike(position: { x: number; y: number; z: number }) {
@@ -118,12 +217,12 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
       angle,
       radius,
       groundY: resolveGroundY(x, z, groundY),
-      height: 2.4 + Math.random() * 4.2,
-      size: 1.05 + Math.random() * 1.15,
-      spinSpeed: (Math.random() > 0.5 ? 1 : -1) * (1.65 + Math.random() * 1.8),
-      orbitSpeed: (Math.random() > 0.5 ? 1 : -1) * (0.08 + Math.random() * 0.13),
-      bobSpeed: 1.2 + Math.random() * 1.4,
-      bobAmount: 0.3 + Math.random() * 0.55,
+      height: 2.2 + Math.random() * 4.6,
+      size: 0.92 + Math.random() * 1.0,
+      spinSpeed: (Math.random() > 0.5 ? 1 : -1) * (0.38 + Math.random() * 0.42),
+      orbitSpeed: (Math.random() > 0.5 ? 1 : -1) * (0.025 + Math.random() * 0.045),
+      bobSpeed: 0.7 + Math.random() * 0.85,
+      bobAmount: 0.22 + Math.random() * 0.42,
       yaw: Math.random() * Math.PI * 2,
       tiltX: randomSigned(0.7),
       tiltY: randomSigned(0.55),
@@ -157,11 +256,11 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
       x,
       z,
       groundY: resolveGroundY(x, z, groundY),
-      radius: 0.1 + Math.random() * 0.18,
-      height: 0.5 + Math.random() * 1.15,
+      radius: 0.28 + Math.random() * 0.4,
+      height: 0.85 + Math.random() * 1.65,
       phase: Math.random(),
-      flickerSpeed: 0.42 + Math.random() * 0.46,
-      dutyCycle: 0.24 + Math.random() * 0.26,
+      flickerSpeed: 0.58 + Math.random() * 0.62,
+      dutyCycle: 0.36 + Math.random() * 0.22,
       yaw: Math.random() * Math.PI * 2,
       leanX: randomSigned(0.16),
       leanZ: randomSigned(0.16),
@@ -184,55 +283,44 @@ export function triggerAirStrike(position: { x: number; y: number; z: number }) 
 function BurningCog({ cog }: { cog: BurningCogData }) {
   return (
     <group scale={[cog.size, cog.size, cog.size]}>
-      <mesh geometry={SHARED_GEOMETRIES.ring32}>
-        <meshBasicMaterial
+      <mesh geometry={COG_BODY_GEOMETRY}>
+        <meshStandardMaterial
           color={COG_FIRE_ORANGE}
           transparent
-          opacity={0.48}
-          side={THREE.DoubleSide}
+          opacity={0.56}
           depthWrite={false}
+          emissive={COG_FIRE_ORANGE}
+          emissiveIntensity={0.42}
+          roughness={0.42}
+          metalness={0.15}
         />
       </mesh>
 
-      <mesh geometry={SHARED_GEOMETRIES.ring16} scale={[0.5, 0.5, 1]}>
-        <meshBasicMaterial
-          color={COG_FIRE_ORANGE}
-          transparent
-          opacity={0.3}
-          depthWrite={false}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      <mesh geometry={SHARED_GEOMETRIES.circle16} scale={[0.18, 0.18, 1]}>
-        <meshBasicMaterial
+      <mesh geometry={COG_INNER_RING_GEOMETRY} position-z={0.03}>
+        <meshStandardMaterial
           color={COG_FIRE_ORANGE}
           transparent
           opacity={0.42}
-          side={THREE.DoubleSide}
           depthWrite={false}
+          emissive={COG_FIRE_ORANGE}
+          emissiveIntensity={0.36}
+          roughness={0.46}
+          metalness={0.12}
         />
       </mesh>
 
-      {COG_TOOTH_INDEXES.map((index) => {
-        const angle = (index / COG_TEETH) * Math.PI * 2;
-        return (
-          <mesh
-            key={index}
-            geometry={SHARED_GEOMETRIES.box}
-            position={[Math.cos(angle) * 1.03, Math.sin(angle) * 1.03, 0]}
-            rotation-z={angle}
-            scale={[0.28, 0.3, 0.16]}
-          >
-            <meshBasicMaterial
-              color={COG_FIRE_ORANGE}
-              transparent
-              opacity={0.44}
-              depthWrite={false}
-            />
-          </mesh>
-        );
-      })}
+      <mesh geometry={COG_HUB_GEOMETRY} position-z={0.07}>
+        <meshStandardMaterial
+          color={COG_FIRE_ORANGE}
+          transparent
+          opacity={0.5}
+          depthWrite={false}
+          emissive={COG_FIRE_ORANGE}
+          emissiveIntensity={0.46}
+          roughness={0.4}
+          metalness={0.16}
+        />
+      </mesh>
     </group>
   );
 }
@@ -247,36 +335,72 @@ function GroundFlame({
   return (
     <group
       ref={setRef}
-      position={[flame.x, flame.groundY + 0.08, flame.z]}
+      position={[flame.x, flame.groundY + GROUND_FLAME_OFFSET, flame.z]}
       rotation={[flame.leanX, flame.yaw, flame.leanZ]}
       visible={false}
     >
       <mesh
-        geometry={SHARED_GEOMETRIES.cone8}
-        position-y={flame.height * 0.5}
-        scale={[flame.radius, flame.height, flame.radius]}
+        rotation-x={-Math.PI / 2}
+        position-y={0.015}
+        geometry={SHARED_GEOMETRIES.ring16}
+        scale={[flame.radius * 1.28, flame.radius * 1.28, 1]}
+      >
+        <meshBasicMaterial
+          color={0xff7a00}
+          transparent
+          opacity={0.42}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-4}
+        />
+      </mesh>
+      <mesh
+        geometry={SHARED_GEOMETRIES.sphere8}
+        position-y={flame.height * 0.24}
+        scale={[flame.radius * 0.72, flame.height * 0.32, flame.radius * 0.72]}
       >
         <meshBasicMaterial
           color={0xff5a00}
           transparent
-          opacity={0.66}
+          opacity={0.28}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
       </mesh>
-      <mesh
-        geometry={SHARED_GEOMETRIES.cone6}
-        position-y={flame.height * 0.44}
-        scale={[flame.radius * 0.48, flame.height * 0.72, flame.radius * 0.48]}
-      >
-        <meshBasicMaterial
-          color={0xffd36a}
-          transparent
-          opacity={0.56}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
+      {GROUND_FLAME_PLANE_ANGLES.map((angle, index) => (
+        <group key={index} rotation-y={angle}>
+          <mesh
+            geometry={GROUND_FLAME_OUTER_GEOMETRY}
+            scale={[flame.radius, flame.height, 1]}
+          >
+            <meshBasicMaterial
+              color={0xff5a00}
+              transparent
+              opacity={0.68}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+          <mesh
+            geometry={GROUND_FLAME_INNER_GEOMETRY}
+            position-y={flame.height * 0.03}
+            scale={[flame.radius * 0.58, flame.height * 0.78, 1]}
+          >
+            <meshBasicMaterial
+              color={0xffd36a}
+              transparent
+              opacity={0.56}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        </group>
+      ))}
     </group>
   );
 }
@@ -341,16 +465,17 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
       const cycle = (elapsedSeconds * flame.flickerSpeed + flame.phase) % 1;
       const active = cycle <= flame.dutyCycle;
       const flameLife = active ? cycle / flame.dutyCycle : 0;
-      const rise = active ? Math.sin(flameLife * Math.PI) * fade : 0;
-      const shimmer = 0.86 + Math.sin(elapsed * 0.024 + flame.phase * 17.31) * 0.14;
+      const bloom = active ? Math.sin(flameLife * Math.PI) * fade : 0;
+      const shimmer = 0.88 + Math.sin(elapsed * 0.028 + flame.phase * 17.31) * 0.12;
+      const flameHeight = 0.34 + bloom * 0.92;
 
-      flameGroup.visible = rise > 0.04;
-      flameGroup.position.y = flame.groundY + 0.08 + rise * 0.05;
-      flameGroup.rotation.y = flame.yaw + Math.sin(elapsedSeconds * 2.4 + flame.phase * Math.PI * 2) * 0.18;
+      flameGroup.visible = bloom > 0.035;
+      flameGroup.position.y = flame.groundY + GROUND_FLAME_OFFSET + bloom * 0.08;
+      flameGroup.rotation.y = flame.yaw + Math.sin(elapsedSeconds * 2.1 + flame.phase * Math.PI * 2) * 0.2;
       flameGroup.scale.set(
-        (0.72 + rise * 0.38) * shimmer,
-        Math.max(0.02, rise),
-        (0.72 + rise * 0.32) * (1.72 - shimmer)
+        (0.82 + bloom * 0.36) * shimmer,
+        flameHeight,
+        (0.82 + bloom * 0.3) * (1.76 - shimmer)
       );
     });
 
@@ -367,7 +492,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
       );
       cogGroup.rotation.set(
         cog.tiltX + Math.sin(elapsedSeconds * 0.8 + cog.phase) * 0.14,
-        cog.yaw + elapsedSeconds * 0.35 + cog.tiltY,
+        cog.yaw + elapsedSeconds * 0.12 + cog.tiltY,
         cog.phase + elapsedSeconds * cog.spinSpeed
       );
     });
@@ -382,7 +507,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
     <group ref={groupRef}>
       <mesh
         ref={groundFillRef}
-        position={[strike.centerPosition.x, strike.groundY + 0.06, strike.centerPosition.z]}
+        position={[strike.centerPosition.x, strike.groundY + GROUND_FILL_OFFSET, strike.centerPosition.z]}
         rotation-x={-Math.PI / 2}
         geometry={SHARED_GEOMETRIES.circle32}
       >
@@ -393,12 +518,15 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
           side={THREE.DoubleSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-4}
         />
       </mesh>
 
       <mesh
         ref={groundRingRef}
-        position={[strike.centerPosition.x, strike.groundY + 0.11, strike.centerPosition.z]}
+        position={[strike.centerPosition.x, strike.groundY + GROUND_RING_OFFSET, strike.centerPosition.z]}
         rotation-x={-Math.PI / 2}
         geometry={SHARED_GEOMETRIES.ring32}
       >
@@ -409,12 +537,15 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
           side={THREE.DoubleSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-4}
         />
       </mesh>
 
       <mesh
         ref={groundHotCoreRef}
-        position={[strike.centerPosition.x, strike.groundY + 0.13, strike.centerPosition.z]}
+        position={[strike.centerPosition.x, strike.groundY + GROUND_HOT_CORE_OFFSET, strike.centerPosition.z]}
         rotation-x={-Math.PI / 2}
         geometry={SHARED_GEOMETRIES.circle16}
       >
@@ -425,6 +556,9 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
           side={THREE.DoubleSide}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-4}
         />
       </mesh>
 
@@ -432,7 +566,7 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
         <mesh
           key={index}
           ref={element => patchRefs.current[index] = element}
-          position={[patch.x, patch.groundY + 0.16, patch.z]}
+          position={[patch.x, patch.groundY + GROUND_PATCH_OFFSET, patch.z]}
           rotation-x={-Math.PI / 2}
           geometry={SHARED_GEOMETRIES.circle16}
         >
@@ -443,6 +577,9 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
             side={THREE.DoubleSide}
             depthWrite={false}
             blending={THREE.AdditiveBlending}
+            polygonOffset
+            polygonOffsetFactor={-1}
+            polygonOffsetUnits={-4}
           />
         </mesh>
       ))}

@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import { DEFAULT_KEYBINDINGS, type InputState } from '@voxel-strike/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAudio } from '../../hooks/useAudio';
 import {
   defaultSettings,
   type ClientSettings,
+  type KeybindAction,
   useSettingsStore,
 } from '../../store/settingsStore';
+import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
 import { GameDialog } from './GameDialog';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay';
-type KeybindRowAction = keyof InputState | 'scoreboard';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -42,7 +42,7 @@ const fpsDisplayModeOptions = [
   { value: 'full', label: 'Full' },
 ];
 
-const keybindRows: { action: KeybindRowAction; label: string }[] = [
+const keybindRows: { action: KeybindAction; label: string }[] = [
   { action: 'moveForward', label: 'Move Forward' },
   { action: 'moveBackward', label: 'Move Back' },
   { action: 'moveLeft', label: 'Move Left' },
@@ -60,29 +60,13 @@ const keybindRows: { action: KeybindRowAction; label: string }[] = [
   { action: 'scoreboard', label: 'Scoreboard' },
 ];
 
-function formatKeybind(code: string): string {
-  if (code === 'Mouse0') return 'LMB';
-  if (code === 'Mouse1') return 'RMB';
-  if (code === 'Mouse2') return 'MMB';
-  if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
-  if (code === 'ControlLeft' || code === 'ControlRight') return 'Ctrl';
-  if (code === 'AltLeft' || code === 'AltRight') return 'Alt';
-  if (code.startsWith('Key')) return code.slice(3);
-  if (code.startsWith('Digit')) return code.slice(5);
-  return code;
-}
-
-function getKeybindDisplay(action: KeybindRowAction): string {
-  if (action === 'scoreboard') return 'Tab';
-  return formatKeybind(DEFAULT_KEYBINDINGS[action]);
-}
-
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
   const savedSettings = useSettingsStore(state => state.settings);
   const applySettings = useSettingsStore(state => state.applySettings);
   const [settings, setSettings] = useState<ClientSettings>(savedSettings);
   const [hasChanges, setHasChanges] = useState(false);
+  const [rebindingAction, setRebindingAction] = useState<KeybindAction | null>(null);
   const { updateSettings: applyAudioSettings } = useAudio();
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
@@ -98,8 +82,68 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
   const handleReset = () => {
     setSettings(defaultSettings);
+    setRebindingAction(null);
     setHasChanges(true);
   };
+
+  const updateKeybinding = useCallback((action: KeybindAction, code: string) => {
+    setSettings((prev) => {
+      const nextKeybindings = { ...prev.keybindings };
+      const previousCode = nextKeybindings[action];
+      const conflictingRow = keybindRows.find((row) => (
+        row.action !== action && nextKeybindings[row.action] === code
+      ));
+
+      nextKeybindings[action] = code;
+      if (conflictingRow) {
+        nextKeybindings[conflictingRow.action] = previousCode;
+      }
+
+      return {
+        ...prev,
+        keybindings: nextKeybindings,
+      };
+    });
+    setHasChanges(true);
+    setRebindingAction(null);
+  }, []);
+
+  useEffect(() => {
+    if (!rebindingAction) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.code === 'Escape') {
+        setRebindingAction(null);
+        return;
+      }
+
+      updateKeybinding(rebindingAction, event.code);
+    };
+
+    const handleMouseDown = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      updateKeybinding(rebindingAction, mouseButtonToKeybindCode(event.button));
+    };
+
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    window.addEventListener('keydown', handleKeyDown, true);
+    window.addEventListener('mousedown', handleMouseDown, true);
+    window.addEventListener('contextmenu', handleContextMenu, true);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true);
+      window.removeEventListener('mousedown', handleMouseDown, true);
+      window.removeEventListener('contextmenu', handleContextMenu, true);
+    };
+  }, [rebindingAction, updateKeybinding]);
 
   const tabs: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { 
@@ -348,9 +392,21 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     {keybindRows.map((bind) => (
                       <div key={bind.action} className="flex items-center justify-between gap-3 px-3.5 py-2 rounded bg-white/5">
                         <span className="text-white/60 font-body text-sm">{bind.label}</span>
-                        <span className="px-2.5 py-1 bg-white/10 rounded text-white font-mono text-xs">
-                          {getKeybindDisplay(bind.action)}
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setRebindingAction(bind.action)}
+                          aria-pressed={rebindingAction === bind.action}
+                          aria-label={`Rebind ${bind.label}`}
+                          className={`w-24 h-8 px-2.5 rounded border text-center font-mono text-xs transition-colors ${
+                            rebindingAction === bind.action
+                              ? 'border-orange-300 bg-orange-500/30 text-orange-100'
+                              : 'border-white/10 bg-white/10 text-white hover:border-white/25 hover:bg-white/15'
+                          }`}
+                        >
+                          {rebindingAction === bind.action
+                            ? 'LISTENING'
+                            : formatKeybind(settings.keybindings[bind.action])}
+                        </button>
                       </div>
                     ))}
                   </div>

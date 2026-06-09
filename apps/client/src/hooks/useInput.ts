@@ -1,8 +1,11 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
-import { createEmptyInputState, DEFAULT_KEYBINDINGS } from '@voxel-strike/shared';
+import { createEmptyInputState } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
 import { isGameConsoleOpen } from '../components/ui/GameConsole';
 import { useSettingsStore } from '../store/settingsStore';
+import { mouseButtonToKeybindCode } from '../utils/keybindings';
+
+type InputAction = keyof InputState;
 
 interface UseInputReturn {
   inputState: InputState;
@@ -19,10 +22,11 @@ export function useInput(): UseInputReturn {
   const [isControlPressed, setIsControlPressed] = useState(false);
   const toggleCrouch = useSettingsStore(state => state.settings.toggleCrouch);
   const toggleSprint = useSettingsStore(state => state.settings.toggleSprint);
+  const keybindings = useSettingsStore(state => state.settings.keybindings);
 
   // Create key to action mapping
-  const keyToAction = useRef<Map<string, keyof InputState>>(new Map());
-  const pressedKeysRef = useRef<Set<string>>(new Set());
+  const keyToAction = useRef<Map<string, InputAction>>(new Map());
+  const pressedCodesRef = useRef<Set<string>>(new Set());
   const toggleSettingsRef = useRef({ toggleCrouch, toggleSprint });
 
   useEffect(() => {
@@ -31,12 +35,81 @@ export function useInput(): UseInputReturn {
 
   useEffect(() => {
     // Build reverse mapping
-    const map = new Map<string, keyof InputState>();
-    for (const [action, key] of Object.entries(DEFAULT_KEYBINDINGS)) {
-      map.set(key, action as keyof InputState);
+    const map = new Map<string, InputAction>();
+    for (const [action, code] of Object.entries(keybindings)) {
+      if (action === 'scoreboard') continue;
+      map.set(code, action as InputAction);
     }
     keyToAction.current = map;
+    inputStateRef.current = createEmptyInputState();
+    setInputState(createEmptyInputState());
+    pressedCodesRef.current.clear();
+  }, [keybindings]);
+
+  const setActionPressed = useCallback((action: InputAction, isPressed: boolean) => {
+    if (inputStateRef.current[action] === isPressed) return;
+
+    inputStateRef.current = {
+      ...inputStateRef.current,
+      [action]: isPressed,
+    };
+    setInputState({ ...inputStateRef.current });
   }, []);
+
+  const pressInputCode = useCallback((code: string): boolean => {
+    const action = keyToAction.current.get(code);
+    if (!action) return false;
+
+    const wasPressed = pressedCodesRef.current.has(code);
+    pressedCodesRef.current.add(code);
+
+    if (
+      action === 'crouch' &&
+      toggleSettingsRef.current.toggleCrouch
+    ) {
+      if (!wasPressed) {
+        inputStateRef.current = {
+          ...inputStateRef.current,
+          crouch: !inputStateRef.current.crouch,
+        };
+        setInputState({ ...inputStateRef.current });
+      }
+      return true;
+    }
+
+    if (
+      action === 'sprint' &&
+      toggleSettingsRef.current.toggleSprint
+    ) {
+      if (!wasPressed) {
+        inputStateRef.current = {
+          ...inputStateRef.current,
+          sprint: !inputStateRef.current.sprint,
+        };
+        setInputState({ ...inputStateRef.current });
+      }
+      return true;
+    }
+
+    setActionPressed(action, true);
+    return true;
+  }, [setActionPressed]);
+
+  const releaseInputCode = useCallback((code: string): boolean => {
+    const action = keyToAction.current.get(code);
+    pressedCodesRef.current.delete(code);
+    if (!action) return false;
+
+    if (
+      (action === 'crouch' && toggleSettingsRef.current.toggleCrouch) ||
+      (action === 'sprint' && toggleSettingsRef.current.toggleSprint)
+    ) {
+      return true;
+    }
+
+    setActionPressed(action, false);
+    return true;
+  }, [setActionPressed]);
 
   // Handle key down
   useEffect(() => {
@@ -50,47 +123,8 @@ export function useInput(): UseInputReturn {
         setIsControlPressed(true);
       }
 
-      // Prevent default for game keys
-      if (keyToAction.current.has(e.code)) {
+      if (pressInputCode(e.code)) {
         e.preventDefault();
-      }
-
-      const action = keyToAction.current.get(e.code);
-      const wasPressed = pressedKeysRef.current.has(e.code);
-      pressedKeysRef.current.add(e.code);
-
-      if (
-        action === 'crouch' &&
-        toggleSettingsRef.current.toggleCrouch &&
-        !wasPressed
-      ) {
-        inputStateRef.current = {
-          ...inputStateRef.current,
-          crouch: !inputStateRef.current.crouch,
-        };
-        setInputState({ ...inputStateRef.current });
-        return;
-      }
-
-      if (
-        action === 'sprint' &&
-        toggleSettingsRef.current.toggleSprint &&
-        !wasPressed
-      ) {
-        inputStateRef.current = {
-          ...inputStateRef.current,
-          sprint: !inputStateRef.current.sprint,
-        };
-        setInputState({ ...inputStateRef.current });
-        return;
-      }
-
-      if (action && !inputStateRef.current[action]) {
-        inputStateRef.current = {
-          ...inputStateRef.current,
-          [action]: true,
-        };
-        setInputState({ ...inputStateRef.current });
       }
     };
 
@@ -99,23 +133,8 @@ export function useInput(): UseInputReturn {
         setIsControlPressed(false);
       }
 
-      pressedKeysRef.current.delete(e.code);
-
-      // Always handle key up to prevent stuck keys
-      const action = keyToAction.current.get(e.code);
-      if (
-        (action === 'crouch' && toggleSettingsRef.current.toggleCrouch) ||
-        (action === 'sprint' && toggleSettingsRef.current.toggleSprint)
-      ) {
-        return;
-      }
-
-      if (action && inputStateRef.current[action]) {
-        inputStateRef.current = {
-          ...inputStateRef.current,
-          [action]: false,
-        };
-        setInputState({ ...inputStateRef.current });
+      if (releaseInputCode(e.code)) {
+        e.preventDefault();
       }
     };
 
@@ -126,29 +145,21 @@ export function useInput(): UseInputReturn {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [pressInputCode, releaseInputCode]);
 
   // Handle mouse buttons
   useEffect(() => {
     const handleMouseDown = (e: MouseEvent) => {
       if (!isPointerLocked) return;
 
-      if (e.button === 0) {
-        inputStateRef.current = { ...inputStateRef.current, primaryFire: true };
-        setInputState({ ...inputStateRef.current });
-      } else if (e.button === 2) {
-        inputStateRef.current = { ...inputStateRef.current, secondaryFire: true };
-        setInputState({ ...inputStateRef.current });
+      if (pressInputCode(mouseButtonToKeybindCode(e.button))) {
+        e.preventDefault();
       }
     };
 
     const handleMouseUp = (e: MouseEvent) => {
-      if (e.button === 0) {
-        inputStateRef.current = { ...inputStateRef.current, primaryFire: false };
-        setInputState({ ...inputStateRef.current });
-      } else if (e.button === 2) {
-        inputStateRef.current = { ...inputStateRef.current, secondaryFire: false };
-        setInputState({ ...inputStateRef.current });
+      if (releaseInputCode(mouseButtonToKeybindCode(e.button))) {
+        e.preventDefault();
       }
     };
 
@@ -167,7 +178,7 @@ export function useInput(): UseInputReturn {
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('contextmenu', handleContextMenu);
     };
-  }, [isPointerLocked]);
+  }, [isPointerLocked, pressInputCode, releaseInputCode]);
 
   // Handle pointer lock
   useEffect(() => {
@@ -195,7 +206,7 @@ export function useInput(): UseInputReturn {
       inputStateRef.current = createEmptyInputState();
       setInputState(createEmptyInputState());
       setIsControlPressed(false);
-      pressedKeysRef.current.clear();
+      pressedCodesRef.current.clear();
     }
   }, [isPointerLocked]);
 

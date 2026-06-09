@@ -3,8 +3,13 @@ import {
   SLIDE_SPEED_BOOST,
   SLIDE_DURATION,
   SLIDE_COOLDOWN,
+  SLIDE_ENTRY_SPEED_CAP_MULTIPLIER,
   SLIDE_FRICTION,
+  SLIDE_JUMP_MAX_SPEED_MULTIPLIER,
+  SLIDE_JUMP_SPEED_RETENTION,
+  SLIDE_MAX_SPEED_MULTIPLIER,
   MIN_SLIDE_SPEED,
+  SPRINT_MULTIPLIER,
   WALL_RUN_MIN_SPEED,
   WALL_RUN_MAX_DURATION,
   WALL_RUN_GRAVITY_MULTIPLIER,
@@ -15,7 +20,7 @@ import {
   MANTLE_DURATION,
   GRAVITY,
 } from '@voxel-strike/shared';
-import { vec3Scale, vec3Normalize, vec3Cross, createVec3 } from '@voxel-strike/shared';
+import { vec3Scale, vec3Normalize, vec3Cross, createVec3, DEFAULT_HERO_STATS } from '@voxel-strike/shared';
 import type { PhysicsWorld } from '../PhysicsWorld.js';
 import { checkWalls, checkLedge } from '../CollisionDetection.js';
 
@@ -58,6 +63,8 @@ export class ParkourMovement {
   private mantleTimer: number = 0;
   private mantleTarget: Vec3 = createVec3();
   private mantleStart: Vec3 = createVec3();
+  private slideMaxSpeed: number = DEFAULT_HERO_STATS.moveSpeed * SPRINT_MULTIPLIER * SLIDE_MAX_SPEED_MULTIPLIER;
+  private slideJumpMaxSpeed: number = DEFAULT_HERO_STATS.moveSpeed * SPRINT_MULTIPLIER * SLIDE_JUMP_MAX_SPEED_MULTIPLIER;
 
   constructor(world: PhysicsWorld, playerId: string) {
     this.world = world;
@@ -123,9 +130,16 @@ export class ParkourMovement {
         isSliding = true;
         this.slideTimer = SLIDE_DURATION;
         this.slideDirection = vec3Normalize({ x: velocity.x, y: 0, z: velocity.z });
+        const sprintSpeed = DEFAULT_HERO_STATS.moveSpeed * SPRINT_MULTIPLIER;
+        this.slideMaxSpeed = sprintSpeed * SLIDE_MAX_SPEED_MULTIPLIER;
+        this.slideJumpMaxSpeed = sprintSpeed * SLIDE_JUMP_MAX_SPEED_MULTIPLIER;
         
         // Boost velocity
-        const boostedSpeed = horizontalSpeed * SLIDE_SPEED_BOOST;
+        const slideEntrySpeed = Math.min(
+          Math.max(horizontalSpeed, sprintSpeed),
+          sprintSpeed * SLIDE_ENTRY_SPEED_CAP_MULTIPLIER
+        );
+        const boostedSpeed = Math.min(slideEntrySpeed * SLIDE_SPEED_BOOST, this.slideMaxSpeed);
         newVelocity.x = this.slideDirection.x * boostedSpeed;
         newVelocity.z = this.slideDirection.z * boostedSpeed;
       }
@@ -138,10 +152,16 @@ export class ParkourMovement {
         const friction = Math.pow(SLIDE_FRICTION, deltaTime * 60);
         newVelocity.x *= friction;
         newVelocity.z *= friction;
+        this.clampHorizontalSpeed(newVelocity, this.slideMaxSpeed);
 
         // End slide
         const currentSpeed = Math.sqrt(newVelocity.x * newVelocity.x + newVelocity.z * newVelocity.z);
-        if (this.slideTimer <= 0 || currentSpeed < MIN_SLIDE_SPEED * 0.5 || !playerInput.crouch) {
+        if (this.slideTimer <= 0 || currentSpeed < MIN_SLIDE_SPEED * 0.5 || !playerInput.crouch || playerInput.jump) {
+          if (playerInput.jump) {
+            newVelocity.x *= SLIDE_JUMP_SPEED_RETENTION;
+            newVelocity.z *= SLIDE_JUMP_SPEED_RETENTION;
+            this.clampHorizontalSpeed(newVelocity, this.slideJumpMaxSpeed);
+          }
           isSliding = false;
           this.slideCooldown = SLIDE_COOLDOWN;
         }
@@ -254,5 +274,15 @@ export class ParkourMovement {
       finished: progress >= 1,
     };
   }
-}
 
+  private clampHorizontalSpeed(velocity: Vec3, maxSpeed: number): void {
+    const speed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    if (speed <= maxSpeed || speed <= 0.0001) {
+      return;
+    }
+
+    const scale = maxSpeed / speed;
+    velocity.x *= scale;
+    velocity.z *= scale;
+  }
+}

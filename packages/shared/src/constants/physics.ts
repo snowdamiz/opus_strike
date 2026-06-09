@@ -52,12 +52,16 @@ export const GROUND_NORMAL_THRESHOLD = 0.7;
 export const STEP_HEIGHT = 0.5;
 
 // Slide
-export const SLIDE_SPEED_BOOST = 2.25; // Speed multiplier during slide
+export const SLIDE_SPEED_BOOST = 1.75; // Speed multiplier during slide
 export const SLIDE_DURATION = 0.6; // Duration of slide in seconds
 export const SLIDE_COOLDOWN = 0.8; // Cooldown before next slide
 export const SLIDE_FRICTION = 0.982; // Friction applied during slide (higher = less slowdown)
 export const MIN_SLIDE_SPEED = 5; // Minimum speed to initiate slide
-export const SLIDE_INITIAL_BOOST = 2.25; // Initial speed boost when entering slide (ensures faster than sprint)
+export const SLIDE_INITIAL_BOOST = 1.75; // Initial speed boost when entering slide (ensures faster than sprint)
+export const SLIDE_ENTRY_SPEED_CAP_MULTIPLIER = 1.1; // Caps carried speed before applying slide boost
+export const SLIDE_MAX_SPEED_MULTIPLIER = 2.45; // Absolute slide speed cap relative to sprint speed
+export const SLIDE_JUMP_SPEED_RETENTION = 0.82; // Horizontal speed retained when jumping out of a slide
+export const SLIDE_JUMP_MAX_SPEED_MULTIPLIER = 1.9; // Max horizontal carry when slide-jumping
 
 // Glacier Passive - Frozen Momentum (team slide boost when Glacier is on the team)
 export const GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER = 1.4; // 40% faster slides

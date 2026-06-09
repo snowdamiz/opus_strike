@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DEFAULT_KEYBINDINGS, type InputState } from '@voxel-strike/shared';
 import { loggers } from '../utils/logger';
 
 export type GraphicsQuality = 'low' | 'medium' | 'high' | 'ultra';
@@ -7,6 +8,31 @@ export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 export type GraphicsPreset = 'competitive' | 'balanced' | 'cinematic';
 export type FpsDisplayMode = 'off' | 'fps' | 'full';
+export type KeybindAction = keyof InputState | 'scoreboard';
+export type Keybindings = Record<KeybindAction, string>;
+
+export const keybindActionKeys = [
+  'moveForward',
+  'moveBackward',
+  'moveLeft',
+  'moveRight',
+  'jump',
+  'crouch',
+  'sprint',
+  'primaryFire',
+  'secondaryFire',
+  'reload',
+  'ability1',
+  'ability2',
+  'ultimate',
+  'interact',
+  'scoreboard',
+] as const satisfies readonly KeybindAction[];
+
+export const defaultKeybindings: Keybindings = {
+  ...DEFAULT_KEYBINDINGS,
+  scoreboard: 'Tab',
+};
 
 export interface ClientSettings {
   graphicsPreset: GraphicsPreset;
@@ -30,6 +56,7 @@ export interface ClientSettings {
   showKillFeed: boolean;
   crosshairStyle: CrosshairStyle;
   crosshairColor: string;
+  keybindings: Keybindings;
 }
 
 export const SETTINGS_STORAGE_KEY = 'voxel-strike-settings';
@@ -89,6 +116,7 @@ export const defaultSettings: ClientSettings = {
   showKillFeed: true,
   crosshairStyle: 'default',
   crosshairColor: '#ffffff',
+  keybindings: { ...defaultKeybindings },
 };
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
@@ -114,6 +142,49 @@ function pickFpsDisplayMode(value: unknown, fallback: FpsDisplayMode): FpsDispla
   if (value === true) return 'full';
   if (value === false) return 'off';
   return pickOption(value, ['off', 'fps', 'full'] as const, fallback);
+}
+
+function pickKeybindingCode(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+
+  const code = value.trim();
+  return code.length > 0 && code.length <= 64 ? code : fallback;
+}
+
+function sanitizeKeybindings(value: unknown): Keybindings {
+  const raw = typeof value === 'object' && value !== null
+    ? value as Partial<Record<KeybindAction, unknown>>
+    : {};
+  const next = { ...defaultKeybindings };
+  const usedCodes = new Set<string>();
+
+  for (const action of keybindActionKeys) {
+    const preferredCode = pickKeybindingCode(raw[action], defaultKeybindings[action]);
+
+    if (!usedCodes.has(preferredCode)) {
+      next[action] = preferredCode;
+      usedCodes.add(preferredCode);
+      continue;
+    }
+
+    const defaultCode = defaultKeybindings[action];
+    if (!usedCodes.has(defaultCode)) {
+      next[action] = defaultCode;
+      usedCodes.add(defaultCode);
+      continue;
+    }
+
+    const unusedDefaultCode = keybindActionKeys
+      .map((key) => defaultKeybindings[key])
+      .find((code) => !usedCodes.has(code));
+
+    if (unusedDefaultCode) {
+      next[action] = unusedDefaultCode;
+      usedCodes.add(unusedDefaultCode);
+    }
+  }
+
+  return next;
 }
 
 function materialQualityFromLegacyPreset(quality: GraphicsQuality): MaterialQuality {
@@ -158,6 +229,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     showKillFeed: pickBoolean(raw.showKillFeed, defaultSettings.showKillFeed),
     crosshairStyle: pickOption(raw.crosshairStyle, ['default', 'dot', 'circle', 'cross'] as const, defaultSettings.crosshairStyle),
     crosshairColor: normalizeHexColor(raw.crosshairColor, defaultSettings.crosshairColor),
+    keybindings: sanitizeKeybindings(raw.keybindings),
   };
 }
 

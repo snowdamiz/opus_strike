@@ -12,8 +12,12 @@ import {
   CROUCH_MULTIPLIER,
   SLIDE_DURATION,
   SLIDE_COOLDOWN,
+  SLIDE_ENTRY_SPEED_CAP_MULTIPLIER,
   SLIDE_FRICTION,
   SLIDE_INITIAL_BOOST,
+  SLIDE_JUMP_MAX_SPEED_MULTIPLIER,
+  SLIDE_JUMP_SPEED_RETENTION,
+  SLIDE_MAX_SPEED_MULTIPLIER,
   // Glacier passive slide boost constants
   GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER,
   GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER,
@@ -81,6 +85,17 @@ function quakeAccelerate(
   velocity.z += accelSpeed * wishDir.z;
 }
 
+function clampHorizontalSpeed(velocity: THREE.Vector3, maxSpeed: number): void {
+  const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+  if (horizontalSpeed <= maxSpeed || horizontalSpeed <= 0.0001) {
+    return;
+  }
+
+  const scale = maxSpeed / horizontalSpeed;
+  velocity.x *= scale;
+  velocity.z *= scale;
+}
+
 /**
  * Check if the player's team has a Glacier hero
  * Used for Glacier's passive "Frozen Momentum" which boosts teammate slides
@@ -138,6 +153,8 @@ export function useMovement(): UseMovementReturn {
   const slideCooldownRef = useRef(0);
   const slideDirectionRef = useRef(new THREE.Vector3());
   const slideIntensityRef = useRef(0);
+  const slideMaxSpeedRef = useRef(0);
+  const slideJumpMaxSpeedRef = useRef(0);
   const wasSprintingBeforeSlide = useRef(false);
   const smoothedYRef = useRef<number | null>(null);
 
@@ -180,6 +197,9 @@ export function useMovement(): UseMovementReturn {
       const steerForce = 3 * dt;
       velocity.x += moveDirection.x * speed * steerForce;
       velocity.z += moveDirection.z * speed * steerForce;
+      if (slideMaxSpeedRef.current > 0) {
+        clampHorizontalSpeed(velocity, slideMaxSpeedRef.current);
+      }
       return;
     }
 
@@ -300,12 +320,18 @@ export function useMovement(): UseMovementReturn {
       const slideSpeedMultiplier = hasGlacierPassive
         ? SLIDE_INITIAL_BOOST * GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER
         : SLIDE_INITIAL_BOOST;
+      const sprintSpeed = heroMoveSpeed * SPRINT_MULTIPLIER;
+      slideMaxSpeedRef.current = sprintSpeed * SLIDE_MAX_SPEED_MULTIPLIER;
+      slideJumpMaxSpeedRef.current = sprintSpeed * SLIDE_JUMP_MAX_SPEED_MULTIPLIER;
       const currentHorizontalSpeed = Math.sqrt(
         velocityRef.current.x * velocityRef.current.x +
         velocityRef.current.z * velocityRef.current.z
       );
-      const slideEntrySpeed = Math.max(currentHorizontalSpeed, heroMoveSpeed * SPRINT_MULTIPLIER);
-      const slideSpeed = slideEntrySpeed * slideSpeedMultiplier;
+      const slideEntrySpeed = Math.min(
+        Math.max(currentHorizontalSpeed, sprintSpeed),
+        sprintSpeed * SLIDE_ENTRY_SPEED_CAP_MULTIPLIER
+      );
+      const slideSpeed = Math.min(slideEntrySpeed * slideSpeedMultiplier, slideMaxSpeedRef.current);
       velocityRef.current.x = slideDir.x * slideSpeed;
       velocityRef.current.z = slideDir.z * slideSpeed;
     }
@@ -320,6 +346,9 @@ export function useMovement(): UseMovementReturn {
       const friction = Math.pow(slideFriction, dt * 60);
       velocityRef.current.x *= friction;
       velocityRef.current.z *= friction;
+      if (slideMaxSpeedRef.current > 0) {
+        clampHorizontalSpeed(velocityRef.current, slideMaxSpeedRef.current);
+      }
 
       // Check for slide end
       const slideSpeed = Math.sqrt(
@@ -327,9 +356,19 @@ export function useMovement(): UseMovementReturn {
         velocityRef.current.z * velocityRef.current.z
       );
 
-      if (slideTimeRef.current <= 0 || slideSpeed < 2 || inputState.jump) {
+      const slideJumpRequested = inputState.jump;
+      if (slideTimeRef.current <= 0 || slideSpeed < 2 || slideJumpRequested) {
+        if (slideJumpRequested) {
+          velocityRef.current.x *= SLIDE_JUMP_SPEED_RETENTION;
+          velocityRef.current.z *= SLIDE_JUMP_SPEED_RETENTION;
+          if (slideJumpMaxSpeedRef.current > 0) {
+            clampHorizontalSpeed(velocityRef.current, slideJumpMaxSpeedRef.current);
+          }
+        }
         isSliding.current = false;
         slideCooldownRef.current = SLIDE_COOLDOWN;
+        slideMaxSpeedRef.current = 0;
+        slideJumpMaxSpeedRef.current = 0;
         wasSprintingBeforeSlide.current = false;
         isCrouchingRef.current = false;
         sounds.stopSlide();
