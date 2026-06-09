@@ -346,6 +346,7 @@ function HeroPreviewScene({
             isJumping={bodyAnimationMode === 'jump'}
             isCrouching={bodyAnimationMode === 'crouch' || bodyAnimationMode === 'crouchWalk'}
             isSliding={bodyAnimationMode === 'slide'}
+            isAttacking={bodyAnimationMode === 'attack'}
             movementPose={previewMovementPose}
             walkDirection={{ forward: 1, right: 0 }}
             idleIntensity={idleAnimation ? config.idleIntensity : 0}

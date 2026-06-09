@@ -60,6 +60,7 @@ interface NetworkContextType {
   devFillUltimate: () => void;
   setDevFly: (enabled: boolean) => void;
   setDevImmune: (enabled: boolean) => void;
+  setDevTimeFrozen: (enabled: boolean) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
 
@@ -701,6 +702,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('setDevImmune', { enabled });
   }, []);
 
+  const setDevTimeFrozen = useCallback((enabled: boolean) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('setDevTimeFrozen', { enabled });
+  }, []);
+
   const selectTeam = useCallback((team: Team) => {
     loggers.network.debug('sending selectTeam', team);
     gameRoomRef.current?.send('selectTeam', { team });
@@ -764,6 +770,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       devFillUltimate,
       setDevFly,
       setDevImmune,
+      setDevTimeFrozen,
       selectTeam,
       setReady,
       spawnNpc,

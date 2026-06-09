@@ -314,6 +314,7 @@ export class GameRoom extends Room<GameState> {
   private unstuckCooldownUntil: Map<string, number> = new Map();
   private devInvulnerablePlayers: Set<string> = new Set();
   private devImmunePlayers: Set<string> = new Set();
+  private devGameClockFrozen = false;
   private mapManifest: VoxelMapManifest | null = null;
   private mapChunkLookup: Map<string, VoxelChunk> = new Map();
   private movementTerrain: MovementTerrainAdapter = {
@@ -425,6 +426,10 @@ export class GameRoom extends Room<GameState> {
 
       this.onMessage('devFillUltimate', (client) => {
         this.handleDevFillUltimate(client);
+      });
+
+      this.onMessage('setDevTimeFrozen', (client, data: { enabled: boolean }) => {
+        this.handleSetDevTimeFrozen(client, Boolean(data.enabled));
       });
     }
 
@@ -671,9 +676,8 @@ export class GameRoom extends Room<GameState> {
     const dt = TICK_INTERVAL_MS / 1000;
 
     // Update round timer
-    if (this.state.roundStartTime) {
-      const elapsed = (now - this.state.roundStartTime) / 1000;
-      this.state.roundTimeRemaining = Math.max(0, this.config.roundTimeSeconds - elapsed);
+    if (this.state.roundStartTime && !this.devGameClockFrozen) {
+      this.state.roundTimeRemaining = this.getRoundTimeRemaining(now);
 
       if (this.state.roundTimeRemaining <= 0) {
         this.endRound();
@@ -2662,6 +2666,34 @@ export class GameRoom extends Room<GameState> {
     }
 
     player.ultimateCharge = 100;
+  }
+
+  private handleSetDevTimeFrozen(client: Client, enabled: boolean): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    const now = Date.now();
+    if (enabled) {
+      this.state.roundTimeRemaining = this.getRoundTimeRemaining(now);
+      this.devGameClockFrozen = true;
+    } else {
+      this.devGameClockFrozen = false;
+      if (this.state.roundStartTime) {
+        const elapsedSeconds = this.config.roundTimeSeconds - this.state.roundTimeRemaining;
+        this.state.roundStartTime = now - elapsedSeconds * 1000;
+      }
+    }
+
+    this.broadcastMatchSnapshot(true);
+  }
+
+  private getRoundTimeRemaining(now: number): number {
+    if (!this.state.roundStartTime) return this.state.roundTimeRemaining;
+
+    const elapsed = Math.max(0, (now - this.state.roundStartTime) / 1000);
+    return Math.max(0, this.config.roundTimeSeconds - elapsed);
   }
 
   private refreshMapManifest(): void {

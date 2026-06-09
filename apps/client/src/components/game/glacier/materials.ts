@@ -40,6 +40,8 @@ export let malletFrostRingMaterial: THREE.MeshStandardMaterial;
 export let malletVeinMaterial: THREE.MeshBasicMaterial;
 export let malletCrystalMaterial: THREE.MeshStandardMaterial;
 export let malletFrostCrystalMaterial: THREE.MeshStandardMaterial;
+export let malletGripHandMaterial: THREE.MeshStandardMaterial;
+export let malletGripSleeveMaterial: THREE.MeshStandardMaterial;
 export let frostParticleMaterial: THREE.MeshBasicMaterial;
 export let iceShardMaterial: THREE.MeshStandardMaterial;
 
@@ -107,6 +109,22 @@ export function initMaterials() {
     color: GLACIER_COLORS.frost,
     transparent: true,
     opacity: 0.85,
+  });
+
+  malletGripHandMaterial = new THREE.MeshStandardMaterial({
+    color: 0x123a63,
+    metalness: 0.18,
+    roughness: 0.46,
+    emissive: GLACIER_COLORS.iceDark,
+    emissiveIntensity: 0.06,
+  });
+
+  malletGripSleeveMaterial = new THREE.MeshStandardMaterial({
+    color: 0x70aee8,
+    metalness: 0.18,
+    roughness: 0.42,
+    emissive: GLACIER_COLORS.iceGlow,
+    emissiveIntensity: 0.08,
   });
   
   frostParticleMaterial = new THREE.MeshBasicMaterial({
@@ -374,4 +392,3 @@ export const CRYSTAL_LAYOUT = (() => {
   }
   return configs;
 })();
-

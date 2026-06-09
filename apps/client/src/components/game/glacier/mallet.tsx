@@ -20,6 +20,8 @@ import {
   malletVeinMaterial,
   malletCrystalMaterial,
   malletFrostCrystalMaterial,
+  malletGripHandMaterial,
+  malletGripSleeveMaterial,
   frostParticleMaterial,
   iceShardMaterial,
   FROST_RING_POSITIONS,
@@ -33,10 +35,72 @@ import {
 
 const MALLET_SWING_DURATION = 0.4;
 const MALLET_DAMAGE = 50;
-const MALLET_RANGE = 12;
+const MALLET_RANGE = 3.4;
 const FROST_PARTICLE_INDICES = [0, 1, 2, 3, 4, 5] as const;
 const ICE_SHARD_INDICES = [0, 1, 2, 3] as const;
 const IDLE_FROST_CRYSTAL_CONFIGS = FROST_CRYSTAL_CONFIGS.slice(0, 2);
+const MALLET_GRIP_FINGER_Z_OFFSETS = [-0.135, -0.045, 0.045, 0.135] as const;
+
+function MalletLeftGrip() {
+  return (
+    <group position={[0.018, -0.075, -0.58]} rotation={[0.02, 0.04, -0.2]}>
+      <mesh
+        geometry={SHARED_GEOMETRIES.box}
+        material={malletGripHandMaterial}
+        position={[0.102, 0.028, 0]}
+        rotation={[0, 0, -0.08]}
+        scale={[0.16, 0.135, 0.34]}
+      />
+      <mesh
+        geometry={SHARED_GEOMETRIES.box}
+        material={malletGripSleeveMaterial}
+        position={[0.12, 0.065, 0.02]}
+        rotation={[0, 0, -0.08]}
+        scale={[0.11, 0.068, 0.25]}
+      />
+      <mesh
+        geometry={SHARED_GEOMETRIES.box}
+        material={malletGripSleeveMaterial}
+        position={[0.028, -0.012, -0.17]}
+        rotation={[0.03, 0.16, -0.62]}
+        scale={[0.06, 0.155, 0.062]}
+      />
+      {MALLET_GRIP_FINGER_Z_OFFSETS.map((z, index) => {
+        const isLongFinger = index === 1 || index === 2;
+        return (
+          <group key={`mallet-left-grip-finger-${z}`} position={[0.16, 0.092, z]} rotation={[0.02, 0, -0.34]}>
+            <mesh
+              geometry={SHARED_GEOMETRIES.box}
+              material={malletGripHandMaterial}
+              position={[-0.038, -0.002, 0]}
+              scale={[0.056, 0.052, 0.052]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.box}
+              material={malletGripSleeveMaterial}
+              position={[0.03, 0.008, 0]}
+              scale={[isLongFinger ? 0.104 : 0.09, 0.048, 0.046]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.box}
+              material={malletGripHandMaterial}
+              position={[isLongFinger ? 0.106 : 0.092, 0.016, 0]}
+              rotation={[0, 0, -0.12]}
+              scale={[0.052, 0.043, 0.044]}
+            />
+          </group>
+        );
+      })}
+      <mesh
+        geometry={SHARED_GEOMETRIES.box}
+        material={malletGripHandMaterial}
+        position={[0.042, -0.062, 0.125]}
+        rotation={[0.06, -0.22, -0.68]}
+        scale={[0.064, 0.15, 0.064]}
+      />
+    </group>
+  );
+}
 
 interface IceMalletSwingProps {
   swing: IceMalletSwingData;
@@ -231,6 +295,7 @@ export const IceMalletSwing = React.memo(({ swing }: IceMalletSwingProps) => {
         <group ref={swingPivotRef}>
           {/* Handle */}
           <mesh geometry={malletHandleGeometry!} material={malletHandleMaterial} position={[0, 0, -3.5]} rotation={[Math.PI / 2, 0, 0]} />
+          <MalletLeftGrip />
           
           {/* Frost rings - using cached material */}
           {FROST_RING_POSITIONS.map((z, i) => (
@@ -320,6 +385,7 @@ export const IdleMallet = React.memo(function IdleMallet() {
     <group ref={groupRef}>
       <group ref={malletGroupRef}>
         <mesh geometry={malletHandleGeometry!} material={malletHandleMaterial} position={[0, 0, -3.5]} rotation={[Math.PI / 2, 0, 0]} />
+        <MalletLeftGrip />
         
         {FROST_RING_POSITIONS.map((z, i) => (
           <mesh key={i} geometry={SHARED_GEOMETRIES.cylinder8} material={malletFrostRingMaterial} position={[0, 0, -z]} rotation={[Math.PI / 2, 0, 0]} scale={[0.11, 0.06, 0.11]} />

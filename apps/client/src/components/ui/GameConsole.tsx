@@ -149,6 +149,14 @@ function validHeroNames(): string {
   return ALL_HERO_IDS.map((heroId) => HERO_DEFINITIONS[heroId].name).join(', ');
 }
 
+function parseCommandParts(input: string): string[] {
+  const parts = input.split(/\s+/);
+  if (parts[0] === '/' && parts[1]) {
+    return [`/${parts[1]}`, ...parts.slice(2)];
+  }
+  return parts;
+}
+
 function disableActiveSkillState() {
   const store = useGameStore.getState();
   store.setShadowStepTargeting(false, false);
@@ -222,7 +230,7 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /fly | /immune | /hero <hero> | /f'
+        ? 'Developer Console - /fly | /immune | /hero <hero> | /f | /time freeze'
         : 'Developer commands are disabled in this build',
       type: 'info',
     },
@@ -240,6 +248,7 @@ export function GameConsole() {
     devFillUltimate,
     setDevFly,
     setDevImmune,
+    setDevTimeFrozen,
   } = useNetwork();
 
   // Set the network functions for projectiles to use
@@ -308,7 +317,7 @@ export function GameConsole() {
     // Echo input
     addMessage(`> ${trimmed}`, 'input');
 
-    const parts = trimmed.split(/\s+/);
+    const parts = parseCommandParts(trimmed);
     const command = parts[0].toLowerCase();
 
     switch (command) {
@@ -388,10 +397,29 @@ export function GameConsole() {
         break;
       }
 
+      case '/time': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        const action = parts[1]?.toLowerCase();
+        if (action !== 'freeze' && action !== 'unfreeze') {
+          addMessage('Usage: /time freeze | /time unfreeze', 'error');
+          break;
+        }
+
+        const shouldFreeze = action === 'freeze';
+        setDevTimeFrozen(shouldFreeze);
+        addMessage(`Game clock ${shouldFreeze ? 'frozen' : 'unfrozen'}.`, 'info');
+        setTimeout(() => setIsOpen(false), 100);
+        break;
+      }
+
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /f`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /f, /time freeze`, 'error');
     }
-  }, [addMessage, devFillUltimate, devSetHero, setDevFly, setDevImmune]);
+  }, [addMessage, devFillUltimate, devSetHero, setDevFly, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -461,7 +489,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, or /f...' : 'Developer commands disabled'}
+            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, /f, or /time freeze...' : 'Developer commands disabled'}
             autoComplete="off"
             spellCheck={false}
           />

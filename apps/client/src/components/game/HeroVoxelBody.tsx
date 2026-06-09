@@ -17,10 +17,12 @@ type HeroBoneName =
   | 'leftShin'
   | 'rightShin'
   | 'leftArm'
-  | 'rightArm';
+  | 'rightArm'
+  | 'leftForearm'
+  | 'rightForearm';
 type HeroBoneOverride = HeroBoneName | 'static';
 
-export type HeroAnimationMode = 'idle' | 'walk' | 'jump' | 'crouch' | 'crouchWalk' | 'crouchWalkLoop' | 'run' | 'slide';
+export type HeroAnimationMode = 'idle' | 'walk' | 'jump' | 'crouch' | 'crouchWalk' | 'crouchWalkLoop' | 'run' | 'slide' | 'attack';
 
 export type HeroMovementPose = 'walk' | 'crouchWalk' | 'run';
 
@@ -53,6 +55,12 @@ interface HeroVoxelBodyProps {
   isCrouchingRef?: MutableRefObject<boolean>;
   isSliding?: boolean;
   isSlidingRef?: MutableRefObject<boolean>;
+  isAttacking?: boolean;
+  isAttackingRef?: MutableRefObject<boolean>;
+  attackStartedAtMs?: number | null;
+  attackStartedAtMsRef?: MutableRefObject<number | null>;
+  attackSide?: -1 | 1;
+  attackSideRef?: MutableRefObject<-1 | 1>;
   movementPose?: HeroMovementPose;
   movementPoseRef?: MutableRefObject<HeroMovementPose>;
   walkDirection?: HeroWalkDirection;
@@ -136,49 +144,41 @@ const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   },
 };
 
-function createPhantomCastingArmParts(side: -1 | 1): VoxelPart[] {
-  const limb: HeroBoneName = side < 0 ? 'leftArm' : 'rightArm';
-  const upperYaw = side * -0.12;
-  const forearmYaw = side * -0.18;
-  const handRoll = side * 0.08;
+function createPhantomBlazeArmParts(side: -1 | 1): VoxelPart[] {
+  const upperLimb: HeroBoneName = side < 0 ? 'leftArm' : 'rightArm';
+  const lowerLimb: HeroBoneName = side < 0 ? 'leftForearm' : 'rightForearm';
 
   return [
     {
       material: 'dark',
-      position: [side * 0.42, 1.17, -0.16],
-      scale: [0.13, 0.34, 0.16],
-      rotation: [-0.82, upperYaw, side * 0.06],
-      limb,
-    },
-    {
-      material: 'armor',
-      position: [side * 0.36, 1.07, -0.43],
-      scale: [0.12, 0.38, 0.14],
-      rotation: [-1.42, forearmYaw, handRoll],
-      limb,
-    },
-    {
-      material: 'glow',
-      position: [side * 0.34, 1.08, -0.55],
-      scale: [0.052, 0.26, 0.034],
-      rotation: [-1.42, forearmYaw, handRoll],
-      emissive: true,
-      limb,
-    },
-    {
-      material: 'glow',
-      position: [side * 0.31, 1.04, -0.68],
-      scale: [0.086, 0.07, 0.05],
-      rotation: [-1.5, side * -0.12, side * 0.14],
-      emissive: true,
-      limb,
+      position: [side * 0.43, 1.1, 0],
+      scale: [0.13, 0.42, 0.16],
+      limb: upperLimb,
     },
     {
       material: 'edge',
-      position: [side * 0.38, 1.12, -0.28],
-      scale: [0.15, 0.09, 0.16],
-      rotation: [-1.12, side * -0.14, side * 0.08],
-      limb,
+      position: [side * 0.43, 0.88, -0.03],
+      scale: [0.16, 0.12, 0.15],
+      limb: lowerLimb,
+    },
+    {
+      material: 'armor',
+      position: [side * 0.43, 0.88, -0.18],
+      scale: [0.13, 0.1, 0.18],
+      limb: lowerLimb,
+    },
+    {
+      material: 'edge',
+      position: [side * 0.43, 0.88, -0.32],
+      scale: [0.13, 0.13, 0.12],
+      limb: lowerLimb,
+    },
+    {
+      material: 'glow',
+      position: [side * 0.43, 0.77, -0.36],
+      scale: [0.05, 0.055, 0.032],
+      emissive: true,
+      limb: lowerLimb,
     },
   ];
 }
@@ -204,10 +204,10 @@ const PHANTOM_PARTS: VoxelPart[] = [
   { material: 'armor', position: [0.2, 0.9, 0.19], scale: [0.08, 0.48, 0.08] },
   { material: 'edge', position: [0, 0.66, 0.18], scale: [0.3, 0.12, 0.08] },
   { material: 'edge', position: [0, 1.39, -0.01], scale: [0.56, 0.13, 0.38] },
-  { material: 'armor', position: [-0.35, 1.3, -0.01], scale: [0.24, 0.22, 0.32], limb: 'static' },
-  { material: 'armor', position: [0.35, 1.3, -0.01], scale: [0.24, 0.22, 0.32], limb: 'static' },
-  ...createPhantomCastingArmParts(-1),
-  ...createPhantomCastingArmParts(1),
+  { material: 'armor', position: [-0.31, 1.31, -0.01], scale: [0.15, 0.19, 0.27] },
+  { material: 'armor', position: [0.31, 1.31, -0.01], scale: [0.15, 0.19, 0.27] },
+  ...createPhantomBlazeArmParts(-1),
+  ...createPhantomBlazeArmParts(1),
   { material: 'void', position: [0, 1.64, 0.01], scale: [0.34, 0.3, 0.3] },
   { material: 'dark', position: [0, 1.64, -0.18], scale: [0.3, 0.18, 0.044] },
   { material: 'eye', position: [-0.09, 1.68, -0.215], scale: [0.07, 0.038, 0.032], emissive: true },
@@ -246,24 +246,24 @@ const HOOKSHOT_PARTS: VoxelPart[] = [
   { material: 'armor', position: [0.36, 1.32, -0.01], scale: [0.24, 0.22, 0.31], limb: 'static' },
   { material: 'dark', position: [-0.43, 1.02, 0], scale: [0.13, 0.4, 0.16] },
   { material: 'dark', position: [0.44, 1.02, 0], scale: [0.14, 0.4, 0.16] },
-  { material: 'edge', position: [-0.5, 0.82, -0.06], scale: [0.18, 0.34, 0.16] },
-  { material: 'accent', position: [-0.57, 0.83, -0.2], scale: [0.15, 0.22, 0.056], emissive: true },
-  { material: 'dark', position: [-0.6, 0.84, -0.34], scale: [0.18, 0.17, 0.18] },
-  { material: 'edge', position: [-0.6, 0.84, -0.49], scale: [0.13, 0.13, 0.15] },
-  { material: 'glow', position: [-0.6, 0.84, -0.585], scale: [0.074, 0.074, 0.04], emissive: true },
-  { material: 'edge', kind: 'cylinder', position: [-0.6, 0.7, -0.42], scale: [0.024, 0.34, 0.024], rotation: [Math.PI / 2, 0, 0] },
-  { material: 'glow', position: [-0.6, 0.7, -0.66], scale: [0.048, 0.056, 0.048], emissive: true },
-  { material: 'glow', position: [-0.68, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, 0.42, 0], emissive: true },
-  { material: 'glow', position: [-0.52, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, -0.42, 0], emissive: true },
-  { material: 'edge', position: [0.5, 0.83, -0.06], scale: [0.18, 0.36, 0.16] },
-  { material: 'accent', position: [0.57, 0.84, -0.2], scale: [0.16, 0.25, 0.056], emissive: true },
-  { material: 'dark', position: [0.6, 0.86, -0.34], scale: [0.19, 0.18, 0.18] },
-  { material: 'edge', position: [0.6, 0.86, -0.49], scale: [0.14, 0.14, 0.16] },
-  { material: 'glow', position: [0.6, 0.86, -0.585], scale: [0.082, 0.082, 0.042], emissive: true },
-  { material: 'edge', kind: 'cylinder', position: [0.6, 0.73, -0.42], scale: [0.024, 0.38, 0.024], rotation: [Math.PI / 2, 0, 0] },
-  { material: 'glow', position: [0.6, 0.73, -0.66], scale: [0.05, 0.06, 0.05], emissive: true },
-  { material: 'glow', position: [0.52, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, 0.42, 0], emissive: true },
-  { material: 'glow', position: [0.68, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, -0.42, 0], emissive: true },
+  { material: 'edge', position: [-0.5, 0.82, -0.06], scale: [0.18, 0.34, 0.16], limb: 'leftForearm' },
+  { material: 'accent', position: [-0.57, 0.83, -0.2], scale: [0.15, 0.22, 0.056], emissive: true, limb: 'leftForearm' },
+  { material: 'dark', position: [-0.6, 0.84, -0.34], scale: [0.18, 0.17, 0.18], limb: 'leftForearm' },
+  { material: 'edge', position: [-0.6, 0.84, -0.49], scale: [0.13, 0.13, 0.15], limb: 'leftForearm' },
+  { material: 'glow', position: [-0.6, 0.84, -0.585], scale: [0.074, 0.074, 0.04], emissive: true, limb: 'leftForearm' },
+  { material: 'edge', kind: 'cylinder', position: [-0.6, 0.7, -0.42], scale: [0.024, 0.34, 0.024], rotation: [Math.PI / 2, 0, 0], limb: 'leftForearm' },
+  { material: 'glow', position: [-0.6, 0.7, -0.66], scale: [0.048, 0.056, 0.048], emissive: true, limb: 'leftForearm' },
+  { material: 'glow', position: [-0.68, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, 0.42, 0], emissive: true, limb: 'leftForearm' },
+  { material: 'glow', position: [-0.52, 0.7, -0.72], scale: [0.038, 0.044, 0.115], rotation: [0, -0.42, 0], emissive: true, limb: 'leftForearm' },
+  { material: 'edge', position: [0.5, 0.83, -0.06], scale: [0.18, 0.36, 0.16], limb: 'rightForearm' },
+  { material: 'accent', position: [0.57, 0.84, -0.2], scale: [0.16, 0.25, 0.056], emissive: true, limb: 'rightForearm' },
+  { material: 'dark', position: [0.6, 0.86, -0.34], scale: [0.19, 0.18, 0.18], limb: 'rightForearm' },
+  { material: 'edge', position: [0.6, 0.86, -0.49], scale: [0.14, 0.14, 0.16], limb: 'rightForearm' },
+  { material: 'glow', position: [0.6, 0.86, -0.585], scale: [0.082, 0.082, 0.042], emissive: true, limb: 'rightForearm' },
+  { material: 'edge', kind: 'cylinder', position: [0.6, 0.73, -0.42], scale: [0.024, 0.38, 0.024], rotation: [Math.PI / 2, 0, 0], limb: 'rightForearm' },
+  { material: 'glow', position: [0.6, 0.73, -0.66], scale: [0.05, 0.06, 0.05], emissive: true, limb: 'rightForearm' },
+  { material: 'glow', position: [0.52, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, 0.42, 0], emissive: true, limb: 'rightForearm' },
+  { material: 'glow', position: [0.68, 0.73, -0.72], scale: [0.04, 0.045, 0.12], rotation: [0, -0.42, 0], emissive: true, limb: 'rightForearm' },
 
   { material: 'void', position: [0, 1.64, 0.01], scale: [0.34, 0.29, 0.31] },
   { material: 'armor', position: [0, 1.77, -0.03], scale: [0.44, 0.18, 0.34] },
@@ -311,20 +311,20 @@ const BLAZE_PARTS: VoxelPart[] = [
   { material: 'dark', position: [-0.43, 1.1, 0], scale: [0.13, 0.42, 0.16], limb: 'leftArm' },
   { material: 'dark', position: [0.43, 1.1, 0], scale: [0.13, 0.42, 0.16], limb: 'rightArm' },
   { material: 'edge', position: [-0.43, 0.88, -0.03], scale: [0.16, 0.12, 0.15], limb: 'leftArm' },
-  { material: 'edge', position: [0.43, 0.88, -0.03], scale: [0.16, 0.12, 0.15], limb: 'rightArm' },
+  { material: 'edge', position: [0.43, 0.88, -0.03], scale: [0.16, 0.12, 0.15], limb: 'rightForearm' },
   { material: 'armor', position: [-0.43, 0.72, -0.02], scale: [0.12, 0.2, 0.14], limb: 'leftArm' },
-  { material: 'armor', position: [0.43, 0.88, -0.18], scale: [0.13, 0.1, 0.18], limb: 'rightArm' },
+  { material: 'armor', position: [0.43, 0.88, -0.18], scale: [0.13, 0.1, 0.18], limb: 'rightForearm' },
   { material: 'edge', position: [-0.43, 0.57, -0.04], scale: [0.13, 0.13, 0.12], limb: 'leftArm' },
-  { material: 'edge', position: [0.43, 0.88, -0.32], scale: [0.13, 0.13, 0.12], limb: 'rightArm' },
+  { material: 'edge', position: [0.43, 0.88, -0.32], scale: [0.13, 0.13, 0.12], limb: 'rightForearm' },
   { material: 'glow', position: [-0.43, 0.47, -0.12], scale: [0.05, 0.055, 0.032], emissive: true, limb: 'leftArm' },
-  { material: 'glow', position: [0.43, 0.77, -0.36], scale: [0.05, 0.055, 0.032], emissive: true, limb: 'rightArm' },
+  { material: 'glow', position: [0.43, 0.77, -0.36], scale: [0.05, 0.055, 0.032], emissive: true, limb: 'rightForearm' },
 
-  { material: 'dark', kind: 'cylinder', position: [0.52, 0.95, -0.38], scale: [0.05, 1.3, 0.05], limb: 'rightArm' },
-  { material: 'edge', kind: 'cylinder', position: [0.52, 0.33, -0.38], scale: [0.078, 0.08, 0.078], limb: 'rightArm' },
-  { material: 'edge', kind: 'cylinder', position: [0.52, 1.49, -0.38], scale: [0.086, 0.08, 0.086], limb: 'rightArm' },
-  { material: 'glow', kind: 'sphere', position: [0.52, 1.63, -0.38], scale: [0.13, 0.13, 0.13], emissive: true, limb: 'rightArm' },
-  { material: 'accent', kind: 'cylinder', position: [0.52, 1.63, -0.38], scale: [0.16, 0.028, 0.16], emissive: true, limb: 'rightArm' },
-  { material: 'glow', position: [0.52, 1.76, -0.38], scale: [0.055, 0.12, 0.055], emissive: true, limb: 'rightArm' },
+  { material: 'dark', kind: 'cylinder', position: [0.52, 0.95, -0.38], scale: [0.05, 1.3, 0.05], limb: 'rightForearm' },
+  { material: 'edge', kind: 'cylinder', position: [0.52, 0.33, -0.38], scale: [0.078, 0.08, 0.078], limb: 'rightForearm' },
+  { material: 'edge', kind: 'cylinder', position: [0.52, 1.49, -0.38], scale: [0.086, 0.08, 0.086], limb: 'rightForearm' },
+  { material: 'glow', kind: 'sphere', position: [0.52, 1.63, -0.38], scale: [0.13, 0.13, 0.13], emissive: true, limb: 'rightForearm' },
+  { material: 'accent', kind: 'cylinder', position: [0.52, 1.63, -0.38], scale: [0.16, 0.028, 0.16], emissive: true, limb: 'rightForearm' },
+  { material: 'glow', position: [0.52, 1.76, -0.38], scale: [0.055, 0.12, 0.055], emissive: true, limb: 'rightForearm' },
 
   { material: 'void', position: [0, 1.63, 0.02], scale: [0.32, 0.29, 0.3] },
   { material: 'armor', position: [0, 1.76, -0.02], scale: [0.4, 0.16, 0.3] },
@@ -435,6 +435,17 @@ const SLIDE_KNEE_HINGE_SPEED = 8.2;
 const JUMP_CYCLE_DURATION = 1.16;
 const JUMP_HEIGHT = 0.5;
 const DEFAULT_WALK_DIRECTION: HeroWalkDirection = { forward: 1, right: 0 };
+const BLAZE_ATTACK_RAMP_DURATION = 0.28;
+const BLAZE_ATTACK_HOLD_DURATION = 2;
+const BLAZE_ATTACK_RELEASE_DURATION = 0.22;
+const BLAZE_ATTACK_DURATION =
+  BLAZE_ATTACK_RAMP_DURATION + BLAZE_ATTACK_HOLD_DURATION + BLAZE_ATTACK_RELEASE_DURATION;
+const HERO_ATTACK_DURATIONS: Record<HeroId, number> = {
+  phantom: BLAZE_ATTACK_DURATION,
+  hookshot: 0.46,
+  blaze: BLAZE_ATTACK_DURATION,
+  glacier: 0.82,
+};
 interface HeroMovementProfile {
   cycleSpeed: number;
   legPitch: number;
@@ -544,6 +555,8 @@ const HERO_BONE_PIVOTS: Record<HeroBoneName, [number, number, number]> = {
   rightShin: [0.18, 0.44, 0.02],
   leftArm: [-0.48, 1.32, 0],
   rightArm: [0.48, 1.32, 0],
+  leftForearm: [-0.5, 0.9, -0.06],
+  rightForearm: [0.5, 0.9, -0.06],
 };
 const EMPTY_RIGGED_PARTS: RiggedVoxelPart[] = [];
 const GLACIER_MALLET_ANGLE = -Math.PI / 4;
@@ -552,6 +565,8 @@ const GLACIER_LEFT_GRIP_POSITION = [-0.44, 0.21, -0.1] as const;
 const GLACIER_RIGHT_GRIP_POSITION = [0.44, 0.22, -0.12] as const;
 const GLACIER_LEFT_GRIP_ROTATION = [0.58, -0.2, 0.76] as const;
 const GLACIER_RIGHT_GRIP_ROTATION = [0.54, 0.2, -0.72] as const;
+const GLACIER_MALLET_HAND_ANCHOR_POSITION = [0.04, -0.42, 0.33] as const;
+const GLACIER_MALLET_HAND_ANCHOR_ROTATION: [number, number, number] = [0, 0, 0];
 const tempBonePosition = new THREE.Vector3();
 
 interface HeroIdleProfile {
@@ -702,6 +717,8 @@ function groupRiggedParts<TPart extends VoxelPart>(
     rightShin: [],
     leftArm: [],
     rightArm: [],
+    leftForearm: [],
+    rightForearm: [],
   };
 
   parts.forEach((part) => {
@@ -786,6 +803,8 @@ function setBoneBasePose(bones: HeroBoneRefs): void {
   bones.head?.position.set(...getChildBonePosition('head', 'torso'));
   bones.leftArm?.position.set(...getChildBonePosition('leftArm', 'torso'));
   bones.rightArm?.position.set(...getChildBonePosition('rightArm', 'torso'));
+  bones.leftForearm?.position.set(...getChildBonePosition('leftForearm', 'leftArm'));
+  bones.rightForearm?.position.set(...getChildBonePosition('rightForearm', 'rightArm'));
 
   (Object.keys(HERO_BONE_PIVOTS) as HeroBoneName[]).forEach((bone) => {
     const group = bones[bone];
@@ -1249,6 +1268,239 @@ function applyGlacierMalletGripPose(bones: HeroBoneRefs, amount = GLACIER_MALLET
   blendBoneTransform(bones.rightArm, GLACIER_RIGHT_GRIP_POSITION, GLACIER_RIGHT_GRIP_ROTATION, amount);
 }
 
+function setGlacierMalletBasePose(mallet: THREE.Group | null | undefined): void {
+  if (!mallet) return;
+
+  mallet.position.set(...GLACIER_MALLET_HAND_ANCHOR_POSITION);
+  mallet.rotation.set(...GLACIER_MALLET_HAND_ANCHOR_ROTATION);
+  mallet.scale.set(1, 1, 1);
+}
+
+function applyPhantomAttackPose(bones: HeroBoneRefs, progress: number, amount: number): void {
+  if (amount <= 0.001) return;
+
+  const poseAmount = getBlazeAttackPoseAmount(progress);
+  const aim = poseAmount * amount;
+  const settle = poseAmount * amount;
+
+  if (bones.torso) {
+    bones.torso.rotation.x += -0.035 * aim;
+    bones.torso.rotation.y += -0.055 * aim;
+  }
+
+  if (bones.leftArm) {
+    bones.leftArm.position.x -= 0.018 * aim;
+    bones.leftArm.position.y += -0.035 * aim;
+    bones.leftArm.position.z += -0.08 * aim;
+    bones.leftArm.rotation.x += (0.48 + settle * 0.08) * aim;
+    bones.leftArm.rotation.y -= 0.08 * aim;
+    bones.leftArm.rotation.z += 0.1 * aim;
+    bones.leftArm.scale.y *= 1 + 0.065 * aim;
+  }
+
+  if (bones.rightArm) {
+    bones.rightArm.position.x += 0.018 * aim;
+    bones.rightArm.position.y += -0.035 * aim;
+    bones.rightArm.position.z += -0.08 * aim;
+    bones.rightArm.rotation.x += (0.48 + settle * 0.08) * aim;
+    bones.rightArm.rotation.y += 0.08 * aim;
+    bones.rightArm.rotation.z -= 0.1 * aim;
+    bones.rightArm.scale.y *= 1 + 0.065 * aim;
+  }
+
+  if (bones.leftForearm) {
+    bones.leftForearm.position.z += -0.048 * aim;
+    bones.leftForearm.rotation.x -= (0.48 + poseAmount * 0.13) * aim;
+    bones.leftForearm.rotation.y -= 0.035 * aim;
+  }
+
+  if (bones.rightForearm) {
+    bones.rightForearm.position.z += -0.048 * aim;
+    bones.rightForearm.rotation.x -= (0.48 + poseAmount * 0.13) * aim;
+    bones.rightForearm.rotation.y += 0.035 * aim;
+  }
+}
+
+function getBlazeAttackPoseAmount(progress: number): number {
+  const elapsed = clamp01(progress) * BLAZE_ATTACK_DURATION;
+
+  if (elapsed <= BLAZE_ATTACK_RAMP_DURATION) {
+    return easeInOutSine(elapsed / BLAZE_ATTACK_RAMP_DURATION);
+  }
+
+  if (elapsed <= BLAZE_ATTACK_RAMP_DURATION + BLAZE_ATTACK_HOLD_DURATION) {
+    return 1;
+  }
+
+  return 1 - easeInOutSine(
+    (elapsed - BLAZE_ATTACK_RAMP_DURATION - BLAZE_ATTACK_HOLD_DURATION) /
+      BLAZE_ATTACK_RELEASE_DURATION
+  );
+}
+
+function applyBlazeAttackPose(bones: HeroBoneRefs, progress: number, amount: number): void {
+  if (amount <= 0.001) return;
+
+  const poseAmount = getBlazeAttackPoseAmount(progress);
+  const aim = poseAmount * amount;
+  const settle = poseAmount * amount;
+
+  if (bones.torso) {
+    bones.torso.rotation.x += -0.035 * aim;
+    bones.torso.rotation.y += -0.055 * aim;
+  }
+
+  if (bones.leftArm) {
+    bones.leftArm.position.x += 0.025 * aim;
+    bones.leftArm.position.y += -0.035 * aim;
+    bones.leftArm.position.z += -0.045 * aim;
+    bones.leftArm.rotation.x += 0.2 * aim;
+    bones.leftArm.rotation.z += 0.18 * aim;
+  }
+
+  if (bones.rightArm) {
+    bones.rightArm.position.x += 0.018 * aim;
+    bones.rightArm.position.y += -0.035 * aim;
+    bones.rightArm.position.z += -0.08 * aim;
+    bones.rightArm.rotation.x += (0.36 + settle * 0.05) * aim;
+    bones.rightArm.rotation.y += 0.08 * aim;
+    bones.rightArm.rotation.z -= 0.1 * aim;
+    bones.rightArm.scale.y *= 1 + 0.065 * aim;
+  }
+
+  if (bones.rightForearm) {
+    bones.rightForearm.position.z += -0.035 * aim;
+    bones.rightForearm.rotation.x -= (0.34 + poseAmount * 0.1) * aim;
+    bones.rightForearm.rotation.y += 0.035 * aim;
+  }
+}
+
+function applyHookshotAttackPose(
+  bones: HeroBoneRefs,
+  progress: number,
+  amount: number,
+  side: -1 | 1
+): void {
+  if (amount <= 0.001) return;
+
+  const activeForearm = side < 0 ? bones.leftForearm : bones.rightForearm;
+  const activeUpperArm = side < 0 ? bones.leftArm : bones.rightArm;
+  const braceForearm = side < 0 ? bones.rightForearm : bones.leftForearm;
+  const recoil = smoothPulse(progress, 0, 0.44, 0.98) * 0.64 * amount;
+
+  if (bones.torso) {
+    bones.torso.rotation.y += side * 0.01 * recoil;
+    bones.torso.rotation.z += -side * 0.006 * recoil;
+  }
+
+  if (activeUpperArm) {
+    activeUpperArm.position.z += 0.024 * recoil;
+    activeUpperArm.rotation.x -= 0.2 * recoil;
+    activeUpperArm.rotation.z += -side * 0.016 * recoil;
+  }
+
+  if (activeForearm) {
+    activeForearm.position.z += 0.018 * recoil;
+    activeForearm.rotation.x += 0.36 * recoil;
+    activeForearm.rotation.y += side * 0.022 * recoil;
+    activeForearm.rotation.z += -side * 0.032 * recoil;
+    activeForearm.scale.z *= 1 - 0.022 * recoil;
+  }
+
+  if (braceForearm) {
+    braceForearm.rotation.x += 0.055 * recoil;
+    braceForearm.rotation.z += side * 0.016 * recoil;
+  }
+}
+
+function applyGlacierAttackPose(
+  bones: HeroBoneRefs,
+  mallet: THREE.Group | null | undefined,
+  progress: number,
+  amount: number,
+  side: -1 | 1
+): void {
+  if (amount <= 0.001) return;
+
+  const swing = easeInOutSine(progress);
+  const impactPulse = smoothPulse(progress, 0.5, 0.62, 0.78);
+  const liftPulse = Math.sin(progress * Math.PI);
+  const lateralSweep = THREE.MathUtils.lerp(side * 0.32, -side * 0.42, swing);
+  const verticalSweep = THREE.MathUtils.lerp(0.22, -0.18, swing);
+  const torsoTwist = THREE.MathUtils.lerp(-side * 0.26, side * 0.28, swing);
+  const armSwingZ = THREE.MathUtils.lerp(-side * 0.72, side * 0.88, swing);
+  const armSwingY = THREE.MathUtils.lerp(-side * 0.34, side * 0.36, swing);
+  const malletRoll = THREE.MathUtils.lerp(-side * 1.25, side * 1.2, swing);
+
+  if (bones.hips) {
+    bones.hips.rotation.y += torsoTwist * 0.18 * amount;
+    bones.hips.rotation.z += THREE.MathUtils.lerp(side * 0.055, -side * 0.06, swing) * amount;
+  }
+
+  if (bones.torso) {
+    bones.torso.position.x += lateralSweep * 0.16 * amount;
+    bones.torso.rotation.x += (-0.08 * liftPulse + 0.035 * impactPulse) * amount;
+    bones.torso.rotation.y += torsoTwist * amount;
+    bones.torso.rotation.z += THREE.MathUtils.lerp(side * 0.16, -side * 0.18, swing) * amount;
+  }
+
+  if (bones.head) {
+    bones.head.rotation.y += torsoTwist * 0.35 * amount;
+    bones.head.rotation.z += THREE.MathUtils.lerp(side * 0.035, -side * 0.04, swing) * amount;
+  }
+
+  if (bones.leftArm) {
+    bones.leftArm.position.x += lateralSweep * 0.42 * amount;
+    bones.leftArm.position.y += (verticalSweep * 0.78 + 0.04 * liftPulse) * amount;
+    bones.leftArm.position.z += (-0.12 * liftPulse - 0.035 * impactPulse) * amount;
+    bones.leftArm.rotation.x += THREE.MathUtils.lerp(-0.42, 0.28, swing) * amount;
+    bones.leftArm.rotation.y += armSwingY * 0.52 * amount;
+    bones.leftArm.rotation.z += (armSwingZ * 0.74 + side * 0.12) * amount;
+  }
+
+  if (bones.rightArm) {
+    bones.rightArm.position.x += lateralSweep * 0.52 * amount;
+    bones.rightArm.position.y += (verticalSweep + 0.055 * liftPulse) * amount;
+    bones.rightArm.position.z += (-0.16 * liftPulse - 0.045 * impactPulse) * amount;
+    bones.rightArm.rotation.x += THREE.MathUtils.lerp(-0.54, 0.34, swing) * amount;
+    bones.rightArm.rotation.y += armSwingY * amount;
+    bones.rightArm.rotation.z += (armSwingZ + side * 0.08) * amount;
+  }
+
+  if (mallet) {
+    mallet.position.x += lateralSweep * 0.18 * amount;
+    mallet.position.y += (verticalSweep * 0.32 - 0.04 * impactPulse) * amount;
+    mallet.position.z += (-0.18 * liftPulse - 0.05 * impactPulse) * amount;
+    mallet.rotation.x += THREE.MathUtils.lerp(-0.36, 0.42, swing) * amount;
+    mallet.rotation.y += THREE.MathUtils.lerp(-side * 0.32, side * 0.3, swing) * amount;
+    mallet.rotation.z += malletRoll * amount;
+  }
+}
+
+function applyHeroAttackPose(
+  heroId: HeroId,
+  bones: HeroBoneRefs,
+  mallet: THREE.Group | null | undefined,
+  progress: number,
+  amount: number,
+  side: -1 | 1
+): void {
+  switch (heroId) {
+    case 'phantom':
+      applyPhantomAttackPose(bones, progress, amount);
+      return;
+    case 'blaze':
+      applyBlazeAttackPose(bones, progress, amount);
+      return;
+    case 'hookshot':
+      applyHookshotAttackPose(bones, progress, amount, side);
+      return;
+    case 'glacier':
+      applyGlacierAttackPose(bones, mallet, progress, amount, side);
+      return;
+  }
+}
+
 function getMaterialEmissiveIntensity(kind: MaterialKind, hasFlag: boolean) {
   const flagBoost = hasFlag ? 1.35 : 1;
   switch (kind) {
@@ -1284,8 +1536,10 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
   phantom: [
     teamAccentPart({ material: 'accent', position: [-0.19, 1.37, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.2 }),
     teamAccentPart({ material: 'accent', position: [0.19, 1.37, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.2 }),
-    teamAccentPart({ material: 'accent', position: [-0.35, 1.08, -0.6], scale: [0.044, 0.18, 0.032], rotation: [-1.42, 0.18, -0.08], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'leftArm' }),
-    teamAccentPart({ material: 'accent', position: [0.35, 1.08, -0.6], scale: [0.044, 0.18, 0.032], rotation: [-1.42, -0.18, 0.08], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'rightArm' }),
+    teamAccentPart({ material: 'accent', position: [-0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.45, roughness: 0.32, metalness: 0.15, toneMapped: false, limb: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [-0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'rightForearm' }),
     teamAccentPart({ material: 'accent', position: [-0.16, 0.18, -0.19], scale: [0.075, 0.055, 0.032], emissiveIntensity: 0.45, roughness: 0.4, metalness: 0.1 }),
     teamAccentPart({ material: 'accent', position: [0.16, 0.18, -0.19], scale: [0.075, 0.055, 0.032], emissiveIntensity: 0.45, roughness: 0.4, metalness: 0.1 }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.44, 0.014, 0.44], transparent: true, opacity: 0.16, emissiveIntensity: 0.22, roughness: 0.65, depthWrite: false }),
@@ -1293,10 +1547,10 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
   hookshot: [
     teamAccentPart({ material: 'accent', position: [-0.18, 1.39, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.5, roughness: 0.36, metalness: 0.2, toneMapped: false }),
     teamAccentPart({ material: 'accent', position: [0.18, 1.39, -0.235], scale: [0.12, 0.04, 0.035], emissiveIntensity: 0.5, roughness: 0.36, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [-0.63, 0.91, -0.245], scale: [0.058, 0.26, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [-0.63, 0.66, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14 }),
-    teamAccentPart({ material: 'accent', position: [0.63, 0.93, -0.245], scale: [0.058, 0.28, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [0.63, 0.68, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14 }),
+    teamAccentPart({ material: 'accent', position: [-0.63, 0.91, -0.245], scale: [0.058, 0.26, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false, limb: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [-0.63, 0.66, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14, limb: 'leftForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.63, 0.93, -0.245], scale: [0.058, 0.28, 0.036], emissiveIntensity: 0.5, roughness: 0.32, metalness: 0.2, toneMapped: false, limb: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.63, 0.68, -0.47], scale: [0.04, 0.052, 0.18], emissiveIntensity: 0.42, roughness: 0.4, metalness: 0.14, limb: 'rightForearm' }),
     teamAccentPart({ material: 'accent', position: [-0.2, 0.2, -0.205], scale: [0.08, 0.05, 0.032], emissiveIntensity: 0.42, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0.2, 0.2, -0.205], scale: [0.08, 0.05, 0.032], emissiveIntensity: 0.42, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.46, 0.014, 0.46], transparent: true, opacity: 0.16, emissiveIntensity: 0.22, roughness: 0.65, depthWrite: false }),
@@ -1307,12 +1561,12 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
     teamAccentPart({ material: 'accent', position: [-0.19, 1.01, -0.252], scale: [0.06, 0.13, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.18 }),
     teamAccentPart({ material: 'accent', position: [0.19, 1.01, -0.252], scale: [0.06, 0.13, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.18 }),
     teamAccentPart({ material: 'accent', position: [-0.43, 0.47, -0.15], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.14, limb: 'leftArm' }),
-    teamAccentPart({ material: 'accent', position: [0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.14, limb: 'rightArm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.77, -0.36], scale: [0.034, 0.08, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.14, limb: 'rightForearm' }),
     teamAccentPart({ material: 'accent', position: [-0.17, 0.24, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0.17, 0.24, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
     teamAccentPart({ material: 'accent', position: [0, 1.88, -0.282], scale: [0.28, 0.036, 0.03], emissiveIntensity: 0.48, roughness: 0.36, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', kind: 'cylinder', position: [0.52, 1.51, -0.38], scale: [0.12, 0.034, 0.12], emissiveIntensity: 0.46, roughness: 0.35, metalness: 0.18, toneMapped: false, limb: 'rightArm' }),
-    teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'rightArm' }),
+    teamAccentPart({ material: 'accent', kind: 'cylinder', position: [0.52, 1.51, -0.38], scale: [0.12, 0.034, 0.12], emissiveIntensity: 0.46, roughness: 0.35, metalness: 0.18, toneMapped: false, limb: 'rightForearm' }),
+    teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'rightForearm' }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.42, 0.014, 0.42], transparent: true, opacity: 0.16, emissiveIntensity: 0.24, roughness: 0.65, depthWrite: false }),
   ],
   glacier: [
@@ -1450,6 +1704,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   isCrouchingRef,
   isSliding = false,
   isSlidingRef,
+  isAttacking = false,
+  isAttackingRef,
+  attackStartedAtMs = null,
+  attackStartedAtMsRef,
+  attackSide,
+  attackSideRef,
   movementPose = 'walk',
   movementPoseRef,
   walkDirection = DEFAULT_WALK_DIRECTION,
@@ -1463,11 +1723,13 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
 }: HeroVoxelBodyProps) {
   const groupRef = useRef<THREE.Group>(null);
   const boneRefs = useRef<HeroBoneRefs>({});
-  const idleBlendRef = useRef(isMoving || isJumping || isCrouching || isSliding ? 0 : 1);
+  const glacierMalletRef = useRef<THREE.Group | null>(null);
+  const idleBlendRef = useRef(isMoving || isJumping || isCrouching || isSliding || isAttacking ? 0 : 1);
   const movementBlendRef = useRef(isMoving && !isJumping && !isSliding ? 1 : 0);
   const crouchBlendRef = useRef(isCrouching && !isJumping && !isSliding ? 1 : 0);
   const jumpBlendRef = useRef(isJumping ? 1 : 0);
   const slideBlendRef = useRef(isSliding && !isJumping ? 1 : 0);
+  const attackBlendRef = useRef(isAttacking ? 1 : 0);
   const targetMovementPoseRef = useRef<HeroMovementPose>(movementPose);
   const previousMovementProfileRef = useRef<HeroMovementProfile>(HERO_MOVEMENT_PROFILES[movementPose]);
   const currentMovementProfileRef = useRef<HeroMovementProfile>(HERO_MOVEMENT_PROFILES[movementPose]);
@@ -1518,13 +1780,15 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const jumping = isJumpingRef?.current ?? isJumping;
     const crouching = isCrouchingRef?.current ?? isCrouching;
     const sliding = isSlidingRef?.current ?? isSliding;
+    const attacking = isAttackingRef?.current ?? isAttacking;
     const nextMovementPose = movementPoseRef?.current ?? movementPose;
     const nextMovementProfile = HERO_MOVEMENT_PROFILES[nextMovementPose];
-    idleBlendRef.current = idleIntensity > 0 && !moving && !jumping && !crouching && !sliding ? 1 : 0;
+    idleBlendRef.current = idleIntensity > 0 && !moving && !jumping && !crouching && !sliding && !attacking ? 1 : 0;
     movementBlendRef.current = moving && !jumping && !sliding ? 1 : 0;
     crouchBlendRef.current = crouching && !jumping && !sliding ? 1 : 0;
     jumpBlendRef.current = jumping ? 1 : 0;
     slideBlendRef.current = sliding && !jumping ? 1 : 0;
+    attackBlendRef.current = attacking ? 1 : 0;
     targetMovementPoseRef.current = nextMovementPose;
     previousMovementProfileRef.current = nextMovementProfile;
     currentMovementProfileRef.current = nextMovementProfile;
@@ -1544,6 +1808,26 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const jumping = isJumpingRef?.current ?? isJumping;
     const crouching = isCrouchingRef?.current ?? isCrouching;
     const sliding = isSlidingRef?.current ?? isSliding;
+    let attacking = isAttackingRef?.current ?? isAttacking;
+    const attackDuration = HERO_ATTACK_DURATIONS[resolvedHero];
+    const providedAttackStartedAtMs = attackStartedAtMsRef?.current ?? attackStartedAtMs;
+    let attackProgress = 1;
+    const configuredAttackSide = attackSideRef?.current ?? attackSide ?? 1;
+    let activeAttackSide = configuredAttackSide;
+
+    if (attacking && providedAttackStartedAtMs && providedAttackStartedAtMs > 0) {
+      attackProgress = clamp01((Date.now() - providedAttackStartedAtMs) / (attackDuration * 1000));
+      attacking = attackProgress < 1;
+    } else if (attacking) {
+      const attackCycle = t / attackDuration;
+      const attackCycleIndex = Math.floor(attackCycle);
+      attackProgress = attackCycle - attackCycleIndex;
+
+      if (!attackSideRef && attackSide === undefined && (resolvedHero === 'hookshot' || resolvedHero === 'glacier')) {
+        activeAttackSide = attackCycleIndex % 2 === 0 ? 1 : -1;
+      }
+    }
+
     const targetMovementPose = movementPoseRef?.current ?? movementPose;
     if (targetMovementPoseRef.current !== targetMovementPose) {
       previousMovementProfileRef.current = currentMovementProfileRef.current;
@@ -1567,6 +1851,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const normalizedWalkDirection = getNormalizedWalkDirection(rawWalkDirection);
     const bones = boneRefs.current;
     setBoneBasePose(bones);
+    setGlacierMalletBasePose(glacierMalletRef.current);
 
     if (jumping) {
       if (!wasJumpingRef.current || jumpStartedAtRef.current === null) {
@@ -1581,6 +1866,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const targetCrouchBlend = crouching && !jumping && !sliding ? 1 : 0;
     const targetJumpBlend = jumping ? 1 : 0;
     const targetSlideBlend = sliding && !jumping ? 1 : 0;
+    const targetAttackBlend = attacking ? 1 : 0;
     movementBlendRef.current = THREE.MathUtils.damp(
       movementBlendRef.current,
       targetMovementBlend,
@@ -1605,6 +1891,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       targetSlideBlend > slideBlendRef.current ? 11 : 7.5,
       frameDelta
     );
+    attackBlendRef.current = THREE.MathUtils.damp(
+      attackBlendRef.current,
+      targetAttackBlend,
+      targetAttackBlend > attackBlendRef.current ? 14 : 8.5,
+      frameDelta
+    );
 
     if (
       idleIntensity <= 0 &&
@@ -1612,10 +1904,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       !jumping &&
       !crouching &&
       !sliding &&
+      !attacking &&
       movementBlendRef.current <= 0.001 &&
       crouchBlendRef.current <= 0.001 &&
       jumpBlendRef.current <= 0.001 &&
-      slideBlendRef.current <= 0.001
+      slideBlendRef.current <= 0.001 &&
+      attackBlendRef.current <= 0.001
     ) {
       groupRef.current.position.set(0, 0, 0);
       groupRef.current.rotation.set(0, 0, 0);
@@ -1630,16 +1924,22 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       return;
     }
 
-    const targetIdleBlend = moving || jumping || crouching || sliding ? 0 : 1;
+    const targetIdleBlend = moving || jumping || crouching || sliding || attacking ? 0 : 1;
     idleBlendRef.current = THREE.MathUtils.damp(
       idleBlendRef.current,
       targetIdleBlend,
-      moving || jumping || crouching || sliding ? 9.5 : 5.5,
+      moving || jumping || crouching || sliding || attacking ? 9.5 : 5.5,
       frameDelta
     );
 
     const slideAmount = easeInOutSine(slideBlendRef.current);
     const runSlideCrossfadeAmount = targetMovementPoseRef.current === 'run' ? slideAmount : 0;
+    const attackAmount = easeInOutSine(attackBlendRef.current);
+    const attackPosePulse = resolvedHero === 'blaze' || resolvedHero === 'phantom'
+      ? getBlazeAttackPoseAmount(attackProgress)
+      : Math.sin(attackProgress * Math.PI);
+    const attackPulse = attackPosePulse * attackAmount;
+    const rootAttackPulse = resolvedHero === 'phantom' ? 0 : attackPulse;
     const idleAmount = idleBlendRef.current * idleIntensity;
     const movingAmount = movementBlendRef.current * (1 - runSlideCrossfadeAmount);
     const jumpAmount = jumpBlendRef.current;
@@ -1667,21 +1967,26 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       movementStep * movementProfile.rootBob * movingAmount -
       0.09 * poseCrouchAmount +
       Math.sin(t * 2.2) * 0.006 * poseCrouchAmount -
-      0.31 * slideAmount,
-      -0.24 * slideAmount + slideSkid
+      0.31 * slideAmount +
+      0.012 * rootAttackPulse,
+      -0.24 * slideAmount + slideSkid - 0.035 * rootAttackPulse
     );
     groupRef.current.rotation.x =
       secondary * idleProfile.swayAmplitude * 0.08 * idleAmount -
       normalizedWalkDirection.forward * movementProfile.rootPitch * movingAmount +
       jumpPose.pitch * jumpAmount +
       -0.025 * poseCrouchAmount +
-      0.6 * slideAmount;
-    groupRef.current.rotation.y = tertiary * idleProfile.twistAmplitude * 0.12 * idleAmount;
+      0.6 * slideAmount -
+      0.035 * rootAttackPulse;
+    groupRef.current.rotation.y =
+      tertiary * idleProfile.twistAmplitude * 0.12 * idleAmount +
+      activeAttackSide * 0.025 * rootAttackPulse;
     groupRef.current.rotation.z =
       secondary * idleProfile.swayAmplitude * 0.12 * idleAmount -
       normalizedWalkDirection.right * movementProfile.rootRoll * movingAmount +
       movementSway * movementProfile.rootSway * movingAmount +
-      0.055 * slideAmount;
+      0.055 * slideAmount -
+      activeAttackSide * 0.018 * rootAttackPulse;
 
     const jumpSquash = jumpPose.crouch * 0.035 + jumpPose.land * 0.026;
     const jumpStretch = jumpPose.extension * 0.026;
@@ -1703,7 +2008,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       (jumpPose.extension * 0.18 + jumpPose.land * 0.14) * jumpAmount +
       movementStep * movementProfile.glowPulse * movingAmount +
       0.035 * poseCrouchAmount +
-      0.09 * slideAmount;
+      0.09 * slideAmount +
+      0.16 * attackPulse;
     materials.forEach((material, kind) => {
       const baseEmissiveIntensity = getMaterialEmissiveIntensity(kind, hasFlag);
       material.emissiveIntensity = baseEmissiveIntensity * (1 + glowPulse);
@@ -1714,6 +2020,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     if (resolvedHero === 'glacier') {
       applyGlacierMalletGripPose(bones);
     }
+    applyHeroAttackPose(resolvedHero, bones, glacierMalletRef.current, attackProgress, attackAmount, activeAttackSide);
   });
 
   const renderPartsForBone = (bone: HeroBoneName) => (
@@ -1864,7 +2171,6 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         position={HERO_BONE_PIVOTS.torso}
       >
         {renderPartsForBone('torso')}
-        {resolvedHero === 'glacier' && <GlacierHeldMallet materials={materials} castShadow={castShadow} />}
 
         <group
           ref={(node) => {
@@ -1882,6 +2188,15 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('leftArm', 'torso')}
         >
           {renderPartsForBone('leftArm')}
+
+          <group
+            ref={(node) => {
+              boneRefs.current.leftForearm = node;
+            }}
+            position={getChildBonePosition('leftForearm', 'leftArm')}
+          >
+            {renderPartsForBone('leftForearm')}
+          </group>
         </group>
 
         <group
@@ -1891,6 +2206,26 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('rightArm', 'torso')}
         >
           {renderPartsForBone('rightArm')}
+          {resolvedHero === 'glacier' && (
+            <group
+              ref={(node) => {
+                glacierMalletRef.current = node;
+              }}
+              position={GLACIER_MALLET_HAND_ANCHOR_POSITION}
+              rotation={GLACIER_MALLET_HAND_ANCHOR_ROTATION}
+            >
+              <GlacierHeldMallet materials={materials} castShadow={castShadow} />
+            </group>
+          )}
+
+          <group
+            ref={(node) => {
+              boneRefs.current.rightForearm = node;
+            }}
+            position={getChildBonePosition('rightForearm', 'rightArm')}
+          >
+            {renderPartsForBone('rightForearm')}
+          </group>
         </group>
       </group>
 

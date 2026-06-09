@@ -245,6 +245,8 @@ export function MainLobby() {
         setHeroAnimationMode('run');
       } else if (event.key === '5') {
         setHeroAnimationMode('slide');
+      } else if (event.key === '6') {
+        setHeroAnimationMode('attack');
       } else if (event.key === '0') {
         setHeroAnimationMode('idle');
       }

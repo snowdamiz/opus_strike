@@ -12,6 +12,7 @@ export type ClientMessage =
   | { type: 'devFillUltimate'; payload: Record<string, never> }
   | { type: 'setDevFly'; payload: { enabled: boolean } }
   | { type: 'setDevImmune'; payload: { enabled: boolean } }
+  | { type: 'setDevTimeFrozen'; payload: { enabled: boolean } }
   | { type: 'selectTeam'; payload: { team: Team } }
   | { type: 'chat'; payload: { message: string; teamOnly: boolean } }
   | { type: 'ready'; payload: { ready: boolean } }
