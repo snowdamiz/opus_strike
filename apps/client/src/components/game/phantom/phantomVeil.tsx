@@ -1,6 +1,8 @@
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { useGameStore } from '../../../store/gameStore';
+import { visualStore } from '../../../store/visualStore';
 
 // ============================================================================
 // PHANTOM VEIL 3D EFFECT
@@ -9,12 +11,13 @@ import * as THREE from 'three';
 
 interface PhantomVeilEffectProps {
   isActive: boolean;
-  playerPosition: { x: number; y: number; z: number };
+  playerPosition?: { x: number; y: number; z: number };
+  playerId?: string;
 }
 
 const PHANTOM_VEIL_GROUND_GEOMETRY = new THREE.CircleGeometry(0.8, 32);
 
-export function PhantomVeil3DEffect({ isActive, playerPosition }: PhantomVeilEffectProps) {
+export function PhantomVeil3DEffect({ isActive, playerPosition, playerId }: PhantomVeilEffectProps) {
   const groupRef = useRef<THREE.Group>(null);
   const particlesRef = useRef<THREE.Points>(null);
   const wisprRef = useRef<THREE.Points>(null);
@@ -70,9 +73,24 @@ export function PhantomVeil3DEffect({ isActive, playerPosition }: PhantomVeilEff
   
   useFrame((state, delta) => {
     if (!isActive || !groupRef.current) return;
+
+    const store = useGameStore.getState();
+    const trackedPlayer = playerId
+      ? (store.localPlayer?.id === playerId ? store.localPlayer : store.players.get(playerId))
+      : null;
+    const trackedPosition = playerId
+      ? (visualStore.getState().playerPositions.get(playerId) ?? trackedPlayer?.position)
+      : null;
+    const currentPosition = trackedPosition ?? playerPosition;
+    if (!currentPosition) {
+      groupRef.current.visible = false;
+      return;
+    }
+
+    groupRef.current.visible = true;
     
     // Follow player position
-    groupRef.current.position.set(playerPosition.x, playerPosition.y - 0.9, playerPosition.z);
+    groupRef.current.position.set(currentPosition.x, currentPosition.y - 0.9, currentPosition.z);
     
     // Animate particles - spiral motion
     if (particlesRef.current) {

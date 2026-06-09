@@ -1,6 +1,6 @@
 import type { Room } from 'colyseus.js';
 import * as THREE from 'three';
-import { CHRONOS_TIMEBREAK_RELEASE_DELAY_MS } from '@voxel-strike/shared';
+import { ABILITY_DEFINITIONS, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import {
@@ -12,8 +12,12 @@ import {
 } from '../store/visualStore';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike } from '../components/game/BlazeEffects';
+import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/PhantomEffects';
+import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
+import { PHANTOM_PROJECTILE_SPEED } from '../hooks/player/constants';
+import { playSharedSound, type SoundName } from '../hooks/useAudio';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
 import type {
@@ -41,6 +45,8 @@ const MOVEMENT_BIT_GRAPPLING = 1 << 5;
 const MOVEMENT_BIT_JETPACKING = 1 << 6;
 const MOVEMENT_BIT_GLIDING = 1 << 7;
 const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
+const remotePhantomChargeControllers = new Map<string, AbortController>();
+let lastLocalPhantomReloadSoundKey = '';
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -598,6 +604,7 @@ export function setupPlayerVitalsHandler(
     });
 
     for (const removedId of data.removedPlayerIds || []) {
+      stopRemotePhantomCharge(removedId);
       actions.removePlayer(removedId);
     }
 
@@ -802,11 +809,6 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
     ownerId: string;
     ownerTeam: 'red' | 'blue';
   }) => {
-    // Skip if this is our own void zone (already created client-side)
-    if (data.ownerId === sessionId) {
-      loggers.effects.debug('void zone from server skipped as duplicate');
-      return;
-    }
     loggers.effects.debug('void zone created by', data.ownerId);
     useGameStore.getState().addVoidZone(data);
   });
@@ -817,10 +819,306 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
   });
 }
 
+interface AbilityUsedMessage {
+  playerId: string;
+  abilityId: string;
+  success?: boolean;
+  castId?: string;
+  position?: { x: number; y: number; z: number };
+  startPosition?: { x: number; y: number; z: number };
+  aimDirection?: { x: number; y: number; z: number };
+  direction?: { yaw?: number; pitch?: number; x?: number; y?: number; z?: number };
+  ownerTeam?: Team;
+  launchSide?: -1 | 1;
+  launchYaw?: number;
+  serverTime?: number;
+  durationMs?: number;
+  ammoRemaining?: number;
+  reloadStartedAt?: number;
+  reloadUntil?: number;
+  shockwaveDirection?: { x: number; y: number; z: number };
+  releaseAt?: number;
+  radius?: number;
+  duration?: number;
+}
+
+function normalizeAimDirection(data: AbilityUsedMessage): { x: number; y: number; z: number } {
+  if (data.aimDirection) return data.aimDirection;
+  if (
+    typeof data.direction?.x === 'number' &&
+    typeof data.direction?.y === 'number' &&
+    typeof data.direction?.z === 'number'
+  ) {
+    return {
+      x: data.direction.x,
+      y: data.direction.y,
+      z: data.direction.z,
+    };
+  }
+
+  const yaw = data.direction?.yaw ?? 0;
+  const pitch = data.direction?.pitch ?? 0;
+  const cosPitch = Math.cos(pitch);
+  return {
+    x: -Math.sin(yaw) * cosPitch,
+    y: Math.sin(pitch),
+    z: -Math.cos(yaw) * cosPitch,
+  };
+}
+
+function resolveOwnerTeam(data: AbilityUsedMessage): Team {
+  const store = useGameStore.getState();
+  return data.ownerTeam ?? store.players.get(data.playerId)?.team ?? store.localPlayer?.team ?? 'red';
+}
+
+export function stopRemotePhantomCharge(playerId: string): void {
+  const controller = remotePhantomChargeControllers.get(playerId);
+  if (!controller) return;
+  controller.abort();
+  remotePhantomChargeControllers.delete(playerId);
+}
+
+function playPhantomWorldSound(
+  sound: SoundName,
+  position: { x: number; y: number; z: number } | undefined,
+  options: { durationMs?: number; signal?: AbortSignal; volume?: number } = {}
+): void {
+  void playSharedSound(sound, {
+    position,
+    durationMs: options.durationMs,
+    signal: options.signal,
+    volume: options.volume,
+  });
+}
+
+function applyPhantomPrimaryState(data: {
+  ammo?: number;
+  ammoRemaining?: number;
+  reloading?: boolean;
+  reloadStartedAt?: number;
+  reloadUntil?: number;
+}): void {
+  const store = useGameStore.getState();
+  const wasReloading = store.phantomPrimaryReloading;
+  const previousReloadStart = store.phantomPrimaryReloadStart;
+  const previousReloadEnd = store.phantomPrimaryReloadEnd;
+  const now = Date.now();
+  const ammo = data.ammoRemaining ?? data.ammo;
+  if (typeof ammo === 'number') {
+    store.setPhantomPrimaryAmmo(ammo);
+  }
+
+  const reloading = data.reloading ?? Boolean(data.reloadUntil && data.reloadUntil > now);
+  const reloadStartedAt = reloading ? (data.reloadStartedAt ?? now) : 0;
+  const reloadUntil = reloading ? (data.reloadUntil ?? now) : 0;
+  store.setPhantomPrimaryReload(
+    reloading,
+    reloadStartedAt,
+    reloadUntil
+  );
+
+  const reloadSoundKey = `${reloadStartedAt}:${reloadUntil}`;
+  const startedNewReload = reloading &&
+    reloadUntil > reloadStartedAt &&
+    reloadUntil > now &&
+    (!wasReloading || previousReloadStart !== reloadStartedAt || previousReloadEnd !== reloadUntil);
+
+  if (startedNewReload && lastLocalPhantomReloadSoundKey !== reloadSoundKey) {
+    lastLocalPhantomReloadSoundKey = reloadSoundKey;
+    const reloadDurationMs = Math.max(0, reloadUntil - now);
+    const fadeOutMs = Math.min(450, reloadDurationMs);
+    void playSharedSound('phantomReload', {
+      durationMs: reloadDurationMs,
+      fadeOutMs,
+    });
+    void playSharedSound('phantomReloadScream', {
+      durationMs: reloadDurationMs,
+      fadeOutMs,
+    });
+  }
+}
+
+function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
+  const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
+  if (!abilityDef) return;
+
+  const store = useGameStore.getState();
+  const player = store.players.get(data.playerId);
+  if (!player) return;
+
+  const existingAbility = player.abilities?.[data.abilityId];
+  const activatedAt = data.serverTime ?? Date.now();
+  const abilities = {
+    ...player.abilities,
+    [data.abilityId]: {
+      abilityId: data.abilityId,
+      cooldownRemaining: abilityDef.cooldown ?? existingAbility?.cooldownRemaining ?? 0,
+      charges: existingAbility?.charges ?? abilityDef.charges ?? 1,
+      isActive: true,
+      activatedAt,
+    },
+  };
+
+  if (data.playerId === (store.localPlayer?.id ?? store.playerId)) {
+    store.updateLocalPlayer({
+      abilities,
+      ultimateCharge: data.abilityId === 'phantom_veil' ? 0 : player.ultimateCharge,
+    });
+    if (data.abilityId === 'phantom_veil') {
+      const durationMs = (abilityDef.duration ?? 0) * 1000;
+      store.setUltimateEffect(true, 'phantom_veil', Date.now() + durationMs);
+    }
+    return;
+  }
+
+  store.updatePlayer(data.playerId, {
+    ...player,
+    abilities,
+  });
+}
+
+function applyLocalPhantomBlinkConfirmation(
+  data: AbilityUsedMessage,
+  destination: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number }
+): void {
+  const store = useGameStore.getState();
+  const localPlayer = store.localPlayer;
+  if (!localPlayer || data.playerId !== (localPlayer.id ?? store.playerId)) return;
+
+  store.updateLocalPlayer({
+    position: destination,
+    velocity: {
+      x: direction.x * 2,
+      y: localPlayer.velocity.y,
+      z: direction.z * 2,
+    },
+  });
+  setPlayerVisualPosition(localPlayer.id, destination);
+}
+
+function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: string | null): boolean {
+  const store = useGameStore.getState();
+  const isLocalPlayer = data.playerId === localPlayerId;
+  const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
+  const startPosition = data.startPosition ?? position;
+  const ownerTeam = resolveOwnerTeam(data);
+  const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
+
+  switch (data.abilityId) {
+    case 'phantom_dire_ball': {
+      if (!startPosition) return true;
+      const direction = normalizeAimDirection(data);
+      if (isLocalPlayer) {
+        applyPhantomPrimaryState(data);
+      }
+      store.addDireBall({
+        id: castId,
+        position: startPosition,
+        velocity: {
+          x: direction.x * PHANTOM_PROJECTILE_SPEED,
+          y: direction.y * PHANTOM_PROJECTILE_SPEED,
+          z: direction.z * PHANTOM_PROJECTILE_SPEED,
+        },
+        startTime: Date.now(),
+        ownerId: data.playerId,
+        ownerTeam,
+        launchSide: data.launchSide,
+        launchYaw: data.launchYaw,
+      });
+      playPhantomWorldSound('phantomBasic', startPosition);
+      return true;
+    }
+
+    case 'phantom_void_ray_charge': {
+      if (!startPosition) return true;
+      stopRemotePhantomCharge(data.playerId);
+      const controller = new AbortController();
+      remotePhantomChargeControllers.set(data.playerId, controller);
+      if (isLocalPlayer) {
+        store.setVoidRayCharging(true, Date.now());
+      }
+      playPhantomWorldSound('phantomVoidRayCharge', startPosition, {
+        durationMs: data.durationMs,
+        signal: controller.signal,
+      });
+      return true;
+    }
+
+    case 'phantom_void_ray_charge_cancel':
+      stopRemotePhantomCharge(data.playerId);
+      if (isLocalPlayer) {
+        store.setVoidRayCharging(false, 0);
+      }
+      return true;
+
+    case 'phantom_void_ray': {
+      stopRemotePhantomCharge(data.playerId);
+      if (isLocalPlayer) {
+        store.setVoidRayCharging(false, 0);
+      }
+      if (!startPosition) return true;
+      store.addVoidRay({
+        id: castId,
+        startPosition,
+        direction: normalizeAimDirection(data),
+        startTime: Date.now(),
+        ownerId: data.playerId,
+        ownerTeam,
+      });
+      playPhantomWorldSound('phantomVoidRay', startPosition);
+      return true;
+    }
+
+    case 'phantom_blink': {
+      if (startPosition && position) {
+        if (isLocalPlayer) {
+          applyLocalPhantomBlinkConfirmation(data, position, normalizeAimDirection(data));
+          triggerTeleportEffect('blink');
+          playPhantomWorldSound('phantomBlink', undefined, { durationMs: 900, volume: 1.1 });
+        } else {
+          playPhantomWorldSound('phantomBlink', startPosition, { durationMs: 900, volume: 1.1 });
+        }
+        triggerBlinkEffect(startPosition, position);
+      }
+      return true;
+    }
+
+    case 'phantom_shadowstep':
+      if (!isLocalPlayer && position) {
+        triggerShadowArrival(position);
+        playPhantomWorldSound('phantomShadowStep', position);
+      }
+      return true;
+
+    case 'phantom_personal_shield':
+      applyConfirmedPhantomActiveAbility(data);
+      return true;
+
+    case 'phantom_veil':
+      applyConfirmedPhantomActiveAbility(data);
+      playPhantomWorldSound('phantomVeil', position);
+      return true;
+
+    default:
+      return false;
+  }
+}
+
 /**
  * Sets up combat event handlers (damage, kills)
  */
 export function setupCombatHandlers(room: Room) {
+  room.onMessage('phantomPrimaryState', (data: {
+    ammo: number;
+    reloading: boolean;
+    reloadStartedAt: number;
+    reloadUntil: number;
+    serverTime: number;
+  }) => {
+    applyPhantomPrimaryState(data);
+  });
+
   room.onMessage('playerDamaged', (data: {
     targetId: string;
     damage: number;
@@ -915,20 +1213,12 @@ export function setupCombatHandlers(room: Room) {
     });
   });
 
-  room.onMessage('abilityUsed', (data: {
-    playerId: string;
-    abilityId: string;
-    success?: boolean;
-    position?: { x: number; y: number; z: number };
-    shockwaveDirection?: { x: number; y: number; z: number };
-    releaseAt?: number;
-    radius?: number;
-    duration?: number;
-  }) => {
+  room.onMessage('abilityUsed', (data: AbilityUsedMessage) => {
     loggers.network.debug('ability used', data.abilityId, data.playerId, data.success);
 
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
+    if (handlePhantomAbilityUsed(data, localPlayerId)) return;
 
     if (data.abilityId === 'chronos_timebreak') {
       if (data.playerId === localPlayerId) return;

@@ -41,7 +41,9 @@ import {
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_RELOAD_MS,
+  VOID_RAY_CHARGE_TIME,
   UNSTUCK_COOLDOWN_MS,
   findUnstuckTerrainTeleport,
 } from '@voxel-strike/shared';
@@ -106,6 +108,24 @@ type PlainVec2 = { x: number; z: number };
 interface PhantomPrimaryMagazineState {
   ammo: number;
   reloadUntil: number;
+  reloadStartedAt: number;
+}
+
+interface PhantomCastPayload {
+  playerId: string;
+  abilityId: string;
+  castId: string;
+  position: PlainVec3;
+  startPosition?: PlainVec3;
+  aimDirection?: PlainVec3;
+  ownerTeam?: Team;
+  launchSide?: -1 | 1;
+  launchYaw?: number;
+  serverTime: number;
+  durationMs?: number;
+  ammoRemaining?: number;
+  reloadStartedAt?: number;
+  reloadUntil?: number;
 }
 
 interface BotBrain {
@@ -204,14 +224,15 @@ type BotIntent =
   | 'respawning';
 
 // Track previous press state to detect edges for both humans and server-owned bots.
-const playerPressState = new Map<string, {
+type PlayerPressState = {
   primaryFire: boolean;
   secondaryFire: boolean;
   reload: boolean;
   ability1: boolean;
   ability2: boolean;
   ultimate: boolean;
-}>();
+};
+const playerPressState = new Map<string, PlayerPressState>();
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 const BOT_THINK_INTERVAL_MS = 200;
 const BOT_AWARENESS_RANGE = 58;
@@ -297,8 +318,9 @@ const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
     retreatHealthRatio: 0.24,
   },
 };
+const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
 const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: 18, range: 30, cooldownMs: 550, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
+  phantom: { damage: 18, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_BOT_COOLDOWN_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
   chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
@@ -308,6 +330,8 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
   blaze: { damage: 34, range: 35, cooldownMs: 2600, coneDot: Math.cos(0.32), radius: 4, damageType: 'bomb' },
 };
+const PHANTOM_DIRE_BALL_SOCKET = { handHeight: 0.2, forwardOffset: 0.62, sideOffset: 0.22 };
+const PHANTOM_VOID_RAY_SOCKET = { handHeight: -0.08, forwardOffset: 0.52, sideOffset: 0 };
 
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
@@ -318,6 +342,10 @@ export class GameRoom extends Room<GameState> {
   private lobbyName: string | null = null;
   private voidZones: VoidZone[] = [];
   private phantomPrimaryMagazines: Map<string, PhantomPrimaryMagazineState> = new Map();
+  private phantomPrimaryHoldStartedAt: Map<string, number> = new Map();
+  private phantomVoidRayChargeStartedAt: Map<string, number> = new Map();
+  private phantomVoidRayResolvedForPress: Set<string> = new Set();
+  private phantomCastIdCounter: number = 0;
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
   private devBotIdCounter: number = 0;
@@ -499,6 +527,9 @@ export class GameRoom extends Room<GameState> {
         this.state.players.delete(existingSessionId);
         playerPressState.delete(existingSessionId);
         this.phantomPrimaryMagazines.delete(existingSessionId);
+        this.phantomPrimaryHoldStartedAt.delete(existingSessionId);
+        this.phantomVoidRayChargeStartedAt.delete(existingSessionId);
+        this.phantomVoidRayResolvedForPress.delete(existingSessionId);
         this.unstuckCooldownUntil.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
@@ -596,6 +627,9 @@ export class GameRoom extends Room<GameState> {
     this.playerVitalSignatures.delete(client.sessionId);
     playerPressState.delete(client.sessionId);
     this.phantomPrimaryMagazines.delete(client.sessionId);
+    this.phantomPrimaryHoldStartedAt.delete(client.sessionId);
+    this.phantomVoidRayChargeStartedAt.delete(client.sessionId);
+    this.phantomVoidRayResolvedForPress.delete(client.sessionId);
     this.authoritativePositionUntil.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
@@ -1306,6 +1340,147 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private nextPhantomCastId(playerId: string, abilityId: string): string {
+    return `${abilityId}_${playerId}_${this.phantomCastIdCounter++}`;
+  }
+
+  private getPhantomCastOrigin(
+    player: Player,
+    socket: { handHeight: number; forwardOffset: number; sideOffset: number },
+    launchSide: -1 | 1 = 1
+  ): PlainVec3 {
+    const forwardX = -Math.sin(player.lookYaw);
+    const forwardZ = -Math.cos(player.lookYaw);
+    const rightX = Math.cos(player.lookYaw);
+    const rightZ = -Math.sin(player.lookYaw);
+
+    return {
+      x: player.position.x + forwardX * socket.forwardOffset + rightX * socket.sideOffset * launchSide,
+      y: player.position.y + socket.handHeight,
+      z: player.position.z + forwardZ * socket.forwardOffset + rightZ * socket.sideOffset * launchSide,
+    };
+  }
+
+  private broadcastPhantomCast(payload: PhantomCastPayload): void {
+    this.broadcast('abilityUsed', payload);
+  }
+
+  private broadcastPhantomAttackCast(
+    player: Player,
+    abilityId: 'phantom_dire_ball' | 'phantom_void_ray',
+    now: number
+  ): void {
+    const aimDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const launchSide = abilityId === 'phantom_dire_ball'
+      ? ((this.phantomCastIdCounter % 2 === 0 ? 1 : -1) as -1 | 1)
+      : 1;
+    const socket = abilityId === 'phantom_dire_ball'
+      ? PHANTOM_DIRE_BALL_SOCKET
+      : PHANTOM_VOID_RAY_SOCKET;
+    const startPosition = this.getPhantomCastOrigin(player, socket, launchSide);
+    const magazine = abilityId === 'phantom_dire_ball'
+      ? this.getOrCreatePhantomPrimaryMagazine(player)
+      : null;
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId,
+      castId: this.nextPhantomCastId(player.id, abilityId),
+      position: this.vec3SchemaToPlain(player.position),
+      startPosition,
+      aimDirection,
+      ownerTeam: player.team as Team,
+      launchSide,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      ammoRemaining: magazine?.ammo,
+      reloadStartedAt: magazine && magazine.reloadUntil > now ? magazine.reloadStartedAt : undefined,
+      reloadUntil: magazine && magazine.reloadUntil > now ? magazine.reloadUntil : undefined,
+    });
+  }
+
+  private broadcastPhantomVoidRayCharge(player: Player, now: number): void {
+    const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId: 'phantom_void_ray_charge',
+      castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge'),
+      position: this.vec3SchemaToPlain(player.position),
+      startPosition: this.getPhantomCastOrigin(player, PHANTOM_VOID_RAY_SOCKET),
+      aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      durationMs: VOID_RAY_CHARGE_TIME / tempoMultiplier,
+    });
+  }
+
+  private broadcastPhantomVoidRayChargeCancel(player: Player, now: number): void {
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId: 'phantom_void_ray_charge_cancel',
+      castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge_cancel'),
+      position: this.vec3SchemaToPlain(player.position),
+      ownerTeam: player.team as Team,
+      serverTime: now,
+    });
+  }
+
+  private resolvePhantomBlinkDestination(player: Player, distance: number): PlainVec3 {
+    const forward = this.forward2D(player.lookYaw);
+    const start = this.vec3SchemaToPlain(player.position);
+    const verticalOffset = player.lookPitch < -0.3 ? 2 : 0;
+
+    for (let testDistance = distance; testDistance >= 2; testDistance -= 0.5) {
+      const candidate = this.clampToPlayableMap({
+        x: start.x + forward.x * testDistance,
+        y: start.y + verticalOffset,
+        z: start.z + forward.z * testDistance,
+      });
+
+      if (this.isBotPathBlocked(start, candidate)) continue;
+      if (this.isBotSpaceBlocked(candidate)) continue;
+      return candidate;
+    }
+
+    return start;
+  }
+
+  private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {
+    const wasCharging = this.phantomVoidRayChargeStartedAt.has(player.id);
+
+    if (input.secondaryFire && !previousSecondaryFire) {
+      const secondaryAttack = SECONDARY_ATTACKS[player.heroId as HeroId];
+      const cooldownKey = `${player.id}:secondary`;
+      if (!secondaryAttack || now < (this.attackCooldownUntil.get(cooldownKey) || 0)) {
+        return;
+      }
+
+      this.phantomVoidRayChargeStartedAt.set(player.id, now);
+      this.phantomVoidRayResolvedForPress.delete(player.id);
+      this.broadcastPhantomVoidRayCharge(player, now);
+      return;
+    }
+
+    if (!input.secondaryFire) {
+      if (wasCharging && !this.phantomVoidRayResolvedForPress.has(player.id)) {
+        this.broadcastPhantomVoidRayChargeCancel(player, now);
+      }
+      this.phantomVoidRayChargeStartedAt.delete(player.id);
+      this.phantomVoidRayResolvedForPress.delete(player.id);
+      return;
+    }
+
+    const chargeStartedAt = this.phantomVoidRayChargeStartedAt.get(player.id);
+    if (chargeStartedAt === undefined) return;
+    if (this.phantomVoidRayResolvedForPress.has(player.id)) return;
+    const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
+    if (now - chargeStartedAt < VOID_RAY_CHARGE_TIME / tempoMultiplier) return;
+
+    this.tryResolveAttack(player, 'secondary');
+    this.phantomVoidRayResolvedForPress.add(player.id);
+  }
+
   private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
     const chronosLifelineTargets = player.heroId === 'chronos' && slot === 'ability1'
       ? this.getChronosLifelineTargets(player)
@@ -1320,6 +1495,9 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    const startedAt = this.vec3SchemaToPlain(player.position);
+    const usedAt = Date.now();
+
     if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets) {
       this.executeChronosLifelineConduit(
         player,
@@ -1330,6 +1508,10 @@ export class GameRoom extends Room<GameState> {
       // Execute ability effect with context for void zone creation
       executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
         createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
+        resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
+        markAuthoritativePosition: (playerId, durationMs) => {
+          this.authoritativePositionUntil.set(playerId, Date.now() + durationMs);
+        },
       });
     }
 
@@ -1348,11 +1530,16 @@ export class GameRoom extends Room<GameState> {
     this.broadcast('abilityUsed', {
       playerId: player.id,
       abilityId: result.abilityId,
+      castId: this.nextPhantomCastId(player.id, result.abilityId),
       position: { x: player.position.x, y: player.position.y, z: player.position.z },
+      startPosition: startedAt,
       direction: { 
         yaw: player.lookYaw, 
         pitch: player.lookPitch 
       },
+      aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      ownerTeam: player.team,
+      serverTime: usedAt,
       releaseAt: result.abilityId === 'chronos_timebreak'
         ? result.abilityState.activatedAt
         : undefined,
@@ -1432,39 +1619,79 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetPhantomPrimaryMagazine(playerId: string): void {
+    this.phantomPrimaryHoldStartedAt.delete(playerId);
     this.phantomPrimaryMagazines.set(playerId, {
       ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
       reloadUntil: 0,
+      reloadStartedAt: 0,
+    });
+    const player = this.state.players.get(playerId);
+    if (player?.heroId === 'phantom') {
+      this.sendPhantomPrimaryState(player, Date.now());
+    }
+  }
+
+  private getOrCreatePhantomPrimaryMagazine(player: Player): PhantomPrimaryMagazineState {
+    let magazine = this.phantomPrimaryMagazines.get(player.id);
+    if (!magazine) {
+      magazine = {
+        ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
+        reloadUntil: 0,
+        reloadStartedAt: 0,
+      };
+      this.phantomPrimaryMagazines.set(player.id, magazine);
+    }
+
+    return magazine;
+  }
+
+  private completePhantomPrimaryReloadIfReady(player: Player, now: number): PhantomPrimaryMagazineState {
+    const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
+    if (magazine.reloadUntil > 0 && now >= magazine.reloadUntil) {
+      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+      magazine.reloadUntil = 0;
+      magazine.reloadStartedAt = 0;
+      this.sendPhantomPrimaryState(player, now);
+    }
+
+    return magazine;
+  }
+
+  private sendPhantomPrimaryState(player: Player, now: number): void {
+    if (player.heroId !== 'phantom' || player.isBot) return;
+
+    const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
+    const client = this.clients.find((candidate) => candidate.sessionId === player.id);
+    client?.send('phantomPrimaryState', {
+      ammo: magazine.ammo,
+      reloading: magazine.reloadUntil > now,
+      reloadStartedAt: magazine.reloadUntil > now ? magazine.reloadStartedAt : 0,
+      reloadUntil: magazine.reloadUntil > now ? magazine.reloadUntil : 0,
+      serverTime: now,
     });
   }
 
   private consumePhantomPrimaryShot(player: Player, now: number): boolean {
     if (player.heroId !== 'phantom') return true;
 
-    let magazine = this.phantomPrimaryMagazines.get(player.id);
-    if (!magazine) {
-      magazine = {
-        ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
-        reloadUntil: 0,
-      };
-      this.phantomPrimaryMagazines.set(player.id, magazine);
-    }
+    const magazine = this.completePhantomPrimaryReloadIfReady(player, now);
 
-    if (magazine.reloadUntil > 0 && now >= magazine.reloadUntil) {
-      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
-      magazine.reloadUntil = 0;
+    if (magazine.reloadUntil > now) {
+      this.sendPhantomPrimaryState(player, now);
+      return false;
     }
-
-    if (magazine.reloadUntil > now) return false;
 
     if (magazine.ammo <= 0) {
       magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
+      magazine.reloadStartedAt = now;
+      this.sendPhantomPrimaryState(player, now);
       return false;
     }
 
     magazine.ammo--;
     if (magazine.ammo === 0) {
       magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
+      magazine.reloadStartedAt = now;
     }
 
     return true;
@@ -1473,25 +1700,46 @@ export class GameRoom extends Room<GameState> {
   private reloadHeroPrimary(player: Player, now: number): boolean {
     if (player.heroId !== 'phantom') return false;
 
-    let magazine = this.phantomPrimaryMagazines.get(player.id);
-    if (!magazine) {
-      magazine = {
-        ammo: PHANTOM_PRIMARY_MAGAZINE_SIZE,
-        reloadUntil: 0,
-      };
-      this.phantomPrimaryMagazines.set(player.id, magazine);
+    const magazine = this.completePhantomPrimaryReloadIfReady(player, now);
+
+    if (magazine.reloadUntil > now) {
+      this.sendPhantomPrimaryState(player, now);
+      return false;
+    }
+    if (magazine.ammo >= PHANTOM_PRIMARY_MAGAZINE_SIZE) {
+      this.sendPhantomPrimaryState(player, now);
+      return false;
     }
 
-    if (magazine.reloadUntil > 0 && now >= magazine.reloadUntil) {
-      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
-      magazine.reloadUntil = 0;
-    }
-
-    if (magazine.reloadUntil > now) return false;
-    if (magazine.ammo >= PHANTOM_PRIMARY_MAGAZINE_SIZE) return false;
-
+    magazine.reloadStartedAt = now;
     magazine.reloadUntil = now + PHANTOM_PRIMARY_RELOAD_MS;
+    this.sendPhantomPrimaryState(player, now);
     return true;
+  }
+
+  private updatePhantomPrimaryHoldState(
+    player: Player,
+    input: PlayerInput,
+    previous: PlayerPressState,
+    now: number
+  ): void {
+    if (player.heroId !== 'phantom') return;
+
+    if (!input.primaryFire) {
+      this.phantomPrimaryHoldStartedAt.delete(player.id);
+      return;
+    }
+
+    if (!previous.primaryFire || !this.phantomPrimaryHoldStartedAt.has(player.id)) {
+      this.phantomPrimaryHoldStartedAt.set(player.id, now);
+    }
+  }
+
+  private isPhantomPrimaryReady(player: Player, now: number): boolean {
+    if (player.heroId !== 'phantom') return true;
+
+    const holdStartedAt = this.phantomPrimaryHoldStartedAt.get(player.id);
+    return holdStartedAt !== undefined && now - holdStartedAt >= PHANTOM_PRIMARY_FIRE_READY_MS;
   }
 
   private processPlayerInput(player: Player, input: PlayerInput): void {
@@ -1504,6 +1752,7 @@ export class GameRoom extends Room<GameState> {
     const previous = playerPressState.get(player.id)!;
     const now = Date.now();
     const reloadPressed = Boolean(input.reload);
+    this.updatePhantomPrimaryHoldState(player, input, previous, now);
 
     if (reloadPressed && !previous.reload) {
       this.reloadHeroPrimary(player, now);
@@ -1511,7 +1760,9 @@ export class GameRoom extends Room<GameState> {
     if (input.primaryFire) {
       this.tryResolveAttack(player, 'primary');
     }
-    if (input.secondaryFire && !previous.secondaryFire) {
+    if (player.heroId === 'phantom') {
+      this.handlePhantomSecondaryInput(player, input, previous.secondaryFire, now);
+    } else if (input.secondaryFire && !previous.secondaryFire) {
       this.tryResolveAttack(player, 'secondary');
     }
 
@@ -1547,12 +1798,21 @@ export class GameRoom extends Room<GameState> {
     const cooldownKey = `${player.id}:${mode}`;
     const now = Date.now();
     if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) return;
+    if (mode === 'primary' && !this.isPhantomPrimaryReady(player, now)) return;
     if (mode === 'primary' && !this.consumePhantomPrimaryShot(player, now)) return;
     this.attackCooldownUntil.set(cooldownKey, now + attack.cooldownMs);
 
     const veil = player.abilities.get('phantom_veil');
     if (veil?.isActive) {
       veil.isActive = false;
+    }
+
+    if (heroId === 'phantom') {
+      this.broadcastPhantomAttackCast(
+        player,
+        mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray',
+        now
+      );
     }
 
     const primaryTarget = this.findTargetInAimCone(player, attack.range, attack.coneDot);
@@ -1941,6 +2201,7 @@ export class GameRoom extends Room<GameState> {
     const magazine = this.phantomPrimaryMagazines.get(player.id);
     if (magazine?.reloadUntil && magazine.reloadUntil > now) {
       magazine.reloadUntil = Math.max(now, magazine.reloadUntil - adjustmentMs);
+      this.sendPhantomPrimaryState(player, now);
     }
   }
 
@@ -3003,6 +3264,7 @@ export class GameRoom extends Room<GameState> {
     player.maxHealth = heroDef.stats.maxHealth;
     player.health = player.maxHealth;
     player.ultimateCharge = 0;
+    this.phantomPrimaryHoldStartedAt.delete(player.id);
     if (heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     } else {
@@ -3406,6 +3668,9 @@ export class GameRoom extends Room<GameState> {
     player.abilities.forEach(ability => {
       ability.isActive = false;
     });
+    this.phantomPrimaryHoldStartedAt.delete(player.id);
+    this.phantomVoidRayChargeStartedAt.delete(player.id);
+    this.phantomVoidRayResolvedForPress.delete(player.id);
     player.movement.isGrappling = false;
     player.movement.isJetpacking = false;
     player.movement.isGliding = false;

@@ -20,6 +20,7 @@ export function getHeroStats(heroId: HeroId | null | undefined): HeroStats {
 export const PHANTOM_PRIMARY_MAGAZINE_SIZE = 12;
 export const PHANTOM_PRIMARY_RELOAD_SECONDS = 2;
 export const PHANTOM_PRIMARY_RELOAD_MS = PHANTOM_PRIMARY_RELOAD_SECONDS * 1000;
+export const PHANTOM_PRIMARY_FIRE_READY_MS = 240;
 
 export const CHRONOS_LIFELINE_RADIUS = 14;
 export const CHRONOS_LIFELINE_HEAL = 40;

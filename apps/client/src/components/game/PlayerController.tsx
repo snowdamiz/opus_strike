@@ -27,7 +27,7 @@ import {
 import { useInput } from '../../hooks/useInput';
 import { getActiveProceduralMap, usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
-import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
+import { setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
 import { setBlazeBombTargetHeld, setBlazeFlamethrowerHeld, setBlazeRocketHeld } from '../../viewmodel/blazePose';
 import {
@@ -50,7 +50,9 @@ import {
   EYE_HEIGHT,
 } from '../../hooks/player';
 import {
+  ABILITY_DEFINITIONS,
   CROUCH_MULTIPLIER,
+  PHANTOM_PRIMARY_FIRE_READY_MS,
   TICK_RATE,
   createEmptyInputState,
   findUnstuckTerrainTeleport,
@@ -126,7 +128,10 @@ export function PlayerController() {
   const pendingReloadInputRef = useRef(false);
   const lastUnstuckRequestIdRef = useRef(0);
   const pendingUnstuckInputRef = useRef(false);
+  const phantomPrimaryHoldStartedAtRef = useRef(0);
   const positionRef = useRef(new THREE.Vector3());
+  const audioForwardRef = useRef(new THREE.Vector3());
+  const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
 
   // Hero stats cache
   const cachedHeroStatsRef = useRef<{ heroId: string | null; stats: ReturnType<typeof getHeroStats> | null }>({
@@ -308,6 +313,7 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
+      phantomPrimaryHoldStartedAtRef.current = 0;
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
       return;
@@ -321,6 +327,7 @@ export function PlayerController() {
       abilitySystem.abilityActiveRef.current = {};
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
+      phantomPrimaryHoldStartedAtRef.current = 0;
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setChronosAegisVisualState(localPlayer.id, false, now);
       setShadowStepTargeting(false, false);
@@ -364,6 +371,7 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      phantomPrimaryHoldStartedAtRef.current = 0;
       blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
@@ -381,6 +389,7 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      phantomPrimaryHoldStartedAtRef.current = 0;
       blazeAbilities.resetRocketJump();
       const position = positionRef.current;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
@@ -563,7 +572,15 @@ export function PlayerController() {
       : PLAYER_HEIGHT;
 
     // Apply ability speed boosts
-    const { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
+    let { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
+    const phantomVeil = heroId === 'phantom' ? localPlayer.abilities?.['phantom_veil'] : undefined;
+    if (phantomVeil?.isActive) {
+      const activatedAt = phantomVeil.activatedAt ?? now;
+      const durationMs = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 0) * 1000;
+      if (durationMs <= 0 || now - activatedAt < durationMs) {
+        speedMultiplier *= 1.3;
+      }
+    }
     const finalSpeed = modifiedSpeed * speedMultiplier;
 
     // Apply movement physics
@@ -612,10 +629,24 @@ export function PlayerController() {
     }
 
     const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
-    setPhantomPrimaryHeld(
-      heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire && !phantomPrimaryReloading,
-      now
+    const phantomPrimaryHeldForPose = (
+      heroId === 'phantom' &&
+      !shadowStepTargeting &&
+      frameInput.primaryFire &&
+      !phantomPrimaryReloading
     );
+    if (phantomPrimaryHeldForPose) {
+      if (phantomPrimaryHoldStartedAtRef.current <= 0) {
+        phantomPrimaryHoldStartedAtRef.current = now;
+      }
+    } else {
+      phantomPrimaryHoldStartedAtRef.current = 0;
+    }
+    const phantomPrimaryReady = (
+      phantomPrimaryHoldStartedAtRef.current > 0 &&
+      now - phantomPrimaryHoldStartedAtRef.current >= PHANTOM_PRIMARY_FIRE_READY_MS
+    );
+    setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
     setBlazeRocketHeld(
       heroId === 'blaze' && !bombTargeting && frameInput.primaryFire,
       now
@@ -625,7 +656,7 @@ export function PlayerController() {
       now
     );
     const primaryFireForServer = heroId === 'phantom'
-      ? frameInput.primaryFire && !phantomPrimaryReloading && phantomAbilities.phantomPrimaryAmmoRef.current > 0
+      ? phantomPrimaryHeldForPose && phantomPrimaryReady && phantomAbilities.phantomPrimaryAmmoRef.current > 0
       : heroId === 'chronos'
         ? frameInput.primaryFire && getChronosPrimaryHeldBlend(now) >= CHRONOS_PRIMARY_FIRE_READY_BLEND
         : frameInput.primaryFire;
@@ -833,6 +864,9 @@ export function PlayerController() {
     const cameraBodyY = movement.refs.smoothedY.current ?? position.y;
     camera.position.set(position.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
     camera.updateMatrixWorld();
+    camera.getWorldDirection(audioForwardRef.current);
+    audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+    setAudioListenerTransform(camera.position, audioForwardRef.current, audioUpRef.current);
 
     if (heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire) {
       phantomAbilities.fireDireBall(abilityCtx, playerSounds);

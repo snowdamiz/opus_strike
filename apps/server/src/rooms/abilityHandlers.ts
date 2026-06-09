@@ -194,6 +194,11 @@ export function tryUseAbility(
 
 export interface AbilityExecutionContext {
   createVoidZone: (position: { x: number; y: number; z: number }, ownerId: string, ownerTeam: 'red' | 'blue') => void;
+  resolvePhantomBlinkDestination?: (
+    player: Player,
+    distance: number
+  ) => { x: number; y: number; z: number };
+  markAuthoritativePosition?: (playerId: string, durationMs: number) => void;
 }
 
 /**
@@ -213,21 +218,23 @@ export function executeAbility(
     case 'phantom_blink': {
       const distance = 8;
       const yaw = player.lookYaw;
-      const pitch = player.lookPitch;
+      const fallbackDestination = {
+        x: player.position.x + -Math.sin(yaw) * distance,
+        y: player.position.y + (player.lookPitch < -0.3 ? 2 : 0),
+        z: player.position.z + -Math.cos(yaw) * distance,
+      };
+      const destination = context.resolvePhantomBlinkDestination?.(player, distance) ?? fallbackDestination;
 
-      const dx = -Math.sin(yaw);
-      const dz = -Math.cos(yaw);
-
-      const destX = player.position.x + dx * distance;
-      const destZ = player.position.z + dz * distance;
-      const destY = player.position.y + (pitch < -0.3 ? 2 : 0);
-
-      player.position.x = destX;
-      player.position.z = destZ;
-      player.position.y = destY;
+      player.position.x = destination.x;
+      player.position.z = destination.z;
+      player.position.y = destination.y;
+      player.velocity.x = -Math.sin(yaw) * 2;
+      player.velocity.z = -Math.cos(yaw) * 2;
+      player.movement.isGrounded = false;
+      context.markAuthoritativePosition?.(player.id, 450);
 
       context.createVoidZone(
-        { x: destX, y: destY - 0.9, z: destZ },
+        { x: destination.x, y: destination.y - 0.9, z: destination.z },
         player.id,
         player.team as 'red' | 'blue'
       );

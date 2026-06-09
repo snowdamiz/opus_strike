@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
-import { useShallow } from 'zustand/shallow';
+import type { Player } from '@voxel-strike/shared';
 import { recordSystemTime, registerFrameSystem } from '../../utils/perfMarks';
 import { getFrameClock } from '../../utils/frameClock';
 import { SHARED_GEOMETRIES } from './effectResources';
@@ -35,6 +35,7 @@ const BLINK_PILLAR_MATERIAL = new THREE.MeshBasicMaterial({
   blending: THREE.AdditiveBlending,
   side: THREE.DoubleSide,
 });
+const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 
 interface BlinkRenderSlot {
   effectId: string;
@@ -267,6 +268,47 @@ function PooledBlinkTeleportSlots({ renderSlots }: { renderSlots: BlinkRenderSlo
   );
 }
 
+function hasActivePhantomVeil(player: Player | null | undefined, now: number): boolean {
+  if (!player || player.state !== 'alive' || player.heroId !== 'phantom') return false;
+  const veil = player.abilities?.[PHANTOM_VEIL_ABILITY_ID];
+  if (veil?.isActive) return true;
+
+  const store = useGameStore.getState();
+  return Boolean(
+    store.localPlayer?.id === player.id &&
+    store.ultimateEffectActive &&
+    store.ultimateEffectType === PHANTOM_VEIL_ABILITY_ID &&
+    store.ultimateEffectEndTime > now
+  );
+}
+
+function collectActivePhantomVeilIds(): string[] {
+  const store = useGameStore.getState();
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const now = Date.now();
+
+  const addPlayer = (player: Player | null | undefined) => {
+    if (!hasActivePhantomVeil(player, now) || !player || seen.has(player.id)) return;
+    ids.push(player.id);
+    seen.add(player.id);
+  };
+
+  addPlayer(store.localPlayer);
+  for (const player of store.players.values()) {
+    addPlayer(player);
+  }
+
+  ids.sort();
+  return ids;
+}
+
+function getPhantomVeilPlayerPosition(playerId: string): { x: number; y: number; z: number } | undefined {
+  const store = useGameStore.getState();
+  if (store.localPlayer?.id === playerId) return store.localPlayer.position;
+  return store.players.get(playerId)?.position;
+}
+
 export function PhantomEffectsManager() {
   // Use refs for effect arrays to avoid setState in useFrame (prevents 60fps re-renders)
   const activeBlinkEffectsRef = useRef<BlinkEffectData[]>([]);
@@ -276,17 +318,11 @@ export function PhantomEffectsManager() {
   // Version counters to trigger re-renders only when effect counts change
   const [, setBlinkVersion] = useState(0);
   const [, setShadowVersion] = useState(0);
+  const [activeVeilIds, setActiveVeilIds] = useState<string[]>([]);
   const lastBlinkCountRef = useRef(0);
   const lastShadowCountRef = useRef(0);
+  const lastVeilKeyRef = useRef('');
   const lastRevisionRef = useRef(0);
-
-  const { localPlayer, ultimateEffectActive, ultimateEffectType } = useGameStore(
-    useShallow(state => ({
-      localPlayer: state.localPlayer,
-      ultimateEffectActive: state.ultimateEffectActive,
-      ultimateEffectType: state.ultimateEffectType,
-    }))
-  );
 
   useEffect(() => registerFrameSystem('phantom-effects'), []);
 
@@ -322,11 +358,16 @@ export function PhantomEffectsManager() {
       setShadowVersion(version => version + 1);
     }
 
+    const nextVeilIds = collectActivePhantomVeilIds();
+    const nextVeilKey = nextVeilIds.join('|');
+    if (nextVeilKey !== lastVeilKeyRef.current) {
+      lastVeilKeyRef.current = nextVeilKey;
+      setActiveVeilIds(nextVeilIds);
+    }
+
     lastRevisionRef.current = snapshot.revision;
     recordSystemTime('phantomEffects', performance.now() - frameStart);
   });
-  
-  const showVeilEffect = ultimateEffectActive && ultimateEffectType === 'phantom_veil' && localPlayer;
   
   return (
     <group>
@@ -342,13 +383,15 @@ export function PhantomEffectsManager() {
         />
       ))}
 
-      {/* Phantom Veil 3D effect */}
-      {showVeilEffect && localPlayer && (
+      {/* Phantom Veil 3D effects */}
+      {activeVeilIds.map(playerId => (
         <PhantomVeil3DEffect
+          key={playerId}
           isActive={true}
-          playerPosition={localPlayer.position}
+          playerId={playerId}
+          playerPosition={getPhantomVeilPlayerPosition(playerId)}
         />
-      )}
+      ))}
     </group>
   );
 }
