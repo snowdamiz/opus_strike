@@ -34,6 +34,7 @@ import {
   registerViewmodelSocket,
   type ViewmodelSocketPoseDraft,
 } from '../../viewmodel/viewmodelSocketRegistry';
+import { visualStore } from '../../store/visualStore';
 import {
   BLAZE_COLORS,
   HOOKSHOT_COLORS,
@@ -117,6 +118,19 @@ interface PhantomLocomotionRuntime extends PhantomLocomotionPose {
   hasPreviousCameraPosition: boolean;
 }
 
+interface ChronosMovementBobRuntime {
+  phase: number;
+  movementBlend: number;
+  runBlend: number;
+  previousCameraPosition: THREE.Vector3;
+  hasPreviousCameraPosition: boolean;
+}
+
+interface ChronosMovementBobOffset {
+  horizontalX: number;
+  verticalY: number;
+}
+
 interface PhantomReloadPose {
   active: boolean;
   progress: number;
@@ -185,6 +199,12 @@ const BLAZE_STAFF_ROTATION = new THREE.Euler(-0.23, -0.075, 0.24, VIEWMODEL_ROOT
 const BLAZE_STAFF_TIP_LOCAL_POSITION = new THREE.Vector3(0, 0.592, 0);
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
+const CHRONOS_MOVEMENT_BOB_WALK_SPEED = 5.35;
+const CHRONOS_MOVEMENT_BOB_RUN_SPEED = 7.05;
+const CHRONOS_MOVEMENT_BOB_X = 0.032;
+const CHRONOS_MOVEMENT_BOB_Y = 0.026;
+const CHRONOS_MOVEMENT_BOB_MAX_DELTA_SECONDS = 1 / 30;
+const CHRONOS_MOVEMENT_INPUT_FRESH_MS = 180;
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -2721,11 +2741,115 @@ function BlazeViewmodel({
   );
 }
 
+function createChronosMovementBobRuntime(): ChronosMovementBobRuntime {
+  return {
+    phase: 0,
+    movementBlend: 0,
+    runBlend: 0,
+    previousCameraPosition: new THREE.Vector3(),
+    hasPreviousCameraPosition: false,
+  };
+}
+
+function updateChronosMovementBobRuntime(
+  runtime: ChronosMovementBobRuntime,
+  locomotion: PhantomLocomotionPose,
+  camera: THREE.Camera,
+  delta: number
+): ChronosMovementBobOffset {
+  const frameDelta = THREE.MathUtils.clamp(delta, 0, CHRONOS_MOVEMENT_BOB_MAX_DELTA_SECONDS);
+  const previousPosition = runtime.previousCameraPosition;
+  if (!runtime.hasPreviousCameraPosition) {
+    previousPosition.copy(camera.position);
+    runtime.hasPreviousCameraPosition = true;
+    return { horizontalX: 0, verticalY: 0 };
+  }
+
+  const dx = camera.position.x - previousPosition.x;
+  const dz = camera.position.z - previousPosition.z;
+  const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+  previousPosition.copy(camera.position);
+
+  const frameSeconds = Math.max(delta, 1 / 120);
+  const horizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
+    ? 0
+    : horizontalDistance / frameSeconds;
+  const store = useGameStore.getState();
+  const movementState = store.localPlayer?.movement;
+  const localMovement = visualStore.getState().localViewmodelMovement;
+  const isLocalMovementFresh = Date.now() - localMovement.updatedAtMs <= CHRONOS_MOVEMENT_INPUT_FRESH_MS;
+  const localHorizontalSpeed = isLocalMovementFresh ? localMovement.horizontalSpeed : 0;
+  const localInputMoveBlend = isLocalMovementFresh && localMovement.hasMovementInput ? 1 : 0;
+  const slideBlend = THREE.MathUtils.clamp(
+    Math.max(movementState?.isSliding ? 1 : 0, store.slideIntensity),
+    0,
+    1
+  );
+  const cameraMoveBlend = THREE.MathUtils.smoothstep(
+    horizontalSpeed,
+    PHANTOM_LOCOMOTION_MOVE_START_SPEED,
+    PHANTOM_LOCOMOTION_FULL_WALK_SPEED
+  );
+  const velocityMoveBlend = THREE.MathUtils.smoothstep(
+    localHorizontalSpeed,
+    PHANTOM_LOCOMOTION_MOVE_START_SPEED,
+    PHANTOM_LOCOMOTION_FULL_WALK_SPEED
+  );
+  const locomotionMoveBlend = THREE.MathUtils.clamp(locomotion.movementBlend, 0, 1);
+  const targetMovementBlend = THREE.MathUtils.smoothstep(
+    Math.max(cameraMoveBlend, localInputMoveBlend, locomotionMoveBlend, velocityMoveBlend),
+    0,
+    1
+  ) * (1 - slideBlend * 0.85);
+  const walkSpeed = HERO_DEFINITIONS.chronos.stats.moveSpeed;
+  const runSpeed = walkSpeed * SPRINT_MULTIPLIER;
+  const locomotionRunBlend = THREE.MathUtils.clamp(locomotion.runBlend, 0, 1);
+  const targetRunBlend = Math.max(
+    THREE.MathUtils.smoothstep(horizontalSpeed, walkSpeed * 0.92, runSpeed * 0.98),
+    THREE.MathUtils.smoothstep(localHorizontalSpeed, walkSpeed * 0.92, runSpeed * 0.98),
+    locomotionRunBlend,
+    movementState?.isSprinting || (isLocalMovementFresh && localMovement.isSprinting) ? 1 : 0
+  ) * targetMovementBlend;
+
+  runtime.movementBlend = THREE.MathUtils.damp(
+    runtime.movementBlend,
+    targetMovementBlend,
+    8,
+    frameDelta
+  );
+  runtime.runBlend = THREE.MathUtils.damp(
+    runtime.runBlend,
+    targetRunBlend,
+    6,
+    frameDelta
+  );
+
+  if (runtime.movementBlend <= 0.002 && targetMovementBlend <= 0.002) {
+    return { horizontalX: 0, verticalY: 0 };
+  }
+
+  const runScale = THREE.MathUtils.lerp(1, 1.12, runtime.runBlend);
+  const arcSpeed = THREE.MathUtils.lerp(
+    CHRONOS_MOVEMENT_BOB_WALK_SPEED,
+    CHRONOS_MOVEMENT_BOB_RUN_SPEED,
+    runtime.runBlend
+  );
+  runtime.phase = (runtime.phase + frameDelta * arcSpeed) % (Math.PI * 2);
+
+  const sideTravel = Math.sin(runtime.phase);
+  const arcLift = 1 - sideTravel * sideTravel;
+  const movementScale = runScale * runtime.movementBlend;
+  return {
+    horizontalX: sideTravel * CHRONOS_MOVEMENT_BOB_X * movementScale,
+    verticalY: arcLift * CHRONOS_MOVEMENT_BOB_Y * movementScale,
+  };
+}
+
 function writeChronosTriangleForearmPose(
   target: MutableTransformTarget,
   side: -1 | 1,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose
+  movementBob: ChronosMovementBobOffset
 ): void {
   writePhantomForearmPose(
     target,
@@ -2733,12 +2857,12 @@ function writeChronosTriangleForearmPose(
     CHRONOS_FOREARM_READY_BLEND,
     0,
     elapsedSeconds,
-    locomotion
+    PHANTOM_STILL_LOCOMOTION_POSE
   );
 
   const breath = Math.sin(elapsedSeconds * 1.2 + side * 0.65) * 0.002;
-  target.position.x += side * -0.062;
-  target.position.y += 0.018 + breath;
+  target.position.x += side * -0.062 + movementBob.horizontalX;
+  target.position.y += 0.018 + breath + movementBob.verticalY;
   target.position.z -= 0.04;
   target.rotation.x -= 0.062;
   target.rotation.y += side * 0.018;
@@ -2749,7 +2873,7 @@ function writeChronosTriangleHandPose(
   targets: PhantomHandPoseTargets,
   side: -1 | 1,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose
+  movementBob: ChronosMovementBobOffset
 ): void {
   writePhantomHandPose(
     targets,
@@ -2757,13 +2881,13 @@ function writeChronosTriangleHandPose(
     CHRONOS_HAND_READY_BLEND,
     0,
     elapsedSeconds,
-    locomotion
+    PHANTOM_STILL_LOCOMOTION_POSE
   );
 
   const innerSide = -side;
   const breath = Math.sin(elapsedSeconds * 1.42 + side * 0.58) * 0.0025;
-  targets.arm.position.x += side * -0.074;
-  targets.arm.position.y += 0.024 + breath;
+  targets.arm.position.x += side * -0.074 + movementBob.horizontalX;
+  targets.arm.position.y += 0.024 + breath + movementBob.verticalY;
   targets.arm.position.z -= 0.058;
   targets.arm.rotation.x -= 0.074;
   targets.arm.rotation.y += side * 0.026;
@@ -2805,11 +2929,11 @@ function writeChronosTriangleHandPose(
 function ChronosPhantomForearm({
   side,
   materials,
-  locomotionRef,
+  movementBobRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  movementBobRef: MutableRefObject<ChronosMovementBobOffset>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -2825,7 +2949,7 @@ function ChronosPhantomForearm({
       forearm,
       side,
       state.clock.elapsedTime,
-      locomotionRef.current
+      movementBobRef.current
     );
   });
 
@@ -2850,11 +2974,11 @@ function ChronosPhantomForearm({
 function ChronosTriangleHand({
   side,
   materials,
-  locomotionRef,
+  movementBobRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
-  locomotionRef: MutableRefObject<PhantomLocomotionPose>;
+  movementBobRef: MutableRefObject<ChronosMovementBobOffset>;
 }) {
   const armRef = useRef<THREE.Group>(null);
   const wristRef = useRef<THREE.Group>(null);
@@ -2881,7 +3005,7 @@ function ChronosTriangleHand({
       },
       side,
       state.clock.elapsedTime,
-      locomotionRef.current
+      movementBobRef.current
     );
   });
 
@@ -2969,6 +3093,21 @@ function ChronosViewmodel({
   materials: ViewmodelMaterialSet;
   locomotionRef: MutableRefObject<PhantomLocomotionPose>;
 }) {
+  const { camera } = useThree();
+  const bobRuntimeRef = useRef<ChronosMovementBobRuntime>(createChronosMovementBobRuntime());
+  const movementBobRef = useRef<ChronosMovementBobOffset>({ horizontalX: 0, verticalY: 0 });
+
+  useFrame((_, delta) => {
+    const movementBob = updateChronosMovementBobRuntime(
+      bobRuntimeRef.current,
+      locomotionRef.current,
+      camera,
+      delta
+    );
+    movementBobRef.current.horizontalX = movementBob.horizontalX;
+    movementBobRef.current.verticalY = movementBob.verticalY;
+  });
+
   return (
     <group position={[
       PHANTOM_VIEWMODEL_OFFSET.x,
@@ -2978,22 +3117,22 @@ function ChronosViewmodel({
       <ChronosPhantomForearm
         side={-1}
         materials={materials}
-        locomotionRef={locomotionRef}
+        movementBobRef={movementBobRef}
       />
       <ChronosPhantomForearm
         side={1}
         materials={materials}
-        locomotionRef={locomotionRef}
+        movementBobRef={movementBobRef}
       />
       <ChronosTriangleHand
         side={-1}
         materials={materials}
-        locomotionRef={locomotionRef}
+        movementBobRef={movementBobRef}
       />
       <ChronosTriangleHand
         side={1}
         materials={materials}
-        locomotionRef={locomotionRef}
+        movementBobRef={movementBobRef}
       />
     </group>
   );

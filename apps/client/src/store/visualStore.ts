@@ -36,6 +36,14 @@ export interface VisualState {
   /** High-frequency Blaze flamethrower pose for the held flame effect */
   flamethrowerOrigin: { x: number; y: number; z: number } | null;
   flamethrowerDirection: { x: number; y: number; z: number };
+
+  /** Current local movement snapshot for viewmodel-only animation. */
+  localViewmodelMovement: {
+    hasMovementInput: boolean;
+    isSprinting: boolean;
+    horizontalSpeed: number;
+    updatedAtMs: number;
+  };
 }
 
 // ============================================================================
@@ -50,6 +58,12 @@ const initialVisualState: VisualState = {
   interpolationTargets: new Map(),
   flamethrowerOrigin: null,
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
+  localViewmodelMovement: {
+    hasMovementInput: false,
+    isSprinting: false,
+    horizontalSpeed: 0,
+    updatedAtMs: 0,
+  },
 };
 
 // ============================================================================
@@ -101,6 +115,16 @@ export const setPlayerVisualPosition = (
  */
 export const setPlayerVisualRotation = (playerId: string, rotation: number): void => {
   visualStore.getState().playerRotations.set(playerId, rotation);
+};
+
+export const setLocalViewmodelMovement = (
+  movement: VisualState['localViewmodelMovement']
+): void => {
+  const current = visualStore.getState().localViewmodelMovement;
+  current.hasMovementInput = movement.hasMovementInput;
+  current.isSprinting = movement.isSprinting;
+  current.horizontalSpeed = movement.horizontalSpeed;
+  current.updatedAtMs = movement.updatedAtMs;
 };
 
 /**

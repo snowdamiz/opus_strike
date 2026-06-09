@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
   visualStore,
+  setLocalViewmodelMovement,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
   setFlamethrowerVisualPose,
@@ -286,6 +287,12 @@ export function PlayerController() {
     const now = Date.now();
 
     if (!localPlayer) {
+      setLocalViewmodelMovement({
+        hasMovementInput: false,
+        isSprinting: false,
+        horizontalSpeed: 0,
+        updatedAtMs: now,
+      });
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
@@ -324,8 +331,20 @@ export function PlayerController() {
     // grounding and server position sync alive instead of replaying stale input.
     const frameInput = isPointerLocked ? inputState : INACTIVE_INPUT_STATE;
     const devFlyMode = isDevFlyMode();
+    const hasMovementInput = (
+      frameInput.moveForward ||
+      frameInput.moveBackward ||
+      frameInput.moveLeft ||
+      frameInput.moveRight
+    );
 
     if (!isPlaying || localPlayer.state !== 'alive') {
+      setLocalViewmodelMovement({
+        hasMovementInput: false,
+        isSprinting: false,
+        horizontalSpeed: 0,
+        updatedAtMs: now,
+      });
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
@@ -367,6 +386,13 @@ export function PlayerController() {
         verticalInput * DEV_FLY_VERTICAL_SPEED,
         moveDirection.z * flySpeed
       );
+      const horizontalFlySpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+      setLocalViewmodelMovement({
+        hasMovementInput,
+        isSprinting: frameInput.sprint,
+        horizontalSpeed: horizontalFlySpeed,
+        updatedAtMs: now,
+      });
       position.x += velocity.x * dt;
       position.y += velocity.y * dt;
       position.z += velocity.z * dt;
@@ -747,6 +773,12 @@ export function PlayerController() {
 
     // Update walking sound
     const walkingSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    setLocalViewmodelMovement({
+      hasMovementInput,
+      isSprinting: movement.refs.isSprinting.current || frameInput.sprint,
+      horizontalSpeed: walkingSpeed,
+      updatedAtMs: now,
+    });
     updateWalkingSound(walkingSpeed, movement.refs.isGrounded.current, isSliding, heroStats.moveSpeed, justLanded);
 
     // Update camera
