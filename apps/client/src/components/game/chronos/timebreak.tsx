@@ -3,16 +3,17 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
-  CHRONOS_TIMEBREAK_RADIUS,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   type Team,
 } from '@voxel-strike/shared';
 import type { ChronosTimebreakData } from '../../../store/gameStore';
 import { useGameStore } from '../../../store/gameStore';
-import { SHARED_GEOMETRIES } from '../effectResources';
 
-const TIMEBREAK_SHOCKWAVE_DURATION_MS = 460;
+const TIMEBREAK_SHOCKWAVE_DURATION_MS = 520;
 const TIMEBREAK_COLOR = 0x22c55e;
 const CHRONOS_TIMEBREAK_ABILITY_ID = 'chronos_timebreak';
+const DEFAULT_TIMEBREAK_DIRECTION = { x: 0, y: 0, z: -1 };
 let timebreakEffectIdCounter = 0;
 
 interface Vec3Like {
@@ -26,6 +27,7 @@ interface AddChronosTimebreakEffectOptions {
   position: Vec3Like;
   ownerId: string;
   ownerTeam?: Team | null;
+  direction?: Vec3Like;
   startTime?: number;
   releaseTime?: number;
   duration?: number;
@@ -37,11 +39,14 @@ export function addChronosTimebreakEffect({
   position,
   ownerId,
   ownerTeam,
+  direction = DEFAULT_TIMEBREAK_DIRECTION,
   startTime = Date.now(),
   releaseTime = startTime,
-  duration = ABILITY_DEFINITIONS[CHRONOS_TIMEBREAK_ABILITY_ID]?.duration ?? 5,
-  radius = CHRONOS_TIMEBREAK_RADIUS,
+  duration = ABILITY_DEFINITIONS[CHRONOS_TIMEBREAK_ABILITY_ID]?.duration ?? 0,
+  radius = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
 }: AddChronosTimebreakEffectOptions): void {
+  const normalizedDirection = normalizeTimebreakDirection(direction);
+
   useGameStore.getState().addChronosTimebreak({
     id: id ?? `chronos_timebreak_${ownerId}_${timebreakEffectIdCounter++}`,
     position: {
@@ -49,6 +54,7 @@ export function addChronosTimebreakEffect({
       y: position.y,
       z: position.z,
     },
+    direction: normalizedDirection,
     startTime,
     releaseTime,
     duration,
@@ -58,6 +64,70 @@ export function addChronosTimebreakEffect({
   });
 }
 
+function normalizeTimebreakDirection(direction: Vec3Like): Vec3Like {
+  const length = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+  if (length <= 0.0001) return DEFAULT_TIMEBREAK_DIRECTION;
+
+  return {
+    x: direction.x / length,
+    y: 0,
+    z: direction.z / length,
+  };
+}
+
+function getYawFromDirection(direction: Vec3Like): number {
+  return Math.atan2(-direction.x, -direction.z);
+}
+
+function createShockwaveWedgeGeometry(segments = 36): THREE.BufferGeometry {
+  const positions: number[] = [0, 0, 0];
+  const indices: number[] = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = -CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE + t * CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE * 2;
+    positions.push(Math.sin(angle), 0, -Math.cos(angle));
+  }
+
+  for (let i = 1; i <= segments; i++) {
+    indices.push(0, i, i + 1);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function createShockwaveArcGeometry(segments = 36): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const indices: number[] = [];
+  const innerRadius = 0.94;
+  const outerRadius = 1;
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = -CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE + t * CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE * 2;
+    const x = Math.sin(angle);
+    const z = -Math.cos(angle);
+    positions.push(x * innerRadius, 0, z * innerRadius);
+    positions.push(x * outerRadius, 0, z * outerRadius);
+  }
+
+  for (let i = 0; i < segments; i++) {
+    const base = i * 2;
+    indices.push(base, base + 1, base + 2);
+    indices.push(base + 1, base + 3, base + 2);
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function createTimebreakShockwaveMaterial(color: number): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
     color,
@@ -65,19 +135,26 @@ function createTimebreakShockwaveMaterial(color: number): THREE.MeshBasicMateria
     opacity: 0,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
+    side: THREE.DoubleSide,
     toneMapped: false,
   });
 }
 
 function ChronosTimebreakEffect({ timebreak }: { timebreak: ChronosTimebreakData }) {
   const groupRef = useRef<THREE.Group>(null);
-  const shockwaveShellRef = useRef<THREE.Mesh>(null);
-  const shockwaveRingRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const shockwaveMaterial = useMemo(() => createTimebreakShockwaveMaterial(TIMEBREAK_COLOR), []);
+  const shockwaveFanRef = useRef<THREE.Mesh>(null);
+  const shockwaveArcRef = useRef<THREE.Mesh>(null);
+  const shockwaveFanMaterial = useMemo(() => createTimebreakShockwaveMaterial(TIMEBREAK_COLOR), []);
+  const shockwaveArcMaterial = useMemo(() => createTimebreakShockwaveMaterial(TIMEBREAK_COLOR), []);
+  const shockwaveFanGeometry = useMemo(() => createShockwaveWedgeGeometry(), []);
+  const shockwaveArcGeometry = useMemo(() => createShockwaveArcGeometry(), []);
 
   useEffect(() => () => {
-    shockwaveMaterial.dispose();
-  }, [shockwaveMaterial]);
+    shockwaveFanMaterial.dispose();
+    shockwaveArcMaterial.dispose();
+    shockwaveFanGeometry.dispose();
+    shockwaveArcGeometry.dispose();
+  }, [shockwaveArcGeometry, shockwaveArcMaterial, shockwaveFanGeometry, shockwaveFanMaterial]);
 
   useFrame(() => {
     const group = groupRef.current;
@@ -93,39 +170,24 @@ function ChronosTimebreakEffect({ timebreak }: { timebreak: ChronosTimebreakData
 
     const progress = THREE.MathUtils.clamp(elapsedMs / TIMEBREAK_SHOCKWAVE_DURATION_MS, 0, 1);
     const easedProgress = 1 - Math.pow(1 - progress, 3);
-    const shockwaveScale = THREE.MathUtils.lerp(0.06, 0.74, easedProgress);
+    const shockwaveScale = THREE.MathUtils.lerp(0.04, 1, easedProgress);
     const shockwaveOpacity = (1 - THREE.MathUtils.smoothstep(progress, 0.18, 1)) * 0.62;
 
     group.visible = true;
     group.position.set(timebreak.position.x, timebreak.position.y, timebreak.position.z);
+    group.rotation.y = getYawFromDirection(timebreak.direction);
 
-    shockwaveShellRef.current?.scale.setScalar(shockwaveScale);
-    shockwaveRingRefs.current.forEach((ring) => {
-      ring?.scale.set(shockwaveScale, shockwaveScale, 1);
-    });
-    shockwaveMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity, 0, 0.62);
+    const shockwaveReach = (timebreak.radius || CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE) * shockwaveScale;
+    shockwaveFanRef.current?.scale.set(shockwaveReach, 1, shockwaveReach);
+    shockwaveArcRef.current?.scale.set(shockwaveReach, 1, shockwaveReach);
+    shockwaveFanMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity * 0.32, 0, 0.22);
+    shockwaveArcMaterial.opacity = THREE.MathUtils.clamp(shockwaveOpacity, 0, 0.62);
   });
 
   return (
     <group ref={groupRef} visible={false} frustumCulled={false}>
-      <mesh ref={shockwaveShellRef} geometry={SHARED_GEOMETRIES.sphere16} material={shockwaveMaterial} scale={0.001} frustumCulled={false} />
-      {[
-        [Math.PI / 2, 0, 0],
-        [0, Math.PI / 2, 0],
-        [0, 0, Math.PI / 2],
-      ].map((rotation, index) => (
-        <mesh
-          key={index}
-          ref={(node) => {
-            shockwaveRingRefs.current[index] = node;
-          }}
-          geometry={SHARED_GEOMETRIES.ring24}
-          material={shockwaveMaterial}
-          rotation={rotation as [number, number, number]}
-          scale={[0.001, 0.001, 1]}
-          frustumCulled={false}
-        />
-      ))}
+      <mesh ref={shockwaveFanRef} geometry={shockwaveFanGeometry} material={shockwaveFanMaterial} scale={[0.001, 1, 0.001]} frustumCulled={false} />
+      <mesh ref={shockwaveArcRef} geometry={shockwaveArcGeometry} material={shockwaveArcMaterial} scale={[0.001, 1, 0.001]} frustumCulled={false} />
     </group>
   );
 }

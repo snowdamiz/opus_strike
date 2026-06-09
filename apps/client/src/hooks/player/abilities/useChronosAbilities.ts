@@ -5,8 +5,8 @@ import {
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
-  CHRONOS_TIMEBREAK_RADIUS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   type Player,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -47,12 +47,7 @@ export interface UseChronosAbilitiesReturn {
   executeLifelineConduit: (ctx: AbilityContext, useAbilityCharge: (abilityId: string) => boolean) => boolean;
   executeTimebreak: (
     ctx: AbilityContext,
-    setAbilityActive: (
-      abilityId: string,
-      active: boolean,
-      options?: { startTime?: number; startCooldownOnEnd?: boolean }
-    ) => void,
-    updateLocalPlayer: (data: Partial<Player>) => void
+    startClientCooldown: (abilityId: string) => void
   ) => boolean;
   fireVerdantPulse: (ctx: AbilityContext) => void;
 }
@@ -320,37 +315,16 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
 
   const executeTimebreak = useCallback((
     ctx: AbilityContext,
-    setAbilityActive: (
-      abilityId: string,
-      active: boolean,
-      options?: { startTime?: number; startCooldownOnEnd?: boolean }
-    ) => void,
-    updateLocalPlayer: (data: Partial<Player>) => void
+    startClientCooldown: (abilityId: string) => void
   ): boolean => {
     const now = Date.now();
-    const releaseAt = now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
-    const duration = ABILITY_DEFINITIONS[CHRONOS_TIMEBREAK_ABILITY_ID]?.duration ?? 5;
+    const duration = ABILITY_DEFINITIONS[CHRONOS_TIMEBREAK_ABILITY_ID]?.duration ?? 0;
+    const shockwaveDirection = calculateLookDirection(ctx.yaw, 0);
 
     timebreakIdRef.current++;
     const timebreakId = `chronos_timebreak_${ctx.localPlayer.id}_${timebreakIdRef.current}`;
 
-    const currentAbilities = useGameStore.getState().localPlayer?.abilities ?? {};
-    setAbilityActive(CHRONOS_TIMEBREAK_ABILITY_ID, true, {
-      startTime: releaseAt,
-      startCooldownOnEnd: true,
-    });
-    updateLocalPlayer({
-      abilities: {
-        ...currentAbilities,
-        [CHRONOS_TIMEBREAK_ABILITY_ID]: {
-          abilityId: CHRONOS_TIMEBREAK_ABILITY_ID,
-          cooldownRemaining: 0,
-          charges: 1,
-          isActive: true,
-          activatedAt: releaseAt,
-        },
-      },
-    });
+    startClientCooldown(CHRONOS_TIMEBREAK_ABILITY_ID);
     triggerChronosTimebreakPose(now);
 
     window.setTimeout(() => {
@@ -369,10 +343,11 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
         position: sourcePosition,
         ownerId: ctx.localPlayer.id,
         ownerTeam: ctx.localPlayer.team as 'red' | 'blue' | undefined,
+        direction: shockwaveDirection,
         startTime: now,
         releaseTime: releasedAt,
         duration,
-        radius: CHRONOS_TIMEBREAK_RADIUS,
+        radius: CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
       });
     }, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS);
 

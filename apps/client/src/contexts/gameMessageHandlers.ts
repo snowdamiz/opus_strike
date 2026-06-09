@@ -4,6 +4,7 @@ import { CHRONOS_TIMEBREAK_RELEASE_DELAY_MS } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import {
+  pushLocalPlayerImpulse,
   setChronosAegisVisualState,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
@@ -919,6 +920,7 @@ export function setupCombatHandlers(room: Room) {
     abilityId: string;
     success?: boolean;
     position?: { x: number; y: number; z: number };
+    shockwaveDirection?: { x: number; y: number; z: number };
     releaseAt?: number;
     radius?: number;
     duration?: number;
@@ -931,10 +933,14 @@ export function setupCombatHandlers(room: Room) {
     if (data.abilityId === 'chronos_timebreak') {
       if (data.playerId === localPlayerId) return;
 
-      const caster = store.players.get(data.playerId);
-      const casterPosition = data.position ?? store.players.get(data.playerId)?.position;
-      if (casterPosition) {
-        const now = Date.now();
+      const now = Date.now();
+      const releaseTime = data.releaseAt ?? now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
+      window.setTimeout(() => {
+        const freshStore = useGameStore.getState();
+        const caster = freshStore.players.get(data.playerId);
+        const casterPosition = caster?.position ?? data.position;
+        if (!casterPosition) return;
+
         addChronosTimebreakEffect({
           id: `chronos_timebreak_remote_${data.playerId}_${data.releaseAt ?? now}`,
           position: {
@@ -944,12 +950,13 @@ export function setupCombatHandlers(room: Room) {
           },
           ownerId: data.playerId,
           ownerTeam: caster?.team as Team | undefined,
+          direction: data.shockwaveDirection,
           startTime: now,
-          releaseTime: data.releaseAt ?? now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+          releaseTime,
           duration: data.duration,
           radius: data.radius,
         });
-      }
+      }, Math.max(0, releaseTime - now));
       return;
     }
 
@@ -961,6 +968,14 @@ export function setupCombatHandlers(room: Room) {
         triggerAirStrike(casterPosition);
       }
     }
+  });
+
+  room.onMessage('chronosTimebreakImpulse', (data: {
+    sourceId: string;
+    sourcePosition: { x: number; y: number; z: number };
+    impulse: { x: number; y: number; z: number };
+  }) => {
+    pushLocalPlayerImpulse(data.impulse);
   });
 }
 

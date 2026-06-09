@@ -3,7 +3,7 @@ import {
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
-  CHRONOS_TIMEBREAK_RADIUS,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
 } from '@voxel-strike/shared';
 
 export class ChronosHero extends HeroBase {
@@ -43,7 +43,7 @@ export class ChronosHero extends HeroBase {
       effect: {
         type: 'timebreak',
         position: context.position,
-        radius: CHRONOS_TIMEBREAK_RADIUS,
+        radius: CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
       },
     };
   }

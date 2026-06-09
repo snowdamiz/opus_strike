@@ -27,10 +27,13 @@ export const CHRONOS_LIFELINE_MAX_TARGETS = 3;
 export const CHRONOS_LIFELINE_BEAM_DURATION_MS = 620;
 export const CHRONOS_LIFELINE_SOURCE_HEIGHT = 1.18;
 export const CHRONOS_LIFELINE_TARGET_HEIGHT = 1.02;
-export const CHRONOS_TIMEBREAK_RADIUS = 11;
+export const CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE = 11;
+export const CHRONOS_TIMEBREAK_RADIUS = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
+export const CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE = Math.PI / 5;
+export const CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE = 13.5;
+export const CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE = 3.2;
+export const CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS = 650;
 export const CHRONOS_TIMEBREAK_RELEASE_DELAY_MS = 420;
-export const CHRONOS_TIMEBREAK_ALLY_SPEED_MULTIPLIER = 1.18;
-export const CHRONOS_TIMEBREAK_ENEMY_SPEED_MULTIPLIER = 0.72;
 
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
@@ -257,10 +260,9 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     id: 'chronos_timebreak',
     name: 'Timebreak',
     type: 'utility',
-    targeting: 'area',
+    targeting: 'direction',
     cooldown: 20,
-    duration: 5,
-    description: 'Distort time around the fight, slowing enemy heroes while speeding allied movement, ability flow, and actions.',
+    description: 'Send a forward temporal shockwave that knocks enemy heroes away from Chronos.',
   },
   chronos_ascendant_paradox: {
     id: 'chronos_ascendant_paradox',

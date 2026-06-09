@@ -34,10 +34,12 @@ import {
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
-  CHRONOS_TIMEBREAK_ALLY_SPEED_MULTIPLIER,
-  CHRONOS_TIMEBREAK_ENEMY_SPEED_MULTIPLIER,
-  CHRONOS_TIMEBREAK_RADIUS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
+  CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   UNSTUCK_COOLDOWN_MS,
@@ -106,13 +108,6 @@ type PlainVec2 = { x: number; z: number };
 interface PhantomPrimaryMagazineState {
   ammo: number;
   reloadUntil: number;
-}
-
-interface ActiveChronosTimebreakSource {
-  team: Team;
-  x: number;
-  y: number;
-  z: number;
 }
 
 interface BotBrain {
@@ -359,8 +354,6 @@ export class GameRoom extends Room<GameState> {
   private knownPlayerIds = new Set<string>();
   private alivePlayers: Player[] = [];
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
-  private activeChronosTimebreakSources: ActiveChronosTimebreakSource[] = [];
-  private chronosTimebreakTempoByPlayerId = new Map<string, number>();
   private losCache = new Map<string, { result: boolean; expiresAt: number }>();
   private preferredBotHeroes: Map<string, HeroId> = new Map();
 
@@ -646,7 +639,6 @@ export class GameRoom extends Room<GameState> {
     this.state.serverTime = Date.now();
     const dt = TICK_INTERVAL_MS / 1000;
     this.rebuildPlayerSpatialIndex();
-    this.rebuildChronosTimebreakTempoCache(this.state.serverTime);
     if (this.metrics) {
       this.metrics.time('updateBots', () => this.updateBots(this.state.serverTime, dt));
     } else {
@@ -1344,6 +1336,17 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
+    const shockwaveDirection = result.abilityId === 'chronos_timebreak'
+      ? this.getForwardVector(player.lookYaw, 0)
+      : undefined;
+    if (shockwaveDirection) {
+      this.scheduleChronosTimebreakShockwave(
+        player.id,
+        shockwaveDirection,
+        result.abilityState.activatedAt || Date.now() + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS
+      );
+    }
+
     // Broadcast ability use
     this.broadcast('abilityUsed', {
       playerId: player.id,
@@ -1357,11 +1360,12 @@ export class GameRoom extends Room<GameState> {
         ? result.abilityState.activatedAt
         : undefined,
       radius: result.abilityId === 'chronos_timebreak'
-        ? CHRONOS_TIMEBREAK_RADIUS
+        ? CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE
         : undefined,
       duration: result.abilityId === 'chronos_timebreak'
         ? result.abilityDef.duration
         : undefined,
+      shockwaveDirection,
     });
   }
 
@@ -1830,6 +1834,89 @@ export class GameRoom extends Room<GameState> {
     target.position.z += dz / len * distance;
   }
 
+  private scheduleChronosTimebreakShockwave(
+    casterId: string,
+    castDirection: PlainVec3,
+    releaseAt: number
+  ): void {
+    const delayMs = Math.max(0, releaseAt - Date.now());
+    setTimeout(() => {
+      this.applyChronosTimebreakShockwave(casterId, castDirection);
+    }, delayMs);
+  }
+
+  private applyChronosTimebreakShockwave(casterId: string, castDirection: PlainVec3): void {
+    const caster = this.state.players.get(casterId);
+    if (!caster || caster.state !== 'alive') return;
+    if (caster.team !== 'red' && caster.team !== 'blue') return;
+
+    const forward = this.normalizeHorizontalPlain(castDirection);
+    if (!forward) return;
+
+    const origin = this.vec3SchemaToPlain(caster.position);
+    const range = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
+    const minForwardDot = Math.cos(CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE);
+    const maxVerticalDelta = 4.5;
+    const now = Date.now();
+
+    this.state.players.forEach((target) => {
+      if (target.id === caster.id) return;
+      if (target.state !== 'alive') return;
+      if (target.team === caster.team) return;
+
+      const dx = target.position.x - origin.x;
+      const dy = target.position.y - origin.y;
+      const dz = target.position.z - origin.z;
+      if (Math.abs(dy) > maxVerticalDelta) return;
+
+      const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+      if (horizontalDistance > range) return;
+
+      const away = horizontalDistance > 0.001
+        ? { x: dx / horizontalDistance, z: dz / horizontalDistance }
+        : { x: forward.x, z: forward.z };
+      const forwardDot = away.x * forward.x + away.z * forward.z;
+      if (forwardDot < minForwardDot) return;
+
+      const falloff = 1 - horizontalDistance / range * 0.35;
+      const knockbackSpeed = CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE * falloff;
+      const verticalSpeed = CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE * falloff;
+      const currentAwaySpeed = target.velocity.x * away.x + target.velocity.z * away.z;
+      const horizontalBoost = Math.max(0, knockbackSpeed - currentAwaySpeed);
+
+      const impulse = {
+        x: away.x * horizontalBoost,
+        y: Math.max(0, verticalSpeed - target.velocity.y),
+        z: away.z * horizontalBoost,
+      };
+      if (impulse.x === 0 && impulse.y === 0 && impulse.z === 0) return;
+
+      target.velocity.x += impulse.x;
+      target.velocity.y += impulse.y;
+      target.velocity.z += impulse.z;
+      target.movement.isGrounded = false;
+      target.movement.isSliding = false;
+      target.movement.slideTimeRemaining = 0;
+      this.authoritativePositionUntil.set(target.id, now + CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS);
+
+      const targetClient = this.clients.find((client) => client.sessionId === target.id);
+      targetClient?.send('chronosTimebreakImpulse', {
+        sourceId: caster.id,
+        sourcePosition: origin,
+        impulse,
+      });
+    });
+  }
+
+  private normalizeHorizontalPlain(vector: { x: number; z: number }): { x: number; z: number } | null {
+    const length = Math.sqrt(vector.x * vector.x + vector.z * vector.z);
+    if (length <= 0.0001) return null;
+    return {
+      x: vector.x / length,
+      z: vector.z / length,
+    };
+  }
+
   private getActiveSpeedMultiplier(player: Player): number {
     let multiplier = 1;
     if (player.abilities.get('phantom_veil')?.isActive) multiplier *= 1.3;
@@ -1838,54 +1925,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getChronosTimebreakTempoMultiplier(player: Player): number {
-    return this.chronosTimebreakTempoByPlayerId.get(player.id) ?? 1;
-  }
-
-  private rebuildChronosTimebreakTempoCache(now: number): void {
-    this.activeChronosTimebreakSources.length = 0;
-    this.chronosTimebreakTempoByPlayerId.clear();
-
-    const radiusSq = CHRONOS_TIMEBREAK_RADIUS * CHRONOS_TIMEBREAK_RADIUS;
-    const durationMs = (ABILITY_DEFINITIONS.chronos_timebreak?.duration ?? 0) * 1000;
-
-    for (const caster of this.alivePlayers) {
-      if (caster.state !== 'alive' || caster.heroId !== 'chronos') continue;
-
-      const timebreak = caster.abilities.get('chronos_timebreak');
-      const activatedAt = timebreak?.activatedAt ?? 0;
-      if (!timebreak?.isActive || now < activatedAt) continue;
-      if (durationMs > 0 && now - activatedAt >= durationMs) continue;
-
-      if (caster.team !== 'red' && caster.team !== 'blue') continue;
-      this.activeChronosTimebreakSources.push({
-        team: caster.team,
-        x: caster.position.x,
-        y: caster.position.y,
-        z: caster.position.z,
-      });
-    }
-
-    if (this.activeChronosTimebreakSources.length === 0) return;
-
-    for (const player of this.alivePlayers) {
-      let multiplier = 1;
-
-      for (const source of this.activeChronosTimebreakSources) {
-        const dx = player.position.x - source.x;
-        const dy = player.position.y - source.y;
-        const dz = player.position.z - source.z;
-        if (dx * dx + dy * dy + dz * dz > radiusSq) continue;
-
-        multiplier *= source.team === player.team
-          ? CHRONOS_TIMEBREAK_ALLY_SPEED_MULTIPLIER
-          : CHRONOS_TIMEBREAK_ENEMY_SPEED_MULTIPLIER;
-      }
-
-      const clamped = Math.max(0.35, Math.min(1.65, multiplier));
-      if (clamped !== 1) {
-        this.chronosTimebreakTempoByPlayerId.set(player.id, clamped);
-      }
-    }
+    return 1;
   }
 
   private updateTimeScaledSkillTimers(

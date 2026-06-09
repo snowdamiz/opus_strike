@@ -138,6 +138,7 @@ export interface ChronosPulseData {
 export interface ChronosTimebreakData {
   id: string;
   position: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
   startTime: number;
   releaseTime: number;
   duration: number;

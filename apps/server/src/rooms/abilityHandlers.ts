@@ -8,7 +8,7 @@ import {
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
-const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set(['chronos_timebreak']);
+const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>();
 
 // ============================================================================
 // VOID ZONE CONFIGURATION
@@ -302,7 +302,6 @@ export function executeAbility(
 
     // ===== CHRONOS ABILITIES =====
     case 'chronos_timebreak': {
-      abilityState.isActive = true;
       abilityState.activatedAt = now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
       break;
     }

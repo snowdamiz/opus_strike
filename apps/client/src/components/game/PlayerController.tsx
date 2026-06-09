@@ -16,6 +16,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
+  consumeLocalPlayerImpulses,
   visualStore,
   setChronosAegisVisualState,
   setLocalViewmodelMovement,
@@ -496,6 +497,22 @@ export function PlayerController() {
       position.set(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z);
     }
     const velocity = movement.refs.velocity.current;
+    const localImpulses = consumeLocalPlayerImpulses();
+    for (const impulse of localImpulses) {
+      velocity.x += impulse.x;
+      velocity.y += impulse.y;
+      velocity.z += impulse.z;
+      if (impulse.y > 0) {
+        movement.refs.isGrounded.current = false;
+        movement.refs.wasGrounded.current = false;
+        movement.refs.canJump.current = false;
+        movement.refs.smoothedY.current = null;
+      }
+      if (impulse.x !== 0 || impulse.z !== 0) {
+        movement.refs.isSliding.current = false;
+        movement.refs.slideTime.current = 0;
+      }
+    }
     if (
       movement.refs.smoothedY.current !== null &&
       Math.abs(position.y - movement.refs.smoothedY.current) > 1.5
@@ -664,8 +681,7 @@ export function PlayerController() {
           } else if (heroId === 'chronos') {
             chronosAbilities.executeTimebreak(
               abilityCtx,
-              abilitySystem.setAbilityActive,
-              updateLocalPlayer
+              abilitySystem.startClientCooldown
             );
           }
         }

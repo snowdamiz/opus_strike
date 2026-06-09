@@ -777,7 +777,7 @@ function HUDSkillSlot({
   const canTrackAbility = Boolean(abilityId && abilityDef);
   const maxCharges = abilityDef?.charges || 1;
   const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef?.cooldown || skill.cooldown || 0);
-  const cooldownStartsAfterActive = abilityId === 'chronos_timebreak';
+  const cooldownStartsAfterActive = false;
 
   const now = Date.now();
   const isActive = canTrackAbility

@@ -47,6 +47,13 @@ export interface VisualState {
     horizontalSpeed: number;
     updatedAtMs: number;
   };
+
+  /** Server-authoritative local velocity impulses to consume in PlayerController. */
+  localPlayerImpulses: Array<{
+    x: number;
+    y: number;
+    z: number;
+  }>;
 }
 
 // ============================================================================
@@ -68,6 +75,7 @@ const initialVisualState: VisualState = {
     horizontalSpeed: 0,
     updatedAtMs: 0,
   },
+  localPlayerImpulses: [],
 };
 
 // ============================================================================
@@ -129,6 +137,22 @@ export const setLocalViewmodelMovement = (
   current.isSprinting = movement.isSprinting;
   current.horizontalSpeed = movement.horizontalSpeed;
   current.updatedAtMs = movement.updatedAtMs;
+};
+
+export const pushLocalPlayerImpulse = (impulse: { x: number; y: number; z: number }): void => {
+  visualStore.getState().localPlayerImpulses.push({
+    x: impulse.x,
+    y: impulse.y,
+    z: impulse.z,
+  });
+};
+
+export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses'] => {
+  const impulses = visualStore.getState().localPlayerImpulses;
+  if (impulses.length === 0) return [];
+
+  visualStore.setState({ localPlayerImpulses: [] });
+  return impulses;
 };
 
 /**
