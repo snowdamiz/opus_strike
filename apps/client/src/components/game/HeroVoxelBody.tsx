@@ -401,6 +401,7 @@ const WALK_LEG_STRAFE = 0.025;
 const WALK_LEG_LIFT = 0.018;
 const WALK_ARM_PITCH = 0.3;
 const WALK_ARM_STRAFE_ROLL = 0.18;
+const CHRONOS_WALK_ARM_ARC_SCALE = 0.58;
 const WALK_KNEE_BEND = 0.14;
 const WALK_SUPPORT_KNEE_BEND = 0.035;
 const SLIDE_KNEE_HINGE_SPEED = 8.2;
@@ -427,6 +428,7 @@ interface HeroMovementProfile {
   legLift: number;
   armPitch: number;
   armStrafeRoll: number;
+  armArcScale: number;
   kneeBend: number;
   supportKneeBend: number;
   rootPitch: number;
@@ -451,6 +453,7 @@ function lerpMovementProfile(
     legLift: THREE.MathUtils.lerp(from.legLift, to.legLift, t),
     armPitch: THREE.MathUtils.lerp(from.armPitch, to.armPitch, t),
     armStrafeRoll: THREE.MathUtils.lerp(from.armStrafeRoll, to.armStrafeRoll, t),
+    armArcScale: THREE.MathUtils.lerp(from.armArcScale, to.armArcScale, t),
     kneeBend: THREE.MathUtils.lerp(from.kneeBend, to.kneeBend, t),
     supportKneeBend: THREE.MathUtils.lerp(from.supportKneeBend, to.supportKneeBend, t),
     rootPitch: THREE.MathUtils.lerp(from.rootPitch, to.rootPitch, t),
@@ -471,6 +474,7 @@ const HERO_MOVEMENT_PROFILES: Record<HeroMovementPose, HeroMovementProfile> = {
     legLift: WALK_LEG_LIFT,
     armPitch: WALK_ARM_PITCH,
     armStrafeRoll: WALK_ARM_STRAFE_ROLL,
+    armArcScale: 1,
     kneeBend: WALK_KNEE_BEND,
     supportKneeBend: WALK_SUPPORT_KNEE_BEND,
     rootPitch: 0.035,
@@ -488,6 +492,7 @@ const HERO_MOVEMENT_PROFILES: Record<HeroMovementPose, HeroMovementProfile> = {
     legLift: 0.012,
     armPitch: 0.16,
     armStrafeRoll: 0.1,
+    armArcScale: 1,
     kneeBend: 0.08,
     supportKneeBend: 0.025,
     rootPitch: 0.02,
@@ -505,6 +510,7 @@ const HERO_MOVEMENT_PROFILES: Record<HeroMovementPose, HeroMovementProfile> = {
     legLift: 0.04,
     armPitch: 0.58,
     armStrafeRoll: 0.23,
+    armArcScale: 1,
     kneeBend: 0.27,
     supportKneeBend: 0.055,
     rootPitch: 0.09,
@@ -514,6 +520,19 @@ const HERO_MOVEMENT_PROFILES: Record<HeroMovementPose, HeroMovementProfile> = {
     glowPulse: 0.12,
   },
 };
+
+const CHRONOS_WALK_MOVEMENT_PROFILE: HeroMovementProfile = {
+  ...HERO_MOVEMENT_PROFILES.walk,
+  armArcScale: CHRONOS_WALK_ARM_ARC_SCALE,
+};
+
+function getHeroMovementProfile(heroId: HeroId, pose: HeroMovementPose): HeroMovementProfile {
+  if (heroId === 'chronos' && pose === 'walk') {
+    return CHRONOS_WALK_MOVEMENT_PROFILE;
+  }
+
+  return HERO_MOVEMENT_PROFILES[pose];
+}
 const HERO_BONE_PIVOTS: Record<HeroBoneName, [number, number, number]> = {
   aura: [0, 0, 0],
   hips: [0, 0.72, 0.02],
@@ -894,10 +913,11 @@ function applyWalkLimbPose(
     return;
   }
 
-  bone.rotation.x += direction.forward * phase * profile.armPitch * amount;
-  bone.rotation.z += direction.right * phase * profile.armStrafeRoll * amount;
-  bone.position.x += direction.right * phase * 0.035 * amount;
-  bone.position.z += -direction.forward * phase * 0.045 * amount;
+  const armAmount = amount * profile.armArcScale;
+  bone.rotation.x += direction.forward * phase * profile.armPitch * armAmount;
+  bone.rotation.z += direction.right * phase * profile.armStrafeRoll * armAmount;
+  bone.position.x += direction.right * phase * 0.035 * armAmount;
+  bone.position.z += -direction.forward * phase * 0.045 * armAmount;
 }
 
 function applyWalkLegPose(
@@ -1522,6 +1542,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   showTeamAccents = true,
   castShadow = true,
 }: HeroVoxelBodyProps) {
+  const resolvedHero = heroId || 'phantom';
   const groupRef = useRef<THREE.Group>(null);
   const boneRefs = useRef<HeroBoneRefs>({});
   const idleBlendRef = useRef(isMoving || isJumping || isCrouching || isSliding || isAttacking ? 0 : 1);
@@ -1531,13 +1552,16 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const slideBlendRef = useRef(isSliding && !isJumping ? 1 : 0);
   const attackBlendRef = useRef(isAttacking ? 1 : 0);
   const targetMovementPoseRef = useRef<HeroMovementPose>(movementPose);
-  const previousMovementProfileRef = useRef<HeroMovementProfile>(HERO_MOVEMENT_PROFILES[movementPose]);
-  const currentMovementProfileRef = useRef<HeroMovementProfile>(HERO_MOVEMENT_PROFILES[movementPose]);
+  const previousMovementProfileRef = useRef<HeroMovementProfile>(
+    getHeroMovementProfile(resolvedHero, movementPose)
+  );
+  const currentMovementProfileRef = useRef<HeroMovementProfile>(
+    getHeroMovementProfile(resolvedHero, movementPose)
+  );
   const movementProfileBlendRef = useRef(1);
   const movementCycleRef = useRef(0);
   const wasJumpingRef = useRef(false);
   const jumpStartedAtRef = useRef<number | null>(null);
-  const resolvedHero = heroId || 'phantom';
   const scale = height / 1.8;
   const initialVerticalScale = Math.max(0.45, Math.min(1, postureScaleY));
   const teamColor = TEAM_COLORS[team];
@@ -1582,7 +1606,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const sliding = isSlidingRef?.current ?? isSliding;
     const attacking = isAttackingRef?.current ?? isAttacking;
     const nextMovementPose = movementPoseRef?.current ?? movementPose;
-    const nextMovementProfile = HERO_MOVEMENT_PROFILES[nextMovementPose];
+    const nextMovementProfile = getHeroMovementProfile(resolvedHero, nextMovementPose);
     idleBlendRef.current = idleIntensity > 0 && !moving && !jumping && !crouching && !sliding && !attacking ? 1 : 0;
     movementBlendRef.current = moving && !jumping && !sliding ? 1 : 0;
     crouchBlendRef.current = crouching && !jumping && !sliding ? 1 : 0;
@@ -1643,7 +1667,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     );
     const movementProfile = lerpMovementProfile(
       previousMovementProfileRef.current,
-      HERO_MOVEMENT_PROFILES[targetMovementPoseRef.current],
+      getHeroMovementProfile(resolvedHero, targetMovementPoseRef.current),
       movementProfileBlendRef.current
     );
     currentMovementProfileRef.current = movementProfile;
