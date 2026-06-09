@@ -21,6 +21,13 @@ export const PHANTOM_PRIMARY_MAGAZINE_SIZE = 12;
 export const PHANTOM_PRIMARY_RELOAD_SECONDS = 2;
 export const PHANTOM_PRIMARY_RELOAD_MS = PHANTOM_PRIMARY_RELOAD_SECONDS * 1000;
 
+export const CHRONOS_LIFELINE_RADIUS = 14;
+export const CHRONOS_LIFELINE_HEAL = 40;
+export const CHRONOS_LIFELINE_MAX_TARGETS = 3;
+export const CHRONOS_LIFELINE_BEAM_DURATION_MS = 620;
+export const CHRONOS_LIFELINE_SOURCE_HEIGHT = 1.18;
+export const CHRONOS_LIFELINE_TARGET_HEIGHT = 1.02;
+
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
     id: 'phantom',
@@ -240,7 +247,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 15,
     charges: 3,
     chargeRegenTime: 15,
-    description: 'Auto-target allies in the area and send green healing beams to them. 3 charges; cooldown begins after all charges are spent.',
+    description: 'Auto-target up to 3 teammates in the area and send green healing beams to them. 3 charges; cooldown begins after all charges are spent.',
   },
   chronos_timebreak: {
     id: 'chronos_timebreak',

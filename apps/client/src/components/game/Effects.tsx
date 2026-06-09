@@ -1,13 +1,15 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { readViewmodelSocket } from '../../viewmodel/viewmodelSocketRegistry';
 
 interface Effect {
   id: string;
-  type: 'grapple' | 'blink' | 'explosion' | 'hit';
+  type: 'grapple' | 'blink' | 'explosion' | 'hit' | 'lifeline' | 'heal';
   position: THREE.Vector3;
   direction?: THREE.Vector3;
   endPosition?: THREE.Vector3;
+  sourceSocketName?: string;
   startTime: number;
   duration: number;
 }
@@ -19,6 +21,8 @@ const EXPLOSION_PARTICLE_INDICES = Array.from({ length: 20 }, (_, i) => i);
 const BLINK_RING_GEOMETRY = new THREE.RingGeometry(0.5, 0.7, 6);
 const EXPLOSION_BOX_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
 const HIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.3, 8, 8);
+const LIFELINE_BEAM_GEOMETRY = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
+const LIFELINE_AXIS = new THREE.Vector3(0, 1, 0);
 
 export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
   effects.push({
@@ -72,6 +76,10 @@ export function Effects() {
             return <ExplosionEffect key={effect.id} effect={effect} />;
           case 'hit':
             return <HitEffect key={effect.id} effect={effect} />;
+          case 'lifeline':
+            return <LifelineBeamEffect key={effect.id} effect={effect} />;
+          case 'heal':
+            return <HealPulseEffect key={effect.id} effect={effect} />;
           default:
             return null;
         }
@@ -226,5 +234,135 @@ function HitEffect({ effect }: EffectProps) {
         opacity={1}
       />
     </mesh>
+  );
+}
+
+function LifelineBeamEffect({ effect }: EffectProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const beamRef = useRef<THREE.Mesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
+  const progress = useRef(0);
+  const source = useMemo(() => new THREE.Vector3(), []);
+  const end = useMemo(() => new THREE.Vector3(), []);
+  const midpoint = useMemo(() => new THREE.Vector3(), []);
+  const direction = useMemo(() => new THREE.Vector3(), []);
+  const quaternion = useMemo(() => new THREE.Quaternion(), []);
+
+  useFrame((_, delta) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const socketPose = effect.sourceSocketName
+      ? readViewmodelSocket(effect.sourceSocketName)
+      : null;
+    source.copy(socketPose?.position ?? effect.position);
+    end.copy(effect.endPosition ?? source);
+    direction.copy(end).sub(source);
+    const length = Math.max(0.001, direction.length());
+    direction.normalize();
+    midpoint.copy(source).add(end).multiplyScalar(0.5);
+    quaternion.setFromUnitVectors(LIFELINE_AXIS, direction);
+    group.position.copy(midpoint);
+    group.quaternion.copy(quaternion);
+
+    progress.current += delta / (effect.duration / 1000);
+    const t = Math.min(1, progress.current);
+    const fade = Math.sin((1 - t) * Math.PI * 0.5);
+    const beamRadius = 0.74 + Math.sin(t * Math.PI * 4) * 0.08;
+
+    if (beamRef.current) {
+      const mat = beamRef.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.72 * fade;
+      beamRef.current.scale.set(beamRadius, length, beamRadius);
+    }
+
+    if (glowRef.current) {
+      const mat = glowRef.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.2 * fade;
+      glowRef.current.scale.set(beamRadius * 2.4, length, beamRadius * 2.4);
+    }
+  });
+
+  return (
+    <group ref={groupRef} position={effect.position}>
+      <mesh
+        ref={glowRef}
+        geometry={LIFELINE_BEAM_GEOMETRY}
+        scale={[1.8, 1, 1.8]}
+      >
+        <meshBasicMaterial
+          color="#22c55e"
+          transparent
+          opacity={0.2}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh
+        ref={beamRef}
+        geometry={LIFELINE_BEAM_GEOMETRY}
+        scale={[0.74, 1, 0.74]}
+      >
+        <meshBasicMaterial
+          color="#bbf7d0"
+          transparent
+          opacity={0.72}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function HealPulseEffect({ effect }: EffectProps) {
+  const sphereRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const progress = useRef(0);
+
+  useFrame((_, delta) => {
+    progress.current += delta / (effect.duration / 1000);
+    const t = Math.min(1, progress.current);
+    const fade = 1 - t;
+
+    if (sphereRef.current) {
+      const mat = sphereRef.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.46 * fade;
+      sphereRef.current.scale.setScalar(0.7 + t * 1.45);
+    }
+
+    if (ringRef.current) {
+      const mat = ringRef.current.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.62 * fade;
+      ringRef.current.scale.setScalar(0.45 + t * 1.35);
+    }
+  });
+
+  return (
+    <group position={effect.position}>
+      <mesh ref={sphereRef} geometry={HIT_SPHERE_GEOMETRY}>
+        <meshBasicMaterial
+          color="#86efac"
+          transparent
+          opacity={0.46}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+      <mesh ref={ringRef} geometry={BLINK_RING_GEOMETRY} rotation={[Math.PI / 2, 0, 0]}>
+        <meshBasicMaterial
+          color="#bbf7d0"
+          transparent
+          opacity={0.62}
+          side={THREE.DoubleSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
+    </group>
   );
 }

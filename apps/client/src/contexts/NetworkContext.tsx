@@ -61,6 +61,8 @@ interface NetworkContextType {
   setDevFly: (enabled: boolean) => void;
   setDevImmune: (enabled: boolean) => void;
   setDevTimeFrozen: (enabled: boolean) => void;
+  setDevBotsRooted: (enabled: boolean) => void;
+  addGameBot: (heroId: HeroId, team: Team) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
 
@@ -707,6 +709,16 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('setDevTimeFrozen', { enabled });
   }, []);
 
+  const setDevBotsRooted = useCallback((enabled: boolean) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('setDevBotsRooted', { enabled });
+  }, []);
+
+  const addGameBot = useCallback((heroId: HeroId, team: Team) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('devAddBot', { heroId, team });
+  }, []);
+
   const selectTeam = useCallback((team: Team) => {
     loggers.network.debug('sending selectTeam', team);
     gameRoomRef.current?.send('selectTeam', { team });
@@ -771,6 +783,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setDevFly,
       setDevImmune,
       setDevTimeFrozen,
+      setDevBotsRooted,
+      addGameBot,
       selectTeam,
       setReady,
       spawnNpc,

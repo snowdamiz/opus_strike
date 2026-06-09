@@ -1,5 +1,11 @@
 import { useCallback, useRef } from 'react';
 import * as THREE from 'three';
+import {
+  CHRONOS_LIFELINE_HEAL,
+  CHRONOS_LIFELINE_MAX_TARGETS,
+  CHRONOS_LIFELINE_RADIUS,
+  type Player,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../usePhysics';
 import {
@@ -11,9 +17,11 @@ import {
   calculatePlayerSocketPosition,
 } from '../constants';
 import {
+  CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_PRIMARY_FIRE_READY_BLEND,
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   getChronosPrimaryHeldBlend,
+  triggerChronosLifelineConduitPose,
   triggerChronosPrimaryShotGlow,
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../../viewmodel/chronosPose';
@@ -23,16 +31,25 @@ import {
   sampleViewmodelPose,
   type ViewmodelSocketPose,
 } from '../../../viewmodel/viewmodelSocketRegistry';
+import { addChronosLifelineEffects } from '../../../components/game/chronos/lifeline';
 import type { AbilityContext } from '../types';
 
 export interface UseChronosAbilitiesReturn {
   lastPulseTimeRef: React.MutableRefObject<number>;
   pulseIdRef: React.MutableRefObject<number>;
+  executeLifelineConduit: (ctx: AbilityContext, useAbilityCharge: (abilityId: string) => boolean) => boolean;
   fireVerdantPulse: (ctx: AbilityContext) => void;
 }
 
 const CHRONOS_PRIMARY_AIM_DISTANCE = 120;
 const CHRONOS_PRIMARY_PULSE_SPAWN_FORWARD_OFFSET = 0.82;
+const CHRONOS_LIFELINE_ABILITY_ID = 'chronos_lifeline_conduit';
+
+interface LifelineTargetCandidate {
+  player: Player;
+  distanceSq: number;
+  healthScore: number;
+}
 
 function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
   return {
@@ -132,9 +149,115 @@ function calculateChronosPulseLaunch(
   };
 }
 
+function collectChronosLifelineTargets(ctx: AbilityContext): Player[] {
+  const store = useGameStore.getState();
+  const sourcePosition = ctx.position;
+  const sourceTeam = ctx.localPlayer.team;
+  if (!sourceTeam) return [];
+
+  const radiusSq = CHRONOS_LIFELINE_RADIUS * CHRONOS_LIFELINE_RADIUS;
+  const seenIds = new Set<string>();
+  const candidates: LifelineTargetCandidate[] = [];
+
+  const addCandidate = (player: Player | null | undefined) => {
+    if (!player || seenIds.has(player.id)) return;
+    seenIds.add(player.id);
+
+    if (player.id === ctx.localPlayer.id) return;
+    if (player.state !== 'alive') return;
+    if (player.team !== sourceTeam) return;
+
+    const dx = player.position.x - sourcePosition.x;
+    const dy = player.position.y - sourcePosition.y;
+    const dz = player.position.z - sourcePosition.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+    if (distanceSq > radiusSq) return;
+
+    candidates.push({
+      player,
+      distanceSq,
+      healthScore: player.health / Math.max(1, player.maxHealth),
+    });
+  };
+
+  store.players.forEach(addCandidate);
+  addCandidate(store.localPlayer);
+
+  candidates.sort((a, b) => (
+    a.healthScore === b.healthScore
+      ? a.distanceSq - b.distanceSq
+      : a.healthScore - b.healthScore
+  ));
+
+  return candidates.slice(0, CHRONOS_LIFELINE_MAX_TARGETS).map((candidate) => candidate.player);
+}
+
+function applyOptimisticLifelineHeal(targets: readonly Player[]): void {
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id;
+
+  for (const target of targets) {
+    const nextHealth = Math.min(target.maxHealth, target.health + CHRONOS_LIFELINE_HEAL);
+    if (nextHealth <= target.health) continue;
+
+    if (target.id === localPlayerId) {
+      store.updateLocalPlayer({ health: nextHealth });
+    } else {
+      store.updatePlayer(target.id, {
+        ...target,
+        health: nextHealth,
+      });
+    }
+  }
+}
+
+function emitLifelineConduitBeam(ctx: AbilityContext, targets: readonly Player[]): void {
+  if (targets.length === 0) return;
+
+  const now = Date.now();
+  const sourcePose = sampleChronosPrimaryOrbPose(ctx, now);
+  const sourcePosition = sourcePose
+    ? vectorToPlainPosition(sourcePose.position)
+    : {
+      x: ctx.position.x,
+      y: ctx.position.y,
+      z: ctx.position.z,
+    };
+
+  addChronosLifelineEffects(
+    sourcePosition,
+    targets.map((target) => ({
+      position: target.position,
+    })),
+    undefined,
+    {
+      sourceIsExact: Boolean(sourcePose),
+      sourceSocketName: sourcePose ? CHRONOS_PRIMARY_ORB_SOCKET_NAME : undefined,
+    }
+  );
+}
+
 export function useChronosAbilities(): UseChronosAbilitiesReturn {
   const lastPulseTimeRef = useRef(0);
   const pulseIdRef = useRef(0);
+
+  const executeLifelineConduit = useCallback((
+    ctx: AbilityContext,
+    useAbilityCharge: (abilityId: string) => boolean
+  ): boolean => {
+    if (!useAbilityCharge(CHRONOS_LIFELINE_ABILITY_ID)) return false;
+
+    const now = Date.now();
+    const targets = collectChronosLifelineTargets(ctx);
+    triggerChronosLifelineConduitPose(now);
+
+    window.setTimeout(() => {
+      emitLifelineConduitBeam(ctx, targets);
+      applyOptimisticLifelineHeal(targets);
+    }, CHRONOS_LIFELINE_RELEASE_DELAY_MS);
+
+    return true;
+  }, []);
 
   const fireVerdantPulse = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
@@ -178,6 +301,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
   return {
     lastPulseTimeRef,
     pulseIdRef,
+    executeLifelineConduit,
     fireVerdantPulse,
   };
 }

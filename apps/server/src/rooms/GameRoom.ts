@@ -31,6 +31,9 @@ import {
   BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
   BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
   BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+  CHRONOS_LIFELINE_HEAL,
+  CHRONOS_LIFELINE_MAX_TARGETS,
+  CHRONOS_LIFELINE_RADIUS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
   UNSTUCK_COOLDOWN_MS,
@@ -313,6 +316,7 @@ export class GameRoom extends Room<GameState> {
   private phantomPrimaryMagazines: Map<string, PhantomPrimaryMagazineState> = new Map();
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
+  private devBotIdCounter: number = 0;
   private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
   private authoritativePositionUntil: Map<string, number> = new Map();
   private flamethrowerLastDamageTick: Map<string, number> = new Map();
@@ -325,6 +329,7 @@ export class GameRoom extends Room<GameState> {
   private devInvulnerablePlayers: Set<string> = new Set();
   private devImmunePlayers: Set<string> = new Set();
   private devGameClockFrozen = false;
+  private devBotsRooted = false;
   private mapManifest: VoxelMapManifest | null = null;
   private mapChunkLookup: Map<string, VoxelChunk> = new Map();
   private movementTerrain: MovementTerrainAdapter = {
@@ -440,6 +445,14 @@ export class GameRoom extends Room<GameState> {
 
       this.onMessage('setDevTimeFrozen', (client, data: { enabled: boolean }) => {
         this.handleSetDevTimeFrozen(client, Boolean(data.enabled));
+      });
+
+      this.onMessage('setDevBotsRooted', (client, data: { enabled: boolean }) => {
+        this.handleSetDevBotsRooted(client, Boolean(data.enabled));
+      });
+
+      this.onMessage('devAddBot', (client, data: { heroId: HeroId; team: Team }) => {
+        this.handleDevAddBot(client, data);
       });
     }
 
@@ -1206,8 +1219,90 @@ export class GameRoom extends Room<GameState> {
     player.movement.slideTimeRemaining = 0;
   }
 
+  private getChronosLifelineTargets(caster: Player): Player[] {
+    const radiusSq = CHRONOS_LIFELINE_RADIUS * CHRONOS_LIFELINE_RADIUS;
+    const candidates: Array<{
+      player: Player;
+      distanceSq: number;
+      healthScore: number;
+    }> = [];
+
+    this.state.players.forEach((candidate) => {
+      if (candidate.id === caster.id) return;
+      if (candidate.state !== 'alive') return;
+      if (candidate.team !== caster.team) return;
+
+      const dx = candidate.position.x - caster.position.x;
+      const dy = candidate.position.y - caster.position.y;
+      const dz = candidate.position.z - caster.position.z;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq > radiusSq) return;
+
+      candidates.push({
+        player: candidate,
+        distanceSq,
+        healthScore: candidate.health / Math.max(1, candidate.maxHealth),
+      });
+    });
+
+    candidates.sort((a, b) => (
+      a.healthScore === b.healthScore
+        ? a.distanceSq - b.distanceSq
+        : a.healthScore - b.healthScore
+    ));
+
+    return candidates.slice(0, CHRONOS_LIFELINE_MAX_TARGETS).map((candidate) => candidate.player);
+  }
+
+  private executeChronosLifelineConduit(
+    caster: Player,
+    abilityState: AbilityStateSchema,
+    targets: Player[]
+  ): void {
+    const now = Date.now();
+    const healedTargets: Array<{
+      targetId: string;
+      amount: number;
+      newHealth: number;
+      position: PlainVec3;
+    }> = [];
+
+    for (const target of targets) {
+      if (target.state !== 'alive') continue;
+      if (target.team !== caster.team) continue;
+
+      const beforeHealth = target.health;
+      target.health = Math.min(target.maxHealth, target.health + CHRONOS_LIFELINE_HEAL);
+      const amount = target.health - beforeHealth;
+
+      healedTargets.push({
+        targetId: target.id,
+        amount,
+        newHealth: target.health,
+        position: this.vec3SchemaToPlain(target.position),
+      });
+    }
+
+    abilityState.isActive = false;
+    abilityState.activatedAt = now;
+
+    if (healedTargets.length > 0) {
+      this.broadcast('playerHealed', {
+        sourceId: caster.id,
+        abilityId: 'chronos_lifeline_conduit',
+        sourcePosition: this.vec3SchemaToPlain(caster.position),
+        targets: healedTargets,
+        timestamp: now,
+      });
+    }
+  }
+
   private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
-    if (player.heroId === 'chronos') {
+    const chronosLifelineTargets = player.heroId === 'chronos' && slot === 'ability1'
+      ? this.getChronosLifelineTargets(player)
+      : null;
+
+    if (player.heroId === 'chronos' && slot !== 'ability1') {
       return;
     }
 
@@ -1216,10 +1311,18 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    // Execute ability effect with context for void zone creation
-    executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
-      createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
-    });
+    if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets) {
+      this.executeChronosLifelineConduit(
+        player,
+        result.abilityState,
+        chronosLifelineTargets
+      );
+    } else {
+      // Execute ability effect with context for void zone creation
+      executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
+        createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
+      });
+    }
 
     // Broadcast ability use
     this.broadcast('abilityUsed', {
@@ -1258,29 +1361,33 @@ export class GameRoom extends Room<GameState> {
       this.state.players.set(bot.id, bot);
       this.knownPlayerIds.add(bot.id);
       this.initializePressState(bot.id);
-      this.botBrains.set(bot.id, {
-        nextThinkAt: 0,
-        nextBlackboardAt: 0,
-        blackboard: null,
-        intent: 'selecting',
-        stuckTime: 0,
-        lastPosition: { x: bot.position.x, y: bot.position.y, z: bot.position.z },
-        strafeDirection: index % 2 === 0 ? 1 : -1,
-        strafeUntil: 0,
-        reverseUntil: 0,
-        targetId: '',
-        aimYaw: bot.lookYaw,
-        aimPitch: bot.lookPitch,
-        aimJitterYaw: 0,
-        aimJitterPitch: 0,
-        nextAimJitterAt: 0,
-        fireUntil: 0,
-        nextFireDecisionAt: 0,
-        nextSecondaryAt: 0,
-        nextAbilityAt: 0,
-        nextUltimateAt: 0,
-      });
+      this.botBrains.set(bot.id, this.createBotBrain(bot, index));
     });
+  }
+
+  private createBotBrain(bot: Player, index = 0): BotBrain {
+    return {
+      nextThinkAt: 0,
+      nextBlackboardAt: 0,
+      blackboard: null,
+      intent: 'selecting',
+      stuckTime: 0,
+      lastPosition: { x: bot.position.x, y: bot.position.y, z: bot.position.z },
+      strafeDirection: index % 2 === 0 ? 1 : -1,
+      strafeUntil: 0,
+      reverseUntil: 0,
+      targetId: '',
+      aimYaw: bot.lookYaw,
+      aimPitch: bot.lookPitch,
+      aimJitterYaw: 0,
+      aimJitterPitch: 0,
+      nextAimJitterAt: 0,
+      fireUntil: 0,
+      nextFireDecisionAt: 0,
+      nextSecondaryAt: 0,
+      nextAbilityAt: 0,
+      nextUltimateAt: 0,
+    };
   }
 
   private initializePressState(playerId: string): void {
@@ -1841,6 +1948,11 @@ export class GameRoom extends Room<GameState> {
         return;
       }
 
+      if (this.devBotsRooted) {
+        this.rootBotMovementAndSkills(bot, now);
+        return;
+      }
+
       if (!bot.hasFlag && performance.now() - budgetStart > BOT_AI_BUDGET_MS) {
         bot.lastInput = this.createEmptyBotInput(bot, now);
         return;
@@ -1989,6 +2101,11 @@ export class GameRoom extends Room<GameState> {
           && this.hasClearShot(bot, combatTarget!);
         input.ability2 = pulseAbility && (underPressure || intent === 'retreat_or_reposition');
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (blackboard.nearbyEnemyCount >= 2 || objectiveIntent);
+        break;
+      case 'chronos':
+        input.ability1 = pulseAbility && this.getChronosLifelineTargets(bot).length > 0;
+        input.ability2 = false;
+        input.ultimate = false;
         break;
     }
 
@@ -2607,6 +2724,31 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private rootBotMovementAndSkills(bot: Player, now: number): void {
+    bot.lastInput = this.createEmptyBotInput(bot, now);
+    bot.velocity.x = 0;
+    bot.velocity.y = 0;
+    bot.velocity.z = 0;
+    bot.movement.isSprinting = false;
+    bot.movement.isCrouching = false;
+    bot.movement.isWallRunning = false;
+    bot.movement.wallRunSide = '';
+    this.disablePlayerSkills(bot);
+
+    let pressState = playerPressState.get(bot.id);
+    if (!pressState) {
+      this.initializePressState(bot.id);
+      pressState = playerPressState.get(bot.id)!;
+    }
+
+    pressState.primaryFire = false;
+    pressState.secondaryFire = false;
+    pressState.reload = false;
+    pressState.ability1 = false;
+    pressState.ability2 = false;
+    pressState.ultimate = false;
+  }
+
   private getFlagByTeam(team: Team) {
     return team === 'red' ? this.state.redTeam.flag : this.state.blueTeam.flag;
   }
@@ -2783,6 +2925,115 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.broadcastMatchSnapshot(true);
+  }
+
+  private handleSetDevBotsRooted(client: Client, enabled: boolean): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    this.devBotsRooted = enabled;
+
+    if (enabled) {
+      const now = Date.now();
+      this.state.players.forEach((player) => {
+        if (player.isBot) {
+          this.rootBotMovementAndSkills(player, now);
+        }
+      });
+    } else {
+      this.botBrains.forEach((brain) => {
+        brain.nextThinkAt = 0;
+        brain.nextBlackboardAt = 0;
+      });
+    }
+
+    client.send('devBotsRootedChanged', { enabled });
+    this.broadcastStateStreams({ transforms: true, forceVitals: true });
+  }
+
+  private handleDevAddBot(client: Client, data: { heroId?: HeroId; team?: Team }): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    const { heroId, team } = data;
+    const heroDef = heroId ? HERO_DEFINITIONS[heroId] : null;
+    if (!heroId || !heroDef) {
+      client.send('devCommandError', { message: `Invalid bot hero: ${heroId || ''}` });
+      return;
+    }
+
+    if (team !== 'red' && team !== 'blue') {
+      client.send('devCommandError', { message: `Invalid bot team: ${team || ''}` });
+      return;
+    }
+
+    if (this.state.players.size >= this.config.maxPlayers) {
+      client.send('devCommandError', { message: 'Game room is full' });
+      return;
+    }
+
+    const botIndex = this.devBotIdCounter++;
+    const now = Date.now();
+    const bot = new Player();
+    bot.id = `bot_dev_${this.roomId}_${botIndex}`;
+    bot.name = `${heroDef.name} Bot ${botIndex + 1}`;
+    bot.team = team;
+    bot.isBot = true;
+    bot.botDifficulty = 'normal';
+    bot.botProfileId = `dev-${heroId}-${botIndex}`;
+    bot.isReady = true;
+    bot.state = this.state.phase === 'playing'
+      ? 'alive'
+      : this.state.phase === 'countdown'
+        ? 'spawning'
+        : 'selecting';
+
+    this.placePlayerAtSpawn(bot);
+    this.setPlayerHero(bot, heroId);
+    if (this.state.phase === 'playing') {
+      bot.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
+      resetAbilityCooldowns(bot);
+    }
+
+    this.state.players.set(bot.id, bot);
+    this.knownPlayerIds.add(bot.id);
+    this.preferredBotHeroes.set(bot.id, heroId);
+    this.initializePressState(bot.id);
+    this.botBrains.set(bot.id, this.createBotBrain(bot, botIndex));
+    if (this.devBotsRooted) {
+      this.rootBotMovementAndSkills(bot, now);
+    }
+
+    this.broadcast('playerJoined', {
+      playerId: bot.id,
+      playerName: bot.name,
+      team: bot.team,
+      heroId: bot.heroId,
+      isReady: bot.isReady,
+      isBot: bot.isBot,
+      botDifficulty: bot.botDifficulty,
+      botProfileId: bot.botProfileId,
+      position: {
+        x: bot.position.x,
+        y: bot.position.y,
+        z: bot.position.z,
+      },
+    });
+
+    client.send('devBotAdded', {
+      playerId: bot.id,
+      name: bot.name,
+      heroId,
+      team,
+    });
+
+    loggers.room.debug('development bot added', bot.name, heroId, team);
+    this.broadcastStateStreams({ transforms: true, forceVitals: true, forceMatch: true });
+    this.checkPhaseTransition();
   }
 
   private getRoundTimeRemaining(now: number): number {
@@ -3517,6 +3768,10 @@ export class GameRoom extends Room<GameState> {
 
       const input = player.lastInput;
       if (this.isDevelopmentMode() && input.devFly) return;
+      if (this.devBotsRooted && player.isBot) {
+        this.rootBotMovementAndSkills(player, Date.now());
+        return;
+      }
 
       const previousPosition = this.vec3SchemaToPlain(player.position);
       const heroId = player.heroId as HeroId;

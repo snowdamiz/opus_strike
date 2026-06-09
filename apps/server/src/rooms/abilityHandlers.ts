@@ -137,14 +137,16 @@ export function tryUseAbility(
     return { success: false, reason: 'Ability not initialized' };
   }
 
+  const hasMultipleCharges = Boolean(abilityDef.charges && abilityDef.charges > 1);
+
   // Check if on cooldown
-  if (abilityState.cooldownRemaining > 0) {
+  if (!hasMultipleCharges && abilityState.cooldownRemaining > 0) {
     console.log(`${player.name} tried to use ${abilityDef.name} but it's on cooldown (${abilityState.cooldownRemaining.toFixed(1)}s)`);
     return { success: false, reason: 'On cooldown' };
   }
 
   // Check charges for multi-charge abilities
-  if (abilityDef.charges && abilityDef.charges > 1) {
+  if (hasMultipleCharges) {
     if (abilityState.charges <= 0) {
       console.log(`${player.name} tried to use ${abilityDef.name} but has no charges`);
       return { success: false, reason: 'No charges' };
@@ -165,9 +167,11 @@ export function tryUseAbility(
   console.log(`${player.name} used ${abilityDef.name}!`);
 
   // Handle charges vs cooldown
-  if (abilityDef.charges && abilityDef.charges > 1) {
+  if (hasMultipleCharges) {
     abilityState.charges--;
-    abilityState.cooldownRemaining = abilityDef.chargeRegenTime || abilityDef.cooldown;
+    if (abilityState.charges <= 0) {
+      abilityState.cooldownRemaining = abilityDef.chargeRegenTime || abilityDef.cooldown;
+    }
   } else {
     abilityState.cooldownRemaining = abilityDef.cooldown;
   }
@@ -299,8 +303,12 @@ export function executeAbility(
  */
 export function updateAbilityCooldowns(player: Player, dt: number): void {
   player.abilities.forEach((ability) => {
+    const def = ABILITY_DEFINITIONS[ability.abilityId];
     if (ability.cooldownRemaining > 0) {
       ability.cooldownRemaining = Math.max(0, ability.cooldownRemaining - dt);
+      if (ability.cooldownRemaining <= 0 && def?.charges && ability.charges < def.charges) {
+        ability.charges = def.charges;
+      }
     }
   });
 }

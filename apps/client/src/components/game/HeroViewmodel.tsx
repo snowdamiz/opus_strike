@@ -30,6 +30,7 @@ import {
 } from '../../viewmodel/blazePose';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+  getChronosLifelineConduitPose,
   getChronosPrimaryHeldBlend,
   getChronosPrimaryShotGlowBlend,
   type ChronosPrimaryOrbPoseSampleContext,
@@ -147,6 +148,7 @@ interface ChronosMovementBobOffset {
 
 interface ChronosAegisPose {
   active: boolean;
+  aegisBlend: number;
   blend: number;
   spread: number;
   shield: number;
@@ -252,6 +254,12 @@ const CHRONOS_WEAPON_ORB_GLOW_BASE_OPACITY = 0.38;
 const CHRONOS_WEAPON_ORB_GLOW_HELD_OPACITY = 0.72;
 const CHRONOS_WEAPON_ORB_LIGHT_BASE_INTENSITY = 0.34;
 const CHRONOS_WEAPON_ORB_LIGHT_HELD_INTENSITY = 0.92;
+const CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY = 0.3;
+const CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY = 0.58;
+const CHRONOS_WEAPON_PYRAMID_EMISSIVE_BASE_INTENSITY = 0.2;
+const CHRONOS_WEAPON_PYRAMID_EMISSIVE_GLOW_INTENSITY = 1.28;
+const CHRONOS_WEAPON_PYRAMID_WIRE_BASE_OPACITY = 0.9;
+const CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY = 1;
 const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
 const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
 const CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST = 0.86;
@@ -292,6 +300,7 @@ const PHANTOM_VOID_RAY_IDLE_CHARGE_POSE: PhantomVoidRayChargePose = {
 };
 const CHRONOS_AEGIS_IDLE_POSE: ChronosAegisPose = {
   active: false,
+  aegisBlend: 0,
   blend: 0,
   spread: 0,
   shield: 0,
@@ -3429,22 +3438,27 @@ function ChronosFloatingPyramidWeapon({
   const orbCoreHeldColor = useMemo(() => new THREE.Color(0xcaffdc), []);
   const orbGlowIdleColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.accent), []);
   const orbGlowHeldColor = useMemo(() => new THREE.Color(0xa3ffc4), []);
+  const pyramidFaceIdleColor = useMemo(() => new THREE.Color(0x123b2d), []);
+  const pyramidFaceGlowColor = useMemo(() => new THREE.Color(0x3dff98), []);
+  const pyramidWireIdleColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.glow), []);
+  const pyramidWireGlowColor = useMemo(() => new THREE.Color(0xcaffdc), []);
   const pyramidFaceMaterial = useMemo(() => new THREE.MeshStandardMaterial({
     color: 0x123b2d,
     emissive: HERO_MATERIAL_COLORS.chronos.accent,
-    emissiveIntensity: 0.2,
+    emissiveIntensity: CHRONOS_WEAPON_PYRAMID_EMISSIVE_BASE_INTENSITY,
     transparent: true,
-    opacity: 0.3,
+    opacity: CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY,
     depthWrite: false,
     side: THREE.DoubleSide,
     metalness: 0.12,
     roughness: 0.24,
+    toneMapped: false,
   }), []);
   const pyramidWireMaterial = useMemo(() => new THREE.MeshBasicMaterial({
     color: HERO_MATERIAL_COLORS.chronos.glow,
     wireframe: true,
     transparent: true,
-    opacity: 0.9,
+    opacity: CHRONOS_WEAPON_PYRAMID_WIRE_BASE_OPACITY,
     depthWrite: false,
     toneMapped: false,
   }), []);
@@ -3484,6 +3498,7 @@ function ChronosFloatingPyramidWeapon({
       primaryHeldBlend * CHRONOS_WEAPON_ORB_PRIMARY_HOLD_GLOW,
       primaryShotGlow
     );
+    const glowFlicker = 1 + Math.sin(t * 12.5) * 0.055 * orbGlow;
     const spread = aegisPose.spread;
     const shield = aegisPose.shield;
     root.updateMatrixWorld(true);
@@ -3517,13 +3532,41 @@ function ChronosFloatingPyramidWeapon({
       );
       pyramidRef.current.scale.setScalar(pyramidScale);
     }
+    const pyramidGlow = aegisGlow;
+    pyramidFaceMaterial.opacity = THREE.MathUtils.clamp(
+      THREE.MathUtils.lerp(
+        CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY,
+        CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY,
+        pyramidGlow
+      ) * glowFlicker,
+      0,
+      CHRONOS_WEAPON_PYRAMID_FACE_GLOW_OPACITY
+    );
+    pyramidFaceMaterial.emissiveIntensity = THREE.MathUtils.lerp(
+      CHRONOS_WEAPON_PYRAMID_EMISSIVE_BASE_INTENSITY,
+      CHRONOS_WEAPON_PYRAMID_EMISSIVE_GLOW_INTENSITY,
+      pyramidGlow
+    ) * glowFlicker;
+    pyramidFaceMaterial.color
+      .copy(pyramidFaceIdleColor)
+      .lerp(pyramidFaceGlowColor, pyramidGlow * 0.76);
+    pyramidFaceMaterial.emissive.copy(orbGlowIdleColor).lerp(orbGlowHeldColor, pyramidGlow);
+    pyramidWireMaterial.opacity = THREE.MathUtils.clamp(
+      THREE.MathUtils.lerp(
+        CHRONOS_WEAPON_PYRAMID_WIRE_BASE_OPACITY,
+        CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY,
+        pyramidGlow
+      ) * glowFlicker,
+      0,
+      CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY
+    );
+    pyramidWireMaterial.color.copy(pyramidWireIdleColor).lerp(pyramidWireGlowColor, pyramidGlow);
 
     if (orbRef.current) {
       orbRef.current.position.y =
         CHRONOS_WEAPON_ORB_BASE_Y + Math.sin(t * 1.55 + 0.6) * CHRONOS_WEAPON_ORB_HOVER_Y;
       orbRef.current.scale.setScalar(1);
     }
-    const glowFlicker = 1 + Math.sin(t * 12.5) * 0.055 * orbGlow;
     orbGlowMaterial.opacity = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(
         CHRONOS_WEAPON_ORB_GLOW_BASE_OPACITY,
@@ -3765,20 +3808,24 @@ function ChronosViewmodel({
     );
     const aegisPose = aegisPoseRef.current;
     const frameDelta = Math.min(delta, CHRONOS_MOVEMENT_BOB_MAX_DELTA_SECONDS);
-    aegisPose.active = active;
-    aegisPose.blend = THREE.MathUtils.damp(
-      aegisPose.blend,
+    aegisPose.aegisBlend = THREE.MathUtils.damp(
+      aegisPose.aegisBlend,
       active ? 1 : 0,
       active ? CHRONOS_AEGIS_BLEND_IN_SPEED : CHRONOS_AEGIS_BLEND_OUT_SPEED,
       frameDelta
     );
-    aegisPose.spread = THREE.MathUtils.smoothstep(
-      aegisPose.blend,
+    const aegisSpread = THREE.MathUtils.smoothstep(
+      aegisPose.aegisBlend,
       CHRONOS_AEGIS_SPREAD_START,
       CHRONOS_AEGIS_SPREAD_END
     );
+    const lifelinePose = getChronosLifelineConduitPose(now);
+
+    aegisPose.active = active || lifelinePose.glow > 0.01;
+    aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow);
+    aegisPose.spread = Math.max(aegisSpread, lifelinePose.spread);
     aegisPose.shield = THREE.MathUtils.smoothstep(
-      aegisPose.blend,
+      aegisPose.aegisBlend,
       CHRONOS_AEGIS_SHIELD_START,
       1
     );

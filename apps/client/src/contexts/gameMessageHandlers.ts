@@ -10,6 +10,7 @@ import {
 } from '../store/visualStore';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike } from '../components/game/BlazeEffects';
+import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
 import type {
@@ -857,6 +858,44 @@ export function setupCombatHandlers(room: Room) {
         duration: 260,
       });
     }
+  });
+
+  room.onMessage('playerHealed', (data: {
+    sourceId: string;
+    abilityId: string;
+    sourcePosition: { x: number; y: number; z: number };
+    targets: Array<{
+      targetId: string;
+      amount: number;
+      newHealth: number;
+      position: { x: number; y: number; z: number };
+    }>;
+    timestamp: number;
+  }) => {
+    loggers.network.sample('playerHealed', 1000, 'player healed', data.sourceId, data.targets.length, data.abilityId);
+
+    const store = useGameStore.getState();
+    for (const target of data.targets) {
+      if (target.targetId === store.localPlayer?.id) {
+        store.updateLocalPlayer({ health: target.newHealth });
+        continue;
+      }
+
+      const player = store.players.get(target.targetId);
+      if (player) {
+        store.updatePlayer(target.targetId, {
+          ...player,
+          health: target.newHealth,
+        });
+      }
+    }
+
+    const localPlayerId = store.localPlayer?.id ?? store.playerId;
+    if (data.sourceId === localPlayerId) return;
+
+    addChronosLifelineEffects(data.sourcePosition, data.targets.map((target) => ({
+      position: target.position,
+    })));
   });
 
   room.onMessage('playerKilled', (data: {

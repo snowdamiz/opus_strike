@@ -38,6 +38,7 @@ export type ServerMessage =
   | { type: 'devHeroChanged'; payload: { heroId: HeroId; health: number; maxHealth: number } }
   | { type: 'devCommandError'; payload: { message: string } }
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
+  | { type: 'playerHealed'; payload: PlayerHealedEvent }
   | { type: 'damage'; payload: DamageEvent };
 
 export interface GameStateSync {
@@ -168,6 +169,19 @@ export interface DamageEvent {
   amount: number;
   abilityId?: string;
   position: Vec3;
+}
+
+export interface PlayerHealedEvent {
+  sourceId: string;
+  abilityId: string;
+  sourcePosition: Vec3;
+  targets: Array<{
+    targetId: string;
+    amount: number;
+    newHealth: number;
+    position: Vec3;
+  }>;
+  timestamp: number;
 }
 
 // Room state for Colyseus

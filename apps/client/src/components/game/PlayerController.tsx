@@ -635,6 +635,8 @@ export function PlayerController() {
               if (hookshotAbilities.executeGrapple(abilityCtx)) {
                 abilitySystem.startClientCooldown(heroDef.ability1.abilityId);
               }
+            } else if (heroId === 'chronos') {
+              chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge);
             }
           }
         }

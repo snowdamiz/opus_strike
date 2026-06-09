@@ -37,6 +37,11 @@ interface FeatureAnchor {
   radius: number;
 }
 
+interface TerrainPathPoint {
+  x: number;
+  z: number;
+}
+
 interface VolcanicCrater {
   x: number;
   z: number;
@@ -123,8 +128,12 @@ const UNSAFE_GROOVE_MAX_WIDTH_CELLS = Math.max(
 const UNSAFE_GROOVE_SEAL_PASSES = Math.max(8, UNSAFE_GROOVE_MAX_WIDTH_CELLS * 6);
 const UNSAFE_BASIN_MAX_AREA_CELLS = Math.max(144, (UNSAFE_GROOVE_MAX_WIDTH_CELLS + 9) ** 2);
 const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
+const BOUNDARY_SEAM_SEAL_THICKNESS = PLAYER_RADIUS + PROCEDURAL_VOXEL_SIZE.x * 3;
+const BOUNDARY_SEAM_SAMPLE_RADIUS_CELLS = Math.max(2, Math.ceil((PLAYER_RADIUS * 2) / PROCEDURAL_VOXEL_SIZE.x));
 const BOUNDARY_WALL_THICKNESS = 3.1 * FEATURE_WORLD_SCALE;
 const BOUNDARY_SURFACE_THICKNESS = 3.8 * FEATURE_WORLD_SCALE;
+const BOUNDARY_EDGE_ROCK_MIN_INFLUENCE = 0.18;
+const BOUNDARY_OUTCROP_MIN_INFLUENCE = 0.28;
 const FEATURE_ENTRANCE_HEADROOM = 1.1;
 const FEATURE_ENTRANCE_CLEARANCE_ROWS = Math.max(
   1,
@@ -309,6 +318,54 @@ function distanceSq(xA: number, zA: number, xB: number, zB: number): number {
 function distanceToBoundary(worldX: number, worldZ: number, boundary: BoundaryPoint[]): number {
   const { point } = getClosestBoundaryPoint(worldX, worldZ, boundary);
   return Math.sqrt(distanceSq(worldX, worldZ, point.x, point.z));
+}
+
+function getBoundaryInfluence(boundaryDistance: number, thickness = BOUNDARY_SURFACE_THICKNESS): number {
+  return clamp(1 - boundaryDistance / thickness, 0, 1);
+}
+
+function getBoundaryHeightLift(seed: number, worldX: number, worldZ: number, boundaryDistance: number): number {
+  const influence = getBoundaryInfluence(boundaryDistance, scaleWorld(5.6));
+  if (influence <= 0) return 0;
+
+  const broadNoise = fractalNoise2(seed ^ 0x74d2f3a1, worldX * 0.048, worldZ * 0.048, 4);
+  const erosionNoise = fractalNoise2(seed ^ 0x2c1b3c6d, worldX * 0.17, worldZ * 0.17, 2);
+  const raisedShelf = Math.pow(Math.max(0, broadNoise - 0.58) / 0.42, 1.35) * scaleWorld(1.9);
+  const erodedCut = Math.pow(Math.max(0, 0.44 - erosionNoise) / 0.44, 1.15) * scaleWorld(0.85);
+
+  return Math.pow(influence, 0.92) * (raisedShelf - erodedCut);
+}
+
+function hasBoundaryRockSurface(seed: number, worldX: number, worldZ: number, boundaryDistance: number): boolean {
+  const influence = getBoundaryInfluence(boundaryDistance);
+  if (influence < BOUNDARY_EDGE_ROCK_MIN_INFLUENCE) return false;
+
+  const broadNoise = fractalNoise2(seed ^ 0xb4b82e39, worldX * 0.072, worldZ * 0.072, 4);
+  const chipNoise = fractalNoise2(seed ^ 0x51f15e7d, worldX * 0.24, worldZ * 0.24, 2);
+  const brokenEdge = broadNoise * 0.72 + chipNoise * 0.28;
+  const threshold = lerp(0.72, 0.46, influence);
+
+  return brokenEdge > threshold;
+}
+
+function getBoundaryOutcropRows(
+  seed: number,
+  worldX: number,
+  worldZ: number,
+  boundaryDistance: number,
+  maxRows: number
+): number {
+  const influence = getBoundaryInfluence(boundaryDistance);
+  if (influence < BOUNDARY_OUTCROP_MIN_INFLUENCE) return 0;
+
+  const broadNoise = fractalNoise2(seed ^ 0x8f2d33ab, worldX * 0.052, worldZ * 0.052, 4);
+  const splitNoise = fractalNoise2(seed ^ 0xd1b54a35, worldX * 0.19, worldZ * 0.19, 2);
+  const outcropNoise = broadNoise * 0.78 + splitNoise * 0.22;
+  const threshold = lerp(0.82, 0.61, influence);
+  if (outcropNoise <= threshold) return 0;
+
+  const amount = Math.pow((outcropNoise - threshold) / (1 - threshold), 0.84);
+  return Math.max(1, Math.round(maxRows * Math.pow(influence, 0.75) * lerp(0.24, 0.88, amount)));
 }
 
 function getBoundaryRange(boundary: BoundaryPoint[]): { minX: number; maxX: number; minZ: number; maxZ: number } {
@@ -753,40 +810,153 @@ function distanceToSegment(
   };
 }
 
-function blendHeightCorridor(
+function createOrganicRoutePath(
+  start: TerrainPathPoint,
+  end: TerrainPathPoint,
+  featureSeed: number,
+  maxOffset: number,
+  pointCount = 5
+): TerrainPathPoint[] {
+  const random = mulberry32(featureSeed);
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const length = Math.hypot(dx, dz);
+  if (length < PROCEDURAL_VOXEL_SIZE.x) return [start, end];
+
+  const normal = { x: -dz / length, z: dx / length };
+  const tangent = { x: dx / length, z: dz / length };
+  const phase = random() * Math.PI * 2;
+  const waveFrequency = lerp(0.72, 1.45, random());
+  const bias = lerp(-maxOffset * 0.38, maxOffset * 0.38, random());
+  const points: TerrainPathPoint[] = [];
+
+  for (let index = 0; index < pointCount; index++) {
+    const t = pointCount === 1 ? 0 : index / (pointCount - 1);
+    if (index === 0) {
+      points.push(start);
+      continue;
+    }
+    if (index === pointCount - 1) {
+      points.push(end);
+      continue;
+    }
+
+    const envelope = Math.sin(t * Math.PI);
+    const noise = fractalNoise2(featureSeed ^ 0x5bd1e995, t * 3.8, featureSeed * 0.00017, 3) - 0.5;
+    const lateralOffset =
+      (Math.sin(t * Math.PI * 2 * waveFrequency + phase) * 0.56 + noise * 0.92) * maxOffset * envelope +
+      bias * envelope;
+    const alongOffset = lerp(-maxOffset * 0.16, maxOffset * 0.16, random()) * envelope;
+    const baseX = lerp(start.x, end.x, t);
+    const baseZ = lerp(start.z, end.z, t);
+
+    points.push({
+      x: baseX + normal.x * lateralOffset + tangent.x * alongOffset,
+      z: baseZ + normal.z * lateralOffset + tangent.z * alongOffset,
+    });
+  }
+
+  return points;
+}
+
+function getPathBounds(path: TerrainPathPoint[], padding: number): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  return {
+    minX: Math.min(...path.map((point) => point.x)) - padding,
+    maxX: Math.max(...path.map((point) => point.x)) + padding,
+    minZ: Math.min(...path.map((point) => point.z)) - padding,
+    maxZ: Math.max(...path.map((point) => point.z)) + padding,
+  };
+}
+
+function getClosestPathSample(
+  pointX: number,
+  pointZ: number,
+  path: TerrainPathPoint[],
+  segmentLengths: number[],
+  totalLength: number
+): { distance: number; pathT: number; segmentIndex: number; segmentT: number } {
+  let closest = {
+    distance: Number.POSITIVE_INFINITY,
+    pathT: 0,
+    segmentIndex: 0,
+    segmentT: 0,
+  };
+  let traversed = 0;
+
+  for (let index = 0; index < path.length - 1; index++) {
+    const start = path[index];
+    const end = path[index + 1];
+    const sample = distanceToSegment(pointX, pointZ, start.x, start.z, end.x, end.z);
+    const segmentLength = segmentLengths[index];
+    const pathT = totalLength <= 0 ? 0 : clamp((traversed + sample.t * segmentLength) / totalLength, 0, 1);
+
+    if (sample.distance < closest.distance) {
+      closest = {
+        distance: sample.distance,
+        pathT,
+        segmentIndex: index,
+        segmentT: sample.t,
+      };
+    }
+
+    traversed += segmentLength;
+  }
+
+  return closest;
+}
+
+function blendHeightPath(
   heightMap: Uint8Array,
   origin: { x: number; z: number },
   size: VoxelSize,
-  start: { x: number; z: number },
-  end: { x: number; z: number },
+  path: TerrainPathPoint[],
   width: number,
-  strength: number
+  strength: number,
+  featureSeed: number,
+  boundary?: BoundaryPoint[]
 ): void {
+  if (path.length < 2) return;
+
+  const bounds = getPathBounds(path, width * 1.3);
   const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(
     origin,
     size,
-    Math.min(start.x, end.x) - width,
-    Math.max(start.x, end.x) + width,
-    Math.min(start.z, end.z) - width,
-    Math.max(start.z, end.z) + width
+    bounds.minX,
+    bounds.maxX,
+    bounds.minZ,
+    bounds.maxZ
   );
-  const startHeight = getHeightAt(heightMap, origin, size, start.x, start.z);
-  const endHeight = getHeightAt(heightMap, origin, size, end.x, end.z);
-  const centerWidth = width * 0.42;
-  const falloffWidth = Math.max(PROCEDURAL_VOXEL_SIZE.x, width - centerWidth);
+  const pathHeights = path.map((point) => getHeightAt(heightMap, origin, size, point.x, point.z));
+  const segmentLengths = path.slice(0, -1).map((point, index) => {
+    const next = path[index + 1];
+    return Math.hypot(next.x - point.x, next.z - point.z);
+  });
+  const totalLength = segmentLengths.reduce((total, length) => total + length, 0);
 
   for (let x = gx0; x <= gx1; x++) {
     for (let z = gz0; z <= gz1; z++) {
       const worldX = gridToWorldCenter(x, origin.x);
       const worldZ = gridToWorldCenter(z, origin.z);
-      const { distance, t } = distanceToSegment(worldX, worldZ, start.x, start.z, end.x, end.z);
-      if (distance > width) continue;
+      if (boundary && !isInsideBoundaryPolygon(worldX, worldZ, boundary)) continue;
+
+      const widthNoise = fractalNoise2(featureSeed ^ 0x27d4eb2d, worldX * 0.15, worldZ * 0.15, 2);
+      const localWidth = width * lerp(0.72, 1.24, widthNoise);
+      const sample = getClosestPathSample(worldX, worldZ, path, segmentLengths, totalLength);
+      if (sample.distance > localWidth) continue;
 
       const index = x + z * size.x;
-      const centerBlend = distance <= centerWidth ? 1 : 1 - (distance - centerWidth) / falloffWidth;
-      const targetHeight = lerp(startHeight, endHeight, t);
+      const centerWidth = localWidth * lerp(0.24, 0.44, widthNoise);
+      const falloffWidth = Math.max(PROCEDURAL_VOXEL_SIZE.x, localWidth - centerWidth);
+      const centerBlend = sample.distance <= centerWidth ? 1 : 1 - (sample.distance - centerWidth) / falloffWidth;
+      const routeNoise = fractalNoise2(featureSeed ^ 0x165667b1, worldX * 0.31, worldZ * 0.31, 2);
+      const featheredBlend = centerBlend * centerBlend * (3 - centerBlend * 2);
+      const targetHeight = lerp(
+        pathHeights[sample.segmentIndex],
+        pathHeights[sample.segmentIndex + 1],
+        sample.segmentT
+      );
       heightMap[index] = clamp(
-        Math.round(lerp(heightMap[index], targetHeight, clamp(centerBlend * strength, 0, 1))),
+        Math.round(lerp(heightMap[index], targetHeight, clamp(featheredBlend * strength * lerp(0.68, 1.04, routeNoise), 0, 1))),
         1,
         size.y - 1
       );
@@ -798,36 +968,53 @@ function shapeGameplayRouteTerrain(
   heightMap: Uint8Array,
   origin: { x: number; z: number },
   size: VoxelSize,
-  layout: ReturnType<typeof createProceduralCTFLayout>
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  seed: number
 ): void {
   const redSpawnCenter = getAveragePoint(layout.spawnPoints.red);
   const blueSpawnCenter = getAveragePoint(layout.spawnPoints.blue);
   const midfield = { x: 0, z: 0 };
 
-  blendHeightCorridor(heightMap, origin, size, redSpawnCenter, layout.flagZones.red, scaleWorld(4.5), 0.9);
-  blendHeightCorridor(heightMap, origin, size, blueSpawnCenter, layout.flagZones.blue, scaleWorld(4.5), 0.9);
-  blendHeightCorridor(heightMap, origin, size, layout.flagZones.red, midfield, scaleWorld(5.6), 0.82);
-  blendHeightCorridor(heightMap, origin, size, layout.flagZones.blue, midfield, scaleWorld(5.6), 0.82);
-
-  const teamAxisX = redSpawnCenter.x - blueSpawnCenter.x;
-  const teamAxisZ = redSpawnCenter.z - blueSpawnCenter.z;
-  const teamAxisLength = Math.hypot(teamAxisX, teamAxisZ) || 1;
-  const normal = {
-    x: -teamAxisZ / teamAxisLength,
-    z: teamAxisX / teamAxisLength,
-  };
-
-  for (const laneOffset of [scaleWorld(-18), scaleWorld(18)]) {
-    blendHeightCorridor(
-      heightMap,
-      origin,
-      size,
-      { x: redSpawnCenter.x + normal.x * laneOffset, z: redSpawnCenter.z + normal.z * laneOffset },
-      { x: blueSpawnCenter.x + normal.x * laneOffset, z: blueSpawnCenter.z + normal.z * laneOffset },
-      scaleWorld(4.2),
-      0.68
-    );
-  }
+  blendHeightPath(
+    heightMap,
+    origin,
+    size,
+    createOrganicRoutePath(redSpawnCenter, layout.flagZones.red, seed ^ 0x835c0a2d, scaleWorld(1.5), 4),
+    scaleWorld(4.5),
+    0.82,
+    seed ^ 0xf00d1111,
+    layout.boundary
+  );
+  blendHeightPath(
+    heightMap,
+    origin,
+    size,
+    createOrganicRoutePath(blueSpawnCenter, layout.flagZones.blue, seed ^ 0x91e10da5, scaleWorld(1.5), 4),
+    scaleWorld(4.5),
+    0.82,
+    seed ^ 0xf00d2222,
+    layout.boundary
+  );
+  blendHeightPath(
+    heightMap,
+    origin,
+    size,
+    createOrganicRoutePath(layout.flagZones.red, midfield, seed ^ 0x45d9f3b, scaleWorld(2.1), 5),
+    scaleWorld(5.2),
+    0.72,
+    seed ^ 0xf00d3333,
+    layout.boundary
+  );
+  blendHeightPath(
+    heightMap,
+    origin,
+    size,
+    createOrganicRoutePath(layout.flagZones.blue, midfield, seed ^ 0x119de1f3, scaleWorld(2.1), 5),
+    scaleWorld(5.2),
+    0.72,
+    seed ^ 0xf00d4444,
+    layout.boundary
+  );
 }
 
 function fillColumnToHeight(
@@ -3798,6 +3985,98 @@ function sealUnsafeTrappedBasins(
   return sealedAny;
 }
 
+function sealBoundarySeamColumn(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  size: VoxelSize,
+  x: number,
+  z: number,
+  targetTopRow: number,
+  sideSamples: { x: number; z: number }[]
+): boolean {
+  const cellIndex = x + z * size.x;
+  const currentTopRow = topRows[cellIndex];
+  const safeTargetTopRow = clamp(targetTopRow, 1, size.y);
+  if (safeTargetTopRow - currentTopRow <= MAX_NAVIGATION_STEP_ROWS) return false;
+
+  const sideA = sideSamples[0];
+  if (!sideA) return false;
+  const sideB = sideSamples[1] ?? sideA;
+
+  const surfaceY = safeTargetTopRow - 1;
+  const surfaceBlock = chooseGrooveSurfaceBlock(blocks, size, sideA, sideB, safeTargetTopRow);
+
+  for (let y = currentTopRow; y < safeTargetTopRow; y++) {
+    setBlock(x, y, z, getGrooveFillBlock(surfaceBlock, y, surfaceY));
+  }
+
+  topRows[cellIndex] = safeTargetTopRow;
+  return true;
+}
+
+function sealUnsafeBoundarySeams(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>
+): boolean {
+  let sealedAny = false;
+
+  for (let x = 1; x < size.x - 1; x++) {
+    for (let z = 1; z < size.z - 1; z++) {
+      const worldX = gridToWorldCenter(x, origin.x);
+      const worldZ = gridToWorldCenter(z, origin.z);
+      if (!isInsideBoundaryPolygon(worldX, worldZ, layout.boundary)) continue;
+      const boundaryDistance = distanceToBoundary(worldX, worldZ, layout.boundary);
+      if (boundaryDistance > BOUNDARY_SEAM_SEAL_THICKNESS) continue;
+      if (isProtectedGameplayClearanceColumn(origin, layout, x, z)) continue;
+
+      const cellIndex = x + z * size.x;
+      const currentTopRow = topRows[cellIndex];
+      const targetSamples: number[] = [];
+      const sideSamples: { x: number; z: number }[] = [];
+
+      for (let dx = -BOUNDARY_SEAM_SAMPLE_RADIUS_CELLS; dx <= BOUNDARY_SEAM_SAMPLE_RADIUS_CELLS; dx++) {
+        for (let dz = -BOUNDARY_SEAM_SAMPLE_RADIUS_CELLS; dz <= BOUNDARY_SEAM_SAMPLE_RADIUS_CELLS; dz++) {
+          if (dx === 0 && dz === 0) continue;
+          if (dx * dx + dz * dz > BOUNDARY_SEAM_SAMPLE_RADIUS_CELLS ** 2) continue;
+
+          const neighborX = x + dx;
+          const neighborZ = z + dz;
+          if (neighborX < 1 || neighborX >= size.x - 1 || neighborZ < 1 || neighborZ >= size.z - 1) continue;
+
+          const neighborWorldX = gridToWorldCenter(neighborX, origin.x);
+          const neighborWorldZ = gridToWorldCenter(neighborZ, origin.z);
+          if (!isInsideBoundaryPolygon(neighborWorldX, neighborWorldZ, layout.boundary)) continue;
+          if (distanceToBoundary(neighborWorldX, neighborWorldZ, layout.boundary) <= boundaryDistance + PROCEDURAL_VOXEL_SIZE.x * 0.5) continue;
+
+          const neighborTopRow = topRows[neighborX + neighborZ * size.x];
+          if (neighborTopRow - currentTopRow <= MAX_NAVIGATION_STEP_ROWS) continue;
+
+          targetSamples.push(neighborTopRow);
+          if (sideSamples.length < 2) {
+            sideSamples.push({ x: neighborX, z: neighborZ });
+          }
+        }
+      }
+
+      if (targetSamples.length < 3) continue;
+
+      targetSamples.sort((heightA, heightB) => heightA - heightB);
+      const targetTopRow = targetSamples[Math.floor(targetSamples.length * 0.5)];
+
+      if (sealBoundarySeamColumn(setBlock, blocks, topRows, size, x, z, targetTopRow, sideSamples)) {
+        sealedAny = true;
+      }
+    }
+  }
+
+  return sealedAny;
+}
+
 function sealNarrowGrooveRunsForAxis(
   setBlock: BlockSetter,
   blocks: Uint8Array,
@@ -3970,8 +4249,9 @@ function sealUnsafeNarrowGrooves(
     const sealedZ = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'z');
     const sealedPockets = sealUnsafeCornerPockets(setBlock, blocks, topRows, origin, size, layout);
     const sealedBasins = sealUnsafeTrappedBasins(setBlock, blocks, topRows, origin, size, layout);
+    const sealedBoundarySeams = sealUnsafeBoundarySeams(setBlock, blocks, topRows, origin, size, layout);
 
-    if (!sealedX && !sealedZ && !sealedPockets && !sealedBasins) return;
+    if (!sealedX && !sealedZ && !sealedPockets && !sealedBasins && !sealedBoundarySeams) return;
   }
 }
 
@@ -4082,12 +4362,20 @@ function generateProceduralVoxelMapInternal(
   const heightBias = Math.floor(random() * 2);
   const hillStrength = scaleWorld(2.4 + random() * 2.4);
   const ridgeStrength = scaleWorld(0.8 + random() * 1.2);
-  const sideLaneCenter = scaleWorld(lerp(14, 22, random()));
-  const sideLaneWidth = scaleWorld(lerp(4, 7, random()));
-  const centerLaneWidth = scaleWorld(lerp(5.5, 9, random()));
-  const ridgeBandWidth = scaleWorld(lerp(9.5, 15.5, random()));
+  const ridgeAngle = random() * Math.PI * 2;
+  const ridgeCos = Math.cos(ridgeAngle);
+  const ridgeSin = Math.sin(ridgeAngle);
+  const organicRidgeOffset = scaleWorld(lerp(-7, 7, random()));
+  const organicRidgeHalfWidth = scaleWorld(lerp(6.5, 13.5, random()));
+  const organicRidgeLength = scaleWorld(lerp(19, 34, random()));
+  const organicRidgeCenter = scaleWorld(lerp(-7, 7, random()));
+  const organicRidgeCurve = scaleWorld(lerp(2.5, 6.8, random()));
   const plateauStrength = random() < 0.5 ? scaleWorld(lerp(0.6, 1.8, random())) : 0;
   const basinStrength = random() < 0.5 ? scaleWorld(lerp(0.5, 1.4, random())) : 0;
+  const basinCenterX = scaleWorld(lerp(-8, 8, random()));
+  const basinCenterZ = scaleWorld(lerp(-7, 7, random()));
+  const basinRadiusX = scaleWorld(lerp(19, 32, random()));
+  const basinRadiusZ = scaleWorld(lerp(17, 29, random()));
   const minTerrainRows = worldHeightToGridRows(4);
   const maxTerrainRows = size.y - worldHeightToGridRows(10);
   const dirtDepthRows = worldHeightToGridRows(4);
@@ -4114,8 +4402,6 @@ function generateProceduralVoxelMapInternal(
     for (let z = 0; z < size.z; z++) {
       const worldX = gridToWorldCenter(x, origin.x);
       const worldZ = gridToWorldCenter(z, origin.z);
-      const absX = Math.abs(worldX);
-      const absZ = Math.abs(worldZ);
       const insideBoundary = isInsideBoundaryPolygon(worldX, worldZ, layout.boundary);
       const boundaryDistance = distanceToBoundary(worldX, worldZ, layout.boundary);
 
@@ -4123,16 +4409,27 @@ function generateProceduralVoxelMapInternal(
       const ridgeNoise = fractalNoise2(normalizedSeed ^ 0x41c64e6d, worldX * 0.055, worldZ * 0.055, 3);
       const detailNoise = fractalNoise2(normalizedSeed ^ 0x9e3779b9, worldX * 0.12, worldZ * 0.12, 2);
       const plateauNoise = fractalNoise2(normalizedSeed ^ 0x632be59b, worldX * 0.035, worldZ * 0.035, 3);
-      const centerBand = Math.max(0, 1 - absZ / ridgeBandWidth);
-      const centerWidth = Math.max(0, 1 - Math.max(0, absX - scaleWorld(5)) / scaleWorld(24));
-      const midLaneCut = Math.max(0, 1 - absX / centerLaneWidth) * 0.78;
-      const sideLaneCut = Math.max(0, 1 - Math.abs(absX - sideLaneCenter) / sideLaneWidth) * 0.58;
-      const middleRidge =
-        Math.pow(centerBand, 1.6) * centerWidth * (1 - Math.max(midLaneCut, sideLaneCut)) * (1.5 + ridgeNoise * 1.8);
-      const centerBasin = basinStrength * Math.max(0, 1 - absX / scaleWorld(30)) * Math.max(0, 1 - absZ / scaleWorld(25));
+      const ridgeAlong = worldX * ridgeCos + worldZ * ridgeSin;
+      const ridgeAcross = -worldX * ridgeSin + worldZ * ridgeCos;
+      const ridgeCurve =
+        organicRidgeOffset +
+        Math.sin((ridgeAlong + normalizedSeed * 0.00019) * 0.14) * organicRidgeCurve * 0.46 +
+        (fractalNoise2(normalizedSeed ^ 0xaa7f3a19, ridgeAlong * 0.035, ridgeAcross * 0.035, 3) - 0.5) * organicRidgeCurve;
+      const ridgeBand = Math.max(0, 1 - Math.abs(ridgeAcross - ridgeCurve) / organicRidgeHalfWidth);
+      const ridgeLengthMask = Math.max(0, 1 - Math.abs(ridgeAlong - organicRidgeCenter) / organicRidgeLength);
+      const ridgeBreakup = fractalNoise2(normalizedSeed ^ 0xbad5eed, worldX * 0.08, worldZ * 0.08, 3);
+      const organicRidge =
+        Math.pow(ridgeBand, 1.65) *
+        Math.pow(ridgeLengthMask, 0.74) *
+        lerp(0.42, 1.18, ridgeBreakup) *
+        (1.1 + ridgeNoise * 1.2);
+      const basinDx = (worldX - basinCenterX) / basinRadiusX;
+      const basinDz = (worldZ - basinCenterZ) / basinRadiusZ;
+      const basinFalloff = Math.max(0, 1 - basinDx * basinDx - basinDz * basinDz);
+      const centerBasin = basinStrength * Math.pow(basinFalloff, 0.72);
       const plateauStep = plateauStrength > 0 && plateauNoise > 0.66 ? plateauStrength : 0;
       const boundaryLift = insideBoundary
-        ? Math.max(0, 1 - boundaryDistance / scaleWorld(4.8)) * scaleWorld(1.4 + ridgeNoise * 1.2)
+        ? getBoundaryHeightLift(normalizedSeed, worldX, worldZ, boundaryDistance)
         : scaleWorld(3.5) + Math.min(boundaryDistance, scaleWorld(5)) * 0.65;
       const worldHeight = clamp(
         scaleWorld(4) +
@@ -4140,7 +4437,7 @@ function generateProceduralVoxelMapInternal(
           baseNoise * hillStrength +
           (ridgeNoise > 0.68 ? ridgeStrength : 0) +
           detailNoise * scaleWorld(1.5) +
-          middleRidge +
+          organicRidge +
           plateauStep -
           centerBasin +
           boundaryLift,
@@ -4189,7 +4486,7 @@ function generateProceduralVoxelMapInternal(
   );
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.red);
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.blue);
-  shapeGameplayRouteTerrain(heightMap, origin, size, layout);
+  shapeGameplayRouteTerrain(heightMap, origin, size, layout, normalizedSeed);
   limitHeightDeltas(heightMap, size, MAX_NAVIGATION_STEP_ROWS, 2);
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.red);
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.blue);
@@ -4232,7 +4529,7 @@ function generateProceduralVoxelMapInternal(
         continue;
       }
 
-      const boundarySurface = boundaryDistance < BOUNDARY_SURFACE_THICKNESS;
+      const boundaryRockSurface = hasBoundaryRockSurface(normalizedSeed, worldX, worldZ, boundaryDistance);
       const rockPatch = fractalNoise2(normalizedSeed ^ 0xa11ce, worldX * 0.09, worldZ * 0.09, 3) > 0.76;
 
       for (let y = 0; y < height; y++) {
@@ -4248,7 +4545,7 @@ function generateProceduralVoxelMapInternal(
             worldZ,
             height,
             rockySurfaceRows,
-            boundarySurface,
+            boundaryRockSurface,
             rockPatch,
             normalizedSeed
           );
@@ -4259,8 +4556,9 @@ function generateProceduralVoxelMapInternal(
         setBlock(x, y, z, blockId);
       }
 
-      if (boundarySurface) {
-        for (let y = height; y < Math.min(size.y, height + edgeWallRows); y++) {
+      const boundaryOutcropRows = getBoundaryOutcropRows(normalizedSeed, worldX, worldZ, boundaryDistance, edgeWallRows);
+      if (boundaryOutcropRows > 0) {
+        for (let y = height; y < Math.min(size.y, height + boundaryOutcropRows); y++) {
           setBlock(x, y, z, getRockBlockForTheme(theme));
         }
       }

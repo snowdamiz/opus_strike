@@ -14,6 +14,7 @@ const MAX_NAVIGATION_STEP_ROWS = 2;
 const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
 const FLAG_CLEAR_RADIUS = 4.3;
 const SPAWN_CLEAR_RADIUS = 3.6;
+const BOUNDARY_SEAM_SEAL_THICKNESS = PLAYER_RADIUS + 0.25 * 3;
 const FLAG_DISTANCE_AUDIT_CLEARANCE = 8.7;
 const SPAWN_DISTANCE_AUDIT_CLEARANCE = 5;
 const SPAWN_DISTANCE_AUDIT_BASE_RADIUS = 4.41;
@@ -414,6 +415,51 @@ function countUnsafeTrappedBasinColumns(manifest) {
   return count;
 }
 
+function countUnsafeBoundarySeamColumns(manifest) {
+  const topRows = getCollisionTopRows(manifest);
+  const sampleRadiusCells = Math.max(2, Math.ceil((PLAYER_RADIUS * 2) / manifest.voxelSize.x));
+  let count = 0;
+
+  for (let x = 1; x < manifest.size.x - 1; x++) {
+    for (let z = 1; z < manifest.size.z - 1; z++) {
+      const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
+      const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
+      if (!isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary)) continue;
+      const boundaryDistance = distanceToBoundary(worldX, worldZ, manifest.boundary);
+      if (boundaryDistance > BOUNDARY_SEAM_SEAL_THICKNESS) continue;
+      if (isProtectedGameplayClearanceColumn(manifest, x, z)) continue;
+
+      const currentTopRow = topRows[x + z * manifest.size.x];
+      let highInwardSamples = 0;
+
+      for (let dx = -sampleRadiusCells; dx <= sampleRadiusCells; dx++) {
+        for (let dz = -sampleRadiusCells; dz <= sampleRadiusCells; dz++) {
+          if (dx === 0 && dz === 0) continue;
+          if (dx * dx + dz * dz > sampleRadiusCells ** 2) continue;
+
+          const neighborX = x + dx;
+          const neighborZ = z + dz;
+          if (neighborX < 1 || neighborX >= manifest.size.x - 1 || neighborZ < 1 || neighborZ >= manifest.size.z - 1) continue;
+
+          const neighborWorldX = manifest.origin.x + (neighborX + 0.5) * manifest.voxelSize.x;
+          const neighborWorldZ = manifest.origin.z + (neighborZ + 0.5) * manifest.voxelSize.z;
+          if (!isInsideBoundaryPolygon(neighborWorldX, neighborWorldZ, manifest.boundary)) continue;
+          if (distanceToBoundary(neighborWorldX, neighborWorldZ, manifest.boundary) <= boundaryDistance + manifest.voxelSize.x * 0.5) continue;
+
+          const neighborTopRow = topRows[neighborX + neighborZ * manifest.size.x];
+          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+            highInwardSamples++;
+          }
+        }
+      }
+
+      if (highInwardSamples >= 3) count++;
+    }
+  }
+
+  return count;
+}
+
 function worldToGrid(value, origin, voxelSize, max) {
   return Math.max(0, Math.min(max - 1, Math.floor((value - origin) / voxelSize)));
 }
@@ -759,6 +805,7 @@ function inspectMap(seed, options) {
   const unsafeGrooveColumns = countUnsafeNarrowGrooveColumns(manifest);
   const unsafeCornerPocketColumns = countUnsafeCornerPocketColumns(manifest);
   const unsafeTrappedBasinColumns = countUnsafeTrappedBasinColumns(manifest);
+  const unsafeBoundarySeamColumns = countUnsafeBoundarySeamColumns(manifest);
   const acceptedBuildings = diagnostics.buildings.acceptedPlans;
   const mediumEntranceFailures = acceptedBuildings.filter(
     (entry) => entry.metrics.footprintCellCount >= 90 && entry.metrics.entranceCount < 2
@@ -797,6 +844,7 @@ function inspectMap(seed, options) {
   assertCondition(unsafeGrooveColumns === 0, failures, `seed ${seed}: ${unsafeGrooveColumns} unsafe narrow groove columns remain`);
   assertCondition(unsafeCornerPocketColumns === 0, failures, `seed ${seed}: ${unsafeCornerPocketColumns} unsafe corner pocket columns remain`);
   assertCondition(unsafeTrappedBasinColumns === 0, failures, `seed ${seed}: ${unsafeTrappedBasinColumns} unsafe trapped basin columns remain`);
+  assertCondition(unsafeBoundarySeamColumns === 0, failures, `seed ${seed}: ${unsafeBoundarySeamColumns} unsafe boundary seam columns remain`);
   assertCondition(structureBlocks > 0, failures, `seed ${seed}: no structure blocks generated`);
   assertCondition(structureBlocks < 11_000, failures, `seed ${seed}: structure block count ${structureBlocks} is too cluttered`);
   assertCondition(diagnostics.buildings.attempted > 0, failures, `seed ${seed}: no building plans attempted`);

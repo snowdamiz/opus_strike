@@ -76,13 +76,8 @@ export abstract class HeroBase {
       // Reduce cooldown
       if (state.cooldownRemaining > 0) {
         state.cooldownRemaining = Math.max(0, state.cooldownRemaining - deltaTime);
-      }
-
-      // Regenerate charges
-      if (def.charges && def.chargeRegenTime && state.charges < def.charges) {
-        if (state.cooldownRemaining <= 0) {
-          state.cooldownRemaining = def.chargeRegenTime;
-          state.charges = Math.min(def.charges, state.charges + 1);
+        if (state.cooldownRemaining <= 0 && def.charges && state.charges < def.charges) {
+          state.charges = def.charges;
         }
       }
     });
@@ -129,8 +124,8 @@ export abstract class HeroBase {
       // Consume charges or start cooldown
       if (def.charges) {
         state.charges--;
-        if (state.charges === 0 && def.chargeRegenTime) {
-          state.cooldownRemaining = def.chargeRegenTime;
+        if (state.charges <= 0) {
+          state.cooldownRemaining = def.chargeRegenTime ?? def.cooldown;
         }
       } else {
         state.cooldownRemaining = def.cooldown;
