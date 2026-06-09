@@ -14,6 +14,7 @@ import {
   CHRONOS_PRIMARY_FIRE_READY_BLEND,
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   getChronosPrimaryHeldBlend,
+  triggerChronosPrimaryShotGlow,
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../../viewmodel/chronosPose';
 import {
@@ -158,6 +159,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
       direction,
       CHRONOS_PRIMARY_PULSE_SPAWN_FORWARD_OFFSET
     );
+    triggerChronosPrimaryShotGlow(now);
 
     useGameStore.getState().addChronosPulse({
       id: pulseId,

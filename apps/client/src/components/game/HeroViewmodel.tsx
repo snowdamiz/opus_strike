@@ -31,6 +31,7 @@ import {
 import {
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   getChronosPrimaryHeldBlend,
+  getChronosPrimaryShotGlowBlend,
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../viewmodel/chronosPose';
 import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
@@ -246,13 +247,14 @@ const CHRONOS_WEAPON_BIND_LIFT_Y = 0.096;
 const CHRONOS_WEAPON_BIND_FORWARD_Z = -0.062;
 const CHRONOS_WEAPON_ORB_BASE_Y = -0.026;
 const CHRONOS_WEAPON_ORB_HOVER_Y = 0.0032;
+const CHRONOS_WEAPON_ORB_PRIMARY_HOLD_GLOW = 0.34;
 const CHRONOS_WEAPON_ORB_GLOW_BASE_OPACITY = 0.38;
 const CHRONOS_WEAPON_ORB_GLOW_HELD_OPACITY = 0.72;
 const CHRONOS_WEAPON_ORB_LIGHT_BASE_INTENSITY = 0.34;
 const CHRONOS_WEAPON_ORB_LIGHT_HELD_INTENSITY = 0.92;
 const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
 const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
-const CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST = 0.48;
+const CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST = 0.86;
 const CHRONOS_AEGIS_VISUAL_STALE_MS = 220;
 const CHRONOS_AEGIS_BLEND_IN_SPEED = 6.8;
 const CHRONOS_AEGIS_BLEND_OUT_SPEED = 9;
@@ -3418,6 +3420,7 @@ function ChronosFloatingPyramidWeapon({
   const pyramidRef = useRef<THREE.Group>(null);
   const orbRef = useRef<THREE.Group>(null);
   const orbLightRef = useRef<THREE.PointLight>(null);
+  const primarySpinPhaseRef = useRef(0);
   const leftSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
   const rightSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
   const weaponWorldPosition = useMemo(() => new THREE.Vector3(), []);
@@ -3463,7 +3466,7 @@ function ChronosFloatingPyramidWeapon({
     return registerViewmodelSocket(CHRONOS_PRIMARY_ORB_SOCKET_NAME, orbRef.current);
   }, []);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const weapon = weaponRef.current;
     const root = rootRef.current;
     const leftSocket = leftSocketRef.current;
@@ -3474,8 +3477,13 @@ function ChronosFloatingPyramidWeapon({
     const nowMs = Date.now();
     const aegisPose = aegisPoseRef.current;
     const aegisGlow = THREE.MathUtils.smoothstep(aegisPose.blend, 0, 1);
-    const primaryGlow = getChronosPrimaryHeldBlend(nowMs);
-    const orbGlow = Math.max(aegisGlow, primaryGlow);
+    const primaryHeldBlend = getChronosPrimaryHeldBlend(nowMs);
+    const primaryShotGlow = getChronosPrimaryShotGlowBlend(nowMs);
+    const orbGlow = Math.max(
+      aegisGlow,
+      primaryHeldBlend * CHRONOS_WEAPON_ORB_PRIMARY_HOLD_GLOW,
+      primaryShotGlow
+    );
     const spread = aegisPose.spread;
     const shield = aegisPose.shield;
     root.updateMatrixWorld(true);
@@ -3498,14 +3506,13 @@ function ChronosFloatingPyramidWeapon({
 
     if (pyramidRef.current) {
       const pyramidScale = 1 + CHRONOS_AEGIS_PYRAMID_GROWTH * spread + 0.18 * shield;
+      primarySpinPhaseRef.current +=
+        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * primaryHeldBlend;
       pyramidRef.current.rotation.set(
         CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02,
         Math.PI / 4 +
-          t * (
-            CHRONOS_WEAPON_PYRAMID_SPIN_SPEED +
-            CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * primaryGlow +
-            0.5 * spread
-          ),
+          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread) +
+          primarySpinPhaseRef.current,
         Math.sin(t * 0.5) * 0.018
       );
       pyramidRef.current.scale.setScalar(pyramidScale);
