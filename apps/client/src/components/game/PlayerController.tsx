@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
   visualStore,
+  setChronosAegisVisualState,
   setLocalViewmodelMovement,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
@@ -313,6 +314,7 @@ export function PlayerController() {
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       hookshotAbilities.secondaryFirePressedRef.current = false;
+      setChronosAegisVisualState(localPlayer.id, false, now);
       setShadowStepTargeting(false, false);
       setBombTargeting(false, false);
       setAirStrikeTargeting(false, false);
@@ -348,6 +350,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setChronosAegisVisualState(localPlayer.id, false, now);
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
@@ -596,6 +599,11 @@ export function PlayerController() {
     );
     setBlazeRocketHeld(
       heroId === 'blaze' && !bombTargeting && frameInput.primaryFire,
+      now
+    );
+    setChronosAegisVisualState(
+      localPlayer.id,
+      heroId === 'chronos' && frameInput.secondaryFire,
       now
     );
     if (heroDef) {

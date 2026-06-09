@@ -2,7 +2,12 @@ import type { Room } from 'colyseus.js';
 import * as THREE from 'three';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
-import { setPlayerVisualPosition, setPlayerVisualRotation, visualStore } from '../store/visualStore';
+import {
+  setChronosAegisVisualState,
+  setPlayerVisualPosition,
+  setPlayerVisualRotation,
+  visualStore,
+} from '../store/visualStore';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike } from '../components/game/BlazeEffects';
 import { recordNetworkMessage } from '../utils/perfMarks';
@@ -31,6 +36,7 @@ const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
 const MOVEMENT_BIT_GRAPPLING = 1 << 5;
 const MOVEMENT_BIT_JETPACKING = 1 << 6;
 const MOVEMENT_BIT_GLIDING = 1 << 7;
+const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -565,6 +571,11 @@ export function setupPlayerTransformsHandler(
       existingPlayer.movement = movementFromBits(transform, existingPlayer.movement);
       setPlayerVisualPosition(transform.id, decoded.position);
       setPlayerVisualRotation(transform.id, decoded.lookYaw);
+      setChronosAegisVisualState(
+        transform.id,
+        existingPlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS),
+        Date.now()
+      );
     }
   });
 }

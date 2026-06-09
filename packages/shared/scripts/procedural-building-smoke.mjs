@@ -11,6 +11,9 @@ const DEFAULT_MAX_COLLIDERS = 48_000;
 const DEFAULT_MAX_FAILURE_RATE = 0.95;
 const DEFAULT_MIN_SIGNATURE_VARIETY = 0.58;
 const MAX_NAVIGATION_STEP_ROWS = 2;
+const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
+const FLAG_CLEAR_RADIUS = 4.3;
+const SPAWN_CLEAR_RADIUS = 3.6;
 const FLAG_DISTANCE_AUDIT_CLEARANCE = 8.7;
 const SPAWN_DISTANCE_AUDIT_CLEARANCE = 5;
 const SPAWN_DISTANCE_AUDIT_BASE_RADIUS = 4.41;
@@ -278,6 +281,133 @@ function countUnsafeCornerPocketColumns(manifest) {
       if (blockingSides >= 3 && targetTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
         count++;
       }
+    }
+  }
+
+  return count;
+}
+
+function getUnsafeBasinMaxAreaCells(manifest) {
+  const maxUnsafeWidthCells = Math.max(
+    1,
+    Math.ceil((PLAYER_RADIUS * 2) / Math.min(manifest.voxelSize.x, manifest.voxelSize.z)) - 1
+  );
+
+  return Math.max(144, (maxUnsafeWidthCells + 9) ** 2);
+}
+
+function isProtectedGameplayClearanceColumn(manifest, x, z) {
+  const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
+  const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
+
+  for (const flag of [manifest.flagZones.red, manifest.flagZones.blue]) {
+    if (Math.hypot(worldX - flag.x, worldZ - flag.z) <= FLAG_CLEAR_RADIUS + manifest.voxelSize.x * 2) {
+      return true;
+    }
+  }
+
+  for (const spawn of [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue]) {
+    if (Math.hypot(worldX - spawn.x, worldZ - spawn.z) <= SPAWN_CLEAR_RADIUS + manifest.voxelSize.x * 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function shouldAuditBasinColumn(manifest, x, z) {
+  const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
+  const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
+
+  return isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary);
+}
+
+function countUnsafeTrappedBasinColumns(manifest) {
+  const topRows = getCollisionTopRows(manifest);
+  const visited = new Uint8Array(topRows.length);
+  const directions = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+  ];
+  const maxAreaCells = getUnsafeBasinMaxAreaCells(manifest);
+  let count = 0;
+
+  for (let startX = 1; startX < manifest.size.x - 1; startX++) {
+    for (let startZ = 1; startZ < manifest.size.z - 1; startZ++) {
+      const startIndex = startX + startZ * manifest.size.x;
+      if (visited[startIndex] || topRows[startIndex] === 0) continue;
+      if (!shouldAuditBasinColumn(manifest, startX, startZ)) continue;
+
+      const cells = [];
+      const queue = [startIndex];
+      let highPerimeterEdges = 0;
+      let maxTopRow = 0;
+      let perimeterEdges = 0;
+      let targetTopRow = Number.POSITIVE_INFINITY;
+      let touchesProtectedGameplay = false;
+      visited[startIndex] = 1;
+
+      for (let cursor = 0; cursor < queue.length; cursor++) {
+        const cellIndex = queue[cursor];
+        const x = cellIndex % manifest.size.x;
+        const z = Math.floor(cellIndex / manifest.size.x);
+        const currentTopRow = topRows[cellIndex];
+
+        cells.push(cellIndex);
+        maxTopRow = Math.max(maxTopRow, currentTopRow);
+        if (isProtectedGameplayClearanceColumn(manifest, x, z)) {
+          touchesProtectedGameplay = true;
+        }
+
+        for (const direction of directions) {
+          const neighborX = x + direction.dx;
+          const neighborZ = z + direction.dz;
+
+          if (
+            neighborX <= 0 ||
+            neighborX >= manifest.size.x - 1 ||
+            neighborZ <= 0 ||
+            neighborZ >= manifest.size.z - 1
+          ) {
+            perimeterEdges++;
+            continue;
+          }
+
+          const neighborIndex = neighborX + neighborZ * manifest.size.x;
+          const neighborTopRow = topRows[neighborIndex];
+
+          if (neighborTopRow === 0 || !shouldAuditBasinColumn(manifest, neighborX, neighborZ)) {
+            perimeterEdges++;
+            continue;
+          }
+
+          if (Math.abs(neighborTopRow - currentTopRow) <= MAX_NAVIGATION_STEP_ROWS) {
+            if (!visited[neighborIndex]) {
+              visited[neighborIndex] = 1;
+              queue.push(neighborIndex);
+            }
+            continue;
+          }
+
+          perimeterEdges++;
+
+          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+            highPerimeterEdges++;
+            targetTopRow = Math.min(targetTopRow, neighborTopRow);
+          }
+        }
+      }
+
+      if (cells.length > maxAreaCells) continue;
+      if (touchesProtectedGameplay) continue;
+      if (!Number.isFinite(targetTopRow)) continue;
+      if (targetTopRow - maxTopRow <= MAX_NAVIGATION_STEP_ROWS) continue;
+      if (highPerimeterEdges < 4 || perimeterEdges === 0) continue;
+      if (highPerimeterEdges / perimeterEdges < UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO) continue;
+
+      count += cells.length;
     }
   }
 
@@ -628,6 +758,7 @@ function inspectMap(seed, options) {
   const flagObstructions = countFlagObstructions(manifest, manifest.flagZones.red) + countFlagObstructions(manifest, manifest.flagZones.blue);
   const unsafeGrooveColumns = countUnsafeNarrowGrooveColumns(manifest);
   const unsafeCornerPocketColumns = countUnsafeCornerPocketColumns(manifest);
+  const unsafeTrappedBasinColumns = countUnsafeTrappedBasinColumns(manifest);
   const acceptedBuildings = diagnostics.buildings.acceptedPlans;
   const mediumEntranceFailures = acceptedBuildings.filter(
     (entry) => entry.metrics.footprintCellCount >= 90 && entry.metrics.entranceCount < 2
@@ -665,6 +796,7 @@ function inspectMap(seed, options) {
   assertCondition(flagObstructions === 0, failures, `seed ${seed}: ${flagObstructions} solid blocks obstruct flag zones`);
   assertCondition(unsafeGrooveColumns === 0, failures, `seed ${seed}: ${unsafeGrooveColumns} unsafe narrow groove columns remain`);
   assertCondition(unsafeCornerPocketColumns === 0, failures, `seed ${seed}: ${unsafeCornerPocketColumns} unsafe corner pocket columns remain`);
+  assertCondition(unsafeTrappedBasinColumns === 0, failures, `seed ${seed}: ${unsafeTrappedBasinColumns} unsafe trapped basin columns remain`);
   assertCondition(structureBlocks > 0, failures, `seed ${seed}: no structure blocks generated`);
   assertCondition(structureBlocks < 11_000, failures, `seed ${seed}: structure block count ${structureBlocks} is too cluttered`);
   assertCondition(diagnostics.buildings.attempted > 0, failures, `seed ${seed}: no building plans attempted`);

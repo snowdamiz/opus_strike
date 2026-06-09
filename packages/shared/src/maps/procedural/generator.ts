@@ -121,6 +121,8 @@ const UNSAFE_GROOVE_MAX_WIDTH_CELLS = Math.max(
   Math.ceil((PLAYER_RADIUS * 2) / Math.min(PROCEDURAL_VOXEL_SIZE.x, PROCEDURAL_VOXEL_SIZE.z)) - 1
 );
 const UNSAFE_GROOVE_SEAL_PASSES = Math.max(8, UNSAFE_GROOVE_MAX_WIDTH_CELLS * 6);
+const UNSAFE_BASIN_MAX_AREA_CELLS = Math.max(144, (UNSAFE_GROOVE_MAX_WIDTH_CELLS + 9) ** 2);
+const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
 const BOUNDARY_WALL_THICKNESS = 3.1 * FEATURE_WORLD_SCALE;
 const BOUNDARY_SURFACE_THICKNESS = 3.8 * FEATURE_WORLD_SCALE;
 const FEATURE_ENTRANCE_HEADROOM = 1.1;
@@ -3594,6 +3596,30 @@ function shouldSealGrooveColumn(
   );
 }
 
+function isProtectedGameplayClearanceColumn(
+  origin: { x: number; z: number },
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  x: number,
+  z: number
+): boolean {
+  const worldX = gridToWorldCenter(x, origin.x);
+  const worldZ = gridToWorldCenter(z, origin.z);
+
+  for (const flag of [layout.flagZones.red, layout.flagZones.blue]) {
+    if (distanceSq(worldX, worldZ, flag.x, flag.z) <= (FLAG_CLEAR_RADIUS + PROCEDURAL_VOXEL_SIZE.x * 2) ** 2) {
+      return true;
+    }
+  }
+
+  for (const spawn of [...layout.spawnPoints.red, ...layout.spawnPoints.blue]) {
+    if (distanceSq(worldX, worldZ, spawn.x, spawn.z) <= (SPAWN_CLEAR_RADIUS + PROCEDURAL_VOXEL_SIZE.x * 2) ** 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function sealGrooveRun(
   setBlock: BlockSetter,
   blocks: Uint8Array,
@@ -3626,6 +3652,150 @@ function sealGrooveRun(
   }
 
   return sealed;
+}
+
+interface BasinComponent {
+  cells: number[];
+  highSideSamples: { x: number; z: number }[];
+  highPerimeterEdges: number;
+  maxTopRow: number;
+  perimeterEdges: number;
+  targetTopRow: number;
+  touchesProtectedGameplay: boolean;
+}
+
+function sealTrappedBasinComponent(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  size: VoxelSize,
+  component: BasinComponent
+): boolean {
+  if (component.highSideSamples.length === 0) return false;
+  if (component.targetTopRow - component.maxTopRow <= MAX_NAVIGATION_STEP_ROWS) return false;
+
+  const sideA = component.highSideSamples[0];
+  const sideB = component.highSideSamples[1] ?? sideA;
+  const targetTopRow = clamp(component.targetTopRow, 1, size.y);
+  const surfaceY = targetTopRow - 1;
+  const surfaceBlock = chooseGrooveSurfaceBlock(blocks, size, sideA, sideB, targetTopRow);
+  let sealed = false;
+
+  for (const cellIndex of component.cells) {
+    const x = cellIndex % size.x;
+    const z = Math.floor(cellIndex / size.x);
+    const currentTopRow = topRows[cellIndex];
+    if (currentTopRow >= targetTopRow) continue;
+
+    for (let y = currentTopRow; y < targetTopRow; y++) {
+      setBlock(x, y, z, getGrooveFillBlock(surfaceBlock, y, surfaceY));
+    }
+
+    topRows[cellIndex] = targetTopRow;
+    sealed = true;
+  }
+
+  return sealed;
+}
+
+function sealUnsafeTrappedBasins(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>
+): boolean {
+  const visited = new Uint8Array(topRows.length);
+  const directions: GridDirection[] = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+  ];
+  let sealedAny = false;
+
+  for (let startX = 1; startX < size.x - 1; startX++) {
+    for (let startZ = 1; startZ < size.z - 1; startZ++) {
+      const startIndex = startX + startZ * size.x;
+      if (visited[startIndex] || topRows[startIndex] === 0) continue;
+      if (!shouldSealGrooveColumn(origin, layout, startX, startZ)) continue;
+
+      const component: BasinComponent = {
+        cells: [],
+        highSideSamples: [],
+        highPerimeterEdges: 0,
+        maxTopRow: 0,
+        perimeterEdges: 0,
+        targetTopRow: Number.POSITIVE_INFINITY,
+        touchesProtectedGameplay: false,
+      };
+      const queue: number[] = [startIndex];
+      visited[startIndex] = 1;
+
+      for (let cursor = 0; cursor < queue.length; cursor++) {
+        const cellIndex = queue[cursor];
+        const x = cellIndex % size.x;
+        const z = Math.floor(cellIndex / size.x);
+        const currentTopRow = topRows[cellIndex];
+
+        component.cells.push(cellIndex);
+        component.maxTopRow = Math.max(component.maxTopRow, currentTopRow);
+        if (isProtectedGameplayClearanceColumn(origin, layout, x, z)) {
+          component.touchesProtectedGameplay = true;
+        }
+
+        for (const direction of directions) {
+          const neighborX = x + direction.dx;
+          const neighborZ = z + direction.dz;
+
+          if (neighborX <= 0 || neighborX >= size.x - 1 || neighborZ <= 0 || neighborZ >= size.z - 1) {
+            component.perimeterEdges++;
+            continue;
+          }
+
+          const neighborIndex = neighborX + neighborZ * size.x;
+          const neighborTopRow = topRows[neighborIndex];
+
+          if (neighborTopRow === 0 || !shouldSealGrooveColumn(origin, layout, neighborX, neighborZ)) {
+            component.perimeterEdges++;
+            continue;
+          }
+
+          if (Math.abs(neighborTopRow - currentTopRow) <= MAX_NAVIGATION_STEP_ROWS) {
+            if (!visited[neighborIndex]) {
+              visited[neighborIndex] = 1;
+              queue.push(neighborIndex);
+            }
+            continue;
+          }
+
+          component.perimeterEdges++;
+
+          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+            component.highPerimeterEdges++;
+            component.targetTopRow = Math.min(component.targetTopRow, neighborTopRow);
+
+            if (component.highSideSamples.length < 2) {
+              component.highSideSamples.push({ x: neighborX, z: neighborZ });
+            }
+          }
+        }
+      }
+
+      if (component.cells.length > UNSAFE_BASIN_MAX_AREA_CELLS) continue;
+      if (component.touchesProtectedGameplay) continue;
+      if (!Number.isFinite(component.targetTopRow)) continue;
+      if (component.highPerimeterEdges < 4 || component.perimeterEdges === 0) continue;
+      if (component.highPerimeterEdges / component.perimeterEdges < UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO) continue;
+
+      if (sealTrappedBasinComponent(setBlock, blocks, topRows, size, component)) {
+        sealedAny = true;
+      }
+    }
+  }
+
+  return sealedAny;
 }
 
 function sealNarrowGrooveRunsForAxis(
@@ -3799,8 +3969,9 @@ function sealUnsafeNarrowGrooves(
     const sealedX = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'x');
     const sealedZ = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'z');
     const sealedPockets = sealUnsafeCornerPockets(setBlock, blocks, topRows, origin, size, layout);
+    const sealedBasins = sealUnsafeTrappedBasins(setBlock, blocks, topRows, origin, size, layout);
 
-    if (!sealedX && !sealedZ && !sealedPockets) return;
+    if (!sealedX && !sealedZ && !sealedPockets && !sealedBasins) return;
   }
 }
 

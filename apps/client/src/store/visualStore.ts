@@ -37,6 +37,9 @@ export interface VisualState {
   flamethrowerOrigin: { x: number; y: number; z: number } | null;
   flamethrowerDirection: { x: number; y: number; z: number };
 
+  /** High-frequency Chronos RMB shield state for local and remote view effects. */
+  chronosAegisStates: Map<string, { active: boolean; activatedAtMs: number; updatedAtMs: number }>;
+
   /** Current local movement snapshot for viewmodel-only animation. */
   localViewmodelMovement: {
     hasMovementInput: boolean;
@@ -58,6 +61,7 @@ const initialVisualState: VisualState = {
   interpolationTargets: new Map(),
   flamethrowerOrigin: null,
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
+  chronosAegisStates: new Map(),
   localViewmodelMovement: {
     hasMovementInput: false,
     isSprinting: false,
@@ -179,6 +183,31 @@ export const removePlayerVisualState = (playerId: string): void => {
   state.playerPositions.delete(playerId);
   state.playerRotations.delete(playerId);
   state.interpolationTargets.delete(playerId);
+  state.chronosAegisStates.delete(playerId);
+};
+
+export const setChronosAegisVisualState = (
+  playerId: string,
+  active: boolean,
+  timestampMs = Date.now()
+): void => {
+  const states = visualStore.getState().chronosAegisStates;
+  const current = states.get(playerId);
+
+  if (current) {
+    if (active && !current.active) {
+      current.activatedAtMs = timestampMs;
+    }
+    current.active = active;
+    current.updatedAtMs = timestampMs;
+    return;
+  }
+
+  states.set(playerId, {
+    active,
+    activatedAtMs: active ? timestampMs : 0,
+    updatedAtMs: timestampMs,
+  });
 };
 
 export const setFlamethrowerVisualPose = (
@@ -216,6 +245,7 @@ export const clearVisualState = (): void => {
     interpolationTargets: new Map(),
     flamethrowerOrigin: null,
     flamethrowerDirection: { x: 0, y: 0, z: -1 },
+    chronosAegisStates: new Map(),
   }));
 };
 

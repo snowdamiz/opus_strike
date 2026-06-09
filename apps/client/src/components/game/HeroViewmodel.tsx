@@ -43,6 +43,12 @@ import {
   getHookshotMaterials,
 } from './effectResources';
 import { HookshotViewmodelArrow } from './hookshot/arrowHead';
+import {
+  CHRONOS_AEGIS_PANEL_HEIGHT,
+  CHRONOS_AEGIS_PANEL_WIDTH,
+  createChronosAegisPanelGeometry,
+} from './chronos/aegisGeometry';
+import { BudgetedPointLight } from './systems/DynamicLightBudget';
 
 type ViewmodelHeroId = Extract<HeroId, 'phantom' | 'hookshot' | 'blaze' | 'chronos'>;
 
@@ -131,6 +137,13 @@ interface ChronosMovementBobOffset {
   horizontalX: number;
   verticalY: number;
   slideBlend: number;
+}
+
+interface ChronosAegisPose {
+  active: boolean;
+  blend: number;
+  spread: number;
+  shield: number;
 }
 
 interface PhantomReloadPose {
@@ -228,8 +241,23 @@ const CHRONOS_WEAPON_BIND_LIFT_Y = 0.096;
 const CHRONOS_WEAPON_BIND_FORWARD_Z = -0.062;
 const CHRONOS_WEAPON_ORB_BASE_Y = -0.026;
 const CHRONOS_WEAPON_ORB_HOVER_Y = 0.0032;
+const CHRONOS_WEAPON_ORB_GLOW_BASE_OPACITY = 0.38;
+const CHRONOS_WEAPON_ORB_GLOW_HELD_OPACITY = 1;
+const CHRONOS_WEAPON_ORB_LIGHT_BASE_INTENSITY = 0.34;
+const CHRONOS_WEAPON_ORB_LIGHT_HELD_INTENSITY = 1.35;
 const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
 const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
+const CHRONOS_AEGIS_VISUAL_STALE_MS = 220;
+const CHRONOS_AEGIS_BLEND_IN_SPEED = 6.8;
+const CHRONOS_AEGIS_BLEND_OUT_SPEED = 9;
+const CHRONOS_AEGIS_SPREAD_START = 0.04;
+const CHRONOS_AEGIS_SPREAD_END = 0.76;
+const CHRONOS_AEGIS_SHIELD_START = 0.58;
+const CHRONOS_AEGIS_PYRAMID_GROWTH = 0.82;
+const CHRONOS_AEGIS_VIEWMODEL_SHIELD_Z = -2.15;
+const CHRONOS_AEGIS_VIEWMODEL_EDGE_THICKNESS = 0.064;
+const CHRONOS_AEGIS_VIEWMODEL_WIDTH = CHRONOS_AEGIS_PANEL_WIDTH * 0.9;
+const CHRONOS_AEGIS_VIEWMODEL_HEIGHT = CHRONOS_AEGIS_PANEL_HEIGHT * 0.9;
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -253,6 +281,12 @@ const PHANTOM_VOID_RAY_IDLE_CHARGE_POSE: PhantomVoidRayChargePose = {
   shakeX: 0,
   shakeY: 0,
   shakeZ: 0,
+};
+const CHRONOS_AEGIS_IDLE_POSE: ChronosAegisPose = {
+  active: false,
+  blend: 0,
+  spread: 0,
+  shield: 0,
 };
 
 const matrixPosition = new THREE.Vector3();
@@ -2887,7 +2921,8 @@ function writeChronosTriangleForearmPose(
   target: MutableTransformTarget,
   side: -1 | 1,
   elapsedSeconds: number,
-  movementBob: ChronosMovementBobOffset
+  movementBob: ChronosMovementBobOffset,
+  aegisPose: ChronosAegisPose
 ): void {
   writePhantomForearmPose(
     target,
@@ -2899,6 +2934,7 @@ function writeChronosTriangleForearmPose(
   );
 
   const breath = Math.sin(elapsedSeconds * 1.2 + side * 0.65) * 0.002;
+  const spread = aegisPose.spread;
   target.position.x += side * -0.062 + movementBob.horizontalX;
   target.position.y += 0.018 + breath + movementBob.verticalY;
   target.position.z +=
@@ -2907,13 +2943,21 @@ function writeChronosTriangleForearmPose(
   target.rotation.x -= 0.062;
   target.rotation.y += side * 0.018;
   target.rotation.z += side * 0.18;
+
+  target.position.x += side * 0.088 * spread;
+  target.position.y += 0.018 * spread;
+  target.position.z -= 0.036 * spread;
+  target.rotation.x -= 0.052 * spread;
+  target.rotation.y += side * -0.075 * spread;
+  target.rotation.z += side * -0.15 * spread;
 }
 
 function writeChronosTriangleHandPose(
   targets: PhantomHandPoseTargets,
   side: -1 | 1,
   elapsedSeconds: number,
-  movementBob: ChronosMovementBobOffset
+  movementBob: ChronosMovementBobOffset,
+  aegisPose: ChronosAegisPose
 ): void {
   writePhantomHandPose(
     targets,
@@ -2926,6 +2970,7 @@ function writeChronosTriangleHandPose(
 
   const innerSide = -side;
   const breath = Math.sin(elapsedSeconds * 1.42 + side * 0.58) * 0.0025;
+  const spread = aegisPose.spread;
   targets.arm.position.x += side * -0.074 + movementBob.horizontalX;
   targets.arm.position.y += 0.024 + breath + movementBob.verticalY;
   targets.arm.position.z +=
@@ -2935,10 +2980,21 @@ function writeChronosTriangleHandPose(
   targets.arm.rotation.y += side * 0.026;
   targets.arm.rotation.z += side * 0.19;
 
+  targets.arm.position.x += side * 0.118 * spread;
+  targets.arm.position.y += 0.036 * spread;
+  targets.arm.position.z -= 0.07 * spread;
+  targets.arm.rotation.x -= 0.08 * spread;
+  targets.arm.rotation.y += side * -0.16 * spread;
+  targets.arm.rotation.z += side * -0.24 * spread;
+
   targets.wrist.position.z -= 0.004;
   targets.wrist.rotation.x -= 0.012;
   targets.wrist.rotation.y += side * 0.016;
   targets.wrist.rotation.z += side * 0.04;
+  targets.wrist.position.y += 0.01 * spread;
+  targets.wrist.position.z -= 0.018 * spread;
+  targets.wrist.rotation.x -= 0.034 * spread;
+  targets.wrist.rotation.y += side * -0.07 * spread;
 
   targets.palm.position.x += side * -0.002;
   targets.palm.position.y += 0.002;
@@ -2946,6 +3002,12 @@ function writeChronosTriangleHandPose(
   targets.palm.rotation.x -= 0.028;
   targets.palm.rotation.y += side * -0.01;
   targets.palm.rotation.z += side * 0.018;
+  targets.palm.position.x += side * 0.014 * spread;
+  targets.palm.position.y += 0.012 * spread;
+  targets.palm.position.z -= 0.022 * spread;
+  targets.palm.rotation.x -= 0.04 * spread;
+  targets.palm.rotation.y += side * -0.1 * spread;
+  targets.palm.rotation.z += side * 0.045 * spread;
 
   targets.thumb.position.set(innerSide * 0.064, -0.026, -0.032);
   targets.thumb.rotation.set(0.035, innerSide * 0.05, innerSide * 0.48);
@@ -2953,16 +3015,16 @@ function writeChronosTriangleHandPose(
   for (let index = 0; index < targets.fingers.length; index++) {
     const finger = targets.fingers[index];
     const fingerSpread = index - 1.5;
-    const heldFingerSlot = fingerSpread * 0.034;
-    const fanRotation = fingerSpread * 0.04;
+    const heldFingerSlot = fingerSpread * (0.034 + 0.01 * spread);
+    const fanRotation = fingerSpread * (0.04 + 0.055 * spread);
     finger.position.set(
       heldFingerSlot,
-      0.056,
-      -0.032
+      0.056 + 0.014 * spread,
+      -0.032 - 0.02 * spread
     );
     finger.rotation.set(
-      -0.05,
-      innerSide * 0.012,
+      -0.05 - 0.035 * spread,
+      innerSide * (0.012 + 0.02 * spread),
       -innerSide * 0.18 + fanRotation
     );
   }
@@ -2972,10 +3034,12 @@ function ChronosPhantomForearm({
   side,
   materials,
   movementBobRef,
+  aegisPoseRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   movementBobRef: MutableRefObject<ChronosMovementBobOffset>;
+  aegisPoseRef: MutableRefObject<ChronosAegisPose>;
 }) {
   const forearmRef = useRef<THREE.Group>(null);
   const length = 0.32;
@@ -2991,7 +3055,8 @@ function ChronosPhantomForearm({
       forearm,
       side,
       state.clock.elapsedTime,
-      movementBobRef.current
+      movementBobRef.current,
+      aegisPoseRef.current
     );
   });
 
@@ -3017,11 +3082,13 @@ function ChronosTriangleHand({
   side,
   materials,
   movementBobRef,
+  aegisPoseRef,
   weaponSocketRef,
 }: {
   side: -1 | 1;
   materials: ViewmodelMaterialSet;
   movementBobRef: MutableRefObject<ChronosMovementBobOffset>;
+  aegisPoseRef: MutableRefObject<ChronosAegisPose>;
   weaponSocketRef?: MutableRefObject<THREE.Group | null>;
 }) {
   const armRef = useRef<THREE.Group>(null);
@@ -3049,7 +3116,8 @@ function ChronosTriangleHand({
       },
       side,
       state.clock.elapsedTime,
-      movementBobRef.current
+      movementBobRef.current,
+      aegisPoseRef.current
     );
   });
 
@@ -3142,18 +3210,25 @@ function ChronosFloatingPyramidWeapon({
   rootRef,
   leftSocketRef,
   rightSocketRef,
+  aegisPoseRef,
 }: {
   rootRef: MutableRefObject<THREE.Group | null>;
   leftSocketRef: MutableRefObject<THREE.Group | null>;
   rightSocketRef: MutableRefObject<THREE.Group | null>;
+  aegisPoseRef: MutableRefObject<ChronosAegisPose>;
 }) {
   const weaponRef = useRef<THREE.Group>(null);
   const pyramidRef = useRef<THREE.Group>(null);
   const orbRef = useRef<THREE.Group>(null);
+  const orbLightRef = useRef<THREE.PointLight>(null);
   const leftSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
   const rightSocketWorldPosition = useMemo(() => new THREE.Vector3(), []);
   const weaponWorldPosition = useMemo(() => new THREE.Vector3(), []);
   const weaponLocalPosition = useMemo(() => new THREE.Vector3(), []);
+  const orbCoreIdleColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.glow), []);
+  const orbCoreHeldColor = useMemo(() => new THREE.Color(0xcaffdc), []);
+  const orbGlowIdleColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.accent), []);
+  const orbGlowHeldColor = useMemo(() => new THREE.Color(0xa3ffc4), []);
   const pyramidFaceMaterial = useMemo(() => new THREE.MeshStandardMaterial({
     color: 0x123b2d,
     emissive: HERO_MATERIAL_COLORS.chronos.accent,
@@ -3180,7 +3255,7 @@ function ChronosFloatingPyramidWeapon({
   const orbGlowMaterial = useMemo(() => new THREE.MeshBasicMaterial({
     color: HERO_MATERIAL_COLORS.chronos.accent,
     transparent: true,
-    opacity: 0.38,
+    opacity: CHRONOS_WEAPON_ORB_GLOW_BASE_OPACITY,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     toneMapped: false,
@@ -3194,6 +3269,10 @@ function ChronosFloatingPyramidWeapon({
     if (!weapon || !root || !leftSocket || !rightSocket) return;
 
     const t = state.clock.elapsedTime;
+    const aegisPose = aegisPoseRef.current;
+    const aegisGlow = THREE.MathUtils.smoothstep(aegisPose.blend, 0, 1);
+    const spread = aegisPose.spread;
+    const shield = aegisPose.shield;
     root.updateMatrixWorld(true);
     leftSocket.getWorldPosition(leftSocketWorldPosition);
     rightSocket.getWorldPosition(rightSocketWorldPosition);
@@ -3203,8 +3282,8 @@ function ChronosFloatingPyramidWeapon({
       .multiplyScalar(0.5);
     weaponLocalPosition.copy(weaponWorldPosition);
     root.worldToLocal(weaponLocalPosition);
-    weaponLocalPosition.y += CHRONOS_WEAPON_BIND_LIFT_Y;
-    weaponLocalPosition.z += CHRONOS_WEAPON_BIND_FORWARD_Z;
+    weaponLocalPosition.y += CHRONOS_WEAPON_BIND_LIFT_Y + 0.03 * spread;
+    weaponLocalPosition.z += CHRONOS_WEAPON_BIND_FORWARD_Z - 0.105 * shield;
     weapon.position.copy(weaponLocalPosition);
     weapon.rotation.set(
       Math.sin(t * 0.74) * 0.024,
@@ -3213,18 +3292,34 @@ function ChronosFloatingPyramidWeapon({
     );
 
     if (pyramidRef.current) {
+      const pyramidScale = 1 + CHRONOS_AEGIS_PYRAMID_GROWTH * spread + 0.18 * shield;
       pyramidRef.current.rotation.set(
-        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X + Math.sin(t * 0.42) * 0.02,
-        Math.PI / 4 + t * CHRONOS_WEAPON_PYRAMID_SPIN_SPEED,
+        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02,
+        Math.PI / 4 + t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread),
         Math.sin(t * 0.5) * 0.018
       );
+      pyramidRef.current.scale.setScalar(pyramidScale);
     }
 
     if (orbRef.current) {
-      const orbPulse = 1 + Math.sin(t * 2.6) * 0.065;
+      const orbPulse = 1 + Math.sin(t * 2.6) * 0.055;
       orbRef.current.position.y =
         CHRONOS_WEAPON_ORB_BASE_Y + Math.sin(t * 1.55 + 0.6) * CHRONOS_WEAPON_ORB_HOVER_Y;
       orbRef.current.scale.setScalar(orbPulse);
+    }
+    orbGlowMaterial.opacity = THREE.MathUtils.lerp(
+      CHRONOS_WEAPON_ORB_GLOW_BASE_OPACITY,
+      CHRONOS_WEAPON_ORB_GLOW_HELD_OPACITY,
+      aegisGlow
+    );
+    orbGlowMaterial.color.copy(orbGlowIdleColor).lerp(orbGlowHeldColor, aegisGlow);
+    orbCoreMaterial.color.copy(orbCoreIdleColor).lerp(orbCoreHeldColor, aegisGlow * 0.88);
+    if (orbLightRef.current) {
+      orbLightRef.current.intensity = THREE.MathUtils.lerp(
+        CHRONOS_WEAPON_ORB_LIGHT_BASE_INTENSITY,
+        CHRONOS_WEAPON_ORB_LIGHT_HELD_INTENSITY,
+        aegisGlow
+      );
     }
   });
 
@@ -3261,6 +3356,131 @@ function ChronosFloatingPyramidWeapon({
           material={orbCoreMaterial}
           scale={0.022}
         />
+        <BudgetedPointLight
+          ref={orbLightRef}
+          budgetPriority={0.18}
+          color={HERO_MATERIAL_COLORS.chronos.glow}
+          intensity={CHRONOS_WEAPON_ORB_LIGHT_BASE_INTENSITY}
+          distance={0.72}
+          decay={2}
+        />
+      </group>
+    </group>
+  );
+}
+
+function ChronosAegisViewmodelShield({
+  aegisPoseRef,
+}: {
+  aegisPoseRef: MutableRefObject<ChronosAegisPose>;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const fillRef = useRef<THREE.Mesh>(null);
+  const wireRef = useRef<THREE.Mesh>(null);
+  const braceRef = useRef<THREE.Group>(null);
+  const fillGeometry = useMemo(
+    () => createChronosAegisPanelGeometry(
+      CHRONOS_AEGIS_VIEWMODEL_WIDTH,
+      CHRONOS_AEGIS_VIEWMODEL_HEIGHT,
+      0.2,
+      -1
+    ),
+    []
+  );
+  const wireGeometry = useMemo(
+    () => createChronosAegisPanelGeometry(
+      CHRONOS_AEGIS_VIEWMODEL_WIDTH * 0.96,
+      CHRONOS_AEGIS_VIEWMODEL_HEIGHT * 0.94,
+      0.18,
+      -1,
+      6,
+      5
+    ),
+    []
+  );
+  const fillMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: HERO_MATERIAL_COLORS.chronos.accent,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  }), []);
+  const edgeMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: HERO_MATERIAL_COLORS.chronos.glow,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  }), []);
+  const wireMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: HERO_MATERIAL_COLORS.chronos.glow,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    wireframe: true,
+    toneMapped: false,
+  }), []);
+  useEffect(() => () => {
+    fillGeometry.dispose();
+    wireGeometry.dispose();
+    fillMaterial.dispose();
+    edgeMaterial.dispose();
+    wireMaterial.dispose();
+  }, [edgeMaterial, fillGeometry, fillMaterial, wireGeometry, wireMaterial]);
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const shield = THREE.MathUtils.smoothstep(aegisPoseRef.current.shield, 0, 1);
+    if (shield <= 0.01) {
+      group.visible = false;
+      return;
+    }
+
+    const t = state.clock.elapsedTime;
+    const shieldScale = THREE.MathUtils.lerp(0.52, 0.98, shield);
+    const opacityPulse = 0.92 + Math.sin(t * 5.8) * 0.08;
+    group.visible = true;
+    group.position.set(0, -0.2 + 0.018 * shield, CHRONOS_AEGIS_VIEWMODEL_SHIELD_Z - 0.2 * shield);
+    group.rotation.set(
+      Math.sin(t * 1.15) * 0.012,
+      Math.sin(t * 0.8) * 0.018,
+      Math.sin(t * 1.7) * 0.014
+    );
+    group.scale.set(shieldScale, shieldScale, 1);
+
+    fillMaterial.opacity = 0.18 * shield * opacityPulse;
+    edgeMaterial.opacity = 0.72 * shield;
+    wireMaterial.opacity = 0.24 * shield;
+
+    if (fillRef.current) fillRef.current.scale.set(1, 1 + Math.sin(t * 4.1) * 0.006, 1);
+    if (wireRef.current) wireRef.current.scale.setScalar(0.985 + Math.sin(t * 5.6) * 0.004);
+    if (braceRef.current) braceRef.current.position.z = -0.018 + Math.sin(t * 3.8) * 0.006;
+  });
+
+  const halfWidth = CHRONOS_AEGIS_VIEWMODEL_WIDTH * 0.5;
+  const halfHeight = CHRONOS_AEGIS_VIEWMODEL_HEIGHT * 0.5;
+  const edgeThickness = CHRONOS_AEGIS_VIEWMODEL_EDGE_THICKNESS;
+
+  return (
+    <group ref={groupRef} visible={false} frustumCulled={false} renderOrder={24}>
+      <mesh ref={fillRef} geometry={fillGeometry} material={fillMaterial} frustumCulled={false} />
+      <mesh ref={wireRef} geometry={wireGeometry} material={wireMaterial} frustumCulled={false} />
+      <group ref={braceRef}>
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[0, halfHeight, 0.012]} scale={[CHRONOS_AEGIS_VIEWMODEL_WIDTH + edgeThickness * 1.8, edgeThickness, 0.024]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[0, -halfHeight, 0.012]} scale={[CHRONOS_AEGIS_VIEWMODEL_WIDTH + edgeThickness * 1.8, edgeThickness, 0.024]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[-halfWidth, 0, 0.012]} scale={[edgeThickness, CHRONOS_AEGIS_VIEWMODEL_HEIGHT + edgeThickness * 1.8, 0.024]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[halfWidth, 0, 0.012]} scale={[edgeThickness, CHRONOS_AEGIS_VIEWMODEL_HEIGHT + edgeThickness * 1.8, 0.024]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[-halfWidth, halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[halfWidth, halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[-halfWidth, -halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[halfWidth, -halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
       </group>
     </group>
   );
@@ -3283,8 +3503,10 @@ function ChronosViewmodel({
     verticalY: 0,
     slideBlend: 0,
   });
+  const aegisPoseRef = useRef<ChronosAegisPose>({ ...CHRONOS_AEGIS_IDLE_POSE });
 
   useFrame((_, delta) => {
+    const now = Date.now();
     const movementBob = updateChronosMovementBobRuntime(
       bobRuntimeRef.current,
       locomotionRef.current,
@@ -3294,6 +3516,34 @@ function ChronosViewmodel({
     movementBobRef.current.horizontalX = movementBob.horizontalX;
     movementBobRef.current.verticalY = movementBob.verticalY;
     movementBobRef.current.slideBlend = movementBob.slideBlend;
+
+    const localPlayerId = useGameStore.getState().localPlayer?.id;
+    const aegisVisualState = localPlayerId
+      ? visualStore.getState().chronosAegisStates.get(localPlayerId)
+      : null;
+    const active = Boolean(
+      aegisVisualState?.active &&
+      now - aegisVisualState.updatedAtMs <= CHRONOS_AEGIS_VISUAL_STALE_MS
+    );
+    const aegisPose = aegisPoseRef.current;
+    const frameDelta = Math.min(delta, CHRONOS_MOVEMENT_BOB_MAX_DELTA_SECONDS);
+    aegisPose.active = active;
+    aegisPose.blend = THREE.MathUtils.damp(
+      aegisPose.blend,
+      active ? 1 : 0,
+      active ? CHRONOS_AEGIS_BLEND_IN_SPEED : CHRONOS_AEGIS_BLEND_OUT_SPEED,
+      frameDelta
+    );
+    aegisPose.spread = THREE.MathUtils.smoothstep(
+      aegisPose.blend,
+      CHRONOS_AEGIS_SPREAD_START,
+      CHRONOS_AEGIS_SPREAD_END
+    );
+    aegisPose.shield = THREE.MathUtils.smoothstep(
+      aegisPose.blend,
+      CHRONOS_AEGIS_SHIELD_START,
+      1
+    );
   });
 
   return (
@@ -3309,29 +3559,35 @@ function ChronosViewmodel({
         side={-1}
         materials={materials}
         movementBobRef={movementBobRef}
+        aegisPoseRef={aegisPoseRef}
       />
       <ChronosPhantomForearm
         side={1}
         materials={materials}
         movementBobRef={movementBobRef}
+        aegisPoseRef={aegisPoseRef}
       />
       <ChronosTriangleHand
         side={-1}
         materials={materials}
         movementBobRef={movementBobRef}
+        aegisPoseRef={aegisPoseRef}
         weaponSocketRef={leftWeaponSocketRef}
       />
       <ChronosTriangleHand
         side={1}
         materials={materials}
         movementBobRef={movementBobRef}
+        aegisPoseRef={aegisPoseRef}
         weaponSocketRef={rightWeaponSocketRef}
       />
       <ChronosFloatingPyramidWeapon
         rootRef={rootRef}
         leftSocketRef={leftWeaponSocketRef}
         rightSocketRef={rightWeaponSocketRef}
+        aegisPoseRef={aegisPoseRef}
       />
+      <ChronosAegisViewmodelShield aegisPoseRef={aegisPoseRef} />
     </group>
   );
 }

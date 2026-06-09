@@ -225,6 +225,13 @@ const MOVEMENT_BIT_WALL_RUNNING = 1 << 4;
 const MOVEMENT_BIT_GRAPPLING = 1 << 5;
 const MOVEMENT_BIT_JETPACKING = 1 << 6;
 const MOVEMENT_BIT_GLIDING = 1 << 7;
+const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
+const CHRONOS_AEGIS_SHIELD_HALF_WIDTH = 3.36;
+const CHRONOS_AEGIS_SHIELD_HALF_HEIGHT = 1.78;
+const CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET = 1.85;
+const CHRONOS_AEGIS_SHIELD_CENTER_Y_OFFSET = 1.02;
+const CHRONOS_AEGIS_SOURCE_FRONT_MIN = 0.12;
+const CHRONOS_AEGIS_TARGET_BACK_MAX = 0.35;
 const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   easy: {
     thinkIntervalMs: 360,
@@ -755,6 +762,7 @@ export class GameRoom extends Room<GameState> {
     if (player.movement.isGrappling) bits |= MOVEMENT_BIT_GRAPPLING;
     if (player.movement.isJetpacking) bits |= MOVEMENT_BIT_JETPACKING;
     if (player.movement.isGliding) bits |= MOVEMENT_BIT_GLIDING;
+    if (this.isChronosAegisActive(player)) bits |= MOVEMENT_BIT_CHRONOS_AEGIS;
     return bits;
   }
 
@@ -1515,6 +1523,91 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private isChronosAegisActive(player: Player): boolean {
+    return (
+      player.heroId === 'chronos' &&
+      player.state === 'alive' &&
+      Boolean(player.lastInput?.secondaryFire)
+    );
+  }
+
+  private isDamageBlockedByChronosAegis(target: Player, source: Player): boolean {
+    if (source.team === target.team) return false;
+
+    const sourcePoint = this.getPlayerEyePosition(source);
+    const targetPoint = this.getPlayerBodyAimPosition(target);
+    const segment = {
+      x: targetPoint.x - sourcePoint.x,
+      y: targetPoint.y - sourcePoint.y,
+      z: targetPoint.z - sourcePoint.z,
+    };
+
+    let blocked = false;
+    this.state.players.forEach((aegisPlayer) => {
+      if (blocked) return;
+      if (aegisPlayer.team !== target.team) return;
+      if (aegisPlayer.id === source.id) return;
+      if (!this.isChronosAegisActive(aegisPlayer)) return;
+
+      const forward = this.getForwardVector(aegisPlayer.lookYaw, 0);
+      const right = {
+        x: Math.cos(aegisPlayer.lookYaw),
+        y: 0,
+        z: -Math.sin(aegisPlayer.lookYaw),
+      };
+      const center = {
+        x: aegisPlayer.position.x + forward.x * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
+        y: aegisPlayer.position.y + CHRONOS_AEGIS_SHIELD_CENTER_Y_OFFSET,
+        z: aegisPlayer.position.z + forward.z * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
+      };
+      const toSource = {
+        x: sourcePoint.x - center.x,
+        y: sourcePoint.y - center.y,
+        z: sourcePoint.z - center.z,
+      };
+      const toTarget = {
+        x: targetPoint.x - center.x,
+        y: targetPoint.y - center.y,
+        z: targetPoint.z - center.z,
+      };
+      const sourceForwardDot =
+        toSource.x * forward.x + toSource.y * forward.y + toSource.z * forward.z;
+      const targetForwardDot =
+        toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z;
+
+      if (sourceForwardDot < CHRONOS_AEGIS_SOURCE_FRONT_MIN) return;
+      if (targetForwardDot > CHRONOS_AEGIS_TARGET_BACK_MAX) return;
+
+      const denom =
+        segment.x * forward.x + segment.y * forward.y + segment.z * forward.z;
+      if (Math.abs(denom) < 0.0001) return;
+
+      const t = (
+        (center.x - sourcePoint.x) * forward.x +
+        (center.y - sourcePoint.y) * forward.y +
+        (center.z - sourcePoint.z) * forward.z
+      ) / denom;
+      if (t < 0 || t > 1) return;
+
+      const intersectionOffset = {
+        x: sourcePoint.x + segment.x * t - center.x,
+        y: sourcePoint.y + segment.y * t - center.y,
+        z: sourcePoint.z + segment.z * t - center.z,
+      };
+      const lateral =
+        intersectionOffset.x * right.x + intersectionOffset.z * right.z;
+      const vertical = intersectionOffset.y;
+      if (
+        Math.abs(lateral) <= CHRONOS_AEGIS_SHIELD_HALF_WIDTH &&
+        Math.abs(vertical) <= CHRONOS_AEGIS_SHIELD_HALF_HEIGHT
+      ) {
+        blocked = true;
+      }
+    });
+
+    return blocked;
+  }
+
   private applyDamage(target: Player, rawDamage: number, sourceId: string | null, damageType: string): boolean {
     if (target.state !== 'alive' || rawDamage <= 0) return false;
 
@@ -1527,6 +1620,10 @@ export class GameRoom extends Room<GameState> {
       this.isDevelopmentMode()
       && (this.devInvulnerablePlayers.has(target.id) || this.devImmunePlayers.has(target.id))
     ) {
+      return false;
+    }
+
+    if (source && this.isDamageBlockedByChronosAegis(target, source)) {
       return false;
     }
 
