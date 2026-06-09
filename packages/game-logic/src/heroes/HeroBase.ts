@@ -193,6 +193,9 @@ export async function createHero(heroId: HeroId): Promise<HeroBase> {
     case 'blaze':
       const { BlazeHero } = await import('./BlazeHero.js');
       return new BlazeHero();
+    case 'chronos':
+      const { ChronosHero } = await import('./ChronosHero.js');
+      return new ChronosHero();
     default:
       throw new Error(`Unknown hero: ${heroId}`);
   }

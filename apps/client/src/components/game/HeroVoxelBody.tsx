@@ -130,6 +130,18 @@ const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
     eye: '#fff0b0',
     mist: '#ff8f3d',
   },
+  chronos: {
+    armor: '#123c2a',
+    dark: '#07120f',
+    accent: '#dc2626',
+    glow: '#22c55e',
+    glass: '#34d399',
+    skin: '#1d3327',
+    void: '#050a08',
+    edge: '#7f1d1d',
+    eye: '#bbf7d0',
+    mist: '#16a34a',
+  },
 };
 
 function createPhantomBlazeArmParts(side: -1 | 1): VoxelPart[] {
@@ -329,10 +341,55 @@ const BLAZE_PARTS: VoxelPart[] = [
   { material: 'glow', kind: 'sphere', position: [0.075, 2.39, -0.02], scale: [0.055, 0.055, 0.055], emissive: true },
 ];
 
+const CHRONOS_PARTS: VoxelPart[] = [
+  { material: 'mist', kind: 'cylinder', position: [0, 0.016, 0], scale: [0.58, 0.024, 0.58], transparent: true },
+
+  { material: 'dark', position: [-0.15, 0.37, 0.02], scale: [0.14, 0.66, 0.15] },
+  { material: 'dark', position: [0.15, 0.37, 0.02], scale: [0.14, 0.66, 0.15] },
+  { material: 'armor', position: [-0.16, 0.18, -0.08], scale: [0.17, 0.28, 0.15] },
+  { material: 'armor', position: [0.16, 0.18, -0.08], scale: [0.17, 0.28, 0.15] },
+  { material: 'edge', position: [-0.16, 0.07, -0.04], scale: [0.2, 0.1, 0.23] },
+  { material: 'edge', position: [0.16, 0.07, -0.04], scale: [0.2, 0.1, 0.23] },
+  { material: 'glow', position: [-0.16, 0.14, -0.18], scale: [0.065, 0.048, 0.032], emissive: true },
+  { material: 'glow', position: [0.16, 0.14, -0.18], scale: [0.065, 0.048, 0.032], emissive: true },
+
+  { material: 'edge', position: [0, 1.02, 0.28], scale: [0.56, 0.82, 0.055] },
+  { material: 'edge', position: [0, 0.56, 0.3], scale: [0.64, 0.38, 0.05] },
+  { material: 'edge', position: [-0.31, 0.75, 0.28], scale: [0.12, 0.62, 0.05], rotation: [0, 0, -0.08] },
+  { material: 'edge', position: [0.31, 0.75, 0.28], scale: [0.12, 0.62, 0.05], rotation: [0, 0, 0.08] },
+  { material: 'accent', position: [0, 1.43, 0.18], scale: [0.48, 0.14, 0.08] },
+
+  { material: 'dark', position: [0, 0.75, 0.02], scale: [0.38, 0.24, 0.25] },
+  { material: 'armor', position: [0, 1.07, 0], scale: [0.43, 0.64, 0.29] },
+  { material: 'dark', position: [0, 1.12, -0.17], scale: [0.3, 0.42, 0.06] },
+  { material: 'glow', position: [0, 1.16, -0.225], scale: [0.1, 0.26, 0.032], emissive: true },
+  { material: 'glow', position: [-0.12, 1.22, -0.232], scale: [0.06, 0.042, 0.03], emissive: true },
+  { material: 'glow', position: [0.12, 1.22, -0.232], scale: [0.06, 0.042, 0.03], emissive: true },
+  { material: 'accent', position: [0, 0.92, -0.232], scale: [0.26, 0.048, 0.032], emissive: true },
+  { material: 'glass', kind: 'cylinder', position: [0, 1.16, -0.245], scale: [0.17, 0.026, 0.17], rotation: [Math.PI / 2, 0, 0], emissive: true, transparent: true },
+  { material: 'void', position: [0, 0.94, 0.18], scale: [0.25, 0.46, 0.08] },
+  { material: 'edge', position: [0, 0.67, -0.15], scale: [0.42, 0.08, 0.05] },
+  { material: 'edge', position: [0, 1.41, -0.01], scale: [0.54, 0.12, 0.34] },
+  { material: 'accent', position: [-0.28, 1.33, -0.01], scale: [0.13, 0.17, 0.25] },
+  { material: 'accent', position: [0.28, 1.33, -0.01], scale: [0.13, 0.17, 0.25] },
+
+  ...createPhantomBlazeArmParts(-1),
+  ...createPhantomBlazeArmParts(1),
+
+  { material: 'void', position: [0, 1.62, 0.02], scale: [0.31, 0.28, 0.29] },
+  { material: 'armor', position: [0, 1.75, -0.02], scale: [0.4, 0.16, 0.3] },
+  { material: 'dark', position: [0, 1.61, -0.18], scale: [0.3, 0.15, 0.05] },
+  { material: 'eye', position: [-0.08, 1.65, -0.22], scale: [0.065, 0.04, 0.03], emissive: true },
+  { material: 'eye', position: [0.08, 1.65, -0.22], scale: [0.065, 0.04, 0.03], emissive: true },
+  { material: 'glow', position: [0, 1.57, -0.222], scale: [0.13, 0.032, 0.028], emissive: true },
+  { material: 'edge', kind: 'cylinder', position: [0, 1.82, -0.02], scale: [0.46, 0.046, 0.32] },
+];
+
 const HERO_PARTS: Record<HeroId, VoxelPart[]> = {
   phantom: PHANTOM_PARTS,
   hookshot: HOOKSHOT_PARTS,
   blaze: BLAZE_PARTS,
+  chronos: CHRONOS_PARTS,
 };
 
 const IDLE_SPEED_MULTIPLIER = 1.68;
@@ -359,6 +416,7 @@ const HERO_ATTACK_DURATIONS: Record<HeroId, number> = {
   phantom: BLAZE_ATTACK_DURATION,
   hookshot: 0.46,
   blaze: BLAZE_ATTACK_DURATION,
+  chronos: BLAZE_ATTACK_DURATION,
 };
 interface HeroMovementProfile {
   cycleSpeed: number;
@@ -517,6 +575,14 @@ const HERO_IDLE_PROFILES: Record<HeroId, HeroIdleProfile> = {
     swayAmplitude: 0.029,
     twistAmplitude: 0.024,
     auraPulse: 0.108,
+  },
+  chronos: {
+    cycleSpeed: 1.18,
+    phase: 2.7,
+    breathingAmplitude: 0.016,
+    swayAmplitude: 0.018,
+    twistAmplitude: 0.02,
+    auraPulse: 0.14,
   },
 };
 
@@ -979,6 +1045,30 @@ function applyCrouchBonePose(bones: HeroBoneRefs, time: number, amount: number):
   }
 }
 
+function applyChronosArmPose(bones: HeroBoneRefs, amount: number): void {
+  if (amount <= 0.001) return;
+
+  if (bones.leftArm) {
+    bones.leftArm.rotation.x += 0.72 * amount;
+    bones.leftArm.rotation.z += 0.48 * amount;
+  }
+
+  if (bones.rightArm) {
+    bones.rightArm.rotation.x += 0.72 * amount;
+    bones.rightArm.rotation.z -= 0.48 * amount;
+  }
+
+  if (bones.leftForearm) {
+    bones.leftForearm.rotation.x -= 0.18 * amount;
+    bones.leftForearm.rotation.y -= 0.32 * amount;
+  }
+
+  if (bones.rightForearm) {
+    bones.rightForearm.rotation.x -= 0.18 * amount;
+    bones.rightForearm.rotation.y += 0.32 * amount;
+  }
+}
+
 function applySlideBonePose(bones: HeroBoneRefs, time: number, amount: number): void {
   if (amount <= 0.001) return;
 
@@ -1300,6 +1390,9 @@ function applyHeroAttackPose(
     case 'hookshot':
       applyHookshotAttackPose(bones, progress, amount, side);
       return;
+    case 'chronos':
+      applyPhantomAttackPose(bones, progress, amount);
+      return;
   }
 }
 
@@ -1370,6 +1463,13 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
     teamAccentPart({ material: 'accent', kind: 'cylinder', position: [0.52, 1.51, -0.38], scale: [0.12, 0.034, 0.12], emissiveIntensity: 0.46, roughness: 0.35, metalness: 0.18, toneMapped: false, limb: 'rightForearm' }),
     teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'rightForearm' }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.42, 0.014, 0.42], transparent: true, opacity: 0.16, emissiveIntensity: 0.24, roughness: 0.65, depthWrite: false }),
+  ],
+  chronos: [
+    teamAccentPart({ material: 'accent', position: [-0.22, 1.38, -0.225], scale: [0.1, 0.038, 0.034], emissiveIntensity: 0.48, roughness: 0.34, metalness: 0.18, toneMapped: false }),
+    teamAccentPart({ material: 'accent', position: [0.22, 1.38, -0.225], scale: [0.1, 0.038, 0.034], emissiveIntensity: 0.48, roughness: 0.34, metalness: 0.18, toneMapped: false }),
+    teamAccentPart({ material: 'accent', position: [-0.16, 0.2, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
+    teamAccentPart({ material: 'accent', position: [0.16, 0.2, -0.205], scale: [0.065, 0.045, 0.03], emissiveIntensity: 0.4, roughness: 0.42, metalness: 0.12 }),
+    teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.5, 0.014, 0.5], transparent: true, opacity: 0.15, emissiveIntensity: 0.23, roughness: 0.65, depthWrite: false }),
   ],
 };
 
@@ -1698,6 +1798,9 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     applyIdleBonePose(bones, idleProfile, primary, secondary, tertiary, idleAmount);
     applyJumpBonePose(bones, jumpPose, jumpAmount);
     applyCrouchBonePose(bones, t, poseCrouchAmount);
+    if (resolvedHero === 'chronos') {
+      applyChronosArmPose(bones, 1 - slideAmount);
+    }
 
     const glowPulse =
       (0.5 + 0.5 * tertiary) * idleProfile.auraPulse * idleAmount +

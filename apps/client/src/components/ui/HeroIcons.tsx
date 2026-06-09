@@ -16,6 +16,8 @@ export function HeroIcon({ heroId, size = 24, color = 'currentColor', className 
       return <HookshotIcon size={size} color={color} className={className} />;
     case 'blaze':
       return <BlazeIcon size={size} color={color} className={className} />;
+    case 'chronos':
+      return <ChronosIcon size={size} color={color} className={className} />;
     default:
       return null;
   }
@@ -125,6 +127,20 @@ function BlazeIcon({ size, color, className }: IconProps) {
   );
 }
 
+// Chronos - Hourglass/Cape
+function ChronosIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M6.2 4.2L12 2.6L17.8 4.2L16 10.3L12 12.2L8 10.3L6.2 4.2Z" fill="#dc2626" opacity="0.86" />
+      <path d="M8 3.8H16M8 20.2H16" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <path d="M9 4.8C9 8 10.1 10.4 12 12C10.1 13.6 9 16 9 19.2M15 4.8C15 8 13.9 10.4 12 12C13.9 13.6 15 16 15 19.2" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M10.1 8.2H13.9M10.4 15.8H13.6" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.72" />
+      <circle cx="12" cy="12" r="1.7" fill={color} />
+      <path d="M5.2 20.4C7.4 18.9 9.7 18.2 12 18.2C14.3 18.2 16.6 18.9 18.8 20.4" stroke="#dc2626" strokeWidth="2" strokeLinecap="round" opacity="0.82" />
+    </svg>
+  );
+}
+
 // ============= ABILITY ICONS =============
 
 export type AbilityIconType =
@@ -149,6 +165,11 @@ export type AbilityIconType =
   | 'airstrike'
   | 'gearstorm'
   | 'shield'
+  | 'verdantpulse'
+  | 'aegisofages'
+  | 'timebreak'
+  | 'lifelineconduit'
+  | 'ascendantparadox'
   | 'ultimate';
 
 export function AbilityIcon({ type, size = 24, color = 'currentColor', className = '' }: IconProps & { type: AbilityIconType }) {
@@ -192,6 +213,16 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <GearstormIcon size={size} color={color} className={className} />;
     case 'shield':
       return <ShieldIcon size={size} color={color} className={className} />;
+    case 'verdantpulse':
+      return <VerdantPulseIcon size={size} color={color} className={className} />;
+    case 'aegisofages':
+      return <AegisOfAgesIcon size={size} color={color} className={className} />;
+    case 'timebreak':
+      return <TimebreakIcon size={size} color={color} className={className} />;
+    case 'lifelineconduit':
+      return <LifelineConduitIcon size={size} color={color} className={className} />;
+    case 'ascendantparadox':
+      return <AscendantParadoxIcon size={size} color={color} className={className} />;
     case 'ultimate':
       return <UltimateIcon size={size} color={color} className={className} />;
     case 'passive':
@@ -213,6 +244,9 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     blaze_flamethrower: 'flamethrower',
     blaze_rocketjump: 'rocketjump',
     blaze_airstrike: 'gearstorm',
+    chronos_lifeline_conduit: 'lifelineconduit',
+    chronos_timebreak: 'timebreak',
+    chronos_ascendant_paradox: 'ascendantparadox',
   };
   return mapping[abilityId] || 'passive';
 }
@@ -440,6 +474,67 @@ function ShieldIcon({ size, color, className }: IconProps) {
       <path d="M12 2.8L4.8 6.2V11.5C4.8 16 7.9 20 12 21.4C16.1 20 19.2 16 19.2 11.5V6.2L12 2.8Z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
       <path d="M12 7V16M8.6 9L15.4 14M15.4 9L8.6 14" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
       <circle cx="12" cy="11.5" r="1.5" fill={color} />
+    </svg>
+  );
+}
+
+function VerdantPulseIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M4 12H14" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx="15.5" cy="12" r="3.4" fill={color} opacity="0.34" />
+      <circle cx="15.5" cy="12" r="1.7" fill={color} />
+      <path d="M17.6 7.1C20.1 8 21.5 9.8 21.8 12M17.6 16.9C20.1 16 21.5 14.2 21.8 12" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.72" />
+      <path d="M7.4 9.4V14.6M4.8 12H10" stroke="#ffffff" strokeWidth="1.3" strokeLinecap="round" opacity="0.72" />
+    </svg>
+  );
+}
+
+function AegisOfAgesIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M12 2.8L4.8 6.1V11.6C4.8 16 8 19.8 12 21.2C16 19.8 19.2 16 19.2 11.6V6.1L12 2.8Z" fill={color} opacity="0.24" />
+      <path d="M12 2.8L4.8 6.1V11.6C4.8 16 8 19.8 12 21.2C16 19.8 19.2 16 19.2 11.6V6.1L12 2.8Z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      <path d="M9.2 7.7H14.8M9.2 16.3H14.8" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M10 8.5C10 10.3 10.7 11.3 12 12C10.7 12.7 10 13.7 10 15.5M14 8.5C14 10.3 13.3 11.3 12 12C13.3 12.7 14 13.7 14 15.5" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M4 12.3C2.8 12.7 2.2 13.3 2 14M20 12.3C21.2 12.7 21.8 13.3 22 14" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.68" />
+    </svg>
+  );
+}
+
+function TimebreakIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <circle cx="12" cy="12" r="7.2" stroke={color} strokeWidth="2" opacity="0.88" />
+      <path d="M12 6.8V12L15.5 14.2" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.5 5.2L7.8 8.6M19.5 18.8L16.2 15.4" stroke={color} strokeWidth="1.8" strokeLinecap="round" opacity="0.62" />
+      <path d="M5.5 18.5L9.2 14.8L10.6 17L14.1 10.8L15.5 13L19 9.5" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M2.8 12H5M19 12H21.2" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.62" />
+    </svg>
+  );
+}
+
+function LifelineConduitIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <circle cx="12" cy="12" r="2.4" fill={color} />
+      <circle cx="5.4" cy="7" r="2.2" stroke={color} strokeWidth="1.7" />
+      <circle cx="18.6" cy="7" r="2.2" stroke={color} strokeWidth="1.7" />
+      <circle cx="12" cy="19" r="2.2" stroke={color} strokeWidth="1.7" />
+      <path d="M7.1 8.4L10 10.7M16.9 8.4L14 10.7M12 14.4V16.8" stroke={color} strokeWidth="2" strokeLinecap="round" />
+      <path d="M5.4 5.8V8.2M4.2 7H6.6M18.6 5.8V8.2M17.4 7H19.8M12 17.8V20.2M10.8 19H13.2" stroke={color} strokeWidth="1.3" strokeLinecap="round" opacity="0.82" />
+    </svg>
+  );
+}
+
+function AscendantParadoxIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M12 3.2L15.2 9.2H12.9V15H11.1V9.2H8.8L12 3.2Z" fill={color} />
+      <path d="M7.1 9.8C4.8 10.8 3.4 12.7 3 15.6C5.2 14.8 7.4 15.2 9.5 16.8" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.78" />
+      <path d="M16.9 9.8C19.2 10.8 20.6 12.7 21 15.6C18.8 14.8 16.6 15.2 14.5 16.8" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.78" />
+      <circle cx="12" cy="18.2" r="3" stroke={color} strokeWidth="1.7" opacity="0.72" />
+      <path d="M10.2 18.2H13.8M12 16.4V20" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }

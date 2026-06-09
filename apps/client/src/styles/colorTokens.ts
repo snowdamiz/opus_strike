@@ -17,24 +17,29 @@ const palette = {
   phantom: { hex: '#a855f7', rgb: [168, 85, 247] as const },
   phantomDeep: { hex: '#7c3aed', rgb: [124, 58, 237] as const },
   hookshotDeep: { hex: '#0891b2', rgb: [8, 145, 178] as const },
+  chronos: { hex: '#22c55e', rgb: [34, 197, 94] as const },
+  chronosDeep: { hex: '#b91c1c', rgb: [185, 28, 28] as const },
 } as const;
 
 export const HERO_COLORS = {
   phantom: palette.phantom.hex,
   hookshot: palette.cyan.hex,
   blaze: palette.orange.hex,
+  chronos: palette.chronos.hex,
 } satisfies Record<HeroId, string>;
 
 export const HERO_COLOR_SCHEMES = {
   phantom: { primary: palette.phantom.hex, secondary: palette.phantomDeep.hex, glow: rgba(palette.phantom.rgb, 0.6) },
   hookshot: { primary: palette.cyan.hex, secondary: palette.hookshotDeep.hex, glow: rgba(palette.cyan.rgb, 0.6) },
   blaze: { primary: palette.orange.hex, secondary: palette.orangeDeep.hex, glow: rgba(palette.orange.rgb, 0.6) },
+  chronos: { primary: palette.chronos.hex, secondary: palette.chronosDeep.hex, glow: rgba(palette.chronos.rgb, 0.62) },
 } satisfies Record<HeroId, { primary: string; secondary: string; glow: string }>;
 
 export const HUD_HERO_COLORS = {
   phantom: { primary: palette.phantom.hex, glow: rgba(palette.phantom.rgb, 0.4), bg: rgba(palette.phantom.rgb, 0.15) },
   hookshot: { primary: palette.cyan.hex, glow: rgba(palette.cyan.rgb, 0.4), bg: rgba(palette.cyan.rgb, 0.15) },
   blaze: { primary: palette.orange.hex, glow: rgba(palette.orange.rgb, 0.5), bg: rgba(palette.orange.rgb, 0.15) },
+  chronos: { primary: palette.chronos.hex, glow: rgba(palette.chronos.rgb, 0.42), bg: rgba(palette.chronos.rgb, 0.15) },
 } satisfies Record<HeroId, { primary: string; glow: string; bg: string }>;
 
 export const FACTIONS = {

@@ -94,6 +94,22 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
       iconType: 'bomb',
     },
   ],
+  chronos: [
+    {
+      input: 'LMB',
+      name: 'Verdant Pulse',
+      description: 'Fire green pulses that damage enemies and lightly heal teammates on hit.',
+      cooldown: 0.42,
+      iconType: 'verdantpulse',
+    },
+    {
+      input: 'RMB',
+      name: 'Aegis of Ages',
+      description: 'Hold a magic shield in front of Chronos to protect himself and teammates behind it.',
+      cooldown: 0,
+      iconType: 'aegisofages',
+    },
+  ],
 };
 
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
@@ -111,6 +127,11 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
     fromAbility('E', 'blaze_flamethrower'),
     fromAbility('Q', 'blaze_rocketjump'),
     fromAbility('F', 'blaze_airstrike', 'ultimate'),
+  ],
+  chronos: [
+    fromAbility('E', 'chronos_lifeline_conduit'),
+    fromAbility('Q', 'chronos_timebreak'),
+    fromAbility('F', 'chronos_ascendant_paradox', 'ultimate'),
   ],
 };
 

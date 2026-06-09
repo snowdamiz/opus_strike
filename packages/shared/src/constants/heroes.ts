@@ -85,6 +85,27 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     description: 'An assault specialist with sustained fire pressure and explosive abilities.',
   },
 
+  chronos: {
+    id: 'chronos',
+    name: 'Chronos',
+    role: 'support-tank',
+    movementFocus: 'temporal',
+    stats: {
+      maxHealth: 250,
+      moveSpeed: 4.35,
+      jumpForce: 8.1,
+      size: { width: 0.78, height: 1.9, depth: 0.78 },
+    },
+    passive: {
+      name: 'Temporal Bulwark',
+      description: 'A front-line support-tank built to stabilize allies with shields, healing, and tempo control.',
+    },
+    ability1: { abilityId: 'chronos_lifeline_conduit', defaultKey: 'KeyE' },
+    ability2: { abilityId: 'chronos_timebreak', defaultKey: 'KeyQ' },
+    ultimate: { abilityId: 'chronos_ascendant_paradox', defaultKey: 'KeyF' },
+    description: 'A time-warping support tank who bends momentum, protects allies, and turns pressure into recovery.',
+  },
+
 };
 
 export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
@@ -208,6 +229,37 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 5,
     resourceCost: 100,
     description: 'Ignite a massive area around yourself, scorching the ground while flaming cogs spin through the air.',
+  },
+
+  // Chronos Abilities
+  chronos_lifeline_conduit: {
+    id: 'chronos_lifeline_conduit',
+    name: 'Lifeline Conduit',
+    type: 'utility',
+    targeting: 'area',
+    cooldown: 15,
+    charges: 3,
+    chargeRegenTime: 15,
+    description: 'Auto-target allies in the area and send green healing beams to them. 3 charges; cooldown begins after all charges are spent.',
+  },
+  chronos_timebreak: {
+    id: 'chronos_timebreak',
+    name: 'Timebreak',
+    type: 'utility',
+    targeting: 'area',
+    cooldown: 20,
+    duration: 5,
+    description: 'Distort time around the fight, slowing enemy heroes while speeding allied movement, ability flow, and actions.',
+  },
+  chronos_ascendant_paradox: {
+    id: 'chronos_ascendant_paradox',
+    name: 'Ascendant Paradox',
+    type: 'ultimate',
+    targeting: 'self',
+    cooldown: 0,
+    duration: 10,
+    resourceCost: 100,
+    description: 'Lift off for 10 seconds and supercharge Verdant Pulse into larger green AOE blasts while airborne.',
   },
 
 };

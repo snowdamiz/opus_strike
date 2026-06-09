@@ -279,7 +279,7 @@ const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
     retreatHealthRatio: 0.24,
   },
 };
-const PRIMARY_ATTACKS: Record<HeroId, AttackConfig> = {
+const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 18, range: 30, cooldownMs: 550, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_BOT_COOLDOWN_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
@@ -1185,6 +1185,10 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
+    if (player.heroId === 'chronos') {
+      return;
+    }
+
     const result = tryUseAbility(player, slot);
     if (!result.success || !result.abilityId || !result.abilityState || !result.abilityDef) {
       return;
