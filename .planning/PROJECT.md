@@ -13,7 +13,7 @@ A fully playable asymmetrical CTF map with proper collision, spawn points, and f
 ### Validated
 
 - ✓ CTF game mode with flag capture mechanics — existing
-- ✓ Hero system with unique abilities (Phantom, Blaze, Glacier, Sentinel, Pulse, Hookshot) — existing
+- ✓ Hero system with unique abilities (Phantom, Blaze, Hookshot) — existing
 - ✓ Rapier physics-based movement and collision — existing
 - ✓ Colyseus multiplayer state synchronization — existing
 - ✓ Spawn management system — existing

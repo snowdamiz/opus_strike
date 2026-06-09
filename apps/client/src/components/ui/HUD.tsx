@@ -299,10 +299,6 @@ export function HUD() {
     bombTargetValid,
     flamethrowerFuel,
     flamethrowerActive,
-    iceWallRushFuel,
-    iceWallRushActive,
-    frostStormActive,
-    frostStormShield,
     phantomPrimaryAmmo,
     phantomPrimaryReloading,
     phantomPrimaryReloadStart,
@@ -324,10 +320,6 @@ export function HUD() {
       bombTargetValid: state.bombTargetValid,
       flamethrowerFuel: state.flamethrowerFuel,
       flamethrowerActive: state.flamethrowerActive,
-      iceWallRushFuel: state.iceWallRushFuel,
-      iceWallRushActive: state.iceWallRushActive,
-      frostStormActive: state.frostStormActive,
-      frostStormShield: state.frostStormShield,
       phantomPrimaryAmmo: state.phantomPrimaryAmmo,
       phantomPrimaryReloading: state.phantomPrimaryReloading,
       phantomPrimaryReloadStart: state.phantomPrimaryReloadStart,
@@ -639,24 +631,6 @@ export function HUD() {
             />
           </div>
 
-          {frostStormActive && frostStormShield > 0 && (
-            <div
-              className="h-1.5 mt-1 rounded-full overflow-hidden"
-              style={{
-                background: 'rgba(0, 0, 0, 0.34)',
-                border: '1px solid rgba(147, 197, 253, 0.35)',
-              }}
-            >
-              <div
-                className="h-full rounded-full transition-all duration-150"
-                style={{
-                  width: `${(frostStormShield / 75) * 100}%`,
-                  background: '#60a5fa',
-                  boxShadow: '0 0 8px rgba(96, 165, 250, 0.55)',
-                }}
-              />
-            </div>
-          )}
         </div>
       </div>
 
@@ -728,33 +702,6 @@ export function HUD() {
           </div>
         )}
 
-        {/* Ice Wall Rush Charge (Glacier E ability) */}
-        {localPlayer.heroId === 'glacier' && (
-          <div
-            className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
-            style={{
-              background: iceWallRushActive ? 'rgba(59, 130, 246, 0.25)' : 'rgba(59, 130, 246, 0.1)',
-              border: iceWallRushActive ? '1px solid rgba(59, 130, 246, 0.6)' : '1px solid rgba(59, 130, 246, 0.3)',
-            }}
-          >
-            <span className="text-[9px] font-display text-blue-400 tracking-wider">ICE</span>
-            <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
-              <div
-                className="h-full transition-all duration-100"
-                style={{
-                  width: `${iceWallRushFuel}%`,
-                  background: iceWallRushActive
-                    ? 'linear-gradient(90deg, #3b82f6, #60a5fa)'
-                    : 'linear-gradient(90deg, #60a5fa, #93c5fd)',
-                  boxShadow: iceWallRushActive ? '0 0 15px rgba(96, 165, 250, 0.7)' : '0 0 10px rgba(59, 130, 246, 0.5)',
-                }}
-              />
-            </div>
-            <span className="text-[10px] font-mono text-blue-300/70">
-              {Math.round(iceWallRushFuel)}%
-            </span>
-          </div>
-        )}
       </div>
 
       {/* ===== FLAG CARRIER ALERT (Improved) ===== */}

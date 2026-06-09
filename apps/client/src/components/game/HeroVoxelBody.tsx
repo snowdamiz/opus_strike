@@ -130,18 +130,6 @@ const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
     eye: '#fff0b0',
     mist: '#ff8f3d',
   },
-  glacier: {
-    armor: '#d7f2ff',
-    dark: '#102f55',
-    accent: '#18b7e8',
-    glow: '#d9fbff',
-    glass: '#79dfff',
-    skin: '#9dc8ff',
-    void: '#061a31',
-    edge: '#70aee8',
-    eye: '#eff6ff',
-    mist: '#8df3ff',
-  },
 };
 
 function createPhantomBlazeArmParts(side: -1 | 1): VoxelPart[] {
@@ -341,83 +329,10 @@ const BLAZE_PARTS: VoxelPart[] = [
   { material: 'glow', kind: 'sphere', position: [0.075, 2.39, -0.02], scale: [0.055, 0.055, 0.055], emissive: true },
 ];
 
-const GLACIER_PARTS: VoxelPart[] = [
-  { material: 'mist', kind: 'cylinder', position: [0, 0.014, 0], scale: [0.74, 0.026, 0.74], transparent: true },
-  { material: 'mist', kind: 'cylinder', position: [0, 0.028, -0.02], scale: [0.52, 0.014, 0.52], transparent: true },
-
-  { material: 'void', position: [-0.25, 0.38, 0.03], scale: [0.24, 0.7, 0.25] },
-  { material: 'void', position: [0.25, 0.38, 0.03], scale: [0.24, 0.7, 0.25] },
-  { material: 'dark', position: [-0.25, 0.44, -0.12], scale: [0.18, 0.48, 0.08] },
-  { material: 'dark', position: [0.25, 0.44, -0.12], scale: [0.18, 0.48, 0.08] },
-  { material: 'edge', position: [-0.25, 0.16, -0.03], scale: [0.32, 0.16, 0.34] },
-  { material: 'edge', position: [0.25, 0.16, -0.03], scale: [0.32, 0.16, 0.34] },
-  { material: 'armor', position: [-0.25, 0.36, -0.17], scale: [0.25, 0.18, 0.07] },
-  { material: 'armor', position: [0.25, 0.36, -0.17], scale: [0.25, 0.18, 0.07] },
-  { material: 'glass', position: [-0.25, 0.11, -0.23], scale: [0.17, 0.06, 0.05], emissive: true, transparent: true },
-  { material: 'glass', position: [0.25, 0.11, -0.23], scale: [0.17, 0.06, 0.05], emissive: true, transparent: true },
-  { material: 'glow', position: [-0.39, 0.19, -0.12], scale: [0.05, 0.12, 0.04], emissive: true },
-  { material: 'glow', position: [0.39, 0.19, -0.12], scale: [0.05, 0.12, 0.04], emissive: true },
-
-  { material: 'void', position: [0, 0.75, 0], scale: [0.48, 0.24, 0.32] },
-  { material: 'edge', position: [0, 0.67, -0.19], scale: [0.56, 0.1, 0.06] },
-  { material: 'edge', position: [0, 0.78, 0.22], scale: [0.44, 0.12, 0.1] },
-  { material: 'armor', position: [0, 1.05, 0], scale: [0.7, 0.68, 0.4] },
-  { material: 'dark', position: [0, 1.08, -0.23], scale: [0.48, 0.48, 0.07] },
-  { material: 'edge', position: [0, 1.36, -0.02], scale: [0.82, 0.14, 0.44] },
-  { material: 'edge', position: [0, 0.89, -0.24], scale: [0.58, 0.08, 0.06] },
-  { material: 'edge', position: [0, 1.16, 0.28], scale: [0.42, 0.5, 0.1] },
-  { material: 'accent', position: [0, 1.15, -0.278], scale: [0.1, 0.42, 0.036], emissive: true },
-  { material: 'accent', position: [-0.18, 1.21, -0.282], scale: [0.09, 0.23, 0.034], emissive: true },
-  { material: 'accent', position: [0.18, 1.21, -0.282], scale: [0.09, 0.23, 0.034], emissive: true },
-  { material: 'glow', position: [0, 0.98, -0.284], scale: [0.26, 0.07, 0.034], emissive: true },
-  { material: 'glow', position: [-0.18, 1.37, -0.27], scale: [0.11, 0.04, 0.035], emissive: true },
-  { material: 'glow', position: [0.18, 1.37, -0.27], scale: [0.11, 0.04, 0.035], emissive: true },
-  { material: 'glass', position: [0, 1.14, -0.316], scale: [0.18, 0.24, 0.03], emissive: true, transparent: true },
-  { material: 'glass', position: [-0.34, 1.06, -0.26], scale: [0.09, 0.34, 0.035], rotation: [0, 0, -0.34], transparent: true },
-  { material: 'glass', position: [0.34, 1.06, -0.26], scale: [0.09, 0.34, 0.035], rotation: [0, 0, 0.34], transparent: true },
-  { material: 'void', position: [0, 1.0, 0.34], scale: [0.5, 0.56, 0.13] },
-
-  { material: 'armor', position: [-0.48, 1.32, -0.02], scale: [0.22, 0.24, 0.34] },
-  { material: 'armor', position: [0.48, 1.32, -0.02], scale: [0.22, 0.24, 0.34] },
-  { material: 'glass', position: [-0.62, 1.39, -0.03], scale: [0.22, 0.18, 0.28], rotation: [0, 0, 0.24], transparent: true },
-  { material: 'glass', position: [0.62, 1.39, -0.03], scale: [0.22, 0.18, 0.28], rotation: [0, 0, -0.24], transparent: true },
-  { material: 'edge', position: [-0.66, 1.24, -0.05], scale: [0.08, 0.18, 0.3], rotation: [0, 0, 0.38] },
-  { material: 'edge', position: [0.66, 1.24, -0.05], scale: [0.08, 0.18, 0.3], rotation: [0, 0, -0.38] },
-  { material: 'dark', position: [-0.58, 1.0, 0.01], scale: [0.15, 0.42, 0.18] },
-  { material: 'dark', position: [0.58, 1.0, 0.01], scale: [0.15, 0.42, 0.18] },
-  { material: 'armor', position: [-0.62, 0.7, -0.03], scale: [0.16, 0.3, 0.17] },
-  { material: 'armor', position: [0.62, 0.7, -0.03], scale: [0.16, 0.3, 0.17] },
-  { material: 'glass', position: [-0.69, 0.72, -0.19], scale: [0.16, 0.24, 0.06], transparent: true },
-  { material: 'glass', position: [0.69, 0.72, -0.19], scale: [0.16, 0.24, 0.06], transparent: true },
-  { material: 'glow', position: [-0.62, 0.88, -0.17], scale: [0.052, 0.25, 0.034], emissive: true },
-  { material: 'glow', position: [0.62, 0.88, -0.17], scale: [0.052, 0.25, 0.034], emissive: true },
-  { material: 'glow', position: [-0.62, 0.48, -0.15], scale: [0.07, 0.07, 0.038], emissive: true },
-  { material: 'glow', position: [0.62, 0.48, -0.15], scale: [0.07, 0.07, 0.038], emissive: true },
-  { material: 'glass', position: [-0.73, 0.52, 0.04], scale: [0.08, 0.16, 0.18], rotation: [0.18, 0, 0.42], transparent: true },
-  { material: 'glass', position: [0.73, 0.52, 0.04], scale: [0.08, 0.16, 0.18], rotation: [0.18, 0, -0.42], transparent: true },
-
-  { material: 'void', position: [0, 1.62, 0.01], scale: [0.38, 0.3, 0.34] },
-  { material: 'armor', position: [0, 1.75, -0.04], scale: [0.52, 0.18, 0.36] },
-  { material: 'dark', position: [0, 1.61, -0.21], scale: [0.36, 0.16, 0.055] },
-  { material: 'glass', position: [0, 1.65, -0.252], scale: [0.34, 0.07, 0.034], emissive: true, transparent: true },
-  { material: 'eye', position: [-0.1, 1.66, -0.283], scale: [0.07, 0.038, 0.026], emissive: true },
-  { material: 'eye', position: [0.1, 1.66, -0.283], scale: [0.07, 0.038, 0.026], emissive: true },
-  { material: 'edge', position: [0, 1.52, -0.23], scale: [0.28, 0.06, 0.05] },
-  { material: 'armor', position: [-0.28, 1.62, 0.02], scale: [0.09, 0.22, 0.25] },
-  { material: 'armor', position: [0.28, 1.62, 0.02], scale: [0.09, 0.22, 0.25] },
-  { material: 'edge', position: [0, 1.84, -0.03], scale: [0.34, 0.09, 0.26] },
-  { material: 'glass', position: [0, 1.93, -0.02], scale: [0.12, 0.15, 0.22], rotation: [0, 0, 0.12], transparent: true },
-  { material: 'glass', position: [-0.2, 1.87, -0.02], scale: [0.12, 0.12, 0.22], rotation: [0, 0, 0.54], transparent: true },
-  { material: 'glass', position: [0.2, 1.87, -0.02], scale: [0.12, 0.12, 0.22], rotation: [0, 0, -0.54], transparent: true },
-  { material: 'glow', position: [0, 1.87, -0.19], scale: [0.16, 0.04, 0.032], emissive: true },
-  { material: 'armor', position: [0, 1.59, 0.2], scale: [0.3, 0.2, 0.09] },
-];
-
 const HERO_PARTS: Record<HeroId, VoxelPart[]> = {
   phantom: PHANTOM_PARTS,
   hookshot: HOOKSHOT_PARTS,
   blaze: BLAZE_PARTS,
-  glacier: GLACIER_PARTS,
 };
 
 const IDLE_SPEED_MULTIPLIER = 1.68;
@@ -444,7 +359,6 @@ const HERO_ATTACK_DURATIONS: Record<HeroId, number> = {
   phantom: BLAZE_ATTACK_DURATION,
   hookshot: 0.46,
   blaze: BLAZE_ATTACK_DURATION,
-  glacier: 0.82,
 };
 interface HeroMovementProfile {
   cycleSpeed: number;
@@ -559,15 +473,6 @@ const HERO_BONE_PIVOTS: Record<HeroBoneName, [number, number, number]> = {
   rightForearm: [0.5, 0.9, -0.06],
 };
 const EMPTY_RIGGED_PARTS: RiggedVoxelPart[] = [];
-const GLACIER_MALLET_ANGLE = -Math.PI / 4;
-const GLACIER_MALLET_GRIP_AMOUNT = 0.94;
-const GLACIER_LEFT_GRIP_POSITION = [-0.44, 0.21, -0.1] as const;
-const GLACIER_RIGHT_GRIP_POSITION = [0.44, 0.22, -0.12] as const;
-const GLACIER_LEFT_GRIP_ROTATION = [0.58, -0.2, 0.76] as const;
-const GLACIER_RIGHT_GRIP_ROTATION = [0.54, 0.2, -0.72] as const;
-const GLACIER_MALLET_HAND_ANCHOR_POSITION = [0.04, -0.42, 0.33] as const;
-const GLACIER_MALLET_HAND_ANCHOR_ROTATION: [number, number, number] = [0, 0, 0];
-const tempBonePosition = new THREE.Vector3();
 
 interface HeroIdleProfile {
   cycleSpeed: number;
@@ -612,14 +517,6 @@ const HERO_IDLE_PROFILES: Record<HeroId, HeroIdleProfile> = {
     swayAmplitude: 0.029,
     twistAmplitude: 0.024,
     auraPulse: 0.108,
-  },
-  glacier: {
-    cycleSpeed: 1.02,
-    phase: 2.8,
-    breathingAmplitude: 0.016,
-    swayAmplitude: 0.018,
-    twistAmplitude: 0.017,
-    auraPulse: 0.062,
   },
 };
 
@@ -1249,33 +1146,6 @@ function applyJumpBonePose(bones: HeroBoneRefs, pose: HeroJumpPose, amount: numb
   }
 }
 
-function blendBoneTransform(
-  bone: THREE.Group | null | undefined,
-  targetPosition: readonly [number, number, number],
-  targetRotation: readonly [number, number, number],
-  amount: number
-): void {
-  if (!bone || amount <= 0.001) return;
-
-  bone.position.lerp(tempBonePosition.fromArray(targetPosition), amount);
-  bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, targetRotation[0], amount);
-  bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, targetRotation[1], amount);
-  bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, targetRotation[2], amount);
-}
-
-function applyGlacierMalletGripPose(bones: HeroBoneRefs, amount = GLACIER_MALLET_GRIP_AMOUNT): void {
-  blendBoneTransform(bones.leftArm, GLACIER_LEFT_GRIP_POSITION, GLACIER_LEFT_GRIP_ROTATION, amount);
-  blendBoneTransform(bones.rightArm, GLACIER_RIGHT_GRIP_POSITION, GLACIER_RIGHT_GRIP_ROTATION, amount);
-}
-
-function setGlacierMalletBasePose(mallet: THREE.Group | null | undefined): void {
-  if (!mallet) return;
-
-  mallet.position.set(...GLACIER_MALLET_HAND_ANCHOR_POSITION);
-  mallet.rotation.set(...GLACIER_MALLET_HAND_ANCHOR_ROTATION);
-  mallet.scale.set(1, 1, 1);
-}
-
 function applyPhantomAttackPose(bones: HeroBoneRefs, progress: number, amount: number): void {
   if (amount <= 0.001) return;
 
@@ -1413,74 +1283,9 @@ function applyHookshotAttackPose(
   }
 }
 
-function applyGlacierAttackPose(
-  bones: HeroBoneRefs,
-  mallet: THREE.Group | null | undefined,
-  progress: number,
-  amount: number,
-  side: -1 | 1
-): void {
-  if (amount <= 0.001) return;
-
-  const swing = easeInOutSine(progress);
-  const impactPulse = smoothPulse(progress, 0.5, 0.62, 0.78);
-  const liftPulse = Math.sin(progress * Math.PI);
-  const lateralSweep = THREE.MathUtils.lerp(side * 0.32, -side * 0.42, swing);
-  const verticalSweep = THREE.MathUtils.lerp(0.22, -0.18, swing);
-  const torsoTwist = THREE.MathUtils.lerp(-side * 0.26, side * 0.28, swing);
-  const armSwingZ = THREE.MathUtils.lerp(-side * 0.72, side * 0.88, swing);
-  const armSwingY = THREE.MathUtils.lerp(-side * 0.34, side * 0.36, swing);
-  const malletRoll = THREE.MathUtils.lerp(-side * 1.25, side * 1.2, swing);
-
-  if (bones.hips) {
-    bones.hips.rotation.y += torsoTwist * 0.18 * amount;
-    bones.hips.rotation.z += THREE.MathUtils.lerp(side * 0.055, -side * 0.06, swing) * amount;
-  }
-
-  if (bones.torso) {
-    bones.torso.position.x += lateralSweep * 0.16 * amount;
-    bones.torso.rotation.x += (-0.08 * liftPulse + 0.035 * impactPulse) * amount;
-    bones.torso.rotation.y += torsoTwist * amount;
-    bones.torso.rotation.z += THREE.MathUtils.lerp(side * 0.16, -side * 0.18, swing) * amount;
-  }
-
-  if (bones.head) {
-    bones.head.rotation.y += torsoTwist * 0.35 * amount;
-    bones.head.rotation.z += THREE.MathUtils.lerp(side * 0.035, -side * 0.04, swing) * amount;
-  }
-
-  if (bones.leftArm) {
-    bones.leftArm.position.x += lateralSweep * 0.42 * amount;
-    bones.leftArm.position.y += (verticalSweep * 0.78 + 0.04 * liftPulse) * amount;
-    bones.leftArm.position.z += (-0.12 * liftPulse - 0.035 * impactPulse) * amount;
-    bones.leftArm.rotation.x += THREE.MathUtils.lerp(-0.42, 0.28, swing) * amount;
-    bones.leftArm.rotation.y += armSwingY * 0.52 * amount;
-    bones.leftArm.rotation.z += (armSwingZ * 0.74 + side * 0.12) * amount;
-  }
-
-  if (bones.rightArm) {
-    bones.rightArm.position.x += lateralSweep * 0.52 * amount;
-    bones.rightArm.position.y += (verticalSweep + 0.055 * liftPulse) * amount;
-    bones.rightArm.position.z += (-0.16 * liftPulse - 0.045 * impactPulse) * amount;
-    bones.rightArm.rotation.x += THREE.MathUtils.lerp(-0.54, 0.34, swing) * amount;
-    bones.rightArm.rotation.y += armSwingY * amount;
-    bones.rightArm.rotation.z += (armSwingZ + side * 0.08) * amount;
-  }
-
-  if (mallet) {
-    mallet.position.x += lateralSweep * 0.18 * amount;
-    mallet.position.y += (verticalSweep * 0.32 - 0.04 * impactPulse) * amount;
-    mallet.position.z += (-0.18 * liftPulse - 0.05 * impactPulse) * amount;
-    mallet.rotation.x += THREE.MathUtils.lerp(-0.36, 0.42, swing) * amount;
-    mallet.rotation.y += THREE.MathUtils.lerp(-side * 0.32, side * 0.3, swing) * amount;
-    mallet.rotation.z += malletRoll * amount;
-  }
-}
-
 function applyHeroAttackPose(
   heroId: HeroId,
   bones: HeroBoneRefs,
-  mallet: THREE.Group | null | undefined,
   progress: number,
   amount: number,
   side: -1 | 1
@@ -1494,9 +1299,6 @@ function applyHeroAttackPose(
       return;
     case 'hookshot':
       applyHookshotAttackPose(bones, progress, amount, side);
-      return;
-    case 'glacier':
-      applyGlacierAttackPose(bones, mallet, progress, amount, side);
       return;
   }
 }
@@ -1569,18 +1371,6 @@ const TEAM_ACCENT_PARTS: Record<HeroId, TeamAccentPart[]> = {
     teamAccentPart({ material: 'accent', position: [0.43, 0.88, -0.4], scale: [0.032, 0.1, 0.03], emissiveIntensity: 0.42, roughness: 0.38, metalness: 0.16, limb: 'rightForearm' }),
     teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.42, 0.014, 0.42], transparent: true, opacity: 0.16, emissiveIntensity: 0.24, roughness: 0.65, depthWrite: false }),
   ],
-  glacier: [
-    teamAccentPart({ material: 'accent', position: [-0.28, 1.38, -0.286], scale: [0.13, 0.042, 0.034], emissiveIntensity: 0.56, roughness: 0.32, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [0.28, 1.38, -0.286], scale: [0.13, 0.042, 0.034], emissiveIntensity: 0.56, roughness: 0.32, metalness: 0.2, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [0, 0.84, -0.265], scale: [0.28, 0.05, 0.034], emissiveIntensity: 0.48, roughness: 0.38, metalness: 0.18, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [-0.48, 1.43, -0.245], rotation: [0, 0, 0.24], scale: [0.08, 0.16, 0.035], emissiveIntensity: 0.46, roughness: 0.38, metalness: 0.18 }),
-    teamAccentPart({ material: 'accent', position: [0.48, 1.43, -0.245], rotation: [0, 0, -0.24], scale: [0.08, 0.16, 0.035], emissiveIntensity: 0.46, roughness: 0.38, metalness: 0.18 }),
-    teamAccentPart({ material: 'accent', position: [-0.71, 0.86, -0.235], scale: [0.054, 0.22, 0.034], emissiveIntensity: 0.48, roughness: 0.35, metalness: 0.18, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [0.71, 0.86, -0.235], scale: [0.054, 0.22, 0.034], emissiveIntensity: 0.48, roughness: 0.35, metalness: 0.18, toneMapped: false }),
-    teamAccentPart({ material: 'accent', position: [-0.25, 0.35, -0.235], scale: [0.11, 0.052, 0.034], emissiveIntensity: 0.44, roughness: 0.4, metalness: 0.14 }),
-    teamAccentPart({ material: 'accent', position: [0.25, 0.35, -0.235], scale: [0.11, 0.052, 0.034], emissiveIntensity: 0.44, roughness: 0.4, metalness: 0.14 }),
-    teamAccentPart({ material: 'mist', kind: 'cylinder', position: [0, 0.018, 0], scale: [0.62, 0.014, 0.62], transparent: true, opacity: 0.16, emissiveIntensity: 0.24, roughness: 0.65, depthWrite: false }),
-  ],
 };
 
 const EMPTY_TEAM_ACCENT_PARTS: TeamAccentPart[] = [];
@@ -1599,95 +1389,6 @@ function TeamAccentMaterial({ part, teamColor }: { part: TeamAccentPart; teamCol
       depthWrite={part.depthWrite ?? !transparent}
       toneMapped={part.toneMapped}
     />
-  );
-}
-
-function GlacierHeldMallet({
-  materials,
-  castShadow,
-}: {
-  materials: Map<MaterialKind, THREE.MeshStandardMaterial>;
-  castShadow: boolean;
-}) {
-  return (
-    <group position={[0.08, -0.23, -0.48]} rotation={[0, 0, GLACIER_MALLET_ANGLE]}>
-      <mesh
-        position={[0, 0.19, 0]}
-        scale={[0.052, 1.38, 0.052]}
-        castShadow={castShadow}
-        geometry={HERO_PART_GEOMETRIES.cylinder}
-      >
-        <primitive object={materials.get('dark')!} attach="material" />
-      </mesh>
-
-      {[-0.42, -0.08, 0.28, 0.54, 0.74].map((y) => (
-        <mesh
-          key={`glacier-mallet-ring-${y}`}
-          position={[0, y, 0]}
-          scale={[0.085, 0.032, 0.085]}
-          castShadow={castShadow}
-          geometry={HERO_PART_GEOMETRIES.cylinder}
-        >
-          <primitive object={materials.get('glass')!} attach="material" />
-        </mesh>
-      ))}
-
-      {[-0.32, 0.12].map((y) => (
-        <mesh
-          key={`glacier-mallet-grip-${y}`}
-          position={[0, y, -0.012]}
-          scale={[0.18, 0.095, 0.16]}
-          castShadow={castShadow}
-          geometry={HERO_PART_GEOMETRIES.box}
-        >
-          <primitive object={materials.get('armor')!} attach="material" />
-        </mesh>
-      ))}
-
-      <group position={[0, 0.9, 0]}>
-        <mesh
-          position={[0, 0, 0]}
-          scale={[0.66, 0.26, 0.32]}
-          castShadow={castShadow}
-          geometry={HERO_PART_GEOMETRIES.box}
-        >
-          <primitive object={materials.get('glass')!} attach="material" />
-        </mesh>
-        <mesh
-          position={[-0.38, 0, 0]}
-          scale={[0.13, 0.3, 0.36]}
-          castShadow={castShadow}
-          geometry={HERO_PART_GEOMETRIES.box}
-        >
-          <primitive object={materials.get('edge')!} attach="material" />
-        </mesh>
-        <mesh
-          position={[0.38, 0, 0]}
-          scale={[0.13, 0.3, 0.36]}
-          castShadow={castShadow}
-          geometry={HERO_PART_GEOMETRIES.box}
-        >
-          <primitive object={materials.get('edge')!} attach="material" />
-        </mesh>
-        <mesh
-          position={[0, 0.01, -0.18]}
-          scale={[0.48, 0.052, 0.04]}
-          castShadow={castShadow}
-          geometry={HERO_PART_GEOMETRIES.box}
-        >
-          <primitive object={materials.get('glow')!} attach="material" />
-        </mesh>
-        <mesh
-          position={[0, 0.22, 0]}
-          rotation={[0, 0, Math.PI]}
-          scale={[0.15, 0.22, 0.15]}
-          castShadow={castShadow}
-          geometry={HERO_PART_GEOMETRIES.cone}
-        >
-          <primitive object={materials.get('glow')!} attach="material" />
-        </mesh>
-      </group>
-    </group>
   );
 }
 
@@ -1723,7 +1424,6 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
 }: HeroVoxelBodyProps) {
   const groupRef = useRef<THREE.Group>(null);
   const boneRefs = useRef<HeroBoneRefs>({});
-  const glacierMalletRef = useRef<THREE.Group | null>(null);
   const idleBlendRef = useRef(isMoving || isJumping || isCrouching || isSliding || isAttacking ? 0 : 1);
   const movementBlendRef = useRef(isMoving && !isJumping && !isSliding ? 1 : 0);
   const crouchBlendRef = useRef(isCrouching && !isJumping && !isSliding ? 1 : 0);
@@ -1823,7 +1523,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       const attackCycleIndex = Math.floor(attackCycle);
       attackProgress = attackCycle - attackCycleIndex;
 
-      if (!attackSideRef && attackSide === undefined && (resolvedHero === 'hookshot' || resolvedHero === 'glacier')) {
+      if (!attackSideRef && attackSide === undefined && resolvedHero === 'hookshot') {
         activeAttackSide = attackCycleIndex % 2 === 0 ? 1 : -1;
       }
     }
@@ -1851,7 +1551,6 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const normalizedWalkDirection = getNormalizedWalkDirection(rawWalkDirection);
     const bones = boneRefs.current;
     setBoneBasePose(bones);
-    setGlacierMalletBasePose(glacierMalletRef.current);
 
     if (jumping) {
       if (!wasJumpingRef.current || jumpStartedAtRef.current === null) {
@@ -1917,9 +1616,6 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       materials.forEach((material, kind) => {
         material.emissiveIntensity = getMaterialEmissiveIntensity(kind, hasFlag);
       });
-      if (resolvedHero === 'glacier') {
-        applyGlacierMalletGripPose(bones);
-      }
 
       return;
     }
@@ -2017,10 +1713,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
 
     applyWalkingBonePose(bones, movementCycleTime, movingAmount, normalizedWalkDirection, movementProfile);
     applySlideBonePose(bones, t, slideAmount);
-    if (resolvedHero === 'glacier') {
-      applyGlacierMalletGripPose(bones);
-    }
-    applyHeroAttackPose(resolvedHero, bones, glacierMalletRef.current, attackProgress, attackAmount, activeAttackSide);
+    applyHeroAttackPose(resolvedHero, bones, attackProgress, attackAmount, activeAttackSide);
   });
 
   const renderPartsForBone = (bone: HeroBoneName) => (
@@ -2206,17 +1899,6 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('rightArm', 'torso')}
         >
           {renderPartsForBone('rightArm')}
-          {resolvedHero === 'glacier' && (
-            <group
-              ref={(node) => {
-                glacierMalletRef.current = node;
-              }}
-              position={GLACIER_MALLET_HAND_ANCHOR_POSITION}
-              rotation={GLACIER_MALLET_HAND_ANCHOR_ROTATION}
-            >
-              <GlacierHeldMallet materials={materials} castShadow={castShadow} />
-            </group>
-          )}
 
           <group
             ref={(node) => {

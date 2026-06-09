@@ -23,12 +23,6 @@ import {
   type ProjectileSlice,
 } from './slices/projectiles';
 
-import {
-  createGlacierSlice,
-  glacierInitialState,
-  type GlacierSlice,
-} from './slices/glacier';
-
 // Re-export all types for backwards compatibility
 export type {
   LobbyInfo,
@@ -51,9 +45,6 @@ export type {
   SwingLineData,
   GrappleLineData,
   EarthWallData,
-  IceMalletSwingData,
-  IceWallSegmentData,
-  IceWallRushData,
 } from './types';
 
 // ============================================================================
@@ -187,7 +178,7 @@ interface CoreActions {
 // COMBINED STORE TYPE
 // ============================================================================
 
-type GameStore = CoreState & CoreActions & ProjectileSlice & GlacierSlice;
+type GameStore = CoreState & CoreActions & ProjectileSlice;
 
 const MAX_PENDING_INPUTS = 128;
 
@@ -244,7 +235,6 @@ const coreInitialState: CoreState = {
 const initialState = {
   ...coreInitialState,
   ...projectileInitialState,
-  ...glacierInitialState,
 };
 
 // ============================================================================
@@ -257,7 +247,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   // Include slice actions
   ...createProjectileSlice(set, get, store),
-  ...createGlacierSlice(set, get, store),
 
   // ==================== CORE ACTIONS ====================
 

@@ -1,15 +1,10 @@
 // Export temporary wall collider system
 export {
-  initIceWallSystem,
-  updateIceWallWorld,
+  initTemporaryWallSystem,
+  updateTemporaryWallWorld,
   addTemporaryWallCollider,
   removeTemporaryWallCollider,
   cleanupExpiredTemporaryWallColliders,
   clearAllTemporaryWallColliders,
   getTemporaryWallColliderCount,
-  addIceWallCollider,
-  removeIceWallCollider,
-  cleanupExpiredIceWallColliders,
-  clearAllIceWallColliders,
-  getIceWallColliderCount,
-} from './iceWallColliders';
+} from './temporaryWallColliders';

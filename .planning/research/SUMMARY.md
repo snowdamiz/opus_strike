@@ -9,7 +9,7 @@
 
 Building a competitive CTF map for this R3F hero shooter requires a hybrid approach: use Blender for visual geometry exported as compressed GLB, then define collision separately using simplified Rapier colliders. The critical insight from 2025 best practices is that visual and collision geometry must be decoupled - trimesh colliders work but are expensive, primitive collider composition performs better.
 
-From a gameplay perspective, competitive CTF maps follow well-established patterns: 3-4 attack routes, balanced travel times, 2-3 height tiers for vertical mobility, and multiple flag zone entrances to prevent stalemates. The hero roster (Phantom, Hookshot, Blaze, Glacier, Pulse, Sentinel) introduces mobility complexity that must be handled carefully - every vertical route needs a ground-level alternative or low-mobility heroes become unviable.
+From a gameplay perspective, competitive CTF maps follow well-established patterns: 3-4 attack routes, balanced travel times, 2-3 height tiers for vertical mobility, and multiple flag zone entrances to prevent stalemates. The hero roster (Phantom, Hookshot, Blaze) introduces mobility complexity that must be handled carefully - every vertical route needs a ground-level alternative so the map stays readable and fair.
 
 The main risks are performance degradation from complex collision meshes and gameplay imbalance from poor spawn/route design. Mitigation: establish collision mesh complexity budgets early, use debug visualization throughout development, and test movement patterns with actual hero abilities before finalizing geometry.
 

@@ -35,7 +35,6 @@ import {
   usePlayerPhysics,
   usePhantomAbilities,
   useBlazeAbilities,
-  useGlacierAbilities,
   useHookshotAbilities,
   PLAYER_HEIGHT,
   PLAYER_CROUCH_HEIGHT,
@@ -76,10 +75,6 @@ export function PlayerController() {
   const setAirStrikeTargeting = useGameStore(state => state.setAirStrikeTargeting);
   const setFlamethrowerActive = useGameStore(state => state.setFlamethrowerActive);
   const setFlamethrowerFuel = useGameStore(state => state.setFlamethrowerFuel);
-  const setIceWallRushActive = useGameStore(state => state.setIceWallRushActive);
-  const setIceWallRushFuel = useGameStore(state => state.setIceWallRushFuel);
-  const addIceWallRush = useGameStore(state => state.addIceWallRush);
-  const updateIceWallRush = useGameStore(state => state.updateIceWallRush);
   const gamePhase = useGameStore(state => state.gamePhase);
   const shadowStepTargeting = useGameStore(state => state.shadowStepTargeting);
   const grappleTrapTargeting = useGameStore(state => state.grappleTrapTargeting);
@@ -109,7 +104,6 @@ export function PlayerController() {
   // Hero ability hooks
   const phantomAbilities = usePhantomAbilities();
   const blazeAbilities = useBlazeAbilities();
-  const glacierAbilities = useGlacierAbilities();
   const hookshotAbilities = useHookshotAbilities();
   const blazeFlamethrowerActiveRef = blazeAbilities.flamethrowerActiveRef;
 
@@ -315,7 +309,6 @@ export function PlayerController() {
       setAirStrikeTargeting(false, false);
       setGrappleTrapTargeting(false, false);
       setFlamethrowerActive(false);
-      setIceWallRushActive(false);
       phantomAbilities.resetPhantomPrimaryMagazine();
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
@@ -493,7 +486,6 @@ export function PlayerController() {
       movement.refs.isGrounded.current,
       cameraControl.refs.yaw.current,
       heroStats.moveSpeed * movementMultiplier,
-      localPlayer.team,
       dt,
       movementSounds
     );
@@ -570,7 +562,7 @@ export function PlayerController() {
     );
     if (heroDef) {
       // Handle ability input
-      if (heroId !== 'blaze' && heroId !== 'glacier') {
+      if (heroId !== 'blaze') {
         if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
           if (!shadowStepTargeting && !grappleTrapTargeting && abilitySystem.canUseAbility(heroDef.ability1.abilityId, false, shadowStepTargeting)) {
             if (heroId === 'phantom') {
@@ -600,9 +592,6 @@ export function PlayerController() {
             // Blaze Q is Rocket Jump
             blazeAbilities.executeRocketJump(abilityCtx);
             abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
-          } else if (heroId === 'glacier') {
-            glacierAbilities.executeIceSlide(abilityCtx, abilitySystem.setAbilityActive);
-            abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
           } else if (heroId === 'hookshot') {
             hookshotAbilities.executeEarthWall(abilityCtx);
             abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
@@ -618,8 +607,6 @@ export function PlayerController() {
             phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive);
           } else if (heroId === 'blaze') {
             blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
-          } else if (heroId === 'glacier') {
-            glacierAbilities.executeFrostStormShield(abilitySystem.setAbilityActive);
           } else if (heroId === 'hookshot') {
             hookshotAbilities.executeGrappleTrap(abilityCtx, updateLocalPlayer);
           }
@@ -643,19 +630,6 @@ export function PlayerController() {
           playerSounds,
           setFlamethrowerActive,
           setFlamethrowerFuel
-        );
-      }
-
-      if (heroId === 'glacier') {
-        glacierAbilities.handleIceMalletSwing(abilityCtx);
-        glacierAbilities.handleIceShield(abilityCtx);
-        glacierAbilities.handleIceWallRush(
-          abilityCtx,
-          movement.refs.smoothedY,
-          setIceWallRushActive,
-          setIceWallRushFuel,
-          addIceWallRush,
-          updateIceWallRush
         );
       }
 
@@ -713,7 +687,6 @@ export function PlayerController() {
       velocity,
       movement.refs.isGrounded.current,
       movement.refs.smoothedY.current,
-      glacierAbilities.iceWallRushActiveRef.current,
       dt,
       playerBodyHeight,
       willJumpThisFrame

@@ -63,11 +63,6 @@ export const SLIDE_MAX_SPEED_MULTIPLIER = 2.45; // Absolute slide speed cap rela
 export const SLIDE_JUMP_SPEED_RETENTION = 0.82; // Horizontal speed retained when jumping out of a slide
 export const SLIDE_JUMP_MAX_SPEED_MULTIPLIER = 1.9; // Max horizontal carry when slide-jumping
 
-// Glacier Passive - Frozen Momentum (team slide boost when Glacier is on the team)
-export const GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER = 1.4; // 40% faster slides
-export const GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER = 1.5; // 50% longer slides (further distance)
-export const GLACIER_PASSIVE_SLIDE_FRICTION = 0.99; // Less friction = slides further
-
 // Crouch
 export const CROUCH_TRANSITION_SPEED = 12; // How fast to transition camera height
 export const CROUCH_HEIGHT_OFFSET = -0.4; // How much to lower the camera when crouching
@@ -127,23 +122,6 @@ export const BLAZE_GEARSTORM_RADIUS = 23.1; // 40% larger than the previous 16.5
 // Rocket Jump
 export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 11;
 export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;
-
-// Ice Wall Rush (Glacier E ability)
-export const ICE_WALL_RUSH_MAX_FUEL = 100;
-export const ICE_WALL_RUSH_FUEL_DRAIN = 60; // per second - depletes faster
-export const ICE_WALL_RUSH_FUEL_REGEN = 15; // per second when grounded - slower regen
-export const ICE_WALL_RUSH_REGEN_DELAY = 1000; // ms delay before regen starts after use
-export const ICE_WALL_RUSH_SPEED = 14; // propulsion speed - slightly slower
-export const ICE_WALL_SEGMENT_INTERVAL = 0.10; // Create wall segment every 150ms
-export const ICE_WALL_SEGMENT_HEIGHT = 3.5; // Height of each wall segment
-export const ICE_WALL_SEGMENT_WIDTH = 2.0; // Width of each wall segment  
-export const ICE_WALL_SEGMENT_DEPTH = 0.8; // Thickness of wall
-export const ICE_WALL_DURATION = 5; // How long wall segments last (seconds)
-
-// Frost Storm Shield (Glacier Q ability)
-export const FROST_STORM_SHIELD_AMOUNT = 75; // Shield HP
-export const FROST_STORM_DURATION = 8; // Duration in seconds
-export const FROST_STORM_COOLDOWN = 18; // Cooldown in seconds
 
 // Glide
 export const GLIDE_FALL_SPEED = -4;

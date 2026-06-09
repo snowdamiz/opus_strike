@@ -1,6 +1,5 @@
 import type { HeroDefinition, HeroId, HeroStats } from '../types/hero.js';
 import type { AbilityDefinition } from '../types/ability.js';
-import { FROST_STORM_DURATION, FROST_STORM_COOLDOWN } from './physics.js';
 
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
@@ -86,26 +85,6 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     description: 'An assault specialist with sustained fire pressure and explosive abilities.',
   },
 
-  glacier: {
-    id: 'glacier',
-    name: 'Glacier',
-    role: 'tank',
-    movementFocus: 'parkour',
-    stats: {
-      maxHealth: 350,
-      moveSpeed: 3.97,
-      jumpForce: 7.1,
-      size: { width: 1.0, height: 2.0, depth: 1.0 },
-    },
-    passive: {
-      name: 'Frozen Momentum',
-      description: 'Allies slide 40% faster and 50% further when Glacier is on the team',
-    },
-    ability1: { abilityId: 'glacier_iceslide', defaultKey: 'KeyE' },
-    ability2: { abilityId: 'glacier_frostshield', defaultKey: 'KeyQ' },
-    ultimate: { abilityId: 'glacier_fortress', defaultKey: 'KeyF' },
-    description: 'A tank who combines ice-powered parkour with defensive abilities.',
-  },
 };
 
 export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
@@ -229,43 +208,6 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 5,
     resourceCost: 100,
     description: 'Ignite a massive area around yourself, scorching the ground while flaming cogs spin through the air.',
-  },
-
-  // Glacier Abilities
-  glacier_mallet_swing: {
-    id: 'glacier_mallet_swing',
-    name: 'Ice Mallet',
-    type: 'offensive',
-    targeting: 'direction',
-    cooldown: 0,
-    description: 'Swing a massive ice mallet in a wide arc. 1.5 swings per second.',
-  },
-  glacier_iceslide: {
-    id: 'glacier_iceslide',
-    name: 'Ice Wall Rush',
-    type: 'movement',
-    targeting: 'self',
-    cooldown: 0,
-    description: 'Hold to propel forward while building a wall of ice behind you. Wall blocks player movement.',
-  },
-  glacier_frostshield: {
-    id: 'glacier_frostshield',
-    name: 'Frost Storm',
-    type: 'defensive',
-    targeting: 'self',
-    cooldown: FROST_STORM_COOLDOWN,
-    duration: FROST_STORM_DURATION,
-    description: 'Surround yourself with a protective blizzard. Gain 75 shield for 8 seconds.',
-  },
-  glacier_fortress: {
-    id: 'glacier_fortress',
-    name: 'Frozen Fortress',
-    type: 'ultimate',
-    targeting: 'instant',
-    cooldown: 0,
-    duration: 8,
-    resourceCost: 100,
-    description: 'Create ice walls around yourself. Gain 50% damage reduction.',
   },
 
 };

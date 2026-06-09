@@ -24,7 +24,6 @@ key-files:
     - apps/client/src/components/game/HookshotEffects.tsx
     - apps/client/src/components/game/BlazeEffects.tsx
     - apps/client/src/components/game/PhantomEffects.tsx
-    - apps/client/src/components/game/GlacierEffects.tsx
     - apps/client/src/components/ui/Scoreboard.tsx
     - apps/client/src/components/ui/HUD.tsx
 
@@ -58,7 +57,7 @@ completed: 2026-01-22
 - OtherPlayers now uses shallow selectors for players, playerId, gamePhase - will not re-render when projectiles/effects update
 - HookshotEffects manager combines 6 individual selectors into single shallow selector
 - BlazeEffects manager uses shallow comparison for bombs, localPlayer, jetpackActive
-- PhantomEffects, GlacierEffects, Scoreboard, HUD all migrated to narrow selectors
+- PhantomEffects, Scoreboard, HUD all migrated to narrow selectors
 
 ## Task Commits
 
@@ -75,7 +74,6 @@ Each task was committed atomically:
 - `apps/client/src/components/game/HookshotEffects.tsx` - Combined 6 individual selectors into single shallow selector
 - `apps/client/src/components/game/BlazeEffects.tsx` - Shallow selector for bombs/localPlayer/jetpackActive
 - `apps/client/src/components/game/PhantomEffects.tsx` - Shallow selector for localPlayer/ultimateEffectActive/ultimateEffectType
-- `apps/client/src/components/game/GlacierEffects.tsx` - Shallow selector for 8 glacier-specific fields
 - `apps/client/src/components/ui/Scoreboard.tsx` - Shallow selector for players/localPlayer/redScore/blueScore
 - `apps/client/src/components/ui/HUD.tsx` - Shallow selector for 18 HUD-specific fields
 

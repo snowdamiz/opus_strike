@@ -47,7 +47,7 @@ Features that seem good but create problems. Explicitly exclude from this test m
 | Anti-Feature | Why Requested | Why Problematic | Alternative |
 |--------------|---------------|-----------------|-------------|
 | **Flag in spawn-adjacent room** | "Easier to defend" | Forces attackers through defenders twice; enables kill farming over objective play | Place flag accessible from multiple routes, defensible but not spawn-camping-friendly |
-| **Single-entrance flag room** | "Strategic defense" | Creates impasses; Sentinel's barriers + Glacier's walls make it literally impossible to breach | Minimum 2 entrances to any objective area, preferably 3 |
+| **Single-entrance flag room** | "Strategic defense" | Creates impasses; a single chokepoint can become impossible to breach | Minimum 2 entrances to any objective area, preferably 3 |
 | **Extreme verticality everywhere** | "We have mobility heroes" | Punishes low-mobility heroes (Sentinel, Pulse) excessively; creates unfair matchups | Use verticality strategically in specific areas, not map-wide |
 | **Long hallways** | "Classic FPS design" | Only one engagement angle; position becomes deterministic not strategic | Use rooms and intersections that offer multiple angles |
 | **Perfect symmetry** | "Fair balance" | Boring and artificial-feeling; hard to orient | Visual asymmetry with gameplay symmetry (same distances, different aesthetics) |
@@ -169,18 +169,15 @@ Features to defer until the test map proves successful.
 
 ## Special Considerations for Hero Abilities
 
-Given the hero roster (Phantom, Hookshot, Blaze, Glacier, Pulse, Sentinel), map design must account for:
+Given the hero roster (Phantom, Hookshot, Blaze), map design must account for:
 
 | Hero | Key Mobility | Map Requirement |
 |------|--------------|-----------------|
 | **Phantom** | Blink teleportation, Shadow Step | Medium sightlines for blink targets; shadow areas for invisibility value |
 | **Hookshot** | Grappling hook, Swing | Horizontal grapple points; open air space for swinging; anchor points throughout |
 | **Blaze** | Jetpack, Rocket jump | Vertical space; elevated positions; fuel-appropriate distances between perches |
-| **Glacier** | Ice slide, Wall climb | Long floor surfaces for slide value; climbable walls; not all walls (preserve strategy) |
-| **Pulse** | Speed aura, Quick dash | Open running lanes; cover for speed-pushing teammates |
-| **Sentinel** | Fortify, Energy barrier | Defensible positions; chokepoints worth holding; cannot rely on map for defense |
 
-**Design principle:** Every area accessible to high-mobility heroes must also have a ground-level route for Sentinel and Pulse. Otherwise those heroes become unviable picks on this map.
+**Design principle:** Every area accessible to high-mobility heroes should also have a ground-level route so mobility shortcuts reward mastery without making core routes mandatory.
 
 ## Sources
 

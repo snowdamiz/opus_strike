@@ -61,10 +61,6 @@ export const GRAPPLE_TRAP_MAX_RANGE = 30;
 export const GRAPPLE_TRAP_THROW_SPEED = 30;
 export const GRAPPLE_TRAP_GRAVITY = 25;
 
-// Glacier
-export const GLACIER_MALLET_SWING_RATE = 1.5;
-export const GLACIER_MALLET_SWING_INTERVAL = 1000 / GLACIER_MALLET_SWING_RATE;
-
 // ============================================================================
 // FUEL UPDATE THROTTLING
 // ============================================================================

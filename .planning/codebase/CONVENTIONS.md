@@ -182,10 +182,10 @@ const handleSpawnNpc = (client, data: { heroId: HeroId; team: Team; position?: .
 ## Zustand Store Pattern
 
 **Store structure observed in `gameStore.ts`:**
-- Sliced stores with separate initial states (e.g., `projectileInitialState`, `glacierInitialState`)
+- Sliced stores with separate initial states (e.g., `projectileInitialState`)
 - Actions grouped by domain (core, lobby, UI)
 - State updates use `set()` with object spread for immutability
-- Store composition: `const GameStore = CoreState & CoreActions & ProjectileSlice & GlacierSlice`
+- Store composition: `const GameStore = CoreState & CoreActions & ProjectileSlice`
 - Inline initial state objects
 - Comments separating action groups with `// ==================== GROUP NAME ====================`
 

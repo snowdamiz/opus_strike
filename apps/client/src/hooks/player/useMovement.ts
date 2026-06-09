@@ -18,10 +18,6 @@ import {
   SLIDE_JUMP_MAX_SPEED_MULTIPLIER,
   SLIDE_JUMP_SPEED_RETENTION,
   SLIDE_MAX_SPEED_MULTIPLIER,
-  // Glacier passive slide boost constants
-  GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER,
-  GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER,
-  GLACIER_PASSIVE_SLIDE_FRICTION,
   // CS-style bunny hop constants
   BHOP_GROUND_ACCEL,
   BHOP_AIR_ACCEL,
@@ -35,7 +31,6 @@ import {
 } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
 import type { MovementRefs, MovementSounds } from './types';
-import { useGameStore } from '../../store/gameStore';
 
 // ============================================================================
 // QUAKE/SOURCE ENGINE ACCELERATION
@@ -96,22 +91,6 @@ function clampHorizontalSpeed(velocity: THREE.Vector3, maxSpeed: number): void {
   velocity.z *= scale;
 }
 
-/**
- * Check if the player's team has a Glacier hero
- * Used for Glacier's passive "Frozen Momentum" which boosts teammate slides
- */
-function teamHasGlacier(localPlayerTeam: string | undefined): boolean {
-  if (!localPlayerTeam) return false;
-
-  const players = useGameStore.getState().players;
-  for (const [, player] of players) {
-    if (player.team === localPlayerTeam && player.heroId === 'glacier') {
-      return true;
-    }
-  }
-  return false;
-}
-
 // ============================================================================
 // MOVEMENT HOOK
 // ============================================================================
@@ -132,7 +111,6 @@ export interface UseMovementReturn {
     isGrounded: boolean,
     yaw: number,
     heroMoveSpeed: number,
-    localPlayerTeam: string | undefined,
     dt: number,
     sounds: MovementSounds
   ) => { isSliding: boolean; speed: number };
@@ -266,7 +244,6 @@ export function useMovement(): UseMovementReturn {
     isGrounded: boolean,
     yaw: number,
     heroMoveSpeed: number,
-    localPlayerTeam: string | undefined,
     dt: number,
     sounds: MovementSounds
   ): { isSliding: boolean; speed: number } => {
@@ -288,13 +265,7 @@ export function useMovement(): UseMovementReturn {
 
     if (shouldStartSlide) {
       isSliding.current = true;
-
-      // Check for Glacier passive boost
-      const hasGlacierPassive = teamHasGlacier(localPlayerTeam);
-      const slideDuration = hasGlacierPassive
-        ? SLIDE_DURATION * GLACIER_PASSIVE_SLIDE_DURATION_MULTIPLIER
-        : SLIDE_DURATION;
-      slideTimeRef.current = slideDuration;
+      slideTimeRef.current = SLIDE_DURATION;
 
       wasSprintingBeforeSlide.current = true;
       isSprintingRef.current = false;
@@ -317,9 +288,6 @@ export function useMovement(): UseMovementReturn {
       slideDirectionRef.current.copy(slideDir);
 
       // Set initial slide velocity
-      const slideSpeedMultiplier = hasGlacierPassive
-        ? SLIDE_INITIAL_BOOST * GLACIER_PASSIVE_SLIDE_SPEED_MULTIPLIER
-        : SLIDE_INITIAL_BOOST;
       const sprintSpeed = heroMoveSpeed * SPRINT_MULTIPLIER;
       slideMaxSpeedRef.current = sprintSpeed * SLIDE_MAX_SPEED_MULTIPLIER;
       slideJumpMaxSpeedRef.current = sprintSpeed * SLIDE_JUMP_MAX_SPEED_MULTIPLIER;
@@ -331,7 +299,7 @@ export function useMovement(): UseMovementReturn {
         Math.max(currentHorizontalSpeed, sprintSpeed),
         sprintSpeed * SLIDE_ENTRY_SPEED_CAP_MULTIPLIER
       );
-      const slideSpeed = Math.min(slideEntrySpeed * slideSpeedMultiplier, slideMaxSpeedRef.current);
+      const slideSpeed = Math.min(slideEntrySpeed * SLIDE_INITIAL_BOOST, slideMaxSpeedRef.current);
       velocityRef.current.x = slideDir.x * slideSpeed;
       velocityRef.current.z = slideDir.z * slideSpeed;
     }
@@ -341,9 +309,7 @@ export function useMovement(): UseMovementReturn {
       slideTimeRef.current -= dt;
 
       // Apply slide friction
-      const hasGlacierPassive = teamHasGlacier(localPlayerTeam);
-      const slideFriction = hasGlacierPassive ? GLACIER_PASSIVE_SLIDE_FRICTION : SLIDE_FRICTION;
-      const friction = Math.pow(slideFriction, dt * 60);
+      const friction = Math.pow(SLIDE_FRICTION, dt * 60);
       velocityRef.current.x *= friction;
       velocityRef.current.z *= friction;
       if (slideMaxSpeedRef.current > 0) {

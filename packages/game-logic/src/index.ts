@@ -2,7 +2,6 @@ export * from './heroes/HeroBase.js';
 export * from './heroes/PhantomHero.js';
 export * from './heroes/HookshotHero.js';
 export * from './heroes/BlazeHero.js';
-export * from './heroes/GlacierHero.js';
 export * from './abilities/AbilitySystem.js';
 export * from './abilities/AbilityEffects.js';
 export * from './ctf/CTFGameMode.js';

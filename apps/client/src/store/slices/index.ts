@@ -6,13 +6,3 @@ export {
   type ProjectileState,
   type ProjectileActions,
 } from './projectiles';
-
-export { 
-  createGlacierSlice, 
-  glacierInitialState,
-  type GlacierSlice,
-  type GlacierState,
-  type GlacierActions,
-} from './glacier';
-
-

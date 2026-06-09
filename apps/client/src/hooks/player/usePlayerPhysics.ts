@@ -62,7 +62,6 @@ export interface UsePlayerPhysicsReturn {
     velocity: THREE.Vector3,
     isGrounded: boolean,
     smoothedY: number | null,
-    isIceWallRushing: boolean,
     dt: number,
     playerHeight?: number,
     isJumpingFromGround?: boolean
@@ -515,7 +514,6 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     velocity: THREE.Vector3,
     isGrounded: boolean,
     smoothedY: number | null,
-    isIceWallRushing: boolean,
     dt: number,
     playerHeight: number = PLAYER_HEIGHT,
     isJumpingFromGround: boolean = false
@@ -541,14 +539,12 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
     }
 
     // Step-up logic for stairs and low terrain ledges.
-    const effectivelyGrounded = isGrounded || (isIceWallRushing && velocity.y < 2);
     const canUseAirborneStepAssist = isJumpingFromGround || (!isGrounded && velocity.y > 0);
 
-    if (effectivelyGrounded || canUseAirborneStepAssist) {
+    if (isGrounded || canUseAirborneStepAssist) {
       const moveDist = Math.sqrt(moveX * moveX + moveZ * moveZ);
       if (moveDist > 0) {
-        const effectiveStepHeight = isIceWallRushing ? STEP_HEIGHT * 1.25 : STEP_HEIGHT;
-        const terrainMove = findGroundedTerrainMove(position, moveX, moveZ, effectiveStepHeight);
+        const terrainMove = findGroundedTerrainMove(position, moveX, moveZ, STEP_HEIGHT);
 
         if (terrainMove) {
           const currentFeetY = position.y - PLAYER_HEIGHT / 2;
@@ -568,7 +564,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
             canTraverse = hasCeilingClearance;
           }
 
-          canTraverse = canTraverse && !hasTallWallInMovePath(position, moveX, moveZ, effectiveStepHeight, playerHeight);
+          canTraverse = canTraverse && !hasTallWallInMovePath(position, moveX, moveZ, STEP_HEIGHT, playerHeight);
 
           if (canTraverse && (!canUseAirborneStepAssist || isStepUp)) {
             const targetY = targetGroundY + PLAYER_HEIGHT / 2;
@@ -590,9 +586,7 @@ export function usePlayerPhysics(): UsePlayerPhysicsReturn {
 
             const currentY = smoothedY ?? position.y;
             const smoothSpeed = isStepUp
-              ? isIceWallRushing
-                ? TERRAIN_RAMP_UP_SMOOTH_SPEED * 1.35
-                : TERRAIN_RAMP_UP_SMOOTH_SPEED
+              ? TERRAIN_RAMP_UP_SMOOTH_SPEED
               : TERRAIN_RAMP_DOWN_SMOOTH_SPEED;
 
             const newY = smoothY(currentY, targetY, smoothSpeed, dt);

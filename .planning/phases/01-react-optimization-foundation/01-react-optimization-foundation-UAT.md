@@ -22,7 +22,7 @@ expected: When using React DevTools Profiler during ability use, effect componen
 result: pass
 
 ### 3. Effect Visuals Work Correctly
-expected: All ability effects still animate correctly: rockets fly with trails, hookshots extend and retract, phantom void rays and blink effects display, glacier ice walls appear, etc. No visual regressions from optimizations.
+expected: All ability effects still animate correctly: rockets fly with trails, hookshots extend and retract, phantom void rays and blink effects display, etc. No visual regressions from optimizations.
 result: pass
 
 ### 4. Production Build - No Console Output

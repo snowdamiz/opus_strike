@@ -287,8 +287,6 @@ export function getClientPerfSnapshot(): ClientPerfSnapshot {
     dragHooks: state.dragHooks.length,
     grappleTraps: state.grappleTraps.length,
     earthWalls: state.earthWalls.length,
-    iceMalletSwings: state.iceMalletSwings.length,
-    iceWallRushes: state.iceWallRushes.length,
   };
 
   return {

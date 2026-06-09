@@ -287,27 +287,6 @@ export function executeAbility(
       break;
     }
 
-    // ===== GLACIER ABILITIES =====
-    case 'glacier_iceslide': {
-      player.movement.isSliding = true;
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
-    case 'glacier_wallclimb': {
-      player.movement.isWallRunning = true;
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
-    case 'glacier_fortress': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      break;
-    }
-
   }
 }
 

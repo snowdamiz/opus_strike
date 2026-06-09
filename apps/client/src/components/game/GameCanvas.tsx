@@ -16,7 +16,6 @@ import { VoidZonesManager, DireBallsManager, VoidRaysManager, PhantomPersonalShi
 import { PhantomEffectsManager } from './PhantomEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
-import { GlacierEffectsManager } from './GlacierEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
 import { prewarmBlazeEffects, prewarmPhantomEffects } from './effectResources';
 import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
@@ -341,7 +340,6 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
             <PhantomEffectsManager />
             <BlazeEffectsManager />
             <HookshotEffectsManager />
-            <GlacierEffectsManager />
             <TerrainImpactEffectsManager />
           </>
         )}

@@ -209,7 +209,6 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
 
       // Apply speed boosts for active abilities
       if (abilityId === 'phantom_veil') speedMultiplier *= 1.3;
-      if (abilityId === 'glacier_iceslide') speedMultiplier *= 1.5;
     }
 
     return { speedMultiplier };

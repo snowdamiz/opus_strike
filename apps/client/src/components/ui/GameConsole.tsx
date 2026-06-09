@@ -164,7 +164,6 @@ function disableActiveSkillState() {
   store.setAirStrikeTargeting(false, false);
   store.setGrappleTrapTargeting(false, false);
   store.setFlamethrowerActive(false);
-  store.setIceWallRushActive(false);
 }
 
 function createHeroAbilities(heroId: HeroId): Record<string, AbilityState> {
@@ -198,7 +197,6 @@ function applyLocalHero(heroId: HeroId): boolean {
   store.clearClientCooldowns();
   store.setFlamethrowerActive(false);
   store.setFlamethrowerFuel(BLAZE_FLAMETHROWER_MAX_FUEL);
-  store.setIceWallRushActive(false);
 
   store.updateLocalPlayer({
     heroId,

@@ -16,8 +16,6 @@ export function HeroIcon({ heroId, size = 24, color = 'currentColor', className 
       return <HookshotIcon size={size} color={color} className={className} />;
     case 'blaze':
       return <BlazeIcon size={size} color={color} className={className} />;
-    case 'glacier':
-      return <GlacierIcon size={size} color={color} className={className} />;
     default:
       return null;
   }
@@ -127,49 +125,6 @@ function BlazeIcon({ size, color, className }: IconProps) {
   );
 }
 
-// Glacier - Snowflake/Ice Crystal
-function GlacierIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      {/* Main crystal arms */}
-      <path 
-        d="M12 2V22M2 12H22M4.93 4.93L19.07 19.07M19.07 4.93L4.93 19.07" 
-        stroke={color} 
-        strokeWidth="2" 
-        strokeLinecap="round"
-      />
-      {/* Crystal branches */}
-      <path 
-        d="M12 2L10 5M12 2L14 5" 
-        stroke={color} 
-        strokeWidth="1.5" 
-        strokeLinecap="round"
-      />
-      <path 
-        d="M12 22L10 19M12 22L14 19" 
-        stroke={color} 
-        strokeWidth="1.5" 
-        strokeLinecap="round"
-      />
-      <path 
-        d="M2 12L5 10M2 12L5 14" 
-        stroke={color} 
-        strokeWidth="1.5" 
-        strokeLinecap="round"
-      />
-      <path 
-        d="M22 12L19 10M22 12L19 14" 
-        stroke={color} 
-        strokeWidth="1.5" 
-        strokeLinecap="round"
-      />
-      {/* Center crystal */}
-      <circle cx="12" cy="12" r="3" fill={color} opacity="0.3" />
-      <circle cx="12" cy="12" r="1.5" fill={color} />
-    </svg>
-  );
-}
-
 // ============= ABILITY ICONS =============
 
 export type AbilityIconType =
@@ -193,14 +148,7 @@ export type AbilityIconType =
   | 'rocketjump'
   | 'airstrike'
   | 'gearstorm'
-  | 'icemallet'
-  | 'iceshield'
-  | 'icewallrush'
-  | 'iceslide'
-  | 'froststorm'
-  | 'wallclimb'
-  | 'frostshield'
-  | 'fortress'
+  | 'shield'
   | 'ultimate';
 
 export function AbilityIcon({ type, size = 24, color = 'currentColor', className = '' }: IconProps & { type: AbilityIconType }) {
@@ -242,20 +190,8 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <AirstrikeIcon size={size} color={color} className={className} />;
     case 'gearstorm':
       return <GearstormIcon size={size} color={color} className={className} />;
-    case 'icemallet':
-      return <IceMalletIcon size={size} color={color} className={className} />;
-    case 'iceshield':
-    case 'frostshield':
-      return <IceShieldIcon size={size} color={color} className={className} />;
-    case 'icewallrush':
-    case 'wallclimb':
-      return <IceWallRushIcon size={size} color={color} className={className} />;
-    case 'iceslide':
-      return <IceSlideIcon size={size} color={color} className={className} />;
-    case 'froststorm':
-      return <FrostStormIcon size={size} color={color} className={className} />;
-    case 'fortress':
-      return <FortressIcon size={size} color={color} className={className} />;
+    case 'shield':
+      return <ShieldIcon size={size} color={color} className={className} />;
     case 'ultimate':
       return <UltimateIcon size={size} color={color} className={className} />;
     case 'passive':
@@ -268,7 +204,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
   const mapping: Record<string, AbilityIconType> = {
     phantom_blink: 'blink',
     phantom_shadowstep: 'shadowstep',
-    phantom_personal_shield: 'frostshield',
+    phantom_personal_shield: 'shield',
     phantom_veil: 'veil',
     hookshot_grapple: 'grapple',
     hookshot_anchor_wall: 'anchorwall',
@@ -277,9 +213,6 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     blaze_flamethrower: 'flamethrower',
     blaze_rocketjump: 'rocketjump',
     blaze_airstrike: 'gearstorm',
-    glacier_iceslide: 'icewallrush',
-    glacier_frostshield: 'froststorm',
-    glacier_fortress: 'fortress',
   };
   return mapping[abilityId] || 'passive';
 }
@@ -500,68 +433,13 @@ function GearstormIcon({ size, color, className }: IconProps) {
   );
 }
 
-function IceMalletIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M6 6L9 3L15 9L12 12L6 6Z" fill={color} />
-      <path d="M4.5 7.5L7.5 4.5M13.5 10.5L16.5 7.5" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <path d="M12 12L20 20" stroke={color} strokeWidth="2.2" strokeLinecap="round" />
-      <path d="M5 17C8.1 18.5 11.4 18.7 15 17.5" stroke={color} strokeWidth="1.6" strokeLinecap="round" opacity="0.68" />
-      <path d="M9 3L11.2 5.2M6 6L8.2 8.2" stroke="#0a0a0f" strokeWidth="1.2" strokeLinecap="round" opacity="0.35" />
-    </svg>
-  );
-}
-
-function IceShieldIcon({ size, color, className }: IconProps) {
+function ShieldIcon({ size, color, className }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
       <path d="M12 2.8L4.8 6.2V11.5C4.8 16 7.9 20 12 21.4C16.1 20 19.2 16 19.2 11.5V6.2L12 2.8Z" fill={color} opacity="0.25" />
       <path d="M12 2.8L4.8 6.2V11.5C4.8 16 7.9 20 12 21.4C16.1 20 19.2 16 19.2 11.5V6.2L12 2.8Z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
       <path d="M12 7V16M8.6 9L15.4 14M15.4 9L8.6 14" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
       <circle cx="12" cy="11.5" r="1.5" fill={color} />
-    </svg>
-  );
-}
-
-function IceWallRushIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M4 17V10L7 7L10 10V17H4ZM10 17V8L13 5L16 8V17H10ZM16 17V11L19 8L21 10V17H16Z" fill={color} opacity="0.35" />
-      <path d="M4 17V10L7 7L10 10V17M10 17V8L13 5L16 8V17M16 17V11L19 8L21 10V17" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M3 20H16M17 20L21 20" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
-      <path d="M4 5H10M3 7.5H7" stroke={color} strokeWidth="1.8" strokeLinecap="round" opacity="0.72" />
-    </svg>
-  );
-}
-
-function IceSlideIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M4 16C8.5 12.8 13.8 12.6 20 15.5" stroke={color} strokeWidth="2.4" strokeLinecap="round" />
-      <path d="M8 12L5.2 14.6L8 17.2" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M12 10.2L15.2 13.3L18.5 12.5" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M4 19H8M10 19H14M16 19H20" stroke={color} strokeWidth="1.2" strokeLinecap="round" opacity="0.62" />
-    </svg>
-  );
-}
-
-function FrostStormIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M18.5 8.5C16.3 5.1 11.2 4.3 8 7.1M5.5 15.5C7.7 18.9 12.8 19.7 16 16.9" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <path d="M16.4 5.2L18.8 8.8L14.6 9.5M7.6 18.8L5.2 15.2L9.4 14.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="12" cy="12" r="2.1" fill={color} />
-      <path d="M12 8.2V15.8M8.8 10.1L15.2 13.9M15.2 10.1L8.8 13.9" stroke={color} strokeWidth="1.2" strokeLinecap="round" opacity="0.9" />
-    </svg>
-  );
-}
-
-function FortressIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M4 20V8L7 5L10 8L13 5L16 8L19 5L21 8V20H4Z" fill={color} opacity="0.3" />
-      <path d="M4 20V8L7 5L10 8L13 5L16 8L19 5L21 8V20" stroke={color} strokeWidth="2" strokeLinejoin="round" />
-      <path d="M8 20V15H11V20M14 20V15H17V20M4 12H21" stroke={color} strokeWidth="1.4" opacity="0.7" />
     </svg>
   );
 }

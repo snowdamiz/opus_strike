@@ -120,12 +120,12 @@
 
 **Hero System:**
 - Purpose: Define unique hero abilities, stats, movement
-- Examples: `packages/game-logic/src/heroes/` (PhantomHero, BlazeHero, GlacierHero, etc.)
+- Examples: `packages/game-logic/src/heroes/` (PhantomHero, BlazeHero, HookshotHero, etc.)
 - Pattern: Hero classes with ability definitions, stat scaling, effect triggers
 
 **Store Slicing (Zustand):**
-- Purpose: Organize game state by domain (projectiles, glacier effects)
-- Examples: `apps/client/src/store/slices/projectiles.ts`, `apps/client/src/store/slices/glacier.ts`
+- Purpose: Organize game state by domain (projectiles)
+- Examples: `apps/client/src/store/slices/projectiles.ts`
 - Pattern: Slice creators export state interface and actions, composed in main store
 
 **Movement Controllers:**

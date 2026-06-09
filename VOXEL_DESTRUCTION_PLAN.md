@@ -142,7 +142,6 @@ Suggested first pass:
 | Blaze air strike | high per strike | medium radius per bomb | Treat as several capped explosions, not one huge sphere. |
 | Blaze flamethrower | low repeated | narrow cone | Damage fragile blocks and exposed soft terrain only. |
 | Rocket jump | low | small radius | Optional self-centered terrain chip; keep mobility safe. |
-| Glacier mallet | medium | very small arc/sphere | Direct melee cover breaking. |
 | Phantom void ray | high line damage | tiny splash | Good later use case for voxel DDA along a beam. |
 | Hookshot heavy | medium direct | none or tiny | Lets hooks chip cover without carving craters. |
 

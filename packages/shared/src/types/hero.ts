@@ -1,12 +1,11 @@
 export type HeroId = 
   | 'phantom'
   | 'hookshot'
-  | 'blaze'
-  | 'glacier';
+  | 'blaze';
 
-export type HeroRole = 'flanker' | 'mobile' | 'assault' | 'tank';
+export type HeroRole = 'flanker' | 'mobile' | 'assault';
 
-export type MovementFocus = 'blink' | 'grapple' | 'aerial' | 'parkour';
+export type MovementFocus = 'blink' | 'grapple' | 'aerial';
 
 export interface HeroStats {
   maxHealth: number;

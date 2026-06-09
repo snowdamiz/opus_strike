@@ -19,7 +19,7 @@ let worldInstance: RAPIER.World | null = null;
 /**
  * Initialize the temporary wall collider system with physics instances
  */
-export function initIceWallSystem(rapier: typeof RAPIER, world: RAPIER.World): void {
+export function initTemporaryWallSystem(rapier: typeof RAPIER, world: RAPIER.World): void {
   rapierInstance = rapier;
   worldInstance = world;
 }
@@ -27,7 +27,7 @@ export function initIceWallSystem(rapier: typeof RAPIER, world: RAPIER.World): v
 /**
  * Update world instance (called when world changes)
  */
-export function updateIceWallWorld(world: RAPIER.World | null): void {
+export function updateTemporaryWallWorld(world: RAPIER.World | null): void {
   worldInstance = world;
 }
 
@@ -174,12 +174,3 @@ export function getTemporaryWallColliderCount(idPrefix?: string): number {
   }
   return count;
 }
-
-export const addIceWallCollider = addTemporaryWallCollider;
-export const removeIceWallCollider = removeTemporaryWallCollider;
-export const cleanupExpiredIceWallColliders = (maxAge: number): number =>
-  cleanupExpiredTemporaryWallColliders(maxAge, 'icewall_');
-export const clearAllIceWallColliders = (): void =>
-  clearAllTemporaryWallColliders('icewall_');
-export const getIceWallColliderCount = (): number =>
-  getTemporaryWallColliderCount('icewall_');

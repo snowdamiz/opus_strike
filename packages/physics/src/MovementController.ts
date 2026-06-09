@@ -179,7 +179,6 @@ export class MovementController {
   }
 
   private canUseParkour(): boolean {
-    // Parkour is available to all heroes but emphasized for Glacier
     return true;
   }
 

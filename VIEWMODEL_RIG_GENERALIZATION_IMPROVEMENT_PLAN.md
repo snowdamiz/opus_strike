@@ -8,7 +8,7 @@ Post-read action: refactor the current Phantom first-person viewmodel into reusa
 
 ## Goal
 
-The current Phantom first-person model has the right gameplay contract: successful local actions drive the animation, the animated palm socket is the projectile source, and pose sampling can happen synchronously when an ability fires. The goal is to keep that behavior exactly the same while moving the logic into reusable pieces for Hookshot, Blaze, Glacier, and future heroes.
+The current Phantom first-person model has the right gameplay contract: successful local actions drive the animation, the animated palm socket is the projectile source, and pose sampling can happen synchronously when an ability fires. The goal is to keep that behavior exactly the same while moving the logic into reusable pieces for Hookshot, Blaze, and future heroes.
 
 This is not a plan to build a full inverse-kinematics system. The first step should be a tested, pose-driven viewmodel rig layer. Add small analytic reach helpers later only when a specific hero needs a hand or weapon to hit an exact target.
 
@@ -166,7 +166,7 @@ Represent first-person rigs with named transforms instead of hero-specific compo
 - optional fingers and thumb
 - named sockets
 
-Phantom can remain blocky and procedural, but the rig names should be reusable by Hookshot, Blaze, and Glacier.
+Phantom can remain blocky and procedural, but the rig names should be reusable by Hookshot and Blaze.
 
 ### 4. Shared Socket Sampling
 

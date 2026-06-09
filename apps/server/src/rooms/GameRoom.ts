@@ -283,13 +283,11 @@ const PRIMARY_ATTACKS: Record<HeroId, AttackConfig> = {
   phantom: { damage: 18, range: 30, cooldownMs: 550, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_BOT_COOLDOWN_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
-  glacier: { damage: 42, range: 3.4, cooldownMs: 750, coneDot: Math.cos(0.72), damageType: 'ice_mallet' },
 };
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 34, range: 42, cooldownMs: 1200, coneDot: Math.cos(0.12), damageType: 'void_ray' },
   hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
   blaze: { damage: 34, range: 35, cooldownMs: 2600, coneDot: Math.cos(0.32), radius: 4, damageType: 'bomb' },
-  glacier: { damage: 12, range: 6, cooldownMs: 1200, coneDot: Math.cos(0.8), damageType: 'frost_storm' },
 };
 
 export class GameRoom extends Room<GameState> {
@@ -1568,13 +1566,6 @@ export class GameRoom extends Room<GameState> {
   private getDamageTakenMultiplier(player: Player): number {
     let multiplier = 1;
 
-    if (player.abilities.get('glacier_frostshield')?.isActive) {
-      multiplier *= 0.75;
-    }
-    if (player.abilities.get('glacier_fortress')?.isActive) {
-      multiplier *= 0.5;
-    }
-
     return multiplier;
   }
 
@@ -1884,11 +1875,6 @@ export class GameRoom extends Room<GameState> {
         input.ability2 = pulseAbility && (underPressure || intent === 'retreat_or_reposition');
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (blackboard.nearbyEnemyCount >= 2 || objectiveIntent);
         break;
-      case 'glacier':
-        input.ability1 = pulseAbility && safeMobilityUse && (objectiveIntent || input.jump);
-        input.ability2 = pulseAbility && underPressure;
-        input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (underPressure || objectiveIntent);
-        break;
     }
 
     if (input.ability1 || input.ability2) {
@@ -2041,7 +2027,6 @@ export class GameRoom extends Room<GameState> {
 
   private getBotStrategicRole(bot: Player): BotStrategicRole {
     const heroId = bot.heroId as HeroId;
-    if (heroId === 'glacier') return 'defender';
     if (heroId === 'phantom' || heroId === 'hookshot') return 'runner';
     const bucket = this.hashString(bot.botProfileId || bot.id || bot.name) % 10;
     if (bucket < 2) return 'defender';
@@ -2060,8 +2045,6 @@ export class GameRoom extends Room<GameState> {
 
   private getBotPreferredCombatRange(bot: Player): number {
     switch (bot.heroId as HeroId) {
-      case 'glacier':
-        return 3.2;
       case 'blaze':
         return 12;
       case 'hookshot':
@@ -2243,8 +2226,6 @@ export class GameRoom extends Room<GameState> {
         rangeMove = toEnemy;
       } else if (distance < Math.max(2.2, preferredRange - 2)) {
         rangeMove = awayFromEnemy;
-      } else if (bot.heroId === 'glacier') {
-        rangeMove = toEnemy;
       }
 
       if (intent === 'carry_flag_home' || intent === 'return_friendly_flag') {

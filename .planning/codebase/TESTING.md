@@ -198,7 +198,7 @@ const loadSound = useCallback(async (name: SoundName): Promise<SoundEffect | nul
 2. **Game State Management (`gameStore.ts`)**
    - `updateGameState()` with Map mutation optimization
    - Player state reconciliation
-   - Slice integration (projectiles, glacier)
+   - Slice integration (projectiles)
    - Lines: 509 total, critical business logic
 
 3. **Ability System (`abilityHandlers.ts` in server, ability hooks in client)**

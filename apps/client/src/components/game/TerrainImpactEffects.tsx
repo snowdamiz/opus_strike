@@ -20,9 +20,7 @@ export type TerrainImpactKind =
   | 'hookshot_drag_hook'
   | 'hookshot_grapple'
   | 'hookshot_trap'
-  | 'earth_wall'
-  | 'glacier_ice_wall'
-  | 'glacier_mallet';
+  | 'earth_wall';
 
 interface TerrainImpactData {
   id: string;
@@ -243,52 +241,6 @@ function getImpactStyle(kind: TerrainImpactKind): ImpactStyle {
         lightIntensity: 8,
         additive: false,
         debrisShape: 'box',
-      };
-    case 'glacier_ice_wall':
-      return {
-        duration: 560,
-        scale: 0.85,
-        flashColor: PHANTOM_COLORS.white,
-        coreColor: 0xb9f2ff,
-        outerColor: 0x5ecdf2,
-        ringColor: 0xa7f3ff,
-        secondRingColor: 0x74d8ff,
-        particleColors: [PHANTOM_COLORS.white, 0xa7f3ff, 0x5ecdf2],
-        smokeColor: 0xdff9ff,
-        particleCount: 12,
-        smokeCount: 3,
-        particleSpeed: 3.7,
-        particleLift: 4.8,
-        gravity: 6,
-        coreRadius: 0.75,
-        ringRadius: 2.1,
-        lightColor: 0x7de7ff,
-        lightIntensity: 8,
-        additive: true,
-        debrisShape: 'cone',
-      };
-    case 'glacier_mallet':
-      return {
-        duration: 620,
-        scale: 1,
-        flashColor: PHANTOM_COLORS.white,
-        coreColor: 0xcff8ff,
-        outerColor: 0x68d7ff,
-        ringColor: 0xb6f2ff,
-        secondRingColor: 0x88ddff,
-        particleColors: [PHANTOM_COLORS.white, 0xb6f2ff, 0x68d7ff],
-        smokeColor: 0xe8fbff,
-        particleCount: 16,
-        smokeCount: 4,
-        particleSpeed: 5.2,
-        particleLift: 5.8,
-        gravity: 9,
-        coreRadius: 1.1,
-        ringRadius: 2.8,
-        lightColor: 0x8deaff,
-        lightIntensity: 13,
-        additive: true,
-        debrisShape: 'cone',
       };
     case 'hookshot_hook':
     default:

@@ -95,7 +95,7 @@ export function usePhysics(): PhysicsContext {
         setIsReady(true);
         
         // Initialize ice wall system with physics instances
-        initializeIceWallSystem();
+        initializeTemporaryWallSystem();
       } catch (error) {
         console.error('[Physics] Failed to initialize:', error);
       }
@@ -393,7 +393,7 @@ const HEIGHTFIELD_GROUND_EPSILON = 0.05;
 
 function checkProceduralHeightfieldGround(x: number, y: number, z: number, maxDist: number): GroundInfo | null {
   const manifest = activeProceduralMap;
-  if (!manifest || getTemporaryWallColliderCount() > 0 || getIceWallColliderCount() > 0) {
+  if (!manifest || getTemporaryWallColliderCount() > 0) {
     return null;
   }
 
@@ -877,19 +877,14 @@ export function getColliderCount(): number {
 // ============================================================================
 
 import {
-  initIceWallSystem,
-  updateIceWallWorld,
+  initTemporaryWallSystem,
+  updateTemporaryWallWorld,
   addTemporaryWallCollider,
   removeTemporaryWallCollider,
   cleanupExpiredTemporaryWallColliders,
   clearAllTemporaryWallColliders,
   getTemporaryWallColliderCount,
-  addIceWallCollider,
-  removeIceWallCollider,
-  cleanupExpiredIceWallColliders,
-  clearAllIceWallColliders,
-  getIceWallColliderCount,
-} from './physics/iceWallColliders';
+} from './physics/temporaryWallColliders';
 
 // Re-export wall collider functions for ability effects
 export {
@@ -898,17 +893,12 @@ export {
   cleanupExpiredTemporaryWallColliders,
   clearAllTemporaryWallColliders,
   getTemporaryWallColliderCount,
-  addIceWallCollider,
-  removeIceWallCollider,
-  cleanupExpiredIceWallColliders,
-  clearAllIceWallColliders,
-  getIceWallColliderCount,
 };
 
 // Initialize temporary wall collider system when physics is ready (called after world creation)
-function initializeIceWallSystem() {
+function initializeTemporaryWallSystem() {
   if (rapierInstance && worldInstance) {
-    initIceWallSystem(rapierInstance, worldInstance);
+    initTemporaryWallSystem(rapierInstance, worldInstance);
     setTemporaryColliderCountProvider(getTemporaryWallColliderCount);
   }
 }

@@ -100,7 +100,7 @@ voxel-strike/
 
 **apps/client/src/store/:**
 - Purpose: Zustand state management with sliced domains
-- Contains: gameStore (main reactive store), visualStore (non-reactive visual state), slices (projectiles, glacier)
+- Contains: gameStore (main reactive store), visualStore (non-reactive visual state), slices (projectiles)
 - Pattern: Each slice exports state interface and actions, composed in index
 
 **apps/client/src/config/:**
@@ -142,7 +142,7 @@ voxel-strike/
 
 **packages/game-logic/src/heroes/:**
 - Purpose: Hero class definitions with ability specs and stat scaling
-- Contains: HeroBase, PhantomHero, BlazeHero, GlacierHero, etc.
+- Contains: HeroBase, PhantomHero, BlazeHero, HookshotHero, etc.
 - Pattern: Extend HeroBase with hero-specific ability definitions and passive effects
 
 ## Key File Locations

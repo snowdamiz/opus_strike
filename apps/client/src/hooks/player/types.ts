@@ -132,18 +132,6 @@ export interface BlazeState {
   flamethrowerActive: boolean;
 }
 
-export interface GlacierState {
-  malletId: number;
-  lastMalletTime: number;
-  iceWallRushFuel: number;
-  iceWallRushActive: boolean;
-  iceWallRushId: number;
-  activeRushId: string | null;
-  lastWallSegmentTime: number;
-  lastFuelUpdate: number;
-  deactivatedAt: number;
-}
-
 export interface HookshotState {
   hookProjectileId: number;
   dragHookId: number;

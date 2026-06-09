@@ -204,42 +204,6 @@ export interface EarthWallData {
 }
 
 // ============================================================================
-// GLACIER EFFECT TYPES
-// ============================================================================
-
-// Ice Mallet Swing - Glacier basic attack (melee swing in arc)
-export interface IceMalletSwingData {
-  id: string;
-  position: { x: number; y: number; z: number }; // Player position when swinging
-  direction: { x: number; y: number; z: number }; // Look direction (center of swing arc)
-  startTime: number;
-  ownerId: string;
-  ownerTeam: 'red' | 'blue';
-  hasHit: boolean; // Track if we've already hit something this swing
-  swingDirection: 1 | -1; // 1 = right-to-left, -1 = left-to-right (alternates)
-}
-
-// Ice Wall Rush - Glacier E ability (propels player forward while building ice wall behind)
-export interface IceWallSegmentData {
-  position: { x: number; y: number; z: number };
-  height: number;
-  width: number;
-  rotation: number; // Y rotation to face perpendicular to travel direction
-  createdAt: number;
-  createdFrameAt?: number;
-}
-
-export interface IceWallRushData {
-  id: string;
-  startPosition: { x: number; y: number; z: number };
-  startTime: number;
-  ownerId: string;
-  ownerTeam: 'red' | 'blue';
-  segments: IceWallSegmentData[]; // Wall segments created during rush
-  isActive: boolean;
-}
-
-// ============================================================================
 // RE-EXPORTS from shared
 // ============================================================================
 

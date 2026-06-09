@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { ICE_WALL_DURATION } from '@voxel-strike/shared';
 import { cleanupExpiredTemporaryWallColliders } from '../../../hooks/usePhysics';
 import { useGameStore } from '../../../store/gameStore';
 import { updateFrameClock } from '../../../utils/frameClock';
@@ -33,10 +32,7 @@ export function GameplayFrameSystems() {
     store.clearExpiredSwingLines();
     store.clearExpiredGrappleLines();
     store.clearExpiredEarthWalls();
-    store.clearExpiredIceMalletSwings();
-    store.clearExpiredIceWallRushes();
     cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
-    cleanupExpiredTemporaryWallColliders(ICE_WALL_DURATION * 1000, 'icewall_');
   });
 
   return null;

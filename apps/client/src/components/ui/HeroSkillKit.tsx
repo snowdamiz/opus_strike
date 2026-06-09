@@ -94,22 +94,6 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
       iconType: 'bomb',
     },
   ],
-  glacier: [
-    {
-      input: 'LMB',
-      name: 'Ice Mallet',
-      description: 'Swing a heavy ice hammer through nearby enemies.',
-      cooldown: 0.75,
-      iconType: 'icemallet',
-    },
-    {
-      input: 'RMB',
-      name: 'Ice Shield',
-      description: 'Hold up a frost guard to block pressure while advancing.',
-      cooldown: 1.2,
-      iconType: 'iceshield',
-    },
-  ],
 };
 
 export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
@@ -127,25 +111,6 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
     fromAbility('E', 'blaze_flamethrower'),
     fromAbility('Q', 'blaze_rocketjump'),
     fromAbility('F', 'blaze_airstrike', 'ultimate'),
-  ],
-  glacier: [
-    fromAbility('E', 'glacier_iceslide', undefined, {
-      name: 'Ice Wall Rush',
-      description: 'Hold to surge forward while building an ice wall behind you.',
-      iconType: 'icewallrush',
-      cooldown: undefined,
-    }),
-    fromAbility('Q', 'glacier_frostshield', undefined, {
-      name: 'Ice Slide',
-      description: 'Burst forward in a fast ground slide.',
-      iconType: 'iceslide',
-    }),
-    fromAbility('F', 'glacier_fortress', 'ultimate', {
-      name: 'Frost Storm Shield',
-      description: 'Activate a protective blizzard and gain 75 shield for 8 seconds.',
-      iconType: 'froststorm',
-      duration: ABILITY_DEFINITIONS.glacier_frostshield.duration,
-    }),
   ],
 };
 
