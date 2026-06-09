@@ -198,27 +198,7 @@ export function PlayerController() {
     } else if (bombTargeting && blazeAbilities.bombValidRef.current && blazeAbilities.bombTargetRef.current) {
       blazeAbilities.executeBombDrop(playerSounds);
     } else if (grappleTrapTargeting && hookshotAbilities.grappleTrapValidRef.current && hookshotAbilities.grappleTrapTargetRef.current) {
-      const localPlayer = useGameStore.getState().localPlayer;
-      if (localPlayer) {
-        const ctx = {
-          position: new THREE.Vector3(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z),
-          velocity: movement.refs.velocity.current,
-          yaw: cameraControl.refs.yaw.current,
-          pitch: cameraControl.refs.pitch.current,
-          heroId: localPlayer.heroId as HeroId,
-          localPlayer: {
-            id: localPlayer.id,
-            team: localPlayer.team,
-            position: localPlayer.position,
-            ultimateCharge: localPlayer.ultimateCharge,
-          },
-          inputState,
-          dt: 0,
-          isGrounded: movement.refs.isGrounded.current,
-        };
-        hookshotAbilities.executeGrappleTrap(ctx, updateLocalPlayer);
-        setGrappleTrapTargeting(false);
-      }
+      setGrappleTrapTargeting(false);
     }
   }, [
     isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, grappleTrapTargeting,
@@ -655,10 +635,6 @@ export function PlayerController() {
           if (!shadowStepTargeting && !grappleTrapTargeting && abilitySystem.canUseAbility(heroDef.ability1.abilityId, false, shadowStepTargeting)) {
             if (heroId === 'phantom') {
               phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge);
-            } else if (heroId === 'hookshot') {
-              if (hookshotAbilities.executeGrapple(abilityCtx)) {
-                abilitySystem.startClientCooldown(heroDef.ability1.abilityId);
-              }
             } else if (heroId === 'chronos') {
               chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge);
             }
@@ -682,9 +658,6 @@ export function PlayerController() {
             // Blaze Q is Rocket Jump
             blazeAbilities.executeRocketJump(abilityCtx);
             abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
-          } else if (heroId === 'hookshot') {
-            hookshotAbilities.executeEarthWall(abilityCtx);
-            abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
           } else if (heroId === 'chronos') {
             chronosAbilities.executeTimebreak(
               abilityCtx,
@@ -702,8 +675,6 @@ export function PlayerController() {
             phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive);
           } else if (heroId === 'blaze') {
             blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
-          } else if (heroId === 'hookshot') {
-            hookshotAbilities.executeGrappleTrap(abilityCtx, updateLocalPlayer);
           }
         }
       }
@@ -729,12 +700,6 @@ export function PlayerController() {
       }
 
       if (heroId === 'hookshot' && !grappleTrapTargeting) {
-        if (frameInput.primaryFire) {
-          hookshotAbilities.fireChainHook(abilityCtx);
-        }
-        if (frameInput.secondaryFire && !hookshotAbilities.secondaryFirePressedRef.current) {
-          hookshotAbilities.fireDragHook(abilityCtx);
-        }
         hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
 
         // Update grapple and swing physics

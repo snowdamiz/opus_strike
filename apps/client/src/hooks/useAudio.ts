@@ -18,7 +18,9 @@ export interface PlaySoundOptions {
   volume?: number;
   pitch?: number;
   position?: { x: number; y: number; z: number };
+  startOffsetMs?: number;
   durationMs?: number;
+  fadeInMs?: number;
   fadeOutMs?: number;
   signal?: AbortSignal;
 }
@@ -107,6 +109,15 @@ const SOUND_EFFECTS = {
   blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
   blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
   blazeAirstrike: { path: '/sounds/airstrike.mp3', volume: 0.6 },
+
+  // Hookshot Abilities
+  hookshotShot: { path: '/sounds/hookshot_shot.mp3', volume: 0.58 },
+  hookshotPrimary: { path: '/sounds/hookshot_lmb.mp3', volume: 0.48 },
+  hookshotSecondary: { path: '/sounds/hookshot_rmb.mp3', volume: 0.58 },
+  hookshotGrapple: { path: '/sounds/hookshot_lmb.mp3', volume: 0.5 },
+  hookshotAnchorWall: { path: '/sounds/hookshot_q.mp3', volume: 0.6 },
+  hookshotTrap: { path: '/sounds/hookshot_hero_strike.mp3', volume: 0.58 },
+  hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
   
   // Combat
   hit: { path: '/sounds/hit.mp3', volume: 0.6 },
@@ -135,7 +146,7 @@ const SOUND_EFFECTS = {
 } as const;
 
 export type SoundName = keyof typeof SOUND_EFFECTS;
-export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze';
+export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze' | 'hookshot';
 
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
@@ -143,6 +154,7 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   commonCombat: ['gameMusic', 'walk', 'slide', 'jetpack'],
   phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomReloadScream', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
+  hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
 };
 
 function ensureSharedAudioContext(): AudioContext | null {
@@ -305,7 +317,12 @@ export async function playSharedSound(
   }
 
   const gainNode = ctx.createGain();
-  gainNode.gain.value = (options?.volume ?? 1) * sound.volume * getSfxVolume();
+  const targetGain = (options?.volume ?? 1) * sound.volume * getSfxVolume();
+  const fadeInMs = Math.max(0, options?.fadeInMs ?? 0);
+  gainNode.gain.value = fadeInMs > 0 ? 0 : targetGain;
+  if (fadeInMs > 0) {
+    gainNode.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + fadeInMs / 1000);
+  }
   source.connect(gainNode);
 
   if (options?.position) {
@@ -366,7 +383,11 @@ export async function playSharedSound(
     cleanup();
   };
 
-  source.start();
+  const startOffsetSeconds = Math.min(
+    Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
+    Math.max(0, sound.buffer.duration - 0.001)
+  );
+  source.start(0, startOffsetSeconds);
   if (options?.durationMs !== undefined) {
     const durationMs = Math.max(0, options.durationMs);
     const fadeOutMs = Math.min(durationMs, Math.max(0, options.fadeOutMs ?? 0));
@@ -499,7 +520,12 @@ export function useAudio() {
 
     // Create gain node (SFX volume)
     const gainNode = ctx.createGain();
-    gainNode.gain.value = (options?.volume ?? 1) * sound.volume * getSfxVolume();
+    const targetGain = (options?.volume ?? 1) * sound.volume * getSfxVolume();
+    const fadeInMs = Math.max(0, options?.fadeInMs ?? 0);
+    gainNode.gain.value = fadeInMs > 0 ? 0 : targetGain;
+    if (fadeInMs > 0) {
+      gainNode.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + fadeInMs / 1000);
+    }
 
     // Connect nodes
     source.connect(gainNode);
@@ -558,7 +584,11 @@ export function useAudio() {
       cleanup();
     };
 
-    source.start();
+    const startOffsetSeconds = Math.min(
+      Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
+      Math.max(0, sound.buffer.duration - 0.001)
+    );
+    source.start(0, startOffsetSeconds);
     if (options?.durationMs !== undefined) {
       const durationMs = Math.max(0, options.durationMs);
       const fadeOutMs = Math.min(durationMs, Math.max(0, options.fadeOutMs ?? 0));
@@ -719,6 +749,8 @@ export function useAudio() {
       await preloadSoundGroup('phantom');
     } else if (heroId === 'blaze') {
       await preloadSoundGroup('blaze');
+    } else if (heroId === 'hookshot') {
+      await preloadSoundGroup('hookshot');
     } else {
       await preloadSoundGroup('commonCombat');
     }

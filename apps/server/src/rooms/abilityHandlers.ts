@@ -265,8 +265,6 @@ export function executeAbility(
 
     // ===== HOOKSHOT ABILITIES =====
     case 'hookshot_grapple': {
-      player.movement.isGrappling = true;
-      abilityState.isActive = true;
       abilityState.activatedAt = now;
       break;
     }

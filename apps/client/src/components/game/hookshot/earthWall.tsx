@@ -14,6 +14,7 @@ import {
   HOOKSHOT_COLORS,
 } from '../effectResources';
 import { getFrameClock } from '../../../utils/frameClock';
+import { playSharedSound } from '../../../hooks/useAudio';
 
 // ============================================================================
 // ANCHOR WALL - Hookshot Q ability
@@ -30,6 +31,9 @@ const ANCHOR_WALL_RISE_SPEED = 14;
 const ANCHOR_WALL_COLLAPSE_DURATION = 1.15;
 const ANCHOR_WALL_SEGMENT_BACKSET = 0.85;
 const ANCHOR_WALL_COLLIDER_PREFIX = 'anchorwall_';
+const ANCHOR_WALL_SOUND_VOLUME = 4.4;
+const ANCHOR_WALL_SOUND_START_OFFSET_MS = 250;
+const ANCHOR_WALL_SOUND_FADE_IN_MS = 180;
 
 const STUD_INDICES = [0, 1, 2, 3];
 const DEBRIS_INDICES = [0, 1, 2, 3, 4];
@@ -115,6 +119,23 @@ function releaseColliderSet(ids: Set<string>): void {
     removeTemporaryWallCollider(id);
   }
   ids.clear();
+}
+
+function calculateAnchorWallRiseSoundTiming(maxDistance: number): { durationMs: number; fadeOutMs: number } {
+  const lastSegmentDistance = Math.max(
+    ANCHOR_WALL_FIRST_SEGMENT_DISTANCE,
+    ANCHOR_WALL_FIRST_SEGMENT_DISTANCE +
+      Math.floor((maxDistance - ANCHOR_WALL_FIRST_SEGMENT_DISTANCE) / ANCHOR_WALL_SEGMENT_SPACING) *
+        ANCHOR_WALL_SEGMENT_SPACING
+  );
+  const firstSegmentTime = ANCHOR_WALL_FIRST_SEGMENT_DISTANCE / ANCHOR_WALL_SPEED;
+  const lastSegmentTime = lastSegmentDistance / ANCHOR_WALL_SPEED;
+  const lastRiseDuration = ANCHOR_WALL_MAX_HEIGHT * 1.08 / ANCHOR_WALL_RISE_SPEED;
+
+  return {
+    durationMs: Math.max(220, (lastSegmentTime - firstSegmentTime + lastRiseDuration) * 1000),
+    fadeOutMs: Math.max(140, lastRiseDuration * 1000),
+  };
 }
 
 const WallSegment = React.memo(function WallSegment({
@@ -289,6 +310,7 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   const hookGroundYRef = useRef(wall.startPosition.y);
   const hasStartImpactRef = useRef(false);
   const hasEndImpactRef = useRef(false);
+  const wallRiseSoundStartedRef = useRef(false);
   const collidersReleasedRef = useRef(false);
   const registeredCollidersRef = useRef<Set<string>>(new Set());
   const wallSegmentsRef = useRef<AnchorWallSegmentData[]>([]);
@@ -386,6 +408,18 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
 
         wallSegmentsRef.current.push(segment);
         registerSegmentCollider(segment);
+        if (!wallRiseSoundStartedRef.current) {
+          wallRiseSoundStartedRef.current = true;
+          const timing = calculateAnchorWallRiseSoundTiming(wall.maxDistance);
+          void playSharedSound('hookshotAnchorWall', {
+            position: { x: segment.x, y: segment.y, z: segment.z },
+            startOffsetMs: ANCHOR_WALL_SOUND_START_OFFSET_MS,
+            durationMs: timing.durationMs,
+            fadeInMs: ANCHOR_WALL_SOUND_FADE_IN_MS,
+            fadeOutMs: timing.fadeOutMs,
+            volume: ANCHOR_WALL_SOUND_VOLUME,
+          });
+        }
         setSegmentsVersion(v => v + 1);
       }
 

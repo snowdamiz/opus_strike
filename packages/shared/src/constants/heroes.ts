@@ -179,7 +179,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'defensive',
     targeting: 'direction',
     cooldown: 8,
-    duration: 4.25,
+    duration: 6.25,
     description: 'Launch a ground anchor that raises a solid barricade in your aim direction.',
   },
   hookshot_swing: {

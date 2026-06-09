@@ -16,7 +16,12 @@ import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/Pha
 import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
-import { PHANTOM_PROJECTILE_SPEED } from '../hooks/player/constants';
+import {
+  DRAG_HOOK_SPEED,
+  HOOKSHOT_MAX_DISTANCE,
+  HOOKSHOT_SPEED,
+  PHANTOM_PROJECTILE_SPEED,
+} from '../hooks/player/constants';
 import { playSharedSound, type SoundName } from '../hooks/useAudio';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
@@ -47,6 +52,7 @@ const MOVEMENT_BIT_GLIDING = 1 << 7;
 const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
 let lastLocalPhantomReloadSoundKey = '';
+const HOOKSHOT_SHOT_CLIP_MS = 250;
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -826,7 +832,10 @@ interface AbilityUsedMessage {
   castId?: string;
   position?: { x: number; y: number; z: number };
   startPosition?: { x: number; y: number; z: number };
+  targetPosition?: { x: number; y: number; z: number };
   aimDirection?: { x: number; y: number; z: number };
+  velocity?: { x: number; y: number; z: number };
+  maxDistance?: number;
   direction?: { yaw?: number; pitch?: number; x?: number; y?: number; z?: number };
   ownerTeam?: Team;
   launchSide?: -1 | 1;
@@ -889,6 +898,37 @@ function playPhantomWorldSound(
     signal: options.signal,
     volume: options.volume,
   });
+}
+
+function playHookshotWorldSound(
+  sound: SoundName,
+  position: { x: number; y: number; z: number } | undefined,
+  options: { durationMs?: number; fadeOutMs?: number; volume?: number } = {}
+): void {
+  void playSharedSound(sound, {
+    position,
+    durationMs: options.durationMs,
+    fadeOutMs: options.fadeOutMs,
+    volume: options.volume,
+  });
+}
+
+function playHookshotShotSound(position: { x: number; y: number; z: number } | undefined): void {
+  playHookshotWorldSound('hookshotShot', position, {
+    durationMs: HOOKSHOT_SHOT_CLIP_MS,
+    fadeOutMs: 24,
+  });
+}
+
+function scaleDirection(
+  direction: { x: number; y: number; z: number },
+  speed: number
+): { x: number; y: number; z: number } {
+  return {
+    x: direction.x * speed,
+    y: direction.y * speed,
+    z: direction.z * speed,
+  };
 }
 
 function applyPhantomPrimaryState(data: {
@@ -1105,6 +1145,120 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
   }
 }
 
+function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: string | null): boolean {
+  const store = useGameStore.getState();
+  const isLocalPlayer = data.playerId === localPlayerId;
+  const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
+  const startPosition = data.startPosition ?? position;
+  const targetPosition = data.targetPosition ?? position;
+  const ownerTeam = resolveOwnerTeam(data);
+  const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
+  const now = Date.now();
+
+  switch (data.abilityId) {
+    case 'hookshot_basic_attack': {
+      if (!startPosition) return true;
+      const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), HOOKSHOT_SPEED);
+      store.addHookProjectile({
+        id: castId,
+        position: startPosition,
+        velocity,
+        startTime: now,
+        ownerId: data.playerId,
+        ownerTeam,
+        state: 'extending',
+        maxDistance: data.maxDistance ?? HOOKSHOT_MAX_DISTANCE,
+        startPosition,
+        launchSide: data.launchSide,
+        launchYaw: data.launchYaw,
+      });
+      playHookshotShotSound(startPosition);
+      playHookshotWorldSound('hookshotPrimary', startPosition);
+      return true;
+    }
+
+    case 'hookshot_heavy_attack': {
+      if (!startPosition) return true;
+      const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), DRAG_HOOK_SPEED);
+      store.addDragHook({
+        id: castId,
+        position: startPosition,
+        velocity,
+        startTime: now,
+        ownerId: data.playerId,
+        ownerTeam,
+        state: 'flying',
+        startPosition,
+        launchSide: data.launchSide,
+        launchYaw: data.launchYaw,
+      });
+      playHookshotShotSound(startPosition);
+      playHookshotWorldSound('hookshotSecondary', startPosition, { volume: 1.05 });
+      return true;
+    }
+
+    case 'hookshot_grapple': {
+      if (!startPosition || !targetPosition) return true;
+      store.addGrappleLine({
+        id: castId,
+        startPosition,
+        endPosition: targetPosition,
+        startTime: now,
+        ownerId: data.playerId,
+        state: 'extending',
+        launchSide: data.launchSide,
+        launchYaw: data.launchYaw,
+      });
+      playHookshotShotSound(startPosition);
+      playHookshotWorldSound('hookshotGrapple', startPosition);
+      return true;
+    }
+
+    case 'hookshot_anchor_wall': {
+      if (!startPosition) return true;
+      const direction = normalizeAimDirection(data);
+      store.addEarthWall({
+        id: castId,
+        startPosition,
+        direction: { x: direction.x, y: 0, z: direction.z },
+        startTime: now,
+        duration: data.duration ?? 6.25,
+        ownerId: data.playerId,
+        ownerTeam,
+        maxDistance: data.maxDistance ?? 24.35,
+        hookProgress: 0,
+        wallSegments: [],
+      });
+      return true;
+    }
+
+    case 'hookshot_grapple_trap': {
+      if (!startPosition || !targetPosition) return true;
+      store.addGrappleTrap({
+        id: castId,
+        position: targetPosition,
+        startPosition,
+        velocity: data.velocity,
+        startTime: now,
+        duration: data.duration ?? 8,
+        ownerId: data.playerId,
+        ownerTeam,
+        radius: data.radius ?? 8,
+        hookedPlayers: [],
+      });
+      if (isLocalPlayer) {
+        store.updateLocalPlayer({ ultimateCharge: 0 });
+      }
+      playHookshotShotSound(startPosition);
+      playHookshotWorldSound('hookshotTrap', startPosition, { volume: 1.15 });
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
 /**
  * Sets up combat event handlers (damage, kills)
  */
@@ -1219,6 +1373,7 @@ export function setupCombatHandlers(room: Room) {
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     if (handlePhantomAbilityUsed(data, localPlayerId)) return;
+    if (handleHookshotAbilityUsed(data, localPlayerId)) return;
 
     if (data.abilityId === 'chronos_timebreak') {
       if (data.playerId === localPlayerId) return;

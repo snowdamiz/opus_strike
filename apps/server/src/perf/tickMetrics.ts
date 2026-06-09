@@ -5,6 +5,7 @@ export type TickSection =
   | 'updatePlaying'
   | 'updatePhysics'
   | 'updateVoidZones'
+  | 'updateHookshotTraps'
   | 'updateBlazeFlamethrowers'
   | 'updateCTFObjectives'
   | 'broadcastPlayerStates'

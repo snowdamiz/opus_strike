@@ -64,8 +64,8 @@ export class HookshotHero extends HeroBase {
         type: 'earth_wall',
         position: context.position,
         direction: horizontalDir,
-        duration: 4.25,
-        maxDistance: 22,
+        duration: 6.25,
+        maxDistance: 24.35,
       },
     };
   }

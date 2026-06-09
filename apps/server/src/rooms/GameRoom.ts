@@ -40,6 +40,7 @@ import {
   CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
+  GRAPPLE_MAX_DISTANCE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_RELOAD_MS,
@@ -117,7 +118,10 @@ interface PhantomCastPayload {
   castId: string;
   position: PlainVec3;
   startPosition?: PlainVec3;
+  targetPosition?: PlainVec3;
   aimDirection?: PlainVec3;
+  velocity?: PlainVec3;
+  maxDistance?: number;
   ownerTeam?: Team;
   launchSide?: -1 | 1;
   launchYaw?: number;
@@ -126,6 +130,19 @@ interface PhantomCastPayload {
   ammoRemaining?: number;
   reloadStartedAt?: number;
   reloadUntil?: number;
+  radius?: number;
+  duration?: number;
+}
+
+interface HookshotTrapInstance {
+  id: string;
+  position: PlainVec3;
+  radius: number;
+  duration: number;
+  startTime: number;
+  ownerId: string;
+  ownerTeam: Team;
+  lastDamageTick: Map<string, number>;
 }
 
 interface BotBrain {
@@ -332,6 +349,21 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
 };
 const PHANTOM_DIRE_BALL_SOCKET = { handHeight: 0.2, forwardOffset: 0.62, sideOffset: 0.22 };
 const PHANTOM_VOID_RAY_SOCKET = { handHeight: -0.08, forwardOffset: 0.52, sideOffset: 0 };
+const HOOKSHOT_EYE_HEIGHT = 0.6;
+const HOOKSHOT_CHAIN_SOCKET = { handHeight: 0.16, forwardOffset: 0.62, sideOffset: 0.24 };
+const HOOKSHOT_SPEED = 38;
+const HOOKSHOT_MAX_DISTANCE = 14;
+const DRAG_HOOK_SPEED = 50;
+const DRAG_HOOK_MAX_DISTANCE = 24;
+const HOOKSHOT_ANCHOR_WALL_DURATION = 6.25;
+const HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE = 24.35;
+const GRAPPLE_TRAP_MAX_RANGE = 30;
+const GRAPPLE_TRAP_THROW_SPEED = 30;
+const GRAPPLE_TRAP_GRAVITY = 25;
+const GRAPPLE_TRAP_RADIUS = 8;
+const GRAPPLE_TRAP_DAMAGE = 15;
+const GRAPPLE_TRAP_DAMAGE_INTERVAL_MS = 1000;
+const GRAPPLE_TRAP_DURATION = 8;
 
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
@@ -346,6 +378,9 @@ export class GameRoom extends Room<GameState> {
   private phantomVoidRayChargeStartedAt: Map<string, number> = new Map();
   private phantomVoidRayResolvedForPress: Set<string> = new Set();
   private phantomCastIdCounter: number = 0;
+  private hookshotTrapIdCounter: number = 0;
+  private hookshotPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
+  private hookshotTraps: HookshotTrapInstance[] = [];
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
   private devBotIdCounter: number = 0;
@@ -530,6 +565,8 @@ export class GameRoom extends Room<GameState> {
         this.phantomPrimaryHoldStartedAt.delete(existingSessionId);
         this.phantomVoidRayChargeStartedAt.delete(existingSessionId);
         this.phantomVoidRayResolvedForPress.delete(existingSessionId);
+        this.hookshotPrimaryLaunchSide.delete(existingSessionId);
+        this.hookshotTraps = this.hookshotTraps.filter((trap) => trap.ownerId !== existingSessionId);
         this.unstuckCooldownUntil.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
@@ -630,6 +667,8 @@ export class GameRoom extends Room<GameState> {
     this.phantomPrimaryHoldStartedAt.delete(client.sessionId);
     this.phantomVoidRayChargeStartedAt.delete(client.sessionId);
     this.phantomVoidRayResolvedForPress.delete(client.sessionId);
+    this.hookshotPrimaryLaunchSide.delete(client.sessionId);
+    this.hookshotTraps = this.hookshotTraps.filter((trap) => trap.ownerId !== client.sessionId);
     this.authoritativePositionUntil.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
@@ -780,6 +819,12 @@ export class GameRoom extends Room<GameState> {
       this.metrics.time('updateVoidZones', () => this.updateVoidZones(now));
     } else {
       this.updateVoidZones(now);
+    }
+
+    if (this.metrics) {
+      this.metrics.time('updateHookshotTraps', () => this.updateHookshotTraps(now));
+    } else {
+      this.updateHookshotTraps(now);
     }
 
     // Update held Blaze flamethrowers
@@ -1361,6 +1406,224 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private normalize3D(vector: PlainVec3): PlainVec3 | null {
+    const length = Math.sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
+    if (length <= 0.0001) return null;
+
+    return {
+      x: vector.x / length,
+      y: vector.y / length,
+      z: vector.z / length,
+    };
+  }
+
+  private addScaled3D(origin: PlainVec3, direction: PlainVec3, distance: number): PlainVec3 {
+    return {
+      x: origin.x + direction.x * distance,
+      y: origin.y + direction.y * distance,
+      z: origin.z + direction.z * distance,
+    };
+  }
+
+  private getHookshotAimOrigin(player: Player): PlainVec3 {
+    return {
+      x: player.position.x,
+      y: player.position.y + HOOKSHOT_EYE_HEIGHT,
+      z: player.position.z,
+    };
+  }
+
+  private raycastTerrain(start: PlainVec3, direction: PlainVec3, maxDistance: number, step = 0.35): PlainVec3 | null {
+    const normalized = this.normalize3D(direction);
+    if (!normalized) return null;
+
+    const steps = Math.max(1, Math.ceil(maxDistance / step));
+    let lastOpenPoint = { ...start };
+    for (let i = 1; i <= steps; i++) {
+      const distance = Math.min(maxDistance, i * step);
+      const point = this.addScaled3D(start, normalized, distance);
+      if (isCollisionBlock(this.getBlockAtWorld(point))) {
+        return lastOpenPoint;
+      }
+      lastOpenPoint = point;
+    }
+
+    return null;
+  }
+
+  private getNextHookshotPrimaryLaunchSide(playerId: string): -1 | 1 {
+    const previous = this.hookshotPrimaryLaunchSide.get(playerId) ?? -1;
+    const next = previous === 1 ? -1 : 1;
+    this.hookshotPrimaryLaunchSide.set(playerId, next);
+    return next;
+  }
+
+  private resolveHookshotLaunch(
+    player: Player,
+    launchSide: -1 | 1,
+    maxDistance: number
+  ): { startPosition: PlainVec3; aimDirection: PlainVec3 } {
+    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const startPosition = this.getPhantomCastOrigin(player, HOOKSHOT_CHAIN_SOCKET, launchSide);
+    const aimOrigin = this.getHookshotAimOrigin(player);
+    const aimPoint = this.raycastTerrain(aimOrigin, lookDirection, maxDistance)
+      ?? this.addScaled3D(aimOrigin, lookDirection, maxDistance);
+    const fromHook = this.normalize3D({
+      x: aimPoint.x - startPosition.x,
+      y: aimPoint.y - startPosition.y,
+      z: aimPoint.z - startPosition.z,
+    });
+
+    return {
+      startPosition,
+      aimDirection: fromHook ?? lookDirection,
+    };
+  }
+
+  private resolveHookshotGrappleTarget(player: Player): PlainVec3 | null {
+    const aimOrigin = this.getHookshotAimOrigin(player);
+    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const directHit = this.raycastTerrain(aimOrigin, lookDirection, GRAPPLE_MAX_DISTANCE);
+    if (directHit) return directHit;
+
+    const downwardDirection = this.normalize3D({
+      x: lookDirection.x,
+      y: Math.min(lookDirection.y, -0.1),
+      z: lookDirection.z,
+    });
+    return downwardDirection
+      ? this.raycastTerrain(aimOrigin, downwardDirection, GRAPPLE_MAX_DISTANCE)
+      : null;
+  }
+
+  private resolveHookshotAnchorWall(player: Player): { startPosition: PlainVec3; direction: PlainVec3 } {
+    const forward = this.forward2D(player.lookYaw);
+    const normalized = this.normalize2D(forward) ?? { x: 0, z: -1 };
+    const groundY = this.getProceduralGroundY({
+      x: player.position.x,
+      y: player.position.y + 2,
+      z: player.position.z,
+    }) ?? player.position.y;
+
+    return {
+      startPosition: {
+        x: player.position.x,
+        y: groundY,
+        z: player.position.z,
+      },
+      direction: {
+        x: normalized.x,
+        y: 0,
+        z: normalized.z,
+      },
+    };
+  }
+
+  private resolveHookshotTrapTarget(player: Player): { startPosition: PlainVec3; targetPosition: PlainVec3; velocity: PlainVec3 } {
+    const direction = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const startPosition = {
+      x: player.position.x,
+      y: player.position.y + 1.5,
+      z: player.position.z,
+    };
+
+    let targetPosition = this.addScaled3D(startPosition, direction, GRAPPLE_TRAP_MAX_RANGE);
+    const directHit = this.raycastTerrain(this.getHookshotAimOrigin(player), direction, GRAPPLE_TRAP_MAX_RANGE + 10);
+    if (directHit) {
+      const groundY = this.getProceduralGroundY({
+        x: directHit.x,
+        y: directHit.y + 5,
+        z: directHit.z,
+      });
+      targetPosition = {
+        x: directHit.x,
+        y: groundY !== null ? groundY + 0.1 : directHit.y + 0.1,
+        z: directHit.z,
+      };
+    } else {
+      const sampleDistances = [15, 20, 25, GRAPPLE_TRAP_MAX_RANGE];
+      for (const distance of sampleDistances) {
+        const sample = this.addScaled3D(this.vec3SchemaToPlain(player.position), direction, distance);
+        const groundY = this.getProceduralGroundY({
+          x: sample.x,
+          y: Math.max(sample.y + 50, player.position.y + 50),
+          z: sample.z,
+        });
+        if (groundY !== null) {
+          targetPosition = {
+            x: sample.x,
+            y: groundY + 0.1,
+            z: sample.z,
+          };
+          break;
+        }
+      }
+    }
+
+    targetPosition = this.clampToPlayableMap(targetPosition);
+    const velocity = this.calculateHookshotTrapVelocity(startPosition, targetPosition);
+    return { startPosition, targetPosition, velocity };
+  }
+
+  private calculateHookshotTrapVelocity(startPosition: PlainVec3, targetPosition: PlainVec3): PlainVec3 {
+    const dx = targetPosition.x - startPosition.x;
+    const dy = targetPosition.y - startPosition.y;
+    const dz = targetPosition.z - startPosition.z;
+    const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+    const timeOfFlight = Math.max(0.5, horizontalDistance / 20);
+    const horizontalSpeed = horizontalDistance / timeOfFlight;
+
+    const horizontalLength = Math.sqrt(dx * dx + dz * dz);
+    const horizontalVelocityX = horizontalLength > 0 ? (dx / horizontalLength) * horizontalSpeed : 0;
+    const horizontalVelocityZ = horizontalLength > 0 ? (dz / horizontalLength) * horizontalSpeed : 0;
+    const verticalVelocity = (dy + 0.5 * GRAPPLE_TRAP_GRAVITY * timeOfFlight * timeOfFlight) / timeOfFlight;
+
+    return {
+      x: this.clamp(horizontalVelocityX, -GRAPPLE_TRAP_THROW_SPEED, GRAPPLE_TRAP_THROW_SPEED),
+      y: this.clamp(verticalVelocity, 5, GRAPPLE_TRAP_THROW_SPEED * 1.2),
+      z: this.clamp(horizontalVelocityZ, -GRAPPLE_TRAP_THROW_SPEED, GRAPPLE_TRAP_THROW_SPEED),
+    };
+  }
+
+  private createHookshotTrap(trap: HookshotTrapInstance): void {
+    this.hookshotTraps.push(trap);
+  }
+
+  private updateHookshotTraps(now: number): void {
+    if (this.hookshotTraps.length === 0) return;
+
+    this.hookshotTraps = this.hookshotTraps.filter((trap) => {
+      if ((now - trap.startTime) / 1000 >= trap.duration) return false;
+
+      const owner = this.state.players.get(trap.ownerId) ?? null;
+      const radiusSq = trap.radius * trap.radius;
+      this.state.players.forEach((target) => {
+        if (target.id === trap.ownerId) return;
+        if (target.state !== 'alive') return;
+        if (target.team === trap.ownerTeam) return;
+
+        const dx = target.position.x - trap.position.x;
+        const dz = target.position.z - trap.position.z;
+        if (dx * dx + dz * dz > radiusSq) return;
+
+        const lastDamage = trap.lastDamageTick.get(target.id) || 0;
+        if (now - lastDamage < GRAPPLE_TRAP_DAMAGE_INTERVAL_MS) return;
+        trap.lastDamageTick.set(target.id, now);
+
+        const pullDirection = this.direction2DFromTo(target.position, trap.position);
+        if (pullDirection) {
+          target.velocity.x += pullDirection.x * 2.5;
+          target.velocity.z += pullDirection.z * 2.5;
+          this.authoritativePositionUntil.set(target.id, now + 350);
+        }
+
+        this.applyDamage(target, GRAPPLE_TRAP_DAMAGE, owner ? trap.ownerId : null, 'grapple_trap');
+      });
+
+      return true;
+    });
+  }
+
   private broadcastPhantomCast(payload: PhantomCastPayload): void {
     this.broadcast('abilityUsed', payload);
   }
@@ -1426,6 +1689,42 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private broadcastHookshotAttackCast(
+    player: Player,
+    abilityId: 'hookshot_basic_attack' | 'hookshot_heavy_attack',
+    now: number
+  ): void {
+    const launchSide = abilityId === 'hookshot_basic_attack'
+      ? this.getNextHookshotPrimaryLaunchSide(player.id)
+      : 1;
+    const maxDistance = abilityId === 'hookshot_basic_attack'
+      ? HOOKSHOT_MAX_DISTANCE
+      : DRAG_HOOK_MAX_DISTANCE;
+    const speed = abilityId === 'hookshot_basic_attack'
+      ? HOOKSHOT_SPEED
+      : DRAG_HOOK_SPEED;
+    const launch = this.resolveHookshotLaunch(player, launchSide, maxDistance);
+
+    this.broadcastPhantomCast({
+      playerId: player.id,
+      abilityId,
+      castId: this.nextPhantomCastId(player.id, abilityId),
+      position: this.vec3SchemaToPlain(player.position),
+      startPosition: launch.startPosition,
+      aimDirection: launch.aimDirection,
+      velocity: {
+        x: launch.aimDirection.x * speed,
+        y: launch.aimDirection.y * speed,
+        z: launch.aimDirection.z * speed,
+      },
+      maxDistance,
+      ownerTeam: player.team as Team,
+      launchSide,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+    });
+  }
+
   private resolvePhantomBlinkDestination(player: Player, distance: number): PlainVec3 {
     const forward = this.forward2D(player.lookYaw);
     const start = this.vec3SchemaToPlain(player.position);
@@ -1485,8 +1784,14 @@ export class GameRoom extends Room<GameState> {
     const chronosLifelineTargets = player.heroId === 'chronos' && slot === 'ability1'
       ? this.getChronosLifelineTargets(player)
       : null;
+    const hookshotGrappleTarget = player.heroId === 'hookshot' && slot === 'ability1'
+      ? this.resolveHookshotGrappleTarget(player)
+      : null;
 
     if (player.heroId === 'chronos' && slot === 'ultimate') {
+      return;
+    }
+    if (player.heroId === 'hookshot' && slot === 'ability1' && !hookshotGrappleTarget) {
       return;
     }
 
@@ -1513,6 +1818,95 @@ export class GameRoom extends Room<GameState> {
           this.authoritativePositionUntil.set(playerId, Date.now() + durationMs);
         },
       });
+    }
+
+    if (player.heroId === 'hookshot') {
+      const ownerTeam = player.team as Team;
+      const castId = this.nextPhantomCastId(player.id, result.abilityId);
+
+      if (result.abilityId === 'hookshot_grapple' && hookshotGrappleTarget) {
+        const launchSide = 1;
+        const startPosition = this.getPhantomCastOrigin(player, HOOKSHOT_CHAIN_SOCKET, launchSide);
+        const aimDirection = this.normalize3D({
+          x: hookshotGrappleTarget.x - startPosition.x,
+          y: hookshotGrappleTarget.y - startPosition.y,
+          z: hookshotGrappleTarget.z - startPosition.z,
+        }) ?? this.getForwardVector(player.lookYaw, player.lookPitch);
+
+        this.broadcast('abilityUsed', {
+          playerId: player.id,
+          abilityId: result.abilityId,
+          castId,
+          position: this.vec3SchemaToPlain(player.position),
+          startPosition,
+          targetPosition: hookshotGrappleTarget,
+          direction: {
+            yaw: player.lookYaw,
+            pitch: player.lookPitch,
+          },
+          aimDirection,
+          ownerTeam,
+          launchSide,
+          launchYaw: player.lookYaw,
+          serverTime: usedAt,
+        });
+        return;
+      }
+
+      if (result.abilityId === 'hookshot_anchor_wall') {
+        const wall = this.resolveHookshotAnchorWall(player);
+        this.broadcast('abilityUsed', {
+          playerId: player.id,
+          abilityId: result.abilityId,
+          castId,
+          position: this.vec3SchemaToPlain(player.position),
+          startPosition: wall.startPosition,
+          targetPosition: wall.startPosition,
+          direction: wall.direction,
+          aimDirection: wall.direction,
+          ownerTeam,
+          launchYaw: player.lookYaw,
+          serverTime: usedAt,
+          maxDistance: HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE,
+          duration: HOOKSHOT_ANCHOR_WALL_DURATION,
+        });
+        return;
+      }
+
+      if (result.abilityId === 'hookshot_grapple_trap') {
+        const trap = this.resolveHookshotTrapTarget(player);
+        const trapId = `hookshot_trap_${player.id}_${this.hookshotTrapIdCounter++}`;
+        this.createHookshotTrap({
+          id: trapId,
+          position: trap.targetPosition,
+          radius: GRAPPLE_TRAP_RADIUS,
+          duration: GRAPPLE_TRAP_DURATION,
+          startTime: usedAt,
+          ownerId: player.id,
+          ownerTeam,
+          lastDamageTick: new Map(),
+        });
+
+        this.broadcast('abilityUsed', {
+          playerId: player.id,
+          abilityId: result.abilityId,
+          castId: trapId,
+          position: this.vec3SchemaToPlain(player.position),
+          startPosition: trap.startPosition,
+          targetPosition: trap.targetPosition,
+          velocity: trap.velocity,
+          direction: {
+            yaw: player.lookYaw,
+            pitch: player.lookPitch,
+          },
+          aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+          ownerTeam,
+          serverTime: usedAt,
+          radius: GRAPPLE_TRAP_RADIUS,
+          duration: GRAPPLE_TRAP_DURATION,
+        });
+        return;
+      }
     }
 
     const shockwaveDirection = result.abilityId === 'chronos_timebreak'
@@ -1811,6 +2205,12 @@ export class GameRoom extends Room<GameState> {
       this.broadcastPhantomAttackCast(
         player,
         mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray',
+        now
+      );
+    } else if (heroId === 'hookshot') {
+      this.broadcastHookshotAttackCast(
+        player,
+        mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack',
         now
       );
     }

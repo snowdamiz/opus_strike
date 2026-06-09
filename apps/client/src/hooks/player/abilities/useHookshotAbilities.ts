@@ -356,10 +356,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       startPosition: { x: ctx.position.x, y: groundY, z: ctx.position.z },
       direction: { x: normDirX, y: 0, z: normDirZ },
       startTime: Date.now(),
-      duration: 4.25,
+      duration: 6.25,
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
-      maxDistance: 22,
+      maxDistance: 24.35,
       hookProgress: 0,
       wallSegments: [],
     });
@@ -521,6 +521,22 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       swingWasAirborneRef.current = false;
     };
 
+    const store = useGameStore.getState();
+    if (!activeGrappleLineIdRef.current) {
+      for (let index = store.grappleLines.length - 1; index >= 0; index--) {
+        const line = store.grappleLines[index];
+        if (line.ownerId !== ctx.localPlayer.id) continue;
+        if (line.state === 'done' || line.state === 'retracting') continue;
+
+        activeGrappleLineIdRef.current = line.id;
+        activeGrappleStartTimeRef.current = line.startTime;
+        grappleTargetRef.current = line.endPosition;
+        isGrapplingRef.current = false;
+        swingWasAirborneRef.current = false;
+        break;
+      }
+    }
+
     const lineId = activeGrappleLineIdRef.current;
     const target = grappleTargetRef.current;
     if (!lineId || !target) {
@@ -529,8 +545,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       }
       return;
     }
-
-    const store = useGameStore.getState();
 
     const toTargetX = target.x - ctx.position.x;
     const toTargetY = target.y - ctx.position.y;
