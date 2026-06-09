@@ -157,6 +157,8 @@ const BLAZE_ROCKET_BOT_COOLDOWN_MS = Math.round(850 / BLAZE_ROCKET_FIRE_RATE_RED
 const BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS = 300;
 const BLAZE_ROCKET_IMPACT_MAX_DISTANCE = 240;
 const BLAZE_ROCKET_IMPACT_DEDUP_MS = 5000;
+const CHRONOS_VERDANT_PULSE_DAMAGE = 16;
+const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 250;
 
 interface BlazeRocketImpactMessage {
   rocketId: string;
@@ -292,6 +294,7 @@ const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 18, range: 30, cooldownMs: 550, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_BOT_COOLDOWN_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
+  chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
 };
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 34, range: 42, cooldownMs: 1200, coneDot: Math.cos(0.12), damageType: 'void_ray' },

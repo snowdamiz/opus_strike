@@ -48,6 +48,11 @@ export const BLAZE_ROCKET_SPEED = PHANTOM_PROJECTILE_SPEED;
 export const BLAZE_BOMB_COOLDOWN = 8000;
 export const BLAZE_BOMB_FALL_DURATION = 1500;
 
+// Chronos
+export const CHRONOS_PRIMARY_FIRE_RATE = 4;
+export const CHRONOS_PRIMARY_FIRE_INTERVAL = 1000 / CHRONOS_PRIMARY_FIRE_RATE;
+export const CHRONOS_PRIMARY_PULSE_SPEED = 68;
+
 // Hookshot
 export const HOOKSHOT_FIRE_RATE = 3;
 export const HOOKSHOT_FIRE_INTERVAL = 1000 / HOOKSHOT_FIRE_RATE;
@@ -104,6 +109,12 @@ export const PHANTOM_DIRE_BALL_SOCKET: PlayerSocketOffset = {
 export const PHANTOM_VOID_RAY_SOCKET: PlayerSocketOffset = {
   handHeight: -0.08,
   forwardOffset: 0.52,
+  sideOffset: 0,
+};
+
+export const CHRONOS_PRIMARY_ORB_SOCKET: PlayerSocketOffset = {
+  handHeight: -0.06,
+  forwardOffset: 0.56,
   sideOffset: 0,
 };
 

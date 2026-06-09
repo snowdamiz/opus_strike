@@ -29,6 +29,11 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
 import { setBlazeBombTargetHeld, setBlazeFlamethrowerHeld, setBlazeRocketHeld } from '../../viewmodel/blazePose';
+import {
+  CHRONOS_PRIMARY_FIRE_READY_BLEND,
+  getChronosPrimaryHeldBlend,
+  setChronosPrimaryHeld,
+} from '../../viewmodel/chronosPose';
 import { isDevFlyMode } from '../ui/GameConsole';
 import {
   useCamera,
@@ -38,6 +43,7 @@ import {
   usePhantomAbilities,
   useBlazeAbilities,
   useHookshotAbilities,
+  useChronosAbilities,
   PLAYER_HEIGHT,
   PLAYER_CROUCH_HEIGHT,
   EYE_HEIGHT,
@@ -109,6 +115,7 @@ export function PlayerController() {
   const phantomAbilities = usePhantomAbilities();
   const blazeAbilities = useBlazeAbilities();
   const hookshotAbilities = useHookshotAbilities();
+  const chronosAbilities = useChronosAbilities();
   const blazeFlamethrowerActiveRef = blazeAbilities.flamethrowerActiveRef;
 
   // Initialize refs
@@ -178,6 +185,7 @@ export function PlayerController() {
   useEffect(() => {
     return () => {
       resetBlazeFlamethrower();
+      setChronosPrimaryHeld(false);
     };
   }, [resetBlazeFlamethrower]);
 
@@ -297,6 +305,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setChronosPrimaryHeld(false, now);
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
@@ -324,6 +333,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setChronosPrimaryHeld(false, now);
       resetBlazeFlamethrower(now);
       blazeAbilities.resetRocketJump();
     }
@@ -350,6 +360,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setChronosPrimaryHeld(false, now);
       setChronosAegisVisualState(localPlayer.id, false, now);
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
@@ -367,6 +378,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setChronosPrimaryHeld(false, now);
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
@@ -590,9 +602,6 @@ export function PlayerController() {
     }
 
     const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
-    const primaryFireForServer = heroId === 'phantom'
-      ? frameInput.primaryFire && !phantomPrimaryReloading && phantomAbilities.phantomPrimaryAmmoRef.current > 0
-      : frameInput.primaryFire;
     setPhantomPrimaryHeld(
       heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire && !phantomPrimaryReloading,
       now
@@ -601,6 +610,15 @@ export function PlayerController() {
       heroId === 'blaze' && !bombTargeting && frameInput.primaryFire,
       now
     );
+    setChronosPrimaryHeld(
+      heroId === 'chronos' && frameInput.primaryFire,
+      now
+    );
+    const primaryFireForServer = heroId === 'phantom'
+      ? frameInput.primaryFire && !phantomPrimaryReloading && phantomAbilities.phantomPrimaryAmmoRef.current > 0
+      : heroId === 'chronos'
+        ? frameInput.primaryFire && getChronosPrimaryHeldBlend(now) >= CHRONOS_PRIMARY_FIRE_READY_BLEND
+        : frameInput.primaryFire;
     setChronosAegisVisualState(
       localPlayer.id,
       heroId === 'chronos' && frameInput.secondaryFire,
@@ -691,6 +709,10 @@ export function PlayerController() {
         // Update grapple and swing physics
         hookshotAbilities.updateGrapplePhysics(abilityCtx);
         hookshotAbilities.updateSwingPhysics(abilityCtx);
+      }
+
+      if (heroId === 'chronos' && frameInput.primaryFire) {
+        chronosAbilities.fireVerdantPulse(abilityCtx);
       }
     }
 

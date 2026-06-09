@@ -16,6 +16,7 @@ export type TerrainImpactKind =
   | 'blaze_rocket'
   | 'blaze_flamethrower'
   | 'phantom_dire_ball'
+  | 'chronos_pulse'
   | 'hookshot_hook'
   | 'hookshot_drag_hook'
   | 'hookshot_grapple'
@@ -147,6 +148,29 @@ function getImpactStyle(kind: TerrainImpactKind): ImpactStyle {
         ringRadius: 1.55,
         lightColor: PHANTOM_COLORS.violet,
         lightIntensity: 7,
+        additive: true,
+        debrisShape: 'sphere',
+      };
+    case 'chronos_pulse':
+      return {
+        duration: 540,
+        scale: 0.5,
+        flashColor: 0xd9ffe7,
+        coreColor: 0x86efac,
+        outerColor: 0x22c55e,
+        ringColor: 0xb7ffd1,
+        secondRingColor: 0x4ade80,
+        particleColors: [0xd9ffe7, 0x86efac, 0x22c55e],
+        smokeColor: 0x0f2f21,
+        particleCount: 9,
+        smokeCount: 1,
+        particleSpeed: 3.2,
+        particleLift: 2.4,
+        gravity: 4,
+        coreRadius: 0.62,
+        ringRadius: 1.45,
+        lightColor: 0x22c55e,
+        lightIntensity: 6,
         additive: true,
         debrisShape: 'sphere',
       };

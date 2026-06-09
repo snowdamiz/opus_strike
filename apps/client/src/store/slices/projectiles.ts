@@ -9,6 +9,7 @@ import type {
   VoidRayData,
   RocketData,
   BombData,
+  ChronosPulseData,
   HookProjectileData,
   DragHookData,
   GrappleTrapData,
@@ -44,6 +45,9 @@ export interface ProjectileState {
   flamethrowerFuel: number;
   flamethrowerOrigin: { x: number; y: number; z: number } | null;
   flamethrowerDirection: { x: number; y: number; z: number };
+
+  // Chronos projectiles
+  chronosPulses: ChronosPulseData[];
 
   // Hookshot projectiles
   hookProjectiles: HookProjectileData[];
@@ -99,6 +103,12 @@ export interface ProjectileActions {
     origin: { x: number; y: number; z: number },
     direction: { x: number; y: number; z: number }
   ) => void;
+
+  // Chronos pulse actions
+  addChronosPulse: (pulse: ChronosPulseData) => void;
+  removeChronosPulse: (id: string) => void;
+  removeChronosPulses: (ids: readonly string[]) => void;
+  clearExpiredChronosPulses: () => void;
 
   // Hook projectile actions
   addHookProjectile: (hook: HookProjectileData) => void;
@@ -164,6 +174,7 @@ export const projectileInitialState: ProjectileState = {
   flamethrowerFuel: 100,
   flamethrowerOrigin: null,
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
+  chronosPulses: [],
   hookProjectiles: [],
   dragHooks: [],
   grappleTraps: [],
@@ -184,6 +195,7 @@ const PROJECTILE_LIMITS = {
   voidRays: 32,
   rockets: 96,
   bombs: 32,
+  chronosPulses: 96,
   hookProjectiles: 64,
   dragHooks: 32,
   grappleTraps: 32,
@@ -440,6 +452,28 @@ export const createProjectileSlice: StateCreator<
       flamethrowerOrigin: { ...origin },
       flamethrowerDirection: { ...direction },
     };
+  }),
+
+  // ==================== CHRONOS PULSES ====================
+  addChronosPulse: (pulse) => set((state) => {
+    const chronosPulses = appendUnique(state.chronosPulses, pulse, PROJECTILE_LIMITS.chronosPulses);
+    return chronosPulses === state.chronosPulses ? state : { chronosPulses };
+  }),
+
+  removeChronosPulse: (id) => set((state) => {
+    const chronosPulses = removeById(state.chronosPulses, id);
+    return chronosPulses === state.chronosPulses ? state : { chronosPulses };
+  }),
+
+  removeChronosPulses: (ids) => set((state) => {
+    const chronosPulses = removeByIds(state.chronosPulses, ids);
+    return chronosPulses === state.chronosPulses ? state : { chronosPulses };
+  }),
+
+  clearExpiredChronosPulses: () => set((state) => {
+    const LIFETIME = 3000;
+    const chronosPulses = filterExpired(state.chronosPulses, (pulse, now) => now - pulse.startTime < LIFETIME);
+    return chronosPulses === state.chronosPulses ? state : { chronosPulses };
   }),
 
   // ==================== HOOK PROJECTILES ====================

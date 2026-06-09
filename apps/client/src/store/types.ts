@@ -123,6 +123,19 @@ export interface BombData {
 }
 
 // ============================================================================
+// CHRONOS PROJECTILE TYPES
+// ============================================================================
+
+export interface ChronosPulseData {
+  id: string;
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  startTime: number;
+  ownerId: string;
+  ownerTeam: 'red' | 'blue';
+}
+
+// ============================================================================
 // HOOKSHOT PROJECTILE TYPES
 // ============================================================================
 

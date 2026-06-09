@@ -39,6 +39,7 @@ export type {
   VoidRayData,
   RocketData,
   BombData,
+  ChronosPulseData,
   HookProjectileData,
   DragHookData,
   GrappleTrapData,

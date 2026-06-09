@@ -26,6 +26,7 @@ export function GameplayFrameSystems() {
     store.clearExpiredDireBalls();
     store.clearExpiredVoidRays();
     store.clearExpiredVoidZones();
+    store.clearExpiredChronosPulses();
     store.clearExpiredHookProjectiles();
     store.clearExpiredDragHooks();
     store.clearExpiredGrappleTraps();
