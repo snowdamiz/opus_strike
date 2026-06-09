@@ -35,11 +35,14 @@ import {
 } from '../constants';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
+  BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS,
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+  clearBlazeRocketJumpStaffSlam,
   getBlazeFlamethrowerHeldBlend,
   getBlazeRocketHeldBlend,
   setBlazeFlamethrowerHeld,
   setBlazeBombTargetHeld,
+  triggerBlazeRocketJumpStaffSlam,
   triggerBlazeStaffShockwave,
   type BlazeRocketStaffPoseSampleContext,
 } from '../../../viewmodel/blazePose';
@@ -171,6 +174,7 @@ export interface UseBlazeAbilitiesReturn {
   airStrikeTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
   airStrikeValidRef: React.MutableRefObject<boolean>;
   secondaryFirePressedRef: React.MutableRefObject<boolean>;
+  pendingRocketJumpRef: React.MutableRefObject<PendingRocketJump | null>;
 
   // Methods
   fireRocket: (ctx: AbilityContext, sounds: PlayerSounds) => void;
@@ -182,13 +186,20 @@ export interface UseBlazeAbilitiesReturn {
     setFlamethrowerActive: (active: boolean) => void,
     setFlamethrowerFuel: (fuel: number) => void
   ) => void;
-  executeRocketJump: (ctx: AbilityContext, sounds: PlayerSounds) => void;
+  executeRocketJump: (ctx: AbilityContext) => void;
+  updateRocketJump: (ctx: AbilityContext, sounds: PlayerSounds) => void;
+  resetRocketJump: () => void;
   executeAirStrike: (
     sounds: PlayerSounds,
     updateLocalPlayer: (data: any) => void
   ) => void;
   handleBombTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
   handleAirStrikeTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
+}
+
+interface PendingRocketJump {
+  ownerId: string;
+  activateAtMs: number;
 }
 
 export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
@@ -206,6 +217,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   // Flamethrower state
   const flamethrowerFuelRef = useRef(BLAZE_FLAMETHROWER_MAX_FUEL);
   const flamethrowerActiveRef = useRef(false);
+  const pendingRocketJumpRef = useRef<PendingRocketJump | null>(null);
 
   // Air Strike state
   const airStrikeTargetRef = useRef<THREE.Vector3 | null>(null);
@@ -389,8 +401,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     }
   }, []);
 
-  // Execute Rocket Jump (Q ability)
-  const executeRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
+  const applyRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     ctx.velocity.y = BLAZE_ROCKET_JUMP_VERTICAL_FORCE;
     ctx.position.y += 0.5;
 
@@ -403,6 +414,39 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     triggerRocketJumpExplosion({ x: ctx.position.x, y: ctx.position.y, z: ctx.position.z });
 
     sounds.playBlazeRocketJump();
+  }, []);
+
+  // Execute Rocket Jump (Q ability)
+  const executeRocketJump = useCallback((ctx: AbilityContext) => {
+    const now = Date.now();
+    const timestampMs = ctx.viewmodelNowMs ?? now;
+
+    triggerBlazeRocketJumpStaffSlam(timestampMs);
+    pendingRocketJumpRef.current = {
+      ownerId: ctx.localPlayer.id,
+      activateAtMs: now + BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS,
+    };
+  }, []);
+
+  const updateRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
+    const pendingRocketJump = pendingRocketJumpRef.current;
+    if (!pendingRocketJump) return;
+
+    if (ctx.heroId !== 'blaze' || ctx.localPlayer.id !== pendingRocketJump.ownerId) {
+      pendingRocketJumpRef.current = null;
+      clearBlazeRocketJumpStaffSlam();
+      return;
+    }
+
+    if (Date.now() < pendingRocketJump.activateAtMs) return;
+
+    pendingRocketJumpRef.current = null;
+    applyRocketJump(ctx, sounds);
+  }, [applyRocketJump]);
+
+  const resetRocketJump = useCallback(() => {
+    pendingRocketJumpRef.current = null;
+    clearBlazeRocketJumpStaffSlam();
   }, []);
 
   // Execute Air Strike (Ultimate)
@@ -461,11 +505,14 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     airStrikeTargetRef,
     airStrikeValidRef,
     secondaryFirePressedRef,
+    pendingRocketJumpRef,
     fireRocket,
     handleBombTargeting,
     executeBombDrop,
     handleFlamethrower,
     executeRocketJump,
+    updateRocketJump,
+    resetRocketJump,
     executeAirStrike,
     handleBombTargetUpdate,
     handleAirStrikeTargetUpdate,

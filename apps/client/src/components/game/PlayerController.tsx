@@ -267,6 +267,7 @@ export function PlayerController() {
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       phantomAbilities.resetPhantomPrimaryMagazine();
+      blazeAbilities.resetRocketJump();
       return;
     }
 
@@ -291,6 +292,7 @@ export function PlayerController() {
       setBlazeBombTargetHeld(false, now);
       setBlazeFlamethrowerHeld(false, now);
       stopFlamethrowerSound();
+      blazeAbilities.resetRocketJump();
     }
 
     const dt = Math.min(delta, 0.1);
@@ -306,6 +308,7 @@ export function PlayerController() {
       setBlazeFlamethrowerHeld(false, now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
       camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
@@ -321,6 +324,7 @@ export function PlayerController() {
       setBlazeFlamethrowerHeld(false, now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      blazeAbilities.resetRocketJump();
       const position = positionRef.current;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
       if (visualPos) {
@@ -551,7 +555,7 @@ export function PlayerController() {
             );
           } else if (heroId === 'blaze') {
             // Blaze Q is Rocket Jump
-            blazeAbilities.executeRocketJump(abilityCtx, playerSounds);
+            blazeAbilities.executeRocketJump(abilityCtx);
             abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
           } else if (heroId === 'glacier') {
             glacierAbilities.executeIceSlide(abilityCtx, abilitySystem.setAbilityActive);
@@ -586,6 +590,7 @@ export function PlayerController() {
       }
 
       if (heroId === 'blaze') {
+        blazeAbilities.updateRocketJump(abilityCtx, playerSounds);
         if (frameInput.primaryFire && !bombTargeting) {
           blazeAbilities.fireRocket(abilityCtx, playerSounds);
         }

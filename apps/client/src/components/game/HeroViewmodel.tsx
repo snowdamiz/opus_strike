@@ -22,8 +22,10 @@ import {
 } from '../../viewmodel/phantomPrimaryPose';
 import {
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+  getBlazeRocketJumpStaffSlamPose,
   getBlazeStaffHeldBlend,
   getBlazeStaffShockwaveEvent,
+  type BlazeRocketJumpStaffSlamPose,
   type BlazeRocketStaffPoseSampleContext,
 } from '../../viewmodel/blazePose';
 import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
@@ -1999,17 +2001,112 @@ function applyBlazeRocketPoseToHand(
   }
 }
 
+function getBlazeRocketJumpPoseAmount(pose: BlazeRocketJumpStaffSlamPose): number {
+  if (!pose.active) return 0;
+  return THREE.MathUtils.clamp(
+    Math.max(pose.readyBlend, pose.strikeBlend) + pose.impactPulse * 0.18,
+    0,
+    1
+  );
+}
+
+function applyBlazeRocketJumpPoseToForearm(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  pose: BlazeRocketJumpStaffSlamPose
+): void {
+  if (!pose.active) return;
+
+  const ready = pose.readyBlend;
+  const strike = pose.strikeBlend;
+  const impact = pose.impactPulse;
+  const poseAmount = THREE.MathUtils.clamp(ready + strike * 0.85 + impact * 0.18, 0, 1);
+  const depthCorrection = side === -1 ? -0.12 * poseAmount : 0.018 * poseAmount;
+
+  target.position.x += side * -0.158 * ready;
+  target.position.y += 0.07 * ready - 0.16 * strike - 0.012 * impact;
+  target.position.z += depthCorrection - 0.028 * ready - 0.004 * strike;
+  target.rotation.x += -0.045 * ready + 0.07 * strike + 0.012 * impact;
+  target.rotation.y += side * -0.052 * ready + side * 0.01 * strike;
+  target.rotation.z += side * 0.08 * ready + side * 0.014 * strike;
+}
+
+function applyBlazeRocketJumpPoseToHand(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  pose: BlazeRocketJumpStaffSlamPose
+): void {
+  if (!pose.active) return;
+
+  const ready = pose.readyBlend;
+  const strike = pose.strikeBlend;
+  const impact = pose.impactPulse;
+  const poseAmount = THREE.MathUtils.clamp(ready + strike * 0.85 + impact * 0.18, 0, 1);
+  const gripSeparationY = (side === -1 ? 0.032 : -0.032) * (ready + strike * 0.65);
+  const depthCorrection = side === -1 ? -0.138 * poseAmount : 0.018 * poseAmount;
+  const gripSeparationZ = (side === -1 ? -0.012 : 0.012) * ready;
+  const centerX = side * -0.178 * ready;
+  const liftY = 0.086 * ready - 0.182 * strike - 0.014 * impact + gripSeparationY;
+  const reachZ = depthCorrection - 0.024 * ready - 0.004 * strike + gripSeparationZ;
+  const pitch = -0.055 * ready + 0.085 * strike + 0.012 * impact;
+  const yaw = side * -0.06 * ready + side * 0.012 * strike;
+  const roll = side * 0.095 * ready + side * 0.014 * strike;
+
+  targets.arm.position.x += centerX;
+  targets.arm.position.y += liftY;
+  targets.arm.position.z += reachZ;
+  targets.arm.rotation.x += pitch;
+  targets.arm.rotation.y += yaw;
+  targets.arm.rotation.z += roll;
+
+  targets.wrist.position.y += 0.012 * ready - 0.02 * strike;
+  targets.wrist.position.z -= 0.008 * ready;
+  targets.wrist.rotation.x += -0.018 * ready + 0.036 * strike;
+  targets.wrist.rotation.y += side * -0.012 * ready;
+  targets.wrist.rotation.z += side * 0.018 * ready + side * 0.01 * strike;
+
+  targets.palm.position.x += side * -0.008 * ready;
+  targets.palm.position.y += 0.008 * ready - 0.018 * strike;
+  targets.palm.position.z -= 0.012 * ready;
+  targets.palm.rotation.x += -0.012 * ready + 0.03 * strike;
+  targets.palm.rotation.y += side * -0.01 * ready;
+  targets.palm.rotation.z += side * 0.014 * ready + side * 0.008 * strike;
+
+  if (targets.closedHand) {
+    targets.closedHand.position.x += centerX + side * -0.004 * ready;
+    targets.closedHand.position.y += liftY - 0.004 * strike;
+    targets.closedHand.position.z += reachZ - 0.004 * ready;
+    targets.closedHand.rotation.x += -0.012 * ready + 0.025 * strike + 0.006 * impact;
+    targets.closedHand.rotation.y += side * -0.01 * ready + side * 0.004 * strike;
+    targets.closedHand.rotation.z += side * 0.026 * ready + side * 0.006 * strike;
+  }
+}
+
 function writeBlazeStaffPose(
   target: MutableTransformTarget,
-  holdBlend: number
+  holdBlend: number,
+  rocketJumpPose: BlazeRocketJumpStaffSlamPose = getBlazeRocketJumpStaffSlamPose()
 ): void {
+  const rocketJumpAmount = getBlazeRocketJumpPoseAmount(rocketJumpPose);
+  const adjustedHoldBlend = holdBlend * (1 - rocketJumpAmount);
+  const ready = rocketJumpPose.readyBlend;
+  const strike = rocketJumpPose.strikeBlend;
+  const impact = rocketJumpPose.impactPulse;
+
   target.position.copy(BLAZE_STAFF_POSITION);
-  target.position.y += 0.006 * holdBlend;
-  target.position.z -= 0.026 * holdBlend;
+  target.position.y += 0.006 * adjustedHoldBlend;
+  target.position.z -= 0.026 * adjustedHoldBlend;
   target.rotation.copy(BLAZE_STAFF_ROTATION);
-  target.rotation.x -= 0.18 * holdBlend;
-  target.rotation.y -= 0.032 * holdBlend;
-  target.rotation.z += 0.018 * holdBlend;
+  target.rotation.x -= 0.18 * adjustedHoldBlend;
+  target.rotation.y -= 0.032 * adjustedHoldBlend;
+  target.rotation.z += 0.018 * adjustedHoldBlend;
+
+  target.position.x -= 0.03 * ready;
+  target.position.y += 0.09 * ready - 0.255 * strike - 0.02 * impact;
+  target.position.z -= 0.018 * ready + 0.008 * strike;
+  target.rotation.x += 0.006 * ready + 0.004 * strike;
+  target.rotation.y += 0.004 * ready;
+  target.rotation.z -= 0.006 * ready;
 }
 
 function createBlazeRocketHandPoseTargets(): PhantomHandPoseTargets & {
@@ -2049,13 +2146,16 @@ function composeBlazeRocketStaffTipMatrix({
   actionBlend,
   targetingBlend,
   holdBlend,
+  rocketJumpPose,
 }: {
   camera: THREE.Camera;
   elapsedSeconds: number;
   actionBlend: number;
   targetingBlend: number;
   holdBlend: number;
+  rocketJumpPose: BlazeRocketJumpStaffSlamPose;
 }): THREE.Matrix4 {
+  const adjustedHoldBlend = holdBlend * (1 - getBlazeRocketJumpPoseAmount(rocketJumpPose));
   const rootTransform = {
     position: matrixPosition,
     rotation: matrixEuler,
@@ -2075,7 +2175,8 @@ function composeBlazeRocketStaffTipMatrix({
     0,
     elapsedSeconds
   );
-  applyBlazeRocketPoseToHand(poseTarget, 1, holdBlend);
+  applyBlazeRocketPoseToHand(poseTarget, 1, adjustedHoldBlend);
+  applyBlazeRocketJumpPoseToHand(poseTarget, 1, rocketJumpPose);
   composeTransformMatrix(
     phantomArmMatrix,
     poseTarget.closedHand.position,
@@ -2089,7 +2190,7 @@ function composeBlazeRocketStaffTipMatrix({
   writeBlazeStaffPose({
     position: blazeStaffPositionScratch,
     rotation: blazeStaffRotationScratch,
-  }, holdBlend);
+  }, holdBlend, rocketJumpPose);
   composeTransformMatrix(blazeStaffMatrix, blazeStaffPositionScratch, blazeStaffRotationScratch);
 
   matrixPosition.copy(BLAZE_STAFF_TIP_LOCAL_POSITION);
@@ -2116,12 +2217,14 @@ function sampleBlazeRocketStaffTipSocket(
 ): ViewmodelSocketPoseDraft {
   const timestampMs = context.timestampMs ?? Date.now();
   const holdBlend = context.holdBlend ?? getBlazeStaffHeldBlend(timestampMs);
+  const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(timestampMs);
   const worldMatrix = composeBlazeRocketStaffTipMatrix({
     camera: context.camera,
     elapsedSeconds: context.elapsedSeconds,
     actionBlend,
     targetingBlend,
     holdBlend,
+    rocketJumpPose,
   });
 
   worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
@@ -2163,7 +2266,9 @@ function BlazePhantomForearm({
   useFrame((state) => {
     const forearm = forearmRef.current;
     if (!forearm) return;
-    const staffHoldBlend = getBlazeStaffHeldBlend(Date.now());
+    const nowMs = Date.now();
+    const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(nowMs);
+    const staffHoldBlend = getBlazeStaffHeldBlend(nowMs) * (1 - getBlazeRocketJumpPoseAmount(rocketJumpPose));
     writePhantomForearmPose(
       forearm,
       side,
@@ -2172,6 +2277,7 @@ function BlazePhantomForearm({
       state.clock.elapsedTime
     );
     applyBlazeRocketPoseToForearm(forearm, side, staffHoldBlend);
+    applyBlazeRocketJumpPoseToForearm(forearm, side, rocketJumpPose);
   });
 
   return (
@@ -2227,8 +2333,9 @@ function BlazeWizardStaff({
     if (!staff) return;
 
     const nowMs = Date.now();
+    const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(nowMs);
     const holdBlend = getBlazeStaffHeldBlend(nowMs);
-    writeBlazeStaffPose(staff, holdBlend);
+    writeBlazeStaffPose(staff, holdBlend, rocketJumpPose);
 
     const chargeGlow = chargeGlowRef.current;
     if (!chargeGlow) return;
@@ -2396,7 +2503,9 @@ function BlazePhantomHand({
     const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
     if (!closedHand || !arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
 
-    const staffHoldBlend = getBlazeStaffHeldBlend(Date.now());
+    const nowMs = Date.now();
+    const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(nowMs);
+    const staffHoldBlend = getBlazeStaffHeldBlend(nowMs) * (1 - getBlazeRocketJumpPoseAmount(rocketJumpPose));
     writePhantomHandPose(
       {
         closedHand,
@@ -2422,6 +2531,18 @@ function BlazePhantomHand({
       },
       side,
       staffHoldBlend
+    );
+    applyBlazeRocketJumpPoseToHand(
+      {
+        closedHand,
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      },
+      side,
+      rocketJumpPose
     );
   });
 
