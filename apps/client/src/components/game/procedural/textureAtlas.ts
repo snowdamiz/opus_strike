@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
 
-export const ATLAS_COLUMNS = 4;
-export const ATLAS_ROWS = 4;
+export const ATLAS_COLUMNS = 6;
+export const ATLAS_ROWS = 5;
 export const TILE_SIZE = 128;
 
 export type VoxelFaceDirection = 'top' | 'bottom' | 'side';
@@ -37,18 +37,27 @@ const TILE_MAP: Record<string, AtlasTile> = {
   grass_side: { x: 1, y: 0 },
   dirt: { x: 2, y: 0 },
   stone: { x: 3, y: 0 },
+  sand: { x: 4, y: 0 },
+  snow: { x: 5, y: 0 },
   metal: { x: 0, y: 1 },
   glass: { x: 1, y: 1 },
   neon_red: { x: 2, y: 1 },
   neon_blue: { x: 3, y: 1 },
+  ice: { x: 4, y: 1 },
+  obsidian: { x: 5, y: 1 },
   spawn_pad: { x: 0, y: 2 },
   flag_pad: { x: 1, y: 2 },
   barrier: { x: 2, y: 2 },
   wood: { x: 3, y: 2 },
+  bamboo: { x: 4, y: 2 },
+  ash: { x: 5, y: 2 },
   leaves: { x: 0, y: 3 },
   cactus: { x: 1, y: 3 },
   spawn_pad_red: { x: 2, y: 3 },
   spawn_pad_blue: { x: 3, y: 3 },
+  blossom_leaves: { x: 4, y: 3 },
+  moss: { x: 5, y: 3 },
+  lava: { x: 0, y: 4 },
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -1402,6 +1411,268 @@ function paintCactusTile(contexts: AtlasContexts, tile: AtlasTile): void {
   paintTileEdgePixelFrame(contexts, tile, mixHex(light, '#ffffff', 0.16), mixHex(dark, '#000000', 0.14), 3);
 }
 
+function paintSandTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
+  const { x, y } = tileOrigin(tile);
+  const light = mixHex(base, '#fff3b0', 0.34);
+  const dark = shadeHex(base, -34);
+
+  paintNoisyColor(contexts.color, tile, base, light, dark, 0x5a2d, 0.5);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.44,
+    bumpNoise: 0.18,
+    roughness: 0.98,
+    roughnessNoise: 0.03,
+    metalness: 0,
+    aoStrength: 0.14,
+    seed: 0x5a2d,
+  });
+  paintSpeckles(contexts.color, tile, [light, dark, mixHex(base, '#ffffff', 0.14)], 130, 0x5a2de, 1, 2);
+
+  withAlpha(contexts.color, 0.38, () => {
+    contexts.color.strokeStyle = mixHex(light, '#ffffff', 0.2);
+    contexts.color.lineWidth = 1;
+    for (let i = 0; i < 18; i++) {
+      const sy = y + 8 + hash2(i, 17, 0x5a7d) * (TILE_SIZE - 16);
+      strokeJitterLine(contexts.color, x + 8, sy, x + TILE_SIZE - 8, sy + (hash2(i, 23, 0x5a7d) - 0.5) * 10, 0x5a7d ^ i, 5);
+    }
+  });
+
+  paintTileEdgePixelFrame(contexts, tile, light, shadeHex(dark, -16), 3);
+}
+
+function paintSnowTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
+  const light = mixHex(base, '#ffffff', 0.62);
+  const blue = mixHex(base, '#9edcff', 0.36);
+
+  paintNoisyColor(contexts.color, tile, base, light, blue, 0x5f10, 0.42);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.62,
+    bumpNoise: 0.18,
+    roughness: 0.86,
+    roughnessNoise: 0.05,
+    metalness: 0,
+    aoStrength: 0.1,
+    seed: 0x5f10,
+  });
+  paintSpeckles(contexts.color, tile, ['#ffffff', blue, mixHex(base, '#d8f3ff', 0.34)], 86, 0x5f10e, 1, 2);
+  paintPackPixelClusters(contexts, tile, ['#ffffff', blue, mixHex(base, '#ffffff', 0.34)], 0x5f1cc, 28, 4, 12, 0.18);
+  paintTileEdgePixelFrame(contexts, tile, '#ffffff', mixHex(blue, '#5c8ca8', 0.26), 3);
+}
+
+function paintIceTile(contexts: AtlasContexts, tile: AtlasTile, base: string, accent: string): void {
+  const { x, y } = tileOrigin(tile);
+  const bright = mixHex(base, '#ffffff', 0.68);
+  const deep = mixHex(base, '#356e95', 0.48);
+
+  paintNoisyColor(contexts.color, tile, base, bright, deep, 0x1ce, 0.5);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.48,
+    bumpNoise: 0.12,
+    roughness: 0.12,
+    roughnessNoise: 0.04,
+    metalness: 0,
+    emissive: mixHex(base, '#000000', 0.7),
+    aoStrength: 0.08,
+    seed: 0x1ce,
+  });
+  paintTileGlow(contexts.emissive, tile, mixHex(accent, '#ffffff', 0.42), 0.18, 6);
+
+  contexts.color.strokeStyle = mixHex(bright, '#ffffff', 0.28);
+  contexts.bump.strokeStyle = 'rgb(218, 218, 218)';
+  contexts.color.lineWidth = 2;
+  contexts.bump.lineWidth = 1;
+  for (let i = 0; i < 12; i++) {
+    const sx = x + 10 + hash2(i, 31, 0x1ce) * (TILE_SIZE - 20);
+    const sy = y + 10 + hash2(i, 37, 0x1ce) * (TILE_SIZE - 20);
+    const ex = sx + (hash2(i, 41, 0x1ce) - 0.5) * 54;
+    const ey = sy + (hash2(i, 43, 0x1ce) - 0.5) * 54;
+    strokeJitterLine(contexts.color, sx, sy, ex, ey, 0x1ce ^ i, 4);
+    strokeJitterLine(contexts.bump, sx, sy, ex, ey, 0x1ce5 ^ i, 4);
+  }
+
+  paintInsetBevel(contexts, tile, '#ffffff', mixHex(deep, '#000000', 0.24), 5, 2);
+}
+
+function paintAshTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
+  const light = shadeHex(base, 32);
+  const dark = shadeHex(base, -46);
+
+  paintNoisyColor(contexts.color, tile, base, light, dark, 0xa511, 0.58);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.4,
+    bumpNoise: 0.2,
+    roughness: 0.99,
+    roughnessNoise: 0.02,
+    metalness: 0,
+    aoStrength: 0.22,
+    seed: 0xa511,
+  });
+  paintSpeckles(contexts.color, tile, [light, dark, mixHex(base, '#f1d0b0', 0.14)], 112, 0xa511e, 1, 3);
+  paintPackPixelClusters(contexts, tile, [light, dark, shadeHex(base, -20)], 0xa511c, 34, 5, 14, 0.28);
+  paintCracks(contexts, tile, shadeHex(dark, -16), 0xa5115, 6);
+  paintTileEdgePixelFrame(contexts, tile, light, shadeHex(dark, -18), 3);
+}
+
+function paintObsidianTile(contexts: AtlasContexts, tile: AtlasTile, accent: string): void {
+  const base = '#16131a';
+  const purple = '#3b314c';
+  const deep = '#050407';
+
+  paintNoisyColor(contexts.color, tile, base, purple, deep, 0x0b51d1a, 0.74);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.5,
+    bumpNoise: 0.22,
+    roughness: 0.42,
+    roughnessNoise: 0.1,
+    metalness: 0.04,
+    emissive: '#000000',
+    aoStrength: 0.3,
+    seed: 0x0b51d1a,
+  });
+  paintCracks(contexts, tile, mixHex(accent, '#ff4a1f', 0.36), 0x0b51d1a, 9);
+  paintPackPixelClusters(contexts, tile, [purple, '#231d2d', mixHex(accent, '#000000', 0.72)], 0x0b51c, 26, 4, 12, 0.24);
+  paintInsetBevel(contexts, tile, '#4b405b', '#050407', 5, 2);
+  paintTileEdgePixelFrame(contexts, tile, '#4b405b', '#030205', 3);
+}
+
+function paintLavaTile(contexts: AtlasContexts, tile: AtlasTile): void {
+  const { x, y } = tileOrigin(tile);
+  const base = '#2d0d08';
+  const hot = '#ffb347';
+  const glow = '#ff4b1f';
+
+  paintNoisyColor(contexts.color, tile, base, glow, '#050201', 0x1a7a, 0.9);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.38,
+    bumpNoise: 0.26,
+    roughness: 0.52,
+    roughnessNoise: 0.12,
+    metalness: 0,
+    emissive: mixHex(glow, '#000000', 0.44),
+    aoStrength: 0.12,
+    seed: 0x1a7a,
+  });
+  paintTileGlow(contexts.emissive, tile, glow, 0.7, 0);
+
+  for (let i = 0; i < 13; i++) {
+    const sx = x + hash2(i, 7, 0x1a7a) * TILE_SIZE;
+    const sy = y + hash2(i, 11, 0x1a7a) * TILE_SIZE;
+    const ex = x + hash2(i, 13, 0x1a7a) * TILE_SIZE;
+    const ey = y + hash2(i, 17, 0x1a7a) * TILE_SIZE;
+    contexts.color.strokeStyle = i % 3 === 0 ? hot : glow;
+    contexts.color.lineWidth = i % 3 === 0 ? 5 : 3;
+    contexts.emissive.strokeStyle = i % 3 === 0 ? hot : glow;
+    contexts.emissive.lineWidth = contexts.color.lineWidth;
+    strokeJitterLine(contexts.color, sx, sy, ex, ey, 0x1a7a ^ i, 5);
+    strokeJitterLine(contexts.emissive, sx, sy, ex, ey, 0x1a7a ^ i, 5);
+  }
+
+  withAlpha(contexts.color, 0.7, () => {
+    contexts.color.fillStyle = mixHex(hot, '#ffffff', 0.28);
+    for (let i = 0; i < 18; i++) {
+      const px = x + 8 + hash2(i, 23, 0x1a7a) * (TILE_SIZE - 16);
+      const py = y + 8 + hash2(i, 29, 0x1a7a) * (TILE_SIZE - 16);
+      contexts.color.fillRect(px, py, 4 + hash2(i, 31, 0x1a7a) * 9, 2 + hash2(i, 37, 0x1a7a) * 5);
+    }
+  });
+
+  paintTileEdgePixelFrame(contexts, tile, glow, '#160503', 3);
+}
+
+function paintBambooTile(contexts: AtlasContexts, tile: AtlasTile): void {
+  const { x, y } = tileOrigin(tile);
+  const base = '#5a9b43';
+  const light = '#b6d56a';
+  const dark = '#254c25';
+
+  paintNoisyColor(contexts.color, tile, base, light, dark, 0xba4b00, 0.44);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.54,
+    bumpNoise: 0.16,
+    roughness: 0.78,
+    roughnessNoise: 0.06,
+    metalness: 0,
+    aoStrength: 0.18,
+    seed: 0xba4b00,
+  });
+
+  for (let px = 6; px < TILE_SIZE; px += 18) {
+    contexts.color.fillStyle = px % 36 === 6 ? light : mixHex(base, light, 0.28);
+    contexts.color.fillRect(x + px, y, 7, TILE_SIZE);
+    contexts.color.fillStyle = dark;
+    contexts.color.fillRect(x + px + 6, y, 2, TILE_SIZE);
+    contexts.bump.fillStyle = 'rgb(192, 192, 192)';
+    contexts.bump.fillRect(x + px, y, 6, TILE_SIZE);
+
+    for (let py = 12; py < TILE_SIZE; py += 26) {
+      contexts.color.fillStyle = mixHex(dark, '#000000', 0.12);
+      contexts.color.fillRect(x + px - 1, y + py, 10, 3);
+      contexts.bump.fillStyle = 'rgb(84, 84, 84)';
+      contexts.bump.fillRect(x + px - 1, y + py, 10, 2);
+    }
+  }
+
+  paintSpeckles(contexts.color, tile, [light, dark, '#e3f0a2'], 42, 0xba4b, 1, 2);
+  paintTileEdgePixelFrame(contexts, tile, light, shadeHex(dark, -8), 3);
+}
+
+function paintBlossomLeavesTile(contexts: AtlasContexts, tile: AtlasTile): void {
+  const palette = { base: '#f19abd', light: '#ffd4e4', dark: '#a64d75' };
+  const { x, y } = tileOrigin(tile);
+
+  paintNoisyColor(contexts.color, tile, palette.base, palette.light, palette.dark, 0xb10550, 0.72);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.55,
+    bumpNoise: 0.28,
+    roughness: 0.94,
+    roughnessNoise: 0.04,
+    metalness: 0,
+    aoStrength: 0.16,
+    seed: 0xb10550,
+  });
+  paintPackPixelClusters(
+    contexts,
+    tile,
+    [palette.light, palette.base, mixHex(palette.dark, '#ffffff', 0.12), '#fff0c6'],
+    0xb105c,
+    58,
+    3,
+    11,
+    0.42
+  );
+
+  for (let i = 0; i < 92; i++) {
+    const px = x + hash2(i, 7, 0xb10550) * TILE_SIZE;
+    const py = y + hash2(i, 11, 0xb10550) * TILE_SIZE;
+    const rotation = hash2(i, 13, 0xb10550) * Math.PI;
+    contexts.color.fillStyle = i % 5 === 0 ? '#fff5f8' : i % 2 === 0 ? palette.light : palette.dark;
+    contexts.color.beginPath();
+    contexts.color.ellipse(px, py, 4 + hash2(i, 17, 0xb10550) * 5, 2 + hash2(i, 19, 0xb10550) * 3, rotation, 0, Math.PI * 2);
+    contexts.color.fill();
+  }
+
+  paintTileEdgePixelFrame(contexts, tile, '#ffe3ee', '#823658', 3);
+}
+
+function paintMossTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
+  const light = mixHex(base, '#d9f99d', 0.42);
+  const dark = mixHex(base, '#183f20', 0.5);
+
+  paintNoisyColor(contexts.color, tile, base, light, dark, 0x4055, 0.76);
+  paintUtilityMaps(contexts, tile, {
+    bump: 0.6,
+    bumpNoise: 0.32,
+    roughness: 0.96,
+    roughnessNoise: 0.04,
+    metalness: 0,
+    aoStrength: 0.16,
+    seed: 0x4055,
+  });
+  paintPackPixelClusters(contexts, tile, [light, base, dark, '#b6de6a'], 0x4055c, 52, 3, 10, 0.38);
+  paintSpeckles(contexts.color, tile, [light, dark, '#e8f7b4'], 80, 0x40551, 1, 2);
+  paintTileEdgePixelFrame(contexts, tile, light, shadeHex(dark, -16), 3);
+}
+
 function createLayerContext(): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } {
   const canvas = document.createElement('canvas');
   canvas.width = ATLAS_COLUMNS * TILE_SIZE;
@@ -1457,18 +1728,27 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme): VoxelAtlasTextur
   paintGrassSide(contexts, TILE_MAP.grass_side, theme.ground.top, theme.ground.dirt);
   paintDirtTile(contexts, TILE_MAP.dirt, theme.ground.dirt);
   paintStoneTile(contexts, TILE_MAP.stone, theme.ground.stone, theme.structures.accent);
+  paintSandTile(contexts, TILE_MAP.sand, theme.id === 'desert' ? theme.ground.top : '#d7b76b');
+  paintSnowTile(contexts, TILE_MAP.snow, theme.id === 'frost' ? theme.ground.top : '#dceff5');
   paintMetalTile(contexts, TILE_MAP.metal, theme.structures.metal, theme.structures.accent);
   paintGlassTile(contexts, TILE_MAP.glass, theme.structures.glass, theme.structures.accent);
   paintNeonTile(contexts, TILE_MAP.neon_red, shadeHex('#3d1212', theme.id === 'desert' ? 12 : 0), '#ff4b24', 0x1ed);
   paintNeonTile(contexts, TILE_MAP.neon_blue, shadeHex('#11193f', theme.id === 'frost' ? 12 : 0), '#3cf7ff', 0xb10e);
+  paintIceTile(contexts, TILE_MAP.ice, theme.id === 'frost' ? theme.ground.top : '#aee7f2', theme.structures.accent);
+  paintObsidianTile(contexts, TILE_MAP.obsidian, theme.structures.accent);
   paintPadTile(contexts, TILE_MAP.spawn_pad, mixHex(theme.structures.metal, '#1b1820', 0.45), '#ffd84d', theme.structures.accent, 0x5f0a);
   paintPadTile(contexts, TILE_MAP.spawn_pad_red, mixHex(theme.structures.metal, '#3a1114', 0.58), '#ff684f', '#ffd1a3', 0x5f0b);
   paintPadTile(contexts, TILE_MAP.spawn_pad_blue, mixHex(theme.structures.metal, '#101d3a', 0.58), '#47ddff', '#b8f2ff', 0x5f0c);
   paintPadTile(contexts, TILE_MAP.flag_pad, mixHex(theme.structures.metal, '#f7f7ff', 0.2), '#f7f7ff', theme.structures.accent, 0xf1a6);
   paintBarrierTile(contexts, TILE_MAP.barrier, theme.structures.barrier, theme.structures.accent);
   paintWoodTile(contexts, TILE_MAP.wood);
+  paintBambooTile(contexts, TILE_MAP.bamboo);
+  paintAshTile(contexts, TILE_MAP.ash, theme.id === 'volcanic' ? theme.ground.top : '#696967');
   paintLeavesTile(contexts, TILE_MAP.leaves, theme);
   paintCactusTile(contexts, TILE_MAP.cactus);
+  paintBlossomLeavesTile(contexts, TILE_MAP.blossom_leaves);
+  paintMossTile(contexts, TILE_MAP.moss, theme.id === 'sakura' ? '#6fae5f' : '#5f9a68');
+  paintLavaTile(contexts, TILE_MAP.lava);
 
   const textures = {
     color: createTexture(color.canvas, THREE.SRGBColorSpace),

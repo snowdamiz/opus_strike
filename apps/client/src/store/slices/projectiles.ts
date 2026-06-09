@@ -89,7 +89,7 @@ export interface ProjectileActions {
   clearExpiredBombs: () => void;
   setBombTargeting: (targeting: boolean, valid?: boolean) => void;
 
-  // Blaze air strike actions
+  // Legacy Blaze ultimate targeting actions
   setAirStrikeTargeting: (targeting: boolean, valid?: boolean) => void;
 
   // Blaze flamethrower actions

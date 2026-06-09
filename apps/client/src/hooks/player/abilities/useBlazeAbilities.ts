@@ -6,7 +6,7 @@
  * - Bomb (secondary fire - targeting)
  * - Flamethrower (E ability - hold)
  * - Rocket Jump (Q ability)
- * - Air Strike (Ultimate - targeting)
+ * - Infernal Gearstorm (Ultimate - hero-centered AOE)
  */
 
 import { useRef, useCallback } from 'react';
@@ -190,6 +190,7 @@ export interface UseBlazeAbilitiesReturn {
   updateRocketJump: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   resetRocketJump: () => void;
   executeAirStrike: (
+    ctx: AbilityContext,
     sounds: PlayerSounds,
     updateLocalPlayer: (data: any) => void
   ) => void;
@@ -219,7 +220,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const flamethrowerActiveRef = useRef(false);
   const pendingRocketJumpRef = useRef<PendingRocketJump | null>(null);
 
-  // Air Strike state
+  // Legacy targeting refs kept so stale target state can be cleared safely.
   const airStrikeTargetRef = useRef<THREE.Vector3 | null>(null);
   const airStrikeValidRef = useRef(false);
 
@@ -449,23 +450,21 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     clearBlazeRocketJumpStaffSlam();
   }, []);
 
-  // Execute Air Strike (Ultimate)
+  // Execute Infernal Gearstorm (Ultimate)
   const executeAirStrike = useCallback((
+    ctx: AbilityContext,
     sounds: PlayerSounds,
     updateLocalPlayer: (data: any) => void
   ) => {
-    if (!airStrikeTargetRef.current || !airStrikeValidRef.current) return;
-
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer || (localPlayer.ultimateCharge ?? 0) < 100) return;
 
-    const target = airStrikeTargetRef.current.clone();
-    triggerAirStrike({ x: target.x, y: target.y, z: target.z });
+    triggerAirStrike({ x: ctx.position.x, y: ctx.position.y, z: ctx.position.z });
 
     updateLocalPlayer({ ultimateCharge: 0 });
     sounds.playBlazeAirstrike();
 
-    // Exit targeting mode
+    // Clear any stale target state from older targeting flows.
     useGameStore.getState().setAirStrikeTargeting(false, false);
     airStrikeTargetRef.current = null;
     airStrikeValidRef.current = false;
@@ -482,7 +481,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     }
   }, []);
 
-  // Handle air strike target updates
+  // Legacy target update hook for the removed targeted ultimate flow.
   const handleAirStrikeTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
     airStrikeTargetRef.current = position;
     airStrikeValidRef.current = isValid;

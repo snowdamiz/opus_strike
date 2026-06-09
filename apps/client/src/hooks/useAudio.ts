@@ -58,7 +58,10 @@ const sharedLoops = new Map<string, {
   gain: GainNode;
   isMusic: boolean;
   baseVolume: number;
+  stopping?: boolean;
+  stopTimeout?: number;
 }>();
+const sharedPendingLoops = new Map<string, { cancelled: boolean }>();
 
 // Calculate effective volume for SFX
 function getSfxVolume(): number {
@@ -315,21 +318,32 @@ export function useAudio() {
     options?: { volume?: number; fadeIn?: number; isMusic?: boolean }
   ) => {
     if (sharedConfig.muted) return;
-    if (sharedLoops.has(id)) return; // Already playing
+    if (sharedLoops.has(id) || sharedPendingLoops.has(id)) return; // Already playing or loading
+
+    const pendingLoop = { cancelled: false };
+    sharedPendingLoops.set(id, pendingLoop);
 
     if (!sharedAudioContext) {
       initAudio();
     }
 
     const ctx = sharedAudioContext;
-    if (!ctx) return;
+    if (!ctx) {
+      sharedPendingLoops.delete(id);
+      return;
+    }
 
     if (ctx.state === 'suspended') {
       await ctx.resume();
     }
+    if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
 
     const sound = await loadSound(name);
-    if (!sound?.buffer) return;
+    if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
+    if (!sound?.buffer) {
+      sharedPendingLoops.delete(id);
+      return;
+    }
 
     const source = ctx.createBufferSource();
     source.buffer = sound.buffer;
@@ -352,7 +366,6 @@ export function useAudio() {
 
     source.connect(gainNode);
     gainNode.connect(ctx.destination);
-    source.start();
 
     sharedLoops.set(id, {
       source,
@@ -360,22 +373,43 @@ export function useAudio() {
       isMusic: options?.isMusic ?? false,
       baseVolume,
     });
+    sharedPendingLoops.delete(id);
+    source.start();
   }, [loadSound, initAudio]);
 
   // Stop looping sound
   const stopLoop = useCallback((id: string, fadeOut?: number) => {
+    const pendingLoop = sharedPendingLoops.get(id);
+    if (pendingLoop) {
+      pendingLoop.cancelled = true;
+      sharedPendingLoops.delete(id);
+    }
+
     const loop = sharedLoops.get(id);
     if (!loop || !sharedAudioContext) return;
+    if (loop.stopping) return;
 
     if (fadeOut) {
+      loop.stopping = true;
       const ctx = sharedAudioContext;
       loop.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeOut);
-      setTimeout(() => {
-        loop.source.stop();
+      loop.stopTimeout = window.setTimeout(() => {
+        try {
+          loop.source.stop();
+        } catch {
+          // Source may already have ended if the browser stopped it first.
+        }
         sharedLoops.delete(id);
       }, fadeOut * 1000);
     } else {
-      loop.source.stop();
+      if (loop.stopTimeout !== undefined) {
+        window.clearTimeout(loop.stopTimeout);
+      }
+      try {
+        loop.source.stop();
+      } catch {
+        // Source may already have ended.
+      }
       sharedLoops.delete(id);
     }
   }, []);

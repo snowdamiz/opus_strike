@@ -102,6 +102,46 @@ export const VOXEL_MAP_THEMES: VoxelMapTheme[] = [
       accent: '#ff9df2',
     },
   },
+  {
+    id: 'volcanic',
+    name: 'Cinder Caldera',
+    skyColor: '#7d6a61',
+    ambientColor: '#ffd7b5',
+    sunColor: '#ffae5f',
+    fogColor: '#8f5d4c',
+    ground: {
+      top: '#5f5c58',
+      side: '#423c39',
+      dirt: '#3b3633',
+      stone: '#28272b',
+    },
+    structures: {
+      metal: '#332e32',
+      glass: '#ff914d',
+      barrier: '#171316',
+      accent: '#ff642e',
+    },
+  },
+  {
+    id: 'sakura',
+    name: 'Sakura Shrine',
+    skyColor: '#f6cddd',
+    ambientColor: '#fff2f6',
+    sunColor: '#ffe3b4',
+    fogColor: '#ffd5e5',
+    ground: {
+      top: '#79b86b',
+      side: '#5f8a56',
+      dirt: '#8b6a4e',
+      stone: '#827a78',
+    },
+    structures: {
+      metal: '#5b5156',
+      glass: '#ffd2e5',
+      barrier: '#2d2528',
+      accent: '#ff8fbd',
+    },
+  },
 ];
 
 export function getVoxelMapTheme(seed: number): VoxelMapTheme {

@@ -18,7 +18,16 @@ export type VoxelBlockId =
   | 'barrier'
   | 'wood'
   | 'leaves'
-  | 'cactus';
+  | 'cactus'
+  | 'ash'
+  | 'lava'
+  | 'obsidian'
+  | 'sand'
+  | 'snow'
+  | 'ice'
+  | 'moss'
+  | 'bamboo'
+  | 'blossom_leaves';
 
 export interface VoxelSize {
   x: number;
@@ -51,7 +60,7 @@ export interface VoxelCollider {
 }
 
 export interface VoxelMapTheme {
-  id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal';
+  id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal' | 'volcanic' | 'sakura';
   name: string;
   skyColor: string;
   ambientColor: string;

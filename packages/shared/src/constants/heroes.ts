@@ -222,13 +222,13 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
   },
   blaze_airstrike: {
     id: 'blaze_airstrike',
-    name: 'Air Strike',
+    name: 'Infernal Gearstorm',
     type: 'ultimate',
-    targeting: 'ground',
+    targeting: 'instant',
     cooldown: 0,
-    duration: 3,
+    duration: 5,
     resourceCost: 100,
-    description: 'Mark an area for a devastating aerial bombardment.',
+    description: 'Ignite a massive area around yourself, scorching the ground while flaming cogs spin through the air.',
   },
 
   // Glacier Abilities

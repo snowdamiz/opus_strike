@@ -1,598 +1,501 @@
 import { useRef, useState } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import React from 'react';
-import { useGameStore } from '../../../store/gameStore';
-import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
+import { BLAZE_GEARSTORM_RADIUS } from '@voxel-strike/shared';
+import { checkGroundWithNormal, isPhysicsReady } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 
 // ============================================================================
-// AIR STRIKE EFFECT - DRAMATIC BOMBING RUN
-// More bombs, longer duration, spectacular visuals
+// INFERNAL GEARSTORM EFFECT - BLAZE ULTIMATE
+// Legacy export names are kept so callers do not need to know the old airstrike
+// implementation was replaced.
 // ============================================================================
+
+interface BurningCogData {
+  angle: number;
+  radius: number;
+  groundY: number;
+  height: number;
+  size: number;
+  spinSpeed: number;
+  orbitSpeed: number;
+  bobSpeed: number;
+  bobAmount: number;
+  yaw: number;
+  tiltX: number;
+  tiltY: number;
+  phase: number;
+}
+
+interface BurnPatchData {
+  x: number;
+  z: number;
+  groundY: number;
+  radiusX: number;
+  radiusZ: number;
+  phase: number;
+  opacity: number;
+  color: number;
+}
+
+interface GroundFlameData {
+  x: number;
+  z: number;
+  groundY: number;
+  radius: number;
+  height: number;
+  phase: number;
+  flickerSpeed: number;
+  dutyCycle: number;
+  yaw: number;
+  leanX: number;
+  leanZ: number;
+}
 
 interface AirStrikeData {
   id: string;
   centerPosition: { x: number; y: number; z: number };
   startTime: number;
   frameStartTime: number;
-  bombs: { x: number; z: number; delay: number; groundY: number; size: number }[];
+  groundY: number;
+  cogs: BurningCogData[];
+  burnPatches: BurnPatchData[];
+  groundFlames: GroundFlameData[];
 }
 
 const airStrikes: AirStrikeData[] = [];
 let airStrikeIdCounter = 0;
 let airStrikeRevision = 0;
-const AIR_STRIKE_AREA_RADIUS = 7.75;
-const AIR_STRIKE_INNER_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.34;
-const AIR_STRIKE_MIDDLE_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.58;
-const AIR_STRIKE_OUTER_RADIUS = AIR_STRIKE_AREA_RADIUS * 0.86;
+
+export const AIR_STRIKE_DURATION = 5200;
+
+const GEARSTORM_RADIUS = BLAZE_GEARSTORM_RADIUS;
+const GEARSTORM_COG_COUNT = 18;
+const GEARSTORM_BURN_PATCH_COUNT = 72;
+const GEARSTORM_GROUND_FLAME_COUNT = 64;
+const COG_TEETH = 16;
+const COG_FIRE_ORANGE = 0xff6a00;
+const COG_TOOTH_INDEXES = Array.from({ length: COG_TEETH }, (_, index) => index);
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+function randomSigned(amount: number): number {
+  return (Math.random() * 2 - 1) * amount;
+}
+
+function randomInRadius(radius: number): { x: number; z: number } {
+  const angle = Math.random() * Math.PI * 2;
+  const distance = Math.sqrt(Math.random()) * radius;
+  return {
+    x: Math.cos(angle) * distance,
+    z: Math.sin(angle) * distance,
+  };
+}
+
+function resolveGroundY(x: number, z: number, fallbackY: number): number {
+  if (!isPhysicsReady()) return fallbackY;
+
+  const groundCheck = checkGroundWithNormal(x, fallbackY + 42, z, 96);
+  return groundCheck?.isWalkable ? groundCheck.groundY + 0.08 : fallbackY;
+}
 
 export function triggerAirStrike(position: { x: number; y: number; z: number }) {
-  const bombs: { x: number; z: number; delay: number; groundY: number; size: number }[] = [];
-  
-  // Wave 1: Inner ring (4 bombs) - starts immediately
-  for (let i = 0; i < 4; i++) {
-    const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.3;
-    const r = AIR_STRIKE_INNER_RADIUS + Math.random() * 1.0;
-    const bx = position.x + Math.cos(angle) * r;
-    const bz = position.z + Math.sin(angle) * r;
-    
-    let groundY = position.y;
-    if (isPhysicsReady()) {
-      const check = checkGroundWithNormal(bx, position.y + 60, bz, 120);
-      if (check?.isWalkable) groundY = check.groundY;
-    }
-    bombs.push({ x: bx, z: bz, delay: i * 120 + Math.random() * 80, groundY, size: 0.8 + Math.random() * 0.4 });
+  const fallbackGroundY = position.y - 1;
+  const groundY = resolveGroundY(position.x, position.z, fallbackGroundY);
+  const cogs: BurningCogData[] = [];
+  const burnPatches: BurnPatchData[] = [];
+  const groundFlames: GroundFlameData[] = [];
+
+  for (let i = 0; i < GEARSTORM_COG_COUNT; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const radius = 4.2 + Math.sqrt(Math.random()) * (GEARSTORM_RADIUS - 4.2);
+    const x = position.x + Math.cos(angle) * radius;
+    const z = position.z + Math.sin(angle) * radius;
+
+    cogs.push({
+      angle,
+      radius,
+      groundY: resolveGroundY(x, z, groundY),
+      height: 2.4 + Math.random() * 4.2,
+      size: 1.05 + Math.random() * 1.15,
+      spinSpeed: (Math.random() > 0.5 ? 1 : -1) * (1.65 + Math.random() * 1.8),
+      orbitSpeed: (Math.random() > 0.5 ? 1 : -1) * (0.08 + Math.random() * 0.13),
+      bobSpeed: 1.2 + Math.random() * 1.4,
+      bobAmount: 0.3 + Math.random() * 0.55,
+      yaw: Math.random() * Math.PI * 2,
+      tiltX: randomSigned(0.7),
+      tiltY: randomSigned(0.55),
+      phase: Math.random() * Math.PI * 2,
+    });
   }
-  
-  // Wave 2: Middle ring (6 bombs) - starts at 400ms
-  for (let i = 0; i < 6; i++) {
-    const angle = (i / 6) * Math.PI * 2 + Math.random() * 0.4;
-    const r = AIR_STRIKE_MIDDLE_RADIUS + Math.random() * 1.6;
-    const bx = position.x + Math.cos(angle) * r;
-    const bz = position.z + Math.sin(angle) * r;
-    
-    let groundY = position.y;
-    if (isPhysicsReady()) {
-      const check = checkGroundWithNormal(bx, position.y + 60, bz, 120);
-      if (check?.isWalkable) groundY = check.groundY;
-    }
-    bombs.push({ x: bx, z: bz, delay: 400 + i * 100 + Math.random() * 60, groundY, size: 1.0 + Math.random() * 0.5 });
+
+  for (let i = 0; i < GEARSTORM_BURN_PATCH_COUNT; i++) {
+    const offset = randomInRadius(GEARSTORM_RADIUS * 0.96);
+    const x = position.x + offset.x;
+    const z = position.z + offset.z;
+
+    burnPatches.push({
+      x,
+      z,
+      groundY: resolveGroundY(x, z, groundY),
+      radiusX: 0.85 + Math.random() * 2.6,
+      radiusZ: 0.55 + Math.random() * 1.85,
+      phase: Math.random() * Math.PI * 2,
+      opacity: 0.18 + Math.random() * 0.24,
+      color: Math.random() > 0.45 ? 0xff4a00 : 0xffaa00,
+    });
   }
-  
-  // Wave 3: Outer ring (8 bombs) - starts at 900ms
-  for (let i = 0; i < 8; i++) {
-    const angle = (i / 8) * Math.PI * 2 + Math.random() * 0.3;
-    const r = AIR_STRIKE_OUTER_RADIUS + Math.random() * 2.4;
-    const bx = position.x + Math.cos(angle) * r;
-    const bz = position.z + Math.sin(angle) * r;
-    
-    let groundY = position.y;
-    if (isPhysicsReady()) {
-      const check = checkGroundWithNormal(bx, position.y + 60, bz, 120);
-      if (check?.isWalkable) groundY = check.groundY;
-    }
-    bombs.push({ x: bx, z: bz, delay: 900 + i * 80 + Math.random() * 50, groundY, size: 1.2 + Math.random() * 0.6 });
+
+  for (let i = 0; i < GEARSTORM_GROUND_FLAME_COUNT; i++) {
+    const offset = randomInRadius(GEARSTORM_RADIUS * 0.94);
+    const x = position.x + offset.x;
+    const z = position.z + offset.z;
+
+    groundFlames.push({
+      x,
+      z,
+      groundY: resolveGroundY(x, z, groundY),
+      radius: 0.1 + Math.random() * 0.18,
+      height: 0.5 + Math.random() * 1.15,
+      phase: Math.random(),
+      flickerSpeed: 0.42 + Math.random() * 0.46,
+      dutyCycle: 0.24 + Math.random() * 0.26,
+      yaw: Math.random() * Math.PI * 2,
+      leanX: randomSigned(0.16),
+      leanZ: randomSigned(0.16),
+    });
   }
-  
-  // Final big bomb in center
-  bombs.push({ 
-    x: position.x, 
-    z: position.z, 
-    delay: 1800, 
-    groundY: position.y,
-    size: 2.0 // Bigger center explosion
-  });
-  
+
   airStrikes.push({
-    id: `airstrike_${airStrikeIdCounter++}`,
+    id: `gearstorm_${airStrikeIdCounter++}`,
     centerPosition: { ...position },
     startTime: Date.now(),
     frameStartTime: getFrameClock().nowMs,
-    bombs,
+    groundY,
+    cogs,
+    burnPatches,
+    groundFlames,
   });
   airStrikeRevision++;
 }
 
-export const AIR_STRIKE_DURATION = 4500; // Longer duration
-const AIR_BOMB_FALL_TIME = 600;
-const AIR_EXPLOSION_TIME = 700; // Longer explosions
+function BurningCog({ cog }: { cog: BurningCogData }) {
+  return (
+    <group scale={[cog.size, cog.size, cog.size]}>
+      <mesh geometry={SHARED_GEOMETRIES.ring32}>
+        <meshBasicMaterial
+          color={COG_FIRE_ORANGE}
+          transparent
+          opacity={0.48}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
 
-// Single optimized component for all air strike visuals
-const AirStrikeEffect = React.memo(({ strike }: { strike: AirStrikeData }) => {
-  const bombMeshes = useRef<(THREE.Mesh | null)[]>([]);
-  const trailMeshes = useRef<(THREE.Mesh | null)[]>([]);
-  const warningMeshes = useRef<(THREE.Mesh | null)[]>([]);
-  const warningFillMeshes = useRef<(THREE.Mesh | null)[]>([]);
-  const explosionGroups = useRef<(THREE.Group | null)[]>([]);
+      <mesh geometry={SHARED_GEOMETRIES.ring16} scale={[0.5, 0.5, 1]}>
+        <meshBasicMaterial
+          color={COG_FIRE_ORANGE}
+          transparent
+          opacity={0.3}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      <mesh geometry={SHARED_GEOMETRIES.circle16} scale={[0.18, 0.18, 1]}>
+        <meshBasicMaterial
+          color={COG_FIRE_ORANGE}
+          transparent
+          opacity={0.42}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {COG_TOOTH_INDEXES.map((index) => {
+        const angle = (index / COG_TEETH) * Math.PI * 2;
+        return (
+          <mesh
+            key={index}
+            geometry={SHARED_GEOMETRIES.box}
+            position={[Math.cos(angle) * 1.03, Math.sin(angle) * 1.03, 0]}
+            rotation-z={angle}
+            scale={[0.28, 0.3, 0.16]}
+          >
+            <meshBasicMaterial
+              color={COG_FIRE_ORANGE}
+              transparent
+              opacity={0.44}
+              depthWrite={false}
+            />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+function GroundFlame({
+  flame,
+  setRef,
+}: {
+  flame: GroundFlameData;
+  setRef: (element: THREE.Group | null) => void;
+}) {
+  return (
+    <group
+      ref={setRef}
+      position={[flame.x, flame.groundY + 0.08, flame.z]}
+      rotation={[flame.leanX, flame.yaw, flame.leanZ]}
+      visible={false}
+    >
+      <mesh
+        geometry={SHARED_GEOMETRIES.cone8}
+        position-y={flame.height * 0.5}
+        scale={[flame.radius, flame.height, flame.radius]}
+      >
+        <meshBasicMaterial
+          color={0xff5a00}
+          transparent
+          opacity={0.66}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+      <mesh
+        geometry={SHARED_GEOMETRIES.cone6}
+        position-y={flame.height * 0.44}
+        scale={[flame.radius * 0.48, flame.height * 0.72, flame.radius * 0.48]}
+      >
+        <meshBasicMaterial
+          color={0xffd36a}
+          transparent
+          opacity={0.56}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const groundFillRef = useRef<THREE.Mesh>(null);
+  const groundRingRef = useRef<THREE.Mesh>(null);
+  const groundHotCoreRef = useRef<THREE.Mesh>(null);
+  const patchRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const flameRefs = useRef<(THREE.Group | null)[]>([]);
+  const cogRefs = useRef<(THREE.Group | null)[]>([]);
   const lightRef = useRef<THREE.PointLight>(null);
-  const explodedFlags = useRef<boolean[]>(strike.bombs.map(() => false));
-  
+
   useFrame(() => {
     const elapsed = getFrameClock().nowMs - strike.frameStartTime;
-    
-    let activeExplosions = 0;
-    let lightX = strike.centerPosition.x;
-    let lightY = strike.centerPosition.y + 3;
-    let lightZ = strike.centerPosition.z;
-    
-    strike.bombs.forEach((bomb, i) => {
-      const bombElapsed = elapsed - bomb.delay;
-      const bombMesh = bombMeshes.current[i];
-      const trailMesh = trailMeshes.current[i];
-      const warningMesh = warningMeshes.current[i];
-      const warningFill = warningFillMeshes.current[i];
-      const explosionGroup = explosionGroups.current[i];
-      
-      if (bombElapsed < 0) {
-        // Not started - show early warning
-        if (bombMesh) bombMesh.visible = false;
-        if (trailMesh) trailMesh.visible = false;
-        if (explosionGroup) explosionGroup.visible = false;
-        
-        // Show warning 500ms before bomb starts falling
-        const warningElapsed = bombElapsed + 500;
-        if (warningElapsed > 0 && warningMesh && warningFill) {
-          warningMesh.visible = true;
-          warningFill.visible = true;
-          const warningProgress = Math.min(1, warningElapsed / 500);
-          const pulse = 0.86 + Math.sin(warningElapsed * 0.035) * 0.16;
-          warningMesh.rotation.z = warningElapsed * 0.006;
-          warningMesh.scale.setScalar((0.65 + warningProgress * 0.45) * pulse * bomb.size);
-          warningFill.scale.setScalar((0.6 + warningProgress * 0.34) * bomb.size);
-          (warningMesh.material as THREE.MeshBasicMaterial).opacity = 0.35 + warningProgress * 0.35;
-          (warningFill.material as THREE.MeshBasicMaterial).opacity = 0.08 + warningProgress * 0.13;
-        } else {
-          if (warningMesh) warningMesh.visible = false;
-          if (warningFill) warningFill.visible = false;
-        }
-        return;
-      }
-      
-      const fallProgress = Math.min(1, bombElapsed / AIR_BOMB_FALL_TIME);
-      
-      if (fallProgress < 1) {
-        // Falling
-        if (bombMesh) {
-          bombMesh.visible = true;
-          const startY = bomb.groundY + 55;
-          const y = startY - (startY - bomb.groundY) * fallProgress * fallProgress;
-          bombMesh.position.set(bomb.x, y, bomb.z);
-          bombMesh.rotation.x += 0.15;
-          bombMesh.rotation.z += 0.1;
-          bombMesh.scale.set(0.18 * bomb.size, 0.34 * bomb.size, 0.18 * bomb.size);
-        }
-        if (trailMesh) {
-          trailMesh.visible = true;
-          const startY = bomb.groundY + 55;
-          const y = startY - (startY - bomb.groundY) * fallProgress * fallProgress;
-          trailMesh.position.set(bomb.x, y + 0.8 * bomb.size, bomb.z);
-          trailMesh.scale.set(
-            0.16 * bomb.size * (1 - fallProgress * 0.25),
-            1.5 * bomb.size * (0.75 + fallProgress * 0.35),
-            0.16 * bomb.size * (1 - fallProgress * 0.25)
-          );
-          (trailMesh.material as THREE.MeshBasicMaterial).opacity = 0.45 + fallProgress * 0.4;
-        }
-        if (warningMesh) {
-          warningMesh.visible = true;
-          const pulse = 0.94 + Math.sin(bombElapsed * 0.03) * 0.08;
-          warningMesh.rotation.z = bombElapsed * 0.01;
-          warningMesh.scale.setScalar((1 + fallProgress * 0.18) * pulse * bomb.size);
-          (warningMesh.material as THREE.MeshBasicMaterial).opacity = 0.75;
-        }
-        if (warningFill) {
-          warningFill.visible = true;
-          warningFill.scale.setScalar((0.92 + fallProgress * 0.16) * bomb.size);
-          (warningFill.material as THREE.MeshBasicMaterial).opacity = 0.16 + fallProgress * 0.12;
-        }
-        if (explosionGroup) explosionGroup.visible = false;
-      } else {
-        // Exploded
-        if (!explodedFlags.current[i]) {
-          explodedFlags.current[i] = true;
-        }
-        
-        if (bombMesh) bombMesh.visible = false;
-        if (trailMesh) trailMesh.visible = false;
-        if (warningMesh) warningMesh.visible = false;
-        if (warningFill) warningFill.visible = false;
-        
-        const explosionElapsed = bombElapsed - AIR_BOMB_FALL_TIME;
-        const explosionProgress = Math.min(1, explosionElapsed / AIR_EXPLOSION_TIME);
-        
-        if (explosionProgress < 1 && explosionGroup) {
-          explosionGroup.visible = true;
-          activeExplosions++;
-          const easeOut = 1 - Math.pow(1 - explosionProgress, 2);
-          const fadeOut = Math.max(0, 1 - explosionProgress * 1.2);
-          const scale = (0.28 + easeOut * 1.35) * bomb.size;
-          explosionGroup.scale.setScalar(scale);
-          
-          // Track light position
-          lightX = bomb.x;
-          lightY = bomb.groundY + 2 * bomb.size;
-          lightZ = bomb.z;
-          
-          // Update opacity on all children
-          explosionGroup.children.forEach((child, ci) => {
-            const mesh = child as THREE.Mesh;
-            if (mesh.material) {
-              const material = mesh.material as THREE.MeshBasicMaterial;
-              material.opacity = Math.max(0, fadeOut * (1 - ci * 0.09));
-            }
 
-            switch (ci) {
-              case 0:
-                mesh.scale.setScalar(0.55 + (1 - explosionProgress) * 0.35);
-                break;
-              case 1:
-                mesh.scale.setScalar(0.78 + easeOut * 0.34);
-                break;
-              case 2:
-                mesh.scale.setScalar(1.02 + easeOut * 0.46);
-                break;
-              case 3:
-                mesh.scale.setScalar(1.18 + easeOut * 0.54);
-                break;
-              case 4: {
-                const ringScale = 0.8 + easeOut * 0.85;
-                mesh.scale.set(ringScale, ringScale, 1);
-                break;
-              }
-              case 5: {
-                const shockScale = 0.92 + easeOut * 1.08;
-                mesh.scale.set(shockScale, shockScale, 1);
-                break;
-              }
-              case 6:
-                mesh.scale.setScalar(0.95 + easeOut * 0.72);
-                break;
-            }
-          });
-        } else if (explosionGroup) {
-          explosionGroup.visible = false;
-        }
-      }
+    if (elapsed > AIR_STRIKE_DURATION) {
+      if (groupRef.current) groupRef.current.visible = false;
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
+    }
+
+    const elapsedSeconds = elapsed / 1000;
+    const fadeIn = clamp01(elapsed / 420);
+    const fadeOut = clamp01((AIR_STRIKE_DURATION - elapsed) / 950);
+    const fade = fadeIn * fadeOut;
+    const pulse = 0.92 + Math.sin(elapsed * 0.006) * 0.08;
+
+    if (groundFillRef.current) {
+      groundFillRef.current.rotation.z = elapsed * 0.00065;
+      groundFillRef.current.scale.setScalar(GEARSTORM_RADIUS * (0.94 + fadeIn * 0.08) * pulse);
+      (groundFillRef.current.material as THREE.MeshBasicMaterial).opacity = 0.1 * fade;
+    }
+
+    if (groundRingRef.current) {
+      groundRingRef.current.rotation.z = -elapsed * 0.0012;
+      groundRingRef.current.scale.setScalar(GEARSTORM_RADIUS * (0.92 + Math.sin(elapsed * 0.004) * 0.035));
+      (groundRingRef.current.material as THREE.MeshBasicMaterial).opacity = 0.52 * fade;
+    }
+
+    if (groundHotCoreRef.current) {
+      groundHotCoreRef.current.rotation.z = elapsed * 0.0015;
+      groundHotCoreRef.current.scale.setScalar(GEARSTORM_RADIUS * 0.4 * (0.95 + Math.sin(elapsed * 0.008) * 0.08));
+      (groundHotCoreRef.current.material as THREE.MeshBasicMaterial).opacity = 0.16 * fade;
+    }
+
+    strike.burnPatches.forEach((patch, index) => {
+      const patchMesh = patchRefs.current[index];
+      if (!patchMesh) return;
+
+      const patchPulse = 0.84 + Math.sin(elapsed * 0.008 + patch.phase) * 0.18;
+      patchMesh.rotation.z = patch.phase + elapsed * 0.0009;
+      patchMesh.scale.set(patch.radiusX * patchPulse, patch.radiusZ * patchPulse, 1);
+      (patchMesh.material as THREE.MeshBasicMaterial).opacity = patch.opacity * fade;
     });
-    
-    // Update dynamic light
+
+    strike.groundFlames.forEach((flame, index) => {
+      const flameGroup = flameRefs.current[index];
+      if (!flameGroup) return;
+
+      const cycle = (elapsedSeconds * flame.flickerSpeed + flame.phase) % 1;
+      const active = cycle <= flame.dutyCycle;
+      const flameLife = active ? cycle / flame.dutyCycle : 0;
+      const rise = active ? Math.sin(flameLife * Math.PI) * fade : 0;
+      const shimmer = 0.86 + Math.sin(elapsed * 0.024 + flame.phase * 17.31) * 0.14;
+
+      flameGroup.visible = rise > 0.04;
+      flameGroup.position.y = flame.groundY + 0.08 + rise * 0.05;
+      flameGroup.rotation.y = flame.yaw + Math.sin(elapsedSeconds * 2.4 + flame.phase * Math.PI * 2) * 0.18;
+      flameGroup.scale.set(
+        (0.72 + rise * 0.38) * shimmer,
+        Math.max(0.02, rise),
+        (0.72 + rise * 0.32) * (1.72 - shimmer)
+      );
+    });
+
+    strike.cogs.forEach((cog, index) => {
+      const cogGroup = cogRefs.current[index];
+      if (!cogGroup) return;
+
+      const orbitAngle = cog.angle + elapsedSeconds * cog.orbitSpeed;
+      cogGroup.visible = true;
+      cogGroup.position.set(
+        strike.centerPosition.x + Math.cos(orbitAngle) * cog.radius,
+        cog.groundY + cog.height + Math.sin(elapsedSeconds * cog.bobSpeed + cog.phase) * cog.bobAmount,
+        strike.centerPosition.z + Math.sin(orbitAngle) * cog.radius
+      );
+      cogGroup.rotation.set(
+        cog.tiltX + Math.sin(elapsedSeconds * 0.8 + cog.phase) * 0.14,
+        cog.yaw + elapsedSeconds * 0.35 + cog.tiltY,
+        cog.phase + elapsedSeconds * cog.spinSpeed
+      );
+    });
+
     if (lightRef.current) {
-      lightRef.current.position.set(lightX, lightY, lightZ);
-      lightRef.current.intensity = activeExplosions > 0 ? Math.min(activeExplosions * 8, 26) : 3;
+      lightRef.current.position.set(strike.centerPosition.x, strike.groundY + 4.2, strike.centerPosition.z);
+      lightRef.current.intensity = 12 * fade + Math.sin(elapsed * 0.012) * 1.8 * fade;
     }
   });
-  
-  const elapsed = getFrameClock().nowMs - strike.frameStartTime;
-  if (elapsed > AIR_STRIKE_DURATION) return null;
-  
+
   return (
-    <group>
-      {strike.bombs.map((bomb, i) => (
-        <group key={i}>
-          {/* Falling bomb */}
-          <mesh 
-            ref={el => bombMeshes.current[i] = el}
-            visible={false}
-            geometry={SHARED_GEOMETRIES.sphere8}
-          >
-            <meshBasicMaterial color={0x1a1a1a} />
-          </mesh>
-          
-          {/* Fire trail */}
-          <mesh
-            ref={el => trailMeshes.current[i] = el}
-            visible={false}
-            rotation={[Math.PI, 0, 0]}
-            geometry={SHARED_GEOMETRIES.cone8}
-          >
-            <meshBasicMaterial color={0xff6600} transparent opacity={0.8} />
-          </mesh>
-          
-          {/* Warning ring */}
-          <mesh
-            ref={el => warningMeshes.current[i] = el}
-            visible={false}
-            position={[bomb.x, bomb.groundY + 0.12, bomb.z]}
-            rotation-x={-Math.PI / 2}
-            geometry={SHARED_GEOMETRIES.ring24}
-            scale={[2.5, 2.5, 1]}
-          >
-            <meshBasicMaterial color={0xff0000} transparent opacity={0.8} side={THREE.DoubleSide} />
-          </mesh>
-          
-          {/* Warning fill */}
-          <mesh
-            ref={el => warningFillMeshes.current[i] = el}
-            visible={false}
-            position={[bomb.x, bomb.groundY + 0.08, bomb.z]}
-            rotation-x={-Math.PI / 2}
-            geometry={SHARED_GEOMETRIES.circle16}
-            scale={[2.5, 2.5, 1]}
-          >
-            <meshBasicMaterial color={0xff2200} transparent opacity={0.25} side={THREE.DoubleSide} />
-          </mesh>
-          
-          {/* Explosion - multiple layers */}
-          <group 
-            ref={el => explosionGroups.current[i] = el}
-            visible={false}
-            position={[bomb.x, bomb.groundY + 0.8, bomb.z]}
-          >
-            {/* Core flash */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8}>
-              <meshBasicMaterial color={0xffffcc} transparent opacity={1} depthWrite={false} blending={THREE.AdditiveBlending} />
-            </mesh>
-            {/* Inner fire */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.3}>
-              <meshBasicMaterial color={0xffcc44} transparent opacity={0.9} depthWrite={false} blending={THREE.AdditiveBlending} />
-            </mesh>
-            {/* Outer fire */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.6}>
-              <meshBasicMaterial color={0xff5a00} transparent opacity={0.7} depthWrite={false} blending={THREE.AdditiveBlending} />
-            </mesh>
-            {/* Smoke ring */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.4}>
-              <meshBasicMaterial color={0x6b2a12} transparent opacity={0.34} depthWrite={false} />
-            </mesh>
-            {/* Ground ring */}
-            <mesh rotation-x={-Math.PI / 2} position-y={-0.5} geometry={SHARED_GEOMETRIES.ring16} scale={[1.1, 1.1, 1]}>
-              <meshBasicMaterial color={0xff7a00} transparent opacity={0.6} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
-            </mesh>
-            {/* Shockwave */}
-            <mesh rotation-x={-Math.PI / 2} position-y={-0.46} geometry={SHARED_GEOMETRIES.ring24} scale={[1.35, 1.35, 1]}>
-              <meshBasicMaterial color={0xffffaa} transparent opacity={0.42} side={THREE.DoubleSide} depthWrite={false} blending={THREE.AdditiveBlending} />
-            </mesh>
-            {/* Lingering smoke dome */}
-            <mesh geometry={SHARED_GEOMETRIES.sphere8} scale={1.55}>
-              <meshBasicMaterial color={0x2a211c} transparent opacity={0.24} depthWrite={false} />
-            </mesh>
-          </group>
+    <group ref={groupRef}>
+      <mesh
+        ref={groundFillRef}
+        position={[strike.centerPosition.x, strike.groundY + 0.06, strike.centerPosition.z]}
+        rotation-x={-Math.PI / 2}
+        geometry={SHARED_GEOMETRIES.circle32}
+      >
+        <meshBasicMaterial
+          color={0xff2a00}
+          transparent
+          opacity={0.2}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      <mesh
+        ref={groundRingRef}
+        position={[strike.centerPosition.x, strike.groundY + 0.11, strike.centerPosition.z]}
+        rotation-x={-Math.PI / 2}
+        geometry={SHARED_GEOMETRIES.ring32}
+      >
+        <meshBasicMaterial
+          color={0xff7a00}
+          transparent
+          opacity={0.7}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      <mesh
+        ref={groundHotCoreRef}
+        position={[strike.centerPosition.x, strike.groundY + 0.13, strike.centerPosition.z]}
+        rotation-x={-Math.PI / 2}
+        geometry={SHARED_GEOMETRIES.circle16}
+      >
+        <meshBasicMaterial
+          color={0xffcc33}
+          transparent
+          opacity={0.22}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+
+      {strike.burnPatches.map((patch, index) => (
+        <mesh
+          key={index}
+          ref={element => patchRefs.current[index] = element}
+          position={[patch.x, patch.groundY + 0.16, patch.z]}
+          rotation-x={-Math.PI / 2}
+          geometry={SHARED_GEOMETRIES.circle16}
+        >
+          <meshBasicMaterial
+            color={patch.color}
+            transparent
+            opacity={patch.opacity}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+          />
+        </mesh>
+      ))}
+
+      {strike.groundFlames.map((flame, index) => (
+        <GroundFlame
+          key={index}
+          flame={flame}
+          setRef={element => flameRefs.current[index] = element}
+        />
+      ))}
+
+      {strike.cogs.map((cog, index) => (
+        <group
+          key={index}
+          ref={element => cogRefs.current[index] = element}
+          visible={false}
+        >
+          <BurningCog cog={cog} />
         </group>
       ))}
-      
-      {/* Dynamic light that follows active explosions */}
+
       <BudgetedPointLight
-        budgetPriority={7}
+        budgetPriority={8}
         ref={lightRef}
-        position={[strike.centerPosition.x, strike.centerPosition.y + 3, strike.centerPosition.z]}
-        color={0xff4400} 
-        intensity={10} 
-        distance={24} 
-        decay={2} 
+        position={[strike.centerPosition.x, strike.groundY + 4.2, strike.centerPosition.z]}
+        color={0xff4a00}
+        intensity={12}
+        distance={GEARSTORM_RADIUS * 2.1}
+        decay={2}
       />
     </group>
   );
-}, (prev, next) => {
-  // Custom comparison for object props (strike)
-  return (
-    prev.strike.id === next.strike.id &&
-    prev.strike.centerPosition.x === next.strike.centerPosition.x &&
-    prev.strike.centerPosition.y === next.strike.centerPosition.y &&
-    prev.strike.centerPosition.z === next.strike.centerPosition.z &&
-    prev.strike.startTime === next.strike.startTime
-  );
-});
-
-// ============================================================================
-// AIR STRIKE TARGETING INDICATOR - Simplified for performance
-// ============================================================================
+}
 
 interface AirStrikeTargetingIndicatorProps {
   isActive: boolean;
   onTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
-const AIRSTRIKE_MAX_RANGE = 80;
-const AIRSTRIKE_MIN_RANGE = 10;
-const AIRSTRIKE_TARGET_SAMPLE_FACTORS = [0.5, 1, 1.5] as const;
-
-// Pre-allocated vectors for airstrike targeting (local to avoid conflicts)
-const _asLookDir = new THREE.Vector3();
-const _asTargetPos = new THREE.Vector3();
-const _asHorizDir = new THREE.Vector3();
-
 export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStrikeTargetingIndicatorProps) {
-  const indicatorRef = useRef<THREE.Group>(null);
-  const isValidRef = useRef(false);
-  const reportedTargetRef = useRef(new THREE.Vector3());
-  const lastReportedTargetRef = useRef(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
-  const lastReportedValidRef = useRef(false);
-  const lastReportAtRef = useRef(0);
   const wasActiveRef = useRef(false);
-  const { camera } = useThree();
-  
+
   useFrame(() => {
-    const now = getFrameClock().nowMs;
-
-    if (!isActive) {
-      if (indicatorRef.current) indicatorRef.current.visible = false;
-      if (wasActiveRef.current) {
-        wasActiveRef.current = false;
-        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
-        lastReportedValidRef.current = false;
-        lastReportAtRef.current = now;
-        onTargetUpdate(null, false);
-      }
-      return;
+    if (isActive && !wasActiveRef.current) {
+      onTargetUpdate(null, false);
     }
-    wasActiveRef.current = true;
-    
-    const localPlayer = useGameStore.getState().localPlayer;
-    if (!localPlayer) {
-      if (lastReportedValidRef.current || lastReportedTargetRef.current.x !== Number.POSITIVE_INFINITY) {
-        lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
-        lastReportedValidRef.current = false;
-        lastReportAtRef.current = now;
-        onTargetUpdate(null, false);
-      }
-      return;
-    }
-    
-    _asLookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    
-    let targetX = camera.position.x;
-    let targetY = camera.position.y;
-    let targetZ = camera.position.z;
-    let isValid = false;
-    let foundTarget = false;
-    
-    if (isPhysicsReady()) {
-      const directHit = raycastDirection(
-        camera.position.x, camera.position.y, camera.position.z,
-        _asLookDir.x, _asLookDir.y, _asLookDir.z,
-        AIRSTRIKE_MAX_RANGE + 20
-      );
-      
-      if (directHit && directHit.hit) {
-        targetX = directHit.point.x;
-        targetY = directHit.point.y;
-        targetZ = directHit.point.z;
-        foundTarget = true;
-        
-        if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 10, targetZ, 60);
-          if (groundBelow?.isWalkable) {
-            targetY = groundBelow.groundY + 0.1;
-          }
-        } else {
-          targetY += 0.1;
-        }
-      }
-      
-      if (!foundTarget) {
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -_asLookDir.y)));
-        const baseDist = pitch > 0.3 ? 20 : (pitch > 0 ? 35 : 50);
-        for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
-          const dist = sampleIndex === 3
-            ? AIRSTRIKE_MAX_RANGE
-            : baseDist * AIRSTRIKE_TARGET_SAMPLE_FACTORS[sampleIndex];
-          const sampleX = camera.position.x + _asLookDir.x * dist;
-          const sampleY = camera.position.y + _asLookDir.y * dist;
-          const sampleZ = camera.position.z + _asLookDir.z * dist;
-          
-          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 60, camera.position.y + 60), sampleZ, 180);
-          
-          if (groundCheck?.isWalkable) {
-            targetX = sampleX;
-            targetY = groundCheck.groundY + 0.1;
-            targetZ = sampleZ;
-            foundTarget = true;
-            break;
-          }
-        }
-      }
-      
-      if (foundTarget) {
-        const dx = targetX - localPlayer.position.x;
-        const dy = targetY - localPlayer.position.y;
-        const dz = targetZ - localPlayer.position.z;
-        const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        
-        if (dist3D > AIRSTRIKE_MAX_RANGE) {
-          const scale = AIRSTRIKE_MAX_RANGE / dist3D;
-          targetX = localPlayer.position.x + dx * scale;
-          targetY = localPlayer.position.y + dy * scale;
-          targetZ = localPlayer.position.z + dz * scale;
-          
-          const groundCheck = checkGroundWithNormal(targetX, targetY + 40, targetZ, 120);
-          if (groundCheck?.isWalkable) {
-            targetY = groundCheck.groundY + 0.1;
-          } else {
-            foundTarget = false;
-          }
-        }
-        
-        const finalDistH = Math.sqrt(
-          (targetX - localPlayer.position.x) ** 2 + 
-          (targetZ - localPlayer.position.z) ** 2
-        );
-        
-        if (foundTarget && finalDistH >= AIRSTRIKE_MIN_RANGE) {
-          isValid = true;
-        }
-      }
-      
-      if (!foundTarget) {
-        const fallbackDist = 30;
-        _asHorizDir.set(_asLookDir.x, 0, _asLookDir.z).normalize();
-        targetX = localPlayer.position.x + _asHorizDir.x * fallbackDist;
-        targetZ = localPlayer.position.z + _asHorizDir.z * fallbackDist;
-        
-        const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 40, targetZ, 120);
-        if (groundCheck?.isWalkable) {
-          targetY = groundCheck.groundY + 0.1;
-          isValid = Math.sqrt(
-            (targetX - localPlayer.position.x) ** 2 + 
-            (targetZ - localPlayer.position.z) ** 2
-          ) >= AIRSTRIKE_MIN_RANGE;
-        }
-      }
-    }
-    
-    _asTargetPos.set(targetX, targetY, targetZ);
-    isValidRef.current = isValid;
-    
-    if (indicatorRef.current) {
-      indicatorRef.current.visible = true;
-      indicatorRef.current.position.copy(_asTargetPos);
-    }
-    
-    const targetMoved = lastReportedTargetRef.current.distanceToSquared(_asTargetPos) > 0.04;
-    const validityChanged = lastReportedValidRef.current !== isValid;
-    const cadenceElapsed = now - lastReportAtRef.current >= 100;
-
-    if (targetMoved || validityChanged || cadenceElapsed) {
-      reportedTargetRef.current.copy(_asTargetPos);
-      lastReportedTargetRef.current.copy(_asTargetPos);
-      lastReportedValidRef.current = isValid;
-      lastReportAtRef.current = now;
-      onTargetUpdate(reportedTargetRef.current, isValid);
-    }
+    wasActiveRef.current = isActive;
   });
-  
-  if (!isActive) return null;
-  
-  const baseColor = isValidRef.current ? 0xff2200 : 0x880000;
-  const middleRadius = AIR_STRIKE_AREA_RADIUS * 0.68;
-  const innerRadius = AIR_STRIKE_AREA_RADIUS * 0.38;
-  const crossLength = AIR_STRIKE_AREA_RADIUS * 2.08;
-  
-  return (
-    <group ref={indicatorRef}>
-      {/* Large danger zone indicator */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.1} geometry={SHARED_GEOMETRIES.ring24} scale={[AIR_STRIKE_AREA_RADIUS, AIR_STRIKE_AREA_RADIUS, 1]}>
-        <meshBasicMaterial color={0xff2200} transparent opacity={0.62} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.12} geometry={SHARED_GEOMETRIES.ring24} scale={[middleRadius, middleRadius, 1]}>
-        <meshBasicMaterial color={baseColor} transparent opacity={0.72} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.14} geometry={SHARED_GEOMETRIES.ring16} scale={[innerRadius, innerRadius, 1]}>
-        <meshBasicMaterial color={0xffaa00} transparent opacity={0.82} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.2} geometry={SHARED_GEOMETRIES.circle16} scale={[0.65, 0.65, 1]}>
-        <meshBasicMaterial color={0xffff66} transparent opacity={1} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} position-y={0.05} geometry={SHARED_GEOMETRIES.circle16} scale={[AIR_STRIKE_AREA_RADIUS, AIR_STRIKE_AREA_RADIUS, 1]}>
-        <meshBasicMaterial color={0xff3300} transparent opacity={0.08} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      
-      {/* Cross */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.16, crossLength, 1]}>
-        <meshBasicMaterial color={0xff3300} transparent opacity={0.58} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position-y={0.15} geometry={SHARED_GEOMETRIES.plane} scale={[0.16, crossLength, 1]}>
-        <meshBasicMaterial color={0xff3300} transparent opacity={0.58} side={THREE.DoubleSide} depthWrite={false} />
-      </mesh>
-      
-      <BudgetedPointLight budgetPriority={2} color={0xff3300} intensity={2.6} distance={10} decay={2} position-y={1} />
-    </group>
-  );
+
+  return null;
 }
 
-// Hook to manage air strikes
 export function useAirStrikes() {
   const [activeStrikes, setActiveStrikes] = useState<AirStrikeData[]>([]);
   const lastRevisionRef = useRef(-1);
@@ -602,7 +505,7 @@ export function useAirStrikes() {
     let changed = lastRevisionRef.current !== airStrikeRevision;
 
     for (let i = airStrikes.length - 1; i >= 0; i--) {
-      if (now - airStrikes[i].frameStartTime >= AIR_STRIKE_DURATION + 500) {
+      if (now - airStrikes[i].frameStartTime >= AIR_STRIKE_DURATION + 300) {
         airStrikes.splice(i, 1);
         changed = true;
       }
@@ -613,17 +516,17 @@ export function useAirStrikes() {
       setActiveStrikes([...airStrikes]);
     }
   });
-  
+
   return activeStrikes;
 }
 
 export function AirStrikeEffects() {
   const activeStrikes = useAirStrikes();
-  
+
   return (
     <>
       {activeStrikes.map(strike => (
-        <AirStrikeEffect key={strike.id} strike={strike} />
+        <InfernalGearstormEffect key={strike.id} strike={strike} />
       ))}
     </>
   );

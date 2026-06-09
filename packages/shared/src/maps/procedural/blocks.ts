@@ -27,6 +27,15 @@ export const VOXEL_BLOCK_IDS: VoxelBlockId[] = [
   'cactus',
   'spawn_pad_red',
   'spawn_pad_blue',
+  'ash',
+  'lava',
+  'obsidian',
+  'sand',
+  'snow',
+  'ice',
+  'moss',
+  'bamboo',
+  'blossom_leaves',
 ];
 
 export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
@@ -46,6 +55,15 @@ export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
   cactus: { id: 'cactus', numericId: 13, solid: true, walkable: false, grappleable: true, slippery: false },
   spawn_pad_red: { id: 'spawn_pad_red', numericId: 14, solid: true, walkable: true, grappleable: false, slippery: false, teamTint: 'red' },
   spawn_pad_blue: { id: 'spawn_pad_blue', numericId: 15, solid: true, walkable: true, grappleable: false, slippery: false, teamTint: 'blue' },
+  ash: { id: 'ash', numericId: 16, solid: true, walkable: true, grappleable: true, slippery: false },
+  lava: { id: 'lava', numericId: 17, solid: true, walkable: true, grappleable: false, slippery: false },
+  obsidian: { id: 'obsidian', numericId: 18, solid: true, walkable: true, grappleable: true, slippery: false },
+  sand: { id: 'sand', numericId: 19, solid: true, walkable: true, grappleable: true, slippery: false },
+  snow: { id: 'snow', numericId: 20, solid: true, walkable: true, grappleable: true, slippery: false },
+  ice: { id: 'ice', numericId: 21, solid: true, walkable: true, grappleable: true, slippery: true },
+  moss: { id: 'moss', numericId: 22, solid: true, walkable: true, grappleable: true, slippery: false },
+  bamboo: { id: 'bamboo', numericId: 23, solid: true, walkable: false, grappleable: true, slippery: false },
+  blossom_leaves: { id: 'blossom_leaves', numericId: 24, solid: true, walkable: false, grappleable: true, slippery: false },
 };
 
 export function getBlockDefinition(blockId: VoxelBlockId | number): VoxelBlockDefinition {

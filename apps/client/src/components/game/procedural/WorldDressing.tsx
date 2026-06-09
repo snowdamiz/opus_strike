@@ -125,7 +125,17 @@ function isProtectedSurface(manifest: VoxelMapManifest, worldX: number, worldZ: 
 }
 
 function isNaturalSurface(blockId: VoxelBlockId): boolean {
-  return blockId === 'grass' || blockId === 'dirt' || blockId === 'stone';
+  return (
+    blockId === 'grass' ||
+    blockId === 'dirt' ||
+    blockId === 'stone' ||
+    blockId === 'sand' ||
+    blockId === 'snow' ||
+    blockId === 'ice' ||
+    blockId === 'ash' ||
+    blockId === 'obsidian' ||
+    blockId === 'moss'
+  );
 }
 
 function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
@@ -165,6 +175,24 @@ function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
     };
   }
 
+  if (theme.id === 'volcanic') {
+    return {
+      tuft: '#7f6b4f',
+      pebble: '#252127',
+      crystal: '#ff7b39',
+      crystalEmissive: '#ff4a1f',
+    };
+  }
+
+  if (theme.id === 'sakura') {
+    return {
+      tuft: '#7fbd6e',
+      pebble: '#8a7b78',
+      crystal: '#ffd2e5',
+      crystalEmissive: '#ff8fbd',
+    };
+  }
+
   return {
     tuft: '#58b957',
     pebble: '#737b80',
@@ -188,6 +216,14 @@ function getBiomeDensities(theme: VoxelMapTheme): { tuft: number; pebble: number
 
   if (theme.id === 'crystal') {
     return { tuft: 0.026, pebble: 0.024, crystal: 0.035 };
+  }
+
+  if (theme.id === 'volcanic') {
+    return { tuft: 0.006, pebble: 0.052, crystal: 0.022 };
+  }
+
+  if (theme.id === 'sakura') {
+    return { tuft: 0.04, pebble: 0.02, crystal: 0.012 };
   }
 
   return { tuft: 0.048, pebble: 0.022, crystal: 0.01 };
@@ -248,7 +284,11 @@ function createDressingSet(manifest: VoxelMapManifest, densityScale: number): Dr
 
       if (
         crystals.length < maxCrystals &&
-        (surface.blockId === 'stone' || manifest.theme.id === 'crystal' || manifest.theme.id === 'frost') &&
+        (surface.blockId === 'stone' ||
+          surface.blockId === 'obsidian' ||
+          manifest.theme.id === 'crystal' ||
+          manifest.theme.id === 'frost' ||
+          manifest.theme.id === 'volcanic') &&
         crystalRoll < densities.crystal * safeDensityScale
       ) {
         const height = 0.18 + hashCell(manifest.seed, x, z, 0xd1) * 0.34;

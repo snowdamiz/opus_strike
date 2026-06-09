@@ -419,6 +419,10 @@ export class GameRoom extends Room<GameState> {
       this.onMessage('setDevImmune', (client, data: { enabled: boolean }) => {
         this.handleSetDevImmune(client, Boolean(data.enabled));
       });
+
+      this.onMessage('devFillUltimate', (client) => {
+        this.handleDevFillUltimate(client);
+      });
     }
 
     this.onMessage('requestPerfSnapshot', (client) => {
@@ -2622,6 +2626,21 @@ export class GameRoom extends Room<GameState> {
     } else {
       this.devImmunePlayers.delete(client.sessionId);
     }
+  }
+
+  private handleDevFillUltimate(client: Client): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.heroId) {
+      client.send('devCommandError', { message: 'No active hero to charge' });
+      return;
+    }
+
+    player.ultimateCharge = 100;
   }
 
   private refreshMapManifest(): void {

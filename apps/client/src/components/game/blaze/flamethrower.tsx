@@ -247,17 +247,17 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
 
       const heat = streamHeatRefs.current[i];
       if (heat) {
-        heat.visible = heat.visible && segmentRamp > 0.01;
+        heat.visible = segmentRamp > 0.01;
         (heat.material as THREE.MeshBasicMaterial).opacity = 0.08 * opacity;
       }
       const outer = streamOuterRefs.current[i];
       if (outer) {
-        outer.visible = outer.visible && segmentRamp > 0.01;
+        outer.visible = segmentRamp > 0.01;
         (outer.material as THREE.MeshBasicMaterial).opacity = 0.22 * opacity;
       }
       const core = streamCoreRefs.current[i];
       if (core) {
-        core.visible = core.visible && segmentRamp > 0.01;
+        core.visible = segmentRamp > 0.01;
         (core.material as THREE.MeshBasicMaterial).opacity = 0.54 * opacity;
       }
     });

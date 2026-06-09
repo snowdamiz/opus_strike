@@ -15,7 +15,12 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
-import { visualStore, setPlayerVisualPosition, setPlayerVisualRotation } from '../../store/visualStore';
+import {
+  visualStore,
+  setPlayerVisualPosition,
+  setPlayerVisualRotation,
+  setFlamethrowerVisualPose,
+} from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
 import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
@@ -46,13 +51,14 @@ import {
 } from '@voxel-strike/shared';
 
 // Component imports for targeting indicators
-import { BombTargetingIndicator, AirStrikeTargetingIndicator } from './BlazeEffects';
+import { BombTargetingIndicator } from './BlazeEffects';
 import { GrappleTrapTargetingIndicator } from './HookshotEffects';
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
 const DEV_FLY_SPEED = 14;
 const DEV_FLY_FAST_MULTIPLIER = 1.8;
 const DEV_FLY_VERTICAL_SPEED = 10;
+const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
 
 // ============================================================================
 // PLAYER CONTROLLER COMPONENT
@@ -67,7 +73,6 @@ export function PlayerController() {
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
   const bombTargeting = useGameStore(state => state.bombTargeting);
   const setAirStrikeTargeting = useGameStore(state => state.setAirStrikeTargeting);
-  const airStrikeTargeting = useGameStore(state => state.airStrikeTargeting);
   const setFlamethrowerActive = useGameStore(state => state.setFlamethrowerActive);
   const setFlamethrowerFuel = useGameStore(state => state.setFlamethrowerFuel);
   const setIceWallRushActive = useGameStore(state => state.setIceWallRushActive);
@@ -105,6 +110,7 @@ export function PlayerController() {
   const blazeAbilities = useBlazeAbilities();
   const glacierAbilities = useGlacierAbilities();
   const hookshotAbilities = useHookshotAbilities();
+  const blazeFlamethrowerActiveRef = blazeAbilities.flamethrowerActiveRef;
 
   // Initialize refs
   const initializedRef = useRef(false);
@@ -151,14 +157,35 @@ export function PlayerController() {
     stopSlide,
   };
 
+  const resetBlazeFlamethrower = useCallback((timestampMs = Date.now()) => {
+    const store = useGameStore.getState();
+    const hadFlamethrowerState =
+      blazeFlamethrowerActiveRef.current ||
+      store.flamethrowerActive ||
+      visualStore.getState().flamethrowerOrigin !== null;
+
+    blazeFlamethrowerActiveRef.current = false;
+    setBlazeFlamethrowerHeld(false, timestampMs);
+    setFlamethrowerVisualPose(null, DEFAULT_FLAMETHROWER_DIRECTION);
+    store.setFlamethrowerActive(false);
+
+    if (hadFlamethrowerState) {
+      stopFlamethrowerSound();
+    }
+  }, [blazeFlamethrowerActiveRef, stopFlamethrowerSound]);
+
+  useEffect(() => {
+    return () => {
+      resetBlazeFlamethrower();
+    };
+  }, [resetBlazeFlamethrower]);
+
   // Handle targeting confirmations via click
   const handleClick = useCallback(() => {
     if (!isPointerLocked) {
       requestPointerLock();
     } else if (bombTargeting && blazeAbilities.bombValidRef.current && blazeAbilities.bombTargetRef.current) {
       blazeAbilities.executeBombDrop(playerSounds);
-    } else if (airStrikeTargeting && blazeAbilities.airStrikeValidRef.current && blazeAbilities.airStrikeTargetRef.current) {
-      blazeAbilities.executeAirStrike(playerSounds, updateLocalPlayer);
     } else if (grappleTrapTargeting && hookshotAbilities.grappleTrapValidRef.current && hookshotAbilities.grappleTrapTargetRef.current) {
       const localPlayer = useGameStore.getState().localPlayer;
       if (localPlayer) {
@@ -183,7 +210,7 @@ export function PlayerController() {
       }
     }
   }, [
-    isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, airStrikeTargeting, grappleTrapTargeting,
+    isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, grappleTrapTargeting,
     phantomAbilities, blazeAbilities, hookshotAbilities, playerSounds, abilitySystem, movement,
     cameraControl, sendInput, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
   ]);
@@ -263,7 +290,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
-      setBlazeFlamethrowerHeld(false, now);
+      resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       phantomAbilities.resetPhantomPrimaryMagazine();
@@ -290,8 +317,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
-      setBlazeFlamethrowerHeld(false, now);
-      stopFlamethrowerSound();
+      resetBlazeFlamethrower(now);
       blazeAbilities.resetRocketJump();
     }
 
@@ -305,7 +331,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
-      setBlazeFlamethrowerHeld(false, now);
+      resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       blazeAbilities.resetRocketJump();
@@ -321,7 +347,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
-      setBlazeFlamethrowerHeld(false, now);
+      resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       blazeAbilities.resetRocketJump();
@@ -574,7 +600,7 @@ export function PlayerController() {
           if (heroId === 'phantom') {
             phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive);
           } else if (heroId === 'blaze') {
-            setAirStrikeTargeting(true);
+            blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
           } else if (heroId === 'glacier') {
             glacierAbilities.executeFrostStormShield(abilitySystem.setAbilityActive);
           } else if (heroId === 'hookshot') {
@@ -791,10 +817,6 @@ export function PlayerController() {
       <BombTargetingIndicator
         isActive={bombTargeting}
         onTargetUpdate={blazeAbilities.handleBombTargetUpdate}
-      />
-      <AirStrikeTargetingIndicator
-        isActive={airStrikeTargeting}
-        onTargetUpdate={blazeAbilities.handleAirStrikeTargetUpdate}
       />
       <GrappleTrapTargetingIndicator
         isActive={grappleTrapTargeting}

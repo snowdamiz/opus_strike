@@ -40,7 +40,7 @@ export function BlazeEffectsManager() {
       {/* Rocket jump explosions */}
       <RocketJumpExplosions />
       
-      {/* Air strikes */}
+      {/* Infernal Gearstorm ultimate */}
       <AirStrikeEffects />
       
       <FlamethrowerEffect isActive={flamethrowerActive} />

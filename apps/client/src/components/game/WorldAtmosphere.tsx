@@ -361,7 +361,7 @@ function getAtmosphereProfiles(theme: VoxelMapTheme, seed: number): AtmospherePr
     ]);
   }
 
-  if (theme.id === 'basalt') {
+  if (theme.id === 'basalt' || theme.id === 'volcanic') {
     return pickProfileStack(seed, 0xba5a17, [
       [
         {
@@ -821,8 +821,8 @@ function createDustDevils(profile: AtmosphereProfile, seed: number): DustDevilCo
 }
 
 function getSkyUniforms(theme: VoxelMapTheme) {
-  const darken = theme.id === 'basalt' ? 0.44 : theme.id === 'crystal' ? 0.2 : 0.08;
-  const warmHorizon = theme.id === 'desert' ? 0.18 : 0.06;
+  const darken = theme.id === 'basalt' || theme.id === 'volcanic' ? 0.44 : theme.id === 'crystal' ? 0.2 : 0.08;
+  const warmHorizon = theme.id === 'desert' || theme.id === 'volcanic' || theme.id === 'sakura' ? 0.18 : 0.06;
 
   return {
     topColor: { value: createThemeColor(theme.skyColor, '#07111f', darken) },

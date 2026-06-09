@@ -4,6 +4,7 @@ import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import { setPlayerVisualPosition, setPlayerVisualRotation, visualStore } from '../store/visualStore';
 import { addEffect } from '../components/game/Effects';
+import { triggerAirStrike } from '../components/game/BlazeEffects';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
 import type {
@@ -864,9 +865,21 @@ export function setupCombatHandlers(room: Room) {
   room.onMessage('abilityUsed', (data: {
     playerId: string;
     abilityId: string;
-    success: boolean;
+    success?: boolean;
+    position?: { x: number; y: number; z: number };
   }) => {
     loggers.network.debug('ability used', data.abilityId, data.playerId, data.success);
+
+    if (data.abilityId === 'blaze_airstrike') {
+      const store = useGameStore.getState();
+      const localPlayerId = store.localPlayer?.id ?? store.playerId;
+      if (data.playerId === localPlayerId) return;
+
+      const casterPosition = data.position ?? store.players.get(data.playerId)?.position;
+      if (casterPosition) {
+        triggerAirStrike(casterPosition);
+      }
+    }
   });
 }
 

@@ -191,6 +191,7 @@ export type AbilityIconType =
   | 'bomb'
   | 'rocketjump'
   | 'airstrike'
+  | 'gearstorm'
   | 'icemallet'
   | 'iceshield'
   | 'icewallrush'
@@ -236,6 +237,8 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <RocketjumpIcon size={size} color={color} className={className} />;
     case 'airstrike':
       return <AirstrikeIcon size={size} color={color} className={className} />;
+    case 'gearstorm':
+      return <GearstormIcon size={size} color={color} className={className} />;
     case 'icemallet':
       return <IceMalletIcon size={size} color={color} className={className} />;
     case 'iceshield':
@@ -270,7 +273,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     hookshot_grapple_trap: 'grappletrap',
     blaze_flamethrower: 'flamethrower',
     blaze_rocketjump: 'rocketjump',
-    blaze_airstrike: 'airstrike',
+    blaze_airstrike: 'gearstorm',
     glacier_iceslide: 'icewallrush',
     glacier_frostshield: 'froststorm',
     glacier_fortress: 'fortress',
@@ -464,6 +467,18 @@ function AirstrikeIcon({ size, color, className }: IconProps) {
       <path d="M6.5 3V11L4.8 13H8.2L6.5 11V3ZM12 5V13L10.3 15H13.7L12 13V5ZM17.5 3V11L15.8 13H19.2L17.5 11V3Z" fill={color} />
       <circle cx="12" cy="19" r="3" stroke={color} strokeWidth="1.7" />
       <path d="M8 19H16M12 15V23" stroke={color} strokeWidth="1.4" strokeLinecap="round" opacity="0.75" />
+    </svg>
+  );
+}
+
+function GearstormIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <circle cx="12" cy="12" r="5.1" stroke={color} strokeWidth="2.2" />
+      <circle cx="12" cy="12" r="2" fill={color} opacity="0.72" />
+      <path d="M12 2.8V5.2M12 18.8V21.2M2.8 12H5.2M18.8 12H21.2M5.5 5.5L7.2 7.2M16.8 16.8L18.5 18.5M18.5 5.5L16.8 7.2M7.2 16.8L5.5 18.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M7.4 20.5C5.2 18.2 5.7 15.9 7.5 13.8C7.3 16.1 9.6 16.8 9.2 19.1C9 20.1 8.3 20.5 7.4 20.5Z" fill={color} opacity="0.6" />
+      <path d="M17 4C19.4 6.2 18.9 8.7 16.9 10.7C17.2 8.2 14.8 7.7 15.3 5.3C15.5 4.4 16.1 4 17 4Z" fill={color} opacity="0.78" />
     </svg>
   );
 }

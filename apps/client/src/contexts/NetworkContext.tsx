@@ -57,6 +57,7 @@ interface NetworkContextType {
   reportBlazeRocketImpact: (rocketId: string, position: { x: number; y: number; z: number }) => void;
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
+  devFillUltimate: () => void;
   setDevFly: (enabled: boolean) => void;
   setDevImmune: (enabled: boolean) => void;
   selectTeam: (team: Team) => void;
@@ -684,6 +685,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('selectHero', { heroId });
   }, []);
 
+  const devFillUltimate = useCallback(() => {
+    if (!config.isDev) return;
+    loggers.network.debug('sending development ultimate fill');
+    gameRoomRef.current?.send('devFillUltimate', {});
+  }, []);
+
   const setDevFly = useCallback((enabled: boolean) => {
     if (!config.isDev) return;
     gameRoomRef.current?.send('setDevFly', { enabled });
@@ -754,6 +761,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       reportBlazeRocketImpact,
       selectHero,
       devSetHero,
+      devFillUltimate,
       setDevFly,
       setDevImmune,
       selectTeam,

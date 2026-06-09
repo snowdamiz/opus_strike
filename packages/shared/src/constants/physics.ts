@@ -117,6 +117,9 @@ export const BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT = 0.42;
 export const BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET = 0.18;
 export const BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET = 0.14;
 
+// Blaze Ultimate - Infernal Gearstorm
+export const BLAZE_GEARSTORM_RADIUS = 23.1; // 40% larger than the previous 16.5 radius
+
 // Rocket Jump
 export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 11;
 export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;

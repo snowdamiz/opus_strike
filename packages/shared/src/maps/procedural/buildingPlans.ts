@@ -481,6 +481,28 @@ function getWorldBounds(gridCenter: BuildingGridPoint, bounds: BuildingGridRect,
 }
 
 function createMaterialProfile(theme: VoxelMapTheme, accentBlock: VoxelBlockId, random: () => number): BuildingMaterialProfile {
+  if (theme.id === 'volcanic') {
+    return {
+      floor: random() > 0.42 ? 'obsidian' : 'metal',
+      wall: 'obsidian',
+      roof: random() > 0.56 ? 'metal' : 'obsidian',
+      accent: accentBlock,
+      glass: 'glass',
+      support: 'obsidian',
+    };
+  }
+
+  if (theme.id === 'sakura') {
+    return {
+      floor: random() > 0.48 ? 'wood' : 'stone',
+      wall: random() > 0.36 ? 'wood' : 'stone',
+      roof: random() > 0.5 ? 'wood' : 'stone',
+      accent: accentBlock,
+      glass: 'glass',
+      support: random() > 0.5 ? 'wood' : 'stone',
+    };
+  }
+
   const themeStone: VoxelBlockId =
     theme.id === 'desert'
       ? 'stone'

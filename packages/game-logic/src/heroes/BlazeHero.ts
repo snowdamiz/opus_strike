@@ -6,6 +6,7 @@ import {
   BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_RANGE,
   BLAZE_FLAMETHROWER_DAMAGE,
+  BLAZE_GEARSTORM_RADIUS,
 } from '@voxel-strike/shared';
 import { vec3Scale, vec3Normalize } from '@voxel-strike/shared';
 
@@ -13,8 +14,8 @@ export class BlazeHero extends HeroBase {
   private flamethrowerFuel: number = BLAZE_FLAMETHROWER_MAX_FUEL;
   private passiveFuelRegenBonus: number = 0;
   private lastKillTime: number = 0;
-  private airstrikeTarget: { x: number; y: number; z: number } | null = null;
-  private airstrikeEndTime: number = 0;
+  private gearstormCenter: { x: number; y: number; z: number } | null = null;
+  private gearstormEndTime: number = 0;
 
   constructor() {
     super('blaze');
@@ -70,20 +71,17 @@ export class BlazeHero extends HeroBase {
   }
 
   private executeAirstrike(context: AbilityContext): AbilityResult {
-    if (!context.targetPosition) {
-      return { success: false, message: 'No target position' };
-    }
-
-    this.airstrikeTarget = context.targetPosition;
-    this.airstrikeEndTime = context.timestamp + 3000; // 3 second duration
+    this.gearstormCenter = context.position;
+    this.gearstormEndTime = context.timestamp + 5000; // 5 second duration
 
     return {
       success: true,
       effect: {
-        type: 'airstrike',
-        position: context.targetPosition,
-        duration: 3,
+        type: 'infernal_gearstorm',
+        position: context.position,
+        duration: 5,
         value: 100, // Total damage over duration
+        radius: BLAZE_GEARSTORM_RADIUS,
       },
     };
   }
@@ -98,9 +96,9 @@ export class BlazeHero extends HeroBase {
       this.passiveFuelRegenBonus = 0;
     }
 
-    // Check airstrike end
-    if (this.airstrikeTarget && now >= this.airstrikeEndTime) {
-      this.airstrikeTarget = null;
+    // Check ultimate end
+    if (this.gearstormCenter && now >= this.gearstormEndTime) {
+      this.gearstormCenter = null;
     }
   }
 
@@ -131,10 +129,10 @@ export class BlazeHero extends HeroBase {
   }
 
   getAirstrikeTarget(): { x: number; y: number; z: number } | null {
-    return this.airstrikeTarget;
+    return this.gearstormCenter;
   }
 
   isAirstrikeActive(): boolean {
-    return this.airstrikeTarget !== null && Date.now() < this.airstrikeEndTime;
+    return this.gearstormCenter !== null && Date.now() < this.gearstormEndTime;
   }
 }

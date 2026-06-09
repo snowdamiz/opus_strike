@@ -505,6 +505,13 @@ const HERO_BONE_PIVOTS: Record<HeroBoneName, [number, number, number]> = {
   rightArm: [0.48, 1.32, 0],
 };
 const EMPTY_RIGGED_PARTS: RiggedVoxelPart[] = [];
+const GLACIER_MALLET_ANGLE = -Math.PI / 4;
+const GLACIER_MALLET_GRIP_AMOUNT = 0.94;
+const GLACIER_LEFT_GRIP_POSITION = [-0.44, 0.21, -0.1] as const;
+const GLACIER_RIGHT_GRIP_POSITION = [0.44, 0.22, -0.12] as const;
+const GLACIER_LEFT_GRIP_ROTATION = [0.58, -0.2, 0.76] as const;
+const GLACIER_RIGHT_GRIP_ROTATION = [0.54, 0.2, -0.72] as const;
+const tempBonePosition = new THREE.Vector3();
 
 interface HeroIdleProfile {
   cycleSpeed: number;
@@ -1182,6 +1189,25 @@ function applyJumpBonePose(bones: HeroBoneRefs, pose: HeroJumpPose, amount: numb
   }
 }
 
+function blendBoneTransform(
+  bone: THREE.Group | null | undefined,
+  targetPosition: readonly [number, number, number],
+  targetRotation: readonly [number, number, number],
+  amount: number
+): void {
+  if (!bone || amount <= 0.001) return;
+
+  bone.position.lerp(tempBonePosition.fromArray(targetPosition), amount);
+  bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, targetRotation[0], amount);
+  bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, targetRotation[1], amount);
+  bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, targetRotation[2], amount);
+}
+
+function applyGlacierMalletGripPose(bones: HeroBoneRefs, amount = GLACIER_MALLET_GRIP_AMOUNT): void {
+  blendBoneTransform(bones.leftArm, GLACIER_LEFT_GRIP_POSITION, GLACIER_LEFT_GRIP_ROTATION, amount);
+  blendBoneTransform(bones.rightArm, GLACIER_RIGHT_GRIP_POSITION, GLACIER_RIGHT_GRIP_ROTATION, amount);
+}
+
 function getMaterialEmissiveIntensity(kind: MaterialKind, hasFlag: boolean) {
   const flagBoost = hasFlag ? 1.35 : 1;
   switch (kind) {
@@ -1278,6 +1304,95 @@ function TeamAccentMaterial({ part, teamColor }: { part: TeamAccentPart; teamCol
       depthWrite={part.depthWrite ?? !transparent}
       toneMapped={part.toneMapped}
     />
+  );
+}
+
+function GlacierHeldMallet({
+  materials,
+  castShadow,
+}: {
+  materials: Map<MaterialKind, THREE.MeshStandardMaterial>;
+  castShadow: boolean;
+}) {
+  return (
+    <group position={[0.08, -0.23, -0.48]} rotation={[0, 0, GLACIER_MALLET_ANGLE]}>
+      <mesh
+        position={[0, 0.19, 0]}
+        scale={[0.052, 1.38, 0.052]}
+        castShadow={castShadow}
+        geometry={HERO_PART_GEOMETRIES.cylinder}
+      >
+        <primitive object={materials.get('dark')!} attach="material" />
+      </mesh>
+
+      {[-0.42, -0.08, 0.28, 0.54, 0.74].map((y) => (
+        <mesh
+          key={`glacier-mallet-ring-${y}`}
+          position={[0, y, 0]}
+          scale={[0.085, 0.032, 0.085]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.cylinder}
+        >
+          <primitive object={materials.get('glass')!} attach="material" />
+        </mesh>
+      ))}
+
+      {[-0.32, 0.12].map((y) => (
+        <mesh
+          key={`glacier-mallet-grip-${y}`}
+          position={[0, y, -0.012]}
+          scale={[0.18, 0.095, 0.16]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.box}
+        >
+          <primitive object={materials.get('armor')!} attach="material" />
+        </mesh>
+      ))}
+
+      <group position={[0, 0.9, 0]}>
+        <mesh
+          position={[0, 0, 0]}
+          scale={[0.66, 0.26, 0.32]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.box}
+        >
+          <primitive object={materials.get('glass')!} attach="material" />
+        </mesh>
+        <mesh
+          position={[-0.38, 0, 0]}
+          scale={[0.13, 0.3, 0.36]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.box}
+        >
+          <primitive object={materials.get('edge')!} attach="material" />
+        </mesh>
+        <mesh
+          position={[0.38, 0, 0]}
+          scale={[0.13, 0.3, 0.36]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.box}
+        >
+          <primitive object={materials.get('edge')!} attach="material" />
+        </mesh>
+        <mesh
+          position={[0, 0.01, -0.18]}
+          scale={[0.48, 0.052, 0.04]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.box}
+        >
+          <primitive object={materials.get('glow')!} attach="material" />
+        </mesh>
+        <mesh
+          position={[0, 0.22, 0]}
+          rotation={[0, 0, Math.PI]}
+          scale={[0.15, 0.22, 0.15]}
+          castShadow={castShadow}
+          geometry={HERO_PART_GEOMETRIES.cone}
+        >
+          <primitive object={materials.get('glow')!} attach="material" />
+        </mesh>
+      </group>
+    </group>
   );
 }
 
@@ -1467,6 +1582,9 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       materials.forEach((material, kind) => {
         material.emissiveIntensity = getMaterialEmissiveIntensity(kind, hasFlag);
       });
+      if (resolvedHero === 'glacier') {
+        applyGlacierMalletGripPose(bones);
+      }
 
       return;
     }
@@ -1552,6 +1670,9 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
 
     applyWalkingBonePose(bones, movementCycleTime, movingAmount, normalizedWalkDirection, movementProfile);
     applySlideBonePose(bones, t, slideAmount);
+    if (resolvedHero === 'glacier') {
+      applyGlacierMalletGripPose(bones);
+    }
   });
 
   const renderPartsForBone = (bone: HeroBoneName) => (
@@ -1702,6 +1823,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         position={HERO_BONE_PIVOTS.torso}
       >
         {renderPartsForBone('torso')}
+        {resolvedHero === 'glacier' && <GlacierHeldMallet materials={materials} castShadow={castShadow} />}
 
         <group
           ref={(node) => {

@@ -9,6 +9,7 @@ export type ClientMessage =
   | { type: 'input'; payload: PlayerInput }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
+  | { type: 'devFillUltimate'; payload: Record<string, never> }
   | { type: 'setDevFly'; payload: { enabled: boolean } }
   | { type: 'setDevImmune'; payload: { enabled: boolean } }
   | { type: 'selectTeam'; payload: { team: Team } }

@@ -222,7 +222,7 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /fly | /immune | /hero <hero>'
+        ? 'Developer Console - /fly | /immune | /hero <hero> | /f'
         : 'Developer commands are disabled in this build',
       type: 'info',
     },
@@ -237,6 +237,7 @@ export function GameConsole() {
     damageNpc: networkDamageNpcFn,
     killNpc: networkKillNpcFn,
     devSetHero,
+    devFillUltimate,
     setDevFly,
     setDevImmune,
   } = useNetwork();
@@ -368,10 +369,29 @@ export function GameConsole() {
         break;
       }
 
+      case '/f': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        const store = useGameStore.getState();
+        if (!store.localPlayer?.heroId) {
+          addMessage('No active hero to charge.', 'error');
+          break;
+        }
+
+        store.updateLocalPlayer({ ultimateCharge: 100 });
+        devFillUltimate();
+        addMessage('Ultimate ability ready.', 'info');
+        setTimeout(() => setIsOpen(false), 100);
+        break;
+      }
+
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /f`, 'error');
     }
-  }, [addMessage, devSetHero, setDevFly, setDevImmune]);
+  }, [addMessage, devFillUltimate, devSetHero, setDevFly, setDevImmune]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -441,7 +461,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /fly, /immune, or /hero <hero>...' : 'Developer commands disabled'}
+            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, or /f...' : 'Developer commands disabled'}
             autoComplete="off"
             spellCheck={false}
           />

@@ -7,7 +7,7 @@ A browser-based 4v4 Capture the Flag game with Minecraft-style voxel graphics an
 - **4 Unique Heroes** with distinct movement abilities:
   - **Phantom** (Flanker) - Blink teleportation, Shadow Step, Invisibility
   - **Hookshot** (Mobile) - Grappling hook, Swing mechanics, Zipline ultimate
-  - **Blaze** (Assault) - Flamethrower, Rocket jump, Air strike ultimate
+  - **Blaze** (Assault) - Flamethrower, Rocket jump, Infernal Gearstorm ultimate
   - **Glacier** (Tank) - Ice slide, Wall climb, Frozen fortress
 
 - **Advanced Movement System**:

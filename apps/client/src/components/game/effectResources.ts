@@ -405,7 +405,7 @@ export function initializeEffectResources() {
     getGlowMaterial(color, 0.7);
   });
   
-  // Prewarm Blaze materials (airstrike, etc.)
+  // Prewarm Blaze materials.
   import('./blaze/materials').then(({ prewarmBlazeMaterials }) => {
     prewarmBlazeMaterials();
   });

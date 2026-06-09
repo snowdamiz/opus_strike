@@ -37,6 +37,14 @@ interface FeatureAnchor {
   radius: number;
 }
 
+interface VolcanicCrater {
+  x: number;
+  z: number;
+  radius: number;
+  innerRadius: number;
+  seed: number;
+}
+
 interface GridDirection {
   dx: -1 | 0 | 1;
   dz: -1 | 0 | 1;
@@ -202,7 +210,7 @@ function chunkIndex(x: number, y: number, z: number, size: VoxelSize): number {
 
 function isTreeBlock(blockId: number): boolean {
   const block = getBlockId(blockId);
-  return block === 'wood' || block === 'leaves';
+  return block === 'wood' || block === 'leaves' || block === 'blossom_leaves' || block === 'bamboo';
 }
 
 function hasTreeBlockNearColumn(
@@ -464,6 +472,106 @@ function applySinuousValley(
 
       const index = x + z * size.x;
       heightMap[index] = Math.max(minRows, heightMap[index] - delta);
+    }
+  }
+}
+
+function createVolcanicCraters(
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  random: () => number,
+  seed: number
+): VolcanicCrater[] {
+  const boundaryRange = getBoundaryRange(layout.boundary);
+  const halfPlayableX = Math.min(scaleWorld(28), Math.max(scaleWorld(12), (boundaryRange.maxX - boundaryRange.minX) * 0.5 - scaleWorld(7)));
+  const halfPlayableZ = Math.min(scaleWorld(22), Math.max(scaleWorld(10), (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - scaleWorld(7)));
+  const craterCount = 1 + (random() > 0.72 ? 1 : 0);
+  const craters: VolcanicCrater[] = [];
+
+  for (let attempts = 0; attempts < 80 && craters.length < craterCount; attempts++) {
+    const centerX = lerp(-halfPlayableX, halfPlayableX, random());
+    const centerZ = lerp(-halfPlayableZ, halfPlayableZ, random());
+    const radius = scaleWorld(lerp(8.5, 15.5, random()));
+    if (!isInsideBoundaryPolygon(centerX, centerZ, layout.boundary)) continue;
+    if (distanceToBoundary(centerX, centerZ, layout.boundary) < radius + scaleWorld(4.5)) continue;
+    if (isNearProtectedGameplayArea(layout, centerX, centerZ, radius + scaleWorld(2.5))) continue;
+
+    let overlaps = false;
+    for (const crater of craters) {
+      if (distanceSq(centerX, centerZ, crater.x, crater.z) < (radius + crater.radius + scaleWorld(8)) ** 2) {
+        overlaps = true;
+        break;
+      }
+    }
+    if (overlaps) continue;
+
+    craters.push({
+      x: centerX,
+      z: centerZ,
+      radius,
+      innerRadius: radius * lerp(0.18, 0.28, random()),
+      seed: seed ^ Math.floor(random() * 0xffffffff),
+    });
+  }
+
+  if (craters.length === 0) {
+    craters.push({
+      x: scaleWorld(lerp(-10, 10, random())),
+      z: scaleWorld(lerp(-8, 8, random())),
+      radius: scaleWorld(11),
+      innerRadius: scaleWorld(2.5),
+      seed: seed ^ 0xca1de2a,
+    });
+  }
+
+  return craters;
+}
+
+function applyVolcanicLandforms(
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  craters: VolcanicCrater[],
+  minRows: number,
+  maxRows: number
+): void {
+  for (const crater of craters) {
+    const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(
+      origin,
+      size,
+      crater.x - crater.radius * 1.45,
+      crater.x + crater.radius * 1.45,
+      crater.z - crater.radius * 1.45,
+      crater.z + crater.radius * 1.45
+    );
+    const coneRows = worldHeightToGridRows(scaleWorld(5.4 + (crater.seed & 3) * 0.7));
+    const rimRows = worldHeightToGridRows(scaleWorld(2.4 + ((crater.seed >>> 3) & 3) * 0.35));
+    const craterDepthRows = worldHeightToGridRows(scaleWorld(3.6 + ((crater.seed >>> 7) & 3) * 0.45));
+
+    for (let x = gx0; x <= gx1; x++) {
+      for (let z = gz0; z <= gz1; z++) {
+        const worldX = gridToWorldCenter(x, origin.x);
+        const worldZ = gridToWorldCenter(z, origin.z);
+        const distance = Math.sqrt(distanceSq(worldX, worldZ, crater.x, crater.z));
+        const radial = distance / crater.radius;
+        if (radial > 1.45) continue;
+
+        const ridgeNoise = fractalNoise2(crater.seed, worldX * 0.11, worldZ * 0.11, 3);
+        const lavaChannelNoise = fractalNoise2(crater.seed ^ 0x51a6b00d, worldX * 0.18, worldZ * 0.18, 3);
+        const apron = radial > 1 ? Math.max(0, 1.45 - radial) * worldHeightToGridRows(scaleWorld(1.2)) : 0;
+        const cone = radial <= 1 ? Math.pow(1 - radial, 0.72) * coneRows * lerp(0.84, 1.16, ridgeNoise) : apron;
+        const rim = Math.max(0, 1 - Math.abs(radial - 0.31) / 0.13) * rimRows * lerp(0.8, 1.22, ridgeNoise);
+        const craterCut = radial < 0.32
+          ? Math.pow(1 - radial / 0.32, 0.56) * craterDepthRows * lerp(0.86, 1.2, lavaChannelNoise)
+          : 0;
+        const channelCut = radial > 0.32 && radial < 1.18 && lavaChannelNoise > 0.78
+          ? worldHeightToGridRows(scaleWorld(0.8)) * (lavaChannelNoise - 0.78) * 4.2
+          : 0;
+        const delta = Math.round(cone + rim - craterCut - channelCut);
+        if (delta === 0) continue;
+
+        const index = x + z * size.x;
+        heightMap[index] = clamp(heightMap[index] + delta, minRows, maxRows);
+      }
     }
   }
 }
@@ -919,7 +1027,8 @@ function stampBoulder(
   centerZ: number,
   radiusX: number,
   radiusZ: number,
-  height: number
+  height: number,
+  blockId: VoxelBlockId = 'stone'
 ): void {
   const { gx0, gx1, gz0, gz1 } = getWorldRectBounds(
     origin,
@@ -942,7 +1051,7 @@ function stampBoulder(
       const localHeight = Math.max(1, Math.ceil(height * (1 - distance * 0.65)));
       const surfaceY = heightMap[x + z * size.x];
       for (let y = surfaceY; y < surfaceY + localHeight; y++) {
-        setBlock(x, y, z, 'stone');
+        setBlock(x, y, z, blockId);
       }
     }
   }
@@ -975,7 +1084,7 @@ function stampTreeBranchStub(setBlock: BlockSetter, trunkX: number, trunkZ: numb
   setBlock(trunkX + dx, y, trunkZ + dz, 'wood');
 }
 
-function stampLeafCluster(setBlock: BlockSetter, cluster: TreeLeafCluster): void {
+function stampLeafCluster(setBlock: BlockSetter, cluster: TreeLeafCluster, leafBlock: VoxelBlockId): void {
   for (let dy = -cluster.radiusY; dy <= cluster.radiusY; dy++) {
     const leafY = cluster.centerY + dy;
     if (leafY < cluster.minY) continue;
@@ -998,7 +1107,7 @@ function stampLeafCluster(setBlock: BlockSetter, cluster: TreeLeafCluster): void
 
         if (!core && !edge && !lowerTuft) continue;
 
-        setBlock(cluster.centerX + dx, leafY, cluster.centerZ + dz, 'leaves');
+        setBlock(cluster.centerX + dx, leafY, cluster.centerZ + dz, leafBlock);
       }
     }
   }
@@ -1012,7 +1121,8 @@ function stampTree(
   worldX: number,
   worldZ: number,
   trunkHeight: number,
-  featureSeed: number
+  featureSeed: number,
+  leafBlock: VoxelBlockId = 'leaves'
 ): void {
   const x = clamp(worldToGrid(worldX, origin.x), 1, size.x - 2);
   const z = clamp(worldToGrid(worldZ, origin.z), 1, size.z - 2);
@@ -1116,7 +1226,7 @@ function stampTree(
   }
 
   for (const cluster of clusters) {
-    stampLeafCluster(setBlock, cluster);
+    stampLeafCluster(setBlock, cluster, leafBlock);
   }
 
   stampTreeTrunk(setBlock, x, baseY, z, trunkHeight);
@@ -1149,6 +1259,80 @@ function stampCactus(
     setBlock(x + dir, armY, z, 'cactus');
     setBlock(x + dir, armY + 1, z, 'cactus');
     if (height > 4) setBlock(x + dir * 2, armY + 1, z, 'cactus');
+  }
+}
+
+function stampBambooClump(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  worldX: number,
+  worldZ: number,
+  height: number,
+  featureSeed: number
+): void {
+  const centerX = clamp(worldToGrid(worldX, origin.x), 3, size.x - 4);
+  const centerZ = clamp(worldToGrid(worldZ, origin.z), 3, size.z - 4);
+  const random = mulberry32(featureSeed ^ 0xba4b00);
+  const stalkCount = 4 + (featureSeed % 5);
+
+  for (let i = 0; i < stalkCount; i++) {
+    const angle = random() * Math.PI * 2;
+    const distance = Math.floor(random() * 3);
+    const x = clamp(centerX + Math.round(Math.cos(angle) * distance), 2, size.x - 3);
+    const z = clamp(centerZ + Math.round(Math.sin(angle) * distance), 2, size.z - 3);
+    const baseY = heightMap[x + z * size.x];
+    const stalkHeight = Math.max(3, height + Math.floor(random() * 4) - 1);
+
+    for (let y = baseY; y < baseY + stalkHeight; y++) {
+      setBlock(x, y, z, 'bamboo');
+    }
+
+    if (random() > 0.34) {
+      const leafY = baseY + stalkHeight - 1;
+      setBlock(x + 1, leafY, z, 'leaves');
+      setBlock(x - 1, leafY, z, 'leaves');
+      setBlock(x, leafY, z + 1, 'leaves');
+      setBlock(x, leafY, z - 1, 'leaves');
+    }
+  }
+}
+
+function stampLavaVent(
+  setBlock: BlockSetter,
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  worldX: number,
+  worldZ: number,
+  height: number,
+  featureSeed: number
+): void {
+  const centerX = clamp(worldToGrid(worldX, origin.x), 3, size.x - 4);
+  const centerZ = clamp(worldToGrid(worldZ, origin.z), 3, size.z - 4);
+  const radius = 2 + (featureSeed % 2);
+  const baseY = heightMap[centerX + centerZ * size.x];
+
+  for (let dx = -radius; dx <= radius; dx++) {
+    for (let dz = -radius; dz <= radius; dz++) {
+      const distance = Math.sqrt(dx * dx + dz * dz);
+      if (distance > radius + 0.35) continue;
+
+      const x = centerX + dx;
+      const z = centerZ + dz;
+      const localBaseY = heightMap[x + z * size.x];
+      const rimHeight = Math.max(1, Math.round((radius + 0.5 - distance) * 0.8));
+      const ventNoise = fractalNoise2(featureSeed, x * 0.66, z * 0.66, 2);
+
+      for (let y = localBaseY; y <= Math.min(size.y - 2, baseY + Math.min(height, rimHeight + 2)); y++) {
+        setBlock(x, y, z, distance <= 1 && y >= baseY ? 'lava' : ventNoise > 0.72 ? 'ash' : 'obsidian');
+      }
+
+      if (distance <= 1.2) {
+        setBlock(x, Math.min(size.y - 2, baseY + 1), z, 'lava');
+      }
+    }
   }
 }
 
@@ -1214,6 +1398,26 @@ function stampThemedNaturalFeature(
 ): void {
   if (theme.id === 'desert') {
     stampCactus(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(3)), height + worldHeightToGridRows(scaleWorld(1))), featureSeed);
+  } else if (theme.id === 'volcanic') {
+    if (featureSeed % 3 === 0) {
+      stampLavaVent(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(2)), height), featureSeed);
+    } else {
+      stampBasaltSpire(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(2.4)), height));
+    }
+  } else if (theme.id === 'sakura') {
+    stampTree(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(3)), height), featureSeed, 'blossom_leaves');
+    if (featureSeed % 3 === 0) {
+      stampBambooClump(
+        setBlock,
+        heightMap,
+        origin,
+        size,
+        worldX + scaleWorld(1.3),
+        worldZ - scaleWorld(1.1),
+        Math.max(worldHeightToGridRows(scaleWorld(4)), height + 1),
+        featureSeed ^ 0xba4b00
+      );
+    }
   } else if (theme.id === 'frost' || theme.id === 'crystal') {
     stampCrystalCluster(setBlock, heightMap, origin, size, worldX, worldZ, Math.max(worldHeightToGridRows(scaleWorld(2)), height), featureSeed);
   } else if (theme.id === 'basalt') {
@@ -3010,7 +3214,7 @@ function stampProceduralFeatures(
     const featureSeed = Math.floor(random() * 0xffffffff);
 
     if (preferStone) {
-      stampBoulder(setBlock, heightMap, origin, size, baseX, baseZ, radiusX, radiusZ, boulderHeight);
+      stampBoulder(setBlock, heightMap, origin, size, baseX, baseZ, radiusX, radiusZ, boulderHeight, getRockBlockForTheme(theme));
     } else {
       stampThemedNaturalFeature(setBlock, heightMap, origin, size, theme, baseX, baseZ, trunkHeight, featureSeed);
     }
@@ -3339,7 +3543,14 @@ function chooseGrooveSurfaceBlock(
 
   if (blockA === blockB) return blockA;
   if (blockA === 'grass' || blockB === 'grass') return 'grass';
+  if (blockA === 'moss' || blockB === 'moss') return 'moss';
   if (blockA === 'dirt' || blockB === 'dirt') return 'dirt';
+  if (blockA === 'sand' || blockB === 'sand') return 'sand';
+  if (blockA === 'snow' || blockB === 'snow') return 'snow';
+  if (blockA === 'ash' || blockB === 'ash') return 'ash';
+  if (blockA === 'lava' || blockB === 'lava') return 'obsidian';
+  if (blockA === 'obsidian' || blockB === 'obsidian') return 'obsidian';
+  if (blockA === 'ice' || blockB === 'ice') return 'ice';
   if (blockA === 'stone' || blockB === 'stone') return 'stone';
 
   return blockA;
@@ -3359,6 +3570,12 @@ function getGrooveFillBlock(surfaceBlock: VoxelBlockId, y: number, surfaceY: num
   }
 
   if (surfaceBlock === 'dirt') return 'dirt';
+  if (surfaceBlock === 'sand') return 'sand';
+  if (surfaceBlock === 'snow') return y >= surfaceY - 1 ? 'snow' : 'ice';
+  if (surfaceBlock === 'ash') return 'ash';
+  if (surfaceBlock === 'moss') return y >= surfaceY - 1 ? 'moss' : 'dirt';
+  if (surfaceBlock === 'lava') return 'obsidian';
+  if (surfaceBlock === 'obsidian' || surfaceBlock === 'ice') return surfaceBlock;
   return 'stone';
 }
 
@@ -3587,6 +3804,97 @@ function sealUnsafeNarrowGrooves(
   }
 }
 
+function getVolcanicSurfaceBlock(
+  craters: VolcanicCrater[],
+  worldX: number,
+  worldZ: number
+): VoxelBlockId | null {
+  for (const crater of craters) {
+    const distance = Math.sqrt(distanceSq(worldX, worldZ, crater.x, crater.z));
+    if (distance > crater.radius * 1.42) continue;
+
+    const radial = distance / crater.radius;
+    const heatNoise = fractalNoise2(crater.seed ^ 0x1a7a, worldX * 0.18, worldZ * 0.18, 3);
+    const veinNoise = fractalNoise2(crater.seed ^ 0x0b51d1a, worldX * 0.33, worldZ * 0.33, 2);
+    const channel = radial > 0.28 && radial < 1.08 && heatNoise > 0.82;
+
+    if (distance < crater.innerRadius * lerp(0.74, 1.08, heatNoise) || channel) {
+      return 'lava';
+    }
+
+    if (distance < crater.innerRadius * 1.65 || (radial < 0.92 && veinNoise > 0.74)) {
+      return 'obsidian';
+    }
+
+    if (radial < 1.26) {
+      return heatNoise > 0.72 ? 'obsidian' : 'ash';
+    }
+  }
+
+  return null;
+}
+
+function getRockBlockForTheme(theme: VoxelMapTheme): VoxelBlockId {
+  if (theme.id === 'volcanic') return 'obsidian';
+  if (theme.id === 'frost') return 'ice';
+  return 'stone';
+}
+
+function getLooseGroundBlockForTheme(theme: VoxelMapTheme): VoxelBlockId {
+  if (theme.id === 'volcanic') return 'ash';
+  if (theme.id === 'desert') return 'sand';
+  if (theme.id === 'frost') return 'snow';
+  return 'dirt';
+}
+
+function chooseTerrainSurfaceBlock(
+  theme: VoxelMapTheme,
+  volcanicCraters: VolcanicCrater[],
+  worldX: number,
+  worldZ: number,
+  height: number,
+  rockySurfaceRows: number,
+  boundarySurface: boolean,
+  rockPatch: boolean,
+  seed: number
+): VoxelBlockId {
+  if (theme.id === 'volcanic') {
+    const volcanicBlock = getVolcanicSurfaceBlock(volcanicCraters, worldX, worldZ);
+    if (volcanicBlock) return volcanicBlock;
+    return boundarySurface || rockPatch || height > rockySurfaceRows ? 'obsidian' : 'ash';
+  }
+
+  if (theme.id === 'desert') {
+    return boundarySurface || rockPatch || height > rockySurfaceRows ? 'stone' : 'sand';
+  }
+
+  if (theme.id === 'frost') {
+    const icePatch = fractalNoise2(seed ^ 0x1ce, worldX * 0.12, worldZ * 0.12, 2) > 0.78;
+    return boundarySurface || rockPatch || height > rockySurfaceRows || icePatch ? 'ice' : 'snow';
+  }
+
+  if (theme.id === 'sakura') {
+    const mossPatch = fractalNoise2(seed ^ 0x4055, worldX * 0.1, worldZ * 0.1, 3) > 0.54;
+    if (boundarySurface || rockPatch || height > rockySurfaceRows) return mossPatch ? 'moss' : 'stone';
+    return mossPatch ? 'moss' : 'grass';
+  }
+
+  if (theme.id === 'crystal') {
+    const mossPatch = fractalNoise2(seed ^ 0xc275, worldX * 0.09, worldZ * 0.09, 2) > 0.68;
+    if (mossPatch && !boundarySurface && !rockPatch) return 'moss';
+  }
+
+  return boundarySurface || rockPatch || height > rockySurfaceRows ? 'stone' : 'grass';
+}
+
+function chooseTerrainFillBlock(theme: VoxelMapTheme, y: number, height: number, dirtDepthRows: number): VoxelBlockId {
+  if (y >= height - dirtDepthRows) {
+    return getLooseGroundBlockForTheme(theme);
+  }
+
+  return getRockBlockForTheme(theme);
+}
+
 function generateProceduralVoxelMapInternal(
   seed = DEFAULT_PROCEDURAL_MAP_SEED,
   diagnostics?: ProceduralVoxelMapDiagnostics
@@ -3614,6 +3922,9 @@ function generateProceduralVoxelMapInternal(
   const dirtDepthRows = worldHeightToGridRows(4);
   const edgeWallRows = worldHeightToGridRows(scaleWorld(2.5 + random() * 2.5));
   const rockySurfaceRows = worldHeightToGridRows(11);
+  const volcanicCraters = theme.id === 'volcanic'
+    ? createVolcanicCraters(layout, random, normalizedSeed)
+    : [];
 
   const setBlock: BlockSetter = (x, y, z, blockId) => {
     if (x < 0 || x >= size.x || y < 0 || y >= size.y || z < 0 || z >= size.z) return;
@@ -3676,6 +3987,9 @@ function generateProceduralVoxelMapInternal(
   }
 
   applyTerrainLandforms(heightMap, origin, size, layout, random, normalizedSeed, minTerrainRows, maxTerrainRows);
+  if (volcanicCraters.length > 0) {
+    applyVolcanicLandforms(heightMap, origin, size, volcanicCraters, minTerrainRows, maxTerrainRows);
+  }
   smoothHeightMap(heightMap, origin, size, layout, minTerrainRows, maxTerrainRows, TERRAIN_SMOOTHING_PASSES);
   limitHeightDeltas(heightMap, size, MAX_NAVIGATION_STEP_ROWS, 3);
 
@@ -3742,7 +4056,7 @@ function generateProceduralVoxelMapInternal(
       if (boundaryWallShell) {
         const wallTopY = Math.min(size.y - 1, height + edgeWallRows + worldHeightToGridRows(scaleWorld(1.9)));
         for (let y = 0; y <= wallTopY; y++) {
-          setBlock(x, y, z, y === 0 ? 'barrier' : 'stone');
+          setBlock(x, y, z, y === 0 ? 'barrier' : getRockBlockForTheme(theme));
         }
         continue;
       }
@@ -3756,9 +4070,19 @@ function generateProceduralVoxelMapInternal(
         if (y === 0) {
           blockId = 'barrier';
         } else if (y === height - 1) {
-          blockId = boundarySurface || rockPatch || height > rockySurfaceRows ? 'stone' : 'grass';
+          blockId = chooseTerrainSurfaceBlock(
+            theme,
+            volcanicCraters,
+            worldX,
+            worldZ,
+            height,
+            rockySurfaceRows,
+            boundarySurface,
+            rockPatch,
+            normalizedSeed
+          );
         } else if (y >= height - dirtDepthRows) {
-          blockId = 'dirt';
+          blockId = chooseTerrainFillBlock(theme, y, height, dirtDepthRows);
         }
 
         setBlock(x, y, z, blockId);
@@ -3766,7 +4090,7 @@ function generateProceduralVoxelMapInternal(
 
       if (boundarySurface) {
         for (let y = height; y < Math.min(size.y, height + edgeWallRows); y++) {
-          setBlock(x, y, z, 'stone');
+          setBlock(x, y, z, getRockBlockForTheme(theme));
         }
       }
     }
