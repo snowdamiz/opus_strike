@@ -654,9 +654,10 @@ function writePhantomHandPose(
   const counterSwing = Math.cos(phase);
   const lift = Math.max(0, swing);
   const drop = Math.max(0, -swing);
+  const retractPulse = drop;
   const cadencePulse = 0.5 + 0.5 * Math.sin(phase * 2 + 0.25);
   const breath = Math.sin(elapsedSeconds * 1.55 + sideSign * 0.35) * 0.0025;
-  const reachAmount = (0.04 + runBlend * 0.027) * locomotionBlend;
+  const retractAmount = (0.04 + runBlend * 0.027) * locomotionBlend;
   const liftAmount = (0.017 + runBlend * 0.014) * locomotionBlend;
   const crossAmount = (0.011 + runBlend * 0.011) * locomotionBlend;
   const pumpPitch = (0.06 + runBlend * 0.055) * locomotionBlend;
@@ -684,16 +685,16 @@ function writePhantomHandPose(
     PHANTOM_IDLE_HAND_POSITION.z -
       readyBlend * 0.032 -
       shotPulse * 0.014 -
-      swing * reachAmount -
-      runTuck * 0.007 +
+      runTuck * 0.003 +
+      retractPulse * retractAmount +
       slidePullback
   );
   targets.arm.rotation.set(
     PHANTOM_IDLE_HAND_ROTATION.x -
       readyBlend * 0.37 -
       shotPulse * 0.055 -
-      swing * pumpPitch -
       runTuck * 0.045 +
+      retractPulse * pumpPitch +
       handUpBias,
     sideSign * (
       PHANTOM_IDLE_HAND_ROTATION.y -
@@ -704,8 +705,8 @@ function writePhantomHandPose(
     sideSign * (
       PHANTOM_IDLE_HAND_ROTATION.z +
       readyBlend * 0.42 +
-      shotPulse * 0.055 -
-      swing * pumpRoll +
+      shotPulse * 0.055 +
+      retractPulse * pumpRoll +
       counterSwing * 0.022 * locomotionBlend
     )
   );
@@ -721,8 +722,8 @@ function writePhantomHandPose(
   targets.wrist.position.set(0, 0, 0);
   targets.wrist.rotation.set(
     -readyBlend * 0.045 -
-      shotPulse * 0.018 -
-      swing * (0.008 + runBlend * 0.006) * locomotionBlend,
+      shotPulse * 0.018 +
+      retractPulse * (0.008 + runBlend * 0.006) * locomotionBlend,
     sideSign * (
       -readyBlend * 0.036 -
       shotPulse * 0.012 +
@@ -730,8 +731,8 @@ function writePhantomHandPose(
     ),
     sideSign * (
       readyBlend * 0.14 +
-      shotPulse * 0.024 -
-      swing * 0.007 * locomotionBlend
+      shotPulse * 0.024 +
+      retractPulse * 0.007 * locomotionBlend
     )
   );
 
@@ -795,8 +796,9 @@ function writePhantomForearmPose(
   const counterSwing = Math.cos(phase);
   const lift = Math.max(0, swing);
   const drop = Math.max(0, -swing);
+  const retractPulse = drop;
   const breath = Math.sin(elapsedSeconds * 1.35 + side * 0.45) * 0.002;
-  const reachAmount = (0.038 + runBlend * 0.029) * locomotionBlend;
+  const retractAmount = (0.038 + runBlend * 0.029) * locomotionBlend;
   const liftAmount = (0.013 + runBlend * 0.017) * locomotionBlend;
   const crossAmount = (0.01 + runBlend * 0.012) * locomotionBlend;
   const pumpPitch = (0.16 + runBlend * 0.2) * locomotionBlend;
@@ -821,16 +823,16 @@ function writePhantomForearmPose(
     -0.41 -
       holdBlend * 0.096 -
       shotPulse * 0.01 -
-      swing * reachAmount -
-      runTuck * 0.006 +
+      runTuck * 0.003 +
+      retractPulse * retractAmount +
       slidePullback
   );
   target.rotation.set(
     0.22 -
       holdBlend * 0.34 -
       shotPulse * 0.055 -
-      runTuck * 0.035 +
-      swing * pumpPitch * 0.72,
+      runTuck * 0.035 -
+      retractPulse * pumpPitch * 0.72,
     side * (
       -0.1 +
       holdBlend * 0.08 +
@@ -840,8 +842,8 @@ function writePhantomForearmPose(
     side * (
       -0.09 +
       holdBlend * 0.235 +
-      shotPulse * 0.055 -
-      swing * (0.055 + runBlend * 0.074) * locomotionBlend +
+      shotPulse * 0.055 +
+      retractPulse * (0.055 + runBlend * 0.074) * locomotionBlend +
       counterSwing * 0.018 * locomotionBlend
     )
   );

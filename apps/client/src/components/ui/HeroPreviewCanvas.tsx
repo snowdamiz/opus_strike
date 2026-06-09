@@ -60,9 +60,9 @@ interface PreviewConfig {
 
 const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
   featured: {
-    cameraPosition: [0, 0.08, 4.35],
-    cameraTarget: [0, 0.08, 0],
-    fov: 31,
+    cameraPosition: [0, 0.22, 4.35],
+    cameraTarget: [0, 0.22, 0],
+    fov: 40,
     dpr: [1, 1.75],
     bodyScale: 1.04,
     floorScale: 3.1,
@@ -72,7 +72,7 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
     idleIntensity: 0.9,
     shadows: true,
     jumpFraming: {
-      fov: 37,
+      fov: 44,
       bodyLift: -0.22,
       floorScale: 1.08,
     },

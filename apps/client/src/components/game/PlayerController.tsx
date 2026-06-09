@@ -44,6 +44,7 @@ import {
 import {
   CROUCH_MULTIPLIER,
   TICK_RATE,
+  UNSTUCK_VERTICAL_VELOCITY,
   createEmptyInputState,
   getHeroStats,
   HERO_DEFINITIONS,
@@ -119,6 +120,8 @@ export function PlayerController() {
   const lastHeroIdRef = useRef<string | null>(null);
   const reloadPressedRef = useRef(false);
   const pendingReloadInputRef = useRef(false);
+  const lastUnstuckRequestIdRef = useRef(0);
+  const pendingUnstuckInputRef = useRef(false);
   const positionRef = useRef(new THREE.Vector3());
 
   // Hero stats cache
@@ -467,6 +470,20 @@ export function PlayerController() {
       movement.refs.canJump.current = false;
     }
 
+    const unstuckRequestId = useGameStore.getState().unstuckRequestId;
+    if (unstuckRequestId !== lastUnstuckRequestIdRef.current) {
+      lastUnstuckRequestIdRef.current = unstuckRequestId;
+      pendingUnstuckInputRef.current = true;
+      velocity.y = Math.max(velocity.y, UNSTUCK_VERTICAL_VELOCITY);
+      movement.refs.isGrounded.current = false;
+      movement.refs.wasGrounded.current = false;
+      movement.refs.canJump.current = false;
+      movement.refs.isSliding.current = false;
+      movement.refs.slideTime.current = 0;
+      movement.refs.smoothedY.current = null;
+      stopSlide();
+    }
+
     const movementMultiplier = shadowStepTargeting ? 0.3 : 1;
     const moveDirection = movement.calculateMoveDirection(frameInput, cameraControl.refs.yaw.current);
 
@@ -784,6 +801,7 @@ export function PlayerController() {
       lastSendRef.current = now;
       const currentTargeting = useGameStore.getState().shadowStepTargeting;
       const reloadForServer = frameInput.reload || pendingReloadInputRef.current;
+      const unstuckForServer = pendingUnstuckInputRef.current;
 
       sendInput({
         tick: tickRef.current,
@@ -804,10 +822,12 @@ export function PlayerController() {
         lookYaw: cameraControl.refs.yaw.current,
         lookPitch: cameraControl.refs.pitch.current,
         timestamp: now,
+        unstuck: unstuckForServer,
         position: { x: position.x, y: position.y, z: position.z },
         velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
       });
       pendingReloadInputRef.current = false;
+      pendingUnstuckInputRef.current = false;
     }
   });
 

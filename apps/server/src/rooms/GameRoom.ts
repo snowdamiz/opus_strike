@@ -33,6 +33,8 @@ import {
   BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
+  UNSTUCK_COOLDOWN_MS,
+  UNSTUCK_VERTICAL_VELOCITY,
 } from '@voxel-strike/shared';
 import type { 
   BotDifficulty,
@@ -309,6 +311,7 @@ export class GameRoom extends Room<GameState> {
   private blazeRocketImpactCooldownUntil: Map<string, number> = new Map();
   private processedBlazeRocketImpacts: Map<string, number> = new Map();
   private damageHistory: Map<string, Map<string, { damage: number; timestamp: number }>> = new Map();
+  private unstuckCooldownUntil: Map<string, number> = new Map();
   private devInvulnerablePlayers: Set<string> = new Set();
   private devImmunePlayers: Set<string> = new Set();
   private mapManifest: VoxelMapManifest | null = null;
@@ -464,6 +467,7 @@ export class GameRoom extends Room<GameState> {
         this.state.players.delete(existingSessionId);
         playerPressState.delete(existingSessionId);
         this.phantomPrimaryMagazines.delete(existingSessionId);
+        this.unstuckCooldownUntil.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
         // Broadcast that old player left
@@ -564,6 +568,7 @@ export class GameRoom extends Room<GameState> {
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
     this.blazeRocketImpactCooldownUntil.delete(client.sessionId);
+    this.unstuckCooldownUntil.delete(client.sessionId);
     this.deleteProcessedBlazeRocketImpactsForPlayer(client.sessionId);
     this.devInvulnerablePlayers.delete(client.sessionId);
     this.devImmunePlayers.delete(client.sessionId);
@@ -1156,9 +1161,25 @@ export class GameRoom extends Room<GameState> {
       player.velocity.y = input.velocity.y;
       player.velocity.z = input.velocity.z;
     }
+    if (input.unstuck) {
+      this.tryApplyUnstuck(player);
+    }
 
     // Handle ability inputs (detect key press, not hold)
     this.processPlayerInput(player, input);
+  }
+
+  private tryApplyUnstuck(player: Player): void {
+    const now = Date.now();
+    if (now < (this.unstuckCooldownUntil.get(player.id) ?? 0)) {
+      return;
+    }
+
+    this.unstuckCooldownUntil.set(player.id, now + UNSTUCK_COOLDOWN_MS);
+    player.velocity.y = Math.max(player.velocity.y, UNSTUCK_VERTICAL_VELOCITY);
+    player.movement.isGrounded = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
   }
 
   private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {

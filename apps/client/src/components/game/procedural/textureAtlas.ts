@@ -4,6 +4,8 @@ import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
 export const ATLAS_COLUMNS = 6;
 export const ATLAS_ROWS = 5;
 export const TILE_SIZE = 128;
+export const ATLAS_UV_PADDING = 0.006;
+export const ATLAS_REPEAT_EDGE_CROP_PIXELS = 14;
 
 export type VoxelFaceDirection = 'top' | 'bottom' | 'side';
 

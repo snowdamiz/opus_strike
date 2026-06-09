@@ -12,6 +12,7 @@ interface MeshBuffers {
   positions: number[];
   normals: number[];
   uvs: number[];
+  tileOrigins: number[];
   indices: number[];
 }
 
@@ -78,15 +79,28 @@ function createBlockAccessor(manifest: VoxelMapManifest): (x: number, y: number,
   return accessor;
 }
 
-function pushUv(buffers: MeshBuffers, blockId: number, face: VoxelFaceDirection): void {
+function pushUv(
+  buffers: MeshBuffers,
+  blockId: number,
+  face: VoxelFaceDirection,
+  repeatWidth: number,
+  repeatHeight: number
+): void {
   const tile = getTileForBlock(getBlockId(blockId), face);
-  const padding = 0.006;
-  const u0 = tile.x / ATLAS_COLUMNS + padding;
-  const v0 = 1 - (tile.y + 1) / ATLAS_ROWS + padding;
-  const u1 = (tile.x + 1) / ATLAS_COLUMNS - padding;
-  const v1 = 1 - tile.y / ATLAS_ROWS - padding;
+  const tileOriginU = tile.x / ATLAS_COLUMNS;
+  const tileOriginV = 1 - (tile.y + 1) / ATLAS_ROWS;
 
-  buffers.uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
+  buffers.uvs.push(0, 0, repeatWidth, 0, repeatWidth, repeatHeight, 0, repeatHeight);
+  buffers.tileOrigins.push(
+    tileOriginU,
+    tileOriginV,
+    tileOriginU,
+    tileOriginV,
+    tileOriginU,
+    tileOriginV,
+    tileOriginU,
+    tileOriginV
+  );
 }
 
 function pushQuad(
@@ -94,7 +108,9 @@ function pushQuad(
   vertices: [number, number, number][],
   normal: [number, number, number],
   blockId: number,
-  face: VoxelFaceDirection
+  face: VoxelFaceDirection,
+  repeatWidth: number,
+  repeatHeight: number
 ): void {
   const baseIndex = buffers.positions.length / 3;
 
@@ -103,7 +119,7 @@ function pushQuad(
     buffers.normals.push(normal[0], normal[1], normal[2]);
   }
 
-  pushUv(buffers, blockId, face);
+  pushUv(buffers, blockId, face, repeatWidth, repeatHeight);
   buffers.indices.push(baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3);
 }
 
@@ -115,17 +131,17 @@ function emitFace(
   const { x, y, z, width, height, blockId } = rect;
 
   if (direction === 'px') {
-    pushQuad(buffers, [[x + 1, y, z + width], [x + 1, y, z], [x + 1, y + height, z], [x + 1, y + height, z + width]], [1, 0, 0], blockId, 'side');
+    pushQuad(buffers, [[x + 1, y, z + width], [x + 1, y, z], [x + 1, y + height, z], [x + 1, y + height, z + width]], [1, 0, 0], blockId, 'side', width, height);
   } else if (direction === 'nx') {
-    pushQuad(buffers, [[x, y, z], [x, y, z + width], [x, y + height, z + width], [x, y + height, z]], [-1, 0, 0], blockId, 'side');
+    pushQuad(buffers, [[x, y, z], [x, y, z + width], [x, y + height, z + width], [x, y + height, z]], [-1, 0, 0], blockId, 'side', width, height);
   } else if (direction === 'py') {
-    pushQuad(buffers, [[x, y + 1, z], [x, y + 1, z + height], [x + width, y + 1, z + height], [x + width, y + 1, z]], [0, 1, 0], blockId, 'top');
+    pushQuad(buffers, [[x, y + 1, z], [x, y + 1, z + height], [x + width, y + 1, z + height], [x + width, y + 1, z]], [0, 1, 0], blockId, 'top', height, width);
   } else if (direction === 'ny') {
-    pushQuad(buffers, [[x, y, z + height], [x, y, z], [x + width, y, z], [x + width, y, z + height]], [0, -1, 0], blockId, 'bottom');
+    pushQuad(buffers, [[x, y, z + height], [x, y, z], [x + width, y, z], [x + width, y, z + height]], [0, -1, 0], blockId, 'bottom', height, width);
   } else if (direction === 'pz') {
-    pushQuad(buffers, [[x, y, z + 1], [x + width, y, z + 1], [x + width, y + height, z + 1], [x, y + height, z + 1]], [0, 0, 1], blockId, 'side');
+    pushQuad(buffers, [[x, y, z + 1], [x + width, y, z + 1], [x + width, y + height, z + 1], [x, y + height, z + 1]], [0, 0, 1], blockId, 'side', width, height);
   } else {
-    pushQuad(buffers, [[x + width, y, z], [x, y, z], [x, y + height, z], [x + width, y + height, z]], [0, 0, -1], blockId, 'side');
+    pushQuad(buffers, [[x + width, y, z], [x, y, z], [x, y + height, z], [x + width, y + height, z]], [0, 0, -1], blockId, 'side', width, height);
   }
 }
 
@@ -276,6 +292,7 @@ function createGeometryFromBuffers(
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buffers.normals, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buffers.uvs, 2));
   geometry.setAttribute('uv2', new THREE.Float32BufferAttribute(buffers.uvs, 2));
+  geometry.setAttribute('voxelTileOrigin', new THREE.Float32BufferAttribute(buffers.tileOrigins, 2));
   geometry.setIndex(buffers.indices);
   geometry.scale(manifest.voxelSize.x, manifest.voxelSize.y, manifest.voxelSize.z);
   geometry.translate(manifest.origin.x, manifest.origin.y, manifest.origin.z);
@@ -294,7 +311,7 @@ export function buildVoxelChunkGeometry(manifest: VoxelMapManifest, chunk: Voxel
   if (cached) return cached;
 
   const buildStart = performance.now();
-  const buffers: MeshBuffers = { positions: [], normals: [], uvs: [], indices: [] };
+  const buffers: MeshBuffers = { positions: [], normals: [], uvs: [], tileOrigins: [], indices: [] };
   appendVoxelChunkBuffers(manifest, chunk, buffers, createBlockAccessor(manifest));
   return createGeometryFromBuffers(manifest, cacheKey, buffers, 'voxelMeshBuild', buildStart);
 }
@@ -309,7 +326,7 @@ export function buildVoxelRegionGeometry(
   if (cached) return cached;
 
   const buildStart = performance.now();
-  const buffers: MeshBuffers = { positions: [], normals: [], uvs: [], indices: [] };
+  const buffers: MeshBuffers = { positions: [], normals: [], uvs: [], tileOrigins: [], indices: [] };
   const getBlock = createBlockAccessor(manifest);
 
   for (const chunk of chunks) {
