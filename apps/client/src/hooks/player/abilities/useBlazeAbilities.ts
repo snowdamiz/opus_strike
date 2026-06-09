@@ -36,7 +36,9 @@ import {
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+  getBlazeFlamethrowerHeldBlend,
   getBlazeRocketHeldBlend,
+  setBlazeFlamethrowerHeld,
   setBlazeBombTargetHeld,
   triggerBlazeStaffShockwave,
   type BlazeRocketStaffPoseSampleContext,
@@ -69,7 +71,7 @@ function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z
   };
 }
 
-function sampleBlazeRocketStaffTipPose(
+function sampleBlazeStaffTipPose(
   ctx: AbilityContext,
   nowMs: number,
   holdBlend: number
@@ -146,6 +148,16 @@ function calculateBlazeRocketLaunch(
   };
 }
 
+function calculateBlazeFlamethrowerPose(
+  ctx: AbilityContext,
+  originOverride?: { x: number; y: number; z: number }
+) {
+  return {
+    origin: originOverride ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_FLAMETHROWER_SOCKET),
+    direction: calculateLookDirection(ctx.yaw, ctx.pitch),
+  };
+}
+
 export interface UseBlazeAbilitiesReturn {
   // State refs
   lastRocketTimeRef: React.MutableRefObject<number>;
@@ -209,7 +221,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     lastRocketTimeRef.current = now;
     rocketIdRef.current++;
     const rocketId = `rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
-    const launchPose = sampleBlazeRocketStaffTipPose(ctx, now, holdBlend);
+    const launchPose = sampleBlazeStaffTipPose(ctx, now, holdBlend);
     const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
     const { spawnPos, direction } = calculateBlazeRocketLaunch(ctx, spawnOverride);
     assertViewmodelLaunchMatchesPose({
@@ -329,15 +341,22 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     setFlamethrowerActive: (active: boolean) => void,
     setFlamethrowerFuel: (fuel: number) => void
   ) => {
-    if (ctx.inputState.ability1 && flamethrowerFuelRef.current > 0) {
+    const now = Date.now();
+    const timestampMs = ctx.viewmodelNowMs ?? now;
+    const isHoldingFlamethrower = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
+    setBlazeFlamethrowerHeld(isHoldingFlamethrower, timestampMs);
+
+    if (isHoldingFlamethrower) {
       if (!flamethrowerActiveRef.current) {
         flamethrowerActiveRef.current = true;
         setFlamethrowerActive(true);
         sounds.startFlamethrowerSound();
       }
 
-      const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
-      const origin = calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_FLAMETHROWER_SOCKET);
+      const holdBlend = getBlazeFlamethrowerHeldBlend(timestampMs);
+      const staffTipPose = sampleBlazeStaffTipPose(ctx, now, holdBlend);
+      const staffTipOrigin = staffTipPose ? vectorToPlainPosition(staffTipPose.position) : undefined;
+      const { origin, direction } = calculateBlazeFlamethrowerPose(ctx, staffTipOrigin);
       setFlamethrowerVisualPose(origin, direction);
 
       // Consume fuel
@@ -346,6 +365,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
         flamethrowerFuelRef.current = 0;
         flamethrowerActiveRef.current = false;
         setFlamethrowerActive(false);
+        setBlazeFlamethrowerHeld(false, timestampMs);
         setFlamethrowerVisualPose(null, { x: 0, y: 0, z: -1 });
         sounds.stopFlamethrowerSound();
       }

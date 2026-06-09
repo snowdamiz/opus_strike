@@ -21,7 +21,7 @@ import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
-import { setBlazeBombTargetHeld, setBlazeRocketHeld } from '../../viewmodel/blazePose';
+import { setBlazeBombTargetHeld, setBlazeFlamethrowerHeld, setBlazeRocketHeld } from '../../viewmodel/blazePose';
 import { isDevFlyMode } from '../ui/GameConsole';
 import {
   useCamera,
@@ -263,6 +263,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setBlazeFlamethrowerHeld(false, now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       phantomAbilities.resetPhantomPrimaryMagazine();
@@ -288,6 +289,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setBlazeFlamethrowerHeld(false, now);
       stopFlamethrowerSound();
     }
 
@@ -301,6 +303,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setBlazeFlamethrowerHeld(false, now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
@@ -315,6 +318,7 @@ export function PlayerController() {
       setPhantomPrimaryHeld(false, now);
       setBlazeRocketHeld(false, now);
       setBlazeBombTargetHeld(false, now);
+      setBlazeFlamethrowerHeld(false, now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       const position = positionRef.current;

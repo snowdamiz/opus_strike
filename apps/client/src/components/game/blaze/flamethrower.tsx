@@ -9,6 +9,13 @@ import { raycastDirection } from '../../../hooks/usePhysics';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
+import {
+  PLIABLE_ROPE_SEGMENT_COUNT,
+  ROPE_SEGMENT_INDICES,
+  createRopePoints,
+  updatePliableRopePoints,
+  updateRopeSegment,
+} from '../hookshot/rope';
 
 // ============================================================================
 // FLAMETHROWER EFFECT - Held Blaze E ability
@@ -26,41 +33,70 @@ const _inverseQuat = new THREE.Quaternion();
 const _lag = new THREE.Vector3();
 const _localLag = new THREE.Vector3();
 const _smoothedLocalDirection = new THREE.Vector3();
-const OPEN_FLAME_GEOMETRY = new THREE.ConeGeometry(1, 1, 10, 1, true);
+const _streamStart = new THREE.Vector3();
+const _streamEnd = new THREE.Vector3();
+const _swirlOffset = new THREE.Vector3();
+const _pathPoint = new THREE.Vector3();
+const OPEN_FLAME_GEOMETRY = new THREE.ConeGeometry(1, 1, 14, 1, true);
 
 const FLAME_SEGMENTS = [
-  { y: 0.55, radius: 0.1, length: 1.1, color: 0xffffff, opacity: 0.46, lag: 0 },
-  { y: 1.15, radius: 0.22, length: 1.65, color: 0xfff2a6, opacity: 0.4, lag: 0.12 },
-  { y: 2.0, radius: 0.4, length: 2.35, color: 0xffa000, opacity: 0.34, lag: 0.3 },
-  { y: 3.05, radius: 0.66, length: 3.0, color: 0xff4d00, opacity: 0.26, lag: 0.5 },
-  { y: 4.35, radius: 0.95, length: 3.6, color: 0xbb1f00, opacity: 0.18, lag: 0.72 },
-  { y: 5.9, radius: 1.24, length: 4.1, color: 0x6f1600, opacity: 0.12, lag: 0.95 },
+  { y: 0.72, radius: 0.1, length: 0.82, color: 0xffffff, opacity: 0.46, lag: 0 },
+  { y: 1.18, radius: 0.24, length: 1.38, color: 0xfff2a6, opacity: 0.43, lag: 0.1 },
+  { y: 1.9, radius: 0.54, length: 2.36, color: 0xffb21f, opacity: 0.38, lag: 0.28 },
+  { y: 2.88, radius: 0.9, length: 3.18, color: 0xff5a00, opacity: 0.3, lag: 0.48 },
+  { y: 4.1, radius: 1.2, length: 3.82, color: 0xd43100, opacity: 0.22, lag: 0.68 },
+  { y: 5.48, radius: 1.48, length: 4.28, color: 0x7d1700, opacity: 0.15, lag: 0.92 },
 ];
 
-const FLAME_SPARKS = Array.from({ length: 14 }, (_, i) => ({
-  phase: i / 14,
+const FLAME_SPARKS = Array.from({ length: 24 }, (_, i) => ({
+  phase: i / 24,
   side: i % 2 === 0 ? -1 : 1,
-  drift: 0.08 + Math.random() * 0.18,
-  speed: 1.8 + Math.random() * 1.5,
-  size: 0.025 + Math.random() * 0.03,
+  drift: 0.12 + Math.random() * 0.28,
+  speed: 1.9 + Math.random() * 1.8,
+  size: 0.03 + Math.random() * 0.04,
 }));
 
-const SMOKE_PUFFS = Array.from({ length: 8 }, (_, i) => ({
-  phase: i / 8,
-  drift: (Math.random() - 0.5) * 0.35,
+const SMOKE_PUFFS = Array.from({ length: 10 }, (_, i) => ({
+  phase: i / 10,
+  drift: (Math.random() - 0.5) * 0.52,
   rise: 0.15 + Math.random() * 0.25,
-  size: 0.1 + Math.random() * 0.12,
+  size: 0.13 + Math.random() * 0.16,
 }));
 
 const FLAMETHROWER_SPIN_UP_DURATION = 0.14;
 const FLAMETHROWER_SPIN_DOWN_DURATION = 0.18;
+const FLAME_NOZZLE_VISUAL_OFFSET = 0.16;
+const FLAME_STREAM_MAX_LAG = 1.42;
+const FLAME_STREAM_POINT_INDICES = Array.from(
+  { length: PLIABLE_ROPE_SEGMENT_COUNT + 1 },
+  (_, index) => index
+);
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 const easeOutCubic = (value: number): number => 1 - Math.pow(1 - clamp01(value), 3);
 
+function sampleStreamPoint(
+  out: THREE.Vector3,
+  points: THREE.Vector3[],
+  distance: number,
+  streamLength: number
+): THREE.Vector3 {
+  const segmentCount = points.length - 1;
+  const t = clamp01((distance - FLAME_NOZZLE_VISUAL_OFFSET) / Math.max(0.001, streamLength - FLAME_NOZZLE_VISUAL_OFFSET));
+  const scaledIndex = t * segmentCount;
+  const startIndex = Math.min(segmentCount - 1, Math.floor(scaledIndex));
+  const endIndex = startIndex + 1;
+
+  return out.copy(points[startIndex]).lerp(points[endIndex], scaledIndex - startIndex);
+}
+
 export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const streamHeatRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const streamOuterRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const streamCoreRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const streamPuffRefs = useRef<(THREE.Mesh | null)[]>([]);
   const glowRef = useRef<THREE.Mesh>(null);
   const sparkRefs = useRef<(THREE.Mesh | null)[]>([]);
   const smokeRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -72,6 +108,10 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
   const poseInitializedRef = useRef(false);
   const rampRef = useRef(0);
   const wasLiveRef = useRef(false);
+  const streamPointsRef = useRef(createRopePoints());
+  const streamControlARef = useRef(new THREE.Vector3());
+  const streamControlBRef = useRef(new THREE.Vector3());
+  const streamLagRef = useRef(new THREE.Vector3());
 
   useFrame((state, delta) => {
     if (!groupRef.current) return;
@@ -153,6 +193,88 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
     const flicker = 0.88 + Math.sin(time * 34) * 0.08 + Math.sin(time * 71) * 0.04;
     const plumeIntensity = easeOutCubic(rampRef.current);
     const spin = time * (10 + plumeIntensity * 18);
+    const streamPoints = streamPointsRef.current;
+    const streamLength = BLAZE_FLAMETHROWER_RANGE * (0.78 + plumeIntensity * 0.18);
+
+    _streamStart.set(0, FLAME_NOZZLE_VISUAL_OFFSET, 0);
+    _streamEnd.set(
+      _localLag.x * 0.72 + _smoothedLocalDirection.x * streamLength * 0.42 + Math.sin(time * 2.1) * 0.08 * plumeIntensity,
+      streamLength + THREE.MathUtils.clamp(_localLag.y * 0.2, -0.22, 0.22),
+      _localLag.z * 0.72 + _smoothedLocalDirection.z * streamLength * 0.42 + Math.cos(time * 2.4) * 0.08 * plumeIntensity
+    );
+    streamLagRef.current.copy(_localLag).multiplyScalar(0.86);
+    const streamLagLength = streamLagRef.current.length();
+    if (streamLagLength > FLAME_STREAM_MAX_LAG) {
+      streamLagRef.current.multiplyScalar(FLAME_STREAM_MAX_LAG / streamLagLength);
+    }
+
+    streamPoints[0].copy(_streamStart);
+    streamPoints[PLIABLE_ROPE_SEGMENT_COUNT].copy(_streamEnd);
+    updatePliableRopePoints(
+      streamPoints,
+      streamControlARef.current,
+      streamControlBRef.current,
+      _streamStart,
+      _streamEnd,
+      streamLagRef.current,
+      streamLength,
+      0.34
+    );
+
+    for (let i = 1; i < PLIABLE_ROPE_SEGMENT_COUNT; i++) {
+      const t = i / PLIABLE_ROPE_SEGMENT_COUNT;
+      const swirlRadius = t * t * (0.34 + plumeIntensity * 0.44);
+      const swirlAngle = spin * (0.2 + t * 0.2) + i * 1.36;
+      _swirlOffset.set(
+        Math.cos(swirlAngle) * swirlRadius * plumeIntensity,
+        Math.sin(time * (5.5 + i) + i) * 0.035 * plumeIntensity,
+        Math.sin(swirlAngle) * swirlRadius * plumeIntensity
+      );
+      streamPoints[i].add(_swirlOffset);
+    }
+
+    ROPE_SEGMENT_INDICES.forEach((i) => {
+      const t = (i + 0.5) / PLIABLE_ROPE_SEGMENT_COUNT;
+      const segmentRamp = easeOutCubic(clamp01((rampRef.current - t * 0.08) / 0.7));
+      const endFade = 1 - THREE.MathUtils.smoothstep(t, 0.72, 1);
+      const widthPulse = flicker + Math.sin(time * (13 + i * 1.7) + i) * 0.08;
+      const radius = Math.max(0.001, (0.045 + Math.pow(t, 0.92) * 0.62) * widthPulse * segmentRamp);
+      const opacity = endFade * segmentRamp;
+
+      updateRopeSegment(streamHeatRefs.current[i], streamPoints[i], streamPoints[i + 1], radius * 2.15);
+      updateRopeSegment(streamOuterRefs.current[i], streamPoints[i], streamPoints[i + 1], radius * 1.28);
+      updateRopeSegment(streamCoreRefs.current[i], streamPoints[i], streamPoints[i + 1], radius * 0.42);
+
+      const heat = streamHeatRefs.current[i];
+      if (heat) {
+        heat.visible = heat.visible && segmentRamp > 0.01;
+        (heat.material as THREE.MeshBasicMaterial).opacity = 0.08 * opacity;
+      }
+      const outer = streamOuterRefs.current[i];
+      if (outer) {
+        outer.visible = outer.visible && segmentRamp > 0.01;
+        (outer.material as THREE.MeshBasicMaterial).opacity = 0.22 * opacity;
+      }
+      const core = streamCoreRefs.current[i];
+      if (core) {
+        core.visible = core.visible && segmentRamp > 0.01;
+        (core.material as THREE.MeshBasicMaterial).opacity = 0.54 * opacity;
+      }
+    });
+
+    streamPuffRefs.current.forEach((puff, i) => {
+      if (!puff) return;
+      const t = i / PLIABLE_ROPE_SEGMENT_COUNT;
+      const source = streamPoints[Math.min(i, PLIABLE_ROPE_SEGMENT_COUNT)];
+      const puffRamp = easeOutCubic(clamp01((rampRef.current - t * 0.06) / 0.7));
+      const pulse = 0.85 + Math.sin(time * (16 + i) + i * 0.7) * 0.12;
+
+      puff.visible = puffRamp > 0.01;
+      puff.position.copy(source);
+      puff.scale.setScalar((0.045 + Math.pow(t, 0.86) * 0.56) * pulse * puffRamp);
+      (puff.material as THREE.MeshBasicMaterial).opacity =
+        (0.24 + (1 - t) * 0.28) * (1 - THREE.MathUtils.smoothstep(t, 0.78, 1)) * puffRamp;
+    });
 
     flameRefs.current.forEach((flame, i) => {
       if (!flame) return;
@@ -169,13 +291,15 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
         _smoothedLocalDirection.z * segment.y * trailLag * 0.45;
       const spinAngle = spin + i * 0.75;
       const spinWobble = Math.sin(spinAngle) * segment.radius * 0.08 * plumeIntensity;
+      const pathPoint = sampleStreamPoint(_pathPoint, streamPoints, segment.y, streamLength);
+      const pathBlend = 0.35 + segmentRamp * 0.65;
 
       flame.visible = segmentRamp > 0.01;
       flame.rotation.y = spinAngle;
       flame.position.set(
-        trailX + spinWobble + Math.sin(time * (9 + i) + i) * segment.radius * 0.14,
-        segment.y * pulse * (0.28 + segmentRamp * 0.72) + trailY,
-        trailZ + Math.cos(spinAngle) * segment.radius * 0.08 * plumeIntensity +
+        pathPoint.x * pathBlend + trailX * 0.38 + spinWobble + Math.sin(time * (9 + i) + i) * segment.radius * 0.14,
+        pathPoint.y * pathBlend + trailY,
+        pathPoint.z * pathBlend + trailZ * 0.38 + Math.cos(spinAngle) * segment.radius * 0.08 * plumeIntensity +
           Math.cos(time * (7 + i) + i) * segment.radius * 0.14
       );
       flame.scale.set(
@@ -267,6 +391,31 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
 
   return (
     <group ref={groupRef} visible={false}>
+      {ROPE_SEGMENT_INDICES.map(i => (
+        <mesh key={`stream-heat-${i}`} ref={el => streamHeatRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8}>
+          <meshBasicMaterial color={0xff2a00} transparent opacity={0.08} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </mesh>
+      ))}
+      {ROPE_SEGMENT_INDICES.map(i => (
+        <mesh key={`stream-outer-${i}`} ref={el => streamOuterRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8}>
+          <meshBasicMaterial color={0xff6a00} transparent opacity={0.22} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </mesh>
+      ))}
+      {ROPE_SEGMENT_INDICES.map(i => (
+        <mesh key={`stream-core-${i}`} ref={el => streamCoreRefs.current[i] = el} geometry={SHARED_GEOMETRIES.cylinder8}>
+          <meshBasicMaterial color={0xfff0a8} transparent opacity={0.5} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </mesh>
+      ))}
+      {FLAME_STREAM_POINT_INDICES.map(i => (
+        <mesh
+          key={`stream-puff-${i}`}
+          ref={el => streamPuffRefs.current[i] = el}
+          geometry={SHARED_GEOMETRIES.sphere12}
+        >
+          <meshBasicMaterial color={i < 3 ? 0xfff2b0 : 0xff5a00} transparent opacity={0.28} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </mesh>
+      ))}
+
       {FLAME_SEGMENTS.map((segment, i) => (
         <mesh
           key={`flame-${i}`}

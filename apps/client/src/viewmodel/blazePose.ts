@@ -17,6 +17,9 @@ let rocketHoldBlendAtChange = 0;
 let blazeBombTargetHeld = false;
 let bombTargetHoldChangedAtMs = 0;
 let bombTargetHoldBlendAtChange = 0;
+let blazeFlamethrowerHeld = false;
+let flamethrowerHoldChangedAtMs = 0;
+let flamethrowerHoldBlendAtChange = 0;
 let staffShockwaveRevision = 0;
 let staffShockwaveStartedAtMs = 0;
 
@@ -54,10 +57,28 @@ export function getBlazeBombTargetHeldBlend(timestampMs = Date.now()): number {
   });
 }
 
+export function setBlazeFlamethrowerHeld(held: boolean, timestampMs = Date.now()): void {
+  if (blazeFlamethrowerHeld === held) return;
+
+  flamethrowerHoldBlendAtChange = getBlazeFlamethrowerHeldBlend(timestampMs);
+  blazeFlamethrowerHeld = held;
+  flamethrowerHoldChangedAtMs = timestampMs;
+}
+
+export function getBlazeFlamethrowerHeldBlend(timestampMs = Date.now()): number {
+  return getHeldBlend({
+    held: blazeFlamethrowerHeld,
+    changedAtMs: flamethrowerHoldChangedAtMs,
+    blendAtChange: flamethrowerHoldBlendAtChange,
+    timestampMs,
+  });
+}
+
 export function getBlazeStaffHeldBlend(timestampMs = Date.now()): number {
   return Math.max(
     getBlazeRocketHeldBlend(timestampMs),
-    getBlazeBombTargetHeldBlend(timestampMs)
+    getBlazeBombTargetHeldBlend(timestampMs),
+    getBlazeFlamethrowerHeldBlend(timestampMs)
   );
 }
 
