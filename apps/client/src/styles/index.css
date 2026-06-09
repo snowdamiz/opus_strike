@@ -309,6 +309,9 @@ body,
 .game-active {
   user-select: none;
   -webkit-user-select: none;
+  background:
+    radial-gradient(ellipse at 50% 42%, rgb(var(--color-accent-secondary) / 0.05), transparent 58%),
+    linear-gradient(180deg, rgb(var(--color-strike-page-top)), rgb(var(--color-strike-page-bottom)));
 }
 
 .pointer-locked {
@@ -966,8 +969,33 @@ input[type="color"]::-webkit-color-swatch {
 
 /* ===== HERO PREVIEW CANVAS ===== */
 .hero-preview-shell {
+  --hero-preview-accent: rgb(var(--color-accent-primary));
   contain: layout paint;
   isolation: isolate;
+  background: transparent;
+  transition: background-color 180ms ease-out;
+}
+
+.hero-preview-shell::before {
+  content: '';
+  position: absolute;
+  inset: 8%;
+  border-radius: 999px;
+  background: radial-gradient(ellipse at center, var(--hero-preview-accent) 0%, transparent 68%);
+  opacity: 0;
+  filter: blur(18px);
+  transform: scale(0.86);
+  transition: opacity 180ms ease-out;
+  pointer-events: none;
+}
+
+.hero-preview-shell[data-ready="false"] {
+  background:
+    linear-gradient(180deg, rgb(var(--color-strike-canvas) / 0.42), rgb(var(--color-strike-page-bottom) / 0.58));
+}
+
+.hero-preview-shell[data-ready="false"]::before {
+  opacity: 0.16;
 }
 
 .hero-preview-shell canvas {
@@ -976,6 +1004,33 @@ input[type="color"]::-webkit-color-swatch {
   height: 100% !important;
   background: transparent;
   outline: none;
+}
+
+.hero-preview-loading {
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+
+.hero-preview-shell[data-ready="false"] .hero-preview-loading {
+  opacity: 1;
+}
+
+.hero-preview-loader-ring {
+  width: clamp(1.5rem, 3vw, 2.75rem);
+  height: clamp(1.5rem, 3vw, 2.75rem);
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-top-color: var(--hero-preview-accent);
+  border-radius: 999px;
+  animation: spin-slow 0.85s linear infinite;
+  box-shadow: 0 0 24px rgb(var(--color-strike-bg) / 0.55);
+}
+
+.hero-preview-shell[data-size="card"] .hero-preview-loader-ring,
+.hero-preview-shell[data-size="compact"] .hero-preview-loader-ring {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-width: 1px;
 }
 
 .hero-preview-shell[data-interactive="true"] {

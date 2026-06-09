@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ContactShadows } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -145,6 +145,21 @@ const RUN_SLIDE_LOOP_SEQUENCE: Array<{ mode: HeroPreviewActionMode; duration: nu
 ];
 const RUN_SLIDE_LOOP_DURATION = RUN_SLIDE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
 const SLIDE_PREVIEW_YAW = -Math.PI / 2;
+const PREVIEW_CLEAR_COLOR_VAR = '--color-strike-canvas';
+
+function getCssRgbColor(variableName: string): THREE.Color {
+  const channels = getComputedStyle(document.documentElement)
+    .getPropertyValue(variableName)
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+
+  if (channels.length >= 3 && channels.slice(0, 3).every(Number.isFinite)) {
+    return new THREE.Color(channels[0] / 255, channels[1] / 255, channels[2] / 255);
+  }
+
+  return new THREE.Color(0, 0, 0);
+}
 
 function getLoopMode(
   sequence: Array<{ mode: HeroPreviewActionMode; duration: number }>,
@@ -181,30 +196,82 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
 }: HeroPreviewCanvasProps) {
   const config = PREVIEW_CONFIG[size];
   const resolvedAccentColor = accentColor ?? HERO_COLOR_SCHEMES[heroId].primary;
+  const [isCanvasReady, setIsCanvasReady] = useState(false);
+  const hasCanvasCreatedRef = useRef(false);
+  const readyFramesRef = useRef({ first: 0, second: 0 });
   const shouldIdleRotate = idleRotation ?? interactive;
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
   const rotationInitialYaw = animationMode === 'slide' ? SLIDE_PREVIEW_YAW : initialYaw;
+  const previewShellStyle = {
+    '--hero-preview-accent': resolvedAccentColor,
+  } as CSSProperties;
   const { yaw, isDragging, interactionProps } = useHeroPreviewRotation({
     enabled: interactive,
     initialYaw: rotationInitialYaw,
     resetKey: `${heroId}:${animationMode === 'slide' ? 'slide' : 'default'}`,
   });
 
+  const clearCanvasReadyFrames = useCallback(() => {
+    window.cancelAnimationFrame(readyFramesRef.current.first);
+    window.cancelAnimationFrame(readyFramesRef.current.second);
+    readyFramesRef.current = { first: 0, second: 0 };
+  }, []);
+
+  const scheduleCanvasReady = useCallback(() => {
+    clearCanvasReadyFrames();
+    readyFramesRef.current.first = window.requestAnimationFrame(() => {
+      readyFramesRef.current.second = window.requestAnimationFrame(() => {
+        setIsCanvasReady(true);
+      });
+    });
+  }, [clearCanvasReadyFrames]);
+
+  useEffect(() => {
+    return () => {
+      clearCanvasReadyFrames();
+    };
+  }, [clearCanvasReadyFrames]);
+
+  useEffect(() => {
+    setIsCanvasReady(false);
+
+    if (hasCanvasCreatedRef.current) {
+      scheduleCanvasReady();
+    }
+
+    return clearCanvasReadyFrames;
+  }, [animationMode, clearCanvasReadyFrames, heroId, scheduleCanvasReady, size, team]);
+
+  const handleCanvasCreated = useCallback(({ gl }: { gl: THREE.WebGLRenderer }) => {
+    gl.setClearColor(getCssRgbColor(PREVIEW_CLEAR_COLOR_VAR), 0);
+    hasCanvasCreatedRef.current = true;
+    scheduleCanvasReady();
+  }, [scheduleCanvasReady]);
+
   return (
     <div
       className={`hero-preview-shell relative overflow-hidden ${interactive ? 'select-none' : 'pointer-events-none'} ${className}`}
       data-interactive={interactive ? 'true' : 'false'}
       data-dragging={isDragging ? 'true' : 'false'}
+      data-ready={isCanvasReady ? 'true' : 'false'}
+      data-size={size}
+      style={previewShellStyle}
       aria-label={ariaLabel ?? `${HERO_DEFINITIONS[heroId].name} voxel preview`}
       aria-hidden={interactive ? undefined : true}
+      aria-busy={isCanvasReady ? undefined : true}
       {...interactionProps}
     >
+      <div className="hero-preview-loading pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="hero-preview-loader-ring" />
+        <span className="sr-only">Loading {HERO_DEFINITIONS[heroId].name} preview</span>
+      </div>
       <Canvas
-        className="absolute inset-0"
+        className={`absolute inset-0 transition-opacity duration-300 ease-out ${isCanvasReady ? 'opacity-100' : 'opacity-0'}`}
         camera={{ position: config.cameraPosition, fov: config.fov, near: 0.1, far: 60 }}
         dpr={config.dpr}
         frameloop={interactive || shouldIdleRotate || shouldIdleAnimate || animationMode !== 'idle' ? 'always' : 'demand'}
         gl={{ alpha: true, antialias: true, powerPreference: size === 'compact' ? 'default' : 'high-performance' }}
+        onCreated={handleCanvasCreated}
         shadows={config.shadows}
       >
         <HeroPreviewScene

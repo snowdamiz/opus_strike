@@ -44,6 +44,7 @@ import {
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_RELOAD_MS,
+  PHANTOM_VOID_RAY_COOLDOWN_MS,
   VOID_RAY_CHARGE_TIME,
   UNSTUCK_COOLDOWN_MS,
   findUnstuckTerrainTeleport,
@@ -343,7 +344,7 @@ const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
 };
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: 34, range: 42, cooldownMs: 1200, coneDot: Math.cos(0.12), damageType: 'void_ray' },
+  phantom: { damage: 34, range: 42, cooldownMs: PHANTOM_VOID_RAY_COOLDOWN_MS, coneDot: Math.cos(0.12), damageType: 'void_ray' },
   hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
   blaze: { damage: 34, range: 35, cooldownMs: 2600, coneDot: Math.cos(0.32), radius: 4, damageType: 'bomb' },
 };

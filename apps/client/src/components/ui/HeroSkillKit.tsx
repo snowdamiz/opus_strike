@@ -1,4 +1,4 @@
-import { ABILITY_DEFINITIONS, HERO_DEFINITIONS } from '@voxel-strike/shared';
+import { ABILITY_DEFINITIONS, HERO_DEFINITIONS, PHANTOM_VOID_RAY_COOLDOWN_SECONDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { ABILITY_COLORS } from '../../styles/colorTokens';
 import { AbilityIcon, getAbilityIconType, type AbilityIconType } from './HeroIcons';
@@ -58,7 +58,7 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
       input: 'RMB',
       name: 'Void Ray',
       description: 'Charge, then release a piercing beam at long range.',
-      cooldown: 1.2,
+      cooldown: PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
       iconType: 'voidray',
     },
   ],

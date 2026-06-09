@@ -236,6 +236,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         powerPreference: 'high-performance',
       }}
       onCreated={({ gl }) => {
+        gl.setClearColor(new THREE.Color(mapTheme.skyColor), 1);
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = qualityConfig.render.exposure;
         gl.shadowMap.enabled = qualityConfig.shadows.enabled;
@@ -251,6 +252,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         position: 'absolute',
         inset: 0,
         background: mapTheme.skyColor,
+        display: 'block',
       }}
     >
       <Suspense fallback={null}>

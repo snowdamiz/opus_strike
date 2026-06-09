@@ -168,57 +168,124 @@ function KillFeed({ events }: { events: KillFeedEvent[] }) {
   );
 }
 
-function PhantomAmmoCounter({
+interface ShotCounterTone {
+  labelClass: string;
+  readyClass: string;
+  reloadClass: string;
+  idleBackground: string;
+  reloadBackground: string;
+  idleBorder: string;
+  reloadBorder: string;
+  idleShadow: string;
+  reloadShadow: string;
+  idleFill: string;
+  reloadFill: string;
+  idleProgress: string;
+  reloadProgress: string;
+  idleStroke: string;
+  reloadStroke: string;
+  idleTextShadow: string;
+  reloadTextShadow: string;
+  reloadStrokeFilter: string;
+  progressShadow: string;
+}
+
+const PHANTOM_SHOT_COUNTER_TONE: ShotCounterTone = {
+  labelClass: 'text-violet-100/46',
+  readyClass: 'text-white/92',
+  reloadClass: 'text-violet-100',
+  idleBackground: 'linear-gradient(135deg, rgba(31, 21, 48, 0.28), rgba(5, 5, 8, 0.22))',
+  reloadBackground: 'linear-gradient(135deg, rgba(48, 31, 73, 0.36), rgba(7, 6, 11, 0.28))',
+  idleBorder: '1px solid rgba(255, 255, 255, 0.08)',
+  reloadBorder: '1px solid rgba(168, 85, 247, 0.38)',
+  idleShadow: '0 8px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.06)',
+  reloadShadow: '0 0 18px rgba(168, 85, 247, 0.18), 0 8px 20px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.07)',
+  idleFill: 'linear-gradient(90deg, rgba(168, 85, 247, 0.055), transparent)',
+  reloadFill: 'linear-gradient(90deg, rgba(168, 85, 247, 0.12), rgba(34, 211, 238, 0.07))',
+  idleProgress: 'linear-gradient(90deg, rgba(168, 85, 247, 0.54), rgba(216, 180, 254, 0.5))',
+  reloadProgress: 'linear-gradient(90deg, rgba(34, 211, 238, 0.68), rgba(168, 85, 247, 0.42))',
+  idleStroke: '#a855f7',
+  reloadStroke: '#22d3ee',
+  idleTextShadow: '0 2px 8px rgba(0,0,0,0.7)',
+  reloadTextShadow: '0 0 10px rgba(168, 85, 247, 0.55)',
+  reloadStrokeFilter: 'drop-shadow(0 0 4px rgba(34, 211, 238, 0.72))',
+  progressShadow: '0 0 8px rgba(34, 211, 238, 0.32)',
+};
+
+const HOOKSHOT_SHOT_COUNTER_TONE: ShotCounterTone = {
+  labelClass: 'text-cyan-100/52',
+  readyClass: 'text-cyan-50/95',
+  reloadClass: 'text-cyan-50/95',
+  idleBackground: 'linear-gradient(135deg, rgba(8, 80, 95, 0.3), rgba(4, 16, 20, 0.24))',
+  reloadBackground: 'linear-gradient(135deg, rgba(8, 80, 95, 0.3), rgba(4, 16, 20, 0.24))',
+  idleBorder: '1px solid rgba(34, 211, 238, 0.22)',
+  reloadBorder: '1px solid rgba(34, 211, 238, 0.22)',
+  idleShadow: '0 0 18px rgba(34, 211, 238, 0.12), 0 8px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.06)',
+  reloadShadow: '0 0 18px rgba(34, 211, 238, 0.12), 0 8px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.06)',
+  idleFill: 'linear-gradient(90deg, rgba(34, 211, 238, 0.08), transparent)',
+  reloadFill: 'linear-gradient(90deg, rgba(34, 211, 238, 0.08), transparent)',
+  idleProgress: 'linear-gradient(90deg, rgba(34, 211, 238, 0.64), rgba(103, 232, 249, 0.48))',
+  reloadProgress: 'linear-gradient(90deg, rgba(34, 211, 238, 0.64), rgba(103, 232, 249, 0.48))',
+  idleStroke: '#22d3ee',
+  reloadStroke: '#22d3ee',
+  idleTextShadow: '0 0 10px rgba(34, 211, 238, 0.5), 0 2px 8px rgba(0,0,0,0.7)',
+  reloadTextShadow: '0 0 10px rgba(34, 211, 238, 0.5), 0 2px 8px rgba(0,0,0,0.7)',
+  reloadStrokeFilter: 'drop-shadow(0 0 4px rgba(34, 211, 238, 0.72))',
+  progressShadow: '0 0 8px rgba(34, 211, 238, 0.32)',
+};
+
+function PrimaryShotCounter({
+  label,
   ammo,
   reloading,
   reloadStart,
   reloadEnd,
+  infinite = false,
+  tone,
 }: {
+  label: string;
   ammo: number;
   reloading: boolean;
   reloadStart: number;
   reloadEnd: number;
+  infinite?: boolean;
+  tone: ShotCounterTone;
 }) {
   const now = Date.now();
   const maxAmmo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
   const shownAmmo = Math.max(0, Math.min(maxAmmo, Math.round(ammo)));
   const reloadDuration = Math.max(1, reloadEnd - reloadStart || PHANTOM_PRIMARY_RELOAD_MS);
-  const reloadProgress = reloading
+  const isReloading = !infinite && reloading;
+  const reloadProgress = isReloading
     ? Math.max(0, Math.min(1, (now - reloadStart) / reloadDuration))
     : 1;
   const reloadRemainingSeconds = Math.max(0, (reloadEnd - now) / 1000);
   const ammoRatio = shownAmmo / maxAmmo;
-  const readoutProgress = reloading ? reloadProgress : ammoRatio;
+  const readoutProgress = infinite ? 1 : isReloading ? reloadProgress : ammoRatio;
+  const displayAmmo = infinite ? '∞' : shownAmmo.toString().padStart(2, '0');
+  const displayMax = infinite ? '∞' : maxAmmo;
 
   return (
     <div
       className="relative w-[clamp(7.75rem,10vw,9.5rem)] rounded-md overflow-hidden backdrop-blur-md animate-fade-in"
       style={{
-        background: reloading
-          ? 'linear-gradient(135deg, rgba(48, 31, 73, 0.36), rgba(7, 6, 11, 0.28))'
-          : 'linear-gradient(135deg, rgba(31, 21, 48, 0.28), rgba(5, 5, 8, 0.22))',
-        border: reloading
-          ? '1px solid rgba(168, 85, 247, 0.38)'
-          : '1px solid rgba(255, 255, 255, 0.08)',
-        boxShadow: reloading
-          ? '0 0 18px rgba(168, 85, 247, 0.18), 0 8px 20px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.07)'
-          : '0 8px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.06)',
+        background: isReloading ? tone.reloadBackground : tone.idleBackground,
+        border: isReloading ? tone.reloadBorder : tone.idleBorder,
+        boxShadow: isReloading ? tone.reloadShadow : tone.idleShadow,
       }}
     >
       <div
         className="absolute inset-y-0 left-0 transition-[width] duration-100"
         style={{
-          width: reloading ? `${reloadProgress * 100}%` : '100%',
-          background: reloading
-            ? 'linear-gradient(90deg, rgba(168, 85, 247, 0.12), rgba(34, 211, 238, 0.07))'
-            : 'linear-gradient(90deg, rgba(168, 85, 247, 0.055), transparent)',
+          width: isReloading ? `${reloadProgress * 100}%` : '100%',
+          background: isReloading ? tone.reloadFill : tone.idleFill,
         }}
       />
 
       <div className="relative px-2.5 py-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="font-mono text-[8px] uppercase tracking-[0.18em] text-violet-100/46">dire</span>
-          {reloading && (
+          <span className={`font-mono text-[8px] uppercase tracking-[0.18em] ${tone.labelClass}`}>{label}</span>
+          {isReloading && (
             <span className="font-mono text-[8px] uppercase tracking-[0.12em] text-cyan-100/72 tabular-nums">
               {reloadRemainingSeconds.toFixed(1)}s
             </span>
@@ -228,12 +295,12 @@ function PhantomAmmoCounter({
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <div className="flex items-end gap-1">
             <span
-              className={`font-mono text-[clamp(1.75rem,2.35vw,2.25rem)] font-bold leading-none tabular-nums ${reloading ? 'text-violet-100' : 'text-white/92'}`}
-              style={{ textShadow: reloading ? '0 0 10px rgba(168, 85, 247, 0.55)' : '0 2px 8px rgba(0,0,0,0.7)' }}
+              className={`font-mono text-[clamp(1.75rem,2.35vw,2.25rem)] font-bold leading-none tabular-nums ${isReloading ? tone.reloadClass : tone.readyClass}`}
+              style={{ textShadow: isReloading ? tone.reloadTextShadow : tone.idleTextShadow }}
             >
-              {shownAmmo.toString().padStart(2, '0')}
+              {displayAmmo}
             </span>
-            <span className="mb-0.5 font-mono text-[10px] text-white/36 tabular-nums">/{maxAmmo}</span>
+            <span className="mb-0.5 font-mono text-[10px] text-white/36 tabular-nums">/{displayMax}</span>
           </div>
 
           <div
@@ -250,11 +317,11 @@ function PhantomAmmoCounter({
                 cy="14"
                 r="10.5"
                 fill="none"
-                stroke={reloading ? '#22d3ee' : '#a855f7'}
+                stroke={isReloading ? tone.reloadStroke : tone.idleStroke}
                 strokeWidth="3"
                 strokeDasharray={`${reloadProgress * 66} 66`}
                 strokeLinecap="round"
-                style={{ filter: reloading ? 'drop-shadow(0 0 4px rgba(34, 211, 238, 0.72))' : 'none' }}
+                style={{ filter: isReloading ? tone.reloadStrokeFilter : 'none' }}
               />
             </svg>
           </div>
@@ -265,15 +332,50 @@ function PhantomAmmoCounter({
             className="h-full transition-[width] duration-100"
             style={{
               width: `${readoutProgress * 100}%`,
-              background: reloading
-                ? 'linear-gradient(90deg, rgba(34, 211, 238, 0.68), rgba(168, 85, 247, 0.42))'
-                : 'linear-gradient(90deg, rgba(168, 85, 247, 0.54), rgba(216, 180, 254, 0.5))',
-              boxShadow: reloading ? '0 0 8px rgba(34, 211, 238, 0.32)' : 'none',
+              background: isReloading ? tone.reloadProgress : tone.idleProgress,
+              boxShadow: isReloading || infinite ? tone.progressShadow : 'none',
             }}
           />
         </div>
       </div>
     </div>
+  );
+}
+
+function PhantomAmmoCounter({
+  ammo,
+  reloading,
+  reloadStart,
+  reloadEnd,
+}: {
+  ammo: number;
+  reloading: boolean;
+  reloadStart: number;
+  reloadEnd: number;
+}) {
+  return (
+    <PrimaryShotCounter
+      label="dire"
+      ammo={ammo}
+      reloading={reloading}
+      reloadStart={reloadStart}
+      reloadEnd={reloadEnd}
+      tone={PHANTOM_SHOT_COUNTER_TONE}
+    />
+  );
+}
+
+function HookshotShotCounter() {
+  return (
+    <PrimaryShotCounter
+      label="chain"
+      ammo={PHANTOM_PRIMARY_MAGAZINE_SIZE}
+      reloading={false}
+      reloadStart={0}
+      reloadEnd={0}
+      infinite
+      tone={HOOKSHOT_SHOT_COUNTER_TONE}
+    />
   );
 }
 
@@ -659,6 +761,7 @@ export function HUD() {
             reloadEnd={phantomPrimaryReloadEnd}
           />
         )}
+        {localPlayer.heroId === 'hookshot' && <HookshotShotCounter />}
 
         {/* Movement indicators container */}
         <div className="flex flex-col items-end gap-1.5">
