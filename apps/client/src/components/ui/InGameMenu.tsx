@@ -87,12 +87,6 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
         onClose={handleResume}
         showCloseButton={false}
         bodyClassName="p-4 space-y-2"
-        footerClassName="px-6 py-4 border-t border-white/5 bg-strike-elevated/50 text-center"
-        footer={(
-          <p className="font-body text-xs text-white/30">
-            Press <span className="text-white/50">ESC</span> to resume
-          </p>
-        )}
       >
         <MenuButton onClick={handleResume} primary>
           RESUME
@@ -104,10 +98,6 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
 
         <MenuButton onClick={handleUnstuck} disabled={!canUseUnstuck}>
           {unstuckLabel}
-        </MenuButton>
-
-        <MenuButton onClick={() => {}}>
-          CONTROLS
         </MenuButton>
 
         <div className="pt-2 border-t border-strike-border">

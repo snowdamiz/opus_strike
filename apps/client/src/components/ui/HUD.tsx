@@ -187,61 +187,64 @@ function PhantomAmmoCounter({
     ? Math.max(0, Math.min(1, (now - reloadStart) / reloadDuration))
     : 1;
   const reloadRemainingSeconds = Math.max(0, (reloadEnd - now) / 1000);
-  const status = reloading ? `${reloadRemainingSeconds.toFixed(1)}s` : 'ready';
+  const ammoRatio = shownAmmo / maxAmmo;
+  const readoutProgress = reloading ? reloadProgress : ammoRatio;
 
   return (
     <div
-      className="relative w-[clamp(9rem,12vw,11.75rem)] rounded-md overflow-hidden backdrop-blur-sm animate-fade-in"
+      className="relative w-[clamp(7.75rem,10vw,9.5rem)] rounded-md overflow-hidden backdrop-blur-md animate-fade-in"
       style={{
         background: reloading
-          ? 'linear-gradient(135deg, rgba(54, 36, 83, 0.7), rgba(10, 8, 18, 0.72))'
-          : 'linear-gradient(135deg, rgba(38, 24, 60, 0.64), rgba(8, 7, 13, 0.62))',
+          ? 'linear-gradient(135deg, rgba(48, 31, 73, 0.36), rgba(7, 6, 11, 0.28))'
+          : 'linear-gradient(135deg, rgba(31, 21, 48, 0.28), rgba(5, 5, 8, 0.22))',
         border: reloading
-          ? '1px solid rgba(168, 85, 247, 0.72)'
-          : '1px solid rgba(168, 85, 247, 0.38)',
+          ? '1px solid rgba(168, 85, 247, 0.38)'
+          : '1px solid rgba(255, 255, 255, 0.08)',
         boxShadow: reloading
-          ? '0 0 24px rgba(168, 85, 247, 0.28), inset 0 0 18px rgba(168, 85, 247, 0.1)'
-          : '0 8px 22px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.06)',
+          ? '0 0 18px rgba(168, 85, 247, 0.18), 0 8px 20px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.07)'
+          : '0 8px 20px rgba(0, 0, 0, 0.16), inset 0 1px 0 rgba(255,255,255,0.06)',
       }}
     >
       <div
         className="absolute inset-y-0 left-0 transition-[width] duration-100"
         style={{
-          width: `${reloadProgress * 100}%`,
+          width: reloading ? `${reloadProgress * 100}%` : '100%',
           background: reloading
-            ? 'linear-gradient(90deg, rgba(168, 85, 247, 0.22), rgba(34, 211, 238, 0.12))'
-            : 'linear-gradient(90deg, rgba(168, 85, 247, 0.14), transparent)',
+            ? 'linear-gradient(90deg, rgba(168, 85, 247, 0.12), rgba(34, 211, 238, 0.07))'
+            : 'linear-gradient(90deg, rgba(168, 85, 247, 0.055), transparent)',
         }}
       />
 
-      <div className="relative px-3 py-2">
+      <div className="relative px-2.5 py-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="font-mono text-[9px] uppercase text-violet-200/80">dire</span>
-          <span className={`font-mono text-[9px] uppercase ${reloading ? 'text-cyan-200' : 'text-white/45'}`}>
-            {status}
-          </span>
+          <span className="font-mono text-[8px] uppercase tracking-[0.18em] text-violet-100/46">dire</span>
+          {reloading && (
+            <span className="font-mono text-[8px] uppercase tracking-[0.12em] text-cyan-100/72 tabular-nums">
+              {reloadRemainingSeconds.toFixed(1)}s
+            </span>
+          )}
         </div>
 
-        <div className="mt-0.5 flex items-end justify-between gap-3">
-          <div className="flex items-baseline gap-1">
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          <div className="flex items-end gap-1">
             <span
-              className={`font-mono text-[clamp(2rem,3vw,2.7rem)] font-bold leading-none tabular-nums ${reloading ? 'text-violet-100' : 'text-white'}`}
-              style={{ textShadow: reloading ? '0 0 14px rgba(168, 85, 247, 0.75)' : '0 2px 10px rgba(0,0,0,0.9)' }}
+              className={`font-mono text-[clamp(1.75rem,2.35vw,2.25rem)] font-bold leading-none tabular-nums ${reloading ? 'text-violet-100' : 'text-white/92'}`}
+              style={{ textShadow: reloading ? '0 0 10px rgba(168, 85, 247, 0.55)' : '0 2px 8px rgba(0,0,0,0.7)' }}
             >
               {shownAmmo.toString().padStart(2, '0')}
             </span>
-            <span className="font-mono text-[11px] text-white/42 tabular-nums">/{maxAmmo}</span>
+            <span className="mb-0.5 font-mono text-[10px] text-white/36 tabular-nums">/{maxAmmo}</span>
           </div>
 
           <div
-            className="h-9 w-9 rounded-md border flex items-center justify-center"
+            className="h-7 w-7 rounded-[5px] flex items-center justify-center"
             style={{
-              borderColor: reloading ? 'rgba(34, 211, 238, 0.62)' : 'rgba(255, 255, 255, 0.14)',
-              background: 'rgba(0, 0, 0, 0.28)',
+              background: 'rgba(255, 255, 255, 0.055)',
+              boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.08)',
             }}
           >
-            <svg width="28" height="28" viewBox="0 0 28 28" className="-rotate-90">
-              <circle cx="14" cy="14" r="10.5" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="3" />
+            <svg width="22" height="22" viewBox="0 0 28 28" className="-rotate-90 opacity-90">
+              <circle cx="14" cy="14" r="10.5" fill="none" stroke="rgba(255,255,255,0.11)" strokeWidth="3" />
               <circle
                 cx="14"
                 cy="14"
@@ -251,31 +254,23 @@ function PhantomAmmoCounter({
                 strokeWidth="3"
                 strokeDasharray={`${reloadProgress * 66} 66`}
                 strokeLinecap="round"
-                style={{ filter: reloading ? 'drop-shadow(0 0 5px rgba(34, 211, 238, 0.9))' : 'none' }}
+                style={{ filter: reloading ? 'drop-shadow(0 0 4px rgba(34, 211, 238, 0.72))' : 'none' }}
               />
             </svg>
           </div>
         </div>
 
-        <div
-          className="mt-2 grid gap-[3px]"
-          style={{ gridTemplateColumns: `repeat(${maxAmmo}, minmax(0, 1fr))` }}
-        >
-          {Array.from({ length: maxAmmo }, (_, index) => {
-            const filled = index < shownAmmo;
-            return (
-              <div
-                key={index}
-                className="h-1.5 rounded-[2px] transition-colors duration-100"
-                style={{
-                  background: filled
-                    ? 'linear-gradient(180deg, #d8b4fe, #7c3aed)'
-                    : 'rgba(255, 255, 255, 0.12)',
-                  boxShadow: filled ? '0 0 8px rgba(168, 85, 247, 0.62)' : 'none',
-                }}
-              />
-            );
-          })}
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+          <div
+            className="h-full transition-[width] duration-100"
+            style={{
+              width: `${readoutProgress * 100}%`,
+              background: reloading
+                ? 'linear-gradient(90deg, rgba(34, 211, 238, 0.68), rgba(168, 85, 247, 0.42))'
+                : 'linear-gradient(90deg, rgba(168, 85, 247, 0.54), rgba(216, 180, 254, 0.5))',
+              boxShadow: reloading ? '0 0 8px rgba(34, 211, 238, 0.32)' : 'none',
+            }}
+          />
         </div>
       </div>
     </div>

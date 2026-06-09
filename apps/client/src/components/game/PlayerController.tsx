@@ -52,10 +52,8 @@ import {
 import {
   CROUCH_MULTIPLIER,
   TICK_RATE,
-  UNSTUCK_VERTICAL_VELOCITY,
-  applyUnstuckHorizontalShove,
   createEmptyInputState,
-  findUnstuckTerrainShove,
+  findUnstuckTerrainTeleport,
   getHeroStats,
   HERO_DEFINITIONS,
   type HeroId,
@@ -528,23 +526,18 @@ export function PlayerController() {
       lastUnstuckRequestIdRef.current = unstuckRequestId;
       pendingUnstuckInputRef.current = true;
       const activeMap = getActiveProceduralMap();
-      const terrainShove = activeMap ? findUnstuckTerrainShove(activeMap, position) : null;
-      if (terrainShove) {
-        const shovedVelocity = applyUnstuckHorizontalShove(
-          { x: velocity.x, y: velocity.y, z: velocity.z },
-          terrainShove.direction
-        );
-        velocity.x = shovedVelocity.x;
-        velocity.z = shovedVelocity.z;
+      const terrainTeleport = activeMap ? findUnstuckTerrainTeleport(activeMap, position) : null;
+      if (terrainTeleport) {
+        position.set(terrainTeleport.position.x, terrainTeleport.position.y, terrainTeleport.position.z);
+        velocity.set(0, 0, 0);
+        movement.refs.isGrounded.current = false;
+        movement.refs.wasGrounded.current = false;
+        movement.refs.canJump.current = false;
+        movement.refs.isSliding.current = false;
+        movement.refs.slideTime.current = 0;
+        movement.refs.smoothedY.current = null;
+        stopSlide();
       }
-      velocity.y = Math.max(velocity.y, UNSTUCK_VERTICAL_VELOCITY);
-      movement.refs.isGrounded.current = false;
-      movement.refs.wasGrounded.current = false;
-      movement.refs.canJump.current = false;
-      movement.refs.isSliding.current = false;
-      movement.refs.slideTime.current = 0;
-      movement.refs.smoothedY.current = null;
-      stopSlide();
     }
 
     const movementMultiplier = shadowStepTargeting ? 0.3 : 1;

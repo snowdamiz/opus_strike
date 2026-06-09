@@ -153,6 +153,7 @@ interface ChronosAegisPose {
   blend: number;
   spread: number;
   shield: number;
+  recoil: number;
 }
 
 interface PhantomReloadPose {
@@ -305,6 +306,7 @@ const CHRONOS_AEGIS_IDLE_POSE: ChronosAegisPose = {
   blend: 0,
   spread: 0,
   shield: 0,
+  recoil: 0,
 };
 const CHRONOS_STILL_MOVEMENT_BOB: ChronosMovementBobOffset = {
   horizontalX: 0,
@@ -2968,6 +2970,7 @@ function writeChronosTriangleForearmPose(
 
   const breath = Math.sin(elapsedSeconds * 1.2 + side * 0.65) * 0.002;
   const spread = aegisPose.spread;
+  const recoil = aegisPose.recoil;
   target.position.x += side * -0.062 + movementBob.horizontalX;
   target.position.y += 0.018 + breath + movementBob.verticalY;
   target.position.z +=
@@ -2983,6 +2986,13 @@ function writeChronosTriangleForearmPose(
   target.rotation.x -= 0.052 * spread;
   target.rotation.y += side * -0.075 * spread;
   target.rotation.z += side * -0.15 * spread;
+
+  target.position.x += side * -0.018 * recoil;
+  target.position.y -= 0.026 * recoil;
+  target.position.z += 0.128 * recoil;
+  target.rotation.x += 0.11 * recoil;
+  target.rotation.y += side * 0.034 * recoil;
+  target.rotation.z += side * 0.08 * recoil;
 }
 
 function writeChronosTriangleHandPose(
@@ -3004,6 +3014,7 @@ function writeChronosTriangleHandPose(
   const innerSide = -side;
   const breath = Math.sin(elapsedSeconds * 1.42 + side * 0.58) * 0.0025;
   const spread = aegisPose.spread;
+  const recoil = aegisPose.recoil;
   targets.arm.position.x += side * -0.074 + movementBob.horizontalX;
   targets.arm.position.y += 0.024 + breath + movementBob.verticalY;
   targets.arm.position.z +=
@@ -3019,6 +3030,12 @@ function writeChronosTriangleHandPose(
   targets.arm.rotation.x -= 0.08 * spread;
   targets.arm.rotation.y += side * -0.16 * spread;
   targets.arm.rotation.z += side * -0.24 * spread;
+  targets.arm.position.x += side * -0.024 * recoil;
+  targets.arm.position.y -= 0.034 * recoil;
+  targets.arm.position.z += 0.168 * recoil;
+  targets.arm.rotation.x += 0.14 * recoil;
+  targets.arm.rotation.y += side * 0.052 * recoil;
+  targets.arm.rotation.z += side * 0.11 * recoil;
 
   targets.wrist.position.z -= 0.004;
   targets.wrist.rotation.x -= 0.012;
@@ -3028,6 +3045,10 @@ function writeChronosTriangleHandPose(
   targets.wrist.position.z -= 0.018 * spread;
   targets.wrist.rotation.x -= 0.034 * spread;
   targets.wrist.rotation.y += side * -0.07 * spread;
+  targets.wrist.position.y -= 0.012 * recoil;
+  targets.wrist.position.z += 0.052 * recoil;
+  targets.wrist.rotation.x += 0.066 * recoil;
+  targets.wrist.rotation.z += side * 0.04 * recoil;
 
   targets.palm.position.x += side * -0.002;
   targets.palm.position.y += 0.002;
@@ -3041,6 +3062,10 @@ function writeChronosTriangleHandPose(
   targets.palm.rotation.x -= 0.04 * spread;
   targets.palm.rotation.y += side * -0.1 * spread;
   targets.palm.rotation.z += side * 0.045 * spread;
+  targets.palm.position.y -= 0.014 * recoil;
+  targets.palm.position.z += 0.064 * recoil;
+  targets.palm.rotation.x += 0.072 * recoil;
+  targets.palm.rotation.y += side * 0.036 * recoil;
 
   targets.thumb.position.set(innerSide * 0.064, -0.026, -0.032);
   targets.thumb.rotation.set(0.035, innerSide * 0.05, innerSide * 0.48);
@@ -3178,16 +3203,17 @@ function composeChronosPrimaryOrbMatrix({
 
   const spread = aegisPose.spread;
   const shield = aegisPose.shield;
+  const recoil = aegisPose.recoil;
   chronosWeaponPositionScratch
     .copy(chronosLeftSocketPosition)
     .add(chronosRightSocketPosition)
     .multiplyScalar(0.5);
-  chronosWeaponPositionScratch.y += CHRONOS_WEAPON_BIND_LIFT_Y + 0.03 * spread;
-  chronosWeaponPositionScratch.z += CHRONOS_WEAPON_BIND_FORWARD_Z - 0.105 * shield;
+  chronosWeaponPositionScratch.y += CHRONOS_WEAPON_BIND_LIFT_Y + 0.03 * spread - 0.034 * recoil;
+  chronosWeaponPositionScratch.z += CHRONOS_WEAPON_BIND_FORWARD_Z - 0.105 * shield + 0.18 * recoil;
   chronosWeaponRotationScratch.set(
-    Math.sin(elapsedSeconds * 0.74) * 0.024,
+    Math.sin(elapsedSeconds * 0.74) * 0.024 + 0.12 * recoil,
     Math.sin(elapsedSeconds * 0.51) * 0.034,
-    Math.sin(elapsedSeconds * 0.88) * 0.026
+    Math.sin(elapsedSeconds * 0.88) * 0.026 - 0.045 * recoil
   );
   composeTransformMatrix(chronosWeaponMatrix, chronosWeaponPositionScratch, chronosWeaponRotationScratch);
 
@@ -3502,6 +3528,7 @@ function ChronosFloatingPyramidWeapon({
     const glowFlicker = 1 + Math.sin(t * 12.5) * 0.055 * orbGlow;
     const spread = aegisPose.spread;
     const shield = aegisPose.shield;
+    const recoil = aegisPose.recoil;
     root.updateMatrixWorld(true);
     leftSocket.getWorldPosition(leftSocketWorldPosition);
     rightSocket.getWorldPosition(rightSocketWorldPosition);
@@ -3511,21 +3538,21 @@ function ChronosFloatingPyramidWeapon({
       .multiplyScalar(0.5);
     weaponLocalPosition.copy(weaponWorldPosition);
     root.worldToLocal(weaponLocalPosition);
-    weaponLocalPosition.y += CHRONOS_WEAPON_BIND_LIFT_Y + 0.03 * spread;
-    weaponLocalPosition.z += CHRONOS_WEAPON_BIND_FORWARD_Z - 0.105 * shield;
+    weaponLocalPosition.y += CHRONOS_WEAPON_BIND_LIFT_Y + 0.03 * spread - 0.034 * recoil;
+    weaponLocalPosition.z += CHRONOS_WEAPON_BIND_FORWARD_Z - 0.105 * shield + 0.18 * recoil;
     weapon.position.copy(weaponLocalPosition);
     weapon.rotation.set(
-      Math.sin(t * 0.74) * 0.024,
+      Math.sin(t * 0.74) * 0.024 + 0.12 * recoil,
       Math.sin(t * 0.51) * 0.034,
-      Math.sin(t * 0.88) * 0.026
+      Math.sin(t * 0.88) * 0.026 - 0.045 * recoil
     );
 
     if (pyramidRef.current) {
-      const pyramidScale = 1 + CHRONOS_AEGIS_PYRAMID_GROWTH * spread + 0.18 * shield;
+      const pyramidScale = 1 + CHRONOS_AEGIS_PYRAMID_GROWTH * spread + 0.18 * shield + 0.08 * recoil;
       primarySpinPhaseRef.current +=
-        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * primaryHeldBlend;
+        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4);
       pyramidRef.current.rotation.set(
-        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02,
+        CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02 + 0.16 * recoil,
         Math.PI / 4 +
           t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread) +
           primarySpinPhaseRef.current,
@@ -3826,6 +3853,7 @@ function ChronosViewmodel({
     aegisPose.active = active || lifelinePose.glow > 0.01 || timebreakPose.glow > 0.01;
     aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow, timebreakPose.glow);
     aegisPose.spread = Math.max(aegisSpread, lifelinePose.spread, timebreakPose.spread);
+    aegisPose.recoil = timebreakPose.recoil;
     aegisPose.shield = THREE.MathUtils.smoothstep(
       aegisPose.aegisBlend,
       CHRONOS_AEGIS_SHIELD_START,

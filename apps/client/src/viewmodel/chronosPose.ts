@@ -16,6 +16,8 @@ const CHRONOS_TIMEBREAK_POSE_ATTACK_SECONDS = CHRONOS_LIFELINE_POSE_ATTACK_SECON
 const CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS = CHRONOS_TIMEBREAK_RELEASE_DELAY_MS / 1000;
 const CHRONOS_TIMEBREAK_POSE_FADE_START_SECONDS = CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS + 0.08;
 const CHRONOS_TIMEBREAK_POSE_FADE_END_SECONDS = CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS + 0.56;
+const CHRONOS_TIMEBREAK_RECOIL_ATTACK_SECONDS = 0.035;
+const CHRONOS_TIMEBREAK_RECOIL_FADE_END_SECONDS = 0.26;
 
 export interface ChronosPrimaryOrbPoseSampleContext {
   camera: THREE.Camera;
@@ -100,10 +102,10 @@ export function getChronosLifelineConduitPose(timestampMs = Date.now()): { glow:
   };
 }
 
-export function getChronosTimebreakPose(timestampMs = Date.now()): { glow: number; spread: number } {
+export function getChronosTimebreakPose(timestampMs = Date.now()): { glow: number; spread: number; recoil: number } {
   const elapsedSeconds = (timestampMs - chronosTimebreakStartedAtMs) / 1000;
   if (elapsedSeconds < 0 || elapsedSeconds > CHRONOS_TIMEBREAK_POSE_FADE_END_SECONDS) {
-    return { glow: 0, spread: 0 };
+    return { glow: 0, spread: 0, recoil: 0 };
   }
 
   const charge = smoothstep(0, CHRONOS_TIMEBREAK_POSE_ATTACK_SECONDS, elapsedSeconds);
@@ -121,10 +123,16 @@ export function getChronosTimebreakPose(timestampMs = Date.now()): { glow: numbe
       CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS + 0.24,
       elapsedSeconds
     );
+  const releaseElapsed = elapsedSeconds - CHRONOS_TIMEBREAK_POSE_RELEASE_SECONDS;
+  const recoil = releaseElapsed < 0 || releaseElapsed > CHRONOS_TIMEBREAK_RECOIL_FADE_END_SECONDS
+    ? 0
+    : smoothstep(0, CHRONOS_TIMEBREAK_RECOIL_ATTACK_SECONDS, releaseElapsed) *
+      (1 - smoothstep(CHRONOS_TIMEBREAK_RECOIL_ATTACK_SECONDS, CHRONOS_TIMEBREAK_RECOIL_FADE_END_SECONDS, releaseElapsed));
 
   return {
     glow: Math.max(charge * fade, releaseFlash * charge),
     spread: charge * fade,
+    recoil: recoil * charge,
   };
 }
 

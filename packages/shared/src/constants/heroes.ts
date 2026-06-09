@@ -261,7 +261,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Timebreak',
     type: 'utility',
     targeting: 'direction',
-    cooldown: 20,
+    cooldown: 6,
     description: 'Send a forward temporal shockwave that knocks enemy heroes away from Chronos.',
   },
   chronos_ascendant_paradox: {

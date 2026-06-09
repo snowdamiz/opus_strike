@@ -134,7 +134,6 @@ export const BLINK_COOLDOWN = 6;
 
 // ESC menu recovery
 export const UNSTUCK_COOLDOWN_MS = 30_000;
-export const UNSTUCK_VERTICAL_VELOCITY = 10.5;
 
 // Player collision
 export const PLAYER_HEIGHT = 1.8;
