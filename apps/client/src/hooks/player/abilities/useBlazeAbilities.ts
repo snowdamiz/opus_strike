@@ -219,17 +219,22 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       serverFuel > 0
     );
     const isHoldingFlamethrower = ctx.inputState.ability1 && serverFuel > 0;
+    const shouldPlayLocalFlamethrowerSound = isHoldingFlamethrower;
 
     flamethrowerFuelRef.current = serverFuel;
     setFlamethrowerFuel(serverFuel);
     setBlazeFlamethrowerHeld(isHoldingFlamethrower || serverActive, timestampMs);
 
+    if (shouldPlayLocalFlamethrowerSound && !flamethrowerActiveRef.current) {
+      flamethrowerActiveRef.current = true;
+      sounds.startFlamethrowerSound();
+    } else if (!shouldPlayLocalFlamethrowerSound && flamethrowerActiveRef.current) {
+      flamethrowerActiveRef.current = false;
+      sounds.stopFlamethrowerSound();
+    }
+
     if (serverActive) {
-      if (!flamethrowerActiveRef.current) {
-        flamethrowerActiveRef.current = true;
-        setFlamethrowerActive(true);
-        sounds.startFlamethrowerSound();
-      }
+      setFlamethrowerActive(true);
 
       const holdBlend = getBlazeFlamethrowerHeldBlend(timestampMs);
       const staffTipPose = sampleBlazeStaffTipPose(ctx, now, holdBlend);
@@ -237,12 +242,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       const { origin, direction } = calculateBlazeFlamethrowerPose(ctx, staffTipOrigin);
       setFlamethrowerVisualPose(origin, direction);
     } else {
-      if (flamethrowerActiveRef.current) {
-        flamethrowerActiveRef.current = false;
-        setFlamethrowerActive(false);
-        setFlamethrowerVisualPose(null, { x: 0, y: 0, z: -1 });
-        sounds.stopFlamethrowerSound();
-      }
+      setFlamethrowerActive(false);
+      setFlamethrowerVisualPose(null, { x: 0, y: 0, z: -1 });
     }
   }, []);
 

@@ -68,6 +68,7 @@ export interface UseHookshotAbilitiesReturn {
   // Methods
   fireChainHook: (ctx: AbilityContext) => void;
   fireDragHook: (ctx: AbilityContext) => void;
+  canGrapple: (ctx: AbilityContext) => boolean;
   executeGrapple: (ctx: AbilityContext) => boolean;
   executeEarthWall: (ctx: AbilityContext) => void;
   executeGrappleTrap: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => void;
@@ -158,6 +159,36 @@ function calculateHookshotLaunch(
       z: aimDelta.z / aimLength,
     },
   };
+}
+
+function resolveHookshotGrapplePoint(ctx: AbilityContext): { x: number; y: number; z: number } | null {
+  const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
+
+  if (!isPhysicsReady()) return null;
+
+  const aimOrigin = {
+    x: ctx.position.x,
+    y: ctx.position.y + EYE_HEIGHT,
+    z: ctx.position.z,
+  };
+
+  let hit = raycastDirection(
+    aimOrigin.x, aimOrigin.y, aimOrigin.z,
+    direction.x, direction.y, direction.z,
+    GRAPPLE_MAX_RANGE
+  );
+
+  if (hit?.hit) {
+    return hit.point;
+  }
+
+  hit = raycastDirection(
+    aimOrigin.x, aimOrigin.y, aimOrigin.z,
+    direction.x, Math.min(direction.y, -0.1), direction.z,
+    GRAPPLE_MAX_RANGE
+  );
+
+  return hit?.hit ? hit.point : null;
 }
 
 export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
@@ -266,40 +297,13 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     });
   }, []);
 
+  const canGrapple = useCallback((ctx: AbilityContext) => {
+    return resolveHookshotGrapplePoint(ctx) !== null;
+  }, []);
+
   // Execute Grapple (E ability)
   const executeGrapple = useCallback((ctx: AbilityContext) => {
-    const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
-
-    if (!isPhysicsReady()) return false;
-
-    // Raycast to find grapple point
-    let grapplePoint = null;
-    const aimOrigin = {
-      x: ctx.position.x,
-      y: ctx.position.y + EYE_HEIGHT,
-      z: ctx.position.z,
-    };
-
-    let hit = raycastDirection(
-      aimOrigin.x, aimOrigin.y, aimOrigin.z,
-      direction.x, direction.y, direction.z,
-      GRAPPLE_MAX_RANGE
-    );
-
-    if (hit?.hit) {
-      grapplePoint = hit.point;
-    } else {
-      // Try slightly downward
-      hit = raycastDirection(
-        aimOrigin.x, aimOrigin.y, aimOrigin.z,
-        direction.x, Math.min(direction.y, -0.1), direction.z,
-        GRAPPLE_MAX_RANGE
-      );
-      if (hit?.hit) {
-        grapplePoint = hit.point;
-      }
-    }
-
+    const grapplePoint = resolveHookshotGrapplePoint(ctx);
     if (!grapplePoint) return false;
 
     // Create grapple line visual
@@ -913,6 +917,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleTrapValidRef,
     fireChainHook,
     fireDragHook,
+    canGrapple,
     executeGrapple,
     executeEarthWall,
     executeGrappleTrap,

@@ -34,6 +34,7 @@ import {
   HOOKSHOT_SPEED,
   PHANTOM_PROJECTILE_SPEED,
 } from '../hooks/player/constants';
+import { shouldSuppressPredictedLocalAbilitySound } from '../hooks/player/useLocalAbilityAudioPrediction';
 import { playSharedSound, type SoundName } from '../hooks/useAudio';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
@@ -1114,7 +1115,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         launchSide: data.launchSide,
         launchYaw: data.launchYaw,
       });
-      playPhantomWorldSound('phantomBasic', startPosition);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_dire_ball')) {
+        playPhantomWorldSound('phantomBasic', startPosition);
+      }
       return true;
     }
 
@@ -1126,10 +1129,12 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       if (isLocalPlayer) {
         store.setVoidRayCharging(true, Date.now());
       }
-      playPhantomWorldSound('phantomVoidRayCharge', startPosition, {
-        durationMs: data.durationMs,
-        signal: controller.signal,
-      });
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_void_ray_charge')) {
+        playPhantomWorldSound('phantomVoidRayCharge', startPosition, {
+          durationMs: data.durationMs,
+          signal: controller.signal,
+        });
+      }
       return true;
     }
 
@@ -1158,7 +1163,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         ownerId: data.playerId,
         ownerTeam,
       });
-      playPhantomWorldSound('phantomVoidRay', startPosition);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_void_ray')) {
+        playPhantomWorldSound('phantomVoidRay', startPosition);
+      }
       return true;
     }
 
@@ -1167,7 +1174,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         if (isLocalPlayer) {
           applyLocalPhantomBlinkConfirmation(data, position, normalizeAimDirection(data));
           triggerTeleportEffect('blink');
-          playPhantomWorldSound('phantomBlink', undefined, { durationMs: 900, volume: 1.1 });
+          if (!shouldSuppressPredictedLocalAbilitySound('phantom_blink')) {
+            playPhantomWorldSound('phantomBlink', undefined, { durationMs: 900, volume: 1.1 });
+          }
         } else {
           playPhantomWorldSound('phantomBlink', startPosition, { durationMs: 900, volume: 1.1 });
         }
@@ -1189,7 +1198,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
     case 'phantom_veil':
       applyConfirmedPhantomActiveAbility(data);
-      playPhantomWorldSound('phantomVeil', position);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_veil')) {
+        playPhantomWorldSound('phantomVeil', position);
+      }
       return true;
 
     default:
@@ -1224,8 +1235,10 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
         launchSide: data.launchSide,
         launchYaw: data.launchYaw,
       });
-      playHookshotShotSound(startPosition);
-      playHookshotWorldSound('hookshotPrimary', startPosition);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_basic_attack')) {
+        playHookshotShotSound(startPosition);
+        playHookshotWorldSound('hookshotPrimary', startPosition);
+      }
       return true;
     }
 
@@ -1244,8 +1257,10 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
         launchSide: data.launchSide,
         launchYaw: data.launchYaw,
       });
-      playHookshotShotSound(startPosition);
-      playHookshotWorldSound('hookshotSecondary', startPosition, { volume: 1.05 });
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_heavy_attack')) {
+        playHookshotShotSound(startPosition);
+        playHookshotWorldSound('hookshotSecondary', startPosition, { volume: 1.05 });
+      }
       return true;
     }
 
@@ -1261,8 +1276,10 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
         launchSide: data.launchSide,
         launchYaw: data.launchYaw,
       });
-      playHookshotShotSound(startPosition);
-      playHookshotWorldSound('hookshotGrapple', startPosition);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_grapple')) {
+        playHookshotShotSound(startPosition);
+        playHookshotWorldSound('hookshotGrapple', startPosition);
+      }
       return true;
     }
 
@@ -1301,8 +1318,10 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       if (isLocalPlayer) {
         store.updateLocalPlayer({ ultimateCharge: 0 });
       }
-      playHookshotShotSound(startPosition);
-      playHookshotWorldSound('hookshotTrap', startPosition, { volume: 1.15 });
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_grapple_trap')) {
+        playHookshotShotSound(startPosition);
+        playHookshotWorldSound('hookshotTrap', startPosition, { volume: 1.15 });
+      }
       return true;
     }
 
@@ -1333,9 +1352,11 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         ownerId: data.playerId,
         ownerTeam,
       });
-      playBlazeWorldSound('blazeRocket', startPosition, {
-        pitch: 0.85 + Math.random() * 0.3,
-      });
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_rocket')) {
+        playBlazeWorldSound('blazeRocket', startPosition, {
+          pitch: 0.85 + Math.random() * 0.3,
+        });
+      }
       return true;
     }
 
@@ -1370,7 +1391,9 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       const effectPosition = startPosition ?? position;
       if (effectPosition) {
         triggerRocketJumpExplosion(effectPosition);
-        playBlazeWorldSound('blazeRocketJump', effectPosition);
+        if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_rocketjump')) {
+          playBlazeWorldSound('blazeRocketJump', effectPosition);
+        }
       }
       if (isLocalPlayer && data.velocity && store.localPlayer) {
         triggerBlazeRocketJumpStaffSlam(now);
@@ -1393,7 +1416,9 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
     case 'blaze_airstrike': {
       if (position) {
         triggerAirStrike(position);
-        playBlazeWorldSound('blazeAirstrike', position);
+        if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_airstrike')) {
+          playBlazeWorldSound('blazeAirstrike', position);
+        }
       }
       if (isLocalPlayer && store.localPlayer) {
         store.updateLocalPlayer({ ultimateCharge: 0 });
@@ -1466,7 +1491,9 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         ownerId: data.playerId,
         ownerTeam,
       });
-      playChronosWorldSound('chronosPulse', startPosition);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('chronos_verdant_pulse')) {
+        playChronosWorldSound('chronosPulse', startPosition);
+      }
       return true;
     }
 
@@ -1474,7 +1501,9 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       if (isLocalPlayer) {
         triggerChronosLifelineConduitPose(data.serverTime ?? now);
       }
-      playChronosWorldSound('chronosAegis', startPosition, { volume: 0.65 });
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit')) {
+        playChronosWorldSound('chronosAegis', startPosition, { volume: 0.65 });
+      }
       return true;
     }
 
@@ -1485,11 +1514,14 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
       const releaseTime = data.releaseAt ?? now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
       const releaseDelay = Math.max(0, releaseTime - now);
-      playChronosWorldSound('chronosTimebreak', startPosition, {
-        durationMs: Math.max(180, releaseDelay),
-        fadeOutMs: Math.min(140, releaseDelay),
-        volume: 0.72,
-      });
+      const suppressLocalTimebreakSound = isLocalPlayer && shouldSuppressPredictedLocalAbilitySound('chronos_timebreak');
+      if (!suppressLocalTimebreakSound) {
+        playChronosWorldSound('chronosTimebreak', startPosition, {
+          durationMs: Math.max(180, releaseDelay),
+          fadeOutMs: Math.min(140, releaseDelay),
+          volume: 0.72,
+        });
+      }
 
       window.setTimeout(() => {
         const freshStore = useGameStore.getState();
@@ -1516,7 +1548,9 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           duration: data.duration,
           radius: data.radius,
         });
-        playChronosWorldSound('chronosTimebreak', effectPosition, { volume: 1.05 });
+        if (!suppressLocalTimebreakSound) {
+          playChronosWorldSound('chronosTimebreak', effectPosition, { volume: 1.05 });
+        }
       }, releaseDelay);
       return true;
     }

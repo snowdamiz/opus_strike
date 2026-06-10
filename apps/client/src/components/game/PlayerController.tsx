@@ -47,8 +47,10 @@ import {
   PLAYER_CROUCH_HEIGHT,
   EYE_HEIGHT,
 } from '../../hooks/player';
+import { useLocalAbilityAudioPrediction } from '../../hooks/player/useLocalAbilityAudioPrediction';
 import {
   ABILITY_DEFINITIONS,
+  CHRONOS_LIFELINE_RADIUS,
   CROUCH_MULTIPLIER,
   TICK_RATE,
   createEmptyInputState,
@@ -114,6 +116,10 @@ export function PlayerController() {
   const blazeAbilities = useBlazeAbilities();
   const hookshotAbilities = useHookshotAbilities();
   const chronosAbilities = useChronosAbilities();
+  const {
+    resetPredictedAbilitySounds,
+    updatePredictedAbilitySounds,
+  } = useLocalAbilityAudioPrediction();
   const blazeFlamethrowerActiveRef = blazeAbilities.flamethrowerActiveRef;
 
   // Initialize refs
@@ -128,6 +134,28 @@ export function PlayerController() {
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
+
+  const hasChronosLifelineTarget = useCallback(() => {
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
+    if (!localPlayer) return false;
+
+    const origin = visualStore.getState().playerPositions.get(localPlayer.id) ?? localPlayer.position;
+    const radiusSq = CHRONOS_LIFELINE_RADIUS * CHRONOS_LIFELINE_RADIUS;
+
+    for (const candidate of store.players.values()) {
+      if (candidate.id === localPlayer.id) continue;
+      if (candidate.state !== 'alive') continue;
+      if (candidate.team !== localPlayer.team) continue;
+
+      const dx = candidate.position.x - origin.x;
+      const dy = candidate.position.y - origin.y;
+      const dz = candidate.position.z - origin.z;
+      if (dx * dx + dy * dy + dz * dz <= radiusSq) return true;
+    }
+
+    return false;
+  }, []);
 
   // Hero stats cache
   const cachedHeroStatsRef = useRef<{ heroId: string | null; stats: ReturnType<typeof getHeroStats> | null }>({
@@ -290,6 +318,7 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
+      resetPredictedAbilitySounds();
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
       return;
@@ -303,6 +332,7 @@ export function PlayerController() {
       abilitySystem.abilityActiveRef.current = {};
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
+      resetPredictedAbilitySounds();
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setChronosAegisVisualState(localPlayer.id, false, now);
       setShadowStepTargeting(false, false);
@@ -346,6 +376,7 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      resetPredictedAbilitySounds();
       blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
@@ -363,6 +394,7 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      resetPredictedAbilitySounds();
       blazeAbilities.resetRocketJump();
       const position = positionRef.current;
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
@@ -630,6 +662,20 @@ export function PlayerController() {
       now
     );
     if (heroDef) {
+      updatePredictedAbilitySounds({
+        now,
+        heroId,
+        inputState: frameInput,
+        shadowStepTargeting,
+        bombTargeting,
+        grappleTrapTargeting,
+        phantomPrimaryAmmo: phantomAbilities.phantomPrimaryAmmoRef.current,
+        phantomPrimaryReloading,
+        canUseAbility: abilitySystem.canUseAbility,
+        canUseHookshotGrapple: () => hookshotAbilities.canGrapple(abilityCtx),
+        hasChronosLifelineTarget,
+      });
+
       // Handle ability input
       if (heroId !== 'blaze') {
         if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
