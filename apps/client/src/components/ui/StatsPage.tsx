@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useGameStore, type UserStats } from '../../store/gameStore';
 import { config } from '../../config/environment';
+import { getLevelProgress } from '@voxel-strike/shared';
 
 interface PlayerRecords {
   bestScore: number;
@@ -159,11 +160,11 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
           </div>
 
           <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
+            <InlineStat label="Level" value={formatNumber(getLevelProgress(player.stats.totalExperience).level)} />
             <InlineStat label="Score" value={formatNumber(player.stats.totalScore)} />
             <InlineStat label="Win Rate" value={formatPercent(player.stats.totalWins, player.stats.totalGames)} />
             <InlineStat label="Games" value={formatNumber(player.stats.totalGames)} />
             <InlineStat label="K/D" value={formatRatio(player.stats.totalKills, player.stats.totalDeaths)} />
-            <InlineStat label="Kills" value={formatNumber(player.stats.totalKills)} />
             <InlineStat label="Captures" value={formatNumber(player.stats.totalCaptures)} />
           </div>
         </div>

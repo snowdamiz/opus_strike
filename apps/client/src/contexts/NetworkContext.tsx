@@ -3,7 +3,7 @@ import { Client, Room } from 'colyseus.js';
 import { useGameStore, LobbyPlayer, LobbyInfo, MapVoteOption, MapVoteRecord } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
-import type { BotDifficulty, HeroId, Team, PlayerInput, MovementCommandPacket } from '@voxel-strike/shared';
+import type { BotDifficulty, GameEndEvent, HeroId, Team, PlayerInput, MovementCommandPacket } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
 
@@ -65,6 +65,7 @@ interface NetworkContextType {
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
+  devEndGame: () => void;
   setDevFly: (enabled: boolean) => void;
   setDevImmune: (enabled: boolean) => void;
   setDevTimeFrozen: (enabled: boolean) => void;
@@ -143,9 +144,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     removeLobbyPlayer,
     setIsLobbyHost,
     setMatchmakingStatus,
+    setMatchSummary,
     setMapVoteState,
     setMapVotes,
     clearMapVote,
+    clearMatchSummary,
     reset,
     resetLobby,
   } = useGameStore();
@@ -673,6 +676,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPhaseEndTime(data.endTime);
     });
 
+    room.onMessage('gameEnd', (data: GameEndEvent) => {
+      loggers.network.info('game ended', data.finalScore);
+      setMatchSummary(data);
+      setGamePhase('game_end' as any);
+      setPhaseEndTime(null);
+    });
+
     setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
     setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
     setupSelfMovementAuthorityHandler(room, { setLocalPlayer });
@@ -748,7 +758,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby, rejectPendingVoiceTokenRequests]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby, rejectPendingVoiceTokenRequests, setMatchSummary]);
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => {
     if (isJoiningGameRef.current) {
@@ -771,6 +781,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
 
       useGameStore.getState().setPlayers(new Map());
+      clearMatchSummary();
       setGamePhase('waiting');
       setPhaseEndTime(null);
 
@@ -799,7 +810,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       isJoiningGameRef.current = false;
       throw error;
     }
-  }, [getClient, setupGameListeners, setLoading, setRoomId, setAppPhase]);
+  }, [getClient, setupGameListeners, setLoading, setRoomId, setAppPhase, clearMatchSummary, setGamePhase, setPhaseEndTime]);
 
   const leaveGame = useCallback(() => {
     disconnectVoice('leave_game');
@@ -812,9 +823,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setRoomId(null);
     setConnected(false);
     resetLobby();
+    clearMatchSummary();
     setGamePhase('waiting' as any);
     setAppPhase('browsing_lobbies');
-  }, [setRoomId, setConnected, resetLobby, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests]);
+  }, [setRoomId, setConnected, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests]);
 
   const disconnect = useCallback(() => {
     disconnectVoice('network_disconnect');
@@ -889,6 +901,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     if (!config.isDev) return;
     loggers.network.debug('sending development ultimate fill');
     gameRoomRef.current?.send('devFillUltimate', {});
+  }, []);
+
+  const devEndGame = useCallback(() => {
+    if (!config.isDev) return;
+    loggers.network.debug('sending development game end');
+    gameRoomRef.current?.send('devEndGame', {});
   }, []);
 
   const setDevFly = useCallback((enabled: boolean) => {
@@ -980,6 +998,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       selectHero,
       devSetHero,
       devFillUltimate,
+      devEndGame,
       setDevFly,
       setDevImmune,
       setDevTimeFrozen,

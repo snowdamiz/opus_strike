@@ -1,7 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
-import type { Team } from '@voxel-strike/shared';
-
-export type MatchOutcome = 'win' | 'loss' | 'draw';
+import { calculateMatchExperience } from '@voxel-strike/shared';
+import type { MatchOutcome, Team } from '@voxel-strike/shared';
 
 export interface MatchParticipantStats {
   kills: number;
@@ -51,6 +50,7 @@ export const PLAYER_SCORE_VALUES = {
 interface PersistableParticipant extends MatchParticipantSnapshot {
   outcome: MatchOutcome;
   score: number;
+  experienceGained: number;
 }
 
 export function calculateParticipantScore(stats: MatchParticipantStats): number {
@@ -65,6 +65,13 @@ export function getMatchOutcome(team: Team, winningTeam: Team | null): MatchOutc
   return team === winningTeam ? 'win' : 'loss';
 }
 
+export function calculateParticipantExperience(
+  stats: MatchParticipantStats,
+  outcome: MatchOutcome
+): number {
+  return calculateMatchExperience(stats, outcome);
+}
+
 export function normalizeMatchParticipants(
   participants: MatchParticipantSnapshot[],
   winningTeam: Team | null
@@ -75,12 +82,14 @@ export function normalizeMatchParticipants(
     const existing = byUserId.get(participant.userId);
     const score = calculateParticipantScore(participant);
     const outcome = getMatchOutcome(participant.team, winningTeam);
+    const experienceGained = calculateParticipantExperience(participant, outcome);
 
     if (!existing) {
       byUserId.set(participant.userId, {
         ...participant,
         outcome,
         score,
+        experienceGained,
       });
       continue;
     }
@@ -95,6 +104,7 @@ export function normalizeMatchParticipants(
     existing.flagCaptures += participant.flagCaptures;
     existing.flagReturns += participant.flagReturns;
     existing.score += score;
+    existing.experienceGained += experienceGained;
     existing.outcome = outcome;
     if (participant.joinedAt < existing.joinedAt) {
       existing.joinedAt = participant.joinedAt;
@@ -117,6 +127,7 @@ function getUserAggregateIncrement(participant: PersistableParticipant): Prisma.
     totalCaptures: { increment: participant.flagCaptures },
     totalFlagReturns: { increment: participant.flagReturns },
     totalScore: { increment: participant.score },
+    totalExperience: { increment: participant.experienceGained },
   };
 }
 
@@ -186,6 +197,7 @@ export async function persistCompletedMatch(
             flagCaptures: participant.flagCaptures,
             flagReturns: participant.flagReturns,
             score: participant.score,
+            experienceGained: participant.experienceGained,
             outcome: participant.outcome,
             joinedAt: participant.joinedAt,
             leftAt: participant.leftAt,

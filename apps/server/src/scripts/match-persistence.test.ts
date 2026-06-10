@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   PLAYER_SCORE_VALUES,
+  calculateParticipantExperience,
   calculateParticipantScore,
   getMatchOutcome,
   normalizeMatchParticipants,
@@ -36,6 +37,7 @@ assert.equal(
 assert.equal(getMatchOutcome('red', 'red'), 'win');
 assert.equal(getMatchOutcome('blue', 'red'), 'loss');
 assert.equal(getMatchOutcome('blue', null), 'draw');
+assert.equal(calculateParticipantExperience(baseParticipant, 'win'), 665);
 
 const normalized = normalizeMatchParticipants([
   baseParticipant,
@@ -80,6 +82,17 @@ assert.equal(red.assists, 4);
 assert.equal(red.flagCaptures, 1);
 assert.equal(red.flagReturns, 2);
 assert.equal(red.outcome, 'win');
+assert.equal(
+  red.experienceGained,
+  calculateParticipantExperience(baseParticipant, 'win')
+    + calculateParticipantExperience({
+      kills: 1,
+      deaths: 0,
+      assists: 1,
+      flagCaptures: 0,
+      flagReturns: 0,
+    }, 'win')
+);
 assert.equal(red.joinedAt, joinedAt);
 assert.equal(red.leftAt?.toISOString(), '2026-06-10T10:08:00.000Z');
 

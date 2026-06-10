@@ -9,6 +9,8 @@ export type GamePhase =
   | 'round_end'     // Round ended, showing scores
   | 'game_end';     // Game over
 
+export type MatchOutcome = 'win' | 'loss' | 'draw';
+
 export interface Flag {
   team: Team;
   position: Vec3;
@@ -87,4 +89,3 @@ export interface PlayerMatchStats {
   damageDealt: number;
   healingDone: number;
 }
-

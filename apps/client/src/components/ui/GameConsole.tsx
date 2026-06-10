@@ -233,7 +233,7 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /fly | /immune | /hero <hero> | /bot add <hero> <red|blue> | /bots root | /bots release | /f | /time freeze'
+        ? 'Developer Console - /fly | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bots root | /bots release | /f | /time freeze'
         : 'Developer commands are disabled in this build',
       type: 'info',
     },
@@ -249,6 +249,7 @@ export function GameConsole() {
     killNpc: networkKillNpcFn,
     devSetHero,
     devFillUltimate,
+    devEndGame,
     setDevFly,
     setDevImmune,
     setDevTimeFrozen,
@@ -402,6 +403,18 @@ export function GameConsole() {
         break;
       }
 
+      case '/end': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        devEndGame();
+        addMessage('Ending match...', 'info');
+        setTimeout(() => setIsOpen(false), 100);
+        break;
+      }
+
       case '/time': {
         if (!config.isDev) {
           addMessage('Developer commands are disabled outside development builds.', 'error');
@@ -464,9 +477,9 @@ export function GameConsole() {
       }
 
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /bot add <hero> <red|blue>, /bots root, /bots release, /f, /time freeze`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bots root, /bots release, /f, /time freeze`, 'error');
     }
-  }, [addGameBot, addMessage, devFillUltimate, devSetHero, setDevBotsRooted, setDevFly, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotsRooted, setDevFly, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -536,7 +549,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, /bot add <hero> <side>, /bots root, /f, or /time freeze...' : 'Developer commands disabled'}
+            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, /end, /bot add <hero> <side>, /bots root, /f, or /time freeze...' : 'Developer commands disabled'}
             autoComplete="off"
             spellCheck={false}
           />

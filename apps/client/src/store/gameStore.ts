@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameStateSync } from '@voxel-strike/shared';
+import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type GameStateSync } from '@voxel-strike/shared';
 import { removePlayerVisualState, setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
 
 // Import types
@@ -85,6 +85,8 @@ interface CoreState {
 
   // Game state
   gamePhase: GamePhase;
+  matchSummary: GameEndEvent | null;
+  appliedExperienceMatchId: string | null;
   tick: number;
   serverTime: number;
   mapSeed: number;
@@ -140,6 +142,8 @@ interface CoreActions {
   setAppPhase: (phase: AppPhase) => void;
   setMatchmakingStatus: (status: MatchmakingStatus) => void;
   setGamePhase: (phase: GamePhase) => void;
+  setMatchSummary: (summary: GameEndEvent | null) => void;
+  clearMatchSummary: () => void;
   setPhaseEndTime: (time: number | null) => void;
   setMapSeed: (seed: number) => void;
   updateGameState: (state: GameStateSync) => void;
@@ -218,6 +222,8 @@ const coreInitialState: CoreState = {
     skillSearchDistance: null,
   },
   gamePhase: 'waiting',
+  matchSummary: null,
+  appliedExperienceMatchId: null,
   tick: 0,
   serverTime: 0,
   mapSeed: createRandomSeed(),
@@ -276,6 +282,49 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
   setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
   setGamePhase: (phase) => set((state) => state.gamePhase === phase ? state : { gamePhase: phase }),
+  setMatchSummary: (summary) => set((state) => {
+    if (!summary) {
+      return state.matchSummary === null ? state : { matchSummary: null };
+    }
+
+    const summaryKey = summary.matchId ?? `${summary.endedAt}`;
+    const localSummary = state.playerId
+      ? summary.players.find((player) => player.playerId === state.playerId)
+      : null;
+    const shouldApplyStats = Boolean(
+      localSummary
+      && state.userStats
+      && state.appliedExperienceMatchId !== summaryKey
+    );
+
+    if (!shouldApplyStats || !localSummary || !state.userStats) {
+      return {
+        matchSummary: summary,
+        gamePhase: 'game_end',
+      };
+    }
+
+    return {
+      matchSummary: summary,
+      appliedExperienceMatchId: summaryKey,
+      gamePhase: 'game_end',
+      userStats: {
+        ...state.userStats,
+        totalGames: state.userStats.totalGames + 1,
+        totalWins: state.userStats.totalWins + (localSummary.outcome === 'win' ? 1 : 0),
+        totalLosses: state.userStats.totalLosses + (localSummary.outcome === 'loss' ? 1 : 0),
+        totalDraws: state.userStats.totalDraws + (localSummary.outcome === 'draw' ? 1 : 0),
+        totalKills: state.userStats.totalKills + localSummary.stats.kills,
+        totalDeaths: state.userStats.totalDeaths + localSummary.stats.deaths,
+        totalAssists: state.userStats.totalAssists + localSummary.stats.assists,
+        totalCaptures: state.userStats.totalCaptures + localSummary.stats.flagCaptures,
+        totalFlagReturns: state.userStats.totalFlagReturns + localSummary.stats.flagReturns,
+        totalScore: state.userStats.totalScore + localSummary.score,
+        totalExperience: state.userStats.totalExperience + localSummary.experienceGained,
+      },
+    };
+  }),
+  clearMatchSummary: () => set((state) => state.matchSummary === null ? state : { matchSummary: null }),
   setPhaseEndTime: (time) => set((state) => state.phaseEndTime === time ? state : { phaseEndTime: time }),
   setMapSeed: (seed) => set((state) => {
     const mapSeed = seed >>> 0;

@@ -36,6 +36,7 @@ model User {
   totalCaptures    Int      @default(0)
   totalFlagReturns Int      @default(0)
   totalScore       Int      @default(0)
+  totalExperience  Int      @default(0)
 
   @@index([walletAddress])
 }
@@ -92,6 +93,7 @@ model GameMatchParticipant {
   flagCaptures    Int       @default(0)
   flagReturns     Int       @default(0)
   score           Int       @default(0)
+  experienceGained Int      @default(0)
   outcome         String
   joinedAt        DateTime
   leftAt          DateTime?

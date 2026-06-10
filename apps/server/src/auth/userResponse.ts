@@ -32,6 +32,7 @@ export function serializeUser(user: UserWithAccounts): UserResponse {
       totalCaptures: user.totalCaptures,
       totalFlagReturns: user.totalFlagReturns,
       totalScore: user.totalScore,
+      totalExperience: user.totalExperience,
     },
     linkedAccounts: (user.authAccounts ?? []).map(serializeLinkedAccount),
   };

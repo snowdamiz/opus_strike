@@ -22,11 +22,13 @@ const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((modul
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
 const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
+const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen').then((module) => ({ default: module.MatchSummaryScreen })));
 const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 
 export function App() {
   const appPhase = useGameStore((state) => state.appPhase);
   const gamePhase = useGameStore((state) => state.gamePhase);
+  const matchSummary = useGameStore((state) => state.matchSummary);
   const isLoading = useGameStore((state) => state.isLoading);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
@@ -40,7 +42,7 @@ export function App() {
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
   const { preloadSoundGroup, preloadHeroSounds } = useAudio();
   const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
-  const shouldLoadMatchWorld = appPhase === 'in_game' && !isPreGame;
+  const shouldLoadMatchWorld = appPhase === 'in_game' && !isPreGame && !matchSummary;
 
   useEffect(() => {
     installLocalCombatStressScenario();
@@ -253,6 +255,14 @@ export function App() {
 
   // In game
   if (appPhase === 'in_game') {
+    if (matchSummary) {
+      return (
+        <Suspense fallback={null}>
+          <MatchSummaryScreen />
+        </Suspense>
+      );
+    }
+
     // Determine what phase we're in
     const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
 

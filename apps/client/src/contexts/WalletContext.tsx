@@ -59,6 +59,7 @@ export interface UserData {
     totalCaptures: number;
     totalFlagReturns: number;
     totalScore: number;
+    totalExperience: number;
   };
   linkedAccounts: LinkedAccountSummary[];
 }

@@ -85,6 +85,9 @@ import type {
   MovementCommandPacket,
   MovementCorrectionReason,
   MovementTelemetrySnapshot,
+  GameEndEvent,
+  MatchOutcome,
+  MatchSummaryPlayer,
   SelfMovementAuthority,
   MatchSnapshotMessage,
   PlayerTransformsMessage,
@@ -119,6 +122,9 @@ import {
 } from '../matchmaking/skill';
 import { voiceService } from '../voice/VoiceService';
 import {
+  calculateParticipantExperience,
+  calculateParticipantScore,
+  getMatchOutcome,
   persistCompletedMatch,
   type MatchParticipantSnapshot,
 } from '../persistence/matchPersistence';
@@ -862,6 +868,14 @@ export class GameRoom extends Room<GameState> {
         this.handleDevFillUltimate(client);
       });
 
+      this.onMessage('devEndGame', (client) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'devEndGame', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'devEndGame');
+          return;
+        }
+        this.handleDevEndGame(client);
+      });
+
       this.onMessage('setDevTimeFrozen', (client, data: unknown) => {
         if (!this.rateLimiter.consume(client.sessionId, 'setDevTimeFrozen', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
           this.recordRateLimitDrop(client.sessionId, 'setDevTimeFrozen');
@@ -1485,6 +1499,71 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private buildPlayerMatchStats(player: Player): MatchSummaryPlayer['stats'] {
+    return {
+      kills: player.kills,
+      deaths: player.deaths,
+      assists: player.assists,
+      flagCaptures: player.flagCaptures,
+      flagReturns: player.flagReturns,
+    };
+  }
+
+  private buildMatchSummaryPlayers(winningTeam: Team | null): MatchSummaryPlayer[] {
+    const players: MatchSummaryPlayer[] = [];
+
+    this.state.players.forEach((player, playerId) => {
+      if (this.spawnedNpcs.has(playerId)) return;
+
+      const team = isTeam(player.team) ? player.team : 'red';
+      const heroId = isHeroId(player.heroId) ? player.heroId : null;
+      const outcome: MatchOutcome = getMatchOutcome(team, winningTeam);
+      const stats = this.buildPlayerMatchStats(player);
+      const score = calculateParticipantScore(stats);
+      const isExperienceEligible = !player.isBot;
+
+      players.push({
+        playerId,
+        userId: this.getDurableUserId(playerId),
+        playerName: player.name,
+        team,
+        heroId,
+        isBot: player.isBot,
+        outcome,
+        stats,
+        score,
+        experienceGained: isExperienceEligible
+          ? calculateParticipantExperience(stats, outcome)
+          : 0,
+      });
+    });
+
+    return players.sort((a, b) => {
+      if (a.team !== b.team) return a.team === 'red' ? -1 : 1;
+      return b.score - a.score || b.stats.kills - a.stats.kills || a.playerName.localeCompare(b.playerName);
+    });
+  }
+
+  private buildGameEndEvent(
+    finalScore: { red: number; blue: number },
+    winningTeam: Team | null,
+    endedAt: number,
+    forcedByPlayerId?: string
+  ): GameEndEvent {
+    const startedAt = this.matchPersistenceLedger?.startedAt.getTime()
+      ?? (this.state.roundStartTime || endedAt);
+
+    return {
+      winningTeam,
+      finalScore,
+      matchId: this.matchPersistenceLedger?.matchId ?? null,
+      endedAt,
+      durationMs: Math.max(0, endedAt - startedAt),
+      forcedByPlayerId,
+      players: this.buildMatchSummaryPlayers(winningTeam),
+    };
+  }
+
   private broadcastWithMetrics(type: string, payload: unknown): void {
     this.metrics?.recordNetworkMessage(type, payload);
     this.broadcast(type, payload);
@@ -1857,6 +1936,11 @@ export class GameRoom extends Room<GameState> {
     participant.displayName = player.name;
     participant.team = player.team;
     participant.heroId = isHeroId(player.heroId) ? player.heroId : null;
+    participant.kills = Math.max(participant.kills, player.kills);
+    participant.deaths = Math.max(participant.deaths, player.deaths);
+    participant.assists = Math.max(participant.assists, player.assists);
+    participant.flagCaptures = Math.max(participant.flagCaptures, player.flagCaptures);
+    participant.flagReturns = Math.max(participant.flagReturns, player.flagReturns);
     return participant;
   }
 
@@ -5681,6 +5765,21 @@ export class GameRoom extends Room<GameState> {
     player.ultimateCharge = 100;
   }
 
+  private handleDevEndGame(client: Client): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player) {
+      client.send('devCommandError', { message: 'No active player to end the match' });
+      return;
+    }
+
+    this.endGame(client.sessionId);
+  }
+
   private handleSetDevTimeFrozen(client: Client, enabled: boolean): void {
     if (!this.isDevelopmentMode()) {
       client.send('devCommandError', { message: 'Developer commands are disabled' });
@@ -6361,10 +6460,12 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private endGame() {
+  private endGame(forcedByPlayerId?: string) {
     if (this.state.phase === 'game_end') return;
 
     this.state.phase = 'game_end';
+    this.state.phaseEndTime = 0;
+    this.state.roundTimeRemaining = 0;
 
     const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' :
                         this.state.blueTeam.score > this.state.redTeam.score ? 'blue' : null;
@@ -6372,11 +6473,10 @@ export class GameRoom extends Room<GameState> {
       red: this.state.redTeam.score,
       blue: this.state.blueTeam.score,
     };
+    const endedAt = Date.now();
 
-    this.broadcast('gameEnd', {
-      winningTeam,
-      finalScore,
-    });
+    this.broadcast('gameEnd', this.buildGameEndEvent(finalScore, winningTeam, endedAt, forcedByPlayerId));
+    this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
     this.persistMatchLedger(finalScore, winningTeam);
 

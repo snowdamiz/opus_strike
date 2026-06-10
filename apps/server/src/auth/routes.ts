@@ -63,6 +63,7 @@ interface LeaderboardUserSummary {
   totalCaptures: number;
   totalFlagReturns: number;
   totalScore: number;
+  totalExperience: number;
 }
 
 const leaderboardUserSelect = {
@@ -79,6 +80,7 @@ const leaderboardUserSelect = {
   totalCaptures: true,
   totalFlagReturns: true,
   totalScore: true,
+  totalExperience: true,
 } satisfies Prisma.UserSelect;
 
 const leaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
@@ -230,6 +232,7 @@ function serializeLeaderboardStats(user: LeaderboardUserSummary) {
     totalCaptures: user.totalCaptures,
     totalFlagReturns: user.totalFlagReturns,
     totalScore: user.totalScore,
+    totalExperience: user.totalExperience,
   };
 }
 

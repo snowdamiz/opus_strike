@@ -69,6 +69,7 @@ export interface UserStats {
   totalCaptures: number;
   totalFlagReturns: number;
   totalScore: number;
+  totalExperience: number;
 }
 
 export interface MatchmakingStatus {

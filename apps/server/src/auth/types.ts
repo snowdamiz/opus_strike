@@ -38,6 +38,7 @@ export interface UserResponse {
     totalCaptures: number;
     totalFlagReturns: number;
     totalScore: number;
+    totalExperience: number;
   };
   linkedAccounts: LinkedAccountSummary[];
 }
