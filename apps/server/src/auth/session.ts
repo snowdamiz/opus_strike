@@ -5,6 +5,11 @@ import prisma from '../db';
 import { isGuestPlayAllowed } from '../config/security';
 import type { AuthProviderName, PendingRegistrationIdentity } from './types';
 import { isAuthProvider } from './types';
+import {
+  calculateMatchmakingRating,
+  getSkillBucket,
+  type MatchmakingSkillBucket,
+} from '../matchmaking/skill';
 
 export interface AuthTokenPayload {
   userId: string;
@@ -23,6 +28,8 @@ export interface RoomAuthContext {
   userId: string;
   walletAddress?: string;
   displayName: string;
+  matchmakingSkillRating: number;
+  matchmakingSkillBucket: MatchmakingSkillBucket;
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || 'voxel-strike-secret-key-change-in-production';
@@ -145,15 +152,30 @@ export async function resolveRoomAuthContext(
           ...(payload.walletAddress ? [{ walletAddress: payload.walletAddress }] : []),
         ],
       },
-      select: { id: true, walletAddress: true, name: true },
+      select: {
+        id: true,
+        walletAddress: true,
+        name: true,
+        totalGames: true,
+        totalWins: true,
+        totalKills: true,
+        totalDeaths: true,
+        totalAssists: true,
+        totalCaptures: true,
+        totalFlagReturns: true,
+        totalScore: true,
+      },
     });
 
     if (user && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
+      const matchmakingSkillRating = calculateMatchmakingRating(user);
       return {
         kind: 'authenticated',
         userId: user.id,
         walletAddress: user.walletAddress ?? undefined,
         displayName: sanitizeDisplayName(user.name, 'Player'),
+        matchmakingSkillRating,
+        matchmakingSkillBucket: getSkillBucket(matchmakingSkillRating).id,
       };
     }
   }
@@ -166,5 +188,7 @@ export async function resolveRoomAuthContext(
     kind: 'guest',
     userId: `guest:${sessionId}`,
     displayName: sanitizeDisplayName(options?.playerName, 'Guest'),
+    matchmakingSkillRating: calculateMatchmakingRating(null),
+    matchmakingSkillBucket: getSkillBucket(calculateMatchmakingRating(null)).id,
   };
 }

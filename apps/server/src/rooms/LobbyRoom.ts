@@ -6,6 +6,15 @@ import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team } fro
 import { assertUsableEntryTicketSecret } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { createGameEntryTicket } from '../security/entryTickets';
+import { verifyMatchmakingTicket, type MatchmakingTicketClaims } from '../security/matchmakingTickets';
+import {
+  DEFAULT_MATCHMAKING_RATING,
+  DEFAULT_MATCHMAKING_SKILL_BUCKET,
+  getAllowedBucketDistance,
+  getSkillBucketLabel,
+  normalizeSkillBucket,
+  type MatchmakingSkillBucket,
+} from '../matchmaking/skill';
 import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
 import {
   isBotDifficulty,
@@ -27,6 +36,8 @@ interface JoinOptions {
   lobbyName?: string;
   isPrivate?: boolean;
   matchmakingMode?: boolean;
+  matchmakingTicket?: string;
+  skillBucket?: string;
   clientId?: string; // Persistent client ID for reconnection detection
   authToken?: string;
   initialBotCount?: number;
@@ -129,7 +140,9 @@ export class LobbyRoom extends Room<LobbyState> {
   private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
+  private readonly playerSkillRatings = new Map<string, number>();
   private isQuickPlayQueue = false;
+  private skillBucket: MatchmakingSkillBucket = DEFAULT_MATCHMAKING_SKILL_BUCKET;
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -144,6 +157,7 @@ export class LobbyRoom extends Room<LobbyState> {
     assertUsableEntryTicketSecret();
     console.log('Lobby room created:', this.roomId);
     this.isQuickPlayQueue = options.matchmakingMode === true;
+    this.skillBucket = this.resolveRoomSkillBucket(options);
 
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
@@ -264,7 +278,19 @@ export class LobbyRoom extends Room<LobbyState> {
       kind: 'guest' as const,
       userId: `guest:${client.sessionId}`,
       displayName: sanitizeDisplayName(options.playerName),
+      matchmakingSkillRating: DEFAULT_MATCHMAKING_RATING,
+      matchmakingSkillBucket: DEFAULT_MATCHMAKING_SKILL_BUCKET,
     };
+
+    const matchmakingTicket = this.isQuickPlayQueue
+      ? verifyMatchmakingTicket(options.matchmakingTicket)
+      : null;
+    if (this.isQuickPlayQueue && !this.isValidMatchmakingTicket(matchmakingTicket, authContext)) {
+      client.send('error', { message: 'Invalid matchmaking ticket' });
+      client.leave();
+      return;
+    }
+
     this.playerAuthContexts.set(client.sessionId, authContext);
 
     console.log(`[LobbyRoom] Player joining: sessionId=${client.sessionId}, name=${authContext.displayName}, clientId=${options.clientId}, userId=${authContext.userId}`);
@@ -294,6 +320,7 @@ export class LobbyRoom extends Room<LobbyState> {
         this.mapVoteSession?.previewReadyPlayerIds.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         this.playerAuthContexts.delete(existingSessionId);
+        this.playerSkillRatings.delete(existingSessionId);
         this.rateLimiter.clearScope(existingSessionId);
         
         // Broadcast that old player left
@@ -313,6 +340,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (this.state.players.size >= this.state.maxParticipants) {
       client.send('error', { message: 'Lobby is full' });
       this.playerAuthContexts.delete(client.sessionId);
+      this.playerSkillRatings.delete(client.sessionId);
       if (this.clientIdToSessionId.get(identityKey) === client.sessionId) {
         this.clientIdToSessionId.delete(identityKey);
       }
@@ -337,6 +365,10 @@ export class LobbyRoom extends Room<LobbyState> {
     }
 
     this.state.players.set(client.sessionId, player);
+    this.playerSkillRatings.set(
+      client.sessionId,
+      this.resolvePlayerSkillRating(authContext, matchmakingTicket)
+    );
 
     // Notify all players
     this.broadcast('playerJoined', {
@@ -363,12 +395,14 @@ export class LobbyRoom extends Room<LobbyState> {
       humanCount: this.getHumanCount(),
       botCount: this.getBotCount(),
       requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
+      ...this.getMatchmakingStatusPayload(),
     });
 
     if (this.state.status === 'map_vote' && this.mapVoteSession) {
       this.sendMapVoteStarted(client);
     }
     this.updateMetadata();
+    this.broadcastMatchmakingStatus();
     this.tryStartQuickPlayMapVote();
   }
 
@@ -382,6 +416,7 @@ export class LobbyRoom extends Room<LobbyState> {
     const removedVote = this.mapVoteSession?.votes.delete(client.sessionId) ?? false;
     this.mapVoteSession?.previewReadyPlayerIds.delete(client.sessionId);
     this.playerAuthContexts.delete(client.sessionId);
+    this.playerSkillRatings.delete(client.sessionId);
     this.rateLimiter.clearScope(client.sessionId);
     
     // Clean up clientId mappings
@@ -416,6 +451,7 @@ export class LobbyRoom extends Room<LobbyState> {
     }
     this.startMapVoteCountdownIfReady();
     this.updateMetadata();
+    this.broadcastMatchmakingStatus();
   }
 
   onDispose() {
@@ -1059,6 +1095,7 @@ export class LobbyRoom extends Room<LobbyState> {
       humanCount: this.getHumanCount(),
       botCount: this.getBotCount(),
       requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
+      ...this.getMatchmakingStatusPayload(),
     });
   }
 
@@ -1076,6 +1113,70 @@ export class LobbyRoom extends Room<LobbyState> {
     this.beginMapVote();
   }
 
+  private resolveRoomSkillBucket(options: JoinOptions): MatchmakingSkillBucket {
+    if (options.matchmakingMode !== true) return DEFAULT_MATCHMAKING_SKILL_BUCKET;
+
+    const ticket = verifyMatchmakingTicket(options.matchmakingTicket);
+    return ticket?.targetSkillBucket ?? normalizeSkillBucket(options.skillBucket);
+  }
+
+  private isValidMatchmakingTicket(
+    ticket: MatchmakingTicketClaims | null,
+    authContext: RoomAuthContext
+  ): ticket is MatchmakingTicketClaims {
+    if (!ticket) return false;
+    if (ticket.targetSkillBucket !== this.skillBucket) return false;
+
+    if (authContext.kind === 'authenticated') {
+      return ticket.userId === authContext.userId;
+    }
+
+    return ticket.userId.startsWith('guest:') || ticket.userId === authContext.userId;
+  }
+
+  private resolvePlayerSkillRating(
+    authContext: RoomAuthContext,
+    ticket: MatchmakingTicketClaims | null
+  ): number {
+    if (authContext.kind === 'authenticated') {
+      return authContext.matchmakingSkillRating;
+    }
+
+    return ticket?.skillRating ?? authContext.matchmakingSkillRating;
+  }
+
+  private getAverageSkillRating(): number {
+    if (this.playerSkillRatings.size === 0) return DEFAULT_MATCHMAKING_RATING;
+
+    let total = 0;
+    this.playerSkillRatings.forEach((rating) => {
+      total += rating;
+    });
+
+    return Math.round(total / this.playerSkillRatings.size);
+  }
+
+  private getMatchmakingWaitMs(): number {
+    return Math.max(0, Date.now() - (this.state.createdAt || Date.now()));
+  }
+
+  private getMatchmakingStatusPayload(): Record<string, unknown> {
+    if (!this.isQuickPlayQueue) return {};
+
+    return {
+      skillBucket: this.skillBucket,
+      skillBucketLabel: getSkillBucketLabel(this.skillBucket),
+      averageSkillRating: this.getAverageSkillRating(),
+      skillSearchDistance: getAllowedBucketDistance(this.getMatchmakingWaitMs()),
+      matchmakingCreatedAt: this.state.createdAt,
+    };
+  }
+
+  private broadcastMatchmakingStatus(): void {
+    if (!this.isQuickPlayQueue) return;
+    this.broadcast('matchmakingStatus', this.getMatchmakingStatusPayload());
+  }
+
   private updateMetadata(overrides: Record<string, unknown> = {}): void {
     const humanCount = this.getHumanCount();
     const botCount = this.getBotCount();
@@ -1090,6 +1191,7 @@ export class LobbyRoom extends Room<LobbyState> {
       maxPlayers: this.state.maxPlayers,
       matchmakingMode: this.isQuickPlayQueue,
       requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
+      ...this.getMatchmakingStatusPayload(),
       ...overrides,
     });
   }

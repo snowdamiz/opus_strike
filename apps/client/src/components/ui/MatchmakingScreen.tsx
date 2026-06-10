@@ -1,9 +1,14 @@
 import { DEFAULT_GAME_CONFIG } from '@voxel-strike/shared';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAudio, useUISounds } from '../../hooks/useAudio';
 import { useGameStore } from '../../store/gameStore';
 import { LobbyBackdrop } from './LobbyBackdrop';
+
+function getHttpUrl(): string {
+  return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+}
 
 export function MatchmakingScreen() {
   const { playerName, lobbyPlayers } = useGameStore();
@@ -13,10 +18,41 @@ export function MatchmakingScreen() {
   const humanCount = Array.from(lobbyPlayers.values()).filter((player) => !player.isBot).length;
   const requiredPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
   const filledSlots = Math.min(humanCount, requiredPlayers);
+  const [totalPlayersInQueue, setTotalPlayersInQueue] = useState(filledSlots);
+  const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
+  const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
 
   useEffect(() => {
     preloadSoundGroup('lobby');
   }, [preloadSoundGroup]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchQueueStatus = async () => {
+      try {
+        const response = await fetch(`${getHttpUrl()}/matchmaking/queue-status`, {
+          credentials: 'include',
+        });
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (!cancelled && typeof data.totalPlayersInQueue === 'number') {
+          setTotalPlayersInQueue(Math.max(0, data.totalPlayersInQueue));
+        }
+      } catch {
+        // Keep the last known count if the status request misses a beat.
+      }
+    };
+
+    fetchQueueStatus();
+    const intervalId = window.setInterval(fetchQueueStatus, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const handleCancel = () => {
     playButtonClick();
@@ -45,7 +81,6 @@ export function MatchmakingScreen() {
           <div className="mt-10">
             <div className="mb-4 flex items-center justify-between font-display text-sm text-white/60">
               <span>PLAYERS FOUND</span>
-              <span className="text-white">{filledSlots}/{requiredPlayers}</span>
             </div>
 
             <div className="grid grid-cols-8 gap-2">
@@ -83,6 +118,12 @@ export function MatchmakingScreen() {
           </div>
         </section>
       </main>
+
+      <div className="absolute inset-x-0 bottom-6 z-10 flex justify-center px-5">
+        <p className="font-display text-sm uppercase tracking-[0.22em] text-white/65">
+          {displayedQueueCount} {queuePlayerLabel} in queue
+        </p>
+      </div>
     </div>
   );
 }

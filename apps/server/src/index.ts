@@ -7,6 +7,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import authRoutes from './auth/routes';
+import matchmakingRoutes from './matchmaking/routes';
 import { voiceService } from './voice/VoiceService';
 
 const app = express();
@@ -25,7 +26,7 @@ const gameServer = new Server({
 gameServer.define('game_room', GameRoom);
 gameServer
   .define('lobby_room', LobbyRoom)
-  .filterBy(['isPrivate', 'matchmakingMode'])
+  .filterBy(['isPrivate', 'matchmakingMode', 'skillBucket'])
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
 
@@ -65,6 +66,7 @@ app.use(express.json());
 
 // Auth routes
 app.use('/auth', authRoutes);
+app.use('/matchmaking', matchmakingRoutes);
 
 // Health check endpoint
 app.get('/health', (_req, res) => {

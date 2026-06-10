@@ -113,6 +113,10 @@ import {
 } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
+import {
+  DEFAULT_MATCHMAKING_RATING,
+  DEFAULT_MATCHMAKING_SKILL_BUCKET,
+} from '../matchmaking/skill';
 import { voiceService } from '../voice/VoiceService';
 import {
   persistCompletedMatch,
@@ -642,6 +646,8 @@ export class GameRoom extends Room<GameState> {
           kind: 'guest',
           userId: ticket.userId,
           displayName: ticket.displayName,
+          matchmakingSkillRating: DEFAULT_MATCHMAKING_RATING,
+          matchmakingSkillBucket: DEFAULT_MATCHMAKING_SKILL_BUCKET,
         };
       }
     }

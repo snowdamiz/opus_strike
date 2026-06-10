@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test:auth": "tsx src/scripts/auth-service.test.ts",
     "test:authority": "tsx src/scripts/authority-hardening-harness.ts",
+    "test:matchmaking": "tsx src/scripts/matchmaking-skill.test.ts",
     "test:persistence": "tsx src/scripts/match-persistence.test.ts",
     "test:voice": "tsx src/scripts/voice-service.test.ts",
     "clean": "rm -rf dist",

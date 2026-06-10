@@ -81,7 +81,33 @@ interface NetworkContextType {
   killAllNpcs: () => void;
 }
 
+interface QuickPlayTicketResponse {
+  ticket: string;
+  skillRating: number;
+  skillBucket: string;
+  skillBucketLabel: string;
+  targetSkillBucket: string;
+  targetSkillBucketLabel: string;
+}
+
 const NetworkContext = createContext<NetworkContextType | null>(null);
+
+function getHttpUrl(): string {
+  return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+}
+
+async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
+  const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to issue matchmaking ticket' }));
+    throw new Error(payload.error || 'Failed to issue matchmaking ticket');
+  }
+
+  return response.json();
+}
 
 // ============================================================================
 // PROVIDER COMPONENT
@@ -116,6 +142,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     updateLobbyPlayer,
     removeLobbyPlayer,
     setIsLobbyHost,
+    setMatchmakingStatus,
     setMapVoteState,
     setMapVotes,
     clearMapVote,
@@ -136,8 +163,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const fetchLobbies = useCallback(async (): Promise<LobbyInfo[]> => {
     try {
-      const httpUrl = config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-      const response = await fetch(`${httpUrl}/lobbies`);
+      const response = await fetch(`${getHttpUrl()}/lobbies`);
       const data = await response.json();
       const lobbies = data.lobbies || [];
       setAvailableLobbies(lobbies);
@@ -154,8 +180,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       return () => {};
     }
 
-    const httpUrl = config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-    const events = new EventSource(`${httpUrl}/lobbies/stream`);
+    const events = new EventSource(`${getHttpUrl()}/lobbies/stream`);
 
     events.addEventListener('lobbies', (event) => {
       try {
@@ -207,10 +232,26 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [rejectPendingVoiceTokenRequests]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
-    room.onMessage('lobbyState', (data: { lobbyId: string; name: string; hostId: string; status: string; players: any[] }) => {
+    room.onMessage('lobbyState', (data: {
+      lobbyId: string;
+      name: string;
+      hostId: string;
+      status: string;
+      players: any[];
+      skillBucket?: string;
+      skillBucketLabel?: string;
+      averageSkillRating?: number;
+      skillSearchDistance?: number;
+    }) => {
       loggers.network.debug('received lobby state', data);
       setCurrentLobby(data.lobbyId, data.name);
       setIsLobbyHost(data.hostId === room.sessionId);
+      setMatchmakingStatus({
+        skillBucket: data.skillBucket ?? null,
+        skillBucketLabel: data.skillBucketLabel ?? null,
+        averageSkillRating: typeof data.averageSkillRating === 'number' ? data.averageSkillRating : null,
+        skillSearchDistance: typeof data.skillSearchDistance === 'number' ? data.skillSearchDistance : null,
+      });
       if (data.status === 'map_vote') {
         setAppPhase('map_vote');
       } else if (data.status === 'matchmaking') {
@@ -232,6 +273,20 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         });
       }
       setLobbyPlayers(playersMap);
+    });
+
+    room.onMessage('matchmakingStatus', (data: {
+      skillBucket?: string;
+      skillBucketLabel?: string;
+      averageSkillRating?: number;
+      skillSearchDistance?: number;
+    }) => {
+      setMatchmakingStatus({
+        skillBucket: data.skillBucket ?? null,
+        skillBucketLabel: data.skillBucketLabel ?? null,
+        averageSkillRating: typeof data.averageSkillRating === 'number' ? data.averageSkillRating : null,
+        skillSearchDistance: typeof data.skillSearchDistance === 'number' ? data.skillSearchDistance : null,
+      });
     });
 
     room.onMessage('mapVoteStarted', (data: {
@@ -390,7 +445,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       disconnectVoice('left_lobby');
       resetLobby();
     });
-  }, [setCurrentLobby, setIsLobbyHost, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, clearMapVote, resetLobby]);
+  }, [setCurrentLobby, setIsLobbyHost, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, clearMapVote, resetLobby]);
 
   const createLobby = useCallback(async (
     playerName: string,
@@ -443,14 +498,17 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       const client = getClient();
       const clientId = getClientId();
+      const matchmakingTicket = await requestQuickPlayTicket();
 
-      loggers.network.debug('quick play matchmaking with client id', clientId);
+      loggers.network.debug('quick play matchmaking with client id', clientId, matchmakingTicket.targetSkillBucket);
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
         lobbyName: 'Quick Play',
         isPrivate: false,
         matchmakingMode: true,
+        matchmakingTicket: matchmakingTicket.ticket,
+        skillBucket: matchmakingTicket.targetSkillBucket,
         clientId,
         initialBotCount: 0,
         botFillMode: 'manual',

@@ -13,6 +13,7 @@ import type {
   MapVoteOption,
   MapVoteRecord,
   UserStats,
+  MatchmakingStatus,
   AppPhase,
 } from './types';
 
@@ -30,6 +31,7 @@ export type {
   MapVoteOption,
   MapVoteRecord,
   UserStats,
+  MatchmakingStatus,
   AppPhase,
 } from './types';
 
@@ -79,6 +81,7 @@ interface CoreState {
   mapVotes: Map<string, string>;
   mapVotePhaseEndTime: number | null;
   selectedMapOptionId: string | null;
+  matchmakingStatus: MatchmakingStatus;
 
   // Game state
   gamePhase: GamePhase;
@@ -135,6 +138,7 @@ interface CoreActions {
   setPlayerId: (playerId: string | null) => void;
   setPlayerName: (name: string) => void;
   setAppPhase: (phase: AppPhase) => void;
+  setMatchmakingStatus: (status: MatchmakingStatus) => void;
   setGamePhase: (phase: GamePhase) => void;
   setPhaseEndTime: (time: number | null) => void;
   setMapSeed: (seed: number) => void;
@@ -207,6 +211,12 @@ const coreInitialState: CoreState = {
   mapVotes: new Map(),
   mapVotePhaseEndTime: null,
   selectedMapOptionId: null,
+  matchmakingStatus: {
+    skillBucket: null,
+    skillBucketLabel: null,
+    averageSkillRating: null,
+    skillSearchDistance: null,
+  },
   gamePhase: 'waiting',
   tick: 0,
   serverTime: 0,
@@ -264,6 +274,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setPlayerId: (playerId) => set((state) => state.playerId === playerId ? state : { playerId }),
   setPlayerName: (name) => set((state) => state.playerName === name ? state : { playerName: name }),
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
+  setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
   setGamePhase: (phase) => set((state) => state.gamePhase === phase ? state : { gamePhase: phase }),
   setPhaseEndTime: (time) => set((state) => state.phaseEndTime === time ? state : { phaseEndTime: time }),
   setMapSeed: (seed) => set((state) => {
@@ -617,5 +628,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     mapVotes: new Map(),
     mapVotePhaseEndTime: null,
     selectedMapOptionId: null,
+    matchmakingStatus: {
+      skillBucket: null,
+      skillBucketLabel: null,
+      averageSkillRating: null,
+      skillSearchDistance: null,
+    },
   }),
 }));

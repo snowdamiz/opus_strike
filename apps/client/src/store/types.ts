@@ -71,6 +71,13 @@ export interface UserStats {
   totalScore: number;
 }
 
+export interface MatchmakingStatus {
+  skillBucket: string | null;
+  skillBucketLabel: string | null;
+  averageSkillRating: number | null;
+  skillSearchDistance: number | null;
+}
+
 export type AppPhase = 'menu' | 'browsing_lobbies' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';
 
 // ============================================================================
