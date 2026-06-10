@@ -16,6 +16,8 @@ import {
   type MatchmakingSkillBucket,
 } from '../matchmaking/skill';
 import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
+import { wagerService, type CreateWagerOptions, type LobbyWagerSnapshot, type LockedWagerContext, type WagerPaymentStatusChanged } from '../wagers/service';
+import type { WagerRosterPlayer } from '../wagers/math';
 import {
   isBotDifficulty,
   isHeroId,
@@ -43,6 +45,7 @@ interface JoinOptions {
   initialBotCount?: number;
   botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
   defaultBotDifficulty?: BotDifficulty;
+  wager?: CreateWagerOptions;
 }
 
 interface ParticipantAssignment {
@@ -141,8 +144,15 @@ export class LobbyRoom extends Room<LobbyState> {
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   private readonly playerSkillRatings = new Map<string, number>();
+  private readonly onWagerPaymentStatusChanged = (payload: WagerPaymentStatusChanged) => {
+    if (payload.lobbyId !== this.state.lobbyId) return;
+    this.applyPaymentStatusUpdate(payload).catch((error) => {
+      console.error('[LobbyRoom] Failed to apply payment status update:', error);
+    });
+  };
   private isQuickPlayQueue = false;
   private skillBucket: MatchmakingSkillBucket = DEFAULT_MATCHMAKING_SKILL_BUCKET;
+  private pendingWagerOptions: CreateWagerOptions | undefined;
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -158,6 +168,7 @@ export class LobbyRoom extends Room<LobbyState> {
     console.log('Lobby room created:', this.roomId);
     this.isQuickPlayQueue = options.matchmakingMode === true;
     this.skillBucket = this.resolveRoomSkillBucket(options);
+    this.pendingWagerOptions = !this.isQuickPlayQueue ? options.wager : undefined;
 
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
@@ -169,6 +180,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state.status = this.isQuickPlayQueue ? 'matchmaking' : 'waiting';
     this.state.defaultBotDifficulty = this.normalizeDifficulty(options.defaultBotDifficulty);
     this.state.botFillMode = options.botFillMode || 'manual';
+    wagerService.on('paymentStatusChanged', this.onWagerPaymentStatusChanged);
 
     // Set metadata for lobby listing
     this.updateMetadata();
@@ -191,6 +203,26 @@ export class LobbyRoom extends Room<LobbyState> {
     this.onMessage('startGame', (client) => {
       if (!this.rateLimiter.consume(client.sessionId, 'startGame', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       this.handleStartGame(client);
+    });
+
+    this.onMessage('createPaymentIntent', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'createPaymentIntent', LOBBY_MESSAGE_RATE_LIMITS.payment)) return;
+      if (!isRecord(data)) return;
+      const walletAddress = sanitizeShortText(data.walletAddress, 64);
+      this.handleCreatePaymentIntent(client, walletAddress || '').catch((error) => {
+        client.send('paymentIntentError', { message: error instanceof Error ? error.message : 'Failed to create payment intent' });
+      });
+    });
+
+    this.onMessage('submitPaymentSignature', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'submitPaymentSignature', LOBBY_MESSAGE_RATE_LIMITS.payment)) return;
+      if (!isRecord(data)) return;
+      const intentId = sanitizeShortText(data.intentId, 96);
+      const signature = sanitizeShortText(data.signature, 128);
+      if (!intentId || !signature) return;
+      this.handleSubmitPaymentSignature(client, intentId, signature).catch((error) => {
+        client.send('paymentIntentError', { message: error instanceof Error ? error.message : 'Failed to verify payment' });
+      });
     });
 
     this.onMessage('voteMap', (client, data: unknown) => {
@@ -273,7 +305,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.updateMetadata();
   }
 
-  onJoin(client: Client, options: JoinOptions) {
+  async onJoin(client: Client, options: JoinOptions) {
     const authContext = (client as Client & { auth?: RoomAuthContext }).auth ?? {
       kind: 'guest' as const,
       userId: `guest:${client.sessionId}`,
@@ -365,6 +397,25 @@ export class LobbyRoom extends Room<LobbyState> {
     }
 
     this.state.players.set(client.sessionId, player);
+    if (player.isHost) {
+      try {
+        await this.ensureWagerCreatedForHost(authContext);
+      } catch (error) {
+        this.state.players.delete(client.sessionId);
+        this.playerAuthContexts.delete(client.sessionId);
+        this.playerSkillRatings.delete(client.sessionId);
+        this.rateLimiter.clearScope(client.sessionId);
+        const identity = this.sessionIdToClientId.get(client.sessionId);
+        if (identity && this.clientIdToSessionId.get(identity) === client.sessionId) {
+          this.clientIdToSessionId.delete(identity);
+        }
+        this.sessionIdToClientId.delete(client.sessionId);
+        client.send('error', { message: error instanceof Error ? error.message : 'Failed to create wagered lobby' });
+        client.leave();
+        return;
+      }
+    }
+    await this.refreshWagerState();
     this.playerSkillRatings.set(
       client.sessionId,
       this.resolvePlayerSkillRating(authContext, matchmakingTicket)
@@ -381,6 +432,10 @@ export class LobbyRoom extends Room<LobbyState> {
       isBot: player.isBot,
       botDifficulty: player.botDifficulty,
       botProfileId: player.botProfileId,
+      paymentStatus: player.paymentStatus,
+      paymentWalletAddress: player.paymentWalletAddress,
+      depositSignature: player.depositSignature,
+      refundSignature: player.refundSignature,
     });
 
     // Send current lobby state to the new player
@@ -394,6 +449,7 @@ export class LobbyRoom extends Room<LobbyState> {
       maxParticipants: this.state.maxParticipants,
       humanCount: this.getHumanCount(),
       botCount: this.getBotCount(),
+      wager: this.getWagerPayload(),
       requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
       ...this.getMatchmakingStatusPayload(),
     });
@@ -411,6 +467,7 @@ export class LobbyRoom extends Room<LobbyState> {
 
     const player = this.state.players.get(client.sessionId);
     const wasHost = player?.isHost;
+    const authContext = this.playerAuthContexts.get(client.sessionId);
 
     this.state.players.delete(client.sessionId);
     const removedVote = this.mapVoteSession?.votes.delete(client.sessionId) ?? false;
@@ -446,6 +503,16 @@ export class LobbyRoom extends Room<LobbyState> {
     this.broadcast('playerLeft', {
       playerId: client.sessionId,
     });
+    if (
+      this.state.wagerEnabled
+      && authContext?.kind === 'authenticated'
+      && this.state.status !== 'in_game'
+      && !this.state.gameRoomId
+    ) {
+      wagerService.refundPlayerBeforeGame(this.state.lobbyId, authContext.userId, 'pre_game_leave').catch((error) => {
+        console.error('[LobbyRoom] Failed to refund leaving player wager:', error);
+      });
+    }
     if (removedVote) {
       this.broadcastMapVoteUpdated();
     }
@@ -457,6 +524,12 @@ export class LobbyRoom extends Room<LobbyState> {
   onDispose() {
     console.log('Lobby room disposing:', this.roomId);
     this.clearMapVoteTimer();
+    wagerService.off('paymentStatusChanged', this.onWagerPaymentStatusChanged);
+    if (this.state.wagerEnabled && this.state.status !== 'in_game' && !this.state.gameRoomId) {
+      wagerService.refundLobbyBeforeGame(this.state.lobbyId, 'lobby_dispose').catch((error) => {
+        console.error('[LobbyRoom] Failed to refund disposed lobby wager:', error);
+      });
+    }
   }
 
   private handleReady(client: Client, ready: boolean) {
@@ -540,6 +613,9 @@ export class LobbyRoom extends Room<LobbyState> {
       client.send('error', { message: 'Not all players are ready' });
       return;
     }
+
+    const wagerEligibility = await this.ensureWagerStartEligible(client);
+    if (!wagerEligibility) return;
 
     this.beginMapVote();
   }
@@ -654,6 +730,18 @@ export class LobbyRoom extends Room<LobbyState> {
   private async finalizeMapVote(errorClient?: Client): Promise<void> {
     if (!this.mapVoteSession || this.state.status !== 'map_vote') return;
 
+    const wagerEligibility = await this.ensureWagerStartEligible(errorClient);
+    if (!wagerEligibility) {
+      this.clearMapVoteTimer();
+      this.state.status = this.isQuickPlayQueue ? 'matchmaking' : 'waiting';
+      this.mapVoteSession = null;
+      this.setMatchmakingLocked(false);
+      this.updateMetadata({ status: this.state.status });
+      this.broadcast('mapVoteCancelled', { reason: 'Wager payment required', status: this.state.status });
+      this.broadcastLobbyState();
+      return;
+    }
+
     const selectedOption = this.getWinningMapOption();
     this.clearMapVoteTimer();
     this.state.status = 'starting';
@@ -683,50 +771,70 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private async createGameFromLobby(mapSeed: number): Promise<void> {
     const playerAssignments = this.createPlayerAssignments();
+    let lockedWagerContext: LockedWagerContext | null = null;
 
-    // Create the game room
-    const gameRoom = await matchMaker.createRoom('game_room', {
-      lobbyId: this.state.lobbyId,
-      lobbyName: this.state.name,
-      mapSeed,
-      botAssignments: playerAssignments.filter((assignment) => assignment.isBot),
-    });
+    try {
+      if (this.state.wagerEnabled) {
+        lockedWagerContext = await wagerService.lockLobbyRoster(this.state.lobbyId, this.buildWagerRoster());
+      }
 
-    this.state.gameRoomId = gameRoom.roomId;
-    this.state.status = 'in_game';
-    this.mapVoteSession = null;
-    this.updateMetadata({ status: 'in_game' });
-
-    const ticketsByPlayerId = new Map<string, string>();
-    for (const assignment of playerAssignments) {
-      if (assignment.isBot) continue;
-      const authContext = this.playerAuthContexts.get(assignment.playerId);
-      ticketsByPlayerId.set(assignment.playerId, createGameEntryTicket({
+      // Create the game room
+      const gameRoom = await matchMaker.createRoom('game_room', {
         lobbyId: this.state.lobbyId,
-        gameRoomId: gameRoom.roomId,
-        lobbyPlayerId: assignment.playerId,
-        userId: authContext?.userId ?? `guest:${assignment.playerId}`,
-        displayName: authContext?.displayName ?? assignment.playerName,
-        assignedTeam: assignment.team,
-        selectedHero: assignment.heroId,
-      }));
-    }
-
-    // Tell each human client to join with only their own entry ticket.
-    for (const client of this.clients) {
-      client.send('gameStarting', {
-        gameRoomId: gameRoom.roomId,
-        players: playerAssignments,
-        entryTicket: ticketsByPlayerId.get(client.sessionId),
+        lobbyName: this.state.name,
+        mapSeed,
+        botAssignments: playerAssignments.filter((assignment) => assignment.isBot),
+        wagerContext: lockedWagerContext,
       });
+
+      if (lockedWagerContext) {
+        await wagerService.markLobbyInGame(this.state.lobbyId, gameRoom.roomId);
+      }
+
+      this.state.gameRoomId = gameRoom.roomId;
+      this.state.status = 'in_game';
+      this.mapVoteSession = null;
+      await this.refreshWagerState();
+      this.updateMetadata({ status: 'in_game' });
+
+      const ticketsByPlayerId = new Map<string, string>();
+      for (const assignment of playerAssignments) {
+        if (assignment.isBot) continue;
+        const authContext = this.playerAuthContexts.get(assignment.playerId);
+        ticketsByPlayerId.set(assignment.playerId, createGameEntryTicket({
+          lobbyId: this.state.lobbyId,
+          gameRoomId: gameRoom.roomId,
+          lobbyPlayerId: assignment.playerId,
+          userId: authContext?.userId ?? `guest:${assignment.playerId}`,
+          displayName: authContext?.displayName ?? assignment.playerName,
+          assignedTeam: assignment.team,
+          selectedHero: assignment.heroId,
+        }));
+      }
+
+      // Tell each human client to join with only their own entry ticket.
+      for (const client of this.clients) {
+        client.send('gameStarting', {
+          gameRoomId: gameRoom.roomId,
+          players: playerAssignments,
+          entryTicket: ticketsByPlayerId.get(client.sessionId),
+          wager: lockedWagerContext,
+        });
+      }
+
+      console.log('Game room created:', gameRoom.roomId, 'from lobby:', this.roomId);
+
+      // Dispose this lobby after a short delay
+      setTimeout(() => {
+        this.disconnect();
+      }, 5000);
+    } catch (error) {
+      if (lockedWagerContext) {
+        await wagerService.unlockLobbyAfterStartFailure(this.state.lobbyId);
+        await this.refreshWagerState();
+      }
+      throw error;
     }
-
-    console.log('Game room created:', gameRoom.roomId, 'from lobby:', this.roomId);
-
-    // Dispose this lobby after a short delay
-    setTimeout(() => {
-      this.disconnect();
-    }, 5000);
   }
 
   private handleKick(client: Client, playerId: string) {
@@ -782,6 +890,10 @@ export class LobbyRoom extends Room<LobbyState> {
         isBot: p.isBot,
         botDifficulty: p.botDifficulty,
         botProfileId: p.botProfileId,
+        paymentStatus: p.paymentStatus,
+        paymentWalletAddress: p.paymentWalletAddress,
+        depositSignature: p.depositSignature,
+        refundSignature: p.refundSignature,
       });
     });
     return players;
@@ -872,6 +984,7 @@ export class LobbyRoom extends Room<LobbyState> {
     bot.isBot = true;
     bot.botDifficulty = this.normalizeDifficulty(data.difficulty);
     bot.botProfileId = profileName.toLowerCase();
+    bot.paymentStatus = this.state.wagerEnabled ? 'not_required' : '';
 
     this.state.players.set(bot.id, bot);
     this.broadcast('playerJoined', {
@@ -884,6 +997,7 @@ export class LobbyRoom extends Room<LobbyState> {
       isBot: bot.isBot,
       botDifficulty: bot.botDifficulty,
       botProfileId: bot.botProfileId,
+      paymentStatus: bot.paymentStatus,
     });
     this.updateMetadata();
     return bot;
@@ -1083,6 +1197,152 @@ export class LobbyRoom extends Room<LobbyState> {
     return heroId && HERO_DEFINITIONS[heroId as HeroId] ? (heroId as HeroId) : '';
   }
 
+  private async ensureWagerCreatedForHost(authContext: RoomAuthContext): Promise<void> {
+    if (!this.pendingWagerOptions) return;
+    const pending = this.pendingWagerOptions;
+    this.pendingWagerOptions = undefined;
+
+    if (!pending.enabled) return;
+    if (authContext.kind !== 'authenticated') {
+      throw new Error('Sign in before creating a wagered lobby');
+    }
+
+    const snapshot = await wagerService.createWageredLobby({
+      lobbyId: this.state.lobbyId,
+      createdByUserId: authContext.userId,
+      options: pending,
+    });
+    this.applyWagerSnapshot(snapshot);
+    this.updateMetadata();
+  }
+
+  private applyWagerSnapshot(snapshot: LobbyWagerSnapshot): void {
+    this.state.wagerEnabled = snapshot.enabled;
+    this.state.wagerStatus = snapshot.status || '';
+    this.state.wagerToken = snapshot.token || '';
+    this.state.wagerCoverChargeLamports = snapshot.coverChargeLamports || '';
+    this.state.wagerTreasuryWallet = snapshot.treasuryWallet || '';
+    this.state.wagerPlatformFeeBps = snapshot.platformFeeBps || 0;
+    this.state.wagerPotLamports = snapshot.potLamports || '0';
+    this.state.wagerPaidPlayerCount = snapshot.paidPlayerCount || 0;
+  }
+
+  private getWagerPayload(): Record<string, unknown> {
+    if (!this.state.wagerEnabled) {
+      return { enabled: false };
+    }
+
+    return {
+      enabled: true,
+      status: this.state.wagerStatus,
+      token: this.state.wagerToken,
+      coverChargeLamports: this.state.wagerCoverChargeLamports,
+      treasuryWallet: this.state.wagerTreasuryWallet,
+      platformFeeBps: this.state.wagerPlatformFeeBps,
+      potLamports: this.state.wagerPotLamports,
+      paidPlayerCount: this.state.wagerPaidPlayerCount,
+    };
+  }
+
+  private buildWagerRoster(): WagerRosterPlayer[] {
+    const roster: WagerRosterPlayer[] = [];
+    this.state.players.forEach((player, playerId) => {
+      const authContext = this.playerAuthContexts.get(playerId);
+      roster.push({
+        lobbyPlayerId: playerId,
+        userId: player.isBot ? null : authContext?.userId ?? `guest:${playerId}`,
+        name: player.name,
+        team: this.isTeam(player.team) ? player.team : null,
+        isBot: player.isBot,
+      });
+    });
+    return roster;
+  }
+
+  private async refreshWagerState(): Promise<void> {
+    const snapshot = await wagerService.getLobbySnapshot(this.state.lobbyId);
+    this.applyWagerSnapshot(snapshot);
+
+    if (!snapshot.enabled) {
+      this.state.players.forEach((player) => {
+        player.paymentStatus = '';
+        player.paymentWalletAddress = '';
+        player.depositSignature = '';
+        player.refundSignature = '';
+      });
+      this.updateMetadata();
+      return;
+    }
+
+    const statuses = await wagerService.getPlayerPaymentStatuses(this.state.lobbyId, this.buildWagerRoster());
+    for (const status of statuses) {
+      const player = this.state.players.get(status.lobbyPlayerId);
+      if (!player) continue;
+      player.paymentStatus = status.status;
+      player.paymentWalletAddress = status.walletAddress || '';
+      player.depositSignature = status.depositSignature || '';
+      player.refundSignature = status.refundSignature || '';
+    }
+    this.updateMetadata();
+  }
+
+  private async applyPaymentStatusUpdate(payload: WagerPaymentStatusChanged): Promise<void> {
+    await this.refreshWagerState();
+    this.broadcast('paymentStatusChanged', payload);
+    this.broadcastLobbyState();
+  }
+
+  private async handleCreatePaymentIntent(client: Client, walletAddress: string): Promise<void> {
+    const authContext = this.playerAuthContexts.get(client.sessionId);
+    if (authContext?.kind !== 'authenticated') {
+      throw new Error('Sign in with a Solana wallet before paying');
+    }
+    if (!this.state.wagerEnabled) {
+      throw new Error('This lobby does not require payment');
+    }
+
+    const intent = await wagerService.createPaymentIntent({
+      lobbyId: this.state.lobbyId,
+      userId: authContext.userId,
+      walletAddress: walletAddress || authContext.walletAddress || '',
+      lobbyPlayerId: client.sessionId,
+    });
+    await this.refreshWagerState();
+    client.send('paymentIntentCreated', { intent });
+  }
+
+  private async handleSubmitPaymentSignature(client: Client, intentId: string, signature: string): Promise<void> {
+    const authContext = this.playerAuthContexts.get(client.sessionId);
+    if (authContext?.kind !== 'authenticated') {
+      throw new Error('Sign in before verifying payment');
+    }
+
+    const intent = await wagerService.submitPaymentSignature({
+      intentId,
+      userId: authContext.userId,
+      signature,
+    });
+    await this.refreshWagerState();
+    client.send('paymentIntentUpdated', { intent });
+  }
+
+  private async ensureWagerStartEligible(client?: Client): Promise<boolean> {
+    if (!this.state.wagerEnabled) return true;
+    await this.refreshWagerState();
+    const eligibility = await wagerService.getStartEligibility(this.state.lobbyId, this.buildWagerRoster());
+    if (eligibility.canStart) return true;
+
+    const payload = {
+      message: 'All assigned human players must pay before this wagered lobby can start',
+      unpaidPlayers: eligibility.unpaidPlayers,
+      paidHumanCountByTeam: eligibility.paidHumanCountByTeam,
+      reasons: eligibility.reasons,
+    };
+    client?.send('wagerStartBlocked', payload);
+    client?.send('error', { message: payload.message, unpaidPlayers: eligibility.unpaidPlayers });
+    return false;
+  }
+
   private broadcastLobbyState(): void {
     this.broadcast('lobbyState', {
       lobbyId: this.state.lobbyId,
@@ -1094,6 +1354,7 @@ export class LobbyRoom extends Room<LobbyState> {
       maxParticipants: this.state.maxParticipants,
       humanCount: this.getHumanCount(),
       botCount: this.getBotCount(),
+      wager: this.getWagerPayload(),
       requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
       ...this.getMatchmakingStatusPayload(),
     });
@@ -1191,6 +1452,13 @@ export class LobbyRoom extends Room<LobbyState> {
       maxPlayers: this.state.maxPlayers,
       matchmakingMode: this.isQuickPlayQueue,
       requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
+      wagerEnabled: this.state.wagerEnabled,
+      wagerStatus: this.state.wagerStatus || undefined,
+      wagerToken: this.state.wagerToken || undefined,
+      wagerCoverChargeLamports: this.state.wagerCoverChargeLamports || undefined,
+      wagerPotLamports: this.state.wagerPotLamports || undefined,
+      wagerPaidPlayerCount: this.state.wagerPaidPlayerCount,
+      wagerTreasuryWallet: this.state.wagerTreasuryWallet || undefined,
       ...this.getMatchmakingStatusPayload(),
       ...overrides,
     });

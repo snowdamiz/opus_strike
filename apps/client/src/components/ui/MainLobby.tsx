@@ -14,6 +14,7 @@ import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
+import { lamportsToSolDisplay, solInputToLamports } from '../../utils/wagerPayments';
 
 // Phantom wallet icon component
 function PhantomIcon({ className }: { className?: string }) {
@@ -362,10 +363,10 @@ export function MainLobby() {
     }
   }, [watchLobbies, activeTab]);
 
-  const handleCreateLobby = async (lobbyName: string, isPrivate: boolean) => {
+  const handleCreateLobby = async (lobbyName: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }) => {
     setError(null);
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate);
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate, { wager });
       setShowCreateLobby(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -969,16 +970,26 @@ interface CreateLobbyModalProps {
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
-  onCreate: (name: string, isPrivate: boolean) => void;
+  onCreate: (name: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }) => void;
 }
 
 function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: CreateLobbyModalProps) {
   const [lobbyName, setLobbyName] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
+  const [wagerEnabled, setWagerEnabled] = useState(false);
+  const [coverChargeSol, setCoverChargeSol] = useState('0.01');
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onCreate(lobbyName, isPrivate);
+    setLocalError(null);
+    try {
+      onCreate(lobbyName, isPrivate, wagerEnabled
+        ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
+        : { enabled: false });
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Invalid wager amount');
+    }
   };
 
   return (
@@ -1031,10 +1042,46 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
           </div>
         </div>
 
+        <div
+          className="flex items-center justify-between gap-3 p-3 bg-white/[0.03] border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors"
+          onClick={() => setWagerEnabled(!wagerEnabled)}
+        >
+          <div className="flex items-center gap-3">
+            <svg className={`w-4 h-4 ${wagerEnabled ? 'text-cyan-300' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v18m5-14H9.5a3.5 3.5 0 000 7H14a3.5 3.5 0 010 7H6" />
+            </svg>
+            <div>
+              <p className="font-body text-sm text-white">SOL Pot</p>
+              <p className="text-[11px] text-white/40">Cover charge per human player</p>
+            </div>
+          </div>
+          <div className={`w-10 h-5 shrink-0 rounded-full transition-all relative ${wagerEnabled ? 'bg-cyan-500' : 'bg-white/20'}`}>
+            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${wagerEnabled ? 'left-[22px]' : 'left-0.5'}`} />
+          </div>
+        </div>
+
+        {wagerEnabled && (
+          <div>
+            <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
+              Cover Charge
+            </label>
+            <div className="flex items-center rounded-lg border border-white/10 bg-black/20 focus-within:border-cyan-300/50">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={coverChargeSol}
+                onChange={(e) => setCoverChargeSol(e.target.value)}
+                className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-base text-white outline-none"
+              />
+              <span className="px-3 text-xs font-display text-cyan-200">SOL</span>
+            </div>
+          </div>
+        )}
+
         {/* Error */}
-        {error && (
+        {(error || localError) && (
           <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-            <p className="text-red-400 text-sm font-body">{error}</p>
+            <p className="text-red-400 text-sm font-body">{localError || error}</p>
           </div>
         )}
 
@@ -1108,6 +1155,11 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
               FULL
             </span>
           )}
+          {lobby.wager?.enabled && (
+            <span className="px-2 py-0.5 bg-cyan-500/15 text-cyan-200 text-[10px] font-display rounded-full">
+              {lamportsToSolDisplay(lobby.wager.coverChargeLamports)} SOL
+            </span>
+          )}
         </div>
 
         {/* Player count */}
@@ -1122,6 +1174,11 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
           <span className="text-xs text-white/50 font-mono">
             {participantCount}/{maxParticipants}
           </span>
+          {lobby.wager?.enabled && (
+            <span className="text-xs text-cyan-200/70 font-mono">
+              POT {lamportsToSolDisplay(lobby.wager.potLamports)}
+            </span>
+          )}
         </div>
       </div>
 

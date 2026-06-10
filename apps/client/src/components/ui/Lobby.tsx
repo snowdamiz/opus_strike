@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { useWallet } from '../../contexts/WalletContext';
 import { useUISounds } from '../../hooks/useAudio';
 import {
   ALL_HERO_IDS,
@@ -11,6 +12,7 @@ import {
 } from '@voxel-strike/shared';
 import type { LobbyPlayer } from '../../store/gameStore';
 import { FACTIONS, HERO_COLORS } from '../../styles/colorTokens';
+import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -171,7 +173,9 @@ export function Lobby() {
   const { 
     playerName, 
     playerId,
+    currentLobbyId,
     currentLobbyName, 
+    currentLobbyWager,
     lobbyPlayers, 
     isLobbyHost,
     isLoading,
@@ -189,13 +193,35 @@ export function Lobby() {
     updateLobbyBotHero,
     startGame,
     kickPlayer,
+    createWagerPaymentIntent,
+    createWagerPaymentTransaction,
+    submitWagerSignedPaymentTransaction,
   } = useNetwork();
+  const {
+    walletAddress,
+    isConnected: isWalletConnected,
+    connect: connectWallet,
+    signTransaction,
+  } = useWallet();
   const { playButtonClick } = useUISounds();
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [isPaying, setIsPaying] = useState(false);
 
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
   const currentTeam = currentPlayer?.team;
   const hasChosenTeam = currentTeam === 'red' || currentTeam === 'blue';
   const isReady = currentPlayer?.isReady || false;
+  const playerList = Array.from(lobbyPlayers.values());
+  const wagerEnabled = currentLobbyWager.enabled;
+  const localPaymentStatus = currentPlayer?.paymentStatus || '';
+  const localPlayerPaid = localPaymentStatus === 'credited' || localPaymentStatus === 'settled';
+  const localPaymentConfirming = localPaymentStatus === 'intent_created' || localPaymentStatus === 'submitted' || localPaymentStatus === 'confirmed';
+  const localPaymentRefunding = localPaymentStatus === 'refunding';
+  const showPayEntry = wagerEnabled
+    && Boolean(currentPlayer)
+    && !currentPlayer?.isBot
+    && !localPlayerPaid
+    && !localPaymentRefunding;
 
   const handleToggleReady = () => {
     if (!hasChosenTeam) return;
@@ -212,11 +238,17 @@ export function Lobby() {
   };
   const handleKick = (targetId: string) => kickPlayer(targetId);
 
-  const playerList = Array.from(lobbyPlayers.values());
   const readyCount = playerList.filter(p => p.isReady || p.isHost).length;
   const assignedCount = playerList.filter(p => p.team === 'red' || p.team === 'blue').length;
   const allPlayersAssigned = playerList.length > 0 && assignedCount === playerList.length;
-  const canStart = isLobbyHost && allPlayersAssigned && (playerList.length === 1 || readyCount === playerList.length);
+  const assignedHumanPlayers = playerList.filter((p) => !p.isBot && (p.team === 'red' || p.team === 'blue'));
+  const unpaidHumanPlayers = wagerEnabled
+    ? assignedHumanPlayers.filter((p) => p.paymentStatus !== 'credited' && p.paymentStatus !== 'settled')
+    : [];
+  const paidRedHumans = assignedHumanPlayers.filter((p) => p.team === 'red' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
+  const paidBlueHumans = assignedHumanPlayers.filter((p) => p.team === 'blue' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
+  const wagerStartReady = !wagerEnabled || (unpaidHumanPlayers.length === 0 && paidRedHumans > 0 && paidBlueHumans > 0);
+  const canStart = isLobbyHost && allPlayersAssigned && wagerStartReady && (playerList.length === 1 || readyCount === playerList.length);
 
   const solarPlayers = playerList.filter(p => p.team === 'red');
   const voidPlayers = playerList.filter(p => p.team === 'blue');
@@ -248,6 +280,32 @@ export function Lobby() {
 
   const handleBotHeroChange = (botId: string, heroId: LobbyBotHero) => {
     updateLobbyBotHero(botId, heroId);
+  };
+
+  const handlePayEntry = async () => {
+    if (!currentLobbyId || !currentPlayer || !wagerEnabled || isPaying) return;
+    setPaymentError(null);
+    setIsPaying(true);
+
+    try {
+      let payerWallet = walletAddress;
+      if (!isWalletConnected || !walletAddress) {
+        payerWallet = await connectWallet();
+      }
+      if (!payerWallet) {
+        throw new Error('Connect Phantom before paying');
+      }
+
+      const intent = await createWagerPaymentIntent(currentLobbyId, payerWallet, currentPlayer.id);
+      const paymentTransaction = await createWagerPaymentTransaction(intent.intentId);
+      const transaction = deserializeWagerPaymentTransaction(paymentTransaction.transactionBase64);
+      const signedTransactionBase64 = await signTransaction(transaction);
+      await submitWagerSignedPaymentTransaction(intent.intentId, signedTransactionBase64);
+    } catch (err) {
+      setPaymentError(err instanceof Error ? err.message : 'Payment failed');
+    } finally {
+      setIsPaying(false);
+    }
   };
 
   return (
@@ -321,6 +379,19 @@ export function Lobby() {
 
           {/* Right side - Player info */}
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
+            {wagerEnabled && (
+              <div className="hidden sm:flex items-center gap-3 rounded-xl border border-cyan-300/15 bg-cyan-500/[0.055] px-3 py-2">
+                <div>
+                  <p className="font-body text-[9px] uppercase tracking-widest text-cyan-100/45">Entry</p>
+                  <p className="font-display text-sm text-cyan-100">{lamportsToSolDisplay(currentLobbyWager.coverChargeLamports)} SOL</p>
+                </div>
+                <div className="h-7 w-px bg-cyan-100/10" />
+                <div>
+                  <p className="font-body text-[9px] uppercase tracking-widest text-cyan-100/45">Pot</p>
+                  <p className="font-display text-sm text-cyan-100">{lamportsToSolDisplay(currentLobbyWager.potLamports)} SOL</p>
+                </div>
+              </div>
+            )}
             <div 
               className="flex items-center gap-3 py-2 pl-2 pr-4 rounded-xl border"
               style={{
@@ -401,6 +472,11 @@ export function Lobby() {
           background: 'linear-gradient(to top, rgb(var(--color-strike-page-top) / 0.95), rgb(var(--color-strike-page-top) / 0.6), transparent)',
         }}
       >
+        {paymentError && (
+          <div className="mx-auto mb-2 max-w-xl rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-center text-sm text-red-200">
+            {paymentError}
+          </div>
+        )}
         <div className="flex items-center justify-center py-2 xl:py-4">
           <div className="flex items-center gap-3 xl:gap-4 px-4 xl:px-5 py-2 rounded-full bg-white/[0.035] border border-white/5 backdrop-blur-xl shadow-2xl shadow-black/30">
             {/* Solar count */}
@@ -416,6 +492,23 @@ export function Lobby() {
                 <span className="text-[9px] text-white/30 font-body ml-1.5">SOLAR</span>
               </div>
             </div>
+
+            {wagerEnabled && (
+              <button
+                type="button"
+                onClick={() => { playButtonClick(); handlePayEntry(); }}
+                disabled={!showPayEntry || localPaymentConfirming || isPaying}
+                className={`h-10 min-w-[8.5rem] rounded-full px-4 font-display text-xs uppercase tracking-wide transition-all ${
+                  localPlayerPaid
+                    ? 'bg-cyan-500/15 text-cyan-100 border border-cyan-300/20'
+                    : showPayEntry && !localPaymentConfirming
+                      ? 'text-white bg-cyan-500 hover:bg-cyan-400 active:scale-[0.98]'
+                      : 'bg-white/[0.055] text-white/30 cursor-not-allowed'
+                }`}
+              >
+                {isPaying || localPaymentConfirming ? 'Confirming' : localPlayerPaid ? 'Paid' : 'Pay Entry'}
+              </button>
+            )}
             
             {isLobbyHost ? (
               <button
@@ -447,6 +540,13 @@ export function Lobby() {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V7l7-4z" />
                       </svg>
                       Awaiting Teams
+                    </>
+                  ) : !wagerStartReady ? (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v18m5-14H9.5a3.5 3.5 0 000 7H14a3.5 3.5 0 010 7H6" />
+                      </svg>
+                      Awaiting Payments
                     </>
                   ) : !canStart ? (
                     <>
@@ -714,6 +814,28 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot, 
 }
 
 // Player Card Component
+function PaymentBadge({ status }: { status: LobbyPlayer['paymentStatus'] }) {
+  if (!status || status === 'not_required') return null;
+  const paid = status === 'credited' || status === 'settled';
+  const pending = status === 'intent_created' || status === 'submitted' || status === 'confirmed';
+  const refunding = status === 'refunding' || status === 'refunded';
+  const failed = status === 'failed' || status === 'expired';
+  const label = paid ? 'Paid' : pending ? 'Pending' : refunding ? 'Refund' : failed ? 'Due' : 'Due';
+  const className = paid
+    ? 'border-cyan-300/25 bg-cyan-500/15 text-cyan-100'
+    : pending
+      ? 'border-amber-300/25 bg-amber-500/15 text-amber-100'
+      : refunding
+        ? 'border-sky-300/25 bg-sky-500/15 text-sky-100'
+        : 'border-white/10 bg-white/[0.055] text-white/45';
+
+  return (
+    <span className={`flex h-5 shrink-0 items-center rounded-md border px-1.5 font-display text-[8px] uppercase ${className}`}>
+      {label}
+    </span>
+  );
+}
+
 interface PlayerCardProps {
   player: LobbyPlayer;
   isCurrentPlayer: boolean;
@@ -799,6 +921,7 @@ function PlayerCard({
               You
             </span>
           )}
+          {!player.isBot && <PaymentBadge status={player.paymentStatus} />}
         </div>
         {showBotControls && (
           <div className={`flex min-w-0 items-center ${compact ? 'mt-0 gap-0.5' : 'mt-0.5 gap-1'}`}>

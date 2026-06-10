@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type GameStateSync } from '@voxel-strike/shared';
+import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type GameStateSync, type PlayerPingsMessage } from '@voxel-strike/shared';
 import { removePlayerVisualState, setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
 
 // Import types
@@ -10,8 +10,11 @@ import type {
   PlayerInput,
   LobbyInfo,
   LobbyPlayer,
+  LobbyWagerState,
   MapVoteOption,
   MapVoteRecord,
+  WagerPaymentIntent,
+  WagerPaymentTransaction,
   UserStats,
   MatchmakingStatus,
   AppPhase,
@@ -28,8 +31,11 @@ import {
 export type {
   LobbyInfo,
   LobbyPlayer,
+  LobbyWagerState,
   MapVoteOption,
   MapVoteRecord,
+  WagerPaymentIntent,
+  WagerPaymentTransaction,
   UserStats,
   MatchmakingStatus,
   AppPhase,
@@ -75,6 +81,7 @@ interface CoreState {
   availableLobbies: LobbyInfo[];
   currentLobbyId: string | null;
   currentLobbyName: string | null;
+  currentLobbyWager: LobbyWagerState;
   lobbyPlayers: Map<string, LobbyPlayer>;
   isLobbyHost: boolean;
   mapVoteOptions: MapVoteOption[];
@@ -100,6 +107,7 @@ interface CoreState {
   // Players
   players: Map<string, Player>;
   localPlayer: Player | null;
+  playerPings: Map<string, number | null>;
 
   // Timing
   roundTimeRemaining: number;
@@ -152,12 +160,14 @@ interface CoreActions {
   setPlayers: (players: Map<string, Player>) => void;
   updatePlayer: (playerId: string, player: Player) => void;
   removePlayer: (playerId: string) => void;
+  setPlayerPings: (message: PlayerPingsMessage) => void;
   addPendingInput: (input: PlayerInput) => void;
   clearProcessedInputs: (tick: number) => void;
 
   // Lobby actions
   setAvailableLobbies: (lobbies: LobbyInfo[]) => void;
   setCurrentLobby: (lobbyId: string | null, lobbyName: string | null) => void;
+  setCurrentLobbyWager: (wager: LobbyWagerState) => void;
   setLobbyPlayers: (players: Map<string, LobbyPlayer>) => void;
   updateLobbyPlayer: (playerId: string, player: LobbyPlayer) => void;
   removeLobbyPlayer: (playerId: string) => void;
@@ -209,6 +219,7 @@ const coreInitialState: CoreState = {
   availableLobbies: [],
   currentLobbyId: null,
   currentLobbyName: null,
+  currentLobbyWager: { enabled: false },
   lobbyPlayers: new Map(),
   isLobbyHost: false,
   mapVoteOptions: [],
@@ -233,6 +244,7 @@ const coreInitialState: CoreState = {
   blueFlag: null,
   players: new Map(),
   localPlayer: null,
+  playerPings: new Map(),
   roundTimeRemaining: 0,
   phaseEndTime: null,
   pendingInputs: [],
@@ -466,9 +478,17 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   },
 
   setPlayers: (players) => {
-    const { playerId } = get();
+    const { playerId, playerPings } = get();
     const localPlayer = playerId ? players.get(playerId) ?? null : null;
-    set({ players, localPlayer });
+    const nextPlayerPings = new Map<string, number | null>();
+
+    playerPings.forEach((pingMs, id) => {
+      if (players.has(id)) {
+        nextPlayerPings.set(id, pingMs);
+      }
+    });
+
+    set({ players, localPlayer, playerPings: nextPlayerPings });
 
     // Update visual store for bulk player updates (initial sync)
     players.forEach((player, id) => {
@@ -495,13 +515,40 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   },
 
   removePlayer: (playerId) => {
-    const { players } = get();
+    const { players, playerPings } = get();
     if (!players.has(playerId)) return;
 
     const updatedPlayers = new Map(players);
     updatedPlayers.delete(playerId);
     removePlayerVisualState(playerId);
-    set({ players: updatedPlayers });
+    const updatedPings = new Map(playerPings);
+    updatedPings.delete(playerId);
+    set({ players: updatedPlayers, playerPings: updatedPings });
+  },
+
+  setPlayerPings: (message) => {
+    set((state) => {
+      const nextPings = new Map(state.playerPings);
+      const currentIds = new Set<string>();
+      let changed = false;
+
+      for (const ping of message.players) {
+        currentIds.add(ping.playerId);
+        if (nextPings.get(ping.playerId) !== ping.pingMs) {
+          nextPings.set(ping.playerId, ping.pingMs);
+          changed = true;
+        }
+      }
+
+      for (const playerId of Array.from(nextPings.keys())) {
+        if (!currentIds.has(playerId)) {
+          nextPings.delete(playerId);
+          changed = true;
+        }
+      }
+
+      return changed ? { playerPings: nextPings } : state;
+    });
   },
 
   cleanupGhostPlayers: () => {
@@ -568,6 +615,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     currentLobbyId: lobbyId,
     currentLobbyName: lobbyName,
   }),
+
+  setCurrentLobbyWager: (wager) => set({ currentLobbyWager: wager }),
 
   setLobbyPlayers: (players) => set({ lobbyPlayers: players }),
 
@@ -671,6 +720,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   resetLobby: () => set({
     currentLobbyId: null,
     currentLobbyName: null,
+    currentLobbyWager: { enabled: false },
     lobbyPlayers: new Map(),
     isLobbyHost: false,
     mapVoteOptions: [],

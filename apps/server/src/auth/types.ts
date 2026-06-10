@@ -39,6 +39,13 @@ export interface UserResponse {
     totalFlagReturns: number;
     totalScore: number;
     totalExperience: number;
+    totalWagerGames: number;
+    totalWagerWins: number;
+    totalWagerLosses: number;
+    totalWagerDraws: number;
+    totalWageredLamports: string;
+    totalWagerWonLamports: string;
+    totalWagerLostLamports: string;
   };
   linkedAccounts: LinkedAccountSummary[];
 }

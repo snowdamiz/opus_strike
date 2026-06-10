@@ -140,6 +140,7 @@ const SOUND_EFFECTS = {
   // UI
   buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
   buttonClick: { path: '/sounds/button_press.mp3', volume: 0.1 },
+  countdownTick: { path: '/sounds/tick.mp3', volume: 0.65 },
   countdown: { path: '/sounds/countdown.mp3', volume: 0.6 },
   matchStart: { path: '/sounds/match_start.mp3', volume: 0.8 },
   roundEnd: { path: '/sounds/round_end.mp3', volume: 0.8 },
@@ -157,7 +158,7 @@ export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze'
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['buttonHover', 'buttonClick'],
-  commonCombat: ['walk', 'slide', 'jetpack'],
+  commonCombat: ['walk', 'slide', 'jetpack', 'countdownTick'],
   phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],

@@ -28,6 +28,7 @@ export interface LobbyInfo {
   participantCount?: number;
   maxParticipants?: number;
   status: string;
+  wager?: LobbyWagerState;
 }
 
 export interface LobbyPlayer {
@@ -40,6 +41,55 @@ export interface LobbyPlayer {
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
   botProfileId?: string;
+  paymentStatus?: WagerPaymentStatus;
+  paymentWalletAddress?: string;
+  depositSignature?: string;
+  refundSignature?: string;
+}
+
+export type WagerPaymentStatus =
+  | ''
+  | 'not_required'
+  | 'unpaid'
+  | 'intent_created'
+  | 'submitted'
+  | 'confirmed'
+  | 'credited'
+  | 'refunding'
+  | 'refunded'
+  | 'settled'
+  | 'failed'
+  | 'expired';
+
+export interface LobbyWagerState {
+  enabled: boolean;
+  status?: string;
+  token?: 'SOL' | string;
+  coverChargeLamports?: string;
+  treasuryWallet?: string;
+  platformFeeBps?: number;
+  potLamports?: string;
+  paidPlayerCount?: number;
+}
+
+export interface WagerPaymentIntent {
+  intentId: string;
+  lobbyId: string;
+  status: WagerPaymentStatus;
+  token: 'SOL';
+  amountLamports: string;
+  treasuryWallet: string;
+  walletAddress: string;
+  memo: string;
+  expiresAt: string;
+  cluster: string;
+}
+
+export interface WagerPaymentTransaction {
+  intentId: string;
+  transactionBase64: string;
+  lastValidBlockHeight: number;
+  cluster: string;
 }
 
 export interface MapVoteOption {
@@ -70,6 +120,13 @@ export interface UserStats {
   totalFlagReturns: number;
   totalScore: number;
   totalExperience: number;
+  totalWagerGames: number;
+  totalWagerWins: number;
+  totalWagerLosses: number;
+  totalWagerDraws: number;
+  totalWageredLamports: string;
+  totalWagerWonLamports: string;
+  totalWagerLostLamports: string;
 }
 
 export interface MatchmakingStatus {

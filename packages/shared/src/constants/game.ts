@@ -9,7 +9,7 @@ export const DEFAULT_GAME_CONFIG: GameConfig = {
   spawnProtectionSeconds: 3,
   flagReturnTimeSeconds: 30,
   heroSelectTimeSeconds: 30,
-  countdownSeconds: 5,
+  countdownSeconds: 10,
 };
 
 export const TICK_RATE = 20; // Server ticks per second

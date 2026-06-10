@@ -64,6 +64,13 @@ interface LeaderboardUserSummary {
   totalFlagReturns: number;
   totalScore: number;
   totalExperience: number;
+  totalWagerGames: number;
+  totalWagerWins: number;
+  totalWagerLosses: number;
+  totalWagerDraws: number;
+  totalWageredLamports: bigint;
+  totalWagerWonLamports: bigint;
+  totalWagerLostLamports: bigint;
 }
 
 const leaderboardUserSelect = {
@@ -81,6 +88,13 @@ const leaderboardUserSelect = {
   totalFlagReturns: true,
   totalScore: true,
   totalExperience: true,
+  totalWagerGames: true,
+  totalWagerWins: true,
+  totalWagerLosses: true,
+  totalWagerDraws: true,
+  totalWageredLamports: true,
+  totalWagerWonLamports: true,
+  totalWagerLostLamports: true,
 } satisfies Prisma.UserSelect;
 
 const leaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
@@ -233,6 +247,13 @@ function serializeLeaderboardStats(user: LeaderboardUserSummary) {
     totalFlagReturns: user.totalFlagReturns,
     totalScore: user.totalScore,
     totalExperience: user.totalExperience,
+    totalWagerGames: user.totalWagerGames,
+    totalWagerWins: user.totalWagerWins,
+    totalWagerLosses: user.totalWagerLosses,
+    totalWagerDraws: user.totalWagerDraws,
+    totalWageredLamports: user.totalWageredLamports.toString(),
+    totalWagerWonLamports: user.totalWagerWonLamports.toString(),
+    totalWagerLostLamports: user.totalWagerLostLamports.toString(),
   };
 }
 

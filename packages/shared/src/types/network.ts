@@ -10,6 +10,7 @@ import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } f
 export type ClientMessage = 
   | { type: 'input'; payload: PlayerInput }
   | { type: 'movementCommands'; payload: MovementCommandPacket }
+  | { type: 'playerPingResponse'; payload: PlayerPingResponseMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
   | { type: 'devFillUltimate'; payload: Record<string, never> }
@@ -29,6 +30,8 @@ export type ServerMessage =
   | { type: 'playerTransforms'; payload: PlayerTransformsMessage }
   | { type: 'selfMovementAuthority'; payload: SelfMovementAuthority }
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
+  | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
+  | { type: 'playerPings'; payload: PlayerPingsMessage }
   | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
   | { type: 'playerLeft'; payload: { playerId: string } }
@@ -109,6 +112,24 @@ export interface PlayerVitalsMessage {
   serverTime: number;
   players: PlayerVitalsSnapshot[];
   removedPlayerIds?: string[];
+}
+
+export interface PlayerPingRequestMessage {
+  nonce: string;
+}
+
+export interface PlayerPingResponseMessage {
+  nonce: string;
+}
+
+export interface PlayerPingSnapshot {
+  playerId: string;
+  pingMs: number | null;
+}
+
+export interface PlayerPingsMessage {
+  serverTime: number;
+  players: PlayerPingSnapshot[];
 }
 
 export interface MatchSnapshotMessage {

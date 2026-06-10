@@ -29,10 +29,11 @@ function VoidIcon({ className, style }: { className?: string; style?: React.CSSP
 }
 
 export function Scoreboard() {
-  const { players, localPlayer, redScore, blueScore } = useGameStore(
+  const { players, localPlayer, playerPings, redScore, blueScore } = useGameStore(
     useShallow(state => ({
       players: state.players,
       localPlayer: state.localPlayer,
+      playerPings: state.playerPings,
       redScore: state.redScore,
       blueScore: state.blueScore,
     }))
@@ -57,7 +58,7 @@ export function Scoreboard() {
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-auto">
       <div
-        className="w-full max-w-2xl lg:max-w-3xl xl:max-w-4xl mx-4 lg:mx-6 xl:mx-8 rounded-2xl overflow-hidden animate-scale-in"
+        className="w-full max-w-3xl lg:max-w-4xl xl:max-w-5xl mx-4 lg:mx-6 xl:mx-8 rounded-2xl overflow-hidden animate-scale-in"
         style={{
           background: 'linear-gradient(180deg, rgb(var(--color-strike-elevated) / 0.98) 0%, rgb(var(--color-strike-bg) / 0.98) 100%)',
           border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -147,6 +148,7 @@ export function Scoreboard() {
                   voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
                   voiceMuted={mutedPlayerIds.has(player.id)}
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
+                  pingMs={playerPings.get(player.id) ?? null}
                   faction={FACTIONS.red}
                 />
               ))}
@@ -172,6 +174,7 @@ export function Scoreboard() {
                   voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
                   voiceMuted={mutedPlayerIds.has(player.id)}
                   onToggleVoiceMute={() => togglePlayerMute(player.id)}
+                  pingMs={playerPings.get(player.id) ?? null}
                   faction={FACTIONS.blue}
                 />
               ))}
@@ -209,7 +212,7 @@ interface FactionHeaderProps {
 function FactionHeader({ faction }: FactionHeaderProps) {
   return (
     <div 
-      className="grid grid-cols-7 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
+      className="grid grid-cols-8 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
       style={{ background: faction.bgColor }}
     >
       <span className="col-span-2" style={{ color: faction.primaryColor }}>Warrior</span>
@@ -217,6 +220,7 @@ function FactionHeader({ faction }: FactionHeaderProps) {
       <span className="text-white/40 text-center">D</span>
       <span className="text-white/40 text-center">A</span>
       <span className="text-white/40 text-center">Flags</span>
+      <span className="text-white/40 text-center">Ping</span>
       <span className="text-white/40 text-center">Voice</span>
     </div>
   );
@@ -230,14 +234,15 @@ interface PlayerRowProps {
   voiceParticipant: VoiceParticipant | null;
   voiceMuted: boolean;
   onToggleVoiceMute: () => void;
+  pingMs: number | null;
 }
 
-function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, voiceMuted, onToggleVoiceMute }: PlayerRowProps) {
+function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, voiceMuted, onToggleVoiceMute, pingMs }: PlayerRowProps) {
   const stats = player.stats ?? { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 };
   
   return (
     <div 
-      className={`grid grid-cols-7 gap-2 px-4 py-3 items-center transition-colors ${
+      className={`grid grid-cols-8 gap-2 px-4 py-3 items-center transition-colors ${
         isLocal ? 'bg-white/[0.06]' : 'hover:bg-white/[0.02]'
       }`}
     >
@@ -295,6 +300,9 @@ function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, v
       >
         {stats.flagCaptures}
       </span>
+      <span className={`font-mono text-xs text-center ${getPingClassName(player, pingMs)}`}>
+        {formatPing(player, pingMs)}
+      </span>
       <div className="flex justify-center">
         {canMuteVoice ? (
           <button
@@ -324,4 +332,16 @@ function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, v
       </div>
     </div>
   );
+}
+
+function formatPing(player: Player, pingMs: number | null): string {
+  if (player.isBot) return '-';
+  return pingMs === null ? '--' : `${pingMs}`;
+}
+
+function getPingClassName(player: Player, pingMs: number | null): string {
+  if (player.isBot || pingMs === null) return 'text-white/25';
+  if (pingMs < 80) return 'text-emerald-300/85';
+  if (pingMs < 140) return 'text-amber-300/85';
+  return 'text-red-300/85';
 }

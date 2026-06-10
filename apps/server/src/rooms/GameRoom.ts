@@ -90,6 +90,8 @@ import type {
   MatchSummaryPlayer,
   SelfMovementAuthority,
   MatchSnapshotMessage,
+  PlayerPingRequestMessage,
+  PlayerPingsMessage,
   PlayerTransformsMessage,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
@@ -121,6 +123,7 @@ import {
   DEFAULT_MATCHMAKING_SKILL_BUCKET,
 } from '../matchmaking/skill';
 import { voiceService } from '../voice/VoiceService';
+import { wagerService, type LockedWagerContext } from '../wagers/service';
 import {
   calculateParticipantExperience,
   calculateParticipantScore,
@@ -168,6 +171,7 @@ interface CreateOptions {
   lobbyName?: string;
   mapSeed?: number;
   botAssignments?: BotAssignment[];
+  wagerContext?: LockedWagerContext | null;
 }
 
 interface JoinOptions {
@@ -191,6 +195,7 @@ interface BotAssignment {
 type BotStrategicRole = 'runner' | 'fighter' | 'defender' | 'support';
 type PlainVec3 = { x: number; y: number; z: number };
 type PlainVec2 = { x: number; z: number };
+type PendingPlayerPing = { nonce: string; sentAt: number };
 interface PhantomPrimaryMagazineState {
   ammo: number;
   reloadUntil: number;
@@ -428,6 +433,9 @@ const BOT_AWARENESS_RANGE = 58;
 const BOT_CLOSE_REVEAL_RANGE = 8;
 const BOT_LOS_SAMPLE_STEP = 0.55;
 const DAMAGE_HISTORY_WINDOW_MS = 10000;
+const PLAYER_PING_INTERVAL_MS = 3000;
+const PLAYER_PING_TIMEOUT_MS = 10000;
+const MAX_REPORTED_PLAYER_PING_MS = 999;
 const BOT_AI_BUDGET_MS = 5;
 const LOS_CACHE_TTL_MS = 180;
 const TRANSFORM_POSITION_SCALE = 100;
@@ -605,7 +613,12 @@ export class GameRoom extends Room<GameState> {
   private lastVitalsBroadcastAt = 0;
   private lastMatchSnapshotBroadcastAt = 0;
   private lastLowFrequencyStateAt = 0;
+  private lastPingProbeAt = 0;
+  private pingProbeSequence = 0;
   private playerVitalSignatures = new Map<string, PlayerVitalsSnapshot>();
+  private pendingPlayerPings = new Map<string, PendingPlayerPing>();
+  private playerPingMs = new Map<string, number>();
+  private playerPingsDirty = true;
   private knownPlayerIds = new Set<string>();
   private alivePlayers: Player[] = [];
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
@@ -619,6 +632,7 @@ export class GameRoom extends Room<GameState> {
   private readonly securityLogSamples = new Map<string, { lastLoggedAt: number; suppressed: number }>();
   private readonly damageCapWindows = new Map<string, { startedAt: number; damage: number }>();
   private matchPersistenceLedger: MatchPersistenceLedger | null = null;
+  private wagerContext: LockedWagerContext | null = null;
 
   async onAuth(
     client: Client,
@@ -664,6 +678,7 @@ export class GameRoom extends Room<GameState> {
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
+    this.wagerContext = options.wagerContext || null;
     if (this.lobbyId) {
       assertUsableEntryTicketSecret();
     }
@@ -783,6 +798,10 @@ export class GameRoom extends Room<GameState> {
         return;
       }
       void this.handleVoiceTokenRequest(client, data);
+    });
+
+    this.onMessage('playerPingResponse', (client, data: unknown) => {
+      this.handlePlayerPingResponse(client, data);
     });
 
     if (this.isDevelopmentMode()) {
@@ -983,6 +1002,9 @@ export class GameRoom extends Room<GameState> {
         this.rateLimiter.clearScope(existingSessionId);
         this.knownPlayerIds.delete(existingSessionId);
         this.playerVitalSignatures.delete(existingSessionId);
+        this.pendingPlayerPings.delete(existingSessionId);
+        this.playerPingMs.delete(existingSessionId);
+        this.playerPingsDirty = true;
         
         // Broadcast that old player left
         this.broadcast('playerLeft', { playerId: existingSessionId });
@@ -1048,6 +1070,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.set(client.sessionId, player);
     this.knownPlayerIds.add(client.sessionId);
+    this.playerPingsDirty = true;
     this.updateLastSafeMovement(player, 0);
     if (this.state.phase === 'playing') {
       this.ensureMatchPersistenceLedger();
@@ -1075,6 +1098,7 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.sendCurrentSnapshots(client);
+    this.requestPlayerPing(client, Date.now());
 
     // Check if we should start hero select
     this.checkPhaseTransition();
@@ -1121,6 +1145,9 @@ export class GameRoom extends Room<GameState> {
     this.playerAuthContexts.delete(client.sessionId);
     this.playerEntryTickets.delete(client.sessionId);
     this.rateLimiter.clearScope(client.sessionId);
+    this.pendingPlayerPings.delete(client.sessionId);
+    this.playerPingMs.delete(client.sessionId);
+    this.playerPingsDirty = true;
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -1601,11 +1628,72 @@ export class GameRoom extends Room<GameState> {
       serverTime: this.state.serverTime,
       players: Array.from(this.state.players, ([id, player]) => this.buildPlayerVitals(id, player)),
     } satisfies PlayerVitalsMessage);
+    this.sendWithMetrics(client, 'playerPings', this.buildPlayerPingsMessage());
 
     const transformPayload = this.buildPlayerTransformsPayload();
     if (transformPayload.players.length > 0) {
       this.sendWithMetrics(client, 'playerTransforms', transformPayload);
     }
+  }
+
+  private requestPlayerPing(client: Client, now: number): void {
+    const nonce = `${this.state.tick}:${++this.pingProbeSequence}:${client.sessionId}`;
+    this.pendingPlayerPings.set(client.sessionId, { nonce, sentAt: now });
+    this.sendWithMetrics(client, 'playerPingRequest', { nonce } satisfies PlayerPingRequestMessage);
+  }
+
+  private handlePlayerPingResponse(client: Client, data: unknown): void {
+    if (!isRecord(data) || typeof data.nonce !== 'string') return;
+
+    const pending = this.pendingPlayerPings.get(client.sessionId);
+    if (!pending || pending.nonce !== data.nonce) return;
+
+    this.pendingPlayerPings.delete(client.sessionId);
+    const pingMs = Math.min(
+      MAX_REPORTED_PLAYER_PING_MS,
+      Math.max(0, Math.round(Date.now() - pending.sentAt))
+    );
+
+    if (this.playerPingMs.get(client.sessionId) !== pingMs) {
+      this.playerPingMs.set(client.sessionId, pingMs);
+      this.playerPingsDirty = true;
+    }
+  }
+
+  private probePlayerPings(): void {
+    const now = this.state.serverTime || Date.now();
+    if (now - this.lastPingProbeAt < PLAYER_PING_INTERVAL_MS) return;
+
+    this.lastPingProbeAt = now;
+
+    for (const [playerId, pending] of Array.from(this.pendingPlayerPings)) {
+      if (now - pending.sentAt > PLAYER_PING_TIMEOUT_MS) {
+        this.pendingPlayerPings.delete(playerId);
+      }
+    }
+
+    for (const client of this.clients) {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || player.isBot) continue;
+      this.requestPlayerPing(client, now);
+    }
+  }
+
+  private buildPlayerPingsMessage(): PlayerPingsMessage {
+    return {
+      serverTime: this.state.serverTime,
+      players: Array.from(this.state.players, ([playerId, player]) => ({
+        playerId,
+        pingMs: player.isBot ? null : this.playerPingMs.get(playerId) ?? null,
+      })),
+    };
+  }
+
+  private broadcastPlayerPings(force = false): void {
+    if (!force && !this.playerPingsDirty) return;
+
+    this.playerPingsDirty = false;
+    this.broadcastWithMetrics('playerPings', this.buildPlayerPingsMessage());
   }
 
   private buildPlayerTransformsPayload(): PlayerTransformsMessage {
@@ -1677,6 +1765,17 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastStateStreams(options: { transforms?: boolean; vitals?: boolean; match?: boolean; forceVitals?: boolean; forceMatch?: boolean } = {}): void {
+    const updatePlayerPings = () => {
+      this.probePlayerPings();
+      this.broadcastPlayerPings();
+    };
+
+    if (this.metrics) {
+      this.metrics.time('playerPings', updatePlayerPings);
+    } else {
+      updatePlayerPings();
+    }
+
     const shouldBroadcastTransforms = options.transforms ?? (this.state.phase === 'playing' || this.state.phase === 'countdown');
     if (shouldBroadcastTransforms) {
       this.metrics?.time('broadcastPlayerTransforms', () => this.broadcastPlayerTransforms());
@@ -2076,6 +2175,35 @@ export class GameRoom extends Room<GameState> {
           blueScore: finalScore.blue,
           winningTeam,
           participantCount: participants.length,
+          error: this.serializePersistenceError(error),
+        });
+      });
+  }
+
+  private settleWagerAfterGame(winningTeam: Team | null): void {
+    if (!this.wagerContext) return;
+
+    const matchId = this.matchPersistenceLedger?.matchId ?? null;
+    wagerService.settleWageredLobby({
+      wageredLobbyId: this.wagerContext.wageredLobbyId,
+      matchId,
+      winningTeam,
+    })
+      .then((settlement) => {
+        loggers.room.info('Wager settlement requested', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId,
+          wageredLobbyId: this.wagerContext?.wageredLobbyId,
+          settlement,
+        });
+      })
+      .catch((error) => {
+        loggers.room.error('Wager settlement failed', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId,
+          wageredLobbyId: this.wagerContext?.wageredLobbyId,
           error: this.serializePersistenceError(error),
         });
       });
@@ -6408,6 +6536,15 @@ export class GameRoom extends Room<GameState> {
     this.state.roundTimeRemaining = this.config.roundTimeSeconds;
     this.state.phaseEndTime = 0;
     const ledger = this.ensureMatchPersistenceLedger(this.state.roundStartTime);
+    if (this.wagerContext) {
+      wagerService.attachMatchId(this.wagerContext.wageredLobbyId, ledger.matchId).catch((error) => {
+        loggers.room.error('Failed to attach wager to match ledger', {
+          wageredLobbyId: this.wagerContext?.wageredLobbyId,
+          matchId: ledger.matchId,
+          error: this.serializePersistenceError(error),
+        });
+      });
+    }
 
     // Set all players to alive
     this.state.players.forEach(player => {
@@ -6479,6 +6616,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
     this.persistMatchLedger(finalScore, winningTeam);
+    this.settleWagerAfterGame(winningTeam);
 
     // Reset room after delay
     setTimeout(() => {

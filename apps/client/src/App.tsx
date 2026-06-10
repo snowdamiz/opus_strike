@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useGameStore } from './store/gameStore';
 import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
@@ -25,6 +25,27 @@ const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module)
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
 const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen').then((module) => ({ default: module.MatchSummaryScreen })));
 const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
+const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
+
+type CountdownEffectStyle = CSSProperties & {
+  '--prematch-countdown-backdrop-opacity': string;
+  '--prematch-countdown-brightness': string;
+  '--prematch-countdown-edge-opacity': string;
+  '--prematch-countdown-grayscale': string;
+  '--prematch-countdown-saturate': string;
+  '--prematch-countdown-scan-opacity': string;
+  '--prematch-countdown-side-mid-opacity': string;
+  '--prematch-countdown-side-opacity': string;
+};
+
+function getCountdownRemainingMs(phaseEndTime: number | null): number {
+  return phaseEndTime ? Math.max(0, phaseEndTime - Date.now()) : 0;
+}
+
+function smoothstep(value: number): number {
+  const clamped = Math.min(1, Math.max(0, value));
+  return clamped * clamped * (3 - 2 * clamped);
+}
 
 export function App() {
   const appPhase = useGameStore((state) => state.appPhase);
@@ -339,24 +360,52 @@ export function App() {
 
 function CountdownOverlay() {
   const phaseEndTime = useGameStore((state) => state.phaseEndTime);
-  const [countdown, setCountdown] = useState(5);
+  const { playSound } = useAudio();
+  const [remainingMs, setRemainingMs] = useState(() => getCountdownRemainingMs(phaseEndTime));
+  const previousCountdownRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      if (phaseEndTime) {
-        const remaining = Math.ceil((phaseEndTime - Date.now()) / 1000);
-        setCountdown(Math.max(0, remaining));
-      }
-    }, 100);
+    const updateCountdown = () => {
+      setRemainingMs(getCountdownRemainingMs(phaseEndTime));
+    };
 
-    return () => clearInterval(interval);
+    updateCountdown();
+    const interval = window.setInterval(updateCountdown, 50);
+
+    return () => window.clearInterval(interval);
   }, [phaseEndTime]);
+
+  const countdown = Math.ceil(remainingMs / 1000);
+
+  useEffect(() => {
+    const previousCountdown = previousCountdownRef.current;
+    if (previousCountdown !== null && countdown > 0 && countdown < previousCountdown) {
+      void playSound('countdownTick');
+    }
+    previousCountdownRef.current = countdown;
+  }, [countdown, playSound]);
 
   if (countdown <= 0) return null;
 
+  const fadeRatio = remainingMs / PREMATCH_COUNTDOWN_EFFECT_FADE_MS;
+  const effectIntensity = smoothstep(fadeRatio);
+  const effectStyle: CountdownEffectStyle = {
+    '--prematch-countdown-backdrop-opacity': (effectIntensity * 0.14).toFixed(3),
+    '--prematch-countdown-brightness': (1 - effectIntensity * 0.18).toFixed(3),
+    '--prematch-countdown-edge-opacity': (effectIntensity * 0.36).toFixed(3),
+    '--prematch-countdown-grayscale': effectIntensity.toFixed(3),
+    '--prematch-countdown-saturate': (1 - effectIntensity * 0.86).toFixed(3),
+    '--prematch-countdown-scan-opacity': (effectIntensity * 0.22).toFixed(3),
+    '--prematch-countdown-side-mid-opacity': (effectIntensity * 0.44).toFixed(3),
+    '--prematch-countdown-side-opacity': (effectIntensity * 0.78).toFixed(3),
+  };
+
   return (
-    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
-      <div className="text-center">
+    <div className="prematch-countdown-overlay" style={effectStyle}>
+      <div className="prematch-countdown-tone" />
+      <div className="prematch-countdown-vignette" />
+      <div className="prematch-countdown-scanlines" />
+      <div className="prematch-countdown-content">
         <div
           className="font-display text-[200px] text-voxel-primary animate-pulse"
           style={{ textShadow: '0 0 60px rgb(var(--color-ui-objective) / 0.8)' }}

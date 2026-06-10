@@ -8,7 +8,9 @@ import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import authRoutes from './auth/routes';
 import matchmakingRoutes from './matchmaking/routes';
+import wagerRoutes from './wagers/routes';
 import { voiceService } from './voice/VoiceService';
+import { wagerService } from './wagers/service';
 
 const app = express();
 const httpServer = createServer(app);
@@ -47,7 +49,7 @@ app.use((_req, res, next) => {
   }
   
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Wager-Admin-Token');
   res.header('Access-Control-Allow-Credentials', 'true');
   
   // Handle preflight requests
@@ -67,6 +69,7 @@ app.use(express.json());
 // Auth routes
 app.use('/auth', authRoutes);
 app.use('/matchmaking', matchmakingRoutes);
+app.use('/wagers', wagerRoutes);
 
 // Health check endpoint
 app.get('/health', (_req, res) => {
@@ -87,6 +90,15 @@ interface LobbySummary {
   participantCount: number;
   maxParticipants: number;
   status: string;
+  wager?: {
+    enabled: boolean;
+    status?: string;
+    token?: string;
+    coverChargeLamports?: string;
+    potLamports?: string;
+    paidPlayerCount?: number;
+    treasuryWallet?: string;
+  };
 }
 
 async function getPublicLobbies(): Promise<LobbySummary[]> {
@@ -103,6 +115,15 @@ async function getPublicLobbies(): Promise<LobbySummary[]> {
       participantCount: room.metadata?.participantCount ?? room.clients,
       maxParticipants: room.metadata?.maxParticipants ?? room.maxClients,
       status: room.metadata?.status || 'waiting',
+      wager: {
+        enabled: room.metadata?.wagerEnabled === true,
+        status: room.metadata?.wagerStatus,
+        token: room.metadata?.wagerToken,
+        coverChargeLamports: room.metadata?.wagerCoverChargeLamports,
+        potLamports: room.metadata?.wagerPotLamports,
+        paidPlayerCount: room.metadata?.wagerPaidPlayerCount,
+        treasuryWallet: room.metadata?.wagerTreasuryWallet,
+      },
     }));
 }
 
@@ -161,6 +182,8 @@ httpServer.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════════╝
   `);
 });
+
+wagerService.startBackgroundJobs();
 
 // Graceful shutdown
 process.on('SIGTERM', () => {

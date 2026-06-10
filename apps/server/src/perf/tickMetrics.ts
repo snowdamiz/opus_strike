@@ -12,6 +12,7 @@ export type TickSection =
   | 'broadcastPlayerTransforms'
   | 'broadcastPlayerVitals'
   | 'broadcastMatchSnapshot'
+  | 'playerPings'
   | 'input';
 
 interface SectionStats {

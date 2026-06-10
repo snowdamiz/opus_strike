@@ -22,6 +22,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      buffer: path.resolve(__dirname, './node_modules/buffer/index.js'),
     },
   },
   server: {

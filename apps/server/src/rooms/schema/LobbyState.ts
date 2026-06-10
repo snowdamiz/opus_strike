@@ -11,6 +11,10 @@ export class LobbyPlayer extends Schema {
   isBot: boolean = false;
   botDifficulty: string = 'normal';
   botProfileId: string = '';
+  paymentStatus: string = '';
+  paymentWalletAddress: string = '';
+  depositSignature: string = '';
+  refundSignature: string = '';
 }
 
 defineTypes(LobbyPlayer, {
@@ -23,6 +27,10 @@ defineTypes(LobbyPlayer, {
   isBot: 'boolean',
   botDifficulty: 'string',
   botProfileId: 'string',
+  paymentStatus: 'string',
+  paymentWalletAddress: 'string',
+  depositSignature: 'string',
+  refundSignature: 'string',
 });
 
 export class LobbyState extends Schema {
@@ -36,6 +44,14 @@ export class LobbyState extends Schema {
   gameRoomId: string = ''; // Set when game starts
   defaultBotDifficulty: string = 'normal';
   botFillMode: string = 'manual';
+  wagerEnabled: boolean = false;
+  wagerStatus: string = '';
+  wagerToken: string = '';
+  wagerCoverChargeLamports: string = '';
+  wagerTreasuryWallet: string = '';
+  wagerPlatformFeeBps: number = 0;
+  wagerPotLamports: string = '0';
+  wagerPaidPlayerCount: number = 0;
   
   players = new MapSchema<LobbyPlayer>();
   
@@ -53,6 +69,14 @@ defineTypes(LobbyState, {
   gameRoomId: 'string',
   defaultBotDifficulty: 'string',
   botFillMode: 'string',
+  wagerEnabled: 'boolean',
+  wagerStatus: 'string',
+  wagerToken: 'string',
+  wagerCoverChargeLamports: 'string',
+  wagerTreasuryWallet: 'string',
+  wagerPlatformFeeBps: 'number',
+  wagerPotLamports: 'string',
+  wagerPaidPlayerCount: 'number',
   players: { map: LobbyPlayer },
   createdAt: 'number',
 });

@@ -33,6 +33,13 @@ export function serializeUser(user: UserWithAccounts): UserResponse {
       totalFlagReturns: user.totalFlagReturns,
       totalScore: user.totalScore,
       totalExperience: user.totalExperience,
+      totalWagerGames: user.totalWagerGames,
+      totalWagerWins: user.totalWagerWins,
+      totalWagerLosses: user.totalWagerLosses,
+      totalWagerDraws: user.totalWagerDraws,
+      totalWageredLamports: user.totalWageredLamports.toString(),
+      totalWagerWonLamports: user.totalWagerWonLamports.toString(),
+      totalWagerLostLamports: user.totalWagerLostLamports.toString(),
     },
     linkedAccounts: (user.authAccounts ?? []).map(serializeLinkedAccount),
   };

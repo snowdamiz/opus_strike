@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test:voice": "pnpm --filter @voxel-strike/server test:voice && pnpm --filter @voxel-strike/client test:voice",
+    "test:wager": "pnpm --filter @voxel-strike/server test:wager",
     "test:authority": "pnpm --filter @voxel-strike/server test:authority",
     "test:movement": "pnpm --filter @voxel-strike/physics test:movement",
     "smoke:procedural-buildings": "pnpm --filter @voxel-strike/shared smoke:buildings",

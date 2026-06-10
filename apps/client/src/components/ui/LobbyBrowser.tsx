@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useGameStore, LobbyInfo } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import type { BotDifficulty } from '@voxel-strike/shared';
+import { lamportsToSolDisplay, solInputToLamports } from '../../utils/wagerPayments';
 
 export function LobbyBrowser() {
   const { playerName, availableLobbies, isLoading, setAppPhase } = useGameStore();
@@ -10,6 +11,8 @@ export function LobbyBrowser() {
   const [isPrivate, setIsPrivate] = useState(false);
   const [initialBotCount, setInitialBotCount] = useState(0);
   const [defaultBotDifficulty, setDefaultBotDifficulty] = useState<BotDifficulty>('normal');
+  const [wagerEnabled, setWagerEnabled] = useState(false);
+  const [coverChargeSol, setCoverChargeSol] = useState('0.01');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -23,6 +26,9 @@ export function LobbyBrowser() {
         initialBotCount,
         botFillMode: 'manual',
         defaultBotDifficulty,
+        wager: wagerEnabled
+          ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
+          : { enabled: false },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -196,6 +202,48 @@ export function LobbyBrowser() {
                   </div>
                 </div>
 
+                <label className="flex items-center gap-3 p-3 bg-black/20 border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors">
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      checked={wagerEnabled}
+                      onChange={(e) => setWagerEnabled(e.target.checked)}
+                      className="sr-only"
+                    />
+                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                      wagerEnabled ? 'bg-cyan-500 border-cyan-300' : 'bg-transparent border-white/30'
+                    }`}>
+                      {wagerEnabled && (
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-body text-sm text-white/70">SOL Pot</p>
+                    <p className="text-xs text-white/30">Per human player</p>
+                  </div>
+                </label>
+
+                {wagerEnabled && (
+                  <div>
+                    <label className="block text-xs text-white/40 font-body uppercase tracking-wider mb-2">
+                      Cover Charge
+                    </label>
+                    <div className="flex items-center overflow-hidden rounded-lg border border-white/10 bg-black/20">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={coverChargeSol}
+                        onChange={(e) => setCoverChargeSol(e.target.value)}
+                        className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-white outline-none"
+                      />
+                      <span className="px-3 text-xs font-display text-cyan-200">SOL</span>
+                    </div>
+                  </div>
+                )}
+
                 {error && (
                   <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
                     <p className="text-red-400 text-sm font-body">{error}</p>
@@ -288,6 +336,11 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
               FULL
             </span>
           )}
+          {lobby.wager?.enabled && (
+            <span className="px-1.5 py-0.5 bg-cyan-500/15 text-cyan-200 text-[10px] font-display rounded">
+              {lamportsToSolDisplay(lobby.wager.coverChargeLamports)} SOL
+            </span>
+          )}
         </div>
         
         {/* Progress */}
@@ -303,6 +356,11 @@ function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
           <span className="text-xs text-white/40 font-mono">
             {humanCount}H/{botCount}B
           </span>
+          {lobby.wager?.enabled && (
+            <span className="text-xs text-cyan-200/70 font-mono">
+              POT {lamportsToSolDisplay(lobby.wager.potLamports)}
+            </span>
+          )}
         </div>
       </div>
 

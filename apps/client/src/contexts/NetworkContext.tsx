@@ -1,9 +1,18 @@
 import { createContext, useContext, useRef, useCallback, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore, LobbyPlayer, LobbyInfo, MapVoteOption, MapVoteRecord } from '../store/gameStore';
+import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
-import type { BotDifficulty, GameEndEvent, HeroId, Team, PlayerInput, MovementCommandPacket } from '@voxel-strike/shared';
+import type {
+  BotDifficulty,
+  GameEndEvent,
+  HeroId,
+  Team,
+  PlayerInput,
+  MovementCommandPacket,
+  PlayerPingRequestMessage,
+  PlayerPingsMessage,
+} from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
 
@@ -24,6 +33,8 @@ import {
 } from './gameMessageHandlers';
 import { loggers } from '../utils/logger';
 
+type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
+
 // ============================================================================
 // CONTEXT TYPE
 // ============================================================================
@@ -36,7 +47,12 @@ interface NetworkContextType {
     playerName: string,
     lobbyName?: string,
     isPrivate?: boolean,
-    options?: { initialBotCount?: number; botFillMode?: 'manual' | 'fill_even' | 'fill_empty'; defaultBotDifficulty?: BotDifficulty }
+    options?: {
+      initialBotCount?: number;
+      botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
+      defaultBotDifficulty?: BotDifficulty;
+      wager?: CreateLobbyWagerOptions;
+    }
   ) => Promise<void>;
   quickPlay: (playerName: string) => Promise<void>;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
@@ -53,6 +69,10 @@ interface NetworkContextType {
   reportMapVotePreviewsReady: () => void;
   finalizeMapVote: () => void;
   kickPlayer: (playerId: string) => void;
+  createWagerPaymentIntent: (lobbyId: string, walletAddress: string, lobbyPlayerId?: string | null) => Promise<WagerPaymentIntent>;
+  createWagerPaymentTransaction: (intentId: string) => Promise<WagerPaymentTransaction>;
+  submitWagerSignedPaymentTransaction: (intentId: string, signedTransactionBase64: string) => Promise<WagerPaymentIntent>;
+  submitWagerPaymentSignature: (intentId: string, signature: string) => Promise<WagerPaymentIntent>;
 
   // Game operations
   joinGameRoom: (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => Promise<void>;
@@ -110,6 +130,32 @@ async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
   return response.json();
 }
 
+async function wagerApiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${getHttpUrl()}${endpoint}`, {
+    ...options,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Wager request failed' }));
+    throw new Error(payload.error || 'Wager request failed');
+  }
+
+  return response.json();
+}
+
+async function preflightWageredLobby(wager: CreateLobbyWagerOptions | undefined): Promise<void> {
+  if (!wager?.enabled) return;
+  await wagerApiRequest('/wagers/lobbies/preflight', {
+    method: 'POST',
+    body: JSON.stringify({ wager }),
+  });
+}
+
 // ============================================================================
 // PROVIDER COMPONENT
 // ============================================================================
@@ -139,12 +185,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     removePlayer,
     setAvailableLobbies,
     setCurrentLobby,
+    setCurrentLobbyWager,
     setLobbyPlayers,
     updateLobbyPlayer,
     removeLobbyPlayer,
     setIsLobbyHost,
     setMatchmakingStatus,
     setMatchSummary,
+    setPlayerPings,
     setMapVoteState,
     setMapVotes,
     clearMapVote,
@@ -245,9 +293,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       skillBucketLabel?: string;
       averageSkillRating?: number;
       skillSearchDistance?: number;
+      wager?: LobbyWagerState;
     }) => {
       loggers.network.debug('received lobby state', data);
       setCurrentLobby(data.lobbyId, data.name);
+      setCurrentLobbyWager(data.wager ?? { enabled: false });
       setIsLobbyHost(data.hostId === room.sessionId);
       setMatchmakingStatus({
         skillBucket: data.skillBucket ?? null,
@@ -273,6 +323,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           isBot: Boolean(p.isBot),
           botDifficulty: p.botDifficulty || '',
           botProfileId: p.botProfileId,
+          paymentStatus: p.paymentStatus || '',
+          paymentWalletAddress: p.paymentWalletAddress || '',
+          depositSignature: p.depositSignature || '',
+          refundSignature: p.refundSignature || '',
         });
       }
       setLobbyPlayers(playersMap);
@@ -336,6 +390,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       isBot?: boolean;
       botDifficulty?: BotDifficulty | '';
       botProfileId?: string;
+      paymentStatus?: LobbyPlayer['paymentStatus'];
+      paymentWalletAddress?: string;
+      depositSignature?: string;
+      refundSignature?: string;
     }) => {
       loggers.network.debug('player joined lobby', data.playerName);
       updateLobbyPlayer(data.playerId, {
@@ -348,7 +406,60 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         isBot: Boolean(data.isBot),
         botDifficulty: data.botDifficulty || '',
         botProfileId: data.botProfileId,
+        paymentStatus: data.paymentStatus || '',
+        paymentWalletAddress: data.paymentWalletAddress || '',
+        depositSignature: data.depositSignature || '',
+        refundSignature: data.refundSignature || '',
       });
+    });
+
+    room.onMessage('paymentStatusChanged', (data: {
+      lobbyId: string;
+      userId: string;
+      lobbyPlayerId: string | null;
+      status: LobbyPlayer['paymentStatus'];
+      amountLamports: string;
+      walletAddress: string;
+      depositSignature?: string | null;
+      refundSignature?: string | null;
+      potLamports: string;
+    }) => {
+      loggers.network.debug('payment status changed', data.status);
+      if (data.lobbyPlayerId) {
+        const player = useGameStore.getState().lobbyPlayers.get(data.lobbyPlayerId);
+        if (player) {
+          updateLobbyPlayer(data.lobbyPlayerId, {
+            ...player,
+            paymentStatus: data.status,
+            paymentWalletAddress: data.walletAddress,
+            depositSignature: data.depositSignature || '',
+            refundSignature: data.refundSignature || '',
+          });
+        }
+      }
+      const currentWager = useGameStore.getState().currentLobbyWager;
+      if (currentWager.enabled) {
+        setCurrentLobbyWager({
+          ...currentWager,
+          potLamports: data.potLamports,
+        });
+      }
+    });
+
+    room.onMessage('paymentIntentCreated', (data: { intent: WagerPaymentIntent }) => {
+      loggers.network.debug('payment intent created', data.intent.intentId);
+    });
+
+    room.onMessage('paymentIntentUpdated', (data: { intent: WagerPaymentIntent }) => {
+      loggers.network.debug('payment intent updated', data.intent.status);
+    });
+
+    room.onMessage('paymentIntentError', (data: { message: string }) => {
+      loggers.network.error('payment intent error', data.message);
+    });
+
+    room.onMessage('wagerStartBlocked', (data: { message: string; unpaidPlayers?: Array<{ name: string }> }) => {
+      loggers.network.warn('wager start blocked', data.message, data.unpaidPlayers?.map((player) => player.name));
     });
 
     room.onMessage('playerLeft', (data: { playerId: string }) => {
@@ -448,17 +559,23 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       disconnectVoice('left_lobby');
       resetLobby();
     });
-  }, [setCurrentLobby, setIsLobbyHost, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, clearMapVote, resetLobby]);
+  }, [setCurrentLobby, setCurrentLobbyWager, setIsLobbyHost, setMatchmakingStatus, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, clearMapVote, resetLobby]);
 
   const createLobby = useCallback(async (
     playerName: string,
     lobbyName?: string,
     isPrivate?: boolean,
-    options?: { initialBotCount?: number; botFillMode?: 'manual' | 'fill_even' | 'fill_empty'; defaultBotDifficulty?: BotDifficulty }
+    options?: {
+      initialBotCount?: number;
+      botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
+      defaultBotDifficulty?: BotDifficulty;
+      wager?: CreateLobbyWagerOptions;
+    }
   ) => {
     setLoading(true);
 
     try {
+      await preflightWageredLobby(options?.wager);
       cleanupExistingConnections();
 
       const client = getClient();
@@ -474,6 +591,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         initialBotCount: options?.initialBotCount || 0,
         botFillMode: options?.botFillMode || 'manual',
         defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
+        wager: options?.wager,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);
@@ -624,6 +742,59 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current?.send('kick', { playerId });
   }, []);
 
+  const createWagerPaymentIntent = useCallback(async (
+    lobbyId: string,
+    walletAddress: string,
+    lobbyPlayerId?: string | null
+  ): Promise<WagerPaymentIntent> => {
+    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
+      `/wagers/lobbies/${encodeURIComponent(lobbyId)}/intents`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ walletAddress, lobbyPlayerId }),
+      }
+    );
+    return response.intent;
+  }, []);
+
+  const submitWagerPaymentSignature = useCallback(async (
+    intentId: string,
+    signature: string
+  ): Promise<WagerPaymentIntent> => {
+    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
+      `/wagers/intents/${encodeURIComponent(intentId)}/signature`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ signature }),
+      }
+    );
+    return response.intent;
+  }, []);
+
+  const createWagerPaymentTransaction = useCallback(async (
+    intentId: string
+  ): Promise<WagerPaymentTransaction> => {
+    const response = await wagerApiRequest<{ transaction: WagerPaymentTransaction }>(
+      `/wagers/intents/${encodeURIComponent(intentId)}/transaction`,
+      { method: 'POST' }
+    );
+    return response.transaction;
+  }, []);
+
+  const submitWagerSignedPaymentTransaction = useCallback(async (
+    intentId: string,
+    signedTransactionBase64: string
+  ): Promise<WagerPaymentIntent> => {
+    const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
+      `/wagers/intents/${encodeURIComponent(intentId)}/signed-transaction`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ signedTransactionBase64 }),
+      }
+    );
+    return response.intent;
+  }, []);
+
   // ==================== GAME ROOM OPERATIONS ====================
 
   const setupGameListeners = useCallback((room: Room, playerName: string) => {
@@ -692,6 +863,15 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setupVoidZoneHandlers(room, sessionId);
     setupCombatHandlers(room);
 
+    room.onMessage('playerPingRequest', (data: PlayerPingRequestMessage) => {
+      if (!data || typeof data.nonce !== 'string') return;
+      room.send('playerPingResponse', { nonce: data.nonce });
+    });
+
+    room.onMessage('playerPings', (data: PlayerPingsMessage) => {
+      setPlayerPings(data);
+    });
+
     room.onMessage('playerLeft', (data: { playerId: string }) => {
       loggers.network.debug('player left', data.playerId);
       stopRemotePhantomCharge(data.playerId);
@@ -758,7 +938,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby, rejectPendingVoiceTokenRequests, setMatchSummary]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby, rejectPendingVoiceTokenRequests, setMatchSummary, setPlayerPings]);
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => {
     if (isJoiningGameRef.current) {
@@ -988,6 +1168,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       reportMapVotePreviewsReady,
       finalizeMapVote,
       kickPlayer,
+      createWagerPaymentIntent,
+      createWagerPaymentTransaction,
+      submitWagerSignedPaymentTransaction,
+      submitWagerPaymentSignature,
       joinGameRoom,
       leaveGame,
       disconnect,

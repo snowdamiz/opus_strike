@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useGameStore, type UserStats } from '../../store/gameStore';
 import { config } from '../../config/environment';
 import { getLevelProgress } from '@voxel-strike/shared';
+import { lamportsToSolDisplay } from '../../utils/wagerPayments';
 
 interface PlayerRecords {
   bestScore: number;
@@ -53,6 +54,20 @@ function formatRatio(kills: number, deaths: number): string {
   if (kills <= 0 && deaths <= 0) return '0.0';
   const ratio = deaths > 0 ? kills / deaths : kills;
   return ratio.toFixed(1);
+}
+
+function parseLamports(value: string | undefined): bigint {
+  return typeof value === 'string' && /^[0-9]+$/.test(value) ? BigInt(value) : 0n;
+}
+
+function formatLamports(value: string | bigint): string {
+  return `${lamportsToSolDisplay(value)} SOL`;
+}
+
+function formatSignedLamports(value: bigint): string {
+  const sign = value > 0n ? '+' : value < 0n ? '-' : '';
+  const absoluteValue = value < 0n ? -value : value;
+  return `${sign}${lamportsToSolDisplay(absoluteValue)} SOL`;
 }
 
 function getLocalPersonalStats(playerName: string, userStats: UserStats | null): PersonalLeaderboardPlayer | null {
@@ -150,24 +165,27 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
   return (
     <section className="border-y border-white/10 bg-black/25 px-4 py-4 backdrop-blur-sm">
       {player ? (
-        <div className="grid gap-5 md:grid-cols-[minmax(11rem,16rem)_1fr] md:items-center">
-          <div className="min-w-0">
-            <p className="font-body text-[11px] uppercase tracking-widest text-accent-primary/80">Your Rank</p>
-            <p className="mt-1 font-display text-5xl leading-none text-white">
-              {player.rank ? `#${player.rank}` : 'UNRANKED'}
-            </p>
-            <p className="mt-1 truncate font-display text-lg leading-none text-white/45">{player.name}</p>
-          </div>
+        <>
+          <div className="grid gap-5 md:grid-cols-[minmax(11rem,16rem)_1fr] md:items-center">
+            <div className="min-w-0">
+              <p className="font-body text-[11px] uppercase tracking-widest text-accent-primary/80">Your Rank</p>
+              <p className="mt-1 font-display text-5xl leading-none text-white">
+                {player.rank ? `#${player.rank}` : 'UNRANKED'}
+              </p>
+              <p className="mt-1 truncate font-display text-lg leading-none text-white/45">{player.name}</p>
+            </div>
 
-          <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
-            <InlineStat label="Level" value={formatNumber(getLevelProgress(player.stats.totalExperience).level)} />
-            <InlineStat label="Score" value={formatNumber(player.stats.totalScore)} />
-            <InlineStat label="Win Rate" value={formatPercent(player.stats.totalWins, player.stats.totalGames)} />
-            <InlineStat label="Games" value={formatNumber(player.stats.totalGames)} />
-            <InlineStat label="K/D" value={formatRatio(player.stats.totalKills, player.stats.totalDeaths)} />
-            <InlineStat label="Captures" value={formatNumber(player.stats.totalCaptures)} />
+            <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
+              <InlineStat label="Level" value={formatNumber(getLevelProgress(player.stats.totalExperience).level)} />
+              <InlineStat label="Score" value={formatNumber(player.stats.totalScore)} />
+              <InlineStat label="Win Rate" value={formatPercent(player.stats.totalWins, player.stats.totalGames)} />
+              <InlineStat label="Games" value={formatNumber(player.stats.totalGames)} />
+              <InlineStat label="K/D" value={formatRatio(player.stats.totalKills, player.stats.totalDeaths)} />
+              <InlineStat label="Captures" value={formatNumber(player.stats.totalCaptures)} />
+            </div>
           </div>
-        </div>
+          <WagerStatsStrip stats={player.stats} />
+        </>
       ) : (
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -180,6 +198,43 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
         </div>
       )}
     </section>
+  );
+}
+
+function WagerStatsStrip({ stats }: { stats: UserStats }) {
+  const wonLamports = parseLamports(stats.totalWagerWonLamports);
+  const lostLamports = parseLamports(stats.totalWagerLostLamports);
+  const netLamports = wonLamports - lostLamports;
+  const netTone = netLamports > 0n
+    ? 'text-emerald-300'
+    : netLamports < 0n
+      ? 'text-red-300'
+      : 'text-white/75';
+
+  return (
+    <div className="mt-4 border-t border-white/10 pt-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="font-body text-[11px] uppercase tracking-widest text-white/35">Wager Games</p>
+        <p className={`font-mono text-xs ${netTone}`}>{formatSignedLamports(netLamports)} NET</p>
+      </div>
+      <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
+        <WagerStat label="Games" value={formatNumber(stats.totalWagerGames)} />
+        <WagerStat label="W/L/D" value={`${stats.totalWagerWins}/${stats.totalWagerLosses}/${stats.totalWagerDraws}`} />
+        <WagerStat label="Wagered" value={formatLamports(stats.totalWageredLamports)} />
+        <WagerStat label="Won" value={formatLamports(stats.totalWagerWonLamports)} tone="text-emerald-300" />
+        <WagerStat label="Lost" value={formatLamports(stats.totalWagerLostLamports)} tone="text-red-300" />
+        <WagerStat label="Net" value={formatSignedLamports(netLamports)} tone={netTone} />
+      </div>
+    </div>
+  );
+}
+
+function WagerStat({ label, value, tone = 'text-white/80' }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="min-w-0 border-l border-white/10 pl-3">
+      <p className="font-body text-[11px] uppercase tracking-widest text-white/30">{label}</p>
+      <p className={`mt-1 truncate font-mono text-sm leading-5 ${tone}`}>{value}</p>
+    </div>
   );
 }
 

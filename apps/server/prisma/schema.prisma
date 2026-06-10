@@ -15,6 +15,49 @@ enum AuthProvider {
   phantom
 }
 
+enum WageredLobbyStatus {
+  waiting
+  locked
+  in_game
+  settling
+  settled
+  refunding
+  refunded
+  failed
+}
+
+enum WagerPaymentStatus {
+  intent_created
+  submitted
+  confirmed
+  credited
+  refunding
+  refunded
+  settled
+  failed
+  expired
+}
+
+enum WagerSettlementStatus {
+  pending
+  processing
+  complete
+  failed
+}
+
+enum WagerSettlementTransferKind {
+  winner_payout
+  developer_fee
+  refund
+}
+
+enum WagerSettlementTransferStatus {
+  pending
+  submitted
+  confirmed
+  failed
+}
+
 model User {
   id            String   @id @default(cuid())
   walletAddress String?  @unique
@@ -24,6 +67,8 @@ model User {
   updatedAt     DateTime @updatedAt
   authAccounts  AuthAccount[]
   matchStats     GameMatchParticipant[]
+  wageredLobbies WageredLobby[]
+  wagerPayments  WagerPayment[]
 
   // Player stats (optional - can expand later)
   totalGames       Int      @default(0)
@@ -37,6 +82,13 @@ model User {
   totalFlagReturns Int      @default(0)
   totalScore       Int      @default(0)
   totalExperience  Int      @default(0)
+  totalWagerGames        Int    @default(0)
+  totalWagerWins         Int    @default(0)
+  totalWagerLosses       Int    @default(0)
+  totalWagerDraws        Int    @default(0)
+  totalWageredLamports   BigInt @default(0)
+  totalWagerWonLamports  BigInt @default(0)
+  totalWagerLostLamports BigInt @default(0)
 
   @@index([walletAddress])
 }
@@ -107,4 +159,107 @@ model GameMatchParticipant {
   @@index([matchId])
   @@index([userId, joinedAt])
   @@index([outcome])
+}
+
+model WageredLobby {
+  id                  String              @id @default(cuid())
+  lobbyId             String              @unique
+  gameRoomId          String?
+  matchId             String?
+  status              WageredLobbyStatus  @default(waiting)
+  token               String              @default("SOL")
+  coverChargeLamports BigInt
+  treasuryWallet      String
+  platformFeeBps      Int                 @default(500)
+  createdByUserId     String
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  lockedAt            DateTime?
+  settledAt           DateTime?
+
+  createdBy User                    @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  payments  WagerPayment[]
+  settlement WagerSettlement?
+
+  @@index([lobbyId])
+  @@index([gameRoomId])
+  @@index([matchId])
+  @@index([status])
+  @@index([createdByUserId])
+}
+
+model WagerPayment {
+  id                String             @id
+  wageredLobbyId   String
+  lobbyPlayerId    String?
+  userId            String
+  walletAddress     String
+  teamAtLock        String?
+  amountLamports    BigInt
+  surplusLamports   BigInt             @default(0)
+  memo              String             @unique
+  intentExpiresAt   DateTime
+  status            WagerPaymentStatus @default(intent_created)
+  depositSignature  String?            @unique
+  refundSignature   String?            @unique
+  lastError         String?
+  creditedAt        DateTime?
+  refundedAt        DateTime?
+  settledAt         DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  wageredLobby WageredLobby @relation(fields: [wageredLobbyId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([wageredLobbyId, userId])
+  @@index([wageredLobbyId])
+  @@index([userId])
+  @@index([walletAddress])
+  @@index([status])
+  @@index([intentExpiresAt])
+}
+
+model WagerSettlement {
+  id                    String                 @id @default(cuid())
+  wageredLobbyId        String                 @unique
+  matchId               String?
+  winningTeam           String?
+  totalPotLamports      BigInt                 @default(0)
+  developerFeeLamports  BigInt                 @default(0)
+  winnerPoolLamports    BigInt                 @default(0)
+  status                WagerSettlementStatus  @default(pending)
+  attemptCount          Int                    @default(0)
+  lastError             String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  completedAt           DateTime?
+
+  wageredLobby WageredLobby             @relation(fields: [wageredLobbyId], references: [id], onDelete: Cascade)
+  transfers    WagerSettlementTransfer[]
+
+  @@index([matchId])
+  @@index([status])
+}
+
+model WagerSettlementTransfer {
+  id             String                         @id @default(cuid())
+  settlementId   String
+  idempotencyKey String                         @unique
+  kind           WagerSettlementTransferKind
+  recipientWallet String
+  amountLamports BigInt
+  signature      String?                        @unique
+  status         WagerSettlementTransferStatus  @default(pending)
+  lastError      String?
+  createdAt      DateTime                       @default(now())
+  updatedAt      DateTime                       @updatedAt
+  confirmedAt    DateTime?
+
+  settlement WagerSettlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@unique([settlementId, kind, recipientWallet])
+  @@index([settlementId])
+  @@index([kind])
+  @@index([status])
 }

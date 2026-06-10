@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
+import type { Transaction } from '@solana/web3.js';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
 import {
@@ -25,6 +26,7 @@ interface PhantomProvider {
   connect: (opts?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: WalletPublicKey }>;
   disconnect: () => Promise<void>;
   signMessage: (message: Uint8Array, encoding: string) => Promise<{ signature: Uint8Array }>;
+  signTransaction?: (transaction: Transaction) => Promise<Transaction>;
   on: (event: string, handler: (...args: any[]) => void) => void;
   off: (event: string, handler: (...args: any[]) => void) => void;
 }
@@ -70,6 +72,13 @@ export interface UserData {
     totalFlagReturns: number;
     totalScore: number;
     totalExperience: number;
+    totalWagerGames: number;
+    totalWagerWins: number;
+    totalWagerLosses: number;
+    totalWagerDraws: number;
+    totalWageredLamports: string;
+    totalWagerWonLamports: string;
+    totalWagerLostLamports: string;
   };
   linkedAccounts: LinkedAccountSummary[];
 }
@@ -93,12 +102,13 @@ interface WalletContextType {
   suggestedPlayerName: string;
   isSessionLoading: boolean;
 
-  connect: () => Promise<void>;
+  connect: () => Promise<string | null>;
   disconnect: () => void;
   authenticate: () => Promise<{ isNewUser: boolean }>;
   signInWithDiscord: () => void;
   linkDiscord: () => void;
   linkPhantom: () => Promise<UserData>;
+  signTransaction: (transaction: Transaction) => Promise<string>;
   registerUser: (name: string) => Promise<UserData>;
   logout: () => Promise<void>;
 
@@ -115,6 +125,14 @@ function getPhantomProvider(): PhantomProvider | null {
 
   const provider = window.phantom?.solana || window.solana;
   return provider?.isPhantom ? provider : null;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
 }
 
 function getHttpUrl(): string {
@@ -492,7 +510,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     return verifyPhantomSignatureWithServer(address, signatureBase58, nonce);
   }, []);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (): Promise<string | null> => {
     const provider = getPhantomProvider();
 
     if (!provider && canUsePhantomMobileDeepLink()) {
@@ -505,24 +523,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         if (mobileSession) {
           setWalletAddress(mobileSession.publicKey);
           setIsConnected(true);
-          return;
+          return mobileSession.publicKey;
         }
 
         startPhantomMobileConnect();
         await waitForPhantomMobileRedirect<void>();
+        return null;
       } catch (err: any) {
         loggers.auth.error('failed to connect mobile wallet:', err);
         setError(err.message || 'Failed to connect wallet');
+        return null;
       } finally {
         setIsConnecting(false);
       }
-      return;
     }
 
     if (!provider) {
       window.open('https://phantom.app/', '_blank');
       setError('Phantom wallet is not installed. Please install it to continue.');
-      return;
+      return null;
     }
 
     setIsConnecting(true);
@@ -531,8 +550,10 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     try {
       const { publicKey } = await provider.connect();
-      setWalletAddress(publicKey.toBase58());
+      const address = publicKey.toBase58();
+      setWalletAddress(address);
       setIsConnected(true);
+      return address;
     } catch (err: any) {
       loggers.auth.error('failed to connect wallet:', err);
       if (err.code === 4001) {
@@ -540,6 +561,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       } else {
         setError(err.message || 'Failed to connect wallet');
       }
+      return null;
     } finally {
       setIsConnecting(false);
     }
@@ -686,6 +708,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }
   }, [applyPhantomVerificationResult, isAuthenticated, user, verifyPhantomWithServer]);
 
+  const signTransaction = useCallback(async (transaction: Transaction): Promise<string> => {
+    const provider = getPhantomProvider();
+    if (!provider || !provider.publicKey) {
+      throw new Error('Connect Phantom before paying');
+    }
+
+    if (typeof provider.signTransaction !== 'function') {
+      throw new Error('This Phantom connection cannot sign transactions for server relay');
+    }
+
+    const signed = await provider.signTransaction(transaction);
+    return bytesToBase64(signed.serialize());
+  }, []);
+
   const registerUser = useCallback(async (name: string): Promise<UserData> => {
     setError(null);
     setNotice(null);
@@ -775,6 +811,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         signInWithDiscord,
         linkDiscord,
         linkPhantom,
+        signTransaction,
         registerUser,
         logout,
         error,
