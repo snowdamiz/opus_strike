@@ -3,6 +3,7 @@ import { useGameStore } from './store/gameStore';
 import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
+import { MatchmakingScreen } from './components/ui/MatchmakingScreen';
 import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
 import { HeroSelect } from './components/ui/HeroSelect';
@@ -46,7 +47,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    preloadSoundGroup(appPhase === 'in_lobby' || appPhase === 'map_vote' ? 'lobby' : 'menu');
+    preloadSoundGroup(appPhase === 'matchmaking' || appPhase === 'in_lobby' || appPhase === 'map_vote' ? 'lobby' : 'menu');
   }, [appPhase, preloadSoundGroup]);
 
   useEffect(() => {
@@ -240,6 +241,10 @@ export function App() {
 
   if (appPhase === 'in_lobby') {
     return <Lobby />;
+  }
+
+  if (appPhase === 'matchmaking') {
+    return <MatchmakingScreen />;
   }
 
   if (appPhase === 'map_vote') {

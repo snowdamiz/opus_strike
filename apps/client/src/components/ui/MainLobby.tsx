@@ -100,7 +100,7 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
-  const { watchLobbies, createLobby, joinLobby } = useNetwork();
+  const { watchLobbies, createLobby, quickPlay, joinLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -349,9 +349,9 @@ export function MainLobby() {
   const handleQuickPlay = async () => {
     setError(null);
     try {
-      await createLobby(playerName, `${playerName}'s Lobby`, false);
+      await quickPlay(playerName);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create lobby');
+      setError(err instanceof Error ? err.message : 'Failed to find a match');
     }
   };
 

@@ -26,6 +26,7 @@ interface JoinOptions {
   playerName?: string;
   lobbyName?: string;
   isPrivate?: boolean;
+  matchmakingMode?: boolean;
   clientId?: string; // Persistent client ID for reconnection detection
   authToken?: string;
   initialBotCount?: number;
@@ -68,6 +69,7 @@ interface MapVoteSession {
 
 const MAX_PARTICIPANTS = DEFAULT_GAME_CONFIG.maxPlayers;
 const MAX_PLAYERS_PER_TEAM = DEFAULT_GAME_CONFIG.teamSize;
+const QUICK_PLAY_REQUIRED_PLAYERS = DEFAULT_GAME_CONFIG.maxPlayers;
 const MAP_VOTE_OPTION_COUNT = 3;
 const MAP_VOTE_DURATION_MS = 30000;
 const MAP_NAME_SUFFIXES = [
@@ -127,6 +129,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
+  private isQuickPlayQueue = false;
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -140,15 +143,16 @@ export class LobbyRoom extends Room<LobbyState> {
     this.autoDispose = true;
     assertUsableEntryTicketSecret();
     console.log('Lobby room created:', this.roomId);
+    this.isQuickPlayQueue = options.matchmakingMode === true;
 
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
-    this.state.name = options.lobbyName || `Lobby ${this.roomId.slice(0, 6)}`;
+    this.state.name = options.lobbyName || (this.isQuickPlayQueue ? 'Quick Play' : `Lobby ${this.roomId.slice(0, 6)}`);
     this.state.maxPlayers = this.maxClients;
     this.state.maxParticipants = MAX_PARTICIPANTS;
-    this.state.isPublic = !options.isPrivate;
+    this.state.isPublic = !options.isPrivate && !this.isQuickPlayQueue;
     this.state.createdAt = Date.now();
-    this.state.status = 'waiting';
+    this.state.status = this.isQuickPlayQueue ? 'matchmaking' : 'waiting';
     this.state.defaultBotDifficulty = this.normalizeDifficulty(options.defaultBotDifficulty);
     this.state.botFillMode = options.botFillMode || 'manual';
 
@@ -321,8 +325,8 @@ export class LobbyRoom extends Room<LobbyState> {
     player.id = client.sessionId;
     player.name = authContext.displayName || `Player${this.state.players.size + 1}`;
     player.isHost = this.getHumanCount() === 0; // First human player is host
-    player.isReady = false;
-    player.team = '';
+    player.isReady = this.isQuickPlayQueue;
+    player.team = this.isQuickPlayQueue ? this.assignBalancedTeam() : '';
     player.heroId = '';
     player.isBot = false;
     player.botDifficulty = '';
@@ -358,12 +362,14 @@ export class LobbyRoom extends Room<LobbyState> {
       maxParticipants: this.state.maxParticipants,
       humanCount: this.getHumanCount(),
       botCount: this.getBotCount(),
+      requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
     });
 
     if (this.state.status === 'map_vote' && this.mapVoteSession) {
       this.sendMapVoteStarted(client);
     }
     this.updateMetadata();
+    this.tryStartQuickPlayMapVote();
   }
 
   onLeave(client: Client, consented: boolean) {
@@ -505,6 +511,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private beginMapVote(): void {
     this.clearMapVoteTimer();
     this.state.status = 'map_vote';
+    this.setMatchmakingLocked(true);
     this.mapVoteSession = {
       options: this.createMapVoteOptions(),
       votes: new Map(),
@@ -628,10 +635,11 @@ export class LobbyRoom extends Room<LobbyState> {
       await this.createGameFromLobby(selectedOption.seed);
     } catch (error) {
       console.error('Failed to create game room:', error);
-      this.state.status = 'waiting';
+      this.state.status = this.isQuickPlayQueue ? 'matchmaking' : 'waiting';
       this.mapVoteSession = null;
-      this.updateMetadata({ status: 'waiting' });
-      this.broadcast('mapVoteCancelled', { reason: 'Failed to start game' });
+      this.setMatchmakingLocked(false);
+      this.updateMetadata({ status: this.state.status });
+      this.broadcast('mapVoteCancelled', { reason: 'Failed to start game', status: this.state.status });
       this.broadcastLobbyState();
       errorClient?.send('error', { message: 'Failed to start game' });
     }
@@ -1050,7 +1058,22 @@ export class LobbyRoom extends Room<LobbyState> {
       maxParticipants: this.state.maxParticipants,
       humanCount: this.getHumanCount(),
       botCount: this.getBotCount(),
+      requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
     });
+  }
+
+  private setMatchmakingLocked(locked: boolean): void {
+    const operation = locked ? this.lock() : this.unlock();
+    operation.catch((error) => {
+      console.error(`Failed to ${locked ? 'lock' : 'unlock'} lobby matchmaking:`, error);
+    });
+  }
+
+  private tryStartQuickPlayMapVote(): void {
+    if (!this.isQuickPlayQueue || this.state.status !== 'matchmaking') return;
+    if (this.getHumanCount() < QUICK_PLAY_REQUIRED_PLAYERS) return;
+
+    this.beginMapVote();
   }
 
   private updateMetadata(overrides: Record<string, unknown> = {}): void {
@@ -1065,6 +1088,8 @@ export class LobbyRoom extends Room<LobbyState> {
       participantCount: humanCount + botCount,
       maxParticipants: this.state.maxParticipants,
       maxPlayers: this.state.maxPlayers,
+      matchmakingMode: this.isQuickPlayQueue,
+      requiredPlayers: this.isQuickPlayQueue ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
       ...overrides,
     });
   }

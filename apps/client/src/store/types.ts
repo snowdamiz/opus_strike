@@ -71,7 +71,7 @@ export interface UserStats {
   totalScore: number;
 }
 
-export type AppPhase = 'menu' | 'browsing_lobbies' | 'in_lobby' | 'map_vote' | 'in_game';
+export type AppPhase = 'menu' | 'browsing_lobbies' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';
 
 // ============================================================================
 // PHANTOM PROJECTILE TYPES

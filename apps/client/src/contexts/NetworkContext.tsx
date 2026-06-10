@@ -38,6 +38,7 @@ interface NetworkContextType {
     isPrivate?: boolean,
     options?: { initialBotCount?: number; botFillMode?: 'manual' | 'fill_even' | 'fill_empty'; defaultBotDifficulty?: BotDifficulty }
   ) => Promise<void>;
+  quickPlay: (playerName: string) => Promise<void>;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
@@ -212,6 +213,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setIsLobbyHost(data.hostId === room.sessionId);
       if (data.status === 'map_vote') {
         setAppPhase('map_vote');
+      } else if (data.status === 'matchmaking') {
+        setAppPhase('matchmaking');
       }
 
       const playersMap = new Map<string, LobbyPlayer>();
@@ -259,10 +262,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setMapSeed(data.mapSeed);
     });
 
-    room.onMessage('mapVoteCancelled', (data: { reason?: string }) => {
+    room.onMessage('mapVoteCancelled', (data: { reason?: string; status?: string }) => {
       loggers.network.warn('map vote cancelled', data.reason || 'unknown');
       clearMapVote();
-      setAppPhase('in_lobby');
+      setAppPhase(data.status === 'matchmaking' ? 'matchmaking' : 'in_lobby');
     });
 
     room.onMessage('playerJoined', (data: {
@@ -431,6 +434,43 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected]);
+
+  const quickPlay = useCallback(async (playerName: string) => {
+    setLoading(true);
+
+    try {
+      cleanupExistingConnections();
+
+      const client = getClient();
+      const clientId = getClientId();
+
+      loggers.network.debug('quick play matchmaking with client id', clientId);
+
+      lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
+        playerName,
+        lobbyName: 'Quick Play',
+        isPrivate: false,
+        matchmakingMode: true,
+        clientId,
+        initialBotCount: 0,
+        botFillMode: 'manual',
+        defaultBotDifficulty: 'normal',
+      });
+
+      setupLobbyListeners(lobbyRoomRef.current, playerName);
+
+      setPlayerId(lobbyRoomRef.current.sessionId);
+      setAppPhase('matchmaking');
+      setConnected(true);
+      setLoading(false);
+
+      loggers.network.info('quick play joined lobby', lobbyRoomRef.current.id);
+    } catch (error) {
+      loggers.network.error('quick play matchmaking failed', error);
+      setLoading(false);
+      throw error;
+    }
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected]);
 
   const joinLobby = useCallback(async (playerName: string, lobbyId: string) => {
     setLoading(true);
@@ -857,6 +897,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       fetchLobbies,
       watchLobbies,
       createLobby,
+      quickPlay,
       joinLobby,
       leaveLobby,
       setLobbyReady,

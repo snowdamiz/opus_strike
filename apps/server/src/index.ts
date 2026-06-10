@@ -23,7 +23,11 @@ const gameServer = new Server({
 
 // Register rooms
 gameServer.define('game_room', GameRoom);
-gameServer.define('lobby_room', LobbyRoom).enableRealtimeListing();
+gameServer
+  .define('lobby_room', LobbyRoom)
+  .filterBy(['isPrivate', 'matchmakingMode'])
+  .sortBy({ clients: -1 })
+  .enableRealtimeListing();
 
 // CORS configuration - MUST be before routes
 const ALLOWED_ORIGINS = [
