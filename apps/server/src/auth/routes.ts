@@ -41,10 +41,53 @@ const AUTH_RATE_LIMITS = {
   oauthCallback: { limit: 30, windowMs: 60 * 1000 },
 } as const;
 
+const LEADERBOARD_DEFAULT_LIMIT = 25;
+const LEADERBOARD_MAX_LIMIT = 50;
+
 interface NonceRecord {
   nonce: string;
   timestamp: number;
 }
+
+interface LeaderboardUserSummary {
+  id: string;
+  name: string;
+  createdAt: Date;
+  totalGames: number;
+  totalWins: number;
+  totalLosses: number;
+  totalDraws: number;
+  totalKills: number;
+  totalDeaths: number;
+  totalAssists: number;
+  totalCaptures: number;
+  totalFlagReturns: number;
+  totalScore: number;
+}
+
+const leaderboardUserSelect = {
+  id: true,
+  name: true,
+  createdAt: true,
+  totalGames: true,
+  totalWins: true,
+  totalLosses: true,
+  totalDraws: true,
+  totalKills: true,
+  totalDeaths: true,
+  totalAssists: true,
+  totalCaptures: true,
+  totalFlagReturns: true,
+  totalScore: true,
+} satisfies Prisma.UserSelect;
+
+const leaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
+  { totalScore: 'desc' },
+  { totalWins: 'desc' },
+  { totalKills: 'desc' },
+  { totalGames: 'asc' },
+  { createdAt: 'asc' },
+];
 
 class ProviderConflictError extends Error {
   constructor(message = 'Provider account is already linked to another user') {
@@ -165,6 +208,40 @@ function validatePlayerName(value: unknown): {
   return { ok: true, name };
 }
 
+function getLeaderboardLimit(value: unknown): number {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const parsed = typeof rawValue === 'string'
+    ? Number.parseInt(rawValue, 10)
+    : LEADERBOARD_DEFAULT_LIMIT;
+
+  if (!Number.isFinite(parsed)) return LEADERBOARD_DEFAULT_LIMIT;
+  return Math.max(1, Math.min(LEADERBOARD_MAX_LIMIT, parsed));
+}
+
+function serializeLeaderboardStats(user: LeaderboardUserSummary) {
+  return {
+    totalGames: user.totalGames,
+    totalWins: user.totalWins,
+    totalLosses: user.totalLosses,
+    totalDraws: user.totalDraws,
+    totalKills: user.totalKills,
+    totalDeaths: user.totalDeaths,
+    totalAssists: user.totalAssists,
+    totalCaptures: user.totalCaptures,
+    totalFlagReturns: user.totalFlagReturns,
+    totalScore: user.totalScore,
+  };
+}
+
+function serializeLeaderboardEntry(user: LeaderboardUserSummary, rank: number) {
+  return {
+    rank,
+    userId: user.id,
+    name: user.name,
+    stats: serializeLeaderboardStats(user),
+  };
+}
+
 async function findUserForPayload(payload: AuthTokenPayload) {
   const filters: Prisma.UserWhereInput[] = [{ id: payload.userId }];
   if (payload.walletAddress) {
@@ -181,6 +258,43 @@ async function findUserForPayload(payload: AuthTokenPayload) {
   }
 
   return user;
+}
+
+async function getLeaderboardRank(user: LeaderboardUserSummary): Promise<number | null> {
+  if (user.totalGames <= 0) return null;
+
+  const higherRankedUsers = await prisma.user.count({
+    where: {
+      totalGames: { gt: 0 },
+      OR: [
+        { totalScore: { gt: user.totalScore } },
+        {
+          totalScore: user.totalScore,
+          totalWins: { gt: user.totalWins },
+        },
+        {
+          totalScore: user.totalScore,
+          totalWins: user.totalWins,
+          totalKills: { gt: user.totalKills },
+        },
+        {
+          totalScore: user.totalScore,
+          totalWins: user.totalWins,
+          totalKills: user.totalKills,
+          totalGames: { lt: user.totalGames },
+        },
+        {
+          totalScore: user.totalScore,
+          totalWins: user.totalWins,
+          totalKills: user.totalKills,
+          totalGames: user.totalGames,
+          createdAt: { lt: user.createdAt },
+        },
+      ],
+    },
+  });
+
+  return higherRankedUsers + 1;
 }
 
 async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload | null> {
@@ -814,6 +928,59 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
     const reason = getOAuthErrorReason(error);
     logOAuthFailure(reason, error);
     redirectToClient(res, returnTo, { auth: 'error', error: reason });
+  }
+});
+
+router.get('/leaderboard', async (req: Request, res: Response) => {
+  try {
+    const limit = getLeaderboardLimit(req.query.limit);
+    const leaderboardUsers = await prisma.user.findMany({
+      where: { totalGames: { gt: 0 } },
+      orderBy: leaderboardOrderBy,
+      take: limit,
+      select: leaderboardUserSelect,
+    });
+
+    const payload = await getAuthenticatedPayload(req);
+    const user = payload ? await findUserForPayload(payload) : null;
+    const personalRecordsPromise = user
+      ? prisma.gameMatchParticipant.aggregate({
+        where: { userId: user.id },
+        _max: {
+          score: true,
+          kills: true,
+          assists: true,
+          flagCaptures: true,
+          flagReturns: true,
+        },
+      })
+      : null;
+
+    const [personalRank, personalRecords] = user
+      ? await Promise.all([getLeaderboardRank(user), personalRecordsPromise])
+      : [null, null];
+
+    res.json({
+      leaderboard: leaderboardUsers.map((leaderboardUser, index) => (
+        serializeLeaderboardEntry(leaderboardUser, index + 1)
+      )),
+      currentUser: user ? {
+        rank: personalRank,
+        userId: user.id,
+        name: user.name,
+        stats: serializeLeaderboardStats(user),
+        records: {
+          bestScore: personalRecords?._max.score ?? 0,
+          bestKills: personalRecords?._max.kills ?? 0,
+          bestAssists: personalRecords?._max.assists ?? 0,
+          bestCaptures: personalRecords?._max.flagCaptures ?? 0,
+          bestReturns: personalRecords?._max.flagReturns ?? 0,
+        },
+      } : null,
+    });
+  } catch (error) {
+    console.error('[auth] Leaderboard lookup error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

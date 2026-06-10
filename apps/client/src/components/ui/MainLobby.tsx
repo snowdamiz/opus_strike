@@ -3,6 +3,7 @@ import { useGameStore, LobbyInfo } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
+import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
 import { HeroPreviewCanvas } from './HeroPreviewCanvas';
@@ -86,7 +87,7 @@ function PwaInstallButton({ onInstall }: { onInstall: () => void }) {
 }
 
 // Navigation tabs
-type MainTab = 'play' | 'heroes' | 'loadout';
+type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
 
 function isTextEntryTarget(target: EventTarget | null): boolean {
   return (
@@ -389,7 +390,7 @@ export function MainLobby() {
             </div>
 
             <div className="flex min-w-0 items-center ml-2 xl:ml-8">
-              {(['play', 'heroes', 'loadout'] as MainTab[]).map((tab) => (
+              {(['play', 'heroes', 'stats', 'loadout'] as MainTab[]).map((tab) => (
  <button
  key={tab}
  onClick={() => { playButtonClick(); setActiveTab(tab); }}
@@ -507,6 +508,7 @@ export function MainLobby() {
           />
         )}
         {activeTab === 'heroes' && <HeroesPage />}
+        {activeTab === 'stats' && <StatsPage />}
         {activeTab === 'loadout' && (
           <div className="h-full flex items-center justify-center menu-content">
             <div className="text-center">
