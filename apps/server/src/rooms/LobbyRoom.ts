@@ -1,7 +1,7 @@
 import type { IncomingMessage } from 'http';
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { DEFAULT_GAME_CONFIG, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankDivisionIndex, getRankFromRating, getVoxelMapTheme, hashSeed, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
@@ -9,12 +9,12 @@ import { createGameEntryTicket } from '../security/entryTickets';
 import { verifyMatchmakingTicket, type MatchmakingTicketClaims } from '../security/matchmakingTickets';
 import {
   DEFAULT_MATCHMAKING_RATING,
-  DEFAULT_MATCHMAKING_SKILL_BUCKET,
-  getAllowedBucketDistance,
-  getSkillBucketLabel,
-  normalizeSkillBucket,
-  type MatchmakingSkillBucket,
+  DEFAULT_RANK_DIVISION_INDEX,
+  getAllowedRankDivisionDistance,
+  getRankDivisionLabel,
+  normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
+import { serializeRankPayload } from '../ranking/serialization';
 import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
 import { wagerService, type CreateWagerOptions, type LobbyWagerSnapshot, type LockedWagerContext, type WagerPaymentStatusChanged } from '../wagers/service';
 import type { WagerRosterPlayer } from '../wagers/math';
@@ -39,7 +39,7 @@ interface JoinOptions {
   isPrivate?: boolean;
   matchmakingMode?: boolean;
   matchmakingTicket?: string;
-  skillBucket?: string;
+  rankBandId?: number;
   clientId?: string; // Persistent client ID for reconnection detection
   authToken?: string;
   initialBotCount?: number;
@@ -143,7 +143,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
-  private readonly playerSkillRatings = new Map<string, number>();
+  private readonly playerCompetitiveRatings = new Map<string, number>();
   private readonly onWagerPaymentStatusChanged = (payload: WagerPaymentStatusChanged) => {
     if (payload.lobbyId !== this.state.lobbyId) return;
     this.applyPaymentStatusUpdate(payload).catch((error) => {
@@ -151,7 +151,7 @@ export class LobbyRoom extends Room<LobbyState> {
     });
   };
   private isQuickPlayQueue = false;
-  private skillBucket: MatchmakingSkillBucket = DEFAULT_MATCHMAKING_SKILL_BUCKET;
+  private rankBandId = DEFAULT_RANK_DIVISION_INDEX;
   private pendingWagerOptions: CreateWagerOptions | undefined;
   
   // Track clientId -> sessionId mapping for reconnection detection
@@ -167,7 +167,7 @@ export class LobbyRoom extends Room<LobbyState> {
     assertUsableEntryTicketSecret();
     console.log('Lobby room created:', this.roomId);
     this.isQuickPlayQueue = options.matchmakingMode === true;
-    this.skillBucket = this.resolveRoomSkillBucket(options);
+    this.rankBandId = this.resolveRoomRankBand(options);
     this.pendingWagerOptions = !this.isQuickPlayQueue ? options.wager : undefined;
 
     this.setState(new LobbyState());
@@ -310,8 +310,12 @@ export class LobbyRoom extends Room<LobbyState> {
       kind: 'guest' as const,
       userId: `guest:${client.sessionId}`,
       displayName: sanitizeDisplayName(options.playerName),
-      matchmakingSkillRating: DEFAULT_MATCHMAKING_RATING,
-      matchmakingSkillBucket: DEFAULT_MATCHMAKING_SKILL_BUCKET,
+      competitiveRating: DEFAULT_MATCHMAKING_RATING,
+      rankedGames: 0,
+      rankedPlacementsRemaining: 0,
+      rankDivisionIndex: DEFAULT_RANK_DIVISION_INDEX,
+      rank: getRankFromRating(DEFAULT_MATCHMAKING_RATING, 0),
+      rankPayload: serializeRankPayload(null),
     };
 
     const matchmakingTicket = this.isQuickPlayQueue
@@ -352,7 +356,7 @@ export class LobbyRoom extends Room<LobbyState> {
         this.mapVoteSession?.previewReadyPlayerIds.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         this.playerAuthContexts.delete(existingSessionId);
-        this.playerSkillRatings.delete(existingSessionId);
+        this.playerCompetitiveRatings.delete(existingSessionId);
         this.rateLimiter.clearScope(existingSessionId);
         
         // Broadcast that old player left
@@ -372,7 +376,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (this.state.players.size >= this.state.maxParticipants) {
       client.send('error', { message: 'Lobby is full' });
       this.playerAuthContexts.delete(client.sessionId);
-      this.playerSkillRatings.delete(client.sessionId);
+      this.playerCompetitiveRatings.delete(client.sessionId);
       if (this.clientIdToSessionId.get(identityKey) === client.sessionId) {
         this.clientIdToSessionId.delete(identityKey);
       }
@@ -391,6 +395,7 @@ export class LobbyRoom extends Room<LobbyState> {
     player.isBot = false;
     player.botDifficulty = '';
     player.botProfileId = '';
+    this.applyLobbyPlayerRank(player, toPublicRankSnapshot(authContext.rank));
 
     if (player.isHost) {
       this.state.hostId = client.sessionId;
@@ -403,7 +408,7 @@ export class LobbyRoom extends Room<LobbyState> {
       } catch (error) {
         this.state.players.delete(client.sessionId);
         this.playerAuthContexts.delete(client.sessionId);
-        this.playerSkillRatings.delete(client.sessionId);
+        this.playerCompetitiveRatings.delete(client.sessionId);
         this.rateLimiter.clearScope(client.sessionId);
         const identity = this.sessionIdToClientId.get(client.sessionId);
         if (identity && this.clientIdToSessionId.get(identity) === client.sessionId) {
@@ -416,9 +421,9 @@ export class LobbyRoom extends Room<LobbyState> {
       }
     }
     await this.refreshWagerState();
-    this.playerSkillRatings.set(
+    this.playerCompetitiveRatings.set(
       client.sessionId,
-      this.resolvePlayerSkillRating(authContext, matchmakingTicket)
+      this.resolvePlayerCompetitiveRating(authContext, matchmakingTicket)
     );
 
     // Notify all players
@@ -432,6 +437,7 @@ export class LobbyRoom extends Room<LobbyState> {
       isBot: player.isBot,
       botDifficulty: player.botDifficulty,
       botProfileId: player.botProfileId,
+      rank: this.getLobbyRankPayload(player),
       paymentStatus: player.paymentStatus,
       paymentWalletAddress: player.paymentWalletAddress,
       depositSignature: player.depositSignature,
@@ -473,7 +479,7 @@ export class LobbyRoom extends Room<LobbyState> {
     const removedVote = this.mapVoteSession?.votes.delete(client.sessionId) ?? false;
     this.mapVoteSession?.previewReadyPlayerIds.delete(client.sessionId);
     this.playerAuthContexts.delete(client.sessionId);
-    this.playerSkillRatings.delete(client.sessionId);
+    this.playerCompetitiveRatings.delete(client.sessionId);
     this.rateLimiter.clearScope(client.sessionId);
     
     // Clean up clientId mappings
@@ -777,6 +783,7 @@ export class LobbyRoom extends Room<LobbyState> {
       if (this.state.wagerEnabled) {
         lockedWagerContext = await wagerService.lockLobbyRoster(this.state.lobbyId, this.buildWagerRoster());
       }
+      const rankedEligible = this.isRankedQuickPlayCandidate(playerAssignments, lockedWagerContext);
 
       // Create the game room
       const gameRoom = await matchMaker.createRoom('game_room', {
@@ -785,6 +792,8 @@ export class LobbyRoom extends Room<LobbyState> {
         mapSeed,
         botAssignments: playerAssignments.filter((assignment) => assignment.isBot),
         wagerContext: lockedWagerContext,
+        rankedEligible,
+        requiredHumanPlayers: QUICK_PLAY_REQUIRED_PLAYERS,
       });
 
       if (lockedWagerContext) {
@@ -877,6 +886,33 @@ export class LobbyRoom extends Room<LobbyState> {
     });
   }
 
+  private applyLobbyPlayerRank(
+    player: LobbyPlayer,
+    rank: ReturnType<typeof toPublicRankSnapshot>
+  ): void {
+    player.rankTier = rank.tier;
+    player.rankTierLabel = rank.tierLabel;
+    player.rankDivision = rank.division ?? 0;
+    player.rankDivisionIndex = rank.divisionIndex ?? -1;
+    player.rankLabel = rank.label;
+    player.rankIconKey = rank.iconKey;
+    player.rankIsRanked = rank.isRanked;
+    player.rankPlacementRemaining = rank.placementRemaining;
+  }
+
+  private getLobbyRankPayload(player: LobbyPlayer): ReturnType<typeof toPublicRankSnapshot> {
+    return {
+      tier: player.rankTier as ReturnType<typeof toPublicRankSnapshot>['tier'],
+      tierLabel: player.rankTierLabel,
+      division: player.rankDivision > 0 ? player.rankDivision : null,
+      divisionIndex: player.rankDivisionIndex >= 0 ? player.rankDivisionIndex : null,
+      label: player.rankLabel,
+      iconKey: player.rankIconKey,
+      isRanked: player.rankIsRanked,
+      placementRemaining: player.rankPlacementRemaining,
+    };
+  }
+
   private getPlayersArray() {
     const players: any[] = [];
     this.state.players.forEach((p, id) => {
@@ -890,6 +926,7 @@ export class LobbyRoom extends Room<LobbyState> {
         isBot: p.isBot,
         botDifficulty: p.botDifficulty,
         botProfileId: p.botProfileId,
+        rank: this.getLobbyRankPayload(p),
         paymentStatus: p.paymentStatus,
         paymentWalletAddress: p.paymentWalletAddress,
         depositSignature: p.depositSignature,
@@ -997,6 +1034,7 @@ export class LobbyRoom extends Room<LobbyState> {
       isBot: bot.isBot,
       botDifficulty: bot.botDifficulty,
       botProfileId: bot.botProfileId,
+      rank: this.getLobbyRankPayload(bot),
       paymentStatus: bot.paymentStatus,
     });
     this.updateMetadata();
@@ -1259,6 +1297,20 @@ export class LobbyRoom extends Room<LobbyState> {
     return roster;
   }
 
+  private isRankedQuickPlayCandidate(
+    playerAssignments: ParticipantAssignment[],
+    lockedWagerContext: LockedWagerContext | null
+  ): boolean {
+    if (!this.isQuickPlayQueue || lockedWagerContext || this.state.wagerEnabled) return false;
+    if (this.getHumanCount() !== QUICK_PLAY_REQUIRED_PLAYERS || this.getBotCount() !== 0) return false;
+    if (playerAssignments.length !== QUICK_PLAY_REQUIRED_PLAYERS) return false;
+    if (playerAssignments.some((assignment) => assignment.isBot)) return false;
+
+    return playerAssignments.every((assignment) => (
+      this.playerAuthContexts.get(assignment.playerId)?.kind === 'authenticated'
+    ));
+  }
+
   private async refreshWagerState(): Promise<void> {
     const snapshot = await wagerService.getLobbySnapshot(this.state.lobbyId);
     this.applyWagerSnapshot(snapshot);
@@ -1374,11 +1426,11 @@ export class LobbyRoom extends Room<LobbyState> {
     this.beginMapVote();
   }
 
-  private resolveRoomSkillBucket(options: JoinOptions): MatchmakingSkillBucket {
-    if (options.matchmakingMode !== true) return DEFAULT_MATCHMAKING_SKILL_BUCKET;
+  private resolveRoomRankBand(options: JoinOptions): number {
+    if (options.matchmakingMode !== true) return DEFAULT_RANK_DIVISION_INDEX;
 
     const ticket = verifyMatchmakingTicket(options.matchmakingTicket);
-    return ticket?.targetSkillBucket ?? normalizeSkillBucket(options.skillBucket);
+    return ticket?.targetRankDivisionIndex ?? normalizeRankDivisionIndex(options.rankBandId);
   }
 
   private isValidMatchmakingTicket(
@@ -1386,7 +1438,7 @@ export class LobbyRoom extends Room<LobbyState> {
     authContext: RoomAuthContext
   ): ticket is MatchmakingTicketClaims {
     if (!ticket) return false;
-    if (ticket.targetSkillBucket !== this.skillBucket) return false;
+    if (ticket.targetRankDivisionIndex !== this.rankBandId) return false;
 
     if (authContext.kind === 'authenticated') {
       return ticket.userId === authContext.userId;
@@ -1395,26 +1447,26 @@ export class LobbyRoom extends Room<LobbyState> {
     return ticket.userId.startsWith('guest:') || ticket.userId === authContext.userId;
   }
 
-  private resolvePlayerSkillRating(
+  private resolvePlayerCompetitiveRating(
     authContext: RoomAuthContext,
     ticket: MatchmakingTicketClaims | null
   ): number {
     if (authContext.kind === 'authenticated') {
-      return authContext.matchmakingSkillRating;
+      return authContext.competitiveRating;
     }
 
-    return ticket?.skillRating ?? authContext.matchmakingSkillRating;
+    return ticket?.competitiveRating ?? authContext.competitiveRating;
   }
 
-  private getAverageSkillRating(): number {
-    if (this.playerSkillRatings.size === 0) return DEFAULT_MATCHMAKING_RATING;
+  private getAverageCompetitiveRating(): number {
+    if (this.playerCompetitiveRatings.size === 0) return DEFAULT_MATCHMAKING_RATING;
 
     let total = 0;
-    this.playerSkillRatings.forEach((rating) => {
+    this.playerCompetitiveRatings.forEach((rating) => {
       total += rating;
     });
 
-    return Math.round(total / this.playerSkillRatings.size);
+    return Math.round(total / this.playerCompetitiveRatings.size);
   }
 
   private getMatchmakingWaitMs(): number {
@@ -1423,13 +1475,16 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private getMatchmakingStatusPayload(): Record<string, unknown> {
     if (!this.isQuickPlayQueue) return {};
+    const averageCompetitiveRating = this.getAverageCompetitiveRating();
 
     return {
-      skillBucket: this.skillBucket,
-      skillBucketLabel: getSkillBucketLabel(this.skillBucket),
-      averageSkillRating: this.getAverageSkillRating(),
-      skillSearchDistance: getAllowedBucketDistance(this.getMatchmakingWaitMs()),
+      rankBandId: this.rankBandId,
+      rankBandLabel: getRankDivisionLabel(this.rankBandId),
+      averageCompetitiveRating,
+      averageVisibleRank: getRankFromRating(averageCompetitiveRating, 0).label,
+      rankSearchDistance: getAllowedRankDivisionDistance(this.getMatchmakingWaitMs()),
       matchmakingCreatedAt: this.state.createdAt,
+      rankedEligible: this.isQuickPlayQueue && this.getBotCount() === 0 && !this.state.wagerEnabled,
     };
   }
 

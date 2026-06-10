@@ -2,17 +2,17 @@ import crypto from 'crypto';
 import { getEntryTicketSecret } from '../config/security';
 import {
   DEFAULT_MATCHMAKING_RATING,
-  DEFAULT_MATCHMAKING_SKILL_BUCKET,
-  normalizeSkillBucket,
-  type MatchmakingSkillBucket,
+  DEFAULT_RANK_DIVISION_INDEX,
+  normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
 
 export interface MatchmakingTicketClaims {
-  version: 1;
+  version: 2;
   userId: string;
-  skillRating: number;
-  skillBucket: MatchmakingSkillBucket;
-  targetSkillBucket: MatchmakingSkillBucket;
+  competitiveRating: number;
+  rankDivisionIndex: number;
+  targetRankDivisionIndex: number;
+  placementRemaining: number;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -20,9 +20,10 @@ export interface MatchmakingTicketClaims {
 
 export interface CreateMatchmakingTicketInput {
   userId: string;
-  skillRating: number;
-  skillBucket: MatchmakingSkillBucket;
-  targetSkillBucket: MatchmakingSkillBucket;
+  competitiveRating: number;
+  rankDivisionIndex: number;
+  targetRankDivisionIndex: number;
+  placementRemaining: number;
   ttlMs?: number;
 }
 
@@ -60,11 +61,12 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
 } {
   const now = Date.now();
   const claims: MatchmakingTicketClaims = {
-    version: 1,
+    version: 2,
     userId: input.userId,
-    skillRating: Math.round(Number.isFinite(input.skillRating) ? input.skillRating : DEFAULT_MATCHMAKING_RATING),
-    skillBucket: normalizeSkillBucket(input.skillBucket),
-    targetSkillBucket: normalizeSkillBucket(input.targetSkillBucket),
+    competitiveRating: Math.round(Number.isFinite(input.competitiveRating) ? input.competitiveRating : DEFAULT_MATCHMAKING_RATING),
+    rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
+    targetRankDivisionIndex: normalizeRankDivisionIndex(input.targetRankDivisionIndex),
+    placementRemaining: Math.max(0, Math.floor(Number.isFinite(input.placementRemaining) ? input.placementRemaining : 0)),
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -91,17 +93,18 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     return null;
   }
 
-  if (claims.version !== 1) return null;
+  if (claims.version !== 2) return null;
   if (!claims.userId || !claims.nonce) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
-  if (!Number.isFinite(claims.skillRating)) return null;
-  if (normalizeSkillBucket(claims.skillBucket) !== claims.skillBucket) return null;
-  if (normalizeSkillBucket(claims.targetSkillBucket) !== claims.targetSkillBucket) return null;
+  if (!Number.isFinite(claims.competitiveRating)) return null;
+  if (normalizeRankDivisionIndex(claims.rankDivisionIndex) !== claims.rankDivisionIndex) return null;
+  if (normalizeRankDivisionIndex(claims.targetRankDivisionIndex) !== claims.targetRankDivisionIndex) return null;
 
   return {
     ...claims,
-    skillRating: Math.round(claims.skillRating),
-    skillBucket: claims.skillBucket ?? DEFAULT_MATCHMAKING_SKILL_BUCKET,
-    targetSkillBucket: claims.targetSkillBucket ?? DEFAULT_MATCHMAKING_SKILL_BUCKET,
+    competitiveRating: Math.round(claims.competitiveRating),
+    rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
+    targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
+    placementRemaining: Math.max(0, Math.floor(claims.placementRemaining ?? 0)),
   };
 }

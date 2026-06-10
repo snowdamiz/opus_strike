@@ -15,6 +15,7 @@ import type { HeroId } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
 import { lamportsToSolDisplay, solInputToLamports } from '../../utils/wagerPayments';
+import { RankIcon, getRankForStats } from './RankBadge';
 
 // Phantom wallet icon component
 function PhantomIcon({ className }: { className?: string }) {
@@ -110,7 +111,7 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 }
 
 export function MainLobby() {
-  const { playerName, availableLobbies, isLoading, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
+  const { playerName, availableLobbies, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
   const { watchLobbies, createLobby, quickPlay, joinLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
@@ -157,6 +158,7 @@ export function MainLobby() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
   const shouldAuthenticateConnectedWalletRef = useRef(false);
+  const currentRank = getRankForStats(userStats);
 
   // Handle authentication after wallet connection
   useEffect(() => {
@@ -451,14 +453,14 @@ export function MainLobby() {
             {isAuthenticated && user ? (
               <div className="flex items-center gap-3 py-1 pl-1 pr-0 rounded-lg group">
                 <div
-                  className="w-9 h-9 shrink-0 rounded-lg flex items-center justify-center font-display text-white"
-                  style={{ background: heroColor }}
+                  className="flex h-11 w-11 shrink-0 items-center justify-center"
+                  title={currentRank.label}
                 >
-                  {playerName.charAt(0).toUpperCase()}
+                  <RankIcon rank={currentRank} size={42} labelled />
                 </div>
                 <div className="min-w-0">
                   <p className="font-display text-white text-sm">{playerName}</p>
-                  <p className="text-[10px] text-white/40 font-body">Level 1</p>
+                  <p className="mt-1 font-display text-[10px] uppercase leading-none text-white/70">{currentRank.label}</p>
                 </div>
                 {/* Disconnect button on hover */}
  <button
@@ -766,7 +768,7 @@ function PlayTab({
             </div>
           )}
 
- <button
+          <button
  onClick={() => { playButtonClick(); onQuickPlay(); }}
  disabled={isLoading}
  className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 2xl:py-4 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl 2xl:text-2xl text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"

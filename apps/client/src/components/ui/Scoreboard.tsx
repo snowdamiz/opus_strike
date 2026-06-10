@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/shallow';
 import type { Team, Player } from '@voxel-strike/shared';
 import { FACTIONS } from '../../styles/colorTokens';
 import { useVoiceStore, type VoiceParticipant } from '../../store/voiceStore';
+import { RankBadge } from './RankBadge';
 
 // Solar Icon
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -283,6 +284,9 @@ function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, v
               </span>
             )}
           </div>
+          {!player.isBot && player.rank && (
+            <RankBadge rank={player.rank} compact className="mt-1 max-w-[8rem] py-0.5 text-[10px]" />
+          )}
           {player.hasFlag && (
             <span className="text-[9px] text-amber-400 font-display flex items-center gap-1">
               <span>🏴</span> Carrying Flag

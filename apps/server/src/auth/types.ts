@@ -1,3 +1,5 @@
+import type { PublicRankPayload } from '../ranking/serialization';
+
 export const AUTH_PROVIDERS = ['discord', 'phantom'] as const;
 
 export type AuthProviderName = (typeof AUTH_PROVIDERS)[number];
@@ -46,7 +48,16 @@ export interface UserResponse {
     totalWageredLamports: string;
     totalWagerWonLamports: string;
     totalWagerLostLamports: string;
+    competitiveRating: number;
+    rankedGames: number;
+    rankedWins: number;
+    rankedLosses: number;
+    rankedDraws: number;
+    rankedPlacementsRemaining: number;
+    rankedPeakRating: number;
+    rankedLastMatchAt: string | null;
   };
+  rank: PublicRankPayload;
   linkedAccounts: LinkedAccountSummary[];
 }
 

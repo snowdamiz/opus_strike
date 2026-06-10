@@ -19,6 +19,7 @@ export * from './utils/math.js';
 
 // Progression
 export * from './progression/leveling.js';
+export * from './progression/ranking.js';
 
 // Maps
 export * from './maps/index.js';

@@ -9,6 +9,7 @@ import type {
   HeroId,
   Team,
   PlayerInput,
+  PublicRankSnapshot,
   MovementCommandPacket,
   PlayerPingRequestMessage,
   PlayerPingsMessage,
@@ -104,11 +105,12 @@ interface NetworkContextType {
 
 interface QuickPlayTicketResponse {
   ticket: string;
-  skillRating: number;
-  skillBucket: string;
-  skillBucketLabel: string;
-  targetSkillBucket: string;
-  targetSkillBucketLabel: string;
+  competitiveRating: number;
+  rankDivisionIndex: number;
+  rank: unknown;
+  isGuest: boolean;
+  targetRankDivisionIndex: number;
+  targetRankLabel: string;
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
@@ -289,10 +291,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       hostId: string;
       status: string;
       players: any[];
-      skillBucket?: string;
-      skillBucketLabel?: string;
-      averageSkillRating?: number;
-      skillSearchDistance?: number;
+      rankBandId?: number;
+      rankBandLabel?: string;
+      averageCompetitiveRating?: number;
+      averageVisibleRank?: string;
+      rankSearchDistance?: number;
       wager?: LobbyWagerState;
     }) => {
       loggers.network.debug('received lobby state', data);
@@ -300,10 +303,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setCurrentLobbyWager(data.wager ?? { enabled: false });
       setIsLobbyHost(data.hostId === room.sessionId);
       setMatchmakingStatus({
-        skillBucket: data.skillBucket ?? null,
-        skillBucketLabel: data.skillBucketLabel ?? null,
-        averageSkillRating: typeof data.averageSkillRating === 'number' ? data.averageSkillRating : null,
-        skillSearchDistance: typeof data.skillSearchDistance === 'number' ? data.skillSearchDistance : null,
+        rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
+        rankBandLabel: data.rankBandLabel ?? null,
+        averageCompetitiveRating: typeof data.averageCompetitiveRating === 'number' ? data.averageCompetitiveRating : null,
+        averageVisibleRank: data.averageVisibleRank ?? null,
+        rankSearchDistance: typeof data.rankSearchDistance === 'number' ? data.rankSearchDistance : null,
       });
       if (data.status === 'map_vote') {
         setAppPhase('map_vote');
@@ -327,22 +331,25 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           paymentWalletAddress: p.paymentWalletAddress || '',
           depositSignature: p.depositSignature || '',
           refundSignature: p.refundSignature || '',
+          rank: p.rank,
         });
       }
       setLobbyPlayers(playersMap);
     });
 
     room.onMessage('matchmakingStatus', (data: {
-      skillBucket?: string;
-      skillBucketLabel?: string;
-      averageSkillRating?: number;
-      skillSearchDistance?: number;
+      rankBandId?: number;
+      rankBandLabel?: string;
+      averageCompetitiveRating?: number;
+      averageVisibleRank?: string;
+      rankSearchDistance?: number;
     }) => {
       setMatchmakingStatus({
-        skillBucket: data.skillBucket ?? null,
-        skillBucketLabel: data.skillBucketLabel ?? null,
-        averageSkillRating: typeof data.averageSkillRating === 'number' ? data.averageSkillRating : null,
-        skillSearchDistance: typeof data.skillSearchDistance === 'number' ? data.skillSearchDistance : null,
+        rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
+        rankBandLabel: data.rankBandLabel ?? null,
+        averageCompetitiveRating: typeof data.averageCompetitiveRating === 'number' ? data.averageCompetitiveRating : null,
+        averageVisibleRank: data.averageVisibleRank ?? null,
+        rankSearchDistance: typeof data.rankSearchDistance === 'number' ? data.rankSearchDistance : null,
       });
     });
 
@@ -394,6 +401,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       paymentWalletAddress?: string;
       depositSignature?: string;
       refundSignature?: string;
+      rank?: PublicRankSnapshot;
     }) => {
       loggers.network.debug('player joined lobby', data.playerName);
       updateLobbyPlayer(data.playerId, {
@@ -410,6 +418,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         paymentWalletAddress: data.paymentWalletAddress || '',
         depositSignature: data.depositSignature || '',
         refundSignature: data.refundSignature || '',
+        rank: data.rank,
       });
     });
 
@@ -621,7 +630,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const clientId = getClientId();
       const matchmakingTicket = await requestQuickPlayTicket();
 
-      loggers.network.debug('quick play matchmaking with client id', clientId, matchmakingTicket.targetSkillBucket);
+      loggers.network.debug('quick play matchmaking with client id', clientId, matchmakingTicket.targetRankLabel);
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
@@ -629,7 +638,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         isPrivate: false,
         matchmakingMode: true,
         matchmakingTicket: matchmakingTicket.ticket,
-        skillBucket: matchmakingTicket.targetSkillBucket,
+        rankBandId: matchmakingTicket.targetRankDivisionIndex,
         clientId,
         initialBotCount: 0,
         botFillMode: 'manual',

@@ -1,3 +1,9 @@
+import {
+  DEFAULT_COMPETITIVE_RATING,
+  getRankDivisionIndex,
+  getRankFromDivisionIndex,
+} from '@voxel-strike/shared';
+
 export interface MatchmakingStats {
   totalGames: number;
   totalWins: number;
@@ -9,28 +15,14 @@ export interface MatchmakingStats {
   totalScore: number;
 }
 
-export const DEFAULT_MATCHMAKING_RATING = 1000;
-
-export const MATCHMAKING_SKILL_BUCKETS = [
-  { id: 'rookie', label: 'Rookie', min: Number.NEGATIVE_INFINITY, max: 899 },
-  { id: 'contender', label: 'Contender', min: 900, max: 1099 },
-  { id: 'adept', label: 'Adept', min: 1100, max: 1299 },
-  { id: 'veteran', label: 'Veteran', min: 1300, max: 1499 },
-  { id: 'elite', label: 'Elite', min: 1500, max: Number.POSITIVE_INFINITY },
-] as const;
-
-export type MatchmakingSkillBucket = (typeof MATCHMAKING_SKILL_BUCKETS)[number]['id'];
-
-export const DEFAULT_MATCHMAKING_SKILL_BUCKET: MatchmakingSkillBucket = 'contender';
-
-const BUCKET_EXPANSION_MS = 30_000;
-const MAX_BUCKET_DISTANCE = 2;
+export const DEFAULT_MATCHMAKING_RATING = DEFAULT_COMPETITIVE_RATING;
+export const DEFAULT_RANK_DIVISION_INDEX = getRankDivisionIndex(DEFAULT_COMPETITIVE_RATING);
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-export function calculateMatchmakingRating(stats: MatchmakingStats | null | undefined): number {
+export function calculateLegacyMatchmakingRating(stats: MatchmakingStats | null | undefined): number {
   if (!stats || stats.totalGames <= 0) return DEFAULT_MATCHMAKING_RATING;
 
   const games = Math.max(1, stats.totalGames);
@@ -55,24 +47,22 @@ export function calculateMatchmakingRating(stats: MatchmakingStats | null | unde
   ));
 }
 
-export function getSkillBucket(rating: number): (typeof MATCHMAKING_SKILL_BUCKETS)[number] {
-  return MATCHMAKING_SKILL_BUCKETS.find((bucket) => rating <= bucket.max) ?? MATCHMAKING_SKILL_BUCKETS[MATCHMAKING_SKILL_BUCKETS.length - 1];
+export function normalizeRankDivisionIndex(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_RANK_DIVISION_INDEX;
+  return clamp(Math.floor(value), 0, 23);
 }
 
-export function normalizeSkillBucket(value: unknown): MatchmakingSkillBucket {
-  return MATCHMAKING_SKILL_BUCKETS.some((bucket) => bucket.id === value)
-    ? value as MatchmakingSkillBucket
-    : DEFAULT_MATCHMAKING_SKILL_BUCKET;
+export function getRankDivisionLabel(divisionIndex: number): string {
+  return getRankFromDivisionIndex(normalizeRankDivisionIndex(divisionIndex)).label;
 }
 
-export function getSkillBucketIndex(bucketId: MatchmakingSkillBucket): number {
-  return MATCHMAKING_SKILL_BUCKETS.findIndex((bucket) => bucket.id === bucketId);
+export function getAllowedRankDivisionDistance(waitMs: number): number {
+  const elapsed = Math.max(0, waitMs);
+  if (elapsed < 30_000) return 1;
+  if (elapsed < 60_000) return 2;
+  if (elapsed < 90_000) return 4;
+
+  return 6;
 }
 
-export function getSkillBucketLabel(bucketId: MatchmakingSkillBucket): string {
-  return MATCHMAKING_SKILL_BUCKETS[getSkillBucketIndex(bucketId)]?.label ?? 'Contender';
-}
-
-export function getAllowedBucketDistance(waitMs: number): number {
-  return clamp(Math.floor(Math.max(0, waitMs) / BUCKET_EXPANSION_MS), 0, MAX_BUCKET_DISTANCE);
-}
+export const calculateMatchmakingRating = calculateLegacyMatchmakingRating;

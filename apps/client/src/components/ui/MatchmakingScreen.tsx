@@ -5,13 +5,14 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useAudio, useUISounds } from '../../hooks/useAudio';
 import { useGameStore } from '../../store/gameStore';
 import { LobbyBackdrop } from './LobbyBackdrop';
+import { RankBadge, getRankForStats } from './RankBadge';
 
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
 
 export function MatchmakingScreen() {
-  const { playerName, lobbyPlayers } = useGameStore();
+  const { playerName, lobbyPlayers, userStats, matchmakingStatus } = useGameStore();
   const { leaveLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const { preloadSoundGroup } = useAudio();
@@ -21,6 +22,10 @@ export function MatchmakingScreen() {
   const [totalPlayersInQueue, setTotalPlayersInQueue] = useState(filledSlots);
   const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
+  const currentRank = getRankForStats(userStats);
+  const searchLabel = matchmakingStatus.averageVisibleRank
+    ?? matchmakingStatus.rankBandLabel
+    ?? currentRank.label;
 
   useEffect(() => {
     preloadSoundGroup('lobby');
@@ -63,7 +68,12 @@ export function MatchmakingScreen() {
     <div className="menu-screen bg-strike-bg">
       <LobbyBackdrop />
 
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(249,115,22,0.18),transparent_34%),linear-gradient(to_bottom,rgba(6,10,20,0.22),rgba(4,6,14,0.82))]" />
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'radial-gradient(circle at 50% 42%, rgb(var(--color-accent-primary) / 0.18), transparent 34%), linear-gradient(to bottom, rgb(var(--color-accent-secondary) / 0.22), rgb(var(--color-strike-page-bottom) / 0.82))',
+        }}
+      />
       <div className="absolute inset-0 pattern-grid opacity-20" />
 
       <main className="relative z-10 flex h-full items-center justify-center px-5">
@@ -77,6 +87,13 @@ export function MatchmakingScreen() {
           <p className="mx-auto mt-4 max-w-md font-body text-sm leading-relaxed text-white/50 sm:text-base">
             {playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.
           </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <RankBadge rank={currentRank} />
+            <span className="font-body text-xs uppercase tracking-wider text-white/40">
+              Searching near {searchLabel}
+              {matchmakingStatus.rankSearchDistance !== null ? ` +/-${matchmakingStatus.rankSearchDistance}` : ''}
+            </span>
+          </div>
 
           <div className="mt-10">
             <div className="mb-4 flex items-center justify-between font-display text-sm text-white/60">

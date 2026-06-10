@@ -5,6 +5,7 @@ import {
   calculateParticipantScore,
   getMatchOutcome,
   normalizeMatchParticipants,
+  persistCompletedMatch,
 } from '../persistence/matchPersistence';
 import type { MatchParticipantSnapshot } from '../persistence/matchPersistence';
 
@@ -101,4 +102,169 @@ assert.ok(blue);
 assert.equal(blue.outcome, 'loss');
 assert.equal(blue.score, calculateParticipantScore(blue));
 
-console.log('match-persistence tests passed');
+function createFakeUser(id: string) {
+  return {
+    id,
+    competitiveRating: 800,
+    rankedGames: 5,
+    rankedWins: 2,
+    rankedLosses: 2,
+    rankedDraws: 1,
+    rankedPlacementsRemaining: 0,
+    rankedPeakRating: 800,
+    totalGames: 0,
+    totalWins: 0,
+    totalLosses: 0,
+    totalDraws: 0,
+    totalKills: 0,
+    totalDeaths: 0,
+    totalAssists: 0,
+    totalCaptures: 0,
+    totalFlagReturns: 0,
+    totalScore: 0,
+    totalExperience: 0,
+  };
+}
+
+function applyUpdate(target: Record<string, any>, update: Record<string, any>): void {
+  for (const [key, value] of Object.entries(update)) {
+    if (value && typeof value === 'object' && 'increment' in value) {
+      target[key] = (target[key] ?? 0) + value.increment;
+    } else {
+      target[key] = value;
+    }
+  }
+}
+
+function createFakePrisma() {
+  const users = new Map<string, any>([
+    ['ranked_red', createFakeUser('ranked_red')],
+    ['ranked_blue', createFakeUser('ranked_blue')],
+    ['unranked_red', createFakeUser('unranked_red')],
+    ['unranked_blue', createFakeUser('unranked_blue')],
+  ]);
+  const matches = new Map<string, any>();
+  const participants: any[] = [];
+
+  const tx = {
+    gameMatch: {
+      findUnique: async ({ where }: any) => matches.get(where.id) ?? null,
+      create: async ({ data }: any) => {
+        if (matches.has(data.id)) {
+          const error = new Error('Unique constraint') as Error & { code: string };
+          error.code = 'P2002';
+          throw error;
+        }
+        matches.set(data.id, data);
+        return data;
+      },
+    },
+    gameMatchParticipant: {
+      createMany: async ({ data }: any) => {
+        participants.push(...data);
+        return { count: data.length };
+      },
+    },
+    user: {
+      findMany: async ({ where, select }: any) => {
+        return where.id.in
+          .map((id: string) => users.get(id))
+          .filter(Boolean)
+          .map((user: any) => Object.fromEntries(
+            Object.keys(select).map((key) => [key, user[key]])
+          ));
+      },
+      update: async ({ where, data }: any) => {
+        const user = users.get(where.id);
+        assert.ok(user);
+        applyUpdate(user, data);
+        return user;
+      },
+    },
+  };
+
+  return {
+    users,
+    matches,
+    participants,
+    prisma: {
+      $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+    },
+  };
+}
+
+async function runPersistenceWriteTests() {
+  const fake = createFakePrisma();
+  const rankedResult = await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'ranked_match',
+    roomId: 'room_ranked',
+    lobbyId: 'lobby_ranked',
+    mapSeed: 123,
+    rankedEligible: true,
+    startedAt: joinedAt,
+    endedAt: new Date('2026-06-10T10:20:00.000Z'),
+    redScore: 3,
+    blueScore: 1,
+    winningTeam: 'red',
+    participants: [
+      { ...baseParticipant, userId: 'ranked_red', team: 'red', leftAt: null },
+      { ...baseParticipant, userId: 'ranked_blue', team: 'blue', leftAt: new Date('2026-06-10T10:15:00.000Z') },
+    ],
+  });
+
+  assert.equal(rankedResult.alreadyPersisted, false);
+  assert.equal(fake.matches.get('ranked_match').rankedEligible, true);
+  assert.equal(fake.users.get('ranked_red').rankedGames, 6);
+  assert.notEqual(fake.users.get('ranked_red').competitiveRating, 800);
+  const rankedParticipant = fake.participants.find((participant) => participant.userId === 'ranked_blue');
+  assert.equal(rankedParticipant.rankedEligible, true);
+  assert.equal(typeof rankedParticipant.ratingDelta, 'number');
+  assert.equal(rankedParticipant.leaverPenaltyApplied, true);
+
+  const duplicateResult = await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'ranked_match',
+    roomId: 'room_ranked',
+    lobbyId: 'lobby_ranked',
+    mapSeed: 123,
+    rankedEligible: true,
+    startedAt: joinedAt,
+    endedAt: new Date('2026-06-10T10:20:00.000Z'),
+    redScore: 3,
+    blueScore: 1,
+    winningTeam: 'red',
+    participants: [
+      { ...baseParticipant, userId: 'ranked_red', team: 'red', leftAt: null },
+      { ...baseParticipant, userId: 'ranked_blue', team: 'blue', leftAt: null },
+    ],
+  });
+  assert.equal(duplicateResult.alreadyPersisted, true);
+  assert.equal(fake.users.get('ranked_red').rankedGames, 6);
+
+  const unrankedBefore = fake.users.get('unranked_red').competitiveRating;
+  await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'unranked_match',
+    roomId: 'room_unranked',
+    lobbyId: 'lobby_unranked',
+    mapSeed: 456,
+    rankedEligible: false,
+    startedAt: joinedAt,
+    endedAt: new Date('2026-06-10T10:20:00.000Z'),
+    redScore: 1,
+    blueScore: 1,
+    winningTeam: null,
+    participants: [
+      { ...baseParticipant, userId: 'unranked_red', team: 'red', leftAt: null },
+      { ...baseParticipant, userId: 'unranked_blue', team: 'blue', leftAt: null },
+    ],
+  });
+
+  assert.equal(fake.matches.get('unranked_match').rankedEligible, false);
+  assert.equal(fake.users.get('unranked_red').competitiveRating, unrankedBefore);
+  assert.equal(fake.users.get('unranked_red').rankedGames, 5);
+  assert.equal(fake.users.get('unranked_red').totalGames, 1);
+}
+
+runPersistenceWriteTests()
+  .then(() => {
+    console.log('match-persistence tests passed');
+  });

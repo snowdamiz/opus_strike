@@ -89,8 +89,17 @@ model User {
   totalWageredLamports   BigInt @default(0)
   totalWagerWonLamports  BigInt @default(0)
   totalWagerLostLamports BigInt @default(0)
+  competitiveRating      Int      @default(800)
+  rankedGames            Int      @default(0)
+  rankedWins             Int      @default(0)
+  rankedLosses           Int      @default(0)
+  rankedDraws            Int      @default(0)
+  rankedPlacementsRemaining Int   @default(0)
+  rankedPeakRating       Int      @default(800)
+  rankedLastMatchAt      DateTime?
 
   @@index([walletAddress])
+  @@index([competitiveRating(sort: Desc), rankedWins(sort: Desc), rankedGames, createdAt])
 }
 
 model AuthAccount {
@@ -120,6 +129,7 @@ model GameMatch {
   redScore    Int
   blueScore   Int
   winningTeam String?
+  rankedEligible Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -129,6 +139,7 @@ model GameMatch {
   @@index([lobbyId])
   @@index([startedAt])
   @@index([winningTeam])
+  @@index([rankedEligible])
 }
 
 model GameMatchParticipant {
@@ -147,6 +158,13 @@ model GameMatchParticipant {
   score           Int       @default(0)
   experienceGained Int      @default(0)
   outcome         String
+  rankedEligible Boolean    @default(false)
+  ratingBefore   Int?
+  ratingAfter    Int?
+  ratingDelta    Int?
+  visibleRankBefore String?
+  visibleRankAfter  String?
+  leaverPenaltyApplied Boolean @default(false)
   joinedAt        DateTime
   leftAt          DateTime?
   createdAt       DateTime  @default(now())
@@ -159,6 +177,8 @@ model GameMatchParticipant {
   @@index([matchId])
   @@index([userId, joinedAt])
   @@index([outcome])
+  @@index([rankedEligible])
+  @@index([userId, rankedEligible, joinedAt])
 }
 
 model WageredLobby {

@@ -1,6 +1,7 @@
 import type { Vec3, Quaternion } from './vector.js';
 import type { HeroId } from './hero.js';
 import type { AbilityState } from './ability.js';
+import type { PublicRankSnapshot } from '../progression/ranking.js';
 
 export type Team = 'red' | 'blue';
 
@@ -101,6 +102,7 @@ export interface Player {
   
   // Match stats
   stats: PlayerStats;
+  rank?: PublicRankSnapshot;
 }
 
 export interface PlayerSnapshot {
@@ -119,5 +121,6 @@ export interface PlayerSnapshot {
   abilities: Record<string, AbilityState>;
   hasFlag: boolean;
   isBot?: boolean;
+  rank?: PublicRankSnapshot;
   stats?: PlayerStats;
 }

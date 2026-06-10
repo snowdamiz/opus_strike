@@ -6,28 +6,31 @@ import { isGuestPlayAllowed } from '../config/security';
 import { parseCookies, verifyAuthToken } from '../auth/session';
 import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
-  calculateMatchmakingRating,
-  getAllowedBucketDistance,
-  getSkillBucket,
-  getSkillBucketIndex,
-  getSkillBucketLabel,
-  normalizeSkillBucket,
-  type MatchmakingSkillBucket,
-  type MatchmakingStats,
+  DEFAULT_MATCHMAKING_RATING,
+  DEFAULT_RANK_DIVISION_INDEX,
+  getAllowedRankDivisionDistance,
+  getRankDivisionLabel,
+  normalizeRankDivisionIndex,
 } from './skill';
+import { getRankDivisionIndex } from '@voxel-strike/shared';
+import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
 
 const router: RouterType = Router();
 
 interface MatchmakingUserContext {
   userId: string;
-  stats: MatchmakingStats | null;
+  competitiveRating: number;
+  rankDivisionIndex: number;
+  rank: PublicRankPayload;
+  isGuest: boolean;
 }
 
 interface QuickPlayCandidate {
-  bucket: MatchmakingSkillBucket;
+  rankBandId: number;
   humanCount: number;
   waitMs: number;
   distance: number;
+  ratingDistance: number;
 }
 
 interface QuickPlayQueueStatus {
@@ -68,13 +71,25 @@ async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserC
         totalCaptures: true,
         totalFlagReturns: true,
         totalScore: true,
+        competitiveRating: true,
+        rankedGames: true,
+        rankedWins: true,
+        rankedLosses: true,
+        rankedDraws: true,
+        rankedPlacementsRemaining: true,
+        rankedPeakRating: true,
+        rankedLastMatchAt: true,
       },
     });
 
     if (user && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
+      const rank = serializeRankPayload(user);
       return {
         userId: user.id,
-        stats: user,
+        competitiveRating: user.competitiveRating,
+        rankDivisionIndex: getRankDivisionIndex(user.competitiveRating),
+        rank,
+        isGuest: false,
       };
     }
   }
@@ -85,45 +100,53 @@ async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserC
 
   return {
     userId: 'guest:quick-play',
-    stats: null,
+    competitiveRating: DEFAULT_MATCHMAKING_RATING,
+    rankDivisionIndex: DEFAULT_RANK_DIVISION_INDEX,
+    rank: serializeRankPayload(null),
+    isGuest: true,
   };
 }
 
-async function chooseQuickPlayBucket(playerBucket: MatchmakingSkillBucket): Promise<MatchmakingSkillBucket> {
+async function chooseQuickPlayRankBand(playerRating: number, playerDivisionIndex: number): Promise<number> {
   const now = Date.now();
-  const playerBucketIndex = getSkillBucketIndex(playerBucket);
   const rooms = await matchMaker.query({ name: 'lobby_room' });
 
   const candidates: QuickPlayCandidate[] = rooms.flatMap((room: any) => {
     const metadata = room.metadata ?? {};
     if (room.locked || metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') return [];
 
-    const bucket = normalizeSkillBucket(metadata.skillBucket);
-    const bucketIndex = getSkillBucketIndex(bucket);
-    const distance = Math.abs(bucketIndex - playerBucketIndex);
+    const rankBandId = normalizeRankDivisionIndex(metadata.rankBandId);
+    const averageCompetitiveRating = typeof metadata.averageCompetitiveRating === 'number'
+      ? metadata.averageCompetitiveRating
+      : playerRating;
+    const averageDivisionIndex = getRankDivisionIndex(averageCompetitiveRating);
+    const distance = Math.abs(averageDivisionIndex - playerDivisionIndex);
+    const ratingDistance = Math.abs(averageCompetitiveRating - playerRating);
     const createdAt = typeof metadata.matchmakingCreatedAt === 'number' ? metadata.matchmakingCreatedAt : now;
     const waitMs = Math.max(0, now - createdAt);
     const humanCount = typeof metadata.humanCount === 'number' ? metadata.humanCount : room.clients ?? 0;
     const requiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
 
     if (humanCount >= requiredPlayers) return [];
-    if (distance > getAllowedBucketDistance(waitMs)) return [];
+    if (distance > getAllowedRankDivisionDistance(waitMs)) return [];
 
     return [{
-      bucket,
+      rankBandId,
       humanCount,
       waitMs,
       distance,
+      ratingDistance,
     }];
   });
 
   candidates.sort((a, b) => (
-    a.distance - b.distance
+    a.ratingDistance - b.ratingDistance
+    || a.distance - b.distance
     || b.humanCount - a.humanCount
     || b.waitMs - a.waitMs
   ));
 
-  return candidates[0]?.bucket ?? playerBucket;
+  return candidates[0]?.rankBandId ?? playerDivisionIndex;
 }
 
 async function getQuickPlayQueueStatus(): Promise<QuickPlayQueueStatus> {
@@ -158,24 +181,27 @@ router.get('/queue-status', async (_req: Request, res: Response) => {
 router.get('/quick-play-ticket', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req);
-    const skillRating = calculateMatchmakingRating(context.stats);
-    const skillBucket = getSkillBucket(skillRating).id;
-    const targetSkillBucket = await chooseQuickPlayBucket(skillBucket);
+    const targetRankDivisionIndex = await chooseQuickPlayRankBand(
+      context.competitiveRating,
+      context.rankDivisionIndex
+    );
     const { ticket, claims } = createMatchmakingTicket({
       userId: context.userId,
-      skillRating,
-      skillBucket,
-      targetSkillBucket,
+      competitiveRating: context.competitiveRating,
+      rankDivisionIndex: context.rankDivisionIndex,
+      targetRankDivisionIndex,
+      placementRemaining: context.rank.rankedPlacementsRemaining,
     });
 
     res.json({
       ticket,
       expiresAt: claims.expiresAt,
-      skillRating,
-      skillBucket,
-      skillBucketLabel: getSkillBucketLabel(skillBucket),
-      targetSkillBucket,
-      targetSkillBucketLabel: getSkillBucketLabel(targetSkillBucket),
+      competitiveRating: context.competitiveRating,
+      rankDivisionIndex: context.rankDivisionIndex,
+      rank: context.rank,
+      isGuest: context.isGuest,
+      targetRankDivisionIndex,
+      targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'Authentication required') {

@@ -8,6 +8,7 @@ import type {
   BotDifficulty,
   BlueprintPreview,
   MapTopologyId,
+  PublicRankSnapshot,
 } from '@voxel-strike/shared';
 
 // Re-export VisualState from visualStore for central type access
@@ -45,6 +46,7 @@ export interface LobbyPlayer {
   paymentWalletAddress?: string;
   depositSignature?: string;
   refundSignature?: string;
+  rank?: PublicRankSnapshot;
 }
 
 export type WagerPaymentStatus =
@@ -127,13 +129,22 @@ export interface UserStats {
   totalWageredLamports: string;
   totalWagerWonLamports: string;
   totalWagerLostLamports: string;
+  competitiveRating: number;
+  rankedGames: number;
+  rankedWins: number;
+  rankedLosses: number;
+  rankedDraws: number;
+  rankedPlacementsRemaining: number;
+  rankedPeakRating: number;
+  rankedLastMatchAt: string | null;
 }
 
 export interface MatchmakingStatus {
-  skillBucket: string | null;
-  skillBucketLabel: string | null;
-  averageSkillRating: number | null;
-  skillSearchDistance: number | null;
+  rankBandId: number | null;
+  rankBandLabel: string | null;
+  averageCompetitiveRating: number | null;
+  averageVisibleRank: string | null;
+  rankSearchDistance: number | null;
 }
 
 export type AppPhase = 'menu' | 'browsing_lobbies' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';

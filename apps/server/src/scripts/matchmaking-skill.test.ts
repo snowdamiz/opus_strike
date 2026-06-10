@@ -1,16 +1,20 @@
 import assert from 'node:assert/strict';
 import {
+  DEFAULT_MATCHMAKING_RATING,
+  DEFAULT_RANK_DIVISION_INDEX,
   calculateMatchmakingRating,
-  getAllowedBucketDistance,
-  getSkillBucket,
-  normalizeSkillBucket,
+  getAllowedRankDivisionDistance,
+  getRankDivisionLabel,
+  normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
 import { createMatchmakingTicket, verifyMatchmakingTicket } from '../security/matchmakingTickets';
+import { getRankDivisionIndex } from '@voxel-strike/shared';
 
 process.env.ENTRY_TICKET_SECRET = process.env.ENTRY_TICKET_SECRET || 'matchmaking-skill-test-secret';
 
-assert.equal(calculateMatchmakingRating(null), 1000);
-assert.equal(getSkillBucket(calculateMatchmakingRating(null)).id, 'contender');
+assert.equal(calculateMatchmakingRating(null), DEFAULT_MATCHMAKING_RATING);
+assert.equal(DEFAULT_RANK_DIVISION_INDEX, getRankDivisionIndex(DEFAULT_MATCHMAKING_RATING));
+assert.equal(getRankDivisionLabel(DEFAULT_RANK_DIVISION_INDEX), 'Bronze 1');
 
 const newPlayer = calculateMatchmakingRating({
   totalGames: 1,
@@ -33,27 +37,29 @@ const strongPlayer = calculateMatchmakingRating({
   totalScore: 52000,
 });
 
-assert.ok(newPlayer < 1000, `expected new player rating below default, got ${newPlayer}`);
-assert.ok(strongPlayer > 1300, `expected strong player rating above veteran threshold, got ${strongPlayer}`);
+assert.ok(newPlayer < DEFAULT_MATCHMAKING_RATING, `expected new player rating below default, got ${newPlayer}`);
+assert.ok(strongPlayer > 1300, `expected strong player rating above Gold 3 threshold, got ${strongPlayer}`);
 
-assert.equal(normalizeSkillBucket('elite'), 'elite');
-assert.equal(normalizeSkillBucket('not-real'), 'contender');
-assert.equal(getAllowedBucketDistance(0), 0);
-assert.equal(getAllowedBucketDistance(30_000), 1);
-assert.equal(getAllowedBucketDistance(90_000), 2);
+assert.equal(normalizeRankDivisionIndex(99), 23);
+assert.equal(normalizeRankDivisionIndex('not-real'), DEFAULT_RANK_DIVISION_INDEX);
+assert.equal(getAllowedRankDivisionDistance(0), 1);
+assert.equal(getAllowedRankDivisionDistance(30_000), 2);
+assert.equal(getAllowedRankDivisionDistance(90_000), 6);
 
 const { ticket, claims } = createMatchmakingTicket({
   userId: 'user_1',
-  skillRating: strongPlayer,
-  skillBucket: getSkillBucket(strongPlayer).id,
-  targetSkillBucket: 'veteran',
+  competitiveRating: strongPlayer,
+  rankDivisionIndex: getRankDivisionIndex(strongPlayer),
+  targetRankDivisionIndex: getRankDivisionIndex(1300),
+  placementRemaining: 0,
 });
 
 const verified = verifyMatchmakingTicket(ticket, claims.issuedAt + 1);
 assert.ok(verified);
 assert.equal(verified.userId, 'user_1');
-assert.equal(verified.skillRating, strongPlayer);
-assert.equal(verified.targetSkillBucket, 'veteran');
+assert.equal(verified.version, 2);
+assert.equal(verified.competitiveRating, strongPlayer);
+assert.equal(verified.targetRankDivisionIndex, getRankDivisionIndex(1300));
 
 assert.equal(verifyMatchmakingTicket(`${ticket.slice(0, -1)}x`, claims.issuedAt + 1), null);
 assert.equal(verifyMatchmakingTicket(ticket, claims.expiresAt + 1), null);

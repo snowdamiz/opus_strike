@@ -13,6 +13,7 @@ import {
 import type { LobbyPlayer } from '../../store/gameStore';
 import { FACTIONS, HERO_COLORS } from '../../styles/colorTokens';
 import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
+import { RankBadge, RankIcon, getRankForStats } from './RankBadge';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -179,6 +180,7 @@ export function Lobby() {
     lobbyPlayers, 
     isLobbyHost,
     isLoading,
+    userStats,
     setAppPhase,
     clearMapVote,
   } = useGameStore();
@@ -211,6 +213,7 @@ export function Lobby() {
   const currentTeam = currentPlayer?.team;
   const hasChosenTeam = currentTeam === 'red' || currentTeam === 'blue';
   const isReady = currentPlayer?.isReady || false;
+  const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
   const playerList = Array.from(lobbyPlayers.values());
   const wagerEnabled = currentLobbyWager.enabled;
   const localPaymentStatus = currentPlayer?.paymentStatus || '';
@@ -401,16 +404,11 @@ export function Lobby() {
                 borderColor: currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
               }}
             >
-              <div 
-                className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-white shadow-lg"
-                style={{
-                  background: currentFaction 
-                    ? `linear-gradient(135deg, ${currentFaction.primaryColor}, ${currentFaction.secondaryColor})`
-                    : 'linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.1))',
-                  boxShadow: currentFaction ? `0 4px 15px ${currentFaction.glowColor}` : undefined,
-                }}
+              <div
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 shadow-lg"
+                title={currentRank.label}
               >
-                {playerName.charAt(0).toUpperCase()}
+                <RankIcon rank={currentRank} size={28} labelled />
               </div>
               <div>
                 <p className="font-display text-white text-sm">{playerName}</p>
@@ -462,7 +460,7 @@ export function Lobby() {
             reverse
           />
         </div>
-        </div>
+      </div>
       </div>
 
       {/* Bottom Status Bar */}
@@ -923,6 +921,9 @@ function PlayerCard({
           )}
           {!player.isBot && <PaymentBadge status={player.paymentStatus} />}
         </div>
+        {!player.isBot && player.rank && (
+          <RankBadge rank={player.rank} compact className="mt-1 max-w-[8rem] py-0.5 text-[10px]" />
+        )}
         {showBotControls && (
           <div className={`flex min-w-0 items-center ${compact ? 'mt-0 gap-0.5' : 'mt-0.5 gap-1'}`}>
             <InlinePicker

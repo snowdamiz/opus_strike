@@ -28,7 +28,7 @@ const gameServer = new Server({
 gameServer.define('game_room', GameRoom);
 gameServer
   .define('lobby_room', LobbyRoom)
-  .filterBy(['isPrivate', 'matchmakingMode', 'skillBucket'])
+  .filterBy(['isPrivate', 'matchmakingMode', 'rankBandId'])
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
 

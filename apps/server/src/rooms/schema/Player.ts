@@ -12,6 +12,14 @@ export class Player extends Schema {
   isBot: boolean = false;
   botDifficulty: string = 'normal';
   botProfileId: string = '';
+  rankTier: string = 'unranked';
+  rankTierLabel: string = 'Unranked';
+  rankDivision: number = 0;
+  rankDivisionIndex: number = -1;
+  rankLabel: string = 'Unranked';
+  rankIconKey: string = 'unranked';
+  rankIsRanked: boolean = false;
+  rankPlacementRemaining: number = 5;
 
   // Transform
   position: Vec3Schema = new Vec3Schema();
@@ -58,6 +66,14 @@ defineTypes(Player, {
   isBot: 'boolean',
   botDifficulty: 'string',
   botProfileId: 'string',
+  rankTier: 'string',
+  rankTierLabel: 'string',
+  rankDivision: 'number',
+  rankDivisionIndex: 'number',
+  rankLabel: 'string',
+  rankIconKey: 'string',
+  rankIsRanked: 'boolean',
+  rankPlacementRemaining: 'number',
   position: Vec3Schema,
   velocity: Vec3Schema,
   lookYaw: 'number',

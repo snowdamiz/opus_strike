@@ -227,10 +227,11 @@ const coreInitialState: CoreState = {
   mapVotePhaseEndTime: null,
   selectedMapOptionId: null,
   matchmakingStatus: {
-    skillBucket: null,
-    skillBucketLabel: null,
-    averageSkillRating: null,
-    skillSearchDistance: null,
+    rankBandId: null,
+    rankBandLabel: null,
+    averageCompetitiveRating: null,
+    averageVisibleRank: null,
+    rankSearchDistance: null,
   },
   gamePhase: 'waiting',
   matchSummary: null,
@@ -316,6 +317,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       };
     }
 
+    const ratingDelta = typeof localSummary.ratingDelta === 'number' ? localSummary.ratingDelta : null;
+    const competitiveRating = ratingDelta === null
+      ? state.userStats.competitiveRating
+      : Math.max(0, state.userStats.competitiveRating + ratingDelta);
+
     return {
       matchSummary: summary,
       appliedExperienceMatchId: summaryKey,
@@ -333,6 +339,16 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
         totalFlagReturns: state.userStats.totalFlagReturns + localSummary.stats.flagReturns,
         totalScore: state.userStats.totalScore + localSummary.score,
         totalExperience: state.userStats.totalExperience + localSummary.experienceGained,
+        competitiveRating,
+        rankedGames: ratingDelta === null ? state.userStats.rankedGames : state.userStats.rankedGames + 1,
+        rankedWins: state.userStats.rankedWins + (ratingDelta !== null && localSummary.outcome === 'win' ? 1 : 0),
+        rankedLosses: state.userStats.rankedLosses + (ratingDelta !== null && localSummary.outcome === 'loss' ? 1 : 0),
+        rankedDraws: state.userStats.rankedDraws + (ratingDelta !== null && localSummary.outcome === 'draw' ? 1 : 0),
+        rankedPlacementsRemaining: ratingDelta === null
+          ? state.userStats.rankedPlacementsRemaining
+          : Math.max(0, state.userStats.rankedPlacementsRemaining - 1),
+        rankedPeakRating: Math.max(state.userStats.rankedPeakRating, competitiveRating),
+        rankedLastMatchAt: ratingDelta === null ? state.userStats.rankedLastMatchAt : new Date(summary.endedAt).toISOString(),
       },
     };
   }),
@@ -728,10 +744,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     mapVotePhaseEndTime: null,
     selectedMapOptionId: null,
     matchmakingStatus: {
-      skillBucket: null,
-      skillBucketLabel: null,
-      averageSkillRating: null,
-      skillSearchDistance: null,
+      rankBandId: null,
+      rankBandLabel: null,
+      averageCompetitiveRating: null,
+      averageVisibleRank: null,
+      rankSearchDistance: null,
     },
   }),
 }));

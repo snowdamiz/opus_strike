@@ -1,5 +1,6 @@
 import type { AuthAccount, User } from '@prisma/client';
 import type { LinkedAccountSummary, UserResponse } from './types';
+import { serializeRankPayload } from '../ranking/serialization';
 
 type UserWithAccounts = User & {
   authAccounts?: AuthAccount[];
@@ -40,7 +41,16 @@ export function serializeUser(user: UserWithAccounts): UserResponse {
       totalWageredLamports: user.totalWageredLamports.toString(),
       totalWagerWonLamports: user.totalWagerWonLamports.toString(),
       totalWagerLostLamports: user.totalWagerLostLamports.toString(),
+      competitiveRating: user.competitiveRating,
+      rankedGames: user.rankedGames,
+      rankedWins: user.rankedWins,
+      rankedLosses: user.rankedLosses,
+      rankedDraws: user.rankedDraws,
+      rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+      rankedPeakRating: user.rankedPeakRating,
+      rankedLastMatchAt: user.rankedLastMatchAt?.toISOString() ?? null,
     },
+    rank: serializeRankPayload(user),
     linkedAccounts: (user.authAccounts ?? []).map(serializeLinkedAccount),
   };
 }

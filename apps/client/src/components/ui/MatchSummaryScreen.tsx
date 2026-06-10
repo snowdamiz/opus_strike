@@ -8,6 +8,7 @@ import {
   type MatchSummaryPlayer,
   type Team,
 } from '@voxel-strike/shared';
+import { RankBadge, RankChangeSummary } from './RankBadge';
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('en-US').format(value);
@@ -66,7 +67,7 @@ export function MatchSummaryScreen() {
     <main
       className="fixed inset-0 z-[9000] overflow-y-auto bg-black text-white"
       style={{
-        backgroundImage: 'linear-gradient(180deg, rgba(4, 7, 13, 0.86), rgba(3, 5, 10, 0.97)), url(/bg.jpg)',
+        backgroundImage: 'linear-gradient(180deg, rgb(var(--color-strike-page-top) / 0.86), rgb(var(--color-strike-page-bottom) / 0.97)), url(/bg.jpg)',
         backgroundSize: 'cover',
         backgroundPosition: 'center',
       }}
@@ -104,6 +105,12 @@ export function MatchSummaryScreen() {
                 experienceToNextLevel={currentProgress.experienceToNextLevel}
                 progress={currentProgress.progress}
                 leveledUp={leveledUp}
+              />
+
+              <RankChangeSummary
+                delta={localPlayer?.ratingDelta}
+                before={localPlayer?.rankBefore}
+                after={localPlayer?.rankAfter ?? localPlayer?.rank}
               />
 
               <LocalStatsPanel player={localPlayer} />
@@ -308,6 +315,9 @@ function ScoreboardRow({
             </span>
           )}
         </div>
+        {!player.isBot && player.rank && (
+          <RankBadge rank={player.rankAfter ?? player.rank} compact className="mt-1 max-w-[8rem] py-0.5 text-[10px]" />
+        )}
         <p className="mt-1 truncate font-body text-xs text-white/30 sm:hidden">{getHeroLabel(player)}</p>
       </div>
       <span className="hidden self-center truncate text-right font-body text-xs text-white/45 sm:block">

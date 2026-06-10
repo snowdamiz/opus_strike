@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import type { Transaction } from '@solana/web3.js';
+import type { RankSummary } from '@voxel-strike/shared';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
 import {
@@ -79,6 +80,26 @@ export interface UserData {
     totalWageredLamports: string;
     totalWagerWonLamports: string;
     totalWagerLostLamports: string;
+    competitiveRating: number;
+    rankedGames: number;
+    rankedWins: number;
+    rankedLosses: number;
+    rankedDraws: number;
+    rankedPlacementsRemaining: number;
+    rankedPeakRating: number;
+    rankedLastMatchAt: string | null;
+  };
+  rank: {
+    competitiveRating: number;
+    rankedGames: number;
+    rankedWins: number;
+    rankedLosses: number;
+    rankedDraws: number;
+    rankedPlacementsRemaining: number;
+    rankedLastMatchAt: string | null;
+    current: RankSummary;
+    peak: RankSummary;
+    progress: RankSummary['progress'];
   };
   linkedAccounts: LinkedAccountSummary[];
 }

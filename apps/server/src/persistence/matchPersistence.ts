@@ -1,6 +1,11 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { calculateMatchExperience } from '@voxel-strike/shared';
 import type { MatchOutcome, Team } from '@voxel-strike/shared';
+import {
+  calculateRankedRatingUpdates,
+  type RankedRatingUpdate,
+  type RankedUserState,
+} from '../ranking/ratingService';
 
 export interface MatchParticipantStats {
   kills: number;
@@ -25,6 +30,7 @@ export interface CompletedMatchPersistenceInput {
   roomId: string;
   lobbyId: string | null;
   mapSeed: number;
+  rankedEligible?: boolean;
   startedAt: Date;
   endedAt: Date;
   redScore: number;
@@ -131,6 +137,25 @@ function getUserAggregateIncrement(participant: PersistableParticipant): Prisma.
   };
 }
 
+function getRankedAggregateIncrement(
+  participant: PersistableParticipant,
+  ratingUpdate: RankedRatingUpdate | undefined,
+  endedAt: Date
+): Prisma.UserUpdateInput {
+  if (!ratingUpdate) return {};
+
+  return {
+    competitiveRating: ratingUpdate.ratingAfter,
+    rankedGames: { increment: 1 },
+    rankedWins: { increment: participant.outcome === 'win' ? 1 : 0 },
+    rankedLosses: { increment: participant.outcome === 'loss' ? 1 : 0 },
+    rankedDraws: { increment: participant.outcome === 'draw' ? 1 : 0 },
+    rankedPlacementsRemaining: ratingUpdate.rankedPlacementsRemainingAfter,
+    rankedPeakRating: ratingUpdate.rankedPeakRatingAfter,
+    rankedLastMatchAt: endedAt,
+  };
+}
+
 function isPrismaUniqueConstraintError(error: unknown): boolean {
   return typeof error === 'object'
     && error !== null
@@ -162,11 +187,30 @@ export async function persistCompletedMatch(
       const userIds = Array.from(new Set(normalizedParticipants.map((participant) => participant.userId)));
       const existingUsers = await tx.user.findMany({
         where: { id: { in: userIds } },
-        select: { id: true },
+        select: {
+          id: true,
+          competitiveRating: true,
+          rankedGames: true,
+          rankedWins: true,
+          rankedLosses: true,
+          rankedDraws: true,
+          rankedPlacementsRemaining: true,
+          rankedPeakRating: true,
+        },
       });
       const existingUserIds = new Set(existingUsers.map((user) => user.id));
       const participants = normalizedParticipants.filter((participant) => existingUserIds.has(participant.userId));
       const skippedUserIds = userIds.filter((userId) => !existingUserIds.has(userId));
+      const rankedEligible = input.rankedEligible === true && skippedUserIds.length === 0 && participants.length > 0;
+      const ratingUpdates = rankedEligible
+        ? calculateRankedRatingUpdates({
+          participants,
+          users: existingUsers as RankedUserState[],
+          winningTeam: input.winningTeam,
+          endedAt: input.endedAt,
+        })
+        : [];
+      const ratingUpdatesByUserId = new Map(ratingUpdates.map((update) => [update.userId, update]));
 
       await tx.gameMatch.create({
         data: {
@@ -174,6 +218,7 @@ export async function persistCompletedMatch(
           roomId: input.roomId,
           lobbyId: input.lobbyId,
           mapSeed: input.mapSeed,
+          rankedEligible,
           startedAt: input.startedAt,
           endedAt: input.endedAt,
           redScore: input.redScore,
@@ -199,6 +244,13 @@ export async function persistCompletedMatch(
             score: participant.score,
             experienceGained: participant.experienceGained,
             outcome: participant.outcome,
+            rankedEligible,
+            ratingBefore: ratingUpdatesByUserId.get(participant.userId)?.ratingBefore,
+            ratingAfter: ratingUpdatesByUserId.get(participant.userId)?.ratingAfter,
+            ratingDelta: ratingUpdatesByUserId.get(participant.userId)?.ratingDelta,
+            visibleRankBefore: ratingUpdatesByUserId.get(participant.userId)?.visibleRankBefore,
+            visibleRankAfter: ratingUpdatesByUserId.get(participant.userId)?.visibleRankAfter,
+            leaverPenaltyApplied: ratingUpdatesByUserId.get(participant.userId)?.leaverPenaltyApplied ?? false,
             joinedAt: participant.joinedAt,
             leftAt: participant.leftAt,
           })),
@@ -208,7 +260,14 @@ export async function persistCompletedMatch(
       for (const participant of participants) {
         await tx.user.update({
           where: { id: participant.userId },
-          data: getUserAggregateIncrement(participant),
+          data: {
+            ...getUserAggregateIncrement(participant),
+            ...getRankedAggregateIncrement(
+              participant,
+              ratingUpdatesByUserId.get(participant.userId),
+              input.endedAt
+            ),
+          },
         });
       }
 

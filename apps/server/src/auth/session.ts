@@ -6,10 +6,12 @@ import { isGuestPlayAllowed } from '../config/security';
 import type { AuthProviderName, PendingRegistrationIdentity } from './types';
 import { isAuthProvider } from './types';
 import {
-  calculateMatchmakingRating,
-  getSkillBucket,
-  type MatchmakingSkillBucket,
-} from '../matchmaking/skill';
+  DEFAULT_COMPETITIVE_RATING,
+  getRankDivisionIndex,
+  getRankFromRating,
+  type RankSummary,
+} from '@voxel-strike/shared';
+import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
 
 export interface AuthTokenPayload {
   userId: string;
@@ -28,8 +30,12 @@ export interface RoomAuthContext {
   userId: string;
   walletAddress?: string;
   displayName: string;
-  matchmakingSkillRating: number;
-  matchmakingSkillBucket: MatchmakingSkillBucket;
+  competitiveRating: number;
+  rankedGames: number;
+  rankedPlacementsRemaining: number;
+  rankDivisionIndex: number;
+  rank: RankSummary;
+  rankPayload: PublicRankPayload;
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || 'voxel-strike-secret-key-change-in-production';
@@ -164,18 +170,30 @@ export async function resolveRoomAuthContext(
         totalCaptures: true,
         totalFlagReturns: true,
         totalScore: true,
+        competitiveRating: true,
+        rankedGames: true,
+        rankedWins: true,
+        rankedLosses: true,
+        rankedDraws: true,
+        rankedPlacementsRemaining: true,
+        rankedPeakRating: true,
+        rankedLastMatchAt: true,
       },
     });
 
     if (user && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
-      const matchmakingSkillRating = calculateMatchmakingRating(user);
+      const rankPayload = serializeRankPayload(user);
       return {
         kind: 'authenticated',
         userId: user.id,
         walletAddress: user.walletAddress ?? undefined,
         displayName: sanitizeDisplayName(user.name, 'Player'),
-        matchmakingSkillRating,
-        matchmakingSkillBucket: getSkillBucket(matchmakingSkillRating).id,
+        competitiveRating: user.competitiveRating,
+        rankedGames: user.rankedGames,
+        rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+        rankDivisionIndex: getRankDivisionIndex(user.competitiveRating),
+        rank: rankPayload.current,
+        rankPayload,
       };
     }
   }
@@ -184,11 +202,17 @@ export async function resolveRoomAuthContext(
     throw new Error('Authentication required');
   }
 
+  const guestRank = getRankFromRating(DEFAULT_COMPETITIVE_RATING, 0);
+  const guestRankPayload = serializeRankPayload(null);
   return {
     kind: 'guest',
     userId: `guest:${sessionId}`,
     displayName: sanitizeDisplayName(options?.playerName, 'Guest'),
-    matchmakingSkillRating: calculateMatchmakingRating(null),
-    matchmakingSkillBucket: getSkillBucket(calculateMatchmakingRating(null)).id,
+    competitiveRating: DEFAULT_COMPETITIVE_RATING,
+    rankedGames: 0,
+    rankedPlacementsRemaining: guestRank.placementRemaining,
+    rankDivisionIndex: getRankDivisionIndex(DEFAULT_COMPETITIVE_RATING),
+    rank: guestRank,
+    rankPayload: guestRankPayload,
   };
 }

@@ -4,6 +4,7 @@ import {
   ABILITY_DEFINITIONS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
+  type PublicRankSnapshot,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
@@ -146,6 +147,22 @@ export function createDefaultStats() {
   };
 }
 
+function normalizeRankSnapshot(source: any, fallback?: PublicRankSnapshot): PublicRankSnapshot | undefined {
+  if (source?.rank) return source.rank as PublicRankSnapshot;
+  if (!source?.rankLabel && !source?.rankTier) return fallback;
+
+  return {
+    tier: source.rankTier || 'unranked',
+    tierLabel: source.rankTierLabel || 'Unranked',
+    division: typeof source.rankDivision === 'number' && source.rankDivision > 0 ? source.rankDivision : null,
+    divisionIndex: typeof source.rankDivisionIndex === 'number' && source.rankDivisionIndex >= 0 ? source.rankDivisionIndex : null,
+    label: source.rankLabel || 'Unranked',
+    iconKey: source.rankIconKey || 'unranked',
+    isRanked: source.rankIsRanked === true,
+    placementRemaining: typeof source.rankPlacementRemaining === 'number' ? source.rankPlacementRemaining : 0,
+  };
+}
+
 /**
  * Creates a Player object from server schema data
  */
@@ -160,6 +177,7 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     isBot: Boolean(schemaPlayer.isBot),
     botDifficulty: schemaPlayer.botDifficulty || undefined,
     botProfileId: schemaPlayer.botProfileId || undefined,
+    rank: normalizeRankSnapshot(schemaPlayer),
     position: {
       x: schemaPlayer.position?.x ?? 0,
       y: schemaPlayer.position?.y ?? 1,
@@ -308,6 +326,7 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, existing?: Player)
     isBot: Boolean(vitals.isBot),
     botDifficulty: vitals.botDifficulty || existing?.botDifficulty,
     botProfileId: vitals.botProfileId || existing?.botProfileId,
+    rank: normalizeRankSnapshot(vitals, existing?.rank),
     position: existing?.position || { x: 0, y: 1, z: 0 },
     velocity: existing?.velocity || { x: 0, y: 0, z: 0 },
     lookYaw: existing?.lookYaw ?? 0,
@@ -371,6 +390,7 @@ export function syncPlayerFromSchema(
         isBot: Boolean(schemaPlayer.isBot ?? store.localPlayer.isBot),
         botDifficulty: schemaPlayer.botDifficulty || store.localPlayer.botDifficulty,
         botProfileId: schemaPlayer.botProfileId || store.localPlayer.botProfileId,
+        rank: normalizeRankSnapshot(schemaPlayer, store.localPlayer.rank),
         health: schemaPlayer.health ?? store.localPlayer.health,
         maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
         state: nextState,
@@ -425,6 +445,7 @@ export function processPlayerDuringPoll(
         isBot: Boolean(schemaPlayer.isBot ?? freshStore.localPlayer.isBot),
         botDifficulty: schemaPlayer.botDifficulty || freshStore.localPlayer.botDifficulty,
         botProfileId: schemaPlayer.botProfileId || freshStore.localPlayer.botProfileId,
+        rank: normalizeRankSnapshot(schemaPlayer, freshStore.localPlayer.rank),
         health: schemaPlayer.health ?? freshStore.localPlayer.health,
         maxHealth: schemaPlayer.maxHealth ?? freshStore.localPlayer.maxHealth,
         state: nextState,
@@ -477,6 +498,7 @@ export function processPlayerDuringPoll(
       isBot: Boolean(schemaPlayer.isBot ?? existingPlayer.isBot),
       botDifficulty: schemaPlayer.botDifficulty || existingPlayer.botDifficulty,
       botProfileId: schemaPlayer.botProfileId || existingPlayer.botProfileId,
+      rank: normalizeRankSnapshot(schemaPlayer, existingPlayer.rank),
       health: schemaPlayer.health ?? existingPlayer.health,
       maxHealth: schemaPlayer.maxHealth ?? existingPlayer.maxHealth,
       ultimateCharge: schemaPlayer.ultimateCharge ?? existingPlayer.ultimateCharge,
@@ -509,6 +531,7 @@ export function setupPlayerJoinedHandler(
     isBot?: boolean;
     botDifficulty?: BotDifficulty;
     botProfileId?: string;
+    rank?: PublicRankSnapshot;
     position?: { x: number; y: number; z: number };
   }) => {
     loggers.network.debug('player joined message', data.playerName, data.playerId);
@@ -532,6 +555,7 @@ export function setupPlayerJoinedHandler(
           isBot: Boolean(data.isBot),
           botDifficulty: data.botDifficulty,
           botProfileId: data.botProfileId,
+          rank: data.rank,
           position: data.position || { x: 0, y: 1, z: 0 },
           velocity: { x: 0, y: 0, z: 0 },
           lookYaw: 0,
@@ -815,6 +839,7 @@ export function setupPlayerStatesHandler(
             isBot: Boolean(serverPlayer.isBot ?? freshStore.localPlayer.isBot),
             botDifficulty: serverPlayer.botDifficulty || freshStore.localPlayer.botDifficulty,
             botProfileId: serverPlayer.botProfileId || freshStore.localPlayer.botProfileId,
+            rank: normalizeRankSnapshot(serverPlayer, freshStore.localPlayer.rank),
             position: shouldSyncPosition ? nextPosition! : freshStore.localPlayer.position,
             velocity: shouldSyncPosition
               ? (serverPlayer.velocity ?? freshStore.localPlayer.velocity)
@@ -844,6 +869,7 @@ export function setupPlayerStatesHandler(
             isBot: Boolean(serverPlayer.isBot ?? existingPlayer.isBot),
             botDifficulty: serverPlayer.botDifficulty || existingPlayer.botDifficulty,
             botProfileId: serverPlayer.botProfileId || existingPlayer.botProfileId,
+            rank: normalizeRankSnapshot(serverPlayer, existingPlayer.rank),
             position: serverPlayer.position || existingPlayer.position,
             velocity: serverPlayer.velocity || existingPlayer.velocity,
             lookYaw: serverPlayer.lookYaw ?? existingPlayer.lookYaw,
@@ -868,6 +894,7 @@ export function setupPlayerStatesHandler(
             isBot: Boolean(serverPlayer.isBot),
             botDifficulty: serverPlayer.botDifficulty || undefined,
             botProfileId: serverPlayer.botProfileId || undefined,
+            rank: normalizeRankSnapshot(serverPlayer),
             position: serverPlayer.position || { x: 0, y: 1, z: 0 },
             velocity: serverPlayer.velocity || { x: 0, y: 0, z: 0 },
             lookYaw: serverPlayer.lookYaw ?? 0,

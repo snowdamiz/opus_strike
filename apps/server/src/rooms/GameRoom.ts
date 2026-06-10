@@ -15,6 +15,9 @@ import {
   createRandomSeed,
   generateProceduralVoxelMap,
   createProceduralTerrainLookup,
+  getRankDivisionIndex,
+  getRankFromRating,
+  toPublicRankSnapshot,
   isInsideBoundaryPolygon,
   constrainToBoundaryPolygon,
   clampToBoundaryPolygon,
@@ -120,8 +123,13 @@ import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
 import {
   DEFAULT_MATCHMAKING_RATING,
-  DEFAULT_MATCHMAKING_SKILL_BUCKET,
+  DEFAULT_RANK_DIVISION_INDEX,
 } from '../matchmaking/skill';
+import { serializeRankPayload } from '../ranking/serialization';
+import {
+  calculateRankedRatingUpdates,
+  type RankedUserState,
+} from '../ranking/ratingService';
 import { voiceService } from '../voice/VoiceService';
 import { wagerService, type LockedWagerContext } from '../wagers/service';
 import {
@@ -172,6 +180,8 @@ interface CreateOptions {
   mapSeed?: number;
   botAssignments?: BotAssignment[];
   wagerContext?: LockedWagerContext | null;
+  rankedEligible?: boolean;
+  requiredHumanPlayers?: number;
 }
 
 interface JoinOptions {
@@ -302,6 +312,7 @@ interface MatchPersistenceLedger {
   roomId: string;
   lobbyId: string | null;
   mapSeed: number;
+  rankedEligible: boolean;
   startedAt: Date;
   endedAt: Date | null;
   redScore: number | null;
@@ -633,6 +644,8 @@ export class GameRoom extends Room<GameState> {
   private readonly damageCapWindows = new Map<string, { startedAt: number; damage: number }>();
   private matchPersistenceLedger: MatchPersistenceLedger | null = null;
   private wagerContext: LockedWagerContext | null = null;
+  private rankedEligibilityCandidate = false;
+  private rankedRequiredHumanPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
 
   async onAuth(
     client: Client,
@@ -662,12 +675,17 @@ export class GameRoom extends Room<GameState> {
         throw new Error('Game entry ticket does not match authenticated user');
       }
       if (auth.kind === 'guest') {
+        const competitiveRating = DEFAULT_MATCHMAKING_RATING;
         auth = {
           kind: 'guest',
           userId: ticket.userId,
           displayName: ticket.displayName,
-          matchmakingSkillRating: DEFAULT_MATCHMAKING_RATING,
-          matchmakingSkillBucket: DEFAULT_MATCHMAKING_SKILL_BUCKET,
+          competitiveRating,
+          rankedGames: 0,
+          rankedPlacementsRemaining: 0,
+          rankDivisionIndex: getRankDivisionIndex(competitiveRating) ?? DEFAULT_RANK_DIVISION_INDEX,
+          rank: getRankFromRating(competitiveRating, 0),
+          rankPayload: serializeRankPayload(null),
         };
       }
     }
@@ -679,6 +697,8 @@ export class GameRoom extends Room<GameState> {
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
     this.wagerContext = options.wagerContext || null;
+    this.rankedEligibilityCandidate = options.rankedEligible === true;
+    this.rankedRequiredHumanPlayers = Math.max(1, Math.floor(options.requiredHumanPlayers ?? DEFAULT_GAME_CONFIG.maxPlayers));
     if (this.lobbyId) {
       assertUsableEntryTicketSecret();
     }
@@ -1044,6 +1064,7 @@ export class GameRoom extends Room<GameState> {
         isBot: existingPlayer.isBot,
         botDifficulty: existingPlayer.botDifficulty,
         botProfileId: existingPlayer.botProfileId,
+        rank: this.getPlayerRankPayload(existingPlayer),
         position: {
           x: existingPlayer.position.x,
           y: existingPlayer.position.y,
@@ -1061,6 +1082,7 @@ export class GameRoom extends Room<GameState> {
     player.isBot = false;
     player.botDifficulty = '';
     player.botProfileId = '';
+    this.applyPlayerRank(player, toPublicRankSnapshot(authContext.rank));
 
     // Set spawn position
     this.placePlayerAtSpawn(player, 'spawn');
@@ -1085,6 +1107,7 @@ export class GameRoom extends Room<GameState> {
       heroId: player.heroId,
       isReady: player.isReady,
       isBot: player.isBot,
+      rank: this.getPlayerRankPayload(player),
       position: {
         x: player.position.x,
         y: player.position.y,
@@ -1374,6 +1397,33 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private applyPlayerRank(
+    player: Player,
+    rank: ReturnType<typeof toPublicRankSnapshot>
+  ): void {
+    player.rankTier = rank.tier;
+    player.rankTierLabel = rank.tierLabel;
+    player.rankDivision = rank.division ?? 0;
+    player.rankDivisionIndex = rank.divisionIndex ?? -1;
+    player.rankLabel = rank.label;
+    player.rankIconKey = rank.iconKey;
+    player.rankIsRanked = rank.isRanked;
+    player.rankPlacementRemaining = rank.placementRemaining;
+  }
+
+  private getPlayerRankPayload(player: Player): ReturnType<typeof toPublicRankSnapshot> {
+    return {
+      tier: player.rankTier as ReturnType<typeof toPublicRankSnapshot>['tier'],
+      tierLabel: player.rankTierLabel,
+      division: player.rankDivision > 0 ? player.rankDivision : null,
+      divisionIndex: player.rankDivisionIndex >= 0 ? player.rankDivisionIndex : null,
+      label: player.rankLabel,
+      iconKey: player.rankIconKey,
+      isRanked: player.rankIsRanked,
+      placementRemaining: player.rankPlacementRemaining,
+    };
+  }
+
   private buildPlayerVitals(id: string, player: Player): PlayerVitalsSnapshot {
     const abilities: Record<string, any> = {};
     player.abilities.forEach((ability, abilityId) => {
@@ -1396,6 +1446,7 @@ export class GameRoom extends Room<GameState> {
       isBot: player.isBot,
       botDifficulty: player.botDifficulty ? this.normalizeBotDifficulty(player.botDifficulty) : undefined,
       botProfileId: player.botProfileId || undefined,
+      rank: this.getPlayerRankPayload(player),
       health: player.health,
       maxHealth: player.maxHealth,
       ultimateCharge: player.ultimateCharge,
@@ -1562,6 +1613,7 @@ export class GameRoom extends Room<GameState> {
         experienceGained: isExperienceEligible
           ? calculateParticipantExperience(stats, outcome)
           : 0,
+        rank: this.getPlayerRankPayload(player),
       });
     });
 
@@ -1580,7 +1632,7 @@ export class GameRoom extends Room<GameState> {
     const startedAt = this.matchPersistenceLedger?.startedAt.getTime()
       ?? (this.state.roundStartTime || endedAt);
 
-    return {
+    const event: GameEndEvent = {
       winningTeam,
       finalScore,
       matchId: this.matchPersistenceLedger?.matchId ?? null,
@@ -1589,6 +1641,95 @@ export class GameRoom extends Room<GameState> {
       forcedByPlayerId,
       players: this.buildMatchSummaryPlayers(winningTeam),
     };
+    this.attachRankedSummaryUpdates(event, winningTeam, new Date(endedAt), forcedByPlayerId);
+    return event;
+  }
+
+  private getRankedUserState(userId: string): RankedUserState | null {
+    for (const authContext of this.playerAuthContexts.values()) {
+      if (authContext.kind !== 'authenticated' || authContext.userId !== userId) continue;
+      return {
+        id: userId,
+        competitiveRating: authContext.competitiveRating,
+        rankedGames: authContext.rankedGames,
+        rankedWins: authContext.rankPayload.rankedWins,
+        rankedLosses: authContext.rankPayload.rankedLosses,
+        rankedDraws: authContext.rankPayload.rankedDraws,
+        rankedPlacementsRemaining: authContext.rankedPlacementsRemaining,
+        rankedPeakRating: authContext.rankPayload.peak.rating,
+      };
+    }
+
+    return null;
+  }
+
+  private attachRankedSummaryUpdates(
+    event: GameEndEvent,
+    winningTeam: Team | null,
+    endedAt: Date,
+    forcedByPlayerId?: string
+  ): void {
+    const ledger = this.matchPersistenceLedger;
+    if (!ledger || ledger.state !== 'active') return;
+
+    this.state.players.forEach((player) => {
+      this.syncMatchParticipant(player);
+    });
+
+    const participants: MatchParticipantSnapshot[] = Array.from(ledger.participants.values()).map((participant) => ({
+      userId: participant.userId,
+      playerSessionId: participant.playerSessionId,
+      displayName: participant.displayName,
+      team: participant.team,
+      heroId: participant.heroId,
+      kills: participant.kills,
+      deaths: participant.deaths,
+      assists: participant.assists,
+      flagCaptures: participant.flagCaptures,
+      flagReturns: participant.flagReturns,
+      joinedAt: participant.joinedAt,
+      leftAt: participant.leftAt,
+    }));
+
+    if (!this.isFinalRankedEligible(ledger, participants, forcedByPlayerId)) return;
+
+    const users = participants
+      .map((participant) => this.getRankedUserState(participant.userId))
+      .filter((user): user is RankedUserState => user !== null);
+    if (users.length !== participants.length) return;
+
+    const updates = calculateRankedRatingUpdates({
+      participants: event.players
+        .filter((player) => !player.isBot && player.userId)
+        .map((player) => ({
+          userId: player.userId!,
+          team: player.team,
+          outcome: player.outcome,
+          score: player.score,
+          kills: player.stats.kills,
+          deaths: player.stats.deaths,
+          assists: player.stats.assists,
+          flagCaptures: player.stats.flagCaptures,
+          flagReturns: player.stats.flagReturns,
+          leftAt: participants.find((participant) => participant.userId === player.userId)?.leftAt ?? null,
+        })),
+      users,
+      winningTeam,
+      endedAt,
+    });
+    const updatesByUserId = new Map(updates.map((update) => [update.userId, update]));
+    const usersById = new Map(users.map((user) => [user.id, user]));
+
+    for (const player of event.players) {
+      if (!player.userId) continue;
+      const update = updatesByUserId.get(player.userId);
+      const user = usersById.get(player.userId);
+      if (!update || !user) continue;
+
+      player.ratingDelta = update.ratingDelta;
+      player.rankBefore = toPublicRankSnapshot(getRankFromRating(update.ratingBefore, user.rankedGames));
+      player.rankAfter = toPublicRankSnapshot(getRankFromRating(update.ratingAfter, update.rankedGamesAfter));
+    }
   }
 
   private broadcastWithMetrics(type: string, payload: unknown): void {
@@ -1964,6 +2105,7 @@ export class GameRoom extends Room<GameState> {
         roomId: this.roomId,
         lobbyId: this.lobbyId,
         mapSeed: this.state.mapSeed,
+        rankedEligible: this.rankedEligibilityCandidate,
         startedAt: new Date(now),
         endedAt: null,
         redScore: null,
@@ -2107,7 +2249,26 @@ export class GameRoom extends Room<GameState> {
     return { message: String(error) };
   }
 
-  private persistMatchLedger(finalScore: { red: number; blue: number }, winningTeam: Team | null): void {
+  private isFinalRankedEligible(
+    ledger: MatchPersistenceLedger,
+    participants: MatchParticipantSnapshot[],
+    forcedByPlayerId?: string
+  ): boolean {
+    return Boolean(
+      ledger.rankedEligible
+      && !forcedByPlayerId
+      && !this.wagerContext
+      && this.spawnedNpcs.size === 0
+      && participants.length === this.rankedRequiredHumanPlayers
+      && participants.every((participant) => participant.userId && !participant.userId.startsWith('guest:'))
+    );
+  }
+
+  private persistMatchLedger(
+    finalScore: { red: number; blue: number },
+    winningTeam: Team | null,
+    forcedByPlayerId?: string
+  ): void {
     const ledger = this.matchPersistenceLedger;
     if (!ledger || ledger.state !== 'active') return;
 
@@ -2136,12 +2297,14 @@ export class GameRoom extends Room<GameState> {
       joinedAt: participant.joinedAt,
       leftAt: participant.leftAt,
     }));
+    const rankedEligible = this.isFinalRankedEligible(ledger, participants, forcedByPlayerId);
 
     void persistCompletedMatch(prisma, {
       matchId: ledger.matchId,
       roomId: ledger.roomId,
       lobbyId: ledger.lobbyId,
       mapSeed: ledger.mapSeed,
+      rankedEligible,
       startedAt: ledger.startedAt,
       endedAt,
       redScore: finalScore.red,
@@ -2162,6 +2325,7 @@ export class GameRoom extends Room<GameState> {
           participantCount: result.participantCount,
           alreadyPersisted: result.alreadyPersisted,
           skippedUserIds: result.skippedUserIds,
+          rankedEligible,
         });
       })
       .catch((error) => {
@@ -6020,6 +6184,7 @@ export class GameRoom extends Room<GameState> {
       isBot: bot.isBot,
       botDifficulty: bot.botDifficulty,
       botProfileId: bot.botProfileId,
+      rank: this.getPlayerRankPayload(bot),
       position: {
         x: bot.position.x,
         y: bot.position.y,
@@ -6615,7 +6780,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcast('gameEnd', this.buildGameEndEvent(finalScore, winningTeam, endedAt, forcedByPlayerId));
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
-    this.persistMatchLedger(finalScore, winningTeam);
+    this.persistMatchLedger(finalScore, winningTeam, forcedByPlayerId);
     this.settleWagerAfterGame(winningTeam);
 
     // Reset room after delay

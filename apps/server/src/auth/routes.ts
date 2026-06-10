@@ -71,6 +71,14 @@ interface LeaderboardUserSummary {
   totalWageredLamports: bigint;
   totalWagerWonLamports: bigint;
   totalWagerLostLamports: bigint;
+  competitiveRating: number;
+  rankedGames: number;
+  rankedWins: number;
+  rankedLosses: number;
+  rankedDraws: number;
+  rankedPlacementsRemaining: number;
+  rankedPeakRating: number;
+  rankedLastMatchAt: Date | null;
 }
 
 const leaderboardUserSelect = {
@@ -95,6 +103,14 @@ const leaderboardUserSelect = {
   totalWageredLamports: true,
   totalWagerWonLamports: true,
   totalWagerLostLamports: true,
+  competitiveRating: true,
+  rankedGames: true,
+  rankedWins: true,
+  rankedLosses: true,
+  rankedDraws: true,
+  rankedPlacementsRemaining: true,
+  rankedPeakRating: true,
+  rankedLastMatchAt: true,
 } satisfies Prisma.UserSelect;
 
 const leaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
@@ -104,6 +120,15 @@ const leaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
   { totalGames: 'asc' },
   { createdAt: 'asc' },
 ];
+
+const rankedLeaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
+  { competitiveRating: 'desc' },
+  { rankedWins: 'desc' },
+  { rankedGames: 'asc' },
+  { createdAt: 'asc' },
+];
+
+type LeaderboardMode = 'ranked' | 'score';
 
 class ProviderConflictError extends Error {
   constructor(message = 'Provider account is already linked to another user') {
@@ -234,6 +259,11 @@ function getLeaderboardLimit(value: unknown): number {
   return Math.max(1, Math.min(LEADERBOARD_MAX_LIMIT, parsed));
 }
 
+function getLeaderboardMode(value: unknown): LeaderboardMode {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  return rawValue === 'score' ? 'score' : 'ranked';
+}
+
 function serializeLeaderboardStats(user: LeaderboardUserSummary) {
   return {
     totalGames: user.totalGames,
@@ -254,6 +284,14 @@ function serializeLeaderboardStats(user: LeaderboardUserSummary) {
     totalWageredLamports: user.totalWageredLamports.toString(),
     totalWagerWonLamports: user.totalWagerWonLamports.toString(),
     totalWagerLostLamports: user.totalWagerLostLamports.toString(),
+    competitiveRating: user.competitiveRating,
+    rankedGames: user.rankedGames,
+    rankedWins: user.rankedWins,
+    rankedLosses: user.rankedLosses,
+    rankedDraws: user.rankedDraws,
+    rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+    rankedPeakRating: user.rankedPeakRating,
+    rankedLastMatchAt: user.rankedLastMatchAt?.toISOString() ?? null,
   };
 }
 
@@ -284,7 +322,7 @@ async function findUserForPayload(payload: AuthTokenPayload) {
   return user;
 }
 
-async function getLeaderboardRank(user: LeaderboardUserSummary): Promise<number | null> {
+async function getScoreLeaderboardRank(user: LeaderboardUserSummary): Promise<number | null> {
   if (user.totalGames <= 0) return null;
 
   const higherRankedUsers = await prisma.user.count({
@@ -312,6 +350,36 @@ async function getLeaderboardRank(user: LeaderboardUserSummary): Promise<number 
           totalWins: user.totalWins,
           totalKills: user.totalKills,
           totalGames: user.totalGames,
+          createdAt: { lt: user.createdAt },
+        },
+      ],
+    },
+  });
+
+  return higherRankedUsers + 1;
+}
+
+async function getRankedLeaderboardRank(user: LeaderboardUserSummary): Promise<number | null> {
+  if (user.rankedGames <= 0) return null;
+
+  const higherRankedUsers = await prisma.user.count({
+    where: {
+      rankedGames: { gt: 0 },
+      OR: [
+        { competitiveRating: { gt: user.competitiveRating } },
+        {
+          competitiveRating: user.competitiveRating,
+          rankedWins: { gt: user.rankedWins },
+        },
+        {
+          competitiveRating: user.competitiveRating,
+          rankedWins: user.rankedWins,
+          rankedGames: { lt: user.rankedGames },
+        },
+        {
+          competitiveRating: user.competitiveRating,
+          rankedWins: user.rankedWins,
+          rankedGames: user.rankedGames,
           createdAt: { lt: user.createdAt },
         },
       ],
@@ -958,9 +1026,10 @@ router.get('/discord/callback', async (req: Request, res: Response) => {
 router.get('/leaderboard', async (req: Request, res: Response) => {
   try {
     const limit = getLeaderboardLimit(req.query.limit);
+    const mode = getLeaderboardMode(req.query.mode);
     const leaderboardUsers = await prisma.user.findMany({
-      where: { totalGames: { gt: 0 } },
-      orderBy: leaderboardOrderBy,
+      where: mode === 'ranked' ? { rankedGames: { gt: 0 } } : { totalGames: { gt: 0 } },
+      orderBy: mode === 'ranked' ? rankedLeaderboardOrderBy : leaderboardOrderBy,
       take: limit,
       select: leaderboardUserSelect,
     });
@@ -981,10 +1050,14 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
       : null;
 
     const [personalRank, personalRecords] = user
-      ? await Promise.all([getLeaderboardRank(user), personalRecordsPromise])
+      ? await Promise.all([
+        mode === 'ranked' ? getRankedLeaderboardRank(user) : getScoreLeaderboardRank(user),
+        personalRecordsPromise,
+      ])
       : [null, null];
 
     res.json({
+      mode,
       leaderboard: leaderboardUsers.map((leaderboardUser, index) => (
         serializeLeaderboardEntry(leaderboardUser, index + 1)
       )),

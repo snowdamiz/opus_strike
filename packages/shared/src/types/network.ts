@@ -5,6 +5,7 @@ import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
 import type { MovementCommandPacket, SelfMovementAuthority } from './movementPrediction.js';
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
+import type { PublicRankSnapshot } from '../progression/ranking.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -96,6 +97,7 @@ export interface PlayerVitalsSnapshot {
   isBot: boolean;
   botDifficulty?: BotDifficulty;
   botProfileId?: string;
+  rank?: PublicRankSnapshot;
   health: number;
   maxHealth: number;
   ultimateCharge: number;
@@ -193,6 +195,10 @@ export interface MatchSummaryPlayer {
   stats: PlayerStats;
   score: number;
   experienceGained: number;
+  rank?: PublicRankSnapshot;
+  ratingDelta?: number | null;
+  rankBefore?: PublicRankSnapshot | null;
+  rankAfter?: PublicRankSnapshot | null;
 }
 
 export interface ChatMessage {
