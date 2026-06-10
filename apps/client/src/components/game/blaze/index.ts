@@ -23,6 +23,7 @@ export {
 export { 
   FlamethrowerEffect,
 } from './flamethrower';
+export type { FlamethrowerPose } from './flamethrower';
 
 export { 
   prewarmBlazeMaterials,

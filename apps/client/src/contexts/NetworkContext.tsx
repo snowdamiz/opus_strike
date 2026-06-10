@@ -55,6 +55,7 @@ interface NetworkContextType {
   leaveGame: () => void;
   disconnect: () => void;
   sendInput: (input: PlayerInput) => void;
+  requestBlazeBombDrop: () => void;
   reportBlazeRocketImpact: (rocketId: string, position: { x: number; y: number; z: number }) => void;
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
@@ -164,6 +165,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [fetchLobbies, setAvailableLobbies]);
 
   const cleanupExistingConnections = useCallback(() => {
+    isJoiningGameRef.current = false;
+
     if (lobbyRoomRef.current) {
       try {
         lobbyRoomRef.current.leave(false);
@@ -586,6 +589,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     room.onLeave((code) => {
       loggers.network.debug('left room', code);
       if (syncInterval) clearInterval(syncInterval);
+      if (gameRoomRef.current === room) {
+        gameRoomRef.current = null;
+      }
+      isJoiningGameRef.current = false;
+      setLoading(false);
       setConnected(false);
       setRoomId(null);
       setGamePhase('waiting');
@@ -594,7 +602,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setConnected(true);
-  }, [setConnected, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby]);
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string) => {
     if (isJoiningGameRef.current) {
@@ -673,6 +681,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const sendInput = useCallback((input: PlayerInput) => {
     gameRoomRef.current?.send('input', input);
+  }, []);
+
+  const requestBlazeBombDrop = useCallback(() => {
+    gameRoomRef.current?.send('blazeBombDrop', {});
   }, []);
 
   const reportBlazeRocketImpact = useCallback((rocketId: string, position: { x: number; y: number; z: number }) => {
@@ -778,6 +790,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       leaveGame,
       disconnect,
       sendInput,
+      requestBlazeBombDrop,
       reportBlazeRocketImpact,
       selectHero,
       devSetHero,

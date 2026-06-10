@@ -36,14 +36,6 @@ function ClockGlyph({ className }: { className?: string }) {
   );
 }
 
-function formatTopologyLabel(topologyId?: string): string {
-  if (!topologyId) return 'Lane Triad';
-  return topologyId
-    .split('_')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
 function CaptureFrame({
   seed,
   onCapture,
@@ -525,34 +517,8 @@ export function MapVoteScreen() {
                     style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
                   >
                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-                    <div className="relative flex min-h-12 items-center justify-between gap-3">
-                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-display text-base leading-none text-white">{option.name}</p>
-                          <p className="mt-1 truncate font-body text-[10px] uppercase tracking-wide text-white/46">
-                            {option.themeName} / {formatTopologyLabel(option.topologyId)}
-                          </p>
-                        </div>
-                        <p className="shrink-0 font-display text-sm leading-none text-white/72">{getVoteLabel(voters.length)}</p>
-                        {voters.length > 0 && (
-                          <div className="flex min-w-0 flex-wrap gap-1">
-                            {voters.slice(0, 6).map((voter) => (
-                              <span
-                                key={voter.id}
-                                className="flex h-5 min-w-5 items-center justify-center rounded-md border border-white/[0.08] bg-white/[0.04] px-1.5 font-display text-[10px] text-white/[0.76]"
-                                title={voter.name}
-                              >
-                                {getPlayerInitial(voter.name)}
-                              </span>
-                            ))}
-                            {voters.length > 6 && (
-                              <span className="flex h-5 items-center rounded-md border border-white/[0.08] bg-white/[0.04] px-2 font-body text-[9px] text-white/[0.58]">
-                                +{voters.length - 6}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                    <div className="relative flex min-h-9 items-center justify-between gap-3">
+                      <p className="shrink-0 font-display text-lg leading-none text-white">{getVoteLabel(voters.length)}</p>
 
                       <span
                         className="rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"

@@ -6,10 +6,12 @@ import {
   type KeybindAction,
   useSettingsStore,
 } from '../../store/settingsStore';
+import { useGameStore } from '../../store/gameStore';
+import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
 import { GameDialog } from './GameDialog';
 
-type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay';
+type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -64,10 +66,26 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('video');
   const savedSettings = useSettingsStore(state => state.settings);
   const applySettings = useSettingsStore(state => state.applySettings);
+  const gamePlayerName = useGameStore(state => state.playerName);
+  const setGameUser = useGameStore(state => state.setUser);
+  const setGameWalletAddress = useGameStore(state => state.setWalletAddress);
+  const {
+    isAuthenticated,
+    isSessionLoading,
+    logout,
+    user,
+    walletAddress,
+  } = useWallet();
   const [settings, setSettings] = useState<ClientSettings>(savedSettings);
   const [hasChanges, setHasChanges] = useState(false);
   const [rebindingAction, setRebindingAction] = useState<KeybindAction | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const { updateSettings: applyAudioSettings } = useAudio();
+
+  const displayName = user?.name || gamePlayerName || 'Unknown';
+  const displayWalletAddress = user?.walletAddress ?? walletAddress;
+  const accountInitial = displayName.charAt(0).toUpperCase();
+  const hasAccount = isAuthenticated && Boolean(user);
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
@@ -84,6 +102,19 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setSettings(defaultSettings);
     setRebindingAction(null);
     setHasChanges(true);
+  };
+
+  const handleSignOut = async () => {
+    if (isSigningOut) return;
+
+    setIsSigningOut(true);
+    try {
+      await logout();
+      setGameUser(null, '', null);
+      setGameWalletAddress(null);
+    } finally {
+      setIsSigningOut(false);
+    }
   };
 
   const updateKeybinding = useCallback((action: KeybindAction, code: string) => {
@@ -183,6 +214,16 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         </svg>
       )
     },
+    {
+      id: 'account',
+      label: 'Account',
+      icon: (
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.5 20.25a8.25 8.25 0 0115 0" />
+        </svg>
+      )
+    },
   ];
 
   return (
@@ -234,7 +275,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
  <button
  key={tab.id}
  onClick={() => setActiveTab(tab.id)}
- className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg font-display text-xs [&_svg]:h-[1rem] [&_svg]:w-[1rem] ${
+ className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg font-display text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70 [&_svg]:h-[1rem] [&_svg]:w-[1rem] ${
  activeTab === tab.id
  ? 'bg-orange-500/20 text-orange-400'
  : 'text-white/50 hover:text-white hover:bg-white/5'
@@ -456,8 +497,75 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </SettingRow>
               </div>
             )}
+
+            {activeTab === 'account' && (
+              <div className="space-y-1">
+                <SettingRow
+                  label="Player"
+                  description={hasAccount ? 'Currently signed in' : isSessionLoading ? 'Checking saved session' : 'No active account'}
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className={`w-10 h-10 shrink-0 rounded-lg flex items-center justify-center font-display text-base ${
+                      hasAccount ? 'bg-orange-500/20 text-orange-300' : 'bg-white/5 text-white/35'
+                    }`}>
+                      {hasAccount ? accountInitial : (
+                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75m-.75 10.5h10.5a2.25 2.25 0 002.25-2.25v-6a2.25 2.25 0 00-2.25-2.25H6.75A2.25 2.25 0 004.5 12.75v6A2.25 2.25 0 006.75 21z" />
+                        </svg>
+                      )}
+                    </div>
+                    <span className="max-w-44 truncate font-display text-sm text-white">
+                      {hasAccount ? displayName : 'SIGNED OUT'}
+                    </span>
+                  </div>
+                </SettingRow>
+
+                <SettingRow label="Wallet" description="Connected wallet address">
+                  <AccountValue value={formatAccountAddress(displayWalletAddress)} />
+                </SettingRow>
+
+                <SettingRow label="Sign Out" description="End this wallet session">
+                  <button
+                    type="button"
+                    onClick={handleSignOut}
+                    disabled={!hasAccount || isSigningOut}
+                    className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center gap-2 border focus:outline-none focus-visible:ring-1 focus-visible:ring-red-300/70 ${
+                      hasAccount
+                        ? 'border-red-400/20 bg-red-500/10 text-red-200 hover:border-red-300/40 hover:bg-red-500/15'
+                        : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
+                    }`}
+                  >
+                    {isSigningOut ? (
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                      </svg>
+                    )}
+                    {isSigningOut ? 'SIGNING OUT' : 'SIGN OUT'}
+                  </button>
+                </SettingRow>
+              </div>
+            )}
           </div>
     </GameDialog>
+  );
+}
+
+function formatAccountAddress(address: string | null | undefined): string {
+  if (!address) return 'UNLINKED';
+  if (address.length <= 14) return address;
+  return `${address.slice(0, 6)}...${address.slice(-6)}`;
+}
+
+function AccountValue({ value }: { value: string }) {
+  return (
+    <span className="block max-w-[17rem] truncate rounded-lg border border-white/10 bg-white/[0.07] px-3.5 py-2 font-mono text-xs text-white/70">
+      {value}
+    </span>
   );
 }
 

@@ -56,6 +56,7 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
     },
     {
       input: 'RMB',
+      abilityId: 'phantom_void_ray',
       name: 'Void Ray',
       description: 'Charge, then release a piercing beam at long range.',
       cooldown: PHANTOM_VOID_RAY_COOLDOWN_SECONDS,

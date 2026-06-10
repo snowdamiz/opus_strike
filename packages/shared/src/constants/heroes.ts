@@ -146,6 +146,14 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     duration: 0.8,
     description: 'Mark a location and teleport there after a brief delay.',
   },
+  phantom_void_ray: {
+    id: 'phantom_void_ray',
+    name: 'Void Ray',
+    type: 'offensive',
+    targeting: 'direction',
+    cooldown: PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
+    description: 'Charge, then release a piercing beam at long range.',
+  },
   phantom_personal_shield: {
     id: 'phantom_personal_shield',
     name: 'Shadow Bubble',

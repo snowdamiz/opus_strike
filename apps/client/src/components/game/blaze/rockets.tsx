@@ -10,7 +10,6 @@ import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
-import { useNetwork } from '../../../contexts/NetworkContext';
 import {
   getFireballCoreMaterial,
   getFireballInnerMaterial,
@@ -261,7 +260,6 @@ export function prewarmRocketResources(renderer?: THREE.WebGLRenderer): void {
 export function RocketsManager() {
   const storeRockets = useGameStore(state => state.rockets);
   const removeRockets = useGameStore(state => state.removeRockets);
-  const { reportBlazeRocketImpact } = useNetwork();
   const poolRef = useRef<RocketRuntimePool>();
   const removalsRef = useRef<string[]>([]);
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
@@ -347,7 +345,6 @@ export function RocketsManager() {
               direction: slot.direction,
               scale: ROCKET_IMPACT_SCALE,
             });
-            reportBlazeRocketImpact(slot.id, { x: hit.point.x, y: hit.point.y, z: hit.point.z });
             removals.push(slot.id);
             pool.deactivate(slotIndex);
             return;
@@ -371,7 +368,6 @@ export function RocketsManager() {
             direction: slot.direction,
             scale: ROCKET_IMPACT_SCALE,
           });
-          reportBlazeRocketImpact(slot.id, { x: slot.position.x, y: slot.position.y, z: slot.position.z });
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;

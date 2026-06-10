@@ -31,6 +31,7 @@ import {
   BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
   BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
   BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+  BLAZE_GEARSTORM_RADIUS,
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
@@ -133,6 +134,7 @@ interface PhantomCastPayload {
   reloadUntil?: number;
   radius?: number;
   duration?: number;
+  impactTime?: number;
 }
 
 interface HookshotTrapInstance {
@@ -143,6 +145,28 @@ interface HookshotTrapInstance {
   startTime: number;
   ownerId: string;
   ownerTeam: Team;
+  lastDamageTick: Map<string, number>;
+}
+
+interface PendingAreaDamageInstance {
+  id: string;
+  ownerId: string;
+  center: PlainVec3;
+  radius: number;
+  damage: number;
+  damageType: string;
+  resolveAt: number;
+}
+
+interface BlazeGearstormInstance {
+  id: string;
+  ownerId: string;
+  ownerTeam: Team;
+  position: PlainVec3;
+  radius: number;
+  damage: number;
+  startTime: number;
+  endTime: number;
   lastDamageTick: Map<string, number>;
 }
 
@@ -198,10 +222,22 @@ interface AttackConfig {
 const BLAZE_ROCKET_DAMAGE = 28;
 const BLAZE_ROCKET_SPLASH_RADIUS = 3.2;
 const BLAZE_ROCKET_FIRE_RATE_REDUCTION = 0.7;
-const BLAZE_ROCKET_BOT_COOLDOWN_MS = Math.round(850 / BLAZE_ROCKET_FIRE_RATE_REDUCTION);
+const BLAZE_ROCKET_FIRE_INTERVAL_MS = Math.round(250 / BLAZE_ROCKET_FIRE_RATE_REDUCTION);
+const BLAZE_ROCKET_BOT_COOLDOWN_MS = BLAZE_ROCKET_FIRE_INTERVAL_MS;
+const BLAZE_ROCKET_SPEED = 70;
+const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS = 300;
 const BLAZE_ROCKET_IMPACT_MAX_DISTANCE = 240;
 const BLAZE_ROCKET_IMPACT_DEDUP_MS = 5000;
+const BLAZE_BOMB_COOLDOWN_MS = 8000;
+const BLAZE_BOMB_FALL_DURATION_MS = 1500;
+const BLAZE_BOMB_MAX_RANGE = 60;
+const BLAZE_BOMB_MIN_RANGE = 3;
+const BLAZE_BOMB_DAMAGE = 34;
+const BLAZE_BOMB_SPLASH_RADIUS = 4;
+const BLAZE_GEARSTORM_DAMAGE = 10;
+const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 500;
+const BLAZE_ROCKET_STAFF_SOCKET = { handHeight: 0.24, forwardOffset: 0.64, sideOffset: 0.22 };
 const CHRONOS_VERDANT_PULSE_DAMAGE = 16;
 const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 250;
 
@@ -346,7 +382,7 @@ const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 34, range: 42, cooldownMs: PHANTOM_VOID_RAY_COOLDOWN_MS, coneDot: Math.cos(0.12), damageType: 'void_ray' },
   hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
-  blaze: { damage: 34, range: 35, cooldownMs: 2600, coneDot: Math.cos(0.32), radius: 4, damageType: 'bomb' },
+  blaze: { damage: BLAZE_BOMB_DAMAGE, range: BLAZE_BOMB_MAX_RANGE, cooldownMs: BLAZE_BOMB_COOLDOWN_MS, coneDot: Math.cos(0.32), radius: BLAZE_BOMB_SPLASH_RADIUS, damageType: 'bomb' },
 };
 const PHANTOM_DIRE_BALL_SOCKET = { handHeight: 0.2, forwardOffset: 0.62, sideOffset: 0.22 };
 const PHANTOM_VOID_RAY_SOCKET = { handHeight: -0.08, forwardOffset: 0.52, sideOffset: 0 };
@@ -379,9 +415,16 @@ export class GameRoom extends Room<GameState> {
   private phantomVoidRayChargeStartedAt: Map<string, number> = new Map();
   private phantomVoidRayResolvedForPress: Set<string> = new Set();
   private phantomCastIdCounter: number = 0;
+  private blazeRocketIdCounter: number = 0;
+  private blazeBombIdCounter: number = 0;
+  private blazeGearstormIdCounter: number = 0;
   private hookshotTrapIdCounter: number = 0;
   private hookshotPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotTraps: HookshotTrapInstance[] = [];
+  private pendingAreaDamage: PendingAreaDamageInstance[] = [];
+  private blazeGearstorms: BlazeGearstormInstance[] = [];
+  private blazeBombDropConsumedForHold: Set<string> = new Set();
+  private blazeFlamethrowerActivePlayers: Set<string> = new Set();
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
   private devBotIdCounter: number = 0;
@@ -449,6 +492,10 @@ export class GameRoom extends Room<GameState> {
 
     this.onMessage('blazeRocketImpact', (client, data: Partial<BlazeRocketImpactMessage> | null) => {
       this.handleBlazeRocketImpact(client, data);
+    });
+
+    this.onMessage('blazeBombDrop', (client) => {
+      this.handleBlazeBombDrop(client);
     });
 
     this.onMessage('selectHero', (client, data: { heroId: HeroId }) => {
@@ -568,6 +615,8 @@ export class GameRoom extends Room<GameState> {
         this.phantomVoidRayResolvedForPress.delete(existingSessionId);
         this.hookshotPrimaryLaunchSide.delete(existingSessionId);
         this.hookshotTraps = this.hookshotTraps.filter((trap) => trap.ownerId !== existingSessionId);
+        this.blazeBombDropConsumedForHold.delete(existingSessionId);
+        this.blazeFlamethrowerActivePlayers.delete(existingSessionId);
         this.unstuckCooldownUntil.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
@@ -670,6 +719,8 @@ export class GameRoom extends Room<GameState> {
     this.phantomVoidRayResolvedForPress.delete(client.sessionId);
     this.hookshotPrimaryLaunchSide.delete(client.sessionId);
     this.hookshotTraps = this.hookshotTraps.filter((trap) => trap.ownerId !== client.sessionId);
+    this.blazeBombDropConsumedForHold.delete(client.sessionId);
+    this.blazeFlamethrowerActivePlayers.delete(client.sessionId);
     this.authoritativePositionUntil.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
@@ -827,6 +878,9 @@ export class GameRoom extends Room<GameState> {
     } else {
       this.updateHookshotTraps(now);
     }
+
+    this.updatePendingAreaDamage(now);
+    this.updateBlazeGearstorms(now);
 
     // Update held Blaze flamethrowers
     if (this.metrics) {
@@ -1590,6 +1644,81 @@ export class GameRoom extends Room<GameState> {
     this.hookshotTraps.push(trap);
   }
 
+  private queuePendingAreaDamage(instance: PendingAreaDamageInstance): void {
+    this.pendingAreaDamage.push(instance);
+  }
+
+  private updatePendingAreaDamage(now: number): void {
+    if (this.pendingAreaDamage.length === 0) return;
+
+    this.pendingAreaDamage = this.pendingAreaDamage.filter((instance) => {
+      if (now < instance.resolveAt) return true;
+
+      const owner = this.state.players.get(instance.ownerId);
+      if (owner) {
+        this.applyAreaDamage(
+          owner,
+          instance.center,
+          instance.radius,
+          instance.damage,
+          instance.damageType
+        );
+      }
+
+      return false;
+    });
+  }
+
+  private createBlazeGearstorm(
+    player: Player,
+    position: PlainVec3,
+    now: number,
+    durationSeconds: number
+  ): void {
+    this.blazeGearstorms.push({
+      id: `blaze_gearstorm_${player.id}_${this.blazeGearstormIdCounter++}`,
+      ownerId: player.id,
+      ownerTeam: player.team as Team,
+      position,
+      radius: BLAZE_GEARSTORM_RADIUS,
+      damage: BLAZE_GEARSTORM_DAMAGE,
+      startTime: now,
+      endTime: now + durationSeconds * 1000,
+      lastDamageTick: new Map(),
+    });
+  }
+
+  private updateBlazeGearstorms(now: number): void {
+    if (this.blazeGearstorms.length === 0) return;
+
+    this.blazeGearstorms = this.blazeGearstorms.filter((storm) => {
+      if (now >= storm.endTime) return false;
+
+      const owner = this.state.players.get(storm.ownerId);
+      if (!owner) return true;
+
+      const radiusSq = storm.radius * storm.radius;
+      for (const target of this.getEnemyPlayers(storm.ownerTeam)) {
+        if (target.state !== 'alive') continue;
+
+        const dx = target.position.x - storm.position.x;
+        const dy = target.position.y - storm.position.y;
+        const dz = target.position.z - storm.position.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        if (distSq > radiusSq) continue;
+
+        const lastDamage = storm.lastDamageTick.get(target.id) || 0;
+        if (now - lastDamage < BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS) continue;
+        storm.lastDamageTick.set(target.id, now);
+
+        const falloff = 1 - Math.sqrt(distSq) / storm.radius * 0.35;
+        this.applyDamage(target, Math.max(1, Math.round(storm.damage * falloff)), owner.id, 'airstrike');
+      }
+
+      return true;
+    });
+  }
+
   private updateHookshotTraps(now: number): void {
     if (this.hookshotTraps.length === 0) return;
 
@@ -1622,6 +1751,156 @@ export class GameRoom extends Room<GameState> {
       });
 
       return true;
+    });
+  }
+
+  private nextBlazeCastId(playerId: string, abilityId: string, counter: number): string {
+    return `${abilityId}_${playerId}_${counter}`;
+  }
+
+  private getBlazeAimOrigin(player: Player): PlainVec3 {
+    return {
+      x: player.position.x,
+      y: player.position.y + HOOKSHOT_EYE_HEIGHT,
+      z: player.position.z,
+    };
+  }
+
+  private resolveBlazeRocketCast(
+    player: Player,
+    attack: AttackConfig,
+    now: number
+  ): {
+    castId: string;
+    startPosition: PlainVec3;
+    impactPosition: PlainVec3;
+    aimDirection: PlainVec3;
+    impactTime: number;
+  } {
+    const castId = this.nextBlazeCastId(player.id, 'blaze_rocket', this.blazeRocketIdCounter++);
+    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const aimOrigin = this.getBlazeAimOrigin(player);
+    const startPosition = this.getPhantomCastOrigin(player, BLAZE_ROCKET_STAFF_SOCKET);
+    const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
+    const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
+    const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
+    const terrainDistance = terrainHit ? this.distance3D(aimOrigin, terrainHit) : Infinity;
+    const targetDistance = targetPoint ? this.distance3D(aimOrigin, targetPoint) : Infinity;
+    const fallbackImpact = this.addScaled3D(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
+    const impactPosition = targetPoint && targetDistance <= terrainDistance
+      ? targetPoint
+      : terrainHit ?? fallbackImpact;
+    const aimDirection = this.normalize3D({
+      x: impactPosition.x - startPosition.x,
+      y: impactPosition.y - startPosition.y,
+      z: impactPosition.z - startPosition.z,
+    }) ?? lookDirection;
+    const travelMs = Math.max(
+      60,
+      Math.min(3000, (this.distance3D(startPosition, impactPosition) / BLAZE_ROCKET_SPEED) * 1000)
+    );
+
+    return {
+      castId,
+      startPosition,
+      impactPosition,
+      aimDirection,
+      impactTime: now + travelMs,
+    };
+  }
+
+  private fireBlazeRocket(player: Player, attack: AttackConfig, now: number): void {
+    const rocket = this.resolveBlazeRocketCast(player, attack, now);
+    this.queuePendingAreaDamage({
+      id: rocket.castId,
+      ownerId: player.id,
+      center: rocket.impactPosition,
+      radius: attack.radius ?? BLAZE_ROCKET_SPLASH_RADIUS,
+      damage: attack.damage,
+      damageType: attack.damageType,
+      resolveAt: rocket.impactTime,
+    });
+
+    this.broadcast('abilityUsed', {
+      playerId: player.id,
+      abilityId: 'blaze_rocket',
+      castId: rocket.castId,
+      position: this.vec3SchemaToPlain(player.position),
+      startPosition: rocket.startPosition,
+      targetPosition: rocket.impactPosition,
+      aimDirection: rocket.aimDirection,
+      velocity: {
+        x: rocket.aimDirection.x * BLAZE_ROCKET_SPEED,
+        y: rocket.aimDirection.y * BLAZE_ROCKET_SPEED,
+        z: rocket.aimDirection.z * BLAZE_ROCKET_SPEED,
+      },
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      impactTime: rocket.impactTime,
+      radius: attack.radius ?? BLAZE_ROCKET_SPLASH_RADIUS,
+    });
+  }
+
+  private resolveBlazeBombTarget(player: Player): PlainVec3 {
+    const aimOrigin = this.getBlazeAimOrigin(player);
+    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
+    let targetPosition = terrainHit ?? this.addScaled3D(aimOrigin, lookDirection, BLAZE_BOMB_MAX_RANGE);
+
+    const horizontalDistance = this.distance2D(aimOrigin, targetPosition);
+    if (horizontalDistance < BLAZE_BOMB_MIN_RANGE) {
+      const forward = this.forward2D(player.lookYaw);
+      targetPosition = {
+        x: aimOrigin.x + forward.x * BLAZE_BOMB_MIN_RANGE,
+        y: targetPosition.y,
+        z: aimOrigin.z + forward.z * BLAZE_BOMB_MIN_RANGE,
+      };
+    }
+
+    targetPosition = this.clampToPlayableMap(targetPosition);
+    const groundY = this.getProceduralGroundY({
+      x: targetPosition.x,
+      y: Math.max(targetPosition.y + 80, player.position.y + 80),
+      z: targetPosition.z,
+    });
+
+    return {
+      x: targetPosition.x,
+      y: groundY ?? targetPosition.y,
+      z: targetPosition.z,
+    };
+  }
+
+  private dropBlazeBomb(player: Player, attack: AttackConfig, now: number): void {
+    const castId = this.nextBlazeCastId(player.id, 'blaze_bomb', this.blazeBombIdCounter++);
+    const targetPosition = this.resolveBlazeBombTarget(player);
+    const startPosition = this.getPhantomCastOrigin(player, BLAZE_ROCKET_STAFF_SOCKET);
+    const impactTime = now + BLAZE_BOMB_FALL_DURATION_MS;
+
+    this.queuePendingAreaDamage({
+      id: castId,
+      ownerId: player.id,
+      center: targetPosition,
+      radius: attack.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
+      damage: attack.damage,
+      damageType: attack.damageType,
+      resolveAt: impactTime,
+    });
+
+    this.broadcast('abilityUsed', {
+      playerId: player.id,
+      abilityId: 'blaze_bomb',
+      castId,
+      position: this.vec3SchemaToPlain(player.position),
+      startPosition,
+      targetPosition,
+      aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+      impactTime,
+      radius: attack.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
     });
   }
 
@@ -1821,6 +2100,10 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
+    if (result.abilityId === 'blaze_flamethrower') {
+      return;
+    }
+
     if (player.heroId === 'hookshot') {
       const ownerTeam = player.team as Team;
       const castId = this.nextPhantomCastId(player.id, result.abilityId);
@@ -1921,6 +2204,15 @@ export class GameRoom extends Room<GameState> {
       );
     }
 
+    if (result.abilityId === 'blaze_airstrike') {
+      this.createBlazeGearstorm(
+        player,
+        startedAt,
+        usedAt,
+        result.abilityDef.duration ?? 5
+      );
+    }
+
     // Broadcast ability use
     this.broadcast('abilityUsed', {
       playerId: player.id,
@@ -1933,6 +2225,9 @@ export class GameRoom extends Room<GameState> {
         pitch: player.lookPitch 
       },
       aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      velocity: result.abilityId === 'blaze_rocketjump'
+        ? this.vec3SchemaToPlain(player.velocity)
+        : undefined,
       ownerTeam: player.team,
       serverTime: usedAt,
       releaseAt: result.abilityId === 'chronos_timebreak'
@@ -2157,6 +2452,17 @@ export class GameRoom extends Room<GameState> {
     }
     if (player.heroId === 'phantom') {
       this.handlePhantomSecondaryInput(player, input, previous.secondaryFire, now);
+    } else if (player.heroId === 'blaze') {
+      if (input.secondaryFire && !previous.secondaryFire) {
+        this.blazeBombDropConsumedForHold.delete(player.id);
+      }
+      if (!input.secondaryFire && previous.secondaryFire) {
+        if (this.blazeBombDropConsumedForHold.has(player.id)) {
+          this.blazeBombDropConsumedForHold.delete(player.id);
+        } else {
+          this.tryResolveAttack(player, 'secondary');
+        }
+      }
     } else if (input.secondaryFire && !previous.secondaryFire) {
       this.tryResolveAttack(player, 'secondary');
     }
@@ -2186,10 +2492,6 @@ export class GameRoom extends Room<GameState> {
     const attack = mode === 'primary' ? PRIMARY_ATTACKS[heroId] : SECONDARY_ATTACKS[heroId];
     if (!attack) return;
 
-    if (heroId === 'blaze' && mode === 'primary' && !player.isBot) {
-      return;
-    }
-
     const cooldownKey = `${player.id}:${mode}`;
     const now = Date.now();
     if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) return;
@@ -2200,6 +2502,15 @@ export class GameRoom extends Room<GameState> {
     const veil = player.abilities.get('phantom_veil');
     if (veil?.isActive) {
       veil.isActive = false;
+    }
+
+    if (heroId === 'blaze') {
+      if (mode === 'primary') {
+        this.fireBlazeRocket(player, attack, now);
+      } else {
+        this.dropBlazeBomb(player, attack, now);
+      }
+      return;
     }
 
     if (heroId === 'phantom') {
@@ -2231,31 +2542,16 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleBlazeRocketImpact(client: Client, data: Partial<BlazeRocketImpactMessage> | null): void {
+    void client;
+    void data;
+  }
+
+  private handleBlazeBombDrop(client: Client): void {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive' || player.heroId !== 'blaze') return;
-    if (!data || typeof data.rocketId !== 'string' || data.rocketId.length === 0 || data.rocketId.length > 96) return;
-    if (!data.rocketId.startsWith(`rocket_${player.id}_`)) return;
-    if (!data.position || !this.isFiniteVec3(data.position)) return;
 
-    const now = Date.now();
-    this.cleanupProcessedBlazeRocketImpacts(now);
-
-    const impactKey = `${player.id}:${data.rocketId}`;
-    if (this.processedBlazeRocketImpacts.has(impactKey)) return;
-
-    const center = {
-      x: data.position.x,
-      y: data.position.y,
-      z: data.position.z,
-    };
-    if (this.distance3D(player.position, center) > BLAZE_ROCKET_IMPACT_MAX_DISTANCE) return;
-
-    const cooldownUntil = this.blazeRocketImpactCooldownUntil.get(player.id) || 0;
-    if (now < cooldownUntil) return;
-
-    this.blazeRocketImpactCooldownUntil.set(player.id, now + BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS);
-    this.processedBlazeRocketImpacts.set(impactKey, now + BLAZE_ROCKET_IMPACT_DEDUP_MS);
-    this.applyAreaDamage(player, center, BLAZE_ROCKET_SPLASH_RADIUS, BLAZE_ROCKET_DAMAGE, 'rocket');
+    this.blazeBombDropConsumedForHold.add(player.id);
+    this.tryResolveAttack(player, 'secondary');
   }
 
   private cleanupProcessedBlazeRocketImpacts(now: number): void {
@@ -4114,6 +4410,8 @@ export class GameRoom extends Room<GameState> {
     player.abilities.forEach(ability => {
       ability.isActive = false;
     });
+    this.broadcastBlazeFlamethrowerState(player, false, Date.now());
+    this.blazeBombDropConsumedForHold.delete(player.id);
     this.phantomPrimaryHoldStartedAt.delete(player.id);
     this.phantomVoidRayChargeStartedAt.delete(player.id);
     this.phantomVoidRayResolvedForPress.delete(player.id);
@@ -4426,20 +4724,84 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private getBlazeFlamethrowerPose(player: Player): { origin: PlainVec3; direction: PlainVec3 } {
+    const pitch = player.lookPitch;
+    const cosPitch = Math.cos(pitch);
+    const forward = {
+      x: -Math.sin(player.lookYaw) * cosPitch,
+      y: Math.sin(pitch),
+      z: -Math.cos(player.lookYaw) * cosPitch,
+    };
+    const right = {
+      x: Math.cos(player.lookYaw),
+      y: 0,
+      z: -Math.sin(player.lookYaw),
+    };
+    const horizontalForward = {
+      x: -Math.sin(player.lookYaw),
+      z: -Math.cos(player.lookYaw),
+    };
+
+    return {
+      origin: {
+        x:
+          player.position.x +
+          horizontalForward.x * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
+          right.x * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+        y: player.position.y + BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+        z:
+          player.position.z +
+          horizontalForward.z * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
+          right.z * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+      },
+      direction: forward,
+    };
+  }
+
+  private broadcastBlazeFlamethrowerState(player: Player, active: boolean, now: number): void {
+    const wasActive = this.blazeFlamethrowerActivePlayers.has(player.id);
+    if (wasActive === active) return;
+
+    if (active) {
+      this.blazeFlamethrowerActivePlayers.add(player.id);
+    } else {
+      this.blazeFlamethrowerActivePlayers.delete(player.id);
+    }
+
+    const pose = this.getBlazeFlamethrowerPose(player);
+    this.broadcast('abilityUsed', {
+      playerId: player.id,
+      abilityId: 'blaze_flamethrower',
+      castId: `blaze_flamethrower_${player.id}_${active ? 'start' : 'stop'}_${now}`,
+      position: this.vec3SchemaToPlain(player.position),
+      startPosition: pose.origin,
+      aimDirection: pose.direction,
+      ownerTeam: player.team as Team,
+      serverTime: now,
+      active,
+      fuel: player.movement.jetpackFuel,
+    });
+  }
+
   private updateBlazeFlamethrowers(now: number, dt: number) {
+    const activeBlazePlayersThisTick = new Set<string>();
+
     for (const player of this.alivePlayers) {
       if (player.heroId !== 'blaze') continue;
+      activeBlazePlayersThisTick.add(player.id);
 
       player.movement.isJetpacking = false;
       const tempoMultiplier = this.getChronosTimebreakTempoMultiplier(player);
 
       const isFiring = Boolean(player.lastInput?.ability1);
       if (isFiring && player.movement.jetpackFuel > 0) {
+        player.movement.isJetpacking = true;
         player.movement.jetpackFuel = Math.max(
           0,
           player.movement.jetpackFuel - BLAZE_FLAMETHROWER_FUEL_DRAIN * dt * tempoMultiplier
         );
         this.applyFlamethrowerDamage(player, now, tempoMultiplier);
+        this.broadcastBlazeFlamethrowerState(player, true, now);
         continue;
       }
 
@@ -4449,38 +4811,25 @@ export class GameRoom extends Room<GameState> {
           player.movement.jetpackFuel + BLAZE_FLAMETHROWER_FUEL_REGEN * dt * tempoMultiplier
         );
       }
+      this.broadcastBlazeFlamethrowerState(player, false, now);
+    }
+
+    for (const playerId of Array.from(this.blazeFlamethrowerActivePlayers)) {
+      if (activeBlazePlayersThisTick.has(playerId)) continue;
+
+      const player = this.state.players.get(playerId);
+      if (!player) {
+        this.blazeFlamethrowerActivePlayers.delete(playerId);
+        continue;
+      }
+
+      player.movement.isJetpacking = false;
+      this.broadcastBlazeFlamethrowerState(player, false, now);
     }
   }
 
   private applyFlamethrowerDamage(source: Player, now: number, tempoMultiplier: number) {
-    const pitch = source.lookPitch;
-    const cosPitch = Math.cos(pitch);
-    const forward = {
-      x: -Math.sin(source.lookYaw) * cosPitch,
-      y: Math.sin(pitch),
-      z: -Math.cos(source.lookYaw) * cosPitch,
-    };
-    const right = {
-      x: Math.cos(source.lookYaw),
-      y: 0,
-      z: -Math.sin(source.lookYaw),
-    };
-    const horizontalForward = {
-      x: -Math.sin(source.lookYaw),
-      z: -Math.cos(source.lookYaw),
-    };
-
-    const origin = {
-      x:
-        source.position.x +
-        horizontalForward.x * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
-        right.x * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-      y: source.position.y + BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-      z:
-        source.position.z +
-        horizontalForward.z * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
-        right.z * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-    };
+    const { origin, direction: forward } = this.getBlazeFlamethrowerPose(source);
 
     const rangeSq = BLAZE_FLAMETHROWER_RANGE * BLAZE_FLAMETHROWER_RANGE;
 
@@ -4521,10 +4870,15 @@ export class GameRoom extends Room<GameState> {
 
     const killer = this.state.players.get(killerId);
     
+    const deathAt = Date.now();
+
     player.state = 'dead';
     player.health = 0;
     player.deaths++;
-    player.respawnTime = Date.now() + this.config.respawnTimeSeconds * 1000;
+    player.respawnTime = deathAt + this.config.respawnTimeSeconds * 1000;
+    player.movement.isJetpacking = false;
+    this.broadcastBlazeFlamethrowerState(player, false, deathAt);
+    this.blazeBombDropConsumedForHold.delete(player.id);
     
     // Drop flag if carrying
     if (player.hasFlag) {

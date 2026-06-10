@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { type CSSProperties, useState, useEffect } from 'react';
 import { useGameStore, LobbyInfo } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -561,10 +561,9 @@ function PlayTab({
               }}
             />
 
-            <HeroPreviewCanvas
+            <DeferredFeaturedHeroPreview
               heroId={featuredHero}
               accentColor={heroColor}
-              size="featured"
               initialYaw={Math.PI - 0.18}
               animationMode={heroAnimationMode}
               className={featuredPreviewClassName}
@@ -711,6 +710,70 @@ function PlayTab({
         </div>
       </div>
     </div>
+  );
+}
+
+function DeferredFeaturedHeroPreview({
+  heroId,
+  accentColor,
+  initialYaw,
+  animationMode,
+  className,
+}: {
+  heroId: HeroId;
+  accentColor: string;
+  initialYaw: number;
+  animationMode: HeroAnimationMode;
+  className: string;
+}) {
+  const [shouldMountPreview, setShouldMountPreview] = useState(false);
+
+  useEffect(() => {
+    setShouldMountPreview(false);
+
+    let secondFrame = 0;
+    let thirdFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        thirdFrame = window.requestAnimationFrame(() => {
+          setShouldMountPreview(true);
+        });
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+      window.cancelAnimationFrame(thirdFrame);
+    };
+  }, [animationMode, heroId]);
+
+  if (!shouldMountPreview) {
+    return (
+      <div
+        className={`hero-preview-shell relative overflow-hidden select-none ${className}`}
+        data-ready="false"
+        data-size="featured"
+        style={{ '--hero-preview-accent': accentColor } as CSSProperties}
+        aria-label={`Loading ${HERO_DEFINITIONS[heroId].name} voxel preview`}
+        aria-busy
+      >
+        <div className="hero-preview-loading pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="hero-preview-loader-ring" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <HeroPreviewCanvas
+      heroId={heroId}
+      accentColor={accentColor}
+      size="featured"
+      initialYaw={initialYaw}
+      animationMode={animationMode}
+      className={className}
+    />
   );
 }
 

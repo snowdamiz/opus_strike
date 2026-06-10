@@ -21,8 +21,14 @@ import {
 // FLAMETHROWER EFFECT - Held Blaze E ability
 // ============================================================================
 
+export interface FlamethrowerPose {
+  origin: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
+}
+
 interface FlamethrowerEffectProps {
   isActive: boolean;
+  poseProvider?: () => FlamethrowerPose | null;
 }
 
 const _origin = new THREE.Vector3();
@@ -90,7 +96,7 @@ function sampleStreamPoint(
   return out.copy(points[startIndex]).lerp(points[endIndex], scaledIndex - startIndex);
 }
 
-export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectProps) => {
+export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: FlamethrowerEffectProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
   const streamHeatRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -116,7 +122,10 @@ export const FlamethrowerEffect = React.memo(({ isActive }: FlamethrowerEffectPr
   useFrame((state, delta) => {
     if (!groupRef.current) return;
 
-    const { flamethrowerOrigin, flamethrowerDirection } = visualStore.getState();
+    const providedPose = poseProvider?.() ?? null;
+    const { flamethrowerOrigin, flamethrowerDirection } = providedPose
+      ? { flamethrowerOrigin: providedPose.origin, flamethrowerDirection: providedPose.direction }
+      : visualStore.getState();
     const hasLivePose = isActive && Boolean(flamethrowerOrigin);
     const rampStep = delta / (hasLivePose ? FLAMETHROWER_SPIN_UP_DURATION : FLAMETHROWER_SPIN_DOWN_DURATION);
     rampRef.current = hasLivePose

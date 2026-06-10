@@ -1,4 +1,5 @@
 import { memo, type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ContactShadows } from '@react-three/drei';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -146,6 +147,30 @@ const RUN_SLIDE_LOOP_SEQUENCE: Array<{ mode: HeroPreviewActionMode; duration: nu
 const RUN_SLIDE_LOOP_DURATION = RUN_SLIDE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
 const SLIDE_PREVIEW_YAW = -Math.PI / 2;
 const PREVIEW_CLEAR_COLOR_VAR = '--color-strike-canvas';
+const PREVIEW_OFFSCREEN_ROOT_ID = 'hero-preview-offscreen-root';
+const PREVIEW_SAMPLE_SIZE = 24;
+
+function getPreviewOffscreenRoot(): HTMLElement | null {
+  if (typeof document === 'undefined') return null;
+
+  const existingRoot = document.getElementById(PREVIEW_OFFSCREEN_ROOT_ID);
+  if (existingRoot) return existingRoot;
+
+  const root = document.createElement('div');
+  root.id = PREVIEW_OFFSCREEN_ROOT_ID;
+  root.className = 'hero-preview-offscreen-root';
+  document.body.appendChild(root);
+  return root;
+}
+
+function createPreviewStageElement(): HTMLDivElement | null {
+  if (typeof document === 'undefined') return null;
+
+  const element = document.createElement('div');
+  element.className = 'hero-preview-stage';
+  element.setAttribute('data-ready', 'false');
+  return element;
+}
 
 function getCssRgbColor(variableName: string): THREE.Color {
   const channels = getComputedStyle(document.documentElement)
@@ -159,6 +184,42 @@ function getCssRgbColor(variableName: string): THREE.Color {
   }
 
   return new THREE.Color(0, 0, 0);
+}
+
+function isCanvasSafeToReveal(canvas: HTMLCanvasElement): boolean {
+  const sampleCanvas = document.createElement('canvas');
+  sampleCanvas.width = PREVIEW_SAMPLE_SIZE;
+  sampleCanvas.height = PREVIEW_SAMPLE_SIZE;
+
+  const context = sampleCanvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return false;
+
+  context.clearRect(0, 0, PREVIEW_SAMPLE_SIZE, PREVIEW_SAMPLE_SIZE);
+  context.drawImage(canvas, 0, 0, PREVIEW_SAMPLE_SIZE, PREVIEW_SAMPLE_SIZE);
+
+  const pixels = context.getImageData(0, 0, PREVIEW_SAMPLE_SIZE, PREVIEW_SAMPLE_SIZE).data;
+  const totalPixels = PREVIEW_SAMPLE_SIZE * PREVIEW_SAMPLE_SIZE;
+  let visiblePixels = 0;
+  let whitePixels = 0;
+
+  for (let index = 0; index < pixels.length; index += 4) {
+    const red = pixels[index] ?? 0;
+    const green = pixels[index + 1] ?? 0;
+    const blue = pixels[index + 2] ?? 0;
+    const alpha = pixels[index + 3] ?? 0;
+
+    if (alpha > 8) {
+      visiblePixels++;
+    }
+
+    if (alpha > 200 && red > 245 && green > 245 && blue > 245) {
+      whitePixels++;
+    }
+  }
+
+  if (visiblePixels < totalPixels * 0.01) return false;
+
+  return whitePixels / totalPixels < 0.35;
 }
 
 function getLoopMode(
@@ -197,6 +258,10 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const config = PREVIEW_CONFIG[size];
   const resolvedAccentColor = accentColor ?? HERO_COLOR_SCHEMES[heroId].primary;
   const [isCanvasReady, setIsCanvasReady] = useState(false);
+  const [shouldMountStage, setShouldMountStage] = useState(false);
+  const [stageElement] = useState(createPreviewStageElement);
+  const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
+  const shellRef = useRef<HTMLDivElement>(null);
   const hasCanvasCreatedRef = useRef(false);
   const shouldIdleRotate = idleRotation ?? interactive;
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
@@ -211,8 +276,76 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
     resetKey: `${heroId}:${animationMode === 'slide' ? 'slide' : 'default'}`,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return undefined;
+
+    const updateStageSize = () => {
+      const rect = shell.getBoundingClientRect();
+      const width = Math.max(1, Math.round(rect.width));
+      const height = Math.max(1, Math.round(rect.height));
+
+      setStageSize((currentSize) => (
+        currentSize.width === width && currentSize.height === height
+          ? currentSize
+          : { width, height }
+      ));
+    };
+
+    updateStageSize();
+
+    const resizeObserver = new ResizeObserver(updateStageSize);
+    resizeObserver.observe(shell);
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!stageElement) return;
+
+    stageElement.style.setProperty('--hero-preview-stage-width', `${stageSize.width}px`);
+    stageElement.style.setProperty('--hero-preview-stage-height', `${stageSize.height}px`);
+  }, [stageElement, stageSize.height, stageSize.width]);
+
+  useLayoutEffect(() => {
+    if (!stageElement) return undefined;
+
+    const parent = isCanvasReady && shellRef.current
+      ? shellRef.current
+      : getPreviewOffscreenRoot();
+
+    if (parent && stageElement.parentElement !== parent) {
+      parent.appendChild(stageElement);
+    }
+
+    stageElement.setAttribute('data-ready', isCanvasReady ? 'true' : 'false');
+    stageElement.setAttribute('aria-hidden', isCanvasReady ? 'false' : 'true');
+
+    return () => {
+      if (stageElement.parentElement) {
+        stageElement.parentElement.removeChild(stageElement);
+      }
+    };
+  }, [isCanvasReady, stageElement]);
+
+  useLayoutEffect(() => {
     setIsCanvasReady(false);
+    setShouldMountStage(false);
+    hasCanvasCreatedRef.current = false;
+  }, [previewReadyKey]);
+
+  useEffect(() => {
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        setShouldMountStage(true);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
   }, [previewReadyKey]);
 
   const handleCanvasCreated = useCallback(({ gl }: { gl: THREE.WebGLRenderer }) => {
@@ -226,8 +359,16 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
     setIsCanvasReady(true);
   }, []);
 
+  const shouldRenderPreviewStage = Boolean(
+    shouldMountStage &&
+    stageElement &&
+    stageSize.width > 0 &&
+    stageSize.height > 0
+  );
+
   return (
     <div
+      ref={shellRef}
       className={`hero-preview-shell relative overflow-hidden ${interactive ? 'select-none' : 'pointer-events-none'} ${className}`}
       data-interactive={interactive ? 'true' : 'false'}
       data-dragging={isDragging ? 'true' : 'false'}
@@ -243,45 +384,47 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
         <div className="hero-preview-loader-ring" />
         <span className="sr-only">Loading {HERO_DEFINITIONS[heroId].name} preview</span>
       </div>
-      <Canvas
-        className="hero-preview-canvas"
-        camera={{ position: config.cameraPosition, fov: config.fov, near: 0.1, far: 60 }}
-        dpr={config.dpr}
-        frameloop={interactive || shouldIdleRotate || shouldIdleAnimate || animationMode !== 'idle' ? 'always' : 'demand'}
-        gl={{
-          alpha: true,
-          antialias: true,
-          premultipliedAlpha: false,
-          powerPreference: size === 'compact' ? 'default' : 'high-performance',
-        }}
-        onCreated={handleCanvasCreated}
-        shadows={config.shadows}
-        style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'transparent',
-          opacity: isCanvasReady ? 1 : 0,
-          visibility: isCanvasReady ? 'visible' : 'hidden',
-          transition: 'opacity 300ms ease-out',
-        }}
-      >
-        <HeroPreviewScene
-          heroId={heroId}
-          team={team}
-          yaw={yaw}
-          isDragging={isDragging}
-          idleRotation={shouldIdleRotate}
-          accentColor={resolvedAccentColor}
-          config={config}
-          showShadow={showShadow}
-          isBot={isBot}
-          hasFlag={hasFlag}
-          postureScaleY={postureScaleY}
-          idleAnimation={shouldIdleAnimate}
-          animationMode={animationMode}
-        />
-        <PreviewRenderReadySignal readyKey={previewReadyKey} onReady={handlePreviewRendered} />
-      </Canvas>
+      {stageElement && shouldRenderPreviewStage && createPortal(
+        <Canvas
+          className="hero-preview-canvas"
+          camera={{ position: config.cameraPosition, fov: config.fov, near: 0.1, far: 60 }}
+          dpr={config.dpr}
+          frameloop={interactive || shouldIdleRotate || shouldIdleAnimate || animationMode !== 'idle' ? 'always' : 'demand'}
+          gl={{
+            alpha: true,
+            antialias: true,
+            premultipliedAlpha: false,
+            preserveDrawingBuffer: true,
+            powerPreference: size === 'compact' ? 'default' : 'high-performance',
+          }}
+          onCreated={handleCanvasCreated}
+          shadows={config.shadows}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'transparent',
+          }}
+        >
+          <HeroPreviewScene
+            heroId={heroId}
+            team={team}
+            yaw={yaw}
+            isDragging={isDragging}
+            idleRotation={shouldIdleRotate}
+            accentColor={resolvedAccentColor}
+            config={config}
+            showShadow={showShadow}
+            isBot={isBot}
+            hasFlag={hasFlag}
+            postureScaleY={postureScaleY}
+            idleAnimation={shouldIdleAnimate}
+            animationMode={animationMode}
+          />
+          <PreviewRenderReadySignal readyKey={previewReadyKey} onReady={handlePreviewRendered} />
+        </Canvas>
+        ,
+        stageElement
+      )}
     </div>
   );
 });
@@ -293,6 +436,7 @@ function PreviewRenderReadySignal({
   readyKey: string;
   onReady: () => void;
 }) {
+  const { gl } = useThree();
   const renderedFramesRef = useRef(0);
   const didSignalRef = useRef(false);
 
@@ -306,6 +450,7 @@ function PreviewRenderReadySignal({
 
     renderedFramesRef.current += 1;
     if (renderedFramesRef.current < 4) return;
+    if (renderedFramesRef.current < 180 && !isCanvasSafeToReveal(gl.domElement)) return;
 
     didSignalRef.current = true;
     onReady();

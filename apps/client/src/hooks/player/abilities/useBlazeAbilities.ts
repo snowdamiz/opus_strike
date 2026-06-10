@@ -12,43 +12,29 @@
 import { useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import {
-  BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
-  BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
-  BLAZE_FLAMETHROWER_FUEL_DRAIN,
-  BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_MAX_FUEL,
   BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
   BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
   BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
-import { triggerRocketJumpExplosion, triggerAirStrike } from '../../../components/game/BlazeEffects';
-import { isPhysicsReady, raycastDirection } from '../../usePhysics';
 import {
-  BLAZE_ROCKET_FIRE_INTERVAL,
-  BLAZE_ROCKET_SPEED,
   BLAZE_BOMB_COOLDOWN,
-  BLAZE_BOMB_FALL_DURATION,
-  EYE_HEIGHT,
   calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
-  BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS,
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
   clearBlazeRocketJumpStaffSlam,
   getBlazeFlamethrowerHeldBlend,
-  getBlazeRocketHeldBlend,
   setBlazeFlamethrowerHeld,
   setBlazeBombTargetHeld,
-  triggerBlazeRocketJumpStaffSlam,
   triggerBlazeStaffShockwave,
   type BlazeRocketStaffPoseSampleContext,
 } from '../../../viewmodel/blazePose';
 import {
-  assertViewmodelLaunchMatchesPose,
   sampleViewmodelPose,
   type ViewmodelSocketPose,
 } from '../../../viewmodel/viewmodelSocketRegistry';
@@ -59,13 +45,6 @@ const BLAZE_FLAMETHROWER_SOCKET = {
   forwardOffset: BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
   sideOffset: BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
 };
-const BLAZE_ROCKET_AIM_DISTANCE = 120;
-const BLAZE_ROCKET_STAFF_FALLBACK_SOCKET = {
-  handHeight: 0.24,
-  forwardOffset: 0.64,
-  sideOffset: 0.22,
-};
-const BLAZE_ROCKET_FIRE_READY_BLEND = 0.86;
 
 function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
   return {
@@ -95,63 +74,6 @@ function sampleBlazeStaffTipPose(
   );
 }
 
-function calculateBlazeRocketLaunch(
-  ctx: AbilityContext,
-  spawnOverride?: { x: number; y: number; z: number }
-) {
-  const lookDirection = calculateLookDirection(ctx.yaw, ctx.pitch);
-  const fallbackSpawnPos = calculatePlayerSocketPosition(
-    ctx.position,
-    ctx.yaw,
-    BLAZE_ROCKET_STAFF_FALLBACK_SOCKET
-  );
-  const spawnPos = spawnOverride ?? fallbackSpawnPos;
-  const aimOrigin = {
-    x: ctx.position.x,
-    y: ctx.position.y + EYE_HEIGHT,
-    z: ctx.position.z,
-  };
-  const aimPoint = {
-    x: aimOrigin.x + lookDirection.x * BLAZE_ROCKET_AIM_DISTANCE,
-    y: aimOrigin.y + lookDirection.y * BLAZE_ROCKET_AIM_DISTANCE,
-    z: aimOrigin.z + lookDirection.z * BLAZE_ROCKET_AIM_DISTANCE,
-  };
-
-  if (isPhysicsReady()) {
-    const hit = raycastDirection(
-      aimOrigin.x,
-      aimOrigin.y,
-      aimOrigin.z,
-      lookDirection.x,
-      lookDirection.y,
-      lookDirection.z,
-      BLAZE_ROCKET_AIM_DISTANCE
-    );
-
-    if (hit?.hit) {
-      aimPoint.x = hit.point.x;
-      aimPoint.y = hit.point.y;
-      aimPoint.z = hit.point.z;
-    }
-  }
-
-  const aimDelta = {
-    x: aimPoint.x - spawnPos.x,
-    y: aimPoint.y - spawnPos.y,
-    z: aimPoint.z - spawnPos.z,
-  };
-  const aimLength = Math.sqrt(aimDelta.x ** 2 + aimDelta.y ** 2 + aimDelta.z ** 2) || 1;
-
-  return {
-    spawnPos,
-    direction: {
-      x: aimDelta.x / aimLength,
-      y: aimDelta.y / aimLength,
-      z: aimDelta.z / aimLength,
-    },
-  };
-}
-
 function calculateBlazeFlamethrowerPose(
   ctx: AbilityContext,
   originOverride?: { x: number; y: number; z: number }
@@ -164,10 +86,7 @@ function calculateBlazeFlamethrowerPose(
 
 export interface UseBlazeAbilitiesReturn {
   // State refs
-  lastRocketTimeRef: React.MutableRefObject<number>;
-  rocketIdRef: React.MutableRefObject<number>;
   lastBombTimeRef: React.MutableRefObject<number>;
-  bombIdRef: React.MutableRefObject<number>;
   bombTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
   bombValidRef: React.MutableRefObject<boolean>;
   flamethrowerFuelRef: React.MutableRefObject<number>;
@@ -178,7 +97,6 @@ export interface UseBlazeAbilitiesReturn {
   pendingRocketJumpRef: React.MutableRefObject<PendingRocketJump | null>;
 
   // Methods
-  fireRocket: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
   handleFlamethrower: (
@@ -205,13 +123,8 @@ interface PendingRocketJump {
 }
 
 export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
-  // Rocket state
-  const lastRocketTimeRef = useRef(0);
-  const rocketIdRef = useRef(0);
-
   // Bomb state
   const lastBombTimeRef = useRef(0);
-  const bombIdRef = useRef(0);
   const bombTargetRef = useRef<THREE.Vector3 | null>(null);
   const bombValidRef = useRef(false);
   const secondaryFirePressedRef = useRef(false);
@@ -224,42 +137,6 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   // Legacy targeting refs kept so stale target state can be cleared safely.
   const airStrikeTargetRef = useRef<THREE.Vector3 | null>(null);
   const airStrikeValidRef = useRef(false);
-
-  // Fire Rocket (primary fire)
-  const fireRocket = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
-    const now = Date.now();
-    const holdBlend = getBlazeRocketHeldBlend(ctx.viewmodelNowMs ?? now);
-    if (holdBlend < BLAZE_ROCKET_FIRE_READY_BLEND) return;
-    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
-    if (now - lastRocketTimeRef.current < BLAZE_ROCKET_FIRE_INTERVAL / tempoMultiplier) return;
-
-    lastRocketTimeRef.current = now;
-    rocketIdRef.current++;
-    const rocketId = `rocket_${ctx.localPlayer.id}_${rocketIdRef.current}`;
-    const launchPose = sampleBlazeStaffTipPose(ctx, now, holdBlend);
-    const spawnOverride = launchPose ? vectorToPlainPosition(launchPose.position) : undefined;
-    const { spawnPos, direction } = calculateBlazeRocketLaunch(ctx, spawnOverride);
-    assertViewmodelLaunchMatchesPose({
-      eventId: rocketId,
-      launchPosition: spawnPos,
-      pose: launchPose,
-    });
-
-    useGameStore.getState().addRocket({
-      id: rocketId,
-      position: spawnPos,
-      velocity: {
-        x: direction.x * BLAZE_ROCKET_SPEED,
-        y: direction.y * BLAZE_ROCKET_SPEED,
-        z: direction.z * BLAZE_ROCKET_SPEED,
-      },
-      startTime: now,
-      ownerId: ctx.localPlayer.id,
-      ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
-    });
-
-    sounds.playBlazeRocket();
-  }, []);
 
   // Handle bomb targeting mode
   const handleBombTargeting = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
@@ -304,43 +181,14 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   }, []);
 
   // Execute bomb drop
-  const executeBombDrop = useCallback((sounds: PlayerSounds) => {
+  const executeBombDrop = useCallback((_sounds: PlayerSounds) => {
     if (!bombTargetRef.current || !bombValidRef.current) return;
 
     const now = Date.now();
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
     if (now - lastBombTimeRef.current < BLAZE_BOMB_COOLDOWN / tempoMultiplier) return;
 
-    const target = bombTargetRef.current.clone();
-    const localPlayer = useGameStore.getState().localPlayer;
-    if (!localPlayer) return;
-
-    const groundY = target.y < 1 ? (localPlayer.position.y - 1) : target.y;
-
-    bombIdRef.current++;
-    const bombId = `bomb_${localPlayer.id}_${bombIdRef.current}`;
-
-    useGameStore.getState().addBomb({
-      id: bombId,
-      targetPosition: { x: target.x, y: groundY, z: target.z },
-      startPosition: {
-        x: localPlayer.position.x,
-        y: localPlayer.position.y,
-        z: localPlayer.position.z,
-      },
-      startTime: now,
-      impactTime: now + BLAZE_BOMB_FALL_DURATION,
-      ownerId: localPlayer.id,
-      ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
-      hasExploded: false,
-    });
-
-    sounds.playBlazeBombTarget();
     triggerBlazeStaffShockwave(now);
-
-    setTimeout(() => {
-      sounds.playBlazeBombExplode();
-    }, BLAZE_BOMB_FALL_DURATION);
 
     lastBombTimeRef.current = now;
 
@@ -360,11 +208,23 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   ) => {
     const now = Date.now();
     const timestampMs = ctx.viewmodelNowMs ?? now;
-    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
-    const isHoldingFlamethrower = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
-    setBlazeFlamethrowerHeld(isHoldingFlamethrower, timestampMs);
+    const localPlayer = useGameStore.getState().localPlayer;
+    const serverFuel = localPlayer?.heroId === 'blaze'
+      ? (localPlayer.movement?.jetpackFuel ?? BLAZE_FLAMETHROWER_MAX_FUEL)
+      : BLAZE_FLAMETHROWER_MAX_FUEL;
+    const serverActive = Boolean(
+      localPlayer?.heroId === 'blaze' &&
+      localPlayer.state === 'alive' &&
+      localPlayer.movement?.isJetpacking &&
+      serverFuel > 0
+    );
+    const isHoldingFlamethrower = ctx.inputState.ability1 && serverFuel > 0;
 
-    if (isHoldingFlamethrower) {
+    flamethrowerFuelRef.current = serverFuel;
+    setFlamethrowerFuel(serverFuel);
+    setBlazeFlamethrowerHeld(isHoldingFlamethrower || serverActive, timestampMs);
+
+    if (serverActive) {
       if (!flamethrowerActiveRef.current) {
         flamethrowerActiveRef.current = true;
         setFlamethrowerActive(true);
@@ -376,18 +236,6 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       const staffTipOrigin = staffTipPose ? vectorToPlainPosition(staffTipPose.position) : undefined;
       const { origin, direction } = calculateBlazeFlamethrowerPose(ctx, staffTipOrigin);
       setFlamethrowerVisualPose(origin, direction);
-
-      // Consume fuel
-      flamethrowerFuelRef.current -= BLAZE_FLAMETHROWER_FUEL_DRAIN * ctx.dt * tempoMultiplier;
-      if (flamethrowerFuelRef.current <= 0) {
-        flamethrowerFuelRef.current = 0;
-        flamethrowerActiveRef.current = false;
-        setFlamethrowerActive(false);
-        setBlazeFlamethrowerHeld(false, timestampMs);
-        setFlamethrowerVisualPose(null, { x: 0, y: 0, z: -1 });
-        sounds.stopFlamethrowerSound();
-      }
-      setFlamethrowerFuel(flamethrowerFuelRef.current);
     } else {
       if (flamethrowerActiveRef.current) {
         flamethrowerActiveRef.current = false;
@@ -395,43 +243,16 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
         setFlamethrowerVisualPose(null, { x: 0, y: 0, z: -1 });
         sounds.stopFlamethrowerSound();
       }
-
-      // Regenerate fuel when grounded
-      if (ctx.isGrounded && flamethrowerFuelRef.current < BLAZE_FLAMETHROWER_MAX_FUEL) {
-        flamethrowerFuelRef.current = Math.min(
-          BLAZE_FLAMETHROWER_MAX_FUEL,
-          flamethrowerFuelRef.current + BLAZE_FLAMETHROWER_FUEL_REGEN * ctx.dt * tempoMultiplier
-        );
-        setFlamethrowerFuel(flamethrowerFuelRef.current);
-      }
     }
   }, []);
 
-  const applyRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
-    ctx.velocity.y = BLAZE_ROCKET_JUMP_VERTICAL_FORCE;
-    ctx.position.y += 0.5;
-
-    // Small horizontal push
-    const rjYaw = ctx.yaw;
-    ctx.velocity.x += -Math.sin(rjYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
-    ctx.velocity.z += -Math.cos(rjYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
-
-    // Visual explosion
-    triggerRocketJumpExplosion({ x: ctx.position.x, y: ctx.position.y, z: ctx.position.z });
-
-    sounds.playBlazeRocketJump();
+  const applyRocketJump = useCallback((_ctx: AbilityContext, _sounds: PlayerSounds) => {
+    // Server-confirmed blaze_rocketjump events own movement, explosion, and sound.
   }, []);
 
   // Execute Rocket Jump (Q ability)
-  const executeRocketJump = useCallback((ctx: AbilityContext) => {
-    const now = Date.now();
-    const timestampMs = ctx.viewmodelNowMs ?? now;
-
-    triggerBlazeRocketJumpStaffSlam(timestampMs);
-    pendingRocketJumpRef.current = {
-      ownerId: ctx.localPlayer.id,
-      activateAtMs: now + BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS,
-    };
+  const executeRocketJump = useCallback((_ctx: AbilityContext) => {
+    pendingRocketJumpRef.current = null;
   }, []);
 
   const updateRocketJump = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
@@ -458,16 +279,11 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   // Execute Infernal Gearstorm (Ultimate)
   const executeAirStrike = useCallback((
     ctx: AbilityContext,
-    sounds: PlayerSounds,
-    updateLocalPlayer: (data: any) => void
+    _sounds: PlayerSounds,
+    _updateLocalPlayer: (data: any) => void
   ) => {
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer || (localPlayer.ultimateCharge ?? 0) < 100) return;
-
-    triggerAirStrike({ x: ctx.position.x, y: ctx.position.y, z: ctx.position.z });
-
-    updateLocalPlayer({ ultimateCharge: 0 });
-    sounds.playBlazeAirstrike();
 
     // Clear any stale target state from older targeting flows.
     useGameStore.getState().setAirStrikeTargeting(false, false);
@@ -498,10 +314,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   }, []);
 
   return {
-    lastRocketTimeRef,
-    rocketIdRef,
     lastBombTimeRef,
-    bombIdRef,
     bombTargetRef,
     bombValidRef,
     flamethrowerFuelRef,
@@ -510,7 +323,6 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     airStrikeValidRef,
     secondaryFirePressedRef,
     pendingRocketJumpRef,
-    fireRocket,
     handleBombTargeting,
     executeBombDrop,
     handleFlamethrower,

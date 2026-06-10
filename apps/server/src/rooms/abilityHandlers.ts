@@ -3,6 +3,7 @@ import { AbilityStateSchema } from './schema/Components';
 import { 
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
+  BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
 } from '@voxel-strike/shared';
@@ -294,8 +295,12 @@ export function executeAbility(
     }
 
     case 'blaze_rocketjump': {
+      player.velocity.x += -Math.sin(player.lookYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
       player.velocity.y = BLAZE_ROCKET_JUMP_VERTICAL_FORCE;
+      player.velocity.z += -Math.cos(player.lookYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
       player.position.y += 0.5;
+      player.movement.isGrounded = false;
+      context.markAuthoritativePosition?.(player.id, 550);
       break;
     }
 

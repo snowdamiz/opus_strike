@@ -11,13 +11,16 @@ import {
   visualStore,
 } from '../store/visualStore';
 import { addEffect } from '../components/game/Effects';
-import { triggerAirStrike } from '../components/game/BlazeEffects';
+import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/PhantomEffects';
 import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
+import { triggerBlazeRocketJumpStaffSlam } from '../viewmodel/blazePose';
 import {
   DRAG_HOOK_SPEED,
+  BLAZE_BOMB_FALL_DURATION,
+  BLAZE_ROCKET_SPEED,
   HOOKSHOT_MAX_DISTANCE,
   HOOKSHOT_SPEED,
   PHANTOM_PROJECTILE_SPEED,
@@ -849,6 +852,9 @@ interface AbilityUsedMessage {
   releaseAt?: number;
   radius?: number;
   duration?: number;
+  impactTime?: number;
+  active?: boolean;
+  fuel?: number;
 }
 
 function normalizeAimDirection(data: AbilityUsedMessage): { x: number; y: number; z: number } {
@@ -917,6 +923,20 @@ function playHookshotShotSound(position: { x: number; y: number; z: number } | u
   playHookshotWorldSound('hookshotShot', position, {
     durationMs: HOOKSHOT_SHOT_CLIP_MS,
     fadeOutMs: 24,
+  });
+}
+
+function playBlazeWorldSound(
+  sound: SoundName,
+  position: { x: number; y: number; z: number } | undefined,
+  options: { durationMs?: number; fadeOutMs?: number; volume?: number; pitch?: number } = {}
+): void {
+  void playSharedSound(sound, {
+    position,
+    durationMs: options.durationMs,
+    fadeOutMs: options.fadeOutMs,
+    volume: options.volume,
+    pitch: options.pitch,
   });
 }
 
@@ -1096,6 +1116,10 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       stopRemotePhantomCharge(data.playerId);
       if (isLocalPlayer) {
         store.setVoidRayCharging(false, 0);
+        const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
+        if (abilityDef?.cooldown) {
+          store.setClientCooldown(data.abilityId, Date.now() + abilityDef.cooldown * 1000);
+        }
       }
       if (!startPosition) return true;
       store.addVoidRay({
@@ -1259,6 +1283,135 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
   }
 }
 
+function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string | null): boolean {
+  const store = useGameStore.getState();
+  const isLocalPlayer = data.playerId === localPlayerId;
+  const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
+  const startPosition = data.startPosition ?? position;
+  const targetPosition = data.targetPosition ?? position;
+  const ownerTeam = resolveOwnerTeam(data);
+  const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
+  const now = Date.now();
+
+  switch (data.abilityId) {
+    case 'blaze_rocket': {
+      if (!startPosition) return true;
+      const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), BLAZE_ROCKET_SPEED);
+      store.addRocket({
+        id: castId,
+        position: startPosition,
+        velocity,
+        startTime: now,
+        ownerId: data.playerId,
+        ownerTeam,
+      });
+      playBlazeWorldSound('blazeRocket', startPosition, {
+        pitch: 0.85 + Math.random() * 0.3,
+      });
+      return true;
+    }
+
+    case 'blaze_bomb': {
+      if (!startPosition || !targetPosition) return true;
+      const impactDelay = data.impactTime
+        ? Math.max(0, data.impactTime - (data.serverTime ?? now))
+        : BLAZE_BOMB_FALL_DURATION;
+      const impactTime = now + impactDelay;
+      store.addBomb({
+        id: castId,
+        targetPosition,
+        startPosition,
+        startTime: now,
+        impactTime,
+        ownerId: data.playerId,
+        ownerTeam,
+        hasExploded: false,
+      });
+      playBlazeWorldSound('blazeBombTarget', startPosition);
+      playBlazeWorldSound('blazeBombFall', startPosition, {
+        durationMs: impactDelay,
+        fadeOutMs: Math.min(200, impactDelay),
+      });
+      window.setTimeout(() => {
+        playBlazeWorldSound('blazeBombExplode', targetPosition, { volume: 1.05 });
+      }, impactDelay);
+      return true;
+    }
+
+    case 'blaze_rocketjump': {
+      const effectPosition = startPosition ?? position;
+      if (effectPosition) {
+        triggerRocketJumpExplosion(effectPosition);
+        playBlazeWorldSound('blazeRocketJump', effectPosition);
+      }
+      if (isLocalPlayer && data.velocity && store.localPlayer) {
+        triggerBlazeRocketJumpStaffSlam(now);
+        pushLocalPlayerImpulse({
+          x: data.velocity.x - store.localPlayer.velocity.x,
+          y: data.velocity.y - store.localPlayer.velocity.y,
+          z: data.velocity.z - store.localPlayer.velocity.z,
+        });
+        if (position) {
+          store.updateLocalPlayer({
+            position,
+            velocity: data.velocity,
+          });
+          setPlayerVisualPosition(store.localPlayer.id, position);
+        }
+      }
+      return true;
+    }
+
+    case 'blaze_airstrike': {
+      if (position) {
+        triggerAirStrike(position);
+        playBlazeWorldSound('blazeAirstrike', position);
+      }
+      if (isLocalPlayer && store.localPlayer) {
+        store.updateLocalPlayer({ ultimateCharge: 0 });
+      }
+      return true;
+    }
+
+    case 'blaze_flamethrower': {
+      const active = Boolean(data.active);
+      const fuel = typeof data.fuel === 'number' ? data.fuel : undefined;
+
+      if (isLocalPlayer && store.localPlayer) {
+        store.updateLocalPlayer({
+          movement: {
+            ...store.localPlayer.movement,
+            isJetpacking: active,
+            jetpackFuel: fuel ?? store.localPlayer.movement.jetpackFuel,
+          },
+        });
+        store.setFlamethrowerActive(active);
+        if (fuel !== undefined) {
+          store.setFlamethrowerFuel(fuel);
+        }
+        return true;
+      }
+
+      const player = store.players.get(data.playerId);
+      if (!player) return true;
+
+      store.updatePlayer(data.playerId, {
+        ...player,
+        position: position ?? player.position,
+        movement: {
+          ...player.movement,
+          isJetpacking: active,
+          jetpackFuel: fuel ?? player.movement.jetpackFuel,
+        },
+      });
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
 /**
  * Sets up combat event handlers (damage, kills)
  */
@@ -1374,6 +1527,7 @@ export function setupCombatHandlers(room: Room) {
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     if (handlePhantomAbilityUsed(data, localPlayerId)) return;
     if (handleHookshotAbilityUsed(data, localPlayerId)) return;
+    if (handleBlazeAbilityUsed(data, localPlayerId)) return;
 
     if (data.abilityId === 'chronos_timebreak') {
       if (data.playerId === localPlayerId) return;
@@ -1405,14 +1559,6 @@ export function setupCombatHandlers(room: Room) {
       return;
     }
 
-    if (data.abilityId === 'blaze_airstrike') {
-      if (data.playerId === localPlayerId) return;
-
-      const casterPosition = data.position ?? store.players.get(data.playerId)?.position;
-      if (casterPosition) {
-        triggerAirStrike(casterPosition);
-      }
-    }
   });
 
   room.onMessage('chronosTimebreakImpulse', (data: {

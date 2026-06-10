@@ -94,7 +94,7 @@ export function PlayerController() {
   // Input and network
   const { inputState, isPointerLocked, isControlPressed, requestPointerLock } = useInput();
   const { world, playerBody } = usePhysics();
-  const { sendInput } = useNetwork();
+  const { sendInput, requestBlazeBombDrop } = useNetwork();
 
   // Audio hooks
   const {
@@ -196,6 +196,7 @@ export function PlayerController() {
     if (!isPointerLocked) {
       requestPointerLock();
     } else if (bombTargeting && blazeAbilities.bombValidRef.current && blazeAbilities.bombTargetRef.current) {
+      requestBlazeBombDrop();
       blazeAbilities.executeBombDrop(playerSounds);
     } else if (grappleTrapTargeting && hookshotAbilities.grappleTrapValidRef.current && hookshotAbilities.grappleTrapTargetRef.current) {
       setGrappleTrapTargeting(false);
@@ -203,7 +204,7 @@ export function PlayerController() {
   }, [
     isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, grappleTrapTargeting,
     phantomAbilities, blazeAbilities, hookshotAbilities, playerSounds, abilitySystem, movement,
-    cameraControl, sendInput, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
+    cameraControl, sendInput, requestBlazeBombDrop, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
   ]);
 
   // Canvas click listener
@@ -622,6 +623,8 @@ export function PlayerController() {
       ? phantomPrimaryHeldForPose && phantomAbilities.phantomPrimaryAmmoRef.current > 0
       : heroId === 'chronos'
         ? frameInput.primaryFire && getChronosPrimaryHeldBlend(now) >= CHRONOS_PRIMARY_FIRE_READY_BLEND
+        : heroId === 'blaze'
+          ? frameInput.primaryFire && !bombTargeting
         : frameInput.primaryFire;
     setChronosAegisVisualState(
       localPlayer.id,
@@ -657,7 +660,6 @@ export function PlayerController() {
           } else if (heroId === 'blaze') {
             // Blaze Q is Rocket Jump
             blazeAbilities.executeRocketJump(abilityCtx);
-            abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
           } else if (heroId === 'chronos') {
             chronosAbilities.executeTimebreak(
               abilityCtx,
@@ -686,10 +688,6 @@ export function PlayerController() {
       }
 
       if (heroId === 'blaze') {
-        blazeAbilities.updateRocketJump(abilityCtx, playerSounds);
-        if (frameInput.primaryFire && !bombTargeting) {
-          blazeAbilities.fireRocket(abilityCtx, playerSounds);
-        }
         blazeAbilities.handleBombTargeting(abilityCtx, playerSounds);
         blazeAbilities.handleFlamethrower(
           abilityCtx,
@@ -846,6 +844,7 @@ export function PlayerController() {
     if (now - lastSendRef.current >= 1000 / TICK_RATE) {
       lastSendRef.current = now;
       const currentTargeting = useGameStore.getState().shadowStepTargeting;
+      const currentBombTargeting = useGameStore.getState().bombTargeting;
       const reloadForServer = frameInput.reload || pendingReloadInputRef.current;
       const unstuckForServer = pendingUnstuckInputRef.current;
 
@@ -858,7 +857,7 @@ export function PlayerController() {
         jump: frameInput.jump,
         crouch: frameInput.crouch || movement.refs.isCrouching.current,
         sprint: frameInput.sprint,
-        primaryFire: primaryFireForServer,
+        primaryFire: heroId === 'blaze' && currentBombTargeting ? false : primaryFireForServer,
         secondaryFire: frameInput.secondaryFire,
         reload: reloadForServer,
         ability1: frameInput.ability1,

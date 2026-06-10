@@ -1005,6 +1005,39 @@ input[type="color"]::-webkit-color-swatch {
   outline: none;
 }
 
+.hero-preview-offscreen-root {
+  position: fixed;
+  left: -100000px;
+  top: -100000px;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.hero-preview-stage {
+  position: fixed;
+  left: -100000px;
+  top: -100000px;
+  width: var(--hero-preview-stage-width, 1px);
+  height: var(--hero-preview-stage-height, 1px);
+  z-index: 0;
+  pointer-events: none;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 300ms ease-out;
+}
+
+.hero-preview-stage[data-ready="true"] {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  opacity: 1;
+}
+
 .hero-preview-canvas {
   z-index: 0;
   background: transparent !important;

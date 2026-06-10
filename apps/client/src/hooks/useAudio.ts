@@ -59,6 +59,7 @@ const sharedSoundLoads = new Map<string, Promise<SoundEffect | null>>();
 const sharedLoops = new Map<string, {
   source: AudioBufferSourceNode;
   gain: GainNode;
+  panner?: PannerNode;
   isMusic: boolean;
   baseVolume: number;
   stopping?: boolean;
@@ -103,9 +104,9 @@ const SOUND_EFFECTS = {
   
   // Blaze Abilities (using existing sounds as fallbacks)
   blazeRocket: { path: '/sounds/rocket_fire.mp3', volume: 0.4 },
-  blazeBombTarget: { path: '/sounds/button.mp3', volume: 0.5 },
-  blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.5 },
-  blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 0.7 },
+  blazeBombTarget: { path: '/sounds/button.mp3', volume: 0.75 },
+  blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.8 },
+  blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 1.33 },
   blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
   blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
   blazeAirstrike: { path: '/sounds/airstrike.mp3', volume: 0.6 },
@@ -399,6 +400,129 @@ export async function playSharedSound(
   }
 
   return { stop };
+}
+
+export async function playSharedLoop(
+  id: string,
+  name: SoundName,
+  options: {
+    volume?: number;
+    position?: { x: number; y: number; z: number };
+    fadeInMs?: number;
+    isMusic?: boolean;
+  } = {}
+): Promise<void> {
+  if (sharedConfig.muted) return;
+  if (sharedLoops.has(id) || sharedPendingLoops.has(id)) return;
+
+  const pendingLoop = { cancelled: false };
+  sharedPendingLoops.set(id, pendingLoop);
+
+  const ctx = ensureSharedAudioContext();
+  if (!ctx) {
+    sharedPendingLoops.delete(id);
+    return;
+  }
+
+  if (ctx.state === 'suspended') {
+    await ctx.resume();
+  }
+  if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
+
+  const sound = await loadSharedSound(name);
+  if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
+  if (!sound?.buffer) {
+    sharedPendingLoops.delete(id);
+    return;
+  }
+
+  const source = ctx.createBufferSource();
+  source.buffer = sound.buffer;
+  source.loop = true;
+
+  const volumeMultiplier = options.isMusic ? getMusicVolume() : getSfxVolume();
+  const baseVolume = (options.volume ?? 1) * sound.volume;
+  const gainNode = ctx.createGain();
+  const fadeInMs = Math.max(0, options.fadeInMs ?? 0);
+  gainNode.gain.value = fadeInMs > 0 ? 0 : baseVolume * volumeMultiplier;
+  if (fadeInMs > 0) {
+    gainNode.gain.linearRampToValueAtTime(baseVolume * volumeMultiplier, ctx.currentTime + fadeInMs / 1000);
+  }
+
+  source.connect(gainNode);
+
+  let panner: PannerNode | undefined;
+  if (options.position) {
+    panner = ctx.createPanner();
+    panner.panningModel = 'HRTF';
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1;
+    panner.maxDistance = 70;
+    panner.rolloffFactor = 0.65;
+    panner.setPosition(options.position.x, options.position.y, options.position.z);
+    gainNode.connect(panner);
+    panner.connect(ctx.destination);
+  } else {
+    gainNode.connect(ctx.destination);
+  }
+
+  sharedLoops.set(id, {
+    source,
+    gain: gainNode,
+    panner,
+    isMusic: options.isMusic ?? false,
+    baseVolume,
+  });
+  sharedPendingLoops.delete(id);
+  source.start();
+}
+
+export function setSharedLoopPosition(
+  id: string,
+  position: { x: number; y: number; z: number }
+): void {
+  const loop = sharedLoops.get(id);
+  loop?.panner?.setPosition(position.x, position.y, position.z);
+}
+
+export function stopSharedLoop(id: string, fadeOutMs = 0): void {
+  const pendingLoop = sharedPendingLoops.get(id);
+  if (pendingLoop) {
+    pendingLoop.cancelled = true;
+    sharedPendingLoops.delete(id);
+  }
+
+  const loop = sharedLoops.get(id);
+  if (!loop || !sharedAudioContext) return;
+  if (loop.stopping) return;
+
+  if (fadeOutMs > 0) {
+    loop.stopping = true;
+    const ctx = sharedAudioContext;
+    const fadeSeconds = fadeOutMs / 1000;
+    loop.gain.gain.cancelScheduledValues(ctx.currentTime);
+    loop.gain.gain.setValueAtTime(loop.gain.gain.value, ctx.currentTime);
+    loop.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeSeconds);
+    loop.stopTimeout = window.setTimeout(() => {
+      try {
+        loop.source.stop();
+      } catch {
+        // Source may already have ended.
+      }
+      sharedLoops.delete(id);
+    }, fadeOutMs);
+    return;
+  }
+
+  if (loop.stopTimeout !== undefined) {
+    window.clearTimeout(loop.stopTimeout);
+  }
+  try {
+    loop.source.stop();
+  } catch {
+    // Source may already have ended.
+  }
+  sharedLoops.delete(id);
 }
 
 export function useAudio() {
