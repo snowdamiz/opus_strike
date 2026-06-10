@@ -9,6 +9,7 @@ import type {
   BlueprintPreview,
   MapTopologyId,
   PublicRankSnapshot,
+  MatchMode,
 } from '@voxel-strike/shared';
 
 // Re-export VisualState from visualStore for central type access
@@ -22,6 +23,7 @@ export type { VisualState };
 export interface LobbyInfo {
   roomId: string;
   name: string;
+  matchMode?: MatchMode;
   playerCount: number;
   maxPlayers: number;
   humanCount?: number;
@@ -29,6 +31,8 @@ export interface LobbyInfo {
   participantCount?: number;
   maxParticipants?: number;
   status: string;
+  queuedHumanCount?: number;
+  requiredPlayers?: number;
   wager?: LobbyWagerState;
 }
 
@@ -65,6 +69,9 @@ export type WagerPaymentStatus =
 
 export interface LobbyWagerState {
   enabled: boolean;
+  matchMode?: MatchMode;
+  rankedEntryQuoteId?: string | null;
+  rankedEntryQuoteExpiresAt?: string | null;
   status?: string;
   token?: 'SOL' | string;
   coverChargeLamports?: string;
@@ -72,6 +79,17 @@ export interface LobbyWagerState {
   platformFeeBps?: number;
   potLamports?: string;
   paidPlayerCount?: number;
+}
+
+export interface RankedEntryQuote {
+  quoteId: string;
+  usdCents: number;
+  solUsdPrice?: string;
+  solUsdPriceMicroUsd: string;
+  coverChargeLamports: string;
+  priceSource: string;
+  expiresAt: string;
+  cluster: string;
 }
 
 export interface WagerPaymentIntent {
@@ -140,11 +158,17 @@ export interface UserStats {
 }
 
 export interface MatchmakingStatus {
+  matchMode: MatchMode | null;
   rankBandId: number | null;
   rankBandLabel: string | null;
   averageCompetitiveRating: number | null;
   averageVisibleRank: string | null;
   rankSearchDistance: number | null;
+  queuedHumanCount: number | null;
+  provisionalHumanCount: number | null;
+  requiredPlayers: number | null;
+  rankedCoverChargeLamports: string | null;
+  rankedEntryQuoteId: string | null;
 }
 
 export type AppPhase = 'menu' | 'browsing_lobbies' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';

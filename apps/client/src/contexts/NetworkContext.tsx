@@ -1,6 +1,6 @@
 import { createContext, useContext, useRef, useCallback, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
+import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, RankedEntryQuote, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
 import type {
@@ -56,6 +56,7 @@ interface NetworkContextType {
     }
   ) => Promise<void>;
   quickPlay: (playerName: string) => Promise<void>;
+  rankedPlay: (playerName: string) => Promise<void>;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
@@ -70,7 +71,7 @@ interface NetworkContextType {
   reportMapVotePreviewsReady: () => void;
   finalizeMapVote: () => void;
   kickPlayer: (playerId: string) => void;
-  createWagerPaymentIntent: (lobbyId: string, walletAddress: string, lobbyPlayerId?: string | null) => Promise<WagerPaymentIntent>;
+  createWagerPaymentIntent: (lobbyId: string, walletAddress: string, lobbyPlayerId?: string | null, rankedEntryQuoteId?: string | null) => Promise<WagerPaymentIntent>;
   createWagerPaymentTransaction: (intentId: string) => Promise<WagerPaymentTransaction>;
   submitWagerSignedPaymentTransaction: (intentId: string, signedTransactionBase64: string) => Promise<WagerPaymentIntent>;
   submitWagerPaymentSignature: (intentId: string, signature: string) => Promise<WagerPaymentIntent>;
@@ -105,12 +106,25 @@ interface NetworkContextType {
 
 interface QuickPlayTicketResponse {
   ticket: string;
+  mode: 'quick_play';
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: unknown;
   isGuest: boolean;
   targetRankDivisionIndex: number;
   targetRankLabel: string;
+}
+
+interface RankedTicketResponse {
+  ticket: string;
+  mode: 'ranked';
+  competitiveRating: number;
+  rankDivisionIndex: number;
+  rank: unknown;
+  isGuest: false;
+  targetRankDivisionIndex: number;
+  targetRankLabel: string;
+  quote: RankedEntryQuote;
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
@@ -127,6 +141,36 @@ async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ error: 'Failed to issue matchmaking ticket' }));
     throw new Error(payload.error || 'Failed to issue matchmaking ticket');
+  }
+
+  return response.json();
+}
+
+async function requestRankedEntryQuote(): Promise<RankedEntryQuote> {
+  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-entry-quote`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to create ranked entry quote' }));
+    throw new Error(payload.error || 'Failed to create ranked entry quote');
+  }
+
+  const data = await response.json();
+  return data.quote;
+}
+
+async function requestRankedTicket(quoteId: string): Promise<RankedTicketResponse> {
+  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-ticket`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quoteId }),
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to issue ranked ticket' }));
+    throw new Error(payload.error || 'Failed to issue ranked ticket');
   }
 
   return response.json();
@@ -288,6 +332,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     room.onMessage('lobbyState', (data: {
       lobbyId: string;
       name: string;
+      matchMode?: LobbyWagerState['matchMode'];
       hostId: string;
       status: string;
       players: any[];
@@ -296,18 +341,34 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       averageCompetitiveRating?: number;
       averageVisibleRank?: string;
       rankSearchDistance?: number;
+      queuedHumanCount?: number;
+      provisionalHumanCount?: number;
+      requiredPlayers?: number;
+      rankedCoverChargeLamports?: string;
+      rankedEntryQuoteId?: string;
       wager?: LobbyWagerState;
     }) => {
       loggers.network.debug('received lobby state', data);
       setCurrentLobby(data.lobbyId, data.name);
-      setCurrentLobbyWager(data.wager ?? { enabled: false });
+      const currentWager = useGameStore.getState().currentLobbyWager;
+      const nextWager = data.wager ?? { enabled: false };
+      setCurrentLobbyWager({
+        ...nextWager,
+        rankedEntryQuoteExpiresAt: nextWager.rankedEntryQuoteExpiresAt ?? currentWager.rankedEntryQuoteExpiresAt ?? null,
+      });
       setIsLobbyHost(data.hostId === room.sessionId);
       setMatchmakingStatus({
+        matchMode: data.matchMode ?? null,
         rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
         rankBandLabel: data.rankBandLabel ?? null,
         averageCompetitiveRating: typeof data.averageCompetitiveRating === 'number' ? data.averageCompetitiveRating : null,
         averageVisibleRank: data.averageVisibleRank ?? null,
         rankSearchDistance: typeof data.rankSearchDistance === 'number' ? data.rankSearchDistance : null,
+        queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
+        provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
+        requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
+        rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
+        rankedEntryQuoteId: data.rankedEntryQuoteId ?? data.wager?.rankedEntryQuoteId ?? null,
       });
       if (data.status === 'map_vote') {
         setAppPhase('map_vote');
@@ -338,18 +399,30 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     room.onMessage('matchmakingStatus', (data: {
+      matchMode?: LobbyWagerState['matchMode'];
       rankBandId?: number;
       rankBandLabel?: string;
       averageCompetitiveRating?: number;
       averageVisibleRank?: string;
       rankSearchDistance?: number;
+      queuedHumanCount?: number;
+      provisionalHumanCount?: number;
+      requiredPlayers?: number;
+      rankedCoverChargeLamports?: string;
+      rankedEntryQuoteId?: string;
     }) => {
       setMatchmakingStatus({
+        matchMode: data.matchMode ?? null,
         rankBandId: typeof data.rankBandId === 'number' ? data.rankBandId : null,
         rankBandLabel: data.rankBandLabel ?? null,
         averageCompetitiveRating: typeof data.averageCompetitiveRating === 'number' ? data.averageCompetitiveRating : null,
         averageVisibleRank: data.averageVisibleRank ?? null,
         rankSearchDistance: typeof data.rankSearchDistance === 'number' ? data.rankSearchDistance : null,
+        queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
+        provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
+        requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
+        rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
+        rankedEntryQuoteId: data.rankedEntryQuoteId ?? null,
       });
     });
 
@@ -431,6 +504,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       walletAddress: string;
       depositSignature?: string | null;
       refundSignature?: string | null;
+      refundReason?: string | null;
+      refundGrossLamports?: string | null;
+      refundOutboundFeeLamports?: string | null;
+      refundNetLamports?: string | null;
+      refundFeeSource?: string | null;
       potLamports: string;
     }) => {
       loggers.network.debug('payment status changed', data.status);
@@ -637,6 +715,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         lobbyName: 'Quick Play',
         isPrivate: false,
         matchmakingMode: true,
+        matchMode: 'quick_play',
         matchmakingTicket: matchmakingTicket.ticket,
         rankBandId: matchmakingTicket.targetRankDivisionIndex,
         clientId,
@@ -659,6 +738,71 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected]);
+
+  const rankedPlay = useCallback(async (playerName: string) => {
+    setLoading(true);
+
+    try {
+      cleanupExistingConnections();
+
+      const client = getClient();
+      const clientId = getClientId();
+      const quote = await requestRankedEntryQuote();
+      const rankedTicket = await requestRankedTicket(quote.quoteId);
+
+      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.quote.coverChargeLamports);
+
+      lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
+        playerName,
+        lobbyName: 'Ranked',
+        isPrivate: false,
+        matchmakingMode: true,
+        matchMode: 'ranked',
+        matchmakingTicket: rankedTicket.ticket,
+        rankBandId: rankedTicket.targetRankDivisionIndex,
+        rankedEntryQuoteId: rankedTicket.quote.quoteId,
+        rankedCoverChargeLamports: rankedTicket.quote.coverChargeLamports,
+        clientId,
+        initialBotCount: 0,
+        botFillMode: 'manual',
+        defaultBotDifficulty: 'normal',
+      });
+
+      setupLobbyListeners(lobbyRoomRef.current, playerName);
+
+      setPlayerId(lobbyRoomRef.current.sessionId);
+      setCurrentLobbyWager({
+        enabled: true,
+        matchMode: 'ranked',
+        rankedEntryQuoteId: rankedTicket.quote.quoteId,
+        rankedEntryQuoteExpiresAt: rankedTicket.quote.expiresAt,
+        token: 'SOL',
+        coverChargeLamports: rankedTicket.quote.coverChargeLamports,
+      });
+      setMatchmakingStatus({
+        matchMode: 'ranked',
+        rankBandId: rankedTicket.targetRankDivisionIndex,
+        rankBandLabel: rankedTicket.targetRankLabel,
+        averageCompetitiveRating: rankedTicket.competitiveRating,
+        averageVisibleRank: null,
+        rankSearchDistance: null,
+        queuedHumanCount: 0,
+        provisionalHumanCount: 1,
+        requiredPlayers: null,
+        rankedCoverChargeLamports: rankedTicket.quote.coverChargeLamports,
+        rankedEntryQuoteId: rankedTicket.quote.quoteId,
+      });
+      setAppPhase('matchmaking');
+      setConnected(true);
+      setLoading(false);
+
+      loggers.network.info('ranked joined lobby', lobbyRoomRef.current.id);
+    } catch (error) {
+      loggers.network.error('ranked matchmaking failed', error);
+      setLoading(false);
+      throw error;
+    }
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected]);
 
   const joinLobby = useCallback(async (playerName: string, lobbyId: string) => {
     setLoading(true);
@@ -754,13 +898,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const createWagerPaymentIntent = useCallback(async (
     lobbyId: string,
     walletAddress: string,
-    lobbyPlayerId?: string | null
+    lobbyPlayerId?: string | null,
+    rankedEntryQuoteId?: string | null
   ): Promise<WagerPaymentIntent> => {
     const response = await wagerApiRequest<{ intent: WagerPaymentIntent }>(
       `/wagers/lobbies/${encodeURIComponent(lobbyId)}/intents`,
       {
         method: 'POST',
-        body: JSON.stringify({ walletAddress, lobbyPlayerId }),
+        body: JSON.stringify({ walletAddress, lobbyPlayerId, rankedEntryQuoteId }),
       }
     );
     return response.intent;
@@ -1163,6 +1308,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       watchLobbies,
       createLobby,
       quickPlay,
+      rankedPlay,
       joinLobby,
       leaveLobby,
       setLobbyReady,

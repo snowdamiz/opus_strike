@@ -28,7 +28,7 @@ const gameServer = new Server({
 gameServer.define('game_room', GameRoom);
 gameServer
   .define('lobby_room', LobbyRoom)
-  .filterBy(['isPrivate', 'matchmakingMode', 'rankBandId'])
+  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'rankedCoverChargeLamports'])
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
 
@@ -83,6 +83,7 @@ app.get('/voice/status', (_req, res) => {
 interface LobbySummary {
   roomId: string;
   name: string;
+  matchMode?: string;
   playerCount: number;
   maxPlayers: number;
   humanCount: number;
@@ -90,8 +91,12 @@ interface LobbySummary {
   participantCount: number;
   maxParticipants: number;
   status: string;
+  queuedHumanCount?: number;
+  requiredPlayers?: number;
   wager?: {
     enabled: boolean;
+    matchMode?: string;
+    rankedEntryQuoteId?: string | null;
     status?: string;
     token?: string;
     coverChargeLamports?: string;
@@ -108,6 +113,7 @@ async function getPublicLobbies(): Promise<LobbySummary[]> {
     .map((room: any) => ({
       roomId: room.roomId,
       name: room.metadata?.name || `Lobby ${room.roomId.slice(0, 6)}`,
+      matchMode: room.metadata?.matchMode,
       playerCount: room.metadata?.humanCount ?? room.clients,
       maxPlayers: room.metadata?.maxPlayers ?? room.maxClients,
       humanCount: room.metadata?.humanCount ?? room.clients,
@@ -115,8 +121,12 @@ async function getPublicLobbies(): Promise<LobbySummary[]> {
       participantCount: room.metadata?.participantCount ?? room.clients,
       maxParticipants: room.metadata?.maxParticipants ?? room.maxClients,
       status: room.metadata?.status || 'waiting',
+      queuedHumanCount: room.metadata?.queuedHumanCount,
+      requiredPlayers: room.metadata?.requiredPlayers,
       wager: {
         enabled: room.metadata?.wagerEnabled === true,
+        matchMode: room.metadata?.matchMode,
+        rankedEntryQuoteId: room.metadata?.rankedEntryQuoteId,
         status: room.metadata?.wagerStatus,
         token: room.metadata?.wagerToken,
         coverChargeLamports: room.metadata?.wagerCoverChargeLamports,

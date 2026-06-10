@@ -57,6 +57,7 @@ export function MatchSummaryScreen() {
   const localOutcome = localPlayer?.outcome ?? 'draw';
   const resultLabel = localOutcome === 'win' ? 'Victory' : localOutcome === 'loss' ? 'Defeat' : 'Draw';
   const winnerLabel = summary.winningTeam ? `${getFactionLabel(summary.winningTeam)} Wins` : 'Draw';
+  const showRankChange = summary.matchMode === 'ranked';
 
   const handleReturn = () => {
     clearMatchSummary();
@@ -107,11 +108,13 @@ export function MatchSummaryScreen() {
                 leveledUp={leveledUp}
               />
 
-              <RankChangeSummary
-                delta={localPlayer?.ratingDelta}
-                before={localPlayer?.rankBefore}
-                after={localPlayer?.rankAfter ?? localPlayer?.rank}
-              />
+              {showRankChange && (
+                <RankChangeSummary
+                  delta={localPlayer?.ratingDelta}
+                  before={localPlayer?.rankBefore}
+                  after={localPlayer?.rankAfter ?? localPlayer?.rank}
+                />
+              )}
 
               <LocalStatsPanel player={localPlayer} />
 

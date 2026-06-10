@@ -79,6 +79,7 @@ router.post('/lobbies/:lobbyId/intents', async (req, res) => {
       userId: user.userId,
       walletAddress,
       lobbyPlayerId: typeof req.body?.lobbyPlayerId === 'string' ? req.body.lobbyPlayerId : null,
+      rankedEntryQuoteId: typeof req.body?.rankedEntryQuoteId === 'string' ? req.body.rankedEntryQuoteId : null,
     });
     res.json({ intent });
   } catch (error) {

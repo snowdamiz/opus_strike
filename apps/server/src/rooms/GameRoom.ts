@@ -89,6 +89,7 @@ import type {
   MovementCorrectionReason,
   MovementTelemetrySnapshot,
   GameEndEvent,
+  MatchMode,
   MatchOutcome,
   MatchSummaryPlayer,
   SelfMovementAuthority,
@@ -177,6 +178,7 @@ import {
 interface CreateOptions {
   lobbyId?: string;
   lobbyName?: string;
+  matchMode?: MatchMode;
   mapSeed?: number;
   botAssignments?: BotAssignment[];
   wagerContext?: LockedWagerContext | null;
@@ -311,6 +313,7 @@ interface MatchPersistenceLedger {
   matchId: string;
   roomId: string;
   lobbyId: string | null;
+  matchMode: MatchMode;
   mapSeed: number;
   rankedEligible: boolean;
   startedAt: Date;
@@ -646,6 +649,8 @@ export class GameRoom extends Room<GameState> {
   private wagerContext: LockedWagerContext | null = null;
   private rankedEligibilityCandidate = false;
   private rankedRequiredHumanPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
+  private matchMode: MatchMode = 'custom';
+  private wagerSettlementRequested = false;
 
   async onAuth(
     client: Client,
@@ -696,6 +701,7 @@ export class GameRoom extends Room<GameState> {
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
+    this.matchMode = options.matchMode ?? options.wagerContext?.matchMode ?? (options.wagerContext ? 'custom_wager' : 'custom');
     this.wagerContext = options.wagerContext || null;
     this.rankedEligibilityCandidate = options.rankedEligible === true;
     this.rankedRequiredHumanPlayers = Math.max(1, Math.floor(options.requiredHumanPlayers ?? DEFAULT_GAME_CONFIG.maxPlayers));
@@ -1201,6 +1207,23 @@ export class GameRoom extends Room<GameState> {
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
     }
+    if (this.wagerContext && !this.wagerSettlementRequested) {
+      this.wagerSettlementRequested = true;
+      const matchId = this.matchPersistenceLedger?.matchId ?? null;
+      wagerService.settleWageredLobby({
+        wageredLobbyId: this.wagerContext.wageredLobbyId,
+        matchId,
+        winningTeam: null,
+      }).catch((error) => {
+        loggers.room.error('Failed to request wager no-contest refund on room dispose', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId,
+          wageredLobbyId: this.wagerContext?.wageredLobbyId,
+          error: this.serializePersistenceError(error),
+        });
+      });
+    }
   }
 
   private tick() {
@@ -1633,6 +1656,7 @@ export class GameRoom extends Room<GameState> {
       ?? (this.state.roundStartTime || endedAt);
 
     const event: GameEndEvent = {
+      matchMode: this.matchMode,
       winningTeam,
       finalScore,
       matchId: this.matchPersistenceLedger?.matchId ?? null,
@@ -2104,6 +2128,7 @@ export class GameRoom extends Room<GameState> {
         matchId: randomUUID(),
         roomId: this.roomId,
         lobbyId: this.lobbyId,
+        matchMode: this.matchMode,
         mapSeed: this.state.mapSeed,
         rankedEligible: this.rankedEligibilityCandidate,
         startedAt: new Date(now),
@@ -2254,13 +2279,19 @@ export class GameRoom extends Room<GameState> {
     participants: MatchParticipantSnapshot[],
     forcedByPlayerId?: string
   ): boolean {
+    if (!this.wagerContext) return false;
+    const paidUserIds = new Set(this.wagerContext.paidPlayers.map((player) => player.userId));
+
     return Boolean(
       ledger.rankedEligible
+      && ledger.matchMode === 'ranked'
       && !forcedByPlayerId
-      && !this.wagerContext
+      && this.wagerContext.matchMode === 'ranked'
       && this.spawnedNpcs.size === 0
       && participants.length === this.rankedRequiredHumanPlayers
+      && this.wagerContext.paidPlayers.length === this.rankedRequiredHumanPlayers
       && participants.every((participant) => participant.userId && !participant.userId.startsWith('guest:'))
+      && participants.every((participant) => paidUserIds.has(participant.userId))
     );
   }
 
@@ -2304,6 +2335,7 @@ export class GameRoom extends Room<GameState> {
       roomId: ledger.roomId,
       lobbyId: ledger.lobbyId,
       mapSeed: ledger.mapSeed,
+      matchMode: ledger.matchMode,
       rankedEligible,
       startedAt: ledger.startedAt,
       endedAt,
@@ -2346,6 +2378,7 @@ export class GameRoom extends Room<GameState> {
 
   private settleWagerAfterGame(winningTeam: Team | null): void {
     if (!this.wagerContext) return;
+    this.wagerSettlementRequested = true;
 
     const matchId = this.matchPersistenceLedger?.matchId ?? null;
     wagerService.settleWageredLobby({
@@ -6781,7 +6814,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
     this.persistMatchLedger(finalScore, winningTeam, forcedByPlayerId);
-    this.settleWagerAfterGame(winningTeam);
+    this.settleWagerAfterGame(forcedByPlayerId ? null : winningTeam);
 
     // Reset room after delay
     setTimeout(() => {

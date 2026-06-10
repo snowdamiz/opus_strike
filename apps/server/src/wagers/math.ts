@@ -101,6 +101,22 @@ export function evaluateWagerStartEligibility(
   };
 }
 
+export function calculateNetRefundLamports(
+  grossLamports: bigint,
+  outboundFeeLamports: bigint
+): bigint {
+  if (grossLamports < 0n) {
+    throw new Error('refund gross lamports cannot be negative');
+  }
+  if (outboundFeeLamports < 0n) {
+    throw new Error('refund fee lamports cannot be negative');
+  }
+  if (outboundFeeLamports >= grossLamports) {
+    throw new Error('refund fee must be less than gross lamports; manual review required');
+  }
+  return grossLamports - outboundFeeLamports;
+}
+
 export function bigintToJson(value: bigint): string {
   return value.toString(10);
 }

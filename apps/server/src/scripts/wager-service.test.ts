@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import type { ParsedTransactionWithMeta } from '@solana/web3.js';
 import {
+  calculateNetRefundLamports,
   calculateWagerPayouts,
   evaluateWagerStartEligibility,
   type WagerRosterPlayer,
@@ -151,6 +152,12 @@ function getIncrementValue(data: unknown, key: string): number | bigint {
   return value;
 }
 
+function runRefundMathTests(): void {
+  assert.equal(calculateNetRefundLamports(1_000_000n, 5_000n), 995_000n);
+  assert.throws(() => calculateNetRefundLamports(5_000n, 5_000n), /manual review/);
+  assert.throws(() => calculateNetRefundLamports(5_000n, 6_000n), /manual review/);
+}
+
 function runWagerStatsTests(): void {
   const settled = buildWagerUserStatIncrements({
     winningTeam: 'red',
@@ -227,6 +234,7 @@ function runWagerStatsTests(): void {
 }
 
 runPayoutMathTests();
+runRefundMathTests();
 runStartGateTests();
 runTransactionParserTests();
 runWagerStatsTests();

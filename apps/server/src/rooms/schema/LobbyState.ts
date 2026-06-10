@@ -52,6 +52,7 @@ defineTypes(LobbyPlayer, {
 export class LobbyState extends Schema {
   lobbyId: string = '';
   name: string = '';
+  matchMode: string = 'custom';
   hostId: string = '';
   maxPlayers: number = DEFAULT_GAME_CONFIG.maxPlayers;
   maxParticipants: number = DEFAULT_GAME_CONFIG.maxPlayers;
@@ -77,6 +78,7 @@ export class LobbyState extends Schema {
 defineTypes(LobbyState, {
   lobbyId: 'string',
   name: 'string',
+  matchMode: 'string',
   hostId: 'string',
   maxPlayers: 'number',
   maxParticipants: 'number',

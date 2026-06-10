@@ -3,12 +3,14 @@ import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import {
   Connection,
+  Message,
   PublicKey,
   SystemInstruction,
   SystemProgram,
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+import type { MatchMode } from '@voxel-strike/shared';
 import prisma from '../db';
 import { loggers } from '../utils/logger';
 import {
@@ -20,6 +22,7 @@ import {
 } from './config';
 import {
   bigintToJson,
+  calculateNetRefundLamports,
   calculateWagerPayouts,
   evaluateWagerStartEligibility,
   WAGER_TOKEN,
@@ -66,6 +69,8 @@ export interface LobbyWagerSnapshot {
   enabled: boolean;
   wageredLobbyId?: string;
   lobbyId?: string;
+  matchMode?: MatchMode;
+  rankedEntryQuoteId?: string | null;
   status?: WageredLobbyStatus;
   token?: typeof WAGER_TOKEN;
   coverChargeLamports?: string;
@@ -103,6 +108,11 @@ export interface PlayerWagerPaymentStatus {
   amountLamports?: string;
   depositSignature?: string;
   refundSignature?: string;
+  refundReason?: string | null;
+  refundGrossLamports?: string;
+  refundOutboundFeeLamports?: string;
+  refundNetLamports?: string;
+  refundFeeSource?: string | null;
 }
 
 export interface LockedWagerPlayer {
@@ -120,6 +130,8 @@ export interface LockedWagerContext {
   coverChargeLamports: string;
   treasuryWallet: string;
   platformFeeBps: number;
+  matchMode: MatchMode;
+  rankedEntryQuoteId?: string | null;
   paidPlayers: LockedWagerPlayer[];
 }
 
@@ -132,6 +144,11 @@ export interface WagerPaymentStatusChanged {
   walletAddress: string;
   depositSignature?: string | null;
   refundSignature?: string | null;
+  refundReason?: string | null;
+  refundGrossLamports?: string | null;
+  refundOutboundFeeLamports?: string | null;
+  refundNetLamports?: string | null;
+  refundFeeSource?: string | null;
   potLamports: string;
 }
 
@@ -148,6 +165,13 @@ export interface WagerSettlementSnapshot {
 interface TreasuryTransferResult {
   signature: string | null;
   confirmedAt: Date;
+}
+
+interface RefundTransferAudit {
+  grossLamports: bigint;
+  outboundFeeLamports: bigint;
+  netLamports: bigint;
+  feeSource: 'exact' | 'fallback';
 }
 
 interface WagerSettlementPaymentForStats {
@@ -295,6 +319,8 @@ export class WagerService extends EventEmitter {
   async createWageredLobby(input: {
     lobbyId: string;
     createdByUserId: string;
+    matchMode?: MatchMode;
+    rankedEntryQuoteId?: string | null;
     options?: CreateWagerOptions;
   }): Promise<LobbyWagerSnapshot> {
     const normalized = this.normalizeCreateOptions(input.options);
@@ -303,6 +329,8 @@ export class WagerService extends EventEmitter {
     const row = await prisma.wageredLobby.create({
       data: {
         lobbyId: input.lobbyId,
+        matchMode: input.matchMode ?? 'custom_wager',
+        rankedEntryQuoteId: input.rankedEntryQuoteId ?? null,
         status: 'waiting',
         token: normalized.token,
         coverChargeLamports: normalized.coverChargeLamports,
@@ -337,6 +365,8 @@ export class WagerService extends EventEmitter {
 
     return {
       wagerEnabled: true,
+      matchMode: snapshot.matchMode,
+      rankedEntryQuoteId: snapshot.rankedEntryQuoteId,
       wagerStatus: snapshot.status,
       wagerToken: snapshot.token,
       wagerCoverChargeLamports: snapshot.coverChargeLamports,
@@ -395,6 +425,11 @@ export class WagerService extends EventEmitter {
         amountLamports: bigintToJson(payment.amountLamports),
         depositSignature: payment.depositSignature ?? undefined,
         refundSignature: payment.refundSignature ?? undefined,
+        refundReason: payment.refundReason,
+        refundGrossLamports: payment.refundGrossLamports === null ? undefined : bigintToJson(payment.refundGrossLamports),
+        refundOutboundFeeLamports: payment.refundOutboundFeeLamports === null ? undefined : bigintToJson(payment.refundOutboundFeeLamports),
+        refundNetLamports: payment.refundNetLamports === null ? undefined : bigintToJson(payment.refundNetLamports),
+        refundFeeSource: payment.refundFeeSource,
       };
     });
   }
@@ -404,6 +439,7 @@ export class WagerService extends EventEmitter {
     userId: string;
     walletAddress: string;
     lobbyPlayerId?: string | null;
+    rankedEntryQuoteId?: string | null;
   }): Promise<WagerPaymentIntentPayload> {
     const config = this.getConfig();
     assertWagerPaymentsConfigured(config);
@@ -418,6 +454,23 @@ export class WagerService extends EventEmitter {
     }
     if (wageredLobby.status !== 'waiting' && wageredLobby.status !== 'locked') {
       throw new Error('This wager is no longer accepting payments');
+    }
+    if (wageredLobby.matchMode === 'ranked') {
+      if (!input.rankedEntryQuoteId) {
+        throw new Error('Ranked payment requires a ranked entry quote');
+      }
+      const quote = await prisma.rankedEntryQuote.findUnique({
+        where: { id: input.rankedEntryQuoteId },
+      });
+      if (!quote || quote.userId !== input.userId) {
+        throw new Error('Ranked entry quote not found');
+      }
+      if (quote.expiresAt.getTime() <= Date.now()) {
+        throw new Error('Ranked entry quote has expired');
+      }
+      if (quote.coverChargeLamports !== wageredLobby.coverChargeLamports) {
+        throw new Error('Ranked entry quote amount does not match this queue');
+      }
     }
 
     const now = new Date();
@@ -456,6 +509,7 @@ export class WagerService extends EventEmitter {
         where: { id: active.id },
         data: {
           lobbyPlayerId: input.lobbyPlayerId ?? active.lobbyPlayerId,
+          rankedEntryQuoteId: input.rankedEntryQuoteId ?? active.rankedEntryQuoteId,
           walletAddress: input.walletAddress,
           amountLamports: wageredLobby.coverChargeLamports,
           surplusLamports: 0n,
@@ -464,6 +518,11 @@ export class WagerService extends EventEmitter {
           status: 'intent_created',
           depositSignature: null,
           refundSignature: null,
+          refundReason: null,
+          refundGrossLamports: null,
+          refundOutboundFeeLamports: null,
+          refundNetLamports: null,
+          refundFeeSource: null,
           lastError: null,
           creditedAt: null,
           refundedAt: null,
@@ -478,6 +537,7 @@ export class WagerService extends EventEmitter {
           lobbyPlayerId: input.lobbyPlayerId ?? null,
           userId: input.userId,
           walletAddress: input.walletAddress,
+          rankedEntryQuoteId: input.rankedEntryQuoteId ?? null,
           amountLamports: wageredLobby.coverChargeLamports,
           memo,
           intentExpiresAt: expiresAt,
@@ -679,16 +739,31 @@ export class WagerService extends EventEmitter {
       return;
     }
 
-    await prisma.wagerPayment.update({
+    let refundReason = payment.refundReason;
+    if (!refundReason && payment.rankedEntryQuoteId && payment.wageredLobby.status !== 'in_game') {
+      const quote = await prisma.rankedEntryQuote.findUnique({
+        where: { id: payment.rankedEntryQuoteId },
+        select: { expiresAt: true },
+      });
+      if (!quote || quote.expiresAt.getTime() <= Date.now()) {
+        refundReason = 'ranked_quote_expired';
+      }
+    }
+
+    const credited = await prisma.wagerPayment.update({
       where: { id: payment.id },
       data: {
         status: 'credited',
         surplusLamports: result.payment?.surplusLamports ?? 0n,
         creditedAt: new Date(),
+        refundReason,
         lastError: null,
       },
     });
     await this.emitPaymentStatusChanged(payment.wageredLobby.lobbyId, payment.id);
+    if (credited.refundReason) {
+      await this.refundSinglePayment(payment.id, credited.refundReason);
+    }
   }
 
   async getStartEligibility(lobbyId: string, roster: WagerRosterPlayer[]): Promise<WagerStartEligibility> {
@@ -764,6 +839,8 @@ export class WagerService extends EventEmitter {
       coverChargeLamports: bigintToJson(wageredLobby.coverChargeLamports),
       treasuryWallet: wageredLobby.treasuryWallet,
       platformFeeBps: wageredLobby.platformFeeBps,
+      matchMode: wageredLobby.matchMode as MatchMode,
+      rankedEntryQuoteId: wageredLobby.rankedEntryQuoteId,
       paidPlayers,
     };
   }
@@ -803,7 +880,7 @@ export class WagerService extends EventEmitter {
     const payment = await prisma.wagerPayment.findFirst({
       where: {
         userId,
-        status: 'credited',
+        status: { in: ['submitted', 'confirmed', 'credited', 'refunding'] },
         wageredLobby: {
           lobbyId,
           status: { in: ['waiting', 'locked'] },
@@ -812,6 +889,18 @@ export class WagerService extends EventEmitter {
       include: { wageredLobby: true },
     });
     if (!payment) return;
+
+    if (payment.status === 'submitted' || payment.status === 'confirmed') {
+      await prisma.wagerPayment.update({
+        where: { id: payment.id },
+        data: {
+          refundReason: reason,
+          lastError: reason,
+        },
+      });
+      await this.emitPaymentStatusChanged(payment.wageredLobby.lobbyId, payment.id);
+      return;
+    }
 
     loggers.room.info('Refunding pre-game wager payment', {
       lobbyId,
@@ -838,7 +927,18 @@ export class WagerService extends EventEmitter {
     });
 
     for (const payment of wageredLobby.payments) {
-      if (payment.status !== 'credited') continue;
+      if (payment.status === 'submitted' || payment.status === 'confirmed') {
+        await prisma.wagerPayment.update({
+          where: { id: payment.id },
+          data: {
+            refundReason: reason,
+            lastError: reason,
+          },
+        });
+        await this.emitPaymentStatusChanged(wageredLobby.lobbyId, payment.id);
+        continue;
+      }
+      if (payment.status !== 'credited' && payment.status !== 'refunding') continue;
       await this.refundSinglePayment(payment.id, reason);
     }
 
@@ -932,6 +1032,8 @@ export class WagerService extends EventEmitter {
     row: {
       id: string;
       lobbyId: string;
+      matchMode?: string;
+      rankedEntryQuoteId?: string | null;
       status: string;
       token: string;
       coverChargeLamports: bigint;
@@ -945,6 +1047,8 @@ export class WagerService extends EventEmitter {
       enabled: true,
       wageredLobbyId: row.id,
       lobbyId: row.lobbyId,
+      matchMode: (row.matchMode ?? 'custom_wager') as MatchMode,
+      rankedEntryQuoteId: row.rankedEntryQuoteId ?? null,
       status: row.status as WageredLobbyStatus,
       token: WAGER_TOKEN,
       coverChargeLamports: bigintToJson(row.coverChargeLamports),
@@ -1081,8 +1185,84 @@ export class WagerService extends EventEmitter {
       walletAddress: payment.walletAddress,
       depositSignature: payment.depositSignature,
       refundSignature: payment.refundSignature,
+      refundReason: payment.refundReason,
+      refundGrossLamports: payment.refundGrossLamports?.toString() ?? null,
+      refundOutboundFeeLamports: payment.refundOutboundFeeLamports?.toString() ?? null,
+      refundNetLamports: payment.refundNetLamports?.toString() ?? null,
+      refundFeeSource: payment.refundFeeSource,
       potLamports: bigintToJson(potLamports),
     } satisfies WagerPaymentStatusChanged);
+  }
+
+  private async estimateRefundTransferAudit(input: {
+    recipientWallet: string;
+    grossLamports: bigint;
+  }): Promise<RefundTransferAudit> {
+    if (input.grossLamports <= 0n) {
+      return {
+        grossLamports: input.grossLamports,
+        outboundFeeLamports: 0n,
+        netLamports: 0n,
+        feeSource: 'exact',
+      };
+    }
+    assertPublicKey(input.recipientWallet, 'recipientWallet');
+    const config = this.getConfig();
+    assertWagerPaymentsConfigured(config);
+    if (input.recipientWallet === config.treasuryWallet) {
+      return {
+        grossLamports: input.grossLamports,
+        outboundFeeLamports: 0n,
+        netLamports: input.grossLamports,
+        feeSource: 'exact',
+      };
+    }
+    if (!isSafeLamportNumber(input.grossLamports)) {
+      throw new Error('Refund amount exceeds safe lamport range');
+    }
+
+    const signer = getSettlementKeypair();
+    if (!signer) {
+      throw new Error('WAGER_SETTLEMENT_SECRET_KEY is required for payouts and refunds');
+    }
+    if (signer.publicKey.toBase58() !== config.treasuryWallet) {
+      throw new Error('Settlement signer public key must match WAGER_TREASURY_WALLET');
+    }
+
+    let outboundFeeLamports = config.refundFeeFallbackLamports;
+    let feeSource: RefundTransferAudit['feeSource'] = 'fallback';
+    try {
+      const latest = await this.getConnection().getLatestBlockhash('confirmed');
+      const message: Message = new Transaction({
+        feePayer: signer.publicKey,
+        blockhash: latest.blockhash,
+        lastValidBlockHeight: latest.lastValidBlockHeight,
+      }).add(SystemProgram.transfer({
+        fromPubkey: signer.publicKey,
+        toPubkey: new PublicKey(input.recipientWallet),
+        lamports: Number(input.grossLamports),
+      })).compileMessage();
+      const fee = await this.getConnection().getFeeForMessage(message, 'confirmed');
+      if (typeof fee.value === 'number' && Number.isSafeInteger(fee.value) && fee.value >= 0) {
+        outboundFeeLamports = BigInt(fee.value);
+        feeSource = 'exact';
+      }
+    } catch (error) {
+      loggers.room.warn('Falling back to configured wager refund fee estimate', {
+        recipientWallet: input.recipientWallet,
+        grossLamports: input.grossLamports.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    const netLamports = calculateNetRefundLamports(input.grossLamports, outboundFeeLamports);
+
+    return {
+      grossLamports: input.grossLamports,
+      outboundFeeLamports,
+      netLamports,
+      feeSource,
+    };
   }
 
   private async refundSinglePayment(paymentId: string, reason: string): Promise<void> {
@@ -1093,10 +1273,48 @@ export class WagerService extends EventEmitter {
     if (!payment || payment.status === 'refunded') return;
     if (payment.status !== 'credited' && payment.status !== 'refunding') return;
 
+    let audit: RefundTransferAudit;
+    try {
+      audit = payment.refundGrossLamports !== null
+        && payment.refundOutboundFeeLamports !== null
+        && payment.refundNetLamports !== null
+        && (payment.refundFeeSource === 'exact' || payment.refundFeeSource === 'fallback')
+        ? {
+          grossLamports: payment.refundGrossLamports,
+          outboundFeeLamports: payment.refundOutboundFeeLamports,
+          netLamports: payment.refundNetLamports,
+          feeSource: payment.refundFeeSource,
+        }
+        : await this.estimateRefundTransferAudit({
+          recipientWallet: payment.walletAddress,
+          grossLamports: payment.amountLamports,
+        });
+    } catch (error) {
+      await prisma.wagerPayment.update({
+        where: { id: payment.id },
+        data: {
+          status: 'refunding',
+          refundReason: reason,
+          refundGrossLamports: payment.amountLamports,
+          refundOutboundFeeLamports: null,
+          refundNetLamports: null,
+          refundFeeSource: null,
+          lastError: `${reason}:${error instanceof Error ? error.message : String(error)}`,
+        },
+      });
+      await this.emitPaymentStatusChanged(payment.wageredLobby.lobbyId, payment.id);
+      throw error;
+    }
+
     await prisma.wagerPayment.update({
       where: { id: payment.id },
       data: {
         status: 'refunding',
+        refundReason: reason,
+        refundGrossLamports: audit.grossLamports,
+        refundOutboundFeeLamports: audit.outboundFeeLamports,
+        refundNetLamports: audit.netLamports,
+        refundFeeSource: audit.feeSource,
         lastError: null,
       },
     });
@@ -1105,7 +1323,7 @@ export class WagerService extends EventEmitter {
     try {
       const result = await this.sendTreasuryTransfer({
         recipientWallet: payment.walletAddress,
-        amountLamports: payment.amountLamports,
+        amountLamports: audit.netLamports,
         existingSignature: payment.refundSignature,
         onSubmitted: async (signature) => {
           await prisma.wagerPayment.update({
@@ -1120,6 +1338,11 @@ export class WagerService extends EventEmitter {
         data: {
           status: 'refunded',
           refundSignature: result.signature,
+          refundReason: reason,
+          refundGrossLamports: audit.grossLamports,
+          refundOutboundFeeLamports: audit.outboundFeeLamports,
+          refundNetLamports: audit.netLamports,
+          refundFeeSource: audit.feeSource,
           refundedAt: result.confirmedAt,
           lastError: null,
         },
@@ -1158,6 +1381,15 @@ export class WagerService extends EventEmitter {
     ));
     const totalPotLamports = lockedPayments.reduce((sum, payment) => sum + payment.amountLamports, 0n);
     const winningTeam = isValidTeam(settlement.winningTeam) ? settlement.winningTeam : null;
+    const refundAudits = new Map<string, RefundTransferAudit>();
+    if (!winningTeam) {
+      for (const payment of lockedPayments) {
+        refundAudits.set(payment.id, await this.estimateRefundTransferAudit({
+          recipientWallet: payment.walletAddress,
+          grossLamports: payment.amountLamports,
+        }));
+      }
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.wagerSettlement.update({
@@ -1172,6 +1404,10 @@ export class WagerService extends EventEmitter {
 
       if (!winningTeam) {
         for (const payment of lockedPayments) {
+          const audit = refundAudits.get(payment.id);
+          if (!audit) {
+            throw new Error('Missing refund audit data for settlement refund');
+          }
           await tx.wagerSettlementTransfer.upsert({
             where: {
               settlementId_kind_recipientWallet: {
@@ -1185,11 +1421,22 @@ export class WagerService extends EventEmitter {
               idempotencyKey: `${settlement.id}:refund:${payment.userId}`,
               kind: 'refund',
               recipientWallet: payment.walletAddress,
-              amountLamports: payment.amountLamports,
-              status: 'pending',
+              amountLamports: audit.netLamports,
+              refundReason: 'settlement_refund',
+              refundGrossLamports: audit.grossLamports,
+              refundOutboundFeeLamports: audit.outboundFeeLamports,
+              refundNetLamports: audit.netLamports,
+              refundFeeSource: audit.feeSource,
+              status: audit.netLamports > 0n ? 'pending' : 'confirmed',
+              confirmedAt: audit.netLamports > 0n ? null : new Date(),
             },
             update: {
-              amountLamports: payment.amountLamports,
+              amountLamports: audit.netLamports,
+              refundReason: 'settlement_refund',
+              refundGrossLamports: audit.grossLamports,
+              refundOutboundFeeLamports: audit.outboundFeeLamports,
+              refundNetLamports: audit.netLamports,
+              refundFeeSource: audit.feeSource,
             },
           });
         }
@@ -1341,6 +1588,11 @@ export class WagerService extends EventEmitter {
 
     const now = new Date();
     const isRefundSettlement = !isValidTeam(settlement.winningTeam);
+    const refundTransferByWallet = new Map(
+      settlement.transfers
+        .filter((transfer) => transfer.kind === 'refund')
+        .map((transfer) => [transfer.recipientWallet, transfer])
+    );
     const userStatIncrements = buildWagerUserStatIncrements({
       payments: settlement.wageredLobby.payments,
       transfers: settlement.transfers,
@@ -1350,10 +1602,20 @@ export class WagerService extends EventEmitter {
     await prisma.$transaction(async (tx) => {
       for (const payment of settlement.wageredLobby.payments) {
         if (payment.status !== 'credited' && payment.status !== 'settled') continue;
+        const refundTransfer = refundTransferByWallet.get(payment.walletAddress);
         await tx.wagerPayment.update({
           where: { id: payment.id },
           data: isRefundSettlement
-            ? { status: 'refunded', refundedAt: now }
+            ? {
+              status: 'refunded',
+              refundSignature: refundTransfer?.signature ?? payment.refundSignature,
+              refundReason: refundTransfer?.refundReason ?? 'settlement_refund',
+              refundGrossLamports: refundTransfer?.refundGrossLamports ?? payment.amountLamports,
+              refundOutboundFeeLamports: refundTransfer?.refundOutboundFeeLamports ?? null,
+              refundNetLamports: refundTransfer?.refundNetLamports ?? refundTransfer?.amountLamports ?? null,
+              refundFeeSource: refundTransfer?.refundFeeSource ?? null,
+              refundedAt: now,
+            }
             : { status: 'settled', settledAt: now },
         });
       }

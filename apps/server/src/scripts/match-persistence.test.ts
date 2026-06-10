@@ -142,6 +142,8 @@ function createFakePrisma() {
     ['ranked_blue', createFakeUser('ranked_blue')],
     ['unranked_red', createFakeUser('unranked_red')],
     ['unranked_blue', createFakeUser('unranked_blue')],
+    ['custom_wager_red', createFakeUser('custom_wager_red')],
+    ['custom_wager_blue', createFakeUser('custom_wager_blue')],
   ]);
   const matches = new Map<string, any>();
   const participants: any[] = [];
@@ -199,6 +201,7 @@ async function runPersistenceWriteTests() {
     matchId: 'ranked_match',
     roomId: 'room_ranked',
     lobbyId: 'lobby_ranked',
+    matchMode: 'ranked',
     mapSeed: 123,
     rankedEligible: true,
     startedAt: joinedAt,
@@ -214,6 +217,7 @@ async function runPersistenceWriteTests() {
 
   assert.equal(rankedResult.alreadyPersisted, false);
   assert.equal(fake.matches.get('ranked_match').rankedEligible, true);
+  assert.equal(fake.matches.get('ranked_match').matchMode, 'ranked');
   assert.equal(fake.users.get('ranked_red').rankedGames, 6);
   assert.notEqual(fake.users.get('ranked_red').competitiveRating, 800);
   const rankedParticipant = fake.participants.find((participant) => participant.userId === 'ranked_blue');
@@ -225,6 +229,7 @@ async function runPersistenceWriteTests() {
     matchId: 'ranked_match',
     roomId: 'room_ranked',
     lobbyId: 'lobby_ranked',
+    matchMode: 'ranked',
     mapSeed: 123,
     rankedEligible: true,
     startedAt: joinedAt,
@@ -245,6 +250,7 @@ async function runPersistenceWriteTests() {
     matchId: 'unranked_match',
     roomId: 'room_unranked',
     lobbyId: 'lobby_unranked',
+    matchMode: 'quick_play',
     mapSeed: 456,
     rankedEligible: false,
     startedAt: joinedAt,
@@ -262,6 +268,30 @@ async function runPersistenceWriteTests() {
   assert.equal(fake.users.get('unranked_red').competitiveRating, unrankedBefore);
   assert.equal(fake.users.get('unranked_red').rankedGames, 5);
   assert.equal(fake.users.get('unranked_red').totalGames, 1);
+
+  const customWagerBefore = fake.users.get('custom_wager_red').competitiveRating;
+  await persistCompletedMatch(fake.prisma as any, {
+    matchId: 'custom_wager_match',
+    roomId: 'room_custom_wager',
+    lobbyId: 'lobby_custom_wager',
+    matchMode: 'custom_wager',
+    mapSeed: 789,
+    rankedEligible: false,
+    startedAt: joinedAt,
+    endedAt: new Date('2026-06-10T10:25:00.000Z'),
+    redScore: 3,
+    blueScore: 1,
+    winningTeam: 'red',
+    participants: [
+      { ...baseParticipant, userId: 'custom_wager_red', team: 'red', leftAt: null },
+      { ...baseParticipant, userId: 'custom_wager_blue', team: 'blue', leftAt: null },
+    ],
+  });
+
+  assert.equal(fake.matches.get('custom_wager_match').matchMode, 'custom_wager');
+  assert.equal(fake.matches.get('custom_wager_match').rankedEligible, false);
+  assert.equal(fake.users.get('custom_wager_red').competitiveRating, customWagerBefore);
+  assert.equal(fake.users.get('custom_wager_red').rankedGames, 5);
 }
 
 runPersistenceWriteTests()

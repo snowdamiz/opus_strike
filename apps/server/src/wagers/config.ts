@@ -15,12 +15,14 @@ export interface WagerRuntimeConfig {
   settlementMaxAttempts: number;
   settlementRetryMs: number;
   treasuryLowBalanceLamports: bigint;
+  refundFeeFallbackLamports: bigint;
   adminToken: string;
 }
 
 const DEFAULT_MIN_COVER_CHARGE_LAMPORTS = 1_000_000n;
 const DEFAULT_MAX_COVER_CHARGE_LAMPORTS = 10_000_000_000n;
 const DEFAULT_TREASURY_LOW_BALANCE_LAMPORTS = 20_000_000n;
+const DEFAULT_REFUND_FEE_FALLBACK_LAMPORTS = 5_000n;
 
 function bigintEnv(name: string, fallback: bigint): bigint {
   const value = process.env[name];
@@ -85,6 +87,7 @@ export function getWagerRuntimeConfig(): WagerRuntimeConfig {
     settlementMaxAttempts: intEnv('WAGER_SETTLEMENT_MAX_ATTEMPTS', 6, { min: 1, max: 50 }),
     settlementRetryMs: intEnv('WAGER_SETTLEMENT_RETRY_MS', 60_000, { min: 5_000 }),
     treasuryLowBalanceLamports: bigintEnv('WAGER_TREASURY_LOW_BALANCE_LAMPORTS', DEFAULT_TREASURY_LOW_BALANCE_LAMPORTS),
+    refundFeeFallbackLamports: bigintEnv('WAGER_REFUND_FEE_FALLBACK_LAMPORTS', DEFAULT_REFUND_FEE_FALLBACK_LAMPORTS),
     adminToken: process.env.WAGER_ADMIN_TOKEN || '',
   };
 }

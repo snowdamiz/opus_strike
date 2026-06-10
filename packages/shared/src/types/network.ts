@@ -6,6 +6,7 @@ import type { AbilityCast } from './ability.js';
 import type { MovementCommandPacket, SelfMovementAuthority } from './movementPrediction.js';
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
+import type { MatchMode } from './matchMode.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -175,6 +176,7 @@ export interface RoundEndEvent {
 }
 
 export interface GameEndEvent {
+  matchMode: MatchMode;
   winningTeam: Team | null;
   finalScore: { red: number; blue: number };
   matchId: string | null;

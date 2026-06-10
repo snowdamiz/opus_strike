@@ -47,6 +47,7 @@ assert.equal(getAllowedRankDivisionDistance(30_000), 2);
 assert.equal(getAllowedRankDivisionDistance(90_000), 6);
 
 const { ticket, claims } = createMatchmakingTicket({
+  mode: 'quick_play',
   userId: 'user_1',
   competitiveRating: strongPlayer,
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
@@ -58,10 +59,28 @@ const verified = verifyMatchmakingTicket(ticket, claims.issuedAt + 1);
 assert.ok(verified);
 assert.equal(verified.userId, 'user_1');
 assert.equal(verified.version, 2);
+assert.equal(verified.mode, 'quick_play');
 assert.equal(verified.competitiveRating, strongPlayer);
 assert.equal(verified.targetRankDivisionIndex, getRankDivisionIndex(1300));
 
 assert.equal(verifyMatchmakingTicket(`${ticket.slice(0, -1)}x`, claims.issuedAt + 1), null);
 assert.equal(verifyMatchmakingTicket(ticket, claims.expiresAt + 1), null);
+
+const ranked = createMatchmakingTicket({
+  mode: 'ranked',
+  userId: 'user_ranked',
+  competitiveRating: strongPlayer,
+  rankDivisionIndex: getRankDivisionIndex(strongPlayer),
+  targetRankDivisionIndex: getRankDivisionIndex(strongPlayer),
+  placementRemaining: 0,
+  rankedEntryQuoteId: 'quote_1',
+  coverChargeLamports: '33000000',
+  rankedEntryQuoteExpiresAt: claims.issuedAt + 60_000,
+});
+const rankedVerified = verifyMatchmakingTicket(ranked.ticket, ranked.claims.issuedAt + 1);
+assert.ok(rankedVerified);
+assert.equal(rankedVerified.mode, 'ranked');
+assert.equal(rankedVerified.rankedEntryQuoteId, 'quote_1');
+assert.equal(rankedVerified.coverChargeLamports, '33000000');
 
 console.log('matchmaking skill tests passed');

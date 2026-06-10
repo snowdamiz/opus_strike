@@ -6,6 +6,10 @@ import { isGuestPlayAllowed } from '../config/security';
 import { parseCookies, verifyAuthToken } from '../auth/session';
 import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
+  createRankedEntryQuote,
+  getValidRankedEntryQuote,
+} from './rankedEntry';
+import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
   getAllowedRankDivisionDistance,
@@ -13,29 +17,35 @@ import {
   normalizeRankDivisionIndex,
 } from './skill';
 import { getRankDivisionIndex } from '@voxel-strike/shared';
+import type { MatchMode } from '@voxel-strike/shared';
 import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
 
 const router: RouterType = Router();
 
 interface MatchmakingUserContext {
   userId: string;
+  walletAddress: string | null;
   competitiveRating: number;
   rankDivisionIndex: number;
   rank: PublicRankPayload;
   isGuest: boolean;
 }
 
-interface QuickPlayCandidate {
+interface QueueCandidate {
   rankBandId: number;
   humanCount: number;
+  queuedHumanCount: number;
   waitMs: number;
   distance: number;
   ratingDistance: number;
 }
 
-interface QuickPlayQueueStatus {
+interface MatchmakingQueueStatus {
+  mode: MatchMode;
   totalPlayersInQueue: number;
   queueCount: number;
+  provisionalPlayerCount?: number;
+  requiredPlayers?: number;
 }
 
 function getRequestToken(req: Request): string | null {
@@ -48,7 +58,20 @@ function getRequestToken(req: Request): string | null {
   return cookies.auth_token || null;
 }
 
-async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserContext> {
+function sendRouteError(res: Response, error: unknown, fallbackMessage: string): void {
+  const statusCode = typeof error === 'object' && error && 'statusCode' in error
+    ? Number((error as { statusCode?: unknown }).statusCode) || 500
+    : error instanceof Error && error.message === 'Authentication required'
+      ? 401
+      : 500;
+  const message = error instanceof Error ? error.message : fallbackMessage;
+  res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({ error: message });
+}
+
+async function getMatchmakingUserContext(
+  req: Request,
+  options: { allowGuest: boolean } = { allowGuest: true }
+): Promise<MatchmakingUserContext> {
   const token = getRequestToken(req);
   const payload = token ? verifyAuthToken(token) : null;
 
@@ -86,6 +109,7 @@ async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserC
       const rank = serializeRankPayload(user);
       return {
         userId: user.id,
+        walletAddress: user.walletAddress,
         competitiveRating: user.competitiveRating,
         rankDivisionIndex: getRankDivisionIndex(user.competitiveRating),
         rank,
@@ -94,12 +118,13 @@ async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserC
     }
   }
 
-  if (!isGuestPlayAllowed()) {
+  if (!options.allowGuest || !isGuestPlayAllowed()) {
     throw new Error('Authentication required');
   }
 
   return {
     userId: 'guest:quick-play',
+    walletAddress: null,
     competitiveRating: DEFAULT_MATCHMAKING_RATING,
     rankDivisionIndex: DEFAULT_RANK_DIVISION_INDEX,
     rank: serializeRankPayload(null),
@@ -107,24 +132,38 @@ async function getMatchmakingUserContext(req: Request): Promise<MatchmakingUserC
   };
 }
 
-async function chooseQuickPlayRankBand(playerRating: number, playerDivisionIndex: number): Promise<number> {
+async function chooseMatchmakingRankBand(input: {
+  mode: 'quick_play' | 'ranked';
+  playerRating: number;
+  playerDivisionIndex: number;
+  coverChargeLamports?: string;
+}): Promise<number> {
   const now = Date.now();
   const rooms = await matchMaker.query({ name: 'lobby_room' });
 
-  const candidates: QuickPlayCandidate[] = rooms.flatMap((room: any) => {
+  const candidates: QueueCandidate[] = rooms.flatMap((room: any) => {
     const metadata = room.metadata ?? {};
     if (room.locked || metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') return [];
+    const mode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
+    if (mode !== input.mode) return [];
+    if (
+      input.mode === 'ranked'
+      && metadata.rankedCoverChargeLamports !== input.coverChargeLamports
+    ) return [];
 
     const rankBandId = normalizeRankDivisionIndex(metadata.rankBandId);
     const averageCompetitiveRating = typeof metadata.averageCompetitiveRating === 'number'
       ? metadata.averageCompetitiveRating
-      : playerRating;
+      : input.playerRating;
     const averageDivisionIndex = getRankDivisionIndex(averageCompetitiveRating);
-    const distance = Math.abs(averageDivisionIndex - playerDivisionIndex);
-    const ratingDistance = Math.abs(averageCompetitiveRating - playerRating);
+    const distance = Math.abs(averageDivisionIndex - input.playerDivisionIndex);
+    const ratingDistance = Math.abs(averageCompetitiveRating - input.playerRating);
     const createdAt = typeof metadata.matchmakingCreatedAt === 'number' ? metadata.matchmakingCreatedAt : now;
     const waitMs = Math.max(0, now - createdAt);
     const humanCount = typeof metadata.humanCount === 'number' ? metadata.humanCount : room.clients ?? 0;
+    const queuedHumanCount = typeof metadata.queuedHumanCount === 'number'
+      ? metadata.queuedHumanCount
+      : humanCount;
     const requiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
 
     if (humanCount >= requiredPlayers) return [];
@@ -133,6 +172,7 @@ async function chooseQuickPlayRankBand(playerRating: number, playerDivisionIndex
     return [{
       rankBandId,
       humanCount,
+      queuedHumanCount,
       waitMs,
       distance,
       ratingDistance,
@@ -146,32 +186,48 @@ async function chooseQuickPlayRankBand(playerRating: number, playerDivisionIndex
     || b.waitMs - a.waitMs
   ));
 
-  return candidates[0]?.rankBandId ?? playerDivisionIndex;
+  return candidates[0]?.rankBandId ?? input.playerDivisionIndex;
 }
 
-async function getQuickPlayQueueStatus(): Promise<QuickPlayQueueStatus> {
+async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
   const rooms = await matchMaker.query({ name: 'lobby_room' });
   let totalPlayersInQueue = 0;
+  let provisionalPlayerCount = 0;
   let queueCount = 0;
+  let requiredPlayers: number | undefined;
 
   for (const room of rooms as any[]) {
     const metadata = room.metadata ?? {};
     if (metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') continue;
+    const roomMode: MatchMode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
+    if (roomMode !== mode) continue;
 
     const humanCount = Math.max(0, typeof metadata.humanCount === 'number' ? metadata.humanCount : room.clients ?? 0);
-    const requiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
-    if (requiredPlayers > 0 && humanCount >= requiredPlayers) continue;
+    const queuedHumanCount = Math.max(0, typeof metadata.queuedHumanCount === 'number'
+      ? metadata.queuedHumanCount
+      : humanCount);
+    const roomRequiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
+    requiredPlayers = roomRequiredPlayers || requiredPlayers;
+    if (roomRequiredPlayers > 0 && queuedHumanCount >= roomRequiredPlayers) continue;
 
-    totalPlayersInQueue += humanCount;
+    totalPlayersInQueue += queuedHumanCount;
+    provisionalPlayerCount += Math.max(0, humanCount - queuedHumanCount);
     queueCount++;
   }
 
-  return { totalPlayersInQueue, queueCount };
+  return {
+    mode,
+    totalPlayersInQueue,
+    queueCount,
+    provisionalPlayerCount,
+    requiredPlayers,
+  };
 }
 
-router.get('/queue-status', async (_req: Request, res: Response) => {
+router.get('/queue-status', async (req: Request, res: Response) => {
   try {
-    res.json(await getQuickPlayQueueStatus());
+    const requestedMode = req.query.mode === 'ranked' ? 'ranked' : 'quick_play';
+    res.json(await getQueueStatus(requestedMode));
   } catch (error) {
     console.error('[matchmaking] Failed to get queue status:', error);
     res.status(500).json({ error: 'Failed to get queue status' });
@@ -181,11 +237,13 @@ router.get('/queue-status', async (_req: Request, res: Response) => {
 router.get('/quick-play-ticket', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req);
-    const targetRankDivisionIndex = await chooseQuickPlayRankBand(
-      context.competitiveRating,
-      context.rankDivisionIndex
-    );
+    const targetRankDivisionIndex = await chooseMatchmakingRankBand({
+      mode: 'quick_play',
+      playerRating: context.competitiveRating,
+      playerDivisionIndex: context.rankDivisionIndex,
+    });
     const { ticket, claims } = createMatchmakingTicket({
+      mode: 'quick_play',
       userId: context.userId,
       competitiveRating: context.competitiveRating,
       rankDivisionIndex: context.rankDivisionIndex,
@@ -195,6 +253,7 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
 
     res.json({
       ticket,
+      mode: claims.mode,
       expiresAt: claims.expiresAt,
       competitiveRating: context.competitiveRating,
       rankDivisionIndex: context.rankDivisionIndex,
@@ -204,13 +263,86 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
       targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
     });
   } catch (error) {
-    if (error instanceof Error && error.message === 'Authentication required') {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
+    console.error('[matchmaking] Failed to issue quick-play ticket:', error);
+    sendRouteError(res, error, 'Failed to issue matchmaking ticket');
+  }
+});
+
+router.get('/ranked-entry-quote', async (req: Request, res: Response) => {
+  try {
+    const context = await getMatchmakingUserContext(req, { allowGuest: false });
+    if (!context.walletAddress) {
+      throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
     }
 
-    console.error('[matchmaking] Failed to issue quick-play ticket:', error);
-    res.status(500).json({ error: 'Failed to issue matchmaking ticket' });
+    res.json({ quote: await createRankedEntryQuote(context.userId) });
+  } catch (error) {
+    console.error('[matchmaking] Failed to create ranked entry quote:', error);
+    sendRouteError(res, error, 'Failed to create ranked entry quote');
+  }
+});
+
+router.post('/ranked-ticket', async (req: Request, res: Response) => {
+  try {
+    const context = await getMatchmakingUserContext(req, { allowGuest: false });
+    if (!context.walletAddress) {
+      throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
+    }
+
+    const quoteId = typeof req.body?.quoteId === 'string' ? req.body.quoteId : '';
+    if (!quoteId) {
+      throw Object.assign(new Error('quoteId is required'), { statusCode: 400 });
+    }
+
+    const quote = await getValidRankedEntryQuote({
+      quoteId,
+      userId: context.userId,
+    });
+    const coverChargeLamports = quote.coverChargeLamports.toString();
+    const targetRankDivisionIndex = await chooseMatchmakingRankBand({
+      mode: 'ranked',
+      playerRating: context.competitiveRating,
+      playerDivisionIndex: context.rankDivisionIndex,
+      coverChargeLamports,
+    });
+    const now = Date.now();
+    const ttlMs = Math.max(1, Math.min(60_000, quote.expiresAt.getTime() - now));
+    const { ticket, claims } = createMatchmakingTicket({
+      mode: 'ranked',
+      userId: context.userId,
+      competitiveRating: context.competitiveRating,
+      rankDivisionIndex: context.rankDivisionIndex,
+      targetRankDivisionIndex,
+      placementRemaining: context.rank.rankedPlacementsRemaining,
+      rankedEntryQuoteId: quote.id,
+      coverChargeLamports,
+      rankedEntryQuoteExpiresAt: quote.expiresAt.getTime(),
+      ttlMs,
+    });
+
+    res.json({
+      ticket,
+      mode: claims.mode,
+      expiresAt: claims.expiresAt,
+      competitiveRating: context.competitiveRating,
+      rankDivisionIndex: context.rankDivisionIndex,
+      rank: context.rank,
+      isGuest: false,
+      targetRankDivisionIndex,
+      targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
+      quote: {
+        quoteId: quote.id,
+        usdCents: quote.usdCents,
+        solUsdPriceMicroUsd: quote.solUsdPriceMicroUsd.toString(),
+        coverChargeLamports,
+        priceSource: quote.priceSource,
+        expiresAt: quote.expiresAt.toISOString(),
+        cluster: quote.cluster,
+      },
+    });
+  } catch (error) {
+    console.error('[matchmaking] Failed to issue ranked ticket:', error);
+    sendRouteError(res, error, 'Failed to issue ranked ticket');
   }
 });
 

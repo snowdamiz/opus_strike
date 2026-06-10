@@ -15,6 +15,7 @@ import type {
   MapVoteRecord,
   WagerPaymentIntent,
   WagerPaymentTransaction,
+  RankedEntryQuote,
   UserStats,
   MatchmakingStatus,
   AppPhase,
@@ -36,6 +37,7 @@ export type {
   MapVoteRecord,
   WagerPaymentIntent,
   WagerPaymentTransaction,
+  RankedEntryQuote,
   UserStats,
   MatchmakingStatus,
   AppPhase,
@@ -227,11 +229,17 @@ const coreInitialState: CoreState = {
   mapVotePhaseEndTime: null,
   selectedMapOptionId: null,
   matchmakingStatus: {
+    matchMode: null,
     rankBandId: null,
     rankBandLabel: null,
     averageCompetitiveRating: null,
     averageVisibleRank: null,
     rankSearchDistance: null,
+    queuedHumanCount: null,
+    provisionalHumanCount: null,
+    requiredPlayers: null,
+    rankedCoverChargeLamports: null,
+    rankedEntryQuoteId: null,
   },
   gamePhase: 'waiting',
   matchSummary: null,
@@ -317,7 +325,9 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       };
     }
 
-    const ratingDelta = typeof localSummary.ratingDelta === 'number' ? localSummary.ratingDelta : null;
+    const ratingDelta = summary.matchMode === 'ranked' && typeof localSummary.ratingDelta === 'number'
+      ? localSummary.ratingDelta
+      : null;
     const competitiveRating = ratingDelta === null
       ? state.userStats.competitiveRating
       : Math.max(0, state.userStats.competitiveRating + ratingDelta);
@@ -744,11 +754,17 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     mapVotePhaseEndTime: null,
     selectedMapOptionId: null,
     matchmakingStatus: {
+      matchMode: null,
       rankBandId: null,
       rankBandLabel: null,
       averageCompetitiveRating: null,
       averageVisibleRank: null,
       rankSearchDistance: null,
+      queuedHumanCount: null,
+      provisionalHumanCount: null,
+      requiredPlayers: null,
+      rankedCoverChargeLamports: null,
+      rankedEntryQuoteId: null,
     },
   }),
 }));

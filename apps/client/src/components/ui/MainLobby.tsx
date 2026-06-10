@@ -112,7 +112,7 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
-  const { watchLobbies, createLobby, quickPlay, joinLobby } = useNetwork();
+  const { watchLobbies, createLobby, quickPlay, rankedPlay, joinLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -384,6 +384,23 @@ export function MainLobby() {
     }
   };
 
+  const handleRankedPlay = async () => {
+    setError(null);
+    if (!isAuthenticated) {
+      handleSignInClick();
+      return;
+    }
+    if (!hasFullFunctionality) {
+      await handleLinkPhantom();
+      return;
+    }
+    try {
+      await rankedPlay(playerName);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to enter ranked');
+    }
+  };
+
   const handleJoinLobby = async (lobbyId: string) => {
     setError(null);
     try {
@@ -527,6 +544,7 @@ export function MainLobby() {
             hasFullFunctionality={hasFullFunctionality}
             isLinkingPhantom={isLinkingPhantom}
             onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
+            onRankedPlay={handleRankedPlay}
             onLinkPhantom={handleLinkPhantom}
             onOpenCreateLobby={isAuthenticated ? () => setShowCreateLobby(true) : handleSignInClick}
             onOpenBrowseGames={() => setShowBrowseGames(true)}
@@ -618,6 +636,7 @@ interface PlayTabProps {
   hasFullFunctionality: boolean;
   isLinkingPhantom: boolean;
   onQuickPlay: () => void;
+  onRankedPlay: () => void;
   onLinkPhantom: () => void;
   onOpenCreateLobby: () => void;
   onOpenBrowseGames: () => void;
@@ -638,6 +657,7 @@ function PlayTab({
   hasFullFunctionality,
   isLinkingPhantom,
   onQuickPlay,
+  onRankedPlay,
   onLinkPhantom,
   onOpenCreateLobby,
   onOpenBrowseGames,
@@ -804,6 +824,17 @@ function PlayTab({
  )}
  </span>
  </button>
+
+          <button
+            onClick={() => { playButtonClick(); onRankedPlay(); }}
+            disabled={isLoading || isLinkingPhantom}
+            className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl text-amber-50 border border-amber-300/25 bg-amber-500/12 hover:border-amber-200/45 hover:bg-amber-500/20 disabled:opacity-60 flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5"
+          >
+            <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
+            </svg>
+            {isLoading ? 'PREPARING...' : isAuthenticated && hasFullFunctionality ? 'RANKED $5 SOL' : 'RANKED'}
+          </button>
 
           <div className="grid grid-cols-2 gap-1 sm:gap-1.5 lg:gap-2 xl:gap-2.5">
  <button

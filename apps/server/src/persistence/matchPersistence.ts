@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { calculateMatchExperience } from '@voxel-strike/shared';
 import type { MatchOutcome, Team } from '@voxel-strike/shared';
+import type { MatchMode } from '@voxel-strike/shared';
 import {
   calculateRankedRatingUpdates,
   type RankedRatingUpdate,
@@ -29,6 +30,7 @@ export interface CompletedMatchPersistenceInput {
   matchId: string;
   roomId: string;
   lobbyId: string | null;
+  matchMode: MatchMode;
   mapSeed: number;
   rankedEligible?: boolean;
   startedAt: Date;
@@ -217,6 +219,7 @@ export async function persistCompletedMatch(
           id: input.matchId,
           roomId: input.roomId,
           lobbyId: input.lobbyId,
+          matchMode: input.matchMode,
           mapSeed: input.mapSeed,
           rankedEligible,
           startedAt: input.startedAt,

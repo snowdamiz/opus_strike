@@ -5,25 +5,34 @@ import {
   DEFAULT_RANK_DIVISION_INDEX,
   normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
+import { isMatchMode, type MatchMode } from '@voxel-strike/shared';
 
 export interface MatchmakingTicketClaims {
   version: 2;
+  mode: MatchMode;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
   targetRankDivisionIndex: number;
   placementRemaining: number;
+  rankedEntryQuoteId?: string;
+  coverChargeLamports?: string;
+  rankedEntryQuoteExpiresAt?: number;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
 }
 
 export interface CreateMatchmakingTicketInput {
+  mode: MatchMode;
   userId: string;
   competitiveRating: number;
   rankDivisionIndex: number;
   targetRankDivisionIndex: number;
   placementRemaining: number;
+  rankedEntryQuoteId?: string;
+  coverChargeLamports?: string;
+  rankedEntryQuoteExpiresAt?: number;
   ttlMs?: number;
 }
 
@@ -62,11 +71,15 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
   const now = Date.now();
   const claims: MatchmakingTicketClaims = {
     version: 2,
+    mode: input.mode,
     userId: input.userId,
     competitiveRating: Math.round(Number.isFinite(input.competitiveRating) ? input.competitiveRating : DEFAULT_MATCHMAKING_RATING),
     rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
     targetRankDivisionIndex: normalizeRankDivisionIndex(input.targetRankDivisionIndex),
     placementRemaining: Math.max(0, Math.floor(Number.isFinite(input.placementRemaining) ? input.placementRemaining : 0)),
+    rankedEntryQuoteId: input.mode === 'ranked' ? input.rankedEntryQuoteId : undefined,
+    coverChargeLamports: input.mode === 'ranked' ? input.coverChargeLamports : undefined,
+    rankedEntryQuoteExpiresAt: input.mode === 'ranked' ? input.rankedEntryQuoteExpiresAt : undefined,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -94,17 +107,29 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
   }
 
   if (claims.version !== 2) return null;
+  const mode = isMatchMode(claims.mode) ? claims.mode : 'quick_play';
   if (!claims.userId || !claims.nonce) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
   if (!Number.isFinite(claims.competitiveRating)) return null;
   if (normalizeRankDivisionIndex(claims.rankDivisionIndex) !== claims.rankDivisionIndex) return null;
   if (normalizeRankDivisionIndex(claims.targetRankDivisionIndex) !== claims.targetRankDivisionIndex) return null;
 
+  if (mode === 'ranked') {
+    if (typeof claims.rankedEntryQuoteId !== 'string' || !claims.rankedEntryQuoteId) return null;
+    if (typeof claims.coverChargeLamports !== 'string' || !/^[0-9]+$/.test(claims.coverChargeLamports)) return null;
+    if (BigInt(claims.coverChargeLamports) <= 0n) return null;
+    if (!Number.isFinite(claims.rankedEntryQuoteExpiresAt) || Number(claims.rankedEntryQuoteExpiresAt) < now) return null;
+  }
+
   return {
     ...claims,
+    mode,
     competitiveRating: Math.round(claims.competitiveRating),
     rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     placementRemaining: Math.max(0, Math.floor(claims.placementRemaining ?? 0)),
+    rankedEntryQuoteId: mode === 'ranked' ? claims.rankedEntryQuoteId : undefined,
+    coverChargeLamports: mode === 'ranked' ? claims.coverChargeLamports : undefined,
+    rankedEntryQuoteExpiresAt: mode === 'ranked' ? claims.rankedEntryQuoteExpiresAt : undefined,
   };
 }
