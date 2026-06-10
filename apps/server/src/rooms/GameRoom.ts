@@ -35,12 +35,19 @@ import {
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
+  CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
   CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE,
+  CHRONOS_VERDANT_PULSE_AIM_DISTANCE,
+  CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
+  CHRONOS_VERDANT_PULSE_DAMAGE,
+  CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
+  CHRONOS_VERDANT_PULSE_SPAWN_FORWARD_OFFSET,
+  CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_FIRE_READY_MS,
@@ -238,8 +245,7 @@ const BLAZE_BOMB_SPLASH_RADIUS = 4;
 const BLAZE_GEARSTORM_DAMAGE = 10;
 const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 500;
 const BLAZE_ROCKET_STAFF_SOCKET = { handHeight: 0.24, forwardOffset: 0.64, sideOffset: 0.22 };
-const CHRONOS_VERDANT_PULSE_DAMAGE = 16;
-const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 250;
+const CHRONOS_PRIMARY_ORB_SOCKET = { handHeight: -0.06, forwardOffset: 0.56, sideOffset: 0 };
 
 interface BlazeRocketImpactMessage {
   rocketId: string;
@@ -412,6 +418,7 @@ export class GameRoom extends Room<GameState> {
   private voidZones: VoidZone[] = [];
   private phantomPrimaryMagazines: Map<string, PhantomPrimaryMagazineState> = new Map();
   private phantomPrimaryHoldStartedAt: Map<string, number> = new Map();
+  private chronosPrimaryHoldStartedAt: Map<string, number> = new Map();
   private phantomVoidRayChargeStartedAt: Map<string, number> = new Map();
   private phantomVoidRayResolvedForPress: Set<string> = new Set();
   private phantomCastIdCounter: number = 0;
@@ -611,6 +618,7 @@ export class GameRoom extends Room<GameState> {
         playerPressState.delete(existingSessionId);
         this.phantomPrimaryMagazines.delete(existingSessionId);
         this.phantomPrimaryHoldStartedAt.delete(existingSessionId);
+        this.chronosPrimaryHoldStartedAt.delete(existingSessionId);
         this.phantomVoidRayChargeStartedAt.delete(existingSessionId);
         this.phantomVoidRayResolvedForPress.delete(existingSessionId);
         this.hookshotPrimaryLaunchSide.delete(existingSessionId);
@@ -715,6 +723,7 @@ export class GameRoom extends Room<GameState> {
     playerPressState.delete(client.sessionId);
     this.phantomPrimaryMagazines.delete(client.sessionId);
     this.phantomPrimaryHoldStartedAt.delete(client.sessionId);
+    this.chronosPrimaryHoldStartedAt.delete(client.sessionId);
     this.phantomVoidRayChargeStartedAt.delete(client.sessionId);
     this.phantomVoidRayResolvedForPress.delete(client.sessionId);
     this.hookshotPrimaryLaunchSide.delete(client.sessionId);
@@ -1440,6 +1449,28 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private scheduleChronosLifelineConduit(
+    casterId: string,
+    targetIds: string[],
+    releaseAt: number
+  ): void {
+    const delayMs = Math.max(0, releaseAt - Date.now());
+
+    setTimeout(() => {
+      const caster = this.state.players.get(casterId);
+      if (!caster || caster.state !== 'alive') return;
+
+      const abilityState = caster.abilities.get('chronos_lifeline_conduit');
+      if (!abilityState) return;
+
+      const targets = targetIds
+        .map((targetId) => this.state.players.get(targetId))
+        .filter((target): target is Player => Boolean(target));
+
+      this.executeChronosLifelineConduit(caster, abilityState, targets);
+    }, delayMs);
+  }
+
   private nextPhantomCastId(playerId: string, abilityId: string): string {
     return `${abilityId}_${playerId}_${this.phantomCastIdCounter++}`;
   }
@@ -1842,6 +1873,73 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private getChronosAimOrigin(player: Player): PlainVec3 {
+    return {
+      x: player.position.x,
+      y: player.position.y + HOOKSHOT_EYE_HEIGHT,
+      z: player.position.z,
+    };
+  }
+
+  private resolveChronosVerdantPulseCast(
+    player: Player,
+    attack: AttackConfig
+  ): {
+    castId: string;
+    startPosition: PlainVec3;
+    aimDirection: PlainVec3;
+  } {
+    const castId = this.nextPhantomCastId(player.id, 'chronos_verdant_pulse');
+    const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const aimOrigin = this.getChronosAimOrigin(player);
+    const socketPosition = this.getPhantomCastOrigin(player, CHRONOS_PRIMARY_ORB_SOCKET);
+    const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
+    const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
+    const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
+    const terrainDistance = terrainHit ? this.distance3D(aimOrigin, terrainHit) : Infinity;
+    const targetDistance = targetPoint ? this.distance3D(aimOrigin, targetPoint) : Infinity;
+    const fallbackAimPoint = this.addScaled3D(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
+    const aimPoint = targetPoint && targetDistance <= terrainDistance
+      ? targetPoint
+      : terrainHit ?? fallbackAimPoint;
+    const aimDirection = this.normalize3D({
+      x: aimPoint.x - socketPosition.x,
+      y: aimPoint.y - socketPosition.y,
+      z: aimPoint.z - socketPosition.z,
+    }) ?? lookDirection;
+
+    return {
+      castId,
+      startPosition: this.addScaled3D(
+        socketPosition,
+        aimDirection,
+        CHRONOS_VERDANT_PULSE_SPAWN_FORWARD_OFFSET
+      ),
+      aimDirection,
+    };
+  }
+
+  private broadcastChronosVerdantPulseCast(player: Player, attack: AttackConfig, now: number): void {
+    const pulse = this.resolveChronosVerdantPulseCast(player, attack);
+
+    this.broadcast('abilityUsed', {
+      playerId: player.id,
+      abilityId: 'chronos_verdant_pulse',
+      castId: pulse.castId,
+      position: this.vec3SchemaToPlain(player.position),
+      startPosition: pulse.startPosition,
+      aimDirection: pulse.aimDirection,
+      velocity: {
+        x: pulse.aimDirection.x * CHRONOS_VERDANT_PULSE_SPEED,
+        y: pulse.aimDirection.y * CHRONOS_VERDANT_PULSE_SPEED,
+        z: pulse.aimDirection.z * CHRONOS_VERDANT_PULSE_SPEED,
+      },
+      ownerTeam: player.team as Team,
+      launchYaw: player.lookYaw,
+      serverTime: now,
+    });
+  }
+
   private resolveBlazeBombTarget(player: Player): PlainVec3 {
     const aimOrigin = this.getBlazeAimOrigin(player);
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
@@ -2071,6 +2169,9 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId === 'chronos' && slot === 'ultimate') {
       return;
     }
+    if (player.heroId === 'chronos' && slot === 'ability1' && (!chronosLifelineTargets || chronosLifelineTargets.length === 0)) {
+      return;
+    }
     if (player.heroId === 'hookshot' && slot === 'ability1' && !hookshotGrappleTarget) {
       return;
     }
@@ -2084,11 +2185,26 @@ export class GameRoom extends Room<GameState> {
     const usedAt = Date.now();
 
     if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets) {
-      this.executeChronosLifelineConduit(
-        player,
-        result.abilityState,
-        chronosLifelineTargets
+      const releaseAt = usedAt + CHRONOS_LIFELINE_RELEASE_DELAY_MS;
+      result.abilityState.activatedAt = usedAt;
+
+      this.broadcast('abilityUsed', {
+        playerId: player.id,
+        abilityId: result.abilityId,
+        castId: this.nextPhantomCastId(player.id, result.abilityId),
+        position: this.vec3SchemaToPlain(player.position),
+        startPosition: this.getPhantomCastOrigin(player, CHRONOS_PRIMARY_ORB_SOCKET),
+        targetIds: chronosLifelineTargets.map((target) => target.id),
+        ownerTeam: player.team,
+        serverTime: usedAt,
+        releaseAt,
+      });
+      this.scheduleChronosLifelineConduit(
+        player.id,
+        chronosLifelineTargets.map((target) => target.id),
+        releaseAt
       );
+      return;
     } else {
       // Execute ability effect with context for void zone creation
       executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
@@ -2432,6 +2548,31 @@ export class GameRoom extends Room<GameState> {
     return holdStartedAt !== undefined && now - holdStartedAt >= PHANTOM_PRIMARY_FIRE_READY_MS;
   }
 
+  private updateChronosPrimaryHoldState(
+    player: Player,
+    input: PlayerInput,
+    previous: PlayerPressState,
+    now: number
+  ): void {
+    if (player.heroId !== 'chronos') return;
+
+    if (!input.primaryFire) {
+      this.chronosPrimaryHoldStartedAt.delete(player.id);
+      return;
+    }
+
+    if (!previous.primaryFire || !this.chronosPrimaryHoldStartedAt.has(player.id)) {
+      this.chronosPrimaryHoldStartedAt.set(player.id, now);
+    }
+  }
+
+  private isChronosPrimaryReady(player: Player, now: number): boolean {
+    if (player.heroId !== 'chronos') return true;
+
+    const holdStartedAt = this.chronosPrimaryHoldStartedAt.get(player.id);
+    return holdStartedAt !== undefined && now - holdStartedAt >= CHRONOS_VERDANT_PULSE_FIRE_READY_MS;
+  }
+
   private processPlayerInput(player: Player, input: PlayerInput): void {
     if (player.state !== 'alive') return;
 
@@ -2443,6 +2584,7 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     const reloadPressed = Boolean(input.reload);
     this.updatePhantomPrimaryHoldState(player, input, previous, now);
+    this.updateChronosPrimaryHoldState(player, input, previous, now);
 
     if (reloadPressed && !previous.reload) {
       this.reloadHeroPrimary(player, now);
@@ -2496,6 +2638,7 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) return;
     if (mode === 'primary' && !this.isPhantomPrimaryReady(player, now)) return;
+    if (mode === 'primary' && !this.isChronosPrimaryReady(player, now)) return;
     if (mode === 'primary' && !this.consumePhantomPrimaryShot(player, now)) return;
     this.attackCooldownUntil.set(cooldownKey, now + attack.cooldownMs);
 
@@ -2525,6 +2668,8 @@ export class GameRoom extends Room<GameState> {
         mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack',
         now
       );
+    } else if (heroId === 'chronos' && mode === 'primary') {
+      this.broadcastChronosVerdantPulseCast(player, attack, now);
     }
 
     const primaryTarget = this.findTargetInAimCone(player, attack.range, attack.coneDot);
@@ -4007,6 +4152,7 @@ export class GameRoom extends Room<GameState> {
     player.health = player.maxHealth;
     player.ultimateCharge = 0;
     this.phantomPrimaryHoldStartedAt.delete(player.id);
+    this.chronosPrimaryHoldStartedAt.delete(player.id);
     if (heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     } else {
@@ -4413,6 +4559,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastBlazeFlamethrowerState(player, false, Date.now());
     this.blazeBombDropConsumedForHold.delete(player.id);
     this.phantomPrimaryHoldStartedAt.delete(player.id);
+    this.chronosPrimaryHoldStartedAt.delete(player.id);
     this.phantomVoidRayChargeStartedAt.delete(player.id);
     this.phantomVoidRayResolvedForPress.delete(player.id);
     player.movement.isGrappling = false;

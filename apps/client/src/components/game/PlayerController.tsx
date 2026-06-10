@@ -31,8 +31,6 @@ import { setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
 import { setBlazeBombTargetHeld, setBlazeFlamethrowerHeld, setBlazeRocketHeld } from '../../viewmodel/blazePose';
 import {
-  CHRONOS_PRIMARY_FIRE_READY_BLEND,
-  getChronosPrimaryHeldBlend,
   setChronosPrimaryHeld,
 } from '../../viewmodel/chronosPose';
 import { isDevFlyMode } from '../ui/GameConsole';
@@ -622,7 +620,7 @@ export function PlayerController() {
     const primaryFireForServer = heroId === 'phantom'
       ? phantomPrimaryHeldForPose && phantomAbilities.phantomPrimaryAmmoRef.current > 0
       : heroId === 'chronos'
-        ? frameInput.primaryFire && getChronosPrimaryHeldBlend(now) >= CHRONOS_PRIMARY_FIRE_READY_BLEND
+        ? frameInput.primaryFire
         : heroId === 'blaze'
           ? frameInput.primaryFire && !bombTargeting
         : frameInput.primaryFire;

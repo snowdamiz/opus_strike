@@ -1,6 +1,10 @@
 import type { Room } from 'colyseus.js';
 import * as THREE from 'three';
-import { ABILITY_DEFINITIONS, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS } from '@voxel-strike/shared';
+import {
+  ABILITY_DEFINITIONS,
+  CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+  CHRONOS_VERDANT_PULSE_SPEED,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import {
@@ -17,6 +21,11 @@ import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
 import { triggerBlazeRocketJumpStaffSlam } from '../viewmodel/blazePose';
+import {
+  triggerChronosLifelineConduitPose,
+  triggerChronosPrimaryShotGlow,
+  triggerChronosTimebreakPose,
+} from '../viewmodel/chronosPose';
 import {
   DRAG_HOOK_SPEED,
   BLAZE_BOMB_FALL_DURATION,
@@ -590,9 +599,14 @@ export function setupPlayerTransformsHandler(
       existingPlayer.movement = movementFromBits(transform, existingPlayer.movement);
       setPlayerVisualPosition(transform.id, decoded.position);
       setPlayerVisualRotation(transform.id, decoded.lookYaw);
+      const chronosAegisActive = existingPlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
+      const previousChronosAegis = visualStore.getState().chronosAegisStates.get(transform.id);
+      if (chronosAegisActive && !previousChronosAegis?.active) {
+        playChronosWorldSound('chronosAegis', decoded.position);
+      }
       setChronosAegisVisualState(
         transform.id,
-        existingPlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS),
+        chronosAegisActive,
         Date.now()
       );
     }
@@ -836,6 +850,7 @@ interface AbilityUsedMessage {
   position?: { x: number; y: number; z: number };
   startPosition?: { x: number; y: number; z: number };
   targetPosition?: { x: number; y: number; z: number };
+  targetIds?: string[];
   aimDirection?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };
   maxDistance?: number;
@@ -937,6 +952,19 @@ function playBlazeWorldSound(
     fadeOutMs: options.fadeOutMs,
     volume: options.volume,
     pitch: options.pitch,
+  });
+}
+
+function playChronosWorldSound(
+  sound: SoundName,
+  position: { x: number; y: number; z: number } | undefined,
+  options: { durationMs?: number; fadeOutMs?: number; volume?: number } = {}
+): void {
+  void playSharedSound(sound, {
+    position,
+    durationMs: options.durationMs,
+    fadeOutMs: options.fadeOutMs,
+    volume: options.volume,
   });
 }
 
@@ -1412,6 +1440,92 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
   }
 }
 
+function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: string | null): boolean {
+  const store = useGameStore.getState();
+  const isLocalPlayer = data.playerId === localPlayerId;
+  const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
+  const startPosition = data.startPosition ?? position;
+  const ownerTeam = resolveOwnerTeam(data);
+  const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
+  const now = Date.now();
+
+  switch (data.abilityId) {
+    case 'chronos_verdant_pulse': {
+      if (!startPosition) return true;
+      const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), CHRONOS_VERDANT_PULSE_SPEED);
+
+      if (isLocalPlayer) {
+        triggerChronosPrimaryShotGlow(data.serverTime ?? now);
+      }
+
+      store.addChronosPulse({
+        id: castId,
+        position: startPosition,
+        velocity,
+        startTime: now,
+        ownerId: data.playerId,
+        ownerTeam,
+      });
+      playChronosWorldSound('chronosPulse', startPosition);
+      return true;
+    }
+
+    case 'chronos_lifeline_conduit': {
+      if (isLocalPlayer) {
+        triggerChronosLifelineConduitPose(data.serverTime ?? now);
+      }
+      playChronosWorldSound('chronosAegis', startPosition, { volume: 0.65 });
+      return true;
+    }
+
+    case 'chronos_timebreak': {
+      if (isLocalPlayer) {
+        triggerChronosTimebreakPose(data.serverTime ?? now);
+      }
+
+      const releaseTime = data.releaseAt ?? now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
+      const releaseDelay = Math.max(0, releaseTime - now);
+      playChronosWorldSound('chronosTimebreak', startPosition, {
+        durationMs: Math.max(180, releaseDelay),
+        fadeOutMs: Math.min(140, releaseDelay),
+        volume: 0.72,
+      });
+
+      window.setTimeout(() => {
+        const freshStore = useGameStore.getState();
+        const caster = data.playerId === (freshStore.localPlayer?.id ?? freshStore.playerId)
+          ? freshStore.localPlayer
+          : freshStore.players.get(data.playerId);
+        const casterPosition = caster?.position ?? data.position;
+        if (!casterPosition) return;
+
+        const effectPosition = {
+          x: casterPosition.x,
+          y: casterPosition.y + 1.18,
+          z: casterPosition.z,
+        };
+
+        addChronosTimebreakEffect({
+          id: castId,
+          position: effectPosition,
+          ownerId: data.playerId,
+          ownerTeam: (caster?.team ?? data.ownerTeam) as Team | undefined,
+          direction: data.shockwaveDirection ?? data.aimDirection,
+          startTime: data.serverTime ?? now,
+          releaseTime,
+          duration: data.duration,
+          radius: data.radius,
+        });
+        playChronosWorldSound('chronosTimebreak', effectPosition, { volume: 1.05 });
+      }, releaseDelay);
+      return true;
+    }
+
+    default:
+      return false;
+  }
+}
+
 /**
  * Sets up combat event handlers (damage, kills)
  */
@@ -1498,12 +1612,12 @@ export function setupCombatHandlers(room: Room) {
       }
     }
 
-    const localPlayerId = store.localPlayer?.id ?? store.playerId;
-    if (data.sourceId === localPlayerId) return;
-
     addChronosLifelineEffects(data.sourcePosition, data.targets.map((target) => ({
       position: target.position,
     })));
+    if (data.abilityId === 'chronos_lifeline_conduit') {
+      playChronosWorldSound('chronosLifeline', data.sourcePosition);
+    }
   });
 
   room.onMessage('playerKilled', (data: {
@@ -1528,36 +1642,7 @@ export function setupCombatHandlers(room: Room) {
     if (handlePhantomAbilityUsed(data, localPlayerId)) return;
     if (handleHookshotAbilityUsed(data, localPlayerId)) return;
     if (handleBlazeAbilityUsed(data, localPlayerId)) return;
-
-    if (data.abilityId === 'chronos_timebreak') {
-      if (data.playerId === localPlayerId) return;
-
-      const now = Date.now();
-      const releaseTime = data.releaseAt ?? now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
-      window.setTimeout(() => {
-        const freshStore = useGameStore.getState();
-        const caster = freshStore.players.get(data.playerId);
-        const casterPosition = caster?.position ?? data.position;
-        if (!casterPosition) return;
-
-        addChronosTimebreakEffect({
-          id: `chronos_timebreak_remote_${data.playerId}_${data.releaseAt ?? now}`,
-          position: {
-            x: casterPosition.x,
-            y: casterPosition.y + 1.18,
-            z: casterPosition.z,
-          },
-          ownerId: data.playerId,
-          ownerTeam: caster?.team as Team | undefined,
-          direction: data.shockwaveDirection,
-          startTime: now,
-          releaseTime,
-          duration: data.duration,
-          radius: data.radius,
-        });
-      }, Math.max(0, releaseTime - now));
-      return;
-    }
+    if (handleChronosAbilityUsed(data, localPlayerId)) return;
 
   });
 

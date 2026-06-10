@@ -119,6 +119,12 @@ const SOUND_EFFECTS = {
   hookshotAnchorWall: { path: '/sounds/hookshot_q.mp3', volume: 0.6 },
   hookshotTrap: { path: '/sounds/hookshot_hero_strike.mp3', volume: 0.58 },
   hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
+
+  // Chronos Abilities
+  chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0.34 },
+  chronosAegis: { path: '/sounds/chronos_charge.mp3', volume: 0.24 },
+  chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
+  chronosTimebreak: { path: '/sounds/chronos_charge.mp3', volume: 0.62 },
   
   // Combat
   hit: { path: '/sounds/hit.mp3', volume: 0.6 },
@@ -147,7 +153,7 @@ const SOUND_EFFECTS = {
 } as const;
 
 export type SoundName = keyof typeof SOUND_EFFECTS;
-export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze' | 'hookshot';
+export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze' | 'hookshot' | 'chronos';
 
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
@@ -156,6 +162,7 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomReloadScream', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
+  chronos: ['chronosPulse', 'chronosAegis', 'chronosLifeline', 'chronosTimebreak'],
 };
 
 function ensureSharedAudioContext(): AudioContext | null {
@@ -875,6 +882,8 @@ export function useAudio() {
       await preloadSoundGroup('blaze');
     } else if (heroId === 'hookshot') {
       await preloadSoundGroup('hookshot');
+    } else if (heroId === 'chronos') {
+      await preloadSoundGroup('chronos');
     } else {
       await preloadSoundGroup('commonCombat');
     }
