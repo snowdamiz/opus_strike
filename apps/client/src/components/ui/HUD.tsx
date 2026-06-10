@@ -540,7 +540,7 @@ export function HUD() {
             <p className="text-white text-sm font-bold drop-shadow-lg">
               {bombTargetValid ? 'RELEASE TO CALL METEOR STRIKE' : 'TARGET OUT OF RANGE'}
             </p>
-            <p className="text-white/70 text-xs">Right-click or ESC to cancel</p>
+            <p className="text-white/70 text-xs">Release secondary to confirm, ESC to cancel</p>
           </div>
         </div>
       )}
@@ -690,7 +690,7 @@ export function HUD() {
 
       {/* ===== BOTTOM LEFT - Health ===== */}
       <div
-        className="absolute hud-scale"
+        className="absolute hud-scale hud-health"
         style={{
           left: 'clamp(0.75rem, 1.25vw, 1.125rem)',
           bottom: 'clamp(0.75rem, 1.25vw, 1.125rem)',
@@ -735,7 +735,7 @@ export function HUD() {
 
       {/* ===== BOTTOM CENTER - Skill Bar ===== */}
       {heroSkillItems.length > 0 && (
-        <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 -translate-x-1/2 max-w-[94vw]">
+        <div className="absolute bottom-[clamp(0.45rem,1vw,0.875rem)] left-1/2 -translate-x-1/2 max-w-[94vw] hud-skill-bar">
           <div className="flex items-end justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
             {heroSkillItems.map((skill) => (
               <HUDSkillSlot
@@ -754,7 +754,7 @@ export function HUD() {
       )}
 
       {/* ===== BOTTOM RIGHT - Movement Status (Improved) ===== */}
-      <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2">
+      <div className="absolute bottom-4 right-4 xl:bottom-6 xl:right-6 flex flex-col items-end gap-2 hud-status">
         {localPlayer.heroId === 'phantom' && (
           <PhantomAmmoCounter
             ammo={phantomPrimaryAmmo}

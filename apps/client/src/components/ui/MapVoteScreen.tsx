@@ -274,12 +274,12 @@ function GeneratingMapPanel() {
 
 function PreparingMapCard() {
   return (
-    <div className="relative overflow-hidden rounded-lg border border-white/[0.08] bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl">
-      <div className="relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
+    <div className="map-vote-card map-vote-preparing-card relative overflow-hidden rounded-lg border border-white/[0.08] bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl">
+      <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
         <GeneratingMapPanel />
       </div>
       <div
-        className="relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
+        className="map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
         style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
       >
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
@@ -387,7 +387,7 @@ export function MapVoteScreen() {
   };
 
   return (
-    <div className="menu-screen bg-strike-bg">
+    <div className="menu-screen map-vote-screen bg-strike-bg">
       <div className="absolute inset-0">
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
@@ -419,12 +419,12 @@ export function MapVoteScreen() {
       </div>
 
       <nav className="absolute left-0 right-0 top-0 z-20">
-        <div className="menu-nav relative flex items-center justify-between gap-4">
-          <div className="flex min-w-0 items-center gap-3 xl:gap-4">
+        <div className="menu-nav map-vote-nav relative flex items-center justify-between gap-4">
+          <div className="map-vote-title-group flex min-w-0 items-center gap-3 xl:gap-4">
             <button
               type="button"
               onClick={handleLeave}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/60 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+              className="map-vote-back-button flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/60 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
               aria-label="Leave lobby"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -433,16 +433,16 @@ export function MapVoteScreen() {
             </button>
 
             <div className="min-w-0">
-              <h1 className="font-display translate-y-[0.08em] truncate text-2xl leading-none text-white xl:text-3xl">
+              <h1 className="map-vote-title font-display translate-y-[0.08em] truncate text-2xl leading-none text-white xl:text-3xl">
                 Map Vote
               </h1>
             </div>
           </div>
 
-          <PhaseCountdownTimer phaseEndTime={mapVotePhaseEndTime} />
+          <PhaseCountdownTimer phaseEndTime={mapVotePhaseEndTime} className="map-vote-timer" />
 
           <div
-            className="flex shrink-0 items-center gap-3 rounded-xl border py-2 pl-2 pr-4"
+            className="map-vote-profile flex shrink-0 items-center gap-3 rounded-xl border py-2 pl-2 pr-4"
             style={{
               background: currentFaction
                 ? `linear-gradient(135deg, ${currentFaction.bgGradient}, rgb(var(--color-strike-panel-raised) / 0.9))`
@@ -451,7 +451,7 @@ export function MapVoteScreen() {
             }}
           >
             <div
-              className="flex h-9 w-9 items-center justify-center rounded-lg font-display text-white shadow-lg"
+              className="map-vote-profile-avatar flex h-9 w-9 items-center justify-center rounded-lg font-display text-white shadow-lg"
               style={{
                 background: currentFaction
                   ? `linear-gradient(135deg, ${currentFaction.primaryColor}, ${currentFaction.secondaryColor})`
@@ -461,7 +461,7 @@ export function MapVoteScreen() {
             >
               {getPlayerInitial(playerName)}
             </div>
-            <div>
+            <div className="map-vote-profile-copy">
               <p className="font-display text-sm text-white">{playerName}</p>
               <p className="font-body text-[10px]" style={{ color: currentFaction?.primaryColor || 'rgba(255,255,255,0.4)' }}>
                 {currentFaction?.fullName || 'Unassigned'}
@@ -471,15 +471,15 @@ export function MapVoteScreen() {
         </div>
       </nav>
 
-      <main className="menu-main z-10">
-        <div className="menu-content-wide flex h-full flex-col justify-center gap-4 py-1 xl:gap-5">
-          <div className="flex justify-center">
+      <main className="menu-main map-vote-main z-10">
+        <div className="map-vote-content menu-content-wide flex h-full flex-col justify-center gap-4 py-1 xl:gap-5">
+          <div className="map-vote-heading flex justify-center">
             <h2 className="font-display text-center text-2xl leading-none text-white xl:text-4xl">
               Choose the battlefield
             </h2>
           </div>
 
-          <div className="mx-auto grid w-full max-w-[72rem] min-h-0 grid-cols-1 gap-3 lg:grid-cols-3 xl:gap-4">
+          <div className="map-vote-grid mx-auto grid w-full max-w-[72rem] min-h-0 grid-cols-1 gap-3 lg:grid-cols-3 xl:gap-4">
             {isPreparingMaps && [0, 1, 2].map((index) => (
               <PreparingMapCard key={index} />
             ))}
@@ -500,14 +500,14 @@ export function MapVoteScreen() {
                   type="button"
                   onClick={() => handleVote(option.id)}
                   disabled={isFinalized}
-                  className={`relative overflow-hidden rounded-lg border bg-black/[0.1] text-left shadow-2xl shadow-black/[0.26] outline-none backdrop-blur-xl focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
+                  className={`map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] text-left shadow-2xl shadow-black/[0.26] outline-none backdrop-blur-xl focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
                   style={{
                     boxShadow: isSelected || isWinner
                       ? `0 20px 60px rgba(0,0,0,0.48), 0 0 28px ${isWinner ? 'rgb(var(--color-ui-success) / 0.28)' : 'rgb(var(--color-accent-primary) / 0.25)'}`
                       : undefined,
                   }}
                 >
-                  <div className="relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
+                  <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
                     <MapPreviewImage option={option} onReady={handlePreviewReady} />
                     {(isSelected || isWinner) && (
                       <div
@@ -524,7 +524,7 @@ export function MapVoteScreen() {
                   </div>
 
                   <div
-                    className="relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
+                    className="map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
                     style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
                   >
                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
@@ -563,15 +563,15 @@ export function MapVoteScreen() {
       </main>
 
       <div
-        className="absolute bottom-0 left-0 right-0 z-20"
+        className="map-vote-footer absolute bottom-0 left-0 right-0 z-20"
         style={{
           background: 'linear-gradient(to top, rgb(var(--color-strike-page-top) / 0.96), rgb(var(--color-strike-page-top) / 0.62), transparent)',
         }}
       >
         <div className="flex items-center justify-center py-3 xl:py-4">
-          <div className="flex items-center gap-3 rounded-full border border-white/5 bg-white/[0.035] px-4 py-2 shadow-2xl shadow-black/30 backdrop-blur-xl xl:gap-4 xl:px-5">
+          <div className="map-vote-action-bar flex items-center gap-3 rounded-full border border-white/5 bg-white/[0.035] px-4 py-2 shadow-2xl shadow-black/30 backdrop-blur-xl xl:gap-4 xl:px-5">
             <div
-              className="flex h-8 w-8 items-center justify-center rounded-lg"
+              className="map-vote-action-icon flex h-8 w-8 items-center justify-center rounded-lg"
               style={{ background: `${FACTIONS.red.primaryColor}20`, color: FACTIONS.red.primaryColor }}
             >
               <MapGlyph className="h-4 w-4" />
@@ -582,7 +582,7 @@ export function MapVoteScreen() {
                 type="button"
                 onClick={handleFinalize}
                 disabled={isFinalized || mapVoteOptions.length === 0 || !isVoteTimerStarted}
-                className="h-10 min-w-[13rem] rounded-full px-5 font-display text-xs uppercase tracking-wide text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-white/[0.055] disabled:text-white/30"
+                className="map-vote-lock-button h-10 min-w-[13rem] rounded-full px-5 font-display text-xs uppercase tracking-wide text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-white/[0.055] disabled:text-white/30"
                 style={!isFinalized && mapVoteOptions.length > 0 && isVoteTimerStarted ? {
                   background: 'linear-gradient(135deg, rgb(var(--color-ui-success)) 0%, rgb(var(--color-ui-success-deep)) 100%)',
                   boxShadow: '0 0 32px rgb(var(--color-ui-success) / 0.28)',
@@ -591,13 +591,13 @@ export function MapVoteScreen() {
                 {isFinalized ? 'Launching' : isVoteTimerStarted ? 'Lock Vote' : 'Generating'}
               </button>
             ) : (
-              <div className="flex h-10 min-w-[13rem] items-center justify-center rounded-full bg-white/[0.055] px-5 font-display text-xs uppercase tracking-wide text-white/[0.42]">
+              <div className="map-vote-lock-status flex h-10 min-w-[13rem] items-center justify-center rounded-full bg-white/[0.055] px-5 font-display text-xs uppercase tracking-wide text-white/[0.42]">
                 {localVote ? 'Vote Locked' : 'Awaiting Vote'}
               </div>
             )}
 
             <div
-              className="flex h-8 w-8 items-center justify-center rounded-lg"
+              className="map-vote-action-icon flex h-8 w-8 items-center justify-center rounded-lg"
               style={{ background: `${FACTIONS.blue.primaryColor}20`, color: FACTIONS.blue.primaryColor }}
             >
               <ClockGlyph className="h-4 w-4" />

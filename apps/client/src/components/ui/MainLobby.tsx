@@ -1,4 +1,4 @@
-import { type CSSProperties, useState, useEffect } from 'react';
+import { type CSSProperties, useState, useEffect, useRef } from 'react';
 import { useGameStore, LobbyInfo } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -50,6 +50,16 @@ function DiscordIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M19.54 5.34A18.2 18.2 0 0015.02 4c-.2.36-.42.84-.58 1.22a16.9 16.9 0 00-5.01 0A11.7 11.7 0 008.84 4c-1.6.27-3.12.72-4.52 1.34C1.46 9.6.68 13.74 1.07 17.81A18.5 18.5 0 006.61 20.6c.45-.61.84-1.26 1.18-1.95-.65-.24-1.27-.54-1.86-.89.16-.12.31-.24.46-.36a13.05 13.05 0 0011.14 0l.46.36c-.6.35-1.22.65-1.87.89.34.69.74 1.34 1.18 1.95a18.43 18.43 0 005.55-2.79c.46-4.72-.78-8.82-3.31-12.47zM8.52 15.3c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2zm6.96 0c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2z" />
+    </svg>
+  );
+}
+
+function SignInIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 3h3.5A2.5 2.5 0 0121 5.5v13a2.5 2.5 0 01-2.5 2.5H15" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M10 7l5 5-5 5" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12H3" />
     </svg>
   );
 }
@@ -145,13 +155,15 @@ export function MainLobby() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
+  const shouldAuthenticateConnectedWalletRef = useRef(false);
 
   // Handle authentication after wallet connection
   useEffect(() => {
-    if (isConnected && !isAuthenticated && !isAuthenticating && showAuthModal) {
+    if (isConnected && !isAuthenticated && !isAuthenticating && showAuthModal && shouldAuthenticateConnectedWalletRef.current) {
+      shouldAuthenticateConnectedWalletRef.current = false;
       handleAuthenticate();
     }
-  }, [isConnected, showAuthModal]);
+  }, [isConnected, isAuthenticated, isAuthenticating, showAuthModal]);
 
   // Handle user authenticated - close modal and set user info
   useEffect(() => {
@@ -167,6 +179,7 @@ export function MainLobby() {
   // Show name input for new users
   useEffect(() => {
     if (isAuthenticated && isNewUser) {
+      setShowAuthModal(true);
       setShowNameInput(true);
       setNewPlayerName((currentName) => currentName || suggestedPlayerName);
     }
@@ -181,7 +194,13 @@ export function MainLobby() {
   const handleConnect = async () => {
     clearError();
     clearNotice();
-    await connect();
+    shouldAuthenticateConnectedWalletRef.current = true;
+    try {
+      await connect();
+    } catch (err) {
+      shouldAuthenticateConnectedWalletRef.current = false;
+      throw err;
+    }
   };
 
   const handleAuthenticate = async () => {
@@ -235,13 +254,20 @@ export function MainLobby() {
     setShowNameInput(false);
     setNewPlayerName('');
     setNameError(null);
+    shouldAuthenticateConnectedWalletRef.current = false;
     setShowAuthModal(false);
   };
 
   const handleSignInClick = () => {
     clearError();
     clearNotice();
+    shouldAuthenticateConnectedWalletRef.current = false;
     setShowAuthModal(true);
+  };
+
+  const handleAuthModalClose = () => {
+    shouldAuthenticateConnectedWalletRef.current = false;
+    setShowAuthModal(false);
   };
 
   const handleLinkPhantom = async () => {
@@ -472,7 +498,7 @@ export function MainLobby() {
  </>
  ) : (
  <>
- <PhantomIcon className="w-5 h-5" />
+ <SignInIcon className="w-5 h-5" />
  SIGN IN
  </>
  )}
@@ -495,7 +521,6 @@ export function MainLobby() {
             heroAnimationMode={heroAnimationMode}
             lobbyCount={availableLobbies.length}
             isAuthenticated={isAuthenticated}
-            isDiscordAuthEnabled={isDiscordAuthEnabled}
             hasFullFunctionality={hasFullFunctionality}
             isLinkingPhantom={isLinkingPhantom}
             onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
@@ -569,7 +594,7 @@ export function MainLobby() {
           onRegister={handleRegister}
           onNameChange={setNewPlayerName}
           onNameErrorClear={() => setNameError(null)}
-          onClose={() => setShowAuthModal(false)}
+          onClose={handleAuthModalClose}
           formatAddress={formatAddress}
         />
       )}
@@ -587,7 +612,6 @@ interface PlayTabProps {
   heroAnimationMode: HeroAnimationMode;
   lobbyCount: number;
   isAuthenticated: boolean;
-  isDiscordAuthEnabled: boolean;
   hasFullFunctionality: boolean;
   isLinkingPhantom: boolean;
   onQuickPlay: () => void;
@@ -608,7 +632,6 @@ function PlayTab({
   heroAnimationMode,
   lobbyCount,
   isAuthenticated,
-  isDiscordAuthEnabled,
   hasFullFunctionality,
   isLinkingPhantom,
   onQuickPlay,
@@ -628,15 +651,15 @@ function PlayTab({
       : 'relative h-[clamp(17rem,42vh,30rem)] w-[clamp(15rem,32vw,30rem)]';
 
   return (
-    <div className="h-full flex items-center justify-center menu-content">
+    <div className="play-tab-shell h-full flex items-center justify-center menu-content">
       {/* Centered Content */}
       <div className="play-tab-stage menu-compact-scale relative flex flex-col items-center">
         {/* Hero Visual with Carousel Controls */}
-        <div className="relative flex items-center gap-3 lg:gap-4 2xl:gap-6">
+        <div className="play-hero-nav relative flex items-center gap-3 lg:gap-4 2xl:gap-6">
           {/* Previous Arrow */}
  <button
  onClick={onPrevHero}
- className="group relative w-10 h-10 xl:w-12 xl:h-12 2xl:w-14 2xl:h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
+ className="play-carousel-arrow play-carousel-prev group relative w-10 h-10 xl:w-12 xl:h-12 2xl:w-14 2xl:h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
  aria-label="Previous hero"
  >
  <svg className="w-5 h-5 xl:w-6 xl:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -645,7 +668,7 @@ function PlayTab({
  </button>
 
           {/* Hero Container */}
-          <div className="relative">
+          <div className="play-hero-preview-wrap relative">
             {/* Background glow that matches hero color */}
             <div
               className="absolute inset-0 opacity-20 -z-10"
@@ -667,7 +690,7 @@ function PlayTab({
           {/* Next Arrow */}
  <button
  onClick={onNextHero}
- className="group relative w-10 h-10 xl:w-12 xl:h-12 2xl:w-14 2xl:h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
+ className="play-carousel-arrow play-carousel-next group relative w-10 h-10 xl:w-12 xl:h-12 2xl:w-14 2xl:h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 hover:border-white/20"
  aria-label="Next hero"
  >
  <svg className="w-5 h-5 xl:w-6 xl:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -677,7 +700,7 @@ function PlayTab({
         </div>
 
         {/* Hero info - below the preview with proper spacing */}
-        <div className="text-center w-[clamp(17rem,24vw,32rem)] mt-2 sm:mt-3 lg:mt-4 xl:mt-5">
+        <div className="play-hero-info text-center w-[clamp(17rem,24vw,32rem)] mt-2 sm:mt-3 lg:mt-4 xl:mt-5">
           <h2
             className="font-display text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl 2xl:text-5xl text-white mb-0.5 lg:mb-1 xl:mb-2"
             style={{ textShadow: `0 0 30px ${heroColor}50, 0 2px 10px rgba(0,0,0,0.5)` }}
@@ -687,7 +710,7 @@ function PlayTab({
           <p className="text-white/50 font-body text-[10px] sm:text-xs xl:text-sm max-w-sm mx-auto leading-relaxed">{heroInfo.description}</p>
 
           {/* Carousel Dot Indicators */}
-          <div className="flex items-center justify-center gap-1.5 sm:gap-2 mt-1 sm:mt-1.5 lg:mt-2 xl:mt-3 2xl:mt-4 mb-1 sm:mb-1.5 lg:mb-2 xl:mb-3 2xl:mb-4">
+          <div className="play-carousel-dots flex items-center justify-center gap-1.5 sm:gap-2 mt-1 sm:mt-1.5 lg:mt-2 xl:mt-3 2xl:mt-4 mb-1 sm:mb-1.5 lg:mb-2 xl:mb-3 2xl:mb-4">
             {ALL_HERO_IDS.map((heroId) => {
               const isActive = heroId === featuredHero;
               const dotColor = HERO_COLORS[heroId];
@@ -719,7 +742,7 @@ function PlayTab({
         <div className="h-0 lg:h-1 xl:h-2 2xl:h-3" />
 
         {/* Action Buttons */}
-        <div className="w-[clamp(18rem,25vw,34rem)] space-y-1.5 lg:space-y-2 xl:space-y-2.5">
+        <div className="play-action-stack w-[clamp(18rem,25vw,34rem)] space-y-1.5 lg:space-y-2 xl:space-y-2.5">
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
               <p className="text-red-400 text-sm font-body text-center">{error}</p>
@@ -772,11 +795,7 @@ function PlayTab({
  </>
  ) : (
  <>
- {isDiscordAuthEnabled ? (
- <DiscordIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
- ) : (
- <PhantomIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
- )}
+ <SignInIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
  SIGN IN TO PLAY
  </>
  )}
@@ -1180,7 +1199,13 @@ function AuthModal({
   return (
     <GameDialog
       title={showNameInput ? 'CREATE PROFILE' : 'SIGN IN'}
-      icon={(showNameInput && !isDiscordPending) || !isDiscordAuthEnabled ? <PhantomIcon className="w-6 h-6" /> : <DiscordIcon className="w-6 h-6 text-indigo-200" />}
+      icon={
+        showNameInput
+          ? isDiscordPending
+            ? <DiscordIcon className="w-6 h-6 text-indigo-200" />
+            : <PhantomIcon className="w-6 h-6" />
+          : <SignInIcon className="w-6 h-6 text-indigo-100" />
+      }
       iconClassName="bg-gradient-to-br from-indigo-500/20 to-purple-600/10 border border-indigo-400/20"
       size="sm"
       onClose={onClose}

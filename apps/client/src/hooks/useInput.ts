@@ -1,7 +1,8 @@
-import { useEffect, useCallback, useRef, useState } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { createEmptyInputState } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
 import { isGameConsoleOpen } from '../components/ui/GameConsole';
+import { useMobileControlsStore } from '../store/mobileControlsStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { mouseButtonToKeybindCode } from '../utils/keybindings';
 
@@ -11,8 +12,28 @@ interface UseInputReturn {
   inputState: InputState;
   isPointerLocked: boolean;
   isControlPressed: boolean;
+  isTouchInputActive: boolean;
   requestPointerLock: () => void;
   exitPointerLock: () => void;
+}
+
+function mergeInputStates(primary: InputState, secondary: InputState): InputState {
+  return {
+    moveForward: primary.moveForward || secondary.moveForward,
+    moveBackward: primary.moveBackward || secondary.moveBackward,
+    moveLeft: primary.moveLeft || secondary.moveLeft,
+    moveRight: primary.moveRight || secondary.moveRight,
+    jump: primary.jump || secondary.jump,
+    crouch: primary.crouch || secondary.crouch,
+    sprint: primary.sprint || secondary.sprint,
+    primaryFire: primary.primaryFire || secondary.primaryFire,
+    secondaryFire: primary.secondaryFire || secondary.secondaryFire,
+    reload: primary.reload || secondary.reload,
+    ability1: primary.ability1 || secondary.ability1,
+    ability2: primary.ability2 || secondary.ability2,
+    ultimate: primary.ultimate || secondary.ultimate,
+    interact: primary.interact || secondary.interact,
+  };
 }
 
 export function useInput(): UseInputReturn {
@@ -20,6 +41,8 @@ export function useInput(): UseInputReturn {
   const [inputState, setInputState] = useState<InputState>(createEmptyInputState());
   const [isPointerLocked, setIsPointerLocked] = useState(false);
   const [isControlPressed, setIsControlPressed] = useState(false);
+  const mobileInputState = useMobileControlsStore(state => state.inputState);
+  const isTouchInputActive = useMobileControlsStore(state => state.isTouchInputActive);
   const toggleCrouch = useSettingsStore(state => state.settings.toggleCrouch);
   const toggleSprint = useSettingsStore(state => state.settings.toggleSprint);
   const keybindings = useSettingsStore(state => state.settings.keybindings);
@@ -224,10 +247,16 @@ export function useInput(): UseInputReturn {
     document.exitPointerLock();
   }, []);
 
+  const mergedInputState = useMemo(
+    () => mergeInputStates(inputState, mobileInputState),
+    [inputState, mobileInputState]
+  );
+
   return {
-    inputState,
+    inputState: mergedInputState,
     isPointerLocked,
     isControlPressed,
+    isTouchInputActive,
     requestPointerLock,
     exitPointerLock,
   };

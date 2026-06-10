@@ -8,6 +8,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { MOUSE_SENSITIVITY, PITCH_LIMIT } from '@voxel-strike/shared';
 import type { CameraRefs } from './types';
+import { consumeMobileLookDelta } from '../../store/mobileControlsStore';
 import { useSettingsStore } from '../../store/settingsStore';
 
 export interface UseCameraOptions {
@@ -45,19 +46,23 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
   const slideRollRef = useRef(0);
 
   // Handle mouse movement
+  const applyLookDelta = useCallback((deltaX: number, deltaY: number) => {
+    const sensitivityMultiplier = sensitivity / 50;
+    yawRef.current -= deltaX * MOUSE_SENSITIVITY * sensitivityMultiplier;
+    pitchRef.current += (invertY ? 1 : -1) * deltaY * MOUSE_SENSITIVITY * sensitivityMultiplier;
+    pitchRef.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitchRef.current));
+  }, [invertY, sensitivity]);
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isPointerLocked) return;
 
-      const sensitivityMultiplier = sensitivity / 50;
-      yawRef.current -= e.movementX * MOUSE_SENSITIVITY * sensitivityMultiplier;
-      pitchRef.current += (invertY ? 1 : -1) * e.movementY * MOUSE_SENSITIVITY * sensitivityMultiplier;
-      pitchRef.current = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitchRef.current));
+      applyLookDelta(e.movementX, e.movementY);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     return () => document.removeEventListener('mousemove', handleMouseMove);
-  }, [invertY, isPointerLocked, sensitivity]);
+  }, [applyLookDelta, isPointerLocked]);
 
   // Update camera rotation with slide/crouch effects
   const updateCameraRotation = useCallback((
@@ -66,6 +71,11 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     isCrouching: boolean,
     dt: number
   ) => {
+    const touchLookDelta = consumeMobileLookDelta();
+    if (touchLookDelta.x !== 0 || touchLookDelta.y !== 0) {
+      applyLookDelta(touchLookDelta.x, touchLookDelta.y);
+    }
+
     // Interpolate crouch camera height
     const targetCrouchOffset = (isCrouching || isSliding) ? CROUCH_HEIGHT_OFFSET : 0;
     crouchHeightRef.current += (targetCrouchOffset - crouchHeightRef.current) * Math.min(CROUCH_TRANSITION_SPEED * dt, 1);
@@ -92,7 +102,7 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     camera.rotation.y = yawRef.current;
     camera.rotation.x = pitchRef.current + slidePitchRef.current;
     camera.rotation.z = slideRollRef.current;
-  }, [fov]);
+  }, [applyLookDelta, fov]);
 
   // Get camera position with eye height and crouch offset
   const getCameraPosition = useCallback((position: THREE.Vector3, _crouchOffset?: number): THREE.Vector3 => {
@@ -113,4 +123,3 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     getCameraPosition,
   };
 }
-

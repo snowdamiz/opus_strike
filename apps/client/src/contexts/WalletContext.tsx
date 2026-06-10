@@ -1,6 +1,16 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
+import {
+  canUsePhantomMobileDeepLink,
+  clearPhantomMobileDeepLinkSession,
+  getPhantomMobileDeepLinkSession,
+  handlePhantomMobileDeepLinkCallback,
+  hasPhantomMobileDeepLinkCallback,
+  startPhantomMobileConnect,
+  startPhantomMobileSignMessage,
+  waitForPhantomMobileRedirect,
+} from '../utils/phantomDeepLink';
 
 type AuthProviderName = 'discord' | 'phantom';
 
@@ -207,6 +217,37 @@ async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T
   return response.json();
 }
 
+type PhantomVerificationResult = {
+  authenticated: boolean;
+  isNewUser: boolean;
+  provider?: AuthProviderName;
+  linked?: boolean;
+  user?: UserData;
+  walletAddress?: string;
+  pendingRegistration?: PendingRegistrationData;
+};
+
+async function requestPhantomAuthNonce(address: string): Promise<{ nonce: string; message: string }> {
+  return apiRequest<{ nonce: string; message: string }>(
+    `/auth/nonce?walletAddress=${encodeURIComponent(address)}`
+  );
+}
+
+async function verifyPhantomSignatureWithServer(
+  address: string,
+  signature: string,
+  nonce: string
+): Promise<PhantomVerificationResult> {
+  return apiRequest<PhantomVerificationResult>('/auth/verify', {
+    method: 'POST',
+    body: JSON.stringify({
+      walletAddress: address,
+      signature,
+      nonce,
+    }),
+  });
+}
+
 export function WalletProvider({ children }: { children: ReactNode }) {
   const [isPhantomInstalled, setIsPhantomInstalled] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -246,27 +287,90 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setAuthProvider(pending.provider);
   }, []);
 
+  const applyPhantomVerificationResult = useCallback((
+    result: PhantomVerificationResult,
+    address: string
+  ): { isNewUser: boolean; user?: UserData } => {
+    if (result.authenticated) {
+      if (result.isNewUser) {
+        applyPendingRegistration(result.pendingRegistration ?? {
+          provider: 'phantom',
+          walletAddress: address,
+          displayName: address,
+        });
+        return { isNewUser: true };
+      }
+
+      if (result.user) {
+        applyUserSession(result.user, 'phantom');
+        if (result.linked) {
+          setNotice('Phantom wallet connected.');
+        }
+        return { isNewUser: false, user: result.user };
+      }
+    }
+
+    throw new Error('Authentication failed');
+  }, [applyPendingRegistration, applyUserSession]);
+
   useEffect(() => {
     const restoreSession = async () => {
       const oauthReturn = getOAuthReturnStatus();
 
       try {
-        const result = await apiRequest<{
-          authenticated: boolean;
-          isNewUser?: boolean;
-          provider?: AuthProviderName | null;
-          user?: UserData;
-          pendingRegistration?: PendingRegistrationData;
-          error?: string;
-        }>('/auth/session');
+        if (hasPhantomMobileDeepLinkCallback()) {
+          const callback = handlePhantomMobileDeepLinkCallback();
+          if (callback.handled) {
+            if (!callback.ok) {
+              setError(callback.error);
+              return;
+            }
 
-        if (result.authenticated && result.user) {
-          applyUserSession(result.user, result.provider ?? oauthReturn.provider);
-        } else if (result.authenticated && result.isNewUser && result.pendingRegistration) {
-          applyPendingRegistration(result.pendingRegistration);
+            if (callback.action === 'connect') {
+              setWalletAddress(callback.publicKey);
+              setIsConnected(true);
+              setIsConnecting(true);
+              const { nonce, message } = await requestPhantomAuthNonce(callback.publicKey);
+              startPhantomMobileSignMessage({
+                publicKey: callback.publicKey,
+                message,
+                authNonce: nonce,
+              });
+              await waitForPhantomMobileRedirect<void>();
+              return;
+            }
+
+            const result = await verifyPhantomSignatureWithServer(
+              callback.publicKey,
+              callback.signature,
+              callback.authNonce
+            );
+            applyPhantomVerificationResult(result, callback.publicKey);
+            return;
+          }
         }
-      } catch {
-        loggers.auth.debug('no existing session found');
+
+        try {
+          const result = await apiRequest<{
+            authenticated: boolean;
+            isNewUser?: boolean;
+            provider?: AuthProviderName | null;
+            user?: UserData;
+            pendingRegistration?: PendingRegistrationData;
+            error?: string;
+          }>('/auth/session');
+
+          if (result.authenticated && result.user) {
+            applyUserSession(result.user, result.provider ?? oauthReturn.provider);
+          } else if (result.authenticated && result.isNewUser && result.pendingRegistration) {
+            applyPendingRegistration(result.pendingRegistration);
+          }
+        } catch {
+          loggers.auth.debug('no existing session found');
+        }
+      } catch (err: any) {
+        loggers.auth.error('phantom mobile callback error:', err);
+        setError(err.message || 'Phantom connection failed. Please try again.');
       } finally {
         if (oauthReturn.status === 'error') {
           setError(getOAuthErrorMessage(oauthReturn.errorCode));
@@ -282,16 +386,20 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     };
 
     restoreSession();
-  }, [applyPendingRegistration, applyUserSession]);
+  }, [applyPendingRegistration, applyPhantomVerificationResult, applyUserSession]);
 
   useEffect(() => {
     const checkForPhantom = () => {
       const provider = getPhantomProvider();
-      setIsPhantomInstalled(Boolean(provider));
+      const mobileSession = getPhantomMobileDeepLinkSession();
+      setIsPhantomInstalled(Boolean(provider) || canUsePhantomMobileDeepLink());
 
       if (provider?.isConnected && provider.publicKey && !isAuthenticated) {
         setIsConnected(true);
         setWalletAddress(provider.publicKey.toBase58());
+      } else if (!provider && mobileSession && !isAuthenticated) {
+        setIsConnected(true);
+        setWalletAddress(mobileSession.publicKey);
       }
     };
 
@@ -375,35 +483,41 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const verifyPhantomWithServer = useCallback(async (provider: PhantomProvider, address: string) => {
-    const { nonce, message } = await apiRequest<{ nonce: string; message: string }>(
-      `/auth/nonce?walletAddress=${encodeURIComponent(address)}`
-    );
-
+    const { nonce, message } = await requestPhantomAuthNonce(address);
     const encodedMessage = new TextEncoder().encode(message);
     const { signature } = await provider.signMessage(encodedMessage, 'utf8');
     const { default: bs58 } = await import('bs58');
     const signatureBase58 = bs58.encode(signature);
 
-    return apiRequest<{
-      authenticated: boolean;
-      isNewUser: boolean;
-      provider?: AuthProviderName;
-      linked?: boolean;
-      user?: UserData;
-      walletAddress?: string;
-      pendingRegistration?: PendingRegistrationData;
-    }>('/auth/verify', {
-      method: 'POST',
-      body: JSON.stringify({
-        walletAddress: address,
-        signature: signatureBase58,
-        nonce,
-      }),
-    });
+    return verifyPhantomSignatureWithServer(address, signatureBase58, nonce);
   }, []);
 
   const connect = useCallback(async () => {
     const provider = getPhantomProvider();
+
+    if (!provider && canUsePhantomMobileDeepLink()) {
+      setIsConnecting(true);
+      setError(null);
+      setNotice(null);
+
+      try {
+        const mobileSession = getPhantomMobileDeepLinkSession();
+        if (mobileSession) {
+          setWalletAddress(mobileSession.publicKey);
+          setIsConnected(true);
+          return;
+        }
+
+        startPhantomMobileConnect();
+        await waitForPhantomMobileRedirect<void>();
+      } catch (err: any) {
+        loggers.auth.error('failed to connect mobile wallet:', err);
+        setError(err.message || 'Failed to connect wallet');
+      } finally {
+        setIsConnecting(false);
+      }
+      return;
+    }
 
     if (!provider) {
       window.open('https://phantom.app/', '_blank');
@@ -437,6 +551,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     if (provider) {
       provider.disconnect();
     }
+    clearPhantomMobileDeepLinkSession();
 
     setIsConnected(false);
     setWalletAddress(null);
@@ -454,6 +569,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const authenticate = useCallback(async (): Promise<{ isNewUser: boolean }> => {
     const provider = getPhantomProvider();
 
+    if (!provider && walletAddress && canUsePhantomMobileDeepLink()) {
+      setError(null);
+      setNotice(null);
+
+      try {
+        const { nonce, message } = await requestPhantomAuthNonce(walletAddress);
+        startPhantomMobileSignMessage({
+          publicKey: walletAddress,
+          message,
+          authNonce: nonce,
+        });
+        return waitForPhantomMobileRedirect<{ isNewUser: boolean }>();
+      } catch (err: any) {
+        loggers.auth.error('mobile phantom authentication error:', err);
+        setError(err.message || 'Authentication failed');
+        throw err;
+      }
+    }
+
     if (!provider || !walletAddress) {
       throw new Error('Wallet not connected');
     }
@@ -463,27 +597,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     try {
       const result = await verifyPhantomWithServer(provider, walletAddress);
-
-      if (result.authenticated) {
-        if (result.isNewUser) {
-          applyPendingRegistration(result.pendingRegistration ?? {
-            provider: 'phantom',
-            walletAddress,
-            displayName: walletAddress,
-          });
-          return { isNewUser: true };
-        }
-
-        if (result.user) {
-          applyUserSession(result.user, 'phantom');
-          if (result.linked) {
-            setNotice('Phantom wallet connected.');
-          }
-          return { isNewUser: false };
-        }
-      }
-
-      throw new Error('Authentication failed');
+      return applyPhantomVerificationResult(result, walletAddress);
     } catch (err: any) {
       loggers.auth.error('authentication error:', err);
       if (err.code === 4001) {
@@ -493,20 +607,50 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       }
       throw err;
     }
-  }, [applyPendingRegistration, applyUserSession, verifyPhantomWithServer, walletAddress]);
+  }, [applyPhantomVerificationResult, verifyPhantomWithServer, walletAddress]);
 
   const linkPhantom = useCallback(async (): Promise<UserData> => {
     const provider = getPhantomProvider();
+
+    if (!isAuthenticated || !user) {
+      setError('Sign in before linking Phantom.');
+      throw new Error('Sign in before linking Phantom.');
+    }
+
+    if (!provider && canUsePhantomMobileDeepLink()) {
+      setIsConnecting(true);
+      setError(null);
+      setNotice(null);
+
+      try {
+        const mobileSession = getPhantomMobileDeepLinkSession();
+        if (mobileSession) {
+          setWalletAddress(mobileSession.publicKey);
+          setIsConnected(true);
+          const { nonce, message } = await requestPhantomAuthNonce(mobileSession.publicKey);
+          startPhantomMobileSignMessage({
+            publicKey: mobileSession.publicKey,
+            message,
+            authNonce: nonce,
+          });
+        } else {
+          startPhantomMobileConnect();
+        }
+
+        return await waitForPhantomMobileRedirect<UserData>();
+      } catch (err: any) {
+        loggers.auth.error('mobile phantom linking error:', err);
+        setError(err.message || 'Phantom linking failed');
+        throw err;
+      } finally {
+        setIsConnecting(false);
+      }
+    }
 
     if (!provider) {
       window.open('https://phantom.app/', '_blank');
       setError('Phantom wallet is not installed. Please install it to continue.');
       throw new Error('Phantom wallet not installed');
-    }
-
-    if (!isAuthenticated || !user) {
-      setError('Sign in before linking Phantom.');
-      throw new Error('Sign in before linking Phantom.');
     }
 
     setIsConnecting(true);
@@ -523,10 +667,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnected(true);
 
       const result = await verifyPhantomWithServer(provider, address);
-      if (result.authenticated && result.user && !result.isNewUser) {
-        applyUserSession(result.user, 'phantom');
-        setNotice('Phantom wallet connected.');
-        return result.user;
+      const applied = applyPhantomVerificationResult(result, address);
+      if (applied.user && !applied.isNewUser) {
+        return applied.user;
       }
 
       throw new Error('Phantom linking failed');
@@ -541,7 +684,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }, [applyUserSession, isAuthenticated, user, verifyPhantomWithServer]);
+  }, [applyPhantomVerificationResult, isAuthenticated, user, verifyPhantomWithServer]);
 
   const registerUser = useCallback(async (name: string): Promise<UserData> => {
     setError(null);
@@ -587,6 +730,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         // Ignore disconnect errors; the server session is already cleared.
       }
     }
+    clearPhantomMobileDeepLinkSession();
 
     setIsConnected(false);
     setWalletAddress(null);

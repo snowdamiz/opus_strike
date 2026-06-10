@@ -18,12 +18,14 @@ interface PhaseCountdownTimerProps {
   phaseEndTime: number | null;
   disabled?: boolean;
   onExpired?: () => void;
+  className?: string;
 }
 
 export const PhaseCountdownTimer = memo(function PhaseCountdownTimer({
   phaseEndTime,
   disabled = false,
   onExpired,
+  className = '',
 }: PhaseCountdownTimerProps) {
   const [timeRemaining, setTimeRemaining] = useState(() => getSecondsRemaining(phaseEndTime));
   const didExpireRef = useRef(false);
@@ -49,7 +51,7 @@ export const PhaseCountdownTimer = memo(function PhaseCountdownTimer({
   }, [disabled, onExpired, phaseEndTime]);
 
   return (
-    <div className="pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-3 text-white drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)]">
+    <div className={`pointer-events-none absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 items-center gap-3 text-white drop-shadow-[0_4px_18px_rgba(0,0,0,0.55)] ${className}`}>
       <ClockGlyph className="h-5 w-5 text-accent-secondary" />
       <span className="font-display translate-y-[0.08em] text-3xl leading-none tabular-nums text-white">
         {timeRemaining === null ? '...' : timeRemaining}

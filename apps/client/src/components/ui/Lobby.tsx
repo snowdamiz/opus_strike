@@ -353,8 +353,8 @@ export function Lobby() {
       </nav>
 
       {/* Main Content */}
-      <div className="menu-main menu-main-play">
-        <div className="lobby-layout menu-content-wide">
+      <div className="team-select-main menu-main menu-main-play">
+        <div className="team-select-layout lobby-layout menu-content-wide">
         {/* Solar Vanguard Panel */}
         <div className="lobby-team-panel">
           <FactionPanel
@@ -623,6 +623,7 @@ function FactionPanel({
             onBotDifficultyChange={(difficulty) => onBotDifficultyChange(player.id, difficulty)}
             onBotHeroChange={(heroId) => onBotHeroChange(player.id, heroId)}
             faction={faction}
+            compact
           />
         ))}
 
@@ -634,6 +635,7 @@ function FactionPanel({
             canAddBot={canAddBot}
             onJoin={onSelect}
             onAddBot={() => onAddBot(factionTeam)}
+            compact
           />
         )}
       </div>
@@ -648,19 +650,23 @@ interface JoinTeamCardProps {
   canAddBot: boolean;
   onJoin: () => void;
   onAddBot: () => void;
+  compact?: boolean;
 }
 
-function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot }: JoinTeamCardProps) {
+function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot, compact }: JoinTeamCardProps) {
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const { playButtonClick } = useUISounds();
+  const containerClass = compact ? 'h-11 gap-1.5' : 'h-14 gap-2';
+  const iconClass = compact ? 'h-8 w-8' : 'h-10 w-10';
+  const addBotClass = compact ? 'h-11 w-11' : 'h-14 w-14';
 
   return (
-    <div className={`flex h-14 w-full items-stretch gap-2 ${reverse ? 'flex-row-reverse' : ''}`}>
+    <div className={`flex w-full items-stretch ${containerClass} ${reverse ? 'flex-row-reverse' : ''}`}>
       {canJoin && (
         <button
           type="button"
           onClick={() => { playButtonClick(); onJoin(); }}
-          className={`group flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-dashed p-2 transition-all hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 ${
+          className={`group flex min-w-0 flex-1 items-center rounded-xl border border-dashed transition-all hover:bg-white/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 ${compact ? 'gap-2 p-1.5' : 'gap-3 p-2'} ${
             reverse ? 'flex-row-reverse text-right' : ''
           }`}
           style={{
@@ -669,7 +675,7 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot }
           }}
         >
           <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border transition-colors group-hover:bg-white/[0.04]"
+            className={`flex ${iconClass} shrink-0 items-center justify-center rounded-lg border transition-colors group-hover:bg-white/[0.04]`}
             style={{
               borderColor: `${faction.primaryColor}32`,
               color: faction.primaryColor,
@@ -694,7 +700,7 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot }
           onClick={() => { playButtonClick(); onAddBot(); }}
           aria-label={`Add ${faction.name} bot`}
           title="Add bot"
-          className="group relative flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40"
+          className={`group relative flex ${addBotClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40`}
           style={{
             borderColor: `${faction.primaryColor}28`,
           }}
@@ -737,7 +743,7 @@ function PlayerCard({
   const secondaryColor = faction?.secondaryColor || FACTIONS.red.secondaryColor;
   const { playButtonClick } = useUISounds();
   const showBotControls = !player.isHost && Boolean(player.isBot) && isLobbyHost;
-  const cardClass = compact ? 'h-12 p-2' : showBotControls ? 'h-16 p-2' : 'h-14 p-2';
+  const cardClass = compact ? 'h-11 p-1.5' : showBotControls ? 'h-16 p-2' : 'h-14 p-2';
   const avatarClass = compact ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-base';
   const readyClass = compact ? 'w-8 h-8' : 'w-9 h-9';
   const botDifficulty: BotDifficulty =
@@ -750,7 +756,7 @@ function PlayerCard({
 
   return (
     <div
-      className={`group relative flex w-full min-w-0 items-center gap-3 ${cardClass} rounded-xl transition-all ${
+      className={`group relative flex w-full min-w-0 items-center ${compact ? 'gap-2' : 'gap-3'} ${cardClass} rounded-xl transition-all ${
         isCurrentPlayer 
           ? 'bg-white/[0.08] ring-1 ring-inset ring-white/20'
           : 'bg-white/[0.02] hover:bg-white/[0.05]'
@@ -767,8 +773,8 @@ function PlayerCard({
       </div>
 
       {/* Info */}
-      <div className={`flex-1 min-w-0 ${showBotControls ? 'pr-8' : ''}`}>
-        <div className="flex items-center gap-1.5">
+      <div className={`flex-1 min-w-0 ${showBotControls ? (compact ? 'pr-6' : 'pr-8') : ''}`}>
+        <div className={`flex items-center ${compact ? 'gap-1' : 'gap-1.5'}`}>
           <span className={`font-display ${compact ? 'text-sm' : 'text-sm'} truncate ${isCurrentPlayer ? 'text-white' : 'text-white/80'}`}>
             {player.name}
           </span>
@@ -795,7 +801,7 @@ function PlayerCard({
           )}
         </div>
         {showBotControls && (
-          <div className="mt-0.5 flex min-w-0 items-center gap-1">
+          <div className={`flex min-w-0 items-center ${compact ? 'mt-0 gap-0.5' : 'mt-0.5 gap-1'}`}>
             <InlinePicker
               label={`${player.name} hero`}
               value={botHero}

@@ -96,7 +96,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const localPlayerForInit = useGameStore(state => state.localPlayer);
 
   // Input and network
-  const { inputState, isPointerLocked, isControlPressed, requestPointerLock, exitPointerLock } = useInput();
+  const { inputState, isPointerLocked, isControlPressed, isTouchInputActive, requestPointerLock, exitPointerLock } = useInput();
   usePhysics();
   const { sendInput, requestBlazeBombDrop } = useNetwork();
 
@@ -405,7 +405,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
-    const frameInput = isPointerLocked ? inputState : INACTIVE_INPUT_STATE;
+    const frameInput = (isPointerLocked || isTouchInputActive) ? inputState : INACTIVE_INPUT_STATE;
     const devFlyMode = isDevFlyMode();
     const hasMovementInput = (
       frameInput.moveForward ||
