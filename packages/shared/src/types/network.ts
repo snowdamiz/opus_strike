@@ -3,10 +3,12 @@ import type { HeroId } from './hero.js';
 import type { GamePhase } from './game.js';
 import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
+import type { MovementCommandPacket, SelfMovementAuthority } from './movementPrediction.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
   | { type: 'input'; payload: PlayerInput }
+  | { type: 'movementCommands'; payload: MovementCommandPacket }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
   | { type: 'devFillUltimate'; payload: Record<string, never> }
@@ -22,6 +24,7 @@ export type ClientMessage =
 export type ServerMessage = 
   | { type: 'gameState'; payload: GameStateSync }
   | { type: 'playerTransforms'; payload: PlayerTransformsMessage }
+  | { type: 'selfMovementAuthority'; payload: SelfMovementAuthority }
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
   | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
@@ -66,6 +69,7 @@ export interface QuantizedPlayerTransform {
   pitch: number;
   movementBits: number;
   wallRunSide: -1 | 0 | 1;
+  movementEpoch: number;
 }
 
 export interface PlayerTransformsMessage {

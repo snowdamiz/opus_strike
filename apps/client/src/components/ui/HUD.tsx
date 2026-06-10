@@ -484,10 +484,10 @@ export function HUD() {
         />
       )}
 
-      {/* Crosshair - changes for bomb targeting mode */}
+      {/* Crosshair - changes for Meteor Strike targeting mode */}
       <div className="crosshair">
         {bombTargeting ? (
-          // Bomb targeting crosshair - larger, orange, with explosion radius indicator
+          // Meteor Strike targeting crosshair - larger, orange, with explosion radius indicator
           <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
             {/* Outer blast radius ring */}
             <circle
@@ -525,7 +525,7 @@ export function HUD() {
       {showDamageNumbers && <DamageNumberStack events={damageNumbers} />}
       {showKillFeed && <KillFeed events={killFeed} />}
 
-      {/* Bomb Targeting Instructions */}
+      {/* Meteor Strike targeting instructions */}
       {bombTargeting && (
         <div className="fixed top-1/3 left-1/2 -translate-x-1/2 text-center z-50 pointer-events-none">
           <div
@@ -536,7 +536,7 @@ export function HUD() {
             }}
           >
             <p className="text-white text-sm font-bold drop-shadow-lg">
-              {bombTargetValid ? 'CLICK TO DROP BOMB' : 'TARGET OUT OF RANGE'}
+              {bombTargetValid ? 'RELEASE TO CALL METEOR STRIKE' : 'TARGET OUT OF RANGE'}
             </p>
             <p className="text-white/70 text-xs">Right-click or ESC to cancel</p>
           </div>

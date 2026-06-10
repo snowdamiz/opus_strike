@@ -12,6 +12,11 @@
 import { useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { ABILITY_DEFINITIONS, GRAVITY } from '@voxel-strike/shared';
+import {
+  createHookshotSwingState,
+  stepHookshotSwing,
+  type HookshotSwingState,
+} from '@voxel-strike/physics';
 import { useGameStore } from '../../../store/gameStore';
 import { raycastDirection, checkGroundWithNormal, isPhysicsReady } from '../../usePhysics';
 import {
@@ -35,6 +40,7 @@ import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTemp
 import type { AbilityContext } from '../types';
 import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
 import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
+import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
 export interface UseHookshotAbilitiesReturn {
   // State refs
@@ -79,20 +85,6 @@ export interface UseHookshotAbilitiesReturn {
 }
 
 const WEB_SWING_DURATION_SECONDS = 2.75;
-const WEB_SWING_MIN_ROPE_LENGTH = 5;
-const WEB_SWING_ANCHOR_RELEASE_DISTANCE = 1.15;
-const WEB_SWING_TAUTNESS = 0.96;
-const WEB_SWING_INITIAL_PULL = 8;
-const WEB_SWING_LOOK_STEER = 46;
-const WEB_SWING_INPUT_STEER = 30;
-const WEB_SWING_STRAFE_PUMP = 13;
-const WEB_SWING_STRAFE_PUMP_MAX_SPEED = 46;
-const WEB_SWING_TENSION_FORCE = 76;
-const WEB_SWING_NATURAL_PULL = 3.5;
-const WEB_SWING_GRAVITY_SCALE = 0.9;
-const WEB_SWING_MAX_SPEED = 72;
-const WEB_SWING_RELEASE_BOOST = 7;
-const WEB_SWING_RELEASE_UPWARD = 8;
 
 function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
   return {
@@ -219,6 +211,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const swingMomentumRef = useRef({ x: 0, y: 0, z: 0 });
   const activeSwingLineIdRef = useRef<string | null>(null);
   const swingWasAirborneRef = useRef(false);
+  const grappleSwingStateRef = useRef<HookshotSwingState | null>(null);
 
   // Grapple trap targeting
   const grappleTrapTargetRef = useRef<THREE.Vector3 | null>(null);
@@ -259,6 +252,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       launchSide,
       launchYaw: ctx.yaw,
     });
+    markPredictedLocalAbilityVisual('hookshot_basic_attack', ctx.localPlayer.id, hookId, {
+      launchSide,
+      now,
+    });
   }, []);
 
   // Fire Drag Hook (secondary fire)
@@ -295,6 +292,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       launchSide,
       launchYaw: ctx.yaw,
     });
+    markPredictedLocalAbilityVisual('hookshot_heavy_attack', ctx.localPlayer.id, hookId, {
+      launchSide,
+      now,
+    });
   }, []);
 
   const canGrapple = useCallback((ctx: AbilityContext) => {
@@ -325,6 +326,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       state: 'extending',
       launchSide,
       launchYaw: ctx.yaw,
+    });
+    markPredictedLocalAbilityVisual('hookshot_grapple', ctx.localPlayer.id, lineId, {
+      launchSide,
+      now: startTime,
     });
 
     // Store target - pulling will start when hook reaches target
@@ -367,6 +372,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       hookProgress: 0,
       wallSegments: [],
     });
+    markPredictedLocalAbilityVisual('hookshot_anchor_wall', ctx.localPlayer.id, wallId);
   }, []);
 
   // Execute Grapple Trap (Ultimate)
@@ -467,6 +473,9 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       radius: 8,
       hookedPlayers: [],
     });
+    markPredictedLocalAbilityVisual('hookshot_grapple_trap', ctx.localPlayer.id, trapId, {
+      now,
+    });
 
     updateLocalPlayer({ ultimateCharge: 0 });
   }, []);
@@ -492,25 +501,12 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     swingRopeLengthRef.current = 0;
     swingInitialRopeLengthRef.current = 0;
     swingWasAirborneRef.current = false;
+    grappleSwingStateRef.current = null;
   }, []);
 
   // Update grapple physics
   const updateGrapplePhysics = useCallback((ctx: AbilityContext) => {
-    const releaseGrappleSwing = (withBoost: boolean) => {
-      if (withBoost) {
-        const horizontalSpeed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.z ** 2);
-        if (horizontalSpeed > 0.1) {
-          ctx.velocity.x += (ctx.velocity.x / horizontalSpeed) * WEB_SWING_RELEASE_BOOST;
-          ctx.velocity.z += (ctx.velocity.z / horizontalSpeed) * WEB_SWING_RELEASE_BOOST;
-        }
-
-        const lookDir = calculateLookDirection(ctx.yaw, ctx.pitch);
-        ctx.velocity.x += lookDir.x * 4;
-        ctx.velocity.y += Math.max(0, lookDir.y) * 4;
-        ctx.velocity.z += lookDir.z * 4;
-        ctx.velocity.y = Math.max(ctx.velocity.y, WEB_SWING_RELEASE_UPWARD);
-      }
-
+    const releaseGrappleSwing = () => {
       if (activeGrappleLineIdRef.current) {
         useGameStore.getState().removeGrappleLine(activeGrappleLineIdRef.current);
       }
@@ -523,6 +519,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       swingRopeLengthRef.current = 0;
       swingInitialRopeLengthRef.current = 0;
       swingWasAirborneRef.current = false;
+      grappleSwingStateRef.current = null;
     };
 
     const store = useGameStore.getState();
@@ -545,28 +542,15 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     const target = grappleTargetRef.current;
     if (!lineId || !target) {
       if (isGrapplingRef.current) {
-        releaseGrappleSwing(false);
+        releaseGrappleSwing();
       }
       return;
     }
 
-    const toTargetX = target.x - ctx.position.x;
-    const toTargetY = target.y - ctx.position.y;
-    const toTargetZ = target.z - ctx.position.z;
-    const currentLength = Math.sqrt(toTargetX * toTargetX + toTargetY * toTargetY + toTargetZ * toTargetZ);
-    if (currentLength < WEB_SWING_ANCHOR_RELEASE_DISTANCE) {
-      releaseGrappleSwing(true);
-      return;
-    }
-
-    const ropeDirX = toTargetX / currentLength;
-    const ropeDirY = toTargetY / currentLength;
-    const ropeDirZ = toTargetZ / currentLength;
-
     if (!isGrapplingRef.current) {
       const activeLine = store.grappleLines.find(l => l.id === lineId);
       if (!activeLine) {
-        releaseGrappleSwing(false);
+        releaseGrappleSwing();
         return;
       }
       if (activeLine.state !== 'attached' && activeLine.state !== 'pulling') return;
@@ -574,130 +558,45 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       isGrapplingRef.current = true;
       isSwingingRef.current = true;
       activeGrappleStartTimeRef.current = activeLine.startTime;
-      swingWasAirborneRef.current = !ctx.isGrounded;
-      swingRopeLengthRef.current = Math.max(WEB_SWING_MIN_ROPE_LENGTH, currentLength * WEB_SWING_TAUTNESS);
-      swingInitialRopeLengthRef.current = swingRopeLengthRef.current;
+      grappleSwingStateRef.current = createHookshotSwingState(
+        { x: ctx.position.x, y: ctx.position.y, z: ctx.position.z },
+        target,
+        ctx.isGrounded
+      );
+      swingWasAirborneRef.current = grappleSwingStateRef.current.wasAirborne;
+      swingRopeLengthRef.current = grappleSwingStateRef.current.ropeLength;
+      swingInitialRopeLengthRef.current = grappleSwingStateRef.current.initialRopeLength;
       swingMomentumRef.current = { x: ctx.velocity.x, y: ctx.velocity.y, z: ctx.velocity.z };
       store.updateGrappleLine(lineId, { state: 'pulling' });
-
-      ctx.velocity.x += ropeDirX * WEB_SWING_INITIAL_PULL;
-      ctx.velocity.y += ropeDirY * WEB_SWING_INITIAL_PULL;
-      ctx.velocity.z += ropeDirZ * WEB_SWING_INITIAL_PULL;
-      ctx.velocity.y = Math.max(ctx.velocity.y, 5);
     }
 
-    if (ctx.isGrounded && swingWasAirborneRef.current) {
-      releaseGrappleSwing(false);
-      return;
-    }
-    if (!ctx.isGrounded) {
-      swingWasAirborneRef.current = true;
-    }
+    if (!grappleSwingStateRef.current) return;
 
-    const elapsed = (Date.now() - activeGrappleStartTimeRef.current) / 1000;
-    const duration = WEB_SWING_DURATION_SECONDS;
-    if (elapsed >= duration || ctx.inputState.jump) {
-      releaseGrappleSwing(ctx.inputState.jump);
-      return;
-    }
+    const result = stepHookshotSwing({
+      position: { x: ctx.position.x, y: ctx.position.y, z: ctx.position.z },
+      velocity: { x: ctx.velocity.x, y: ctx.velocity.y, z: ctx.velocity.z },
+      swing: grappleSwingStateRef.current,
+      input: ctx.inputState,
+      lookYaw: ctx.yaw,
+      lookPitch: ctx.pitch,
+      isGrounded: ctx.isGrounded,
+      deltaTime: ctx.dt,
+    });
 
-    const lookDir = calculateLookDirection(ctx.yaw, ctx.pitch);
-    const lookAlongRope = lookDir.x * ropeDirX + lookDir.y * ropeDirY + lookDir.z * ropeDirZ;
-    const lookPerpX = lookDir.x - ropeDirX * lookAlongRope;
-    const lookPerpY = lookDir.y - ropeDirY * lookAlongRope;
-    const lookPerpZ = lookDir.z - ropeDirZ * lookAlongRope;
-    const lookPerpLen = Math.sqrt(lookPerpX * lookPerpX + lookPerpY * lookPerpY + lookPerpZ * lookPerpZ);
+    ctx.position.x = result.position.x;
+    ctx.position.y = result.position.y;
+    ctx.position.z = result.position.z;
+    ctx.velocity.x = result.velocity.x;
+    ctx.velocity.y = result.velocity.y;
+    ctx.velocity.z = result.velocity.z;
 
-    if (lookPerpLen > 0.05) {
-      const lookInfluence = 0.35 + Math.min(lookPerpLen, 1) * 0.65;
-      const lookForce = WEB_SWING_LOOK_STEER * lookInfluence * ctx.dt;
-      ctx.velocity.x += (lookPerpX / lookPerpLen) * lookForce;
-      ctx.velocity.y += (lookPerpY / lookPerpLen) * lookForce;
-      ctx.velocity.z += (lookPerpZ / lookPerpLen) * lookForce;
-    }
-
-    const isPureStrafing = ctx.inputState.moveLeft !== ctx.inputState.moveRight &&
-      !ctx.inputState.moveForward &&
-      !ctx.inputState.moveBackward;
-    let wishDirX = 0;
-    let wishDirZ = 0;
-    if (isPureStrafing && ctx.inputState.moveLeft) { wishDirX -= Math.cos(ctx.yaw); wishDirZ += Math.sin(ctx.yaw); }
-    if (isPureStrafing && ctx.inputState.moveRight) { wishDirX += Math.cos(ctx.yaw); wishDirZ -= Math.sin(ctx.yaw); }
-
-    const wishLen = Math.sqrt(wishDirX * wishDirX + wishDirZ * wishDirZ);
-    if (wishLen > 0.1) {
-      wishDirX /= wishLen;
-      wishDirZ /= wishLen;
-
-      const wishAlongRope = wishDirX * ropeDirX + wishDirZ * ropeDirZ;
-      const wishPerpX = wishDirX - ropeDirX * wishAlongRope;
-      const wishPerpY = -ropeDirY * wishAlongRope;
-      const wishPerpZ = wishDirZ - ropeDirZ * wishAlongRope;
-      const wishPerpLen = Math.sqrt(wishPerpX * wishPerpX + wishPerpY * wishPerpY + wishPerpZ * wishPerpZ);
-
-      if (wishPerpLen > 0.05) {
-        const inputForce = WEB_SWING_INPUT_STEER * ctx.dt;
-        const tangentX = wishPerpX / wishPerpLen;
-        const tangentY = wishPerpY / wishPerpLen;
-        const tangentZ = wishPerpZ / wishPerpLen;
-        ctx.velocity.x += tangentX * inputForce;
-        ctx.velocity.y += tangentY * inputForce * 0.6;
-        ctx.velocity.z += tangentZ * inputForce;
-
-        const horizontalSpeed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.z ** 2);
-        if (horizontalSpeed < WEB_SWING_STRAFE_PUMP_MAX_SPEED) {
-          const pumpScale = 1 - horizontalSpeed / WEB_SWING_STRAFE_PUMP_MAX_SPEED;
-          const pumpForce = WEB_SWING_STRAFE_PUMP * pumpScale * ctx.dt;
-          const pumpX = horizontalSpeed > 0.1 ? ctx.velocity.x / horizontalSpeed : tangentX;
-          const pumpZ = horizontalSpeed > 0.1 ? ctx.velocity.z / horizontalSpeed : tangentZ;
-          ctx.velocity.x += pumpX * pumpForce;
-          ctx.velocity.z += pumpZ * pumpForce;
-        }
-      }
-    }
-
-    ctx.velocity.y += GRAVITY * WEB_SWING_GRAVITY_SCALE * ctx.dt;
-
-    const ropeLength = swingRopeLengthRef.current || currentLength;
-    if (currentLength > ropeLength) {
-      const awaySpeed = ctx.velocity.x * -ropeDirX + ctx.velocity.y * -ropeDirY + ctx.velocity.z * -ropeDirZ;
-      if (awaySpeed > 0) {
-        ctx.velocity.x += ropeDirX * awaySpeed;
-        ctx.velocity.y += ropeDirY * awaySpeed;
-        ctx.velocity.z += ropeDirZ * awaySpeed;
-      }
-
-      const overExtend = currentLength - ropeLength;
-      const tensionForce = overExtend * WEB_SWING_TENSION_FORCE * ctx.dt;
-      ctx.velocity.x += ropeDirX * tensionForce;
-      ctx.velocity.y += ropeDirY * tensionForce;
-      ctx.velocity.z += ropeDirZ * tensionForce;
-
-      ctx.position.x = target.x - ropeDirX * ropeLength;
-      ctx.position.y = target.y - ropeDirY * ropeLength;
-      ctx.position.z = target.z - ropeDirZ * ropeLength;
-    }
-
-    ctx.velocity.x += ropeDirX * WEB_SWING_NATURAL_PULL * ctx.dt;
-    ctx.velocity.y += ropeDirY * WEB_SWING_NATURAL_PULL * ctx.dt * 0.35;
-    ctx.velocity.z += ropeDirZ * WEB_SWING_NATURAL_PULL * ctx.dt;
-
-    if (ctx.position.y < target.y) {
-      const heightDiff = target.y - ctx.position.y;
-      const swingBoost = Math.min(heightDiff * 0.45, 4);
-      const horizontalSpeed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.z ** 2);
-      if (horizontalSpeed > 0.1) {
-        ctx.velocity.x += (ctx.velocity.x / horizontalSpeed) * swingBoost * ctx.dt;
-        ctx.velocity.z += (ctx.velocity.z / horizontalSpeed) * swingBoost * ctx.dt;
-      }
-    }
-
-    const speed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.y ** 2 + ctx.velocity.z ** 2);
-    if (speed > WEB_SWING_MAX_SPEED) {
-      const scale = WEB_SWING_MAX_SPEED / speed;
-      ctx.velocity.x *= scale;
-      ctx.velocity.y *= scale;
-      ctx.velocity.z *= scale;
+    grappleSwingStateRef.current = result.swing;
+    if (result.swing) {
+      swingWasAirborneRef.current = result.swing.wasAirborne;
+      swingRopeLengthRef.current = result.swing.ropeLength;
+      swingInitialRopeLengthRef.current = result.swing.initialRopeLength;
+    } else {
+      releaseGrappleSwing();
     }
   }, []);
 

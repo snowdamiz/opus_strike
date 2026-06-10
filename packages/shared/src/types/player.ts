@@ -36,6 +36,7 @@ export interface PlayerInput {
   moveRight: boolean;
   jump: boolean;
   crouch: boolean;
+  crouchPressed?: boolean;
   sprint: boolean;
   primaryFire: boolean;
   secondaryFire: boolean;

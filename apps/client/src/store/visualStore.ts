@@ -1,5 +1,9 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
+import {
+  MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
+  MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+} from '@voxel-strike/shared';
 
 // ============================================================================
 // VISUAL STATE INTERFACE
@@ -33,6 +37,9 @@ export interface VisualState {
   /** Raw server positions before interpolation (for extrapolation/prediction) */
   interpolationTargets: Map<string, { x: number; y: number; z: number }>;
 
+  /** Remote transform histories sampled slightly in the past for smooth remote rendering. */
+  remoteTransformHistories: Map<string, RemoteTransformHistory>;
+
   /** High-frequency Blaze flamethrower pose for the held flame effect */
   flamethrowerOrigin: { x: number; y: number; z: number } | null;
   flamethrowerDirection: { x: number; y: number; z: number };
@@ -56,6 +63,37 @@ export interface VisualState {
   }>;
 }
 
+export interface RemoteTransformSnapshot {
+  serverTick: number;
+  serverTime: number;
+  receivedAtMs: number;
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  lookYaw: number;
+  lookPitch: number;
+  movementBits: number;
+  wallRunSide: -1 | 0 | 1;
+  movementEpoch: number;
+}
+
+export interface RemoteTransformHistory {
+  snapshots: RemoteTransformSnapshot[];
+  latestServerTime: number;
+  latestReceivedAtMs: number;
+}
+
+export interface SampledRemoteTransform {
+  position: { x: number; y: number; z: number };
+  velocity: { x: number; y: number; z: number };
+  lookYaw: number;
+  lookPitch: number;
+  movementBits: number;
+  wallRunSide: -1 | 0 | 1;
+  movementEpoch: number;
+  extrapolatedMs: number;
+  stale: boolean;
+}
+
 // ============================================================================
 // INITIAL STATE
 // ============================================================================
@@ -66,6 +104,7 @@ const initialVisualState: VisualState = {
   cameraShake: { intensity: 0, time: 0 },
   slideFov: 0,
   interpolationTargets: new Map(),
+  remoteTransformHistories: new Map(),
   flamethrowerOrigin: null,
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
   chronosAegisStates: new Map(),
@@ -77,6 +116,18 @@ const initialVisualState: VisualState = {
   },
   localPlayerImpulses: [],
 };
+
+const REMOTE_HISTORY_LIMIT = 32;
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function lerpYaw(a: number, b: number, t: number): number {
+  const twoPi = Math.PI * 2;
+  const delta = ((b - a + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
+  return a + delta * t;
+}
 
 // ============================================================================
 // VANILLA STORE (NON-REACTIVE)
@@ -196,6 +247,99 @@ export const setInterpolationTarget = (
   }
 };
 
+export const addRemoteTransformSnapshot = (
+  playerId: string,
+  snapshot: Omit<RemoteTransformSnapshot, 'receivedAtMs'>
+): void => {
+  const histories = visualStore.getState().remoteTransformHistories;
+  const receivedAtMs = Date.now();
+  let history = histories.get(playerId);
+  const last = history?.snapshots[history.snapshots.length - 1] ?? null;
+  if (!history || (last && last.movementEpoch !== snapshot.movementEpoch)) {
+    history = {
+      snapshots: [],
+      latestServerTime: snapshot.serverTime,
+      latestReceivedAtMs: receivedAtMs,
+    };
+    histories.set(playerId, history);
+  }
+
+  history.snapshots.push({ ...snapshot, receivedAtMs });
+  history.snapshots.sort((a, b) => a.serverTime - b.serverTime);
+  if (history.snapshots.length > REMOTE_HISTORY_LIMIT) {
+    history.snapshots.splice(0, history.snapshots.length - REMOTE_HISTORY_LIMIT);
+  }
+  history.latestServerTime = snapshot.serverTime;
+  history.latestReceivedAtMs = receivedAtMs;
+};
+
+export const sampleRemoteTransform = (
+  playerId: string,
+  nowMs = Date.now()
+): SampledRemoteTransform | null => {
+  const history = visualStore.getState().remoteTransformHistories.get(playerId);
+  if (!history || history.snapshots.length === 0) return null;
+
+  const snapshots = history.snapshots;
+  const latest = snapshots[snapshots.length - 1];
+  const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
+  const renderServerTime = estimatedServerTime - MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
+
+  let previous = snapshots[0];
+  let next: RemoteTransformSnapshot | null = null;
+  for (const snapshot of snapshots) {
+    if (snapshot.serverTime <= renderServerTime) {
+      previous = snapshot;
+      continue;
+    }
+    next = snapshot;
+    break;
+  }
+
+  if (next) {
+    const span = Math.max(1, next.serverTime - previous.serverTime);
+    const t = Math.max(0, Math.min(1, (renderServerTime - previous.serverTime) / span));
+    return {
+      position: {
+        x: lerp(previous.position.x, next.position.x, t),
+        y: lerp(previous.position.y, next.position.y, t),
+        z: lerp(previous.position.z, next.position.z, t),
+      },
+      velocity: {
+        x: lerp(previous.velocity.x, next.velocity.x, t),
+        y: lerp(previous.velocity.y, next.velocity.y, t),
+        z: lerp(previous.velocity.z, next.velocity.z, t),
+      },
+      lookYaw: lerpYaw(previous.lookYaw, next.lookYaw, t),
+      lookPitch: lerp(previous.lookPitch, next.lookPitch, t),
+      movementBits: next.movementBits,
+      wallRunSide: next.wallRunSide,
+      movementEpoch: next.movementEpoch,
+      extrapolatedMs: 0,
+      stale: false,
+    };
+  }
+
+  const extrapolatedMs = Math.max(0, renderServerTime - latest.serverTime);
+  const cappedMs = Math.min(extrapolatedMs, MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS);
+  const dt = cappedMs / 1000;
+  return {
+    position: {
+      x: latest.position.x + latest.velocity.x * dt,
+      y: latest.position.y + latest.velocity.y * dt,
+      z: latest.position.z + latest.velocity.z * dt,
+    },
+    velocity: { ...latest.velocity },
+    lookYaw: latest.lookYaw,
+    lookPitch: latest.lookPitch,
+    movementBits: latest.movementBits,
+    wallRunSide: latest.wallRunSide,
+    movementEpoch: latest.movementEpoch,
+    extrapolatedMs,
+    stale: extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
+  };
+};
+
 /**
  * Remove a player from all visual state maps.
  * Call this when a player disconnects or is removed from the game.
@@ -207,6 +351,7 @@ export const removePlayerVisualState = (playerId: string): void => {
   state.playerPositions.delete(playerId);
   state.playerRotations.delete(playerId);
   state.interpolationTargets.delete(playerId);
+  state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
 };
 
@@ -267,9 +412,17 @@ export const clearVisualState = (): void => {
     cameraShake: { intensity: 0, time: 0 },
     slideFov: 0,
     interpolationTargets: new Map(),
+    remoteTransformHistories: new Map(),
     flamethrowerOrigin: null,
     flamethrowerDirection: { x: 0, y: 0, z: -1 },
     chronosAegisStates: new Map(),
+    localViewmodelMovement: {
+      hasMovementInput: false,
+      isSprinting: false,
+      horizontalSpeed: 0,
+      updatedAtMs: 0,
+    },
+    localPlayerImpulses: [],
   }));
 };
 

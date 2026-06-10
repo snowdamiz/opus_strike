@@ -89,10 +89,10 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
     },
     {
       input: 'RMB',
-      name: 'Bomb',
-      description: 'Pick a target zone, then drop an explosive payload.',
+      name: 'Meteor Strike',
+      description: 'Mark a target zone, then call a blazing meteor down at an angle.',
       cooldown: 2.6,
-      iconType: 'bomb',
+      iconType: 'meteorstrike',
     },
   ],
   chronos: [

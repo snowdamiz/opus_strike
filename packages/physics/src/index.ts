@@ -6,3 +6,5 @@ export * from './movement/ParkourMovement.js';
 export * from './movement/AerialMovement.js';
 export * from './movement/AbilityMovement.js';
 export * from './movement/sharedSimulator.js';
+export * from './movement/predictionController.js';
+export * from './movement/hookshotSwing.js';

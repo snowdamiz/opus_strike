@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 
 // ============================================================================
-// BLAZE BOMB MATERIALS - Pre-cached for instant use (right-click ability)
+// BLAZE METEOR STRIKE MATERIALS - Pre-cached for instant use (right-click ability)
 // ============================================================================
 
-// --- Bomb body materials ---
+// --- Meteor body materials ---
 let sharedBombBodyMaterial: THREE.MeshBasicMaterial | null = null;
 let sharedBombBandMaterial: THREE.MeshBasicMaterial | null = null;
 let sharedBombNoseMaterial: THREE.MeshBasicMaterial | null = null;
@@ -48,40 +48,40 @@ let sharedTargetBeamMaterial: THREE.MeshBasicMaterial | null = null;
 let sharedTargetBeamTopMaterial: THREE.MeshBasicMaterial | null = null;
 
 // ============================================================================
-// BOMB BODY MATERIALS
+// METEOR BODY MATERIALS
 // ============================================================================
 
 export function getBombBodyMaterial(): THREE.MeshBasicMaterial {
   if (!sharedBombBodyMaterial) {
-    sharedBombBodyMaterial = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
+    sharedBombBodyMaterial = new THREE.MeshBasicMaterial({ color: 0x2a130d });
   }
   return sharedBombBodyMaterial;
 }
 
 export function getBombBandMaterial(): THREE.MeshBasicMaterial {
   if (!sharedBombBandMaterial) {
-    sharedBombBandMaterial = new THREE.MeshBasicMaterial({ color: 0x444444 });
+    sharedBombBandMaterial = new THREE.MeshBasicMaterial({ color: 0xff6a00 });
   }
   return sharedBombBandMaterial;
 }
 
 export function getBombNoseMaterial(): THREE.MeshBasicMaterial {
   if (!sharedBombNoseMaterial) {
-    sharedBombNoseMaterial = new THREE.MeshBasicMaterial({ color: 0x111111 });
+    sharedBombNoseMaterial = new THREE.MeshBasicMaterial({ color: 0xffd15c });
   }
   return sharedBombNoseMaterial;
 }
 
 export function getBombFinMaterial(): THREE.MeshBasicMaterial {
   if (!sharedBombFinMaterial) {
-    sharedBombFinMaterial = new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.DoubleSide });
+    sharedBombFinMaterial = new THREE.MeshBasicMaterial({ color: 0x7a1e12, side: THREE.DoubleSide });
   }
   return sharedBombFinMaterial;
 }
 
 export function getBombStripeMaterial(): THREE.MeshBasicMaterial {
   if (!sharedBombStripeMaterial) {
-    sharedBombStripeMaterial = new THREE.MeshBasicMaterial({ color: 0xcc0000 });
+    sharedBombStripeMaterial = new THREE.MeshBasicMaterial({ color: 0xfff0a3 });
   }
   return sharedBombStripeMaterial;
 }
@@ -95,7 +95,7 @@ export function getBombTrailMaterial(): THREE.MeshBasicMaterial {
     sharedBombTrailMaterial = new THREE.MeshBasicMaterial({ 
       color: 0xff6600, 
       transparent: true, 
-      opacity: 0.8 
+      opacity: 0.85 
     });
   }
   return sharedBombTrailMaterial;
@@ -104,9 +104,9 @@ export function getBombTrailMaterial(): THREE.MeshBasicMaterial {
 export function getBombGlowMaterial(): THREE.MeshBasicMaterial {
   if (!sharedBombGlowMaterial) {
     sharedBombGlowMaterial = new THREE.MeshBasicMaterial({ 
-      color: 0xff4400, 
+      color: 0xff7a00, 
       transparent: true, 
-      opacity: 0.25 
+      opacity: 0.32 
     });
   }
   return sharedBombGlowMaterial;
@@ -498,7 +498,7 @@ export function prewarmBlazeMaterials(): void {
   if (_materialsPrewarmed) return;
   _materialsPrewarmed = true;
   
-  // Bomb body materials
+  // Meteor body materials
   getBombBodyMaterial();
   getBombBandMaterial();
   getBombNoseMaterial();

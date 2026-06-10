@@ -49,7 +49,7 @@ export const PITCH_LIMIT = Math.PI / 2 - 0.1;
 // Ground detection
 export const GROUND_CHECK_DISTANCE = 0.1;
 export const GROUND_NORMAL_THRESHOLD = 0.7;
-export const STEP_HEIGHT = 0.5;
+export const STEP_HEIGHT = 0.9;
 
 // Slide
 export const SLIDE_SPEED_BOOST = 1.75; // Speed multiplier during slide

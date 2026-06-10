@@ -93,7 +93,7 @@ export function PlayerController() {
 
   // Input and network
   const { inputState, isPointerLocked, isControlPressed, requestPointerLock } = useInput();
-  const { world, playerBody } = usePhysics();
+  usePhysics();
   const { sendInput, requestBlazeBombDrop } = useNetwork();
 
   // Audio hooks
@@ -318,6 +318,9 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
+      pendingUnstuckInputRef.current = false;
+      movement.refs.slideIntensity.current = 0;
+      useGameStore.getState().setSlideIntensity(0);
       resetPredictedAbilitySounds();
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
@@ -332,6 +335,7 @@ export function PlayerController() {
       abilitySystem.abilityActiveRef.current = {};
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
+      pendingUnstuckInputRef.current = false;
       resetPredictedAbilitySounds();
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setChronosAegisVisualState(localPlayer.id, false, now);
@@ -376,6 +380,9 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      pendingUnstuckInputRef.current = false;
+      movement.refs.slideIntensity.current = 0;
+      useGameStore.getState().setSlideIntensity(0);
       resetPredictedAbilitySounds();
       blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
@@ -394,6 +401,8 @@ export function PlayerController() {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
+      pendingUnstuckInputRef.current = false;
+      movement.refs.slideIntensity.current = 0;
       resetPredictedAbilitySounds();
       blazeAbilities.resetRocketJump();
       const position = positionRef.current;
@@ -598,27 +607,6 @@ export function PlayerController() {
       dt
     );
 
-    // Create ability context
-    const abilityCtx = {
-      position,
-      velocity,
-      yaw: cameraControl.refs.yaw.current,
-      pitch: cameraControl.refs.pitch.current,
-      heroId,
-      localPlayer: {
-        id: localPlayer.id,
-        team: localPlayer.team,
-        position: localPlayer.position,
-        ultimateCharge: localPlayer.ultimateCharge,
-      },
-      inputState: frameInput,
-      dt,
-      isGrounded: movement.refs.isGrounded.current,
-      camera,
-      viewmodelElapsedSeconds: frameState.clock.elapsedTime,
-      viewmodelNowMs: now,
-    };
-
     // Handle hero-specific abilities
     const heroDef = HERO_DEFINITIONS[heroId];
     const reloadPressed = frameInput.reload && !reloadPressedRef.current;
@@ -640,6 +628,36 @@ export function PlayerController() {
       frameInput.primaryFire &&
       !phantomPrimaryReloading
     );
+    const primaryFireForServer = heroId === 'phantom'
+      ? phantomPrimaryHeldForPose && phantomAbilities.phantomPrimaryAmmoRef.current > 0
+      : heroId === 'chronos'
+        ? frameInput.primaryFire
+        : heroId === 'blaze'
+          ? frameInput.primaryFire && !bombTargeting
+          : frameInput.primaryFire;
+    const ability2ForServer = shadowStepTargeting ? false : frameInput.ability2;
+
+    // Create ability context
+    const abilityCtx = {
+      position,
+      velocity,
+      yaw: cameraControl.refs.yaw.current,
+      pitch: cameraControl.refs.pitch.current,
+      heroId,
+      localPlayer: {
+        id: localPlayer.id,
+        team: localPlayer.team,
+        position: localPlayer.position,
+        ultimateCharge: localPlayer.ultimateCharge,
+      },
+      inputState: frameInput,
+      dt,
+      isGrounded: movement.refs.isGrounded.current,
+      camera,
+      viewmodelElapsedSeconds: frameState.clock.elapsedTime,
+      viewmodelNowMs: now,
+    };
+
     setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
     setBlazeRocketHeld(
       heroId === 'blaze' && !bombTargeting && frameInput.primaryFire,
@@ -649,13 +667,6 @@ export function PlayerController() {
       heroId === 'chronos' && frameInput.primaryFire,
       now
     );
-    const primaryFireForServer = heroId === 'phantom'
-      ? phantomPrimaryHeldForPose && phantomAbilities.phantomPrimaryAmmoRef.current > 0
-      : heroId === 'chronos'
-        ? frameInput.primaryFire
-        : heroId === 'blaze'
-          ? frameInput.primaryFire && !bombTargeting
-        : frameInput.primaryFire;
     setChronosAegisVisualState(
       localPlayer.id,
       heroId === 'chronos' && frameInput.secondaryFire,
@@ -666,12 +677,14 @@ export function PlayerController() {
         now,
         heroId,
         inputState: frameInput,
+        ultimateCharge: localPlayer.ultimateCharge ?? 0,
         shadowStepTargeting,
         bombTargeting,
         grappleTrapTargeting,
         phantomPrimaryAmmo: phantomAbilities.phantomPrimaryAmmoRef.current,
         phantomPrimaryReloading,
         canUseAbility: abilitySystem.canUseAbility,
+        getAbilityCharges: (abilityId: string) => localPlayer.abilities?.[abilityId]?.charges,
         canUseHookshotGrapple: () => hookshotAbilities.canGrapple(abilityCtx),
         hasChronosLifelineTarget,
       });
@@ -682,7 +695,9 @@ export function PlayerController() {
           if (!shadowStepTargeting && !grappleTrapTargeting && abilitySystem.canUseAbility(heroDef.ability1.abilityId, false, shadowStepTargeting)) {
             if (heroId === 'phantom') {
               phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge);
-            } else if (heroId === 'chronos') {
+            } else if (heroId === 'hookshot') {
+              hookshotAbilities.executeGrapple(abilityCtx);
+            } else if (heroId === 'chronos' && hasChronosLifelineTarget()) {
               chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge);
             }
           }
@@ -704,6 +719,8 @@ export function PlayerController() {
           } else if (heroId === 'blaze') {
             // Blaze Q is Rocket Jump
             blazeAbilities.executeRocketJump(abilityCtx);
+          } else if (heroId === 'hookshot') {
+            hookshotAbilities.executeEarthWall(abilityCtx);
           } else if (heroId === 'chronos') {
             chronosAbilities.executeTimebreak(
               abilityCtx,
@@ -721,6 +738,8 @@ export function PlayerController() {
             phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive);
           } else if (heroId === 'blaze') {
             blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
+          } else if (heroId === 'hookshot') {
+            hookshotAbilities.executeGrappleTrap(abilityCtx, updateLocalPlayer);
           }
         }
       }
@@ -732,6 +751,7 @@ export function PlayerController() {
       }
 
       if (heroId === 'blaze') {
+        blazeAbilities.fireRocket(abilityCtx);
         blazeAbilities.handleBombTargeting(abilityCtx, playerSounds);
         blazeAbilities.handleFlamethrower(
           abilityCtx,
@@ -742,6 +762,13 @@ export function PlayerController() {
       }
 
       if (heroId === 'hookshot' && !grappleTrapTargeting) {
+        const secondaryPressed = frameInput.secondaryFire && !hookshotAbilities.secondaryFirePressedRef.current;
+        if (frameInput.primaryFire) {
+          hookshotAbilities.fireChainHook(abilityCtx);
+        }
+        if (secondaryPressed) {
+          hookshotAbilities.fireDragHook(abilityCtx);
+        }
         hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
 
         // Update grapple and swing physics
@@ -749,7 +776,7 @@ export function PlayerController() {
         hookshotAbilities.updateSwingPhysics(abilityCtx);
       }
 
-      if (heroId === 'chronos' && frameInput.primaryFire) {
+      if (heroId === 'chronos') {
         chronosAbilities.fireVerdantPulse(abilityCtx);
       }
     }
@@ -858,7 +885,7 @@ export function PlayerController() {
     audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
     setAudioListenerTransform(camera.position, audioForwardRef.current, audioUpRef.current);
 
-    if (heroId === 'phantom' && !shadowStepTargeting && frameInput.primaryFire) {
+    if (heroId === 'phantom' && !shadowStepTargeting) {
       phantomAbilities.fireDireBall(abilityCtx, playerSounds);
     }
 
@@ -876,7 +903,7 @@ export function PlayerController() {
       },
     });
 
-    // Update visual store for non-reactive position access
+    // Update visual store for non-reactive position access.
     setPlayerVisualPosition(localPlayer.id, { x: position.x, y: position.y, z: position.z });
     setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
 
@@ -889,7 +916,12 @@ export function PlayerController() {
       lastSendRef.current = now;
       const currentTargeting = useGameStore.getState().shadowStepTargeting;
       const currentBombTargeting = useGameStore.getState().bombTargeting;
-      const reloadForServer = frameInput.reload || pendingReloadInputRef.current;
+      const phantomAutoReloadForServer = heroId === 'phantom' &&
+        phantomAbilities.phantomPrimaryReloadingRef.current &&
+        phantomAbilities.phantomPrimaryAmmoRef.current <= 0;
+      const reloadForServer = frameInput.reload ||
+        pendingReloadInputRef.current ||
+        (phantomAutoReloadForServer && !primaryFireForServer);
       const unstuckForServer = pendingUnstuckInputRef.current;
 
       sendInput({
@@ -905,7 +937,7 @@ export function PlayerController() {
         secondaryFire: frameInput.secondaryFire,
         reload: reloadForServer,
         ability1: frameInput.ability1,
-        ability2: currentTargeting ? false : frameInput.ability2,
+        ability2: currentTargeting ? false : ability2ForServer,
         ultimate: frameInput.ultimate,
         interact: frameInput.interact,
         lookYaw: cameraControl.refs.yaw.current,

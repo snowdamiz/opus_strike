@@ -6,6 +6,7 @@ export * from './types/ability.js';
 export * from './types/game.js';
 export * from './types/network.js';
 export * from './types/input.js';
+export * from './types/movementPrediction.js';
 
 // Constants
 export * from './constants/game.js';
@@ -17,4 +18,3 @@ export * from './utils/math.js';
 
 // Maps
 export * from './maps/index.js';
-

@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { HOOKSHOT_GRAPPLE_EXTENSION_SPEED } from '@voxel-strike/physics';
 import { useGameStore, type GrappleLineData } from '../../../store/gameStore';
 import { HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
 import { writeOwnerVisualPosition } from './ownerPosition';
@@ -135,32 +136,44 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
     const dirX = totalDist > 0 ? toTargetX / totalDist : 0;
     const dirY = totalDist > 0 ? toTargetY / totalDist : 0;
     const dirZ = totalDist > 0 ? toTargetZ / totalDist : 0;
+    const castToTargetX = line.endPosition.x - line.startPosition.x;
+    const castToTargetY = line.endPosition.y - line.startPosition.y;
+    const castToTargetZ = line.endPosition.z - line.startPosition.z;
+    const castDist = Math.sqrt(
+      castToTargetX * castToTargetX +
+      castToTargetY * castToTargetY +
+      castToTargetZ * castToTargetZ
+    );
+    const castDirX = castDist > 0 ? castToTargetX / castDist : dirX;
+    const castDirY = castDist > 0 ? castToTargetY / castDist : dirY;
+    const castDirZ = castDist > 0 ? castToTargetZ / castDist : dirZ;
     
     // Hook position calculation
     const hookPos = currentHookPosRef.current;
     
     // Hook extension logic
     if (!hasReachedRef.current && line.state === 'extending') {
-      // Extend the hook outward from player
-      const speed = 80 * delta;
-      hookExtensionRef.current += speed;
+      const elapsed = Math.max(0, (frameNow - startFrameTimeRef.current) / 1000);
+      hookExtensionRef.current = Math.max(
+        hookExtensionRef.current + HOOKSHOT_GRAPPLE_EXTENSION_SPEED * delta,
+        HOOKSHOT_GRAPPLE_EXTENSION_SPEED * elapsed
+      );
       
-      if (hookExtensionRef.current >= totalDist) {
+      if (hookExtensionRef.current >= castDist) {
         // Hook reached target
         hasReachedRef.current = true;
         hookPos.x = line.endPosition.x;
         hookPos.y = line.endPosition.y;
         hookPos.z = line.endPosition.z;
         triggerTerrainImpact('hookshot_grapple', line.endPosition, {
-          normal: { x: -dirX, y: -dirY, z: -dirZ },
-          direction: { x: dirX, y: dirY, z: dirZ },
+          normal: { x: -castDirX, y: -castDirY, z: -castDirZ },
+          direction: { x: castDirX, y: castDirY, z: castDirZ },
         });
         useGameStore.getState().updateGrappleLine(line.id, { state: 'attached' });
       } else {
-        // Position hook along the line from player toward target
-        hookPos.x = pX + dirX * hookExtensionRef.current;
-        hookPos.y = pY + dirY * hookExtensionRef.current;
-        hookPos.z = pZ + dirZ * hookExtensionRef.current;
+        hookPos.x = line.startPosition.x + castDirX * hookExtensionRef.current;
+        hookPos.y = line.startPosition.y + castDirY * hookExtensionRef.current;
+        hookPos.z = line.startPosition.z + castDirZ * hookExtensionRef.current;
       }
     } else if (line.state === 'attached' || line.state === 'pulling') {
       // Hook is attached to geometry - stays at target position

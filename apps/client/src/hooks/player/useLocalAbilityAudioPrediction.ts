@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import {
+  ABILITY_DEFINITIONS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
@@ -12,6 +13,7 @@ import {
   type InputState,
 } from '@voxel-strike/shared';
 import { playSharedSound } from '../useAudio';
+import { resetPredictedLocalAbilityVisuals } from './useLocalAbilityVisualPrediction';
 import {
   BLAZE_ROCKET_FIRE_INTERVAL,
   DRAG_HOOK_COOLDOWN,
@@ -23,17 +25,27 @@ import { getLocalChronosTimebreakTempoMultiplier } from './chronosTimebreakTempo
 const LOCAL_AUDIO_PREDICTION_TTL_MS = 1500;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
 
-const predictedLocalAbilitySounds = new Map<string, number>();
+const predictedLocalAbilitySounds = new Map<string, {
+  predictedAt: number;
+  suppressUntil: number;
+}>();
 
-export function markPredictedLocalAbilitySound(abilityId: string, now = Date.now()): void {
-  predictedLocalAbilitySounds.set(abilityId, now);
+export function markPredictedLocalAbilitySound(
+  abilityId: string,
+  now = Date.now(),
+  ttlMs = LOCAL_AUDIO_PREDICTION_TTL_MS
+): void {
+  predictedLocalAbilitySounds.set(abilityId, {
+    predictedAt: now,
+    suppressUntil: now + Math.max(0, ttlMs),
+  });
 }
 
 export function shouldSuppressPredictedLocalAbilitySound(abilityId: string, now = Date.now()): boolean {
-  const predictedAt = predictedLocalAbilitySounds.get(abilityId);
-  if (predictedAt === undefined) return false;
+  const prediction = predictedLocalAbilitySounds.get(abilityId);
+  if (prediction === undefined) return false;
 
-  if (now - predictedAt > LOCAL_AUDIO_PREDICTION_TTL_MS) {
+  if (now > prediction.suppressUntil) {
     predictedLocalAbilitySounds.delete(abilityId);
     return false;
   }
@@ -45,12 +57,14 @@ export interface LocalAbilityAudioPredictionFrame {
   now: number;
   heroId: HeroId;
   inputState: InputState;
+  ultimateCharge: number;
   shadowStepTargeting: boolean;
   bombTargeting: boolean;
   grappleTrapTargeting: boolean;
   phantomPrimaryAmmo: number;
   phantomPrimaryReloading: boolean;
   canUseAbility: (abilityId: string, isUltimate: boolean, isTargetingActive?: boolean) => boolean;
+  getAbilityCharges?: (abilityId: string) => number | undefined;
   canUseHookshotGrapple?: () => boolean;
   hasChronosLifelineTarget?: () => boolean;
 }
@@ -62,6 +76,18 @@ function playHookshotCastSounds(abilityId: string, castSound: 'hookshotPrimary' 
     fadeOutMs: 24,
   });
   void playSharedSound(castSound, { volume });
+}
+
+function getPredictedAbilityCooldownMs(abilityId: string, tempoMultiplier: number): number {
+  const abilityDef = ABILITY_DEFINITIONS[abilityId];
+  if (!abilityDef) return 0;
+
+  const cooldownSeconds = abilityDef.charges && abilityDef.charges > 1
+    ? abilityDef.chargeRegenTime ?? abilityDef.cooldown ?? 0
+    : abilityDef.cooldown ?? 0;
+  if (!Number.isFinite(cooldownSeconds) || cooldownSeconds <= 0) return 0;
+
+  return (cooldownSeconds * 1000) / Math.max(tempoMultiplier, 0.001);
 }
 
 export function useLocalAbilityAudioPrediction() {
@@ -77,6 +103,9 @@ export function useLocalAbilityAudioPrediction() {
   const phantomVoidRayReleasePlayedRef = useRef(false);
   const phantomVoidRayChargeAbortRef = useRef<AbortController | null>(null);
   const chronosTimebreakReleaseTimeoutRef = useRef<number | null>(null);
+  const predictedAbilityCooldownUntilRef = useRef<Record<string, number>>({});
+  const predictedAbilityChargesRef = useRef<Record<string, number>>({});
+  const predictedUltimateSpentRef = useRef<Record<string, boolean>>({});
 
   const stopPredictedPhantomVoidRayCharge = useCallback(() => {
     phantomVoidRayChargeAbortRef.current?.abort();
@@ -97,6 +126,11 @@ export function useLocalAbilityAudioPrediction() {
     primaryHoldStartedAtRef.current = 0;
     lastPrimarySoundAtRef.current = 0;
     lastSecondarySoundAtRef.current = 0;
+    predictedAbilityCooldownUntilRef.current = {};
+    predictedAbilityChargesRef.current = {};
+    predictedUltimateSpentRef.current = {};
+    predictedLocalAbilitySounds.clear();
+    resetPredictedLocalAbilityVisuals();
     stopPredictedPhantomVoidRayCharge();
     clearPredictedChronosTimebreakRelease();
   }, [clearPredictedChronosTimebreakRelease, stopPredictedPhantomVoidRayCharge]);
@@ -149,17 +183,82 @@ export function useLocalAbilityAudioPrediction() {
     }, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS);
   }, [clearPredictedChronosTimebreakRelease]);
 
+  const reservePredictedAbilitySound = useCallback((
+    abilityId: string,
+    options: {
+      now: number;
+      tempoMultiplier: number;
+      isUltimate?: boolean;
+      ultimateCharge?: number;
+      confirmedCharges?: number;
+    }
+  ): boolean => {
+    const { now, tempoMultiplier, isUltimate = false, ultimateCharge = 0, confirmedCharges } = options;
+
+    if (isUltimate) {
+      if (ultimateCharge < 100) {
+        delete predictedUltimateSpentRef.current[abilityId];
+        return false;
+      }
+      if (predictedUltimateSpentRef.current[abilityId]) return false;
+      predictedUltimateSpentRef.current[abilityId] = true;
+      return true;
+    }
+
+    const cooldownUntil = predictedAbilityCooldownUntilRef.current[abilityId] ?? 0;
+    if (cooldownUntil > now) return false;
+    if (cooldownUntil > 0) {
+      delete predictedAbilityCooldownUntilRef.current[abilityId];
+    }
+
+    const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    const maxCharges = abilityDef?.charges ?? 1;
+    if (maxCharges > 1) {
+      let charges = predictedAbilityChargesRef.current[abilityId];
+      if (charges === undefined) {
+        charges = confirmedCharges === undefined
+          ? maxCharges
+          : Math.max(0, Math.min(maxCharges, confirmedCharges));
+      } else if (confirmedCharges !== undefined && confirmedCharges < charges) {
+        charges = Math.max(0, confirmedCharges);
+      } else if (charges <= 0) {
+        charges = confirmedCharges === undefined
+          ? maxCharges
+          : Math.max(0, Math.min(maxCharges, confirmedCharges));
+      }
+      if (charges <= 0) return false;
+
+      charges -= 1;
+      predictedAbilityChargesRef.current[abilityId] = charges;
+      if (charges <= 0) {
+        const cooldownMs = getPredictedAbilityCooldownMs(abilityId, tempoMultiplier);
+        if (cooldownMs > 0) {
+          predictedAbilityCooldownUntilRef.current[abilityId] = now + cooldownMs;
+        }
+      }
+      return true;
+    }
+
+    const cooldownMs = getPredictedAbilityCooldownMs(abilityId, tempoMultiplier);
+    if (cooldownMs > 0) {
+      predictedAbilityCooldownUntilRef.current[abilityId] = now + cooldownMs;
+    }
+    return true;
+  }, []);
+
   const updatePredictedAbilitySounds = useCallback((frame: LocalAbilityAudioPredictionFrame) => {
     const {
       now,
       heroId,
       inputState,
+      ultimateCharge,
       shadowStepTargeting,
       bombTargeting,
       grappleTrapTargeting,
       phantomPrimaryAmmo,
       phantomPrimaryReloading,
       canUseAbility,
+      getAbilityCharges,
       canUseHookshotGrapple,
       hasChronosLifelineTarget,
     } = frame;
@@ -170,6 +269,9 @@ export function useLocalAbilityAudioPrediction() {
       primaryHoldStartedAtRef.current = 0;
       lastPrimarySoundAtRef.current = 0;
       lastSecondarySoundAtRef.current = 0;
+      predictedAbilityCooldownUntilRef.current = {};
+      predictedAbilityChargesRef.current = {};
+      predictedUltimateSpentRef.current = {};
       stopPredictedPhantomVoidRayCharge();
       syncPredictedPhantomAmmo(phantomPrimaryAmmo);
     } else {
@@ -177,6 +279,24 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    if (ultimateCharge < 100) {
+      predictedUltimateSpentRef.current = {};
+    }
+    const canReservePredictedSkillSound = (
+      abilityId: string,
+      isUltimate = false,
+      isTargetingActive = false
+    ): boolean => (
+      canUseAbility(abilityId, isUltimate, isTargetingActive) &&
+      reservePredictedAbilitySound(abilityId, {
+        now,
+        tempoMultiplier,
+        isUltimate,
+        ultimateCharge,
+        confirmedCharges: getAbilityCharges?.(abilityId),
+      })
+    );
+
     const primaryPressed = inputState.primaryFire;
     if (primaryPressed && !previousInput.primaryFire) {
       primaryHoldStartedAtRef.current = now;
@@ -275,20 +395,20 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.ability1 && !previousInput.ability1) {
-      if (heroId === 'phantom' && !shadowStepTargeting && canUseAbility('phantom_blink', false, shadowStepTargeting)) {
+      if (heroId === 'phantom' && !shadowStepTargeting && canReservePredictedSkillSound('phantom_blink', false, shadowStepTargeting)) {
         markPredictedLocalAbilitySound('phantom_blink', now);
         void playSharedSound('phantomBlink', { durationMs: 900, volume: 1.1 });
       } else if (
         heroId === 'hookshot' &&
         !grappleTrapTargeting &&
-        canUseAbility('hookshot_grapple', false, shadowStepTargeting) &&
-        (canUseHookshotGrapple?.() ?? false)
+        (canUseHookshotGrapple?.() ?? false) &&
+        canReservePredictedSkillSound('hookshot_grapple', false, shadowStepTargeting)
       ) {
         playHookshotCastSounds('hookshot_grapple', 'hookshotGrapple');
       } else if (
         heroId === 'chronos' &&
-        canUseAbility('chronos_lifeline_conduit', false, shadowStepTargeting) &&
-        (hasChronosLifelineTarget?.() ?? false)
+        (hasChronosLifelineTarget?.() ?? false) &&
+        canReservePredictedSkillSound('chronos_lifeline_conduit', false, shadowStepTargeting)
       ) {
         markPredictedLocalAbilitySound('chronos_lifeline_conduit', now);
         void playSharedSound('chronosAegis', { volume: 0.65 });
@@ -296,22 +416,22 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.ability2 && !previousInput.ability2) {
-      if (heroId === 'blaze' && canUseAbility('blaze_rocketjump', false, shadowStepTargeting)) {
+      if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_rocketjump', false, shadowStepTargeting)) {
         markPredictedLocalAbilitySound('blaze_rocketjump', now);
         void playSharedSound('blazeRocketJump');
-      } else if (heroId === 'chronos' && canUseAbility('chronos_timebreak', false, shadowStepTargeting)) {
+      } else if (heroId === 'chronos' && canReservePredictedSkillSound('chronos_timebreak', false, shadowStepTargeting)) {
         playPredictedChronosTimebreak(now);
       }
     }
 
     if (inputState.ultimate && !previousInput.ultimate) {
-      if (heroId === 'phantom' && !shadowStepTargeting && canUseAbility('phantom_veil', true, shadowStepTargeting)) {
+      if (heroId === 'phantom' && !shadowStepTargeting && canReservePredictedSkillSound('phantom_veil', true, shadowStepTargeting)) {
         markPredictedLocalAbilitySound('phantom_veil', now);
         void playSharedSound('phantomVeil');
-      } else if (heroId === 'blaze' && canUseAbility('blaze_airstrike', true, shadowStepTargeting)) {
+      } else if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_airstrike', true, shadowStepTargeting)) {
         markPredictedLocalAbilitySound('blaze_airstrike', now);
         void playSharedSound('blazeAirstrike');
-      } else if (heroId === 'hookshot' && canUseAbility('hookshot_grapple_trap', true, grappleTrapTargeting)) {
+      } else if (heroId === 'hookshot' && canReservePredictedSkillSound('hookshot_grapple_trap', true, grappleTrapTargeting)) {
         playHookshotCastSounds('hookshot_grapple_trap', 'hookshotTrap', 1.15);
       }
     }
@@ -321,6 +441,7 @@ export function useLocalAbilityAudioPrediction() {
     canPlayPrimary,
     canPlaySecondary,
     playPredictedChronosTimebreak,
+    reservePredictedAbilitySound,
     startPredictedPhantomVoidRayCharge,
     stopPredictedPhantomVoidRayCharge,
     syncPredictedPhantomAmmo,

@@ -12,6 +12,7 @@ import { useUISounds } from '../../hooks/useAudio';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
+import { usePwaInstallPrompt } from '../../pwa';
 
 // Phantom wallet icon component
 function PhantomIcon({ className }: { className?: string }) {
@@ -56,6 +57,26 @@ function SlopHeroesMark({ className }: { className?: string }) {
   );
 }
 
+function PwaInstallButton({ onInstall }: { onInstall: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onInstall}
+      className="group relative w-10 h-10 shrink-0 rounded-lg border border-orange-400/20 bg-orange-500/10 text-orange-200 shadow-[0_0_24px_rgba(249,115,22,0.14)] transition hover:border-orange-300/50 hover:bg-orange-400/20 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/70"
+      aria-label="Install Slop Heroes app"
+      title="Install Slop Heroes app"
+    >
+      <span className="absolute inset-0 rounded-lg opacity-0 transition group-hover:opacity-100 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.18),transparent_62%)]" />
+      <span className="relative flex h-full w-full items-center justify-center">
+        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v10m0 0l4-4m-4 4L8 9" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 14v3.5A2.5 2.5 0 007.5 20h9a2.5 2.5 0 002.5-2.5V14" />
+        </svg>
+      </span>
+    </button>
+  );
+}
+
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'loadout';
 
@@ -88,6 +109,7 @@ export function MainLobby() {
     error: walletError,
     clearError,
   } = useWallet();
+  const { canInstall, install: installPwa } = usePwaInstallPrompt();
 
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +214,11 @@ export function MainLobby() {
   const handleSignInClick = () => {
     clearError();
     setShowAuthModal(true);
+  };
+
+  const handleInstallPwa = () => {
+    playButtonClick();
+    installPwa().catch(() => undefined);
   };
 
   // Format wallet address for display
@@ -343,6 +370,8 @@ export function MainLobby() {
  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
  </svg>
  </button>
+
+            {canInstall && <PwaInstallButton onInstall={handleInstallPwa} />}
 
             {/* Conditional: Show sign-in button or profile card */}
             {isAuthenticated && user ? (

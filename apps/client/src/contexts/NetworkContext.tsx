@@ -3,7 +3,7 @@ import { Client, Room } from 'colyseus.js';
 import { useGameStore, LobbyPlayer, LobbyInfo, MapVoteOption, MapVoteRecord } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
-import type { BotDifficulty, HeroId, Team, PlayerInput } from '@voxel-strike/shared';
+import type { BotDifficulty, HeroId, Team, PlayerInput, MovementCommandPacket } from '@voxel-strike/shared';
 
 // Import extracted handlers
 import {
@@ -11,6 +11,7 @@ import {
   syncPlayerFromSchema,
   setupPlayerJoinedHandler,
   setupPlayerTransformsHandler,
+  setupSelfMovementAuthorityHandler,
   setupPlayerVitalsHandler,
   setupMatchSnapshotHandler,
   setupPlayerStatesHandler,
@@ -55,6 +56,7 @@ interface NetworkContextType {
   leaveGame: () => void;
   disconnect: () => void;
   sendInput: (input: PlayerInput) => void;
+  sendMovementCommands: (packet: MovementCommandPacket) => void;
   requestBlazeBombDrop: () => void;
   reportBlazeRocketImpact: (rocketId: string, position: { x: number; y: number; z: number }) => void;
   selectHero: (heroId: HeroId) => void;
@@ -549,6 +551,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
     setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
+    setupSelfMovementAuthorityHandler(room, { setLocalPlayer });
     setupPlayerVitalsHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer, removePlayer });
     setupMatchSnapshotHandler(room);
     setupPlayerStatesHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer });
@@ -683,6 +686,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('input', input);
   }, []);
 
+  const sendMovementCommands = useCallback((packet: MovementCommandPacket) => {
+    if (packet.commands.length === 0) return;
+    gameRoomRef.current?.send('movementCommands', packet);
+  }, []);
+
   const requestBlazeBombDrop = useCallback(() => {
     gameRoomRef.current?.send('blazeBombDrop', {});
   }, []);
@@ -790,6 +798,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       leaveGame,
       disconnect,
       sendInput,
+      sendMovementCommands,
       requestBlazeBombDrop,
       reportBlazeRocketImpact,
       selectHero,

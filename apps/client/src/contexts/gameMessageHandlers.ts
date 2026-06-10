@@ -9,11 +9,13 @@ import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import {
   pushLocalPlayerImpulse,
+  addRemoteTransformSnapshot,
   setChronosAegisVisualState,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
   visualStore,
 } from '../store/visualStore';
+import { applySelfMovementAuthority, confirmLocalMovementTransform } from '../movement/localPrediction';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/PhantomEffects';
@@ -35,6 +37,7 @@ import {
   PHANTOM_PROJECTILE_SPEED,
 } from '../hooks/player/constants';
 import { shouldSuppressPredictedLocalAbilitySound } from '../hooks/player/useLocalAbilityAudioPrediction';
+import { consumePredictedLocalAbilityVisual } from '../hooks/player/useLocalAbilityVisualPrediction';
 import { playSharedSound, type SoundName } from '../hooks/useAudio';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
@@ -48,6 +51,7 @@ import type {
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
   QuantizedPlayerTransform,
+  SelfMovementAuthority,
   Team,
 } from '@voxel-strike/shared';
 
@@ -65,6 +69,7 @@ const MOVEMENT_BIT_GLIDING = 1 << 7;
 const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
 let lastLocalPhantomReloadSoundKey = '';
+let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
 
 // ============================================================================
@@ -566,23 +571,28 @@ export function setupPlayerTransformsHandler(
       const decoded = dequantizeTransform(transform);
 
       if (transform.id === sessionId) {
-        const localPlayer = useGameStore.getState().localPlayer;
-        if (!localPlayer) continue;
+        if (!hasReceivedSelfMovementAuthority) {
+          const localPlayer = useGameStore.getState().localPlayer;
+          if (!localPlayer) continue;
 
-        const shouldSyncPosition = shouldSyncLocalPosition(localPlayer, localPlayer.state, decoded.position);
-        if (!shouldSyncPosition) continue;
+          const nextMovement = movementFromBits(transform, localPlayer.movement);
+          const shouldSyncPosition = shouldSyncLocalPosition(localPlayer, localPlayer.state, decoded.position);
+          if (shouldSyncPosition) {
+            const updated: Player = {
+              ...localPlayer,
+              position: decoded.position,
+              velocity: decoded.velocity,
+              lookYaw: decoded.lookYaw,
+              lookPitch: decoded.lookPitch,
+              movement: nextMovement,
+            };
+            actions.setLocalPlayer(updated);
+            syncLocalVisualPosition(updated);
+          }
+        }
 
-        const updated: Player = {
-          ...localPlayer,
-          position: decoded.position,
-          velocity: decoded.velocity,
-          lookYaw: decoded.lookYaw,
-          lookPitch: decoded.lookPitch,
-          movement: movementFromBits(transform, localPlayer.movement),
-        };
-        actions.setLocalPlayer(updated);
-        syncLocalVisualPosition(updated);
-        loggers.network.sample('local-correction', 1500, 'server corrected local transform', transform.id);
+        // Local correction is private and sequence-aware; shared transform entries
+        // are retained only for migration and ignored during normal prediction.
         continue;
       }
 
@@ -593,12 +603,32 @@ export function setupPlayerTransformsHandler(
         continue;
       }
 
+      const wasGrappling = existingPlayer.movement.isGrappling;
+      const nextMovement = movementFromBits(transform, existingPlayer.movement);
       existingPlayer.position = decoded.position;
       existingPlayer.velocity = decoded.velocity;
       existingPlayer.lookYaw = decoded.lookYaw;
       existingPlayer.lookPitch = decoded.lookPitch;
-      existingPlayer.movement = movementFromBits(transform, existingPlayer.movement);
-      setPlayerVisualPosition(transform.id, decoded.position);
+      existingPlayer.movement = nextMovement;
+      if (wasGrappling && !nextMovement.isGrappling) {
+        const freshStore = useGameStore.getState();
+        for (const line of freshStore.grappleLines) {
+          if (line.ownerId === transform.id) {
+            freshStore.removeGrappleLine(line.id);
+          }
+        }
+      }
+      addRemoteTransformSnapshot(transform.id, {
+        serverTick: data.tick,
+        serverTime: data.serverTime,
+        position: decoded.position,
+        velocity: decoded.velocity,
+        lookYaw: decoded.lookYaw,
+        lookPitch: decoded.lookPitch,
+        movementBits: transform.movementBits,
+        wallRunSide: transform.wallRunSide,
+        movementEpoch: transform.movementEpoch,
+      });
       setPlayerVisualRotation(transform.id, decoded.lookYaw);
       const chronosAegisActive = existingPlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
       const previousChronosAegis = visualStore.getState().chronosAegisStates.get(transform.id);
@@ -610,6 +640,45 @@ export function setupPlayerTransformsHandler(
         chronosAegisActive,
         Date.now()
       );
+    }
+  });
+}
+
+export function setupSelfMovementAuthorityHandler(
+  room: Room,
+  actions: Pick<GameStoreActions, 'setLocalPlayer'>
+) {
+  hasReceivedSelfMovementAuthority = false;
+
+  room.onMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
+    hasReceivedSelfMovementAuthority = true;
+    recordNetworkMessage('selfMovementAuthority', authority);
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
+    if (!localPlayer) return;
+
+    const { result, state } = applySelfMovementAuthority(localPlayer, authority);
+    actions.setLocalPlayer({
+      ...localPlayer,
+      position: state.position,
+      velocity: state.velocity,
+      lookYaw: authority.lookYaw,
+      lookPitch: authority.lookPitch,
+      movement: state.movement,
+    });
+
+    if (result.hardCorrection) {
+      loggers.network.sample('local-hard-correction', 1500, 'hard movement correction', {
+        ackSeq: result.ackSeq,
+        reason: authority.correctionReason,
+        positionError: result.positionError,
+      });
+    } else if (result.corrected) {
+      loggers.network.sample('local-movement-correction', 1500, 'movement correction', {
+        ackSeq: result.ackSeq,
+        positionError: result.positionError,
+        replayedCommands: result.replayedCommands,
+      });
     }
   });
 }
@@ -993,11 +1062,17 @@ function applyPhantomPrimaryState(data: {
   const previousReloadEnd = store.phantomPrimaryReloadEnd;
   const now = Date.now();
   const ammo = data.ammoRemaining ?? data.ammo;
+  const reloading = data.reloading ?? Boolean(data.reloadUntil && data.reloadUntil > now);
+  const shouldPreserveEmptyReloadAmmo =
+    reloading &&
+    wasReloading &&
+    store.phantomPrimaryAmmo <= 0 &&
+    typeof ammo === 'number' &&
+    ammo > 0;
   if (typeof ammo === 'number') {
-    store.setPhantomPrimaryAmmo(ammo);
+    store.setPhantomPrimaryAmmo(shouldPreserveEmptyReloadAmmo ? 0 : ammo);
   }
 
-  const reloading = data.reloading ?? Boolean(data.reloadUntil && data.reloadUntil > now);
   const reloadStartedAt = reloading ? (data.reloadStartedAt ?? now) : 0;
   const reloadUntil = reloading ? (data.reloadUntil ?? now) : 0;
   store.setPhantomPrimaryReload(
@@ -1014,13 +1089,11 @@ function applyPhantomPrimaryState(data: {
 
   if (startedNewReload && lastLocalPhantomReloadSoundKey !== reloadSoundKey) {
     lastLocalPhantomReloadSoundKey = reloadSoundKey;
+    if (shouldSuppressPredictedLocalAbilitySound('phantom_reload', now)) return;
+
     const reloadDurationMs = Math.max(0, reloadUntil - now);
     const fadeOutMs = Math.min(450, reloadDurationMs);
     void playSharedSound('phantomReload', {
-      durationMs: reloadDurationMs,
-      fadeOutMs,
-    });
-    void playSharedSound('phantomReloadScream', {
       durationMs: reloadDurationMs,
       fadeOutMs,
     });
@@ -1074,16 +1147,29 @@ function applyLocalPhantomBlinkConfirmation(
   const store = useGameStore.getState();
   const localPlayer = store.localPlayer;
   if (!localPlayer || data.playerId !== (localPlayer.id ?? store.playerId)) return;
+  const horizontalLength = Math.sqrt(direction.x * direction.x + direction.z * direction.z);
+  const velocity = {
+    x: horizontalLength > 0.0001 ? (direction.x / horizontalLength) * 2 : 0,
+    y: localPlayer.velocity.y,
+    z: horizontalLength > 0.0001 ? (direction.z / horizontalLength) * 2 : -2,
+  };
+  const movement = {
+    ...localPlayer.movement,
+    isGrounded: false,
+    isSliding: false,
+    slideTimeRemaining: 0,
+  };
 
   store.updateLocalPlayer({
     position: destination,
-    velocity: {
-      x: direction.x * 2,
-      y: localPlayer.velocity.y,
-      z: direction.z * 2,
-    },
+    velocity,
+    movement,
   });
-  setPlayerVisualPosition(localPlayer.id, destination);
+  confirmLocalMovementTransform(localPlayer, {
+    position: destination,
+    velocity,
+    movement,
+  }, localPlayer.lookYaw);
 }
 
 function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: string | null): boolean {
@@ -1098,23 +1184,28 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     case 'phantom_dire_ball': {
       if (!startPosition) return true;
       const direction = normalizeAimDirection(data);
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('phantom_dire_ball', data.playerId, { launchSide: data.launchSide })
+        : null;
       if (isLocalPlayer) {
         applyPhantomPrimaryState(data);
       }
-      store.addDireBall({
-        id: castId,
-        position: startPosition,
-        velocity: {
-          x: direction.x * PHANTOM_PROJECTILE_SPEED,
-          y: direction.y * PHANTOM_PROJECTILE_SPEED,
-          z: direction.z * PHANTOM_PROJECTILE_SPEED,
-        },
-        startTime: Date.now(),
-        ownerId: data.playerId,
-        ownerTeam,
-        launchSide: data.launchSide,
-        launchYaw: data.launchYaw,
-      });
+      if (!predictedVisualId) {
+        store.addDireBall({
+          id: castId,
+          position: startPosition,
+          velocity: {
+            x: direction.x * PHANTOM_PROJECTILE_SPEED,
+            y: direction.y * PHANTOM_PROJECTILE_SPEED,
+            z: direction.z * PHANTOM_PROJECTILE_SPEED,
+          },
+          startTime: Date.now(),
+          ownerId: data.playerId,
+          ownerTeam,
+          launchSide: data.launchSide,
+          launchYaw: data.launchYaw,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_dire_ball')) {
         playPhantomWorldSound('phantomBasic', startPosition);
       }
@@ -1126,8 +1217,13 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       stopRemotePhantomCharge(data.playerId);
       const controller = new AbortController();
       remotePhantomChargeControllers.set(data.playerId, controller);
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('phantom_void_ray_charge', data.playerId)
+        : null;
       if (isLocalPlayer) {
-        store.setVoidRayCharging(true, Date.now());
+        if (!predictedVisualId) {
+          store.setVoidRayCharging(true, Date.now());
+        }
       }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_void_ray_charge')) {
         playPhantomWorldSound('phantomVoidRayCharge', startPosition, {
@@ -1147,6 +1243,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
     case 'phantom_void_ray': {
       stopRemotePhantomCharge(data.playerId);
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('phantom_void_ray', data.playerId)
+        : null;
       if (isLocalPlayer) {
         store.setVoidRayCharging(false, 0);
         const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
@@ -1155,14 +1254,16 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         }
       }
       if (!startPosition) return true;
-      store.addVoidRay({
-        id: castId,
-        startPosition,
-        direction: normalizeAimDirection(data),
-        startTime: Date.now(),
-        ownerId: data.playerId,
-        ownerTeam,
-      });
+      if (!predictedVisualId) {
+        store.addVoidRay({
+          id: castId,
+          startPosition,
+          direction: normalizeAimDirection(data),
+          startTime: Date.now(),
+          ownerId: data.playerId,
+          ownerTeam,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_void_ray')) {
         playPhantomWorldSound('phantomVoidRay', startPosition);
       }
@@ -1222,19 +1323,24 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
     case 'hookshot_basic_attack': {
       if (!startPosition) return true;
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), HOOKSHOT_SPEED);
-      store.addHookProjectile({
-        id: castId,
-        position: startPosition,
-        velocity,
-        startTime: now,
-        ownerId: data.playerId,
-        ownerTeam,
-        state: 'extending',
-        maxDistance: data.maxDistance ?? HOOKSHOT_MAX_DISTANCE,
-        startPosition,
-        launchSide: data.launchSide,
-        launchYaw: data.launchYaw,
-      });
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('hookshot_basic_attack', data.playerId, { launchSide: data.launchSide })
+        : null;
+      if (!predictedVisualId) {
+        store.addHookProjectile({
+          id: castId,
+          position: startPosition,
+          velocity,
+          startTime: now,
+          ownerId: data.playerId,
+          ownerTeam,
+          state: 'extending',
+          maxDistance: data.maxDistance ?? HOOKSHOT_MAX_DISTANCE,
+          startPosition,
+          launchSide: data.launchSide,
+          launchYaw: data.launchYaw,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_basic_attack')) {
         playHookshotShotSound(startPosition);
         playHookshotWorldSound('hookshotPrimary', startPosition);
@@ -1245,18 +1351,23 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
     case 'hookshot_heavy_attack': {
       if (!startPosition) return true;
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), DRAG_HOOK_SPEED);
-      store.addDragHook({
-        id: castId,
-        position: startPosition,
-        velocity,
-        startTime: now,
-        ownerId: data.playerId,
-        ownerTeam,
-        state: 'flying',
-        startPosition,
-        launchSide: data.launchSide,
-        launchYaw: data.launchYaw,
-      });
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('hookshot_heavy_attack', data.playerId, { launchSide: data.launchSide })
+        : null;
+      if (!predictedVisualId) {
+        store.addDragHook({
+          id: castId,
+          position: startPosition,
+          velocity,
+          startTime: now,
+          ownerId: data.playerId,
+          ownerTeam,
+          state: 'flying',
+          startPosition,
+          launchSide: data.launchSide,
+          launchYaw: data.launchYaw,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_heavy_attack')) {
         playHookshotShotSound(startPosition);
         playHookshotWorldSound('hookshotSecondary', startPosition, { volume: 1.05 });
@@ -1266,16 +1377,38 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
 
     case 'hookshot_grapple': {
       if (!startPosition || !targetPosition) return true;
-      store.addGrappleLine({
-        id: castId,
-        startPosition,
-        endPosition: targetPosition,
-        startTime: now,
-        ownerId: data.playerId,
-        state: 'extending',
-        launchSide: data.launchSide,
-        launchYaw: data.launchYaw,
-      });
+      const startTime = data.serverTime ?? now;
+      const predictedLocalLine = isLocalPlayer
+        ? store.grappleLines.find((line) => (
+          line.ownerId === data.playerId &&
+          line.state !== 'done' &&
+          line.state !== 'retracting'
+        ))
+        : null;
+      if (isLocalPlayer) {
+        consumePredictedLocalAbilityVisual('hookshot_grapple', data.playerId, { launchSide: data.launchSide });
+      }
+
+      if (predictedLocalLine) {
+        store.updateGrappleLine(predictedLocalLine.id, {
+          startPosition,
+          endPosition: targetPosition,
+          startTime,
+          launchSide: data.launchSide,
+          launchYaw: data.launchYaw,
+        });
+      } else {
+        store.addGrappleLine({
+          id: castId,
+          startPosition,
+          endPosition: targetPosition,
+          startTime,
+          ownerId: data.playerId,
+          state: 'extending',
+          launchSide: data.launchSide,
+          launchYaw: data.launchYaw,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_grapple')) {
         playHookshotShotSound(startPosition);
         playHookshotWorldSound('hookshotGrapple', startPosition);
@@ -1285,36 +1418,46 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
 
     case 'hookshot_anchor_wall': {
       if (!startPosition) return true;
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('hookshot_anchor_wall', data.playerId)
+        : null;
       const direction = normalizeAimDirection(data);
-      store.addEarthWall({
-        id: castId,
-        startPosition,
-        direction: { x: direction.x, y: 0, z: direction.z },
-        startTime: now,
-        duration: data.duration ?? 6.25,
-        ownerId: data.playerId,
-        ownerTeam,
-        maxDistance: data.maxDistance ?? 24.35,
-        hookProgress: 0,
-        wallSegments: [],
-      });
+      if (!predictedVisualId) {
+        store.addEarthWall({
+          id: castId,
+          startPosition,
+          direction: { x: direction.x, y: 0, z: direction.z },
+          startTime: now,
+          duration: data.duration ?? 6.25,
+          ownerId: data.playerId,
+          ownerTeam,
+          maxDistance: data.maxDistance ?? 24.35,
+          hookProgress: 0,
+          wallSegments: [],
+        });
+      }
       return true;
     }
 
     case 'hookshot_grapple_trap': {
       if (!startPosition || !targetPosition) return true;
-      store.addGrappleTrap({
-        id: castId,
-        position: targetPosition,
-        startPosition,
-        velocity: data.velocity,
-        startTime: now,
-        duration: data.duration ?? 8,
-        ownerId: data.playerId,
-        ownerTeam,
-        radius: data.radius ?? 8,
-        hookedPlayers: [],
-      });
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('hookshot_grapple_trap', data.playerId)
+        : null;
+      if (!predictedVisualId) {
+        store.addGrappleTrap({
+          id: castId,
+          position: targetPosition,
+          startPosition,
+          velocity: data.velocity,
+          startTime: now,
+          duration: data.duration ?? 8,
+          ownerId: data.playerId,
+          ownerTeam,
+          radius: data.radius ?? 8,
+          hookedPlayers: [],
+        });
+      }
       if (isLocalPlayer) {
         store.updateLocalPlayer({ ultimateCharge: 0 });
       }
@@ -1344,14 +1487,19 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
     case 'blaze_rocket': {
       if (!startPosition) return true;
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), BLAZE_ROCKET_SPEED);
-      store.addRocket({
-        id: castId,
-        position: startPosition,
-        velocity,
-        startTime: now,
-        ownerId: data.playerId,
-        ownerTeam,
-      });
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('blaze_rocket', data.playerId)
+        : null;
+      if (!predictedVisualId) {
+        store.addRocket({
+          id: castId,
+          position: startPosition,
+          velocity,
+          startTime: now,
+          ownerId: data.playerId,
+          ownerTeam,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_rocket')) {
         playBlazeWorldSound('blazeRocket', startPosition, {
           pitch: 0.85 + Math.random() * 0.3,
@@ -1396,18 +1544,27 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         }
       }
       if (isLocalPlayer && data.velocity && store.localPlayer) {
-        triggerBlazeRocketJumpStaffSlam(now);
-        pushLocalPlayerImpulse({
-          x: data.velocity.x - store.localPlayer.velocity.x,
-          y: data.velocity.y - store.localPlayer.velocity.y,
-          z: data.velocity.z - store.localPlayer.velocity.z,
-        });
+        const predictedVisualId = consumePredictedLocalAbilityVisual('blaze_rocketjump', data.playerId);
+        if (!predictedVisualId) {
+          triggerBlazeRocketJumpStaffSlam(now);
+        }
+        const movement = {
+          ...store.localPlayer.movement,
+          isGrounded: false,
+          isSliding: false,
+          slideTimeRemaining: 0,
+        };
+        confirmLocalMovementTransform(store.localPlayer, {
+          position,
+          velocity: data.velocity,
+          movement,
+        }, store.localPlayer.lookYaw);
         if (position) {
           store.updateLocalPlayer({
             position,
             velocity: data.velocity,
+            movement,
           });
-          setPlayerVisualPosition(store.localPlayer.id, position);
         }
       }
       return true;
@@ -1478,19 +1635,24 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     case 'chronos_verdant_pulse': {
       if (!startPosition) return true;
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), CHRONOS_VERDANT_PULSE_SPEED);
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('chronos_verdant_pulse', data.playerId)
+        : null;
 
-      if (isLocalPlayer) {
+      if (isLocalPlayer && !predictedVisualId) {
         triggerChronosPrimaryShotGlow(data.serverTime ?? now);
       }
 
-      store.addChronosPulse({
-        id: castId,
-        position: startPosition,
-        velocity,
-        startTime: now,
-        ownerId: data.playerId,
-        ownerTeam,
-      });
+      if (!predictedVisualId) {
+        store.addChronosPulse({
+          id: castId,
+          position: startPosition,
+          velocity,
+          startTime: now,
+          ownerId: data.playerId,
+          ownerTeam,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('chronos_verdant_pulse')) {
         playChronosWorldSound('chronosPulse', startPosition);
       }
@@ -1498,7 +1660,10 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     }
 
     case 'chronos_lifeline_conduit': {
-      if (isLocalPlayer) {
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('chronos_lifeline_conduit', data.playerId)
+        : null;
+      if (isLocalPlayer && !predictedVisualId) {
         triggerChronosLifelineConduitPose(data.serverTime ?? now);
       }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit')) {
@@ -1508,7 +1673,10 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     }
 
     case 'chronos_timebreak': {
-      if (isLocalPlayer) {
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('chronos_timebreak', data.playerId)
+        : null;
+      if (isLocalPlayer && !predictedVisualId) {
         triggerChronosTimebreakPose(data.serverTime ?? now);
       }
 

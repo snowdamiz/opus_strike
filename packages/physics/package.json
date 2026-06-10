@@ -17,6 +17,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
+    "test:movement": "pnpm --filter @voxel-strike/shared build && pnpm build && node scripts/movement-prediction-harness.mjs",
     "clean": "rm -rf dist"
   },
   "dependencies": {

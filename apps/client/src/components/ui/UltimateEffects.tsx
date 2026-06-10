@@ -1,118 +1,114 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
+import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 
+const PHANTOM_VEIL_DURATION_MS = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 6) * 1000;
+
+interface VeilTrace {
+  id: number;
+  x: number;
+  y: number;
+  length: number;
+  angle: number;
+  duration: number;
+  delay: number;
+  opacity: number;
+  color: string;
+}
+
+type VeilTraceStyle = CSSProperties & {
+  '--trace-rotation': string;
+};
+
+function createVeilTraces(): VeilTrace[] {
+  const colors = ['34, 211, 238', '196, 181, 253', '248, 250, 252'];
+
+  return Array.from({ length: 42 }, (_, id) => {
+    const side = Math.floor(Math.random() * 4);
+    const color = colors[id % colors.length];
+    let x = Math.random() * 100;
+    let y = Math.random() * 100;
+    let angle = -16 + Math.random() * 32;
+
+    if (side === 0) {
+      y = Math.random() * 18;
+      angle += 8;
+    } else if (side === 1) {
+      x = 82 + Math.random() * 18;
+      angle -= 76;
+    } else if (side === 2) {
+      y = 82 + Math.random() * 18;
+      angle -= 10;
+    } else {
+      x = Math.random() * 18;
+      angle += 76;
+    }
+
+    return {
+      id,
+      x,
+      y,
+      length: 72 + Math.random() * 160,
+      angle,
+      duration: 2.2 + Math.random() * 2.9,
+      delay: Math.random() * 2.8,
+      opacity: 0.18 + Math.random() * 0.36,
+      color,
+    };
+  });
+}
+
 /**
- * UltimateEffects - Full-screen visual effects for ultimate abilities
- * Currently supports:
- * - phantom_veil: Ethereal void/ghost visual with swirling shadows and particles
+ * UltimateEffects - Full-screen visual effects for active local ultimates.
  */
 export function UltimateEffects() {
-  const { ultimateEffectActive, ultimateEffectType, ultimateEffectEndTime, localPlayer } = useGameStore();
+  const { ultimateEffectActive, ultimateEffectType, ultimateEffectEndTime } = useGameStore();
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [fadeOut, setFadeOut] = useState(false);
-  const [particles, setParticles] = useState<Array<{
-    id: number;
-    x: number;
-    y: number;
-    size: number;
-    duration: number;
-    delay: number;
-    direction: 'up' | 'down' | 'left' | 'right';
-    opacity: number;
-  }>>([]);
+  const [traces, setTraces] = useState<VeilTrace[]>([]);
 
   const isPhantomVeil = ultimateEffectActive && ultimateEffectType === 'phantom_veil';
 
-  // Generate floating void particles
   useEffect(() => {
     if (!isPhantomVeil) {
-      setParticles([]);
+      setTraces([]);
       return;
     }
 
-    const generateParticles = () => {
-      const newParticles = [];
-      for (let i = 0; i < 50; i++) {
-        const edge = Math.floor(Math.random() * 4);
-        let x = 0, y = 0, direction: 'up' | 'down' | 'left' | 'right' = 'up';
-        
-        switch (edge) {
-          case 0:
-            x = Math.random() * 100;
-            y = -5;
-            direction = 'down';
-            break;
-          case 1:
-            x = 105;
-            y = Math.random() * 100;
-            direction = 'left';
-            break;
-          case 2:
-            x = Math.random() * 100;
-            y = 105;
-            direction = 'up';
-            break;
-          case 3:
-            x = -5;
-            y = Math.random() * 100;
-            direction = 'right';
-            break;
-        }
-        
-        newParticles.push({
-          id: i,
-          x,
-          y,
-          size: Math.random() * 8 + 3,
-          duration: Math.random() * 4 + 3,
-          delay: Math.random() * 3,
-          direction,
-          opacity: Math.random() * 0.5 + 0.3,
-        });
-      }
-      setParticles(newParticles);
-    };
+    setTraces(createVeilTraces());
+  }, [isPhantomVeil, ultimateEffectEndTime]);
 
-    generateParticles();
-    const interval = setInterval(generateParticles, 5000);
-    
-    return () => clearInterval(interval);
-  }, [isPhantomVeil]);
-  
-  // Update time remaining
   useEffect(() => {
     if (!ultimateEffectActive) {
       setFadeOut(false);
       return;
     }
-    
+
     const updateTimer = () => {
       const now = Date.now();
       const remaining = Math.max(0, ultimateEffectEndTime - now);
       setTimeRemaining(remaining);
-      
-      if (remaining < 500 && remaining > 0) {
-        setFadeOut(true);
-      }
-      
+      setFadeOut(remaining < 500 && remaining > 0);
+
       if (remaining <= 0) {
         useGameStore.getState().setUltimateEffect(false);
       }
     };
-    
+
     updateTimer();
     const interval = setInterval(updateTimer, 50);
     return () => clearInterval(interval);
   }, [ultimateEffectActive, ultimateEffectEndTime]);
-  
+
   if (!ultimateEffectActive) return null;
-  
-  // Enhanced Phantom Veil effect
+
   if (ultimateEffectType === 'phantom_veil') {
-    const progress = Math.max(0, Math.min(1, timeRemaining / 6000));
-    
+    const progress = Math.max(0, Math.min(1, timeRemaining / PHANTOM_VEIL_DURATION_MS));
+    const seconds = (timeRemaining / 1000).toFixed(1);
+
     return (
-      <div 
+      <div
+        aria-hidden="true"
         className="fixed inset-0 pointer-events-none overflow-hidden"
         style={{
           opacity: fadeOut ? 0 : 1,
@@ -120,312 +116,178 @@ export function UltimateEffects() {
           zIndex: 100,
         }}
       >
-        {/* Base desaturation layer */}
-        <div 
+        <div
           className="absolute inset-0"
           style={{
-            backdropFilter: 'saturate(30%) brightness(0.9) contrast(1.1)',
-            WebkitBackdropFilter: 'saturate(30%) brightness(0.9) contrast(1.1)',
-          }}
-        />
-        
-        {/* Main vignette - dark purple edges that pulse */}
-        <div 
-          className="absolute inset-0"
-          style={{
-            background: `radial-gradient(ellipse at center, 
-              transparent 25%, 
-              rgba(88, 28, 135, 0.12) 40%, 
-              rgba(59, 7, 100, 0.28) 60%, 
-              rgba(30, 0, 50, 0.45) 80%, 
-              rgba(10, 0, 20, 0.65) 100%)`,
-            animation: 'veilPulse 2s ease-in-out infinite',
+            backdropFilter: 'saturate(48%) contrast(1.22) brightness(0.78) hue-rotate(14deg)',
+            WebkitBackdropFilter: 'saturate(48%) contrast(1.22) brightness(0.78) hue-rotate(14deg)',
           }}
         />
 
-        {/* Swirling shadow overlay - animated rotation */}
-        <div 
+        <div
           className="absolute inset-0"
           style={{
             background: `
-              conic-gradient(from 0deg at 50% 50%, 
-                transparent 0deg,
-                rgba(147, 51, 234, 0.04) 30deg,
-                transparent 60deg,
-                rgba(168, 85, 247, 0.06) 90deg,
-                transparent 120deg,
-                rgba(139, 92, 246, 0.04) 150deg,
-                transparent 180deg,
-                rgba(192, 132, 252, 0.06) 210deg,
-                transparent 240deg,
-                rgba(147, 51, 234, 0.04) 270deg,
-                transparent 300deg,
-                rgba(168, 85, 247, 0.05) 330deg,
-                transparent 360deg
-              )`,
-            animation: 'veilSpin 25s linear infinite',
+              radial-gradient(ellipse 44% 34% at 50% 48%, rgba(34, 211, 238, 0.06), transparent 63%),
+              radial-gradient(ellipse 88% 68% at 50% 50%, transparent 30%, rgba(8, 13, 34, 0.22) 54%, rgba(3, 4, 15, 0.72) 100%),
+              linear-gradient(120deg, rgba(2, 6, 23, 0.2), rgba(49, 46, 129, 0.1), rgba(2, 6, 23, 0.22))
+            `,
+            animation: 'phantomVeilBreath 2.5s ease-in-out infinite',
           }}
         />
-        
-        {/* Second rotating layer (opposite direction) */}
-        <div 
-          className="absolute inset-0"
+
+        <div
+          className="absolute inset-[-18%]"
           style={{
             background: `
-              conic-gradient(from 180deg at 50% 50%, 
+              conic-gradient(from 32deg at 50% 50%,
                 transparent 0deg,
-                rgba(88, 28, 135, 0.03) 45deg,
-                transparent 90deg,
-                rgba(124, 58, 237, 0.05) 135deg,
-                transparent 180deg,
-                rgba(88, 28, 135, 0.03) 225deg,
-                transparent 270deg,
-                rgba(124, 58, 237, 0.05) 315deg,
+                rgba(34, 211, 238, 0.08) 24deg,
+                transparent 52deg,
+                rgba(196, 181, 253, 0.1) 98deg,
+                transparent 132deg,
+                rgba(14, 165, 233, 0.08) 192deg,
+                transparent 236deg,
+                rgba(167, 139, 250, 0.09) 302deg,
                 transparent 360deg
               )`,
-            animation: 'veilSpinReverse 18s linear infinite',
+            mixBlendMode: 'screen',
+            animation: 'phantomVeilSweep 18s linear infinite',
           }}
         />
 
-        {/* Corner shadow tendrils */}
-        <div className="absolute top-0 left-0 w-2/5 h-2/5">
-          <div 
-            className="w-full h-full"
-            style={{
-              background: 'radial-gradient(ellipse at 0% 0%, rgba(88, 28, 135, 0.4) 0%, transparent 70%)',
-              animation: 'tendrilPulse 3s ease-in-out infinite',
-            }}
-          />
-        </div>
-        <div className="absolute top-0 right-0 w-2/5 h-2/5">
-          <div 
-            className="w-full h-full"
-            style={{
-              background: 'radial-gradient(ellipse at 100% 0%, rgba(88, 28, 135, 0.4) 0%, transparent 70%)',
-              animation: 'tendrilPulse 3s ease-in-out infinite 0.75s',
-            }}
-          />
-        </div>
-        <div className="absolute bottom-0 left-0 w-2/5 h-2/5">
-          <div 
-            className="w-full h-full"
-            style={{
-              background: 'radial-gradient(ellipse at 0% 100%, rgba(88, 28, 135, 0.4) 0%, transparent 70%)',
-              animation: 'tendrilPulse 3s ease-in-out infinite 1.5s',
-            }}
-          />
-        </div>
-        <div className="absolute bottom-0 right-0 w-2/5 h-2/5">
-          <div 
-            className="w-full h-full"
-            style={{
-              background: 'radial-gradient(ellipse at 100% 100%, rgba(88, 28, 135, 0.4) 0%, transparent 70%)',
-              animation: 'tendrilPulse 3s ease-in-out infinite 2.25s',
-            }}
-          />
-        </div>
-
-        {/* Edge blur effect */}
-        <div 
+        <div
           className="absolute inset-0"
           style={{
-            maskImage: 'radial-gradient(ellipse 55% 55% at center, transparent 30%, black 80%)',
-            WebkitMaskImage: 'radial-gradient(ellipse 55% 55% at center, transparent 30%, black 80%)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
+            opacity: 0.55,
+            backgroundImage: `
+              repeating-linear-gradient(102deg, transparent 0 22px, rgba(34, 211, 238, 0.055) 23px, transparent 25px),
+              repeating-linear-gradient(78deg, transparent 0 46px, rgba(196, 181, 253, 0.045) 47px, transparent 49px)
+            `,
+            maskImage: 'radial-gradient(ellipse 72% 64% at 50% 50%, transparent 26%, black 100%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 72% 64% at 50% 50%, transparent 26%, black 100%)',
+            animation: 'phantomVeilGrid 5.5s linear infinite',
           }}
         />
 
-        {/* Floating void particles */}
-        {particles.map(particle => (
+        <div
+          className="absolute inset-0"
+          style={{
+            maskImage: 'radial-gradient(ellipse 52% 42% at center, transparent 18%, black 72%)',
+            WebkitMaskImage: 'radial-gradient(ellipse 52% 42% at center, transparent 18%, black 72%)',
+            backdropFilter: 'blur(7px)',
+            WebkitBackdropFilter: 'blur(7px)',
+          }}
+        />
+
+        {traces.map(trace => (
           <div
-            key={particle.id}
-            className="absolute rounded-full"
+            key={trace.id}
+            className="absolute h-px"
             style={{
-              left: `${particle.x}%`,
-              top: `${particle.y}%`,
-              width: particle.size,
-              height: particle.size,
-              background: `radial-gradient(circle, 
-                rgba(192, 132, 252, ${particle.opacity}) 0%, 
-                rgba(147, 51, 234, ${particle.opacity * 0.5}) 50%, 
-                transparent 100%)`,
-              boxShadow: `0 0 ${particle.size * 2}px rgba(147, 51, 234, ${particle.opacity * 0.7})`,
-              animation: `voidParticle${particle.direction} ${particle.duration}s ease-in-out ${particle.delay}s infinite`,
-            }}
+              left: `${trace.x}%`,
+              top: `${trace.y}%`,
+              width: trace.length,
+              opacity: trace.opacity,
+              transform: `rotate(${trace.angle}deg)`,
+              transformOrigin: 'center',
+              background: `linear-gradient(90deg, transparent, rgba(${trace.color}, 0.95), transparent)`,
+              boxShadow: `0 0 14px rgba(${trace.color}, 0.58)`,
+              animation: `phantomVeilTrace ${trace.duration}s ease-in-out ${trace.delay}s infinite`,
+              '--trace-rotation': `${trace.angle}deg`,
+            } as VeilTraceStyle}
           />
         ))}
 
-        {/* Edge glow strips */}
-        <div 
-          className="absolute top-0 left-0 right-0 h-0.5"
-          style={{
-            background: 'linear-gradient(180deg, rgba(147, 51, 234, 0.5) 0%, transparent 100%)',
-            boxShadow: '0 0 15px rgba(147, 51, 234, 0.4)',
-          }}
-        />
-        <div 
-          className="absolute bottom-0 left-0 right-0 h-0.5"
-          style={{
-            background: 'linear-gradient(0deg, rgba(147, 51, 234, 0.5) 0%, transparent 100%)',
-            boxShadow: '0 0 15px rgba(147, 51, 234, 0.4)',
-          }}
-        />
-        <div 
-          className="absolute left-0 top-0 bottom-0 w-0.5"
-          style={{
-            background: 'linear-gradient(90deg, rgba(147, 51, 234, 0.5) 0%, transparent 100%)',
-            boxShadow: '0 0 15px rgba(147, 51, 234, 0.4)',
-          }}
-        />
-        <div 
-          className="absolute right-0 top-0 bottom-0 w-0.5"
-          style={{
-            background: 'linear-gradient(270deg, rgba(147, 51, 234, 0.5) 0%, transparent 100%)',
-            boxShadow: '0 0 15px rgba(147, 51, 234, 0.4)',
-          }}
-        />
-
-        {/* Status indicator */}
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
-          <div 
-            className="relative px-6 py-2.5 rounded-full backdrop-blur-sm"
+        <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2">
+          <div
+            className="absolute inset-5 rounded-full"
             style={{
-              background: 'linear-gradient(135deg, rgba(88, 28, 135, 0.7) 0%, rgba(59, 7, 100, 0.85) 100%)',
-              border: '1px solid rgba(192, 132, 252, 0.4)',
-              boxShadow: '0 0 25px rgba(147, 51, 234, 0.35), inset 0 0 15px rgba(192, 132, 252, 0.1)',
+              border: '1px solid rgba(34, 211, 238, 0.34)',
+              boxShadow: '0 0 28px rgba(34, 211, 238, 0.22), inset 0 0 22px rgba(196, 181, 253, 0.1)',
+              animation: 'phantomVeilReticle 1.8s ease-in-out infinite',
             }}
-          >
-            <div className="flex items-center gap-3">
-              {/* Ghost icon */}
-              <svg 
-                className="w-5 h-5 text-purple-300"
-                viewBox="0 0 24 24" 
-                fill="currentColor"
-                style={{ animation: 'ghostFloat 2s ease-in-out infinite' }}
-              >
-                <path d="M12 2C6.48 2 2 6.48 2 12v8c0 1.1.9 2 2 2h2v-4H4v-2h2v-2H4v-2c0-4.42 3.58-8 8-8s8 3.58 8 8v2h-2v2h2v2h-2v4h2c1.1 0 2-.9 2-2v-8c0-5.52-4.48-10-10-10zm-2 12c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm4 0c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z"/>
-              </svg>
-              
-              <span 
-                className="font-display text-sm tracking-[0.2em] text-purple-200"
-                style={{ textShadow: '0 0 10px rgba(192, 132, 252, 0.8)' }}
-              >
-                PHANTOM VEIL
-              </span>
-              
-              {/* Timer */}
-              <span 
-                className="font-mono text-lg font-bold text-purple-100 tabular-nums min-w-[52px] text-center"
-                style={{ textShadow: '0 0 10px rgba(192, 132, 252, 0.8)' }}
-              >
-                {(timeRemaining / 1000).toFixed(1)}s
-              </span>
-            </div>
-            
-            {/* Progress bar */}
-            <div className="absolute -bottom-1 left-3 right-3 h-0.5 bg-purple-900/50 rounded-full overflow-hidden">
-              <div 
-                className="h-full transition-all duration-100"
-                style={{
-                  width: `${progress * 100}%`,
-                  background: 'linear-gradient(90deg, #c084fc, #a855f7)',
-                  boxShadow: '0 0 8px rgba(192, 132, 252, 0.8)',
-                }}
-              />
-            </div>
-          </div>
-          
-          {/* Speed boost indicator */}
-          <div 
-            className="flex items-center gap-2 px-3 py-1 rounded-full"
+          />
+          <div
+            className="absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rotate-45"
             style={{
-              background: 'rgba(34, 197, 94, 0.15)',
-              border: '1px solid rgba(34, 197, 94, 0.35)',
-              boxShadow: '0 0 10px rgba(34, 197, 94, 0.15)',
+              border: '1px solid rgba(196, 181, 253, 0.32)',
+              boxShadow: '0 0 18px rgba(196, 181, 253, 0.18)',
+              animation: 'phantomVeilDiamond 4.8s linear infinite',
             }}
+          />
+          <div className="absolute left-0 top-0 h-7 w-7 border-l border-t border-cyan-200/60" />
+          <div className="absolute right-0 top-0 h-7 w-7 border-r border-t border-cyan-200/60" />
+          <div className="absolute bottom-0 left-0 h-7 w-7 border-b border-l border-cyan-200/60" />
+          <div className="absolute bottom-0 right-0 h-7 w-7 border-b border-r border-cyan-200/60" />
+          <div
+            className="absolute left-1/2 top-1/2 min-w-16 -translate-x-1/2 -translate-y-1/2 text-center font-mono text-lg font-bold tabular-nums text-cyan-50"
+            style={{ textShadow: '0 0 12px rgba(34, 211, 238, 0.95)' }}
           >
-            <div 
-              className="w-1.5 h-1.5 rounded-full bg-green-400"
-              style={{ boxShadow: '0 0 6px rgba(34, 197, 94, 0.8)' }}
-            />
-            <span className="text-[10px] font-display text-green-300 tracking-wider">+30% SPEED</span>
+            {seconds}
           </div>
         </div>
 
-        {/* Subtle scanlines */}
-        <div 
-          className="absolute inset-0 opacity-[0.03]"
+        <div className="absolute bottom-10 left-1/2 h-px w-[min(42rem,72vw)] -translate-x-1/2 bg-cyan-100/10">
+          <div
+            className="h-full origin-left transition-[width] duration-100"
+            style={{
+              width: `${progress * 100}%`,
+              background: 'linear-gradient(90deg, rgba(34, 211, 238, 0.95), rgba(196, 181, 253, 0.88), rgba(248, 250, 252, 0.9))',
+              boxShadow: '0 0 14px rgba(34, 211, 238, 0.68)',
+            }}
+          />
+        </div>
+
+        <div
+          className="absolute inset-0 opacity-[0.08]"
           style={{
-            backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(192, 132, 252, 0.3) 2px, rgba(192, 132, 252, 0.3) 4px)',
-            animation: 'scanlines 0.1s linear infinite',
+            backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(248, 250, 252, 0.24) 3px, rgba(248, 250, 252, 0.24) 4px)',
+            animation: 'phantomVeilScan 0.16s linear infinite',
           }}
         />
 
-        {/* Keyframe animations */}
         <style>{`
-          @keyframes veilPulse {
-            0%, 100% { opacity: 0.85; }
-            50% { opacity: 1; }
+          @keyframes phantomVeilBreath {
+            0%, 100% { opacity: 0.82; filter: brightness(0.94); }
+            50% { opacity: 1; filter: brightness(1.08); }
           }
-          
-          @keyframes veilSpin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
+
+          @keyframes phantomVeilSweep {
+            from { transform: rotate(0deg) scale(1.05); }
+            to { transform: rotate(360deg) scale(1.05); }
           }
-          
-          @keyframes veilSpinReverse {
-            from { transform: rotate(360deg); }
-            to { transform: rotate(0deg); }
+
+          @keyframes phantomVeilGrid {
+            from { transform: translate3d(-18px, 0, 0); }
+            to { transform: translate3d(18px, 0, 0); }
           }
-          
-          @keyframes tendrilPulse {
-            0%, 100% { opacity: 0.5; transform: scale(1); }
-            50% { opacity: 0.85; transform: scale(1.08); }
+
+          @keyframes phantomVeilTrace {
+            0% { transform: translate3d(-26px, 8px, 0) rotate(var(--trace-rotation, 0deg)) scaleX(0.18); opacity: 0; }
+            22% { opacity: 1; }
+            70% { opacity: 0.72; }
+            100% { transform: translate3d(36px, -12px, 0) rotate(var(--trace-rotation, 0deg)) scaleX(1); opacity: 0; }
           }
-          
-          @keyframes voidParticleup {
-            0% { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
-            15% { opacity: 0.9; }
-            85% { opacity: 0.9; }
-            100% { transform: translateY(-120px) translateX(25px) scale(0.2); opacity: 0; }
+
+          @keyframes phantomVeilReticle {
+            0%, 100% { transform: scale(0.92); opacity: 0.72; }
+            50% { transform: scale(1.08); opacity: 1; }
           }
-          
-          @keyframes voidParticledown {
-            0% { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
-            15% { opacity: 0.9; }
-            85% { opacity: 0.9; }
-            100% { transform: translateY(120px) translateX(-25px) scale(0.2); opacity: 0; }
+
+          @keyframes phantomVeilDiamond {
+            from { transform: translate(-50%, -50%) rotate(45deg); }
+            to { transform: translate(-50%, -50%) rotate(405deg); }
           }
-          
-          @keyframes voidParticleleft {
-            0% { transform: translateX(0) translateY(0) scale(1); opacity: 0; }
-            15% { opacity: 0.9; }
-            85% { opacity: 0.9; }
-            100% { transform: translateX(-120px) translateY(25px) scale(0.2); opacity: 0; }
-          }
-          
-          @keyframes voidParticleright {
-            0% { transform: translateX(0) translateY(0) scale(1); opacity: 0; }
-            15% { opacity: 0.9; }
-            85% { opacity: 0.9; }
-            100% { transform: translateX(120px) translateY(-25px) scale(0.2); opacity: 0; }
-          }
-          
-          @keyframes scanlines {
-            0% { transform: translateY(0); }
-            100% { transform: translateY(4px); }
-          }
-          
-          @keyframes ghostFloat {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-3px); }
+
+          @keyframes phantomVeilScan {
+            from { transform: translateY(0); }
+            to { transform: translateY(4px); }
           }
         `}</style>
       </div>
     );
   }
-  
-  // Other ultimate effects can be added here
+
   return null;
 }

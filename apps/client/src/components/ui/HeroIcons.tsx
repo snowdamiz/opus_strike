@@ -161,6 +161,7 @@ export type AbilityIconType =
   | 'fireball'
   | 'rocket'
   | 'bomb'
+  | 'meteorstrike'
   | 'rocketjump'
   | 'airstrike'
   | 'gearstorm'
@@ -205,6 +206,8 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <RocketIcon size={size} color={color} className={className} />;
     case 'bomb':
       return <BombIcon size={size} color={color} className={className} />;
+    case 'meteorstrike':
+      return <MeteorStrikeIcon size={size} color={color} className={className} />;
     case 'rocketjump':
       return <RocketjumpIcon size={size} color={color} className={className} />;
     case 'airstrike':
@@ -242,6 +245,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     hookshot_swing: 'swing',
     hookshot_grapple_trap: 'grappletrap',
     blaze_flamethrower: 'flamethrower',
+    blaze_bomb: 'meteorstrike',
     blaze_rocketjump: 'rocketjump',
     blaze_airstrike: 'gearstorm',
     chronos_lifeline_conduit: 'lifelineconduit',
@@ -430,6 +434,18 @@ function BombIcon({ size, color, className }: IconProps) {
       <path d="M9.8 7.3C12.8 5.8 16.2 8.2 16.2 11.8V15.5L12 20L7.8 15.5V11.8C7.8 9.8 8.6 8 9.8 7.3Z" fill={color} />
       <path d="M10.2 13H13.8M12 11.2V14.8" stroke="#0a0a0f" strokeWidth="1.5" strokeLinecap="round" opacity="0.58" />
       <path d="M5 19.5C8.8 18.2 15.2 18.2 19 19.5" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.72" />
+    </svg>
+  );
+}
+
+function MeteorStrikeIcon({ size, color, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
+      <path d="M4 5.2L11.3 8.6L7.9 1.3" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+      <path d="M2.8 9.2L8.4 11.8L5.8 6.2" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" opacity="0.5" />
+      <path d="M13.4 7.8C17.2 8.4 20.1 11.3 20.7 15.1L15.1 20.7C11.3 20.1 8.4 17.2 7.8 13.4L13.4 7.8Z" fill={color} />
+      <path d="M13.8 10.6C16.1 11 17.6 12.5 18 14.8L14.8 18C12.5 17.6 11 16.1 10.6 13.8L13.8 10.6Z" fill="#0a0a0f" opacity="0.42" />
+      <path d="M12 21.5C14.1 20.6 17.5 17.2 21.5 12" stroke={color} strokeWidth="1.4" strokeLinecap="round" opacity="0.58" />
     </svg>
   );
 }

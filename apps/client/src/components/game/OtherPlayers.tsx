@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'rea
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
-import { visualStore } from '../../store/visualStore';
+import {
+  sampleRemoteTransform,
+  setPlayerVisualPosition,
+  setPlayerVisualRotation,
+  visualStore,
+} from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
 import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-strike/shared';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
@@ -81,6 +86,9 @@ const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
 const LOD_NEAR_DISTANCE = 18;
 const LOD_MID_DISTANCE = 38;
 const LOD_UPDATE_INTERVAL = 0.25;
+const REMOTE_SAMPLE_POSITION_SMOOTHING = 28;
+const REMOTE_SAMPLE_ROTATION_SMOOTHING = 32;
+const REMOTE_SAMPLE_SNAP_DISTANCE = 3.5;
 
 type RemotePlayerLodTier = 0 | 1 | 2;
 
@@ -93,6 +101,16 @@ function setPlayerRenderOrigin(
 
 function getHorizontalSpeed(velocity: { x: number; z: number }): number {
   return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+}
+
+function smoothingFactor(rate: number, delta: number): number {
+  return Math.max(0, Math.min(1, 1 - Math.exp(-rate * delta)));
+}
+
+function lerpAngle(a: number, b: number, t: number): number {
+  const twoPi = Math.PI * 2;
+  const delta = ((b - a + Math.PI) % twoPi + twoPi) % twoPi - Math.PI;
+  return a + delta * t;
 }
 
 function setWalkDirectionFromVelocity(
@@ -165,6 +183,7 @@ function OtherPlayer({ player }: OtherPlayerProps) {
   const postureScaleYRef = useRef(postureScaleY);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
+  const remoteEpochRef = useRef<number | null>(null);
   const hasLoggedRef = useRef(false);
   
   // Debug log once when component first renders
@@ -190,16 +209,39 @@ function OtherPlayer({ player }: OtherPlayerProps) {
 
     // Read from visualStore non-reactively (no re-renders)
     const visualState = visualStore.getState();
-    const targetPos = visualState.playerPositions.get(player.id);
-    if (targetPos) {
-      setPlayerRenderOrigin(targetPosition.current, targetPos);
+    const sampledTransform = sampleRemoteTransform(player.id);
+    let snappedToSample = false;
+    if (sampledTransform) {
+      setPlayerVisualPosition(player.id, sampledTransform.position);
+      setPlayerVisualRotation(player.id, sampledTransform.lookYaw);
+      setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
+      const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
+      const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >
+        REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMPLE_SNAP_DISTANCE;
+      if (epochChanged || tooFarForSmoothing) {
+        currentPosition.current.copy(targetPosition.current);
+        snappedToSample = true;
+      } else {
+        currentPosition.current.lerp(
+          targetPosition.current,
+          smoothingFactor(REMOTE_SAMPLE_POSITION_SMOOTHING, delta)
+        );
+      }
+      remoteEpochRef.current = sampledTransform.movementEpoch;
     } else {
-      // Fallback to prop position if visualStore doesn't have data yet
-      setPlayerRenderOrigin(targetPosition.current, player.position);
+      const targetPos = visualState.playerPositions.get(player.id);
+      if (targetPos) {
+        setPlayerRenderOrigin(targetPosition.current, targetPos);
+      } else {
+        // Fallback to prop position if visualStore doesn't have data yet
+        setPlayerRenderOrigin(targetPosition.current, player.position);
+      }
     }
 
     // Lerp current position toward target
-    currentPosition.current.lerp(targetPosition.current, Math.min(1, delta * 15));
+    if (!sampledTransform) {
+      currentPosition.current.lerp(targetPosition.current, Math.min(1, delta * 15));
+    }
     groupRef.current.position.copy(currentPosition.current);
 
     const visualHorizontalSpeed = delta > 0
@@ -210,8 +252,16 @@ function OtherPlayer({ player }: OtherPlayerProps) {
       : 0;
     // Read rotation from visualStore non-reactively
     const targetRot = visualState.playerRotations.get(player.id);
-    const renderYaw = targetRot ?? player.lookYaw;
-    if (targetRot !== undefined) {
+    const renderYaw = sampledTransform?.lookYaw ?? targetRot ?? player.lookYaw;
+    if (sampledTransform && !snappedToSample) {
+      groupRef.current.rotation.y = lerpAngle(
+        groupRef.current.rotation.y,
+        sampledTransform.lookYaw,
+        smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, delta)
+      );
+    } else if (sampledTransform) {
+      groupRef.current.rotation.y = sampledTransform.lookYaw;
+    } else if (targetRot !== undefined) {
       groupRef.current.rotation.y = targetRot;
     } else {
       // Fallback to prop rotation if visualStore doesn't have data yet
@@ -228,7 +278,7 @@ function OtherPlayer({ player }: OtherPlayerProps) {
         renderYaw
       );
     } else {
-      setWalkDirectionFromVelocity(walkDirectionRef.current, player.velocity, renderYaw);
+      setWalkDirectionFromVelocity(walkDirectionRef.current, sampledTransform?.velocity ?? player.velocity, renderYaw);
     }
 
     previousFramePosition.current.copy(currentPosition.current);

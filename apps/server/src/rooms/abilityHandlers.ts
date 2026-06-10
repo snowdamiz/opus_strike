@@ -6,6 +6,8 @@ import {
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+  PHANTOM_BLINK_DISTANCE,
+  PHANTOM_SHADOWSTEP_DISTANCE,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
@@ -217,7 +219,7 @@ export function executeAbility(
   switch (abilityId) {
     // ===== PHANTOM ABILITIES =====
     case 'phantom_blink': {
-      const distance = 8;
+      const distance = PHANTOM_BLINK_DISTANCE;
       const yaw = player.lookYaw;
       const fallbackDestination = {
         x: player.position.x + -Math.sin(yaw) * distance,
@@ -232,6 +234,8 @@ export function executeAbility(
       player.velocity.x = -Math.sin(yaw) * 2;
       player.velocity.z = -Math.cos(yaw) * 2;
       player.movement.isGrounded = false;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
       context.markAuthoritativePosition?.(player.id, 450);
 
       context.createVoidZone(
@@ -245,10 +249,13 @@ export function executeAbility(
     case 'phantom_shadowstep': {
       abilityState.isActive = true;
       abilityState.activatedAt = now;
-      const distance = 12;
+      const distance = PHANTOM_SHADOWSTEP_DISTANCE;
       const yaw = player.lookYaw;
       player.position.x += -Math.sin(yaw) * distance;
       player.position.z += -Math.cos(yaw) * distance;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+      context.markAuthoritativePosition?.(player.id, 450);
       break;
     }
 
@@ -300,6 +307,8 @@ export function executeAbility(
       player.velocity.z += -Math.cos(player.lookYaw) * BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE;
       player.position.y += 0.5;
       player.movement.isGrounded = false;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
       context.markAuthoritativePosition?.(player.id, 550);
       break;
     }

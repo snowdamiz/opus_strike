@@ -12,6 +12,7 @@ import {
   ALL_HERO_IDS,
   createRandomSeed,
   generateProceduralVoxelMap,
+  createProceduralTerrainLookup,
   isInsideBoundaryPolygon,
   constrainToBoundaryPolygon,
   clampToBoundaryPolygon,
@@ -56,12 +57,33 @@ import {
   VOID_RAY_CHARGE_TIME,
   UNSTUCK_COOLDOWN_MS,
   findUnstuckTerrainTeleport,
+  MOVEMENT_PROTOCOL_VERSION,
+  MOVEMENT_SUBSTEP_RATE,
+  MOVEMENT_SUBSTEP_SECONDS,
+  MOVEMENT_MAX_PACKET_COMMANDS,
+  MOVEMENT_MAX_SERVER_QUEUE,
+  MOVEMENT_MAX_COMMANDS_PER_SECOND,
+  MOVEMENT_COMMAND_STALE_GRACE_STEPS,
+  MOVEMENT_SERVER_CATCHUP_BUDGET,
+  movementButtonsToInputState,
+  isMovementSeqAfter,
+  movementSeqDistance,
+  compareMovementSeq,
+  sanitizeMovementCommand,
+  isValidMovementCommand,
+  normalizeLookYaw,
+  clampLookPitch,
 } from '@voxel-strike/shared';
 import type { 
   BotDifficulty,
   HeroId, 
   Team, 
   PlayerInput,
+  MovementCommand,
+  MovementCommandPacket,
+  MovementCorrectionReason,
+  MovementTelemetrySnapshot,
+  SelfMovementAuthority,
   MatchSnapshotMessage,
   PlayerTransformsMessage,
   PlayerVitalsMessage,
@@ -70,7 +92,14 @@ import type {
   VoxelChunk,
   VoxelMapManifest,
 } from '@voxel-strike/shared';
-import { simulateSharedMovement, type MovementTerrainAdapter } from '@voxel-strike/physics';
+import {
+  HOOKSHOT_GRAPPLE_EXTENSION_SPEED,
+  createHookshotSwingState,
+  simulateSharedMovement,
+  stepHookshotSwing,
+  type HookshotSwingState,
+  type MovementTerrainAdapter,
+} from '@voxel-strike/physics';
 import { TickMetrics } from '../perf/tickMetrics';
 import { loggers } from '../utils/logger';
 
@@ -155,6 +184,13 @@ interface HookshotTrapInstance {
   lastDamageTick: Map<string, number>;
 }
 
+interface HookshotGrappleAuthorityState {
+  castId: string;
+  target: PlainVec3;
+  attachAt: number;
+  swing: HookshotSwingState | null;
+}
+
 interface PendingAreaDamageInstance {
   id: string;
   ownerId: string;
@@ -175,6 +211,16 @@ interface BlazeGearstormInstance {
   startTime: number;
   endTime: number;
   lastDamageTick: Map<string, number>;
+}
+
+interface ServerMovementAuthorityState {
+  pendingCommands: MovementCommand[];
+  lastProcessedSeq: number;
+  movementEpoch: number;
+  correctionReason: MovementCorrectionReason | null;
+  metrics: MovementTelemetrySnapshot;
+  commandWindowStartedAt: number;
+  commandsInWindow: number;
 }
 
 interface BotBrain {
@@ -307,6 +353,7 @@ const TRANSFORM_ANGLE_SCALE = 10000;
 const PLAYER_VITALS_INTERVAL_MS = 125;
 const MATCH_SNAPSHOT_INTERVAL_MS = 500;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
+const SERVER_MOVEMENT_SUBSTEPS_PER_TICK = Math.max(1, Math.round(MOVEMENT_SUBSTEP_RATE / TICK_RATE));
 const MOVEMENT_BIT_GROUNDED = 1 << 0;
 const MOVEMENT_BIT_SPRINTING = 1 << 1;
 const MOVEMENT_BIT_CROUCHING = 1 << 2;
@@ -426,8 +473,10 @@ export class GameRoom extends Room<GameState> {
   private blazeBombIdCounter: number = 0;
   private blazeGearstormIdCounter: number = 0;
   private hookshotTrapIdCounter: number = 0;
+  private phantomPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotTraps: HookshotTrapInstance[] = [];
+  private hookshotGrapples: Map<string, HookshotGrappleAuthorityState> = new Map();
   private pendingAreaDamage: PendingAreaDamageInstance[] = [];
   private blazeGearstorms: BlazeGearstormInstance[] = [];
   private blazeBombDropConsumedForHold: Set<string> = new Set();
@@ -437,6 +486,7 @@ export class GameRoom extends Room<GameState> {
   private devBotIdCounter: number = 0;
   private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
   private authoritativePositionUntil: Map<string, number> = new Map();
+  private movementAuthorities: Map<string, ServerMovementAuthorityState> = new Map();
   private flamethrowerLastDamageTick: Map<string, number> = new Map();
   private botBrains: Map<string, BotBrain> = new Map();
   private attackCooldownUntil: Map<string, number> = new Map();
@@ -449,10 +499,12 @@ export class GameRoom extends Room<GameState> {
   private devGameClockFrozen = false;
   private devBotsRooted = false;
   private mapManifest: VoxelMapManifest | null = null;
+  private proceduralTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
   private mapChunkLookup: Map<string, VoxelChunk> = new Map();
   private movementTerrain: MovementTerrainAdapter = {
-    getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralGroundY(position),
-    clampPosition: (position: { x: number; y: number; z: number }) => this.clampToPlayableMap(position),
+    getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getGroundY(position),
+    clampPosition: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().clampToPlayableMap(position),
+    getBlockAtWorld: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getBlockAtWorld(position),
   };
   
   // Track clientId -> sessionId mapping for reconnection detection
@@ -494,6 +546,12 @@ export class GameRoom extends Room<GameState> {
     this.onMessage('input', (client, input: PlayerInput) => {
       this.metrics?.time('input', () => {
         this.handleInput(client, input);
+      });
+    });
+
+    this.onMessage('movementCommands', (client, packet: MovementCommandPacket) => {
+      this.metrics?.time('input', () => {
+        this.handleMovementCommandPacket(client, packet);
       });
     });
 
@@ -580,7 +638,7 @@ export class GameRoom extends Room<GameState> {
 
     this.onMessage('requestPerfSnapshot', (client) => {
       if (!this.isDevelopmentMode()) return;
-      client.send('perfSnapshot', this.metrics?.getDebugSnapshot() ?? null);
+      client.send('perfSnapshot', this.buildPerfSnapshot());
     });
   }
 
@@ -621,11 +679,14 @@ export class GameRoom extends Room<GameState> {
         this.chronosPrimaryHoldStartedAt.delete(existingSessionId);
         this.phantomVoidRayChargeStartedAt.delete(existingSessionId);
         this.phantomVoidRayResolvedForPress.delete(existingSessionId);
+        this.phantomPrimaryLaunchSide.delete(existingSessionId);
         this.hookshotPrimaryLaunchSide.delete(existingSessionId);
         this.hookshotTraps = this.hookshotTraps.filter((trap) => trap.ownerId !== existingSessionId);
+        this.hookshotGrapples.delete(existingSessionId);
         this.blazeBombDropConsumedForHold.delete(existingSessionId);
         this.blazeFlamethrowerActivePlayers.delete(existingSessionId);
         this.unstuckCooldownUntil.delete(existingSessionId);
+        this.movementAuthorities.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         
         // Broadcast that old player left
@@ -676,7 +737,7 @@ export class GameRoom extends Room<GameState> {
     player.botProfileId = '';
 
     // Set spawn position
-    this.placePlayerAtSpawn(player);
+    this.placePlayerAtSpawn(player, 'spawn');
 
     this.state.players.set(client.sessionId, player);
     this.knownPlayerIds.add(client.sessionId);
@@ -726,11 +787,14 @@ export class GameRoom extends Room<GameState> {
     this.chronosPrimaryHoldStartedAt.delete(client.sessionId);
     this.phantomVoidRayChargeStartedAt.delete(client.sessionId);
     this.phantomVoidRayResolvedForPress.delete(client.sessionId);
+    this.phantomPrimaryLaunchSide.delete(client.sessionId);
     this.hookshotPrimaryLaunchSide.delete(client.sessionId);
     this.hookshotTraps = this.hookshotTraps.filter((trap) => trap.ownerId !== client.sessionId);
+    this.hookshotGrapples.delete(client.sessionId);
     this.blazeBombDropConsumedForHold.delete(client.sessionId);
     this.blazeFlamethrowerActivePlayers.delete(client.sessionId);
     this.authoritativePositionUntil.delete(client.sessionId);
+    this.movementAuthorities.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
     this.blazeRocketImpactCooldownUntil.delete(client.sessionId);
@@ -787,6 +851,11 @@ export class GameRoom extends Room<GameState> {
         break;
       case 'countdown':
         this.updateCountdown();
+        if (this.metrics) {
+          this.metrics.time('updatePhysics', () => this.updatePhysics());
+        } else {
+          this.updatePhysics();
+        }
         this.broadcastStateStreams({ transforms: true });
         break;
       case 'playing':
@@ -948,6 +1017,7 @@ export class GameRoom extends Room<GameState> {
       pitch: this.quantize(player.lookPitch, TRANSFORM_ANGLE_SCALE),
       movementBits: this.getMovementBits(player),
       wallRunSide: player.movement.wallRunSide === 'left' ? -1 : player.movement.wallRunSide === 'right' ? 1 : 0,
+      movementEpoch: this.getMovementAuthority(id).movementEpoch,
     };
   }
 
@@ -1111,6 +1181,25 @@ export class GameRoom extends Room<GameState> {
   private sendWithMetrics(client: Client, type: string, payload: unknown): void {
     this.metrics?.recordNetworkMessage(type, payload);
     client.send(type, payload);
+  }
+
+  private buildMovementTelemetry(): Record<string, MovementTelemetrySnapshot> {
+    const snapshots: Record<string, MovementTelemetrySnapshot> = {};
+    this.movementAuthorities.forEach((authority, playerId) => {
+      snapshots[playerId] = {
+        ...authority.metrics,
+        queueLength: authority.pendingCommands.length,
+        lastAckSeq: authority.lastProcessedSeq,
+      };
+    });
+    return snapshots;
+  }
+
+  private buildPerfSnapshot() {
+    return {
+      ...(this.metrics?.getDebugSnapshot() ?? { roomId: this.roomId }),
+      movement: this.buildMovementTelemetry(),
+    };
   }
 
   private sendCurrentSnapshots(client: Client): void {
@@ -1302,6 +1391,386 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private createMovementAuthorityState(): ServerMovementAuthorityState {
+    return {
+      pendingCommands: [],
+      lastProcessedSeq: 0,
+      movementEpoch: 0,
+      correctionReason: null,
+      metrics: {
+        commandsReceived: 0,
+        commandsProcessed: 0,
+        queueLength: 0,
+        duplicateCommands: 0,
+        droppedCommands: 0,
+        lateCommands: 0,
+        malformedCommands: 0,
+        hardCorrections: 0,
+        mediumCorrections: 0,
+        lastAckSeq: 0,
+      },
+      commandWindowStartedAt: Date.now(),
+      commandsInWindow: 0,
+    };
+  }
+
+  private getMovementAuthority(playerId: string): ServerMovementAuthorityState {
+    const existing = this.movementAuthorities.get(playerId);
+    if (existing) return existing;
+
+    const created = this.createMovementAuthorityState();
+    this.movementAuthorities.set(playerId, created);
+    return created;
+  }
+
+  private clearHookshotGrapple(playerId: string): void {
+    this.hookshotGrapples.delete(playerId);
+    const player = this.state.players.get(playerId);
+    if (player) {
+      player.movement.isGrappling = false;
+    }
+  }
+
+  private markMovementBarrier(
+    playerId: string,
+    reason: MovementCorrectionReason,
+    options: { preserveQueuedCommands?: boolean } = {}
+  ): void {
+    const authority = this.getMovementAuthority(playerId);
+    const nextEpoch = authority.movementEpoch + 1;
+    const preservedCommands = options.preserveQueuedCommands
+      ? authority.pendingCommands
+        .filter((command) => isMovementSeqAfter(command.seq, authority.lastProcessedSeq))
+        .map((command) => ({
+          ...command,
+          movementEpoch: nextEpoch,
+        }))
+      : [];
+    authority.movementEpoch = nextEpoch;
+    const preservedOverflow = Math.max(0, preservedCommands.length - MOVEMENT_MAX_SERVER_QUEUE);
+    if (preservedOverflow > 0) {
+      authority.metrics.droppedCommands += preservedOverflow;
+    }
+    authority.pendingCommands = preservedCommands.slice(-MOVEMENT_MAX_SERVER_QUEUE);
+    authority.correctionReason = reason;
+    this.clearHookshotGrapple(playerId);
+  }
+
+  private sanitizeIncomingMovementCommand(
+    authority: ServerMovementAuthorityState,
+    command: MovementCommand
+  ): MovementCommand | null {
+    if (!isValidMovementCommand(command)) {
+      authority.metrics.malformedCommands++;
+      return null;
+    }
+
+    const sanitized = sanitizeMovementCommand(command);
+    if (sanitized.movementEpoch !== authority.movementEpoch) {
+      const canPromotePreviousEpochCommand = (
+        sanitized.movementEpoch + 1 === authority.movementEpoch &&
+        isMovementSeqAfter(sanitized.seq, authority.lastProcessedSeq) &&
+        movementSeqDistance(authority.lastProcessedSeq, sanitized.seq) <= MOVEMENT_COMMAND_STALE_GRACE_STEPS
+      );
+
+      if (canPromotePreviousEpochCommand) {
+        return {
+          ...sanitized,
+          movementEpoch: authority.movementEpoch,
+        };
+      }
+
+      authority.metrics.lateCommands++;
+      authority.correctionReason = 'epoch_mismatch';
+      return null;
+    }
+
+    if (!isMovementSeqAfter(sanitized.seq, authority.lastProcessedSeq)) {
+      authority.metrics.duplicateCommands++;
+      return null;
+    }
+
+    if (authority.pendingCommands.some((queued) => queued.seq === sanitized.seq)) {
+      authority.metrics.duplicateCommands++;
+      return null;
+    }
+
+    return sanitized;
+  }
+
+  private handleMovementCommandPacket(client: Client, packet: MovementCommandPacket): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.state !== 'alive' || player.isBot) return;
+
+    const authority = this.getMovementAuthority(client.sessionId);
+    const now = Date.now();
+    if (now - authority.commandWindowStartedAt >= 1000) {
+      authority.commandWindowStartedAt = now;
+      authority.commandsInWindow = 0;
+    }
+
+    if (
+      !packet ||
+      packet.protocolVersion !== MOVEMENT_PROTOCOL_VERSION ||
+      !Array.isArray(packet.commands) ||
+      packet.commands.length === 0 ||
+      packet.commands.length > MOVEMENT_MAX_PACKET_COMMANDS
+    ) {
+      authority.metrics.malformedCommands++;
+      return;
+    }
+
+    for (const rawCommand of packet.commands) {
+      if (authority.commandsInWindow >= MOVEMENT_MAX_COMMANDS_PER_SECOND) {
+        authority.metrics.droppedCommands++;
+        continue;
+      }
+
+      const command = this.sanitizeIncomingMovementCommand(authority, rawCommand);
+      if (!command) continue;
+
+      authority.commandsInWindow++;
+      authority.metrics.commandsReceived++;
+      authority.pendingCommands.push(command);
+    }
+
+    authority.pendingCommands.sort((a, b) => compareMovementSeq(a.seq, b.seq));
+    if (authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE) {
+      const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
+      authority.pendingCommands.splice(0, overflow);
+      authority.metrics.droppedCommands += overflow;
+      this.markMovementBarrier(client.sessionId, 'epoch_mismatch');
+    }
+
+    authority.metrics.queueLength = authority.pendingCommands.length;
+  }
+
+  private movementCommandToInput(command: MovementCommand, player: Player): PlayerInput {
+    const buttons = movementButtonsToInputState(command.buttons);
+    return {
+      tick: command.seq,
+      moveForward: buttons.moveForward,
+      moveBackward: buttons.moveBackward,
+      moveLeft: buttons.moveLeft,
+      moveRight: buttons.moveRight,
+      jump: buttons.jump,
+      crouch: buttons.crouch,
+      crouchPressed: buttons.crouchPressed,
+      sprint: buttons.sprint,
+      primaryFire: buttons.primaryFire,
+      secondaryFire: buttons.secondaryFire,
+      reload: buttons.reload,
+      ability1: buttons.ability1,
+      ability2: buttons.ability2,
+      ultimate: buttons.ultimate,
+      interact: buttons.interact,
+      lookYaw: command.lookYaw,
+      lookPitch: command.lookPitch,
+      timestamp: this.state.serverTime || Date.now(),
+      unstuck: buttons.unstuck,
+      devFly: false,
+    };
+  }
+
+  private getNextMovementCommand(authority: ServerMovementAuthorityState): MovementCommand | null {
+    const command = authority.pendingCommands.shift();
+    if (command) {
+      authority.lastProcessedSeq = command.seq;
+      return command;
+    }
+    return null;
+  }
+
+  private applyMovementSimulationResult(player: Player, result: ReturnType<typeof simulateSharedMovement>): void {
+    player.position.x = result.position.x;
+    player.position.y = result.position.y;
+    player.position.z = result.position.z;
+    player.velocity.x = result.velocity.x;
+    player.velocity.y = result.velocity.y;
+    player.velocity.z = result.velocity.z;
+    player.movement.isGrounded = result.movement.isGrounded;
+    player.movement.isSprinting = result.movement.isSprinting;
+    player.movement.isCrouching = result.movement.isCrouching;
+    player.movement.isSliding = result.movement.isSliding;
+    player.movement.slideTimeRemaining = result.movement.slideTimeRemaining;
+    player.movement.isWallRunning = result.movement.isWallRunning;
+    player.movement.wallRunSide = result.movement.wallRunSide || '';
+    player.movement.isGrappling = result.movement.isGrappling;
+    player.movement.isJetpacking = result.movement.isJetpacking;
+    player.movement.jetpackFuel = result.movement.jetpackFuel;
+    player.movement.isGliding = result.movement.isGliding;
+  }
+
+  private startHookshotGrappleAuthority(
+    player: Player,
+    castId: string,
+    target: PlainVec3,
+    startPosition: PlainVec3,
+    startedAt: number
+  ): void {
+    const travelMs = Math.max(
+      0,
+      (this.distance3D(startPosition, target) / HOOKSHOT_GRAPPLE_EXTENSION_SPEED) * 1000
+    );
+    this.hookshotGrapples.set(player.id, {
+      castId,
+      target: { ...target },
+      attachAt: startedAt + travelMs,
+      swing: null,
+    });
+    player.movement.isGrappling = false;
+  }
+
+  private prepareHookshotGrappleForMovement(player: Player, now: number): void {
+    const grapple = this.hookshotGrapples.get(player.id);
+    if (!grapple) return;
+
+    if (now < grapple.attachAt) {
+      player.movement.isGrappling = false;
+      return;
+    }
+
+    if (!grapple.swing) {
+      grapple.swing = createHookshotSwingState(
+        this.vec3SchemaToPlain(player.position),
+        grapple.target,
+        player.movement.isGrounded
+      );
+    }
+
+    player.movement.isGrappling = true;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+  }
+
+  private stepHookshotGrappleAuthority(
+    player: Player,
+    input: PlayerInput,
+    dt: number,
+    now: number
+  ): void {
+    const grapple = this.hookshotGrapples.get(player.id);
+    if (!grapple || now < grapple.attachAt || !grapple.swing) return;
+
+    const result = stepHookshotSwing({
+      position: this.vec3SchemaToPlain(player.position),
+      velocity: this.vec3SchemaToPlain(player.velocity),
+      swing: grapple.swing,
+      input,
+      lookYaw: player.lookYaw,
+      lookPitch: player.lookPitch,
+      isGrounded: player.movement.isGrounded,
+      deltaTime: dt,
+    });
+
+    player.position.x = result.position.x;
+    player.position.y = result.position.y;
+    player.position.z = result.position.z;
+    player.velocity.x = result.velocity.x;
+    player.velocity.y = result.velocity.y;
+    player.velocity.z = result.velocity.z;
+
+    if (!result.swing) {
+      this.clearHookshotGrapple(player.id);
+      return;
+    }
+
+    grapple.swing = result.swing;
+    player.movement.isGrappling = true;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+  }
+
+  private simulateAuthoritativeMovementStep(player: Player, input: PlayerInput, dt: number): void {
+    const previousPosition = this.vec3SchemaToPlain(player.position);
+    const heroId = player.heroId as HeroId;
+    const heroStats = getHeroStats(heroId);
+    const result = simulateSharedMovement({
+      position: this.vec3SchemaToPlain(player.position),
+      velocity: this.vec3SchemaToPlain(player.velocity),
+      movement: {
+        isGrounded: player.movement.isGrounded,
+        isSprinting: player.movement.isSprinting,
+        isCrouching: player.movement.isCrouching,
+        isSliding: player.movement.isSliding,
+        slideTimeRemaining: player.movement.slideTimeRemaining,
+        isWallRunning: player.movement.isWallRunning,
+        wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
+          ? player.movement.wallRunSide
+          : null,
+        isGrappling: player.movement.isGrappling,
+        grapplePoint: null,
+        isJetpacking: player.movement.isJetpacking,
+        jetpackFuel: player.movement.jetpackFuel,
+        isGliding: player.movement.isGliding,
+      },
+      heroStats,
+      input,
+      lookYaw: player.lookYaw,
+      deltaTime: dt,
+      terrain: this.movementTerrain,
+      flagCarrier: player.hasFlag,
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
+    });
+
+    let nextPosition = result.position;
+    let nextVelocity = result.velocity;
+    if (player.isBot || this.spawnedNpcs.has(player.id)) {
+      if (this.isBotSpaceBlocked(previousPosition)) {
+        this.placePlayerAtSpawn(player);
+        return;
+      }
+
+      const resolved = this.resolveBotCollision(previousPosition, result.position);
+      nextPosition = resolved.position;
+      nextVelocity = {
+        ...result.velocity,
+        x: resolved.blockedX ? 0 : result.velocity.x,
+        z: resolved.blockedZ ? 0 : result.velocity.z,
+      };
+    }
+
+    this.applyMovementSimulationResult(player, {
+      position: nextPosition,
+      velocity: nextVelocity,
+      movement: result.movement,
+    });
+  }
+
+  private sendSelfMovementAuthority(player: Player, client: Client, reason: MovementCorrectionReason | null): void {
+    const authority = this.getMovementAuthority(player.id);
+    const payload: SelfMovementAuthority = {
+      serverTick: this.state.tick,
+      serverTime: this.state.serverTime,
+      ackSeq: authority.lastProcessedSeq,
+      movementEpoch: authority.movementEpoch,
+      position: this.vec3SchemaToPlain(player.position),
+      velocity: this.vec3SchemaToPlain(player.velocity),
+      lookYaw: player.lookYaw,
+      lookPitch: player.lookPitch,
+      movement: {
+        isGrounded: player.movement.isGrounded,
+        isSprinting: player.movement.isSprinting,
+        isCrouching: player.movement.isCrouching,
+        isSliding: player.movement.isSliding,
+        slideTimeRemaining: player.movement.slideTimeRemaining,
+        isWallRunning: player.movement.isWallRunning,
+        wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
+          ? player.movement.wallRunSide
+          : null,
+        isGrappling: player.movement.isGrappling,
+        grapplePoint: null,
+        isJetpacking: player.movement.isJetpacking,
+        jetpackFuel: player.movement.jetpackFuel,
+        isGliding: player.movement.isGliding,
+      },
+      correctionReason: reason ?? undefined,
+      collisionRevision: 0,
+    };
+    this.sendWithMetrics(client, 'selfMovementAuthority', payload);
+    authority.correctionReason = null;
+  }
+
   private handleInput(client: Client, input: PlayerInput & { position?: { x: number; y: number; z: number }; velocity?: { x: number; y: number; z: number } }) {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive') return;
@@ -1310,8 +1779,8 @@ export class GameRoom extends Room<GameState> {
     player.lastInput = input;
 
     // Update look direction immediately
-    player.lookYaw = input.lookYaw;
-    player.lookPitch = input.lookPitch;
+    player.lookYaw = normalizeLookYaw(input.lookYaw);
+    player.lookPitch = clampLookPitch(input.lookPitch);
 
     if (this.isDevelopmentMode() && input.devFly) {
       this.disablePlayerSkills(player);
@@ -1329,19 +1798,28 @@ export class GameRoom extends Room<GameState> {
     }
 
     const shouldAcceptClientPosition = Date.now() >= (this.authoritativePositionUntil.get(client.sessionId) ?? 0);
+    if ((input.position || input.velocity) && shouldAcceptClientPosition) {
+      const authority = this.movementAuthorities.get(client.sessionId);
+      if (authority) {
+        authority.pendingCommands.length = 0;
+        authority.metrics.queueLength = 0;
+        authority.correctionReason = null;
+      }
+    }
 
-    // Use client-reported position after server-side spawn placement has had time to sync.
-    if (input.position && shouldAcceptClientPosition) {
+    if (input.position && shouldAcceptClientPosition && this.isFiniteVec3(input.position)) {
       const bounds = this.getMapWorldBounds();
       player.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, input.position.x));
       player.position.y = Math.max(-10, Math.min(100, input.position.y));
       player.position.z = Math.max(bounds.minZ, Math.min(bounds.maxZ, input.position.z));
     }
-    if (input.velocity && shouldAcceptClientPosition) {
+
+    if (input.velocity && shouldAcceptClientPosition && this.isFiniteVec3(input.velocity)) {
       player.velocity.x = input.velocity.x;
       player.velocity.y = input.velocity.y;
       player.velocity.z = input.velocity.z;
     }
+
     if (input.unstuck) {
       this.tryApplyUnstuck(player);
     }
@@ -1369,6 +1847,7 @@ export class GameRoom extends Room<GameState> {
     player.movement.isGrounded = true;
     player.movement.isSliding = false;
     player.movement.slideTimeRemaining = 0;
+    this.markMovementBarrier(player.id, 'unstuck', { preserveQueuedCommands: true });
   }
 
   private getChronosLifelineTargets(caster: Player): Player[] {
@@ -1541,6 +2020,13 @@ export class GameRoom extends Room<GameState> {
     const previous = this.hookshotPrimaryLaunchSide.get(playerId) ?? -1;
     const next = previous === 1 ? -1 : 1;
     this.hookshotPrimaryLaunchSide.set(playerId, next);
+    return next;
+  }
+
+  private getNextPhantomPrimaryLaunchSide(playerId: string): -1 | 1 {
+    const previous = this.phantomPrimaryLaunchSide.get(playerId) ?? -1;
+    const next = previous === 1 ? -1 : 1;
+    this.phantomPrimaryLaunchSide.set(playerId, next);
     return next;
   }
 
@@ -1776,6 +2262,7 @@ export class GameRoom extends Room<GameState> {
           target.velocity.x += pullDirection.x * 2.5;
           target.velocity.z += pullDirection.z * 2.5;
           this.authoritativePositionUntil.set(target.id, now + 350);
+          this.markMovementBarrier(target.id, 'knockback');
         }
 
         this.applyDamage(target, GRAPPLE_TRAP_DAMAGE, owner ? trap.ownerId : null, 'grapple_trap');
@@ -2013,7 +2500,7 @@ export class GameRoom extends Room<GameState> {
   ): void {
     const aimDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
     const launchSide = abilityId === 'phantom_dire_ball'
-      ? ((this.phantomCastIdCounter % 2 === 0 ? 1 : -1) as -1 | 1)
+      ? this.getNextPhantomPrimaryLaunchSide(player.id)
       : 1;
     const socket = abilityId === 'phantom_dire_ball'
       ? PHANTOM_DIRE_BALL_SOCKET
@@ -2212,6 +2699,7 @@ export class GameRoom extends Room<GameState> {
         resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
         markAuthoritativePosition: (playerId, durationMs) => {
           this.authoritativePositionUntil.set(playerId, Date.now() + durationMs);
+          this.markMovementBarrier(playerId, 'teleport', { preserveQueuedCommands: true });
         },
       });
     }
@@ -2232,6 +2720,13 @@ export class GameRoom extends Room<GameState> {
           y: hookshotGrappleTarget.y - startPosition.y,
           z: hookshotGrappleTarget.z - startPosition.z,
         }) ?? this.getForwardVector(player.lookYaw, player.lookPitch);
+        this.startHookshotGrappleAuthority(
+          player,
+          castId,
+          hookshotGrappleTarget,
+          startPosition,
+          usedAt
+        );
 
         this.broadcast('abilityUsed', {
           playerId: player.id,
@@ -2997,6 +3492,7 @@ export class GameRoom extends Room<GameState> {
       target.movement.isSliding = false;
       target.movement.slideTimeRemaining = 0;
       this.authoritativePositionUntil.set(target.id, now + CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS);
+      this.markMovementBarrier(target.id, 'knockback');
 
       const targetClient = this.clients.find((client) => client.sessionId === target.id);
       targetClient?.send('chronosTimebreakImpulse', {
@@ -3980,8 +4476,8 @@ export class GameRoom extends Room<GameState> {
     const cos = Math.cos(lookYaw);
     const sin = Math.sin(lookYaw);
     return {
-      x: direction.x * cos + direction.z * sin,
-      z: -direction.x * sin + direction.z * cos,
+      x: direction.x * cos - direction.z * sin,
+      z: direction.x * sin + direction.z * cos,
     };
   }
 
@@ -4364,6 +4860,7 @@ export class GameRoom extends Room<GameState> {
 
   private refreshMapManifest(): void {
     this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed);
+    this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest);
     this.mapChunkLookup.clear();
     for (const chunk of this.mapManifest.chunks) {
       this.mapChunkLookup.set(this.getChunkKey(chunk.coord.x, chunk.coord.y, chunk.coord.z), chunk);
@@ -4375,6 +4872,14 @@ export class GameRoom extends Room<GameState> {
       this.refreshMapManifest();
     }
     return this.mapManifest!;
+  }
+
+  private getProceduralTerrainLookup(): ReturnType<typeof createProceduralTerrainLookup> {
+    this.getMapManifest();
+    if (!this.proceduralTerrainLookup) {
+      this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest!);
+    }
+    return this.proceduralTerrainLookup;
   }
 
   private getMapWorldBounds(manifest = this.getMapManifest()): { minX: number; maxX: number; minZ: number; maxZ: number } {
@@ -4562,6 +5067,7 @@ export class GameRoom extends Room<GameState> {
     this.chronosPrimaryHoldStartedAt.delete(player.id);
     this.phantomVoidRayChargeStartedAt.delete(player.id);
     this.phantomVoidRayResolvedForPress.delete(player.id);
+    this.clearHookshotGrapple(player.id);
     player.movement.isGrappling = false;
     player.movement.isJetpacking = false;
     player.movement.isGliding = false;
@@ -4584,7 +5090,7 @@ export class GameRoom extends Room<GameState> {
 
     player.team = team;
     
-    this.placePlayerAtSpawn(player);
+    this.placePlayerAtSpawn(player, 'respawn');
   }
 
   private handleReady(client: Client, ready: boolean) {
@@ -5026,6 +5532,7 @@ export class GameRoom extends Room<GameState> {
     player.movement.isJetpacking = false;
     this.broadcastBlazeFlamethrowerState(player, false, deathAt);
     this.blazeBombDropConsumedForHold.delete(player.id);
+    this.clearHookshotGrapple(player.id);
     
     // Drop flag if carrying
     if (player.hasFlag) {
@@ -5147,85 +5654,102 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updatePhysics() {
-    this.state.players.forEach(player => {
-      if (player.state !== 'alive' || !player.lastInput) return;
+    const clientsById = new Map(this.clients.map((client) => [client.sessionId, client]));
+    const tickTime = this.state.serverTime || Date.now();
 
-      const input = player.lastInput;
-      if (this.isDevelopmentMode() && input.devFly) return;
+    this.state.players.forEach(player => {
+      if (player.state !== 'alive') return;
+
+      const lastInput = player.lastInput;
+      if (lastInput && this.isDevelopmentMode() && lastInput.devFly) return;
       if (this.devBotsRooted && player.isBot) {
         this.rootBotMovementAndSkills(player, Date.now());
         return;
       }
 
-      const previousPosition = this.vec3SchemaToPlain(player.position);
-      const heroId = player.heroId as HeroId;
-      const heroStats = getHeroStats(heroId);
-      const dt = TICK_INTERVAL_MS / 1000;
-      const result = simulateSharedMovement({
-        position: this.vec3SchemaToPlain(player.position),
-        velocity: this.vec3SchemaToPlain(player.velocity),
-        movement: {
-          isGrounded: player.movement.isGrounded,
-          isSprinting: player.movement.isSprinting,
-          isCrouching: player.movement.isCrouching,
-          isSliding: player.movement.isSliding,
-          slideTimeRemaining: player.movement.slideTimeRemaining,
-          isWallRunning: player.movement.isWallRunning,
-          wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
-            ? player.movement.wallRunSide
-            : null,
-          isGrappling: player.movement.isGrappling,
-          grapplePoint: null,
-          isJetpacking: player.movement.isJetpacking,
-          jetpackFuel: player.movement.jetpackFuel,
-          isGliding: player.movement.isGliding,
-        },
-        heroStats,
-        input,
-        lookYaw: player.lookYaw,
-        deltaTime: dt,
-        terrain: this.movementTerrain,
-        flagCarrier: player.hasFlag,
-        activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
-      });
-
-      let nextPosition = result.position;
-      let nextVelocity = result.velocity;
       if (player.isBot || this.spawnedNpcs.has(player.id)) {
-        if (this.isBotSpaceBlocked(previousPosition)) {
-          this.placePlayerAtSpawn(player);
-          return;
+        if (!lastInput) return;
+        for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
+          this.simulateAuthoritativeMovementStep(player, lastInput, MOVEMENT_SUBSTEP_SECONDS);
         }
-
-        const resolved = this.resolveBotCollision(previousPosition, result.position);
-        nextPosition = resolved.position;
-        nextVelocity = {
-          ...result.velocity,
-          x: resolved.blockedX ? 0 : result.velocity.x,
-          z: resolved.blockedZ ? 0 : result.velocity.z,
-        };
+        if (player.position.y < -10) {
+          this.placePlayerAtSpawn(player, 'respawn');
+        }
+        return;
       }
 
-      player.position.x = nextPosition.x;
-      player.position.y = nextPosition.y;
-      player.position.z = nextPosition.z;
-      player.velocity.x = nextVelocity.x;
-      player.velocity.y = nextVelocity.y;
-      player.velocity.z = nextVelocity.z;
-      player.movement.isGrounded = result.movement.isGrounded;
-      player.movement.isSprinting = result.movement.isSprinting;
-      player.movement.isCrouching = result.movement.isCrouching;
-      player.movement.isSliding = result.movement.isSliding;
-      player.movement.slideTimeRemaining = result.movement.slideTimeRemaining;
-      player.movement.isWallRunning = result.movement.isWallRunning;
-      player.movement.wallRunSide = result.movement.wallRunSide || '';
-      player.movement.isGrappling = result.movement.isGrappling;
-      player.movement.isJetpacking = result.movement.isJetpacking;
-      player.movement.jetpackFuel = result.movement.jetpackFuel;
-      player.movement.isGliding = result.movement.isGliding;
+      const authority = this.getMovementAuthority(player.id);
+      let processedThisTick = 0;
+      const queuedCommandCount = authority.pendingCommands.length;
+      if (queuedCommandCount === 0) {
+        if (lastInput) {
+          this.simulateAuthoritativeMovementStep(player, lastInput, TICK_INTERVAL_MS / 1000);
+        }
+
+        if (player.position.y < -10) {
+          this.placePlayerAtSpawn(player, 'respawn');
+        }
+
+        const client = clientsById.get(player.id);
+        if (client && authority.correctionReason) {
+          this.sendSelfMovementAuthority(player, client, authority.correctionReason);
+        }
+        return;
+      }
+
+      const substepBudget = queuedCommandCount
+        ? Math.min(
+          queuedCommandCount,
+          SERVER_MOVEMENT_SUBSTEPS_PER_TICK + Math.max(
+            0,
+            Math.min(MOVEMENT_SERVER_CATCHUP_BUDGET, queuedCommandCount - SERVER_MOVEMENT_SUBSTEPS_PER_TICK)
+          )
+        )
+        : 0;
+
+      for (let step = 0; step < substepBudget; step++) {
+        const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
+        const epochBeforeStep = authority.movementEpoch;
+        const command = this.getNextMovementCommand(authority);
+        if (!command) break;
+        const input = this.movementCommandToInput(command, player);
+        player.lastInput = input;
+        player.lookYaw = input.lookYaw;
+        player.lookPitch = input.lookPitch;
+        this.prepareHookshotGrappleForMovement(player, stepNow);
+
+        if (input.unstuck) {
+          this.tryApplyUnstuck(player);
+          authority.metrics.commandsProcessed++;
+          processedThisTick++;
+          if (authority.movementEpoch !== epochBeforeStep) break;
+          continue;
+        }
+
+        this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS);
+        this.stepHookshotGrappleAuthority(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
+        this.processPlayerInput(player, input);
+        authority.metrics.commandsProcessed++;
+        processedThisTick++;
+        if (authority.movementEpoch !== epochBeforeStep) break;
+      }
+
+      authority.metrics.queueLength = authority.pendingCommands.length;
+      authority.metrics.lastAckSeq = authority.lastProcessedSeq;
+      if (processedThisTick > 0 && authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE / 2) {
+        const stale = Math.max(0, authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE / 2);
+        authority.pendingCommands.splice(0, stale);
+        authority.metrics.droppedCommands += stale;
+        this.markMovementBarrier(player.id, 'epoch_mismatch');
+      }
 
       if (player.position.y < -10) {
-        this.placePlayerAtSpawn(player);
+        this.placePlayerAtSpawn(player, 'respawn');
+      }
+
+      const client = clientsById.get(player.id);
+      if (client && (processedThisTick > 0 || authority.correctionReason)) {
+        this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
     });
   }
@@ -5275,7 +5799,7 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private placePlayerAtSpawn(player: Player): void {
+  private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {
     const spawn = this.getSpawnPosition(player.team as Team);
     player.position.x = spawn.x;
     player.position.y = spawn.y;
@@ -5284,6 +5808,7 @@ export class GameRoom extends Room<GameState> {
     player.velocity.y = 0;
     player.velocity.z = 0;
     this.authoritativePositionUntil.set(player.id, Date.now() + 1200);
+    this.markMovementBarrier(player.id, reason);
   }
 
   // ===== NPC/BOT HANDLING =====

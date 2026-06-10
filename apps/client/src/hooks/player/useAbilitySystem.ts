@@ -170,6 +170,12 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
         return false;
       }
 
+      const abilityState = localPlayer.abilities?.[abilityId];
+      if (abilityState) {
+        if (abilityState.cooldownRemaining > 0 && abilityState.charges <= 0) return false;
+        return abilityState.charges > 0;
+      }
+
       return true;
     }
 
