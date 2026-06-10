@@ -156,6 +156,9 @@ importers:
       livekit-server-sdk:
         specifier: 2.15.4
         version: 2.15.4
+      prisma:
+        specifier: ^5.22.0
+        version: 5.22.0
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -172,9 +175,6 @@ importers:
       '@types/node':
         specifier: ^22.8.4
         version: 22.19.1
-      prisma:
-        specifier: ^5.22.0
-        version: 5.22.0
       tsx:
         specifier: ^4.20.6
         version: 4.20.6

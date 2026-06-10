@@ -32,13 +32,25 @@ gameServer
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
 
+function readOriginList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
 // CORS configuration - MUST be before routes
-const ALLOWED_ORIGINS = [
+const ALLOWED_ORIGINS = Array.from(new Set([
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:3000',
-];
+  ...readOriginList(process.env.CLIENT_ORIGIN),
+  ...readOriginList(process.env.CLIENT_URL),
+  ...readOriginList(process.env.PUBLIC_CLIENT_ORIGIN),
+  ...readOriginList(process.env.ALLOWED_ORIGINS),
+]));
 
 app.use((_req, res, next) => {
   const origin = _req.headers.origin;
