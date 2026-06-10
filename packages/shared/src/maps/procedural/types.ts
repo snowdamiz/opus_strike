@@ -1,6 +1,7 @@
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
+export const CONSTRUCTED_MAP_MANIFEST_VERSION = 2;
 
 export type VoxelBlockId =
   | 'air'
@@ -59,6 +60,349 @@ export interface VoxelCollider {
   material: 'default' | 'ice' | 'bounce' | 'barrier';
 }
 
+export type MapTeam = 'red' | 'blue';
+export type TeamMap<T> = Record<MapTeam, T>;
+export type MapGameMode = 'ctf';
+export type MapFamilyId = 'ctf_semantic_arena';
+export type MapTopologyId = 'lane_triad' | 'diamond' | 'hourglass' | 'ring' | 'split_level';
+export type MapSymmetryLevel = 'mirrored' | 'rotational' | 'asymmetric_balanced';
+
+export interface MapPerformanceBudget {
+  maxSolidBlocks: number;
+  maxColliders: number;
+  maxRenderableChunks: number;
+  maxGenerationMs: number;
+}
+
+export interface MapDesignBrief {
+  seed: number;
+  gameMode: MapGameMode;
+  teamSize: number;
+  familyId: MapFamilyId;
+  themeId: VoxelMapTheme['id'];
+  targetMatchLengthSeconds: number;
+  desiredTopology: MapTopologyId;
+  desiredSymmetry: MapSymmetryLevel;
+  performanceBudget: MapPerformanceBudget;
+  rngStreams: Record<string, number>;
+}
+
+export type ZoneShape = 'circle' | 'capsule' | 'polygon' | 'rect';
+
+export interface ZoneDescriptor {
+  id: string;
+  shape: ZoneShape;
+  center: Vec3;
+  radius?: number;
+  halfExtents?: { x: number; z: number };
+  points?: BoundaryPoint[];
+  facing?: { x: number; z: number };
+}
+
+export interface BaseZone extends ZoneDescriptor {
+  team: MapTeam;
+  exits: Vec3[];
+  defensivePositions: Vec3[];
+}
+
+export interface FlagZone extends ZoneDescriptor {
+  team: MapTeam;
+  pickupRadius: number;
+  captureRadius: number;
+  approachDirections: Vec3[];
+  returnPathNodeIds: string[];
+}
+
+export interface SpawnCluster extends ZoneDescriptor {
+  team: MapTeam;
+  points: Vec3[];
+  fallbackPoints: Vec3[];
+  protectedExitDirections: Vec3[];
+  facing: { x: number; z: number };
+}
+
+export type ProtectedZoneKind = 'spawn' | 'flag' | 'base' | 'route' | 'module_pad' | 'no_dressing';
+
+export interface ProtectedZone extends ZoneDescriptor {
+  kind: ProtectedZoneKind;
+  team?: MapTeam;
+  clearanceRadius: number;
+  blocksDressing: boolean;
+  blocksModules: boolean;
+}
+
+export type LaneKind = 'primary' | 'flank' | 'return' | 'access';
+
+export interface LaneDescriptor {
+  id: string;
+  label: string;
+  kind: LaneKind;
+  nodeIds: string[];
+  width: number;
+  expectedDistance: number;
+  expectedTravelTimeSeconds: number;
+  coverDensityTarget: number;
+  verticalityBand: { minY: number; maxY: number };
+}
+
+export type RouteNodeKind =
+  | 'base'
+  | 'flag'
+  | 'spawn'
+  | 'midfield'
+  | 'flank'
+  | 'contest'
+  | 'landmark'
+  | 'fallback';
+
+export interface RouteGraphNode {
+  id: string;
+  kind: RouteNodeKind;
+  position: Vec3;
+  team?: MapTeam;
+  laneIds: string[];
+  tags: string[];
+}
+
+export interface RouteGraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  laneId: string;
+  distance: number;
+  expectedTravelTimeSeconds: number;
+  width: number;
+  traversal: 'ground' | 'ramp' | 'bridge' | 'tunnel' | 'drop';
+  tags: string[];
+}
+
+export interface RouteGraph {
+  nodes: RouteGraphNode[];
+  edges: RouteGraphEdge[];
+  primaryRouteNodeIds: TeamMap<string[]>;
+  fallbackAnchorNodeIds: TeamMap<string[]>;
+}
+
+export interface SightlineSample {
+  id: string;
+  fromNodeId: string;
+  toNodeId: string;
+  from: Vec3;
+  to: Vec3;
+  purpose: 'block_spawn_to_spawn' | 'limit_midfield_range' | 'preserve_lane_read';
+  maxAllowedDistance: number;
+  requiresOcclusion: boolean;
+  status: 'planned' | 'passed' | 'repaired' | 'failed';
+}
+
+export type TacticalSlotRole =
+  | 'base_shell'
+  | 'spawn_shelter'
+  | 'flag_stand'
+  | 'midfield_occluder'
+  | 'side_lane_cover_chain'
+  | 'flank_landmark'
+  | 'elevated_bridge'
+  | 'tunnel_entrance'
+  | 'defender_perch'
+  | 'soft_cover_cluster'
+  | 'hard_cover_cluster'
+  | 'traversal_ramp'
+  | 'underpass';
+
+export interface TacticalSlot {
+  id: string;
+  role: TacticalSlotRole;
+  position: Vec3;
+  facing: { x: number; z: number };
+  footprint: {
+    shape: 'circle' | 'rect' | 'capsule';
+    radius?: number;
+    halfExtents?: { x: number; z: number };
+  };
+  heightBand: { minRows: number; maxRows: number };
+  allowedModuleIds: string[];
+  protectedClearance: number;
+  laneId?: string;
+  nodeId?: string;
+  edgeId?: string;
+  team?: MapTeam;
+  sightlinePurpose?: SightlineSample['purpose'];
+  budget: {
+    cover: number;
+    occlusion: number;
+    verticality: number;
+    estimatedSolidBlocks: number;
+    estimatedColliders: number;
+  };
+}
+
+export type ModuleRoleTag =
+  | TacticalSlotRole
+  | 'base'
+  | 'route_cover'
+  | 'landmark'
+  | 'traversal'
+  | 'natural'
+  | 'structure';
+
+export interface ModuleConnector {
+  id: string;
+  kind: 'entrance' | 'exit' | 'ramp' | 'bridge' | 'tunnel' | 'sightline_blocker';
+  position: Vec3;
+  direction: { x: number; z: number };
+  width: number;
+}
+
+export interface ModuleDefinition {
+  id: string;
+  name: string;
+  roleTags: ModuleRoleTag[];
+  footprintShape: TacticalSlot['footprint']['shape'];
+  heightRangeRows: { min: number; max: number };
+  connectorKinds: ModuleConnector['kind'][];
+  coverContribution: number;
+  occlusionContribution: number;
+  traversalAffordances: Array<'ramp' | 'bridge' | 'tunnel' | 'perch' | 'cover'>;
+  blockBudgetEstimate: number;
+  colliderBudgetEstimate: number;
+  allowedThemes: Array<VoxelMapTheme['id'] | 'any'>;
+  protectedZoneBehavior: 'avoid' | 'accent' | 'occupy';
+}
+
+export interface ModuleInstance {
+  id: string;
+  moduleId: string;
+  slotId: string;
+  roleTags: ModuleRoleTag[];
+  position: Vec3;
+  facing: { x: number; z: number };
+  footprint: TacticalSlot['footprint'];
+  connectors: ModuleConnector[];
+  estimatedSolidBlocks: number;
+  estimatedColliders: number;
+  validation: {
+    status: 'planned' | 'accepted' | 'rejected' | 'repaired';
+    reasons: string[];
+  };
+}
+
+export type TerrainConstraintKind =
+  | 'lane_centerline'
+  | 'lane_width'
+  | 'base_pad'
+  | 'spawn_pad'
+  | 'flag_pad'
+  | 'module_pad'
+  | 'ramp_corridor'
+  | 'no_trap_zone'
+  | 'no_dressing_zone'
+  | 'boundary_wall_band'
+  | 'sightline_band'
+  | 'cover_slot';
+
+export interface TerrainConstraint {
+  id: string;
+  kind: TerrainConstraintKind;
+  center?: Vec3;
+  points?: Vec3[];
+  radius: number;
+  width?: number;
+  targetHeightRows?: number;
+  maxStepRows: number;
+  priority: number;
+  laneId?: string;
+  slotId?: string;
+  team?: MapTeam;
+}
+
+export interface PreviewCameraHint {
+  position: Vec3;
+  target: Vec3;
+  fov: number;
+  near: number;
+  far: number;
+}
+
+export interface PreviewSilhouette {
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+  boundary: BoundaryPoint[];
+  routes: Array<{ id: string; kind: LaneKind; points: Vec3[]; width: number }>;
+  landmarks: Array<{ id: string; role: TacticalSlotRole; position: Vec3; radius: number }>;
+  objectives: {
+    flags: TeamMap<Vec3>;
+    spawns: TeamMap<Vec3>;
+  };
+}
+
+export interface BlueprintPreview {
+  camera: PreviewCameraHint;
+  thumbnailSilhouette: PreviewSilhouette;
+  labelTags: string[];
+}
+
+export interface MapDiagnostics {
+  familyId: MapFamilyId;
+  topologyId: MapTopologyId;
+  themeId: VoxelMapTheme['id'];
+  candidateCount: number;
+  selectedCandidateId: string;
+  rejectedCandidates: Array<{ id: string; score: number; reasons: string[] }>;
+  score: number;
+  scoreBreakdown: Record<string, number>;
+  stageTimingsMs: Record<string, number>;
+  laneLengths: Record<string, number>;
+  laneWidths: Record<string, number>;
+  routeChoiceCount: number;
+  coverDensityByLane: Record<string, number>;
+  maxSightlineLength: number;
+  spawnVisibilityPairs: number;
+  flagApproachClearances: TeamMap<number>;
+  colliderCount: number;
+  chunkCount: number;
+  solidBlockCount: number;
+  moduleCountsByRole: Record<string, number>;
+  repairActions: Record<string, number>;
+  warnings: string[];
+}
+
+export interface MapBlueprint {
+  id: string;
+  seed: number;
+  familyId: MapFamilyId;
+  topologyId: MapTopologyId;
+  themeId: VoxelMapTheme['id'];
+  boundary: BoundaryPoint[];
+  bases: TeamMap<BaseZone>;
+  flags: TeamMap<FlagZone>;
+  spawns: TeamMap<SpawnCluster>;
+  protectedZones: ProtectedZone[];
+  lanes: LaneDescriptor[];
+  routeGraph: RouteGraph;
+  sightlineSamples: SightlineSample[];
+  tacticalSlots: TacticalSlot[];
+  terrainConstraints: TerrainConstraint[];
+  moduleInstances: ModuleInstance[];
+  preview: BlueprintPreview;
+  diagnostics: MapDiagnostics;
+}
+
+export interface VoxelMapStats {
+  chunkCount: number;
+  totalChunkSlots: number;
+  emptyChunkSlots: number;
+  renderableChunkCount: number;
+  solidBlocks: number;
+  colliderCount: number;
+}
+
+export interface VoxelHeightfield {
+  origin: Vec3;
+  voxelSize: VoxelSize;
+  size: { x: number; z: number };
+  topSolidRows: Uint16Array;
+}
+
 export interface VoxelMapTheme {
   id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal' | 'volcanic' | 'sakura';
   name: string;
@@ -82,7 +426,11 @@ export interface VoxelMapTheme {
 
 export interface VoxelMapManifest {
   id: string;
+  version: number;
   seed: number;
+  familyId: MapFamilyId;
+  topologyId: MapTopologyId;
+  themeId: VoxelMapTheme['id'];
   theme: VoxelMapTheme;
   origin: Vec3;
   voxelSize: VoxelSize;
@@ -91,20 +439,43 @@ export interface VoxelMapManifest {
   spawnPoints: { red: Vec3[]; blue: Vec3[] };
   flagZones: { red: Vec3; blue: Vec3 };
   boundary: BoundaryPoint[];
-  heightfield: {
-    origin: Vec3;
-    voxelSize: VoxelSize;
-    size: { x: number; z: number };
-    topSolidRows: Uint16Array;
-  };
+  heightfield: VoxelHeightfield;
   chunks: VoxelChunk[];
   colliders: VoxelCollider[];
-  stats: {
-    chunkCount: number;
-    totalChunkSlots: number;
-    emptyChunkSlots: number;
-    renderableChunkCount: number;
-    solidBlocks: number;
-    colliderCount: number;
+  stats: VoxelMapStats;
+  gameplay: {
+    mode: MapGameMode;
+    boundary: BoundaryPoint[];
+    bases: TeamMap<BaseZone>;
+    flags: TeamMap<FlagZone>;
+    spawns: TeamMap<SpawnCluster>;
+    protectedZones: ProtectedZone[];
+    lanes: LaneDescriptor[];
+    routeGraph: RouteGraph;
+    sightlineSamples: SightlineSample[];
+  };
+  construction: {
+    designBrief: MapDesignBrief;
+    blueprintId: string;
+    topologyId: MapTopologyId;
+    tacticalSlots: TacticalSlot[];
+    moduleDefinitions: ModuleDefinition[];
+    moduleInstances: ModuleInstance[];
+    terrainConstraints: TerrainConstraint[];
+    diagnostics: MapDiagnostics;
+  };
+  world: {
+    origin: Vec3;
+    voxelSize: VoxelSize;
+    size: VoxelSize;
+    heightfield: VoxelHeightfield;
+    chunks: VoxelChunk[];
+    colliders: VoxelCollider[];
+    stats: VoxelMapStats;
+  };
+  preview: {
+    camera: PreviewCameraHint;
+    thumbnailSilhouette: PreviewSilhouette;
+    labelTags: string[];
   };
 }

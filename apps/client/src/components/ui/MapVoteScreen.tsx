@@ -36,6 +36,14 @@ function ClockGlyph({ className }: { className?: string }) {
   );
 }
 
+function formatTopologyLabel(topologyId?: string): string {
+  if (!topologyId) return 'Lane Triad';
+  return topologyId
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function CaptureFrame({
   seed,
   onCapture,
@@ -154,6 +162,7 @@ function MapPreviewCanvas({
         <directionalLight position={[-50, 34, -58]} intensity={0.72} color={theme.structures.glass} />
         <VoxelMap
           seed={option.seed}
+          manifest={manifest}
           enablePhysics={false}
           shadowsEnabled={false}
           dressingShadows={false}
@@ -174,7 +183,7 @@ function MapPreviewImage({
   onReady,
 }: {
   option: MapVoteOption;
-  onReady: () => void;
+  onReady: (optionId: string) => void;
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [imageVisible, setImageVisible] = useState(false);
@@ -219,9 +228,9 @@ function MapPreviewImage({
     setImage((current) => current ?? capturedImage);
     if (!didReportReadyRef.current) {
       didReportReadyRef.current = true;
-      onReady();
+      onReady(option.id);
     }
-  }, [onReady]);
+  }, [onReady, option.id]);
 
   return (
     <div className="absolute inset-0 bg-black/[0.08]">
@@ -496,7 +505,7 @@ export function MapVoteScreen() {
                   }}
                 >
                   <div className="relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
-                    <MapPreviewImage option={option} onReady={() => handlePreviewReady(option.id)} />
+                    <MapPreviewImage option={option} onReady={handlePreviewReady} />
                     {(isSelected || isWinner) && (
                       <div
                         className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md"
@@ -516,9 +525,15 @@ export function MapVoteScreen() {
                     style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
                   >
                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-                    <div className="relative flex min-h-9 items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <p className="shrink-0 font-display text-lg leading-none text-white">{getVoteLabel(voters.length)}</p>
+                    <div className="relative flex min-h-12 items-center justify-between gap-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-display text-base leading-none text-white">{option.name}</p>
+                          <p className="mt-1 truncate font-body text-[10px] uppercase tracking-wide text-white/46">
+                            {option.themeName} / {formatTopologyLabel(option.topologyId)}
+                          </p>
+                        </div>
+                        <p className="shrink-0 font-display text-sm leading-none text-white/72">{getVoteLabel(voters.length)}</p>
                         {voters.length > 0 && (
                           <div className="flex min-w-0 flex-wrap gap-1">
                             {voters.slice(0, 6).map((voter) => (

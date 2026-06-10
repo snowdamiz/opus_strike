@@ -15,16 +15,27 @@ import {
 } from './buildingPlans.js';
 import { getClosestBoundaryPoint, isInsideBoundaryPolygon } from './boundaries.js';
 import { generateVoxelColliders } from './colliders.js';
+import {
+  createMapConstruction,
+  finalizeCompiledMapDiagnostics,
+  sampleTerrainConstraints,
+  type MapConstructionResult,
+} from './construction.js';
 import { createProceduralCTFLayout, PROCEDURAL_MAP_SCALE, PROCEDURAL_VOXEL_SIZE } from './ctfLayout.js';
 import { fractalNoise2 } from './noise.js';
 import { mulberry32 } from './rng.js';
 import { getVoxelMapTheme } from './themes.js';
 import {
+  CONSTRUCTED_MAP_MANIFEST_VERSION,
   DEFAULT_PROCEDURAL_MAP_SEED,
   type BoundaryPoint,
+  type MapBlueprint,
+  type MapDesignBrief,
+  type MapDiagnostics,
   type VoxelBlockId,
   type VoxelChunk,
   type VoxelMapManifest,
+  type VoxelMapStats,
   type VoxelMapTheme,
   type VoxelSize,
 } from './types.js';
@@ -101,7 +112,23 @@ export interface ProceduralBuildingGenerationDiagnostics {
 export interface ProceduralVoxelMapDiagnostics {
   seed: number;
   themeId: VoxelMapTheme['id'];
+  designBrief?: MapDesignBrief;
+  blueprint?: Pick<
+    MapBlueprint,
+    | 'id'
+    | 'familyId'
+    | 'topologyId'
+    | 'lanes'
+    | 'routeGraph'
+    | 'protectedZones'
+    | 'tacticalSlots'
+    | 'moduleInstances'
+    | 'terrainConstraints'
+  >;
+  map?: MapDiagnostics;
   buildings: ProceduralBuildingGenerationDiagnostics;
+  repairActions: Record<string, number>;
+  stageTimingsMs: Record<string, number>;
 }
 
 export interface ProceduralVoxelMapGenerationResult {
@@ -171,7 +198,37 @@ function createProceduralVoxelMapDiagnostics(seed: number, themeId: VoxelMapThem
   return {
     seed,
     themeId,
+    repairActions: {},
+    stageTimingsMs: {},
     buildings: createBuildingDiagnostics(),
+  };
+}
+
+function recordRepairAction(
+  diagnostics: ProceduralVoxelMapDiagnostics | undefined,
+  action: string,
+  count = 1
+): void {
+  if (!diagnostics || count <= 0) return;
+  diagnostics.repairActions[action] = (diagnostics.repairActions[action] ?? 0) + count;
+}
+
+function getSlotFootprintRadius(slot: MapBlueprint['tacticalSlots'][number]): number {
+  return slot.footprint.radius ?? Math.max(slot.footprint.halfExtents?.x ?? scaleWorld(3.2), slot.footprint.halfExtents?.z ?? scaleWorld(3.2));
+}
+
+function recordModuleInstanceStatus(
+  blueprint: MapBlueprint | undefined,
+  slotId: string,
+  accepted: boolean,
+  reasons: string[]
+): void {
+  if (!blueprint) return;
+  const instance = blueprint.moduleInstances.find((candidate) => candidate.slotId === slotId);
+  if (!instance) return;
+  instance.validation = {
+    status: accepted ? 'accepted' : 'rejected',
+    reasons,
   };
 }
 
@@ -313,6 +370,15 @@ function distanceSq(xA: number, zA: number, xB: number, zB: number): number {
   const dx = xA - xB;
   const dz = zA - zB;
   return dx * dx + dz * dz;
+}
+
+function averageVec3(points: Array<{ x: number; y: number; z: number }>): { x: number; y: number; z: number } {
+  if (points.length === 0) return { x: 0, y: 0, z: 0 };
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+    z: points.reduce((sum, point) => sum + point.z, 0) / points.length,
+  };
 }
 
 function distanceToBoundary(worldX: number, worldZ: number, boundary: BoundaryPoint[]): number {
@@ -687,6 +753,33 @@ function applyTerrainLandforms(
       minRows,
       seed ^ Math.floor(random() * 0xffffffff)
     );
+  }
+}
+
+function applyBlueprintTerrainConstraints(
+  heightMap: Uint8Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  blueprint: MapBlueprint,
+  minRows: number,
+  maxRows: number,
+  strength: number
+): void {
+  for (let x = 0; x < size.x; x++) {
+    for (let z = 0; z < size.z; z++) {
+      const worldX = gridToWorldCenter(x, origin.x);
+      const worldZ = gridToWorldCenter(z, origin.z);
+      const sample = sampleTerrainConstraints(blueprint.terrainConstraints, worldX, worldZ);
+      if (sample.influence <= 0 || sample.targetHeightRows === null) continue;
+
+      const index = x + z * size.x;
+      const current = heightMap[index];
+      heightMap[index] = clamp(
+        Math.round(lerp(current, sample.targetHeightRows, clamp(sample.influence * strength, 0, 1))),
+        minRows,
+        maxRows
+      );
+    }
   }
 }
 
@@ -2914,7 +3007,8 @@ function enforceSpawnSightlineOcclusion(
   size: VoxelSize,
   layout: ReturnType<typeof createProceduralCTFLayout>,
   seed: number
-): void {
+): number {
+  let repairCount = 0;
   const blockVisiblePairs = (pass: number): boolean => {
     let blockedAnyPair = false;
 
@@ -2938,6 +3032,7 @@ function enforceSpawnSightlineOcclusion(
           pass
         );
         blockedAnyPair = true;
+        repairCount++;
       }
     }
 
@@ -2948,7 +3043,7 @@ function enforceSpawnSightlineOcclusion(
     const blockedAnyPair = blockVisiblePairs(pass);
 
     if (!blockedAnyPair) {
-      return;
+      return repairCount;
     }
   }
 
@@ -2965,9 +3060,11 @@ function enforceSpawnSightlineOcclusion(
 
   for (let pass = 7; pass < 10; pass++) {
     if (!blockVisiblePairs(pass)) {
-      return;
+      return repairCount;
     }
   }
+
+  return repairCount;
 }
 
 function carveProceduralCaves(
@@ -3138,7 +3235,8 @@ function stampGuaranteedLandmarks(
   theme: VoxelMapTheme,
   seed: number,
   accepted: FeatureAnchor[],
-  diagnostics?: ProceduralVoxelMapDiagnostics
+  diagnostics?: ProceduralVoxelMapDiagnostics,
+  blueprint?: MapBlueprint
 ): number {
   const random = mulberry32(seed ^ 0xdecafbad);
   const boundaryRange = getBoundaryRange(layout.boundary);
@@ -3147,6 +3245,57 @@ function stampGuaranteedLandmarks(
   const targetLandmarks = 2 + Math.floor(random() * 2);
   let landmarksPlaced = 0;
   let plannedBuildingsPlaced = 0;
+
+  const slotBuildingRoles = new Set([
+    'flank_landmark',
+    'side_lane_cover_chain',
+    'defender_perch',
+    'elevated_bridge',
+    'underpass',
+  ]);
+  const buildingSlots = blueprint?.tacticalSlots.filter((slot) => slotBuildingRoles.has(slot.role)) ?? [];
+  const slotBuildingTarget = Math.max(2, targetLandmarks);
+
+  for (const slot of buildingSlots) {
+    if (landmarksPlaced >= slotBuildingTarget) break;
+
+    const radius = getSlotFootprintRadius(slot);
+    const radiusX = Math.max(scaleWorld(2.8), slot.footprint.halfExtents?.x ?? radius * 0.82);
+    const radiusZ = Math.max(scaleWorld(2.8), slot.footprint.halfExtents?.z ?? radius * 0.72);
+    const accentBlock: VoxelBlockId = slot.team === 'red' ? 'neon_red' : slot.team === 'blue' ? 'neon_blue' : random() > 0.5 ? 'neon_red' : 'neon_blue';
+
+    if (!canPlacePlannedBuildingFeature(layout, accepted, slot.position.x, slot.position.z, radius)) {
+      recordModuleInstanceStatus(blueprint, slot.id, false, ['slot failed feature placement clearance']);
+      continue;
+    }
+
+    const plan = tryStampPlannedBuilding(
+      setBlock,
+      heightMap,
+      origin,
+      size,
+      layout,
+      theme,
+      slot.position.x,
+      slot.position.z,
+      radiusX,
+      radiusZ,
+      clamp(slot.heightBand.maxRows, worldHeightToGridRows(scaleWorld(4.2)), worldHeightToGridRows(scaleWorld(10.5))),
+      accentBlock,
+      seed ^ Math.floor((slot.position.x + 64) * 4099) ^ Math.floor((slot.position.z + 64) * 9151),
+      diagnostics
+    );
+
+    if (!plan) {
+      recordModuleInstanceStatus(blueprint, slot.id, false, ['slot module failed local building validator']);
+      continue;
+    }
+
+    recordModuleInstanceStatus(blueprint, slot.id, true, []);
+    accepted.push({ x: slot.position.x, z: slot.position.z, radius: radius + scaleWorld(2.2) });
+    landmarksPlaced++;
+    plannedBuildingsPlaced++;
+  }
 
   for (let attempts = 0; attempts < 90 && landmarksPlaced < targetLandmarks; attempts++) {
     const centerBias = random() < 0.38;
@@ -3288,13 +3437,14 @@ function stampProceduralFeatures(
   random: () => number,
   theme: VoxelMapTheme,
   seed: number,
-  diagnostics?: ProceduralVoxelMapDiagnostics
+  diagnostics?: ProceduralVoxelMapDiagnostics,
+  blueprint?: MapBlueprint
 ): void {
   const accepted: FeatureAnchor[] = [];
   const boundaryRange = getBoundaryRange(layout.boundary);
   const halfPlayableX = Math.min(scaleWorld(30), Math.max(scaleWorld(12), (boundaryRange.maxX - boundaryRange.minX) * 0.5 - scaleWorld(4)));
   const halfPlayableZ = Math.min(scaleWorld(25), Math.max(scaleWorld(10), (boundaryRange.maxZ - boundaryRange.minZ) * 0.5 - scaleWorld(4)));
-  let plannedBuildingsPlaced = stampGuaranteedLandmarks(setBlock, heightMap, origin, size, layout, theme, seed, accepted, diagnostics);
+  let plannedBuildingsPlaced = stampGuaranteedLandmarks(setBlock, heightMap, origin, size, layout, theme, seed, accepted, diagnostics, blueprint);
 
   const caveCount = 1 + Math.floor(random() * 2);
 
@@ -4241,8 +4391,9 @@ function sealUnsafeNarrowGrooves(
   origin: { x: number; z: number },
   size: VoxelSize,
   layout: ReturnType<typeof createProceduralCTFLayout>
-): void {
+): number {
   const topRows = buildCollisionTopRows(blocks, size);
+  let sealedPasses = 0;
 
   for (let pass = 0; pass < UNSAFE_GROOVE_SEAL_PASSES; pass++) {
     const sealedX = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'x');
@@ -4251,8 +4402,11 @@ function sealUnsafeNarrowGrooves(
     const sealedBasins = sealUnsafeTrappedBasins(setBlock, blocks, topRows, origin, size, layout);
     const sealedBoundarySeams = sealUnsafeBoundarySeams(setBlock, blocks, topRows, origin, size, layout);
 
-    if (!sealedX && !sealedZ && !sealedPockets && !sealedBasins && !sealedBoundarySeams) return;
+    if (!sealedX && !sealedZ && !sealedPockets && !sealedBasins && !sealedBoundarySeams) return sealedPasses;
+    sealedPasses++;
   }
+
+  return sealedPasses;
 }
 
 function getVolcanicSurfaceBlock(
@@ -4350,9 +4504,36 @@ function generateProceduralVoxelMapInternal(
   seed = DEFAULT_PROCEDURAL_MAP_SEED,
   diagnostics?: ProceduralVoxelMapDiagnostics
 ): VoxelMapManifest {
+  const generationStartedAt = Date.now();
+  const stageTimingsMs: Record<string, number> = {};
+  let stageStartedAt = generationStartedAt;
+  const markStage = (stage: string): void => {
+    const now = Date.now();
+    stageTimingsMs[stage] = (stageTimingsMs[stage] ?? 0) + now - stageStartedAt;
+    stageStartedAt = now;
+  };
   const normalizedSeed = seed >>> 0;
   const layout = createProceduralCTFLayout(normalizedSeed);
   const theme = getVoxelMapTheme(normalizedSeed);
+  const construction = createMapConstruction(normalizedSeed, layout, theme);
+  const { blueprint, designBrief, moduleDefinitions } = construction;
+  markStage('blueprint');
+
+  if (diagnostics) {
+    diagnostics.designBrief = designBrief;
+    diagnostics.blueprint = {
+      id: blueprint.id,
+      familyId: blueprint.familyId,
+      topologyId: blueprint.topologyId,
+      lanes: blueprint.lanes,
+      routeGraph: blueprint.routeGraph,
+      protectedZones: blueprint.protectedZones,
+      tacticalSlots: blueprint.tacticalSlots,
+      moduleInstances: blueprint.moduleInstances,
+      terrainConstraints: blueprint.terrainConstraints,
+    };
+  }
+
   const random = mulberry32(normalizedSeed);
   const { origin, voxelSize, size, chunkSize } = layout;
   const blocks = new Uint8Array(size.x * size.y * size.z);
@@ -4431,7 +4612,7 @@ function generateProceduralVoxelMapInternal(
       const boundaryLift = insideBoundary
         ? getBoundaryHeightLift(normalizedSeed, worldX, worldZ, boundaryDistance)
         : scaleWorld(3.5) + Math.min(boundaryDistance, scaleWorld(5)) * 0.65;
-      const worldHeight = clamp(
+      const rawWorldHeight = clamp(
         scaleWorld(4) +
           heightBias +
           baseNoise * hillStrength +
@@ -4444,6 +4625,12 @@ function generateProceduralVoxelMapInternal(
         4,
         maxTerrainRows * voxelSize.y
       );
+      const constraintSample = sampleTerrainConstraints(blueprint.terrainConstraints, worldX, worldZ);
+      const constrainedWorldHeight =
+        constraintSample.targetHeightRows === null
+          ? rawWorldHeight
+          : lerp(rawWorldHeight, constraintSample.targetHeightRows * voxelSize.y, clamp(constraintSample.influence * 0.78, 0, 1));
+      const worldHeight = clamp(constrainedWorldHeight, 4, maxTerrainRows * voxelSize.y);
       const height = clamp(
         worldHeightToGridRows(worldHeight),
         minTerrainRows,
@@ -4453,13 +4640,17 @@ function generateProceduralVoxelMapInternal(
       heightMap[x + z * size.x] = height;
     }
   }
+  markStage('terrain_initial');
 
   applyTerrainLandforms(heightMap, origin, size, layout, random, normalizedSeed, minTerrainRows, maxTerrainRows);
   if (volcanicCraters.length > 0) {
     applyVolcanicLandforms(heightMap, origin, size, volcanicCraters, minTerrainRows, maxTerrainRows);
   }
+  applyBlueprintTerrainConstraints(heightMap, origin, size, blueprint, minTerrainRows, maxTerrainRows, 0.72);
   smoothHeightMap(heightMap, origin, size, layout, minTerrainRows, maxTerrainRows, TERRAIN_SMOOTHING_PASSES);
   limitHeightDeltas(heightMap, size, MAX_NAVIGATION_STEP_ROWS, 3);
+  applyBlueprintTerrainConstraints(heightMap, origin, size, blueprint, minTerrainRows, maxTerrainRows, 0.44);
+  markStage('terrain_constraints');
 
   const redFlagHeight = heightMap[gridIndexFromWorld(layout.flagZones.red.x, layout.flagZones.red.z, origin, size)];
   const blueFlagHeight = heightMap[gridIndexFromWorld(layout.flagZones.blue.x, layout.flagZones.blue.z, origin, size)];
@@ -4488,6 +4679,7 @@ function generateProceduralVoxelMapInternal(
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.blue);
   shapeGameplayRouteTerrain(heightMap, origin, size, layout, normalizedSeed);
   limitHeightDeltas(heightMap, size, MAX_NAVIGATION_STEP_ROWS, 2);
+  applyBlueprintTerrainConstraints(heightMap, origin, size, blueprint, minTerrainRows, maxTerrainRows, 0.5);
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.red);
   shapeSpawnTerrain(heightMap, origin, size, layout.spawnPoints.blue);
   flattenRect(
@@ -4564,24 +4756,34 @@ function generateProceduralVoxelMapInternal(
       }
     }
   }
+  markStage('voxelize_terrain');
 
   carveProceduralCaves(setBlock, heightMap, origin, size, layout, normalizedSeed);
+  recordRepairAction(diagnostics, 'cave_carving', 1);
 
   paintSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.red, 'spawn_pad_red');
   paintSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
   paintFlagPads(setBlock, heightMap, origin, size, layout.flagZones);
 
-  stampProceduralFeatures(setBlock, heightMap, origin, size, layout, random, theme, normalizedSeed, diagnostics);
+  stampProceduralFeatures(setBlock, heightMap, origin, size, layout, random, theme, normalizedSeed, diagnostics, blueprint);
+  markStage('modules_and_dressing');
   clearFlagZones(setBlock, heightMap, origin, size, layout.flagZones);
+  recordRepairAction(diagnostics, 'flag_clearance_repaint', 1);
   paintFlagPads(setBlock, heightMap, origin, size, layout.flagZones);
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.red, 'spawn_pad_red');
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
-  enforceSpawnSightlineOcclusion(setBlock, blocks, heightMap, origin, size, layout, normalizedSeed);
+  recordRepairAction(diagnostics, 'spawn_clearance_repaint', 1);
+  const spawnSightlineRepairs = enforceSpawnSightlineOcclusion(setBlock, blocks, heightMap, origin, size, layout, normalizedSeed);
+  recordRepairAction(diagnostics, 'spawn_sightline_baffle', spawnSightlineRepairs);
   clearFlagZones(setBlock, heightMap, origin, size, layout.flagZones);
+  recordRepairAction(diagnostics, 'flag_clearance_repaint', 1);
   paintFlagPads(setBlock, heightMap, origin, size, layout.flagZones);
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.red, 'spawn_pad_red');
   clearSpawnPoints(setBlock, heightMap, origin, size, layout.spawnPoints.blue, 'spawn_pad_blue');
-  sealUnsafeNarrowGrooves(setBlock, blocks, origin, size, layout);
+  recordRepairAction(diagnostics, 'spawn_clearance_repaint', 1);
+  const grooveRepairPasses = sealUnsafeNarrowGrooves(setBlock, blocks, origin, size, layout);
+  recordRepairAction(diagnostics, 'unsafe_groove_seal', grooveRepairPasses);
+  markStage('semantic_repairs');
 
   const chunks: VoxelChunk[] = [];
   const chunkSlotsX = Math.ceil(size.x / chunkSize.x);
@@ -4636,6 +4838,87 @@ function generateProceduralVoxelMapInternal(
   }
 
   const topSolidRows = buildCollisionTopRows(blocks, size);
+  markStage('chunks');
+
+  const spawnPoints = {
+    red: layout.spawnPoints.red.map((spawn) => ({
+      ...spawn,
+      y: gridRowsToWorldY(heightMap[gridIndexFromWorld(spawn.x, spawn.z, origin, size)], origin.y) + PLAYER_HEIGHT / 2 + SPAWN_CLEARANCE,
+    })),
+    blue: layout.spawnPoints.blue.map((spawn) => ({
+      ...spawn,
+      y: gridRowsToWorldY(heightMap[gridIndexFromWorld(spawn.x, spawn.z, origin, size)], origin.y) + PLAYER_HEIGHT / 2 + SPAWN_CLEARANCE,
+    })),
+  };
+  const flagZones = {
+    red: {
+      ...layout.flagZones.red,
+      y: gridRowsToWorldY(heightMap[gridIndexFromWorld(layout.flagZones.red.x, layout.flagZones.red.z, origin, size)], origin.y) + voxelSize.y,
+    },
+    blue: {
+      ...layout.flagZones.blue,
+      y: gridRowsToWorldY(heightMap[gridIndexFromWorld(layout.flagZones.blue.x, layout.flagZones.blue.z, origin, size)], origin.y) + voxelSize.y,
+    },
+  };
+  const spawnCenters = {
+    red: averageVec3(spawnPoints.red),
+    blue: averageVec3(spawnPoints.blue),
+  };
+  const routeGraph = {
+    ...blueprint.routeGraph,
+    nodes: blueprint.routeGraph.nodes.map((node) => {
+      if (node.id === 'red_flag') return { ...node, position: flagZones.red };
+      if (node.id === 'blue_flag') return { ...node, position: flagZones.blue };
+      if (node.id === 'red_spawn') return { ...node, position: spawnCenters.red };
+      if (node.id === 'blue_spawn') return { ...node, position: spawnCenters.blue };
+      return node;
+    }),
+  };
+  const gameplay = {
+    mode: 'ctf' as const,
+    boundary: layout.boundary,
+    bases: {
+      red: {
+        ...blueprint.bases.red,
+        center: { ...blueprint.bases.red.center, y: flagZones.red.y },
+      },
+      blue: {
+        ...blueprint.bases.blue,
+        center: { ...blueprint.bases.blue.center, y: flagZones.blue.y },
+      },
+    },
+    flags: {
+      red: {
+        ...blueprint.flags.red,
+        center: flagZones.red,
+      },
+      blue: {
+        ...blueprint.flags.blue,
+        center: flagZones.blue,
+      },
+    },
+    spawns: {
+      red: {
+        ...blueprint.spawns.red,
+        center: spawnCenters.red,
+        points: spawnPoints.red,
+        fallbackPoints: blueprint.spawns.red.fallbackPoints.map((point) => ({ ...point, y: spawnCenters.red.y })),
+      },
+      blue: {
+        ...blueprint.spawns.blue,
+        center: spawnCenters.blue,
+        points: spawnPoints.blue,
+        fallbackPoints: blueprint.spawns.blue.fallbackPoints.map((point) => ({ ...point, y: spawnCenters.blue.y })),
+      },
+    },
+    protectedZones: blueprint.protectedZones,
+    lanes: blueprint.lanes,
+    routeGraph,
+    sightlineSamples: blueprint.sightlineSamples.map((sample) => ({
+      ...sample,
+      status: sample.requiresOcclusion && spawnSightlineRepairs > 0 ? 'repaired' as const : 'planned' as const,
+    })),
+  };
 
   const partialManifest = {
     id: `procedural-ctf-${normalizedSeed}`,
@@ -4645,26 +4928,8 @@ function generateProceduralVoxelMapInternal(
     voxelSize,
     size,
     chunkSize,
-    spawnPoints: {
-      red: layout.spawnPoints.red.map((spawn) => ({
-        ...spawn,
-        y: gridRowsToWorldY(heightMap[gridIndexFromWorld(spawn.x, spawn.z, origin, size)], origin.y) + PLAYER_HEIGHT / 2 + SPAWN_CLEARANCE,
-      })),
-      blue: layout.spawnPoints.blue.map((spawn) => ({
-        ...spawn,
-        y: gridRowsToWorldY(heightMap[gridIndexFromWorld(spawn.x, spawn.z, origin, size)], origin.y) + PLAYER_HEIGHT / 2 + SPAWN_CLEARANCE,
-      })),
-    },
-    flagZones: {
-      red: {
-        ...layout.flagZones.red,
-        y: gridRowsToWorldY(heightMap[gridIndexFromWorld(layout.flagZones.red.x, layout.flagZones.red.z, origin, size)], origin.y) + voxelSize.y,
-      },
-      blue: {
-        ...layout.flagZones.blue,
-        y: gridRowsToWorldY(heightMap[gridIndexFromWorld(layout.flagZones.blue.x, layout.flagZones.blue.z, origin, size)], origin.y) + voxelSize.y,
-      },
-    },
+    spawnPoints,
+    flagZones,
     boundary: layout.boundary,
     heightfield: {
       origin,
@@ -4675,18 +4940,62 @@ function generateProceduralVoxelMapInternal(
     chunks,
   };
   const colliders = generateVoxelColliders(partialManifest);
+  markStage('colliders');
+
+  const stats: VoxelMapStats = {
+    chunkCount: chunks.length,
+    totalChunkSlots,
+    emptyChunkSlots: totalChunkSlots - chunks.length,
+    renderableChunkCount: chunks.length,
+    solidBlocks,
+    colliderCount: colliders.length,
+  };
+  stageTimingsMs.total = Date.now() - generationStartedAt;
+  const compiledDiagnostics = finalizeCompiledMapDiagnostics(blueprint, {
+    stats,
+    stageTimingsMs,
+    repairActions: diagnostics?.repairActions,
+    spawnVisibilityPairs: spawnSightlineRepairs,
+    rejectedModuleReasons: diagnostics?.buildings.rejectionReasons,
+  });
+  blueprint.diagnostics = compiledDiagnostics;
+
+  if (diagnostics) {
+    diagnostics.stageTimingsMs = stageTimingsMs;
+    diagnostics.map = compiledDiagnostics;
+  }
+
+  const world = {
+    origin,
+    voxelSize,
+    size,
+    heightfield: partialManifest.heightfield,
+    chunks,
+    colliders,
+    stats,
+  };
 
   return {
     ...partialManifest,
+    version: CONSTRUCTED_MAP_MANIFEST_VERSION,
+    familyId: designBrief.familyId,
+    topologyId: blueprint.topologyId,
+    themeId: theme.id,
     colliders,
-    stats: {
-      chunkCount: chunks.length,
-      totalChunkSlots,
-      emptyChunkSlots: totalChunkSlots - chunks.length,
-      renderableChunkCount: chunks.length,
-      solidBlocks,
-      colliderCount: colliders.length,
+    stats,
+    gameplay,
+    construction: {
+      designBrief,
+      blueprintId: blueprint.id,
+      topologyId: blueprint.topologyId,
+      tacticalSlots: blueprint.tacticalSlots,
+      moduleDefinitions,
+      moduleInstances: blueprint.moduleInstances,
+      terrainConstraints: blueprint.terrainConstraints,
+      diagnostics: compiledDiagnostics,
     },
+    world,
+    preview: blueprint.preview,
   };
 }
 

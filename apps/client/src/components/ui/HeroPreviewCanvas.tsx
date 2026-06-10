@@ -198,10 +198,10 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   const resolvedAccentColor = accentColor ?? HERO_COLOR_SCHEMES[heroId].primary;
   const [isCanvasReady, setIsCanvasReady] = useState(false);
   const hasCanvasCreatedRef = useRef(false);
-  const readyFramesRef = useRef({ first: 0, second: 0 });
   const shouldIdleRotate = idleRotation ?? interactive;
   const shouldIdleAnimate = idleAnimation && config.idleIntensity > 0;
   const rotationInitialYaw = animationMode === 'slide' ? SLIDE_PREVIEW_YAW : initialYaw;
+  const previewReadyKey = `${heroId}:${team}:${size}:${animationMode}:${isBot}:${hasFlag}:${postureScaleY}`;
   const previewShellStyle = {
     '--hero-preview-accent': resolvedAccentColor,
   } as CSSProperties;
@@ -211,42 +211,20 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
     resetKey: `${heroId}:${animationMode === 'slide' ? 'slide' : 'default'}`,
   });
 
-  const clearCanvasReadyFrames = useCallback(() => {
-    window.cancelAnimationFrame(readyFramesRef.current.first);
-    window.cancelAnimationFrame(readyFramesRef.current.second);
-    readyFramesRef.current = { first: 0, second: 0 };
-  }, []);
-
-  const scheduleCanvasReady = useCallback(() => {
-    clearCanvasReadyFrames();
-    readyFramesRef.current.first = window.requestAnimationFrame(() => {
-      readyFramesRef.current.second = window.requestAnimationFrame(() => {
-        setIsCanvasReady(true);
-      });
-    });
-  }, [clearCanvasReadyFrames]);
-
-  useEffect(() => {
-    return () => {
-      clearCanvasReadyFrames();
-    };
-  }, [clearCanvasReadyFrames]);
-
   useEffect(() => {
     setIsCanvasReady(false);
-
-    if (hasCanvasCreatedRef.current) {
-      scheduleCanvasReady();
-    }
-
-    return clearCanvasReadyFrames;
-  }, [animationMode, clearCanvasReadyFrames, heroId, scheduleCanvasReady, size, team]);
+  }, [previewReadyKey]);
 
   const handleCanvasCreated = useCallback(({ gl }: { gl: THREE.WebGLRenderer }) => {
     gl.setClearColor(getCssRgbColor(PREVIEW_CLEAR_COLOR_VAR), 0);
+    gl.setClearAlpha(0);
     hasCanvasCreatedRef.current = true;
-    scheduleCanvasReady();
-  }, [scheduleCanvasReady]);
+  }, []);
+
+  const handlePreviewRendered = useCallback(() => {
+    if (!hasCanvasCreatedRef.current) return;
+    setIsCanvasReady(true);
+  }, []);
 
   return (
     <div
@@ -266,13 +244,26 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
         <span className="sr-only">Loading {HERO_DEFINITIONS[heroId].name} preview</span>
       </div>
       <Canvas
-        className={`absolute inset-0 transition-opacity duration-300 ease-out ${isCanvasReady ? 'opacity-100' : 'opacity-0'}`}
+        className="hero-preview-canvas"
         camera={{ position: config.cameraPosition, fov: config.fov, near: 0.1, far: 60 }}
         dpr={config.dpr}
         frameloop={interactive || shouldIdleRotate || shouldIdleAnimate || animationMode !== 'idle' ? 'always' : 'demand'}
-        gl={{ alpha: true, antialias: true, powerPreference: size === 'compact' ? 'default' : 'high-performance' }}
+        gl={{
+          alpha: true,
+          antialias: true,
+          premultipliedAlpha: false,
+          powerPreference: size === 'compact' ? 'default' : 'high-performance',
+        }}
         onCreated={handleCanvasCreated}
         shadows={config.shadows}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'transparent',
+          opacity: isCanvasReady ? 1 : 0,
+          visibility: isCanvasReady ? 'visible' : 'hidden',
+          transition: 'opacity 300ms ease-out',
+        }}
       >
         <HeroPreviewScene
           heroId={heroId}
@@ -289,10 +280,39 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
           idleAnimation={shouldIdleAnimate}
           animationMode={animationMode}
         />
+        <PreviewRenderReadySignal readyKey={previewReadyKey} onReady={handlePreviewRendered} />
       </Canvas>
     </div>
   );
 });
+
+function PreviewRenderReadySignal({
+  readyKey,
+  onReady,
+}: {
+  readyKey: string;
+  onReady: () => void;
+}) {
+  const renderedFramesRef = useRef(0);
+  const didSignalRef = useRef(false);
+
+  useEffect(() => {
+    renderedFramesRef.current = 0;
+    didSignalRef.current = false;
+  }, [readyKey]);
+
+  useFrame(() => {
+    if (didSignalRef.current) return;
+
+    renderedFramesRef.current += 1;
+    if (renderedFramesRef.current < 4) return;
+
+    didSignalRef.current = true;
+    onReady();
+  });
+
+  return null;
+}
 
 interface HeroPreviewSceneProps {
   heroId: HeroId;

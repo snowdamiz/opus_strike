@@ -7,5 +7,6 @@ export * from './ctfLayout.js';
 export * from './boundaries.js';
 export * from './colliders.js';
 export * from './buildingPlans.js';
+export * from './construction.js';
 export * from './generator.js';
 export * from './unstuck.js';

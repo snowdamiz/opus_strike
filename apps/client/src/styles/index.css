@@ -990,12 +990,11 @@ input[type="color"]::-webkit-color-swatch {
 }
 
 .hero-preview-shell[data-ready="false"] {
-  background:
-    linear-gradient(180deg, rgb(var(--color-strike-canvas) / 0.42), rgb(var(--color-strike-page-bottom) / 0.58));
+  background: transparent;
 }
 
 .hero-preview-shell[data-ready="false"]::before {
-  opacity: 0.16;
+  opacity: 0;
 }
 
 .hero-preview-shell canvas {
@@ -1006,9 +1005,19 @@ input[type="color"]::-webkit-color-swatch {
   outline: none;
 }
 
+.hero-preview-canvas {
+  z-index: 0;
+  background: transparent !important;
+}
+
+.hero-preview-canvas canvas {
+  background: transparent !important;
+}
+
 .hero-preview-loading {
-  z-index: 1;
+  z-index: 3;
   opacity: 0;
+  background: transparent;
   transition: opacity 160ms ease-out;
 }
 

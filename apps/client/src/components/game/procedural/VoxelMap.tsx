@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { generateProceduralVoxelMap, type VoxelChunk } from '@voxel-strike/shared';
+import { generateProceduralVoxelMap, type VoxelChunk, type VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { areProceduralMapCollidersLoaded, isPhysicsReady, loadProceduralMapColliders } from '../../../hooks/usePhysics';
 import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
@@ -14,6 +14,7 @@ const VOXEL_REGION_CHUNK_SPAN = 4;
 
 interface VoxelMapProps {
   seed?: number;
+  manifest?: VoxelMapManifest;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
   dressingShadows: boolean;
@@ -45,6 +46,7 @@ function createVoxelChunkRegions(chunks: VoxelChunk[]): VoxelChunkRegion[] {
 
 export function VoxelMap({
   seed,
+  manifest: providedManifest,
   enablePhysics = true,
   shadowsEnabled,
   dressingShadows,
@@ -55,6 +57,8 @@ export function VoxelMap({
   const storeMapSeed = useGameStore((state) => state.mapSeed);
   const mapSeed = seed ?? storeMapSeed;
   const manifest = useMemo(() => {
+    if (providedManifest) return providedManifest;
+
     const start = performance.now();
     const nextManifest = generateProceduralVoxelMap(mapSeed);
     const generationMs = performance.now() - start;
@@ -67,7 +71,7 @@ export function VoxelMap({
       colliders: nextManifest.stats.colliderCount,
     });
     return nextManifest;
-  }, [mapSeed]);
+  }, [mapSeed, providedManifest]);
   const renderableRegions = useMemo(() => {
     const start = performance.now();
     const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);

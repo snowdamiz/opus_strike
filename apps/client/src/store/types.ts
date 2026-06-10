@@ -6,6 +6,8 @@ import type {
   Vec3,
   PlayerInput,
   BotDifficulty,
+  BlueprintPreview,
+  MapTopologyId,
 } from '@voxel-strike/shared';
 
 // Re-export VisualState from visualStore for central type access
@@ -46,6 +48,9 @@ export interface MapVoteOption {
   name: string;
   themeId: string;
   themeName: string;
+  topologyId?: MapTopologyId;
+  preview?: BlueprintPreview;
+  score?: number;
 }
 
 export interface MapVoteRecord {

@@ -10,6 +10,7 @@ const DEFAULT_RANDOM_SEEDS = 8;
 const DEFAULT_MAX_COLLIDERS = 48_000;
 const DEFAULT_MAX_FAILURE_RATE = 0.95;
 const DEFAULT_MIN_SIGNATURE_VARIETY = 0.58;
+const KNOWN_REGRESSION_SEEDS = [0, 1, 2, 42, 1337, 0x57564f58, 0xdecafbad, 0xc0ffee];
 const MAX_NAVIGATION_STEP_ROWS = 2;
 const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
 const FLAG_CLEAR_RADIUS = 4.3;
@@ -33,6 +34,8 @@ function parseArgs(argv) {
     maxColliders: DEFAULT_MAX_COLLIDERS,
     maxFailureRate: DEFAULT_MAX_FAILURE_RATE,
     minSignatureVariety: DEFAULT_MIN_SIGNATURE_VARIETY,
+    knownSeeds: false,
+    json: false,
   };
 
   for (let index = 0; index < argv.length; index++) {
@@ -60,6 +63,10 @@ function parseArgs(argv) {
     } else if (arg === '--min-signature-variety' && next) {
       options.minSignatureVariety = Number(next);
       index++;
+    } else if (arg === '--known') {
+      options.knownSeeds = true;
+    } else if (arg === '--json') {
+      options.json = true;
     }
   }
 
@@ -81,6 +88,10 @@ function mulberry32(seed) {
 function createSeedList(options) {
   if (Number.isFinite(options.debugSeed)) {
     return [options.debugSeed >>> 0];
+  }
+
+  if (options.knownSeeds) {
+    return KNOWN_REGRESSION_SEEDS.map((seed) => seed >>> 0);
   }
 
   const seeds = [];
@@ -794,6 +805,30 @@ function assertCondition(condition, failures, message) {
   if (!condition) failures.push(message);
 }
 
+function summarizeBlueprint(manifest, diagnostics) {
+  const mapDiagnostics = diagnostics.map || manifest.construction?.diagnostics;
+  return {
+    familyId: manifest.familyId,
+    topologyId: manifest.topologyId,
+    themeId: manifest.themeId,
+    score: mapDiagnostics?.score ?? 0,
+    candidateCount: mapDiagnostics?.candidateCount ?? 0,
+    rejectedCandidates: mapDiagnostics?.rejectedCandidates ?? [],
+    routeChoiceCount: manifest.gameplay?.lanes?.filter((lane) => lane.kind === 'primary' || lane.kind === 'flank').length ?? 0,
+    laneLengths: mapDiagnostics?.laneLengths ?? {},
+    laneWidths: mapDiagnostics?.laneWidths ?? {},
+    coverDensityByLane: mapDiagnostics?.coverDensityByLane ?? {},
+    maxSightlineLength: mapDiagnostics?.maxSightlineLength ?? 0,
+    tacticalSlotCount: manifest.construction?.tacticalSlots?.length ?? 0,
+    moduleInstanceCount: manifest.construction?.moduleInstances?.length ?? 0,
+    terrainConstraintCount: manifest.construction?.terrainConstraints?.length ?? 0,
+    moduleCountsByRole: mapDiagnostics?.moduleCountsByRole ?? {},
+    repairActions: mapDiagnostics?.repairActions ?? diagnostics.repairActions ?? {},
+    warnings: mapDiagnostics?.warnings ?? [],
+    stageTimingsMs: mapDiagnostics?.stageTimingsMs ?? diagnostics.stageTimingsMs ?? {},
+  };
+}
+
 function inspectMap(seed, options) {
   const { manifest, diagnostics } = generateProceduralVoxelMapWithDiagnostics(seed);
   const failures = [];
@@ -807,6 +842,7 @@ function inspectMap(seed, options) {
   const unsafeTrappedBasinColumns = countUnsafeTrappedBasinColumns(manifest);
   const unsafeBoundarySeamColumns = countUnsafeBoundarySeamColumns(manifest);
   const acceptedBuildings = diagnostics.buildings.acceptedPlans;
+  const blueprintMetrics = summarizeBlueprint(manifest, diagnostics);
   const mediumEntranceFailures = acceptedBuildings.filter(
     (entry) => entry.metrics.footprintCellCount >= 90 && entry.metrics.entranceCount < 2
   );
@@ -849,6 +885,14 @@ function inspectMap(seed, options) {
   assertCondition(structureBlocks < 11_000, failures, `seed ${seed}: structure block count ${structureBlocks} is too cluttered`);
   assertCondition(diagnostics.buildings.attempted > 0, failures, `seed ${seed}: no building plans attempted`);
   assertCondition(diagnostics.buildings.accepted > 0, failures, `seed ${seed}: no building plans accepted`);
+  assertCondition(manifest.version >= 2, failures, `seed ${seed}: manifest version does not include construction metadata`);
+  assertCondition(Boolean(manifest.gameplay?.routeGraph?.nodes?.length), failures, `seed ${seed}: missing semantic route graph`);
+  assertCondition(blueprintMetrics.candidateCount >= 2, failures, `seed ${seed}: blueprint candidate scoring did not run`);
+  assertCondition(blueprintMetrics.routeChoiceCount >= 3, failures, `seed ${seed}: semantic route graph has too few route choices`);
+  assertCondition(blueprintMetrics.tacticalSlotCount >= 10, failures, `seed ${seed}: not enough tactical slots generated`);
+  assertCondition(blueprintMetrics.moduleInstanceCount >= 10, failures, `seed ${seed}: module grammar did not instantiate expected modules`);
+  assertCondition(blueprintMetrics.terrainConstraintCount >= 12, failures, `seed ${seed}: terrain constraints missing from blueprint`);
+  assertCondition(blueprintMetrics.score >= 55, failures, `seed ${seed}: blueprint score ${blueprintMetrics.score.toFixed(1)} is too low`);
   assertCondition(mediumEntranceFailures.length === 0, failures, `seed ${seed}: medium/large building with fewer than 2 entrances`);
   assertCondition(entranceClearanceFailures.length === 0, failures, `seed ${seed}: accepted building with too-narrow or too-short entrance`);
   assertCondition(flatLargeBuildings.length === 0, failures, `seed ${seed}: large accepted building without roofline variation`);
@@ -859,6 +903,7 @@ function inspectMap(seed, options) {
     seed,
     manifest,
     diagnostics,
+    blueprintMetrics,
     shapeStats,
     structureBlocks,
     failures,
@@ -870,6 +915,11 @@ function printDebug(results) {
     const { diagnostics } = result;
     console.log(`\nDebug seed ${result.seed}`);
     console.log(`theme=${result.manifest.theme.id} colliders=${result.manifest.stats.colliderCount} structureBlocks=${result.structureBlocks}`);
+    console.log(`topology=${result.blueprintMetrics.topologyId} score=${result.blueprintMetrics.score.toFixed(1)} candidates=${result.blueprintMetrics.candidateCount} routeChoices=${result.blueprintMetrics.routeChoiceCount}`);
+    console.log(`laneLengths=${Object.entries(result.blueprintMetrics.laneLengths).map(([lane, length]) => `${lane}:${length.toFixed(1)}`).join(',')}`);
+    console.log(`moduleRoles=${formatReasonCounts(result.blueprintMetrics.moduleCountsByRole)}`);
+    console.log(`repairActions=${formatReasonCounts(result.blueprintMetrics.repairActions) || 'none'}`);
+    console.log(`mapWarnings=${result.blueprintMetrics.warnings.join('|') || 'none'}`);
     console.log(`shapePoints=${result.shapeStats.boundaryPointCount} areaRatio=${result.shapeStats.areaRatio.toFixed(2)} outsideFilled=${result.shapeStats.outsideFilledRatio.toFixed(3)} farOutsideFilled=${result.shapeStats.farOutsideFilledRatio.toFixed(3)}`);
     console.log(`buildingAttempts=${diagnostics.buildings.attempted} accepted=${diagnostics.buildings.accepted} rejected=${diagnostics.buildings.rejected}`);
     console.log(`rejectionReasons=${formatReasonCounts(diagnostics.buildings.rejectionReasons)}`);
@@ -889,6 +939,37 @@ function printDebug(results) {
       }
     }
   }
+}
+
+function createJsonReport(results, summary, failures) {
+  return {
+    generatedAt: new Date().toISOString(),
+    summary,
+    failures,
+    seeds: results.map((result) => ({
+      seed: result.seed,
+      manifestId: result.manifest.id,
+      version: result.manifest.version,
+      themeId: result.manifest.theme.id,
+      stats: result.manifest.stats,
+      shapeStats: result.shapeStats,
+      structureBlocks: result.structureBlocks,
+      buildings: {
+        attempted: result.diagnostics.buildings.attempted,
+        accepted: result.diagnostics.buildings.accepted,
+        rejected: result.diagnostics.buildings.rejected,
+        rejectionReasons: result.diagnostics.buildings.rejectionReasons,
+        acceptedPlans: result.diagnostics.buildings.acceptedPlans.map((entry) => ({
+          intent: entry.intent,
+          center: entry.center,
+          signature: entry.signature,
+          metrics: entry.metrics,
+        })),
+      },
+      blueprint: result.blueprintMetrics,
+      failures: result.failures,
+    })),
+  };
 }
 
 function main() {
@@ -923,6 +1004,24 @@ function main() {
   const uniqueSignatureCount = new Set(signatures).size;
   const signatureVariety = signatures.length === 0 ? 0 : uniqueSignatureCount / signatures.length;
   const distinctThemeTarget = Math.min(3, seeds.length);
+  const topologyCounts = results.reduce((counts, result) => {
+    counts[result.blueprintMetrics.topologyId] = (counts[result.blueprintMetrics.topologyId] ?? 0) + 1;
+    return counts;
+  }, {});
+  const averageBlueprintScore =
+    results.reduce((sum, result) => sum + result.blueprintMetrics.score, 0) / Math.max(1, results.length);
+  const totalRepairActions = results.reduce((counts, result) => {
+    for (const [action, count] of Object.entries(result.blueprintMetrics.repairActions)) {
+      counts[action] = (counts[action] ?? 0) + count;
+    }
+    return counts;
+  }, {});
+  const topRejectionReasons = results.reduce((counts, result) => {
+    for (const [reason, count] of Object.entries(result.diagnostics.buildings.rejectionReasons)) {
+      counts[reason] = (counts[reason] ?? 0) + count;
+    }
+    return counts;
+  }, {});
 
   if (seeds.length > 1) {
     assertCondition(failureRate <= options.maxFailureRate, failures, `building validation failure rate ${failureRate.toFixed(2)} > ${options.maxFailureRate}`);
@@ -931,28 +1030,50 @@ function main() {
   assertCondition(signatureVariety >= options.minSignatureVariety, failures, `building signature variety ${signatureVariety.toFixed(2)} < ${options.minSignatureVariety}`);
   assertCondition(shapeSignatures.size >= Math.min(6, seeds.length), failures, `map shape variety too narrow: ${shapeSignatures.size}/${Math.min(6, seeds.length)}`);
 
-  console.log(`Procedural building smoke: seeds=${seeds.length}`);
-  console.log(`maps=${results.length} themes=${[...themes].join(',')} maxColliders=${maxColliderCount}`);
-  console.log(`shapeSignatures=${shapeSignatures.size} samples=${[...shapeSignatures].slice(0, 6).join(',')}`);
-  console.log(`buildingAttempts=${totalAttempts} accepted=${totalAccepted} rejected=${totalRejected} failureRate=${failureRate.toFixed(2)}`);
-  console.log(`signatureVariety=${signatureVariety.toFixed(2)} uniqueSignatures=${uniqueSignatureCount}/${signatures.length}`);
-  console.log(`structureBlocks=${totalStructureBlocks}`);
-  console.log(`topRejectionReasons=${formatReasonCounts(results.reduce((counts, result) => {
-    for (const [reason, count] of Object.entries(result.diagnostics.buildings.rejectionReasons)) {
-      counts[reason] = (counts[reason] ?? 0) + count;
-    }
-    return counts;
-  }, {}))}`);
+  const summary = {
+    seedCount: seeds.length,
+    mapCount: results.length,
+    themes: [...themes],
+    maxColliderCount,
+    shapeSignatureCount: shapeSignatures.size,
+    buildingAttempts: totalAttempts,
+    buildingAccepted: totalAccepted,
+    buildingRejected: totalRejected,
+    buildingFailureRate: failureRate,
+    signatureVariety,
+    totalStructureBlocks,
+    topologyCounts,
+    averageBlueprintScore,
+    repairActions: totalRepairActions,
+    topRejectionReasons,
+  };
 
-  if (Number.isFinite(options.debugSeed)) {
-    printDebug(results);
+  if (options.json) {
+    console.log(JSON.stringify(createJsonReport(results, summary, failures), null, 2));
+  } else {
+    console.log(`Procedural building smoke: seeds=${seeds.length}`);
+    console.log(`maps=${results.length} themes=${[...themes].join(',')} maxColliders=${maxColliderCount}`);
+    console.log(`shapeSignatures=${shapeSignatures.size} samples=${[...shapeSignatures].slice(0, 6).join(',')}`);
+    console.log(`buildingAttempts=${totalAttempts} accepted=${totalAccepted} rejected=${totalRejected} failureRate=${failureRate.toFixed(2)}`);
+    console.log(`topologies=${formatReasonCounts(topologyCounts)} averageBlueprintScore=${averageBlueprintScore.toFixed(1)}`);
+    console.log(`repairActions=${formatReasonCounts(totalRepairActions) || 'none'}`);
+    console.log(`signatureVariety=${signatureVariety.toFixed(2)} uniqueSignatures=${uniqueSignatureCount}/${signatures.length}`);
+    console.log(`structureBlocks=${totalStructureBlocks}`);
+    console.log(`topRejectionReasons=${formatReasonCounts(topRejectionReasons)}`);
+
+    if (Number.isFinite(options.debugSeed)) {
+      printDebug(results);
+    }
   }
 
-  if (failures.length > 0) {
+  if (failures.length > 0 && !options.json) {
     console.error('\nFailures:');
     for (const failure of failures) {
       console.error(`- ${failure}`);
     }
+  }
+
+  if (failures.length > 0) {
     process.exitCode = 1;
   }
 }

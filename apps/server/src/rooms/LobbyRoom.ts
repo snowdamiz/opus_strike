@@ -1,7 +1,7 @@
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { DEFAULT_GAME_CONFIG, HERO_DEFINITIONS, createRandomSeed, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
-import type { BotDifficulty, HeroId, Team } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team } from '@voxel-strike/shared';
 
 interface JoinOptions {
   playerName?: string;
@@ -29,6 +29,9 @@ interface MapVoteOption {
   name: string;
   themeId: string;
   themeName: string;
+  topologyId: MapTopologyId;
+  preview: BlueprintPreview;
+  score: number;
 }
 
 interface MapVoteRecord {
@@ -761,14 +764,18 @@ export class LobbyRoom extends Room<LobbyState> {
       const themeIndex = themeIndices[index % themeIndices.length];
       const seed = createSeedForTheme(themeIndex, source ^ Math.imul(index + 1, 0x85ebca6b));
       const theme = getVoxelMapTheme(seed);
+      const preview = createProceduralMapPreview(seed);
       const suffix = MAP_NAME_SUFFIXES[hashSeed(seed ^ index) % MAP_NAME_SUFFIXES.length];
 
       return {
         id: `map_${index + 1}`,
         seed,
-        name: `${theme.name} ${suffix}`,
-        themeId: theme.id,
-        themeName: theme.name,
+        name: `${preview.name} ${suffix}`,
+        themeId: preview.themeId || theme.id,
+        themeName: preview.themeName || theme.name,
+        topologyId: preview.topologyId,
+        preview: preview.preview,
+        score: preview.diagnostics.score,
       };
     });
   }

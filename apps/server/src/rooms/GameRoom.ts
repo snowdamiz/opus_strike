@@ -3039,6 +3039,9 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBotMovementTarget(bot: Player, intent: BotIntent, blackboard: BotBlackboard): { x: number; y: number; z: number } {
+    const semanticRouteTarget = this.getSemanticBotRouteTarget(bot, intent, blackboard);
+    if (semanticRouteTarget) return semanticRouteTarget;
+
     switch (intent) {
       case 'carry_flag_home':
       case 'retreat_or_reposition':
@@ -3059,6 +3062,48 @@ export class GameRoom extends Room<GameState> {
       default:
         return blackboard.enemyFlagPosition;
     }
+  }
+
+  private getSemanticBotRouteTarget(bot: Player, intent: BotIntent, blackboard: BotBlackboard): { x: number; y: number; z: number } | null {
+    const team = bot.team as Team;
+    const manifest = this.getMapManifest();
+    const routeGraph = manifest.gameplay?.routeGraph;
+    if (!routeGraph) return null;
+
+    if (intent === 'guard_own_flag') {
+      const defensive = manifest.gameplay.bases[team]?.defensivePositions[0];
+      return defensive ? { ...defensive, y: blackboard.ownBasePosition.y } : null;
+    }
+
+    if (intent !== 'seek_enemy_flag' && intent !== 'carry_flag_home' && intent !== 'retreat_or_reposition') {
+      return null;
+    }
+
+    const route = routeGraph.primaryRouteNodeIds[team];
+    if (!route || route.length < 2) return null;
+
+    const orderedRoute = intent === 'seek_enemy_flag' ? route : [...route].reverse();
+    const nodes = orderedRoute
+      .map((nodeId) => routeGraph.nodes.find((node) => node.id === nodeId))
+      .filter((node): node is (typeof routeGraph.nodes)[number] => Boolean(node));
+    if (nodes.length < 2) return null;
+
+    let nearestIndex = 0;
+    let nearestDistance = Infinity;
+    for (let index = 0; index < nodes.length; index++) {
+      const distance = this.distance2D(bot.position, nodes[index].position);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    }
+
+    let targetIndex = Math.min(nodes.length - 1, nearestIndex + 1);
+    if (nearestDistance > 12 && nearestIndex > 0) {
+      targetIndex = nearestIndex;
+    }
+    const target = nodes[targetIndex]?.position;
+    return target ? { x: target.x, y: target.y, z: target.z } : null;
   }
 
   private getEnemyFlagPosition(team: Team): { x: number; y: number; z: number } {
@@ -4322,28 +4367,30 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resetFlags() {
-    const positions = this.getMapManifest();
+    const manifest = this.getMapManifest();
+    const redFlag = manifest.gameplay?.flags?.red?.center ?? manifest.flagZones.red;
+    const blueFlag = manifest.gameplay?.flags?.blue?.center ?? manifest.flagZones.blue;
 
-    this.state.redTeam.flag.position.x = positions.flagZones.red.x;
-    this.state.redTeam.flag.position.y = positions.flagZones.red.y;
-    this.state.redTeam.flag.position.z = positions.flagZones.red.z;
+    this.state.redTeam.flag.position.x = redFlag.x;
+    this.state.redTeam.flag.position.y = redFlag.y;
+    this.state.redTeam.flag.position.z = redFlag.z;
     this.state.redTeam.flag.isAtBase = true;
     this.state.redTeam.flag.carrierId = '';
     this.state.redTeam.flag.droppedAt = 0;
 
-    this.state.redTeam.flag.basePosition.x = positions.flagZones.red.x;
-    this.state.redTeam.flag.basePosition.y = positions.flagZones.red.y;
-    this.state.redTeam.flag.basePosition.z = positions.flagZones.red.z;
+    this.state.redTeam.flag.basePosition.x = redFlag.x;
+    this.state.redTeam.flag.basePosition.y = redFlag.y;
+    this.state.redTeam.flag.basePosition.z = redFlag.z;
 
-    this.state.blueTeam.flag.position.x = positions.flagZones.blue.x;
-    this.state.blueTeam.flag.position.y = positions.flagZones.blue.y;
-    this.state.blueTeam.flag.position.z = positions.flagZones.blue.z;
+    this.state.blueTeam.flag.position.x = blueFlag.x;
+    this.state.blueTeam.flag.position.y = blueFlag.y;
+    this.state.blueTeam.flag.position.z = blueFlag.z;
     this.state.blueTeam.flag.isAtBase = true;
     this.state.blueTeam.flag.carrierId = '';
     this.state.blueTeam.flag.droppedAt = 0;
-    this.state.blueTeam.flag.basePosition.x = positions.flagZones.blue.x;
-    this.state.blueTeam.flag.basePosition.y = positions.flagZones.blue.y;
-    this.state.blueTeam.flag.basePosition.z = positions.flagZones.blue.z;
+    this.state.blueTeam.flag.basePosition.x = blueFlag.x;
+    this.state.blueTeam.flag.basePosition.y = blueFlag.y;
+    this.state.blueTeam.flag.basePosition.z = blueFlag.z;
   }
 
   private updateVoidZones(now: number) {
@@ -4716,7 +4763,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getSpawnPosition(team: Team): { x: number; y: number; z: number } {
-    const spawnPoints = this.getMapManifest().spawnPoints[team];
+    const manifest = this.getMapManifest();
+    const spawnPoints = manifest.gameplay?.spawns?.[team]?.points ?? manifest.spawnPoints[team];
     const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
 
     return {
