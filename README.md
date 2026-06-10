@@ -83,6 +83,28 @@ pnpm run dev:client  # Start client on http://localhost:3000
 pnpm run dev:server  # Start server on ws://localhost:2567
 ```
 
+### Voice Chat
+
+Team voice uses LiveKit through backend-issued, short-lived room tokens. For local development, start the bundled LiveKit service and set the server environment:
+
+```bash
+docker compose up postgres livekit
+VOICE_ENABLED=true \
+LIVEKIT_URL=http://localhost:7880 \
+LIVEKIT_WS_URL=ws://localhost:7880 \
+LIVEKIT_API_KEY=devkey \
+LIVEKIT_API_SECRET=secret \
+pnpm dev:server
+```
+
+Optional production knobs:
+
+- `VOICE_TOKEN_TTL_SECONDS`: token lifetime in seconds, clamped between 60 and 3600. Default: `600`.
+- `VOICE_ENV`: room-name environment segment. Defaults to `NODE_ENV` or `development`.
+- `VOICE_MAX_PARTICIPANTS_PER_ROOM`: LiveKit team-room cap. Default: `8`.
+
+`GET /voice/status` reports whether voice is enabled and why it is disabled without exposing LiveKit secrets.
+
 ### Playing
 
 1. Start the server: `pnpm run dev:server`

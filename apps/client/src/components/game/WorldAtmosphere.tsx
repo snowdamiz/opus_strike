@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { EnvironmentQualityConfig } from './visualQuality';
+import { setAtmosphereParticleCount } from '../../utils/perfMarks';
 
 interface WorldAtmosphereProps {
   theme: VoxelMapTheme;
@@ -706,12 +707,13 @@ function getAtmosphereProfiles(theme: VoxelMapTheme, seed: number): AtmospherePr
 
 function scaleAtmosphereProfile(
   profile: AtmosphereProfile,
-  config: EnvironmentQualityConfig
+  config: EnvironmentQualityConfig,
+  maxCount: number
 ): AtmosphereProfile | null {
-  if (config.particleDensity <= 0) return null;
+  if (config.particleDensity <= 0 || maxCount <= 0) return null;
 
-  const minCount = profile.kind === 'mist' || profile.kind === 'sand' ? 48 : 36;
-  const count = Math.max(minCount, Math.round(profile.count * config.particleDensity));
+  const minCount = config.maxParticles <= 50 ? 0 : profile.kind === 'mist' || profile.kind === 'sand' ? 24 : 18;
+  const count = Math.min(maxCount, Math.max(minCount, Math.round(profile.count * config.particleDensity)));
   const opacityScale = config.particleDensity < 1 ? 0.85 + config.particleDensity * 0.15 : 1;
   const devilCount =
     profile.devilCount && config.dustDevilDensity > 0
@@ -730,9 +732,18 @@ function scaleAtmosphereProfiles(
   profiles: AtmosphereProfile[],
   config: EnvironmentQualityConfig
 ): AtmosphereProfile[] {
-  return profiles
-    .map((profile) => scaleAtmosphereProfile(profile, config))
-    .filter((profile): profile is AtmosphereProfile => Boolean(profile));
+  let remainingParticles = Math.max(0, config.maxParticles);
+  const scaledProfiles: AtmosphereProfile[] = [];
+
+  for (const profile of profiles) {
+    const scaled = scaleAtmosphereProfile(profile, config, remainingParticles);
+    if (!scaled || scaled.count <= 0) continue;
+    scaledProfiles.push(scaled);
+    remainingParticles -= scaled.count;
+    if (remainingParticles <= 0) break;
+  }
+
+  return scaledProfiles;
 }
 
 function createPointParticleSet(profile: AtmosphereProfile, seed: number): PointParticleSet {
@@ -927,7 +938,7 @@ function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: nu
   );
 
   return (
-    <points frustumCulled={false} matrixAutoUpdate={false} renderOrder={-60}>
+    <points matrixAutoUpdate={false} renderOrder={-60}>
       <primitive object={particleSet.geometry} attach="geometry" />
       <primitive object={material} attach="material" />
     </points>
@@ -1013,7 +1024,7 @@ function RainStreaks({ profile, seed }: { profile: AtmosphereProfile; seed: numb
   );
 
   return (
-    <lineSegments frustumCulled={false} matrixAutoUpdate={false} renderOrder={-55}>
+    <lineSegments matrixAutoUpdate={false} renderOrder={-55}>
       <primitive object={streakSet.geometry} attach="geometry" />
       <primitive object={material} attach="material" />
     </lineSegments>
@@ -1146,8 +1157,13 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
     () => createThemeColor(theme.sunColor, '#ffffff', theme.id === 'basalt' ? 0.25 : 0.1),
     [theme]
   );
+  const activeParticleCount = atmosphereProfiles.reduce((sum, profile) => sum + profile.count, 0);
 
   useEffect(() => () => skyMaterial.dispose(), [skyMaterial]);
+  useEffect(() => {
+    setAtmosphereParticleCount(activeParticleCount);
+    return () => setAtmosphereParticleCount(0);
+  }, [activeParticleCount]);
 
   return (
     <group name="world-atmosphere">

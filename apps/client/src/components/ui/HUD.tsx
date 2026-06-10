@@ -11,6 +11,7 @@ import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkil
 import { useCombatFeedbackStore, type DamageNumberEvent, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
 import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
+import { VoiceHud } from './VoiceHud';
 
 // Solar Icon - Small version for HUD
 function SolarIconSmall({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -524,6 +525,7 @@ export function HUD() {
 
       {showDamageNumbers && <DamageNumberStack events={damageNumbers} />}
       {showKillFeed && <KillFeed events={killFeed} />}
+      <VoiceHud />
 
       {/* Meteor Strike targeting instructions */}
       {bombTargeting && (

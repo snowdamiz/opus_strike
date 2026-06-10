@@ -4,6 +4,7 @@ import type { GamePhase } from './game.js';
 import type { Vec3 } from './vector.js';
 import type { AbilityCast } from './ability.js';
 import type { MovementCommandPacket, SelfMovementAuthority } from './movementPrediction.js';
+import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -18,6 +19,7 @@ export type ClientMessage =
   | { type: 'selectTeam'; payload: { team: Team } }
   | { type: 'chat'; payload: { message: string; teamOnly: boolean } }
   | { type: 'ready'; payload: { ready: boolean } }
+  | { type: 'requestVoiceToken'; payload: VoiceTokenRequest }
   | { type: 'ability'; payload: AbilityCast };
 
 // Server -> Client Messages
@@ -38,6 +40,8 @@ export type ServerMessage =
   | { type: 'roundEnd'; payload: RoundEndEvent }
   | { type: 'gameEnd'; payload: GameEndEvent }
   | { type: 'chat'; payload: ChatMessage }
+  | { type: 'voiceToken'; payload: VoiceTokenResponse }
+  | { type: 'voiceTeamChanged'; payload: VoiceTeamChangedMessage }
   | { type: 'devHeroChanged'; payload: { heroId: HeroId; health: number; maxHealth: number } }
   | { type: 'devCommandError'; payload: { message: string } }
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
@@ -147,7 +151,7 @@ export interface RoundEndEvent {
 }
 
 export interface GameEndEvent {
-  winningTeam: Team;
+  winningTeam: Team | null;
   finalScore: { red: number; blue: number };
 }
 

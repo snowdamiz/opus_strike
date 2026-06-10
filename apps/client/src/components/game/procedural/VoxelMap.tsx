@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { generateProceduralVoxelMap, type VoxelChunk, type VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { areProceduralMapCollidersLoaded, isPhysicsReady, loadProceduralMapColliders } from '../../../hooks/usePhysics';
 import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
 import { useVoxelMaterial } from './materials';
-import { VoxelRegionMesh, type VoxelChunkRegion } from './VoxelChunkMesh';
+import { VoxelRegionMesh, type VoxelChunkRegion, type VoxelMeshBuildMode } from './VoxelChunkMesh';
 import { WorldDressing } from './WorldDressing';
 import { clearVoxelGeometryCache } from './meshBuilder';
-import type { VoxelMaterialDetail } from '../visualQuality';
+import type { VoxelMaterialDetail, WorldPerformanceBudget } from '../visualQuality';
 import { recordSystemTime, recordVoxelMapGenerated, recordVoxelWorldRegions } from '../../../utils/perfMarks';
 
 const VOXEL_REGION_CHUNK_SPAN = 4;
@@ -21,6 +21,15 @@ interface VoxelMapProps {
   dressingDensity: number;
   reflectionIntensity: number;
   materialDetail: VoxelMaterialDetail;
+  performanceBudget?: WorldPerformanceBudget;
+  meshBuildMode?: VoxelMeshBuildMode;
+  progressiveReveal?: boolean;
+  onReady?: () => void;
+}
+
+interface ReadyRegionsState {
+  manifestId: string;
+  ids: Set<string>;
 }
 
 function createVoxelChunkRegions(chunks: VoxelChunk[]): VoxelChunkRegion[] {
@@ -53,6 +62,10 @@ export function VoxelMap({
   dressingDensity,
   reflectionIntensity,
   materialDetail,
+  performanceBudget,
+  meshBuildMode = 'async',
+  progressiveReveal = true,
+  onReady,
 }: VoxelMapProps) {
   const storeMapSeed = useGameStore((state) => state.mapSeed);
   const mapSeed = seed ?? storeMapSeed;
@@ -81,6 +94,70 @@ export function VoxelMap({
   }, [manifest]);
   const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
   const collidersLoadedRef = useRef(false);
+  const didSignalReadyRef = useRef<string | null>(null);
+  const regionRevealBudgetRef = useRef(performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
+  const shouldRevealAllRegions = meshBuildMode === 'sync' || !progressiveReveal;
+  const [visibleRegionCount, setVisibleRegionCount] = useState(() => (
+    shouldRevealAllRegions ? renderableRegions.length : 0
+  ));
+  const [readyRegions, setReadyRegions] = useState<ReadyRegionsState>(() => ({
+    manifestId: manifest.id,
+    ids: new Set(),
+  }));
+  const [collidersReady, setCollidersReady] = useState(!enablePhysics);
+
+  useEffect(() => {
+    regionRevealBudgetRef.current = Math.max(1, performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
+  }, [performanceBudget?.maxGeneratedRegionMeshesPerFrame]);
+
+  useEffect(() => {
+    if (shouldRevealAllRegions) {
+      setVisibleRegionCount(renderableRegions.length);
+      return;
+    }
+
+    let cancelled = false;
+    let rafId = 0;
+    let nextVisibleCount = Math.min(renderableRegions.length, regionRevealBudgetRef.current);
+
+    setVisibleRegionCount(nextVisibleCount);
+
+    const revealNextBatch = () => {
+      if (cancelled) return;
+      nextVisibleCount = Math.min(
+        renderableRegions.length,
+        nextVisibleCount + regionRevealBudgetRef.current
+      );
+      setVisibleRegionCount(nextVisibleCount);
+
+      if (nextVisibleCount < renderableRegions.length) {
+        rafId = window.requestAnimationFrame(revealNextBatch);
+      }
+    };
+
+    if (nextVisibleCount < renderableRegions.length) {
+      rafId = window.requestAnimationFrame(revealNextBatch);
+    }
+
+    return () => {
+      cancelled = true;
+      if (rafId) window.cancelAnimationFrame(rafId);
+    };
+  }, [manifest.id, renderableRegions, shouldRevealAllRegions]);
+
+  const handleRegionGeometryReady = useCallback((regionId: string) => {
+    setReadyRegions((current) => {
+      const currentIds = current.manifestId === manifest.id ? current.ids : new Set<string>();
+      if (currentIds.has(regionId)) return current;
+
+      const nextIds = new Set(currentIds);
+      nextIds.add(regionId);
+      return {
+        manifestId: manifest.id,
+        ids: nextIds,
+      };
+    });
+  }, [manifest.id]);
 
   useEffect(() => {
     recordVoxelWorldRegions(renderableRegions.length);
@@ -91,20 +168,39 @@ export function VoxelMap({
   }, [manifest.id]);
 
   useEffect(() => {
-    if (!enablePhysics) return;
+    let cancelled = false;
+    let interval = 0;
+
+    collidersLoadedRef.current = !enablePhysics;
+    setCollidersReady(!enablePhysics);
+
+    if (!enablePhysics) return undefined;
 
     collidersLoadedRef.current = false;
     setMapBoundaryPolygon(manifest.boundary);
 
-    if (collidersLoadedRef.current || areProceduralMapCollidersLoaded(manifest)) {
-      return;
+    const markCollidersReady = () => {
+      if (cancelled) return;
+      collidersLoadedRef.current = true;
+      setCollidersReady(true);
+    };
+
+    if (areProceduralMapCollidersLoaded(manifest)) {
+      markCollidersReady();
+      return undefined;
     }
 
     const loadColliders = () => {
-      if (isPhysicsReady() && !collidersLoadedRef.current) {
-        const success = loadProceduralMapColliders(manifest);
-        if (success) {
-          collidersLoadedRef.current = true;
+      if (collidersLoadedRef.current) return;
+      if (areProceduralMapCollidersLoaded(manifest)) {
+        markCollidersReady();
+        return;
+      }
+
+      if (isPhysicsReady()) {
+        const loadedSynchronously = loadProceduralMapColliders(manifest);
+        if (loadedSynchronously || areProceduralMapCollidersLoaded(manifest)) {
+          markCollidersReady();
         }
       }
     };
@@ -112,31 +208,58 @@ export function VoxelMap({
     loadColliders();
 
     if (!collidersLoadedRef.current) {
-      const interval = window.setInterval(() => {
+      interval = window.setInterval(() => {
         loadColliders();
         if (collidersLoadedRef.current) {
           window.clearInterval(interval);
         }
       }, 100);
 
-      return () => window.clearInterval(interval);
+      return () => {
+        cancelled = true;
+        window.clearInterval(interval);
+      };
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, [enablePhysics, manifest]);
+
+  const readyRegionCount = readyRegions.manifestId === manifest.id ? readyRegions.ids.size : 0;
+  const terrainReady = (
+    visibleRegionCount >= renderableRegions.length &&
+    readyRegionCount >= renderableRegions.length
+  );
+  const isReady = terrainReady && collidersReady;
+
+  useEffect(() => {
+    if (!onReady || !isReady) return;
+
+    const readyKey = `${manifest.id}:${enablePhysics ? 'physics' : 'visual'}:${renderableRegions.length}`;
+    if (didSignalReadyRef.current === readyKey) return;
+
+    didSignalReadyRef.current = readyKey;
+    onReady();
+  }, [enablePhysics, isReady, manifest.id, onReady, renderableRegions.length]);
 
   return (
     <group name="procedural-voxel-map">
-      {renderableRegions.map((region) => (
+      {renderableRegions.slice(0, visibleRegionCount).map((region) => (
         <VoxelRegionMesh
-          key={region.id}
+          key={`${manifest.id}:${region.id}`}
           region={region}
           manifest={manifest}
           material={material}
           shadowsEnabled={shadowsEnabled}
+          buildMode={meshBuildMode}
+          onGeometryReady={handleRegionGeometryReady}
         />
       ))}
       <WorldDressing
         manifest={manifest}
         densityScale={dressingDensity}
+        maxInstances={performanceBudget?.maxWorldDressingInstances}
         shadowsEnabled={dressingShadows}
         reflectionIntensity={reflectionIntensity}
       />

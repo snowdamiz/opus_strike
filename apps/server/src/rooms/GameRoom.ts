@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'http';
+import { randomUUID } from 'node:crypto';
 import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
 import { Player } from './schema/Player';
@@ -103,6 +104,7 @@ import {
 } from '@voxel-strike/physics';
 import { TickMetrics } from '../perf/tickMetrics';
 import { loggers } from '../utils/logger';
+import prisma from '../db';
 import {
   assertUsableEntryTicketSecret,
   isDevelopmentToolsEnabled,
@@ -111,6 +113,11 @@ import {
 } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
+import { voiceService } from '../voice/VoiceService';
+import {
+  persistCompletedMatch,
+  type MatchParticipantSnapshot,
+} from '../persistence/matchPersistence';
 import { validateMovementProposal, type LastSafeMovementState } from './movementValidation';
 import {
   GAME_MESSAGE_RATE_LIMITS,
@@ -267,6 +274,26 @@ interface SecurityEvent {
   position?: PlainVec3;
   serverTime: number;
   detail?: Record<string, unknown>;
+}
+
+type MatchPersistenceState = 'active' | 'persisting' | 'persisted' | 'failed';
+
+interface MatchLedgerParticipant extends MatchParticipantSnapshot {
+  team: Team;
+}
+
+interface MatchPersistenceLedger {
+  matchId: string;
+  roomId: string;
+  lobbyId: string | null;
+  mapSeed: number;
+  startedAt: Date;
+  endedAt: Date | null;
+  redScore: number | null;
+  blueScore: number | null;
+  winningTeam: Team | null;
+  state: MatchPersistenceState;
+  participants: Map<string, MatchLedgerParticipant>;
 }
 
 interface BotBrain {
@@ -581,6 +608,7 @@ export class GameRoom extends Room<GameState> {
   private readonly securityEvents: SecurityEvent[] = [];
   private readonly securityLogSamples = new Map<string, { lastLoggedAt: number; suppressed: number }>();
   private readonly damageCapWindows = new Map<string, { startedAt: number; damage: number }>();
+  private matchPersistenceLedger: MatchPersistenceLedger | null = null;
 
   async onAuth(
     client: Client,
@@ -735,6 +763,14 @@ export class GameRoom extends Room<GameState> {
       const chat = validateChatPayload(data, { teamOnly: true });
       if (!chat) return;
       this.handleChat(client, chat.message, chat.teamOnly);
+    });
+
+    this.onMessage('requestVoiceToken', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'requestVoiceToken', GAME_MESSAGE_RATE_LIMITS.voiceToken)) {
+        this.recordRateLimitDrop(client.sessionId, 'requestVoiceToken');
+        return;
+      }
+      void this.handleVoiceTokenRequest(client, data);
     });
 
     if (this.isDevelopmentMode()) {
@@ -899,6 +935,10 @@ export class GameRoom extends Room<GameState> {
         
         // Clean up old session data (onLeave will also be called, but let's be safe)
         const oldPlayer = this.state.players.get(existingSessionId);
+        void this.removeVoiceParticipantForPlayer(existingSessionId, this.normalizeVoiceTeam(oldPlayer?.team), 'duplicate_session');
+        if (oldPlayer) {
+          this.markMatchParticipantLeft(oldPlayer);
+        }
         if (oldPlayer?.hasFlag) {
           this.dropFlag(oldPlayer);
         }
@@ -989,6 +1029,10 @@ export class GameRoom extends Room<GameState> {
     this.state.players.set(client.sessionId, player);
     this.knownPlayerIds.add(client.sessionId);
     this.updateLastSafeMovement(player, 0);
+    if (this.state.phase === 'playing') {
+      this.ensureMatchPersistenceLedger();
+    }
+    this.registerMatchParticipant(player);
 
     // Broadcast join to all clients (including the new one)
     this.broadcast('playerJoined', {
@@ -1020,10 +1064,14 @@ export class GameRoom extends Room<GameState> {
     loggers.room.info('Player left', client.sessionId, 'consented', consented);
 
     const player = this.state.players.get(client.sessionId);
+    void this.removeVoiceParticipantForPlayer(client.sessionId, this.normalizeVoiceTeam(player?.team), consented ? 'leave' : 'disconnect');
     
     // Handle flag drop if carrying
     if (player?.hasFlag) {
       this.dropFlag(player);
+    }
+    if (player) {
+      this.markMatchParticipantLeft(player);
     }
 
     this.state.players.delete(client.sessionId);
@@ -1075,6 +1123,11 @@ export class GameRoom extends Room<GameState> {
 
   onDispose() {
     loggers.room.info('Room disposing', this.roomId);
+    this.state.players.forEach((player, playerId) => {
+      if (!player.isBot) {
+        void this.removeVoiceParticipantForPlayer(playerId, this.normalizeVoiceTeam(player.team), 'room_dispose');
+      }
+    });
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
     }
@@ -1690,6 +1743,271 @@ export class GameRoom extends Room<GameState> {
 
   private getPlayerUserId(playerId: string): string | undefined {
     return this.playerAuthContexts.get(playerId)?.userId;
+  }
+
+  private isGuestUserId(userId: string | undefined): boolean {
+    return !userId || userId.startsWith('guest:');
+  }
+
+  private getDurableUserId(playerId: string): string | null {
+    const authContext = this.playerAuthContexts.get(playerId);
+    const ticket = this.playerEntryTickets.get(playerId);
+    const userId = authContext?.kind === 'authenticated'
+      ? authContext.userId
+      : ticket?.userId ?? authContext?.userId;
+
+    if (this.isGuestUserId(userId)) return null;
+    return userId ?? null;
+  }
+
+  private isDurableHumanPlayer(player: Player | null | undefined): player is Player {
+    return Boolean(
+      player
+      && !player.isBot
+      && !this.spawnedNpcs.has(player.id)
+      && this.getDurableUserId(player.id)
+    );
+  }
+
+  private ensureMatchPersistenceLedger(now = Date.now()): MatchPersistenceLedger {
+    if (
+      !this.matchPersistenceLedger
+      || this.matchPersistenceLedger.state === 'persisted'
+      || this.matchPersistenceLedger.state === 'failed'
+    ) {
+      this.matchPersistenceLedger = {
+        matchId: randomUUID(),
+        roomId: this.roomId,
+        lobbyId: this.lobbyId,
+        mapSeed: this.state.mapSeed,
+        startedAt: new Date(now),
+        endedAt: null,
+        redScore: null,
+        blueScore: null,
+        winningTeam: null,
+        state: 'active',
+        participants: new Map(),
+      };
+
+      loggers.room.info('Match persistence ledger started', {
+        roomId: this.roomId,
+        matchId: this.matchPersistenceLedger.matchId,
+        lobbyId: this.lobbyId,
+        mapSeed: this.state.mapSeed,
+      });
+    }
+
+    return this.matchPersistenceLedger;
+  }
+
+  private registerMatchParticipant(player: Player, now = Date.now()): MatchLedgerParticipant | null {
+    const ledger = this.matchPersistenceLedger;
+    if (!ledger || ledger.state !== 'active') return null;
+    if (!this.isDurableHumanPlayer(player) || !isTeam(player.team)) return null;
+
+    const userId = this.getDurableUserId(player.id);
+    if (!userId) return null;
+
+    const existing = ledger.participants.get(userId);
+    if (existing) {
+      existing.playerSessionId = player.id;
+      existing.displayName = player.name;
+      existing.team = player.team;
+      existing.heroId = isHeroId(player.heroId) ? player.heroId : null;
+      existing.leftAt = null;
+      return existing;
+    }
+
+    const participant: MatchLedgerParticipant = {
+      userId,
+      playerSessionId: player.id,
+      displayName: player.name,
+      team: player.team,
+      heroId: isHeroId(player.heroId) ? player.heroId : null,
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+      flagCaptures: 0,
+      flagReturns: 0,
+      joinedAt: new Date(now),
+      leftAt: null,
+    };
+    ledger.participants.set(userId, participant);
+    return participant;
+  }
+
+  private syncMatchParticipant(player: Player): MatchLedgerParticipant | null {
+    const ledger = this.matchPersistenceLedger;
+    if (!ledger || ledger.state !== 'active') return null;
+    if (!this.isDurableHumanPlayer(player) || !isTeam(player.team)) return null;
+
+    const userId = this.getDurableUserId(player.id);
+    if (!userId) return null;
+
+    const participant = ledger.participants.get(userId) ?? this.registerMatchParticipant(player);
+    if (!participant) return null;
+
+    participant.playerSessionId = player.id;
+    participant.displayName = player.name;
+    participant.team = player.team;
+    participant.heroId = isHeroId(player.heroId) ? player.heroId : null;
+    return participant;
+  }
+
+  private markMatchParticipantLeft(player: Player, now = Date.now()): void {
+    const participant = this.syncMatchParticipant(player);
+    if (!participant) return;
+
+    participant.leftAt = new Date(now);
+  }
+
+  private recordMatchDeath(victim: Player, killer: Player | null): void {
+    if (!this.isDurableHumanPlayer(victim)) return;
+    if (killer && !this.isDurableHumanPlayer(killer)) return;
+
+    const participant = this.registerMatchParticipant(victim);
+    if (participant) {
+      participant.deaths++;
+    }
+  }
+
+  private recordMatchKill(killer: Player, victim: Player): void {
+    if (!this.isDurableHumanPlayer(killer) || !this.isDurableHumanPlayer(victim)) return;
+
+    const participant = this.registerMatchParticipant(killer);
+    if (participant) {
+      participant.kills++;
+    }
+  }
+
+  private recordMatchAssist(assister: Player, victim: Player): void {
+    if (!this.isDurableHumanPlayer(assister) || !this.isDurableHumanPlayer(victim)) return;
+
+    const participant = this.registerMatchParticipant(assister);
+    if (participant) {
+      participant.assists++;
+    }
+  }
+
+  private recordMatchFlagCapture(player: Player): void {
+    if (!this.isDurableHumanPlayer(player)) return;
+
+    const participant = this.registerMatchParticipant(player);
+    if (participant) {
+      participant.flagCaptures++;
+    }
+  }
+
+  private recordMatchFlagReturn(player: Player): void {
+    if (!this.isDurableHumanPlayer(player)) return;
+
+    const participant = this.registerMatchParticipant(player);
+    if (participant) {
+      participant.flagReturns++;
+    }
+  }
+
+  private serializePersistenceError(error: unknown): Record<string, unknown> {
+    if (error instanceof Error) {
+      return {
+        name: error.name,
+        message: error.message,
+      };
+    }
+
+    return { message: String(error) };
+  }
+
+  private persistMatchLedger(finalScore: { red: number; blue: number }, winningTeam: Team | null): void {
+    const ledger = this.matchPersistenceLedger;
+    if (!ledger || ledger.state !== 'active') return;
+
+    this.state.players.forEach((player) => {
+      this.syncMatchParticipant(player);
+    });
+
+    const endedAt = new Date();
+    ledger.endedAt = endedAt;
+    ledger.redScore = finalScore.red;
+    ledger.blueScore = finalScore.blue;
+    ledger.winningTeam = winningTeam;
+    ledger.state = 'persisting';
+
+    const participants: MatchParticipantSnapshot[] = Array.from(ledger.participants.values()).map((participant) => ({
+      userId: participant.userId,
+      playerSessionId: participant.playerSessionId,
+      displayName: participant.displayName,
+      team: participant.team,
+      heroId: participant.heroId,
+      kills: participant.kills,
+      deaths: participant.deaths,
+      assists: participant.assists,
+      flagCaptures: participant.flagCaptures,
+      flagReturns: participant.flagReturns,
+      joinedAt: participant.joinedAt,
+      leftAt: participant.leftAt,
+    }));
+
+    void persistCompletedMatch(prisma, {
+      matchId: ledger.matchId,
+      roomId: ledger.roomId,
+      lobbyId: ledger.lobbyId,
+      mapSeed: ledger.mapSeed,
+      startedAt: ledger.startedAt,
+      endedAt,
+      redScore: finalScore.red,
+      blueScore: finalScore.blue,
+      winningTeam,
+      participants,
+    })
+      .then((result) => {
+        ledger.state = 'persisted';
+        loggers.room.info('Match persistence completed', {
+          roomId: ledger.roomId,
+          matchId: ledger.matchId,
+          lobbyId: ledger.lobbyId,
+          mapSeed: ledger.mapSeed,
+          redScore: finalScore.red,
+          blueScore: finalScore.blue,
+          winningTeam,
+          participantCount: result.participantCount,
+          alreadyPersisted: result.alreadyPersisted,
+          skippedUserIds: result.skippedUserIds,
+        });
+      })
+      .catch((error) => {
+        ledger.state = 'failed';
+        loggers.room.error('Match persistence failed', {
+          roomId: ledger.roomId,
+          matchId: ledger.matchId,
+          lobbyId: ledger.lobbyId,
+          mapSeed: ledger.mapSeed,
+          redScore: finalScore.red,
+          blueScore: finalScore.blue,
+          winningTeam,
+          participantCount: participants.length,
+          error: this.serializePersistenceError(error),
+        });
+      });
+  }
+
+  private getVoiceIdentity(playerId: string): string {
+    return this.playerAuthContexts.get(playerId)?.userId
+      ?? this.playerEntryTickets.get(playerId)?.userId
+      ?? `guest:${playerId}`;
+  }
+
+  private normalizeVoiceTeam(team: string | null | undefined): Team | null {
+    return isTeam(team) ? team : null;
+  }
+
+  private async removeVoiceParticipantForPlayer(
+    playerId: string,
+    team: Team | null | undefined,
+    reason: string
+  ): Promise<void> {
+    if (!voiceService.isEnabled()) return;
+    await voiceService.removeMatchParticipant(this.roomId, this.getVoiceIdentity(playerId), team, reason);
   }
 
   private recordSecurityEvent(event: Omit<SecurityEvent, 'roomId' | 'tick' | 'serverTime'>): void {
@@ -4201,6 +4519,7 @@ export class GameRoom extends Room<GameState> {
       if (!ownFlag.isAtBase && !ownFlag.carrierId && this.distance2D(player.position, ownFlag.position) <= FLAG_PICKUP_RADIUS) {
         this.returnFlagToBase(playerTeam, player.id);
         player.flagReturns++;
+        this.recordMatchFlagReturn(player);
         player.ultimateCharge = Math.min(100, player.ultimateCharge + 10);
         this.recordObjectiveEvent(player, 'return', playerTeam, now);
       }
@@ -4255,6 +4574,7 @@ export class GameRoom extends Room<GameState> {
 
     player.hasFlag = false;
     player.flagCaptures++;
+    this.recordMatchFlagCapture(player);
     player.ultimateCharge = Math.min(100, player.ultimateCharge + ULTIMATE_CHARGE_PER_CAPTURE);
 
     if (player.team === 'red') {
@@ -5306,6 +5626,7 @@ export class GameRoom extends Room<GameState> {
 
     // Initialize abilities for this hero
     initializePlayerAbilities(player, heroId);
+    this.syncMatchParticipant(player);
 
     loggers.room.debug('hero selected', player.name, heroDef.name);
     return true;
@@ -5785,9 +6106,62 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    const previousTeam = this.normalizeVoiceTeam(player.team);
     player.team = team;
+    this.syncMatchParticipant(player);
+    if (previousTeam && previousTeam !== team) {
+      void this.removeVoiceParticipantForPlayer(client.sessionId, previousTeam, 'team_changed');
+      client.send('voiceTeamChanged', { previousTeam, team });
+    }
     
     this.placePlayerAtSpawn(player, 'respawn');
+  }
+
+  private async handleVoiceTokenRequest(client: Client, data: unknown): Promise<void> {
+    const requestId = isRecord(data)
+      ? sanitizeShortText(data.requestId, 80)
+      : null;
+
+    if (!requestId) {
+      client.send('voiceToken', voiceService.createDisabledResponse('invalid', 'invalid voice token request'));
+      return;
+    }
+
+    if (isRecord(data) && data.scope !== undefined && data.scope !== 'match') {
+      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'unsupported voice scope'));
+      return;
+    }
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player) {
+      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'not in game room'));
+      return;
+    }
+
+    if (player.isBot) {
+      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'bots cannot join voice'));
+      return;
+    }
+
+    const playerTeam = this.normalizeVoiceTeam(player.team);
+    if (!playerTeam) {
+      client.send('voiceToken', voiceService.createDisabledResponse(requestId, 'player has no voice team'));
+      return;
+    }
+
+    const response = await voiceService.issueMatchVoiceToken({
+      requestId,
+      playerId: client.sessionId,
+      identity: this.getVoiceIdentity(client.sessionId),
+      displayName: player.name,
+      team: playerTeam,
+      lobbyId: this.lobbyId,
+      gameRoomId: this.roomId,
+      human: !player.isBot,
+      canPublish: player.state !== 'spectating',
+    });
+
+    client.send('voiceToken', response);
   }
 
   private handleReady(client: Client, ready: boolean) {
@@ -5928,6 +6302,7 @@ export class GameRoom extends Room<GameState> {
     this.state.roundStartTime = Date.now();
     this.state.roundTimeRemaining = this.config.roundTimeSeconds;
     this.state.phaseEndTime = 0;
+    const ledger = this.ensureMatchPersistenceLedger(this.state.roundStartTime);
 
     // Set all players to alive
     this.state.players.forEach(player => {
@@ -5948,6 +6323,9 @@ export class GameRoom extends Room<GameState> {
       
       // Reset ability cooldowns
       resetAbilityCooldowns(player);
+      if (ledger.state === 'active') {
+        this.registerMatchParticipant(player, this.state.roundStartTime);
+      }
     });
 
     // Reset flags
@@ -5978,17 +6356,23 @@ export class GameRoom extends Room<GameState> {
   }
 
   private endGame() {
+    if (this.state.phase === 'game_end') return;
+
     this.state.phase = 'game_end';
 
-    const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' : 'blue';
+    const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' :
+                        this.state.blueTeam.score > this.state.redTeam.score ? 'blue' : null;
+    const finalScore = {
+      red: this.state.redTeam.score,
+      blue: this.state.blueTeam.score,
+    };
 
     this.broadcast('gameEnd', {
       winningTeam,
-      finalScore: {
-        red: this.state.redTeam.score,
-        blue: this.state.blueTeam.score,
-      },
+      finalScore,
     });
+
+    this.persistMatchLedger(finalScore, winningTeam);
 
     // Reset room after delay
     setTimeout(() => {
@@ -6011,6 +6395,7 @@ export class GameRoom extends Room<GameState> {
         player.ultimateCharge = 0;
         player.abilities.clear();
       });
+      this.matchPersistenceLedger = null;
     }, 10000);
   }
 
@@ -6225,6 +6610,7 @@ export class GameRoom extends Room<GameState> {
     player.state = 'dead';
     player.health = 0;
     player.deaths++;
+    this.recordMatchDeath(player, killer ?? null);
     player.respawnTime = deathAt + this.config.respawnTimeSeconds * 1000;
     player.movement.isJetpacking = false;
     this.broadcastBlazeFlamethrowerState(player, false, deathAt);
@@ -6238,6 +6624,7 @@ export class GameRoom extends Room<GameState> {
 
     if (killer) {
       killer.kills++;
+      this.recordMatchKill(killer, player);
       killer.ultimateCharge = Math.min(100, killer.ultimateCharge + ULTIMATE_CHARGE_PER_KILL);
     }
 
@@ -6251,6 +6638,7 @@ export class GameRoom extends Room<GameState> {
         const assister = this.state.players.get(sourceId);
         if (!assister || assister.team === player.team) return;
         assister.assists++;
+        this.recordMatchAssist(assister, player);
         assister.ultimateCharge = Math.min(100, assister.ultimateCharge + 8);
         assistIds.push(sourceId);
       });

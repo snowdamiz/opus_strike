@@ -9,7 +9,12 @@ import {
   type VoxelChunk,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
-import { recordPhysicsQueryTime, recordSystemTime, setTemporaryColliderCountProvider } from '../utils/perfMarks';
+import {
+  recordPhysicsQueryDropped,
+  recordPhysicsQueryTime,
+  recordSystemTime,
+  setTemporaryColliderCountProvider,
+} from '../utils/perfMarks';
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -48,6 +53,7 @@ export function usePhysics(): PhysicsContext {
         loadedProceduralMapId = null;
         loadedProceduralMapColliderSignature = null;
         mapColliderBodies = [];
+        pendingProceduralColliderLoad = null;
         activeProceduralMap = null;
         activeProceduralChunkLookup = new Map();
         activeProceduralChunksX = 0;
@@ -112,6 +118,7 @@ export function usePhysics(): PhysicsContext {
         loadedProceduralMapId = null;
         loadedProceduralMapColliderSignature = null;
         mapColliderBodies = [];
+        pendingProceduralColliderLoad = null;
         activeProceduralMap = null;
         activeProceduralChunkLookup = new Map();
         activeProceduralChunksX = 0;
@@ -144,6 +151,31 @@ let activeProceduralMap: VoxelMapManifest | null = null;
 let activeProceduralChunkLookup = new Map<number, VoxelChunk>();
 let activeProceduralChunksX = 0;
 let activeProceduralChunksZ = 0;
+let visualPhysicsQueryBudgetPerFrame = 44;
+let visualPhysicsQueryFrame = -1;
+let visualPhysicsQueriesUsed = 0;
+
+type PhysicsQueryPriority = 'gameplay' | 'visual';
+
+interface PhysicsQueryOptions {
+  feature?: string;
+  priority?: PhysicsQueryPriority;
+}
+
+interface RaycastOptions extends PhysicsQueryOptions {
+  includeNormal?: boolean;
+}
+
+interface ProceduralColliderLoadJob {
+  manifest: VoxelMapManifest;
+  signature: string;
+  mapBody: RAPIER.RigidBody;
+  nextIndex: number;
+  loadStart: number;
+  rafId: number | null;
+}
+
+let pendingProceduralColliderLoad: ProceduralColliderLoadJob | null = null;
 
 export function getActiveProceduralMap(): VoxelMapManifest | null {
   return activeProceduralMap;
@@ -186,6 +218,11 @@ function getActiveProceduralBlock(gx: number, gy: number, gz: number): number {
 }
 
 function getProceduralMapColliderSignature(manifest: VoxelMapManifest): string {
+  const stats = manifest.stats as VoxelMapManifest['stats'] & { colliderSignature?: string };
+  if (stats.colliderSignature) {
+    return `${manifest.id}:${stats.colliderSignature}`;
+  }
+
   let hash = 2166136261 >>> 0;
 
   const addValue = (value: number) => {
@@ -206,6 +243,39 @@ function getProceduralMapColliderSignature(manifest: VoxelMapManifest): string {
   return `${manifest.id}:${manifest.colliders.length}:${hash.toString(16)}`;
 }
 
+export function configureVisualPhysicsQueryBudget(maxQueriesPerFrame: number): void {
+  visualPhysicsQueryBudgetPerFrame = Math.max(0, Math.floor(maxQueriesPerFrame));
+}
+
+function getFrameBudgetId(): number {
+  return typeof performance !== 'undefined' ? Math.floor(performance.now() / (1000 / 60)) : Date.now();
+}
+
+function tryConsumeVisualPhysicsQuery(feature: string): boolean {
+  const frame = getFrameBudgetId();
+  if (frame !== visualPhysicsQueryFrame) {
+    visualPhysicsQueryFrame = frame;
+    visualPhysicsQueriesUsed = 0;
+  }
+
+  if (visualPhysicsQueriesUsed >= visualPhysicsQueryBudgetPerFrame) {
+    recordPhysicsQueryDropped(feature);
+    return false;
+  }
+
+  visualPhysicsQueriesUsed++;
+  return true;
+}
+
+function shouldRunPhysicsQuery(options?: PhysicsQueryOptions): boolean {
+  if (options?.priority !== 'visual') return true;
+  return tryConsumeVisualPhysicsQuery(options.feature ?? 'visual');
+}
+
+function recordPhysicsQueryDuration(queryStart: number, options?: PhysicsQueryOptions): void {
+  recordPhysicsQueryTime(performance.now() - queryStart, options?.feature ?? 'global');
+}
+
 /**
  * Load fixed cuboid colliders generated from the shared procedural voxel map.
  */
@@ -222,6 +292,20 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
     return true;
   }
 
+  if (
+    pendingProceduralColliderLoad &&
+    pendingProceduralColliderLoad.manifest.id === manifest.id &&
+    pendingProceduralColliderLoad.signature === colliderSignature
+  ) {
+    continueProceduralColliderLoad();
+    return false;
+  }
+
+  if (pendingProceduralColliderLoad && pendingProceduralColliderLoad.rafId !== null) {
+    window.cancelAnimationFrame(pendingProceduralColliderLoad.rafId);
+  }
+  pendingProceduralColliderLoad = null;
+
   for (const body of mapColliderBodies) {
     worldInstance.removeRigidBody(body);
   }
@@ -235,24 +319,68 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
   if (manifest.colliders.length > 0) {
     const bodyDesc = rapierInstance.RigidBodyDesc.fixed().setTranslation(0, 0, 0);
     const mapBody = worldInstance.createRigidBody(bodyDesc);
-
-    for (const collider of manifest.colliders) {
-      const colliderDesc = rapierInstance.ColliderDesc.cuboid(
-        collider.halfExtents.x,
-        collider.halfExtents.y,
-        collider.halfExtents.z
-      ).setTranslation(
-        collider.center.x,
-        collider.center.y,
-        collider.center.z
-      );
-      worldInstance.createCollider(colliderDesc, mapBody);
-    }
-
     mapColliderBodies.push(mapBody);
+    pendingProceduralColliderLoad = {
+      manifest,
+      signature: colliderSignature,
+      mapBody,
+      nextIndex: 0,
+      loadStart,
+      rafId: null,
+    };
+    continueProceduralColliderLoad();
+    return false;
   }
 
-  // Step the world to initialize the new colliders
+  finishProceduralColliderLoad(manifest, colliderSignature, loadStart);
+  return true;
+}
+
+function scheduleProceduralColliderLoadContinuation(): void {
+  if (!pendingProceduralColliderLoad || pendingProceduralColliderLoad.rafId !== null) return;
+
+  pendingProceduralColliderLoad.rafId = window.requestAnimationFrame(() => {
+    if (pendingProceduralColliderLoad) pendingProceduralColliderLoad.rafId = null;
+    continueProceduralColliderLoad();
+  });
+}
+
+function continueProceduralColliderLoad(): void {
+  if (!rapierInstance || !worldInstance || !pendingProceduralColliderLoad) return;
+
+  const job = pendingProceduralColliderLoad;
+  const batchStart = performance.now();
+  const maxBatchMs = 4;
+  const maxBatchColliders = 384;
+  let created = 0;
+
+  while (job.nextIndex < job.manifest.colliders.length) {
+    const collider = job.manifest.colliders[job.nextIndex++];
+    const colliderDesc = rapierInstance.ColliderDesc.cuboid(
+      collider.halfExtents.x,
+      collider.halfExtents.y,
+      collider.halfExtents.z
+    ).setTranslation(
+      collider.center.x,
+      collider.center.y,
+      collider.center.z
+    );
+    worldInstance.createCollider(colliderDesc, job.mapBody);
+    created++;
+
+    if (created >= maxBatchColliders || performance.now() - batchStart >= maxBatchMs) {
+      scheduleProceduralColliderLoadContinuation();
+      return;
+    }
+  }
+
+  finishProceduralColliderLoad(job.manifest, job.signature, job.loadStart);
+  pendingProceduralColliderLoad = null;
+}
+
+function finishProceduralColliderLoad(manifest: VoxelMapManifest, colliderSignature: string, loadStart: number): void {
+  if (!worldInstance) return;
+
   worldInstance.step();
   worldInstance.updateSceneQueries();
 
@@ -262,8 +390,6 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
   buildActiveProceduralChunkLookup(manifest);
   recordSystemTime('mapColliderLoad', performance.now() - loadStart);
   console.log(`[Physics] Procedural map colliders loaded: ${manifest.colliders.length} colliders`);
-
-  return true;
 }
 
 /**
@@ -287,11 +413,13 @@ export function raycast(
   world: RAPIER.World,
   origin: { x: number; y: number; z: number },
   direction: { x: number; y: number; z: number },
-  maxDistance: number
+  maxDistance: number,
+  options?: RaycastOptions
 ): { point: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number }; distance: number } | null {
   if (!rapierInstance || !world) {
     return null;
   }
+  if (!shouldRunPhysicsQuery(options)) return null;
   const queryStart = performance.now();
   
   try {
@@ -299,22 +427,27 @@ export function raycast(
     const ray = new rapierInstance.Ray(origin, direction);
     
     // Cast ray - solidHit=true means we want the first solid hit
-    const hit = world.castRay(ray, maxDistance, true);
+    const hit = options?.includeNormal
+      ? world.castRayAndGetNormal(ray, maxDistance, true)
+      : world.castRay(ray, maxDistance, true);
 
     if (hit) {
       const hitDistance = hit.timeOfImpact;
       const hitPoint = ray.pointAt(hitDistance);
+      const normal = 'normal' in hit && hit.normal
+        ? { x: hit.normal.x, y: hit.normal.y, z: hit.normal.z }
+        : { x: 0, y: 1, z: 0 };
       
       return {
         point: { x: hitPoint.x, y: hitPoint.y, z: hitPoint.z },
-        normal: { x: 0, y: 1, z: 0 }, // Default up normal
+        normal,
         distance: hitDistance,
       };
     }
   } catch (error) {
     console.error('[Physics] Raycast error:', error);
   } finally {
-    recordPhysicsQueryTime(performance.now() - queryStart);
+    recordPhysicsQueryDuration(queryStart, options);
   }
 
   return null;
@@ -325,7 +458,8 @@ export function raycast(
 export function raycastDirection(
   originX: number, originY: number, originZ: number,
   dirX: number, dirY: number, dirZ: number,
-  maxDistance: number
+  maxDistance: number,
+  options?: PhysicsQueryOptions
 ): { 
   hit: boolean; 
   point: { x: number; y: number; z: number }; 
@@ -336,6 +470,7 @@ export function raycastDirection(
   if (!rapierInstance || !worldInstance) {
     return null;
   }
+  if (!shouldRunPhysicsQuery(options)) return null;
   const queryStart = performance.now();
   
   try {
@@ -343,26 +478,16 @@ export function raycastDirection(
     const direction = { x: dirX, y: dirY, z: dirZ };
     const ray = new rapierInstance.Ray(origin, direction);
     
-    const hit = worldInstance.castRay(ray, maxDistance, true);
+    const hit = worldInstance.castRayAndGetNormal(ray, maxDistance, true);
     
     if (hit) {
       const hitDistance = hit.timeOfImpact;
       const hitPoint = ray.pointAt(hitDistance);
-      
-      // Get surface normal
-      let normal = { x: 0, y: 1, z: 0 };
-      try {
-        const hitWithNormal = hit.collider.castRayAndGetNormal(ray, maxDistance, true);
-        if (hitWithNormal) {
-          normal = {
-            x: hitWithNormal.normal.x,
-            y: hitWithNormal.normal.y,
-            z: hitWithNormal.normal.z
-          };
-        }
-      } catch {
-        // Use default normal
-      }
+      const normal = {
+        x: hit.normal.x,
+        y: hit.normal.y,
+        z: hit.normal.z
+      };
       
       // Check if surface is walkable (not too steep)
       const isWalkable = normal.y >= MAX_SLOPE_DOT;
@@ -378,7 +503,7 @@ export function raycastDirection(
   } catch (error) {
     console.error('[Physics] raycastDirection error:', error);
   } finally {
-    recordPhysicsQueryTime(performance.now() - queryStart);
+    recordPhysicsQueryDuration(queryStart, options);
   }
   
   return null;
@@ -428,10 +553,17 @@ function checkProceduralHeightfieldGround(x: number, y: number, z: number, maxDi
   };
 }
 
-export function checkGroundWithNormal(x: number, y: number, z: number, maxDist: number = 100): GroundInfo | null {
+export function checkGroundWithNormal(
+  x: number,
+  y: number,
+  z: number,
+  maxDist: number = 100,
+  options?: PhysicsQueryOptions
+): GroundInfo | null {
   if (!rapierInstance || !worldInstance) return null;
   const heightfieldGround = checkProceduralHeightfieldGround(x, y, z, maxDist);
   if (heightfieldGround) return heightfieldGround;
+  if (!shouldRunPhysicsQuery(options)) return null;
 
   const queryStart = performance.now();
   
@@ -440,24 +572,14 @@ export function checkGroundWithNormal(x: number, y: number, z: number, maxDist: 
     const direction = { x: 0, y: -1, z: 0 };
     const ray = new rapierInstance.Ray(origin, direction);
     
-    const hit = worldInstance.castRay(ray, maxDist, true);
+    const hit = worldInstance.castRayAndGetNormal(ray, maxDist, true);
     if (hit) {
       const groundY = y - hit.timeOfImpact;
-      
-      // Get the surface normal
-      let normal = { x: 0, y: 1, z: 0 };
-      try {
-        const hitWithNormal = hit.collider.castRayAndGetNormal(ray, maxDist, true);
-        if (hitWithNormal) {
-          normal = {
-            x: hitWithNormal.normal.x,
-            y: hitWithNormal.normal.y,
-            z: hitWithNormal.normal.z
-          };
-        }
-      } catch {
-        // Use default up normal
-      }
+      const normal = {
+        x: hit.normal.x,
+        y: hit.normal.y,
+        z: hit.normal.z
+      };
       
       // Check if slope is walkable (normal.y > cos(maxAngle))
       const isWalkable = normal.y >= MAX_SLOPE_DOT;
@@ -467,7 +589,7 @@ export function checkGroundWithNormal(x: number, y: number, z: number, maxDist: 
   } catch (e) {
     console.error('[Physics] checkGroundWithNormal error:', e);
   } finally {
-    recordPhysicsQueryTime(performance.now() - queryStart);
+    recordPhysicsQueryDuration(queryStart, options);
   }
   return null;
 }

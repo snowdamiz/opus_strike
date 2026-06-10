@@ -156,13 +156,56 @@ export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze'
 
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
-  lobby: ['lobbyMusic', 'buttonHover', 'buttonClick'],
-  commonCombat: ['gameMusic', 'walk', 'slide', 'jetpack'],
+  lobby: ['buttonHover', 'buttonClick'],
+  commonCombat: ['walk', 'slide', 'jetpack'],
   phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
   chronos: ['chronosPulse', 'chronosAegis', 'chronosLifeline', 'chronosTimebreak'],
 };
+
+const MUSIC_SOUND_NAMES = new Set<SoundName>(['lobbyMusic', 'gameMusic']);
+const MAX_CONCURRENT_AUDIO_DECODES = 2;
+
+let activeAudioDecodes = 0;
+const queuedAudioDecodeJobs: Array<() => void> = [];
+
+const sharedStreamedLoops = new Map<string, {
+  audio: HTMLAudioElement;
+  name: SoundName;
+  baseVolume: number;
+  isMusic: true;
+  stopping?: boolean;
+  fadeRaf?: number;
+  stopTimeout?: number;
+}>();
+
+function pumpAudioDecodeQueue(): void {
+  while (activeAudioDecodes < MAX_CONCURRENT_AUDIO_DECODES) {
+    const next = queuedAudioDecodeJobs.shift();
+    if (!next) return;
+    activeAudioDecodes++;
+    next();
+  }
+}
+
+function decodeAudioDataLimited(ctx: AudioContext, arrayBuffer: ArrayBuffer): Promise<AudioBuffer> {
+  return new Promise((resolve, reject) => {
+    queuedAudioDecodeJobs.push(() => {
+      ctx.decodeAudioData(arrayBuffer)
+        .then(resolve, reject)
+        .finally(() => {
+          activeAudioDecodes = Math.max(0, activeAudioDecodes - 1);
+          pumpAudioDecodeQueue();
+        });
+    });
+    pumpAudioDecodeQueue();
+  });
+}
+
+function clampAudioVolume(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
 function ensureSharedAudioContext(): AudioContext | null {
   if (!sharedAudioContext) {
@@ -183,6 +226,133 @@ function setAudioParam(
 ): void {
   if (!param) return;
   param.setValueAtTime(value, currentTime);
+}
+
+function cancelStreamedLoopFade(loop: { fadeRaf?: number; stopTimeout?: number }): void {
+  if (loop.fadeRaf !== undefined) {
+    window.cancelAnimationFrame(loop.fadeRaf);
+    loop.fadeRaf = undefined;
+  }
+  if (loop.stopTimeout !== undefined) {
+    window.clearTimeout(loop.stopTimeout);
+    loop.stopTimeout = undefined;
+  }
+}
+
+function getStreamedLoopTargetVolume(loop: { baseVolume: number; isMusic: boolean }): number {
+  return clampAudioVolume(loop.baseVolume * (loop.isMusic ? getMusicVolume() : getSfxVolume()));
+}
+
+function finalizeStreamedLoop(id: string, loop: { audio: HTMLAudioElement; fadeRaf?: number; stopTimeout?: number }): void {
+  cancelStreamedLoopFade(loop);
+  loop.audio.pause();
+  try {
+    loop.audio.currentTime = 0;
+  } catch {
+    // Some browsers disallow seeking until media metadata is ready.
+  }
+  loop.audio.removeAttribute('src');
+  loop.audio.load();
+  sharedStreamedLoops.delete(id);
+}
+
+function fadeStreamedLoop(
+  loop: { audio: HTMLAudioElement; fadeRaf?: number },
+  targetVolume: number,
+  durationMs: number,
+  onComplete?: () => void
+): void {
+  if (durationMs <= 0) {
+    loop.audio.volume = clampAudioVolume(targetVolume);
+    onComplete?.();
+    return;
+  }
+
+  if (loop.fadeRaf !== undefined) {
+    window.cancelAnimationFrame(loop.fadeRaf);
+  }
+
+  const startTime = performance.now();
+  const startVolume = loop.audio.volume;
+  const safeTarget = clampAudioVolume(targetVolume);
+
+  const tick = () => {
+    const progress = Math.min(1, (performance.now() - startTime) / durationMs);
+    loop.audio.volume = startVolume + (safeTarget - startVolume) * progress;
+
+    if (progress >= 1) {
+      loop.fadeRaf = undefined;
+      onComplete?.();
+      return;
+    }
+
+    loop.fadeRaf = window.requestAnimationFrame(tick);
+  };
+
+  loop.fadeRaf = window.requestAnimationFrame(tick);
+}
+
+function updateStreamedLoopVolumes(): void {
+  for (const [, loop] of sharedStreamedLoops) {
+    if (loop.stopping) continue;
+    loop.audio.volume = getStreamedLoopTargetVolume(loop);
+  }
+}
+
+async function playStreamedMusicLoop(
+  id: string,
+  name: SoundName,
+  options: {
+    volume?: number;
+    fadeInMs?: number;
+  },
+  pendingLoop: { cancelled: boolean }
+): Promise<void> {
+  const soundDef = SOUND_EFFECTS[name];
+  const audio = new Audio(soundDef.path);
+  audio.loop = true;
+  audio.preload = 'auto';
+  audio.volume = 0;
+
+  const loop = {
+    audio,
+    name,
+    baseVolume: (options.volume ?? 1) * soundDef.volume,
+    isMusic: true as const,
+  };
+  sharedStreamedLoops.set(id, loop);
+
+  try {
+    await audio.play();
+  } catch (error) {
+    sharedStreamedLoops.delete(id);
+    sharedPendingLoops.delete(id);
+    console.warn(`[Audio] Failed to stream music: ${name}`, error);
+    return;
+  }
+
+  if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) {
+    finalizeStreamedLoop(id, loop);
+    return;
+  }
+
+  sharedPendingLoops.delete(id);
+  const targetVolume = getStreamedLoopTargetVolume(loop);
+  fadeStreamedLoop(loop, targetVolume, Math.max(0, options.fadeInMs ?? 0));
+}
+
+function stopStreamedLoop(id: string, fadeOutMs = 0): void {
+  const loop = sharedStreamedLoops.get(id);
+  if (!loop) return;
+  if (loop.stopping) return;
+
+  if (fadeOutMs > 0) {
+    loop.stopping = true;
+    fadeStreamedLoop(loop, 0, fadeOutMs, () => finalizeStreamedLoop(id, loop));
+    return;
+  }
+
+  finalizeStreamedLoop(id, loop);
 }
 
 export function setAudioListenerTransform(
@@ -237,6 +407,15 @@ export function setAudioListenerTransform(
 }
 
 async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
+  if (MUSIC_SOUND_NAMES.has(name)) {
+    const musicEffect = sharedSounds.get(name) ?? {
+      buffer: null,
+      volume: SOUND_EFFECTS[name].volume,
+    };
+    sharedSounds.set(name, musicEffect);
+    return musicEffect;
+  }
+
   const ctx = ensureSharedAudioContext();
   if (!ctx) {
     console.warn('[Audio] No AudioContext available');
@@ -259,7 +438,7 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
       }
 
       const arrayBuffer = await response.arrayBuffer();
-      const buffer = await ctx.decodeAudioData(arrayBuffer);
+      const buffer = await decodeAudioDataLimited(ctx, arrayBuffer);
       const effect: SoundEffect = {
         buffer,
         volume: soundDef.volume,
@@ -419,10 +598,18 @@ export async function playSharedLoop(
   } = {}
 ): Promise<void> {
   if (sharedConfig.muted) return;
-  if (sharedLoops.has(id) || sharedPendingLoops.has(id)) return;
+  if (sharedLoops.has(id) || sharedStreamedLoops.has(id) || sharedPendingLoops.has(id)) return;
 
   const pendingLoop = { cancelled: false };
   sharedPendingLoops.set(id, pendingLoop);
+
+  if (options.isMusic || MUSIC_SOUND_NAMES.has(name)) {
+    await playStreamedMusicLoop(id, name, {
+      volume: options.volume,
+      fadeInMs: options.fadeInMs,
+    }, pendingLoop);
+    return;
+  }
 
   const ctx = ensureSharedAudioContext();
   if (!ctx) {
@@ -498,6 +685,12 @@ export function stopSharedLoop(id: string, fadeOutMs = 0): void {
     sharedPendingLoops.delete(id);
   }
 
+  const streamedLoop = sharedStreamedLoops.get(id);
+  if (streamedLoop) {
+    stopStreamedLoop(id, fadeOutMs);
+    return;
+  }
+
   const loop = sharedLoops.get(id);
   if (!loop || !sharedAudioContext) return;
   if (loop.stopping) return;
@@ -550,49 +743,7 @@ export function useAudio() {
     if (!sharedAudioContext) {
       initAudio();
     }
-
-    const ctx = sharedAudioContext;
-    if (!ctx) {
-      console.warn('[Audio] No AudioContext available');
-      return null;
-    }
-
-    const existing = sharedSounds.get(name);
-    if (existing?.buffer) return existing;
-
-    const pending = sharedSoundLoads.get(name);
-    if (pending) return pending;
-
-    const soundDef = SOUND_EFFECTS[name];
-
-    const loadPromise = (async () => {
-      try {
-        const response = await fetch(soundDef.path);
-        if (!response.ok) {
-          console.warn(`[Audio] Sound file not found: ${soundDef.path}`);
-          return null;
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        const buffer = await ctx.decodeAudioData(arrayBuffer);
-
-        const effect: SoundEffect = {
-          buffer,
-          volume: soundDef.volume,
-        };
-
-        sharedSounds.set(name, effect);
-        return effect;
-      } catch (error) {
-        console.warn(`[Audio] Failed to load sound: ${name}`, error);
-        return null;
-      } finally {
-        sharedSoundLoads.delete(name);
-      }
-    })();
-
-    sharedSoundLoads.set(name, loadPromise);
-    return loadPromise;
+    return loadSharedSound(name);
   }, [initAudio]);
 
   // Play a sound effect
@@ -738,101 +889,19 @@ export function useAudio() {
     name: SoundName, 
     options?: { volume?: number; fadeIn?: number; isMusic?: boolean }
   ) => {
-    if (sharedConfig.muted) return;
-    if (sharedLoops.has(id) || sharedPendingLoops.has(id)) return; // Already playing or loading
-
-    const pendingLoop = { cancelled: false };
-    sharedPendingLoops.set(id, pendingLoop);
-
     if (!sharedAudioContext) {
       initAudio();
     }
-
-    const ctx = sharedAudioContext;
-    if (!ctx) {
-      sharedPendingLoops.delete(id);
-      return;
-    }
-
-    if (ctx.state === 'suspended') {
-      await ctx.resume();
-    }
-    if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
-
-    const sound = await loadSound(name);
-    if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
-    if (!sound?.buffer) {
-      sharedPendingLoops.delete(id);
-      return;
-    }
-
-    const source = ctx.createBufferSource();
-    source.buffer = sound.buffer;
-    source.loop = true;
-
-    // Use music volume for music tracks, SFX volume for other loops
-    const volumeMultiplier = options?.isMusic ? getMusicVolume() : getSfxVolume();
-    const baseVolume = (options?.volume ?? 1) * sound.volume;
-    const gainNode = ctx.createGain();
-    
-    if (options?.fadeIn) {
-      gainNode.gain.value = 0;
-      gainNode.gain.linearRampToValueAtTime(
-        baseVolume * volumeMultiplier,
-        ctx.currentTime + options.fadeIn
-      );
-    } else {
-      gainNode.gain.value = baseVolume * volumeMultiplier;
-    }
-
-    source.connect(gainNode);
-    gainNode.connect(ctx.destination);
-
-    sharedLoops.set(id, {
-      source,
-      gain: gainNode,
-      isMusic: options?.isMusic ?? false,
-      baseVolume,
+    await playSharedLoop(id, name, {
+      volume: options?.volume,
+      fadeInMs: Math.max(0, options?.fadeIn ?? 0) * 1000,
+      isMusic: options?.isMusic,
     });
-    sharedPendingLoops.delete(id);
-    source.start();
-  }, [loadSound, initAudio]);
+  }, [initAudio]);
 
   // Stop looping sound
   const stopLoop = useCallback((id: string, fadeOut?: number) => {
-    const pendingLoop = sharedPendingLoops.get(id);
-    if (pendingLoop) {
-      pendingLoop.cancelled = true;
-      sharedPendingLoops.delete(id);
-    }
-
-    const loop = sharedLoops.get(id);
-    if (!loop || !sharedAudioContext) return;
-    if (loop.stopping) return;
-
-    if (fadeOut) {
-      loop.stopping = true;
-      const ctx = sharedAudioContext;
-      loop.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeOut);
-      loop.stopTimeout = window.setTimeout(() => {
-        try {
-          loop.source.stop();
-        } catch {
-          // Source may already have ended if the browser stopped it first.
-        }
-        sharedLoops.delete(id);
-      }, fadeOut * 1000);
-    } else {
-      if (loop.stopTimeout !== undefined) {
-        window.clearTimeout(loop.stopTimeout);
-      }
-      try {
-        loop.source.stop();
-      } catch {
-        // Source may already have ended.
-      }
-      sharedLoops.delete(id);
-    }
+    stopSharedLoop(id, Math.max(0, fadeOut ?? 0) * 1000);
   }, []);
 
   // Update audio settings from localStorage
@@ -847,6 +916,7 @@ export function useAudio() {
       const volumeMultiplier = loop.isMusic ? getMusicVolume() : getSfxVolume();
       loop.gain.gain.value = loop.baseVolume * volumeMultiplier;
     }
+    updateStreamedLoopVolumes();
   }, []);
 
   // Toggle mute
@@ -858,6 +928,9 @@ export function useAudio() {
       for (const [id] of sharedLoops) {
         stopLoop(id);
       }
+      for (const [id] of sharedStreamedLoops) {
+        stopStreamedLoop(id);
+      }
     }
   }, [stopLoop]);
 
@@ -867,7 +940,9 @@ export function useAudio() {
       initAudio();
     }
     
-    await Promise.all(names.map(name => loadSound(name)));
+    await Promise.all(names
+      .filter(name => !MUSIC_SOUND_NAMES.has(name))
+      .map(name => loadSound(name)));
   }, [initAudio, loadSound]);
 
   const preloadSoundGroup = useCallback(async (group: SoundGroup) => {
@@ -1244,16 +1319,8 @@ export function useMusic() {
   // Actually start playing the music
   const startMusic = useCallback((track: 'lobby' | 'game') => {    
     // Force stop any current music immediately (no fade to prevent overlap)
-    const lobbyLoop = sharedLoops.get('lobbyMusic');
-    if (lobbyLoop) {
-      try { lobbyLoop.source.stop(); } catch {}
-      sharedLoops.delete('lobbyMusic');
-    }
-    const gameLoop = sharedLoops.get('gameMusic');
-    if (gameLoop) {
-      try { gameLoop.source.stop(); } catch {}
-      sharedLoops.delete('gameMusic');
-    }
+    stopLoop('lobbyMusic');
+    stopLoop('gameMusic');
     
     initAudio();
     
@@ -1268,7 +1335,7 @@ export function useMusic() {
     musicState.isPlaying = true;
     musicState.isPaused = false;
     musicState.pendingTrack = null;
-  }, [playLoop, initAudio]);
+  }, [playLoop, stopLoop, initAudio]);
 
   // Pause music (fade out but don't stop)
   const pauseMusic = useCallback(() => {
@@ -1276,10 +1343,15 @@ export function useMusic() {
     
     const loopId = musicState.currentTrack === 'lobby' ? 'lobbyMusic' : 'gameMusic';
     const loop = sharedLoops.get(loopId);
+    const streamedLoop = sharedStreamedLoops.get(loopId);
     
     if (loop && sharedAudioContext) {
       musicState.pausedGainValue = loop.gain.gain.value;
       loop.gain.gain.linearRampToValueAtTime(0, sharedAudioContext.currentTime + 0.5);
+      musicState.isPaused = true;
+    } else if (streamedLoop) {
+      musicState.pausedGainValue = streamedLoop.audio.volume;
+      fadeStreamedLoop(streamedLoop, 0, 500);
       musicState.isPaused = true;
     }
   }, []);
@@ -1290,6 +1362,7 @@ export function useMusic() {
     
     const loopId = musicState.currentTrack === 'lobby' ? 'lobbyMusic' : 'gameMusic';
     const loop = sharedLoops.get(loopId);
+    const streamedLoop = sharedStreamedLoops.get(loopId);
     
     if (loop && sharedAudioContext) {
       const targetVolume = musicState.pausedGainValue || getMusicVolume();
@@ -1297,6 +1370,10 @@ export function useMusic() {
         targetVolume,
         sharedAudioContext.currentTime + 0.5
       );
+      musicState.isPaused = false;
+    } else if (streamedLoop) {
+      const targetVolume = musicState.pausedGainValue || getStreamedLoopTargetVolume(streamedLoop);
+      fadeStreamedLoop(streamedLoop, targetVolume, 500);
       musicState.isPaused = false;
     }
   }, []);
@@ -1343,10 +1420,10 @@ export function useMusic() {
 
   // Stop all music
   const stopMusic = useCallback(() => {
-    if (sharedLoops.has('lobbyMusic')) {
+    if (sharedLoops.has('lobbyMusic') || sharedStreamedLoops.has('lobbyMusic')) {
       stopLoop('lobbyMusic', 1.5);
     }
-    if (sharedLoops.has('gameMusic')) {
+    if (sharedLoops.has('gameMusic') || sharedStreamedLoops.has('gameMusic')) {
       stopLoop('gameMusic', 1.5);
     }
     musicState.currentTrack = null;

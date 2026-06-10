@@ -4,6 +4,8 @@ import { useGameStore, LobbyPlayer, LobbyInfo, MapVoteOption, MapVoteRecord } fr
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
 import type { BotDifficulty, HeroId, Team, PlayerInput, MovementCommandPacket } from '@voxel-strike/shared';
+import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
+import { disconnectVoice } from '../voice/voiceControls';
 
 // Import extracted handlers
 import {
@@ -69,6 +71,7 @@ interface NetworkContextType {
   addGameBot: (heroId: HeroId, team: Team) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
+  requestVoiceToken: (scope?: VoiceScope) => Promise<VoiceTokenResponse>;
 
   // NPC/Bot operations (for testing)
   spawnNpc: (heroId: HeroId, team?: Team, position?: { x: number; y: number; z: number }, name?: string) => void;
@@ -88,6 +91,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const lobbyRoomRef = useRef<Room | null>(null);
   const gameRoomRef = useRef<Room | null>(null);
   const isJoiningGameRef = useRef(false);
+  const voiceTokenRequestsRef = useRef(new Map<string, {
+    resolve: (response: VoiceTokenResponse) => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+  }>());
 
   const {
     setConnected,
@@ -166,8 +174,18 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     return () => events.close();
   }, [fetchLobbies, setAvailableLobbies]);
 
+  const rejectPendingVoiceTokenRequests = useCallback((message: string) => {
+    voiceTokenRequestsRef.current.forEach((pending) => {
+      window.clearTimeout(pending.timeoutId);
+      pending.reject(new Error(message));
+    });
+    voiceTokenRequestsRef.current.clear();
+  }, []);
+
   const cleanupExistingConnections = useCallback(() => {
     isJoiningGameRef.current = false;
+    disconnectVoice('network_cleanup');
+    rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
 
     if (lobbyRoomRef.current) {
       try {
@@ -185,7 +203,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
       gameRoomRef.current = null;
     }
-  }, []);
+  }, [rejectPendingVoiceTokenRequests]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
     room.onMessage('lobbyState', (data: { lobbyId: string; name: string; hostId: string; status: string; players: any[] }) => {
@@ -347,11 +365,13 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     room.onMessage('kicked', (data: { reason: string }) => {
       loggers.network.warn('kicked from lobby', data.reason);
+      disconnectVoice('lobby_kicked');
       leaveLobby();
     });
 
     room.onMessage('duplicateSession', (data: { reason: string }) => {
       loggers.network.warn('duplicate session detected in lobby', data.reason);
+      disconnectVoice('duplicate_lobby_session');
     });
 
     room.onMessage('error', (data: { message: string }) => {
@@ -364,6 +384,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     room.onLeave((code) => {
       loggers.network.debug('left lobby room', code);
+      disconnectVoice('left_lobby');
       resetLobby();
     });
   }, [setCurrentLobby, setIsLobbyHost, setLobbyPlayers, updateLobbyPlayer, removeLobbyPlayer, setAppPhase, setMapVoteState, setMapVotes, setMapSeed, clearMapVote, resetLobby]);
@@ -443,6 +464,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected]);
 
   const leaveLobby = useCallback(() => {
+    disconnectVoice('leave_lobby');
     if (lobbyRoomRef.current) {
       lobbyRoomRef.current.leave();
       lobbyRoomRef.current = null;
@@ -570,6 +592,23 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     room.onMessage('duplicateSession', (data: { reason: string }) => {
       loggers.network.warn('duplicate session detected', data.reason);
+      disconnectVoice('duplicate_game_session');
+    });
+
+    room.onMessage('voiceToken', (data: VoiceTokenResponse) => {
+      const pending = voiceTokenRequestsRef.current.get(data.requestId);
+      if (!pending) {
+        loggers.network.debug('received unmatched voice token response', data.requestId);
+        return;
+      }
+
+      window.clearTimeout(pending.timeoutId);
+      voiceTokenRequestsRef.current.delete(data.requestId);
+      pending.resolve(data);
+    });
+
+    room.onMessage('voiceTeamChanged', () => {
+      disconnectVoice('voice_team_changed');
     });
 
     room.onMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
@@ -596,6 +635,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     room.onLeave((code) => {
       loggers.network.debug('left room', code);
       if (syncInterval) clearInterval(syncInterval);
+      rejectPendingVoiceTokenRequests('game room left before voice token response');
+      disconnectVoice('left_game_room');
       if (gameRoomRef.current === room) {
         gameRoomRef.current = null;
       }
@@ -609,7 +650,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby, rejectPendingVoiceTokenRequests]);
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => {
     if (isJoiningGameRef.current) {
@@ -663,6 +704,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [getClient, setupGameListeners, setLoading, setRoomId, setAppPhase]);
 
   const leaveGame = useCallback(() => {
+    disconnectVoice('leave_game');
+    rejectPendingVoiceTokenRequests('left game before voice token response');
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
@@ -673,9 +716,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     resetLobby();
     setGamePhase('waiting' as any);
     setAppPhase('browsing_lobbies');
-  }, [setRoomId, setConnected, resetLobby, setGamePhase, setAppPhase]);
+  }, [setRoomId, setConnected, resetLobby, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests]);
 
   const disconnect = useCallback(() => {
+    disconnectVoice('network_disconnect');
+    rejectPendingVoiceTokenRequests('network disconnected before voice token response');
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
@@ -683,7 +728,34 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     clientRef.current = null;
     isJoiningGameRef.current = false;
     reset();
-  }, [reset]);
+  }, [reset, rejectPendingVoiceTokenRequests]);
+
+  const requestVoiceToken = useCallback((scope: VoiceScope = 'match'): Promise<VoiceTokenResponse> => {
+    const room = gameRoomRef.current;
+    if (!room) {
+      return Promise.resolve({
+        requestId: 'not-connected',
+        enabled: false,
+        scope,
+        mode: 'team',
+        reason: 'not connected to game room',
+      });
+    }
+
+    const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return new Promise<VoiceTokenResponse>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        voiceTokenRequestsRef.current.delete(requestId);
+        reject(new Error('voice token request timed out'));
+      }, 8000);
+
+      voiceTokenRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
+      room.send('requestVoiceToken', { requestId, scope });
+    });
+  }, []);
 
   // ==================== GAME ACTIONS ====================
 
@@ -816,6 +888,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       addGameBot,
       selectTeam,
       setReady,
+      requestVoiceToken,
       spawnNpc,
       damageNpc,
       killNpc,

@@ -321,7 +321,11 @@ export function ChronosPulsesManager() {
             world,
             slot.position,
             slot.direction,
-            moveDistance + CHRONOS_PULSE_COLLISION_RADIUS
+            moveDistance + CHRONOS_PULSE_COLLISION_RADIUS,
+            {
+              priority: 'visual',
+              feature: 'projectile:chronosPulse',
+            }
           );
           physicsMs += performance.now() - physicsStart;
           if (hit && hit.distance <= moveDistance + CHRONOS_PULSE_COLLISION_RADIUS) {

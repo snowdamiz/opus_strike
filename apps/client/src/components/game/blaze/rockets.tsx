@@ -337,7 +337,10 @@ export function RocketsManager() {
         const world = getPhysicsWorld();
         if (world) {
           const physicsStart = performance.now();
-          const hit = raycast(world, slot.position, slot.direction, moveDistance + PROJECTILE_RADIUS);
+          const hit = raycast(world, slot.position, slot.direction, moveDistance + PROJECTILE_RADIUS, {
+            priority: 'visual',
+            feature: 'projectile:blazeRocket',
+          });
           physicsMs += performance.now() - physicsStart;
           if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
             triggerTerrainImpact('blaze_rocket', hit.point, {

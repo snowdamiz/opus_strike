@@ -45,6 +45,14 @@ function PhantomIcon({ className }: { className?: string }) {
   );
 }
 
+function DiscordIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M19.54 5.34A18.2 18.2 0 0015.02 4c-.2.36-.42.84-.58 1.22a16.9 16.9 0 00-5.01 0A11.7 11.7 0 008.84 4c-1.6.27-3.12.72-4.52 1.34C1.46 9.6.68 13.74 1.07 17.81A18.5 18.5 0 006.61 20.6c.45-.61.84-1.26 1.18-1.95-.65-.24-1.27-.54-1.86-.89.16-.12.31-.24.46-.36a13.05 13.05 0 0011.14 0l.46.36c-.6.35-1.22.65-1.87.89.34.69.74 1.34 1.18 1.95a18.43 18.43 0 005.55-2.79c.46-4.72-.78-8.82-3.31-12.47zM8.52 15.3c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2zm6.96 0c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2z" />
+    </svg>
+  );
+}
+
 function SlopHeroesMark({ className }: { className?: string }) {
   return (
     <img
@@ -99,15 +107,24 @@ export function MainLobby() {
     isConnecting,
     walletAddress,
     isAuthenticated,
+    isDiscordAuthEnabled,
     isNewUser,
+    authProvider,
     user,
+    pendingRegistration,
+    suggestedPlayerName,
+    hasFullFunctionality,
     connect,
     disconnect,
     logout,
     authenticate,
+    signInWithDiscord,
+    linkPhantom,
     registerUser,
     error: walletError,
+    notice,
     clearError,
+    clearNotice,
   } = useWallet();
   const { canInstall, install: installPwa } = usePwaInstallPrompt();
 
@@ -126,6 +143,7 @@ export function MainLobby() {
   const [newPlayerName, setNewPlayerName] = useState('');
   const [nameError, setNameError] = useState<string | null>(null);
   const [isRegistering, setIsRegistering] = useState(false);
+  const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
 
   // Handle authentication after wallet connection
   useEffect(() => {
@@ -139,7 +157,7 @@ export function MainLobby() {
     if (isAuthenticated && user && !isNewUser) {
       storeSetPlayerName(user.name);
       setUser(user.id, user.name, user.stats);
-      setWalletAddress(user.walletAddress);
+      setWalletAddress(user.walletAddress ?? null);
       setShowAuthModal(false);
       setShowNameInput(false);
     }
@@ -149,11 +167,19 @@ export function MainLobby() {
   useEffect(() => {
     if (isAuthenticated && isNewUser) {
       setShowNameInput(true);
+      setNewPlayerName((currentName) => currentName || suggestedPlayerName);
     }
-  }, [isAuthenticated, isNewUser]);
+  }, [isAuthenticated, isNewUser, suggestedPlayerName]);
+
+  const handleDiscordSignIn = () => {
+    clearError();
+    clearNotice();
+    signInWithDiscord();
+  };
 
   const handleConnect = async () => {
     clearError();
+    clearNotice();
     await connect();
   };
 
@@ -192,7 +218,7 @@ export function MainLobby() {
       const registeredUser = await registerUser(newPlayerName.trim());
       storeSetPlayerName(registeredUser.name);
       setUser(registeredUser.id, registeredUser.name, registeredUser.stats);
-      setWalletAddress(registeredUser.walletAddress);
+      setWalletAddress(registeredUser.walletAddress ?? null);
       setShowAuthModal(false);
       setShowNameInput(false);
       setNewPlayerName('');
@@ -213,7 +239,24 @@ export function MainLobby() {
 
   const handleSignInClick = () => {
     clearError();
+    clearNotice();
     setShowAuthModal(true);
+  };
+
+  const handleLinkPhantom = async () => {
+    if (isLinkingPhantom || hasFullFunctionality) return;
+
+    setIsLinkingPhantom(true);
+    try {
+      const linkedUser = await linkPhantom();
+      storeSetPlayerName(linkedUser.name);
+      setUser(linkedUser.id, linkedUser.name, linkedUser.stats);
+      setWalletAddress(linkedUser.walletAddress ?? null);
+    } catch (err: any) {
+      setError(err.message || 'Failed to connect Phantom');
+    } finally {
+      setIsLinkingPhantom(false);
+    }
   };
 
   const handleInstallPwa = () => {
@@ -225,6 +268,9 @@ export function MainLobby() {
   const formatAddress = (address: string) => {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
+  const discordDisplayName = pendingRegistration?.displayName
+    || user?.linkedAccounts.find((account) => account.provider === 'discord')?.displayName
+    || 'Discord';
 
   // Manual carousel navigation
   const handlePrevHero = () => {
@@ -448,7 +494,11 @@ export function MainLobby() {
             heroAnimationMode={heroAnimationMode}
             lobbyCount={availableLobbies.length}
             isAuthenticated={isAuthenticated}
+            isDiscordAuthEnabled={isDiscordAuthEnabled}
+            hasFullFunctionality={hasFullFunctionality}
+            isLinkingPhantom={isLinkingPhantom}
             onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
+            onLinkPhantom={handleLinkPhantom}
             onOpenCreateLobby={isAuthenticated ? () => setShowCreateLobby(true) : handleSignInClick}
             onOpenBrowseGames={() => setShowBrowseGames(true)}
             onPrevHero={handlePrevHero}
@@ -499,13 +549,18 @@ export function MainLobby() {
           isConnected={isConnected}
           isConnecting={isConnecting}
           walletAddress={walletAddress}
+          isDiscordAuthEnabled={isDiscordAuthEnabled}
+          authProvider={authProvider}
+          pendingRegistrationDisplayName={discordDisplayName}
           isAuthenticating={isAuthenticating}
           isAuthenticated={isAuthenticated}
           showNameInput={showNameInput}
           newPlayerName={newPlayerName}
           nameError={nameError}
           walletError={walletError}
+          notice={notice}
           isRegistering={isRegistering}
+          onDiscordSignIn={handleDiscordSignIn}
           onConnect={handleConnect}
           onAuthenticate={handleAuthenticate}
           onDisconnect={handleDisconnect}
@@ -530,7 +585,11 @@ interface PlayTabProps {
   heroAnimationMode: HeroAnimationMode;
   lobbyCount: number;
   isAuthenticated: boolean;
+  isDiscordAuthEnabled: boolean;
+  hasFullFunctionality: boolean;
+  isLinkingPhantom: boolean;
   onQuickPlay: () => void;
+  onLinkPhantom: () => void;
   onOpenCreateLobby: () => void;
   onOpenBrowseGames: () => void;
   onPrevHero: () => void;
@@ -547,7 +606,11 @@ function PlayTab({
   heroAnimationMode,
   lobbyCount,
   isAuthenticated,
+  isDiscordAuthEnabled,
+  hasFullFunctionality,
+  isLinkingPhantom,
   onQuickPlay,
+  onLinkPhantom,
   onOpenCreateLobby,
   onOpenBrowseGames,
   onPrevHero,
@@ -661,6 +724,22 @@ function PlayTab({
             </div>
           )}
 
+          {isAuthenticated && !hasFullFunctionality && (
+            <div className="p-3 bg-amber-500/10 border border-amber-400/20 rounded-lg mb-4">
+              <p className="text-amber-100 text-xs sm:text-sm font-body text-center">
+                Phantom is required for full functionality.
+              </p>
+              <button
+                type="button"
+                onClick={onLinkPhantom}
+                disabled={isLinkingPhantom}
+                className="mt-2 w-full py-2 rounded-lg font-display text-xs text-amber-50 bg-amber-500/20 border border-amber-300/20 hover:bg-amber-500/30 disabled:opacity-60"
+              >
+                {isLinkingPhantom ? 'CONNECTING...' : 'LINK PHANTOM'}
+              </button>
+            </div>
+          )}
+
  <button
  onClick={() => { playButtonClick(); onQuickPlay(); }}
  disabled={isLoading}
@@ -691,7 +770,11 @@ function PlayTab({
  </>
  ) : (
  <>
+ {isDiscordAuthEnabled ? (
+ <DiscordIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
+ ) : (
  <PhantomIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
+ )}
  SIGN IN TO PLAY
  </>
  )}
@@ -1042,13 +1125,18 @@ interface AuthModalProps {
   isConnected: boolean;
   isConnecting: boolean;
   walletAddress: string | null;
+  isDiscordAuthEnabled: boolean;
+  authProvider: 'discord' | 'phantom' | null;
+  pendingRegistrationDisplayName: string;
   isAuthenticating: boolean;
   isAuthenticated: boolean;
   showNameInput: boolean;
   newPlayerName: string;
   nameError: string | null;
   walletError: string | null;
+  notice: string | null;
   isRegistering: boolean;
+  onDiscordSignIn: () => void;
   onConnect: () => void;
   onAuthenticate: () => void;
   onDisconnect: () => void;
@@ -1064,13 +1152,18 @@ function AuthModal({
   isConnected,
   isConnecting,
   walletAddress,
+  isDiscordAuthEnabled,
+  authProvider,
+  pendingRegistrationDisplayName,
   isAuthenticating,
   isAuthenticated,
   showNameInput,
   newPlayerName,
   nameError,
   walletError,
+  notice,
   isRegistering,
+  onDiscordSignIn,
   onConnect,
   onAuthenticate,
   onDisconnect,
@@ -1080,11 +1173,13 @@ function AuthModal({
   onClose,
   formatAddress,
 }: AuthModalProps) {
+  const isDiscordPending = authProvider === 'discord' && !walletAddress;
+
   return (
     <GameDialog
-      title={showNameInput ? 'CREATE PROFILE' : 'CONNECT WALLET'}
-      icon={<PhantomIcon className="w-6 h-6" />}
-      iconClassName="bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/20"
+      title={showNameInput ? 'CREATE PROFILE' : 'SIGN IN'}
+      icon={(showNameInput && !isDiscordPending) || !isDiscordAuthEnabled ? <PhantomIcon className="w-6 h-6" /> : <DiscordIcon className="w-6 h-6 text-indigo-200" />}
+      iconClassName="bg-gradient-to-br from-indigo-500/20 to-purple-600/10 border border-indigo-400/20"
       size="sm"
       onClose={onClose}
       bodyClassName="p-5 space-y-3"
@@ -1095,10 +1190,12 @@ function AuthModal({
               {/* Connected wallet display */}
               <div className="flex items-center justify-between p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
                 <div className="flex items-center gap-3">
-                  <PhantomIcon className="w-6 h-6" />
+                  {isDiscordPending ? <DiscordIcon className="w-6 h-6 text-indigo-200" /> : <PhantomIcon className="w-6 h-6" />}
                   <div>
                     <p className="text-white/60 text-xs font-body">Connected</p>
-                    <p className="text-white font-mono text-sm">{walletAddress && formatAddress(walletAddress)}</p>
+                    <p className={isDiscordPending ? 'text-white text-sm font-body' : 'text-white font-mono text-sm'}>
+                      {isDiscordPending ? pendingRegistrationDisplayName : walletAddress && formatAddress(walletAddress)}
+                    </p>
                   </div>
                 </div>
  <button
@@ -1171,6 +1268,26 @@ function AuthModal({
             </>
           ) : (
             <>
+              {isDiscordAuthEnabled && (
+                <>
+                  <button
+                    onClick={onDiscordSignIn}
+                    className="w-full py-3 rounded-lg font-display text-base text-white border border-indigo-300/20 bg-indigo-500 hover:bg-indigo-400 shadow-[0_0_36px_rgba(99,102,241,0.28)] relative overflow-hidden group"
+                  >
+                    <span className="relative flex items-center justify-center gap-2.5">
+                      <DiscordIcon className="w-5 h-5" />
+                      CONTINUE WITH DISCORD
+                    </span>
+                  </button>
+
+                  <div className="flex items-center gap-3">
+                    <div className="h-px flex-1 bg-white/10" />
+                    <span className="text-[10px] font-body uppercase tracking-widest text-white/35">or use Phantom</span>
+                    <div className="h-px flex-1 bg-white/10" />
+                  </div>
+                </>
+              )}
+
               {/* Wallet connection state */}
               {isConnected && walletAddress ? (
                 <div className="space-y-3">
@@ -1278,6 +1395,12 @@ function AuthModal({
               )}
 
               {/* Error message */}
+              {notice && (
+                <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg animate-fade-in">
+                  <p className="text-green-300 text-sm font-body">{notice}</p>
+                </div>
+              )}
+
               {walletError && (
                 <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg animate-fade-in">
                   <p className="text-red-400 text-sm font-body">{walletError}</p>

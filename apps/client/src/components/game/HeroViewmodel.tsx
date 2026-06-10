@@ -57,6 +57,7 @@ import {
   createChronosAegisPanelGeometry,
 } from './chronos/aegisGeometry';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
+import type { ViewmodelQualityConfig } from './visualQuality';
 
 type ViewmodelHeroId = Extract<HeroId, 'phantom' | 'hookshot' | 'blaze' | 'chronos'>;
 
@@ -78,6 +79,7 @@ interface ViewmodelMaterialSet {
 interface HeroViewmodelProps {
   heroId: ViewmodelHeroId;
   action: ViewmodelActionState;
+  config: ViewmodelQualityConfig;
 }
 
 const VIEWMODEL_HEROES = new Set<HeroId>(['phantom', 'hookshot', 'blaze', 'chronos']);
@@ -429,6 +431,8 @@ function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMaterialSet {
     }),
     glow: new THREE.MeshBasicMaterial({
       color: colors.glow,
+      transparent: true,
+      opacity: 1,
       toneMapped: false,
     }),
     glass: new THREE.MeshStandardMaterial({
@@ -3907,7 +3911,7 @@ function ChronosViewmodel({
   );
 }
 
-const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: HeroViewmodelProps) {
+const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, config }: HeroViewmodelProps) {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
   const rootRef = useRef<THREE.Group>(null);
@@ -3923,6 +3927,14 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
   const processedHookshotPrimaryEventIdRef = useRef<string | null>(null);
   const processedHookshotSecondaryEventIdRef = useRef<string | null>(null);
   const materials = useMemo(() => getViewmodelMaterials(heroId), [heroId]);
+
+  useEffect(() => {
+    const accentBase = config.allowDecorativeGlows ? 0.34 : 0.12;
+    const glassBase = config.allowDecorativeGlows ? 0.26 : 0.06;
+    materials.accent.emissiveIntensity = accentBase;
+    materials.glass.emissiveIntensity = glassBase;
+    materials.glow.opacity = config.allowDecorativeGlows ? 1 : 0.62;
+  }, [config.allowDecorativeGlows, materials]);
 
   useEffect(() => {
     if (heroId !== 'phantom') return undefined;
@@ -4157,7 +4169,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action }: 
   );
 });
 
-export function HeroViewmodel() {
+export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
   const {
     heroId,
     playerState,
@@ -4206,6 +4218,7 @@ export function HeroViewmodel() {
     <HeroViewmodelInner
       key={heroId}
       heroId={heroId}
+      config={config}
       action={{
         active: actionActive,
         charging: actionCharging,

@@ -131,7 +131,10 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
       
       // Check for ground collision
       if (isPhysicsReady()) {
-        const groundCheck = checkGroundWithNormal(pos.x, pos.y + 2, pos.z, 10);
+        const groundCheck = checkGroundWithNormal(pos.x, pos.y + 2, pos.z, 10, {
+          priority: 'visual',
+          feature: 'effect:hookshotTrapGround',
+        });
         if (groundCheck && pos.y <= groundCheck.groundY + 0.1) {
           // Landed!
           isLandedRef.current = true;
@@ -322,7 +325,11 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
       const directHit = raycastDirection(
         camera.position.x, camera.position.y, camera.position.z,
         TEMP_VECTORS.v1.x, TEMP_VECTORS.v1.y, TEMP_VECTORS.v1.z,
-        TRAP_MAX_RANGE + 10
+        TRAP_MAX_RANGE + 10,
+        {
+          priority: 'visual',
+          feature: 'targeting:hookshotTrap',
+        }
       );
       
       if (directHit && directHit.hit) {
@@ -332,7 +339,10 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
         foundTarget = true;
         
         if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50);
+          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+            priority: 'visual',
+            feature: 'targeting:hookshotTrap',
+          });
           if (groundBelow?.isWalkable) {
             targetY = groundBelow.groundY + 0.1;
           }
@@ -350,7 +360,10 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
           const sampleY = camera.position.y + TEMP_VECTORS.v1.y * dist;
           const sampleZ = camera.position.z + TEMP_VECTORS.v1.z * dist;
           
-          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150);
+          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
+            priority: 'visual',
+            feature: 'targeting:hookshotTrap',
+          });
           
           if (groundCheck?.isWalkable) {
             targetX = sampleX;
@@ -372,7 +385,10 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
           targetX = localPlayer.position.x + dx * scale;
           targetZ = localPlayer.position.z + dz * scale;
           
-          const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100);
+          const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
+            priority: 'visual',
+            feature: 'targeting:hookshotTrap',
+          });
           if (groundCheck?.isWalkable) {
             targetY = groundCheck.groundY + 0.1;
           } else {

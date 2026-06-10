@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import type { EffectQualityConfig } from './visualQuality';
 
-const LINE_COUNT = 36;
+const DEFAULT_LINE_COUNT = 36;
 const LINE_LENGTH = 1.25;
 const SPAWN_RADIUS_MIN = 0.95;
 const SPAWN_RADIUS_MAX = 1.85;
 const BASE_LINE_SPEED = 4.1;
 const DISTANCE_FROM_CAMERA = 2.15;
+const speedLineMatrixDummy = new THREE.Object3D();
 
 interface SpeedLine {
   startRadius: number;
@@ -23,16 +25,17 @@ interface SpeedLine {
   color: string;
 }
 
-export function SlideSpeedLines() {
+export function SlideSpeedLines({ config }: { config: EffectQualityConfig }) {
   const { camera } = useThree();
   const groupRef = useRef<THREE.Group>(null);
-  const linesRef = useRef<THREE.Mesh[]>([]);
+  const meshRef = useRef<THREE.InstancedMesh>(null);
   const lineProgressRef = useRef<number[]>([]);
   const slideIntensityRef = useRef(useGameStore.getState().slideIntensity);
+  const lineCount = Math.min(DEFAULT_LINE_COUNT, Math.max(0, config.slideSpeedLineCount));
   
   const lineConfigs = useMemo<SpeedLine[]>(() => {
-    return Array.from({ length: LINE_COUNT }, (_, i) => {
-      const baseAngle = (i / LINE_COUNT) * Math.PI * 2;
+    return Array.from({ length: lineCount }, (_, i) => {
+      const baseAngle = (i / Math.max(1, lineCount)) * Math.PI * 2;
       const angle = baseAngle + (Math.random() - 0.5) * 0.18;
       const sideBias = Math.abs(Math.cos(angle));
       
@@ -49,7 +52,7 @@ export function SlideSpeedLines() {
         color: Math.random() > 0.58 ? '#b9fbff' : '#ffffff',
       };
     });
-  }, []);
+  }, [lineCount]);
 
   const lineGeometry = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
 
@@ -86,6 +89,15 @@ export function SlideSpeedLines() {
   }, [lineConfigs]);
 
   useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    for (let i = 0; i < lineConfigs.length; i++) {
+      mesh.setColorAt(i, new THREE.Color(lineConfigs[i].color));
+    }
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }, [lineConfigs]);
+
+  useEffect(() => {
     return useGameStore.subscribe((state, previousState) => {
       if (state.slideIntensity === previousState.slideIntensity) return;
       slideIntensityRef.current = state.slideIntensity;
@@ -113,11 +125,14 @@ export function SlideSpeedLines() {
     
     groupRef.current.position.copy(camera.position);
     groupRef.current.quaternion.copy(camera.quaternion);
+    const mesh = meshRef.current;
+    if (!mesh) return;
+
+    const material = mesh.material as THREE.MeshBasicMaterial;
+    material.opacity = Math.min(0.82, Math.pow(slideIntensity, 0.9));
+    mesh.visible = material.opacity > 0.006;
     
-    linesRef.current.forEach((mesh, i) => {
-      if (!mesh) return;
-      
-      const config = lineConfigs[i];
+    lineConfigs.forEach((config, i) => {
       if (!config) return;
       
       const currentProgress = lineProgressRef.current[i] ?? config.offset;
@@ -129,9 +144,8 @@ export function SlideSpeedLines() {
       const x = Math.cos(config.angle) * currentRadius;
       const y = Math.sin(config.angle) * currentRadius;
       
-      mesh.position.set(x, y, -DISTANCE_FROM_CAMERA - config.zDrift * progress);
-      
-      mesh.rotation.set(0, 0, config.angle - Math.PI / 2);
+      speedLineMatrixDummy.position.set(x, y, -DISTANCE_FROM_CAMERA - config.zDrift * progress);
+      speedLineMatrixDummy.rotation.set(0, 0, config.angle - Math.PI / 2);
       
       const lengthScale = 0.42 + progress * 0.88;
       const width = config.thickness * (0.72 + progress * 0.46);
@@ -141,32 +155,31 @@ export function SlideSpeedLines() {
       const fadeIn = THREE.MathUtils.smoothstep(progress, 0, 0.2);
       const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, 0.68, 1);
       const material = mesh.material as THREE.MeshBasicMaterial;
-      const opacity = config.opacity * fadeIn * fadeOut * Math.pow(slideIntensity, 0.9);
-      material.opacity = opacity;
-      mesh.visible = opacity > 0.006;
+      const opacity = config.opacity * fadeIn * fadeOut;
+      speedLineMatrixDummy.scale.set(opacity > 0.006 ? width : 0.0001, opacity > 0.006 ? length : 0.0001, 1);
+      speedLineMatrixDummy.updateMatrix();
+      mesh.setMatrixAt(i, speedLineMatrixDummy.matrix);
     });
+
+    mesh.instanceMatrix.needsUpdate = true;
   });
+
+  if (lineCount <= 0) return null;
 
   return (
     <group ref={groupRef}>
-      {lineConfigs.map((config, i) => (
-        <mesh
-          key={i}
-          geometry={lineGeometry}
-          ref={(el) => { if (el) linesRef.current[i] = el; }}
-        >
-          <meshBasicMaterial
-            map={streakTexture ?? undefined}
-            color={config.color}
-            transparent
-            opacity={0}
-            side={THREE.DoubleSide}
-            depthWrite={false}
-            depthTest={false}
-            blending={THREE.AdditiveBlending}
-          />
-        </mesh>
-      ))}
+      <instancedMesh ref={meshRef} args={[lineGeometry, undefined, lineCount]}>
+        <meshBasicMaterial
+          map={streakTexture ?? undefined}
+          vertexColors
+          transparent
+          opacity={0}
+          side={THREE.DoubleSide}
+          depthWrite={false}
+          depthTest={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </instancedMesh>
     </group>
   );
 }

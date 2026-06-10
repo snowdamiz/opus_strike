@@ -3,11 +3,9 @@ import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import {
   ATLAS_COLUMNS,
-  ATLAS_REPEAT_EDGE_CROP_PIXELS,
   ATLAS_ROWS,
-  ATLAS_UV_PADDING,
-  TILE_SIZE,
   createVoxelAtlasTextures,
+  type VoxelAtlasTextures,
 } from './textureAtlas';
 import type { VoxelMaterialDetail } from '../visualQuality';
 
@@ -67,12 +65,12 @@ function replaceShaderChunk(source: string, chunk: string, replacement: string):
   return source.replace(`#include <${chunk}>`, replacement);
 }
 
-function patchVoxelAtlasShader(shader: ShaderParameters): void {
+function patchVoxelAtlasShader(shader: ShaderParameters, atlas: VoxelAtlasTextures): void {
   shader.uniforms.voxelAtlasTileSize = { value: new THREE.Vector2(1 / ATLAS_COLUMNS, 1 / ATLAS_ROWS) };
   shader.uniforms.voxelAtlasRepeatInset = {
     value: new THREE.Vector2(
-      Math.max(ATLAS_UV_PADDING, ATLAS_REPEAT_EDGE_CROP_PIXELS / (ATLAS_COLUMNS * TILE_SIZE)),
-      Math.max(ATLAS_UV_PADDING, ATLAS_REPEAT_EDGE_CROP_PIXELS / (ATLAS_ROWS * TILE_SIZE))
+      Math.max(atlas.uvPadding, atlas.repeatEdgeCropPixels / (ATLAS_COLUMNS * atlas.tileSize)),
+      Math.max(atlas.uvPadding, atlas.repeatEdgeCropPixels / (ATLAS_ROWS * atlas.tileSize))
     ),
   };
 
@@ -189,7 +187,7 @@ export function useVoxelMaterial(
   { reflectionIntensity, detail }: VoxelMaterialOptions
 ): THREE.MeshStandardMaterial {
   const material = useMemo(() => {
-    const atlas = createVoxelAtlasTextures(theme);
+    const atlas = createVoxelAtlasTextures(theme, { detail });
     const useSurfaceResponseMaps = detail !== 'low';
     const useFineDetailMaps = detail === 'high';
 
@@ -205,12 +203,12 @@ export function useVoxelMaterial(
       color: '#ffffff',
     };
 
-    if (useSurfaceResponseMaps) {
+    if (useSurfaceResponseMaps && atlas.roughness && atlas.metalness) {
       parameters.roughnessMap = atlas.roughness;
       parameters.metalnessMap = atlas.metalness;
     }
 
-    if (useFineDetailMaps) {
+    if (useFineDetailMaps && atlas.bump && atlas.ao) {
       parameters.bumpMap = atlas.bump;
       parameters.aoMap = atlas.ao;
     }
@@ -219,8 +217,8 @@ export function useVoxelMaterial(
 
     material.envMapIntensity = reflectionIntensity;
     material.name = 'procedural-voxel-atlas-material';
-    material.onBeforeCompile = patchVoxelAtlasShader;
-    material.customProgramCacheKey = () => VOXEL_ATLAS_SHADER_KEY;
+    material.onBeforeCompile = (shader) => patchVoxelAtlasShader(shader, atlas);
+    material.customProgramCacheKey = () => `${VOXEL_ATLAS_SHADER_KEY}:${detail}:${atlas.tileSize}`;
     return material;
   }, [detail, reflectionIntensity, theme]);
 

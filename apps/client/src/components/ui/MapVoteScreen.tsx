@@ -38,9 +38,11 @@ function ClockGlyph({ className }: { className?: string }) {
 
 function CaptureFrame({
   seed,
+  ready,
   onCapture,
 }: {
   seed: number;
+  ready: boolean;
   onCapture: (image: string) => void;
 }) {
   const { gl, scene, camera } = useThree();
@@ -51,7 +53,7 @@ function CaptureFrame({
   }, [seed]);
 
   useEffect(() => {
-    if (capturedRef.current) return;
+    if (!ready || capturedRef.current) return;
 
     let firstFrame = 0;
     let secondFrame = 0;
@@ -73,7 +75,7 @@ function CaptureFrame({
       window.cancelAnimationFrame(secondFrame);
       window.cancelAnimationFrame(thirdFrame);
     };
-  }, [camera, gl, onCapture, scene, seed]);
+  }, [camera, gl, onCapture, ready, scene, seed]);
 
   return null;
 }
@@ -125,6 +127,12 @@ function MapPreviewCanvas({
 }) {
   const manifest = useMemo(() => generateProceduralVoxelMap(option.seed), [option.seed]);
   const theme = manifest.theme;
+  const [readySeed, setReadySeed] = useState<number | null>(null);
+  const mapReady = readySeed === option.seed;
+
+  const handleMapReady = useCallback(() => {
+    setReadySeed(option.seed);
+  }, [option.seed]);
 
   return (
     <Canvas
@@ -161,10 +169,13 @@ function MapPreviewCanvas({
           dressingDensity={0.5}
           reflectionIntensity={0.35}
           materialDetail="medium"
+          meshBuildMode="sync"
+          progressiveReveal={false}
+          onReady={handleMapReady}
         />
         <fogExp2 attach="fog" args={[theme.fogColor, 0.0048]} />
         <color attach="background" args={[theme.skyColor]} />
-        <CaptureFrame seed={option.seed} onCapture={onCapture} />
+        <CaptureFrame seed={option.seed} ready={mapReady} onCapture={onCapture} />
       </Suspense>
     </Canvas>
   );

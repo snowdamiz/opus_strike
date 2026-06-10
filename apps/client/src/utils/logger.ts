@@ -73,5 +73,6 @@ export const loggers = {
   perf: createLogger('perf'),
   physics: createLogger('physics'),
   room: createLogger('room'),
+  voice: createLogger('voice'),
   viewmodel: createLogger('viewmodel'),
 };

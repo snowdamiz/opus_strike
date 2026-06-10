@@ -3,7 +3,9 @@ import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
 
 export const ATLAS_COLUMNS = 6;
 export const ATLAS_ROWS = 5;
-export const TILE_SIZE = 128;
+export const DEFAULT_TILE_SIZE = 128;
+export const LOW_DETAIL_TILE_SIZE = 64;
+export let TILE_SIZE = DEFAULT_TILE_SIZE;
 export const ATLAS_UV_PADDING = 0.006;
 export const ATLAS_REPEAT_EDGE_CROP_PIXELS = 14;
 
@@ -16,11 +18,15 @@ export interface AtlasTile {
 
 export interface VoxelAtlasTextures {
   color: THREE.CanvasTexture;
-  bump: THREE.CanvasTexture;
-  roughness: THREE.CanvasTexture;
-  metalness: THREE.CanvasTexture;
+  bump?: THREE.CanvasTexture;
+  roughness?: THREE.CanvasTexture;
+  metalness?: THREE.CanvasTexture;
   emissive: THREE.CanvasTexture;
-  ao: THREE.CanvasTexture;
+  ao?: THREE.CanvasTexture;
+  tileSize: number;
+  repeatEdgeCropPixels: number;
+  uvPadding: number;
+  anisotropy: number;
 }
 
 interface AtlasContexts {
@@ -32,7 +38,13 @@ interface AtlasContexts {
   ao: CanvasRenderingContext2D;
 }
 
-const atlasTextureCache = new Map<VoxelMapTheme['id'], VoxelAtlasTextures>();
+export type VoxelAtlasDetail = 'low' | 'medium' | 'high';
+
+interface VoxelAtlasOptions {
+  detail?: VoxelAtlasDetail;
+}
+
+const atlasTextureCache = new Map<string, VoxelAtlasTextures>();
 
 const TILE_MAP: Record<string, AtlasTile> = {
   grass_top: { x: 0, y: 0 },
@@ -1689,7 +1701,7 @@ function createLayerContext(): { canvas: HTMLCanvasElement; context: CanvasRende
   return { canvas, context };
 }
 
-function createTexture(canvas: HTMLCanvasElement, colorSpace: THREE.ColorSpace): THREE.CanvasTexture {
+function createTexture(canvas: HTMLCanvasElement, colorSpace: THREE.ColorSpace, anisotropy: number): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = colorSpace;
   texture.magFilter = THREE.NearestFilter;
@@ -1697,71 +1709,167 @@ function createTexture(canvas: HTMLCanvasElement, colorSpace: THREE.ColorSpace):
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true;
-  texture.anisotropy = 8;
+  texture.anisotropy = anisotropy;
   texture.needsUpdate = true;
 
   return texture;
 }
 
-export function createVoxelAtlasTextures(theme: VoxelMapTheme): VoxelAtlasTextures {
-  const cached = atlasTextureCache.get(theme.id);
+function getVoxelAtlasProfile(detail: VoxelAtlasDetail): {
+  tileSize: number;
+  anisotropy: number;
+  fullSurfaceMaps: boolean;
+} {
+  if (detail === 'low') {
+    return {
+      tileSize: LOW_DETAIL_TILE_SIZE,
+      anisotropy: 1,
+      fullSurfaceMaps: false,
+    };
+  }
+
+  return {
+    tileSize: DEFAULT_TILE_SIZE,
+    anisotropy: detail === 'high' ? 8 : 4,
+    fullSurfaceMaps: true,
+  };
+}
+
+function paintLowDetailTileSet(contexts: Pick<AtlasContexts, 'color' | 'emissive'>, theme: VoxelMapTheme): void {
+  const colorByTile = new Map<AtlasTile, string>([
+    [TILE_MAP.grass_top, theme.ground.top],
+    [TILE_MAP.grass_side, theme.ground.side],
+    [TILE_MAP.dirt, theme.ground.dirt],
+    [TILE_MAP.stone, theme.ground.stone],
+    [TILE_MAP.sand, theme.id === 'desert' ? theme.ground.top : '#d7b76b'],
+    [TILE_MAP.snow, theme.id === 'frost' ? theme.ground.top : '#dceff5'],
+    [TILE_MAP.metal, theme.structures.metal],
+    [TILE_MAP.glass, theme.structures.glass],
+    [TILE_MAP.neon_red, '#3d1212'],
+    [TILE_MAP.neon_blue, '#11193f'],
+    [TILE_MAP.ice, theme.id === 'frost' ? theme.ground.top : '#aee7f2'],
+    [TILE_MAP.obsidian, mixHex(theme.structures.accent, '#050509', 0.72)],
+    [TILE_MAP.spawn_pad, mixHex(theme.structures.metal, '#1b1820', 0.45)],
+    [TILE_MAP.spawn_pad_red, mixHex(theme.structures.metal, '#3a1114', 0.58)],
+    [TILE_MAP.spawn_pad_blue, mixHex(theme.structures.metal, '#101d3a', 0.58)],
+    [TILE_MAP.flag_pad, mixHex(theme.structures.metal, '#f7f7ff', 0.2)],
+    [TILE_MAP.barrier, theme.structures.barrier],
+    [TILE_MAP.wood, '#8a5a32'],
+    [TILE_MAP.bamboo, '#82a84a'],
+    [TILE_MAP.ash, theme.id === 'volcanic' ? theme.ground.top : '#696967'],
+    [TILE_MAP.leaves, theme.id === 'sakura' ? '#d98fb1' : '#5fa45b'],
+    [TILE_MAP.cactus, '#4d8b52'],
+    [TILE_MAP.blossom_leaves, '#f5a7ca'],
+    [TILE_MAP.moss, theme.id === 'sakura' ? '#6fae5f' : '#5f9a68'],
+    [TILE_MAP.lava, '#c2410c'],
+  ]);
+
+  for (const [tile, color] of colorByTile) {
+    fillTile(contexts.color, tile, color);
+    fillTile(contexts.emissive, tile, '#000000');
+    paintSpeckles(contexts.color, tile, [shadeHex(color, 24), shadeHex(color, -28), mixHex(color, '#ffffff', 0.08)], 18, tile.x * 97 + tile.y * 193, 1, 2);
+    paintTileEdgePixelFrame(
+      {
+        color: contexts.color,
+        bump: contexts.color,
+        roughness: contexts.color,
+        metalness: contexts.color,
+        emissive: contexts.emissive,
+        ao: contexts.color,
+      },
+      tile,
+      mixHex(color, '#ffffff', 0.16),
+      mixHex(color, '#000000', 0.28),
+      2
+    );
+  }
+
+  for (const [tile, glow] of [
+    [TILE_MAP.neon_red, '#ff4b24'],
+    [TILE_MAP.neon_blue, '#3cf7ff'],
+    [TILE_MAP.spawn_pad, '#ffd84d'],
+    [TILE_MAP.spawn_pad_red, '#ff684f'],
+    [TILE_MAP.spawn_pad_blue, '#47ddff'],
+    [TILE_MAP.flag_pad, '#f7f7ff'],
+    [TILE_MAP.lava, '#ff7b1f'],
+  ] as const) {
+    paintTileGlow(contexts.emissive, tile, glow, 0.86, 6);
+    strokePanelLines(contexts.color, tile, mixHex(glow, '#ffffff', 0.18), 2);
+  }
+}
+
+export function createVoxelAtlasTextures(theme: VoxelMapTheme, options: VoxelAtlasOptions = {}): VoxelAtlasTextures {
+  const detail = options.detail ?? 'high';
+  const profile = getVoxelAtlasProfile(detail);
+  const cacheKey = `${theme.id}:${detail}`;
+  const cached = atlasTextureCache.get(cacheKey);
   if (cached) return cached;
 
+  TILE_SIZE = profile.tileSize;
   const color = createLayerContext();
-  const bump = createLayerContext();
-  const roughness = createLayerContext();
-  const metalness = createLayerContext();
   const emissive = createLayerContext();
-  const ao = createLayerContext();
+  const bump = profile.fullSurfaceMaps ? createLayerContext() : null;
+  const roughness = profile.fullSurfaceMaps ? createLayerContext() : null;
+  const metalness = profile.fullSurfaceMaps ? createLayerContext() : null;
+  const ao = profile.fullSurfaceMaps ? createLayerContext() : null;
+
   const contexts: AtlasContexts = {
     color: color.context,
-    bump: bump.context,
-    roughness: roughness.context,
-    metalness: metalness.context,
+    bump: bump?.context ?? color.context,
+    roughness: roughness?.context ?? color.context,
+    metalness: metalness?.context ?? color.context,
     emissive: emissive.context,
-    ao: ao.context,
+    ao: ao?.context ?? color.context,
   };
 
-  for (const context of Object.values(contexts)) {
+  for (const context of new Set(Object.values(contexts))) {
     context.clearRect(0, 0, ATLAS_COLUMNS * TILE_SIZE, ATLAS_ROWS * TILE_SIZE);
   }
 
-  paintGrassTop(contexts, TILE_MAP.grass_top, theme);
-  paintGrassSide(contexts, TILE_MAP.grass_side, theme.ground.top, theme.ground.dirt);
-  paintDirtTile(contexts, TILE_MAP.dirt, theme.ground.dirt);
-  paintStoneTile(contexts, TILE_MAP.stone, theme.ground.stone, theme.structures.accent);
-  paintSandTile(contexts, TILE_MAP.sand, theme.id === 'desert' ? theme.ground.top : '#d7b76b');
-  paintSnowTile(contexts, TILE_MAP.snow, theme.id === 'frost' ? theme.ground.top : '#dceff5');
-  paintMetalTile(contexts, TILE_MAP.metal, theme.structures.metal, theme.structures.accent);
-  paintGlassTile(contexts, TILE_MAP.glass, theme.structures.glass, theme.structures.accent);
-  paintNeonTile(contexts, TILE_MAP.neon_red, shadeHex('#3d1212', theme.id === 'desert' ? 12 : 0), '#ff4b24', 0x1ed);
-  paintNeonTile(contexts, TILE_MAP.neon_blue, shadeHex('#11193f', theme.id === 'frost' ? 12 : 0), '#3cf7ff', 0xb10e);
-  paintIceTile(contexts, TILE_MAP.ice, theme.id === 'frost' ? theme.ground.top : '#aee7f2', theme.structures.accent);
-  paintObsidianTile(contexts, TILE_MAP.obsidian, theme.structures.accent);
-  paintPadTile(contexts, TILE_MAP.spawn_pad, mixHex(theme.structures.metal, '#1b1820', 0.45), '#ffd84d', theme.structures.accent, 0x5f0a);
-  paintPadTile(contexts, TILE_MAP.spawn_pad_red, mixHex(theme.structures.metal, '#3a1114', 0.58), '#ff684f', '#ffd1a3', 0x5f0b);
-  paintPadTile(contexts, TILE_MAP.spawn_pad_blue, mixHex(theme.structures.metal, '#101d3a', 0.58), '#47ddff', '#b8f2ff', 0x5f0c);
-  paintPadTile(contexts, TILE_MAP.flag_pad, mixHex(theme.structures.metal, '#f7f7ff', 0.2), '#f7f7ff', theme.structures.accent, 0xf1a6);
-  paintBarrierTile(contexts, TILE_MAP.barrier, theme.structures.barrier, theme.structures.accent);
-  paintWoodTile(contexts, TILE_MAP.wood);
-  paintBambooTile(contexts, TILE_MAP.bamboo);
-  paintAshTile(contexts, TILE_MAP.ash, theme.id === 'volcanic' ? theme.ground.top : '#696967');
-  paintLeavesTile(contexts, TILE_MAP.leaves, theme);
-  paintCactusTile(contexts, TILE_MAP.cactus);
-  paintBlossomLeavesTile(contexts, TILE_MAP.blossom_leaves);
-  paintMossTile(contexts, TILE_MAP.moss, theme.id === 'sakura' ? '#6fae5f' : '#5f9a68');
-  paintLavaTile(contexts, TILE_MAP.lava);
+  if (profile.fullSurfaceMaps) {
+    paintGrassTop(contexts, TILE_MAP.grass_top, theme);
+    paintGrassSide(contexts, TILE_MAP.grass_side, theme.ground.top, theme.ground.dirt);
+    paintDirtTile(contexts, TILE_MAP.dirt, theme.ground.dirt);
+    paintStoneTile(contexts, TILE_MAP.stone, theme.ground.stone, theme.structures.accent);
+    paintSandTile(contexts, TILE_MAP.sand, theme.id === 'desert' ? theme.ground.top : '#d7b76b');
+    paintSnowTile(contexts, TILE_MAP.snow, theme.id === 'frost' ? theme.ground.top : '#dceff5');
+    paintMetalTile(contexts, TILE_MAP.metal, theme.structures.metal, theme.structures.accent);
+    paintGlassTile(contexts, TILE_MAP.glass, theme.structures.glass, theme.structures.accent);
+    paintNeonTile(contexts, TILE_MAP.neon_red, shadeHex('#3d1212', theme.id === 'desert' ? 12 : 0), '#ff4b24', 0x1ed);
+    paintNeonTile(contexts, TILE_MAP.neon_blue, shadeHex('#11193f', theme.id === 'frost' ? 12 : 0), '#3cf7ff', 0xb10e);
+    paintIceTile(contexts, TILE_MAP.ice, theme.id === 'frost' ? theme.ground.top : '#aee7f2', theme.structures.accent);
+    paintObsidianTile(contexts, TILE_MAP.obsidian, theme.structures.accent);
+    paintPadTile(contexts, TILE_MAP.spawn_pad, mixHex(theme.structures.metal, '#1b1820', 0.45), '#ffd84d', theme.structures.accent, 0x5f0a);
+    paintPadTile(contexts, TILE_MAP.spawn_pad_red, mixHex(theme.structures.metal, '#3a1114', 0.58), '#ff684f', '#ffd1a3', 0x5f0b);
+    paintPadTile(contexts, TILE_MAP.spawn_pad_blue, mixHex(theme.structures.metal, '#101d3a', 0.58), '#47ddff', '#b8f2ff', 0x5f0c);
+    paintPadTile(contexts, TILE_MAP.flag_pad, mixHex(theme.structures.metal, '#f7f7ff', 0.2), '#f7f7ff', theme.structures.accent, 0xf1a6);
+    paintBarrierTile(contexts, TILE_MAP.barrier, theme.structures.barrier, theme.structures.accent);
+    paintWoodTile(contexts, TILE_MAP.wood);
+    paintBambooTile(contexts, TILE_MAP.bamboo);
+    paintAshTile(contexts, TILE_MAP.ash, theme.id === 'volcanic' ? theme.ground.top : '#696967');
+    paintLeavesTile(contexts, TILE_MAP.leaves, theme);
+    paintCactusTile(contexts, TILE_MAP.cactus);
+    paintBlossomLeavesTile(contexts, TILE_MAP.blossom_leaves);
+    paintMossTile(contexts, TILE_MAP.moss, theme.id === 'sakura' ? '#6fae5f' : '#5f9a68');
+    paintLavaTile(contexts, TILE_MAP.lava);
+  } else {
+    paintLowDetailTileSet({ color: color.context, emissive: emissive.context }, theme);
+  }
 
-  const textures = {
-    color: createTexture(color.canvas, THREE.SRGBColorSpace),
-    bump: createTexture(bump.canvas, THREE.NoColorSpace),
-    roughness: createTexture(roughness.canvas, THREE.NoColorSpace),
-    metalness: createTexture(metalness.canvas, THREE.NoColorSpace),
-    emissive: createTexture(emissive.canvas, THREE.SRGBColorSpace),
-    ao: createTexture(ao.canvas, THREE.NoColorSpace),
+  const textures: VoxelAtlasTextures = {
+    color: createTexture(color.canvas, THREE.SRGBColorSpace, profile.anisotropy),
+    bump: bump ? createTexture(bump.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    roughness: roughness ? createTexture(roughness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    metalness: metalness ? createTexture(metalness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    emissive: createTexture(emissive.canvas, THREE.SRGBColorSpace, profile.anisotropy),
+    ao: ao ? createTexture(ao.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    tileSize: profile.tileSize,
+    repeatEdgeCropPixels: detail === 'low' ? 7 : ATLAS_REPEAT_EDGE_CROP_PIXELS,
+    uvPadding: detail === 'low' ? 0.004 : ATLAS_UV_PADDING,
+    anisotropy: profile.anisotropy,
   };
 
-  atlasTextureCache.set(theme.id, textures);
+  atlasTextureCache.set(cacheKey, textures);
   return textures;
 }
 

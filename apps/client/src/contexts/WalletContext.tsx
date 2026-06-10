@@ -1,8 +1,9 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { config } from '../config/environment';
 import { loggers } from '../utils/logger';
 
-// Types for Phantom wallet provider
+type AuthProviderName = 'discord' | 'phantom';
+
 interface WalletPublicKey {
   toBase58: () => string;
 }
@@ -27,76 +28,181 @@ declare global {
   }
 }
 
+export interface LinkedAccountSummary {
+  provider: AuthProviderName;
+  displayName: string | null;
+  avatarUrl: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PendingRegistrationData {
+  provider: AuthProviderName;
+  displayName?: string | null;
+  avatarUrl?: string | null;
+  walletAddress?: string | null;
+}
+
 export interface UserData {
   id: string;
-  walletAddress: string;
+  walletAddress: string | null;
   name: string;
+  lastLoginAt: string | null;
   stats: {
     totalGames: number;
     totalWins: number;
+    totalLosses: number;
+    totalDraws: number;
     totalKills: number;
     totalDeaths: number;
+    totalAssists: number;
     totalCaptures: number;
+    totalFlagReturns: number;
+    totalScore: number;
   };
+  linkedAccounts: LinkedAccountSummary[];
 }
 
 interface WalletContextType {
-  // Connection state
   isPhantomInstalled: boolean;
   isConnected: boolean;
   isConnecting: boolean;
   walletAddress: string | null;
-  
-  // Auth state
+
   isAuthenticated: boolean;
+  isDiscordAuthEnabled: boolean;
   isNewUser: boolean;
+  authProvider: AuthProviderName | null;
   user: UserData | null;
-  isSessionLoading: boolean; // Loading session from cookies
-  
-  // Actions
+  linkedAccounts: LinkedAccountSummary[];
+  hasDiscordAccount: boolean;
+  hasPhantomAccount: boolean;
+  hasFullFunctionality: boolean;
+  pendingRegistration: PendingRegistrationData | null;
+  suggestedPlayerName: string;
+  isSessionLoading: boolean;
+
   connect: () => Promise<void>;
   disconnect: () => void;
   authenticate: () => Promise<{ isNewUser: boolean }>;
+  signInWithDiscord: () => void;
+  linkDiscord: () => void;
+  linkPhantom: () => Promise<UserData>;
   registerUser: (name: string) => Promise<UserData>;
   logout: () => Promise<void>;
-  
-  // Errors
+
   error: string | null;
+  notice: string | null;
   clearError: () => void;
+  clearNotice: () => void;
 }
 
 const WalletContext = createContext<WalletContextType | null>(null);
 
-// Get Phantom provider
 function getPhantomProvider(): PhantomProvider | null {
   if (typeof window === 'undefined') return null;
-  
+
   const provider = window.phantom?.solana || window.solana;
-  
-  if (provider?.isPhantom) {
-    return provider;
+  return provider?.isPhantom ? provider : null;
+}
+
+function getHttpUrl(): string {
+  return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
+}
+
+function getCleanReturnTo(): string {
+  if (typeof window === 'undefined') return '/';
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete('auth');
+  url.searchParams.delete('error');
+  url.searchParams.delete('provider');
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function cleanOAuthReturnParams(): void {
+  if (typeof window === 'undefined') return;
+
+  const url = new URL(window.location.href);
+  const hadOAuthParams = url.searchParams.has('auth') || url.searchParams.has('error') || url.searchParams.has('provider');
+  if (!hadOAuthParams) return;
+
+  url.searchParams.delete('auth');
+  url.searchParams.delete('error');
+  url.searchParams.delete('provider');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+function getOAuthReturnStatus(): {
+  status: string | null;
+  provider: AuthProviderName | null;
+  errorCode: string | null;
+} {
+  if (typeof window === 'undefined') {
+    return { status: null, provider: null, errorCode: null };
   }
-  
+
+  const params = new URLSearchParams(window.location.search);
+  const provider = params.get('provider');
+  return {
+    status: params.get('auth'),
+    provider: provider === 'discord' || provider === 'phantom' ? provider : null,
+    errorCode: params.get('error'),
+  };
+}
+
+function getOAuthErrorMessage(errorCode: string | null): string {
+  switch (errorCode) {
+    case 'disabled':
+      return 'Discord sign-in is currently disabled.';
+    case 'not_configured':
+      return 'Discord sign-in is not configured yet.';
+    case 'oauth_denied':
+      return 'Discord sign-in was canceled.';
+    case 'provider_conflict':
+      return 'That Discord account is already linked to another profile.';
+    case 'login_required':
+      return 'Sign in before linking Discord.';
+    case 'rate_limited':
+      return 'Too many auth attempts. Please try again shortly.';
+    case 'invalid_state_missing':
+    case 'invalid_state_expired':
+    case 'invalid_state_used':
+    case 'invalid_state_provider':
+      return 'Discord sign-in expired. Please try again.';
+    default:
+      return 'Discord sign-in failed. Please try again.';
+  }
+}
+
+function getSuggestedPlayerName(pending: PendingRegistrationData | null): string {
+  const displayName = pending?.displayName?.trim().replace(/\s+/g, ' ') ?? '';
+  if (displayName.length < 2) return '';
+  return displayName.slice(0, 16);
+}
+
+function inferAuthProvider(user: UserData | null): AuthProviderName | null {
+  if (!user) return null;
+  if (user.linkedAccounts.some((account) => account.provider === 'discord')) return 'discord';
+  if (user.linkedAccounts.some((account) => account.provider === 'phantom') || user.walletAddress) return 'phantom';
   return null;
 }
 
-// API helper with credentials support for session cookies
 async function apiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const httpUrl = config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-  const response = await fetch(`${httpUrl}${endpoint}`, {
+  const response = await fetch(`${getHttpUrl()}${endpoint}`, {
     ...options,
-    credentials: 'include', // Include cookies in requests
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,
     },
   });
-  
+
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
     throw new Error(errorData.error || 'Request failed');
   }
-  
+
   return response.json();
 }
 
@@ -107,118 +213,207 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isNewUser, setIsNewUser] = useState(false);
+  const [authProvider, setAuthProvider] = useState<AuthProviderName | null>(null);
   const [user, setUser] = useState<UserData | null>(null);
+  const [pendingRegistration, setPendingRegistration] = useState<PendingRegistrationData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [isSessionLoading, setIsSessionLoading] = useState(true);
-  
-  // Restore session from cookies on page load
+  const authProviderRef = useRef<AuthProviderName | null>(null);
+
+  useEffect(() => {
+    authProviderRef.current = authProvider;
+  }, [authProvider]);
+
+  const applyUserSession = useCallback((nextUser: UserData, provider?: AuthProviderName | null) => {
+    setIsAuthenticated(true);
+    setIsNewUser(false);
+    setUser(nextUser);
+    setPendingRegistration(null);
+    setWalletAddress(nextUser.walletAddress);
+    setIsConnected(Boolean(nextUser.walletAddress));
+    setAuthProvider(provider ?? inferAuthProvider(nextUser));
+  }, []);
+
+  const applyPendingRegistration = useCallback((pending: PendingRegistrationData) => {
+    setIsAuthenticated(true);
+    setIsNewUser(true);
+    setUser(null);
+    setPendingRegistration(pending);
+    setWalletAddress(pending.walletAddress ?? null);
+    setIsConnected(pending.provider === 'phantom' && Boolean(pending.walletAddress));
+    setAuthProvider(pending.provider);
+  }, []);
+
   useEffect(() => {
     const restoreSession = async () => {
+      const oauthReturn = getOAuthReturnStatus();
+
       try {
         const result = await apiRequest<{
           authenticated: boolean;
+          isNewUser?: boolean;
+          provider?: AuthProviderName | null;
           user?: UserData;
+          pendingRegistration?: PendingRegistrationData;
           error?: string;
         }>('/auth/session');
-        
+
         if (result.authenticated && result.user) {
-          setIsAuthenticated(true);
-          setUser(result.user);
-          setWalletAddress(result.user.walletAddress);
-          setIsConnected(true);
-          setIsNewUser(false);
+          applyUserSession(result.user, result.provider ?? oauthReturn.provider);
+        } else if (result.authenticated && result.isNewUser && result.pendingRegistration) {
+          applyPendingRegistration(result.pendingRegistration);
         }
-      } catch (err) {
-        // No valid session - this is expected for first-time visitors
+      } catch {
         loggers.auth.debug('no existing session found');
       } finally {
+        if (oauthReturn.status === 'error') {
+          setError(getOAuthErrorMessage(oauthReturn.errorCode));
+        } else if (oauthReturn.status === 'linked') {
+          setNotice('Discord connected.');
+        } else if (oauthReturn.status === 'success') {
+          setNotice('Signed in with Discord.');
+        }
+
+        cleanOAuthReturnParams();
         setIsSessionLoading(false);
       }
     };
-    
+
     restoreSession();
-  }, []);
-  
-  // Check for Phantom installation
+  }, [applyPendingRegistration, applyUserSession]);
+
   useEffect(() => {
     const checkForPhantom = () => {
       const provider = getPhantomProvider();
-      setIsPhantomInstalled(!!provider);
-      
-      // Check if already connected (only update if not already authenticated via session)
+      setIsPhantomInstalled(Boolean(provider));
+
       if (provider?.isConnected && provider.publicKey && !isAuthenticated) {
         setIsConnected(true);
         setWalletAddress(provider.publicKey.toBase58());
       }
     };
-    
-    // Check immediately
+
     checkForPhantom();
-    
-    // Also check after a short delay (Phantom might inject after page load)
     const timeout = setTimeout(checkForPhantom, 500);
-    
     return () => clearTimeout(timeout);
   }, [isAuthenticated]);
-  
-  // Set up wallet event listeners
+
   useEffect(() => {
     const provider = getPhantomProvider();
     if (!provider) return;
-    
+
     const handleConnect = (publicKey: WalletPublicKey) => {
       loggers.auth.debug('wallet connected', publicKey.toBase58());
       setIsConnected(true);
       setWalletAddress(publicKey.toBase58());
     };
-    
+
     const handleDisconnect = () => {
       loggers.auth.debug('wallet disconnected');
       setIsConnected(false);
-      setWalletAddress(null);
-      setIsAuthenticated(false);
-      setUser(null);
-      setIsNewUser(false);
+      if (authProviderRef.current === 'phantom') {
+        setWalletAddress(null);
+        setIsAuthenticated(false);
+        setUser(null);
+        setIsNewUser(false);
+        setPendingRegistration(null);
+        setAuthProvider(null);
+      }
     };
-    
+
     const handleAccountChanged = (publicKey: WalletPublicKey | null) => {
       if (publicKey) {
         loggers.auth.debug('account changed', publicKey.toBase58());
         setWalletAddress(publicKey.toBase58());
-        // Reset auth state when account changes
-        setIsAuthenticated(false);
-        setUser(null);
-        setIsNewUser(false);
+        if (authProviderRef.current === 'phantom') {
+          setIsAuthenticated(false);
+          setUser(null);
+          setIsNewUser(false);
+          setPendingRegistration(null);
+          setAuthProvider(null);
+        }
       } else {
         handleDisconnect();
       }
     };
-    
+
     provider.on('connect', handleConnect);
     provider.on('disconnect', handleDisconnect);
     provider.on('accountChanged', handleAccountChanged);
-    
+
     return () => {
       provider.off('connect', handleConnect);
       provider.off('disconnect', handleDisconnect);
       provider.off('accountChanged', handleAccountChanged);
     };
   }, []);
-  
-  // Connect to Phantom
+
+  const signInWithDiscord = useCallback(() => {
+    if (!config.discordAuthEnabled) {
+      setError('Discord sign-in is currently disabled.');
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    const returnTo = encodeURIComponent(getCleanReturnTo());
+    window.location.assign(`${getHttpUrl()}/auth/discord/start?returnTo=${returnTo}`);
+  }, []);
+
+  const linkDiscord = useCallback(() => {
+    if (!config.discordAuthEnabled) {
+      setError('Discord linking is currently disabled.');
+      return;
+    }
+
+    setError(null);
+    setNotice(null);
+    const returnTo = encodeURIComponent(getCleanReturnTo());
+    window.location.assign(`${getHttpUrl()}/auth/discord/link/start?returnTo=${returnTo}`);
+  }, []);
+
+  const verifyPhantomWithServer = useCallback(async (provider: PhantomProvider, address: string) => {
+    const { nonce, message } = await apiRequest<{ nonce: string; message: string }>(
+      `/auth/nonce?walletAddress=${encodeURIComponent(address)}`
+    );
+
+    const encodedMessage = new TextEncoder().encode(message);
+    const { signature } = await provider.signMessage(encodedMessage, 'utf8');
+    const { default: bs58 } = await import('bs58');
+    const signatureBase58 = bs58.encode(signature);
+
+    return apiRequest<{
+      authenticated: boolean;
+      isNewUser: boolean;
+      provider?: AuthProviderName;
+      linked?: boolean;
+      user?: UserData;
+      walletAddress?: string;
+      pendingRegistration?: PendingRegistrationData;
+    }>('/auth/verify', {
+      method: 'POST',
+      body: JSON.stringify({
+        walletAddress: address,
+        signature: signatureBase58,
+        nonce,
+      }),
+    });
+  }, []);
+
   const connect = useCallback(async () => {
     const provider = getPhantomProvider();
-    
+
     if (!provider) {
-      // Open Phantom download page
       window.open('https://phantom.app/', '_blank');
       setError('Phantom wallet is not installed. Please install it to continue.');
       return;
     }
-    
+
     setIsConnecting(true);
     setError(null);
-    
+    setNotice(null);
+
     try {
       const { publicKey } = await provider.connect();
       setWalletAddress(publicKey.toBase58());
@@ -234,73 +429,59 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnecting(false);
     }
   }, []);
-  
-  // Disconnect from Phantom
+
   const disconnect = useCallback(() => {
     const provider = getPhantomProvider();
-    
+
     if (provider) {
       provider.disconnect();
     }
-    
+
     setIsConnected(false);
     setWalletAddress(null);
-    setIsAuthenticated(false);
-    setUser(null);
-    setIsNewUser(false);
+    if (authProviderRef.current === 'phantom') {
+      setIsAuthenticated(false);
+      setUser(null);
+      setIsNewUser(false);
+      setPendingRegistration(null);
+      setAuthProvider(null);
+    }
     setError(null);
+    setNotice(null);
   }, []);
-  
-  // Authenticate with the server
+
   const authenticate = useCallback(async (): Promise<{ isNewUser: boolean }> => {
     const provider = getPhantomProvider();
-    
+
     if (!provider || !walletAddress) {
       throw new Error('Wallet not connected');
     }
-    
+
     setError(null);
-    
+    setNotice(null);
+
     try {
-      // Get nonce from server
-      const { nonce, message } = await apiRequest<{ nonce: string; message: string }>(
-        `/auth/nonce?walletAddress=${walletAddress}`
-      );
-      
-      // Sign the message
-      const encodedMessage = new TextEncoder().encode(message);
-      const { signature } = await provider.signMessage(encodedMessage, 'utf8');
-      const { default: bs58 } = await import('bs58');
-      const signatureBase58 = bs58.encode(signature);
-      
-      // Verify with server
-      const result = await apiRequest<{
-        authenticated: boolean;
-        isNewUser: boolean;
-        user?: UserData;
-        walletAddress?: string;
-      }>('/auth/verify', {
-        method: 'POST',
-        body: JSON.stringify({
-          walletAddress,
-          signature: signatureBase58,
-          nonce,
-        }),
-      });
-      
+      const result = await verifyPhantomWithServer(provider, walletAddress);
+
       if (result.authenticated) {
-        setIsAuthenticated(true);
-        
         if (result.isNewUser) {
-          setIsNewUser(true);
+          applyPendingRegistration(result.pendingRegistration ?? {
+            provider: 'phantom',
+            walletAddress,
+            displayName: walletAddress,
+          });
           return { isNewUser: true };
-        } else if (result.user) {
-          setUser(result.user);
-          setIsNewUser(false);
+        }
+
+        if (result.user) {
+          applyUserSession(result.user, 'phantom');
+          if (result.linked) {
+            setNotice('Phantom wallet connected.');
+          }
           return { isNewUser: false };
         }
       }
-      
+
       throw new Error('Authentication failed');
     } catch (err: any) {
       loggers.auth.error('authentication error:', err);
@@ -311,16 +492,60 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       }
       throw err;
     }
-  }, [walletAddress]);
-  
-  // Register new user with name
-  const registerUser = useCallback(async (name: string): Promise<UserData> => {
-    if (!walletAddress) {
-      throw new Error('Wallet not connected');
+  }, [applyPendingRegistration, applyUserSession, verifyPhantomWithServer, walletAddress]);
+
+  const linkPhantom = useCallback(async (): Promise<UserData> => {
+    const provider = getPhantomProvider();
+
+    if (!provider) {
+      window.open('https://phantom.app/', '_blank');
+      setError('Phantom wallet is not installed. Please install it to continue.');
+      throw new Error('Phantom wallet not installed');
     }
-    
+
+    if (!isAuthenticated || !user) {
+      setError('Sign in before linking Phantom.');
+      throw new Error('Sign in before linking Phantom.');
+    }
+
+    setIsConnecting(true);
     setError(null);
-    
+    setNotice(null);
+
+    try {
+      const { publicKey } = provider.isConnected && provider.publicKey
+        ? { publicKey: provider.publicKey }
+        : await provider.connect();
+      const address = publicKey.toBase58();
+
+      setWalletAddress(address);
+      setIsConnected(true);
+
+      const result = await verifyPhantomWithServer(provider, address);
+      if (result.authenticated && result.user && !result.isNewUser) {
+        applyUserSession(result.user, 'phantom');
+        setNotice('Phantom wallet connected.');
+        return result.user;
+      }
+
+      throw new Error('Phantom linking failed');
+    } catch (err: any) {
+      loggers.auth.error('phantom linking error:', err);
+      if (err.code === 4001) {
+        setError('Signature rejected. Please sign the message to link Phantom.');
+      } else {
+        setError(err.message || 'Phantom linking failed');
+      }
+      throw err;
+    } finally {
+      setIsConnecting(false);
+    }
+  }, [applyUserSession, isAuthenticated, user, verifyPhantomWithServer]);
+
+  const registerUser = useCallback(async (name: string): Promise<UserData> => {
+    setError(null);
+    setNotice(null);
+
     try {
       const result = await apiRequest<{ success: boolean; user: UserData }>(
         '/auth/register',
@@ -332,50 +557,54 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           }),
         }
       );
-      
+
       if (result.success && result.user) {
-        setUser(result.user);
-        setIsNewUser(false);
+        applyUserSession(result.user, authProvider);
         return result.user;
       }
-      
+
       throw new Error('Registration failed');
     } catch (err: any) {
       loggers.auth.error('registration error:', err);
       setError(err.message || 'Registration failed');
       throw err;
     }
-  }, [walletAddress]);
-  
-  // Logout - clear server session and local state
+  }, [applyUserSession, authProvider, walletAddress]);
+
   const logout = useCallback(async () => {
     try {
       await apiRequest('/auth/logout', { method: 'POST' });
     } catch (err) {
       loggers.auth.error('logout error:', err);
     }
-    
-    // Disconnect wallet if connected
+
     const provider = getPhantomProvider();
     if (provider) {
       try {
         await provider.disconnect();
-      } catch (err) {
-        // Ignore disconnect errors
+      } catch {
+        // Ignore disconnect errors; the server session is already cleared.
       }
     }
-    
-    // Clear all local state
+
     setIsConnected(false);
     setWalletAddress(null);
     setIsAuthenticated(false);
     setUser(null);
     setIsNewUser(false);
+    setAuthProvider(null);
+    setPendingRegistration(null);
     setError(null);
+    setNotice(null);
   }, []);
-  
+
   const clearError = useCallback(() => setError(null), []);
-  
+  const clearNotice = useCallback(() => setNotice(null), []);
+  const linkedAccounts = user?.linkedAccounts ?? [];
+  const hasDiscordAccount = linkedAccounts.some((account) => account.provider === 'discord');
+  const hasPhantomAccount = Boolean(user?.walletAddress) || linkedAccounts.some((account) => account.provider === 'phantom');
+  const hasFullFunctionality = isAuthenticated && Boolean(user) && hasPhantomAccount;
+
   return (
     <WalletContext.Provider
       value={{
@@ -384,16 +613,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         isConnecting,
         walletAddress,
         isAuthenticated,
+        isDiscordAuthEnabled: config.discordAuthEnabled,
         isNewUser,
+        authProvider,
         user,
+        linkedAccounts,
+        hasDiscordAccount,
+        hasPhantomAccount,
+        hasFullFunctionality,
+        pendingRegistration,
+        suggestedPlayerName: getSuggestedPlayerName(pendingRegistration),
         isSessionLoading,
         connect,
         disconnect,
         authenticate,
+        signInWithDiscord,
+        linkDiscord,
+        linkPhantom,
         registerUser,
         logout,
         error,
+        notice,
         clearError,
+        clearNotice,
       }}
     >
       {children}
@@ -408,3 +650,5 @@ export function useWallet() {
   }
   return context;
 }
+
+export const useAppAuth = useWallet;

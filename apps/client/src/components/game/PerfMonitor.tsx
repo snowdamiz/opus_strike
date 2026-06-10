@@ -3,7 +3,11 @@ import { PerfHeadless, usePerf } from 'r3f-perf';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { useSettingsStore } from '../../store/settingsStore';
-import { getClientPerfSnapshot, type ClientPerfSnapshot } from '../../utils/perfMarks';
+import {
+  getClientPerfSnapshot,
+  setRendererMetricSummary,
+  type ClientPerfSnapshot,
+} from '../../utils/perfMarks';
 
 /**
  * Custom Performance Monitor - Premium Debug UI
@@ -38,6 +42,19 @@ const EMPTY_CLIENT_SNAPSHOT: ClientPerfSnapshot = {
   },
   systems: [],
   recentSpawns: [],
+  renderer: {
+    drawCalls: 0,
+    triangles: 0,
+    textures: 0,
+    geometries: 0,
+    materials: 0,
+    shaderPrograms: 0,
+  },
+  worldVisuals: {
+    atmosphereParticles: 0,
+    worldDressingInstances: 0,
+    fullRemoteBodies: 0,
+  },
   voxelWorld: {
     generationMs: 0,
     meshBuildMsP95: 0,
@@ -51,6 +68,7 @@ const EMPTY_CLIENT_SNAPSHOT: ClientPerfSnapshot = {
   physicsQueries: {
     countPerSecond: 0,
     msPerSecond: 0,
+    byFeature: {},
   },
   activeEffects: 0,
   projectileCounts: {},
@@ -86,15 +104,24 @@ function PerfDisplay() {
   // Update data when log or gl changes
   useEffect(() => {
     if (isMounted.current) {
+      const rendererSummary = {
+        drawCalls: gl?.info?.render?.calls || 0,
+        triangles: gl?.info?.render?.triangles || 0,
+        geometries: gl?.info?.memory?.geometries || 0,
+        textures: gl?.info?.memory?.textures || 0,
+        shaderPrograms: gl?.info?.programs?.length || 0,
+        materials: gl?.info?.programs?.length || 0,
+      };
+      setRendererMetricSummary(rendererSummary);
       setData({
         fps: Math.round(log?.fps || 0),
         gpu: log?.gpu || 0,
         cpu: log?.cpu || 0,
-        triangles: gl?.info?.render?.triangles || 0,
-        geometries: gl?.info?.memory?.geometries || 0,
-        textures: gl?.info?.memory?.textures || 0,
-        shaders: gl?.info?.programs?.length || 0,
-        calls: gl?.info?.render?.calls || 0,
+        triangles: rendererSummary.triangles,
+        geometries: rendererSummary.geometries,
+        textures: rendererSummary.textures,
+        shaders: rendererSummary.shaderPrograms,
+        calls: rendererSummary.drawCalls,
         client: getClientPerfSnapshot(),
       });
     }
@@ -204,6 +231,14 @@ function PerfDisplay() {
             <span className="text-white/70 tabular-nums text-right">{data.client.activeLights}</span>
           </div>
           <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Atmos</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.worldVisuals.atmosphereParticles}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Dressing</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.worldVisuals.worldDressingInstances}</span>
+          </div>
+          <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Chunks</span>
             <span className="text-white/70 tabular-nums text-right">
               {data.client.voxelWorld.renderableChunks}/{data.client.voxelWorld.totalChunkSlots}
@@ -220,6 +255,10 @@ function PerfDisplay() {
           <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Physics Q/s</span>
             <span className="text-white/70 tabular-nums text-right">{data.client.physicsQueries.countPerSecond.toFixed(0)}</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Full Remotes</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.worldVisuals.fullRemoteBodies}</span>
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Mesh p95</span>

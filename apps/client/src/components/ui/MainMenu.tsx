@@ -34,6 +34,14 @@ function PhantomIcon({ className }: { className?: string }) {
   );
 }
 
+function DiscordIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M19.54 5.34A18.2 18.2 0 0015.02 4c-.2.36-.42.84-.58 1.22a16.9 16.9 0 00-5.01 0A11.7 11.7 0 008.84 4c-1.6.27-3.12.72-4.52 1.34C1.46 9.6.68 13.74 1.07 17.81A18.5 18.5 0 006.61 20.6c.45-.61.84-1.26 1.18-1.95-.65-.24-1.27-.54-1.86-.89.16-.12.31-.24.46-.36a13.05 13.05 0 0011.14 0l.46.36c-.6.35-1.22.65-1.87.89.34.69.74 1.34 1.18 1.95a18.43 18.43 0 005.55-2.79c.46-4.72-.78-8.82-3.31-12.47zM8.52 15.3c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2zm6.96 0c-1.08 0-1.97-.99-1.97-2.2 0-1.22.87-2.2 1.97-2.2 1.1 0 1.99.99 1.97 2.2 0 1.21-.87 2.2-1.97 2.2z" />
+    </svg>
+  );
+}
+
 export function MainMenu() {
   const { setPlayerName: storeSetPlayerName, setAppPhase, setUser, setWalletAddress } = useGameStore();
   const {
@@ -42,16 +50,23 @@ export function MainMenu() {
     isConnecting,
     walletAddress,
     isAuthenticated,
+    isDiscordAuthEnabled,
     isNewUser,
+    authProvider,
     user,
+    pendingRegistration,
+    suggestedPlayerName,
     isSessionLoading,
     connect,
     disconnect,
     logout,
     authenticate,
+    signInWithDiscord,
     registerUser,
     error: walletError,
+    notice,
     clearError,
+    clearNotice,
   } = useWallet();
 
   const [showNameInput, setShowNameInput] = useState(false);
@@ -73,7 +88,7 @@ export function MainMenu() {
       // User exists, set their info and proceed
       storeSetPlayerName(user.name);
       setUser(user.id, user.name, user.stats);
-      setWalletAddress(user.walletAddress);
+      setWalletAddress(user.walletAddress ?? null);
       setAppPhase('browsing_lobbies');
     }
   }, [isAuthenticated, user, isNewUser]);
@@ -82,11 +97,19 @@ export function MainMenu() {
   useEffect(() => {
     if (isAuthenticated && isNewUser) {
       setShowNameInput(true);
+      setPlayerName((currentName) => currentName || suggestedPlayerName);
     }
-  }, [isAuthenticated, isNewUser]);
+  }, [isAuthenticated, isNewUser, suggestedPlayerName]);
+
+  const handleDiscordSignIn = () => {
+    clearError();
+    clearNotice();
+    signInWithDiscord();
+  };
 
   const handleConnect = async () => {
     clearError();
+    clearNotice();
     await connect();
   };
 
@@ -125,7 +148,7 @@ export function MainMenu() {
       const registeredUser = await registerUser(playerName.trim());
       storeSetPlayerName(registeredUser.name);
       setUser(registeredUser.id, registeredUser.name, registeredUser.stats);
-      setWalletAddress(registeredUser.walletAddress);
+      setWalletAddress(registeredUser.walletAddress ?? null);
       setAppPhase('browsing_lobbies');
     } catch (err: any) {
       setNameError(err.message || 'Registration failed');
@@ -145,6 +168,10 @@ export function MainMenu() {
   const formatAddress = (address: string) => {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
+  const discordDisplayName = pendingRegistration?.displayName
+    || user?.linkedAccounts.find((account) => account.provider === 'discord')?.displayName
+    || 'Discord';
+  const isDiscordPending = authProvider === 'discord' && !walletAddress;
 
   // Show loading state while restoring session
   if (isSessionLoading) {
@@ -208,7 +235,7 @@ export function MainMenu() {
             {/* Header */}
             <div className="text-center mb-6">
               <div className="w-14 h-14 mx-auto mb-3 rounded-xl bg-gradient-to-br from-purple-500/20 to-purple-600/10 border border-purple-500/20 flex items-center justify-center">
-                <PhantomIcon className="w-8 h-8" />
+                {(showNameInput && !isDiscordPending) || !isDiscordAuthEnabled ? <PhantomIcon className="w-8 h-8" /> : <DiscordIcon className="w-8 h-8 text-indigo-200" />}
               </div>
               <h2 className="font-display text-2xl text-white">
                 {showNameInput ? 'CREATE PROFILE' : 'ENTER ARENA'}
@@ -216,7 +243,7 @@ export function MainMenu() {
               <p className="text-white/40 text-sm mt-1 font-body">
                 {showNameInput
                   ? 'Choose your callsign to continue'
-                  : 'Connect your Phantom wallet to play'}
+                  : isDiscordAuthEnabled ? 'Continue with Discord to play' : 'Connect your Phantom wallet to play'}
               </p>
             </div>
 
@@ -227,10 +254,12 @@ export function MainMenu() {
                   {/* Connected wallet display */}
                   <div className="flex items-center justify-between p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
                     <div className="flex items-center gap-3">
-                      <PhantomIcon className="w-6 h-6" />
+                      {isDiscordPending ? <DiscordIcon className="w-6 h-6 text-indigo-200" /> : <PhantomIcon className="w-6 h-6" />}
                       <div>
                         <p className="text-white/60 text-xs font-body">Connected</p>
-                        <p className="text-white font-mono text-sm">{walletAddress && formatAddress(walletAddress)}</p>
+                        <p className={isDiscordPending ? 'text-white text-sm font-body' : 'text-white font-mono text-sm'}>
+                          {isDiscordPending ? discordDisplayName : walletAddress && formatAddress(walletAddress)}
+                        </p>
                       </div>
                     </div>
  <button
@@ -303,6 +332,26 @@ export function MainMenu() {
                 </>
               ) : (
                 <>
+                  {isDiscordAuthEnabled && (
+                    <>
+                      <button
+                        onClick={handleDiscordSignIn}
+                        className="w-full py-4 rounded-xl font-display text-xl text-white border border-indigo-300/20 bg-indigo-500 hover:bg-indigo-400 shadow-[0_0_48px_rgba(99,102,241,0.32)] relative overflow-hidden group"
+                      >
+                        <span className="relative flex items-center justify-center gap-3">
+                          <DiscordIcon className="w-6 h-6" />
+                          CONTINUE WITH DISCORD
+                        </span>
+                      </button>
+
+                      <div className="flex items-center gap-3">
+                        <div className="h-px flex-1 bg-white/10" />
+                        <span className="text-[10px] font-body uppercase tracking-widest text-white/35">or use Phantom</span>
+                        <div className="h-px flex-1 bg-white/10" />
+                      </div>
+                    </>
+                  )}
+
                   {/* Wallet connection state */}
                   {isConnected && walletAddress ? (
                     <div className="space-y-3">
@@ -410,6 +459,12 @@ export function MainMenu() {
                   )}
 
                   {/* Error message */}
+                  {notice && (
+                    <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg animate-fade-in">
+                      <p className="text-green-300 text-sm font-body">{notice}</p>
+                    </div>
+                  )}
+
                   {walletError && (
                     <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg animate-fade-in">
                       <p className="text-red-400 text-sm font-body">{walletError}</p>

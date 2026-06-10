@@ -61,9 +61,14 @@ export interface MapVoteRecord {
 export interface UserStats {
   totalGames: number;
   totalWins: number;
+  totalLosses: number;
+  totalDraws: number;
   totalKills: number;
   totalDeaths: number;
+  totalAssists: number;
   totalCaptures: number;
+  totalFlagReturns: number;
+  totalScore: number;
 }
 
 export type AppPhase = 'menu' | 'browsing_lobbies' | 'in_lobby' | 'map_vote' | 'in_game';

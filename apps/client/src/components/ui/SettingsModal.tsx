@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAudio } from '../../hooks/useAudio';
 import {
   defaultSettings,
+  graphicsPresetSettings,
   type ClientSettings,
   type KeybindAction,
   useSettingsStore,
@@ -18,6 +19,7 @@ interface SettingsModalProps {
 }
 
 const resolutionScaleOptions = [
+  { value: 'minimum', label: 'Minimum' },
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
@@ -32,6 +34,7 @@ const materialQualityOptions = [
 
 const featureQualityOptions = [
   { value: 'off', label: 'Off' },
+  { value: 'minimum', label: 'Minimum' },
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
@@ -42,6 +45,13 @@ const fpsDisplayModeOptions = [
   { value: 'off', label: 'Off' },
   { value: 'fps', label: 'FPS Only' },
   { value: 'full', label: 'Full' },
+];
+
+const graphicsPresetOptions = [
+  { value: 'potato', label: 'Potato' },
+  { value: 'competitive', label: 'Competitive' },
+  { value: 'balanced', label: 'Balanced' },
+  { value: 'cinematic', label: 'Cinematic' },
 ];
 
 const keybindRows: { action: KeybindAction; label: string }[] = [
@@ -60,6 +70,7 @@ const keybindRows: { action: KeybindAction; label: string }[] = [
   { action: 'ultimate', label: 'Ultimate' },
   { action: 'interact', label: 'Interact' },
   { action: 'scoreboard', label: 'Scoreboard' },
+  { action: 'pushToTalk', label: 'Push To Talk' },
 ];
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
@@ -71,24 +82,47 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const setGameWalletAddress = useGameStore(state => state.setWalletAddress);
   const {
     isAuthenticated,
+    isDiscordAuthEnabled,
+    isConnecting,
     isSessionLoading,
     logout,
+    linkDiscord,
+    linkPhantom,
     user,
     walletAddress,
+    linkedAccounts,
+    hasPhantomAccount,
+    hasFullFunctionality,
+    error: authError,
+    notice,
   } = useWallet();
   const [settings, setSettings] = useState<ClientSettings>(savedSettings);
   const [hasChanges, setHasChanges] = useState(false);
   const [rebindingAction, setRebindingAction] = useState<KeybindAction | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
+  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<MediaDeviceInfo[]>([]);
   const { updateSettings: applyAudioSettings } = useAudio();
 
   const displayName = user?.name || gamePlayerName || 'Unknown';
   const displayWalletAddress = user?.walletAddress ?? walletAddress;
+  const discordAccount = linkedAccounts.find((account) => account.provider === 'discord') ?? null;
+  const phantomAccount = linkedAccounts.find((account) => account.provider === 'phantom') ?? null;
   const accountInitial = displayName.charAt(0).toUpperCase();
   const hasAccount = isAuthenticated && Boolean(user);
 
   const updateSetting = <K extends keyof ClientSettings>(key: K, value: ClientSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
+    setHasChanges(true);
+  };
+
+  const updateGraphicsPreset = (preset: ClientSettings['graphicsPreset']) => {
+    setSettings(prev => ({
+      ...prev,
+      graphicsPreset: preset,
+      ...graphicsPresetSettings[preset],
+    }));
     setHasChanges(true);
   };
 
@@ -117,6 +151,26 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  const handleLinkDiscord = () => {
+    if (!hasAccount || discordAccount || !isDiscordAuthEnabled) return;
+    linkDiscord();
+  };
+
+  const handleLinkPhantom = async () => {
+    if (!hasAccount || hasPhantomAccount || isLinkingPhantom) return;
+
+    setIsLinkingPhantom(true);
+    try {
+      const linkedUser = await linkPhantom();
+      setGameUser(linkedUser.id, linkedUser.name, linkedUser.stats);
+      setGameWalletAddress(linkedUser.walletAddress ?? null);
+    } catch {
+      // The auth context owns the user-facing error message.
+    } finally {
+      setIsLinkingPhantom(false);
+    }
+  };
+
   const updateKeybinding = useCallback((action: KeybindAction, code: string) => {
     setSettings((prev) => {
       const nextKeybindings = { ...prev.keybindings };
@@ -140,7 +194,37 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   }, []);
 
   useEffect(() => {
+    if (activeTab !== 'audio' || typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (cancelled) return;
+        setAudioInputs(devices.filter((device) => device.kind === 'audioinput'));
+        setAudioOutputs(devices.filter((device) => device.kind === 'audiooutput'));
+      } catch {
+        if (!cancelled) {
+          setAudioInputs([]);
+          setAudioOutputs([]);
+        }
+      }
+    };
+
+    void refreshDevices();
+    navigator.mediaDevices.addEventListener?.('devicechange', refreshDevices);
+
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices.removeEventListener?.('devicechange', refreshDevices);
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
     if (!rebindingAction) return;
+    document.body.dataset.rebindingKeybind = 'true';
 
     const handleKeyDown = (event: KeyboardEvent) => {
       event.preventDefault();
@@ -170,6 +254,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     window.addEventListener('contextmenu', handleContextMenu, true);
 
     return () => {
+      delete document.body.dataset.rebindingKeybind;
       window.removeEventListener('keydown', handleKeyDown, true);
       window.removeEventListener('mousedown', handleMouseDown, true);
       window.removeEventListener('contextmenu', handleContextMenu, true);
@@ -224,6 +309,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         </svg>
       )
     },
+  ];
+
+  const inputDeviceOptions = [
+    { value: '', label: 'Default Input' },
+    ...audioInputs.map((device, index) => ({
+      value: device.deviceId,
+      label: device.label || `Microphone ${index + 1}`,
+    })),
+  ];
+
+  const outputDeviceOptions = [
+    { value: '', label: 'Default Output' },
+    ...audioOutputs.map((device, index) => ({
+      value: device.deviceId,
+      label: device.label || `Speaker ${index + 1}`,
+    })),
   ];
 
   return (
@@ -291,6 +392,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           <div className="flex-1 p-[clamp(1.125rem,1.6vw,1.65rem)] overflow-y-auto custom-scrollbar">
             {activeTab === 'video' && (
               <div className="space-y-4">
+                <SettingRow label="Graphics Preset" description="Applies a complete video profile">
+                  <SelectInput
+                    value={settings.graphicsPreset}
+                    onChange={(v) => updateGraphicsPreset(v as ClientSettings['graphicsPreset'])}
+                    options={graphicsPresetOptions}
+                  />
+                </SettingRow>
+
                 <SettingRow label="Resolution Scale" description="Internal render resolution">
                   <SelectInput
                     value={settings.resolutionScale}
@@ -387,6 +496,72 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     min={0}
                     max={100}
                     step={1}
+                  />
+                </SettingRow>
+
+                <div className="pt-3 border-t border-white/5" />
+
+                <SettingRow label="Team Voice" description="Enable match voice connection">
+                  <ToggleInput
+                    value={settings.voiceEnabled}
+                    onChange={(v) => updateSetting('voiceEnabled', v)}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Voice Volume" description={`${settings.voiceVolume}%`}>
+                  <SliderInput
+                    value={settings.voiceVolume}
+                    onChange={(v) => updateSetting('voiceVolume', v)}
+                    min={0}
+                    max={100}
+                    step={1}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Microphone Gain" description={`${settings.micVolume}%`}>
+                  <SliderInput
+                    value={settings.micVolume}
+                    onChange={(v) => updateSetting('micVolume', v)}
+                    min={0}
+                    max={100}
+                    step={1}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Input Device" description="Microphone used for team voice">
+                  <SelectInput
+                    value={settings.voiceInputDeviceId}
+                    onChange={(v) => updateSetting('voiceInputDeviceId', v)}
+                    options={inputDeviceOptions}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Output Device" description="Speaker used for teammate voice">
+                  <SelectInput
+                    value={settings.voiceOutputDeviceId}
+                    onChange={(v) => updateSetting('voiceOutputDeviceId', v)}
+                    options={outputDeviceOptions}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Noise Suppression" description="Reduce background microphone noise">
+                  <ToggleInput
+                    value={settings.noiseSuppressionEnabled}
+                    onChange={(v) => updateSetting('noiseSuppressionEnabled', v)}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Echo Cancellation" description="Prevent speaker audio feeding into mic">
+                  <ToggleInput
+                    value={settings.echoCancellationEnabled}
+                    onChange={(v) => updateSetting('echoCancellationEnabled', v)}
+                  />
+                </SettingRow>
+
+                <SettingRow label="Auto Gain Control" description="Stabilize microphone level">
+                  <ToggleInput
+                    value={settings.autoGainControlEnabled}
+                    onChange={(v) => updateSetting('autoGainControlEnabled', v)}
                   />
                 </SettingRow>
 
@@ -500,6 +675,26 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
             {activeTab === 'account' && (
               <div className="space-y-1">
+                {hasAccount && !hasFullFunctionality && (
+                  <div className="mb-2 rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2">
+                    <p className="text-amber-200 text-xs font-body">
+                      Phantom is required for full functionality. Link a wallet to complete this profile.
+                    </p>
+                  </div>
+                )}
+
+                {notice && (
+                  <div className="mb-2 rounded-lg border border-green-500/20 bg-green-500/10 px-3 py-2">
+                    <p className="text-green-300 text-xs font-body">{notice}</p>
+                  </div>
+                )}
+
+                {authError && (
+                  <div className="mb-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2">
+                    <p className="text-red-300 text-xs font-body">{authError}</p>
+                  </div>
+                )}
+
                 <SettingRow
                   label="Player"
                   description={hasAccount ? 'Currently signed in' : isSessionLoading ? 'Checking saved session' : 'No active account'}
@@ -520,11 +715,55 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </SettingRow>
 
-                <SettingRow label="Wallet" description="Connected wallet address">
-                  <AccountValue value={formatAccountAddress(displayWalletAddress)} />
+                <SettingRow label="Access" description={hasFullFunctionality ? 'All account features available' : 'Phantom wallet required'}>
+                  <AccountValue value={hasFullFunctionality ? 'FULL' : hasAccount ? 'LIMITED' : 'SIGNED OUT'} />
                 </SettingRow>
 
-                <SettingRow label="Sign Out" description="End this wallet session">
+                <SettingRow label="Discord" description={discordAccount ? 'Connected login provider' : isDiscordAuthEnabled ? 'Link Discord to this profile' : 'Discord linking disabled'}>
+                  {discordAccount ? (
+                    <AccountValue value={discordAccount.displayName || 'CONNECTED'} />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleLinkDiscord}
+                      disabled={!hasAccount || !isDiscordAuthEnabled}
+                      className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center border focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-300/70 ${
+                        hasAccount && isDiscordAuthEnabled
+                          ? 'border-indigo-300/20 bg-indigo-500/15 text-indigo-100 hover:border-indigo-200/40 hover:bg-indigo-500/25'
+                          : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
+                      }`}
+                    >
+                      CONNECT
+                    </button>
+                  )}
+                </SettingRow>
+
+                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for full functionality'}>
+                  {hasPhantomAccount ? (
+                    <AccountValue value={formatAccountAddress(displayWalletAddress)} />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleLinkPhantom}
+                      disabled={!hasAccount || isLinkingPhantom || isConnecting}
+                      className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center gap-2 border focus:outline-none focus-visible:ring-1 focus-visible:ring-purple-300/70 ${
+                        hasAccount
+                          ? 'border-purple-300/20 bg-purple-500/15 text-purple-100 hover:border-purple-200/40 hover:bg-purple-500/25'
+                          : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
+                      }`}
+                    >
+                      {(isLinkingPhantom || isConnecting) && (
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                      )}
+                      {isLinkingPhantom || isConnecting ? 'CONNECTING' : 'CONNECT'}
+                    </button>
+                  )}
+                </SettingRow>
+
+                <SettingRow label="Sign Out" description="End this app session">
                   <button
                     type="button"
                     onClick={handleSignOut}

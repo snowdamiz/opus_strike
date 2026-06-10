@@ -10,19 +10,99 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum AuthProvider {
+  discord
+  phantom
+}
+
 model User {
   id            String   @id @default(cuid())
-  walletAddress String   @unique
+  walletAddress String?  @unique
   name          String
+  lastLoginAt   DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  authAccounts  AuthAccount[]
+  matchStats     GameMatchParticipant[]
 
   // Player stats (optional - can expand later)
-  totalGames    Int      @default(0)
-  totalWins     Int      @default(0)
-  totalKills    Int      @default(0)
-  totalDeaths   Int      @default(0)
-  totalCaptures Int      @default(0)
+  totalGames       Int      @default(0)
+  totalWins        Int      @default(0)
+  totalLosses      Int      @default(0)
+  totalDraws       Int      @default(0)
+  totalKills       Int      @default(0)
+  totalDeaths      Int      @default(0)
+  totalAssists     Int      @default(0)
+  totalCaptures    Int      @default(0)
+  totalFlagReturns Int      @default(0)
+  totalScore       Int      @default(0)
 
   @@index([walletAddress])
+}
+
+model AuthAccount {
+  id                String       @id @default(cuid())
+  userId            String
+  provider          AuthProvider
+  providerAccountId String
+  displayName       String?
+  avatarUrl         String?
+  emailHash         String?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model GameMatch {
+  id          String   @id
+  roomId      String
+  lobbyId     String?
+  mapSeed     Int
+  startedAt   DateTime
+  endedAt     DateTime
+  redScore    Int
+  blueScore   Int
+  winningTeam String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  participants GameMatchParticipant[]
+
+  @@index([roomId])
+  @@index([lobbyId])
+  @@index([startedAt])
+  @@index([winningTeam])
+}
+
+model GameMatchParticipant {
+  id              String    @id @default(cuid())
+  matchId         String
+  userId          String
+  playerSessionId String
+  displayName     String
+  team            String
+  heroId          String?
+  kills           Int       @default(0)
+  deaths          Int       @default(0)
+  assists         Int       @default(0)
+  flagCaptures    Int       @default(0)
+  flagReturns     Int       @default(0)
+  score           Int       @default(0)
+  outcome         String
+  joinedAt        DateTime
+  leftAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  match GameMatch @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, userId])
+  @@index([matchId])
+  @@index([userId, joinedAt])
+  @@index([outcome])
 }

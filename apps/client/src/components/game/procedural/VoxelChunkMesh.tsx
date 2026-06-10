@@ -1,7 +1,13 @@
-import { memo, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import type { MeshStandardMaterial } from 'three';
 import type { VoxelChunk, VoxelMapManifest } from '@voxel-strike/shared';
-import { buildVoxelChunkGeometry, buildVoxelRegionGeometry } from './meshBuilder';
+import {
+  buildVoxelChunkGeometry,
+  buildVoxelRegionGeometry,
+  buildVoxelRegionGeometryAsync,
+  getCachedVoxelGeometry,
+  getVoxelRegionGeometryCacheKey,
+} from './meshBuilder';
 
 interface VoxelChunkMeshProps {
   chunk: VoxelChunk;
@@ -21,7 +27,11 @@ interface VoxelRegionMeshProps {
   manifest: VoxelMapManifest;
   material: MeshStandardMaterial;
   shadowsEnabled: boolean;
+  buildMode?: VoxelMeshBuildMode;
+  onGeometryReady?: (regionId: string) => void;
 }
+
+export type VoxelMeshBuildMode = 'async' | 'sync';
 
 export const VoxelChunkMesh = memo(function VoxelChunkMesh({
   chunk,
@@ -47,11 +57,48 @@ export const VoxelRegionMesh = memo(function VoxelRegionMesh({
   manifest,
   material,
   shadowsEnabled,
+  buildMode = 'async',
+  onGeometryReady,
 }: VoxelRegionMeshProps) {
-  const geometry = useMemo(
-    () => buildVoxelRegionGeometry(manifest, region.id, region.chunks),
-    [manifest, region]
-  );
+  const cacheKey = getVoxelRegionGeometryCacheKey(manifest, region.id);
+  const [geometry, setGeometry] = useState(() => {
+    const cached = getCachedVoxelGeometry(cacheKey);
+    if (cached || buildMode === 'async') return cached;
+    return buildVoxelRegionGeometry(manifest, region.id, region.chunks);
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = getCachedVoxelGeometry(cacheKey);
+    if (cached) {
+      setGeometry(cached);
+      return;
+    }
+
+    if (buildMode === 'sync') {
+      setGeometry(buildVoxelRegionGeometry(manifest, region.id, region.chunks));
+      return;
+    }
+
+    setGeometry(null);
+    buildVoxelRegionGeometryAsync(manifest, region.id, region.chunks)
+      .then((nextGeometry) => {
+        if (!cancelled) setGeometry(nextGeometry);
+      })
+      .catch((error) => {
+        console.warn('[VoxelMap] Failed to build region mesh', region.id, error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [buildMode, cacheKey, manifest, region]);
+
+  useEffect(() => {
+    if (geometry) onGeometryReady?.(region.id);
+  }, [geometry, onGeometryReady, region.id]);
+
+  if (!geometry) return null;
 
   return (
     <mesh

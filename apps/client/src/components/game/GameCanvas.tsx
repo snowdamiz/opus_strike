@@ -1,5 +1,5 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Environment, OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { getVoxelMapTheme } from '@voxel-strike/shared';
@@ -22,13 +22,14 @@ import { prewarmBlazeEffects, prewarmPhantomEffects } from './effectResources';
 import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { useGameStore } from '../../store/gameStore';
-import { useSettingsStore } from '../../store/settingsStore';
+import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
 import { getClientPerfSnapshot, setActiveLightCount } from '../../utils/perfMarks';
 import {
   getVisualQualityConfig,
   type ReflectionQualityConfig,
   type ShadowQualityConfig,
 } from './visualQuality';
+import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
 
 function CameraSettingsApplier({ fov }: { fov: number }) {
   const { camera } = useThree();
@@ -63,16 +64,32 @@ function RendererSettingsApplier({
   return null;
 }
 
-function SceneReadySignal({ onReady }: { onReady?: () => void }) {
-  const didSignalRef = useRef(false);
+function PhysicsBudgetApplier({ maxVisualQueriesPerFrame }: { maxVisualQueriesPerFrame: number }) {
+  useEffect(() => {
+    configureVisualPhysicsQueryBudget(maxVisualQueriesPerFrame);
+  }, [maxVisualQueriesPerFrame]);
+
+  return null;
+}
+
+function SceneReadySignal({
+  onReady,
+  ready,
+  readyKey,
+}: {
+  onReady?: () => void;
+  ready: boolean;
+  readyKey: string;
+}) {
+  const didSignalRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!onReady || didSignalRef.current) return;
+    if (!onReady || !ready || didSignalRef.current === readyKey) return;
 
     let secondFrame = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
-        didSignalRef.current = true;
+        didSignalRef.current = readyKey;
         onReady();
       });
     });
@@ -81,7 +98,7 @@ function SceneReadySignal({ onReady }: { onReady?: () => void }) {
       window.cancelAnimationFrame(firstFrame);
       window.cancelAnimationFrame(secondFrame);
     };
-  }, [onReady]);
+  }, [onReady, ready, readyKey]);
 
   return null;
 }
@@ -105,8 +122,8 @@ function SceneLightCounter() {
   return null;
 }
 
-const FEATURE_QUALITY_STEPS = ['off', 'low', 'medium', 'high', 'ultra'] as const;
-const RESOLUTION_QUALITY_STEPS = ['low', 'medium', 'high', 'ultra'] as const;
+const FEATURE_QUALITY_STEPS = ['off', 'minimum', 'low', 'medium', 'high', 'ultra'] as const;
+const RESOLUTION_QUALITY_STEPS = ['minimum', 'low', 'medium', 'high', 'ultra'] as const;
 
 function stepDown<T extends string>(value: T, steps: readonly T[]): T {
   const index = steps.indexOf(value);
@@ -142,6 +159,22 @@ function AdaptiveQualityController() {
       shadowQuality: stepDown(settings.shadowQuality, FEATURE_QUALITY_STEPS),
       resolutionScale: stepDown(settings.resolutionScale, RESOLUTION_QUALITY_STEPS),
     };
+
+    const shouldEnterPotato =
+      nextSettings.reflectionQuality === 'off' &&
+      nextSettings.environmentQuality === 'off' &&
+      nextSettings.shadowQuality === 'off' &&
+      nextSettings.resolutionScale === 'minimum' &&
+      settings.graphicsPreset !== 'potato';
+
+    if (shouldEnterPotato) {
+      useSettingsStore.getState().applySettings({
+        ...settings,
+        graphicsPreset: 'potato',
+        ...graphicsPresetSettings.potato,
+      });
+      return;
+    }
 
     if (
       nextSettings.reflectionQuality !== settings.reflectionQuality ||
@@ -208,6 +241,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
   const debugMode = useGameStore((state) => state.debugMode);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
+  const [readyMapSeed, setReadyMapSeed] = useState<number | null>(null);
   const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
   const gridCellColor = useMemo(
     () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
@@ -219,10 +253,14 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
   const showFullPerfOverlay = debugMode || settings.showFPS === 'full';
+  const isWorldReady = readyMapSeed === mapSeed;
+  const handleWorldReady = useCallback(() => {
+    setReadyMapSeed(mapSeed);
+  }, [mapSeed]);
 
   return (
     <Canvas
-      key={`${settings.resolutionScale}:${settings.antialiasing}`}
+      key={`aa:${settings.antialiasing}`}
       shadows={qualityConfig.shadows.enabled}
       dpr={qualityConfig.render.dpr}
       camera={{ 
@@ -258,6 +296,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
       <Suspense fallback={null}>
         <CameraSettingsApplier fov={settings.fov} />
         <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
+        <PhysicsBudgetApplier maxVisualQueriesPerFrame={qualityConfig.budgets.maxVisualPhysicsQueriesPerFrame} />
         <GameplayFrameSystems />
         <DynamicLightBudgetSystem maxLights={qualityConfig.dynamicLights.maxDynamicLights} />
         {showFullPerfOverlay && <SceneLightCounter />}
@@ -306,6 +345,8 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
           dressingDensity={qualityConfig.environment.dressingDensity}
           reflectionIntensity={qualityConfig.reflections.materialIntensity}
           materialDetail={qualityConfig.render.materialDetail}
+          performanceBudget={qualityConfig.budgets}
+          onReady={handleWorldReady}
         />
 
         {/* Grid helper for visibility */}
@@ -323,19 +364,19 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
           followCamera={false}
         />
 
-        {/* Player controller - always active when connected */}
-        <PlayerController />
+        {/* Physics boots immediately; player input/simulation waits for terrain readiness. */}
+        <PlayerController enabled={isWorldReady} />
         
         {/* Other players - always rendered so players can see each other in lobby */}
-        <OtherPlayers />
+        <OtherPlayers config={qualityConfig.remotePlayers} />
         
         {/* Game objects only during gameplay */}
-        {isPlaying && (
+        {isPlaying && isWorldReady && (
           <>
             <Flags />
             <Effects />
-            <SlideSpeedLines />
-            <HeroViewmodel />
+            <SlideSpeedLines config={qualityConfig.effects} />
+            <HeroViewmodel config={qualityConfig.viewmodel} />
             <VoidZonesManager />
             <DireBallsManager />
             <PhantomPersonalShieldsManager />
@@ -346,7 +387,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
             <ChronosAegisManager />
             <ChronosPulsesManager />
             <ChronosTimebreakManager />
-            <TerrainImpactEffectsManager />
+            <TerrainImpactEffectsManager config={qualityConfig.effects} />
           </>
         )}
 
@@ -355,7 +396,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
 
         <fogExp2 attach="fog" args={[mapTheme.fogColor, 0.0062]} />
         <color attach="background" args={[mapTheme.skyColor]} />
-        <SceneReadySignal onReady={onReady} />
+        <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={`${mapSeed}`} />
       </Suspense>
     </Canvas>
   );

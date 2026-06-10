@@ -1,5 +1,5 @@
 import { VoxelMap } from './procedural';
-import type { VoxelMaterialDetail } from './visualQuality';
+import type { VoxelMaterialDetail, WorldPerformanceBudget } from './visualQuality';
 
 interface VoxelWorldProps {
   seed?: number;
@@ -9,6 +9,8 @@ interface VoxelWorldProps {
   dressingDensity: number;
   reflectionIntensity: number;
   materialDetail: VoxelMaterialDetail;
+  performanceBudget: WorldPerformanceBudget;
+  onReady?: () => void;
 }
 
 export function VoxelWorld({
@@ -19,6 +21,8 @@ export function VoxelWorld({
   dressingDensity,
   reflectionIntensity,
   materialDetail,
+  performanceBudget,
+  onReady,
 }: VoxelWorldProps) {
   return (
     <group>
@@ -30,6 +34,8 @@ export function VoxelWorld({
         dressingDensity={dressingDensity}
         reflectionIntensity={reflectionIntensity}
         materialDetail={materialDetail}
+        performanceBudget={performanceBudget}
+        onReady={onReady}
       />
     </group>
   );

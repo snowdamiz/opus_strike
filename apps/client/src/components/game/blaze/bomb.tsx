@@ -547,7 +547,11 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       const directHit = raycastDirection(
         camera.position.x, camera.position.y, camera.position.z,
         _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
-        BOMB_MAX_RANGE + 10
+        BOMB_MAX_RANGE + 10,
+        {
+          priority: 'visual',
+          feature: 'targeting:blazeBomb',
+        }
       );
       
       if (directHit && directHit.hit) {
@@ -557,7 +561,10 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
         foundTarget = true;
         
         if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50);
+          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+            priority: 'visual',
+            feature: 'targeting:blazeBomb',
+          });
           if (groundBelow?.isWalkable) {
             targetY = groundBelow.groundY + 0.1;
           }
@@ -577,7 +584,10 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
           const sampleY = camera.position.y + _bombLookDir.y * dist;
           const sampleZ = camera.position.z + _bombLookDir.z * dist;
           
-          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150);
+          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
+            priority: 'visual',
+            feature: 'targeting:blazeBomb',
+          });
           
           if (groundCheck?.isWalkable) {
             targetX = sampleX;
@@ -601,7 +611,10 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
           targetY = localPlayer.position.y + dy * scale;
           targetZ = localPlayer.position.z + dz * scale;
           
-          const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100);
+          const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
+            priority: 'visual',
+            feature: 'targeting:blazeBomb',
+          });
           if (groundCheck?.isWalkable) {
             targetY = groundCheck.groundY + 0.1;
           } else {
@@ -625,7 +638,10 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
         targetX = localPlayer.position.x + _bombHorizDir.x * fallbackDist;
         targetZ = localPlayer.position.z + _bombHorizDir.z * fallbackDist;
         
-        const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100);
+        const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100, {
+          priority: 'visual',
+          feature: 'targeting:blazeBomb',
+        });
         if (groundCheck?.isWalkable) {
           targetY = groundCheck.groundY + 0.1;
           isValid = Math.sqrt(

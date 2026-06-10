@@ -4942,6 +4942,22 @@ function generateProceduralVoxelMapInternal(
   const colliders = generateVoxelColliders(partialManifest);
   markStage('colliders');
 
+  let colliderHash = 2166136261 >>> 0;
+  const hashColliderValue = (value: number) => {
+    colliderHash ^= Math.round(value * 1000);
+    colliderHash = Math.imul(colliderHash, 16777619) >>> 0;
+  };
+  hashColliderValue(colliders.length);
+  for (const collider of colliders) {
+    hashColliderValue(collider.center.x);
+    hashColliderValue(collider.center.y);
+    hashColliderValue(collider.center.z);
+    hashColliderValue(collider.halfExtents.x);
+    hashColliderValue(collider.halfExtents.y);
+    hashColliderValue(collider.halfExtents.z);
+  }
+  const estimatedBalancedTriangles = Math.max(chunks.length * 96, Math.round(solidBlocks * 0.72));
+
   const stats: VoxelMapStats = {
     chunkCount: chunks.length,
     totalChunkSlots,
@@ -4949,6 +4965,13 @@ function generateProceduralVoxelMapInternal(
     renderableChunkCount: chunks.length,
     solidBlocks,
     colliderCount: colliders.length,
+    colliderSignature: `${normalizedSeed}:${colliders.length}:${colliderHash.toString(16)}`,
+    estimatedTrianglesByProfile: {
+      potato: Math.round(estimatedBalancedTriangles * 0.58),
+      competitive: Math.round(estimatedBalancedTriangles * 0.72),
+      balanced: estimatedBalancedTriangles,
+      cinematic: Math.round(estimatedBalancedTriangles * 1.08),
+    },
   };
   stageTimingsMs.total = Date.now() - generationStartedAt;
   const compiledDiagnostics = finalizeCompiledMapDiagnostics(blueprint, {

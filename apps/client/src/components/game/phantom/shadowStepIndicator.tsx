@@ -386,7 +386,10 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
               targetX = cameraPos.x + lookDir.x * t;
               targetZ = cameraPos.z + lookDir.z * t;
               
-              const groundCheck = checkGroundWithNormal(targetX, groundY + 10, targetZ, 20);
+              const groundCheck = checkGroundWithNormal(targetX, groundY + 10, targetZ, 20, {
+                priority: 'visual',
+                feature: 'targeting:shadowStep',
+              });
               if (groundCheck && groundCheck.isWalkable) {
                 targetY = groundCheck.groundY + 0.05;
                 foundGround = true;
@@ -402,7 +405,10 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
           targetX = localPlayer.position.x + horizontalDir.x * projectionDist;
           targetZ = localPlayer.position.z + horizontalDir.z * projectionDist;
           
-          const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 20, targetZ, 50);
+          const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 20, targetZ, 50, {
+            priority: 'visual',
+            feature: 'targeting:shadowStep',
+          });
           if (groundCheck && groundCheck.isWalkable) {
             targetY = groundCheck.groundY + 0.05;
             foundGround = true;
@@ -420,7 +426,10 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
             targetX = localPlayer.position.x + dx * scale;
             targetZ = localPlayer.position.z + dz * scale;
             
-            const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 20, targetZ, 50);
+            const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 20, targetZ, 50, {
+              priority: 'visual',
+              feature: 'targeting:shadowStep',
+            });
             if (groundCheck && groundCheck.isWalkable) {
               targetY = groundCheck.groundY + 0.05;
             } else {
@@ -438,7 +447,10 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
                 targetY = validation.adjustedPosition.y - PLAYER_HEIGHT / 2;
               }
             } else {
-              const groundRecheck = checkGroundWithNormal(targetX, teleportY + 5, targetZ, 10);
+              const groundRecheck = checkGroundWithNormal(targetX, teleportY + 5, targetZ, 10, {
+                priority: 'visual',
+                feature: 'targeting:shadowStep',
+              });
               if (groundRecheck && groundRecheck.isWalkable) {
                 isValid = true;
                 targetY = groundRecheck.groundY + 0.05;

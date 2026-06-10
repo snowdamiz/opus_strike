@@ -574,7 +574,10 @@ export function DireBallsManager() {
           rayDirectionRef.current.x = slot.direction.x;
           rayDirectionRef.current.y = slot.direction.y;
           rayDirectionRef.current.z = slot.direction.z;
-          const hit = raycast(world, slot.position, rayDirectionRef.current, moveDistance + BALL_RADIUS);
+          const hit = raycast(world, slot.position, rayDirectionRef.current, moveDistance + BALL_RADIUS, {
+            priority: 'visual',
+            feature: 'projectile:phantomDireBall',
+          });
           physicsMs += performance.now() - physicsStart;
 
           if (hit && hit.distance <= moveDistance + BALL_RADIUS) {

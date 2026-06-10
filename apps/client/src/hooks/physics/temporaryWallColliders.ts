@@ -15,6 +15,22 @@ const temporaryWallColliders = new Map<string, TemporaryWallColliderData>();
 // These will be set by the main physics module
 let rapierInstance: typeof RAPIER | null = null;
 let worldInstance: RAPIER.World | null = null;
+let sceneQueryUpdateRaf: number | null = null;
+
+function scheduleSceneQueryUpdate(): void {
+  if (!worldInstance || sceneQueryUpdateRaf !== null) return;
+
+  sceneQueryUpdateRaf = window.requestAnimationFrame(() => {
+    sceneQueryUpdateRaf = null;
+    worldInstance?.updateSceneQueries();
+  });
+}
+
+function cancelScheduledSceneQueryUpdate(): void {
+  if (sceneQueryUpdateRaf === null) return;
+  window.cancelAnimationFrame(sceneQueryUpdateRaf);
+  sceneQueryUpdateRaf = null;
+}
 
 /**
  * Initialize the temporary wall collider system with physics instances
@@ -22,6 +38,7 @@ let worldInstance: RAPIER.World | null = null;
 export function initTemporaryWallSystem(rapier: typeof RAPIER, world: RAPIER.World): void {
   rapierInstance = rapier;
   worldInstance = world;
+  cancelScheduledSceneQueryUpdate();
 }
 
 /**
@@ -29,6 +46,7 @@ export function initTemporaryWallSystem(rapier: typeof RAPIER, world: RAPIER.Wor
  */
 export function updateTemporaryWallWorld(world: RAPIER.World | null): void {
   worldInstance = world;
+  if (!world) cancelScheduledSceneQueryUpdate();
 }
 
 /**
@@ -66,15 +84,12 @@ export function addTemporaryWallCollider(
     const colliderDesc = rapierInstance.ColliderDesc.cuboid(width / 2, height / 2, depth / 2);
     const collider = worldInstance.createCollider(colliderDesc, rigidBody);
 
-    // CRITICAL: Update scene queries so raycasts can detect this new collider
-    // Without this, dynamically added colliders are invisible to raycasts
-    worldInstance.updateSceneQueries();
-
     temporaryWallColliders.set(id, {
       rigidBody,
       collider,
       createdAt: Date.now(),
     });
+    scheduleSceneQueryUpdate();
 
     return true;
   } catch (e) {
@@ -96,6 +111,7 @@ export function removeTemporaryWallCollider(id: string): boolean {
     worldInstance.removeCollider(data.collider, true);
     worldInstance.removeRigidBody(data.rigidBody);
     temporaryWallColliders.delete(id);
+    scheduleSceneQueryUpdate();
     return true;
   } catch (e) {
     console.error('[Physics] Failed to remove temporary wall collider:', e);
@@ -131,6 +147,7 @@ export function cleanupExpiredTemporaryWallColliders(maxAge: number, idPrefix?: 
     }
   }
 
+  if (removed > 0) scheduleSceneQueryUpdate();
   return removed;
 }
 
@@ -139,6 +156,7 @@ export function cleanupExpiredTemporaryWallColliders(maxAge: number, idPrefix?: 
  */
 export function clearAllTemporaryWallColliders(idPrefix?: string): void {
   if (!worldInstance) {
+    cancelScheduledSceneQueryUpdate();
     if (!idPrefix) {
       temporaryWallColliders.clear();
     } else {
@@ -149,6 +167,7 @@ export function clearAllTemporaryWallColliders(idPrefix?: string): void {
     return;
   }
 
+  let removed = false;
   for (const [id, data] of temporaryWallColliders) {
     if (idPrefix && !id.startsWith(idPrefix)) continue;
 
@@ -159,6 +178,11 @@ export function clearAllTemporaryWallColliders(idPrefix?: string): void {
       // Ignore errors during cleanup
     }
     temporaryWallColliders.delete(id);
+    removed = true;
+  }
+
+  if (removed) {
+    scheduleSceneQueryUpdate();
   }
 }
 

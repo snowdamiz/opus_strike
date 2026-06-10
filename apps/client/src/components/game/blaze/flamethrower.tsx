@@ -165,7 +165,11 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider }: Flamet
       const hit = raycastDirection(
         _origin.x, _origin.y, _origin.z,
         _direction.x, _direction.y, _direction.z,
-        BLAZE_FLAMETHROWER_RANGE
+        BLAZE_FLAMETHROWER_RANGE,
+        {
+          priority: 'visual',
+          feature: 'effect:blazeFlamethrower',
+        }
       );
 
       if (hit?.hit) {

@@ -164,7 +164,10 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
       
       // Terrain collision - if hit, start retracting
       if (isPhysicsReady()) {
-        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5);
+        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5, {
+          priority: 'visual',
+          feature: 'projectile:hookshotDrag',
+        });
         if (hit?.hit) {
           triggerTerrainImpact('hookshot_drag_hook', hit.point, {
             normal: hit.normal,

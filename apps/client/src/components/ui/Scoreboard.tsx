@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import type { Team, Player } from '@voxel-strike/shared';
 import { FACTIONS } from '../../styles/colorTokens';
+import { useVoiceStore, type VoiceParticipant } from '../../store/voiceStore';
 
 // Solar Icon
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -35,12 +37,25 @@ export function Scoreboard() {
       blueScore: state.blueScore,
     }))
   );
+  const { participants, mutedPlayerIds, togglePlayerMute } = useVoiceStore(
+    useShallow(state => ({
+      participants: state.participants,
+      mutedPlayerIds: state.mutedPlayerIds,
+      togglePlayerMute: state.togglePlayerMute,
+    }))
+  );
+
+  const voiceByPlayerId = useMemo(() => new Map(
+    Array.from(participants.values())
+      .filter(participant => participant.playerId)
+      .map(participant => [participant.playerId, participant])
+  ), [participants]);
 
   const solarPlayers = Array.from(players.values()).filter(p => p.team === 'red');
   const voidPlayers = Array.from(players.values()).filter(p => p.team === 'blue');
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-none">
+    <div className="absolute inset-0 flex items-center justify-center bg-black/80 backdrop-blur-md z-40 pointer-events-auto">
       <div
         className="w-full max-w-2xl lg:max-w-3xl xl:max-w-4xl mx-4 lg:mx-6 xl:mx-8 rounded-2xl overflow-hidden animate-scale-in"
         style={{
@@ -128,6 +143,10 @@ export function Scoreboard() {
                   key={player.id} 
                   player={player} 
                   isLocal={player.id === localPlayer?.id}
+                  canMuteVoice={player.team === localPlayer?.team && player.id !== localPlayer?.id && !player.isBot}
+                  voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
+                  voiceMuted={mutedPlayerIds.has(player.id)}
+                  onToggleVoiceMute={() => togglePlayerMute(player.id)}
                   faction={FACTIONS.red}
                 />
               ))}
@@ -149,6 +168,10 @@ export function Scoreboard() {
                   key={player.id} 
                   player={player}
                   isLocal={player.id === localPlayer?.id}
+                  canMuteVoice={player.team === localPlayer?.team && player.id !== localPlayer?.id && !player.isBot}
+                  voiceParticipant={voiceByPlayerId.get(player.id) ?? null}
+                  voiceMuted={mutedPlayerIds.has(player.id)}
+                  onToggleVoiceMute={() => togglePlayerMute(player.id)}
                   faction={FACTIONS.blue}
                 />
               ))}
@@ -186,7 +209,7 @@ interface FactionHeaderProps {
 function FactionHeader({ faction }: FactionHeaderProps) {
   return (
     <div 
-      className="grid grid-cols-6 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
+      className="grid grid-cols-7 gap-2 px-4 py-2.5 text-[10px] font-body uppercase tracking-wider"
       style={{ background: faction.bgColor }}
     >
       <span className="col-span-2" style={{ color: faction.primaryColor }}>Warrior</span>
@@ -194,6 +217,7 @@ function FactionHeader({ faction }: FactionHeaderProps) {
       <span className="text-white/40 text-center">D</span>
       <span className="text-white/40 text-center">A</span>
       <span className="text-white/40 text-center">Flags</span>
+      <span className="text-white/40 text-center">Voice</span>
     </div>
   );
 }
@@ -202,14 +226,18 @@ interface PlayerRowProps {
   player: Player;
   isLocal: boolean;
   faction: typeof FACTIONS.red | typeof FACTIONS.blue;
+  canMuteVoice: boolean;
+  voiceParticipant: VoiceParticipant | null;
+  voiceMuted: boolean;
+  onToggleVoiceMute: () => void;
 }
 
-function PlayerRow({ player, isLocal, faction }: PlayerRowProps) {
+function PlayerRow({ player, isLocal, faction, canMuteVoice, voiceParticipant, voiceMuted, onToggleVoiceMute }: PlayerRowProps) {
   const stats = player.stats ?? { kills: 0, deaths: 0, assists: 0, flagCaptures: 0, flagReturns: 0 };
   
   return (
     <div 
-      className={`grid grid-cols-6 gap-2 px-4 py-3 items-center transition-colors ${
+      className={`grid grid-cols-7 gap-2 px-4 py-3 items-center transition-colors ${
         isLocal ? 'bg-white/[0.06]' : 'hover:bg-white/[0.02]'
       }`}
     >
@@ -267,6 +295,33 @@ function PlayerRow({ player, isLocal, faction }: PlayerRowProps) {
       >
         {stats.flagCaptures}
       </span>
+      <div className="flex justify-center">
+        {canMuteVoice ? (
+          <button
+            type="button"
+            title={voiceMuted ? 'Unmute voice' : 'Mute voice'}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleVoiceMute();
+            }}
+            className={`h-7 w-7 rounded-md border flex items-center justify-center transition-colors ${
+              voiceMuted
+                ? 'border-red-300/35 bg-red-500/15 text-red-200'
+                : voiceParticipant?.isSpeaking
+                  ? 'border-emerald-300/45 bg-emerald-400/15 text-emerald-200'
+                  : 'border-white/10 bg-white/5 text-white/45 hover:text-white/80 hover:bg-white/10'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3a3 3 0 00-3 3v5a3 3 0 006 0V6a3 3 0 00-3-3z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 10v1a7 7 0 0014 0v-1M12 18v3M8 21h8" />
+              {voiceMuted && <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4l16 16" />}
+            </svg>
+          </button>
+        ) : (
+          <span className="text-white/18">-</span>
+        )}
+      </div>
     </div>
   );
 }

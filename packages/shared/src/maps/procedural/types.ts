@@ -394,6 +394,13 @@ export interface VoxelMapStats {
   renderableChunkCount: number;
   solidBlocks: number;
   colliderCount: number;
+  colliderSignature?: string;
+  estimatedTrianglesByProfile?: {
+    potato: number;
+    competitive: number;
+    balanced: number;
+    cinematic: number;
+  };
 }
 
 export interface VoxelHeightfield {

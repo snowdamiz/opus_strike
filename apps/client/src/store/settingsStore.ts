@@ -2,13 +2,13 @@ import { create } from 'zustand';
 import { DEFAULT_KEYBINDINGS, type InputState } from '@voxel-strike/shared';
 import { loggers } from '../utils/logger';
 
-export type GraphicsQuality = 'low' | 'medium' | 'high' | 'ultra';
+export type GraphicsQuality = 'minimum' | 'low' | 'medium' | 'high' | 'ultra';
 export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
 export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
-export type GraphicsPreset = 'competitive' | 'balanced' | 'cinematic';
+export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic';
 export type FpsDisplayMode = 'off' | 'fps' | 'full';
-export type KeybindAction = keyof InputState | 'scoreboard';
+export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk';
 export type Keybindings = Record<KeybindAction, string>;
 
 export const keybindActionKeys = [
@@ -27,11 +27,13 @@ export const keybindActionKeys = [
   'ultimate',
   'interact',
   'scoreboard',
+  'pushToTalk',
 ] as const satisfies readonly KeybindAction[];
 
 export const defaultKeybindings: Keybindings = {
   ...DEFAULT_KEYBINDINGS,
   scoreboard: 'Tab',
+  pushToTalk: 'KeyV',
 };
 
 export interface ClientSettings {
@@ -48,6 +50,15 @@ export interface ClientSettings {
   masterVolume: number;
   sfxVolume: number;
   musicVolume: number;
+  voiceEnabled: boolean;
+  voiceVolume: number;
+  micVolume: number;
+  voiceInputDeviceId: string;
+  voiceOutputDeviceId: string;
+  noiseSuppressionEnabled: boolean;
+  echoCancellationEnabled: boolean;
+  autoGainControlEnabled: boolean;
+  voiceActivationThreshold: number;
   sensitivity: number;
   invertY: boolean;
   toggleCrouch: boolean;
@@ -71,11 +82,20 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   | 'environmentQuality'
   | 'adaptiveQuality'
 >> = {
+  potato: {
+    resolutionScale: 'minimum',
+    antialiasing: false,
+    materialQuality: 'low',
+    shadowQuality: 'off',
+    reflectionQuality: 'off',
+    environmentQuality: 'off',
+    adaptiveQuality: true,
+  },
   competitive: {
-    resolutionScale: 'medium',
+    resolutionScale: 'low',
     antialiasing: false,
     materialQuality: 'medium',
-    shadowQuality: 'low',
+    shadowQuality: 'off',
     reflectionQuality: 'off',
     environmentQuality: 'low',
     adaptiveQuality: true,
@@ -108,6 +128,15 @@ export const defaultSettings: ClientSettings = {
   masterVolume: 80,
   sfxVolume: 100,
   musicVolume: 50,
+  voiceEnabled: true,
+  voiceVolume: 90,
+  micVolume: 100,
+  voiceInputDeviceId: '',
+  voiceOutputDeviceId: '',
+  noiseSuppressionEnabled: true,
+  echoCancellationEnabled: true,
+  autoGainControlEnabled: true,
+  voiceActivationThreshold: 0.08,
   sensitivity: 50,
   invertY: false,
   toggleCrouch: false,
@@ -134,6 +163,12 @@ function normalizeHexColor(value: unknown, fallback: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
 }
 
+function pickDeviceId(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed.length <= 256 ? trimmed : fallback;
+}
+
 function pickBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
@@ -151,7 +186,7 @@ function pickKeybindingCode(value: unknown, fallback: string): string {
   return code.length > 0 && code.length <= 64 ? code : fallback;
 }
 
-function sanitizeKeybindings(value: unknown): Keybindings {
+function sanitizeKeybindings(value: unknown, legacyPushToTalkKey?: unknown): Keybindings {
   const raw = typeof value === 'object' && value !== null
     ? value as Partial<Record<KeybindAction, unknown>>
     : {};
@@ -159,7 +194,10 @@ function sanitizeKeybindings(value: unknown): Keybindings {
   const usedCodes = new Set<string>();
 
   for (const action of keybindActionKeys) {
-    const preferredCode = pickKeybindingCode(raw[action], defaultKeybindings[action]);
+    const rawCode = action === 'pushToTalk' && raw[action] === undefined
+      ? legacyPushToTalkKey
+      : raw[action];
+    const preferredCode = pickKeybindingCode(rawCode, defaultKeybindings[action]);
 
     if (!usedCodes.has(preferredCode)) {
       next[action] = preferredCode;
@@ -188,20 +226,22 @@ function sanitizeKeybindings(value: unknown): Keybindings {
 }
 
 function materialQualityFromLegacyPreset(quality: GraphicsQuality): MaterialQuality {
-  if (quality === 'low') return 'low';
+  if (quality === 'minimum' || quality === 'low') return 'low';
   if (quality === 'medium') return 'medium';
   return 'high';
 }
 
 export function sanitizeSettings(value: unknown): ClientSettings {
   const raw = typeof value === 'object' && value !== null
-    ? value as Partial<ClientSettings> & { quality?: unknown }
+    ? value as Partial<ClientSettings> & { quality?: unknown; pushToTalkKey?: unknown }
     : {};
-  const qualityOptions = ['low', 'medium', 'high', 'ultra'] as const;
-  const featureQualityOptions = ['off', 'low', 'medium', 'high', 'ultra'] as const;
+  const qualityOptions = ['minimum', 'low', 'medium', 'high', 'ultra'] as const;
+  const featureQualityOptions = ['off', 'minimum', 'low', 'medium', 'high', 'ultra'] as const;
   const legacyQuality = pickOption(raw.quality, qualityOptions, defaultSettings.resolutionScale);
-  const graphicsPreset = pickOption(raw.graphicsPreset, ['competitive', 'balanced', 'cinematic'] as const, defaultSettings.graphicsPreset);
+  const graphicsPreset = pickOption(raw.graphicsPreset, ['potato', 'competitive', 'balanced', 'cinematic'] as const, defaultSettings.graphicsPreset);
   const preset = graphicsPresetSettings[graphicsPreset];
+
+  const keybindings = sanitizeKeybindings(raw.keybindings, raw.pushToTalkKey);
 
   return {
     graphicsPreset,
@@ -221,6 +261,15 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     masterVolume: clamp(raw.masterVolume, 0, 100, defaultSettings.masterVolume),
     sfxVolume: clamp(raw.sfxVolume, 0, 100, defaultSettings.sfxVolume),
     musicVolume: clamp(raw.musicVolume, 0, 100, defaultSettings.musicVolume),
+    voiceEnabled: pickBoolean(raw.voiceEnabled, defaultSettings.voiceEnabled),
+    voiceVolume: clamp(raw.voiceVolume, 0, 100, defaultSettings.voiceVolume),
+    micVolume: clamp(raw.micVolume, 0, 100, defaultSettings.micVolume),
+    voiceInputDeviceId: pickDeviceId(raw.voiceInputDeviceId, defaultSettings.voiceInputDeviceId),
+    voiceOutputDeviceId: pickDeviceId(raw.voiceOutputDeviceId, defaultSettings.voiceOutputDeviceId),
+    noiseSuppressionEnabled: pickBoolean(raw.noiseSuppressionEnabled, defaultSettings.noiseSuppressionEnabled),
+    echoCancellationEnabled: pickBoolean(raw.echoCancellationEnabled, defaultSettings.echoCancellationEnabled),
+    autoGainControlEnabled: pickBoolean(raw.autoGainControlEnabled, defaultSettings.autoGainControlEnabled),
+    voiceActivationThreshold: clamp(raw.voiceActivationThreshold, 0, 1, defaultSettings.voiceActivationThreshold),
     sensitivity: clamp(raw.sensitivity, 1, 100, defaultSettings.sensitivity),
     invertY: pickBoolean(raw.invertY, defaultSettings.invertY),
     toggleCrouch: pickBoolean(raw.toggleCrouch, defaultSettings.toggleCrouch),
@@ -229,7 +278,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     showKillFeed: pickBoolean(raw.showKillFeed, defaultSettings.showKillFeed),
     crosshairStyle: pickOption(raw.crosshairStyle, ['default', 'dot', 'circle', 'cross'] as const, defaultSettings.crosshairStyle),
     crosshairColor: normalizeHexColor(raw.crosshairColor, defaultSettings.crosshairColor),
-    keybindings: sanitizeKeybindings(raw.keybindings),
+    keybindings,
   };
 }
 

@@ -7,6 +7,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import authRoutes from './auth/routes';
+import { voiceService } from './voice/VoiceService';
 
 const app = express();
 const httpServer = createServer(app);
@@ -64,6 +65,10 @@ app.use('/auth', authRoutes);
 // Health check endpoint
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/voice/status', (_req, res) => {
+  res.json(voiceService.getStatus());
 });
 
 interface LobbySummary {

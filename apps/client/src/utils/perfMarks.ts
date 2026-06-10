@@ -39,6 +39,26 @@ export interface VoxelWorldMetricSummary {
 export interface PhysicsQueryMetricSummary {
   countPerSecond: number;
   msPerSecond: number;
+  byFeature: Record<string, {
+    countPerSecond: number;
+    msPerSecond: number;
+    droppedPerSecond: number;
+  }>;
+}
+
+export interface RendererMetricSummary {
+  drawCalls: number;
+  triangles: number;
+  textures: number;
+  geometries: number;
+  materials: number;
+  shaderPrograms: number;
+}
+
+export interface WorldVisualMetricSummary {
+  atmosphereParticles: number;
+  worldDressingInstances: number;
+  fullRemoteBodies: number;
 }
 
 export interface ClientPerfSnapshot {
@@ -46,6 +66,8 @@ export interface ClientPerfSnapshot {
   network: NetworkMetricSummary;
   systems: SystemMetricSummary[];
   recentSpawns: SpawnMetricSummary[];
+  renderer: RendererMetricSummary;
+  worldVisuals: WorldVisualMetricSummary;
   voxelWorld: VoxelWorldMetricSummary;
   physicsQueries: PhysicsQueryMetricSummary;
   activeEffects: number;
@@ -79,8 +101,22 @@ let physicsQueryWindowMs = 0;
 let physicsQueryMetrics: PhysicsQueryMetricSummary = {
   countPerSecond: 0,
   msPerSecond: 0,
+  byFeature: {},
 };
 let temporaryColliderCountProvider: () => number = () => 0;
+let rendererMetrics: RendererMetricSummary = {
+  drawCalls: 0,
+  triangles: 0,
+  textures: 0,
+  geometries: 0,
+  materials: 0,
+  shaderPrograms: 0,
+};
+let worldVisualMetrics: WorldVisualMetricSummary = {
+  atmosphereParticles: 0,
+  worldDressingInstances: 0,
+  fullRemoteBodies: 0,
+};
 
 interface SystemSamples {
   samples: number[];
@@ -98,9 +134,16 @@ interface SpawnMarker {
   time: number;
 }
 
+interface PhysicsFeatureWindow {
+  count: number;
+  ms: number;
+  dropped: number;
+}
+
 const networkSamples: NetworkSample[] = [];
 const systemSamples = new Map<string, SystemSamples>();
 const spawnMarkers: SpawnMarker[] = [];
+const physicsFeatureWindow = new Map<string, PhysicsFeatureWindow>();
 
 function percentile(values: number[], p: number): number {
   if (values.length === 0) return 0;
@@ -199,7 +242,14 @@ export function recordVoxelMeshBuild(ms: number): void {
   };
 }
 
-export function recordPhysicsQueryTime(ms: number): void {
+function resetPhysicsWindow(now: number): void {
+  physicsQueryWindowStartedAt = now;
+  physicsQueryWindowCount = 0;
+  physicsQueryWindowMs = 0;
+  physicsFeatureWindow.clear();
+}
+
+export function recordPhysicsQueryTime(ms: number, feature = 'global'): void {
   if (!Number.isFinite(ms) || ms < 0) return;
 
   const now = performance.now();
@@ -209,18 +259,41 @@ export function recordPhysicsQueryTime(ms: number): void {
 
   physicsQueryWindowCount++;
   physicsQueryWindowMs += ms;
+  const featureEntry = physicsFeatureWindow.get(feature) ?? { count: 0, ms: 0, dropped: 0 };
+  featureEntry.count++;
+  featureEntry.ms += ms;
+  physicsFeatureWindow.set(feature, featureEntry);
 
   const elapsed = now - physicsQueryWindowStartedAt;
   if (elapsed < NETWORK_WINDOW_MS) return;
 
   const seconds = elapsed / 1000;
+  const byFeature: PhysicsQueryMetricSummary['byFeature'] = {};
+  for (const [name, entry] of physicsFeatureWindow) {
+    byFeature[name] = {
+      countPerSecond: entry.count / seconds,
+      msPerSecond: entry.ms / seconds,
+      droppedPerSecond: entry.dropped / seconds,
+    };
+  }
+
   physicsQueryMetrics = {
     countPerSecond: physicsQueryWindowCount / seconds,
     msPerSecond: physicsQueryWindowMs / seconds,
+    byFeature,
   };
-  physicsQueryWindowStartedAt = now;
-  physicsQueryWindowCount = 0;
-  physicsQueryWindowMs = 0;
+  resetPhysicsWindow(now);
+}
+
+export function recordPhysicsQueryDropped(feature: string): void {
+  const now = performance.now();
+  if (physicsQueryWindowStartedAt === 0) {
+    physicsQueryWindowStartedAt = now;
+  }
+
+  const featureEntry = physicsFeatureWindow.get(feature) ?? { count: 0, ms: 0, dropped: 0 };
+  featureEntry.dropped++;
+  physicsFeatureWindow.set(feature, featureEntry);
 }
 
 export function registerFrameSystem(name: string): () => void {
@@ -238,6 +311,25 @@ export function recordNetworkMessage(type: string, payload: unknown): void {
 
 export function setActiveLightCount(count: number): void {
   activeLights = Math.max(0, count);
+}
+
+export function setRendererMetricSummary(metrics: Partial<RendererMetricSummary>): void {
+  rendererMetrics = {
+    ...rendererMetrics,
+    ...metrics,
+  };
+}
+
+export function setAtmosphereParticleCount(count: number): void {
+  worldVisualMetrics.atmosphereParticles = Math.max(0, Math.round(count));
+}
+
+export function setWorldDressingInstanceCount(count: number): void {
+  worldVisualMetrics.worldDressingInstances = Math.max(0, Math.round(count));
+}
+
+export function setFullRemoteBodyCount(count: number): void {
+  worldVisualMetrics.fullRemoteBodies = Math.max(0, Math.round(count));
 }
 
 export function setTemporaryColliderCountProvider(provider: () => number): void {
@@ -302,6 +394,8 @@ export function getClientPerfSnapshot(): ClientPerfSnapshot {
     },
     systems,
     recentSpawns,
+    renderer: rendererMetrics,
+    worldVisuals: worldVisualMetrics,
     voxelWorld: voxelWorldMetrics,
     physicsQueries: physicsQueryMetrics,
     activeEffects: Object.values(projectileCounts).reduce((sum, count) => sum + count, 0),

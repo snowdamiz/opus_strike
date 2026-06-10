@@ -11,6 +11,7 @@ import {
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { recordSpawnMarker, recordSystemTime, registerFrameSystem } from '../../utils/perfMarks';
 import { getFrameClock } from '../../utils/frameClock';
+import type { EffectQualityConfig } from './visualQuality';
 
 export type TerrainImpactKind =
   | 'blaze_rocket'
@@ -71,6 +72,14 @@ let terrainImpactRevision = 0;
 
 const UP = { x: 0, y: 1, z: 0 };
 const MAX_IMPACTS = 80;
+let activeImpactConfig: EffectQualityConfig = {
+  maxActiveImpacts: MAX_IMPACTS,
+  maxActiveTrails: 64,
+  maxActiveParticles: 620,
+  maxVisibleRemoteAbilityEffects: 48,
+  enableDecorativeLights: true,
+  slideSpeedLineCount: 36,
+};
 const PHANTOM_DIRE_IMPACT_CAPACITY = 48;
 const PHANTOM_DIRE_IMPACT_PARTICLES = 10;
 const PHANTOM_DIRE_IMPACT_SMOKE = 1;
@@ -418,12 +427,16 @@ export function triggerTerrainImpact(
   position: { x: number; y: number; z: number },
   options: TerrainImpactOptions = {}
 ): void {
+  if (activeImpactConfig.maxActiveImpacts <= 0) return;
+
   const style = getImpactStyle(kind);
   const normal = options.normal ?? UP;
   const now = Date.now();
   const frameNow = getFrameClock().nowMs;
 
   if (kind === 'phantom_dire_ball') {
+    const activePooledImpacts = phantomDireImpactSlots.reduce((count, slot) => count + (slot.active ? 1 : 0), 0);
+    if (activePooledImpacts >= activeImpactConfig.maxActiveImpacts) return;
     claimPooledPhantomDireImpact(position, normal, (options.scale ?? 1) * style.scale, frameNow);
     recordSpawnMarker('impact:phantomDireBall');
     terrainImpactRevision++;
@@ -443,8 +456,9 @@ export function triggerTerrainImpact(
     seed: Math.random() * Math.PI * 2,
   });
 
-  if (terrainImpactEffects.length > MAX_IMPACTS) {
-    terrainImpactEffects.splice(0, terrainImpactEffects.length - MAX_IMPACTS);
+  const maxImpacts = Math.min(MAX_IMPACTS, activeImpactConfig.maxActiveImpacts);
+  if (terrainImpactEffects.length > maxImpacts) {
+    terrainImpactEffects.splice(0, terrainImpactEffects.length - maxImpacts);
   }
 
   terrainImpactRevision++;
@@ -505,7 +519,7 @@ export function prewarmTerrainImpactResources(renderer?: THREE.WebGLRenderer): v
   smokeMaterial.dispose();
 }
 
-export function TerrainImpactEffectsManager() {
+export function TerrainImpactEffectsManager({ config }: { config: EffectQualityConfig }) {
   const activeEffectsRef = useRef<TerrainImpactData[]>([]);
   const phantomRenderSlotsRef = useRef<PhantomDireImpactRenderSlot[]>([]);
   const lastCountRef = useRef(0);
@@ -513,6 +527,9 @@ export function TerrainImpactEffectsManager() {
   const [, setVersion] = useState(0);
 
   useEffect(() => registerFrameSystem('terrain-impacts'), []);
+  useEffect(() => {
+    activeImpactConfig = config;
+  }, [config]);
 
   useFrame(() => {
     const frameStart = performance.now();
@@ -536,9 +553,12 @@ export function TerrainImpactEffectsManager() {
 
   return (
     <group>
-      <PooledPhantomDireImpactSlots renderSlots={phantomRenderSlotsRef.current} />
+      <PooledPhantomDireImpactSlots
+        renderSlots={phantomRenderSlotsRef.current}
+        enableDecorativeLights={config.enableDecorativeLights}
+      />
       {activeEffectsRef.current.map(effect => (
-        <TerrainImpactBurst key={effect.id} effect={effect} />
+        <TerrainImpactBurst key={effect.id} effect={effect} enableDecorativeLights={config.enableDecorativeLights} />
       ))}
     </group>
   );
@@ -652,7 +672,13 @@ function updatePooledPhantomDireImpacts(renderSlots: PhantomDireImpactRenderSlot
   }
 }
 
-function PooledPhantomDireImpactSlots({ renderSlots }: { renderSlots: PhantomDireImpactRenderSlot[] }) {
+function PooledPhantomDireImpactSlots({
+  renderSlots,
+  enableDecorativeLights,
+}: {
+  renderSlots: PhantomDireImpactRenderSlot[];
+  enableDecorativeLights: boolean;
+}) {
   const style = PHANTOM_DIRE_IMPACT_STYLE;
 
   return (
@@ -711,14 +737,16 @@ function PooledPhantomDireImpactSlots({ renderSlots }: { renderSlots: PhantomDir
               </mesh>
             ))}
 
-            <BudgetedPointLight
-              budgetPriority={2}
-              ref={el => { slot.light = el; }}
-              color={style.lightColor}
-              intensity={0}
-              distance={8 * style.scale}
-              decay={2}
-            />
+            {enableDecorativeLights && (
+              <BudgetedPointLight
+                budgetPriority={2}
+                ref={el => { slot.light = el; }}
+                color={style.lightColor}
+                intensity={0}
+                distance={8 * style.scale}
+                decay={2}
+              />
+            )}
           </group>
         );
       })}
@@ -735,7 +763,7 @@ interface ParticleConfig {
   spin: number;
 }
 
-function TerrainImpactBurst({ effect }: { effect: TerrainImpactData }) {
+function TerrainImpactBurst({ effect, enableDecorativeLights }: { effect: TerrainImpactData; enableDecorativeLights: boolean }) {
   const groupRef = useRef<THREE.Group>(null);
   const flashRef = useRef<THREE.Mesh>(null);
   const coreRef = useRef<THREE.Mesh>(null);
@@ -907,7 +935,16 @@ function TerrainImpactBurst({ effect }: { effect: TerrainImpactData }) {
         </mesh>
       ))}
 
-      <pointLight ref={lightRef} color={style.lightColor} intensity={style.lightIntensity} distance={8 * effect.scale} decay={2} />
+      {enableDecorativeLights && (
+        <BudgetedPointLight
+          budgetPriority={1.6}
+          ref={lightRef}
+          color={style.lightColor}
+          intensity={style.lightIntensity}
+          distance={8 * effect.scale}
+          decay={2}
+        />
+      )}
     </group>
   );
 }

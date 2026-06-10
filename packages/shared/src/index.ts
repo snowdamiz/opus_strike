@@ -7,6 +7,7 @@ export * from './types/game.js';
 export * from './types/network.js';
 export * from './types/input.js';
 export * from './types/movementPrediction.js';
+export * from './types/voice.js';
 
 // Constants
 export * from './constants/game.js';

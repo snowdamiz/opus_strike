@@ -542,7 +542,10 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     if (isPhysicsReady()) {
       const world = getPhysicsWorld();
       if (world) {
-        const hit = raycast(world, startPosition, direction, targetLength);
+        const hit = raycast(world, startPosition, direction, targetLength, {
+          priority: 'visual',
+          feature: 'effect:voidRayBeam',
+        });
         if (hit && hit.distance < targetLength) {
           targetLength = hit.distance;
         }

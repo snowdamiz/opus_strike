@@ -9,6 +9,7 @@
     "analyze": "ANALYZE=true vite build",
     "lint": "pnpm lint:tokens",
     "lint:tokens": "node scripts/lint-design-tokens.mjs",
+    "test:voice": "tsx src/store/voiceStore.test.ts && tsx src/components/ui/VoiceHud.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
@@ -23,12 +24,14 @@
     "@voxel-strike/shared": "workspace:*",
     "bs58": "^6.0.0",
     "colyseus.js": "^0.15.25",
+    "livekit-client": "2.19.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.169.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.8.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.169.0",
@@ -39,6 +42,7 @@
     "r3f-perf": "^7.2.3",
     "rollup-plugin-visualizer": "^5.12.0",
     "tailwindcss": "^3.4.14",
+    "tsx": "^4.20.6",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"
   }

@@ -8,6 +8,7 @@ import {
   type VoxelMapManifest,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
+import { setWorldDressingInstanceCount } from '../../../utils/perfMarks';
 
 interface SurfaceCell {
   x: number;
@@ -51,6 +52,10 @@ function chunkIndex(x: number, y: number, z: number, chunk: VoxelChunk): number 
   return x + chunk.size.x * (z + chunk.size.z * y);
 }
 
+function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
+  return x + chunksX * (z + chunksZ * y);
+}
+
 function hashCell(seed: number, x: number, z: number, salt: number): number {
   let h = Math.imul((seed >>> 0) ^ Math.imul(x + salt, 374761393) ^ Math.imul(z - salt, 668265263), 1274126177);
   h = Math.imul(h ^ (h >>> 15), 2246822519);
@@ -64,6 +69,10 @@ function distanceSq(xA: number, zA: number, xB: number, zB: number): number {
 }
 
 function getTopSurfaces(manifest: VoxelMapManifest): (SurfaceCell | null)[] {
+  if (manifest.heightfield?.topSolidRows?.length) {
+    return getTopSurfacesFromHeightfield(manifest);
+  }
+
   const surfaces = new Array<SurfaceCell | null>(manifest.size.x * manifest.size.z).fill(null);
 
   for (const chunk of manifest.chunks) {
@@ -93,6 +102,57 @@ function getTopSurfaces(manifest: VoxelMapManifest): (SurfaceCell | null)[] {
           }
         }
       }
+    }
+  }
+
+  return surfaces;
+}
+
+function getTopSurfacesFromHeightfield(manifest: VoxelMapManifest): (SurfaceCell | null)[] {
+  const surfaces = new Array<SurfaceCell | null>(manifest.size.x * manifest.size.z).fill(null);
+  const chunksX = Math.ceil(manifest.size.x / manifest.chunkSize.x);
+  const chunksZ = Math.ceil(manifest.size.z / manifest.chunkSize.z);
+  const chunks = new Map<number, VoxelChunk>();
+
+  for (const chunk of manifest.chunks) {
+    chunks.set(chunkLookupIndex(chunk.coord.x, chunk.coord.y, chunk.coord.z, chunksX, chunksZ), chunk);
+  }
+
+  const getBlock = (gx: number, gy: number, gz: number): number => {
+    if (gx < 0 || gx >= manifest.size.x || gy < 0 || gy >= manifest.size.y || gz < 0 || gz >= manifest.size.z) {
+      return 0;
+    }
+
+    const cx = Math.floor(gx / manifest.chunkSize.x);
+    const cy = Math.floor(gy / manifest.chunkSize.y);
+    const cz = Math.floor(gz / manifest.chunkSize.z);
+    const chunk = chunks.get(chunkLookupIndex(cx, cy, cz, chunksX, chunksZ));
+    if (!chunk) return 0;
+
+    return chunk.blocks[
+      chunkIndex(
+        gx - cx * manifest.chunkSize.x,
+        gy - cy * manifest.chunkSize.y,
+        gz - cz * manifest.chunkSize.z,
+        chunk
+      )
+    ] ?? 0;
+  };
+
+  for (let z = 0; z < manifest.heightfield.size.z; z++) {
+    for (let x = 0; x < manifest.heightfield.size.x; x++) {
+      const topRow = manifest.heightfield.topSolidRows[x + z * manifest.heightfield.size.x];
+      if (topRow === 0) continue;
+
+      const block = getBlock(x, topRow - 1, z);
+      if (!isSolidBlock(block)) continue;
+
+      surfaces[x + z * manifest.size.x] = {
+        x,
+        y: topRow - 1,
+        z,
+        blockId: getBlockId(block),
+      };
     }
   }
 
@@ -229,15 +289,16 @@ function getBiomeDensities(theme: VoxelMapTheme): { tuft: number; pebble: number
   return { tuft: 0.048, pebble: 0.022, crystal: 0.01 };
 }
 
-function createDressingSet(manifest: VoxelMapManifest, densityScale: number): DressingSet {
+function createDressingSet(manifest: VoxelMapManifest, densityScale: number, maxInstances = Number.POSITIVE_INFINITY): DressingSet {
   if (densityScale <= 0) {
     return { tufts: [], pebbles: [], crystals: [] };
   }
 
   const safeDensityScale = Math.min(1.35, Math.max(0, densityScale));
-  const maxTufts = Math.round(MAX_TUFTS * safeDensityScale);
-  const maxPebbles = Math.round(MAX_PEBBLES * safeDensityScale);
-  const maxCrystals = Math.round(MAX_CRYSTALS * safeDensityScale);
+  const safeMaxInstances = Math.max(0, Math.floor(maxInstances));
+  const maxTufts = Math.min(Math.round(MAX_TUFTS * safeDensityScale), Math.ceil(safeMaxInstances * 0.58));
+  const maxPebbles = Math.min(Math.round(MAX_PEBBLES * safeDensityScale), Math.ceil(safeMaxInstances * 0.28));
+  const maxCrystals = Math.min(Math.round(MAX_CRYSTALS * safeDensityScale), Math.ceil(safeMaxInstances * 0.14));
   const surfaces = getTopSurfaces(manifest);
   const densities = getBiomeDensities(manifest.theme);
   const tufts: DressingInstance[] = [];
@@ -248,6 +309,7 @@ function createDressingSet(manifest: VoxelMapManifest, densityScale: number): Dr
     for (let x = 2; x < manifest.size.x - 2; x += 2) {
       const surface = surfaces[x + z * manifest.size.x];
       if (!surface || !isNaturalSurface(surface.blockId)) continue;
+      if (tufts.length + pebbles.length + crystals.length >= safeMaxInstances) break;
 
       const jitterX = (hashCell(manifest.seed, x, z, 0x51) - 0.5) * manifest.voxelSize.x * 0.7;
       const jitterZ = (hashCell(manifest.seed, x, z, 0x7a) - 0.5) * manifest.voxelSize.z * 0.7;
@@ -363,16 +425,19 @@ function InstancedDressingMesh({
 export function WorldDressing({
   manifest,
   densityScale,
+  maxInstances,
   shadowsEnabled,
   reflectionIntensity,
 }: {
   manifest: VoxelMapManifest;
   densityScale: number;
+  maxInstances?: number;
   shadowsEnabled: boolean;
   reflectionIntensity: number;
 }) {
   const palette = useMemo(() => getDressingPalette(manifest.theme), [manifest.theme]);
-  const dressing = useMemo(() => createDressingSet(manifest, densityScale), [densityScale, manifest]);
+  const dressing = useMemo(() => createDressingSet(manifest, densityScale, maxInstances), [densityScale, manifest, maxInstances]);
+  const instanceCount = dressing.tufts.length + dressing.pebbles.length + dressing.crystals.length;
   const resources = useMemo(() => {
     const tuftMaterial = new THREE.MeshStandardMaterial({
       color: palette.tuft,
@@ -412,6 +477,11 @@ export function WorldDressing({
     },
     [resources]
   );
+
+  useEffect(() => {
+    setWorldDressingInstanceCount(instanceCount);
+    return () => setWorldDressingInstanceCount(0);
+  }, [instanceCount]);
 
   return (
     <group name="procedural-world-dressing">

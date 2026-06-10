@@ -1,15 +1,60 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
+import { Prisma } from '@prisma/client';
 import prisma from '../db';
 import { verifySignature, generateNonce, createSignMessage } from './verify';
-import { createAuthToken, createPendingAuthToken, verifyAuthToken } from './session';
+import {
+  createAuthToken,
+  createPendingAuthToken,
+  verifyAuthToken,
+  verifyPendingAuthToken,
+  type AuthTokenPayload,
+  type PendingAuthTokenPayload,
+} from './session';
+import {
+  createDiscordAuthorizationUrl,
+  exchangeDiscordCode,
+  fetchDiscordUser,
+  getDiscordConfig,
+  mapDiscordUserToIdentity,
+  DiscordOAuthError,
+} from './discord';
+import { appendAuthStatus, sanitizeReturnTo } from './returnTo';
+import { consumeOAuthState, createOAuthState, type OAuthStateRecord } from './oauthState';
+import { consumeRateLimit } from './rateLimit';
+import { serializeUser } from './userResponse';
+import type { AuthAccountIdentity, AuthProviderName, PendingRegistrationIdentity } from './types';
 
 const router: RouterType = Router();
 
-const JWT_EXPIRY = '30d'; // 30 days
-const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
+const JWT_EXPIRY = '30d';
+const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000;
+const PENDING_COOKIE_MAX_AGE = 60 * 60 * 1000;
+const NONCE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_CLIENT_ORIGIN = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000';
 
-// Helper to set auth cookie
+const AUTH_RATE_LIMITS = {
+  nonce: { limit: 30, windowMs: 60 * 1000 },
+  verify: { limit: 20, windowMs: 60 * 1000 },
+  register: { limit: 10, windowMs: 60 * 1000 },
+  oauthStart: { limit: 20, windowMs: 60 * 1000 },
+  oauthCallback: { limit: 30, windowMs: 60 * 1000 },
+} as const;
+
+interface NonceRecord {
+  nonce: string;
+  timestamp: number;
+}
+
+class ProviderConflictError extends Error {
+  constructor(message = 'Provider account is already linked to another user') {
+    super(message);
+    this.name = 'ProviderConflictError';
+  }
+}
+
+const nonceStore = new Map<string, NonceRecord>();
+
 function setAuthCookie(res: Response, token: string): void {
   res.cookie('auth_token', token, {
     httpOnly: true,
@@ -19,7 +64,15 @@ function setAuthCookie(res: Response, token: string): void {
   });
 }
 
-// Helper to clear auth cookie
+function setPendingAuthCookie(res: Response, token: string): void {
+  res.cookie('auth_token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    maxAge: PENDING_COOKIE_MAX_AGE,
+  });
+}
+
 function clearAuthCookie(res: Response): void {
   res.clearCookie('auth_token', {
     httpOnly: true,
@@ -28,279 +81,764 @@ function clearAuthCookie(res: Response): void {
   });
 }
 
-// In-memory store for nonces (in production, use Redis or similar)
-const nonceStore = new Map<string, { nonce: string; timestamp: number }>();
-
-// Clean up old nonces every 5 minutes
-setInterval(() => {
-  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+function cleanupNonces(): void {
+  const expiresBefore = Date.now() - NONCE_TTL_MS;
   for (const [address, data] of nonceStore.entries()) {
-    if (data.timestamp < fiveMinutesAgo) {
+    if (data.timestamp < expiresBefore) {
       nonceStore.delete(address);
     }
   }
-}, 5 * 60 * 1000);
+}
 
-/**
- * GET /auth/nonce
- * Get a nonce for signing
- */
+setInterval(cleanupNonces, 5 * 60 * 1000).unref?.();
+
+function enforceJsonRateLimit(req: Request, res: Response, keyPrefix: string, options: {
+  limit: number;
+  windowMs: number;
+}): boolean {
+  const result = consumeRateLimit(req, { keyPrefix, ...options });
+  if (result.ok) return true;
+
+  res.setHeader('Retry-After', result.retryAfterSeconds.toString());
+  res.status(429).json({ error: 'Too many requests' });
+  return false;
+}
+
+function isPrismaUniqueError(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+function getRequestToken(req: Request): string | null {
+  const token = req.cookies?.auth_token;
+  return typeof token === 'string' && token.length > 0 ? token : null;
+}
+
+function getClientOrigin(): string {
+  return process.env.CLIENT_ORIGIN
+    || process.env.CLIENT_URL
+    || process.env.PUBLIC_CLIENT_ORIGIN
+    || DEFAULT_CLIENT_ORIGIN;
+}
+
+function redirectToClient(res: Response, returnTo: string, params: Record<string, string>): void {
+  const returnPath = appendAuthStatus(returnTo, params);
+  const clientOrigin = getClientOrigin();
+
+  if (!clientOrigin) {
+    res.redirect(303, returnPath);
+    return;
+  }
+
+  res.redirect(303, new URL(returnPath, clientOrigin).toString());
+}
+
+function getSafeOAuthReturnTo(record: OAuthStateRecord | null): string {
+  return record?.returnTo ?? '/';
+}
+
+function getAccountData(identity: AuthAccountIdentity) {
+  return {
+    provider: identity.provider,
+    providerAccountId: identity.providerAccountId,
+    displayName: identity.displayName ?? null,
+    avatarUrl: identity.avatarUrl ?? null,
+    emailHash: identity.emailHash ?? null,
+  };
+}
+
+function validatePlayerName(value: unknown): {
+  ok: true;
+  name: string;
+} | {
+  ok: false;
+  error: string;
+} {
+  if (typeof value !== 'string') {
+    return { ok: false, error: 'Name is required' };
+  }
+
+  const name = value.trim();
+  if (name.length < 2 || name.length > 16) {
+    return { ok: false, error: 'Name must be between 2 and 16 characters' };
+  }
+
+  return { ok: true, name };
+}
+
+async function findUserForPayload(payload: AuthTokenPayload) {
+  const filters: Prisma.UserWhereInput[] = [{ id: payload.userId }];
+  if (payload.walletAddress) {
+    filters.push({ walletAddress: payload.walletAddress });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: { OR: filters },
+    include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+  });
+
+  if (!user || (payload.walletAddress && user.walletAddress !== payload.walletAddress)) {
+    return null;
+  }
+
+  return user;
+}
+
+async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload | null> {
+  const token = getRequestToken(req);
+  if (!token) return null;
+  return verifyAuthToken(token);
+}
+
+async function ensureProviderAccount(userId: string, identity: AuthAccountIdentity): Promise<void> {
+  const existingAccount = await prisma.authAccount.findUnique({
+    where: {
+      provider_providerAccountId: {
+        provider: identity.provider,
+        providerAccountId: identity.providerAccountId,
+      },
+    },
+  });
+
+  if (existingAccount && existingAccount.userId !== userId) {
+    throw new ProviderConflictError();
+  }
+
+  if (existingAccount) {
+    await prisma.authAccount.update({
+      where: { id: existingAccount.id },
+      data: getAccountData(identity),
+    });
+    return;
+  }
+
+  await prisma.authAccount.create({
+    data: {
+      userId,
+      ...getAccountData(identity),
+    },
+  });
+}
+
+async function linkPhantomAccountToUser(userId: string, walletAddress: string) {
+  return prisma.$transaction(async (tx) => {
+    const [currentUser, existingAccount, walletUser] = await Promise.all([
+      tx.user.findUnique({
+        where: { id: userId },
+        include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+      }),
+      tx.authAccount.findUnique({
+        where: {
+          provider_providerAccountId: {
+            provider: 'phantom',
+            providerAccountId: walletAddress,
+          },
+        },
+      }),
+      tx.user.findUnique({
+        where: { walletAddress },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!currentUser) {
+      throw new ProviderConflictError('Authenticated user was not found');
+    }
+
+    if (currentUser.walletAddress && currentUser.walletAddress !== walletAddress) {
+      throw new ProviderConflictError('This profile already has a different Phantom wallet linked');
+    }
+
+    const currentPhantomAccount = currentUser.authAccounts.find((account) => account.provider === 'phantom');
+    if (currentPhantomAccount && currentPhantomAccount.providerAccountId !== walletAddress) {
+      throw new ProviderConflictError('This profile already has a different Phantom wallet linked');
+    }
+
+    if (existingAccount && existingAccount.userId !== userId) {
+      throw new ProviderConflictError('That Phantom wallet is already linked to another profile');
+    }
+
+    if (walletUser && walletUser.id !== userId) {
+      throw new ProviderConflictError('That Phantom wallet is already linked to another profile');
+    }
+
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        walletAddress,
+        lastLoginAt: new Date(),
+      },
+    });
+
+    await tx.authAccount.upsert({
+      where: {
+        provider_providerAccountId: {
+          provider: 'phantom',
+          providerAccountId: walletAddress,
+        },
+      },
+      update: {
+        displayName: walletAddress,
+        avatarUrl: null,
+        emailHash: null,
+      },
+      create: {
+        userId,
+        provider: 'phantom',
+        providerAccountId: walletAddress,
+        displayName: walletAddress,
+      },
+    });
+
+    return tx.user.findUniqueOrThrow({
+      where: { id: userId },
+      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+    });
+  });
+}
+
+async function issueUserSession(res: Response, userId: string, provider: AuthProviderName): Promise<void> {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { lastLoginAt: new Date() },
+    include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+  });
+
+  setAuthCookie(res, createAuthToken({
+    userId: user.id,
+    provider,
+    walletAddress: user.walletAddress,
+    expiresIn: JWT_EXPIRY,
+  }));
+}
+
+async function createRegisteredUser(identity: PendingRegistrationIdentity, name: string) {
+  const walletAddress = identity.provider === 'phantom' ? identity.walletAddress ?? identity.providerAccountId : null;
+  if (identity.provider === 'phantom' && !walletAddress) {
+    throw new Error('Wallet address is required');
+  }
+
+  return prisma.user.create({
+    data: {
+      walletAddress,
+      name,
+      lastLoginAt: new Date(),
+      authAccounts: {
+        create: getAccountData({
+          ...identity,
+          providerAccountId: identity.provider === 'phantom' ? walletAddress! : identity.providerAccountId,
+          displayName: identity.displayName ?? (identity.provider === 'phantom' ? walletAddress : null),
+        }),
+      },
+    },
+    include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+  });
+}
+
+async function completePendingRegistration(pending: PendingAuthTokenPayload, name: string) {
+  const identity: PendingRegistrationIdentity = {
+    provider: pending.provider,
+    providerAccountId: pending.provider === 'phantom'
+      ? pending.walletAddress ?? pending.providerAccountId
+      : pending.providerAccountId,
+    displayName: pending.displayName,
+    avatarUrl: pending.avatarUrl,
+    emailHash: pending.emailHash,
+    walletAddress: pending.walletAddress,
+  };
+
+  const existingAccount = await prisma.authAccount.findUnique({
+    where: {
+      provider_providerAccountId: {
+        provider: identity.provider,
+        providerAccountId: identity.providerAccountId,
+      },
+    },
+  });
+
+  if (existingAccount) {
+    throw new ProviderConflictError('Provider account already exists');
+  }
+
+  if (identity.provider === 'phantom') {
+    const existingWalletUser = await prisma.user.findUnique({
+      where: { walletAddress: identity.providerAccountId },
+    });
+
+    if (existingWalletUser) {
+      throw new ProviderConflictError('User already exists');
+    }
+  }
+
+  return createRegisteredUser(identity, name);
+}
+
+function getOAuthErrorReason(error: unknown): string {
+  if (error instanceof DiscordOAuthError) return error.reason;
+  if (error instanceof ProviderConflictError) return 'provider_conflict';
+  if (isPrismaUniqueError(error)) return 'provider_conflict';
+  return 'discord_failed';
+}
+
+function logOAuthFailure(reason: string, details?: unknown): void {
+  if (details instanceof DiscordOAuthError || details instanceof ProviderConflictError) {
+    console.warn('[auth] Discord OAuth failed', { provider: 'discord', reason });
+    return;
+  }
+
+  console.error('[auth] Discord OAuth failed', { provider: 'discord', reason, error: details });
+}
+
 router.get('/nonce', (req: Request, res: Response) => {
-  const walletAddress = req.query.walletAddress as string;
-  
+  if (!enforceJsonRateLimit(req, res, 'auth:nonce', AUTH_RATE_LIMITS.nonce)) return;
+
+  const walletAddress = typeof req.query.walletAddress === 'string' ? req.query.walletAddress : '';
   if (!walletAddress) {
     res.status(400).json({ error: 'Wallet address is required' });
     return;
   }
-  
+
+  cleanupNonces();
   const nonce = generateNonce();
   const message = createSignMessage(nonce);
-  
-  // Store the nonce temporarily
   nonceStore.set(walletAddress, { nonce, timestamp: Date.now() });
-  
   res.json({ nonce, message });
 });
 
-/**
- * POST /auth/verify
- * Verify a signed message and authenticate the user
- */
 router.post('/verify', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:verify', AUTH_RATE_LIMITS.verify)) return;
+
   try {
     const { walletAddress, signature, nonce } = req.body;
-    
+
     if (!walletAddress || !signature || !nonce) {
       res.status(400).json({ error: 'Missing required fields' });
       return;
     }
-    
-    // Check if we have a valid nonce for this wallet
+
     const storedData = nonceStore.get(walletAddress);
-    if (!storedData || storedData.nonce !== nonce) {
+    if (!storedData || storedData.nonce !== nonce || Date.now() - storedData.timestamp > NONCE_TTL_MS) {
+      nonceStore.delete(walletAddress);
       res.status(401).json({ error: 'Invalid or expired nonce' });
       return;
     }
-    
-    // Verify the signature
+
     const message = createSignMessage(nonce);
     const isValid = verifySignature(message, signature, walletAddress);
-    
     if (!isValid) {
       res.status(401).json({ error: 'Invalid signature' });
       return;
     }
-    
-    // Clear the used nonce
+
     nonceStore.delete(walletAddress);
-    
-    // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { walletAddress },
+
+    const providerIdentity: AuthAccountIdentity = {
+      provider: 'phantom',
+      providerAccountId: walletAddress,
+      displayName: walletAddress,
+    };
+
+    const linkedAccount = await prisma.authAccount.findUnique({
+      where: {
+        provider_providerAccountId: {
+          provider: 'phantom',
+          providerAccountId: walletAddress,
+        },
+      },
+      include: { user: { include: { authAccounts: { orderBy: { createdAt: 'asc' } } } } },
     });
-    
-    if (existingUser) {
-      // Create JWT token and set cookie for existing user
-      const token = createAuthToken(existingUser.walletAddress, existingUser.id, JWT_EXPIRY);
-      setAuthCookie(res, token);
-      
-      // Return existing user
+    const walletUser = linkedAccount?.user ?? await prisma.user.findUnique({
+      where: { walletAddress },
+      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+    });
+
+    const authenticatedPayload = await getAuthenticatedPayload(req);
+    const authenticatedUser = authenticatedPayload ? await findUserForPayload(authenticatedPayload) : null;
+
+    if (authenticatedUser && (!walletUser || walletUser.id === authenticatedUser.id)) {
+      const user = await linkPhantomAccountToUser(authenticatedUser.id, walletAddress);
+      setAuthCookie(res, createAuthToken({
+        userId: user.id,
+        provider: 'phantom',
+        walletAddress: user.walletAddress,
+        expiresIn: JWT_EXPIRY,
+      }));
+
       res.json({
         authenticated: true,
         isNewUser: false,
-        user: {
-          id: existingUser.id,
-          walletAddress: existingUser.walletAddress,
-          name: existingUser.name,
-          stats: {
-            totalGames: existingUser.totalGames,
-            totalWins: existingUser.totalWins,
-            totalKills: existingUser.totalKills,
-            totalDeaths: existingUser.totalDeaths,
-            totalCaptures: existingUser.totalCaptures,
-          },
-        },
+        provider: 'phantom',
+        linked: true,
+        user: serializeUser(user),
       });
-    } else {
-      // New user - needs to set name
-      // Set a temporary token for the registration flow
-      const tempToken = createPendingAuthToken(walletAddress);
-      setAuthCookie(res, tempToken);
-      
+      return;
+    }
+
+    if (authenticatedUser && walletUser && walletUser.id !== authenticatedUser.id) {
+      res.status(409).json({ error: 'That Phantom wallet is already linked to another profile' });
+      return;
+    }
+
+    if (walletUser) {
+      await ensureProviderAccount(walletUser.id, providerIdentity);
+      await issueUserSession(res, walletUser.id, 'phantom');
+
+      const user = await prisma.user.findUniqueOrThrow({
+        where: { id: walletUser.id },
+        include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+      });
+
       res.json({
         authenticated: true,
-        isNewUser: true,
-        walletAddress,
+        isNewUser: false,
+        provider: 'phantom',
+        user: serializeUser(user),
       });
+      return;
     }
+
+    const tempToken = createPendingAuthToken({
+      provider: 'phantom',
+      providerAccountId: walletAddress,
+      walletAddress,
+      displayName: walletAddress,
+    });
+    setPendingAuthCookie(res, tempToken);
+
+    res.json({
+      authenticated: true,
+      isNewUser: true,
+      provider: 'phantom',
+      walletAddress,
+      pendingRegistration: {
+        provider: 'phantom',
+        walletAddress,
+        displayName: walletAddress,
+      },
+    });
   } catch (error) {
-    console.error('Auth verification error:', error);
+    if (error instanceof ProviderConflictError) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+
+    if (isPrismaUniqueError(error)) {
+      res.status(409).json({ error: 'That Phantom wallet is already linked to another profile' });
+      return;
+    }
+
+    console.error('[auth] Phantom verification error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-/**
- * POST /auth/register
- * Register a new user with their chosen name
- */
 router.post('/register', async (req: Request, res: Response) => {
+  if (!enforceJsonRateLimit(req, res, 'auth:register', AUTH_RATE_LIMITS.register)) return;
+
   try {
-    const { walletAddress, name, signature, nonce } = req.body;
-    
-    if (!walletAddress || !name) {
-      res.status(400).json({ error: 'Missing required fields' });
+    const validation = validatePlayerName(req.body?.name);
+    if (!validation.ok) {
+      res.status(400).json({ error: validation.error });
       return;
     }
-    
-    // Validate name
-    const trimmedName = name.trim();
-    if (trimmedName.length < 2 || trimmedName.length > 16) {
-      res.status(400).json({ error: 'Name must be between 2 and 16 characters' });
+
+    const token = getRequestToken(req);
+    const pending = token ? verifyPendingAuthToken(token) : null;
+
+    if (!pending) {
+      res.status(401).json({ error: 'No pending registration found' });
       return;
     }
-    
-    // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { walletAddress },
+
+    if (
+      pending.provider === 'phantom' &&
+      typeof req.body?.walletAddress === 'string' &&
+      pending.walletAddress &&
+      req.body.walletAddress !== pending.walletAddress
+    ) {
+      res.status(400).json({ error: 'Wallet address does not match pending registration' });
+      return;
+    }
+
+    const newUser = await completePendingRegistration(pending, validation.name);
+    setAuthCookie(res, createAuthToken({
+      userId: newUser.id,
+      provider: pending.provider,
+      walletAddress: newUser.walletAddress,
+      expiresIn: JWT_EXPIRY,
+    }));
+
+    res.json({
+      success: true,
+      provider: pending.provider,
+      user: serializeUser(newUser),
     });
-    
-    if (existingUser) {
+  } catch (error) {
+    if (error instanceof ProviderConflictError) {
+      res.status(409).json({ error: error.message || 'User already exists' });
+      return;
+    }
+
+    if (isPrismaUniqueError(error)) {
       res.status(409).json({ error: 'User already exists' });
       return;
     }
-    
-    // Create new user
-    const newUser = await prisma.user.create({
-      data: {
-        walletAddress,
-        name: trimmedName,
-      },
-    });
-    
-    // Create JWT token and set cookie for the new user
-    const token = createAuthToken(newUser.walletAddress, newUser.id, JWT_EXPIRY);
-    setAuthCookie(res, token);
-    
-    res.json({
-      success: true,
-      user: {
-        id: newUser.id,
-        walletAddress: newUser.walletAddress,
-        name: newUser.name,
-        stats: {
-          totalGames: newUser.totalGames,
-          totalWins: newUser.totalWins,
-          totalKills: newUser.totalKills,
-          totalDeaths: newUser.totalDeaths,
-          totalCaptures: newUser.totalCaptures,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('Registration error:', error);
+
+    console.error('[auth] Registration error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-/**
- * GET /auth/session
- * Validate existing session and return user data
- */
 router.get('/session', async (req: Request, res: Response) => {
   try {
-    const token = req.cookies?.auth_token;
-    
+    const token = getRequestToken(req);
     if (!token) {
       res.status(401).json({ authenticated: false, error: 'No session found' });
       return;
     }
-    
-    // Verify the JWT token
+
+    const pending = verifyPendingAuthToken(token);
+    if (pending) {
+      res.json({
+        authenticated: true,
+        isNewUser: true,
+        provider: pending.provider,
+        pendingRegistration: {
+          provider: pending.provider,
+          displayName: pending.displayName,
+          avatarUrl: pending.avatarUrl,
+          walletAddress: pending.walletAddress,
+        },
+      });
+      return;
+    }
+
     const payload = verifyAuthToken(token);
     if (!payload) {
       clearAuthCookie(res);
       res.status(401).json({ authenticated: false, error: 'Invalid or expired session' });
       return;
     }
-    
-    // Find the user in the database
-    const user = await prisma.user.findUnique({
-      where: { walletAddress: payload.walletAddress },
-    });
-    
+
+    const user = await findUserForPayload(payload);
     if (!user) {
       clearAuthCookie(res);
       res.status(401).json({ authenticated: false, error: 'User not found' });
       return;
     }
-    
-    // Refresh the token to extend the session
-    const newToken = createAuthToken(user.walletAddress, user.id, JWT_EXPIRY);
-    setAuthCookie(res, newToken);
-    
+
+    setAuthCookie(res, createAuthToken({
+      userId: user.id,
+      provider: payload.provider,
+      walletAddress: user.walletAddress,
+      expiresIn: JWT_EXPIRY,
+    }));
+
     res.json({
       authenticated: true,
-      user: {
-        id: user.id,
-        walletAddress: user.walletAddress,
-        name: user.name,
-        stats: {
-          totalGames: user.totalGames,
-          totalWins: user.totalWins,
-          totalKills: user.totalKills,
-          totalDeaths: user.totalDeaths,
-          totalCaptures: user.totalCaptures,
-        },
-      },
+      isNewUser: false,
+      provider: payload.provider,
+      user: serializeUser(user),
     });
   } catch (error) {
-    console.error('Session validation error:', error);
+    console.error('[auth] Session validation error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-/**
- * POST /auth/logout
- * Clear the authentication cookie
- */
+router.get('/discord/start', (req: Request, res: Response) => {
+  const returnTo = sanitizeReturnTo(req.query.returnTo);
+  const rateLimit = consumeRateLimit(req, {
+    keyPrefix: 'auth:discord:start',
+    ...AUTH_RATE_LIMITS.oauthStart,
+  });
+
+  if (!rateLimit.ok) {
+    redirectToClient(res, returnTo, { auth: 'error', error: 'rate_limited' });
+    return;
+  }
+
+  try {
+    const state = createOAuthState({
+      provider: 'discord',
+      mode: 'login',
+      returnTo,
+    });
+    const url = createDiscordAuthorizationUrl(getDiscordConfig(req), state.state);
+    res.redirect(303, url);
+  } catch (error) {
+    const reason = getOAuthErrorReason(error);
+    logOAuthFailure(reason, error);
+    redirectToClient(res, returnTo, { auth: 'error', error: reason });
+  }
+});
+
+router.get('/discord/link/start', async (req: Request, res: Response) => {
+  const returnTo = sanitizeReturnTo(req.query.returnTo);
+  const rateLimit = consumeRateLimit(req, {
+    keyPrefix: 'auth:discord:link:start',
+    ...AUTH_RATE_LIMITS.oauthStart,
+  });
+
+  if (!rateLimit.ok) {
+    redirectToClient(res, returnTo, { auth: 'error', error: 'rate_limited' });
+    return;
+  }
+
+  try {
+    const payload = await getAuthenticatedPayload(req);
+    const user = payload ? await findUserForPayload(payload) : null;
+    if (!user) {
+      redirectToClient(res, returnTo, { auth: 'error', error: 'login_required' });
+      return;
+    }
+
+    const alreadyLinked = user.authAccounts.some((account) => account.provider === 'discord');
+    if (alreadyLinked) {
+      redirectToClient(res, returnTo, { auth: 'linked', provider: 'discord' });
+      return;
+    }
+
+    const state = createOAuthState({
+      provider: 'discord',
+      mode: 'link',
+      returnTo,
+      linkUserId: user.id,
+    });
+    const url = createDiscordAuthorizationUrl(getDiscordConfig(req), state.state);
+    res.redirect(303, url);
+  } catch (error) {
+    const reason = getOAuthErrorReason(error);
+    logOAuthFailure(reason, error);
+    redirectToClient(res, returnTo, { auth: 'error', error: reason });
+  }
+});
+
+router.get('/discord/callback', async (req: Request, res: Response) => {
+  const consumedState = consumeOAuthState(req.query.state);
+  const stateRecord = consumedState.ok ? consumedState.record : null;
+  const returnTo = getSafeOAuthReturnTo(stateRecord);
+
+  const rateLimit = consumeRateLimit(req, {
+    keyPrefix: 'auth:discord:callback',
+    ...AUTH_RATE_LIMITS.oauthCallback,
+  });
+
+  if (!rateLimit.ok) {
+    redirectToClient(res, returnTo, { auth: 'error', error: 'rate_limited' });
+    return;
+  }
+
+  if (!consumedState.ok || stateRecord?.provider !== 'discord') {
+    redirectToClient(res, returnTo, { auth: 'error', error: `invalid_state_${consumedState.ok ? 'provider' : consumedState.reason}` });
+    return;
+  }
+
+  if (typeof req.query.error === 'string') {
+    redirectToClient(res, returnTo, { auth: 'error', error: 'oauth_denied' });
+    return;
+  }
+
+  const code = typeof req.query.code === 'string' ? req.query.code : '';
+  if (!code) {
+    redirectToClient(res, returnTo, { auth: 'error', error: 'missing_code' });
+    return;
+  }
+
+  try {
+    const config = getDiscordConfig(req);
+    const accessToken = await exchangeDiscordCode({ config, code });
+    const discordUser = await fetchDiscordUser(accessToken);
+    const identity = mapDiscordUserToIdentity(discordUser);
+
+    const existingAccount = await prisma.authAccount.findUnique({
+      where: {
+        provider_providerAccountId: {
+          provider: 'discord',
+          providerAccountId: identity.providerAccountId,
+        },
+      },
+      include: { user: { include: { authAccounts: { orderBy: { createdAt: 'asc' } } } } },
+    });
+
+    if (existingAccount) {
+      if (stateRecord.mode === 'link' && existingAccount.userId !== stateRecord.linkUserId) {
+        redirectToClient(res, returnTo, { auth: 'error', error: 'provider_conflict' });
+        return;
+      }
+
+      await prisma.authAccount.update({
+        where: { id: existingAccount.id },
+        data: getAccountData(identity),
+      });
+      await issueUserSession(res, existingAccount.userId, 'discord');
+
+      redirectToClient(res, returnTo, {
+        auth: stateRecord.mode === 'link' ? 'linked' : 'success',
+        provider: 'discord',
+      });
+      return;
+    }
+
+    if (stateRecord.mode === 'link') {
+      if (!stateRecord.linkUserId) {
+        redirectToClient(res, returnTo, { auth: 'error', error: 'invalid_link_state' });
+        return;
+      }
+
+      const linkedUser = await prisma.user.update({
+        where: { id: stateRecord.linkUserId },
+        data: {
+          lastLoginAt: new Date(),
+          authAccounts: {
+            create: getAccountData(identity),
+          },
+        },
+        include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
+      });
+
+      setAuthCookie(res, createAuthToken({
+        userId: linkedUser.id,
+        provider: 'discord',
+        walletAddress: linkedUser.walletAddress,
+        expiresIn: JWT_EXPIRY,
+      }));
+
+      redirectToClient(res, returnTo, { auth: 'linked', provider: 'discord' });
+      return;
+    }
+
+    const pendingToken = createPendingAuthToken(identity);
+    setPendingAuthCookie(res, pendingToken);
+    redirectToClient(res, returnTo, { auth: 'pending_registration', provider: 'discord' });
+  } catch (error) {
+    const reason = getOAuthErrorReason(error);
+    logOAuthFailure(reason, error);
+    redirectToClient(res, returnTo, { auth: 'error', error: reason });
+  }
+});
+
 router.post('/logout', (_req: Request, res: Response) => {
   clearAuthCookie(res);
   res.json({ success: true });
 });
 
-/**
- * GET /auth/user/:walletAddress
- * Get user info by wallet address
- */
 router.get('/user/:walletAddress', async (req: Request, res: Response) => {
   try {
     const { walletAddress } = req.params;
-    
+
     const user = await prisma.user.findUnique({
       where: { walletAddress },
+      include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
     });
-    
+
     if (!user) {
       res.status(404).json({ error: 'User not found' });
       return;
     }
-    
-    res.json({
-      user: {
-        id: user.id,
-        walletAddress: user.walletAddress,
-        name: user.name,
-        stats: {
-          totalGames: user.totalGames,
-          totalWins: user.totalWins,
-          totalKills: user.totalKills,
-          totalDeaths: user.totalDeaths,
-          totalCaptures: user.totalCaptures,
-        },
-      },
-    });
+
+    res.json({ user: serializeUser(user) });
   } catch (error) {
-    console.error('User lookup error:', error);
+    console.error('[auth] User lookup error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

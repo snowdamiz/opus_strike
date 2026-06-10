@@ -155,7 +155,10 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
       
       // Terrain collision (throttled - not every frame)
       if (isPhysicsReady()) {
-        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5);
+        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5, {
+          priority: 'visual',
+          feature: 'projectile:hookshotHook',
+        });
         if (hit?.hit) {
           triggerTerrainImpact('hookshot_hook', hit.point, {
             normal: hit.normal,

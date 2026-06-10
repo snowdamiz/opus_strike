@@ -1,6 +1,5 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import { useGameStore, type SwingLineData } from '../../../store/gameStore';
 import { writeOwnerVisualPosition } from './ownerPosition';
@@ -25,6 +24,9 @@ const getHookMaterials = () => getHookshotMaterials();
 export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const hookRef = useRef<THREE.Group>(null);
+  const ropeMainGeometryRef = useRef<THREE.BufferGeometry>(null);
+  const ropeGlowGeometryRef = useRef<THREE.BufferGeometry>(null);
+  const ropeCoreGeometryRef = useRef<THREE.BufferGeometry>(null);
 
   const hookExtensionRef = useRef(0);
   const hasReachedRef = useRef(false);
@@ -38,14 +40,7 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
     (line.attachPoint.z - line.startPosition.z) ** 2
   ));
 
-  // Use ref for rope points to avoid setState in useFrame (prevents 60fps re-renders)
-  const ropePointsRef = useRef<[[number, number, number], [number, number, number]]>([
-    [line.startPosition.x, line.startPosition.y, line.startPosition.z],
-    [line.startPosition.x, line.startPosition.y, line.startPosition.z]
-  ]);
-
-  // Version counter to trigger re-renders when rope points change significantly
-  const [, setRopeVersion] = useState(0);
+  const ropePositions = useMemo(() => new Float32Array(6), []);
   const HOOK_MATERIALS = getHookMaterials();
 
   const removeSwingLine = useGameStore(state => state.removeSwingLine);
@@ -113,24 +108,30 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
       hookRef.current.quaternion.copy(TEMP_VECTORS.quat1);
     }
 
-    // Only trigger re-render if rope state changed (extending vs attached)
-    const stateChanged =
-      (line.state === 'extending' && !hasReachedRef.current) ||
-      (line.state !== 'extending' && hasReachedRef.current);
+    ropePositions[0] = playerPos.x;
+    ropePositions[1] = playerPos.y;
+    ropePositions[2] = playerPos.z;
+    ropePositions[3] = hookPos.x;
+    ropePositions[4] = hookPos.y;
+    ropePositions[5] = hookPos.z;
 
-    const ropePoints = ropePointsRef.current;
-    ropePoints[0][0] = playerPos.x;
-    ropePoints[0][1] = playerPos.y;
-    ropePoints[0][2] = playerPos.z;
-    ropePoints[1][0] = hookPos.x;
-    ropePoints[1][1] = hookPos.y;
-    ropePoints[1][2] = hookPos.z;
-
-    if (stateChanged && frameCount.current % 10 === 0) {
-      // Throttle re-renders during state transitions
-      setRopeVersion(v => v + 1);
+    for (const geometry of [ropeMainGeometryRef.current, ropeGlowGeometryRef.current, ropeCoreGeometryRef.current]) {
+      if (!geometry) continue;
+      const attribute = geometry.getAttribute('position') as THREE.BufferAttribute | undefined;
+      if (!attribute) continue;
+      (attribute.array as Float32Array).set(ropePositions);
+      attribute.needsUpdate = true;
+      geometry.computeBoundingSphere();
     }
   });
+
+  useEffect(() => {
+    return () => {
+      ropeMainGeometryRef.current?.dispose();
+      ropeGlowGeometryRef.current?.dispose();
+      ropeCoreGeometryRef.current?.dispose();
+    };
+  }, []);
   
   if (!line.isActive && line.state === 'done') return null;
   
@@ -152,9 +153,24 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
         />
       </group>
 
-      <Line points={ropePointsRef.current} color={HOOKSHOT_COLORS.energy} lineWidth={8} transparent opacity={1} />
-      <Line points={ropePointsRef.current} color={HOOKSHOT_COLORS.energyGlow} lineWidth={16} transparent opacity={0.4} />
-      <Line points={ropePointsRef.current} color={0xffffff} lineWidth={3} transparent opacity={0.8} />
+      <line>
+        <bufferGeometry ref={ropeMainGeometryRef}>
+          <bufferAttribute attach="attributes-position" args={[ropePositions.slice(), 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial color={HOOKSHOT_COLORS.energy} transparent opacity={1} />
+      </line>
+      <line>
+        <bufferGeometry ref={ropeGlowGeometryRef}>
+          <bufferAttribute attach="attributes-position" args={[ropePositions.slice(), 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial color={HOOKSHOT_COLORS.energyGlow} transparent opacity={0.4} blending={THREE.AdditiveBlending} />
+      </line>
+      <line>
+        <bufferGeometry ref={ropeCoreGeometryRef}>
+          <bufferAttribute attach="attributes-position" args={[ropePositions.slice(), 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial color={0xffffff} transparent opacity={0.8} />
+      </line>
     </group>
   );
 }, (prev, next) => {

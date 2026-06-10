@@ -194,7 +194,11 @@ function resolveGroundY(x: number, z: number, fallbackY: number): number {
     x,
     fallbackY + GEARSTORM_GROUND_RAY_START_HEIGHT,
     z,
-    GEARSTORM_GROUND_RAY_DISTANCE
+    GEARSTORM_GROUND_RAY_DISTANCE,
+    {
+      priority: 'visual',
+      feature: 'effect:blazeAirstrikeGround',
+    }
   );
 
   return groundCheck ? groundCheck.groundY : fallbackY;

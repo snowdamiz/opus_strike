@@ -74,7 +74,11 @@ const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
 // PLAYER CONTROLLER COMPONENT
 // ============================================================================
 
-export function PlayerController() {
+interface PlayerControllerProps {
+  enabled?: boolean;
+}
+
+export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const { camera } = useThree();
 
   // Store state and actions
@@ -92,7 +96,7 @@ export function PlayerController() {
   const localPlayerForInit = useGameStore(state => state.localPlayer);
 
   // Input and network
-  const { inputState, isPointerLocked, isControlPressed, requestPointerLock } = useInput();
+  const { inputState, isPointerLocked, isControlPressed, requestPointerLock, exitPointerLock } = useInput();
   usePhysics();
   const { sendInput, requestBlazeBombDrop } = useNetwork();
 
@@ -168,6 +172,12 @@ export function PlayerController() {
     preloadWalkingSound();
   }, [preloadWalkingSound]);
 
+  useEffect(() => {
+    if (!enabled && isPointerLocked) {
+      exitPointerLock();
+    }
+  }, [enabled, exitPointerLock, isPointerLocked]);
+
   // Initialize camera position
   useEffect(() => {
     if (localPlayerForInit && !initializedRef.current) {
@@ -219,6 +229,8 @@ export function PlayerController() {
 
   // Handle targeting confirmations via click
   const handleClick = useCallback(() => {
+    if (!enabled) return;
+
     if (!isPointerLocked) {
       requestPointerLock();
     } else if (bombTargeting && blazeAbilities.bombValidRef.current && blazeAbilities.bombTargetRef.current) {
@@ -228,7 +240,7 @@ export function PlayerController() {
       setGrappleTrapTargeting(false);
     }
   }, [
-    isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, grappleTrapTargeting,
+    enabled, isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, grappleTrapTargeting,
     phantomAbilities, blazeAbilities, hookshotAbilities, playerSounds, abilitySystem, movement,
     cameraControl, sendInput, requestBlazeBombDrop, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
   ]);
@@ -354,6 +366,43 @@ export function PlayerController() {
     }
 
     const dt = Math.min(delta, 0.1);
+
+    if (!enabled) {
+      setLocalViewmodelMovement({
+        hasMovementInput: false,
+        isSprinting: false,
+        horizontalSpeed: 0,
+        updatedAtMs: now,
+      });
+      setPhantomPrimaryHeld(false, now);
+      setBlazeRocketHeld(false, now);
+      setBlazeBombTargetHeld(false, now);
+      setChronosPrimaryHeld(false, now);
+      setChronosAegisVisualState(localPlayer.id, false, now);
+      resetBlazeFlamethrower(now);
+      reloadPressedRef.current = false;
+      pendingReloadInputRef.current = false;
+      pendingUnstuckInputRef.current = false;
+      movement.refs.slideIntensity.current = 0;
+      movement.refs.velocity.current.set(0, 0, 0);
+      movement.refs.isGrounded.current = false;
+      movement.refs.wasGrounded.current = false;
+      movement.refs.canJump.current = false;
+      movement.refs.isSliding.current = false;
+      movement.refs.slideTime.current = 0;
+      movement.refs.smoothedY.current = null;
+      useGameStore.getState().setSlideIntensity(0);
+      resetPredictedAbilitySounds();
+      blazeAbilities.resetRocketJump();
+
+      const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
+      cameraControl.updateCameraRotation(camera, false, false, dt);
+      camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
+      setPlayerVisualPosition(localPlayer.id, visualPos);
+      setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
+      return;
+    }
+
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
     const frameInput = isPointerLocked ? inputState : INACTIVE_INPUT_STATE;

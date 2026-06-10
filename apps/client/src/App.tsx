@@ -15,6 +15,7 @@ import { SlideEffects } from './components/ui/SlideEffects';
 import { useAudio, useMusic } from './hooks/useAudio';
 import { prewarmBlazeEffects, prewarmPhantomEffects } from './components/game/effectResources';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
+import { installLocalCombatStressScenario } from './utils/combatStressScenario';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
@@ -39,6 +40,10 @@ export function App() {
   const { preloadSoundGroup, preloadHeroSounds } = useAudio();
   const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
   const shouldLoadMatchWorld = appPhase === 'in_game' && !isPreGame;
+
+  useEffect(() => {
+    installLocalCombatStressScenario();
+  }, []);
 
   useEffect(() => {
     preloadSoundGroup(appPhase === 'in_lobby' || appPhase === 'map_vote' ? 'lobby' : 'menu');
