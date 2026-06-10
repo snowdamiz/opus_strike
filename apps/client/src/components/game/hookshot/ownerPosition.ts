@@ -1,6 +1,10 @@
 import type { Player } from '@voxel-strike/shared';
 import { visualStore } from '../../../store/visualStore';
 import { calculatePlayerSocketPosition } from '../../../hooks/player/constants';
+import {
+  readRemoteModelSocketAny,
+  writeRemoteModelSocketPosition,
+} from '../../../viewmodel/remoteModelSocketRegistry';
 
 interface Position {
   x: number;
@@ -12,6 +16,8 @@ interface OwnerVisualOffset {
   forwardOffset?: number;
   sideOffset?: number;
   yaw?: number;
+  socketName?: string;
+  socketNames?: readonly string[];
 }
 
 export function getOwnerVisualPosition(
@@ -22,6 +28,16 @@ export function getOwnerVisualPosition(
   localPlayer: Player | null,
   offset: OwnerVisualOffset = {}
 ): Position {
+  const remoteSocketNames = offset.socketNames ?? (offset.socketName ? [offset.socketName] : undefined);
+  const socketPose = remoteSocketNames ? readRemoteModelSocketAny(ownerId, remoteSocketNames) : null;
+  if (socketPose) {
+    return {
+      x: socketPose.position.x,
+      y: socketPose.position.y,
+      z: socketPose.position.z,
+    };
+  }
+
   const visualState = visualStore.getState();
   const visualPosition = visualState.playerPositions.get(ownerId);
   const owner = localPlayer?.id === ownerId ? localPlayer : players.get(ownerId);
@@ -47,6 +63,11 @@ export function writeOwnerVisualPosition(
   localPlayer: Player | null,
   offset: OwnerVisualOffset = {}
 ): Position {
+  const remoteSocketNames = offset.socketNames ?? (offset.socketName ? [offset.socketName] : undefined);
+  if (remoteSocketNames && writeRemoteModelSocketPosition(out, ownerId, remoteSocketNames)) {
+    return out;
+  }
+
   const visualState = visualStore.getState();
   const visualPosition = visualState.playerPositions.get(ownerId);
   const owner = localPlayer?.id === ownerId ? localPlayer : players.get(ownerId);

@@ -13,6 +13,14 @@ import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-st
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
+import { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '../../viewmodel/blazePose';
+import { CHRONOS_PRIMARY_ORB_SOCKET_NAME } from '../../viewmodel/chronosPose';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
+import {
+  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+} from '../../viewmodel/phantomPrimaryPose';
+import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 import { loggers } from '../../utils/logger';
 import { setFullRemoteBodyCount } from '../../utils/perfMarks';
@@ -121,6 +129,8 @@ const LOD_UPDATE_INTERVAL = 0.25;
 const REMOTE_SAMPLE_POSITION_SMOOTHING = 28;
 const REMOTE_SAMPLE_ROTATION_SMOOTHING = 32;
 const REMOTE_SAMPLE_SNAP_DISTANCE = 3.5;
+const REMOTE_ATTACK_STATE_RETENTION_MS = 3200;
+const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const REMOTE_SIMPLIFIED_GEOMETRIES = {
   torso: new THREE.BoxGeometry(1, 1, 1),
   head: new THREE.BoxGeometry(1, 1, 1),
@@ -132,6 +142,11 @@ const remoteBodyMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
 const remoteMarkerMaterialCache = new Map<string, THREE.MeshBasicMaterial>();
 
 type RemotePlayerLodTier = 0 | 1 | 2;
+
+interface SimplifiedRemoteSocketMarker {
+  socketName: string;
+  position: [number, number, number];
+}
 
 function getSharedRemoteBodyMaterial(
   color: string,
@@ -209,6 +224,54 @@ function setWalkDirectionFromVelocity(
   target.right = (velocity.x * rightX + velocity.z * rightZ) / speed;
 }
 
+function createSimplifiedRemoteSocketMarkers(
+  heroId: HeroId,
+  height: number
+): SimplifiedRemoteSocketMarker[] {
+  switch (heroId) {
+    case 'phantom':
+      return [
+        {
+          socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
+          position: [-0.34, -height * 0.08, -0.32],
+        },
+        {
+          socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
+          position: [0.34, -height * 0.08, -0.32],
+        },
+        {
+          socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+          position: [0, 0, -0.34],
+        },
+      ];
+    case 'hookshot':
+      return [
+        {
+          socketName: HOOKSHOT_HOOK_SOCKET_NAMES[-1],
+          position: [-0.42, -height * 0.06, -0.38],
+        },
+        {
+          socketName: HOOKSHOT_HOOK_SOCKET_NAMES[1],
+          position: [0.42, -height * 0.06, -0.38],
+        },
+      ];
+    case 'blaze':
+      return [
+        {
+          socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+          position: [0.34, height * 0.34, -0.32],
+        },
+      ];
+    case 'chronos':
+      return [
+        {
+          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          position: [0, height * 0.02, -0.34],
+        },
+      ];
+  }
+}
+
 function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
   const movement = player.movement;
@@ -254,6 +317,9 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   const isMovingRef = useRef(initialIsMoving);
   const isCrouchingRef = useRef(player.movement.isCrouching);
   const isSlidingRef = useRef(player.movement.isSliding);
+  const isAttackingRef = useRef(false);
+  const attackStartedAtMsRef = useRef<number | null>(null);
+  const attackSideRef = useRef<-1 | 1>(1);
   const movementPoseRef = useRef<HeroMovementPose>(initialMovementPose);
   const postureScaleYRef = useRef(postureScaleY);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
@@ -296,6 +362,21 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
 
     // Read from visualStore non-reactively (no re-renders)
     const visualState = visualStore.getState();
+    const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
+    if (remoteAttackState) {
+      const attackAgeMs = Date.now() - remoteAttackState.startedAtMs;
+      isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
+      attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
+      attackSideRef.current = remoteAttackState.side;
+
+      if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
+        visualState.remotePlayerAttackStates.delete(player.id);
+      }
+    } else {
+      isAttackingRef.current = false;
+      attackStartedAtMsRef.current = null;
+    }
+
     const sampledTransform = sampleRemoteTransform(player.id);
     let snappedToSample = false;
     if (sampledTransform) {
@@ -400,6 +481,7 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
       {/* Player body */}
       {lodTier === 0 ? (
         <HeroVoxelBody
+          socketOwnerId={player.id}
           heroId={player.heroId}
           team={player.team}
           height={playerHeight}
@@ -412,6 +494,9 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
           isCrouchingRef={isCrouchingRef}
           isSliding={player.movement.isSliding}
           isSlidingRef={isSlidingRef}
+          isAttackingRef={isAttackingRef}
+          attackStartedAtMsRef={attackStartedAtMsRef}
+          attackSideRef={attackSideRef}
           movementPose={initialMovementPose}
           movementPoseRef={movementPoseRef}
           walkDirectionRef={walkDirectionRef}
@@ -419,6 +504,7 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
         />
       ) : lodTier === 1 ? (
         <SimplifiedRemoteBody
+          socketOwnerId={player.id}
           heroId={player.heroId}
           team={player.team}
           height={playerHeight}
@@ -467,12 +553,14 @@ function getHeroAccent(heroId: HeroId | null, team: Team): string {
 }
 
 function SimplifiedRemoteBody({
+  socketOwnerId,
   heroId,
   team,
   height,
   postureScaleYRef,
   hasFlag,
 }: {
+  socketOwnerId?: string;
   heroId: HeroId | null;
   team: Team;
   height: number;
@@ -480,11 +568,37 @@ function SimplifiedRemoteBody({
   hasFlag: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);
+  const socketRefs = useRef<Record<string, THREE.Group | null>>({});
+  const resolvedHero = heroId ?? 'phantom';
   const teamColor = getTeamColor(team);
   const accent = getHeroAccent(heroId, team);
   const torsoMaterial = getSharedRemoteBodyMaterial(teamColor, 0.18, 0.72);
   const headMaterial = getSharedRemoteBodyMaterial(accent, 0.25, 0.66);
   const flagMaterial = getSharedRemoteBodyMaterial('#facc15', 0.55, 0.58);
+  const socketMarkers = useMemo(
+    () => createSimplifiedRemoteSocketMarkers(resolvedHero, height),
+    [height, resolvedHero]
+  );
+
+  useEffect(() => {
+    if (!socketOwnerId) return undefined;
+
+    const cleanups: Array<() => void> = [];
+    for (const marker of socketMarkers) {
+      const socketObject = socketRefs.current[marker.socketName];
+      if (!socketObject) continue;
+      cleanups.push(registerRemoteModelSocket(
+        socketOwnerId,
+        marker.socketName,
+        socketObject,
+        'simplifiedBody'
+      ));
+    }
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [socketMarkers, socketOwnerId]);
 
   useFrame(() => {
     if (!groupRef.current) return;
@@ -512,6 +626,15 @@ function SimplifiedRemoteBody({
           scale={[0.18, 0.42, 0.04]}
         />
       )}
+      {socketMarkers.map((marker) => (
+        <group
+          key={`${resolvedHero}-simplified-socket-${marker.socketName}`}
+          ref={(node) => {
+            socketRefs.current[marker.socketName] = node;
+          }}
+          position={marker.position}
+        />
+      ))}
     </group>
   );
 }

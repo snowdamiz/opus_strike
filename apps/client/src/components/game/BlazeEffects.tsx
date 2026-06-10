@@ -9,6 +9,9 @@ import type { Player } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import { playSharedLoop, setSharedLoopPosition, stopSharedLoop } from '../../hooks/useAudio';
+import { visualStore } from '../../store/visualStore';
+import { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '../../viewmodel/blazePose';
+import { readRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import {
   RocketsManager,
   RocketJumpExplosions,
@@ -35,7 +38,10 @@ function resolveRemoteFlamethrowerPose(player: Player | undefined): Flamethrower
     return null;
   }
 
-  const yaw = player.lookYaw;
+  const visualState = visualStore.getState();
+  const visualPosition = visualState.playerPositions.get(player.id) ?? player.position;
+  const socketPose = readRemoteModelSocket(player.id, BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME);
+  const yaw = visualState.playerRotations.get(player.id) ?? player.lookYaw;
   const pitch = player.lookPitch;
   const cosPitch = Math.cos(pitch);
   const forwardX = -Math.sin(yaw);
@@ -44,11 +50,17 @@ function resolveRemoteFlamethrowerPose(player: Player | undefined): Flamethrower
   const rightZ = -Math.sin(yaw);
 
   return {
-    origin: {
-      x: player.position.x + forwardX * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET + rightX * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-      y: player.position.y + BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-      z: player.position.z + forwardZ * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET + rightZ * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-    },
+    origin: socketPose
+      ? {
+        x: socketPose.position.x,
+        y: socketPose.position.y,
+        z: socketPose.position.z,
+      }
+      : {
+        x: visualPosition.x + forwardX * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET + rightX * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+        y: visualPosition.y + BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+        z: visualPosition.z + forwardZ * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET + rightZ * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+      },
     direction: {
       x: forwardX * cosPitch,
       y: Math.sin(pitch),

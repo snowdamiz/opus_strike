@@ -14,6 +14,7 @@ import {
   setChronosAegisVisualState,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
+  triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
 import { applySelfMovementAuthority, confirmLocalMovementTransform } from '../movement/localPrediction';
@@ -23,12 +24,22 @@ import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/Pha
 import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
-import { triggerBlazeRocketJumpStaffSlam } from '../viewmodel/blazePose';
 import {
+  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+  triggerBlazeRocketJumpStaffSlam,
+} from '../viewmodel/blazePose';
+import {
+  CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   triggerChronosLifelineConduitPose,
   triggerChronosPrimaryShotGlow,
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../viewmodel/hookshotPose';
+import {
+  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+} from '../viewmodel/phantomPrimaryPose';
+import { readRemoteModelSocketAny } from '../viewmodel/remoteModelSocketRegistry';
 import {
   DRAG_HOOK_SPEED,
   BLAZE_BOMB_FALL_DURATION,
@@ -998,6 +1009,48 @@ function resolveOwnerTeam(data: AbilityUsedMessage): Team {
   return data.ownerTeam ?? store.players.get(data.playerId)?.team ?? store.localPlayer?.team ?? 'red';
 }
 
+function toPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
+  return {
+    x: vector.x,
+    y: vector.y,
+    z: vector.z,
+  };
+}
+
+function socketNamesForSide(
+  sockets: Readonly<Record<-1 | 1, string>>,
+  side: -1 | 1 | undefined
+): readonly string[] {
+  return side ? [sockets[side]] : [sockets[1], sockets[-1]];
+}
+
+function resolveObservedStartPosition(
+  data: AbilityUsedMessage,
+  localPlayerId: string | null,
+  fallback: { x: number; y: number; z: number } | undefined,
+  socketNames: readonly string[]
+): { x: number; y: number; z: number } | undefined {
+  if (data.playerId !== localPlayerId) {
+    const socketPose = readRemoteModelSocketAny(data.playerId, socketNames);
+    if (socketPose) return toPlainPosition(socketPose.position);
+  }
+
+  return fallback;
+}
+
+function triggerObservedRemoteAttack(
+  data: AbilityUsedMessage,
+  localPlayerId: string | null,
+  side: -1 | 1 | undefined = data.launchSide
+): void {
+  if (data.playerId === localPlayerId) return;
+
+  triggerRemotePlayerAttack(data.playerId, data.abilityId, {
+    side: side ?? 1,
+    startedAtMs: Date.now(),
+  });
+}
+
 export function stopRemotePhantomCharge(playerId: string): void {
   const controller = remotePhantomChargeControllers.get(playerId);
   if (!controller) return;
@@ -1203,13 +1256,21 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
   const store = useGameStore.getState();
   const isLocalPlayer = data.playerId === localPlayerId;
   const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
-  const startPosition = data.startPosition ?? position;
+  const fallbackStartPosition = data.startPosition ?? position;
   const ownerTeam = resolveOwnerTeam(data);
   const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
 
   switch (data.abilityId) {
     case 'phantom_dire_ball': {
+      const launchSide = data.launchSide ?? 1;
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        socketNamesForSide(PHANTOM_PRIMARY_PALM_SOCKET_NAMES, data.launchSide)
+      );
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId, launchSide);
       const direction = normalizeAimDirection(data);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('phantom_dire_ball', data.playerId, { launchSide: data.launchSide })
@@ -1240,7 +1301,14 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     }
 
     case 'phantom_void_ray_charge': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        [PHANTOM_VOID_RAY_ORB_SOCKET_NAME]
+      );
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId);
       stopRemotePhantomCharge(data.playerId);
       const controller = new AbortController();
       remotePhantomChargeControllers.set(data.playerId, controller);
@@ -1269,6 +1337,12 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       return true;
 
     case 'phantom_void_ray': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        [PHANTOM_VOID_RAY_ORB_SOCKET_NAME]
+      );
       stopRemotePhantomCharge(data.playerId);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('phantom_void_ray', data.playerId)
@@ -1281,6 +1355,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         }
       }
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId);
       if (!predictedVisualId) {
         store.addVoidRay({
           id: castId,
@@ -1298,7 +1373,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     }
 
     case 'phantom_blink': {
-      if (startPosition && position) {
+      if (fallbackStartPosition && position) {
         if (isLocalPlayer) {
           applyLocalPhantomBlinkConfirmation(data, position, normalizeAimDirection(data));
           triggerTeleportEffect('blink');
@@ -1306,9 +1381,9 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
             playPhantomWorldSound('phantomBlink', undefined, { durationMs: 900, volume: 1.1 });
           }
         } else {
-          playPhantomWorldSound('phantomBlink', startPosition, { durationMs: 900, volume: 1.1 });
+          playPhantomWorldSound('phantomBlink', fallbackStartPosition, { durationMs: 900, volume: 1.1 });
         }
-        triggerBlinkEffect(startPosition, position);
+        triggerBlinkEffect(fallbackStartPosition, position);
       }
       return true;
     }
@@ -1340,7 +1415,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
   const store = useGameStore.getState();
   const isLocalPlayer = data.playerId === localPlayerId;
   const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
-  const startPosition = data.startPosition ?? position;
+  const fallbackStartPosition = data.startPosition ?? position;
   const targetPosition = data.targetPosition ?? position;
   const ownerTeam = resolveOwnerTeam(data);
   const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
@@ -1348,7 +1423,15 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
 
   switch (data.abilityId) {
     case 'hookshot_basic_attack': {
+      const launchSide = data.launchSide ?? 1;
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+      );
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId, launchSide);
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), HOOKSHOT_SPEED);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('hookshot_basic_attack', data.playerId, { launchSide: data.launchSide })
@@ -1376,7 +1459,15 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
     }
 
     case 'hookshot_heavy_attack': {
+      const launchSide = data.launchSide ?? 1;
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+      );
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId, launchSide);
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), DRAG_HOOK_SPEED);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('hookshot_heavy_attack', data.playerId, { launchSide: data.launchSide })
@@ -1403,7 +1494,15 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
     }
 
     case 'hookshot_grapple': {
+      const launchSide = data.launchSide ?? 1;
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+      );
       if (!startPosition || !targetPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId, launchSide);
       const startTime = data.serverTime ?? now;
       const predictedLocalLine = isLocalPlayer
         ? store.grappleLines.find((line) => (
@@ -1444,7 +1543,14 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
     }
 
     case 'hookshot_anchor_wall': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+      );
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId, data.launchSide);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('hookshot_anchor_wall', data.playerId)
         : null;
@@ -1467,7 +1573,14 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
     }
 
     case 'hookshot_grapple_trap': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+      );
       if (!startPosition || !targetPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId, data.launchSide);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('hookshot_grapple_trap', data.playerId)
         : null;
@@ -1504,7 +1617,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
   const store = useGameStore.getState();
   const isLocalPlayer = data.playerId === localPlayerId;
   const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
-  const startPosition = data.startPosition ?? position;
+  const fallbackStartPosition = data.startPosition ?? position;
   const targetPosition = data.targetPosition ?? position;
   const ownerTeam = resolveOwnerTeam(data);
   const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
@@ -1512,7 +1625,14 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
 
   switch (data.abilityId) {
     case 'blaze_rocket': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME]
+      );
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId);
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), BLAZE_ROCKET_SPEED);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('blaze_rocket', data.playerId)
@@ -1536,7 +1656,14 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
     }
 
     case 'blaze_bomb': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME]
+      );
       if (!startPosition || !targetPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId);
       const impactDelay = data.impactTime
         ? Math.max(0, data.impactTime - (data.serverTime ?? now))
         : BLAZE_BOMB_FALL_DURATION;
@@ -1563,7 +1690,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
     }
 
     case 'blaze_rocketjump': {
-      const effectPosition = startPosition ?? position;
+      const effectPosition = fallbackStartPosition ?? position;
       if (effectPosition) {
         triggerRocketJumpExplosion(effectPosition);
         if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_rocketjump')) {
@@ -1615,6 +1742,10 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       const active = Boolean(data.active);
       const fuel = typeof data.fuel === 'number' ? data.fuel : undefined;
 
+      if (active) {
+        triggerObservedRemoteAttack(data, localPlayerId);
+      }
+
       if (isLocalPlayer && store.localPlayer) {
         store.updateLocalPlayer({
           movement: {
@@ -1654,14 +1785,21 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
   const store = useGameStore.getState();
   const isLocalPlayer = data.playerId === localPlayerId;
   const position = data.position ?? store.players.get(data.playerId)?.position ?? store.localPlayer?.position;
-  const startPosition = data.startPosition ?? position;
+  const fallbackStartPosition = data.startPosition ?? position;
   const ownerTeam = resolveOwnerTeam(data);
   const castId = data.castId ?? `${data.abilityId}_${data.playerId}_${data.serverTime ?? Date.now()}`;
   const now = Date.now();
 
   switch (data.abilityId) {
     case 'chronos_verdant_pulse': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        [CHRONOS_PRIMARY_ORB_SOCKET_NAME]
+      );
       if (!startPosition) return true;
+      triggerObservedRemoteAttack(data, localPlayerId);
       const velocity = data.velocity ?? scaleDirection(normalizeAimDirection(data), CHRONOS_VERDANT_PULSE_SPEED);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('chronos_verdant_pulse', data.playerId)
@@ -1688,6 +1826,13 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     }
 
     case 'chronos_lifeline_conduit': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        [CHRONOS_PRIMARY_ORB_SOCKET_NAME]
+      );
+      triggerObservedRemoteAttack(data, localPlayerId);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('chronos_lifeline_conduit', data.playerId)
         : null;
@@ -1701,6 +1846,13 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
     }
 
     case 'chronos_timebreak': {
+      const startPosition = resolveObservedStartPosition(
+        data,
+        localPlayerId,
+        fallbackStartPosition,
+        [CHRONOS_PRIMARY_ORB_SOCKET_NAME]
+      );
+      triggerObservedRemoteAttack(data, localPlayerId);
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('chronos_timebreak', data.playerId)
         : null;
@@ -1724,14 +1876,19 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         const caster = data.playerId === (freshStore.localPlayer?.id ?? freshStore.playerId)
           ? freshStore.localPlayer
           : freshStore.players.get(data.playerId);
+        const socketPose = data.playerId !== (freshStore.localPlayer?.id ?? freshStore.playerId)
+          ? readRemoteModelSocketAny(data.playerId, [CHRONOS_PRIMARY_ORB_SOCKET_NAME])
+          : null;
         const casterPosition = caster?.position ?? data.position;
-        if (!casterPosition) return;
+        if (!casterPosition && !socketPose) return;
 
-        const effectPosition = {
-          x: casterPosition.x,
-          y: casterPosition.y + 1.18,
-          z: casterPosition.z,
-        };
+        const effectPosition = socketPose
+          ? toPlainPosition(socketPose.position)
+          : {
+            x: casterPosition!.x,
+            y: casterPosition!.y + 1.18,
+            z: casterPosition!.z,
+          };
 
         addChronosTimebreakEffect({
           id: castId,
@@ -1827,6 +1984,7 @@ export function setupCombatHandlers(room: Room) {
     loggers.network.sample('playerHealed', 1000, 'player healed', data.sourceId, data.targets.length, data.abilityId);
 
     const store = useGameStore.getState();
+    const localPlayerId = store.localPlayer?.id ?? store.playerId;
     for (const target of data.targets) {
       if (target.targetId === store.localPlayer?.id) {
         store.updateLocalPlayer({ health: target.newHealth });
@@ -1842,11 +2000,30 @@ export function setupCombatHandlers(room: Room) {
       }
     }
 
-    addChronosLifelineEffects(data.sourcePosition, data.targets.map((target) => ({
-      position: target.position,
-    })));
+    const isRemoteSource = data.sourceId !== localPlayerId;
+    const sourceSocketPose = isRemoteSource
+      ? readRemoteModelSocketAny(data.sourceId, [CHRONOS_PRIMARY_ORB_SOCKET_NAME])
+      : null;
+    const sourcePosition = sourceSocketPose
+      ? toPlainPosition(sourceSocketPose.position)
+      : data.sourcePosition;
+
+    addChronosLifelineEffects(
+      sourcePosition,
+      data.targets.map((target) => ({
+        position: target.position,
+      })),
+      undefined,
+      isRemoteSource
+        ? {
+          sourceIsExact: Boolean(sourceSocketPose),
+          sourceSocketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          sourcePlayerId: data.sourceId,
+        }
+        : {}
+    );
     if (data.abilityId === 'chronos_lifeline_conduit') {
-      playChronosWorldSound('chronosLifeline', data.sourcePosition);
+      playChronosWorldSound('chronosLifeline', sourcePosition);
     }
   });
 

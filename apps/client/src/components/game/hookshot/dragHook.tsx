@@ -104,6 +104,7 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     yaw: hook.launchYaw,
+    socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
   };
   
   const removeDragHook = useGameStore(state => state.removeDragHook);

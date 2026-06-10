@@ -93,6 +93,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     yaw: hook.launchYaw,
+    socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
   };
   
   // Get store actions once (not in useFrame)

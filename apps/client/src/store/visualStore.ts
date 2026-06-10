@@ -47,6 +47,9 @@ export interface VisualState {
   /** High-frequency Chronos RMB shield state for local and remote view effects. */
   chronosAegisStates: Map<string, { active: boolean; activatedAtMs: number; updatedAtMs: number }>;
 
+  /** Short-lived attack pose state for remote player bodies. */
+  remotePlayerAttackStates: Map<string, RemotePlayerAttackState>;
+
   /** Current local movement snapshot for viewmodel-only animation. */
   localViewmodelMovement: {
     hasMovementInput: boolean;
@@ -64,6 +67,12 @@ export interface LocalPlayerImpulse {
   y: number;
   z: number;
   mode?: 'add' | 'set';
+}
+
+export interface RemotePlayerAttackState {
+  abilityId: string;
+  startedAtMs: number;
+  side: -1 | 1;
 }
 
 export interface RemoteTransformSnapshot {
@@ -111,6 +120,7 @@ const initialVisualState: VisualState = {
   flamethrowerOrigin: null,
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
   chronosAegisStates: new Map(),
+  remotePlayerAttackStates: new Map(),
   localViewmodelMovement: {
     hasMovementInput: false,
     isSprinting: false,
@@ -357,6 +367,7 @@ export const removePlayerVisualState = (playerId: string): void => {
   state.interpolationTargets.delete(playerId);
   state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
+  state.remotePlayerAttackStates.delete(playerId);
 };
 
 export const setChronosAegisVisualState = (
@@ -380,6 +391,18 @@ export const setChronosAegisVisualState = (
     active,
     activatedAtMs: active ? timestampMs : 0,
     updatedAtMs: timestampMs,
+  });
+};
+
+export const triggerRemotePlayerAttack = (
+  playerId: string,
+  abilityId: string,
+  options: { side?: -1 | 1; startedAtMs?: number } = {}
+): void => {
+  visualStore.getState().remotePlayerAttackStates.set(playerId, {
+    abilityId,
+    startedAtMs: options.startedAtMs ?? Date.now(),
+    side: options.side ?? 1,
   });
 };
 
@@ -420,6 +443,7 @@ export const clearVisualState = (): void => {
     flamethrowerOrigin: null,
     flamethrowerDirection: { x: 0, y: 0, z: -1 },
     chronosAegisStates: new Map(),
+    remotePlayerAttackStates: new Map(),
     localViewmodelMovement: {
       hasMovementInput: false,
       isSprinting: false,

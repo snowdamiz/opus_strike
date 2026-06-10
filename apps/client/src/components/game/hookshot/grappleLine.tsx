@@ -84,6 +84,7 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     yaw: line.launchYaw,
+    socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
   };
   
   const removeGrappleLine = useGameStore(state => state.removeGrappleLine);

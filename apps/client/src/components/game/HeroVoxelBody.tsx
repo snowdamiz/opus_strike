@@ -2,6 +2,14 @@ import { memo, useEffect, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { HeroId, Team } from '@voxel-strike/shared';
+import { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '../../viewmodel/blazePose';
+import { CHRONOS_PRIMARY_ORB_SOCKET_NAME } from '../../viewmodel/chronosPose';
+import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
+import {
+  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+} from '../../viewmodel/phantomPrimaryPose';
+import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 
 type PartKind = 'box' | 'sphere' | 'cylinder' | 'cone';
 type MaterialKind = 'armor' | 'dark' | 'accent' | 'glow' | 'glass' | 'skin' | 'void' | 'edge' | 'eye' | 'mist';
@@ -71,6 +79,7 @@ interface HeroVoxelBodyProps {
   idleIntensity?: number;
   showTeamAccents?: boolean;
   castShadow?: boolean;
+  socketOwnerId?: string;
 }
 
 interface RiggedVoxelPart<TPart extends VoxelPart = VoxelPart> {
@@ -86,6 +95,12 @@ interface TeamAccentPart extends VoxelPart {
   opacity?: number;
   toneMapped?: boolean;
   depthWrite?: boolean;
+}
+
+interface RemoteBodySocketMarker {
+  socketName: string;
+  bone: HeroBoneName;
+  position: [number, number, number];
 }
 
 const TEAM_COLORS: Record<Team, string> = {
@@ -550,6 +565,53 @@ const HERO_BONE_PIVOTS: Record<HeroBoneName, [number, number, number]> = {
   rightForearm: [0.5, 0.9, -0.06],
 };
 const EMPTY_RIGGED_PARTS: RiggedVoxelPart[] = [];
+const EMPTY_REMOTE_SOCKET_MARKERS: RemoteBodySocketMarker[] = [];
+
+const REMOTE_BODY_SOCKET_MARKERS: Record<HeroId, RemoteBodySocketMarker[]> = {
+  phantom: [
+    {
+      socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
+      bone: 'leftForearm',
+      position: [0.07, -0.13, -0.34],
+    },
+    {
+      socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
+      bone: 'rightForearm',
+      position: [-0.07, -0.13, -0.34],
+    },
+    {
+      socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+      bone: 'torso',
+      position: [0, -0.16, -0.42],
+    },
+  ],
+  hookshot: [
+    {
+      socketName: HOOKSHOT_HOOK_SOCKET_NAMES[-1],
+      bone: 'leftForearm',
+      position: [-0.1, -0.2, -0.66],
+    },
+    {
+      socketName: HOOKSHOT_HOOK_SOCKET_NAMES[1],
+      bone: 'rightForearm',
+      position: [0.1, -0.17, -0.66],
+    },
+  ],
+  blaze: [
+    {
+      socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+      bone: 'rightForearm',
+      position: [0.02, 0.86, -0.32],
+    },
+  ],
+  chronos: [
+    {
+      socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+      bone: 'torso',
+      position: [0, -0.16, -0.42],
+    },
+  ],
+};
 
 interface HeroIdleProfile {
   cycleSpeed: number;
@@ -1541,10 +1603,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   idleIntensity = 1,
   showTeamAccents = true,
   castShadow = true,
+  socketOwnerId,
 }: HeroVoxelBodyProps) {
   const resolvedHero = heroId || 'phantom';
   const groupRef = useRef<THREE.Group>(null);
   const boneRefs = useRef<HeroBoneRefs>({});
+  const socketRefs = useRef<Record<string, THREE.Group | null>>({});
   const idleBlendRef = useRef(isMoving || isJumping || isCrouching || isSliding || isAttacking ? 0 : 1);
   const movementBlendRef = useRef(isMoving && !isJumping && !isSliding ? 1 : 0);
   const crouchBlendRef = useRef(isCrouching && !isJumping && !isSliding ? 1 : 0);
@@ -1569,6 +1633,13 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const teamAccentParts = showTeamAccents ? TEAM_ACCENT_PARTS[resolvedHero] : EMPTY_TEAM_ACCENT_PARTS;
   const riggedPartsByBone = useMemo(() => groupRiggedParts(parts), [parts]);
   const riggedTeamAccentPartsByBone = useMemo(() => groupRiggedParts(teamAccentParts), [teamAccentParts]);
+  const socketMarkersByBone = useMemo(() => {
+    const grouped: Partial<Record<HeroBoneName, RemoteBodySocketMarker[]>> = {};
+    for (const marker of REMOTE_BODY_SOCKET_MARKERS[resolvedHero] ?? EMPTY_REMOTE_SOCKET_MARKERS) {
+      (grouped[marker.bone] ??= []).push(marker);
+    }
+    return grouped;
+  }, [resolvedHero]);
   const colors = HERO_COLORS[resolvedHero];
   const idleProfile = HERO_IDLE_PROFILES[resolvedHero];
 
@@ -1598,6 +1669,26 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       materials.forEach((material) => material.dispose());
     };
   }, [materials]);
+
+  useEffect(() => {
+    if (!socketOwnerId) return undefined;
+
+    const cleanups: Array<() => void> = [];
+    for (const marker of REMOTE_BODY_SOCKET_MARKERS[resolvedHero] ?? EMPTY_REMOTE_SOCKET_MARKERS) {
+      const socketObject = socketRefs.current[marker.socketName];
+      if (!socketObject) continue;
+      cleanups.push(registerRemoteModelSocket(
+        socketOwnerId,
+        marker.socketName,
+        socketObject,
+        'fullBody'
+      ));
+    }
+
+    return () => {
+      cleanups.forEach((cleanup) => cleanup());
+    };
+  }, [resolvedHero, socketOwnerId]);
 
   useEffect(() => {
     const moving = isMovingRef?.current ?? isMoving;
@@ -1873,6 +1964,18 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     </>
   );
 
+  const renderSocketMarkersForBone = (bone: HeroBoneName) => (
+    (socketMarkersByBone[bone] ?? EMPTY_REMOTE_SOCKET_MARKERS).map((marker) => (
+      <group
+        key={`${resolvedHero}-socket-${marker.socketName}`}
+        ref={(node) => {
+          socketRefs.current[marker.socketName] = node;
+        }}
+        position={marker.position}
+      />
+    ))
+  );
+
   const renderKneeJoint = (side: 'left' | 'right') => (
     <>
       <mesh
@@ -1917,6 +2020,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         position={HERO_BONE_PIVOTS.aura}
       >
         {renderPartsForBone('aura')}
+        {renderSocketMarkersForBone('aura')}
       </group>
 
       <group
@@ -1926,6 +2030,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         position={HERO_BONE_PIVOTS.hips}
       >
         {renderPartsForBone('hips')}
+        {renderSocketMarkersForBone('hips')}
       </group>
 
       <group
@@ -1936,6 +2041,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       >
         {renderUpperLegLink('left')}
         {renderPartsForBone('leftLeg')}
+        {renderSocketMarkersForBone('leftLeg')}
 
         <group
           ref={(node) => {
@@ -1944,6 +2050,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('leftKnee', 'leftLeg')}
         >
           {renderKneeJoint('left')}
+          {renderSocketMarkersForBone('leftKnee')}
 
           <group
             ref={(node) => {
@@ -1952,6 +2059,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             position={getChildBonePosition('leftShin', 'leftKnee')}
           >
             {renderPartsForBone('leftShin')}
+            {renderSocketMarkersForBone('leftShin')}
           </group>
         </group>
       </group>
@@ -1964,6 +2072,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       >
         {renderUpperLegLink('right')}
         {renderPartsForBone('rightLeg')}
+        {renderSocketMarkersForBone('rightLeg')}
 
         <group
           ref={(node) => {
@@ -1972,6 +2081,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('rightKnee', 'rightLeg')}
         >
           {renderKneeJoint('right')}
+          {renderSocketMarkersForBone('rightKnee')}
 
           <group
             ref={(node) => {
@@ -1980,6 +2090,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             position={getChildBonePosition('rightShin', 'rightKnee')}
           >
             {renderPartsForBone('rightShin')}
+            {renderSocketMarkersForBone('rightShin')}
           </group>
         </group>
       </group>
@@ -1991,6 +2102,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         position={HERO_BONE_PIVOTS.torso}
       >
         {renderPartsForBone('torso')}
+        {renderSocketMarkersForBone('torso')}
 
         <group
           ref={(node) => {
@@ -1999,6 +2111,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('head', 'torso')}
         >
           {renderPartsForBone('head')}
+          {renderSocketMarkersForBone('head')}
         </group>
 
         <group
@@ -2008,6 +2121,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('leftArm', 'torso')}
         >
           {renderPartsForBone('leftArm')}
+          {renderSocketMarkersForBone('leftArm')}
 
           <group
             ref={(node) => {
@@ -2016,6 +2130,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             position={getChildBonePosition('leftForearm', 'leftArm')}
           >
             {renderPartsForBone('leftForearm')}
+            {renderSocketMarkersForBone('leftForearm')}
           </group>
         </group>
 
@@ -2026,6 +2141,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
           position={getChildBonePosition('rightArm', 'torso')}
         >
           {renderPartsForBone('rightArm')}
+          {renderSocketMarkersForBone('rightArm')}
 
           <group
             ref={(node) => {
@@ -2034,6 +2150,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             position={getChildBonePosition('rightForearm', 'rightArm')}
           >
             {renderPartsForBone('rightForearm')}
+            {renderSocketMarkersForBone('rightForearm')}
           </group>
         </group>
       </group>
