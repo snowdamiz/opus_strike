@@ -1,3 +1,4 @@
+import type { IncomingMessage } from 'http';
 import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
 import { Player } from './schema/Player';
@@ -102,6 +103,33 @@ import {
 } from '@voxel-strike/physics';
 import { TickMetrics } from '../perf/tickMetrics';
 import { loggers } from '../utils/logger';
+import {
+  assertUsableEntryTicketSecret,
+  isDevelopmentToolsEnabled,
+  isDirectGameRoomJoinAllowed,
+  isHardenedMovementEnabled,
+} from '../config/security';
+import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
+import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
+import { validateMovementProposal, type LastSafeMovementState } from './movementValidation';
+import {
+  GAME_MESSAGE_RATE_LIMITS,
+  MessageRateLimiter,
+} from './rateLimiter';
+import {
+  isHeroId,
+  isRecord,
+  isTeam,
+  sanitizeDisplayName,
+  sanitizeShortText,
+  validateBotIdPayload,
+  validateChatPayload,
+  validateHeroPayload,
+  parsePlayerInputPayload,
+  validateReadyPayload,
+  validateTeamPayload,
+  validateVec3,
+} from './protocolValidation';
 
 // Import extracted ability handlers
 import {
@@ -129,6 +157,8 @@ interface JoinOptions {
   playerName?: string;
   preferredTeam?: Team;
   clientId?: string;
+  entryTicket?: string;
+  authToken?: string;
 }
 
 interface BotAssignment {
@@ -221,6 +251,22 @@ interface ServerMovementAuthorityState {
   metrics: MovementTelemetrySnapshot;
   commandWindowStartedAt: number;
   commandsInWindow: number;
+  lastSafe: LastSafeMovementState | null;
+  objectiveSuppressedUntil: number;
+  transformProposalHoldUntil: number;
+}
+
+interface SecurityEvent {
+  type: string;
+  playerId: string;
+  userId?: string;
+  roomId: string;
+  tick: number;
+  movementEpoch: number;
+  reason?: string;
+  position?: PlainVec3;
+  serverTime: number;
+  detail?: Record<string, unknown>;
 }
 
 interface BotBrain {
@@ -426,6 +472,14 @@ const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
   },
 };
 const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
+const OBJECTIVE_SUPPRESSION_MS = 650;
+const HARD_CORRECTION_PROPOSAL_HOLD_MS = 160;
+const DAMAGE_CAP_WINDOW_MS = 1000;
+const DAMAGE_CAP_PER_SOURCE_TARGET_MULTIPLIER = 2.25;
+const MAX_SECURITY_EVENTS = 2000;
+const SECURITY_EVENT_LOG_SAMPLE_MS = 5000;
+const MOVEMENT_CORRECTION_LOG_SAMPLE_MS = 1000;
+const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
 const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 18, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
@@ -520,10 +574,59 @@ export class GameRoom extends Room<GameState> {
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
   private losCache = new Map<string, { result: boolean; expiresAt: number }>();
   private preferredBotHeroes: Map<string, HeroId> = new Map();
+  private readonly rateLimiter = new MessageRateLimiter();
+  private readonly usedEntryTicketNonces = new Set<string>();
+  private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
+  private readonly playerEntryTickets = new Map<string, GameEntryTicketClaims>();
+  private readonly securityEvents: SecurityEvent[] = [];
+  private readonly securityLogSamples = new Map<string, { lastLoggedAt: number; suppressed: number }>();
+  private readonly damageCapWindows = new Map<string, { startedAt: number; damage: number }>();
+
+  async onAuth(
+    client: Client,
+    options: JoinOptions,
+    request?: IncomingMessage
+  ): Promise<{ auth: RoomAuthContext; ticket: GameEntryTicketClaims | null }> {
+    const directJoin = !this.lobbyId;
+    if (directJoin && !isDirectGameRoomJoinAllowed()) {
+      throw new Error('Direct game room joins are disabled');
+    }
+
+    let auth = await resolveRoomAuthContext(client.sessionId, options as Record<string, unknown>, request);
+    let ticket: GameEntryTicketClaims | null = null;
+
+    if (this.lobbyId) {
+      ticket = verifyGameEntryTicket(options.entryTicket, {
+        lobbyId: this.lobbyId,
+        gameRoomId: this.roomId,
+      });
+      if (!ticket) {
+        throw new Error('Valid game entry ticket required');
+      }
+      if (this.usedEntryTicketNonces.has(ticket.nonce)) {
+        throw new Error('Game entry ticket already used');
+      }
+      if (auth.kind === 'authenticated' && auth.userId !== ticket.userId) {
+        throw new Error('Game entry ticket does not match authenticated user');
+      }
+      if (auth.kind === 'guest') {
+        auth = {
+          kind: 'guest',
+          userId: ticket.userId,
+          displayName: ticket.displayName,
+        };
+      }
+    }
+
+    return { auth, ticket };
+  }
 
   onCreate(options: CreateOptions) {
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
+    if (this.lobbyId) {
+      assertUsableEntryTicketSecret();
+    }
     this.metrics = new TickMetrics(this.roomId);
     loggers.room.info('Game room created', this.roomId, 'from lobby', this.lobbyId || 'direct');
 
@@ -543,9 +646,27 @@ export class GameRoom extends Room<GameState> {
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
     // Handle messages
-    this.onMessage('input', (client, input: PlayerInput) => {
+    this.onMessage('input', (client, rawInput: unknown) => {
       this.metrics?.time('input', () => {
-        this.handleInput(client, input);
+        if (!this.rateLimiter.consume(client.sessionId, 'input', GAME_MESSAGE_RATE_LIMITS.input)) {
+          this.recordRateLimitDrop(client.sessionId, 'input');
+          return;
+        }
+        const inputResult = parsePlayerInputPayload(rawInput);
+        if (!inputResult.ok) {
+          const authority = this.getMovementAuthority(client.sessionId);
+          authority.metrics.malformedCommands++;
+          this.recordSecurityEvent({
+            type: 'malformed_message',
+            playerId: client.sessionId,
+            userId: this.getPlayerUserId(client.sessionId),
+            movementEpoch: authority.movementEpoch,
+            reason: 'input',
+            detail: { validationReason: inputResult.reason },
+          });
+          return;
+        }
+        this.handleInput(client, inputResult.input);
       });
     });
 
@@ -555,106 +676,215 @@ export class GameRoom extends Room<GameState> {
       });
     });
 
-    this.onMessage('blazeRocketImpact', (client, data: Partial<BlazeRocketImpactMessage> | null) => {
+    this.onMessage('blazeRocketImpact', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'blazeRocketImpact', GAME_MESSAGE_RATE_LIMITS.blazeRocketImpact)) {
+        this.recordRateLimitDrop(client.sessionId, 'blazeRocketImpact');
+        return;
+      }
       this.handleBlazeRocketImpact(client, data);
     });
 
     this.onMessage('blazeBombDrop', (client) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'blazeBombDrop', GAME_MESSAGE_RATE_LIMITS.blazeBombDrop)) {
+        this.recordRateLimitDrop(client.sessionId, 'blazeBombDrop');
+        return;
+      }
       this.handleBlazeBombDrop(client);
     });
 
-    this.onMessage('selectHero', (client, data: { heroId: HeroId }) => {
+    this.onMessage('selectHero', (client, data: unknown) => {
       try {
-        this.handleHeroSelect(client, data.heroId);
+        if (!this.rateLimiter.consume(client.sessionId, 'selectHero', GAME_MESSAGE_RATE_LIMITS.selection)) {
+          this.recordRateLimitDrop(client.sessionId, 'selectHero');
+          return;
+        }
+        const heroId = validateHeroPayload(data);
+        if (!heroId) return;
+        this.handleHeroSelect(client, heroId);
       } catch (error) {
         loggers.room.error('Failed to apply hero selection:', error);
         client.send('devCommandError', { message: 'Failed to switch hero' });
       }
     });
 
-    this.onMessage('devSetHero', (client, data: { heroId: HeroId }) => {
-      try {
-        this.handleDevSetHero(client, data.heroId);
-      } catch (error) {
-        loggers.room.error('Failed to apply dev hero switch:', error);
-        client.send('devCommandError', { message: 'Failed to switch hero' });
+    this.onMessage('selectTeam', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'selectTeam', GAME_MESSAGE_RATE_LIMITS.selection)) {
+        this.recordRateLimitDrop(client.sessionId, 'selectTeam');
+        return;
       }
+      const team = validateTeamPayload(data);
+      if (!team) return;
+      this.handleTeamSelect(client, team);
     });
 
-    this.onMessage('selectTeam', (client, data: { team: Team }) => {
-      this.handleTeamSelect(client, data.team);
+    this.onMessage('ready', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'ready', GAME_MESSAGE_RATE_LIMITS.selection)) {
+        this.recordRateLimitDrop(client.sessionId, 'ready');
+        return;
+      }
+      const ready = validateReadyPayload(data);
+      if (ready === null) return;
+      this.handleReady(client, ready);
     });
 
-    this.onMessage('ready', (client, data: { ready: boolean }) => {
-      this.handleReady(client, data.ready);
-    });
-
-    this.onMessage('chat', (client, data: { message: string; teamOnly: boolean }) => {
-      this.handleChat(client, data.message, data.teamOnly);
+    this.onMessage('chat', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'chat', GAME_MESSAGE_RATE_LIMITS.chat)) {
+        this.recordRateLimitDrop(client.sessionId, 'chat');
+        return;
+      }
+      const chat = validateChatPayload(data, { teamOnly: true });
+      if (!chat) return;
+      this.handleChat(client, chat.message, chat.teamOnly);
     });
 
     if (this.isDevelopmentMode()) {
+      this.onMessage('devSetHero', (client, data: unknown) => {
+        try {
+          if (!this.rateLimiter.consume(client.sessionId, 'devSetHero', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+            this.recordRateLimitDrop(client.sessionId, 'devSetHero');
+            return;
+          }
+          const heroId = validateHeroPayload(data);
+          if (!heroId) return;
+          this.handleDevSetHero(client, heroId);
+        } catch (error) {
+          loggers.room.error('Failed to apply dev hero switch:', error);
+          client.send('devCommandError', { message: 'Failed to switch hero' });
+        }
+      });
+
       // Development-only entity helpers. Production bots are lobby participants.
-      this.onMessage('spawnNpc', (client, data: { heroId: HeroId; team: Team; position?: { x: number; y: number; z: number }; name?: string }) => {
-        this.handleSpawnNpc(client, data);
+      this.onMessage('spawnNpc', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'spawnNpc', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'spawnNpc');
+          return;
+        }
+        if (!isRecord(data) || !isHeroId(data.heroId)) return;
+        const team = data.team === undefined ? undefined : isTeam(data.team) ? data.team : null;
+        const position = data.position === undefined ? undefined : validateVec3(data.position);
+        const name = data.name === undefined ? undefined : sanitizeShortText(data.name, 24) ?? undefined;
+        if (team === null || (data.position !== undefined && !position)) return;
+        this.handleSpawnNpc(client, { heroId: data.heroId, team, position: position ?? undefined, name });
       });
 
-      this.onMessage('damageNpc', (client, data: { npcId: string; damage: number }) => {
-        this.handleDamageNpc(client, data);
+      this.onMessage('damageNpc', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'damageNpc', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'damageNpc');
+          return;
+        }
+        if (!isRecord(data) || typeof data.damage !== 'number' || !Number.isFinite(data.damage)) return;
+        const npcId = sanitizeShortText(data.npcId, 96);
+        if (!npcId) return;
+        this.handleDamageNpc(client, { npcId, damage: Math.max(0, Math.min(1000, data.damage)) });
       });
 
-      this.onMessage('killNpc', (client, data: { npcId: string }) => {
-        this.handleKillNpc(client, data);
+      this.onMessage('killNpc', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'killNpc', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'killNpc');
+          return;
+        }
+        const npcId = validateBotIdPayload(data, 'npcId');
+        if (!npcId) return;
+        this.handleKillNpc(client, { npcId });
       });
 
       this.onMessage('killAllNpcs', (client) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'killAllNpcs', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'killAllNpcs');
+          return;
+        }
         this.handleKillAllNpcs(client);
       });
 
-      this.onMessage('setDevFly', (client, data: { enabled: boolean }) => {
-        this.handleSetDevFly(client, Boolean(data.enabled));
+      this.onMessage('setDevFly', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'setDevFly', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'setDevFly');
+          return;
+        }
+        this.handleSetDevFly(client, isRecord(data) && data.enabled === true);
       });
 
-      this.onMessage('setDevImmune', (client, data: { enabled: boolean }) => {
-        this.handleSetDevImmune(client, Boolean(data.enabled));
+      this.onMessage('setDevImmune', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'setDevImmune', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'setDevImmune');
+          return;
+        }
+        this.handleSetDevImmune(client, isRecord(data) && data.enabled === true);
       });
 
       this.onMessage('devFillUltimate', (client) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'devFillUltimate', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'devFillUltimate');
+          return;
+        }
         this.handleDevFillUltimate(client);
       });
 
-      this.onMessage('setDevTimeFrozen', (client, data: { enabled: boolean }) => {
-        this.handleSetDevTimeFrozen(client, Boolean(data.enabled));
+      this.onMessage('setDevTimeFrozen', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'setDevTimeFrozen', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'setDevTimeFrozen');
+          return;
+        }
+        this.handleSetDevTimeFrozen(client, isRecord(data) && data.enabled === true);
       });
 
-      this.onMessage('setDevBotsRooted', (client, data: { enabled: boolean }) => {
-        this.handleSetDevBotsRooted(client, Boolean(data.enabled));
+      this.onMessage('setDevBotsRooted', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'setDevBotsRooted', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'setDevBotsRooted');
+          return;
+        }
+        this.handleSetDevBotsRooted(client, isRecord(data) && data.enabled === true);
       });
 
-      this.onMessage('devAddBot', (client, data: { heroId: HeroId; team: Team }) => {
-        this.handleDevAddBot(client, data);
+      this.onMessage('devAddBot', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'devAddBot', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'devAddBot');
+          return;
+        }
+        if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
+        this.handleDevAddBot(client, { heroId: data.heroId, team: data.team });
+      });
+
+      this.onMessage('requestPerfSnapshot', (client) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'requestPerfSnapshot', GAME_MESSAGE_RATE_LIMITS.perfSnapshot)) {
+          this.recordRateLimitDrop(client.sessionId, 'requestPerfSnapshot');
+          return;
+        }
+        client.send('perfSnapshot', this.buildPerfSnapshot());
       });
     }
-
-    this.onMessage('requestPerfSnapshot', (client) => {
-      if (!this.isDevelopmentMode()) return;
-      client.send('perfSnapshot', this.buildPerfSnapshot());
-    });
   }
 
   onJoin(client: Client, options: JoinOptions) {
+    const authBundle = (client as Client & { auth?: { auth?: RoomAuthContext; ticket?: GameEntryTicketClaims | null } }).auth;
+    const authContext = authBundle?.auth ?? {
+      kind: 'guest' as const,
+      userId: `guest:${client.sessionId}`,
+      displayName: sanitizeDisplayName(options.playerName),
+    };
+    const entryTicket = authBundle?.ticket ?? null;
+
     loggers.room.debug('Player joining', {
       sessionId: client.sessionId,
-      name: options.playerName,
+      name: authContext.displayName,
       clientId: options.clientId,
+      userId: authContext.userId,
+      ticketed: Boolean(entryTicket),
       players: this.state.players.size,
       clientIds: this.clientIdToSessionId.size,
     });
 
-    // Handle reconnection: if same clientId exists, kick the old session
-    if (options.clientId) {
-      const existingSessionId = this.clientIdToSessionId.get(options.clientId);
-      loggers.room.debug('Checking duplicate client id', options.clientId, existingSessionId);
+    if (entryTicket) {
+      this.usedEntryTicketNonces.add(entryTicket.nonce);
+      this.playerEntryTickets.set(client.sessionId, entryTicket);
+    }
+    this.playerAuthContexts.set(client.sessionId, authContext);
+
+    // Handle reconnect/duplicate tabs by authenticated user or signed lobby ticket identity.
+    const identityKey = authContext.userId;
+    if (identityKey) {
+      const existingSessionId = this.clientIdToSessionId.get(identityKey);
+      loggers.room.debug('Checking duplicate identity', identityKey, existingSessionId);
       
       if (existingSessionId && existingSessionId !== client.sessionId) {
         loggers.room.info('Duplicate session detected, kicking old session', existingSessionId);
@@ -688,18 +918,32 @@ export class GameRoom extends Room<GameState> {
         this.unstuckCooldownUntil.delete(existingSessionId);
         this.movementAuthorities.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
+        this.playerAuthContexts.delete(existingSessionId);
+        this.playerEntryTickets.delete(existingSessionId);
+        this.rateLimiter.clearScope(existingSessionId);
+        this.knownPlayerIds.delete(existingSessionId);
+        this.playerVitalSignatures.delete(existingSessionId);
         
         // Broadcast that old player left
         this.broadcast('playerLeft', { playerId: existingSessionId });
       }
       
-      // Register this client's ID mapping
-      this.clientIdToSessionId.set(options.clientId, client.sessionId);
-      this.sessionIdToClientId.set(client.sessionId, options.clientId);
+      // Register this identity mapping. The local clientId is not used as identity.
+      this.clientIdToSessionId.set(identityKey, client.sessionId);
+      this.sessionIdToClientId.set(client.sessionId, identityKey);
     }
 
     if (this.state.players.size >= this.config.maxPlayers) {
       client.send('error', { message: 'Game room is full' });
+      this.playerAuthContexts.delete(client.sessionId);
+      this.playerEntryTickets.delete(client.sessionId);
+      if (entryTicket) {
+        this.usedEntryTicketNonces.delete(entryTicket.nonce);
+      }
+      if (this.clientIdToSessionId.get(identityKey) === client.sessionId) {
+        this.clientIdToSessionId.delete(identityKey);
+      }
+      this.sessionIdToClientId.delete(client.sessionId);
       client.leave();
       return;
     }
@@ -729,8 +973,8 @@ export class GameRoom extends Room<GameState> {
     // Create player
     const player = new Player();
     player.id = client.sessionId;
-    player.name = options.playerName || `Player${this.state.players.size + 1}`;
-    player.team = this.assignTeam(options.preferredTeam);
+    player.name = entryTicket?.displayName || authContext.displayName || `Player${this.state.players.size + 1}`;
+    player.team = entryTicket?.assignedTeam || this.assignTeam(isTeam(options.preferredTeam) ? options.preferredTeam : undefined);
     player.state = 'selecting';
     player.isBot = false;
     player.botDifficulty = '';
@@ -738,9 +982,13 @@ export class GameRoom extends Room<GameState> {
 
     // Set spawn position
     this.placePlayerAtSpawn(player, 'spawn');
+    if (entryTicket?.selectedHero && isHeroId(entryTicket.selectedHero)) {
+      this.setPlayerHero(player, entryTicket.selectedHero);
+    }
 
     this.state.players.set(client.sessionId, player);
     this.knownPlayerIds.add(client.sessionId);
+    this.updateLastSafeMovement(player, 0);
 
     // Broadcast join to all clients (including the new one)
     this.broadcast('playerJoined', {
@@ -802,6 +1050,9 @@ export class GameRoom extends Room<GameState> {
     this.deleteProcessedBlazeRocketImpactsForPlayer(client.sessionId);
     this.devInvulnerablePlayers.delete(client.sessionId);
     this.devImmunePlayers.delete(client.sessionId);
+    this.playerAuthContexts.delete(client.sessionId);
+    this.playerEntryTickets.delete(client.sessionId);
+    this.rateLimiter.clearScope(client.sessionId);
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -959,6 +1210,8 @@ export class GameRoom extends Room<GameState> {
 
     this.updatePendingAreaDamage(now);
     this.updateBlazeGearstorms(now);
+    this.cleanupDamageWindows(now);
+    this.cleanupProcessedBlazeRocketImpacts(now);
 
     // Update held Blaze flamethrowers
     if (this.metrics) {
@@ -1199,6 +1452,7 @@ export class GameRoom extends Room<GameState> {
     return {
       ...(this.metrics?.getDebugSnapshot() ?? { roomId: this.roomId }),
       movement: this.buildMovementTelemetry(),
+      authorityEvents: this.securityEvents.slice(-100),
     };
   }
 
@@ -1407,10 +1661,21 @@ export class GameRoom extends Room<GameState> {
         malformedCommands: 0,
         hardCorrections: 0,
         mediumCorrections: 0,
+        invalidTransforms: 0,
+        speedViolations: 0,
+        blockedPathCorrections: 0,
+        boundsCorrections: 0,
+        objectiveSuppressions: 0,
+        abilityRejects: 0,
+        rateLimitDrops: 0,
+        staleCollisionRevisionDrops: 0,
         lastAckSeq: 0,
       },
       commandWindowStartedAt: Date.now(),
       commandsInWindow: 0,
+      lastSafe: null,
+      objectiveSuppressedUntil: 0,
+      transformProposalHoldUntil: 0,
     };
   }
 
@@ -1421,6 +1686,193 @@ export class GameRoom extends Room<GameState> {
     const created = this.createMovementAuthorityState();
     this.movementAuthorities.set(playerId, created);
     return created;
+  }
+
+  private getPlayerUserId(playerId: string): string | undefined {
+    return this.playerAuthContexts.get(playerId)?.userId;
+  }
+
+  private recordSecurityEvent(event: Omit<SecurityEvent, 'roomId' | 'tick' | 'serverTime'>): void {
+    const fullEvent: SecurityEvent = {
+      ...event,
+      roomId: this.roomId,
+      tick: this.state.tick,
+      serverTime: this.state.serverTime || Date.now(),
+    };
+    this.securityEvents.push(fullEvent);
+    if (this.securityEvents.length > MAX_SECURITY_EVENTS) {
+      this.securityEvents.splice(0, this.securityEvents.length - MAX_SECURITY_EVENTS);
+    }
+    this.logSecurityEvent(fullEvent);
+  }
+
+  private securityEventLogIntervalMs(event: SecurityEvent): number {
+    return event.type === 'movement_correction'
+      ? MOVEMENT_CORRECTION_LOG_SAMPLE_MS
+      : SECURITY_EVENT_LOG_SAMPLE_MS;
+  }
+
+  private securityEventLogKey(event: SecurityEvent): string {
+    const validationReason = typeof event.detail?.validationReason === 'string'
+      ? event.detail.validationReason
+      : '';
+    return [
+      event.type,
+      event.playerId,
+      event.reason ?? '',
+      validationReason,
+    ].join(':');
+  }
+
+  private shouldWarnSecurityEvent(event: SecurityEvent): boolean {
+    if (event.type === 'objective_carrier_mismatch') return true;
+    if (event.type === 'objective_suppression' || event.type.startsWith('objective_')) return false;
+    return true;
+  }
+
+  private logSecurityEvent(event: SecurityEvent): void {
+    const now = Date.now();
+    const key = this.securityEventLogKey(event);
+    const sample = this.securityLogSamples.get(key);
+    const intervalMs = this.securityEventLogIntervalMs(event);
+
+    if (sample && now - sample.lastLoggedAt < intervalMs) {
+      sample.suppressed++;
+      return;
+    }
+
+    if (!sample && this.securityLogSamples.size >= MAX_SECURITY_LOG_SAMPLE_KEYS) {
+      const oldestKey = this.securityLogSamples.keys().next().value;
+      if (oldestKey) this.securityLogSamples.delete(oldestKey);
+    }
+
+    const suppressedSinceLastLog = sample?.suppressed ?? 0;
+    this.securityLogSamples.set(key, { lastLoggedAt: now, suppressed: 0 });
+    const log = this.shouldWarnSecurityEvent(event)
+      ? loggers.room.warn
+      : loggers.room.debug;
+
+    if (suppressedSinceLastLog > 0) {
+      log('authority event', { ...event, suppressedSinceLastLog });
+      return;
+    }
+    log('authority event', event);
+  }
+
+  private ensureLastSafeMovement(player: Player, acceptedAt = Date.now()): LastSafeMovementState {
+    const authority = this.getMovementAuthority(player.id);
+    if (!authority.lastSafe) {
+      authority.lastSafe = {
+        position: this.vec3SchemaToPlain(player.position),
+        velocity: this.vec3SchemaToPlain(player.velocity),
+        acceptedAt,
+        sequence: 0,
+      };
+    }
+    return authority.lastSafe;
+  }
+
+  private updateLastSafeMovement(player: Player, sequence: number, acceptedAt = Date.now()): void {
+    const authority = this.getMovementAuthority(player.id);
+    authority.lastSafe = {
+      position: this.vec3SchemaToPlain(player.position),
+      velocity: this.vec3SchemaToPlain(player.velocity),
+      acceptedAt,
+      sequence,
+    };
+  }
+
+  private restoreLastSafeMovement(player: Player): void {
+    const lastSafe = this.ensureLastSafeMovement(player);
+    player.position.x = lastSafe.position.x;
+    player.position.y = lastSafe.position.y;
+    player.position.z = lastSafe.position.z;
+    player.velocity.x = lastSafe.velocity.x;
+    player.velocity.y = lastSafe.velocity.y;
+    player.velocity.z = lastSafe.velocity.z;
+  }
+
+  private suppressObjectives(playerId: string, reason: string, now = Date.now()): void {
+    const authority = this.getMovementAuthority(playerId);
+    authority.objectiveSuppressedUntil = Math.max(authority.objectiveSuppressedUntil, now + OBJECTIVE_SUPPRESSION_MS);
+    authority.metrics.objectiveSuppressions = (authority.metrics.objectiveSuppressions ?? 0) + 1;
+    this.recordSecurityEvent({
+      type: 'objective_suppression',
+      playerId,
+      userId: this.getPlayerUserId(playerId),
+      movementEpoch: authority.movementEpoch,
+      reason,
+      position: this.state.players.get(playerId)
+        ? this.vec3SchemaToPlain(this.state.players.get(playerId)!.position)
+        : undefined,
+    });
+  }
+
+  private isObjectiveSuppressed(playerId: string, now = Date.now()): boolean {
+    return now < (this.getMovementAuthority(playerId).objectiveSuppressedUntil || 0);
+  }
+
+  private recordObjectiveEvent(player: Player, eventType: string, team: Team, now: number): void {
+    const authority = this.getMovementAuthority(player.id);
+    this.recordSecurityEvent({
+      type: `objective_${eventType}`,
+      playerId: player.id,
+      userId: this.getPlayerUserId(player.id),
+      movementEpoch: authority.movementEpoch,
+      reason: team,
+      position: this.vec3SchemaToPlain(player.position),
+      detail: {
+        team: player.team,
+        phase: this.state.phase,
+        serverTick: this.state.tick,
+        eventTeam: team,
+        serverTime: now,
+      },
+    });
+  }
+
+  private incrementCorrectionMetric(authority: ServerMovementAuthorityState, reason: MovementCorrectionReason): void {
+    authority.metrics.hardCorrections++;
+    if (reason === 'invalid_transform') {
+      authority.metrics.invalidTransforms = (authority.metrics.invalidTransforms ?? 0) + 1;
+    } else if (reason === 'speed_limit') {
+      authority.metrics.speedViolations = (authority.metrics.speedViolations ?? 0) + 1;
+    } else if (reason === 'blocked_path') {
+      authority.metrics.blockedPathCorrections = (authority.metrics.blockedPathCorrections ?? 0) + 1;
+    } else if (reason === 'bounds') {
+      authority.metrics.boundsCorrections = (authority.metrics.boundsCorrections ?? 0) + 1;
+    } else if (reason === 'collision_revision') {
+      authority.metrics.staleCollisionRevisionDrops = (authority.metrics.staleCollisionRevisionDrops ?? 0) + 1;
+    }
+  }
+
+  private recordRateLimitDrop(playerId: string, messageType: string): void {
+    const authority = this.getMovementAuthority(playerId);
+    authority.metrics.rateLimitDrops = (authority.metrics.rateLimitDrops ?? 0) + 1;
+    this.recordSecurityEvent({
+      type: 'rate_limit_drop',
+      playerId,
+      userId: this.getPlayerUserId(playerId),
+      movementEpoch: authority.movementEpoch,
+      reason: messageType,
+      position: this.state.players.get(playerId)
+        ? this.vec3SchemaToPlain(this.state.players.get(playerId)!.position)
+        : undefined,
+    });
+  }
+
+  private rejectAbilityOrCombat(player: Player, reason: string, logEvent = true): void {
+    const authority = this.getMovementAuthority(player.id);
+    authority.metrics.abilityRejects = (authority.metrics.abilityRejects ?? 0) + 1;
+    if (!logEvent) return;
+    this.recordSecurityEvent({
+      type: 'ability_reject',
+      playerId: player.id,
+      userId: this.getPlayerUserId(player.id),
+      movementEpoch: authority.movementEpoch,
+      reason,
+      position: this.vec3SchemaToPlain(player.position),
+    });
   }
 
   private clearHookshotGrapple(playerId: string): void {
@@ -1453,6 +1905,12 @@ export class GameRoom extends Room<GameState> {
     }
     authority.pendingCommands = preservedCommands.slice(-MOVEMENT_MAX_SERVER_QUEUE);
     authority.correctionReason = reason;
+    authority.transformProposalHoldUntil = Date.now() + HARD_CORRECTION_PROPOSAL_HOLD_MS;
+    const player = this.state.players.get(playerId);
+    if (player) {
+      this.updateLastSafeMovement(player, authority.lastProcessedSeq);
+    }
+    this.suppressObjectives(playerId, reason);
     this.clearHookshotGrapple(playerId);
   }
 
@@ -1482,6 +1940,12 @@ export class GameRoom extends Room<GameState> {
 
       authority.metrics.lateCommands++;
       authority.correctionReason = 'epoch_mismatch';
+      return null;
+    }
+
+    if ((sanitized.collisionRevision ?? 0) !== 0) {
+      authority.metrics.staleCollisionRevisionDrops = (authority.metrics.staleCollisionRevisionDrops ?? 0) + 1;
+      authority.correctionReason = 'collision_revision';
       return null;
     }
 
@@ -1539,7 +2003,7 @@ export class GameRoom extends Room<GameState> {
       const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
       authority.pendingCommands.splice(0, overflow);
       authority.metrics.droppedCommands += overflow;
-      this.markMovementBarrier(client.sessionId, 'epoch_mismatch');
+      this.markMovementBarrier(client.sessionId, 'queue_overflow');
     }
 
     authority.metrics.queueLength = authority.pendingCommands.length;
@@ -1774,6 +2238,8 @@ export class GameRoom extends Room<GameState> {
   private handleInput(client: Client, input: PlayerInput & { position?: { x: number; y: number; z: number }; velocity?: { x: number; y: number; z: number } }) {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive') return;
+    const now = Date.now();
+    const authority = this.getMovementAuthority(client.sessionId);
 
     // Store input for processing
     player.lastInput = input;
@@ -1782,7 +2248,7 @@ export class GameRoom extends Room<GameState> {
     player.lookYaw = normalizeLookYaw(input.lookYaw);
     player.lookPitch = clampLookPitch(input.lookPitch);
 
-    if (this.isDevelopmentMode() && input.devFly) {
+    if (this.isDevelopmentMode() && input.devFly && this.devInvulnerablePlayers.has(client.sessionId)) {
       this.disablePlayerSkills(player);
       if (input.position && this.isFiniteVec3(input.position)) {
         player.position.x = input.position.x;
@@ -1794,30 +2260,93 @@ export class GameRoom extends Room<GameState> {
         player.velocity.y = input.velocity.y;
         player.velocity.z = input.velocity.z;
       }
+      this.updateLastSafeMovement(player, input.tick, now);
       return;
     }
 
-    const shouldAcceptClientPosition = Date.now() >= (this.authoritativePositionUntil.get(client.sessionId) ?? 0);
-    if ((input.position || input.velocity) && shouldAcceptClientPosition) {
-      const authority = this.movementAuthorities.get(client.sessionId);
-      if (authority) {
-        authority.pendingCommands.length = 0;
-        authority.metrics.queueLength = 0;
-        authority.correctionReason = null;
+    const hasMovementProposal = Boolean(input.position || input.velocity);
+    const canAcceptMovementProposal = (
+      now >= (this.authoritativePositionUntil.get(client.sessionId) ?? 0) &&
+      now >= authority.transformProposalHoldUntil
+    );
+
+    if (hasMovementProposal && canAcceptMovementProposal) {
+      authority.pendingCommands.length = 0;
+      authority.metrics.queueLength = 0;
+
+      const proposedPosition = input.position ?? this.vec3SchemaToPlain(player.position);
+      const proposedVelocity = input.velocity ?? this.vec3SchemaToPlain(player.velocity);
+
+      if (!isHardenedMovementEnabled()) {
+        if (this.isFiniteVec3(proposedPosition)) {
+          const bounds = this.getMapWorldBounds();
+          player.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, proposedPosition.x));
+          player.position.y = Math.max(-10, Math.min(100, proposedPosition.y));
+          player.position.z = Math.max(bounds.minZ, Math.min(bounds.maxZ, proposedPosition.z));
+        }
+        if (this.isFiniteVec3(proposedVelocity)) {
+          player.velocity.x = proposedVelocity.x;
+          player.velocity.y = proposedVelocity.y;
+          player.velocity.z = proposedVelocity.z;
+        }
+        this.updateLastSafeMovement(player, input.tick, now);
+      } else {
+        const lastSafe = this.ensureLastSafeMovement(player, now);
+        const worldBounds = this.getMapWorldBounds();
+        const validation = validateMovementProposal({
+          previous: lastSafe,
+          proposedPosition,
+          proposedVelocity,
+          inputSequence: input.tick,
+          receivedAt: now,
+          heroStats: getHeroStats(player.heroId as HeroId),
+          movement: {
+            isSliding: player.movement.isSliding,
+            isGrappling: player.movement.isGrappling,
+            isJetpacking: player.movement.isJetpacking,
+            isGliding: player.movement.isGliding,
+          },
+          activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
+          flagCarrier: player.hasFlag,
+          bounds: {
+            minX: worldBounds.minX,
+            maxX: worldBounds.maxX,
+            minY: -20,
+            maxY: 120,
+            minZ: worldBounds.minZ,
+            maxZ: worldBounds.maxZ,
+          },
+          isInsidePlayableArea: (position) => isInsideBoundaryPolygon(position.x, position.z, this.getMapManifest().boundary),
+          isSpaceBlocked: (position) => this.isPlayerProposalSpaceBlocked(position),
+          isPathBlocked: (from, to) => this.isPlayerProposalPathBlocked(from, to),
+        });
+
+        if (validation.accepted) {
+          player.position.x = proposedPosition.x;
+          player.position.y = proposedPosition.y;
+          player.position.z = proposedPosition.z;
+          player.velocity.x = proposedVelocity.x;
+          player.velocity.y = proposedVelocity.y;
+          player.velocity.z = proposedVelocity.z;
+          authority.correctionReason = null;
+          this.updateLastSafeMovement(player, input.tick, now);
+        } else {
+          const reason = validation.reason ?? 'invalid_transform';
+          this.restoreLastSafeMovement(player);
+          this.incrementCorrectionMetric(authority, reason);
+          this.recordSecurityEvent({
+            type: 'movement_correction',
+            playerId: player.id,
+            userId: this.getPlayerUserId(player.id),
+            movementEpoch: authority.movementEpoch,
+            reason,
+            position: this.vec3SchemaToPlain(player.position),
+            detail: validation.metrics,
+          });
+          this.markMovementBarrier(player.id, reason, { preserveQueuedCommands: false });
+          this.sendSelfMovementAuthority(player, client, reason);
+        }
       }
-    }
-
-    if (input.position && shouldAcceptClientPosition && this.isFiniteVec3(input.position)) {
-      const bounds = this.getMapWorldBounds();
-      player.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, input.position.x));
-      player.position.y = Math.max(-10, Math.min(100, input.position.y));
-      player.position.z = Math.max(bounds.minZ, Math.min(bounds.maxZ, input.position.z));
-    }
-
-    if (input.velocity && shouldAcceptClientPosition && this.isFiniteVec3(input.velocity)) {
-      player.velocity.x = input.velocity.x;
-      player.velocity.y = input.velocity.y;
-      player.velocity.z = input.velocity.z;
     }
 
     if (input.unstuck) {
@@ -2646,6 +3175,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
+    if (player.state !== 'alive' || !isHeroId(player.heroId)) {
+      this.rejectAbilityOrCombat(player, `invalid_state:${slot}`);
+      return;
+    }
+
     const chronosLifelineTargets = player.heroId === 'chronos' && slot === 'ability1'
       ? this.getChronosLifelineTargets(player)
       : null;
@@ -2654,17 +3188,21 @@ export class GameRoom extends Room<GameState> {
       : null;
 
     if (player.heroId === 'chronos' && slot === 'ultimate') {
+      this.rejectAbilityOrCombat(player, 'chronos_ultimate_disabled');
       return;
     }
     if (player.heroId === 'chronos' && slot === 'ability1' && (!chronosLifelineTargets || chronosLifelineTargets.length === 0)) {
+      this.rejectAbilityOrCombat(player, 'chronos_lifeline_no_targets', false);
       return;
     }
     if (player.heroId === 'hookshot' && slot === 'ability1' && !hookshotGrappleTarget) {
+      this.rejectAbilityOrCombat(player, 'hookshot_grapple_no_target', false);
       return;
     }
 
     const result = tryUseAbility(player, slot);
     if (!result.success || !result.abilityId || !result.abilityState || !result.abilityDef) {
+      this.rejectAbilityOrCombat(player, `ability_unavailable:${slot}`, false);
       return;
     }
 
@@ -2878,6 +3416,7 @@ export class GameRoom extends Room<GameState> {
 
       this.state.players.set(bot.id, bot);
       this.knownPlayerIds.add(bot.id);
+      this.updateLastSafeMovement(bot, 0);
       this.initializePressState(bot.id);
       this.botBrains.set(bot.id, this.createBotBrain(bot, index));
     });
@@ -3124,17 +3663,35 @@ export class GameRoom extends Room<GameState> {
 
   private tryResolveAttack(player: Player, mode: 'primary' | 'secondary'): void {
     const heroId = player.heroId as HeroId;
-    if (!heroId) return;
+    if (!isHeroId(heroId) || player.state !== 'alive') {
+      this.rejectAbilityOrCombat(player, `attack_invalid_state:${mode}`);
+      return;
+    }
 
     const attack = mode === 'primary' ? PRIMARY_ATTACKS[heroId] : SECONDARY_ATTACKS[heroId];
-    if (!attack) return;
+    if (!attack) {
+      this.rejectAbilityOrCombat(player, `attack_missing_config:${mode}`);
+      return;
+    }
 
     const cooldownKey = `${player.id}:${mode}`;
     const now = Date.now();
-    if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) return;
-    if (mode === 'primary' && !this.isPhantomPrimaryReady(player, now)) return;
-    if (mode === 'primary' && !this.isChronosPrimaryReady(player, now)) return;
-    if (mode === 'primary' && !this.consumePhantomPrimaryShot(player, now)) return;
+    if (now < (this.attackCooldownUntil.get(cooldownKey) || 0)) {
+      this.rejectAbilityOrCombat(player, `attack_cooldown:${mode}`, false);
+      return;
+    }
+    if (mode === 'primary' && !this.isPhantomPrimaryReady(player, now)) {
+      this.rejectAbilityOrCombat(player, 'phantom_primary_not_ready', false);
+      return;
+    }
+    if (mode === 'primary' && !this.isChronosPrimaryReady(player, now)) {
+      this.rejectAbilityOrCombat(player, 'chronos_primary_not_ready', false);
+      return;
+    }
+    if (mode === 'primary' && !this.consumePhantomPrimaryShot(player, now)) {
+      this.rejectAbilityOrCombat(player, 'phantom_primary_no_ammo', false);
+      return;
+    }
     this.attackCooldownUntil.set(cooldownKey, now + attack.cooldownMs);
 
     const veil = player.abilities.get('phantom_veil');
@@ -3181,14 +3738,40 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private handleBlazeRocketImpact(client: Client, data: Partial<BlazeRocketImpactMessage> | null): void {
-    void client;
-    void data;
+  private handleBlazeRocketImpact(client: Client, data: unknown): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+    if (!isRecord(data)) {
+      this.rejectAbilityOrCombat(player, 'malformed_rocket_impact');
+      return;
+    }
+    const rocketId = sanitizeShortText(data.rocketId, 128);
+    const position = validateVec3(data.position);
+    if (!rocketId || !position) {
+      this.rejectAbilityOrCombat(player, 'malformed_rocket_impact');
+      return;
+    }
+    this.recordSecurityEvent({
+      type: 'ignored_projectile_impact',
+      playerId: player.id,
+      userId: this.getPlayerUserId(player.id),
+      movementEpoch: this.getMovementAuthority(player.id).movementEpoch,
+      reason: rocketId,
+      position,
+    });
   }
 
   private handleBlazeBombDrop(client: Client): void {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive' || player.heroId !== 'blaze') return;
+    if (!player.lastInput?.secondaryFire) {
+      this.rejectAbilityOrCombat(player, 'blaze_bomb_without_secondary_hold');
+      return;
+    }
+    if (this.blazeBombDropConsumedForHold.has(player.id)) {
+      this.rejectAbilityOrCombat(player, 'blaze_bomb_duplicate_hold', false);
+      return;
+    }
 
     this.blazeBombDropConsumedForHold.add(player.id);
     this.tryResolveAttack(player, 'secondary');
@@ -3200,6 +3783,15 @@ export class GameRoom extends Room<GameState> {
     for (const [impactKey, expiresAt] of this.processedBlazeRocketImpacts) {
       if (expiresAt <= now) {
         this.processedBlazeRocketImpacts.delete(impactKey);
+      }
+    }
+  }
+
+  private cleanupDamageWindows(now: number): void {
+    if (this.damageCapWindows.size === 0) return;
+    for (const [key, window] of this.damageCapWindows) {
+      if (now - window.startedAt >= DAMAGE_CAP_WINDOW_MS * 3) {
+        this.damageCapWindows.delete(key);
       }
     }
   }
@@ -3364,6 +3956,11 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
+    if (source && !this.consumeDamageBudget(source, target, rawDamage, damageType, now)) {
+      this.rejectAbilityOrCombat(source, `damage_cap:${damageType}`);
+      return false;
+    }
+
     const phantomShield = target.abilities.get('phantom_personal_shield');
     if (phantomShield?.isActive) {
       phantomShield.isActive = false;
@@ -3410,6 +4007,25 @@ export class GameRoom extends Room<GameState> {
       damage: (existing?.damage || 0) + damage,
       timestamp,
     });
+  }
+
+  private consumeDamageBudget(source: Player, target: Player, rawDamage: number, damageType: string, now: number): boolean {
+    const key = `${source.id}:${target.id}:${damageType}`;
+    const window = this.damageCapWindows.get(key);
+    const maxDamage = Math.max(target.maxHealth * DAMAGE_CAP_PER_SOURCE_TARGET_MULTIPLIER, rawDamage + 1);
+
+    if (!window || now - window.startedAt >= DAMAGE_CAP_WINDOW_MS) {
+      this.damageCapWindows.set(key, { startedAt: now, damage: rawDamage });
+      return rawDamage <= maxDamage;
+    }
+
+    const nextDamage = window.damage + rawDamage;
+    if (nextDamage > maxDamage) {
+      return false;
+    }
+
+    window.damage = nextDamage;
+    return true;
   }
 
   private getDamageTakenMultiplier(player: Player): number {
@@ -3567,16 +4183,26 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.forEach((player) => {
       if (player.state !== 'alive') return;
+      if (!isTeam(player.team)) return;
+      if (this.isObjectiveSuppressed(player.id, now)) return;
 
       const playerTeam = player.team as Team;
       const enemyTeam = playerTeam === 'red' ? 'blue' : 'red';
       const ownFlag = this.getFlagByTeam(playerTeam);
       const enemyFlag = this.getFlagByTeam(enemyTeam);
+      const carriedFlagCount = (this.state.redTeam.flag.carrierId === player.id ? 1 : 0)
+        + (this.state.blueTeam.flag.carrierId === player.id ? 1 : 0);
+      if (player.hasFlag && carriedFlagCount !== 1) {
+        player.hasFlag = false;
+        this.recordObjectiveEvent(player, 'carrier_mismatch', enemyTeam, now);
+        return;
+      }
 
       if (!ownFlag.isAtBase && !ownFlag.carrierId && this.distance2D(player.position, ownFlag.position) <= FLAG_PICKUP_RADIUS) {
         this.returnFlagToBase(playerTeam, player.id);
         player.flagReturns++;
         player.ultimateCharge = Math.min(100, player.ultimateCharge + 10);
+        this.recordObjectiveEvent(player, 'return', playerTeam, now);
       }
 
       if (!player.hasFlag && !enemyFlag.carrierId && this.distance2D(player.position, enemyFlag.position) <= FLAG_PICKUP_RADIUS) {
@@ -3584,6 +4210,7 @@ export class GameRoom extends Room<GameState> {
         enemyFlag.isAtBase = false;
         enemyFlag.droppedAt = 0;
         player.hasFlag = true;
+        this.recordObjectiveEvent(player, 'pickup', enemyTeam, now);
         this.broadcast('flagPickup', {
           team: enemyTeam,
           playerId: player.id,
@@ -3614,6 +4241,10 @@ export class GameRoom extends Room<GameState> {
   }
 
   private captureFlag(player: Player, capturedTeam: Team, now: number): void {
+    if (!isTeam(player.team) || player.state !== 'alive' || this.isObjectiveSuppressed(player.id, now)) {
+      return;
+    }
+
     const flag = this.getFlagByTeam(capturedTeam);
     flag.position.x = flag.basePosition.x;
     flag.position.y = flag.basePosition.y;
@@ -3631,6 +4262,8 @@ export class GameRoom extends Room<GameState> {
     } else {
       this.state.blueTeam.score++;
     }
+
+    this.recordObjectiveEvent(player, 'capture', capturedTeam, now);
 
     this.broadcast('flagCapture', {
       team: capturedTeam,
@@ -4683,7 +5316,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private isDevelopmentMode(): boolean {
-    return process.env.NODE_ENV !== 'production';
+    return isDevelopmentToolsEnabled();
   }
 
   private handleSetDevFly(client: Client, enabled: boolean): void {
@@ -4816,6 +5449,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.set(bot.id, bot);
     this.knownPlayerIds.add(bot.id);
+    this.updateLastSafeMovement(bot, 0);
     this.preferredBotHeroes.set(bot.id, heroId);
     this.initializePressState(bot.id);
     this.botBrains.set(bot.id, this.createBotBrain(bot, botIndex));
@@ -5028,6 +5662,66 @@ export class GameRoom extends Room<GameState> {
     return false;
   }
 
+  private isPlayerProposalSpaceBlocked(position: { x: number; y: number; z: number }): boolean {
+    const manifest = this.getMapManifest();
+    if (!isInsideBoundaryPolygon(position.x, position.z, manifest.boundary)) {
+      return true;
+    }
+
+    const radius = 0.42;
+    const diagonal = radius * 0.707;
+    const offsets = [
+      { x: 0, z: 0 },
+      { x: radius, z: 0 },
+      { x: -radius, z: 0 },
+      { x: 0, z: radius },
+      { x: 0, z: -radius },
+      { x: diagonal, z: diagonal },
+      { x: diagonal, z: -diagonal },
+      { x: -diagonal, z: diagonal },
+      { x: -diagonal, z: -diagonal },
+    ];
+    const ySamples = [position.y + 0.2, position.y + 0.9, position.y + 1.55];
+
+    for (const y of ySamples) {
+      for (const offset of offsets) {
+        if (isCollisionBlock(this.getBlockAtWorld({
+          x: position.x + offset.x,
+          y,
+          z: position.z + offset.z,
+        }))) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private isPlayerProposalPathBlocked(
+    previous: { x: number; y: number; z: number },
+    next: { x: number; y: number; z: number }
+  ): boolean {
+    const dx = next.x - previous.x;
+    const dy = next.y - previous.y;
+    const dz = next.z - previous.z;
+    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const steps = Math.max(1, Math.ceil(distance / 0.5));
+
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      if (this.isPlayerProposalSpaceBlocked({
+        x: previous.x + dx * t,
+        y: previous.y + dy * t,
+        z: previous.z + dz * t,
+      })) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private resolveBotCollision(
     previous: { x: number; y: number; z: number },
     desired: { x: number; y: number; z: number }
@@ -5078,6 +5772,9 @@ export class GameRoom extends Room<GameState> {
   private handleTeamSelect(client: Client, team: Team) {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
+    if (this.playerEntryTickets.has(client.sessionId)) {
+      return;
+    }
 
     // Check team balance
     const teamCount = this.getTeamCountExcluding(team, client.sessionId);
@@ -5623,6 +6320,7 @@ export class GameRoom extends Room<GameState> {
     flag.isAtBase = false;
 
     player.hasFlag = false;
+    this.recordObjectiveEvent(player, 'drop', player.team === 'red' ? 'blue' : 'red', Date.now());
 
     this.broadcast('flagDrop', {
       team: player.team === 'red' ? 'blue' : 'red',
@@ -5682,8 +6380,9 @@ export class GameRoom extends Room<GameState> {
       let processedThisTick = 0;
       const queuedCommandCount = authority.pendingCommands.length;
       if (queuedCommandCount === 0) {
-        if (lastInput) {
+        if (lastInput && !lastInput.position && !lastInput.velocity) {
           this.simulateAuthoritativeMovementStep(player, lastInput, TICK_INTERVAL_MS / 1000);
+          this.updateLastSafeMovement(player, lastInput.tick, tickTime);
         }
 
         if (player.position.y < -10) {
@@ -5729,6 +6428,7 @@ export class GameRoom extends Room<GameState> {
         this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS);
         this.stepHookshotGrappleAuthority(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
         this.processPlayerInput(player, input);
+        this.updateLastSafeMovement(player, input.tick, stepNow);
         authority.metrics.commandsProcessed++;
         processedThisTick++;
         if (authority.movementEpoch !== epochBeforeStep) break;

@@ -1,13 +1,33 @@
+import type { IncomingMessage } from 'http';
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
 import { DEFAULT_GAME_CONFIG, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getVoxelMapTheme, hashSeed, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team } from '@voxel-strike/shared';
+import { assertUsableEntryTicketSecret } from '../config/security';
+import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
+import { createGameEntryTicket } from '../security/entryTickets';
+import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
+import {
+  isBotDifficulty,
+  isHeroId,
+  isRecord,
+  isTeam,
+  sanitizeDisplayName,
+  sanitizeShortText,
+  validateBotIdPayload,
+  validateBotPayload,
+  validateChatPayload,
+  validateMapVotePayload,
+  validateReadyPayload,
+  validateTeamPayload,
+} from './protocolValidation';
 
 interface JoinOptions {
   playerName?: string;
   lobbyName?: string;
   isPrivate?: boolean;
   clientId?: string; // Persistent client ID for reconnection detection
+  authToken?: string;
   initialBotCount?: number;
   botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
   defaultBotDifficulty?: BotDifficulty;
@@ -105,13 +125,20 @@ export class LobbyRoom extends Room<LobbyState> {
   private botIdCounter = 0;
   private mapVoteSession: MapVoteSession | null = null;
   private mapVoteFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+  private readonly rateLimiter = new MessageRateLimiter();
+  private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
   private sessionIdToClientId: Map<string, string> = new Map();
 
+  async onAuth(client: Client, options: JoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
+    return resolveRoomAuthContext(client.sessionId, options as Record<string, unknown>, request);
+  }
+
   onCreate(options: JoinOptions) {
     this.autoDispose = true;
+    assertUsableEntryTicketSecret();
     console.log('Lobby room created:', this.roomId);
 
     this.setState(new LobbyState());
@@ -129,56 +156,96 @@ export class LobbyRoom extends Room<LobbyState> {
     this.updateMetadata();
 
     // Handle messages
-    this.onMessage('ready', (client, data: { ready: boolean }) => {
-      this.handleReady(client, data.ready);
+    this.onMessage('ready', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'ready', LOBBY_MESSAGE_RATE_LIMITS.ready)) return;
+      const ready = validateReadyPayload(data);
+      if (ready === null) return;
+      this.handleReady(client, ready);
     });
 
-    this.onMessage('setTeam', (client, data: { team: string }) => {
-      this.handleSetTeam(client, data.team);
+    this.onMessage('setTeam', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'setTeam', LOBBY_MESSAGE_RATE_LIMITS.team)) return;
+      const team = validateTeamPayload(data);
+      if (!team) return;
+      this.handleSetTeam(client, team);
     });
 
     this.onMessage('startGame', (client) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'startGame', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       this.handleStartGame(client);
     });
 
-    this.onMessage('voteMap', (client, data: { optionId: string }) => {
-      this.handleMapVote(client, data.optionId);
+    this.onMessage('voteMap', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'voteMap', LOBBY_MESSAGE_RATE_LIMITS.mapVote)) return;
+      const optionId = validateMapVotePayload(data);
+      if (!optionId) return;
+      this.handleMapVote(client, optionId);
     });
 
     this.onMessage('mapVotePreviewsReady', (client) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'mapVotePreviewsReady', LOBBY_MESSAGE_RATE_LIMITS.mapVote)) return;
       this.handleMapVotePreviewsReady(client);
     });
 
     this.onMessage('finalizeMapVote', (client) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'finalizeMapVote', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
       this.handleFinalizeMapVote(client);
     });
 
-    this.onMessage('kick', (client, data: { playerId: string }) => {
-      this.handleKick(client, data.playerId);
+    this.onMessage('kick', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'kick', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!isRecord(data)) return;
+      const playerId = sanitizeShortText(data.playerId, 96);
+      if (!playerId) return;
+      this.handleKick(client, playerId);
     });
 
-    this.onMessage('addBot', (client, data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' } = {}) => {
-      this.handleAddBot(client, data);
+    this.onMessage('addBot', (client, data: unknown = {}) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'addBot', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      const payload = validateBotPayload(data);
+      if (!payload) return;
+      this.handleAddBot(client, payload);
     });
 
-    this.onMessage('removeBot', (client, data: { botId: string }) => {
-      this.handleRemoveBot(client, data.botId);
+    this.onMessage('removeBot', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'removeBot', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      const botId = validateBotIdPayload(data);
+      if (!botId) return;
+      this.handleRemoveBot(client, botId);
     });
 
-    this.onMessage('updateBotTeam', (client, data: { botId: string; team: string }) => {
-      this.handleUpdateBotTeam(client, data.botId, data.team);
+    this.onMessage('updateBotTeam', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'updateBotTeam', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!isRecord(data)) return;
+      const botId = validateBotIdPayload(data);
+      const team = isTeam(data.team) ? data.team : null;
+      if (!botId || !team) return;
+      this.handleUpdateBotTeam(client, botId, team);
     });
 
-    this.onMessage('updateBotDifficulty', (client, data: { botId: string; difficulty: BotDifficulty }) => {
-      this.handleUpdateBotDifficulty(client, data.botId, data.difficulty);
+    this.onMessage('updateBotDifficulty', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'updateBotDifficulty', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!isRecord(data)) return;
+      const botId = validateBotIdPayload(data);
+      const difficulty = isBotDifficulty(data.difficulty) ? data.difficulty : null;
+      if (!botId || !difficulty) return;
+      this.handleUpdateBotDifficulty(client, botId, difficulty);
     });
 
-    this.onMessage('updateBotHero', (client, data: { botId: string; heroId: HeroId | '' }) => {
-      this.handleUpdateBotHero(client, data.botId, data.heroId);
+    this.onMessage('updateBotHero', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'updateBotHero', LOBBY_MESSAGE_RATE_LIMITS.hostAction)) return;
+      if (!isRecord(data)) return;
+      const botId = validateBotIdPayload(data);
+      const heroId = data.heroId === '' ? '' : isHeroId(data.heroId) ? data.heroId : null;
+      if (!botId || heroId === null) return;
+      this.handleUpdateBotHero(client, botId, heroId);
     });
 
-    this.onMessage('chat', (client, data: { message: string }) => {
-      this.handleChat(client, data.message);
+    this.onMessage('chat', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'chat', LOBBY_MESSAGE_RATE_LIMITS.chat)) return;
+      const chat = validateChatPayload(data);
+      if (!chat) return;
+      this.handleChat(client, chat.message);
     });
 
     const initialBotCount = Math.max(0, Math.min(MAX_PARTICIPANTS - 1, Math.floor(options.initialBotCount || 0)));
@@ -189,13 +256,21 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   onJoin(client: Client, options: JoinOptions) {
-    console.log(`[LobbyRoom] Player joining: sessionId=${client.sessionId}, name=${options.playerName}, clientId=${options.clientId}`);
+    const authContext = (client as Client & { auth?: RoomAuthContext }).auth ?? {
+      kind: 'guest' as const,
+      userId: `guest:${client.sessionId}`,
+      displayName: sanitizeDisplayName(options.playerName),
+    };
+    this.playerAuthContexts.set(client.sessionId, authContext);
+
+    console.log(`[LobbyRoom] Player joining: sessionId=${client.sessionId}, name=${authContext.displayName}, clientId=${options.clientId}, userId=${authContext.userId}`);
     console.log(`[LobbyRoom] Current players in lobby: ${this.state.players.size}, clientId map size: ${this.clientIdToSessionId.size}`);
 
-    // Handle reconnection: if same clientId exists, kick the old session
-    if (options.clientId) {
-      const existingSessionId = this.clientIdToSessionId.get(options.clientId);
-      console.log(`[LobbyRoom] Checking for existing session with clientId ${options.clientId}: found=${existingSessionId}`);
+    // Handle reconnection: identity comes from auth or explicit guest mode, not localStorage clientId.
+    const identityKey = authContext.userId;
+    if (identityKey) {
+      const existingSessionId = this.clientIdToSessionId.get(identityKey);
+      console.log(`[LobbyRoom] Checking for existing session with identity ${identityKey}: found=${existingSessionId}`);
       
       if (existingSessionId && existingSessionId !== client.sessionId) {
         console.log(`[LobbyRoom] DUPLICATE DETECTED! Kicking old session: ${existingSessionId}`);
@@ -214,6 +289,8 @@ export class LobbyRoom extends Room<LobbyState> {
         const removedOldVote = this.mapVoteSession?.votes.delete(existingSessionId) ?? false;
         this.mapVoteSession?.previewReadyPlayerIds.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
+        this.playerAuthContexts.delete(existingSessionId);
+        this.rateLimiter.clearScope(existingSessionId);
         
         // Broadcast that old player left
         this.broadcast('playerLeft', { playerId: existingSessionId });
@@ -224,20 +301,25 @@ export class LobbyRoom extends Room<LobbyState> {
         // If old player was host, we'll assign new host below when creating this player
       }
       
-      // Register this client's ID mapping
-      this.clientIdToSessionId.set(options.clientId, client.sessionId);
-      this.sessionIdToClientId.set(client.sessionId, options.clientId);
+      // Register this identity mapping. The clientId remains reconnect convenience only.
+      this.clientIdToSessionId.set(identityKey, client.sessionId);
+      this.sessionIdToClientId.set(client.sessionId, identityKey);
     }
 
     if (this.state.players.size >= this.state.maxParticipants) {
       client.send('error', { message: 'Lobby is full' });
+      this.playerAuthContexts.delete(client.sessionId);
+      if (this.clientIdToSessionId.get(identityKey) === client.sessionId) {
+        this.clientIdToSessionId.delete(identityKey);
+      }
+      this.sessionIdToClientId.delete(client.sessionId);
       client.leave();
       return;
     }
 
     const player = new LobbyPlayer();
     player.id = client.sessionId;
-    player.name = options.playerName || `Player${this.state.players.size + 1}`;
+    player.name = authContext.displayName || `Player${this.state.players.size + 1}`;
     player.isHost = this.getHumanCount() === 0; // First human player is host
     player.isReady = false;
     player.team = '';
@@ -293,6 +375,8 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state.players.delete(client.sessionId);
     const removedVote = this.mapVoteSession?.votes.delete(client.sessionId) ?? false;
     this.mapVoteSession?.previewReadyPlayerIds.delete(client.sessionId);
+    this.playerAuthContexts.delete(client.sessionId);
+    this.rateLimiter.clearScope(client.sessionId);
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -569,11 +653,29 @@ export class LobbyRoom extends Room<LobbyState> {
     this.mapVoteSession = null;
     this.updateMetadata({ status: 'in_game' });
 
-    // Tell all clients to join the game room
-    this.broadcast('gameStarting', {
-      gameRoomId: gameRoom.roomId,
-      players: playerAssignments,
-    });
+    const ticketsByPlayerId = new Map<string, string>();
+    for (const assignment of playerAssignments) {
+      if (assignment.isBot) continue;
+      const authContext = this.playerAuthContexts.get(assignment.playerId);
+      ticketsByPlayerId.set(assignment.playerId, createGameEntryTicket({
+        lobbyId: this.state.lobbyId,
+        gameRoomId: gameRoom.roomId,
+        lobbyPlayerId: assignment.playerId,
+        userId: authContext?.userId ?? `guest:${assignment.playerId}`,
+        displayName: authContext?.displayName ?? assignment.playerName,
+        assignedTeam: assignment.team,
+        selectedHero: assignment.heroId,
+      }));
+    }
+
+    // Tell each human client to join with only their own entry ticket.
+    for (const client of this.clients) {
+      client.send('gameStarting', {
+        gameRoomId: gameRoom.roomId,
+        players: playerAssignments,
+        entryTicket: ticketsByPlayerId.get(client.sessionId),
+      });
+    }
 
     console.log('Game room created:', gameRoom.roomId, 'from lobby:', this.roomId);
 
@@ -864,7 +966,7 @@ export class LobbyRoom extends Room<LobbyState> {
         playerName: p.name,
         team,
         isBot: p.isBot,
-        heroId: p.isBot ? this.normalizeHeroId(p.heroId) || undefined : undefined,
+        heroId: this.normalizeHeroId(p.heroId) || undefined,
         botDifficulty: p.isBot ? this.normalizeDifficulty(p.botDifficulty) : undefined,
         botProfileId: p.botProfileId || undefined,
       });

@@ -70,7 +70,13 @@ export type MovementCorrectionReason =
   | 'teleport'
   | 'unstuck'
   | 'knockback'
-  | 'epoch_mismatch';
+  | 'epoch_mismatch'
+  | 'invalid_transform'
+  | 'speed_limit'
+  | 'blocked_path'
+  | 'bounds'
+  | 'queue_overflow'
+  | 'collision_revision';
 
 export interface MovementCommand {
   seq: number;
@@ -112,6 +118,14 @@ export interface MovementTelemetrySnapshot {
   malformedCommands: number;
   hardCorrections: number;
   mediumCorrections: number;
+  invalidTransforms?: number;
+  speedViolations?: number;
+  blockedPathCorrections?: number;
+  boundsCorrections?: number;
+  objectiveSuppressions?: number;
+  abilityRejects?: number;
+  rateLimitDrops?: number;
+  staleCollisionRevisionDrops?: number;
   lastAckSeq: number;
 }
 

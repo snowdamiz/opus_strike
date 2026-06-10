@@ -1559,6 +1559,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
           velocity: data.velocity,
           movement,
         }, store.localPlayer.lookYaw);
+        pushLocalPlayerImpulse({ ...data.velocity, mode: 'set' });
         if (position) {
           store.updateLocalPlayer({
             position,

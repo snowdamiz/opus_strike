@@ -52,7 +52,7 @@ interface NetworkContextType {
   kickPlayer: (playerId: string) => void;
 
   // Game operations
-  joinGameRoom: (gameRoomId: string, playerName: string, team?: string) => Promise<void>;
+  joinGameRoom: (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => Promise<void>;
   leaveGame: () => void;
   disconnect: () => void;
   sendInput: (input: PlayerInput) => void;
@@ -322,7 +322,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     let isJoiningGame = false;
-    room.onMessage('gameStarting', async (data: { gameRoomId: string; players: { playerId: string; playerName: string; team: string; isBot?: boolean }[] }) => {
+    room.onMessage('gameStarting', async (data: {
+      gameRoomId: string;
+      players: { playerId: string; playerName: string; team: string; isBot?: boolean }[];
+      entryTicket?: string;
+    }) => {
       if (isJoiningGame) {
         loggers.network.debug('ignoring duplicate gameStarting message');
         return;
@@ -334,7 +338,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const myTeam = myAssignment?.team || 'red';
 
       try {
-        await joinGameRoom(data.gameRoomId, playerName, myTeam);
+        await joinGameRoom(data.gameRoomId, playerName, myTeam, data.entryTicket);
       } catch (error) {
         loggers.network.error('failed to join game room', error);
         isJoiningGame = false;
@@ -607,7 +611,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setConnected(true);
   }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby]);
 
-  const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string) => {
+  const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => {
     if (isJoiningGameRef.current) {
       loggers.network.debug('already joining a game room, ignoring duplicate call');
       return;
@@ -640,6 +644,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         playerName,
         preferredTeam: team,
         clientId,
+        entryTicket,
       });
 
       setupGameListeners(gameRoomRef.current, playerName);
@@ -707,7 +712,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const devSetHero = useCallback((heroId: HeroId) => {
     if (!config.isDev) return;
     loggers.network.debug('sending development selectHero', heroId);
-    gameRoomRef.current?.send('selectHero', { heroId });
+    gameRoomRef.current?.send('devSetHero', { heroId });
   }, []);
 
   const devFillUltimate = useCallback(() => {

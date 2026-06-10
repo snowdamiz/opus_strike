@@ -1,25 +1,13 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
-import jwt from 'jsonwebtoken';
 import prisma from '../db';
 import { verifySignature, generateNonce, createSignMessage } from './verify';
+import { createAuthToken, createPendingAuthToken, verifyAuthToken } from './session';
 
 const router: RouterType = Router();
 
-// JWT Configuration
-const JWT_SECRET = process.env.JWT_SECRET || 'voxel-strike-secret-key-change-in-production';
 const JWT_EXPIRY = '30d'; // 30 days
 const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
-
-interface JWTPayload {
-  walletAddress: string;
-  userId: string;
-}
-
-// Helper to create JWT token
-function createAuthToken(walletAddress: string, userId: string): string {
-  return jwt.sign({ walletAddress, userId } as JWTPayload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
-}
 
 // Helper to set auth cookie
 function setAuthCookie(res: Response, token: string): void {
@@ -113,7 +101,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     
     if (existingUser) {
       // Create JWT token and set cookie for existing user
-      const token = createAuthToken(existingUser.walletAddress, existingUser.id);
+      const token = createAuthToken(existingUser.walletAddress, existingUser.id, JWT_EXPIRY);
       setAuthCookie(res, token);
       
       // Return existing user
@@ -136,7 +124,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     } else {
       // New user - needs to set name
       // Set a temporary token for the registration flow
-      const tempToken = jwt.sign({ walletAddress, pending: true }, JWT_SECRET, { expiresIn: '1h' });
+      const tempToken = createPendingAuthToken(walletAddress);
       setAuthCookie(res, tempToken);
       
       res.json({
@@ -190,7 +178,7 @@ router.post('/register', async (req: Request, res: Response) => {
     });
     
     // Create JWT token and set cookie for the new user
-    const token = createAuthToken(newUser.walletAddress, newUser.id);
+    const token = createAuthToken(newUser.walletAddress, newUser.id, JWT_EXPIRY);
     setAuthCookie(res, token);
     
     res.json({
@@ -228,18 +216,10 @@ router.get('/session', async (req: Request, res: Response) => {
     }
     
     // Verify the JWT token
-    let payload: JWTPayload;
-    try {
-      payload = jwt.verify(token, JWT_SECRET) as JWTPayload;
-    } catch (err) {
+    const payload = verifyAuthToken(token);
+    if (!payload) {
       clearAuthCookie(res);
       res.status(401).json({ authenticated: false, error: 'Invalid or expired session' });
-      return;
-    }
-    
-    // Check if it's a pending registration token
-    if ((payload as any).pending) {
-      res.status(401).json({ authenticated: false, error: 'Registration incomplete' });
       return;
     }
     
@@ -255,7 +235,7 @@ router.get('/session', async (req: Request, res: Response) => {
     }
     
     // Refresh the token to extend the session
-    const newToken = createAuthToken(user.walletAddress, user.id);
+    const newToken = createAuthToken(user.walletAddress, user.id, JWT_EXPIRY);
     setAuthCookie(res, newToken);
     
     res.json({
@@ -326,4 +306,3 @@ router.get('/user/:walletAddress', async (req: Request, res: Response) => {
 });
 
 export default router;
-

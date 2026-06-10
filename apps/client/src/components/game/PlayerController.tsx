@@ -520,9 +520,13 @@ export function PlayerController() {
     const velocity = movement.refs.velocity.current;
     const localImpulses = consumeLocalPlayerImpulses();
     for (const impulse of localImpulses) {
-      velocity.x += impulse.x;
-      velocity.y += impulse.y;
-      velocity.z += impulse.z;
+      if (impulse.mode === 'set') {
+        velocity.set(impulse.x, impulse.y, impulse.z);
+      } else {
+        velocity.x += impulse.x;
+        velocity.y += impulse.y;
+        velocity.z += impulse.z;
+      }
       if (impulse.y > 0) {
         movement.refs.isGrounded.current = false;
         movement.refs.wasGrounded.current = false;

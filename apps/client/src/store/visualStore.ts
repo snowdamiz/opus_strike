@@ -56,11 +56,14 @@ export interface VisualState {
   };
 
   /** Server-authoritative local velocity impulses to consume in PlayerController. */
-  localPlayerImpulses: Array<{
-    x: number;
-    y: number;
-    z: number;
-  }>;
+  localPlayerImpulses: LocalPlayerImpulse[];
+}
+
+export interface LocalPlayerImpulse {
+  x: number;
+  y: number;
+  z: number;
+  mode?: 'add' | 'set';
 }
 
 export interface RemoteTransformSnapshot {
@@ -190,11 +193,12 @@ export const setLocalViewmodelMovement = (
   current.updatedAtMs = movement.updatedAtMs;
 };
 
-export const pushLocalPlayerImpulse = (impulse: { x: number; y: number; z: number }): void => {
+export const pushLocalPlayerImpulse = (impulse: LocalPlayerImpulse): void => {
   visualStore.getState().localPlayerImpulses.push({
     x: impulse.x,
     y: impulse.y,
     z: impulse.z,
+    mode: impulse.mode,
   });
 };
 

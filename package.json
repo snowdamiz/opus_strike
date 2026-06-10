@@ -11,6 +11,7 @@
     "build:server": "turbo run build --filter=@voxel-strike/server",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "test:authority": "pnpm --filter @voxel-strike/server test:authority",
     "test:movement": "pnpm --filter @voxel-strike/physics test:movement",
     "smoke:procedural-buildings": "pnpm --filter @voxel-strike/shared smoke:buildings",
     "clean": "turbo run clean",
