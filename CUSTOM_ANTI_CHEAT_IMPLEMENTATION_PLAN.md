@@ -2,7 +2,7 @@
 
 Reader: the next engineer implementing a custom anti-cheat system for the game.
 
-Post-read action: ship a privacy-conscious, server-authoritative anti-cheat that detects impossible play, reduces exploit value in real time, protects ranked and wager outcomes, and gives operators reviewable evidence before account-level punishments.
+Post-read action: ship a privacy-conscious, server-authoritative anti-cheat that detects impossible play, reduces exploit value in real time, protects ranked and wager outcomes, and gives operators reviewable evidence plus manual admin controls instead of automated bans.
 
 ## Outcome
 
@@ -15,10 +15,10 @@ The first production version should:
 - turn existing authority events into a unified anti-cheat signal stream
 - score suspicious behavior over time instead of punishing isolated network jitter
 - correct or reject impossible actions during the match
-- block ranked and wager rewards when match integrity is compromised
+- pause and flag ranked or wager rewards when match integrity is compromised
 - persist compact evidence for review, appeal, tuning, and abuse analysis
 - expose operator tooling without leaking secrets, wallet addresses, raw network identifiers, or player private data
-- launch in observation mode before automatic enforcement
+- launch in observation mode before automatic gameplay correction or payout holds
 
 This plan deliberately avoids kernel drivers, local file scanning, browser-extension requirements, microphone inspection, or invasive device fingerprinting. The client can contribute low-trust telemetry, but the server must remain correct if every client value is forged.
 
@@ -64,7 +64,7 @@ Server authority beats client inspection. If a value changes the match result, c
 
 Corrections are not punishments. Players can experience packet loss, clock drift, low frame rate, and desync. Use corrections to preserve match integrity, then use repeated evidence to classify behavior.
 
-Deterministic impossibility can be enforced automatically. Statistical suspicion should start as telemetry, ranked restriction, or manual review until the false-positive rate is known.
+Deterministic impossibility can be corrected or rejected automatically inside the match. Account-level punishment is manual-only in the first version: cases are flagged for review, and authorized admins can suspend or ban from the admin UI.
 
 Ranked and wagered matches need stricter gates than casual matches. A suspicious casual player can be corrected in place; a suspicious ranked or wagered match may need reward suppression or no-contest handling.
 
@@ -80,7 +80,7 @@ Add a server-side anti-cheat subsystem with five parts:
 | --- | --- |
 | Signal collector | Receives normalized events from room auth, movement, combat, abilities, objectives, matchmaking, ranked, wager, and rate-limit systems. |
 | Rule engine | Converts events into deterministic violations, suspicion signals, player risk score changes, and match integrity flags. |
-| Enforcement policy | Chooses real-time corrections, action rejection, objective suppression, ranked/wager blocks, kicks, queue locks, suspensions, or review-only outcomes. |
+| Enforcement policy | Chooses real-time corrections, action rejection, objective suppression, ranked/wager payout holds, review outcomes, and manual admin account actions. |
 | Evidence store | Persists compact event timelines, score changes, enforcement actions, and review metadata. |
 | Operator review | Lets trusted operators inspect cases, reverse actions, tune thresholds, and export anonymized false-positive samples. |
 
@@ -119,7 +119,7 @@ Recommended event categories:
 - `ability`: cooldown reject, resource reject, invalid target, impossible teleport, disabled development command, cast-state mismatch
 - `objective`: pickup suppressed, capture suppressed, carrier mismatch, capture after hard correction, flag interaction out of radius
 - `ranked`: ranked eligibility blocked, suspicious participant, no-contest integrity reason
-- `wager`: settlement blocked, refund due to integrity failure, roster/payment mismatch
+- `wager`: payout paused, refund held, settlement review required, roster/payment mismatch
 - `client_hint`: version mismatch, build hash mismatch, telemetry gap, prediction drift, suspicious input cadence
 
 Client hints must never be enough for an automatic ban. Use them to prioritize review or trigger stricter server-side scrutiny.
@@ -137,7 +137,7 @@ Start with shadow authority:
 - tune hero-specific tolerances from observed legal movement, not guesses
 - gate objective, ranked, and wager outcomes with only high-confidence impossibility checks during this phase
 
-Do not let new server movement simulation influence live corrections, objectives, ranked rating, wager settlement, kicks, queue locks, or bans until the trace-replay parity gate exists and passes. Server simulation work may proceed only in offline replay, smoke-test, or observe-only shadow mode before that gate.
+Do not let new server movement simulation influence live corrections, objectives, ranked rating, wager settlement, or payout holds until the trace-replay parity gate exists and passes. Server simulation work may proceed only in offline replay, smoke-test, or observe-only shadow mode before that gate.
 
 Promote authority gradually:
 
@@ -198,7 +198,7 @@ If this gate fails, the plan must stop at observation mode for movement authorit
 
 ## Movement Compatibility Budget
 
-Before strict movement authority can affect ranked rating, wager settlement, or player punishments, define and prove a compatibility budget.
+Before strict movement authority can affect ranked rating, wager settlement, or outcome holds, define and prove a compatibility budget.
 
 Track these values per player and per movement mode:
 
@@ -255,9 +255,9 @@ Suggested score bands:
 | ---: | --- | --- |
 | 0-24 | Normal noise | No action beyond corrections. |
 | 25-49 | Suspicious | Increase telemetry, mark for post-match review, no player-facing action. |
-| 50-74 | Match integrity risk | Block ranked/wager rewards for that player or match when causally relevant; require review for account action. |
-| 75-89 | Severe repeated abuse | Kick from match, temporary ranked/wager queue lock, create high-priority case. |
-| 90+ | Deterministic exploit or repeated severe abuse | Temporary suspension or ban only when backed by deterministic evidence and policy allows automatic action. |
+| 50-74 | Match integrity risk | Pause and flag ranked/wager rewards for that player or match when causally relevant. |
+| 75-89 | Severe repeated abuse | Create a high-priority admin case and keep ranked/wager payouts paused pending review. |
+| 90+ | Deterministic exploit or repeated severe abuse | Create an urgent admin case; authorized admins may manually suspend or ban after review. |
 
 Score changes should decay over time. Decay casual-match noise faster than ranked or wagered-match evidence. Store enough detail to explain why the score changed.
 
@@ -274,26 +274,30 @@ Implement enforcement in stages:
 
 1. Observation mode records signals and scores but takes only existing gameplay-corrective actions.
 2. Soft mode adds player-facing corrections, action rejection, objective suppression, and ranked/wager integrity flags.
-3. Ranked mode blocks ranked queue, ranked rating, and wager settlement when evidence crosses configured thresholds.
-4. Full mode enables kicks, temporary queue locks, and suspensions for deterministic high-confidence cases.
+3. Ranked review mode pauses ranked rating application and wager settlement when evidence crosses configured thresholds, then exposes the hold in the admin UI.
 
-Recommended first automatic actions:
+There is no automated ban stage in the first version. The system may correct impossible gameplay and pause affected outcomes, but account-level punishment requires a human admin action from the review UI.
+
+Recommended first automatic gameplay and outcome actions:
 
 - reject malformed or impossible messages
 - correct invalid movement
 - suppress objective interactions after authority barriers
 - deny development commands outside development mode
-- deny ranked queue to unauthenticated or currently locked users
-- mark a ranked or wagered match no-contest when integrity failure could change the outcome
-- refund wagered players when no-contest is caused by integrity or server failure rather than normal loss
+- honor existing manually applied ranked or account restrictions
+- mark a ranked or wagered match as `review_required` when integrity failure could change the outcome
+- pause wager payout, refund, and settlement decisions until an operator resolves the review
 
-Recommended manual-review actions:
+Recommended operator review actions in this version:
 
-- account suspension from statistical aim or macro signals
-- long-term bans
-- device or network association decisions
-- collusion decisions
-- reversing match outcomes after settlement
+- releasing, refunding, or canceling paused wager payouts
+- applying, clearing, or reversing ranked rating changes before they become visible
+- suspending a user for a finite duration with a required reason and evidence link
+- permanently banning a user with a required reason, evidence link, and elevated admin role
+- lifting a suspension or ban with a required reason
+- annotating a case, marking it false positive, or escalating it
+
+Do not build automated account suspension, automated bans, device association, or automatic queue-lock controls in the first version.
 
 ## Ranked And Wager Integrity
 
@@ -311,11 +315,11 @@ A match can apply ranked rating or wager settlement only when:
 
 When the gate fails:
 
-- skip ranked rating updates
-- skip winner payout settlement
-- mark the match no-contest with an integrity reason
-- refund wager payments according to the existing refund policy when applicable
+- pause ranked rating updates before they become visible
+- pause winner payout settlement and any refund decision
+- mark the match as `review_required` with an integrity reason
 - persist the anti-cheat evidence and enforcement reason
+- expose the paused ranked/wager outcome in the admin UI with affected players, teams, payment ids, payout amount, reason, and evidence links
 - notify the client with a neutral match-integrity message, not detection internals
 
 Do not expose exact thresholds or rule internals in client messages.
@@ -327,9 +331,11 @@ Add durable anti-cheat records.
 Recommended models:
 
 - `AntiCheatSignal`: immutable normalized event with severity, confidence, compact details, and retention class
-- `AntiCheatPlayerProfile`: current decayed score, active restrictions, review state, and last signal timestamps
+- `AntiCheatPlayerProfile`: current decayed score, review flags, and last signal timestamps
 - `AntiCheatMatchIntegrity`: match-level integrity status, no-contest reason, affected teams, ranked/wager impact, and resolver metadata
-- `AntiCheatAction`: correction, objective suppression, reward block, kick, queue lock, suspension, reversal, and operator notes
+- `AntiCheatPayoutHold`: paused wager payout, refund, or settlement decision with payment ids, payout amount, integrity reason, evidence references, and resolution state
+- `AntiCheatAccountAction`: manual suspension, ban, lift, reversal, actor id, reason, evidence references, timestamps, and expiration when applicable
+- `AntiCheatAction`: correction, objective suppression, ranked hold, payout hold, payout release, refund decision, reversal, and operator notes
 - `AntiCheatCase`: grouped signals for review, state, priority, assigned operator, resolution, and appeal marker
 
 Retention:
@@ -349,6 +355,8 @@ Minimum views:
 - live signal rate by type, match mode, and severity
 - player case timeline with room, match, hero, score deltas, and enforcement actions
 - match integrity timeline for ranked and wagered matches
+- paused payout queue showing held winner payouts, held refunds, affected payment ids, amounts, reasons, age, and linked evidence
+- manual account action controls for suspend, ban, lift suspension, lift ban, and view action history
 - false-positive review queue
 - threshold configuration and rollout mode
 - exportable anonymized samples for harness tests
@@ -358,9 +366,10 @@ Minimum metrics:
 - anti-cheat signals by type and severity
 - corrections by reason
 - rejected combat or ability actions by reason
-- ranked matches blocked by integrity reason
-- wager settlements blocked or refunded by integrity reason
-- automatic actions by type
+- ranked outcomes paused by integrity reason
+- wager payouts paused, released, refunded, or canceled by integrity reason
+- automated gameplay corrections and payout holds by type
+- manual suspensions, bans, lifts, and reversals by reason and actor role
 - operator reversals
 - false-positive rate from reviewed cases
 
@@ -378,7 +387,7 @@ Implement:
 - authoritative correction handling that feels smooth and clear
 - neutral error messages for action rejection, ranked restriction, and no-contest outcomes
 - local telemetry for prediction drift, frame timing, and command production gaps
-- clear disconnect or queue-lock messaging without revealing detection rules
+- clear review-required and payout-hold messaging without revealing detection rules
 
 Do not implement:
 
@@ -499,14 +508,18 @@ Acceptance criteria:
 
 ### 8. Enforcement Actions
 
-Add staged enforcement with safe defaults.
+Add staged enforcement with safe defaults and manual-only account punishment.
 
 Acceptance criteria:
 
 - observation mode records the action that would have happened
 - soft mode rejects invalid actions and suppresses objectives
-- ranked mode blocks ranked rating and wager settlement when integrity fails
-- full mode can kick or queue-lock deterministic repeat offenders
+- ranked review mode pauses ranked rating visibility and wager payout settlement when integrity fails
+- paused payouts are visible in the admin UI with payment ids, amounts, reason, age, and evidence links
+- no automated ban, automated suspension, kick, or queue lock is implemented in this version
+- manual suspend and ban actions require an authenticated admin, authorized role, selected reason, evidence link, and confirmation step
+- suspension actions require an expiration time
+- ban actions require elevated admin permission and create an irreversible audit entry even if later lifted
 - every enforcement action stores a reason, evidence references, actor, and expiration when relevant
 - client messages are neutral and do not leak thresholds
 
@@ -518,6 +531,10 @@ Acceptance criteria:
 
 - operators can list cases by severity, mode, player, match, and status
 - a case view shows signal timeline, score changes, match impact, and actions
+- operators can list paused payouts by age, match, user, team, amount, integrity reason, and case status
+- operators can release payout, refund payment, cancel settlement, apply ranked outcome, or cancel ranked outcome from a reviewed case
+- operators with the required role can suspend, ban, lift suspension, lift ban, and see account-action history from the case view
+- manual account actions are audit-logged with actor id, target user id, reason, evidence references, timestamps, and expiration when applicable
 - operators can resolve, reverse, annotate, and mark false positives
 - reversed actions are auditable
 - reviewed false positives can be exported into regression tests
@@ -532,23 +549,26 @@ Acceptance criteria:
 - compare observed score distribution across quick play, ranked, custom, and wagered matches
 - compare movement drift distribution across heroes, maps, frame rates, ping bands, and movement mechanics
 - keep strict movement authority disabled until legal Rapier traces satisfy the compatibility budget
-- tune thresholds before enabling ranked reward blocks
-- enable ranked and wager integrity gates before account punishments
-- enable full automatic enforcement only after reviewed false-positive rates are acceptable
+- tune thresholds before enabling ranked outcome holds
+- enable ranked and wager integrity gates as review-required holds before any settlement decision
+- enable manual admin suspension and ban controls only after audit logging, role checks, and evidence links are implemented
 
 ## Configuration
 
 Recommended environment flags:
 
 - `ANTICHEAT_ENABLED`
-- `ANTICHEAT_MODE=observe|soft|ranked|full`
+- `ANTICHEAT_MODE=observe|soft|ranked_review`
 - `ANTICHEAT_SIGNAL_RETENTION_DAYS`
 - `ANTICHEAT_LOW_SIGNAL_RETENTION_DAYS`
 - `ANTICHEAT_MAX_SIGNAL_DETAIL_BYTES`
 - `ANTICHEAT_RANKED_SCORE_THRESHOLD`
 - `ANTICHEAT_WAGER_SCORE_THRESHOLD`
-- `ANTICHEAT_KICK_SCORE_THRESHOLD`
-- `ANTICHEAT_QUEUE_LOCK_MINUTES`
+- `ANTICHEAT_ADMIN_REVIEW_SCORE_THRESHOLD`
+- `ANTICHEAT_PAYOUT_HOLD_SCORE_THRESHOLD`
+- `ANTICHEAT_PAYOUT_HOLDS_ENABLED`
+- `ANTICHEAT_MANUAL_ACCOUNT_ACTIONS_ENABLED`
+- `ANTICHEAT_BAN_REQUIRES_ELEVATED_ROLE`
 - `ANTICHEAT_ALLOW_CLIENT_TRANSFORM_PROPOSALS`
 - `ANTICHEAT_CLIENT_HINTS_ENABLED`
 - `ANTICHEAT_MOVEMENT_AUTHORITY_MODE=compatibility|shadow|strict`
@@ -578,6 +598,7 @@ Minimum verification:
 10. Add load tests to ensure signal volume does not overload room ticks or persistence.
 11. Add migration tests for anti-cheat persistence models.
 12. Add operator workflow tests for creating, resolving, reversing, and exporting cases.
+13. Add admin account-action tests for role checks, required reasons, required evidence links, suspension expiration, ban audit entries, lifting actions, and denied unauthorized attempts.
 
 ## Launch Checklist
 
@@ -587,11 +608,13 @@ Minimum verification:
 - trace-replay parity gate exists and passes before server movement simulation influences live enforcement, objectives, ranked, or wagers
 - no secrets or private player data appear in logs, metrics, or persisted payloads
 - ranked and wager gates are wired but initially report-only
+- paused payouts and paused ranked outcomes are visible in the admin UI before any hold can be enabled outside report-only mode
+- manual suspend/ban controls are role-gated, require evidence links, and write immutable audit records before they are available in production
 - false-positive samples from live observation are converted into regression tests
 - strict movement authority remains disabled until the compatibility budget passes
 - enforcement thresholds are reviewed with real data
 - player-facing Terms, conduct, and appeal language are updated
-- operator runbook covers no-contest, refund, queue lock, kick, suspension, reversal, and escalation
+- operator runbook covers review-required matches, paused payouts, refund/release/cancel decisions, ranked outcome release/cancel decisions, manual suspension, manual ban, lifting actions, reversal, and escalation
 
 ## Out Of Scope For The First Version
 
@@ -600,6 +623,7 @@ Minimum verification:
 - browser extension requirement
 - OS process or file scanning
 - machine-learning-only automatic bans
-- permanent automatic bans from statistical aim or macro suspicion alone
+- automated bans, automated suspensions, kicks, queue locks, and device association
+- unaudited or non-role-gated admin account actions
 - public exposure of detection thresholds
 - post-settlement wager reversal automation
