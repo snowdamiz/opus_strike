@@ -216,10 +216,33 @@ function runConfigTests(): void {
   assert.throws(
     () => validateColyseusRuntimeConfig(getColyseusRuntimeConfig({
       COLYSEUS_DISTRIBUTED: '1',
+      COLYSEUS_REDIS_URL: 'redis://...',
+    })),
+    /real Redis host/
+  );
+  assert.throws(
+    () => validateColyseusRuntimeConfig(getColyseusRuntimeConfig({
+      COLYSEUS_DISTRIBUTED: '1',
+      COLYSEUS_REDIS_URL: 'http://localhost:6379',
+    })),
+    /redis:\/\/ or rediss:\/\//
+  );
+  assert.throws(
+    () => validateColyseusRuntimeConfig(getColyseusRuntimeConfig({
+      COLYSEUS_DISTRIBUTED: '1',
       COLYSEUS_REDIS_URL: 'redis://localhost:6379',
       COLYSEUS_REQUIRE_PUBLIC_ADDRESS: '1',
     })),
     /requires COLYSEUS_PUBLIC_ADDRESS/
+  );
+  assert.throws(
+    () => validateColyseusRuntimeConfig(getColyseusRuntimeConfig({
+      COLYSEUS_DISTRIBUTED: '1',
+      COLYSEUS_REDIS_URL: 'redis://localhost:6379',
+      COLYSEUS_REQUIRE_PUBLIC_ADDRESS: '1',
+      COLYSEUS_PUBLIC_ADDRESS: 'host:port',
+    })),
+    /real host\[:port\]/
   );
   assert.throws(
     () => validateColyseusRuntimeConfig(getColyseusRuntimeConfig({

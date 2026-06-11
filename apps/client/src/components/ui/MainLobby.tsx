@@ -8,6 +8,7 @@ import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
 import { HeroPreviewCanvas } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
+import { SocialBox, SocialButton } from './SocialBox';
 import type { HeroAnimationMode } from '../game/HeroVoxelBody';
 import { useUISounds } from '../../hooks/useAudio';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
@@ -144,6 +145,7 @@ export function MainLobby() {
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSocial, setShowSocial] = useState(false);
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showBrowseGames, setShowBrowseGames] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
@@ -326,6 +328,7 @@ export function MainLobby() {
       if (
         activeTab !== 'play' ||
         showSettings ||
+        showSocial ||
         showCreateLobby ||
         showBrowseGames ||
         showAuthModal ||
@@ -357,7 +360,7 @@ export function MainLobby() {
 
     window.addEventListener('keydown', handleHeroAnimationKey);
     return () => window.removeEventListener('keydown', handleHeroAnimationKey);
-  }, [activeTab, showAuthModal, showBrowseGames, showCreateLobby, showSettings]);
+  }, [activeTab, showAuthModal, showBrowseGames, showCreateLobby, showSettings, showSocial]);
 
   useEffect(() => {
     if (activeTab === 'play') {
@@ -454,6 +457,13 @@ export function MainLobby() {
 
           {/* Right side controls */}
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
+            <SocialButton
+              onClick={() => {
+                playButtonClick();
+                setShowSocial(true);
+              }}
+            />
+
  <button
  onClick={() => { playButtonClick(); setShowSettings(true); }}
  className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white"
@@ -571,6 +581,12 @@ export function MainLobby() {
       </div>
 
       {/* Modals */}
+      {showSocial && (
+        <SocialBox
+          onClose={() => setShowSocial(false)}
+          onRequireAuth={handleSignInClick}
+        />
+      )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showCreateLobby && (
         <CreateLobbyModal
@@ -674,10 +690,10 @@ function PlayTab({
       : 'relative h-[clamp(17rem,42vh,30rem)] w-[clamp(15rem,32vw,30rem)]';
 
   return (
-    <div className="play-tab-shell h-full flex items-center justify-center menu-content">
-      {/* Centered Content */}
-      <div className="play-tab-stage menu-compact-scale relative flex flex-col items-center">
-        {/* Hero Visual with Carousel Controls */}
+    <div className="play-tab-shell h-full menu-content">
+      <div className="play-tab-stage menu-compact-scale relative">
+        <div className="play-hero-column flex flex-col items-center justify-center">
+          {/* Hero Visual with Carousel Controls */}
         <div className="play-hero-nav relative flex items-center gap-3 lg:gap-4 2xl:gap-6">
           {/* Previous Arrow */}
  <button
@@ -761,8 +777,17 @@ function PlayTab({
           </div>
         </div>
 
-        {/* Spacer before buttons */}
-        <div className="h-0 lg:h-1 xl:h-2 2xl:h-3" />
+        </div>
+
+        <div className="play-column-divider" aria-hidden="true" />
+
+        <div className="play-actions-column">
+          <div className="play-actions-copy">
+            <p className="font-display text-xl text-white sm:text-2xl xl:text-3xl">CHOOSE A MATCH</p>
+            <p className="mt-1 max-w-sm font-body text-xs leading-relaxed text-white/45 sm:text-sm">
+              Jump straight in, browse custom rooms, or queue ranked for SOL stakes.
+            </p>
+          </div>
 
         {/* Action Buttons */}
         <div className="play-action-stack w-[clamp(18rem,25vw,34rem)] space-y-1.5 lg:space-y-2 xl:space-y-2.5">
@@ -836,7 +861,7 @@ function PlayTab({
             {isLoading ? 'PREPARING...' : isAuthenticated && hasFullFunctionality ? 'RANKED $5 SOL' : 'RANKED'}
           </button>
 
-          <div className="grid grid-cols-2 gap-1 sm:gap-1.5 lg:gap-2 xl:gap-2.5">
+          <div className="play-secondary-actions grid grid-cols-2 gap-1 sm:gap-1.5 lg:gap-2 xl:gap-2.5">
  <button
  onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
  disabled={isLoading}
@@ -874,6 +899,13 @@ function PlayTab({
  )}
  </button>
           </div>
+        </div>
+
+          <ul className="play-ranked-notes">
+            <li>$5 SOL entry locks your ranked queue slot.</li>
+            <li>Win the match to claim the losing side's pot.</li>
+            <li>Rating updates when the match ends.</li>
+          </ul>
         </div>
       </div>
     </div>

@@ -19,6 +19,7 @@
     "test:movement": "pnpm --filter @voxel-strike/physics test:movement",
     "smoke:procedural-buildings": "pnpm --filter @voxel-strike/shared smoke:buildings",
     "clean": "turbo run clean",
+    "stop:all": "node scripts/stop-all.mjs",
     "db:up": "docker compose up -d --wait postgres redis",
     "db:down": "docker compose down",
     "db:generate": "pnpm --filter @voxel-strike/server db:generate",

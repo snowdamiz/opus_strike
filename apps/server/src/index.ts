@@ -8,6 +8,7 @@ import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import authRoutes from './auth/routes';
 import matchmakingRoutes from './matchmaking/routes';
+import socialRoutes from './social/routes';
 import wagerRoutes from './wagers/routes';
 import { voiceService } from './voice/VoiceService';
 import { wagerService } from './wagers/service';
@@ -85,7 +86,7 @@ app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', origin);
   }
   
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, X-Wager-Admin-Token');
   res.header('Access-Control-Allow-Credentials', 'true');
   
@@ -106,6 +107,7 @@ app.use(express.json());
 // Auth routes
 app.use('/auth', authRoutes);
 app.use('/matchmaking', matchmakingRoutes);
+app.use('/social', socialRoutes);
 app.use('/wagers', wagerRoutes);
 
 // Health check endpoint

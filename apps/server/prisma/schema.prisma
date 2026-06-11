@@ -65,6 +65,21 @@ enum WagerSettlementTransferStatus {
   failed
 }
 
+enum FriendshipStatus {
+  pending
+  accepted
+  declined
+  canceled
+}
+
+enum LobbyInviteStatus {
+  pending
+  accepted
+  declined
+  canceled
+  expired
+}
+
 model User {
   id            String   @id @default(cuid())
   walletAddress String?  @unique
@@ -77,6 +92,11 @@ model User {
   wageredLobbies WageredLobby[]
   wagerPayments  WagerPayment[]
   rankedEntryQuotes RankedEntryQuote[]
+  friendshipsA Friendship[] @relation("FriendshipUserA")
+  friendshipsB Friendship[] @relation("FriendshipUserB")
+  friendshipRequestsSent Friendship[] @relation("FriendshipRequester")
+  sentLobbyInvites LobbyInvite[] @relation("LobbyInviteSender")
+  receivedLobbyInvites LobbyInvite[] @relation("LobbyInviteRecipient")
 
   // Player stats (optional - can expand later)
   totalGames       Int      @default(0)
@@ -125,6 +145,49 @@ model AuthAccount {
 
   @@unique([provider, providerAccountId])
   @@index([userId])
+}
+
+model Friendship {
+  id                String           @id @default(cuid())
+  userAId           String
+  userBId           String
+  requestedByUserId String
+  status            FriendshipStatus @default(pending)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  respondedAt       DateTime?
+
+  userA       User @relation("FriendshipUserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB       User @relation("FriendshipUserB", fields: [userBId], references: [id], onDelete: Cascade)
+  requestedBy User @relation("FriendshipRequester", fields: [requestedByUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userAId, userBId])
+  @@index([userAId, status])
+  @@index([userBId, status])
+  @@index([requestedByUserId, status])
+  @@index([status, updatedAt])
+}
+
+model LobbyInvite {
+  id        String            @id @default(cuid())
+  lobbyId   String
+  lobbyName String
+  matchMode MatchMode?
+  fromUserId String
+  toUserId   String
+  status    LobbyInviteStatus @default(pending)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  expiresAt DateTime
+  respondedAt DateTime?
+
+  fromUser User @relation("LobbyInviteSender", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUser   User @relation("LobbyInviteRecipient", fields: [toUserId], references: [id], onDelete: Cascade)
+
+  @@index([toUserId, status, createdAt])
+  @@index([fromUserId, createdAt])
+  @@index([lobbyId, status])
+  @@index([expiresAt])
 }
 
 model GameMatch {

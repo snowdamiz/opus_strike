@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "generate:og": "python3 scripts/generate-og-image.py",
     "build": "tsc && vite build",
     "analyze": "ANALYZE=true vite build",
     "lint": "pnpm lint:tokens",

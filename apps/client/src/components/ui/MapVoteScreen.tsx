@@ -9,6 +9,7 @@ import { useUISounds } from '../../hooks/useAudio';
 import { FACTIONS } from '../../styles/colorTokens';
 import { VoxelMap } from '../game/procedural';
 import { PhaseCountdownTimer } from './PhaseCountdownTimer';
+import { RankIcon, getRankForStats } from './RankBadge';
 
 function MapGlyph({ className }: { className?: string }) {
   return (
@@ -292,10 +293,6 @@ function PreparingMapCard() {
   );
 }
 
-function getPlayerInitial(playerName: string): string {
-  return playerName.trim().charAt(0).toUpperCase() || '?';
-}
-
 function getVoteLabel(count: number): string {
   return count === 1 ? '1 vote' : `${count} votes`;
 }
@@ -310,6 +307,7 @@ export function MapVoteScreen() {
     mapVotes,
     mapVotePhaseEndTime,
     selectedMapOptionId,
+    userStats,
   } = useGameStore();
   const { leaveLobby, voteMap, reportMapVotePreviewsReady, finalizeMapVote } = useNetwork();
   const { playButtonClick } = useUISounds();
@@ -329,6 +327,7 @@ export function MapVoteScreen() {
   const playerList = useMemo(() => Array.from(lobbyPlayers.values()), [lobbyPlayers]);
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
   const currentFaction = currentPlayer?.team === 'red' ? FACTIONS.red : currentPlayer?.team === 'blue' ? FACTIONS.blue : null;
+  const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
   const localVote = playerId ? mapVotes.get(playerId) ?? null : null;
   const isFinalized = Boolean(selectedMapOptionId);
   const isPreparingMaps = mapVoteOptions.length === 0;
@@ -450,16 +449,8 @@ export function MapVoteScreen() {
               borderColor: currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
             }}
           >
-            <div
-              className="map-vote-profile-avatar flex h-9 w-9 items-center justify-center rounded-lg font-display text-white shadow-lg"
-              style={{
-                background: currentFaction
-                  ? `linear-gradient(135deg, ${currentFaction.primaryColor}, ${currentFaction.secondaryColor})`
-                  : 'linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.1))',
-                boxShadow: currentFaction ? `0 4px 15px ${currentFaction.glowColor}` : undefined,
-              }}
-            >
-              {getPlayerInitial(playerName)}
+            <div className="map-vote-profile-avatar flex h-9 w-9 items-center justify-center" title={currentRank.label}>
+              <RankIcon rank={currentRank} size={34} labelled />
             </div>
             <div className="map-vote-profile-copy">
               <p className="font-display text-sm text-white">{playerName}</p>

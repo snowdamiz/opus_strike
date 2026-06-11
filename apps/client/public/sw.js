@@ -1,12 +1,15 @@
-const CACHE_VERSION = 'slop-heroes-v3';
+const CACHE_PREFIX = 'slop-heroes';
+const CACHE_VERSION = `${CACHE_PREFIX}-v4`;
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
+const CACHE_PREFIXES_TO_CLEAN = ['slop-heroes-', 'voxel-strike-'];
 const APP_SHELL_ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
   '/favicon.svg',
   '/voxel.svg',
+  '/og-image.png',
   '/apple-touch-icon.png',
   '/pwa-icon-192.png',
   '/pwa-icon-512.png',
@@ -41,7 +44,7 @@ self.addEventListener('activate', (event) => {
       .then((cacheNames) =>
         Promise.all(
           cacheNames
-            .filter((cacheName) => cacheName.startsWith('slop-heroes-') && !expectedCaches.has(cacheName))
+            .filter((cacheName) => CACHE_PREFIXES_TO_CLEAN.some((prefix) => cacheName.startsWith(prefix)) && !expectedCaches.has(cacheName))
             .map((cacheName) => caches.delete(cacheName))
         )
       )

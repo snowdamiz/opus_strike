@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Slop Heroes",
   "short_name": "Slop Heroes",
-  "description": "A voxel arena hero shooter.",
+  "description": "A fast voxel arena hero shooter where heroes grapple, blink, burn, and bend time through capture-the-flag fights.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -11,6 +11,15 @@
   "background_color": "#09090b",
   "theme_color": "#09090b",
   "categories": ["games", "entertainment"],
+  "screenshots": [
+    {
+      "src": "/og-image.png",
+      "sizes": "1200x630",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Slop Heroes key art"
+    }
+  ],
   "icons": [
     {
       "src": "/pwa-icon-192.png",

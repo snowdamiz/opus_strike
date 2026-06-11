@@ -13,7 +13,8 @@ import {
 import type { LobbyPlayer } from '../../store/gameStore';
 import { FACTIONS, HERO_COLORS } from '../../styles/colorTokens';
 import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
-import { RankBadge, RankIcon, getRankForStats } from './RankBadge';
+import { RankIcon, getRankForStats } from './RankBadge';
+import { SocialBox, SocialButton } from './SocialBox';
 
 // Solar Vanguard Icon - Stylized sun with radiating beams
 function SolarIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -208,6 +209,7 @@ export function Lobby() {
   const { playButtonClick } = useUISounds();
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [isPaying, setIsPaying] = useState(false);
+  const [showSocial, setShowSocial] = useState(false);
 
   const currentPlayer = playerId ? lobbyPlayers.get(playerId) : null;
   const currentTeam = currentPlayer?.team;
@@ -382,6 +384,12 @@ export function Lobby() {
 
           {/* Right side - Player info */}
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
+            <SocialButton
+              onClick={() => {
+                playButtonClick();
+                setShowSocial(true);
+              }}
+            />
             {wagerEnabled && (
               <div className="hidden sm:flex items-center gap-3 rounded-xl border border-cyan-300/15 bg-cyan-500/[0.055] px-3 py-2">
                 <div>
@@ -404,12 +412,7 @@ export function Lobby() {
                 borderColor: currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
               }}
             >
-              <div
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 shadow-lg"
-                title={currentRank.label}
-              >
-                <RankIcon rank={currentRank} size={28} labelled />
-              </div>
+              <RankIcon rank={currentRank} size={34} labelled className="shrink-0" />
               <div>
                 <p className="font-display text-white text-sm">{playerName}</p>
                 <p className="text-[10px] font-body" style={{ color: currentFaction?.primaryColor || 'rgba(255,255,255,0.4)' }}>
@@ -625,6 +628,10 @@ export function Lobby() {
           </div>
         </div>
       </div>
+
+      {showSocial && (
+        <SocialBox onClose={() => setShowSocial(false)} />
+      )}
     </div>
   );
 }
@@ -754,9 +761,9 @@ interface JoinTeamCardProps {
 function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot, compact }: JoinTeamCardProps) {
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const { playButtonClick } = useUISounds();
-  const containerClass = compact ? 'h-11 gap-1.5' : 'h-14 gap-2';
-  const iconClass = compact ? 'h-8 w-8' : 'h-10 w-10';
-  const addBotClass = compact ? 'h-11 w-11' : 'h-14 w-14';
+  const containerClass = compact ? 'h-14 gap-2' : 'h-16 gap-2.5';
+  const iconClass = compact ? 'h-10 w-10' : 'h-11 w-11';
+  const addBotClass = compact ? 'h-14 w-14' : 'h-16 w-16';
 
   return (
     <div className={`flex w-full items-stretch ${containerClass} ${reverse ? 'flex-row-reverse' : ''}`}>
@@ -863,9 +870,12 @@ function PlayerCard({
   const secondaryColor = faction?.secondaryColor || FACTIONS.red.secondaryColor;
   const { playButtonClick } = useUISounds();
   const showBotControls = !player.isHost && Boolean(player.isBot) && isLobbyHost;
-  const cardClass = compact ? 'h-11 p-1.5' : showBotControls ? 'h-16 p-2' : 'h-14 p-2';
-  const avatarClass = compact ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-base';
-  const readyClass = compact ? 'w-8 h-8' : 'w-9 h-9';
+  const cardClass = compact
+    ? showBotControls ? 'min-h-16 p-2' : 'h-14 p-2'
+    : showBotControls ? 'min-h-[4.5rem] p-2.5' : 'h-16 p-2.5';
+  const avatarClass = compact ? 'h-10 w-10' : 'h-11 w-11';
+  const avatarIconSize = compact ? 30 : 34;
+  const readyClass = compact ? 'w-10 h-10' : 'w-11 h-11';
   const botDifficulty: BotDifficulty =
     player.botDifficulty === 'easy' || player.botDifficulty === 'hard'
       ? player.botDifficulty
@@ -883,13 +893,21 @@ function PlayerCard({
       }`}
     >
       <div
-        className={`${avatarClass} rounded-lg flex shrink-0 items-center justify-center font-display text-white`}
-        style={{
+        className={`${avatarClass} flex shrink-0 items-center justify-center font-display text-white ${
+          player.isBot ? 'rounded-lg border' : ''
+        }`}
+        style={player.isBot ? {
           background: `linear-gradient(135deg, ${color}, ${secondaryColor})`,
-          boxShadow: `0 4px 15px ${color}40`,
-        }}
+          borderColor: 'rgba(255,255,255,0.12)',
+          boxShadow: `0 6px 18px ${color}40`,
+        } : undefined}
+        title={player.isBot ? player.name : (player.rank?.label ?? 'Unranked')}
       >
-        {player.name.charAt(0).toUpperCase()}
+        {player.isBot ? (
+          <span className={compact ? 'text-sm' : 'text-base'}>{player.name.charAt(0).toUpperCase()}</span>
+        ) : (
+          <RankIcon rank={player.rank} size={avatarIconSize} labelled />
+        )}
       </div>
 
       {/* Info */}
@@ -921,9 +939,6 @@ function PlayerCard({
           )}
           {!player.isBot && <PaymentBadge status={player.paymentStatus} />}
         </div>
-        {!player.isBot && player.rank && (
-          <RankBadge rank={player.rank} compact className="mt-1 max-w-[8rem] py-0.5 text-[10px]" />
-        )}
         {showBotControls && (
           <div className={`flex min-w-0 items-center ${compact ? 'mt-0 gap-0.5' : 'mt-0.5 gap-1'}`}>
             <InlinePicker

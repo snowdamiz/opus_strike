@@ -35,6 +35,31 @@ function optionalEnv(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+function parseRedisUrl(redisUrl: string): URL {
+  try {
+    return new URL(redisUrl);
+  } catch {
+    throw new Error('COLYSEUS_REDIS_URL or REDIS_URL must be a valid redis:// or rediss:// URL');
+  }
+}
+
+function validateRedisUrl(redisUrl: string): void {
+  const parsed = parseRedisUrl(redisUrl);
+
+  if (parsed.protocol !== 'redis:' && parsed.protocol !== 'rediss:') {
+    throw new Error('COLYSEUS_REDIS_URL or REDIS_URL must use the redis:// or rediss:// protocol');
+  }
+
+  if (!parsed.hostname || parsed.hostname === '...' || parsed.hostname.includes('...')) {
+    throw new Error('COLYSEUS_REDIS_URL or REDIS_URL must point to a real Redis host, not a placeholder');
+  }
+}
+
+function isPlaceholderPublicAddress(publicAddress: string): boolean {
+  const normalized = publicAddress.trim().toLowerCase();
+  return normalized === 'host:port' || normalized.includes('...');
+}
+
 function positiveIntegerEnv(value: string | undefined, fallback: number): number {
   const trimmed = optionalEnv(value);
   if (!trimmed) return fallback;
@@ -107,8 +132,14 @@ export function validateColyseusRuntimeConfig(config: ColyseusRuntimeConfig): vo
     throw new Error('COLYSEUS_DISTRIBUTED=1 requires COLYSEUS_REDIS_URL or REDIS_URL');
   }
 
+  validateRedisUrl(config.redisUrl);
+
   if (config.requirePublicAddress && !config.publicAddress) {
     throw new Error('COLYSEUS_REQUIRE_PUBLIC_ADDRESS=1 requires COLYSEUS_PUBLIC_ADDRESS');
+  }
+
+  if (config.publicAddress && isPlaceholderPublicAddress(config.publicAddress)) {
+    throw new Error('COLYSEUS_PUBLIC_ADDRESS must be a real host[:port], not a placeholder');
   }
 
   if (!config.flyReplay.enabled) return;
