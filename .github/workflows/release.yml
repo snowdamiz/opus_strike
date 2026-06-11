@@ -60,6 +60,8 @@ jobs:
 
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@v1
+        with:
+          version: 0.4.54
 
       - name: Deploy server
         run: >
