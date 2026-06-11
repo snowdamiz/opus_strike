@@ -84,6 +84,11 @@ const DEV_FLY_SPEED = 14;
 const DEV_FLY_FAST_MULTIPLIER = 1.8;
 const DEV_FLY_VERTICAL_SPEED = 10;
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
+const TERRAIN_STEP_VISUAL_SNAP_THRESHOLD = 1.35;
+const TERRAIN_STEP_VISUAL_UP_RATE = 16;
+const TERRAIN_STEP_VISUAL_DOWN_RATE = 28;
+const TERRAIN_STEP_VISUAL_MAX_RISE_SPEED = 3.2;
+const TERRAIN_STEP_VISUAL_MAX_DROP_SPEED = 6.5;
 
 function frameRateBand(deltaSeconds: number): string {
   if (deltaSeconds <= 1 / 90) return '90fps+';
@@ -98,6 +103,36 @@ function pingBandMs(ping: number | null | undefined): string {
   if (ping <= 100) return '51-100';
   if (ping <= 180) return '101-180';
   return '181+';
+}
+
+function smoothTerrainVisualY(
+  previousY: number | null,
+  targetY: number,
+  dt: number,
+  isGrounded: boolean
+): number {
+  if (previousY === null || !Number.isFinite(previousY) || !Number.isFinite(targetY)) {
+    return targetY;
+  }
+
+  const delta = targetY - previousY;
+  if (!isGrounded || Math.abs(delta) <= 0.001 || Math.abs(delta) > TERRAIN_STEP_VISUAL_SNAP_THRESHOLD) {
+    return targetY;
+  }
+
+  if (delta > 0) {
+    const rise = Math.min(
+      delta * (1 - Math.exp(-TERRAIN_STEP_VISUAL_UP_RATE * dt)),
+      TERRAIN_STEP_VISUAL_MAX_RISE_SPEED * dt
+    );
+    return previousY + Math.max(0.001, rise);
+  }
+
+  const drop = Math.max(
+    delta * (1 - Math.exp(-TERRAIN_STEP_VISUAL_DOWN_RATE * dt)),
+    -TERRAIN_STEP_VISUAL_MAX_DROP_SPEED * dt
+  );
+  return previousY + Math.min(-0.001, drop);
 }
 
 function resolveTraceMatchMode(): MatchMode {
@@ -663,7 +698,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     movement.refs.isCrouching.current = predictedState.movement.isCrouching;
     movement.refs.isSprinting.current = predictedState.movement.isSprinting;
     movement.refs.slideTime.current = predictedState.movement.slideTimeRemaining;
-    movement.refs.smoothedY.current = predictedState.position.y;
+    if (movement.refs.smoothedY.current === null) {
+      movement.refs.smoothedY.current = predictedState.position.y;
+    }
 
     const unstuckRequestId = useGameStore.getState().unstuckRequestId;
     if (unstuckRequestId !== lastUnstuckRequestIdRef.current) {
@@ -927,6 +964,17 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
     velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
     const visualPosition = getCurrentPredictedVisualPosition(predictedState.position, now);
+    const smoothedVisualY = smoothTerrainVisualY(
+      movement.refs.smoothedY.current,
+      visualPosition.y,
+      dt,
+      predictedState.movement.isGrounded
+    );
+    const smoothedVisualPosition = {
+      x: visualPosition.x,
+      y: smoothedVisualY,
+      z: visualPosition.z,
+    };
     movement.refs.isGrounded.current = predictedState.movement.isGrounded;
     movement.refs.wasGrounded.current = predictedState.movement.isGrounded;
     movement.refs.canJump.current = predictedState.movement.isGrounded;
@@ -934,7 +982,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     movement.refs.isSprinting.current = predictedState.movement.isSprinting;
     movement.refs.isSliding.current = predictedState.movement.isSliding;
     movement.refs.slideTime.current = predictedState.movement.slideTimeRemaining;
-    movement.refs.smoothedY.current = visualPosition.y;
+    movement.refs.smoothedY.current = smoothedVisualY;
 
     const isSliding = predictedState.movement.isSliding;
     const justLanded = predictedState.movement.isGrounded && !wasGroundedBeforePrediction;
@@ -954,8 +1002,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     // Update camera
     cameraControl.updateCameraRotation(camera, isSliding, movement.refs.isCrouching.current, dt);
-    const cameraBodyY = movement.refs.smoothedY.current ?? visualPosition.y;
-    camera.position.set(visualPosition.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPosition.z);
+    const cameraBodyY = movement.refs.smoothedY.current ?? smoothedVisualPosition.y;
+    camera.position.set(smoothedVisualPosition.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, smoothedVisualPosition.z);
     camera.updateMatrixWorld();
     camera.getWorldDirection(audioForwardRef.current);
     audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
@@ -987,7 +1035,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     });
 
     // Update visual store for non-reactive position access.
-    setPlayerVisualPosition(localPlayer.id, visualPosition);
+    setPlayerVisualPosition(localPlayer.id, smoothedVisualPosition);
     setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
 
     const slideIntensity = isSliding
