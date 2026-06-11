@@ -795,10 +795,25 @@ router.post('/register', async (req: Request, res: Response) => {
 });
 
 router.get('/session', async (req: Request, res: Response) => {
+  const quiet = req.query.quiet === '1' || req.query.quiet === 'true';
+  const sendUnauthenticated = (error: string, clearCookie = false) => {
+    if (clearCookie) {
+      clearAuthCookie(res);
+    }
+
+    const body = { authenticated: false, error };
+    if (quiet) {
+      res.json(body);
+      return;
+    }
+
+    res.status(401).json(body);
+  };
+
   try {
     const token = getRequestToken(req);
     if (!token) {
-      res.status(401).json({ authenticated: false, error: 'No session found' });
+      sendUnauthenticated('No session found');
       return;
     }
 
@@ -820,15 +835,13 @@ router.get('/session', async (req: Request, res: Response) => {
 
     const payload = verifyAuthToken(token);
     if (!payload) {
-      clearAuthCookie(res);
-      res.status(401).json({ authenticated: false, error: 'Invalid or expired session' });
+      sendUnauthenticated('Invalid or expired session', true);
       return;
     }
 
     const user = await findUserForPayload(payload);
     if (!user) {
-      clearAuthCookie(res);
-      res.status(401).json({ authenticated: false, error: 'User not found' });
+      sendUnauthenticated('User not found', true);
       return;
     }
 

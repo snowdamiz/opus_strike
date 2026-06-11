@@ -86,8 +86,6 @@ function initializeInstallPromptTracking(): void {
   };
 
   const handleBeforeInstallPrompt = (event: Event) => {
-    event.preventDefault();
-
     if (!isRunningAsInstalledPwa()) {
       pendingInstallPrompt = event as BeforeInstallPromptEvent;
       notifyInstallPromptSubscribers();

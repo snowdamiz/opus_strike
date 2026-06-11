@@ -397,7 +397,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             user?: UserData;
             pendingRegistration?: PendingRegistrationData;
             error?: string;
-          }>('/auth/session');
+          }>('/auth/session?quiet=1');
 
           if (result.authenticated && result.user) {
             applyUserSession(result.user, result.provider ?? oauthReturn.provider);

@@ -44,21 +44,12 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
-          if (id.includes('/three/') || id.includes('@react-three/fiber') || id.includes('@react-three/drei')) {
-            return 'three-vendor';
-          }
           if (id.includes('@dimforge/rapier3d-compat')) {
             return 'physics-vendor';
           }
-          // Keep Colyseus with its transitive deps. Splitting it into a
-          // separate manual chunk can create a browser ESM cycle with the
-          // generic vendor chunk before axios/http helpers initialize.
-          if (id.includes('@solana/web3.js') || id.includes('/bs58/') || id.includes('/buffer/')) {
-            return 'wallet-vendor';
-          }
-          if (id.includes('/zustand/') || id.includes('/react/') || id.includes('/react-dom/')) {
-            return 'react-vendor';
-          }
+          // Keep the React/R3F/Colyseus/Solana dependency graph together.
+          // Splitting these libraries by package creates browser ESM cycles
+          // where React can be read before its namespace export initializes.
           return 'vendor';
         },
       },

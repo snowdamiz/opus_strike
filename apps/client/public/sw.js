@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'slop-heroes-v1';
+const CACHE_VERSION = 'slop-heroes-v3';
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const APP_SHELL_ASSETS = [
@@ -84,7 +84,7 @@ async function networkFirst(request, cacheName, fallbackUrl) {
   const cache = await caches.open(cacheName);
 
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: 'no-store' });
 
     if (response.ok) {
       await cache.put(request, response.clone());

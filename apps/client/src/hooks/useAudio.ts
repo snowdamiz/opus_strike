@@ -67,6 +67,54 @@ const sharedLoops = new Map<string, {
 }>();
 const sharedPendingLoops = new Map<string, { cancelled: boolean }>();
 
+let hasAudioUserActivation =
+  typeof navigator !== 'undefined' && navigator.userActivation?.hasBeenActive === true;
+let audioUnlockListenersInstalled = false;
+
+function hasUserActivatedAudio(): boolean {
+  if (hasAudioUserActivation) return true;
+
+  const activation = typeof navigator !== 'undefined' ? navigator.userActivation : undefined;
+  if (activation?.isActive || activation?.hasBeenActive) {
+    hasAudioUserActivation = true;
+    return true;
+  }
+
+  return false;
+}
+
+function markAudioUserActivation(): void {
+  hasAudioUserActivation = true;
+
+  if (sharedAudioContext?.state === 'suspended') {
+    void sharedAudioContext.resume().catch(() => undefined);
+  }
+}
+
+function installAudioUnlockListeners(): void {
+  if (audioUnlockListenersInstalled || typeof document === 'undefined') return;
+  audioUnlockListenersInstalled = true;
+
+  const handleInteraction = () => {
+    markAudioUserActivation();
+    document.removeEventListener('pointerdown', handleInteraction, true);
+    document.removeEventListener('touchstart', handleInteraction, true);
+    document.removeEventListener('keydown', handleInteraction, true);
+  };
+
+  document.addEventListener('pointerdown', handleInteraction, true);
+  document.addEventListener('touchstart', handleInteraction, true);
+  document.addEventListener('keydown', handleInteraction, true);
+}
+
+function getAudioContextConstructor(): typeof AudioContext | undefined {
+  if (typeof window === 'undefined') return undefined;
+
+  return window.AudioContext || (window as typeof window & {
+    webkitAudioContext?: typeof AudioContext;
+  }).webkitAudioContext;
+}
+
 // Calculate effective volume for SFX
 function getSfxVolume(): number {
   return (sharedConfig.masterVolume / 100) * (sharedConfig.sfxVolume / 100);
@@ -209,15 +257,39 @@ function clampAudioVolume(value: number): number {
 }
 
 function ensureSharedAudioContext(): AudioContext | null {
+  installAudioUnlockListeners();
+
   if (!sharedAudioContext) {
-    sharedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (!hasUserActivatedAudio()) return null;
+
+    const AudioContextConstructor = getAudioContextConstructor();
+    if (!AudioContextConstructor) return null;
+
+    sharedAudioContext = new AudioContextConstructor();
   }
 
-  if (sharedAudioContext.state === 'suspended') {
-    void sharedAudioContext.resume();
+  if (sharedAudioContext.state === 'suspended' && hasUserActivatedAudio()) {
+    void sharedAudioContext.resume().catch(() => undefined);
   }
 
   return sharedAudioContext;
+}
+
+async function ensureRunningAudioContext(): Promise<AudioContext | null> {
+  const audioContext = ensureSharedAudioContext();
+  if (!audioContext) return null;
+
+  if (audioContext.state === 'suspended') {
+    if (!hasUserActivatedAudio()) return null;
+
+    try {
+      await audioContext.resume();
+    } catch {
+      return null;
+    }
+  }
+
+  return audioContext.state === 'closed' ? null : audioContext;
 }
 
 function setAudioParam(
@@ -419,7 +491,6 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
 
   const ctx = ensureSharedAudioContext();
   if (!ctx) {
-    console.warn('[Audio] No AudioContext available');
     return null;
   }
 
@@ -466,16 +537,11 @@ export async function playSharedSound(
   if (sharedConfig.muted) return;
   if (options?.signal?.aborted) return;
 
-  const ctx = ensureSharedAudioContext();
+  const ctx = await ensureRunningAudioContext();
   if (!ctx) {
-    console.warn('[Audio] Cannot play sound - no AudioContext');
     return;
   }
   const audioCtx = ctx;
-
-  if (audioCtx.state === 'suspended') {
-    await audioCtx.resume();
-  }
   if (options?.signal?.aborted) return;
 
   const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
@@ -612,14 +678,10 @@ export async function playSharedLoop(
     return;
   }
 
-  const ctx = ensureSharedAudioContext();
+  const ctx = await ensureRunningAudioContext();
   if (!ctx) {
     sharedPendingLoops.delete(id);
     return;
-  }
-
-  if (ctx.state === 'suspended') {
-    await ctx.resume();
   }
   if (pendingLoop.cancelled || sharedPendingLoops.get(id) !== pendingLoop) return;
 
@@ -726,21 +788,21 @@ export function stopSharedLoop(id: string, fadeOutMs = 0): void {
 }
 
 export function useAudio() {
+  useEffect(() => {
+    installAudioUnlockListeners();
+  }, []);
+
   // Initialize audio context on first interaction
   const initAudio = useCallback(() => {
-    if (sharedAudioContext) {
-      // Resume if suspended (browser autoplay policy)
-      if (sharedAudioContext.state === 'suspended') {
-        sharedAudioContext.resume();
-      }
-      return;
-    }
-
-    sharedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    return ensureSharedAudioContext();
   }, []);
 
   // Load a sound effect
   const loadSound = useCallback(async (name: SoundName): Promise<SoundEffect | null> => {
+    if (!sharedAudioContext && !hasUserActivatedAudio()) {
+      return null;
+    }
+
     if (!sharedAudioContext) {
       initAudio();
     }
@@ -755,22 +817,11 @@ export function useAudio() {
     if (sharedConfig.muted) return;
     if (options?.signal?.aborted) return;
 
-    // Ensure audio context exists and is running
-    if (!sharedAudioContext) {
-      initAudio();
-    }
-    
-    const ctx = sharedAudioContext;
+    const ctx = await ensureRunningAudioContext();
     if (!ctx) {
-      console.warn('[Audio] Cannot play sound - no AudioContext');
       return;
     }
     const audioCtx = ctx;
-
-    // Resume if suspended (browser autoplay policy)
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
     if (options?.signal?.aborted) return;
 
     const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
@@ -890,15 +941,12 @@ export function useAudio() {
     name: SoundName, 
     options?: { volume?: number; fadeIn?: number; isMusic?: boolean }
   ) => {
-    if (!sharedAudioContext) {
-      initAudio();
-    }
     await playSharedLoop(id, name, {
       volume: options?.volume,
       fadeInMs: Math.max(0, options?.fadeIn ?? 0) * 1000,
       isMusic: options?.isMusic,
     });
-  }, [initAudio]);
+  }, []);
 
   // Stop looping sound
   const stopLoop = useCallback((id: string, fadeOut?: number) => {
@@ -937,14 +985,12 @@ export function useAudio() {
 
   // Preload multiple sounds (for abilities that need instant playback)
   const preloadSounds = useCallback(async (names: SoundName[]) => {
-    if (!sharedAudioContext) {
-      initAudio();
-    }
+    if (!hasUserActivatedAudio()) return;
     
     await Promise.all(names
       .filter(name => !MUSIC_SOUND_NAMES.has(name))
       .map(name => loadSound(name)));
-  }, [initAudio, loadSound]);
+  }, [loadSound]);
 
   const preloadSoundGroup = useCallback(async (group: SoundGroup) => {
     await preloadSounds(SOUND_GROUPS[group]);
@@ -1037,14 +1083,13 @@ export function useMovementSounds() {
 
   // Helper to play a single footstep sound
   const playFootstep = useCallback(() => {
-    if (!sharedAudioContext) {
-      initAudio();
-    }
-    const ctx = sharedAudioContext;
+    const ctx = initAudio();
     if (!ctx) return;
 
     if (ctx.state === 'suspended') {
-      ctx.resume();
+      if (!hasUserActivatedAudio()) return;
+      void ctx.resume().catch(() => undefined);
+      if (ctx.state === 'suspended') return;
     }
 
     const buffer = walkingSoundState.cachedBuffer;
@@ -1302,14 +1347,19 @@ function setupInteractionListener(callback: () => void) {
   interactionListenerSet = true;
   
   const handleInteraction = () => {
+    markAudioUserActivation();
     musicState.userHasInteracted = true;
     callback();
     // Remove listeners after first interaction
     document.removeEventListener('click', handleInteraction);
+    document.removeEventListener('pointerdown', handleInteraction);
+    document.removeEventListener('touchstart', handleInteraction);
     document.removeEventListener('keydown', handleInteraction);
   };
   
   document.addEventListener('click', handleInteraction);
+  document.addEventListener('pointerdown', handleInteraction);
+  document.addEventListener('touchstart', handleInteraction);
   document.addEventListener('keydown', handleInteraction);
 }
 
@@ -1327,7 +1377,7 @@ export function useMusic() {
     
     // Resume context if needed
     if (sharedAudioContext?.state === 'suspended') {
-      sharedAudioContext.resume();
+      void sharedAudioContext.resume().catch(() => undefined);
     }
     
     const soundName = track === 'lobby' ? 'lobbyMusic' : 'gameMusic';

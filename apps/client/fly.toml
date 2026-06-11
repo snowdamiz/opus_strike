@@ -6,7 +6,7 @@ primary_region = "iad"
 
   [build.args]
     VITE_SERVER_URL = "wss://opus-strike-server.fly.dev"
-    VITE_DISCORD_AUTH_ENABLED = "false"
+    VITE_DISCORD_AUTH_ENABLED = "true"
 
 [http_service]
   internal_port = 8080
