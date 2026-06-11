@@ -119,6 +119,14 @@ function InviteIcon({ className }: { className?: string }) {
   );
 }
 
+function RequestIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M8 7h8M8 12h5m-7 8l-3-3V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2H9l-3 3z" />
+    </svg>
+  );
+}
+
 function CheckIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -166,12 +174,12 @@ function matchModeLabel(mode: MatchMode | null): string {
 function UserIdentity({ user, detail }: { user: SocialUser; detail?: string }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.055]">
-        <span className="font-display text-lg leading-none text-white">{user.name.slice(0, 1).toUpperCase()}</span>
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-orange-500/20 text-orange-300">
+        <span className="font-display text-base leading-none">{user.name.slice(0, 1).toUpperCase()}</span>
       </div>
       <div className="min-w-0">
-        <p className="truncate font-display text-base leading-none text-white">{user.name}</p>
-        <p className="mt-1 truncate text-[11px] font-body text-white/40">
+        <p className="truncate font-display text-sm leading-none text-white">{user.name}</p>
+        <p className="mt-1 truncate text-xs font-body text-white/40">
           {detail ?? user.rank?.label ?? 'Unranked'}
         </p>
       </div>
@@ -195,7 +203,7 @@ function IconButton({
   children: ReactNode;
 }) {
   const toneClass = {
-    neutral: 'border-white/10 bg-white/[0.055] text-white/55 hover:border-white/25 hover:bg-white/10 hover:text-white',
+    neutral: 'border-white/10 bg-white/[0.07] text-white/55 hover:border-white/25 hover:bg-white/10 hover:text-white',
     primary: 'border-orange-300/25 bg-orange-500/20 text-orange-100 hover:border-orange-200/50 hover:bg-orange-500/30',
     danger: 'border-red-300/20 bg-red-500/10 text-red-200 hover:border-red-300/45 hover:bg-red-500/20',
     success: 'border-green-300/20 bg-green-500/10 text-green-200 hover:border-green-300/45 hover:bg-green-500/20',
@@ -230,7 +238,7 @@ export function SocialButton({
       aria-label="Open social"
       title="Social"
     >
-      <span className="absolute inset-0 rounded-lg opacity-0 transition group-hover:opacity-100 bg-[radial-gradient(circle_at_50%_0%,rgba(249,115,22,0.22),transparent_64%)]" />
+      <span className="absolute inset-0 rounded-lg opacity-0 transition group-hover:opacity-100 bg-[radial-gradient(circle_at_50%_0%,rgb(var(--color-accent-primary)_/_0.22),transparent_64%)]" />
       <UsersIcon className="relative h-5 w-5" />
       {badgeCount > 0 && (
         <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold leading-none text-white">
@@ -274,6 +282,11 @@ export function SocialBox({
     requests: requestCount,
     invites: inviteCount,
   }), [inviteCount, requestCount, social.friends.length]);
+  const tabs: { id: SocialTab; label: string; icon: ReactNode; count: number }[] = [
+    { id: 'friends', label: 'Friends', icon: <UsersIcon className="h-4 w-4" />, count: tabCounts.friends },
+    { id: 'requests', label: 'Requests', icon: <RequestIcon className="h-4 w-4" />, count: tabCounts.requests },
+    { id: 'invites', label: 'Invites', icon: <InviteIcon className="h-4 w-4" />, count: tabCounts.invites },
+  ];
 
   const refreshSocial = useCallback(async (silent = false) => {
     if (!isAuthenticated) return;
@@ -443,135 +456,92 @@ export function SocialBox({
     <GameDialog
       title="SOCIAL"
       icon={<UsersIcon className="h-5 w-5" />}
-      iconClassName="bg-orange-500/15 text-orange-200 border border-orange-300/15"
-      size="lg"
+      iconClassName="bg-orange-500/20 text-orange-500"
+      size="xl"
       onClose={onClose}
-      bodyClassName="p-0 overflow-hidden"
-      panelClassName="max-w-[min(94vw,48rem)]"
+      panelClassName="h-[min(70vh,40rem)]"
+      bodyClassName="flex-1 flex overflow-hidden min-h-0"
+      footer={(
+        <>
+          <div className="min-w-0">
+            <p className="font-display text-xs text-white/50">
+              {isAuthenticated
+                ? canInviteFromLobby
+                  ? 'INVITES ENABLED'
+                  : 'NO ACTIVE LOBBY'
+                : 'SIGN IN REQUIRED'}
+            </p>
+            {isAuthenticated && canInviteFromLobby && (
+              <p className="mt-0.5 max-w-[18rem] truncate text-xs font-body text-cyan-100/55">
+                {currentLobbyName ?? 'Game Lobby'}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-[1.125rem] py-2 rounded-lg bg-white/5 text-xs text-white/70 font-display hover:bg-white/10 hover:text-white"
+          >
+            CLOSE
+          </button>
+        </>
+      )}
     >
       {!isAuthenticated ? (
-        <div className="p-6">
-          <div className="rounded-lg border border-white/10 bg-white/[0.035] p-5 text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-orange-500/15 text-orange-200">
-              <UsersIcon className="h-6 w-6" />
+        <div className="flex flex-1 items-center justify-center p-[clamp(1.125rem,1.6vw,1.65rem)]">
+          <div className="max-w-sm text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-white/5 text-white/20">
+              <UsersIcon className="h-7 w-7" />
             </div>
-            <p className="font-display text-xl text-white">SIGN IN REQUIRED</p>
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onRequireAuth?.();
-              }}
-              className="mt-4 rounded-lg bg-orange-500 px-5 py-2.5 font-display text-sm text-white hover:bg-orange-400"
-            >
-              SIGN IN
-            </button>
+            <p className="font-display text-lg text-white">SIGN IN REQUIRED</p>
+            <p className="mt-2 text-sm font-body text-white/40">
+              Sign in to manage friends, requests, and lobby invites.
+            </p>
+            <div className="mt-5 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onRequireAuth?.();
+                }}
+                className="px-[1.125rem] py-2 rounded-lg bg-orange-500 text-xs text-white font-display hover:bg-orange-400"
+              >
+                SIGN IN
+              </button>
+            </div>
           </div>
         </div>
       ) : (
-        <div className="flex min-h-[min(66vh,34rem)] flex-col">
-          <div className="border-b border-white/5 bg-strike-elevated/35 px-4 py-3">
-            <div className="grid grid-cols-3 gap-2 rounded-lg bg-black/20 p-1">
-              {(['friends', 'requests', 'invites'] as SocialTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  onClick={() => setActiveTab(tab)}
-                  className={`relative rounded-md px-3 py-2 font-display text-sm transition ${
-                    activeTab === tab
-                      ? 'bg-orange-500 text-white shadow-[0_0_24px_rgba(249,115,22,0.22)]'
-                      : 'text-white/45 hover:bg-white/[0.055] hover:text-white/75'
-                  }`}
-                >
-                  {tab.toUpperCase()}
-                  {tabCounts[tab] > 0 && (
-                    <span className={`ml-2 rounded-full px-1.5 py-0.5 text-[10px] ${
-                      activeTab === tab ? 'bg-white/20 text-white' : 'bg-white/10 text-white/55'
-                    }`}>
-                      {tabCounts[tab]}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
+        <>
+          <div className="w-32 lg:w-40 xl:w-48 shrink-0 border-r border-white/5 p-2.5 lg:p-3 space-y-1.5">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg font-display text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-400/70 ${
+                  activeTab === tab.id
+                    ? 'bg-orange-500/20 text-orange-400'
+                    : 'text-white/50 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                {tab.icon}
+                <span className="min-w-0 flex-1 truncate text-left">{tab.label.toUpperCase()}</span>
+                {tab.count > 0 && (
+                  <span className={`flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] leading-none ${
+                    activeTab === tab.id ? 'bg-orange-500/20 text-orange-100' : 'bg-white/10 text-white/55'
+                  }`}>
+                    {Math.min(99, tab.count)}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
 
-          <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[17rem_1fr]">
-            <aside className="border-b border-white/5 bg-white/[0.018] p-4 md:border-b-0 md:border-r">
-              <form
-                className="space-y-3"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const targetName = searchQuery.trim();
-                  if (targetName.length >= 2) {
-                    sendFriendRequest({ targetName });
-                  }
-                }}
-              >
-                <label className="block text-[10px] font-body uppercase tracking-widest text-white/40">
-                  Find Player
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    value={searchQuery}
-                    onChange={(event) => setSearchQuery(event.target.value)}
-                    placeholder="Callsign"
-                    maxLength={24}
-                    className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-orange-300/45"
-                  />
-                  <IconButton
-                    label="Send friend request"
-                    title="Send friend request"
-                    tone="primary"
-                    disabled={searchQuery.trim().length < 2 || Boolean(pendingAction)}
-                    onClick={() => sendFriendRequest({ targetName: searchQuery.trim() })}
-                  >
-                    <PlusIcon className="h-4 w-4" />
-                  </IconButton>
-                </div>
-              </form>
-
-              <div className="mt-4 max-h-56 space-y-2 overflow-y-auto pr-1 custom-scrollbar">
-                {isSearching && (
-                  <p className="py-4 text-center text-xs font-body text-white/35">SEARCHING...</p>
-                )}
-                {!isSearching && searchResults.map((result) => {
-                  const canSend = result.relationship === 'none';
-                  return (
-                    <div key={result.user.userId} className="rounded-lg border border-white/5 bg-white/[0.03] p-2">
-                      <UserIdentity user={result.user} />
-                      <button
-                        type="button"
-                        disabled={!canSend || Boolean(pendingAction)}
-                        onClick={() => sendFriendRequest({ targetUserId: result.user.userId })}
-                        className={`mt-2 w-full rounded-md border px-3 py-1.5 font-display text-xs transition ${
-                          canSend
-                            ? 'border-orange-300/25 bg-orange-500/15 text-orange-100 hover:bg-orange-500/25'
-                            : 'cursor-not-allowed border-white/5 bg-white/[0.03] text-white/35'
-                        }`}
-                      >
-                        {statusLabel(result.relationship)}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {canInviteFromLobby ? (
-                <div className="mt-4 rounded-lg border border-cyan-300/15 bg-cyan-500/[0.055] px-3 py-2">
-                  <p className="truncate font-display text-sm text-cyan-100">{currentLobbyName ?? 'Game Lobby'}</p>
-                  <p className="mt-1 text-[11px] font-body text-cyan-100/45">INVITES ENABLED</p>
-                </div>
-              ) : (
-                <div className="mt-4 rounded-lg border border-white/5 bg-white/[0.025] px-3 py-2">
-                  <p className="font-display text-sm text-white/45">NO ACTIVE LOBBY</p>
-                </div>
-              )}
-            </aside>
-
-            <main className="min-h-0 overflow-y-auto p-4 custom-scrollbar">
+          <div className="flex-1 p-[clamp(1.125rem,1.6vw,1.65rem)] overflow-y-auto custom-scrollbar">
+            <div className="space-y-4">
               {(error || notice) && (
-                <div className={`mb-3 rounded-lg border px-3 py-2 text-sm ${
+                <div className={`rounded-lg border px-3 py-2 text-sm ${
                   error
                     ? 'border-red-400/20 bg-red-500/10 text-red-200'
                     : 'border-green-300/20 bg-green-500/10 text-green-200'
@@ -587,11 +557,82 @@ export function SocialBox({
               ) : (
                 <>
                   {activeTab === 'friends' && (
-                    <div className="space-y-2">
+                    <div className="space-y-5">
+                      <section>
+                        <form
+                          className="flex flex-col gap-3 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const targetName = searchQuery.trim();
+                            if (targetName.length >= 2) {
+                              sendFriendRequest({ targetName });
+                            }
+                          }}
+                        >
+                          <div className="min-w-0">
+                            <h4 className="font-display text-sm text-white">Find Player</h4>
+                            <p className="text-white/40 text-xs font-body mt-0.5">Search callsigns and send friend requests</p>
+                          </div>
+                          <div className="flex w-full min-w-0 items-center gap-2 sm:min-w-[16rem] sm:max-w-md sm:flex-1 sm:shrink-0">
+                            <input
+                              value={searchQuery}
+                              onChange={(event) => setSearchQuery(event.target.value)}
+                              placeholder="Callsign"
+                              maxLength={24}
+                              className="h-10 min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.07] px-3.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-orange-500/80 hover:border-white/20 hover:bg-white/[0.1]"
+                            />
+                            <IconButton
+                              label="Send friend request"
+                              title="Send friend request"
+                              tone="primary"
+                              disabled={searchQuery.trim().length < 2 || Boolean(pendingAction)}
+                              onClick={() => sendFriendRequest({ targetName: searchQuery.trim() })}
+                            >
+                              <PlusIcon className="h-4 w-4" />
+                            </IconButton>
+                          </div>
+                        </form>
+
+                        {(isSearching || searchResults.length > 0) && (
+                          <div className="mt-1 space-y-2">
+                            {isSearching && (
+                              <p className="py-4 text-center text-xs font-body text-white/35">SEARCHING...</p>
+                            )}
+                            {!isSearching && searchResults.map((result) => {
+                              const canSend = result.relationship === 'none';
+                              return (
+                                <div key={result.user.userId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
+                                  <UserIdentity user={result.user} />
+                                  <button
+                                    type="button"
+                                    disabled={!canSend || Boolean(pendingAction)}
+                                    onClick={() => sendFriendRequest({ targetUserId: result.user.userId })}
+                                    className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center border focus:outline-none focus-visible:ring-1 focus-visible:ring-orange-300/70 ${
+                                      canSend
+                                        ? 'border-orange-300/20 bg-orange-500/15 text-orange-100 hover:border-orange-200/40 hover:bg-orange-500/25'
+                                        : 'cursor-not-allowed border-white/10 bg-white/5 text-white/25'
+                                    }`}
+                                  >
+                                    {statusLabel(result.relationship)}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+
+                      <section className="pt-4 border-t border-white/5">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <h3 className="font-display text-base text-white">FRIENDS</h3>
+                          <span className="rounded-lg border border-white/10 bg-white/[0.07] px-3 py-1.5 font-mono text-xs text-white/60">
+                            {social.friends.length}
+                          </span>
+                        </div>
                       {social.friends.length === 0 ? (
                         <EmptyState title="NO FRIENDS YET" />
                       ) : social.friends.map((friend) => (
-                        <div key={friend.friendshipId} className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.03] p-3">
+                        <div key={friend.friendshipId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
                           <UserIdentity user={friend.user} />
                           <div className="flex shrink-0 items-center gap-2">
                             <IconButton
@@ -615,6 +656,7 @@ export function SocialBox({
                           </div>
                         </div>
                       ))}
+                      </section>
                     </div>
                   )}
 
@@ -643,7 +685,7 @@ export function SocialBox({
                       {social.lobbyInvites.length === 0 ? (
                         <EmptyState title="NO LOBBY INVITES" />
                       ) : social.lobbyInvites.map((invite) => (
-                        <div key={invite.inviteId} className="rounded-lg border border-white/5 bg-white/[0.03] p-3">
+                        <div key={invite.inviteId} className="rounded-lg bg-white/5 px-3.5 py-3">
                           <div className="flex items-start justify-between gap-3">
                             <UserIdentity
                               user={invite.from}
@@ -676,9 +718,9 @@ export function SocialBox({
                   )}
                 </>
               )}
-            </main>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </GameDialog>
   );
@@ -686,7 +728,7 @@ export function SocialBox({
 
 function EmptyState({ title }: { title: string }) {
   return (
-    <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-white/10 bg-white/[0.018]">
+    <div className="flex h-40 items-center justify-center">
       <p className="font-display text-lg text-white/35">{title}</p>
     </div>
   );
@@ -711,12 +753,12 @@ function RequestGroup({
 }) {
   return (
     <section>
-      <h3 className="mb-2 font-display text-sm text-white/45">{title}</h3>
+      <h3 className="mb-3 font-display text-base text-white">{title}</h3>
       <div className="space-y-2">
         {requests.length === 0 ? (
           <EmptyState title={emptyTitle} />
         ) : requests.map((request) => (
-          <div key={request.requestId} className="flex items-center justify-between gap-3 rounded-lg border border-white/5 bg-white/[0.03] p-3">
+          <div key={request.requestId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
             <UserIdentity user={request.user} />
             <div className="flex shrink-0 items-center gap-2">
               {onAccept && (

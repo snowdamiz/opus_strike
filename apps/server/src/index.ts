@@ -7,6 +7,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { GameRoom } from './rooms/GameRoom';
 import { LobbyRoom } from './rooms/LobbyRoom';
 import authRoutes from './auth/routes';
+import createAdminRouter from './admin/routes';
 import matchmakingRoutes from './matchmaking/routes';
 import socialRoutes from './social/routes';
 import wagerRoutes from './wagers/routes';
@@ -28,6 +29,10 @@ import {
   PROMETHEUS_CONTENT_TYPE,
   renderPrometheusMetrics,
 } from './metrics/autoscalerMetrics';
+import {
+  startAdminMachineHeartbeat,
+  type AdminMachineHeartbeatHandle,
+} from './admin/machineRegistry';
 import { loggers } from './utils/logger';
 
 const app = express();
@@ -36,6 +41,7 @@ const colyseusRuntime = getColyseusRuntimeConfig();
 validateColyseusRuntimeConfig(colyseusRuntime);
 const sharedRedisClient = colyseusRuntime.distributed ? getSharedRedisClient(colyseusRuntime) : null;
 let flyReplayRouteHandle: FlyReplayProcessRouteHandle | null = null;
+let adminMachineHeartbeatHandle: AdminMachineHeartbeatHandle | null = null;
 
 function getAutoscalerMetricLabels() {
   return {
@@ -125,6 +131,12 @@ app.use('/auth', authRoutes);
 app.use('/matchmaking', matchmakingRoutes);
 app.use('/social', socialRoutes);
 app.use('/wagers', wagerRoutes);
+app.use('/admin', createAdminRouter({
+  config: colyseusRuntime,
+  matchMaker,
+  redis: sharedRedisClient,
+  flyReplayRegistered: () => Boolean(flyReplayRouteHandle),
+}));
 
 // Health check endpoint
 app.get('/health', async (_req, res) => {
@@ -310,8 +322,19 @@ async function startServer(): Promise<void> {
       );
     }
 
+    if (sharedRedisClient) {
+      adminMachineHeartbeatHandle = startAdminMachineHeartbeat({
+        redis: sharedRedisClient,
+        config: colyseusRuntime,
+        matchMaker,
+        flyReplayRegistered: () => Boolean(flyReplayRouteHandle),
+      });
+    }
+
     await gameServer.listen(PORT);
   } catch (error) {
+    await adminMachineHeartbeatHandle?.close();
+    adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();
     flyReplayRouteHandle = null;
     throw error;
@@ -356,6 +379,8 @@ async function shutdown(signal: string): Promise<void> {
 
   try {
     wagerService.stopBackgroundJobs();
+    await adminMachineHeartbeatHandle?.close();
+    adminMachineHeartbeatHandle = null;
     await flyReplayRouteHandle?.close();
     flyReplayRouteHandle = null;
     await gameServer.gracefullyShutdown(false);

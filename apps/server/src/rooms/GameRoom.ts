@@ -722,6 +722,7 @@ export class GameRoom extends Room<GameState> {
     loggers.room.info('Map seed', this.state.mapSeed);
     this.resetFlags();
     this.createBotsFromAssignments(options.botAssignments || []);
+    this.updateMetadata();
 
     // Set up tick loop
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
@@ -1099,6 +1100,7 @@ export class GameRoom extends Room<GameState> {
     this.state.players.set(client.sessionId, player);
     this.knownPlayerIds.add(client.sessionId);
     this.playerPingsDirty = true;
+    this.updateMetadata();
     this.updateLastSafeMovement(player, 0);
     if (this.state.phase === 'playing') {
       this.ensureMatchPersistenceLedger();
@@ -1177,6 +1179,7 @@ export class GameRoom extends Room<GameState> {
     this.pendingPlayerPings.delete(client.sessionId);
     this.playerPingMs.delete(client.sessionId);
     this.playerPingsDirty = true;
+    this.updateMetadata();
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -1784,6 +1787,57 @@ export class GameRoom extends Room<GameState> {
       movement: this.buildMovementTelemetry(),
       authorityEvents: this.securityEvents.slice(-100),
     };
+  }
+
+  private getPopulationCounts(): {
+    humanCount: number;
+    botCount: number;
+    npcCount: number;
+    participantCount: number;
+    entityCount: number;
+  } {
+    let humanCount = 0;
+    let botCount = 0;
+    let npcCount = 0;
+
+    this.state.players.forEach((player) => {
+      if (this.spawnedNpcs.has(player.id)) {
+        npcCount++;
+      } else if (player.isBot) {
+        botCount++;
+      } else {
+        humanCount++;
+      }
+    });
+
+    return {
+      humanCount,
+      botCount,
+      npcCount,
+      participantCount: humanCount + botCount,
+      entityCount: humanCount + botCount + npcCount,
+    };
+  }
+
+  private updateMetadata(): void {
+    const counts = this.getPopulationCounts();
+    this.setMetadata({
+      name: this.lobbyName || `Game ${this.roomId.slice(0, 6)}`,
+      status: this.state.phase,
+      phase: this.state.phase,
+      lobbyId: this.lobbyId || undefined,
+      matchMode: this.matchMode,
+      mapSeed: this.state.mapSeed,
+      humanCount: counts.humanCount,
+      botCount: counts.botCount,
+      npcCount: counts.npcCount,
+      participantCount: counts.participantCount,
+      entityCount: counts.entityCount,
+      maxPlayers: this.config.maxPlayers,
+      rankedEligibleCandidate: this.rankedEligibilityCandidate,
+      rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
+      wagerEnabled: Boolean(this.wagerContext),
+    });
   }
 
   private sendCurrentSnapshots(client: Client): void {
@@ -6207,6 +6261,7 @@ export class GameRoom extends Room<GameState> {
     if (this.devBotsRooted) {
       this.rootBotMovementAndSkills(bot, now);
     }
+    this.updateMetadata();
 
     this.broadcast('playerJoined', {
       playerId: bot.id,
@@ -6686,6 +6741,7 @@ export class GameRoom extends Room<GameState> {
   private startHeroSelect() {
     this.state.phase = 'hero_select';
     this.state.phaseEndTime = Date.now() + this.config.heroSelectTimeSeconds * 1000;
+    this.updateMetadata();
 
     this.state.players.forEach(player => {
       if (player.isBot) {
@@ -6713,6 +6769,7 @@ export class GameRoom extends Room<GameState> {
   private startCountdown() {
     this.state.phase = 'countdown';
     this.state.phaseEndTime = Date.now() + this.config.countdownSeconds * 1000;
+    this.updateMetadata();
 
     // Set all players to spawning
     this.state.players.forEach(player => {
@@ -6733,6 +6790,7 @@ export class GameRoom extends Room<GameState> {
     this.state.roundStartTime = Date.now();
     this.state.roundTimeRemaining = this.config.roundTimeSeconds;
     this.state.phaseEndTime = 0;
+    this.updateMetadata();
     const ledger = this.ensureMatchPersistenceLedger(this.state.roundStartTime);
     if (this.wagerContext) {
       wagerService.attachMatchId(this.wagerContext.wageredLobbyId, ledger.matchId).catch((error) => {
@@ -6782,6 +6840,7 @@ export class GameRoom extends Room<GameState> {
   private endRound() {
     this.state.phase = 'round_end';
     this.state.phaseEndTime = Date.now() + 5000; // 5 second intermission
+    this.updateMetadata();
 
     const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' : 
                         this.state.blueTeam.score > this.state.redTeam.score ? 'blue' : null;
@@ -6801,6 +6860,7 @@ export class GameRoom extends Room<GameState> {
     this.state.phase = 'game_end';
     this.state.phaseEndTime = 0;
     this.state.roundTimeRemaining = 0;
+    this.updateMetadata();
 
     const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' :
                         this.state.blueTeam.score > this.state.redTeam.score ? 'blue' : null;
@@ -6838,6 +6898,7 @@ export class GameRoom extends Room<GameState> {
         player.abilities.clear();
       });
       this.matchPersistenceLedger = null;
+      this.updateMetadata();
     }, 10000);
   }
 
@@ -7416,6 +7477,7 @@ export class GameRoom extends Room<GameState> {
     // Add to game state
     this.state.players.set(npcId, npc);
     this.spawnedNpcs.add(npcId);
+    this.updateMetadata();
 
     loggers.room.debug('NPC spawned', npcName, heroId, team, this.vec3SchemaToPlain(npc.position));
 
@@ -7575,6 +7637,7 @@ export class GameRoom extends Room<GameState> {
     // Remove NPC from game
     this.state.players.delete(npc.id);
     this.spawnedNpcs.delete(npc.id);
+    this.updateMetadata();
 
     // Broadcast player left
     this.broadcast('playerLeft', {

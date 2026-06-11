@@ -83,7 +83,8 @@ enum LobbyInviteStatus {
 model User {
   id            String   @id @default(cuid())
   walletAddress String?  @unique
-  name          String
+  // Callsigns are unique case-insensitively via the User_name_lower_key index.
+  name          String   @unique
   lastLoginAt   DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

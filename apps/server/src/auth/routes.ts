@@ -188,8 +188,23 @@ function enforceJsonRateLimit(req: Request, res: Response, keyPrefix: string, op
   return false;
 }
 
-function isPrismaUniqueError(error: unknown): boolean {
+function isPrismaUniqueError(error: unknown): error is Prisma.PrismaClientKnownRequestError {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+function isUserNameUniqueError(error: unknown): boolean {
+  if (!isPrismaUniqueError(error)) return false;
+
+  const target = error.meta?.target;
+  if (Array.isArray(target)) {
+    return target.includes('name');
+  }
+
+  return typeof target === 'string' && (
+    target.includes('User_name_lower_key') ||
+    target.includes('User_name_key') ||
+    target.includes('name')
+  );
 }
 
 function getRequestToken(req: Request): string | null {
@@ -540,6 +555,20 @@ async function createRegisteredUser(identity: PendingRegistrationIdentity, name:
   });
 }
 
+async function isPlayerNameTaken(name: string): Promise<boolean> {
+  const existing = await prisma.user.findFirst({
+    where: {
+      name: {
+        equals: name,
+        mode: 'insensitive',
+      },
+    },
+    select: { id: true },
+  });
+
+  return existing !== null;
+}
+
 async function completePendingRegistration(pending: PendingAuthTokenPayload, name: string) {
   const identity: PendingRegistrationIdentity = {
     provider: pending.provider,
@@ -765,6 +794,11 @@ router.post('/register', async (req: Request, res: Response) => {
       return;
     }
 
+    if (await isPlayerNameTaken(validation.name)) {
+      res.status(409).json({ error: 'Callsign is already taken' });
+      return;
+    }
+
     const newUser = await completePendingRegistration(pending, validation.name);
     setAuthCookie(res, createAuthToken({
       userId: newUser.id,
@@ -781,6 +815,11 @@ router.post('/register', async (req: Request, res: Response) => {
   } catch (error) {
     if (error instanceof ProviderConflictError) {
       res.status(409).json({ error: error.message || 'User already exists' });
+      return;
+    }
+
+    if (isUserNameUniqueError(error)) {
+      res.status(409).json({ error: 'Callsign is already taken' });
       return;
     }
 
