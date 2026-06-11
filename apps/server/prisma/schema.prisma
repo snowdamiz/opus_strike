@@ -26,6 +26,7 @@ enum WageredLobbyStatus {
   waiting
   locked
   in_game
+  review_required
   settling
   settled
   refunding
@@ -203,6 +204,10 @@ model GameMatch {
   blueScore   Int
   winningTeam String?
   rankedEligible Boolean @default(false)
+  antiCheatIntegrityStatus String @default("clean")
+  antiCheatReviewRequired Boolean @default(false)
+  antiCheatIntegrityReason String?
+  rankedOutcomeStatus String @default("not_applicable")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -214,6 +219,9 @@ model GameMatch {
   @@index([startedAt])
   @@index([winningTeam])
   @@index([rankedEligible])
+  @@index([antiCheatIntegrityStatus])
+  @@index([antiCheatReviewRequired])
+  @@index([rankedOutcomeStatus])
 }
 
 model GameMatchParticipant {
@@ -394,4 +402,181 @@ model WagerSettlementTransfer {
   @@index([settlementId])
   @@index([kind])
   @@index([status])
+}
+
+model AntiCheatSignal {
+  id               String   @id @default(cuid())
+  eventId          String   @unique
+  eventType        String
+  category         String
+  source           String
+  roomId           String
+  matchId          String?
+  lobbyId          String?
+  matchMode        MatchMode?
+  userId           String?
+  playerSessionId  String?
+  team             String?
+  heroId           String?
+  serverTick       Int
+  serverTime       BigInt
+  movementEpoch    Int?
+  movementSequence Int?
+  severity         String
+  confidence       Float
+  reason           String?
+  details          Json
+  detailBytes      Int
+  retentionClass   String
+  scoreDelta       Int      @default(0)
+  observedAt       DateTime
+  createdAt        DateTime @default(now())
+
+  @@index([eventType, observedAt])
+  @@index([category, severity, observedAt])
+  @@index([roomId, observedAt])
+  @@index([matchId, observedAt])
+  @@index([lobbyId, observedAt])
+  @@index([userId, observedAt])
+  @@index([playerSessionId, observedAt])
+  @@index([retentionClass, observedAt])
+}
+
+model AntiCheatPlayerProfile {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  currentScore  Int      @default(0)
+  maxScore      Int      @default(0)
+  scoreBand     String   @default("normal_noise")
+  reviewFlags   String[] @default([])
+  lastSignalAt  DateTime?
+  lastScoredAt  DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([currentScore])
+  @@index([scoreBand])
+  @@index([lastSignalAt])
+}
+
+model AntiCheatMatchIntegrity {
+  id              String   @id @default(cuid())
+  matchId         String   @unique
+  roomId          String
+  lobbyId         String?
+  matchMode       MatchMode
+  status          String   @default("clean")
+  reason          String?
+  score           Int      @default(0)
+  affectedUserIds String[] @default([])
+  affectedTeams   String[] @default([])
+  rankedImpact    String  @default("none")
+  wagerImpact     String  @default("none")
+  caseId          String?
+  resolvedByUserId String?
+  resolvedAt      DateTime?
+  resolution      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([roomId])
+  @@index([lobbyId])
+  @@index([matchMode, status])
+  @@index([caseId])
+}
+
+model AntiCheatPayoutHold {
+  id              String   @id @default(cuid())
+  wageredLobbyId  String   @unique
+  matchId         String?
+  winningTeam     String?
+  paymentIds      String[] @default([])
+  affectedUserIds String[] @default([])
+  amountLamports  BigInt   @default(0)
+  reason          String
+  status          String   @default("open")
+  caseId          String?
+  resolvedByUserId String?
+  resolvedAt      DateTime?
+  resolution      String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([matchId])
+  @@index([status, createdAt])
+  @@index([caseId])
+}
+
+model AntiCheatAction {
+  id               String   @id @default(cuid())
+  actionType       String
+  roomId           String?
+  matchId          String?
+  caseId           String?
+  userId           String?
+  actorUserId      String?
+  reason           String
+  details          Json
+  observedOnly     Boolean  @default(false)
+  evidenceEventIds String[] @default([])
+  reversedByActionId String?
+  createdAt        DateTime @default(now())
+
+  @@index([actionType, createdAt])
+  @@index([matchId, createdAt])
+  @@index([caseId, createdAt])
+  @@index([userId, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model AntiCheatAccountAction {
+  id               String   @id @default(cuid())
+  actionType       String
+  targetUserId     String
+  actorUserId      String
+  reason           String
+  evidenceCaseId   String?
+  evidenceEventIds String[] @default([])
+  expiresAt        DateTime?
+  liftedAt         DateTime?
+  immutableAudit   Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([targetUserId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([actionType, createdAt])
+  @@index([evidenceCaseId])
+  @@index([expiresAt])
+}
+
+model AntiCheatCase {
+  id               String   @id @default(cuid())
+  userId           String?
+  playerSessionId  String?
+  matchId          String?
+  roomId           String?
+  lobbyId          String?
+  matchMode        MatchMode?
+  status           String   @default("open")
+  priority         String   @default("medium")
+  reason           String
+  scoreAtOpen      Int      @default(0)
+  signalCount      Int      @default(0)
+  evidenceEventIds String[] @default([])
+  assignedToUserId String?
+  notes            String[] @default([])
+  resolution       String?
+  falsePositive    Boolean  @default(false)
+  appealMarker     String?
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status, priority, updatedAt])
+  @@index([userId, updatedAt])
+  @@index([matchId, updatedAt])
+  @@index([roomId, updatedAt])
+  @@index([matchMode, updatedAt])
+  @@index([falsePositive, updatedAt])
 }

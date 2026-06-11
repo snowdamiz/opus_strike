@@ -1,0 +1,4099 @@
+{
+  "version": 1,
+  "traceId": "legal-wallrun-glide-fall",
+  "createdAt": "2026-06-11T12:00:00.000Z",
+  "kind": "legal",
+  "recordedBy": "fixture_generator",
+  "heroId": "hookshot",
+  "matchMode": "custom",
+  "movementClass": "wallrun_glide_fall",
+  "mapSeed": 20260611,
+  "frameRateBand": "60fps",
+  "pingBandMs": "0-50",
+  "privacy": {
+    "excludesNames": true,
+    "excludesWallets": true,
+    "excludesRawNetworkIds": true,
+    "excludesSecrets": true
+  },
+  "frames": [
+    {
+      "seq": 0,
+      "command": {
+        "seq": 0,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 0,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 0,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": 0
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 0,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 1,
+      "command": {
+        "seq": 1,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 16.666666666666668,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 16.666666666666668,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.015133333333333332
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -0.9079999999999999
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 0,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 2,
+      "command": {
+        "seq": 2,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 33.333333333333336,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 33.333333333333336,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.042899999999999994
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -1.666
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 1,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 3,
+      "command": {
+        "seq": 3,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 50,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 50,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.08302333333333332
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -2.4074
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 2,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 4,
+      "command": {
+        "seq": 4,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 66.66666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 66.66666666666667,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.13426766666666665
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -3.0746599999999997
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 3,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 5,
+      "command": {
+        "seq": 5,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 83.33333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 83.33333333333334,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.19552089999999997
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -3.675194
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 4,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 6,
+      "command": {
+        "seq": 6,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 100,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 100,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.2657821433333333
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -4.2156746
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 5,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 7,
+      "command": {
+        "seq": 7,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 116.66666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 116.66666666666667,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.3441505956666666
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -4.70210714
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 6,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 8,
+      "command": {
+        "seq": 8,
+        "buttons": 65,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 133.33333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 133.33333333333334,
+      "rapierPosition": {
+        "x": 0,
+        "y": 0.9,
+        "z": -0.42981553609999995
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": -5.139896426
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 7,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 9,
+      "command": {
+        "seq": 9,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 150,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 150,
+      "rapierPosition": {
+        "x": 0.010700882621956419,
+        "y": 0.9,
+        "z": -0.5176148651119563
+      },
+      "rapierVelocity": {
+        "x": 0.6420529573173851,
+        "y": 0,
+        "z": -5.267959740717385
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 8,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 10,
+      "command": {
+        "seq": 10,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 166.66666666666669,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 166.66666666666669,
+      "rapierPosition": {
+        "x": 0.03103255960367361,
+        "y": 0.9,
+        "z": -0.6073351438446735
+      },
+      "rapierVelocity": {
+        "x": 1.2199006189030315,
+        "y": 0,
+        "z": -5.383216723963031
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 9,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 11,
+      "command": {
+        "seq": 11,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 183.33333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 183.33333333333334,
+      "rapierPosition": {
+        "x": 0.0600319515091755,
+        "y": 0.9,
+        "z": -0.6987842773260753
+      },
+      "rapierVelocity": {
+        "x": 1.7399635143301135,
+        "y": 0,
+        "z": -5.486948008884112
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 10,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 12,
+      "command": {
+        "seq": 12,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 200,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 200,
+      "rapierPosition": {
+        "x": 0.09613486353175901,
+        "y": 0.9,
+        "z": -0.7910919567669688
+      },
+      "rapierVelocity": {
+        "x": 2.166174721355011,
+        "y": 0,
+        "z": -5.5384607664536105
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 11,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 13,
+      "command": {
+        "seq": 13,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 216.66666666666669,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 216.66666666666669,
+      "rapierPosition": {
+        "x": 0.13504801392525803,
+        "y": 0.9,
+        "z": -0.8805893978369468
+      },
+      "rapierVelocity": {
+        "x": 2.334789023609941,
+        "y": 0,
+        "z": -5.36984646419868
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 12,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 14,
+      "command": {
+        "seq": 14,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 233.33333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 233.33333333333334,
+      "rapierPosition": {
+        "x": 0.176490378852581,
+        "y": 0.9,
+        "z": -0.9675576243731008
+      },
+      "rapierVelocity": {
+        "x": 2.4865418956393777,
+        "y": 0,
+        "z": -5.218093592169243
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 13,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 15,
+      "command": {
+        "seq": 15,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 250.00000000000003,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 250.00000000000003,
+      "rapierPosition": {
+        "x": 0.22020903686034551,
+        "y": 0.9,
+        "z": -1.0522495578288134
+      },
+      "rapierVelocity": {
+        "x": 2.6231194804658706,
+        "y": 0,
+        "z": -5.08151600734275
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 14,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 16,
+      "command": {
+        "seq": 16,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 266.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 266.6666666666667,
+      "rapierPosition": {
+        "x": 0.2659763586405074,
+        "y": 0.9,
+        "z": -1.1348928275121284
+      },
+      "rapierVelocity": {
+        "x": 2.746039306809714,
+        "y": 0,
+        "z": -4.9585961809989065
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 15,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 17,
+      "command": {
+        "seq": 17,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 283.33333333333337,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 283.33333333333337,
+      "rapierPosition": {
+        "x": 0.31358747781582696,
+        "y": 0.9,
+        "z": -1.215692299800286
+      },
+      "rapierVelocity": {
+        "x": 2.856667150519174,
+        "y": 0,
+        "z": -4.847968337289447
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 16,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 18,
+      "command": {
+        "seq": 18,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 300,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 300,
+      "rapierPosition": {
+        "x": 0.3628580146467884,
+        "y": 0.9,
+        "z": -1.2948323544328015
+      },
+      "rapierVelocity": {
+        "x": 2.9562322098576876,
+        "y": 0,
+        "z": -4.748403277950933
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 17,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 19,
+      "command": {
+        "seq": 19,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 316.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 316.6666666666667,
+      "rapierPosition": {
+        "x": 0.41362202736782755,
+        "y": 0.9,
+        "z": -1.3724789331752394
+      },
+      "rapierVelocity": {
+        "x": 3.0458407632623494,
+        "y": 0,
+        "z": -4.658794724546271
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 18,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 20,
+      "command": {
+        "seq": 20,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 333.33333333333337,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 333.33333333333337,
+      "rapierPosition": {
+        "x": 0.46573016838993664,
+        "y": 0.9,
+        "z": -1.4487813836166072
+      },
+      "rapierVelocity": {
+        "x": 3.126488461326545,
+        "y": 0,
+        "z": -4.578147026482076
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 19,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 21,
+      "command": {
+        "seq": 21,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 350,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 350,
+      "rapierPosition": {
+        "x": 0.5190480248830086,
+        "y": 0.9,
+        "z": -1.5238741185870122
+      },
+      "rapierVelocity": {
+        "x": 3.1990713895843212,
+        "y": 0,
+        "z": -4.5055640982242995
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 20,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 22,
+      "command": {
+        "seq": 22,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 366.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 366.6666666666667,
+      "rapierPosition": {
+        "x": 0.5734546252999473,
+        "y": 0.9,
+        "z": -1.5978781096335506
+      },
+      "rapierVelocity": {
+        "x": 3.26439602501632,
+        "y": 0,
+        "z": -4.4402394627923005
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 21,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 23,
+      "command": {
+        "seq": 23,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 383.33333333333337,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 383.33333333333337,
+      "rapierPosition": {
+        "x": 0.628841095248366,
+        "y": 0.9,
+        "z": -1.670902231148609
+      },
+      "rapierVelocity": {
+        "x": 3.323188196905119,
+        "y": 0,
+        "z": -4.381447290903501
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 22,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 24,
+      "command": {
+        "seq": 24,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 400,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 400,
+      "rapierPosition": {
+        "x": 0.6851094477751166,
+        "y": 0.9,
+        "z": -1.7430444700853354
+      },
+      "rapierVelocity": {
+        "x": 3.3761011516050385,
+        "y": 0,
+        "z": -4.328534336203582
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 23,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 25,
+      "command": {
+        "seq": 25,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 416.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 416.6666666666667,
+      "rapierPosition": {
+        "x": 0.7421714946223661,
+        "y": 0.9,
+        "z": -1.814393014701563
+      },
+      "rapierVelocity": {
+        "x": 3.423722810834965,
+        "y": 0,
+        "z": -4.280912676973655
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 24,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 26,
+      "command": {
+        "seq": 26,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 433.33333333333337,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 433.33333333333337,
+      "rapierPosition": {
+        "x": 0.7999478663580644,
+        "y": 0.9,
+        "z": -1.8850272344293417
+      },
+      "rapierVelocity": {
+        "x": 3.4665823041419,
+        "y": 0,
+        "z": -4.238053183666721
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 25,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 27,
+      "command": {
+        "seq": 27,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 450.00000000000006,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 450.00000000000006,
+      "rapierPosition": {
+        "x": 0.8583671304933667,
+        "y": 0.9,
+        "z": -1.9550185617575164
+      },
+      "rapierVelocity": {
+        "x": 3.5051558481181404,
+        "y": 0,
+        "z": -4.199479639690479
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 26,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 28,
+      "command": {
+        "seq": 28,
+        "buttons": 73,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 466.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 466.6666666666667,
+      "rapierPosition": {
+        "x": 0.9173649977883126,
+        "y": 0.9,
+        "z": -2.0244312859260476
+      },
+      "rapierVelocity": {
+        "x": 3.539872037696758,
+        "y": 0,
+        "z": -4.164763450111863
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": true,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": true,
+        "wallRunSide": "right",
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 27,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 29,
+      "command": {
+        "seq": 29,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 483.33333333333337,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 483.33333333333337,
+      "rapierPosition": {
+        "x": 0.970463078353764,
+        "y": 0.9,
+        "z": -2.0995138487888365
+      },
+      "rapierVelocity": {
+        "x": 3.185884833927082,
+        "y": 0,
+        "z": -4.504953771767344
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 28,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 30,
+      "command": {
+        "seq": 30,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 500.00000000000006,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 500.00000000000006,
+      "rapierPosition": {
+        "x": 1.0182513508626703,
+        "y": 0.9,
+        "z": -2.1751805154555033
+      },
+      "rapierVelocity": {
+        "x": 2.8672963505343736,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 29,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 31,
+      "command": {
+        "seq": 31,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 516.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 516.6666666666667,
+      "rapierPosition": {
+        "x": 1.061260796120686,
+        "y": 0.9,
+        "z": -2.25084718212217
+      },
+      "rapierVelocity": {
+        "x": 2.580566715480936,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 30,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 32,
+      "command": {
+        "seq": 32,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 533.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 533.3333333333334,
+      "rapierPosition": {
+        "x": 1.0999692968529,
+        "y": 0.9,
+        "z": -2.326513848788837
+      },
+      "rapierVelocity": {
+        "x": 2.322510043932842,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 31,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 33,
+      "command": {
+        "seq": 33,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 550,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 550,
+      "rapierPosition": {
+        "x": 1.1348069475118927,
+        "y": 0.9,
+        "z": -2.4021805154555036
+      },
+      "rapierVelocity": {
+        "x": 2.0902590395395575,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 32,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 34,
+      "command": {
+        "seq": 34,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 566.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 566.6666666666667,
+      "rapierPosition": {
+        "x": 1.166160833104986,
+        "y": 0.9,
+        "z": -2.4778471821221704
+      },
+      "rapierVelocity": {
+        "x": 1.8812331355856018,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 33,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 35,
+      "command": {
+        "seq": 35,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 583.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 583.3333333333334,
+      "rapierPosition": {
+        "x": 1.19437933013877,
+        "y": 0.9,
+        "z": -2.553513848788837
+      },
+      "rapierVelocity": {
+        "x": 1.6931098220270415,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 34,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 36,
+      "command": {
+        "seq": 36,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 600,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 600,
+      "rapierPosition": {
+        "x": 1.2197759774691757,
+        "y": 0.9,
+        "z": -2.629180515455504
+      },
+      "rapierVelocity": {
+        "x": 1.5237988398243374,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 35,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 37,
+      "command": {
+        "seq": 37,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 616.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 616.6666666666667,
+      "rapierPosition": {
+        "x": 1.2426329600665407,
+        "y": 0.9,
+        "z": -2.7048471821221707
+      },
+      "rapierVelocity": {
+        "x": 1.3714189558419034,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 36,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 38,
+      "command": {
+        "seq": 38,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 633.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 633.3333333333334,
+      "rapierPosition": {
+        "x": 1.2632042444041691,
+        "y": 0.9,
+        "z": -2.7805138487888374
+      },
+      "rapierVelocity": {
+        "x": 1.234277060257713,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 37,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 39,
+      "command": {
+        "seq": 39,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 650,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 650,
+      "rapierPosition": {
+        "x": 1.2817184003080349,
+        "y": 0.9,
+        "z": -2.856180515455504
+      },
+      "rapierVelocity": {
+        "x": 1.1108493542319418,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 38,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 40,
+      "command": {
+        "seq": 40,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 666.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 666.6666666666667,
+      "rapierPosition": {
+        "x": 1.298381140621514,
+        "y": 0.9,
+        "z": -2.931847182122171
+      },
+      "rapierVelocity": {
+        "x": 0.9997644188087474,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 39,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 41,
+      "command": {
+        "seq": 41,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 683.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 683.3333333333334,
+      "rapierPosition": {
+        "x": 1.3133776069036451,
+        "y": 0.9,
+        "z": -3.0075138487888378
+      },
+      "rapierVelocity": {
+        "x": 0.8997879769278726,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 40,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 42,
+      "command": {
+        "seq": 42,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 700,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 700,
+      "rapierPosition": {
+        "x": 1.3268744265575632,
+        "y": 0.9,
+        "z": -3.0831805154555045
+      },
+      "rapierVelocity": {
+        "x": 0.8098091792350853,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 41,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 43,
+      "command": {
+        "seq": 43,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 716.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 716.6666666666667,
+      "rapierPosition": {
+        "x": 1.3390215642460894,
+        "y": 0.9,
+        "z": -3.1588471821221713
+      },
+      "rapierVelocity": {
+        "x": 0.7288282613115767,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 42,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 44,
+      "command": {
+        "seq": 44,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 733.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 733.3333333333334,
+      "rapierPosition": {
+        "x": 1.3499539881657632,
+        "y": 0.9,
+        "z": -3.234513848788838
+      },
+      "rapierVelocity": {
+        "x": 0.655945435180419,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 43,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 45,
+      "command": {
+        "seq": 45,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 750,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 750,
+      "rapierPosition": {
+        "x": 1.3597931696934695,
+        "y": 0.9,
+        "z": -3.310180515455505
+      },
+      "rapierVelocity": {
+        "x": 0.5903508916623771,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 44,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 46,
+      "command": {
+        "seq": 46,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 766.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 766.6666666666667,
+      "rapierPosition": {
+        "x": 1.3686484330684052,
+        "y": 0.9,
+        "z": -3.3858471821221716
+      },
+      "rapierVelocity": {
+        "x": 0.5313158024961394,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 45,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 47,
+      "command": {
+        "seq": 47,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 783.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 783.3333333333334,
+      "rapierPosition": {
+        "x": 1.3766181701058473,
+        "y": 0.9,
+        "z": -3.4615138487888384
+      },
+      "rapierVelocity": {
+        "x": 0.4781842222465254,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 46,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 48,
+      "command": {
+        "seq": 48,
+        "buttons": 1,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 800,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 800,
+      "rapierPosition": {
+        "x": 1.3837909334395453,
+        "y": 0.9,
+        "z": -3.537180515455505
+      },
+      "rapierVelocity": {
+        "x": 0.43036580002187286,
+        "y": 0,
+        "z": -4.54
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": true
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 47,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 49,
+      "command": {
+        "seq": 49,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 816.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 816.6666666666667,
+      "rapierPosition": {
+        "x": 1.388094591439764,
+        "y": 0.9,
+        "z": -3.582580515455505
+      },
+      "rapierVelocity": {
+        "x": 0.2582194800131237,
+        "y": 0,
+        "z": -2.7239999999999998
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 48,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 50,
+      "command": {
+        "seq": 50,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 833.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 833.3333333333334,
+      "rapierPosition": {
+        "x": 1.3906767862398952,
+        "y": 0.9,
+        "z": -3.609820515455505
+      },
+      "rapierVelocity": {
+        "x": 0.15493168800787427,
+        "y": 0,
+        "z": -1.6344
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 49,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 51,
+      "command": {
+        "seq": 51,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 850.0000000000001,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 850.0000000000001,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0.09295901280472456,
+        "y": 0,
+        "z": -0.98064
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 50,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 52,
+      "command": {
+        "seq": 52,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 866.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 866.6666666666667,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 51,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 53,
+      "command": {
+        "seq": 53,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 883.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 883.3333333333334,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 52,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 54,
+      "command": {
+        "seq": 54,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 900.0000000000001,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 900.0000000000001,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 53,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 55,
+      "command": {
+        "seq": 55,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 916.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 916.6666666666667,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 54,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 56,
+      "command": {
+        "seq": 56,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 933.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 933.3333333333334,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 55,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 57,
+      "command": {
+        "seq": 57,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 950.0000000000001,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 950.0000000000001,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 56,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 58,
+      "command": {
+        "seq": 58,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 966.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 966.6666666666667,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 57,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 59,
+      "command": {
+        "seq": 59,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 983.3333333333334,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 983.3333333333334,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 58,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 60,
+      "command": {
+        "seq": 60,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1000.0000000000001,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1000.0000000000001,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 59,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 61,
+      "command": {
+        "seq": 61,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1016.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1016.6666666666667,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 60,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 62,
+      "command": {
+        "seq": 62,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1033.3333333333335,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1033.3333333333335,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 61,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 63,
+      "command": {
+        "seq": 63,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1050,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1050,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 62,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 64,
+      "command": {
+        "seq": 64,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1066.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1066.6666666666667,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 63,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 65,
+      "command": {
+        "seq": 65,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1083.3333333333335,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1083.3333333333335,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 64,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 66,
+      "command": {
+        "seq": 66,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1100,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1100,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 65,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 67,
+      "command": {
+        "seq": 67,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1116.6666666666667,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1116.6666666666667,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 66,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    },
+    {
+      "seq": 68,
+      "command": {
+        "seq": 68,
+        "buttons": 0,
+        "lookYaw": 0,
+        "lookPitch": 0,
+        "clientTimeMs": 1133.3333333333335,
+        "movementEpoch": 0,
+        "collisionRevision": 0
+      },
+      "clientTimeMs": 1133.3333333333335,
+      "rapierPosition": {
+        "x": 1.3922261031199739,
+        "y": 0.9,
+        "z": -3.626164515455505
+      },
+      "rapierVelocity": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "movement": {
+        "isGrounded": true,
+        "isSprinting": false,
+        "isCrouching": false,
+        "isSliding": false,
+        "slideTimeRemaining": 0,
+        "isWallRunning": false,
+        "wallRunSide": null,
+        "isGrappling": false,
+        "grapplePoint": null,
+        "isJetpacking": false,
+        "jetpackFuel": 100,
+        "isGliding": false
+      },
+      "playerState": "alive",
+      "health": 100,
+      "flagCarrier": false,
+      "activeAbilityState": {
+        "activeAbilityIds": [],
+        "activeSpeedMultiplier": 1,
+        "movementBarrier": null
+      },
+      "terrainContact": {
+        "profile": "flat",
+        "isGrounded": true,
+        "groundY": 0,
+        "blockedAhead": false,
+        "collisionRevision": 0,
+        "mapSeed": 20260611
+      },
+      "latestServerAck": {
+        "ackSeq": 67,
+        "movementEpoch": 0
+      },
+      "movementEpoch": 0,
+      "objectiveSuppressed": false
+    }
+  ],
+  "expected": {
+    "maxPositionDriftMeters": 0.002,
+    "maxVelocityDriftMetersPerSecond": 0.002,
+    "maxMovementStateMismatches": 0,
+    "maxUnexpectedCorrections": 0,
+    "allowedCorrectionReasons": []
+  }
+}

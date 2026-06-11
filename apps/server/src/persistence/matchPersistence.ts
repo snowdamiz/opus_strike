@@ -39,6 +39,10 @@ export interface CompletedMatchPersistenceInput {
   blueScore: number;
   winningTeam: Team | null;
   participants: MatchParticipantSnapshot[];
+  antiCheatIntegrityStatus?: string;
+  antiCheatReviewRequired?: boolean;
+  antiCheatIntegrityReason?: string | null;
+  rankedOutcomeStatus?: 'not_applicable' | 'applied' | 'held' | 'canceled';
 }
 
 export interface PersistCompletedMatchResult {
@@ -203,7 +207,11 @@ export async function persistCompletedMatch(
       const existingUserIds = new Set(existingUsers.map((user) => user.id));
       const participants = normalizedParticipants.filter((participant) => existingUserIds.has(participant.userId));
       const skippedUserIds = userIds.filter((userId) => !existingUserIds.has(userId));
-      const rankedEligible = input.rankedEligible === true && skippedUserIds.length === 0 && participants.length > 0;
+      const rankedOutcomeHeld = input.rankedOutcomeStatus === 'held';
+      const rankedEligible = input.rankedEligible === true
+        && !rankedOutcomeHeld
+        && skippedUserIds.length === 0
+        && participants.length > 0;
       const ratingUpdates = rankedEligible
         ? calculateRankedRatingUpdates({
           participants,
@@ -227,6 +235,11 @@ export async function persistCompletedMatch(
           redScore: input.redScore,
           blueScore: input.blueScore,
           winningTeam: input.winningTeam,
+          antiCheatIntegrityStatus: input.antiCheatIntegrityStatus ?? 'clean',
+          antiCheatReviewRequired: input.antiCheatReviewRequired === true,
+          antiCheatIntegrityReason: input.antiCheatIntegrityReason ?? null,
+          rankedOutcomeStatus: input.rankedOutcomeStatus
+            ?? (rankedEligible ? 'applied' : input.matchMode === 'ranked' ? 'canceled' : 'not_applicable'),
         },
       });
 
@@ -247,7 +260,7 @@ export async function persistCompletedMatch(
             score: participant.score,
             experienceGained: participant.experienceGained,
             outcome: participant.outcome,
-            rankedEligible,
+            rankedEligible: rankedEligible || rankedOutcomeHeld,
             ratingBefore: ratingUpdatesByUserId.get(participant.userId)?.ratingBefore,
             ratingAfter: ratingUpdatesByUserId.get(participant.userId)?.ratingAfter,
             ratingDelta: ratingUpdatesByUserId.get(participant.userId)?.ratingDelta,

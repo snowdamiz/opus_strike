@@ -183,7 +183,16 @@ export interface GameEndEvent {
   endedAt: number;
   durationMs: number;
   forcedByPlayerId?: string;
+  matchIntegrity?: MatchIntegritySummary;
   players: MatchSummaryPlayer[];
+}
+
+export interface MatchIntegritySummary {
+  status: 'clean' | 'suspicious' | 'compromised' | 'no_contest';
+  reviewRequired: boolean;
+  rankedOutcome: 'normal' | 'review_required';
+  wagerOutcome: 'normal' | 'review_required';
+  message: string;
 }
 
 export interface MatchSummaryPlayer {

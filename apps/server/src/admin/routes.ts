@@ -1,8 +1,18 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import prisma from '../db';
 import { verifyAuthToken } from '../auth/session';
+import type { Team } from '@voxel-strike/shared';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
+import {
+  AntiCheatEvidenceStore,
+  applyHeldRankedOutcome,
+  cancelHeldRankedOutcome,
+  getAntiCheatConfig,
+  type AntiCheatAccountActionType,
+  type AntiCheatCaseStatus,
+} from '../anticheat';
+import { wagerService } from '../wagers/service';
 import {
   collectLocalAdminMachineSnapshot,
   listAdminMachineSnapshots,
@@ -23,6 +33,7 @@ interface AdminUser {
   id: string;
   name: string;
   walletAddress: string;
+  elevatedAntiCheatRole: boolean;
 }
 
 interface RoomQueryResult {
@@ -57,6 +68,8 @@ function adminWallet(): string | null {
   return wallet || null;
 }
 
+const antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
+
 function notFound(res: Response): void {
   res.status(404).type('text').send('Not found');
 }
@@ -64,6 +77,23 @@ function notFound(res: Response): void {
 function noStore(res: Response): void {
   res.setHeader('Cache-Control', 'no-store, private, max-age=0');
   res.setHeader('Pragma', 'no-cache');
+}
+
+function isValidTeam(value: unknown): value is Team {
+  return value === 'red' || value === 'blue';
+}
+
+function readRequestString(value: unknown, maxLength = 500): string {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function readEvidenceEventIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .map((item) => item.trim().slice(0, 96))
+      .slice(0, 50)
+    : [];
 }
 
 function readFiniteNumber(value: unknown): number | null {
@@ -171,6 +201,7 @@ async function ensureAdmin(req: Request, res: Response, next: NextFunction): Pro
       id: user.id,
       name: user.name,
       walletAddress,
+      elevatedAntiCheatRole: getAntiCheatConfig().elevatedAdminWallets.includes(walletAddress),
     } satisfies AdminUser;
     next();
   } catch (error) {
@@ -376,10 +407,11 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const redis = await pingRedis(options.redis);
-  const [gameRoomResult, lobbyRoomResult] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat] = await Promise.all([
+    pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
+    antiCheatEvidenceStore.listReviewData(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -457,6 +489,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       userId: adminUser.id,
       name: adminUser.name,
       walletAddress: adminUser.walletAddress,
+      elevatedAntiCheatRole: adminUser.elevatedAntiCheatRole,
     },
     totals,
     machines: machineList,
@@ -479,6 +512,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       localProcessId: options.matchMaker.processId ?? null,
       warnings,
     },
+    antiCheat,
   };
 }
 
@@ -616,6 +650,28 @@ function renderAdminHtml(): string {
       color: var(--text);
       background: rgba(255,255,255,.03);
     }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    button, input, select {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+      font: inherit;
+    }
+    button {
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    button:hover { background: rgba(255,255,255,.12); }
+    input, select {
+      padding: 4px 8px;
+      min-width: 160px;
+    }
     .warnings {
       display: none;
       margin: 0 0 16px;
@@ -677,6 +733,38 @@ function renderAdminHtml(): string {
         <span class="muted" id="lobby-count"></span>
       </div>
       <div class="table-wrap" id="lobbies"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Anti-Cheat Cases</h2>
+        <span class="muted" id="anticheat-case-count"></span>
+      </div>
+      <div class="table-wrap" id="anticheat-cases"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Movement Shadow Drift</h2>
+        <span class="muted" id="movement-shadow-count"></span>
+      </div>
+      <div class="table-wrap" id="movement-shadow"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Paused Payouts</h2>
+        <span class="muted" id="anticheat-payout-count"></span>
+      </div>
+      <div class="table-wrap" id="anticheat-payouts"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Manual Account Actions</h2>
+        <span class="muted" id="anticheat-action-count"></span>
+      </div>
+      <div class="table-wrap" id="anticheat-actions"></div>
     </section>
   </main>
 
@@ -822,6 +910,147 @@ function renderAdminHtml(): string {
         )).join('') + '</tbody></table>';
     }
 
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'include',
+        cache: 'no-store',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || ('HTTP ' + response.status));
+      }
+      await load();
+    }
+
+    window.acResolveCase = (caseId, status) => {
+      const resolution = prompt('Resolution / note');
+      if (!resolution) return;
+      postJson('/admin/api/anti-cheat/cases/' + encodeURIComponent(caseId), { status, resolution, note: resolution })
+        .catch((error) => alert(error.message));
+    };
+    window.acApplyRanked = (matchId, action) => {
+      const reason = prompt('Reason');
+      if (!reason) return;
+      if (!confirm(action + ' ranked outcome for ' + matchId + '?')) return;
+      postJson('/admin/api/anti-cheat/ranked/' + encodeURIComponent(matchId) + '/' + action, { reason })
+        .catch((error) => alert(error.message));
+    };
+    window.acResolvePayout = (holdId, action) => {
+      const reason = prompt('Reason');
+      if (!reason) return;
+      if (!confirm(action + ' payout hold ' + holdId + '?')) return;
+      postJson('/admin/api/anti-cheat/payout-holds/' + encodeURIComponent(holdId) + '/' + action, { reason })
+        .catch((error) => alert(error.message));
+    };
+    window.acAccountAction = () => {
+      const targetUserId = document.getElementById('ac-target-user').value;
+      const actionType = document.getElementById('ac-action-type').value;
+      const evidenceCaseId = document.getElementById('ac-evidence-case').value;
+      const reason = document.getElementById('ac-action-reason').value;
+      const expiresAt = document.getElementById('ac-action-expires').value;
+      if (!confirm(actionType + ' for user ' + targetUserId + '?')) return;
+      postJson('/admin/api/anti-cheat/account-actions', {
+        targetUserId,
+        actionType,
+        evidenceCaseId,
+        reason,
+        expiresAt: expiresAt || null,
+      }).catch((error) => alert(error.message));
+    };
+
+    function renderAntiCheat(data) {
+      const antiCheat = data.antiCheat || { cases: [], payoutHolds: [], accountActions: [], config: {} };
+      const cases = antiCheat.cases || [];
+      const holds = antiCheat.payoutHolds || [];
+      const accountActions = antiCheat.accountActions || [];
+      const shadow = antiCheat.movementShadow || { sampleCount: 0, buckets: [] };
+      const shadowBuckets = shadow.buckets || [];
+      document.getElementById('anticheat-case-count').textContent = num(cases.length) + ' listed / mode ' + escapeHtml(antiCheat.config?.mode || 'unknown');
+      document.getElementById('movement-shadow-count').textContent = num(shadow.sampleCount || 0) + ' samples / ' + num(shadow.bucketCount || 0) + ' buckets';
+      document.getElementById('anticheat-payout-count').textContent = num(holds.filter((hold) => hold.status === 'open').length) + ' open';
+      document.getElementById('anticheat-action-count').textContent = num(accountActions.length) + ' recent';
+
+      document.getElementById('anticheat-cases').innerHTML = cases.length === 0
+        ? '<div class="empty">No anti-cheat cases.</div>'
+        : '<table><thead><tr><th>Case</th><th>Status</th><th>Priority</th><th>Player / Match</th><th class="num">Score</th><th>Reason</th><th>Actions</th></tr></thead><tbody>' +
+          cases.map((item) => (
+            '<tr>' +
+            '<td><span class="mono">' + escapeHtml(item.id) + '</span><br><span class="muted">' + escapeHtml(age(Date.parse(item.updatedAt))) + '</span></td>' +
+            '<td><span class="pill">' + escapeHtml(item.status) + '</span></td>' +
+            '<td>' + escapeHtml(item.priority) + '</td>' +
+            '<td><span class="mono">' + escapeHtml(item.userId || item.playerSessionId || 'unknown') + '</span><br><span class="muted mono">' + escapeHtml(item.matchId || item.roomId || '') + '</span></td>' +
+            '<td class="num">' + num(item.scoreAtOpen) + '</td>' +
+            '<td>' + escapeHtml(item.reason) + '</td>' +
+            '<td><div class="actions">' +
+            '<button onclick="acResolveCase(\\'' + escapeHtml(item.id) + '\\',\\'resolved\\')">Resolve</button>' +
+            '<button onclick="acResolveCase(\\'' + escapeHtml(item.id) + '\\',\\'false_positive\\')">False Positive</button>' +
+            (item.matchId ? '<button onclick="acApplyRanked(\\'' + escapeHtml(item.matchId) + '\\',\\'apply\\')">Apply Ranked</button><button onclick="acApplyRanked(\\'' + escapeHtml(item.matchId) + '\\',\\'cancel\\')">Cancel Ranked</button>' : '') +
+            '</div></td>' +
+            '</tr>'
+          )).join('') + '</tbody></table>';
+
+      document.getElementById('movement-shadow').innerHTML = shadowBuckets.length === 0
+        ? '<div class="empty">No shadow drift samples yet.</div>'
+        : '<table><thead><tr><th>Hero / Movement</th><th>Mode</th><th>Map</th><th>Ping / FPS</th><th class="num">Samples</th><th class="num">Pos p95</th><th class="num">Vel p95</th><th class="num">Mismatch</th><th>Last</th></tr></thead><tbody>' +
+          shadowBuckets.map((bucket) => (
+            '<tr>' +
+            '<td>' + escapeHtml(bucket.heroId || 'unknown') + '<br><span class="muted">' + escapeHtml(bucket.movementClass || 'unknown') + '</span></td>' +
+            '<td>' + escapeHtml(bucket.matchMode || '') + '</td>' +
+            '<td class="mono">' + escapeHtml(String(bucket.mapSeed ?? '')) + '</td>' +
+            '<td>' + escapeHtml(bucket.pingBandMs || 'unknown') + '<br><span class="muted">' + escapeHtml(bucket.frameRateBand || 'unknown') + '</span></td>' +
+            '<td class="num">' + num(bucket.sampleCount || 0) + '</td>' +
+            '<td class="num">' + Number(bucket.positionDriftP95 || 0).toFixed(3) + 'm</td>' +
+            '<td class="num">' + Number(bucket.velocityDriftP95 || 0).toFixed(3) + 'm/s</td>' +
+            '<td class="num">' + (Number(bucket.movementMismatchRate || 0) * 100).toFixed(1) + '%</td>' +
+            '<td>' + escapeHtml(bucket.lastSampleAt ? age(Date.parse(bucket.lastSampleAt)) : '') + '</td>' +
+            '</tr>'
+          )).join('') + '</tbody></table>';
+
+      document.getElementById('anticheat-payouts').innerHTML = holds.length === 0
+        ? '<div class="empty">No paused payouts.</div>'
+        : '<table><thead><tr><th>Hold</th><th>Status</th><th>Match</th><th class="num">Amount</th><th>Reason</th><th>Actions</th></tr></thead><tbody>' +
+          holds.map((hold) => (
+            '<tr>' +
+            '<td><span class="mono">' + escapeHtml(hold.id) + '</span><br><span class="muted mono">' + escapeHtml(hold.wageredLobbyId) + '</span></td>' +
+            '<td><span class="pill">' + escapeHtml(hold.status) + '</span></td>' +
+            '<td><span class="mono">' + escapeHtml(hold.matchId || '') + '</span><br><span class="muted">winner ' + escapeHtml(hold.winningTeam || 'refund') + '</span></td>' +
+            '<td class="num">' + escapeHtml(hold.amountLamports || '0') + '</td>' +
+            '<td>' + escapeHtml(hold.reason) + '</td>' +
+            '<td><div class="actions">' +
+            '<button onclick="acResolvePayout(\\'' + escapeHtml(hold.id) + '\\',\\'release\\')">Release</button>' +
+            '<button onclick="acResolvePayout(\\'' + escapeHtml(hold.id) + '\\',\\'refund\\')">Refund</button>' +
+            '<button onclick="acResolvePayout(\\'' + escapeHtml(hold.id) + '\\',\\'cancel\\')">Cancel</button>' +
+            '</div></td>' +
+            '</tr>'
+          )).join('') + '</tbody></table>';
+
+      document.getElementById('anticheat-actions').innerHTML =
+        '<div style="padding:12px; border-bottom:1px solid var(--line)" class="actions">' +
+        '<input id="ac-target-user" placeholder="target user id">' +
+        '<select id="ac-action-type"><option value="suspension">Suspend</option><option value="ban">Ban</option><option value="lift_suspension">Lift suspension</option><option value="lift_ban">Lift ban</option></select>' +
+        '<input id="ac-evidence-case" placeholder="evidence case id">' +
+        '<input id="ac-action-reason" placeholder="reason">' +
+        '<input id="ac-action-expires" type="datetime-local" title="required for suspension">' +
+        '<button onclick="acAccountAction()">Apply</button>' +
+        '</div>' +
+        (accountActions.length === 0
+          ? '<div class="empty">No manual account actions.</div>'
+          : '<table><thead><tr><th>Action</th><th>Target</th><th>Actor</th><th>Reason</th><th>Expires</th><th>Created</th></tr></thead><tbody>' +
+            accountActions.map((action) => (
+              '<tr>' +
+              '<td><span class="pill">' + escapeHtml(action.actionType) + '</span></td>' +
+              '<td><span class="mono">' + escapeHtml(action.targetUserId) + '</span></td>' +
+              '<td><span class="mono">' + escapeHtml(action.actorUserId) + '</span></td>' +
+              '<td>' + escapeHtml(action.reason) + '</td>' +
+              '<td>' + escapeHtml(action.expiresAt || '') + '</td>' +
+              '<td>' + escapeHtml(new Date(action.createdAt).toLocaleString()) + '</td>' +
+              '</tr>'
+            )).join('') + '</tbody></table>');
+    }
+
     async function load() {
       try {
         const response = await fetch('/admin/api/overview', { credentials: 'include', cache: 'no-store' });
@@ -833,6 +1062,7 @@ function renderAdminHtml(): string {
         renderMachines(data);
         renderGameRooms(data);
         renderLobbies(data);
+        renderAntiCheat(data);
       } catch (error) {
         const el = document.getElementById('status');
         el.className = 'status error';
@@ -867,6 +1097,179 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect admin overview' });
+    }
+  });
+
+  router.get('/api/anti-cheat/overview', ensureAdmin, async (_req, res) => {
+    noStore(res);
+    try {
+      res.json(await antiCheatEvidenceStore.listReviewData());
+    } catch (error) {
+      loggers.room.error('Failed to collect anti-cheat overview', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: 'Failed to collect anti-cheat overview' });
+    }
+  });
+
+  router.post('/api/anti-cheat/cases/:caseId', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const status = req.body?.status;
+    const allowedStatuses = new Set(['open', 'investigating', 'resolved', 'false_positive', 'escalated']);
+    if (status !== undefined && !allowedStatuses.has(status)) {
+      res.status(400).json({ error: 'Invalid case status' });
+      return;
+    }
+
+    try {
+      await antiCheatEvidenceStore.updateCase({
+        caseId: req.params.caseId,
+        actorUserId: adminUser.id,
+        status: status as AntiCheatCaseStatus | undefined,
+        note: readRequestString(req.body?.note),
+        resolution: readRequestString(req.body?.resolution),
+        falsePositive: status === 'false_positive' ? true : undefined,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/ranked/:matchId/apply', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const reason = readRequestString(req.body?.reason);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+    try {
+      await applyHeldRankedOutcome(prisma, {
+        matchId: req.params.matchId,
+        actorUserId: adminUser.id,
+        reason,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/ranked/:matchId/cancel', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const reason = readRequestString(req.body?.reason);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+    try {
+      await cancelHeldRankedOutcome(prisma, {
+        matchId: req.params.matchId,
+        actorUserId: adminUser.id,
+        reason,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/payout-holds/:holdId/:action', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const action = req.params.action;
+    const reason = readRequestString(req.body?.reason);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+    if (action !== 'release' && action !== 'refund' && action !== 'cancel') {
+      res.status(400).json({ error: 'Invalid payout hold action' });
+      return;
+    }
+
+    try {
+      const hold = await prisma.antiCheatPayoutHold.findUniqueOrThrow({
+        where: { id: req.params.holdId },
+      });
+      if (hold.status !== 'open') {
+        throw new Error('Payout hold is already resolved');
+      }
+
+      if (action === 'release' || action === 'refund') {
+        await wagerService.settleWageredLobby({
+          wageredLobbyId: hold.wageredLobbyId,
+          matchId: hold.matchId,
+          winningTeam: action === 'release' && isValidTeam(hold.winningTeam) ? hold.winningTeam : null,
+        });
+      } else {
+        await prisma.wageredLobby.updateMany({
+          where: { id: hold.wageredLobbyId },
+          data: { status: 'failed' },
+        });
+      }
+
+      await prisma.$transaction(async (tx) => {
+        await tx.antiCheatPayoutHold.update({
+          where: { id: hold.id },
+          data: {
+            status: action === 'release' ? 'released' : action === 'refund' ? 'refunded' : 'canceled',
+            resolvedByUserId: adminUser.id,
+            resolvedAt: new Date(),
+            resolution: reason,
+          },
+        });
+        await tx.antiCheatAction.create({
+          data: {
+            actionType: action === 'release' ? 'payout_release' : action === 'refund' ? 'refund_decision' : 'settlement_cancel',
+            matchId: hold.matchId,
+            caseId: hold.caseId,
+            actorUserId: adminUser.id,
+            reason,
+            details: { payoutHoldId: hold.id, wageredLobbyId: hold.wageredLobbyId },
+            observedOnly: false,
+            evidenceEventIds: [],
+          },
+        });
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/anti-cheat/account-actions', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const actionType = readRequestString(req.body?.actionType, 64) as AntiCheatAccountActionType;
+    if (!['suspension', 'ban', 'lift_suspension', 'lift_ban'].includes(actionType)) {
+      res.status(400).json({ error: 'Invalid account action type' });
+      return;
+    }
+    const expiresAtRaw = readRequestString(req.body?.expiresAt, 64);
+    const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : null;
+    if (expiresAtRaw && Number.isNaN(expiresAt?.getTime())) {
+      res.status(400).json({ error: 'Invalid expiration' });
+      return;
+    }
+
+    try {
+      await antiCheatEvidenceStore.createAccountAction({
+        actorUserId: adminUser.id,
+        targetUserId: readRequestString(req.body?.targetUserId, 128),
+        actionType,
+        reason: readRequestString(req.body?.reason),
+        evidenceCaseId: readRequestString(req.body?.evidenceCaseId, 128) || null,
+        evidenceEventIds: readEvidenceEventIds(req.body?.evidenceEventIds),
+        expiresAt,
+        elevated: adminUser.elevatedAntiCheatRole,
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 

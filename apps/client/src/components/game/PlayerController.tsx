@@ -58,7 +58,11 @@ import {
   getHeroStats,
   HERO_DEFINITIONS,
   type HeroId,
+  type MatchMode,
+  type MovementCorrectionReason,
+  type PlayerMovementState,
 } from '@voxel-strike/shared';
+import { recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
 
 // Component imports for targeting indicators
 import { BombTargetingIndicator } from './BlazeEffects';
@@ -69,6 +73,52 @@ const DEV_FLY_SPEED = 14;
 const DEV_FLY_FAST_MULTIPLIER = 1.8;
 const DEV_FLY_VERTICAL_SPEED = 10;
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
+
+function frameRateBand(deltaSeconds: number): string {
+  if (deltaSeconds <= 1 / 90) return '90fps+';
+  if (deltaSeconds <= 1 / 45) return '45-90fps';
+  if (deltaSeconds <= 1 / 30) return '30-45fps';
+  return 'sub30fps';
+}
+
+function pingBandMs(ping: number | null | undefined): string {
+  if (ping === null || ping === undefined) return 'unknown';
+  if (ping <= 50) return '0-50';
+  if (ping <= 100) return '51-100';
+  if (ping <= 180) return '101-180';
+  return '181+';
+}
+
+function resolveTraceMatchMode(): MatchMode {
+  const store = useGameStore.getState();
+  return store.matchmakingStatus.matchMode ??
+    store.currentLobbyWager.matchMode ??
+    (store.currentLobbyWager.enabled ? 'custom_wager' : 'custom');
+}
+
+function activeAbilityIdsForTrace(playerAbilities: Record<string, { isActive?: boolean }> | undefined): string[] {
+  return Object.entries(playerAbilities ?? {})
+    .filter(([, ability]) => ability?.isActive)
+    .map(([abilityId]) => abilityId)
+    .sort();
+}
+
+function movementClassForTrace(input: {
+  heroId: HeroId;
+  movement: PlayerMovementState;
+  inputState: typeof INACTIVE_INPUT_STATE;
+  unstuck: boolean;
+  flagCarrier: boolean;
+}): string {
+  if (input.movement.isSliding) return 'slide';
+  if (input.heroId === 'blaze' && input.inputState.ability2) return 'rocket_jump';
+  if (input.heroId === 'phantom' && input.inputState.ability1) return 'blink';
+  if (input.heroId === 'hookshot' && (input.inputState.ability1 || input.movement.isGrappling)) return 'grapple';
+  if (input.heroId === 'hookshot' && input.inputState.ultimate) return 'grapple_trap';
+  if (input.unstuck) return 'unstuck';
+  if (input.flagCarrier) return 'flag_route';
+  return 'baseline';
+}
 
 // ============================================================================
 // PLAYER CONTROLLER COMPONENT
@@ -942,18 +992,25 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       phantomAbilities.fireDireBall(abilityCtx, playerSounds);
     }
 
+    const traceGrapplePoint = hookshotAbilities.grappleTargetRef.current ?? hookshotAbilities.swingAttachPointRef.current;
+    const localMovementForTrace: PlayerMovementState = {
+      ...localPlayer.movement,
+      isGrounded: movement.refs.isGrounded.current,
+      isSprinting: movement.refs.isSprinting.current,
+      isCrouching: movement.refs.isCrouching.current,
+      isSliding,
+      slideTimeRemaining: movement.refs.slideTime.current,
+      isGrappling: hookshotAbilities.isGrapplingRef.current || hookshotAbilities.isSwingingRef.current || localPlayer.movement.isGrappling,
+      grapplePoint: traceGrapplePoint
+        ? { x: traceGrapplePoint.x, y: traceGrapplePoint.y, z: traceGrapplePoint.z }
+        : localPlayer.movement.grapplePoint,
+    };
+
     // Update game store with movement state ONLY (position/rotation go to visualStore below)
     // Position/velocity/rotation data flows ONLY to visualStore (non-reactive) to avoid React re-renders
     // Game state tracks only game events: movement flags, abilities, damage, etc.
     updateLocalPlayer({
-      movement: {
-        ...localPlayer.movement,
-        isGrounded: movement.refs.isGrounded.current,
-        isSprinting: movement.refs.isSprinting.current,
-        isCrouching: movement.refs.isCrouching.current,
-        isSliding,
-        slideTimeRemaining: movement.refs.slideTime.current,
-      },
+      movement: localMovementForTrace,
     });
 
     // Update visual store for non-reactive position access.
@@ -977,7 +1034,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         (phantomAutoReloadForServer && !primaryFireForServer);
       const unstuckForServer = pendingUnstuckInputRef.current;
 
-      sendInput({
+      const sentInput = {
         tick: tickRef.current,
         moveForward: frameInput.moveForward,
         moveBackward: frameInput.moveBackward,
@@ -996,9 +1053,76 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         lookYaw: cameraControl.refs.yaw.current,
         lookPitch: cameraControl.refs.pitch.current,
         timestamp: now,
+        clientFrameRateBand: frameRateBand(dt),
         unstuck: unstuckForServer,
         position: { x: position.x, y: position.y, z: position.z },
         velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+      };
+
+      sendInput(sentInput);
+
+      const storeForTrace = useGameStore.getState();
+      const traceAbilityIds = activeAbilityIdsForTrace(localPlayer.abilities);
+      if (frameInput.ability1 && heroDef?.ability1.abilityId) traceAbilityIds.push(heroDef.ability1.abilityId);
+      if (frameInput.ability2 && heroDef?.ability2.abilityId) traceAbilityIds.push(heroDef.ability2.abilityId);
+      if (frameInput.ultimate && heroDef?.ultimate.abilityId) traceAbilityIds.push(heroDef.ultimate.abilityId);
+      if (shadowStepTargeting) traceAbilityIds.push('phantom_shadow_step_targeting');
+      if (bombTargeting) traceAbilityIds.push('blaze_bomb_targeting');
+      if (grappleTrapTargeting) traceAbilityIds.push('hookshot_grapple_trap_targeting');
+      const traceGroundY = localMovementForTrace.isGrounded
+        ? (groundResult.groundInfo?.groundY ?? position.y - PLAYER_HEIGHT / 2)
+        : null;
+      const traceMovementClass = movementClassForTrace({
+        heroId,
+        movement: localMovementForTrace,
+        inputState: frameInput,
+        unstuck: unstuckForServer,
+        flagCarrier: localPlayer.hasFlag,
+      });
+      const traceMovementBarrier: MovementCorrectionReason | null = unstuckForServer
+        ? 'unstuck'
+        : heroId === 'phantom' && frameInput.ability1
+          ? 'teleport'
+          : heroId === 'blaze' && frameInput.ability2
+            ? 'knockback'
+            : null;
+      recordMovementTraceFrame({
+        heroId,
+        matchMode: resolveTraceMatchMode(),
+        movementClass: traceMovementClass,
+        mapSeed: storeForTrace.mapSeed,
+        frameRateBand: frameRateBand(dt),
+        pingBandMs: pingBandMs(storeForTrace.playerPings.get(localPlayer.id)),
+        tick: tickRef.current,
+        inputState: sentInput,
+        lookYaw: sentInput.lookYaw,
+        lookPitch: sentInput.lookPitch,
+        timestamp: now,
+        position: sentInput.position,
+        velocity: sentInput.velocity,
+        movement: localMovementForTrace,
+        playerState: localPlayer.state,
+        health: localPlayer.health,
+        flagCarrier: localPlayer.hasFlag,
+        activeAbilityState: {
+          activeAbilityIds: Array.from(new Set(traceAbilityIds)).sort(),
+          activeSpeedMultiplier: speedMultiplier,
+          movementBarrier: traceMovementBarrier === 'unstuck' ||
+            traceMovementBarrier === 'teleport' ||
+            traceMovementBarrier === 'knockback'
+            ? traceMovementBarrier
+            : null,
+        },
+        terrainContact: {
+          profile: 'procedural_map',
+          isGrounded: localMovementForTrace.isGrounded,
+          groundY: traceGroundY,
+          blockedAhead: false,
+          mapSeed: storeForTrace.mapSeed,
+        },
+        unstuck: unstuckForServer,
+        crouchPressed: movement.refs.isSliding.current && !localPlayer.movement.isSliding,
+        correctionReason: traceMovementBarrier ?? undefined,
       });
       pendingReloadInputRef.current = false;
       pendingUnstuckInputRef.current = false;

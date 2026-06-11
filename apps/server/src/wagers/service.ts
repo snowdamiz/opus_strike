@@ -56,6 +56,7 @@ type WageredLobbyStatus =
   | 'waiting'
   | 'locked'
   | 'in_game'
+  | 'review_required'
   | 'settling'
   | 'settled'
   | 'refunding'

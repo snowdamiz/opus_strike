@@ -87,6 +87,11 @@ export function MatchSummaryScreen() {
               <p className="mt-3 font-body text-sm text-white/45">
                 {formatDuration(summary.durationMs)} match length
               </p>
+              {summary.matchIntegrity?.reviewRequired && (
+                <div className="mt-4 border border-amber-300/30 bg-amber-300/10 px-3 py-2 font-body text-sm text-amber-100">
+                  {summary.matchIntegrity.message}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/35 p-3 backdrop-blur-sm">

@@ -84,6 +84,7 @@ import type {
   HeroId, 
   Team, 
   PlayerInput,
+  PlayerMovementState,
   MovementCommand,
   MovementCommandPacket,
   MovementCorrectionReason,
@@ -140,6 +141,18 @@ import {
   persistCompletedMatch,
   type MatchParticipantSnapshot,
 } from '../persistence/matchPersistence';
+import {
+  AntiCheatEvidenceStore,
+  AntiCheatRoomRuntime,
+  advanceMovementShadowSimulation,
+  createMovementShadowSimulationState,
+  getActiveAccountRestriction,
+  getAntiCheatConfig,
+  getMovementShadowDriftReport,
+  recordMovementShadowDriftSample,
+  type AntiCheatIntegrityGate,
+  type MovementShadowSimulationState,
+} from '../anticheat';
 import { validateMovementProposal, type LastSafeMovementState } from './movementValidation';
 import {
   GAME_MESSAGE_RATE_LIMITS,
@@ -192,6 +205,8 @@ interface JoinOptions {
   clientId?: string;
   entryTicket?: string;
   authToken?: string;
+  clientBuildId?: string;
+  movementProtocolVersion?: number;
 }
 
 interface BotAssignment {
@@ -288,6 +303,7 @@ interface ServerMovementAuthorityState {
   lastSafe: LastSafeMovementState | null;
   objectiveSuppressedUntil: number;
   transformProposalHoldUntil: number;
+  shadow: MovementShadowSimulationState;
 }
 
 interface SecurityEvent {
@@ -297,6 +313,7 @@ interface SecurityEvent {
   roomId: string;
   tick: number;
   movementEpoch: number;
+  movementSequence?: number;
   reason?: string;
   position?: PlainVec3;
   serverTime: number;
@@ -643,6 +660,8 @@ export class GameRoom extends Room<GameState> {
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   private readonly playerEntryTickets = new Map<string, GameEntryTicketClaims>();
   private readonly securityEvents: SecurityEvent[] = [];
+  private readonly antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
+  private antiCheat: AntiCheatRoomRuntime | null = null;
   private readonly securityLogSamples = new Map<string, { lastLoggedAt: number; suppressed: number }>();
   private readonly damageCapWindows = new Map<string, { startedAt: number; damage: number }>();
   private matchPersistenceLedger: MatchPersistenceLedger | null = null;
@@ -659,6 +678,7 @@ export class GameRoom extends Room<GameState> {
   ): Promise<{ auth: RoomAuthContext; ticket: GameEntryTicketClaims | null }> {
     const directJoin = !this.lobbyId;
     if (directJoin && !isDirectGameRoomJoinAllowed()) {
+      this.recordAuthReject(client, 'direct_join_disabled');
       throw new Error('Direct game room joins are disabled');
     }
 
@@ -671,12 +691,19 @@ export class GameRoom extends Room<GameState> {
         gameRoomId: this.roomId,
       });
       if (!ticket) {
+        this.recordAuthReject(client, 'invalid_entry_ticket', { lobbyId: this.lobbyId });
         throw new Error('Valid game entry ticket required');
       }
       if (this.usedEntryTicketNonces.has(ticket.nonce)) {
+        this.recordAuthReject(client, 'entry_ticket_nonce_replay', { lobbyId: this.lobbyId });
         throw new Error('Game entry ticket already used');
       }
       if (auth.kind === 'authenticated' && auth.userId !== ticket.userId) {
+        this.recordAuthReject(client, 'entry_ticket_user_mismatch', {
+          lobbyId: this.lobbyId,
+          authUserId: auth.userId,
+          ticketUserId: ticket.userId,
+        });
         throw new Error('Game entry ticket does not match authenticated user');
       }
       if (auth.kind === 'guest') {
@@ -695,6 +722,20 @@ export class GameRoom extends Room<GameState> {
       }
     }
 
+    if (!this.isGuestUserId(auth.userId)) {
+      const restriction = await getActiveAccountRestriction(prisma, auth.userId);
+      if (restriction) {
+        this.recordAuthReject(client, `account_${restriction.actionType}`, {
+          userId: auth.userId,
+          expiresAt: restriction.expiresAt?.toISOString() ?? null,
+        });
+        throw new Error(restriction.actionType === 'ban'
+          ? 'Account is not eligible to join matches'
+          : 'Account is temporarily restricted from matches');
+      }
+    }
+
+    this.recordClientJoinHints(client, auth, options);
     return { auth, ticket };
   }
 
@@ -705,6 +746,15 @@ export class GameRoom extends Room<GameState> {
     this.wagerContext = options.wagerContext || null;
     this.rankedEligibilityCandidate = options.rankedEligible === true;
     this.rankedRequiredHumanPlayers = Math.max(1, Math.floor(options.requiredHumanPlayers ?? DEFAULT_GAME_CONFIG.maxPlayers));
+    this.antiCheat = new AntiCheatRoomRuntime({
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      matchMode: this.matchMode,
+      getMatchId: () => this.matchPersistenceLedger?.matchId ?? null,
+      getServerTick: () => this.state?.tick ?? 0,
+      getServerTime: () => this.state?.serverTime || Date.now(),
+      evidenceStore: this.antiCheatEvidenceStore,
+    });
     if (this.lobbyId) {
       assertUsableEntryTicketSecret();
     }
@@ -990,6 +1040,14 @@ export class GameRoom extends Room<GameState> {
       
       if (existingSessionId && existingSessionId !== client.sessionId) {
         loggers.room.info('Duplicate session detected, kicking old session', existingSessionId);
+        this.recordSecurityEvent({
+          type: 'auth_duplicate_session',
+          playerId: client.sessionId,
+          userId: authContext.userId,
+          movementEpoch: this.getMovementAuthority(client.sessionId).movementEpoch,
+          reason: 'duplicate_identity',
+          detail: { previousSessionId: existingSessionId },
+        });
         
         // Find and disconnect the old client
         const oldClient = this.clients.find(c => c.sessionId === existingSessionId);
@@ -1668,6 +1726,21 @@ export class GameRoom extends Room<GameState> {
       forcedByPlayerId,
       players: this.buildMatchSummaryPlayers(winningTeam),
     };
+    const gate = this.antiCheat?.buildIntegrityGate({
+      rankedEligible: this.matchPersistenceLedger?.rankedEligible === true,
+      wagered: Boolean(this.wagerContext),
+    });
+    if (gate && gate.reviewRequired) {
+      event.matchIntegrity = {
+        status: gate.status,
+        reviewRequired: gate.rankedHoldRequired || gate.payoutHoldRequired,
+        rankedOutcome: gate.rankedHoldRequired ? 'review_required' : 'normal',
+        wagerOutcome: gate.payoutHoldRequired ? 'review_required' : 'normal',
+        message: gate.rankedHoldRequired || gate.payoutHoldRequired
+          ? 'Match rewards are pending integrity review.'
+          : 'Match integrity telemetry has been recorded.',
+      };
+    }
     this.attachRankedSummaryUpdates(event, winningTeam, new Date(endedAt), forcedByPlayerId);
     return event;
   }
@@ -1719,6 +1792,8 @@ export class GameRoom extends Room<GameState> {
     }));
 
     if (!this.isFinalRankedEligible(ledger, participants, forcedByPlayerId)) return;
+    const gate = this.antiCheat?.buildIntegrityGate({ rankedEligible: true, wagered: Boolean(this.wagerContext) });
+    if (gate?.rankedHoldRequired) return;
 
     const users = participants
       .map((participant) => this.getRankedUserState(participant.userId))
@@ -1785,6 +1860,7 @@ export class GameRoom extends Room<GameState> {
     return {
       ...(this.metrics?.getDebugSnapshot() ?? { roomId: this.roomId }),
       movement: this.buildMovementTelemetry(),
+      movementShadow: getMovementShadowDriftReport({ limit: 40 }),
       authorityEvents: this.securityEvents.slice(-100),
     };
   }
@@ -2132,6 +2208,7 @@ export class GameRoom extends Room<GameState> {
       lastSafe: null,
       objectiveSuppressedUntil: 0,
       transformProposalHoldUntil: 0,
+      shadow: createMovementShadowSimulationState(),
     };
   }
 
@@ -2146,6 +2223,79 @@ export class GameRoom extends Room<GameState> {
 
   private getPlayerUserId(playerId: string): string | undefined {
     return this.playerAuthContexts.get(playerId)?.userId;
+  }
+
+  private recordAuthReject(client: Client, reason: string, detail: Record<string, unknown> = {}): void {
+    this.antiCheat?.record({
+      eventType: `auth.${reason}`,
+      category: 'auth',
+      source: 'game_room_auth',
+      userId: this.playerAuthContexts.get(client.sessionId)?.userId ?? null,
+      playerSessionId: client.sessionId,
+      severity: reason.includes('replay') || reason.includes('direct_join') ? 'critical' : 'high',
+      confidence: 0.98,
+      reason,
+      details: detail,
+      retentionClass: 'extended',
+    });
+  }
+
+  private recordClientJoinHints(client: Client, auth: RoomAuthContext, options: JoinOptions): void {
+    if (!getAntiCheatConfig().clientHintsEnabled) return;
+
+    const expectedBuildId = process.env.ANTICHEAT_EXPECTED_CLIENT_BUILD_ID || process.env.CLIENT_BUILD_ID || null;
+    const clientBuildId = typeof options.clientBuildId === 'string' && options.clientBuildId.trim()
+      ? options.clientBuildId.trim().slice(0, 80)
+      : null;
+    const movementProtocolVersion = Number.isFinite(options.movementProtocolVersion)
+      ? Math.trunc(options.movementProtocolVersion as number)
+      : null;
+
+    if (!clientBuildId) {
+      this.antiCheat?.record({
+        eventType: 'client_hint.build_missing',
+        category: 'client_hint',
+        source: 'game_room_join',
+        userId: auth.userId,
+        playerSessionId: client.sessionId,
+        severity: 'low',
+        confidence: 0.4,
+        reason: 'build_missing',
+        details: { expectedBuildId },
+        retentionClass: 'short',
+      });
+    } else if (expectedBuildId && clientBuildId !== expectedBuildId) {
+      this.antiCheat?.record({
+        eventType: 'client_hint.build_mismatch',
+        category: 'client_hint',
+        source: 'game_room_join',
+        userId: auth.userId,
+        playerSessionId: client.sessionId,
+        severity: 'low',
+        confidence: 0.5,
+        reason: 'build_mismatch',
+        details: { clientBuildId, expectedBuildId },
+        retentionClass: 'short',
+      });
+    }
+
+    if (movementProtocolVersion !== MOVEMENT_PROTOCOL_VERSION) {
+      this.antiCheat?.record({
+        eventType: 'client_hint.movement_protocol_mismatch',
+        category: 'client_hint',
+        source: 'game_room_join',
+        userId: auth.userId,
+        playerSessionId: client.sessionId,
+        severity: 'low',
+        confidence: 0.5,
+        reason: movementProtocolVersion === null ? 'movement_protocol_missing' : 'movement_protocol_mismatch',
+        details: {
+          movementProtocolVersion,
+          expectedMovementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
+        },
+        retentionClass: 'short',
+      });
+    }
   }
 
   private isGuestUserId(userId: string | undefined): boolean {
@@ -2328,6 +2478,21 @@ export class GameRoom extends Room<GameState> {
     return { message: String(error) };
   }
 
+  private cleanAntiCheatGate(): AntiCheatIntegrityGate {
+    return {
+      status: 'clean',
+      reviewRequired: false,
+      rankedHoldRequired: false,
+      payoutHoldRequired: false,
+      observedOnly: getAntiCheatConfig().mode === 'observe',
+      reason: null,
+      affectedUserIds: [],
+      affectedTeams: [],
+      score: 0,
+      caseId: null,
+    };
+  }
+
   private isFinalRankedEligible(
     ledger: MatchPersistenceLedger,
     participants: MatchParticipantSnapshot[],
@@ -2383,6 +2548,66 @@ export class GameRoom extends Room<GameState> {
       leftAt: participant.leftAt,
     }));
     const rankedEligible = this.isFinalRankedEligible(ledger, participants, forcedByPlayerId);
+    const integrityGate = this.antiCheat?.buildIntegrityGate({
+      rankedEligible,
+      wagered: Boolean(this.wagerContext),
+    }) ?? this.cleanAntiCheatGate();
+    const rankedOutcomeStatus = rankedEligible
+      ? integrityGate.rankedHoldRequired ? 'held' : 'applied'
+      : ledger.matchMode === 'ranked' ? 'canceled' : 'not_applicable';
+    const rankedImpact = rankedEligible
+      ? integrityGate.rankedHoldRequired
+        ? 'held'
+        : integrityGate.reviewRequired
+          ? 'reported'
+          : 'none'
+      : 'none';
+    const wagerImpact = this.wagerContext
+      ? integrityGate.payoutHoldRequired
+        ? 'held'
+        : integrityGate.reviewRequired
+          ? 'reported'
+          : 'none'
+      : 'none';
+
+    void this.antiCheatEvidenceStore.upsertMatchIntegrity({
+      matchId: ledger.matchId,
+      roomId: ledger.roomId,
+      lobbyId: ledger.lobbyId,
+      matchMode: ledger.matchMode,
+      gate: integrityGate,
+      rankedImpact,
+      wagerImpact,
+    }).catch((error) => {
+      loggers.room.error('Failed to persist anti-cheat match integrity', {
+        roomId: ledger.roomId,
+        matchId: ledger.matchId,
+        error: this.serializePersistenceError(error),
+      });
+    });
+
+    if (rankedEligible && (integrityGate.rankedHoldRequired || (integrityGate.reviewRequired && integrityGate.observedOnly))) {
+      void this.antiCheatEvidenceStore.recordAction({
+        type: 'ranked_hold',
+        roomId: ledger.roomId,
+        matchId: ledger.matchId,
+        caseId: integrityGate.caseId,
+        reason: integrityGate.reason ?? 'match_integrity_review',
+        observedOnly: !integrityGate.rankedHoldRequired,
+        details: {
+          status: integrityGate.status,
+          score: integrityGate.score,
+          affectedUserIds: integrityGate.affectedUserIds,
+          rankedOutcomeStatus,
+        },
+      }).catch((error) => {
+        loggers.room.error('Failed to persist anti-cheat ranked action', {
+          roomId: ledger.roomId,
+          matchId: ledger.matchId,
+          error: this.serializePersistenceError(error),
+        });
+      });
+    }
 
     void persistCompletedMatch(prisma, {
       matchId: ledger.matchId,
@@ -2397,6 +2622,10 @@ export class GameRoom extends Room<GameState> {
       blueScore: finalScore.blue,
       winningTeam,
       participants,
+      antiCheatIntegrityStatus: integrityGate.status,
+      antiCheatReviewRequired: integrityGate.rankedHoldRequired || integrityGate.payoutHoldRequired,
+      antiCheatIntegrityReason: integrityGate.reason,
+      rankedOutcomeStatus,
     })
       .then((result) => {
         ledger.state = 'persisted';
@@ -2435,6 +2664,63 @@ export class GameRoom extends Room<GameState> {
     this.wagerSettlementRequested = true;
 
     const matchId = this.matchPersistenceLedger?.matchId ?? null;
+    const gate = this.antiCheat?.buildIntegrityGate({
+      rankedEligible: this.matchPersistenceLedger?.rankedEligible === true,
+      wagered: true,
+    }) ?? this.cleanAntiCheatGate();
+    if (gate.payoutHoldRequired) {
+      this.antiCheatEvidenceStore.createPayoutHold({
+        wageredLobbyId: this.wagerContext.wageredLobbyId,
+        matchId,
+        winningTeam,
+        gate,
+      })
+        .then((holdId) => {
+          loggers.room.info('Wager settlement paused for anti-cheat review', {
+            roomId: this.roomId,
+            lobbyId: this.lobbyId,
+            matchId,
+            wageredLobbyId: this.wagerContext?.wageredLobbyId,
+            holdId,
+            reason: gate.reason,
+          });
+        })
+        .catch((error) => {
+          loggers.room.error('Failed to create anti-cheat payout hold', {
+            roomId: this.roomId,
+            lobbyId: this.lobbyId,
+            matchId,
+            wageredLobbyId: this.wagerContext?.wageredLobbyId,
+            error: this.serializePersistenceError(error),
+          });
+        });
+      return;
+    }
+
+    if (gate.reviewRequired && gate.observedOnly) {
+      void this.antiCheatEvidenceStore.recordAction({
+        type: 'payout_hold',
+        roomId: this.roomId,
+        matchId,
+        caseId: gate.caseId,
+        reason: gate.reason ?? 'match_integrity_review',
+        observedOnly: true,
+        details: {
+          wageredLobbyId: this.wagerContext.wageredLobbyId,
+          winningTeam,
+          score: gate.score,
+          status: gate.status,
+        },
+      }).catch((error) => {
+        loggers.room.error('Failed to record observed anti-cheat payout hold', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId,
+          error: this.serializePersistenceError(error),
+        });
+      });
+    }
+
     wagerService.settleWageredLobby({
       wageredLobbyId: this.wagerContext.wageredLobbyId,
       matchId,
@@ -2490,6 +2776,12 @@ export class GameRoom extends Room<GameState> {
     if (this.securityEvents.length > MAX_SECURITY_EVENTS) {
       this.securityEvents.splice(0, this.securityEvents.length - MAX_SECURITY_EVENTS);
     }
+    const player = this.state.players.get(event.playerId);
+    this.antiCheat?.recordAuthorityEvent({
+      ...fullEvent,
+      team: player?.team ?? null,
+      heroId: isHeroId(player?.heroId) ? player.heroId : null,
+    });
     this.logSecurityEvent(fullEvent);
   }
 
@@ -2686,6 +2978,7 @@ export class GameRoom extends Room<GameState> {
         }))
       : [];
     authority.movementEpoch = nextEpoch;
+    authority.shadow = createMovementShadowSimulationState();
     const preservedOverflow = Math.max(0, preservedCommands.length - MOVEMENT_MAX_SERVER_QUEUE);
     if (preservedOverflow > 0) {
       authority.metrics.droppedCommands += preservedOverflow;
@@ -2697,16 +2990,37 @@ export class GameRoom extends Room<GameState> {
     if (player) {
       this.updateLastSafeMovement(player, authority.lastProcessedSeq);
     }
+    this.recordSecurityEvent({
+      type: 'movement_authority_barrier',
+      playerId,
+      userId: this.getPlayerUserId(playerId),
+      movementEpoch: authority.movementEpoch,
+      reason,
+      position: player ? this.vec3SchemaToPlain(player.position) : undefined,
+      detail: {
+        preserveQueuedCommands: options.preserveQueuedCommands === true,
+        queueLength: authority.pendingCommands.length,
+      },
+    });
     this.suppressObjectives(playerId, reason);
     this.clearHookshotGrapple(playerId);
   }
 
   private sanitizeIncomingMovementCommand(
     authority: ServerMovementAuthorityState,
-    command: MovementCommand
+    command: MovementCommand,
+    playerId: string
   ): MovementCommand | null {
     if (!isValidMovementCommand(command)) {
       authority.metrics.malformedCommands++;
+      this.recordSecurityEvent({
+        type: 'movement_command_reject',
+        playerId,
+        userId: this.getPlayerUserId(playerId),
+        movementEpoch: authority.movementEpoch,
+        reason: 'malformed_command',
+        detail: { commandType: typeof command },
+      });
       return null;
     }
 
@@ -2727,22 +3041,62 @@ export class GameRoom extends Room<GameState> {
 
       authority.metrics.lateCommands++;
       authority.correctionReason = 'epoch_mismatch';
+      this.recordSecurityEvent({
+        type: 'movement_command_reject',
+        playerId,
+        userId: this.getPlayerUserId(playerId),
+        movementEpoch: authority.movementEpoch,
+        movementSequence: sanitized.seq,
+        reason: 'epoch_mismatch',
+        detail: {
+          commandEpoch: sanitized.movementEpoch,
+          authorityEpoch: authority.movementEpoch,
+          lastProcessedSeq: authority.lastProcessedSeq,
+        },
+      });
       return null;
     }
 
     if ((sanitized.collisionRevision ?? 0) !== 0) {
       authority.metrics.staleCollisionRevisionDrops = (authority.metrics.staleCollisionRevisionDrops ?? 0) + 1;
       authority.correctionReason = 'collision_revision';
+      this.recordSecurityEvent({
+        type: 'movement_command_reject',
+        playerId,
+        userId: this.getPlayerUserId(playerId),
+        movementEpoch: authority.movementEpoch,
+        movementSequence: sanitized.seq,
+        reason: 'collision_revision',
+        detail: { collisionRevision: sanitized.collisionRevision },
+      });
       return null;
     }
 
     if (!isMovementSeqAfter(sanitized.seq, authority.lastProcessedSeq)) {
       authority.metrics.duplicateCommands++;
+      this.recordSecurityEvent({
+        type: 'movement_command_reject',
+        playerId,
+        userId: this.getPlayerUserId(playerId),
+        movementEpoch: authority.movementEpoch,
+        movementSequence: sanitized.seq,
+        reason: 'duplicate_command',
+        detail: { lastProcessedSeq: authority.lastProcessedSeq },
+      });
       return null;
     }
 
     if (authority.pendingCommands.some((queued) => queued.seq === sanitized.seq)) {
       authority.metrics.duplicateCommands++;
+      this.recordSecurityEvent({
+        type: 'movement_command_reject',
+        playerId,
+        userId: this.getPlayerUserId(playerId),
+        movementEpoch: authority.movementEpoch,
+        movementSequence: sanitized.seq,
+        reason: 'duplicate_queued_command',
+        detail: { queueLength: authority.pendingCommands.length },
+      });
       return null;
     }
 
@@ -2768,16 +3122,40 @@ export class GameRoom extends Room<GameState> {
       packet.commands.length > MOVEMENT_MAX_PACKET_COMMANDS
     ) {
       authority.metrics.malformedCommands++;
+      this.recordSecurityEvent({
+        type: 'malformed_message',
+        playerId: client.sessionId,
+        userId: this.getPlayerUserId(client.sessionId),
+        movementEpoch: authority.movementEpoch,
+        reason: 'movementCommands',
+        position: this.vec3SchemaToPlain(player.position),
+        detail: {
+          protocolVersion: packet?.protocolVersion,
+          commandCount: Array.isArray(packet?.commands) ? packet.commands.length : null,
+        },
+      });
       return;
     }
 
     for (const rawCommand of packet.commands) {
       if (authority.commandsInWindow >= MOVEMENT_MAX_COMMANDS_PER_SECOND) {
         authority.metrics.droppedCommands++;
+        this.recordSecurityEvent({
+          type: 'movement_command_drop',
+          playerId: client.sessionId,
+          userId: this.getPlayerUserId(client.sessionId),
+          movementEpoch: authority.movementEpoch,
+          reason: 'command_rate_limit',
+          position: this.vec3SchemaToPlain(player.position),
+          detail: {
+            commandsInWindow: authority.commandsInWindow,
+            limit: MOVEMENT_MAX_COMMANDS_PER_SECOND,
+          },
+        });
         continue;
       }
 
-      const command = this.sanitizeIncomingMovementCommand(authority, rawCommand);
+      const command = this.sanitizeIncomingMovementCommand(authority, rawCommand, client.sessionId);
       if (!command) continue;
 
       authority.commandsInWindow++;
@@ -2790,6 +3168,18 @@ export class GameRoom extends Room<GameState> {
       const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
       authority.pendingCommands.splice(0, overflow);
       authority.metrics.droppedCommands += overflow;
+      this.recordSecurityEvent({
+        type: 'movement_command_drop',
+        playerId: client.sessionId,
+        userId: this.getPlayerUserId(client.sessionId),
+        movementEpoch: authority.movementEpoch,
+        reason: 'queue_overflow',
+        position: this.vec3SchemaToPlain(player.position),
+        detail: {
+          overflow,
+          maxQueue: MOVEMENT_MAX_SERVER_QUEUE,
+        },
+      });
       this.markMovementBarrier(client.sessionId, 'queue_overflow');
     }
 
@@ -3022,6 +3412,133 @@ export class GameRoom extends Room<GameState> {
     authority.correctionReason = null;
   }
 
+  private playerMovementSnapshot(player: Player): PlayerMovementState {
+    return {
+      isGrounded: player.movement.isGrounded,
+      isSprinting: player.movement.isSprinting,
+      isCrouching: player.movement.isCrouching,
+      isSliding: player.movement.isSliding,
+      slideTimeRemaining: player.movement.slideTimeRemaining,
+      isWallRunning: player.movement.isWallRunning,
+      wallRunSide: player.movement.wallRunSide === 'left' || player.movement.wallRunSide === 'right'
+        ? player.movement.wallRunSide
+        : null,
+      isGrappling: player.movement.isGrappling,
+      grapplePoint: null,
+      isJetpacking: player.movement.isJetpacking,
+      jetpackFuel: player.movement.jetpackFuel,
+      isGliding: player.movement.isGliding,
+    };
+  }
+
+  private movementShadowPingBand(playerId: string): string {
+    const ping = this.playerPingMs.get(playerId);
+    if (!Number.isFinite(ping)) return 'unknown';
+    if ((ping as number) <= 50) return '0-50';
+    if ((ping as number) <= 100) return '51-100';
+    if ((ping as number) <= 180) return '101-180';
+    return '181+';
+  }
+
+  private movementShadowFrameRateBand(input: PlayerInput): string {
+    const value = input.clientFrameRateBand;
+    return value === '90fps+' ||
+      value === '45-90fps' ||
+      value === '30-45fps' ||
+      value === 'sub30fps'
+      ? value
+      : 'unknown';
+  }
+
+  private movementShadowClass(player: Player, input: PlayerInput): string {
+    if (input.unstuck) return 'unstuck';
+    if (player.hasFlag) return 'flag_route';
+    if (player.movement.isGrappling) return 'grapple';
+    if (player.movement.isSliding) return input.jump ? 'slide_jump' : 'slide';
+    if (player.movement.isGliding) return 'glide';
+    if (player.movement.isWallRunning) return 'wallrun';
+    if (player.heroId === 'blaze' && input.ability2) return 'rocket_jump';
+    if (player.heroId === 'phantom' && (input.ability1 || input.ability2)) return 'teleport_ability';
+    if (player.heroId === 'chronos' && input.ability2) return 'chronos_tempo';
+    if (input.jump && !player.movement.isGrounded) return 'bhop_air';
+    if (input.crouch) return 'crouch';
+    if (input.sprint) return 'sprint';
+    if (input.moveForward || input.moveBackward || input.moveLeft || input.moveRight) return 'walk';
+    return 'idle';
+  }
+
+  private shouldRunMovementShadowSimulation(authority: ServerMovementAuthorityState, input: PlayerInput): boolean {
+    const config = getAntiCheatConfig();
+    if (config.movementAuthorityMode !== 'shadow' && config.movementAuthorityMode !== 'strict') return false;
+    if (config.movementDriftSampleRate <= 0) return false;
+    if (input.devFly || input.unstuck) return false;
+    if (Math.random() > config.movementDriftSampleRate) return false;
+    if (authority.shadow.initialized && input.tick <= authority.shadow.lastSequence) {
+      authority.shadow = createMovementShadowSimulationState();
+      return false;
+    }
+    return true;
+  }
+
+  private recordMovementShadowSimulation(
+    player: Player,
+    input: PlayerInput,
+    proposedPosition: PlainVec3,
+    proposedVelocity: PlainVec3,
+    now: number
+  ): void {
+    const authority = this.getMovementAuthority(player.id);
+    if (!this.shouldRunMovementShadowSimulation(authority, input)) return;
+
+    const heroId = isHeroId(player.heroId) ? player.heroId : null;
+    if (!heroId) return;
+
+    const result = advanceMovementShadowSimulation({
+      state: authority.shadow,
+      playerPosition: this.vec3SchemaToPlain(player.position),
+      playerVelocity: this.vec3SchemaToPlain(player.velocity),
+      playerMovement: this.playerMovementSnapshot(player),
+      heroStats: getHeroStats(heroId),
+      input,
+      terrain: this.movementTerrain,
+      flagCarrier: player.hasFlag,
+      activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
+      proposedPosition,
+      proposedVelocity,
+    });
+    authority.shadow = result.nextState;
+
+    authority.metrics.shadowSamples = (authority.metrics.shadowSamples ?? 0) + 1;
+    authority.metrics.shadowLastPositionDrift = result.sample.positionDrift;
+    authority.metrics.shadowLastVelocityDrift = result.sample.velocityDrift;
+    authority.metrics.shadowMaxPositionDrift = Math.max(
+      authority.metrics.shadowMaxPositionDrift ?? 0,
+      result.sample.positionDrift
+    );
+    authority.metrics.shadowMaxVelocityDrift = Math.max(
+      authority.metrics.shadowMaxVelocityDrift ?? 0,
+      result.sample.velocityDrift
+    );
+    if (result.sample.movementMismatch) {
+      authority.metrics.shadowMovementMismatches = (authority.metrics.shadowMovementMismatches ?? 0) + 1;
+    }
+
+    recordMovementShadowDriftSample({
+      roomId: this.roomId,
+      matchMode: this.matchMode,
+      heroId,
+      movementClass: this.movementShadowClass(player, input),
+      mapSeed: this.state.mapSeed,
+      pingBandMs: this.movementShadowPingBand(player.id),
+      frameRateBand: this.movementShadowFrameRateBand(input),
+      positionDrift: result.sample.positionDrift,
+      velocityDrift: result.sample.velocityDrift,
+      movementMismatch: result.sample.movementMismatch,
+      objectiveSuppressed: this.isObjectiveSuppressed(player.id, now),
+      sampledAt: now,
+    });
+  }
+
   private handleInput(client: Client, input: PlayerInput & { position?: { x: number; y: number; z: number }; velocity?: { x: number; y: number; z: number } }) {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive') return;
@@ -3053,9 +3570,22 @@ export class GameRoom extends Room<GameState> {
 
     const hasMovementProposal = Boolean(input.position || input.velocity);
     const canAcceptMovementProposal = (
+      getAntiCheatConfig().allowClientTransformProposals &&
       now >= (this.authoritativePositionUntil.get(client.sessionId) ?? 0) &&
       now >= authority.transformProposalHoldUntil
     );
+
+    if (hasMovementProposal && !canAcceptMovementProposal && !getAntiCheatConfig().allowClientTransformProposals) {
+      this.recordSecurityEvent({
+        type: 'movement_command_reject',
+        playerId: client.sessionId,
+        userId: this.getPlayerUserId(client.sessionId),
+        movementEpoch: authority.movementEpoch,
+        movementSequence: input.tick,
+        reason: 'client_transform_proposal_disabled',
+        position: this.vec3SchemaToPlain(player.position),
+      });
+    }
 
     if (hasMovementProposal && canAcceptMovementProposal) {
       authority.pendingCommands.length = 0;
@@ -3065,6 +3595,7 @@ export class GameRoom extends Room<GameState> {
       const proposedVelocity = input.velocity ?? this.vec3SchemaToPlain(player.velocity);
 
       if (!isHardenedMovementEnabled()) {
+        this.recordMovementShadowSimulation(player, input, proposedPosition, proposedVelocity, now);
         if (this.isFiniteVec3(proposedPosition)) {
           const bounds = this.getMapWorldBounds();
           player.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, proposedPosition.x));
@@ -3109,6 +3640,7 @@ export class GameRoom extends Room<GameState> {
         });
 
         if (validation.accepted) {
+          this.recordMovementShadowSimulation(player, input, proposedPosition, proposedVelocity, now);
           player.position.x = proposedPosition.x;
           player.position.y = proposedPosition.y;
           player.position.z = proposedPosition.z;

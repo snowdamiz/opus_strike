@@ -50,6 +50,7 @@ export interface PlayerInput {
   lookPitch: number;
   timestamp: number;
   unstuck?: boolean;
+  clientFrameRateBand?: string;
   // Client position/velocity for sync (server-authoritative games should validate)
   position?: Vec3;
   velocity?: Vec3;

@@ -3,16 +3,17 @@ import { Client, Room } from 'colyseus.js';
 import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, RankedEntryQuote, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
-import type {
-  BotDifficulty,
-  GameEndEvent,
-  HeroId,
-  Team,
-  PlayerInput,
-  PublicRankSnapshot,
-  MovementCommandPacket,
-  PlayerPingRequestMessage,
-  PlayerPingsMessage,
+import {
+  MOVEMENT_PROTOCOL_VERSION,
+  type BotDifficulty,
+  type GameEndEvent,
+  type HeroId,
+  type Team,
+  type PlayerInput,
+  type PublicRankSnapshot,
+  type MovementCommandPacket,
+  type PlayerPingRequestMessage,
+  type PlayerPingsMessage,
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
@@ -1129,6 +1130,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         preferredTeam: team,
         clientId,
         entryTicket,
+        clientBuildId: config.buildId,
+        movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
       });
 
       setupGameListeners(gameRoomRef.current, playerName);

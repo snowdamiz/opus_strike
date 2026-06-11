@@ -12,6 +12,7 @@ type PlayerInputValidationResult =
 
 const MAX_TEXT_LENGTH = 200;
 const MAX_NAME_LENGTH = 24;
+const CLIENT_FRAME_RATE_BANDS = new Set(['90fps+', '45-90fps', '30-45fps', 'sub30fps', 'unknown']);
 const REQUIRED_INPUT_BOOLEANS = [
   'moveForward',
   'moveBackward',
@@ -139,6 +140,9 @@ export function parsePlayerInputPayload(value: unknown, receivedAt = Date.now())
   if (crouchPressed === null) return invalidPlayerInput('crouchPressed');
   if (unstuck === null) return invalidPlayerInput('unstuck');
   if (devFly === null) return invalidPlayerInput('devFly');
+  const clientFrameRateBand = typeof value.clientFrameRateBand === 'string' && CLIENT_FRAME_RATE_BANDS.has(value.clientFrameRateBand)
+    ? value.clientFrameRateBand
+    : undefined;
 
   return { ok: true, input: {
     tick: Math.max(0, Math.trunc(tick)),
@@ -161,6 +165,7 @@ export function parsePlayerInputPayload(value: unknown, receivedAt = Date.now())
     lookPitch: clampLookPitch(lookPitch),
     timestamp,
     unstuck: unstuck ?? undefined,
+    clientFrameRateBand,
     position: position ?? undefined,
     velocity: velocity ?? undefined,
     devFly: devFly ?? undefined,

@@ -18,6 +18,7 @@ import {
   visualStore,
 } from '../store/visualStore';
 import { applySelfMovementAuthority, confirmLocalMovementTransform } from '../movement/localPrediction';
+import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/PhantomEffects';
@@ -688,6 +689,7 @@ export function setupSelfMovementAuthorityHandler(
   room.onMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
     hasReceivedSelfMovementAuthority = true;
     recordNetworkMessage('selfMovementAuthority', authority);
+    recordMovementTraceAuthorityAck(authority);
     const store = useGameStore.getState();
     const localPlayer = store.localPlayer;
     if (!localPlayer) return;

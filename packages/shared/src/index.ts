@@ -7,6 +7,7 @@ export * from './types/game.js';
 export * from './types/network.js';
 export * from './types/input.js';
 export * from './types/movementPrediction.js';
+export * from './types/antiCheatTrace.js';
 export * from './types/voice.js';
 export * from './types/matchMode.js';
 
