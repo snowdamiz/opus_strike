@@ -79,6 +79,8 @@ interface HeroVoxelBodyProps {
   idleIntensity?: number;
   showTeamAccents?: boolean;
   castShadow?: boolean;
+  bodyOpacity?: number;
+  bodyOpacityRef?: MutableRefObject<number>;
   socketOwnerId?: string;
 }
 
@@ -1574,6 +1576,39 @@ function TeamAccentMaterial({ part, teamColor }: { part: TeamAccentPart; teamCol
   );
 }
 
+function applyHeroBodyOpacity(root: THREE.Object3D, opacity: number): void {
+  const clampedOpacity = clamp01(opacity);
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.material) return;
+
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) {
+      const storedBaseOpacity = material.userData.heroBodyBaseOpacity;
+      const storedTransparent = material.userData.heroBodyBaseTransparent;
+      const storedDepthWrite = material.userData.heroBodyBaseDepthWrite;
+      const baseOpacity = typeof storedBaseOpacity === 'number' ? storedBaseOpacity : material.opacity;
+      const baseTransparent = typeof storedTransparent === 'boolean' ? storedTransparent : material.transparent;
+      const baseDepthWrite = typeof storedDepthWrite === 'boolean' ? storedDepthWrite : material.depthWrite;
+      const nextTransparent = clampedOpacity < 0.999 || baseTransparent;
+      const nextDepthWrite = clampedOpacity < 0.999 ? false : baseDepthWrite;
+
+      if (storedBaseOpacity === undefined) {
+        material.userData.heroBodyBaseOpacity = material.opacity;
+        material.userData.heroBodyBaseTransparent = material.transparent;
+        material.userData.heroBodyBaseDepthWrite = material.depthWrite;
+      }
+
+      material.opacity = baseOpacity * clampedOpacity;
+      if (material.transparent !== nextTransparent) {
+        material.transparent = nextTransparent;
+        material.needsUpdate = true;
+      }
+      material.depthWrite = nextDepthWrite;
+    }
+  });
+}
+
 export const HeroVoxelBody = memo(function HeroVoxelBody({
   heroId,
   team,
@@ -1603,6 +1638,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   idleIntensity = 1,
   showTeamAccents = true,
   castShadow = true,
+  bodyOpacity = 1,
+  bodyOpacityRef,
   socketOwnerId,
 }: HeroVoxelBodyProps) {
   const resolvedHero = heroId || 'phantom';
@@ -1626,6 +1663,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const movementCycleRef = useRef(0);
   const wasJumpingRef = useRef(false);
   const jumpStartedAtRef = useRef<number | null>(null);
+  const appliedBodyOpacityRef = useRef(-1);
   const scale = height / 1.8;
   const initialVerticalScale = Math.max(0.45, Math.min(1, postureScaleY));
   const teamColor = TEAM_COLORS[team];
@@ -1668,6 +1706,10 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     return () => {
       materials.forEach((material) => material.dispose());
     };
+  }, [materials]);
+
+  useEffect(() => {
+    appliedBodyOpacityRef.current = -1;
   }, [materials]);
 
   useEffect(() => {
@@ -1716,6 +1758,11 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   useFrame((state, delta) => {
     if (!groupRef.current) return;
     const frameDelta = Math.min(delta, 0.05);
+    const nextBodyOpacity = bodyOpacityRef?.current ?? bodyOpacity;
+    if (Math.abs(appliedBodyOpacityRef.current - nextBodyOpacity) > 0.001) {
+      appliedBodyOpacityRef.current = nextBodyOpacity;
+      applyHeroBodyOpacity(groupRef.current, nextBodyOpacity);
+    }
     const verticalScale = Math.max(0.45, Math.min(1, postureScaleYRef?.current ?? postureScaleY));
     const baseScaleY = scale * verticalScale;
     const t = state.clock.elapsedTime;

@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
+  VOID_RAY_CHARGE_TIME,
   type PublicRankSnapshot,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
@@ -23,6 +25,10 @@ import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecor
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/PhantomEffects';
+import {
+  startObservedAbilityCastEffect,
+  stopObservedAbilityCastEffects,
+} from '../components/game/ObservedAbilityCastEffects';
 import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
@@ -747,6 +753,7 @@ export function setupPlayerVitalsHandler(
 
     for (const removedId of data.removedPlayerIds || []) {
       stopRemotePhantomCharge(removedId);
+      stopObservedAbilityCastEffects(removedId);
       actions.removePlayer(removedId);
     }
 
@@ -1330,6 +1337,22 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId);
       stopRemotePhantomCharge(data.playerId);
+      stopObservedAbilityCastEffects(data.playerId, 'phantom_void_ray_charge');
+      if (!isLocalPlayer) {
+        const visualStartTime = Date.now();
+        startObservedAbilityCastEffect({
+          id: `phantom_void_ray_charge_${data.playerId}`,
+          playerId: data.playerId,
+          abilityId: 'phantom_void_ray_charge',
+          socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+          startPosition,
+          startTime: visualStartTime,
+          endTime: visualStartTime + (data.durationMs ?? VOID_RAY_CHARGE_TIME),
+          color: 0x9f7aea,
+          secondaryColor: 0x22d3ee,
+          scale: 1.08,
+        });
+      }
       const controller = new AbortController();
       remotePhantomChargeControllers.set(data.playerId, controller);
       const predictedVisualId = isLocalPlayer
@@ -1351,6 +1374,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
     case 'phantom_void_ray_charge_cancel':
       stopRemotePhantomCharge(data.playerId);
+      stopObservedAbilityCastEffects(data.playerId, 'phantom_void_ray_charge');
       if (isLocalPlayer) {
         store.setVoidRayCharging(false, 0);
       }
@@ -1364,6 +1388,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         [PHANTOM_VOID_RAY_ORB_SOCKET_NAME]
       );
       stopRemotePhantomCharge(data.playerId);
+      stopObservedAbilityCastEffects(data.playerId, 'phantom_void_ray_charge');
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('phantom_void_ray', data.playerId)
         : null;
@@ -1864,6 +1889,23 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       if (isLocalPlayer && !predictedVisualId) {
         triggerChronosLifelineConduitPose(data.serverTime ?? now);
       }
+      if (!isLocalPlayer) {
+        const releaseDelay = data.releaseAt
+          ? Math.max(0, data.releaseAt - (data.serverTime ?? now))
+          : CHRONOS_LIFELINE_RELEASE_DELAY_MS;
+        startObservedAbilityCastEffect({
+          id: `${castId}_cast`,
+          playerId: data.playerId,
+          abilityId: 'chronos_lifeline_conduit',
+          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          startPosition,
+          startTime: now,
+          endTime: now + Math.max(160, releaseDelay),
+          color: 0x22c55e,
+          secondaryColor: 0xbbf7d0,
+          scale: 0.96,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit')) {
         playChronosWorldSound('chronosLifeline', startPosition);
       }
@@ -1894,8 +1936,23 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           fadeOutMs: Math.min(CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS, releaseDelay),
         });
       }
+      if (!isLocalPlayer && releaseDelay > 0) {
+        startObservedAbilityCastEffect({
+          id: `${castId}_cast`,
+          playerId: data.playerId,
+          abilityId: 'chronos_timebreak',
+          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          startPosition,
+          startTime: now,
+          endTime: now + releaseDelay,
+          color: 0xdc2626,
+          secondaryColor: 0x22c55e,
+          scale: 1.16,
+        });
+      }
 
       window.setTimeout(() => {
+        stopObservedAbilityCastEffects(data.playerId, 'chronos_timebreak');
         const freshStore = useGameStore.getState();
         const freshLocalPlayerId = freshStore.localPlayer?.id ?? freshStore.playerId;
         const isFreshLocalPlayer = data.playerId === freshLocalPlayerId;
@@ -1953,6 +2010,22 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
       if (!predictedVisualId) {
         triggerChronosAscendantParadoxPose(activatedAt);
+      }
+      if (!isLocalPlayer) {
+        startObservedAbilityCastEffect({
+          id: `${castId}_cast`,
+          playerId: data.playerId,
+          abilityId: 'chronos_ascendant_paradox',
+          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          startPosition: position
+            ? { x: position.x, y: position.y + 1.12, z: position.z }
+            : undefined,
+          startTime: now,
+          endTime: now + 650,
+          color: 0x22c55e,
+          secondaryColor: 0xdc2626,
+          scale: 1.22,
+        });
       }
       if (position) {
         playChronosWorldSound('chronosAegis', position, { volume: 0.9 });
@@ -2107,6 +2180,9 @@ export function setupCombatHandlers(room: Room) {
     }
 
     const isRemoteSource = data.sourceId !== localPlayerId;
+    if (data.abilityId === 'chronos_lifeline_conduit') {
+      stopObservedAbilityCastEffects(data.sourceId, 'chronos_lifeline_conduit');
+    }
     const sourceSocketPose = isRemoteSource
       ? readRemoteModelSocketAny(data.sourceId, [CHRONOS_PRIMARY_ORB_SOCKET_NAME])
       : null;

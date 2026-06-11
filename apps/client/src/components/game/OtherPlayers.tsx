@@ -131,6 +131,9 @@ const REMOTE_SAMPLE_ROTATION_SMOOTHING = 32;
 const REMOTE_SAMPLE_SNAP_DISTANCE = 3.5;
 const REMOTE_ATTACK_STATE_RETENTION_MS = 3200;
 const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
+const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
+const PHANTOM_VEIL_BODY_OPACITY = 0.12;
+const PHANTOM_VEIL_OPACITY_DAMP_RATE = 12;
 const REMOTE_SIMPLIFIED_GEOMETRIES = {
   torso: new THREE.BoxGeometry(1, 1, 1),
   head: new THREE.BoxGeometry(1, 1, 1),
@@ -297,10 +300,17 @@ function getPlayerMovementPose(player: Player, hasLoweredPosture: boolean, isMov
   return player.movement.isSprinting ? 'run' : 'walk';
 }
 
+function hasActivePhantomVeil(player: Player): boolean {
+  if (player.state !== 'alive' || player.heroId !== 'phantom') return false;
+  const veil = player.abilities?.[PHANTOM_VEIL_ABILITY_ID];
+  return Boolean(veil?.isActive);
+}
+
 function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const { camera } = useThree();
   const [lodTier, setLodTier] = useState<RemotePlayerLodTier>(0);
+  const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const lodAccumulatorRef = useRef(0);
   const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
   const playerHeight = heroStats?.size.height ?? 1.8;
@@ -322,6 +332,8 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   const attackSideRef = useRef<-1 | 1>(1);
   const movementPoseRef = useRef<HeroMovementPose>(initialMovementPose);
   const postureScaleYRef = useRef(postureScaleY);
+  const bodyOpacityRef = useRef(isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1);
+  const isVeiledRef = useRef(isVeiled);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
   const distantUpdateAccumulatorRef = useRef(0);
@@ -350,6 +362,18 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
     } else {
       distantUpdateAccumulatorRef.current = 0;
     }
+
+    const frameIsVeiled = hasActivePhantomVeil(player);
+    if (frameIsVeiled !== isVeiledRef.current) {
+      isVeiledRef.current = frameIsVeiled;
+      setIsVeiled(frameIsVeiled);
+    }
+    bodyOpacityRef.current = THREE.MathUtils.damp(
+      bodyOpacityRef.current,
+      frameIsVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1,
+      PHANTOM_VEIL_OPACITY_DAMP_RATE,
+      stepDelta
+    );
 
     // Initialize position on first frame
     if (!initializedRef.current) {
@@ -501,6 +525,9 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
           movementPoseRef={movementPoseRef}
           walkDirectionRef={walkDirectionRef}
           hasFlag={player.hasFlag}
+          castShadow={!isVeiled}
+          bodyOpacity={isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1}
+          bodyOpacityRef={bodyOpacityRef}
         />
       ) : lodTier === 1 ? (
         <SimplifiedRemoteBody
@@ -510,13 +537,14 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
           height={playerHeight}
           postureScaleYRef={postureScaleYRef}
           hasFlag={player.hasFlag}
+          bodyVisible={!isVeiled}
         />
       ) : (
-        <RemotePlayerMarker team={player.team} isBot={player.isBot} hasFlag={player.hasFlag} />
+        !isVeiled && <RemotePlayerMarker team={player.team} isBot={player.isBot} hasFlag={player.hasFlag} />
       )}
 
       {/* Nameplate */}
-      {config.showNameplates && lodTier <= 1 && (
+      {!isVeiled && config.showNameplates && lodTier <= 1 && (
         <Nameplate
           heroId={player.heroId}
           name={player.name}
@@ -527,7 +555,7 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
         />
       )}
 
-      {config.showBeacons && lodTier <= 1 && (
+      {!isVeiled && config.showBeacons && lodTier <= 1 && (
         <PlayerVisibilityBeacon
           team={player.team}
           height={visibleHeight}
@@ -559,6 +587,7 @@ function SimplifiedRemoteBody({
   height,
   postureScaleYRef,
   hasFlag,
+  bodyVisible = true,
 }: {
   socketOwnerId?: string;
   heroId: HeroId | null;
@@ -566,6 +595,7 @@ function SimplifiedRemoteBody({
   height: number;
   postureScaleYRef: MutableRefObject<number>;
   hasFlag: boolean;
+  bodyVisible?: boolean;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const socketRefs = useRef<Record<string, THREE.Group | null>>({});
@@ -607,24 +637,28 @@ function SimplifiedRemoteBody({
 
   return (
     <group ref={groupRef} position={[0, height * 0.5, 0]} dispose={null}>
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.torso}
-        material={torsoMaterial}
-        scale={[0.62, height * 0.72, 0.42]}
-      />
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.head}
-        material={headMaterial}
-        position={[0, height * 0.43, 0]}
-        scale={[0.42, 0.34, 0.36]}
-      />
-      {hasFlag && (
-        <mesh
-          geometry={REMOTE_SIMPLIFIED_GEOMETRIES.flag}
-          material={flagMaterial}
-          position={[0, height * 0.7, -0.28]}
-          scale={[0.18, 0.42, 0.04]}
-        />
+      {bodyVisible && (
+        <>
+          <mesh
+            geometry={REMOTE_SIMPLIFIED_GEOMETRIES.torso}
+            material={torsoMaterial}
+            scale={[0.62, height * 0.72, 0.42]}
+          />
+          <mesh
+            geometry={REMOTE_SIMPLIFIED_GEOMETRIES.head}
+            material={headMaterial}
+            position={[0, height * 0.43, 0]}
+            scale={[0.42, 0.34, 0.36]}
+          />
+          {hasFlag && (
+            <mesh
+              geometry={REMOTE_SIMPLIFIED_GEOMETRIES.flag}
+              material={flagMaterial}
+              position={[0, height * 0.7, -0.28]}
+              scale={[0.18, 0.42, 0.04]}
+            />
+          )}
+        </>
       )}
       {socketMarkers.map((marker) => (
         <group

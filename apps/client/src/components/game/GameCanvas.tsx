@@ -15,6 +15,7 @@ import { SlideSpeedLines } from './SlideSpeedLines';
 import { HeroViewmodel } from './HeroViewmodel';
 import { VoidZonesManager, DireBallsManager, VoidRaysManager, PhantomPersonalShieldsManager } from './phantom';
 import { PhantomEffectsManager } from './PhantomEffects';
+import { ObservedAbilityCastEffectsManager } from './ObservedAbilityCastEffects';
 import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
@@ -690,6 +691,7 @@ export function GameCanvas({
             <PhantomPersonalShieldsManager />
             <VoidRaysManager />
             <PhantomEffectsManager />
+            <ObservedAbilityCastEffectsManager />
             <BlazeEffectsManager />
             <HookshotEffectsManager />
             <ChronosAscendantManager />
