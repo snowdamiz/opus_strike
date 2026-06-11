@@ -1281,7 +1281,7 @@
       "movement": {
         "isGrounded": true,
         "isSprinting": false,
-        "isCrouching": true,
+        "isCrouching": false,
         "isSliding": true,
         "slideTimeRemaining": 0.6,
         "isWallRunning": false,
@@ -2932,7 +2932,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.5833333333333327,
@@ -2991,7 +2991,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.566666666666666,
@@ -3050,7 +3050,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.5499999999999993,
@@ -3109,7 +3109,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.5333333333333325,
@@ -3168,7 +3168,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.5166666666666658,
@@ -3227,7 +3227,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.49999999999999917,
@@ -3286,7 +3286,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.4833333333333325,
@@ -3345,7 +3345,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.46666666666666584,
@@ -3404,7 +3404,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.4499999999999992,
@@ -3463,7 +3463,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.4333333333333325,
@@ -3522,7 +3522,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.41666666666666585,
@@ -3581,7 +3581,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.3999999999999992,
@@ -3640,7 +3640,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.3833333333333325,
@@ -3699,7 +3699,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.36666666666666586,
@@ -3758,7 +3758,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.3499999999999992,
@@ -3817,7 +3817,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.33333333333333254,
@@ -3876,7 +3876,7 @@
       },
       "movement": {
         "isGrounded": false,
-        "isSprinting": true,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.3166666666666659,
@@ -3925,17 +3925,17 @@
       "clientTimeMs": 1100,
       "rapierPosition": {
         "x": 0,
-        "y": 0.9,
+        "y": 1.7438888888888875,
         "z": -7.062279422695509
       },
       "rapierVelocity": {
         "x": 0,
-        "y": 0,
+        "y": -4.616666666666668,
         "z": -7.012707509255082
       },
       "movement": {
-        "isGrounded": true,
-        "isSprinting": true,
+        "isGrounded": false,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.2999999999999992,
@@ -3957,8 +3957,8 @@
       },
       "terrainContact": {
         "profile": "flat",
-        "isGrounded": true,
-        "groundY": 0,
+        "isGrounded": false,
+        "groundY": null,
         "blockedAhead": false,
         "collisionRevision": 0,
         "mapSeed": 20260611
@@ -3984,17 +3984,17 @@
       "clientTimeMs": 1116.6666666666667,
       "rapierPosition": {
         "x": 0,
-        "y": 0.9,
-        "z": -7.167470035334335
+        "y": 1.6599999999999986,
+        "z": -7.179157881183094
       },
       "rapierVelocity": {
         "x": 0,
-        "y": 0,
-        "z": -6.311436758329574
+        "y": -5.033333333333335,
+        "z": -7.012707509255082
       },
       "movement": {
-        "isGrounded": true,
-        "isSprinting": true,
+        "isGrounded": false,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.28333333333333255,
@@ -4016,8 +4016,8 @@
       },
       "terrainContact": {
         "profile": "flat",
-        "isGrounded": true,
-        "groundY": 0,
+        "isGrounded": false,
+        "groundY": null,
         "blockedAhead": false,
         "collisionRevision": 0,
         "mapSeed": 20260611
@@ -4043,17 +4043,17 @@
       "clientTimeMs": 1133.3333333333335,
       "rapierPosition": {
         "x": 0,
-        "y": 0.9,
-        "z": -7.262141586709279
+        "y": 1.5691666666666653,
+        "z": -7.296036339670678
       },
       "rapierVelocity": {
         "x": 0,
-        "y": 0,
-        "z": -5.6802930824966165
+        "y": -5.450000000000002,
+        "z": -7.012707509255082
       },
       "movement": {
-        "isGrounded": true,
-        "isSprinting": true,
+        "isGrounded": false,
+        "isSprinting": false,
         "isCrouching": false,
         "isSliding": false,
         "slideTimeRemaining": 0.2666666666666659,
@@ -4075,8 +4075,8 @@
       },
       "terrainContact": {
         "profile": "flat",
-        "isGrounded": true,
-        "groundY": 0,
+        "isGrounded": false,
+        "groundY": null,
         "blockedAhead": false,
         "collisionRevision": 0,
         "mapSeed": 20260611

@@ -52,7 +52,7 @@ let cachedConfig: AntiCheatRuntimeConfig | null = null;
 export function getAntiCheatConfig(): AntiCheatRuntimeConfig {
   if (cachedConfig) return cachedConfig;
 
-  const requestedMovementAuthorityMode = envMovementMode('ANTICHEAT_MOVEMENT_AUTHORITY_MODE', 'compatibility');
+  const requestedMovementAuthorityMode = envMovementMode('ANTICHEAT_MOVEMENT_AUTHORITY_MODE', 'strict');
   const movementParityGateRequired = envBool('ANTICHEAT_MOVEMENT_PARITY_GATE_REQUIRED', true);
   const movementParityGate = getMovementParityGateStatus({
     required: movementParityGateRequired,
@@ -72,7 +72,7 @@ export function getAntiCheatConfig(): AntiCheatRuntimeConfig {
     payoutHoldsEnabled: envBool('ANTICHEAT_PAYOUT_HOLDS_ENABLED', false),
     manualAccountActionsEnabled: envBool('ANTICHEAT_MANUAL_ACCOUNT_ACTIONS_ENABLED', false),
     banRequiresElevatedRole: envBool('ANTICHEAT_BAN_REQUIRES_ELEVATED_ROLE', true),
-    allowClientTransformProposals: envBool('ANTICHEAT_ALLOW_CLIENT_TRANSFORM_PROPOSALS', true),
+    allowClientTransformProposals: envBool('ANTICHEAT_ALLOW_CLIENT_TRANSFORM_PROPOSALS', false),
     clientHintsEnabled: envBool('ANTICHEAT_CLIENT_HINTS_ENABLED', true),
     movementAuthorityMode: movementParityGate.effectiveMode,
     movementParityGateRequired,

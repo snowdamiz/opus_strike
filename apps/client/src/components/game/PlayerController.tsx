@@ -5,9 +5,9 @@
  * Logic has been extracted into specialized hooks for better maintainability.
  *
  * @see hooks/player/useCamera.ts - Camera control and mouse look
- * @see hooks/player/useMovement.ts - Movement, slide, and bunny hop physics
+ * @see hooks/player/useMovement.ts - Development fly helpers and movement-facing refs
  * @see hooks/player/useAbilitySystem.ts - Cooldowns and charge management
- * @see hooks/player/usePlayerPhysics.ts - Ground detection and collision
+ * @see movement/localPrediction.ts - Shared capsule motor prediction
  * @see hooks/player/abilities/ - Hero-specific ability handlers
  */
 
@@ -25,7 +25,7 @@ import {
   setFlamethrowerVisualPose,
 } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
-import { getActiveProceduralMap, usePhysics } from '../../hooks/usePhysics';
+import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
 import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
@@ -38,31 +38,42 @@ import {
   useCamera,
   useMovement,
   useAbilitySystem,
-  usePlayerPhysics,
   usePhantomAbilities,
   useBlazeAbilities,
   useHookshotAbilities,
   useChronosAbilities,
   PLAYER_HEIGHT,
-  PLAYER_CROUCH_HEIGHT,
   EYE_HEIGHT,
 } from '../../hooks/player';
 import { useLocalAbilityAudioPrediction } from '../../hooks/player/useLocalAbilityAudioPrediction';
 import {
   ABILITY_DEFINITIONS,
   CHRONOS_LIFELINE_RADIUS,
-  CROUCH_MULTIPLIER,
+  MOVEMENT_MAX_PACKET_COMMANDS,
+  MOVEMENT_SUBSTEP_SECONDS,
   TICK_RATE,
   createEmptyInputState,
-  findUnstuckTerrainTeleport,
   getHeroStats,
   HERO_DEFINITIONS,
   type HeroId,
   type MatchMode,
+  type MovementCommand,
   type MovementCorrectionReason,
   type PlayerMovementState,
 } from '@voxel-strike/shared';
 import { recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
+import {
+  addLocalMovementImpulse,
+  confirmLocalMovementTransform,
+  createLocalMovementCommand,
+  createMovementCommandPacket,
+  ensureLocalPredictionInitialized,
+  getCurrentPredictedState,
+  getCurrentPredictedVisualPosition,
+  getLocalMovementCollisionRevision,
+  movementStateFromPlayer,
+  stepLocalMovementPrediction,
+} from '../../movement/localPrediction';
 
 // Component imports for targeting indicators
 import { BombTargetingIndicator } from './BlazeEffects';
@@ -148,7 +159,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   // Input and network
   const { inputState, isPointerLocked, isControlPressed, isTouchInputActive, requestPointerLock, exitPointerLock } = useInput();
   usePhysics();
-  const { sendInput, requestBlazeBombDrop } = useNetwork();
+  const { sendInput, sendMovementCommands, requestBlazeBombDrop } = useNetwork();
 
   // Audio hooks
   const {
@@ -157,13 +168,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     playBlazeRocket, playBlazeBombTarget, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
     startFlamethrowerSound, stopFlamethrowerSound,
   } = useAbilitySounds();
-  const { updateWalkingSound, preloadWalkingSound, startSlide, stopSlide } = useMovementSounds();
+  const { updateWalkingSound, preloadWalkingSound } = useMovementSounds();
 
   // Player hooks
   const cameraControl = useCamera({ isPointerLocked });
   const movement = useMovement();
   const abilitySystem = useAbilitySystem();
-  const physics = usePlayerPhysics();
 
   // Hero ability hooks
   const phantomAbilities = usePhantomAbilities();
@@ -180,6 +190,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const initializedRef = useRef(false);
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
+  const lastTraceRef = useRef(0);
+  const movementCommandAccumulatorRef = useRef(0);
+  const pendingMovementCommandsRef = useRef<MovementCommand[]>([]);
+  const lastCrouchHeldRef = useRef(false);
+  const pendingCrouchPressedRef = useRef(false);
   const lastHeroIdRef = useRef<string | null>(null);
   const reloadPressedRef = useRef(false);
   const pendingReloadInputRef = useRef(false);
@@ -188,6 +203,27 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
+
+  const resetMovementCommandBuffer = useCallback(() => {
+    movementCommandAccumulatorRef.current = 0;
+    pendingMovementCommandsRef.current = [];
+    lastCrouchHeldRef.current = false;
+    pendingCrouchPressedRef.current = false;
+  }, []);
+
+  const flushMovementCommands = useCallback((nowMs: number, force = false) => {
+    const pending = pendingMovementCommandsRef.current;
+    if (pending.length === 0) return;
+    if (!force && pending.length < MOVEMENT_MAX_PACKET_COMMANDS && nowMs - lastSendRef.current < 1000 / TICK_RATE) {
+      return;
+    }
+
+    while (pending.length > 0) {
+      const packetCommands = pending.splice(0, MOVEMENT_MAX_PACKET_COMMANDS);
+      sendMovementCommands(createMovementCommandPacket(packetCommands));
+    }
+    lastSendRef.current = nowMs;
+  }, [sendMovementCommands]);
 
   const hasChronosLifelineTarget = useCallback(() => {
     const store = useGameStore.getState();
@@ -245,12 +281,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
     playBlazeRocket, playBlazeBombTarget, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
     startFlamethrowerSound, stopFlamethrowerSound,
-  };
-
-  const movementSounds = {
-    updateWalkingSound,
-    startSlide,
-    stopSlide,
   };
 
   const resetBlazeFlamethrower = useCallback((timestampMs = Date.now()) => {
@@ -381,6 +411,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       pendingUnstuckInputRef.current = false;
+      resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
       useGameStore.getState().setSlideIntensity(0);
       resetPredictedAbilitySounds();
@@ -398,6 +429,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       pendingUnstuckInputRef.current = false;
+      resetMovementCommandBuffer();
       resetPredictedAbilitySounds();
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setChronosAegisVisualState(localPlayer.id, false, now);
@@ -433,6 +465,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
       pendingUnstuckInputRef.current = false;
+      resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
       movement.refs.velocity.current.set(0, 0, 0);
       movement.refs.isGrounded.current = false;
@@ -480,6 +513,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       pendingUnstuckInputRef.current = false;
+      resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
       useGameStore.getState().setSlideIntensity(0);
       resetPredictedAbilitySounds();
@@ -501,6 +535,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
       pendingUnstuckInputRef.current = false;
+      resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
       resetPredictedAbilitySounds();
       blazeAbilities.resetRocketJump();
@@ -607,108 +642,39 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
     const heroStats = cachedHeroStatsRef.current.stats!;
 
-    // Position from visualStore (client-predicted) with fallback to gameStore (server spawn)
+    ensureLocalPredictionInitialized(localPlayer);
+    let predictedState = getCurrentPredictedState(movementStateFromPlayer(localPlayer));
+
     const position = positionRef.current;
-    const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
-    if (visualPos) {
-      position.set(visualPos.x, visualPos.y, visualPos.z);
-    } else {
-      // First frame - use server position
-      position.set(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z);
-    }
     const velocity = movement.refs.velocity.current;
     const localImpulses = consumeLocalPlayerImpulses();
     for (const impulse of localImpulses) {
-      if (impulse.mode === 'set') {
-        velocity.set(impulse.x, impulse.y, impulse.z);
-      } else {
-        velocity.x += impulse.x;
-        velocity.y += impulse.y;
-        velocity.z += impulse.z;
-      }
-      if (impulse.y > 0) {
-        movement.refs.isGrounded.current = false;
-        movement.refs.wasGrounded.current = false;
-        movement.refs.canJump.current = false;
-        movement.refs.smoothedY.current = null;
-      }
-      if (impulse.x !== 0 || impulse.z !== 0) {
-        movement.refs.isSliding.current = false;
-        movement.refs.slideTime.current = 0;
-      }
+      predictedState = addLocalMovementImpulse(
+        { x: impulse.x, y: impulse.y, z: impulse.z },
+        impulse.mode ?? 'add'
+      ) ?? predictedState;
     }
-    if (
-      movement.refs.smoothedY.current !== null &&
-      Math.abs(position.y - movement.refs.smoothedY.current) > 1.5
-    ) {
-      movement.refs.smoothedY.current = null;
-      movement.refs.wasGrounded.current = false;
-      movement.refs.isGrounded.current = false;
-      movement.refs.canJump.current = false;
-    }
+    position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
+    velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
+    movement.refs.isGrounded.current = predictedState.movement.isGrounded;
+    movement.refs.wasGrounded.current = predictedState.movement.isGrounded;
+    movement.refs.canJump.current = predictedState.movement.isGrounded;
+    movement.refs.isSliding.current = predictedState.movement.isSliding;
+    movement.refs.isCrouching.current = predictedState.movement.isCrouching;
+    movement.refs.isSprinting.current = predictedState.movement.isSprinting;
+    movement.refs.slideTime.current = predictedState.movement.slideTimeRemaining;
+    movement.refs.smoothedY.current = predictedState.position.y;
 
     const unstuckRequestId = useGameStore.getState().unstuckRequestId;
     if (unstuckRequestId !== lastUnstuckRequestIdRef.current) {
       lastUnstuckRequestIdRef.current = unstuckRequestId;
       pendingUnstuckInputRef.current = true;
-      const activeMap = getActiveProceduralMap();
-      const terrainTeleport = activeMap ? findUnstuckTerrainTeleport(activeMap, position) : null;
-      if (terrainTeleport) {
-        position.set(terrainTeleport.position.x, terrainTeleport.position.y, terrainTeleport.position.z);
-        velocity.set(0, 0, 0);
-        movement.refs.isGrounded.current = false;
-        movement.refs.wasGrounded.current = false;
-        movement.refs.canJump.current = false;
-        movement.refs.isSliding.current = false;
-        movement.refs.slideTime.current = 0;
-        movement.refs.smoothedY.current = null;
-        stopSlide();
-      }
     }
 
-    const movementMultiplier = shadowStepTargeting ? 0.3 : 1;
-    const moveDirection = movement.calculateMoveDirection(frameInput, cameraControl.refs.yaw.current);
-
-    // Update slide state
-    let { isSliding, speed: modifiedSpeed } = movement.updateSlideState(
-      frameInput,
-      movement.refs.isGrounded.current,
-      cameraControl.refs.yaw.current,
-      heroStats.moveSpeed * movementMultiplier,
-      dt,
-      movementSounds
-    );
-
-    if (!isSliding && !movement.refs.isCrouching.current && !physics.canStandAtPosition(position)) {
-      movement.refs.isCrouching.current = true;
-      movement.refs.isSprinting.current = false;
-      modifiedSpeed = heroStats.moveSpeed * movementMultiplier * CROUCH_MULTIPLIER;
-    }
-    const playerBodyHeight = (isSliding || movement.refs.isCrouching.current)
-      ? PLAYER_CROUCH_HEIGHT
-      : PLAYER_HEIGHT;
-
-    // Apply ability speed boosts
     let { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
-    const phantomVeil = heroId === 'phantom' ? localPlayer.abilities?.['phantom_veil'] : undefined;
-    if (phantomVeil?.isActive) {
-      const activatedAt = phantomVeil.activatedAt ?? now;
-      const durationMs = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 0) * 1000;
-      if (durationMs <= 0 || now - activatedAt < durationMs) {
-        speedMultiplier *= 1.3;
-      }
+    if (localPlayer.heroId === 'phantom' && localPlayer.abilities?.['phantom_veil']?.isActive) {
+      speedMultiplier *= 1.3;
     }
-    const finalSpeed = modifiedSpeed * speedMultiplier;
-
-    // Apply movement physics
-    movement.applyMovement(
-      movement.refs.velocity.current,
-      moveDirection,
-      finalSpeed,
-      movement.refs.isGrounded.current,
-      isSliding,
-      dt
-    );
 
     // Handle hero-specific abilities
     const heroDef = HERO_DEFINITIONS[heroId];
@@ -884,90 +850,97 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       }
     }
 
-    // Ground check
-    const groundResult = physics.checkGround(
-      position,
-      velocity,
-      movement.refs.smoothedY.current,
-      movement.refs.wasGrounded.current,
-      dt
+    if (
+      position.x !== predictedState.position.x ||
+      position.y !== predictedState.position.y ||
+      position.z !== predictedState.position.z ||
+      velocity.x !== predictedState.velocity.x ||
+      velocity.y !== predictedState.velocity.y ||
+      velocity.z !== predictedState.velocity.z
+    ) {
+      predictedState = confirmLocalMovementTransform(
+        localPlayer,
+        {
+          position: { x: position.x, y: position.y, z: position.z },
+          velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+          movement: {
+            isGrappling: hookshotAbilities.isGrapplingRef.current || hookshotAbilities.isSwingingRef.current,
+            grapplePoint: hookshotAbilities.grappleTargetRef.current ?? hookshotAbilities.swingAttachPointRef.current ?? null,
+          },
+        },
+        cameraControl.refs.yaw.current
+      );
+    }
+
+    const wasGroundedBeforePrediction = predictedState.movement.isGrounded;
+    const currentTargeting = useGameStore.getState().shadowStepTargeting;
+    const currentBombTargeting = useGameStore.getState().bombTargeting;
+    const phantomAutoReloadForServer = heroId === 'phantom' &&
+      phantomAbilities.phantomPrimaryReloadingRef.current &&
+      phantomAbilities.phantomPrimaryAmmoRef.current <= 0;
+    const reloadForServer = frameInput.reload ||
+      pendingReloadInputRef.current ||
+      (phantomAutoReloadForServer && !primaryFireForServer);
+    const unstuckForServer = pendingUnstuckInputRef.current;
+    const crouchHeld = frameInput.crouch || isControlPressed;
+    if (crouchHeld && !lastCrouchHeldRef.current) {
+      pendingCrouchPressedRef.current = true;
+    }
+    lastCrouchHeldRef.current = crouchHeld;
+
+    const commandInput = {
+      ...frameInput,
+      crouch: crouchHeld,
+      primaryFire: heroId === 'blaze' && currentBombTargeting ? false : primaryFireForServer,
+      reload: reloadForServer,
+      ability2: currentTargeting ? false : ability2ForServer,
+    };
+
+    movementCommandAccumulatorRef.current = Math.min(
+      movementCommandAccumulatorRef.current + dt,
+      MOVEMENT_SUBSTEP_SECONDS * MOVEMENT_MAX_PACKET_COMMANDS
     );
 
-    movement.refs.isGrounded.current = groundResult.isGrounded;
-    movement.refs.canJump.current = groundResult.canJump;
-    if (groundResult.newSmoothedY !== null) {
-      movement.refs.smoothedY.current = groundResult.newSmoothedY;
+    let substepsThisFrame = 0;
+    while (
+      movementCommandAccumulatorRef.current >= MOVEMENT_SUBSTEP_SECONDS &&
+      substepsThisFrame < MOVEMENT_MAX_PACKET_COMMANDS
+    ) {
+      const command = createLocalMovementCommand(commandInput, {
+        lookYaw: cameraControl.refs.yaw.current,
+        lookPitch: cameraControl.refs.pitch.current,
+        clientTimeMs: now,
+        unstuck: pendingUnstuckInputRef.current,
+        crouchPressed: pendingCrouchPressedRef.current,
+      });
+      pendingUnstuckInputRef.current = false;
+      pendingCrouchPressedRef.current = false;
+      pendingMovementCommandsRef.current.push(command);
+      predictedState = stepLocalMovementPrediction(localPlayer, command);
+      movementCommandAccumulatorRef.current -= MOVEMENT_SUBSTEP_SECONDS;
+      tickRef.current = command.seq;
+      substepsThisFrame++;
     }
-    if (heroId === 'hookshot' && (groundResult.isGrounded || groundResult.newSmoothedY !== null)) {
+    flushMovementCommands(now);
+    pendingReloadInputRef.current = false;
+
+    position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
+    velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
+    const visualPosition = getCurrentPredictedVisualPosition(predictedState.position, now);
+    movement.refs.isGrounded.current = predictedState.movement.isGrounded;
+    movement.refs.wasGrounded.current = predictedState.movement.isGrounded;
+    movement.refs.canJump.current = predictedState.movement.isGrounded;
+    movement.refs.isCrouching.current = predictedState.movement.isCrouching;
+    movement.refs.isSprinting.current = predictedState.movement.isSprinting;
+    movement.refs.isSliding.current = predictedState.movement.isSliding;
+    movement.refs.slideTime.current = predictedState.movement.slideTimeRemaining;
+    movement.refs.smoothedY.current = visualPosition.y;
+
+    const isSliding = predictedState.movement.isSliding;
+    const justLanded = predictedState.movement.isGrounded && !wasGroundedBeforePrediction;
+    if (heroId === 'hookshot' && predictedState.movement.isGrounded && !wasGroundedBeforePrediction) {
       hookshotAbilities.handleSwingTerrainContact();
     }
-
-    // Reset smoothedY when becoming airborne to prevent bounce-on-land from height
-    // Without this, smoothedY retains the old ground level, causing the player to be
-    // "pulled up" toward the old height when landing at a lower elevation
-    const justBecameAirborne = !movement.refs.isGrounded.current && movement.refs.wasGrounded.current;
-    if (justBecameAirborne) {
-      movement.refs.smoothedY.current = null;
-    }
-
-    // Handle landing (bunny hop speed retention)
-    const justLanded = movement.refs.isGrounded.current && !movement.refs.wasGrounded.current;
-    movement.handleLanding(velocity, movement.refs.wasGrounded.current, movement.refs.isGrounded.current);
-    movement.refs.wasGrounded.current = movement.refs.isGrounded.current;
-
-    const willJumpThisFrame = frameInput.jump && movement.refs.canJump.current && movement.refs.isGrounded.current && !shadowStepTargeting;
-
-    // Horizontal movement with step-up
-    const { didFollowTerrain, newSmoothedY, hitTerrain } = physics.applyHorizontalMovement(
-      position,
-      velocity,
-      movement.refs.isGrounded.current,
-      movement.refs.smoothedY.current,
-      dt,
-      playerBodyHeight,
-      willJumpThisFrame
-    );
-
-    if (newSmoothedY !== null) {
-      movement.refs.smoothedY.current = newSmoothedY;
-    }
-    if (heroId === 'hookshot' && hitTerrain) {
-      hookshotAbilities.handleSwingTerrainContact();
-    }
-
-    let didJumpThisFrame = false;
-    if (willJumpThisFrame) {
-      velocity.y = heroStats.jumpForce;
-      movement.refs.canJump.current = false;
-      movement.refs.isGrounded.current = false;
-      movement.refs.wasGrounded.current = false;
-      movement.refs.smoothedY.current = null;
-      didJumpThisFrame = true;
-    }
-
-    // Gravity (reduced during grapple, skipped during swing, skipped when grounded)
-    physics.applyGravity(
-      velocity,
-      movement.refs.isGrounded.current,
-      hookshotAbilities.isGrapplingRef.current,
-      hookshotAbilities.isSwingingRef.current,
-      dt
-    );
-
-    // Vertical movement (skip when terrain following already placed the body)
-    if (!didFollowTerrain || didJumpThisFrame) {
-      const { hitCeiling } = physics.applyVerticalMovement(position, velocity, dt, playerBodyHeight);
-      if (hitCeiling && heroId === 'hookshot') {
-        hookshotAbilities.handleSwingTerrainContact();
-      }
-    }
-
-    // Out of bounds check
-    physics.checkOutOfBounds(position, velocity, movement.refs.isGrounded.current);
-
-    // Map boundary constraint - use visualPos (frame start position) as previous
-    const prevPos = visualPos || localPlayer.position;
-    physics.constrainToMapBoundary(position, { x: prevPos.x, z: prevPos.z });
 
     // Update walking sound
     const walkingSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
@@ -981,8 +954,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     // Update camera
     cameraControl.updateCameraRotation(camera, isSliding, movement.refs.isCrouching.current, dt);
-    const cameraBodyY = movement.refs.smoothedY.current ?? position.y;
-    camera.position.set(position.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
+    const cameraBodyY = movement.refs.smoothedY.current ?? visualPosition.y;
+    camera.position.set(visualPosition.x, cameraBodyY + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPosition.z);
     camera.updateMatrixWorld();
     camera.getWorldDirection(audioForwardRef.current);
     audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
@@ -1014,53 +987,16 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     });
 
     // Update visual store for non-reactive position access.
-    setPlayerVisualPosition(localPlayer.id, { x: position.x, y: position.y, z: position.z });
+    setPlayerVisualPosition(localPlayer.id, visualPosition);
     setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
 
-    // Update slide intensity
-    useGameStore.getState().setSlideIntensity(movement.getSlideIntensity());
+    const slideIntensity = isSliding
+      ? Math.min(1, Math.max(0.25, predictedState.movement.slideTimeRemaining / 0.8))
+      : 0;
+    useGameStore.getState().setSlideIntensity(slideIntensity);
 
-    // Send input to server
-    tickRef.current++;
-    if (now - lastSendRef.current >= 1000 / TICK_RATE) {
-      lastSendRef.current = now;
-      const currentTargeting = useGameStore.getState().shadowStepTargeting;
-      const currentBombTargeting = useGameStore.getState().bombTargeting;
-      const phantomAutoReloadForServer = heroId === 'phantom' &&
-        phantomAbilities.phantomPrimaryReloadingRef.current &&
-        phantomAbilities.phantomPrimaryAmmoRef.current <= 0;
-      const reloadForServer = frameInput.reload ||
-        pendingReloadInputRef.current ||
-        (phantomAutoReloadForServer && !primaryFireForServer);
-      const unstuckForServer = pendingUnstuckInputRef.current;
-
-      const sentInput = {
-        tick: tickRef.current,
-        moveForward: frameInput.moveForward,
-        moveBackward: frameInput.moveBackward,
-        moveLeft: frameInput.moveLeft,
-        moveRight: frameInput.moveRight,
-        jump: frameInput.jump,
-        crouch: frameInput.crouch || movement.refs.isCrouching.current,
-        sprint: frameInput.sprint,
-        primaryFire: heroId === 'blaze' && currentBombTargeting ? false : primaryFireForServer,
-        secondaryFire: frameInput.secondaryFire,
-        reload: reloadForServer,
-        ability1: frameInput.ability1,
-        ability2: currentTargeting ? false : ability2ForServer,
-        ultimate: frameInput.ultimate,
-        interact: frameInput.interact,
-        lookYaw: cameraControl.refs.yaw.current,
-        lookPitch: cameraControl.refs.pitch.current,
-        timestamp: now,
-        clientFrameRateBand: frameRateBand(dt),
-        unstuck: unstuckForServer,
-        position: { x: position.x, y: position.y, z: position.z },
-        velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
-      };
-
-      sendInput(sentInput);
-
+    if (now - lastTraceRef.current >= 1000 / TICK_RATE) {
+      lastTraceRef.current = now;
       const storeForTrace = useGameStore.getState();
       const traceAbilityIds = activeAbilityIdsForTrace(localPlayer.abilities);
       if (frameInput.ability1 && heroDef?.ability1.abilityId) traceAbilityIds.push(heroDef.ability1.abilityId);
@@ -1070,12 +1006,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       if (bombTargeting) traceAbilityIds.push('blaze_bomb_targeting');
       if (grappleTrapTargeting) traceAbilityIds.push('hookshot_grapple_trap_targeting');
       const traceGroundY = localMovementForTrace.isGrounded
-        ? (groundResult.groundInfo?.groundY ?? position.y - PLAYER_HEIGHT / 2)
+        ? position.y - PLAYER_HEIGHT / 2
         : null;
       const traceMovementClass = movementClassForTrace({
         heroId,
         movement: localMovementForTrace,
-        inputState: frameInput,
+        inputState: commandInput,
         unstuck: unstuckForServer,
         flagCarrier: localPlayer.hasFlag,
       });
@@ -1094,12 +1030,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         frameRateBand: frameRateBand(dt),
         pingBandMs: pingBandMs(storeForTrace.playerPings.get(localPlayer.id)),
         tick: tickRef.current,
-        inputState: sentInput,
-        lookYaw: sentInput.lookYaw,
-        lookPitch: sentInput.lookPitch,
+        inputState: commandInput,
+        lookYaw: cameraControl.refs.yaw.current,
+        lookPitch: cameraControl.refs.pitch.current,
         timestamp: now,
-        position: sentInput.position,
-        velocity: sentInput.velocity,
+        position: { x: position.x, y: position.y, z: position.z },
+        velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
         movement: localMovementForTrace,
         playerState: localPlayer.state,
         health: localPlayer.health,
@@ -1119,13 +1055,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           groundY: traceGroundY,
           blockedAhead: false,
           mapSeed: storeForTrace.mapSeed,
+          collisionRevision: getLocalMovementCollisionRevision(),
         },
         unstuck: unstuckForServer,
         crouchPressed: movement.refs.isSliding.current && !localPlayer.movement.isSliding,
         correctionReason: traceMovementBarrier ?? undefined,
       });
-      pendingReloadInputRef.current = false;
-      pendingUnstuckInputRef.current = false;
     }
   });
 

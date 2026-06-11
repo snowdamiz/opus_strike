@@ -201,7 +201,11 @@ export interface AbilityExecutionContext {
     player: Player,
     distance: number
   ) => { x: number; y: number; z: number };
-  markAuthoritativePosition?: (playerId: string, durationMs: number) => void;
+  resolvePhantomShadowStepDestination?: (
+    player: Player,
+    distance: number
+  ) => { x: number; y: number; z: number };
+  markAuthoritativePosition?: (playerId: string, durationMs: number, reason?: 'teleport' | 'knockback') => void;
 }
 
 /**
@@ -236,7 +240,7 @@ export function executeAbility(
       player.movement.isGrounded = false;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;
-      context.markAuthoritativePosition?.(player.id, 450);
+      context.markAuthoritativePosition?.(player.id, 450, 'teleport');
 
       context.createVoidZone(
         { x: destination.x, y: destination.y - 0.9, z: destination.z },
@@ -251,11 +255,18 @@ export function executeAbility(
       abilityState.activatedAt = now;
       const distance = PHANTOM_SHADOWSTEP_DISTANCE;
       const yaw = player.lookYaw;
-      player.position.x += -Math.sin(yaw) * distance;
-      player.position.z += -Math.cos(yaw) * distance;
+      const fallbackDestination = {
+        x: player.position.x + -Math.sin(yaw) * distance,
+        y: player.position.y,
+        z: player.position.z + -Math.cos(yaw) * distance,
+      };
+      const destination = context.resolvePhantomShadowStepDestination?.(player, distance) ?? fallbackDestination;
+      player.position.x = destination.x;
+      player.position.y = destination.y;
+      player.position.z = destination.z;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;
-      context.markAuthoritativePosition?.(player.id, 450);
+      context.markAuthoritativePosition?.(player.id, 450, 'teleport');
       break;
     }
 
@@ -309,7 +320,7 @@ export function executeAbility(
       player.movement.isGrounded = false;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;
-      context.markAuthoritativePosition?.(player.id, 550);
+      context.markAuthoritativePosition?.(player.id, 550, 'knockback');
       break;
     }
 

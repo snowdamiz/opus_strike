@@ -1050,12 +1050,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1115,12 +1111,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1180,12 +1172,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1245,12 +1233,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1310,12 +1294,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1375,12 +1355,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1440,12 +1416,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1505,12 +1477,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1570,12 +1538,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1635,12 +1599,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1700,12 +1660,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1765,12 +1721,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1830,12 +1782,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1895,12 +1843,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -1960,12 +1904,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2025,12 +1965,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2090,12 +2026,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2155,12 +2087,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2220,12 +2148,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2285,12 +2209,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2350,12 +2270,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2415,12 +2331,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2480,12 +2392,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false
@@ -2545,12 +2453,8 @@
         "slideTimeRemaining": 0,
         "isWallRunning": false,
         "wallRunSide": null,
-        "isGrappling": true,
-        "grapplePoint": {
-          "x": 8,
-          "y": 5,
-          "z": -8
-        },
+        "isGrappling": false,
+        "grapplePoint": null,
         "isJetpacking": false,
         "jetpackFuel": 100,
         "isGliding": false

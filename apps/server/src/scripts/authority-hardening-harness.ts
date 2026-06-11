@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { MOVEMENT_BUTTON_MOVE_FORWARD, parseMovementCommandPayload } from '@voxel-strike/shared';
 import type { HeroStats, Vec3 } from '@voxel-strike/shared';
 import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
 import { MessageRateLimiter } from '../rooms/rateLimiter';
 import { validateMovementProposal, type MovementBounds } from '../rooms/movementValidation';
 import { parsePlayerInputPayload, validatePlayerInputPayload, validateTeamPayload } from '../rooms/protocolValidation';
+import { Player } from '../rooms/schema/Player';
+import { AbilityStateSchema } from '../rooms/schema/Components';
+import { executeAbility } from '../rooms/abilityHandlers';
 
 process.env.ENTRY_TICKET_SECRET = process.env.ENTRY_TICKET_SECRET || 'authority-harness-secret';
 
@@ -205,6 +209,42 @@ function runProtocolTests(): void {
   }
 }
 
+function runMovementCommandPayloadTests(): void {
+  const parsed = parseMovementCommandPayload({
+    seq: '7',
+    buttons: String(MOVEMENT_BUTTON_MOVE_FORWARD),
+    lookYaw: '0.25',
+    lookPitch: '-0.1',
+    clientTimeMs: '1781195891144',
+    movementEpoch: '2',
+    collisionRevision: '3',
+  });
+  assert.ok(parsed);
+  assert.equal(parsed.seq, 7);
+  assert.equal(parsed.buttons, MOVEMENT_BUTTON_MOVE_FORWARD);
+  assert.equal(parsed.lookYaw, 0.25);
+  assert.equal(parsed.lookPitch, -0.1);
+  assert.equal(parsed.clientTimeMs, 1781195891144);
+  assert.equal(parsed.movementEpoch, 2);
+  assert.equal(parsed.collisionRevision, 3);
+
+  assert.equal(
+    parseMovementCommandPayload({ ...parsed, seq: 'not-a-sequence' }),
+    null,
+    'malformed sequence must be rejected'
+  );
+  assert.equal(
+    parseMovementCommandPayload({ ...parsed, seq: '4294967296' }),
+    null,
+    'out-of-range sequence must be rejected before normalization'
+  );
+  assert.equal(
+    parseMovementCommandPayload({ ...parsed, collisionRevision: { value: 3 } }),
+    null,
+    'malformed collision revision must be rejected when present'
+  );
+}
+
 function runRateLimitTests(): void {
   const limiter = new MessageRateLimiter();
   assert.equal(limiter.consume('player-a', 'chat', { limit: 2, intervalMs: 1000 }, 0), true);
@@ -213,9 +253,67 @@ function runRateLimitTests(): void {
   assert.equal(limiter.consume('player-a', 'chat', { limit: 2, intervalMs: 1000 }, 1100), true);
 }
 
+function createAbilityHarnessPlayer(heroId: 'phantom' | 'blaze'): Player {
+  const player = new Player();
+  player.id = `${heroId}-harness`;
+  player.team = 'red';
+  player.heroId = heroId;
+  player.lookYaw = 0;
+  player.lookPitch = 0;
+  player.position.x = 1;
+  player.position.y = 5;
+  player.position.z = 2;
+  player.velocity.x = 0;
+  player.velocity.y = 0;
+  player.velocity.z = 0;
+  player.movement.isGrounded = true;
+  player.movement.isSliding = true;
+  player.movement.slideTimeRemaining = 0.4;
+  return player;
+}
+
+function runAbilityBarrierTests(): void {
+  const marks: Array<{ playerId: string; durationMs: number; reason?: 'teleport' | 'knockback' }> = [];
+  const context = {
+    createVoidZone: () => undefined,
+    resolvePhantomBlinkDestination: () => ({ x: 7, y: 6, z: 8 }),
+    resolvePhantomShadowStepDestination: () => ({ x: 3, y: 5, z: 4 }),
+    markAuthoritativePosition: (playerId: string, durationMs: number, reason?: 'teleport' | 'knockback') => {
+      marks.push({ playerId, durationMs, reason });
+    },
+  };
+
+  const blinkPlayer = createAbilityHarnessPlayer('phantom');
+  executeAbility(blinkPlayer, 'phantom_blink', new AbilityStateSchema(), {}, context);
+  assert.deepEqual(
+    { x: blinkPlayer.position.x, y: blinkPlayer.position.y, z: blinkPlayer.position.z },
+    { x: 7, y: 6, z: 8 },
+    'blink should use capsule-validated resolver destination'
+  );
+  assert.equal(marks[marks.length - 1]?.reason, 'teleport');
+  assert.equal(blinkPlayer.movement.isSliding, false);
+
+  const shadowPlayer = createAbilityHarnessPlayer('phantom');
+  executeAbility(shadowPlayer, 'phantom_shadowstep', new AbilityStateSchema(), {}, context);
+  assert.deepEqual(
+    { x: shadowPlayer.position.x, y: shadowPlayer.position.y, z: shadowPlayer.position.z },
+    { x: 3, y: 5, z: 4 },
+    'shadow-step should use capsule-validated resolver destination'
+  );
+  assert.equal(marks[marks.length - 1]?.reason, 'teleport');
+
+  const rocketPlayer = createAbilityHarnessPlayer('blaze');
+  executeAbility(rocketPlayer, 'blaze_rocketjump', new AbilityStateSchema(), {}, context);
+  assert.equal(marks[marks.length - 1]?.reason, 'knockback');
+  assert.equal(rocketPlayer.movement.isGrounded, false);
+  assert.equal(rocketPlayer.movement.isSliding, false);
+}
+
 runMovementTests();
 runTicketTests();
 runProtocolTests();
+runMovementCommandPayloadTests();
 runRateLimitTests();
+runAbilityBarrierTests();
 
 console.log('authority hardening harness passed');

@@ -256,3 +256,64 @@ export function sanitizeMovementCommand(command: MovementCommand): MovementComma
       : undefined,
   };
 }
+
+function coerceFiniteMovementNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'bigint') {
+    const numberValue = Number(value);
+    return Number.isSafeInteger(numberValue) ? numberValue : null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return null;
+    const numberValue = Number(trimmed);
+    return Number.isFinite(numberValue) ? numberValue : null;
+  }
+
+  return null;
+}
+
+export function parseMovementCommandPayload(value: unknown): MovementCommand | null {
+  if (value === null || typeof value !== 'object') return null;
+
+  const raw = value as Record<string, unknown>;
+  const seq = coerceFiniteMovementNumber(raw.seq);
+  const buttons = coerceFiniteMovementNumber(raw.buttons);
+  const lookYaw = coerceFiniteMovementNumber(raw.lookYaw);
+  const lookPitch = coerceFiniteMovementNumber(raw.lookPitch);
+  const clientTimeMs = coerceFiniteMovementNumber(raw.clientTimeMs);
+  const movementEpoch = coerceFiniteMovementNumber(raw.movementEpoch);
+  const collisionRevision = raw.collisionRevision === undefined || raw.collisionRevision === null
+    ? undefined
+    : coerceFiniteMovementNumber(raw.collisionRevision);
+
+  if (
+    seq === null ||
+    buttons === null ||
+    lookYaw === null ||
+    lookPitch === null ||
+    clientTimeMs === null ||
+    movementEpoch === null ||
+    collisionRevision === null ||
+    seq < 0 ||
+    seq > UINT32_MAX
+  ) {
+    return null;
+  }
+
+  const sanitized = sanitizeMovementCommand({
+    seq,
+    buttons,
+    lookYaw,
+    lookPitch,
+    clientTimeMs,
+    movementEpoch,
+    collisionRevision,
+  });
+
+  return isValidMovementCommand(sanitized) ? sanitized : null;
+}

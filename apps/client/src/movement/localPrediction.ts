@@ -1,12 +1,12 @@
 import type { MovementCommand, Player, SelfMovementAuthority, Vec3 } from '@voxel-strike/shared';
 import {
   MOVEMENT_PROTOCOL_VERSION,
+  ABILITY_DEFINITIONS,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_SHADOWSTEP_DISTANCE,
   inputStateToMovementButtons,
-  isCollisionBlock,
   isMovementSeqAfter,
   nextMovementSeq,
   createProceduralTerrainLookup,
@@ -16,11 +16,16 @@ import {
 import type { InputState } from '@voxel-strike/shared';
 import {
   MovementPredictionController,
+  canCapsuleOccupy,
+  computeAnchorWallAabbs,
+  createVoxelCollisionWorld,
+  sweepCapsulePathClear,
   type MovementPredictionContext,
   type MovementSimulationState,
 } from '@voxel-strike/physics';
 import type { MovementTerrainAdapter } from '@voxel-strike/physics';
 import { getActiveProceduralMap } from '../hooks/usePhysics';
+import { useGameStore } from '../store/gameStore';
 import { setPlayerVisualPosition, setPlayerVisualRotation } from '../store/visualStore';
 
 export const localMovementPrediction = new MovementPredictionController();
@@ -29,26 +34,12 @@ let nextCommandSeq = 1;
 let predictedPlayerId: string | null = null;
 let cachedMapId: string | null = null;
 let cachedTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
+let latestServerCollisionRevision = 0;
 
 const fallbackTerrain: MovementTerrainAdapter = {
   getGroundY: () => 0,
   clampPosition: (position) => ({ ...position }),
 };
-
-const LOCAL_PLAYER_RADIUS = 0.45;
-const LOCAL_PLAYER_DIAGONAL_RADIUS = LOCAL_PLAYER_RADIUS * 0.707;
-const LOCAL_PLAYER_SPACE_OFFSETS = [
-  { x: 0, z: 0 },
-  { x: LOCAL_PLAYER_RADIUS, z: 0 },
-  { x: -LOCAL_PLAYER_RADIUS, z: 0 },
-  { x: 0, z: LOCAL_PLAYER_RADIUS },
-  { x: 0, z: -LOCAL_PLAYER_RADIUS },
-  { x: LOCAL_PLAYER_DIAGONAL_RADIUS, z: LOCAL_PLAYER_DIAGONAL_RADIUS },
-  { x: LOCAL_PLAYER_DIAGONAL_RADIUS, z: -LOCAL_PLAYER_DIAGONAL_RADIUS },
-  { x: -LOCAL_PLAYER_DIAGONAL_RADIUS, z: LOCAL_PLAYER_DIAGONAL_RADIUS },
-  { x: -LOCAL_PLAYER_DIAGONAL_RADIUS, z: -LOCAL_PLAYER_DIAGONAL_RADIUS },
-] as const;
-const LOCAL_PLAYER_SPACE_Y_SAMPLES = [-0.35, 0.15, 0.65] as const;
 
 export function resetLocalMovementPrediction(
   state?: MovementSimulationState,
@@ -59,6 +50,7 @@ export function resetLocalMovementPrediction(
   predictedPlayerId = playerId;
   cachedMapId = null;
   cachedTerrainLookup = null;
+  latestServerCollisionRevision = 0;
   if (state) {
     localMovementPrediction.initialize(state, movementEpoch, 0);
   } else {
@@ -104,15 +96,33 @@ function getClientTerrainAdapter(): MovementTerrainAdapter {
     getGroundY: (position) => lookup.getGroundY(position),
     clampPosition: (position) => lookup.clampToPlayableMap(position),
     getBlockAtWorld: (position) => lookup.getBlockAtWorld(position),
+    origin: lookup.origin,
+    voxelSize: lookup.voxelSize,
+    collisionRevision: latestServerCollisionRevision,
+    getCollisionAabbs: (bounds) => computeAnchorWallAabbs(
+      useGameStore.getState().earthWalls,
+      Date.now(),
+      bounds
+    ),
   };
 }
 
 export function getLocalPredictionContext(player: Player): MovementPredictionContext {
+  let activeSpeedMultiplier = 1;
+  const phantomVeil = player.heroId === 'phantom' ? player.abilities?.['phantom_veil'] : undefined;
+  if (phantomVeil?.isActive) {
+    const activatedAt = phantomVeil.activatedAt ?? Date.now();
+    const durationMs = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 0) * 1000;
+    if (durationMs <= 0 || Date.now() - activatedAt < durationMs) {
+      activeSpeedMultiplier *= 1.3;
+    }
+  }
+
   return {
     heroStats: getHeroStats(player.heroId ?? 'phantom'),
     terrain: getClientTerrainAdapter(),
     flagCarrier: player.hasFlag,
-    activeSpeedMultiplier: 1,
+    activeSpeedMultiplier,
   };
 }
 
@@ -134,7 +144,7 @@ export function createLocalMovementCommand(input: InputState, options: {
     lookPitch: options.lookPitch,
     clientTimeMs: options.clientTimeMs,
     movementEpoch: options.movementEpoch ?? localMovementPrediction.getMovementEpoch(),
-    collisionRevision: 0,
+    collisionRevision: latestServerCollisionRevision,
   });
   nextCommandSeq = nextMovementSeq(nextCommandSeq);
   return command;
@@ -155,46 +165,6 @@ function horizontalForwardFromYaw(yaw: number): { x: number; z: number } {
   };
 }
 
-function isLocalPlayerSpaceBlocked(position: Vec3): boolean {
-  const lookup = getClientProceduralTerrainLookup();
-  if (!lookup) return false;
-
-  for (const yOffset of LOCAL_PLAYER_SPACE_Y_SAMPLES) {
-    for (const offset of LOCAL_PLAYER_SPACE_OFFSETS) {
-      if (isCollisionBlock(lookup.getBlockAtWorld({
-        x: position.x + offset.x,
-        y: position.y + yOffset,
-        z: position.z + offset.z,
-      }))) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function isLocalPlayerPathBlocked(previous: Vec3, next: Vec3): boolean {
-  const dx = next.x - previous.x;
-  const dy = next.y - previous.y;
-  const dz = next.z - previous.z;
-  const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
-  const steps = Math.max(1, Math.ceil(horizontalDistance / 0.25));
-
-  for (let index = 1; index <= steps; index++) {
-    const t = index / steps;
-    if (isLocalPlayerSpaceBlocked({
-      x: previous.x + dx * t,
-      y: previous.y + dy * t,
-      z: previous.z + dz * t,
-    })) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
 function resolveLocalPhantomBlinkDestination(
   state: MovementSimulationState,
   yaw: number,
@@ -202,6 +172,7 @@ function resolveLocalPhantomBlinkDestination(
   distance: number
 ): Vec3 {
   const lookup = getClientProceduralTerrainLookup();
+  const world = createVoxelCollisionWorld(getClientTerrainAdapter());
   const forward = horizontalForwardFromYaw(yaw);
   const start = state.position;
   const verticalOffset = pitch < -0.3 ? 2 : 0;
@@ -214,8 +185,8 @@ function resolveLocalPhantomBlinkDestination(
     };
     const candidate = lookup ? lookup.clampToPlayableMap(rawCandidate) : rawCandidate;
 
-    if (isLocalPlayerPathBlocked(start, candidate)) continue;
-    if (isLocalPlayerSpaceBlocked(candidate)) continue;
+    if (!sweepCapsulePathClear(world, start, candidate)) continue;
+    if (!canCapsuleOccupy(world, candidate)) continue;
     return candidate;
   }
 
@@ -260,15 +231,19 @@ export function predictLocalPhantomShadowStep(player: Player, lookYaw: number): 
   const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
   const forward = horizontalForwardFromYaw(lookYaw);
   const lookup = getClientProceduralTerrainLookup();
+  const world = createVoxelCollisionWorld(getClientTerrainAdapter());
   const rawPosition = {
     x: current.position.x + forward.x * PHANTOM_SHADOWSTEP_DISTANCE,
     y: current.position.y,
     z: current.position.z + forward.z * PHANTOM_SHADOWSTEP_DISTANCE,
   };
   const position = lookup ? lookup.clampToPlayableMap(rawPosition) : rawPosition;
+  const validatedPosition = sweepCapsulePathClear(world, current.position, position) && canCapsuleOccupy(world, position)
+    ? position
+    : current.position;
 
   return applyLocalPredictedState(player.id, {
-    position,
+    position: validatedPosition,
     velocity: { ...current.velocity },
     movement: {
       ...current.movement,
@@ -276,6 +251,37 @@ export function predictLocalPhantomShadowStep(player: Player, lookYaw: number): 
       slideTimeRemaining: 0,
     },
   }, lookYaw);
+}
+
+export function addLocalMovementImpulse(impulse: Vec3, mode: 'add' | 'set' = 'add'): MovementSimulationState | null {
+  const current = localMovementPrediction.getState();
+  if (!current) return null;
+
+  const next: MovementSimulationState = {
+    position: { ...current.position },
+    velocity: mode === 'set'
+      ? { ...impulse }
+      : {
+        x: current.velocity.x + impulse.x,
+        y: current.velocity.y + impulse.y,
+        z: current.velocity.z + impulse.z,
+      },
+    movement: {
+      ...current.movement,
+      grapplePoint: current.movement.grapplePoint ? { ...current.movement.grapplePoint } : null,
+    },
+  };
+
+  if (impulse.y > 0) {
+    next.movement.isGrounded = false;
+  }
+  if (impulse.x !== 0 || impulse.z !== 0) {
+    next.movement.isSliding = false;
+    next.movement.slideTimeRemaining = 0;
+  }
+
+  localMovementPrediction.overwriteState(next, { updateLatestCommandRecord: true });
+  return next;
 }
 
 export function predictLocalBlazeRocketJump(player: Player, lookYaw: number): MovementSimulationState {
@@ -341,6 +347,7 @@ function advanceNextCommandSeqPastAck(ackSeq: number): void {
 
 export function applySelfMovementAuthority(player: Player, authority: SelfMovementAuthority) {
   ensureLocalPredictionInitialized(player);
+  latestServerCollisionRevision = authority.collisionRevision ?? latestServerCollisionRevision;
   const result = localMovementPrediction.reconcile(
     authority,
     getLocalPredictionContext(player),
@@ -352,9 +359,22 @@ export function applySelfMovementAuthority(player: Player, authority: SelfMoveme
   return { result, state };
 }
 
+export function stepLocalMovementPrediction(player: Player, command: MovementCommand): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  return localMovementPrediction.step(command, getLocalPredictionContext(player));
+}
+
+export function getLocalMovementCollisionRevision(): number {
+  return latestServerCollisionRevision;
+}
+
 export function getCurrentPredictedVelocity(fallback: Vec3): Vec3 {
   const state = localMovementPrediction.getState();
   return state?.velocity ?? fallback;
+}
+
+export function getCurrentPredictedState(fallback: MovementSimulationState): MovementSimulationState {
+  return localMovementPrediction.getState() ?? fallback;
 }
 
 export function setPredictedVisuals(playerId: string, position: Vec3, lookYaw: number): void {
@@ -370,4 +390,10 @@ export function setPredictedVisuals(playerId: string, position: Vec3, lookYaw: n
 export function getCurrentPredictedPosition(fallback: Vec3): Vec3 {
   const state = localMovementPrediction.getState();
   return state?.position ?? fallback;
+}
+
+export function getCurrentPredictedVisualPosition(fallback: Vec3, nowMs = Date.now()): Vec3 {
+  return localMovementPrediction.hasState()
+    ? localMovementPrediction.getVisualPosition(nowMs)
+    : fallback;
 }

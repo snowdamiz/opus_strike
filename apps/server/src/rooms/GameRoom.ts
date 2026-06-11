@@ -59,6 +59,8 @@ import {
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_RELOAD_MS,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
   VOID_RAY_CHARGE_TIME,
   UNSTUCK_COOLDOWN_MS,
   findUnstuckTerrainTeleport,
@@ -74,8 +76,7 @@ import {
   isMovementSeqAfter,
   movementSeqDistance,
   compareMovementSeq,
-  sanitizeMovementCommand,
-  isValidMovementCommand,
+  parseMovementCommandPayload,
   normalizeLookYaw,
   clampLookPitch,
 } from '@voxel-strike/shared';
@@ -106,10 +107,17 @@ import type {
 } from '@voxel-strike/shared';
 import {
   HOOKSHOT_GRAPPLE_EXTENSION_SPEED,
+  canCapsuleOccupy,
+  computeAnchorWallAabbs,
+  createVoxelCollisionWorld,
   createHookshotSwingState,
   simulateSharedMovement,
   stepHookshotSwing,
+  sweepCapsulePathClear,
+  type AnchorWallCollisionSource,
   type HookshotSwingState,
+  type MovementAabb,
+  type MovementCollisionBounds,
   type MovementTerrainAdapter,
 } from '@voxel-strike/physics';
 import { TickMetrics } from '../perf/tickMetrics';
@@ -261,6 +269,11 @@ interface HookshotTrapInstance {
   ownerId: string;
   ownerTeam: Team;
   lastDamageTick: Map<string, number>;
+}
+
+interface HookshotAnchorWallInstance extends AnchorWallCollisionSource {
+  ownerId: string;
+  ownerTeam: Team;
 }
 
 interface HookshotGrappleAuthorityState {
@@ -606,6 +619,7 @@ export class GameRoom extends Room<GameState> {
   private phantomPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotTraps: HookshotTrapInstance[] = [];
+  private hookshotAnchorWalls: HookshotAnchorWallInstance[] = [];
   private hookshotGrapples: Map<string, HookshotGrappleAuthorityState> = new Map();
   private pendingAreaDamage: PendingAreaDamageInstance[] = [];
   private blazeGearstorms: BlazeGearstormInstance[] = [];
@@ -631,10 +645,13 @@ export class GameRoom extends Room<GameState> {
   private mapManifest: VoxelMapManifest | null = null;
   private proceduralTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
   private mapChunkLookup: Map<string, VoxelChunk> = new Map();
+  private movementCollisionRevision = 0;
   private movementTerrain: MovementTerrainAdapter = {
     getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getGroundY(position),
     clampPosition: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().clampToPlayableMap(position),
     getBlockAtWorld: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getBlockAtWorld(position),
+    collisionRevision: 0,
+    getCollisionAabbs: (bounds: MovementCollisionBounds) => this.getHookshotAnchorWallAabbs(bounds),
   };
   
   // Track clientId -> sessionId mapping for reconnection detection
@@ -3008,23 +3025,33 @@ export class GameRoom extends Room<GameState> {
 
   private sanitizeIncomingMovementCommand(
     authority: ServerMovementAuthorityState,
-    command: MovementCommand,
+    command: unknown,
     playerId: string
   ): MovementCommand | null {
-    if (!isValidMovementCommand(command)) {
+    const sanitized = parseMovementCommandPayload(command);
+    if (!sanitized) {
       authority.metrics.malformedCommands++;
+      const commandShape = command && typeof command === 'object'
+        ? Object.fromEntries(
+          ['seq', 'buttons', 'lookYaw', 'lookPitch', 'clientTimeMs', 'movementEpoch', 'collisionRevision']
+            .map((key) => [key, typeof (command as Record<string, unknown>)[key]])
+        )
+        : undefined;
       this.recordSecurityEvent({
         type: 'movement_command_reject',
         playerId,
         userId: this.getPlayerUserId(playerId),
         movementEpoch: authority.movementEpoch,
         reason: 'malformed_command',
-        detail: { commandType: typeof command },
+        detail: {
+          commandType: Array.isArray(command) ? 'array' : typeof command,
+          commandKeys: command && typeof command === 'object' ? Object.keys(command).slice(0, 12) : undefined,
+          commandShape,
+        },
       });
       return null;
     }
 
-    const sanitized = sanitizeMovementCommand(command);
     if (sanitized.movementEpoch !== authority.movementEpoch) {
       const canPromotePreviousEpochCommand = (
         sanitized.movementEpoch + 1 === authority.movementEpoch &&
@@ -3057,7 +3084,8 @@ export class GameRoom extends Room<GameState> {
       return null;
     }
 
-    if ((sanitized.collisionRevision ?? 0) !== 0) {
+    const currentCollisionRevision = this.getMovementCollisionRevision();
+    if ((sanitized.collisionRevision ?? 0) !== currentCollisionRevision) {
       authority.metrics.staleCollisionRevisionDrops = (authority.metrics.staleCollisionRevisionDrops ?? 0) + 1;
       authority.correctionReason = 'collision_revision';
       this.recordSecurityEvent({
@@ -3067,7 +3095,10 @@ export class GameRoom extends Room<GameState> {
         movementEpoch: authority.movementEpoch,
         movementSequence: sanitized.seq,
         reason: 'collision_revision',
-        detail: { collisionRevision: sanitized.collisionRevision },
+        detail: {
+          commandRevision: sanitized.collisionRevision ?? 0,
+          currentRevision: currentCollisionRevision,
+        },
       });
       return null;
     }
@@ -3293,8 +3324,9 @@ export class GameRoom extends Room<GameState> {
     const grapple = this.hookshotGrapples.get(player.id);
     if (!grapple || now < grapple.attachAt || !grapple.swing) return;
 
+    const previousPosition = this.vec3SchemaToPlain(player.position);
     const result = stepHookshotSwing({
-      position: this.vec3SchemaToPlain(player.position),
+      position: previousPosition,
       velocity: this.vec3SchemaToPlain(player.velocity),
       swing: grapple.swing,
       input,
@@ -3304,12 +3336,50 @@ export class GameRoom extends Room<GameState> {
       deltaTime: dt,
     });
 
-    player.position.x = result.position.x;
-    player.position.y = result.position.y;
-    player.position.z = result.position.z;
-    player.velocity.x = result.velocity.x;
-    player.velocity.y = result.velocity.y;
-    player.velocity.z = result.velocity.z;
+    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision(now);
+    const world = createVoxelCollisionWorld(this.movementTerrain);
+    const swingDelta = {
+      x: result.position.x - previousPosition.x,
+      y: result.position.y - previousPosition.y,
+      z: result.position.z - previousPosition.z,
+    };
+    const terrainHit = world.sweepCapsule(previousPosition, swingDelta, PLAYER_HEIGHT, PLAYER_RADIUS);
+    let nextPosition = result.position;
+    let nextVelocity = result.velocity;
+    if (terrainHit) {
+      const into = result.velocity.x * terrainHit.normal.x +
+        result.velocity.y * terrainHit.normal.y +
+        result.velocity.z * terrainHit.normal.z;
+      nextPosition = {
+        x: terrainHit.position.x + terrainHit.normal.x * 0.04,
+        y: terrainHit.position.y + terrainHit.normal.y * 0.04,
+        z: terrainHit.position.z + terrainHit.normal.z * 0.04,
+      };
+      nextVelocity = into < 0
+        ? {
+          x: result.velocity.x - terrainHit.normal.x * into,
+          y: result.velocity.y - terrainHit.normal.y * into,
+          z: result.velocity.z - terrainHit.normal.z * into,
+        }
+        : result.velocity;
+    }
+
+    if (!canCapsuleOccupy(world, nextPosition, PLAYER_HEIGHT, PLAYER_RADIUS)) {
+      nextPosition = previousPosition;
+      nextVelocity = { x: 0, y: Math.min(0, result.velocity.y), z: 0 };
+    }
+
+    player.position.x = nextPosition.x;
+    player.position.y = nextPosition.y;
+    player.position.z = nextPosition.z;
+    player.velocity.x = nextVelocity.x;
+    player.velocity.y = nextVelocity.y;
+    player.velocity.z = nextVelocity.z;
+
+    if (terrainHit) {
+      this.clearHookshotGrapple(player.id);
+      return;
+    }
 
     if (!result.swing) {
       this.clearHookshotGrapple(player.id);
@@ -3326,6 +3396,7 @@ export class GameRoom extends Room<GameState> {
     const previousPosition = this.vec3SchemaToPlain(player.position);
     const heroId = player.heroId as HeroId;
     const heroStats = getHeroStats(heroId);
+    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision();
     const result = simulateSharedMovement({
       position: this.vec3SchemaToPlain(player.position),
       velocity: this.vec3SchemaToPlain(player.velocity),
@@ -3406,7 +3477,7 @@ export class GameRoom extends Room<GameState> {
         isGliding: player.movement.isGliding,
       },
       correctionReason: reason ?? undefined,
-      collisionRevision: 0,
+      collisionRevision: this.getMovementCollisionRevision(),
     };
     this.sendWithMetrics(client, 'selfMovementAuthority', payload);
     authority.correctionReason = null;
@@ -4442,6 +4513,8 @@ export class GameRoom extends Room<GameState> {
     const forward = this.forward2D(player.lookYaw);
     const start = this.vec3SchemaToPlain(player.position);
     const verticalOffset = player.lookPitch < -0.3 ? 2 : 0;
+    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision();
+    const world = createVoxelCollisionWorld(this.movementTerrain);
 
     for (let testDistance = distance; testDistance >= 2; testDistance -= 0.5) {
       const candidate = this.clampToPlayableMap({
@@ -4450,8 +4523,29 @@ export class GameRoom extends Room<GameState> {
         z: start.z + forward.z * testDistance,
       });
 
-      if (this.isBotPathBlocked(start, candidate)) continue;
-      if (this.isBotSpaceBlocked(candidate)) continue;
+      if (!sweepCapsulePathClear(world, start, candidate)) continue;
+      if (!canCapsuleOccupy(world, candidate)) continue;
+      return candidate;
+    }
+
+    return start;
+  }
+
+  private resolvePhantomShadowStepDestination(player: Player, distance: number): PlainVec3 {
+    const forward = this.forward2D(player.lookYaw);
+    const start = this.vec3SchemaToPlain(player.position);
+    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision();
+    const world = createVoxelCollisionWorld(this.movementTerrain);
+
+    for (let testDistance = distance; testDistance >= 1.5; testDistance -= 0.5) {
+      const candidate = this.clampToPlayableMap({
+        x: start.x + forward.x * testDistance,
+        y: start.y,
+        z: start.z + forward.z * testDistance,
+      });
+
+      if (!sweepCapsulePathClear(world, start, candidate)) continue;
+      if (!canCapsuleOccupy(world, candidate)) continue;
       return candidate;
     }
 
@@ -4554,9 +4648,10 @@ export class GameRoom extends Room<GameState> {
       executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
         createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
         resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
-        markAuthoritativePosition: (playerId, durationMs) => {
+        resolvePhantomShadowStepDestination: (caster, distance) => this.resolvePhantomShadowStepDestination(caster, distance),
+        markAuthoritativePosition: (playerId, durationMs, reason = 'teleport') => {
           this.authoritativePositionUntil.set(playerId, Date.now() + durationMs);
-          this.markMovementBarrier(playerId, 'teleport', { preserveQueuedCommands: true });
+          this.markMovementBarrier(playerId, reason, { preserveQueuedCommands: true });
         },
       });
     }
@@ -4607,6 +4702,16 @@ export class GameRoom extends Room<GameState> {
 
       if (result.abilityId === 'hookshot_anchor_wall') {
         const wall = this.resolveHookshotAnchorWall(player);
+        this.createHookshotAnchorWall({
+          id: castId,
+          startPosition: wall.startPosition,
+          direction: wall.direction,
+          startTime: usedAt,
+          duration: HOOKSHOT_ANCHOR_WALL_DURATION,
+          maxDistance: HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE,
+          ownerId: player.id,
+          ownerTeam,
+        });
         this.broadcast('abilityUsed', {
           playerId: player.id,
           abilityId: result.abilityId,
@@ -6838,6 +6943,46 @@ export class GameRoom extends Room<GameState> {
     for (const chunk of this.mapManifest.chunks) {
       this.mapChunkLookup.set(this.getChunkKey(chunk.coord.x, chunk.coord.y, chunk.coord.z), chunk);
     }
+    this.movementTerrain.origin = this.mapManifest.origin;
+    this.movementTerrain.voxelSize = this.mapManifest.voxelSize;
+    this.hookshotAnchorWalls = [];
+    this.movementCollisionRevision = 0;
+    this.movementTerrain.collisionRevision = 0;
+  }
+
+  private bumpMovementCollisionRevision(): void {
+    this.movementCollisionRevision = (this.movementCollisionRevision + 1) >>> 0;
+    if (this.movementCollisionRevision === 0) {
+      this.movementCollisionRevision = 1;
+    }
+    this.movementTerrain.collisionRevision = this.movementCollisionRevision;
+  }
+
+  private pruneExpiredHookshotAnchorWalls(now = Date.now()): void {
+    const before = this.hookshotAnchorWalls.length;
+    this.hookshotAnchorWalls = this.hookshotAnchorWalls.filter((wall) => (
+      now - wall.startTime >= 0 &&
+      now - wall.startTime <= wall.duration * 1000
+    ));
+    if (this.hookshotAnchorWalls.length !== before) {
+      this.bumpMovementCollisionRevision();
+    }
+  }
+
+  private getMovementCollisionRevision(now = Date.now()): number {
+    this.pruneExpiredHookshotAnchorWalls(now);
+    return this.movementCollisionRevision;
+  }
+
+  private getHookshotAnchorWallAabbs(bounds: MovementCollisionBounds): MovementAabb[] {
+    this.pruneExpiredHookshotAnchorWalls();
+    return computeAnchorWallAabbs(this.hookshotAnchorWalls, Date.now(), bounds);
+  }
+
+  private createHookshotAnchorWall(instance: HookshotAnchorWallInstance): void {
+    this.pruneExpiredHookshotAnchorWalls(instance.startTime);
+    this.hookshotAnchorWalls.push(instance);
+    this.bumpMovementCollisionRevision();
   }
 
   private getMapManifest(): VoxelMapManifest {
@@ -7803,7 +7948,12 @@ export class GameRoom extends Room<GameState> {
       let processedThisTick = 0;
       const queuedCommandCount = authority.pendingCommands.length;
       if (queuedCommandCount === 0) {
-        if (lastInput && !lastInput.position && !lastInput.velocity) {
+        if (
+          getAntiCheatConfig().movementAuthorityMode !== 'strict' &&
+          lastInput &&
+          !lastInput.position &&
+          !lastInput.velocity
+        ) {
           this.simulateAuthoritativeMovementStep(player, lastInput, TICK_INTERVAL_MS / 1000);
           this.updateLastSafeMovement(player, lastInput.tick, tickTime);
         }

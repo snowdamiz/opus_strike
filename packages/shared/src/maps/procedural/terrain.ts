@@ -7,6 +7,9 @@ export interface ProceduralTerrainLookup {
   getGroundY(position: Vec3): number | null;
   clampToPlayableMap(position: Vec3): Vec3;
   getBlockAtWorld(position: Vec3): number;
+  origin: Vec3;
+  voxelSize: Vec3;
+  collisionRevision: number;
 }
 
 function chunkLookupIndex(x: number, y: number, z: number, chunksX: number, chunksZ: number): number {
@@ -62,6 +65,9 @@ export function createProceduralTerrainLookup(manifest: VoxelMapManifest): Proce
   };
 
   return {
+    origin: { ...manifest.origin },
+    voxelSize: { ...manifest.voxelSize },
+    collisionRevision: 0,
     getBlockAtWorld,
     getGroundY(position: Vec3): number | null {
       const gx = worldToGrid(position.x, manifest.origin.x, manifest.voxelSize.x);
