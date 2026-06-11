@@ -1,9 +1,10 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { Environment, OrbitControls, Grid } from '@react-three/drei';
 import * as THREE from 'three';
 import { getVoxelMapTheme } from '@voxel-strike/shared';
 import { VoxelWorld } from './VoxelWorld';
+import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
 import { OtherPlayers } from './OtherPlayers';
@@ -23,7 +24,22 @@ import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
-import { getClientPerfSnapshot, setActiveLightCount } from '../../utils/perfMarks';
+import {
+  beginStartupWarmupSession,
+  getClientPerfSnapshot,
+  recordStartupStageTime,
+  setActiveLightCount,
+  updateStartupWarmupMetrics,
+} from '../../utils/perfMarks';
+import {
+  getMapPrepCacheKey,
+} from '../../utils/mapWarmup/mapPrepCache';
+import {
+  createMapWarmupSnapshot,
+  reduceMapWarmup,
+  type MapWarmupSnapshot,
+  type MapWarmupStageId,
+} from '../../utils/mapWarmup/mapWarmupCoordinator';
 import {
   getVisualQualityConfig,
   type ReflectionQualityConfig,
@@ -117,6 +133,181 @@ function SceneLightCounter() {
       if ((object as THREE.Light).isLight) lights++;
     });
     setActiveLightCount(lights);
+  });
+
+  return null;
+}
+
+const GPU_WARMUP_RENDER_FRAMES = 4;
+const GPU_WARMUP_TIMEOUT_MS = 2200;
+
+function waitForAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
+function collectMaterialTextures(material: THREE.Material): THREE.Texture[] {
+  const textures: THREE.Texture[] = [];
+  const materialRecord = material as unknown as Record<string, unknown>;
+
+  for (const value of Object.values(materialRecord)) {
+    if (value && typeof value === 'object' && 'isTexture' in value && (value as THREE.Texture).isTexture) {
+      textures.push(value as THREE.Texture);
+    }
+  }
+
+  return textures;
+}
+
+function collectSceneTextures(scene: THREE.Scene): THREE.Texture[] {
+  const textures = new Set<THREE.Texture>();
+
+  scene.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    const materials = Array.isArray(mesh.material)
+      ? mesh.material
+      : mesh.material
+        ? [mesh.material]
+        : [];
+
+    for (const material of materials) {
+      for (const texture of collectMaterialTextures(material)) {
+        textures.add(texture);
+      }
+    }
+  });
+
+  return Array.from(textures);
+}
+
+function SceneGpuWarmup({
+  enabled,
+  warmupKey,
+  shadowsEnabled,
+  reflectionsEnabled,
+  onStageDone,
+  onComplete,
+  onFallback,
+}: {
+  enabled: boolean;
+  warmupKey: string;
+  shadowsEnabled: boolean;
+  reflectionsEnabled: boolean;
+  onStageDone: (stage: MapWarmupStageId, durationMs: number) => void;
+  onComplete: () => void;
+  onFallback: (reason: string) => void;
+}) {
+  const { gl, scene, camera } = useThree();
+  const completedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled || completedKeyRef.current === warmupKey) return;
+
+    let cancelled = false;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      completedKeyRef.current = warmupKey;
+      onFallback('gpu-warmup-timeout');
+    }, GPU_WARMUP_TIMEOUT_MS);
+
+    const runWarmup = async () => {
+      await waitForAnimationFrame();
+      await waitForAnimationFrame();
+      if (cancelled || timedOut) return;
+
+      const textureUploadStart = performance.now();
+      const rendererWithTextureInit = gl as THREE.WebGLRenderer & {
+        initTexture?: (texture: THREE.Texture) => void;
+      };
+      for (const texture of collectSceneTextures(scene)) {
+        try {
+          rendererWithTextureInit.initTexture?.(texture);
+        } catch {
+          texture.needsUpdate = true;
+        }
+      }
+      const textureUploadMs = performance.now() - textureUploadStart;
+      recordStartupStageTime('textureUpload', textureUploadMs);
+      onStageDone('textures', textureUploadMs);
+
+      const compileStart = performance.now();
+      gl.compile(scene, camera);
+      const compileMs = performance.now() - compileStart;
+      recordStartupStageTime('rendererCompile', compileMs);
+      onStageDone('shaders', compileMs);
+
+      const shadowReflectionStart = performance.now();
+      if (shadowsEnabled) {
+        gl.shadowMap.needsUpdate = true;
+      }
+      if (shadowsEnabled || reflectionsEnabled) {
+        gl.render(scene, camera);
+      }
+      const shadowReflectionMs = performance.now() - shadowReflectionStart;
+      recordStartupStageTime('shadowReflectionWarmup', shadowReflectionMs);
+      onStageDone('shadowsReflections', shadowReflectionMs);
+
+      const gameplayObjectStart = performance.now();
+      await waitForAnimationFrame();
+      const gameplayObjectMs = performance.now() - gameplayObjectStart;
+      recordStartupStageTime('gameplayObjectMount', gameplayObjectMs);
+      onStageDone('gameplayObjects', gameplayObjectMs);
+
+      const hiddenRenderStart = performance.now();
+      for (let frame = 0; frame < GPU_WARMUP_RENDER_FRAMES; frame++) {
+        await waitForAnimationFrame();
+        if (cancelled || timedOut) return;
+        gl.render(scene, camera);
+      }
+      const hiddenRenderMs = performance.now() - hiddenRenderStart;
+      recordStartupStageTime('hiddenWarmupRender', hiddenRenderMs);
+
+      if (cancelled || timedOut) return;
+      completedKeyRef.current = warmupKey;
+      onComplete();
+    };
+
+    runWarmup().catch((error) => {
+      if (!cancelled && !timedOut) {
+        console.warn('[MapWarmup] GPU warmup failed', error);
+        completedKeyRef.current = warmupKey;
+        onFallback('gpu-warmup-error');
+      }
+    }).finally(() => {
+      window.clearTimeout(timeoutId);
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    camera,
+    enabled,
+    gl,
+    onComplete,
+    onFallback,
+    onStageDone,
+    reflectionsEnabled,
+    scene,
+    shadowsEnabled,
+    warmupKey,
+  ]);
+
+  return null;
+}
+
+function WarmupSettlingFrames({
+  enabled,
+  onFrame,
+}: {
+  enabled: boolean;
+  onFrame: () => void;
+}) {
+  useFrame(() => {
+    if (enabled) onFrame();
   });
 
   return null;
@@ -233,15 +424,40 @@ function ReflectionEnvironment({
 
 interface GameCanvasProps {
   onReady?: () => void;
+  onWarmupUpdate?: (snapshot: MapWarmupSnapshot) => void;
+  startupRampActive?: boolean;
 }
 
-export function GameCanvas({ onReady }: GameCanvasProps) {
+function getGraphicsProfileKey(settings: ReturnType<typeof useSettingsStore.getState>['settings']): string {
+  return [
+    settings.graphicsPreset,
+    settings.resolutionScale,
+    settings.materialQuality,
+    settings.shadowQuality,
+    settings.reflectionQuality,
+    settings.environmentQuality,
+  ].join(':');
+}
+
+export function GameCanvas({
+  onReady,
+  onWarmupUpdate,
+  startupRampActive = false,
+}: GameCanvasProps) {
   const gamePhase = useGameStore((state) => state.gamePhase);
   const mapSeed = useGameStore((state) => state.mapSeed);
+  const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
   const debugMode = useGameStore((state) => state.debugMode);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
-  const [readyMapSeed, setReadyMapSeed] = useState<number | null>(null);
+  const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed }), [mapSeed]);
+  const graphicsProfileKey = useMemo(() => getGraphicsProfileKey(settings), [settings]);
+  const [warmupSnapshot, dispatchWarmup] = useReducer(
+    reduceMapWarmup,
+    createMapWarmupSnapshot(warmupKey, mapSeed)
+  );
+  const completedWarmupStagesRef = useRef<Set<MapWarmupStageId>>(new Set());
+  const didStartGpuRef = useRef<string | null>(null);
   const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
   const gridCellColor = useMemo(
     () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
@@ -253,10 +469,101 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
   const showFullPerfOverlay = debugMode || settings.showFPS === 'full';
-  const isWorldReady = readyMapSeed === mapSeed;
-  const handleWorldReady = useCallback(() => {
-    setReadyMapSeed(mapSeed);
-  }, [mapSeed]);
+  const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
+  const shouldMountGameplayObjects = isPlaying || warmupSnapshot.canShowGameplayObjects;
+  const effectiveEnvironmentConfig = startupRampActive
+    ? {
+      ...qualityConfig.environment,
+      particleDensity: Math.min(qualityConfig.environment.particleDensity, 0.35),
+      dustDevilDensity: 0,
+      dressingDensity: Math.min(qualityConfig.environment.dressingDensity, 0.55),
+      maxParticles: Math.min(qualityConfig.environment.maxParticles, 120),
+    }
+    : qualityConfig.environment;
+  const effectiveEffectsConfig = startupRampActive
+    ? {
+      ...qualityConfig.effects,
+      enableDecorativeLights: false,
+      maxActiveParticles: Math.min(qualityConfig.effects.maxActiveParticles, 80),
+      maxActiveTrails: Math.min(qualityConfig.effects.maxActiveTrails, 8),
+    }
+    : qualityConfig.effects;
+  const effectiveDynamicLights = startupRampActive
+    ? {
+      maxDynamicLights: Math.min(qualityConfig.dynamicLights.maxDynamicLights, 2),
+      staticAccentLights: false,
+    }
+    : qualityConfig.dynamicLights;
+  const effectiveDressingShadows = startupRampActive ? false : qualityConfig.shadows.dressingShadows;
+
+  const markWarmupStageDone = useCallback((stage: MapWarmupStageId, durationMs?: number) => {
+    if (completedWarmupStagesRef.current.has(stage)) return;
+    completedWarmupStagesRef.current.add(stage);
+    dispatchWarmup({ type: 'stageDone', stage, durationMs });
+  }, []);
+
+  useEffect(() => {
+    completedWarmupStagesRef.current = new Set();
+    didStartGpuRef.current = null;
+    beginStartupWarmupSession({
+      key: warmupKey,
+      mapSeed,
+      graphicsProfile: graphicsProfileKey,
+      heroId: localHeroId,
+    });
+    dispatchWarmup({ type: 'startCpu', key: warmupKey, mapSeed });
+    markWarmupStageDone('resources', 0);
+  }, [mapSeed, markWarmupStageDone, warmupKey]);
+
+  useEffect(() => {
+    updateStartupWarmupMetrics({
+      state: warmupSnapshot.state,
+      label: warmupSnapshot.label,
+      progress: warmupSnapshot.progress,
+      fallbackReason: warmupSnapshot.fallbackReason,
+    });
+    onWarmupUpdate?.(warmupSnapshot);
+  }, [
+    onWarmupUpdate,
+    warmupSnapshot.fallbackReason,
+    warmupSnapshot.label,
+    warmupSnapshot.progress,
+    warmupSnapshot.state,
+    warmupSnapshot,
+  ]);
+
+  const handleVoxelWarmupStatus = useCallback((status: VoxelMapWarmupStatus) => {
+    markWarmupStageDone('map', status.preparedMap.source === 'match' ? undefined : 0);
+
+    if (status.collidersReady) {
+      markWarmupStageDone('colliders');
+    }
+
+    if (status.terrainReady) {
+      markWarmupStageDone('meshes');
+    }
+
+    if (status.ready && didStartGpuRef.current !== warmupKey) {
+      didStartGpuRef.current = warmupKey;
+      dispatchWarmup({ type: 'startGpu' });
+    }
+  }, [markWarmupStageDone, warmupKey]);
+
+  const handleGpuStageDone = useCallback((stage: MapWarmupStageId, durationMs: number) => {
+    markWarmupStageDone(stage, durationMs);
+  }, [markWarmupStageDone]);
+
+  const handleGpuWarmupComplete = useCallback(() => {
+    dispatchWarmup({ type: 'gpuReady' });
+  }, []);
+
+  const handleGpuWarmupFallback = useCallback((reason: string) => {
+    dispatchWarmup({ type: 'fallback', reason });
+  }, []);
+
+  const handleSettlingFrame = useCallback(() => {
+    dispatchWarmup({ type: 'settlingFrame' });
+  }, []);
 
   return (
     <Canvas
@@ -298,11 +605,11 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         <RendererSettingsApplier exposure={qualityConfig.render.exposure} shadows={qualityConfig.shadows} />
         <PhysicsBudgetApplier maxVisualQueriesPerFrame={qualityConfig.budgets.maxVisualPhysicsQueriesPerFrame} />
         <GameplayFrameSystems />
-        <DynamicLightBudgetSystem maxLights={qualityConfig.dynamicLights.maxDynamicLights} />
+        <DynamicLightBudgetSystem maxLights={effectiveDynamicLights.maxDynamicLights} />
         {showFullPerfOverlay && <SceneLightCounter />}
         <AdaptiveQualityController />
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
-        <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={qualityConfig.environment} />
+        <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={effectiveEnvironmentConfig} />
 
         {/* Lighting follows the generated map theme. */}
         <ambientLight intensity={0.42} color={mapTheme.ambientColor} />
@@ -326,7 +633,7 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
           intensity={0.75}
           color={mapTheme.structures.glass}
         />
-        {qualityConfig.dynamicLights.staticAccentLights && (
+        {effectiveDynamicLights.staticAccentLights && (
           <>
             <BudgetedPointLight budgetPriority={0.35} position={[0, 12, 0]} intensity={42} color={mapTheme.structures.accent} distance={72} decay={2} />
             <BudgetedPointLight budgetPriority={0.3} position={[-40, 10, 0]} intensity={38} color="#ff5f46" distance={30} decay={2} />
@@ -341,12 +648,13 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         {/* World */}
         <VoxelWorld
           shadowsEnabled={qualityConfig.shadows.enabled}
-          dressingShadows={qualityConfig.shadows.dressingShadows}
-          dressingDensity={qualityConfig.environment.dressingDensity}
+          dressingShadows={effectiveDressingShadows}
+          dressingDensity={effectiveEnvironmentConfig.dressingDensity}
           reflectionIntensity={qualityConfig.reflections.materialIntensity}
           materialDetail={qualityConfig.render.materialDetail}
           performanceBudget={qualityConfig.budgets}
-          onReady={handleWorldReady}
+          prebuildRegions
+          onWarmupStatus={handleVoxelWarmupStatus}
         />
 
         {/* Grid helper for visibility */}
@@ -370,12 +678,12 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
         {/* Other players - always rendered so players can see each other in lobby */}
         <OtherPlayers config={qualityConfig.remotePlayers} />
         
-        {/* Game objects only during gameplay */}
-        {isPlaying && isWorldReady && (
+        {/* Gameplay objects mount during warmup so first-use shaders and buffers are paid before input. */}
+        {shouldMountGameplayObjects && (
           <>
             <Flags />
             <Effects />
-            <SlideSpeedLines config={qualityConfig.effects} />
+            <SlideSpeedLines config={effectiveEffectsConfig} />
             <HeroViewmodel config={qualityConfig.viewmodel} />
             <VoidZonesManager />
             <DireBallsManager />
@@ -388,16 +696,30 @@ export function GameCanvas({ onReady }: GameCanvasProps) {
             <ChronosAegisManager />
             <ChronosPulsesManager />
             <ChronosTimebreakManager />
-            <TerrainImpactEffectsManager config={qualityConfig.effects} />
+            <TerrainImpactEffectsManager config={effectiveEffectsConfig} />
           </>
         )}
+
+        <SceneGpuWarmup
+          enabled={warmupSnapshot.state === 'preparingGpu'}
+          warmupKey={warmupKey}
+          shadowsEnabled={qualityConfig.shadows.enabled}
+          reflectionsEnabled={qualityConfig.reflections.enabled}
+          onStageDone={handleGpuStageDone}
+          onComplete={handleGpuWarmupComplete}
+          onFallback={handleGpuWarmupFallback}
+        />
+        <WarmupSettlingFrames
+          enabled={warmupSnapshot.state === 'settling'}
+          onFrame={handleSettlingFrame}
+        />
 
         {/* Orbit controls when not playing for looking around */}
         {!isPlaying && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
 
         <fogExp2 attach="fog" args={[mapTheme.fogColor, 0.0062]} />
         <color attach="background" args={[mapTheme.skyColor]} />
-        <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={`${mapSeed}`} />
+        <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={warmupKey} />
       </Suspense>
     </Canvas>
   );

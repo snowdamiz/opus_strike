@@ -86,7 +86,7 @@ export const VoxelRegionMesh = memo(function VoxelRegionMesh({
         if (!cancelled) setGeometry(nextGeometry);
       })
       .catch((error) => {
-        console.warn('[VoxelMap] Failed to build region mesh', region.id, error);
+        if (!cancelled) console.warn('[VoxelMap] Failed to build region mesh', region.id, error);
       });
 
     return () => {

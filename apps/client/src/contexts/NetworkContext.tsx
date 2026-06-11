@@ -18,6 +18,7 @@ import {
 } from '@voxel-strike/shared';
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
+import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
 
 // Import extracted handlers
 import {
@@ -455,6 +456,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       loggers.network.info('map vote finalized', data.mapSeed);
       setMapVotes(data.votes, data.selectedOptionId);
       setMapSeed(data.mapSeed);
+      try {
+        prepareVoxelMapCpu({ seed: data.mapSeed, source: 'mapVoteFinalized' });
+      } catch (error) {
+        loggers.network.warn('selected map CPU prep failed', error);
+      }
     });
 
     room.onMessage('mapVoteCancelled', (data: { reason?: string; status?: string }) => {
@@ -999,6 +1005,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       loggers.network.debug('phase change message', data.phase);
       if (typeof data.mapSeed === 'number') {
         setMapSeed(data.mapSeed);
+        try {
+          prepareVoxelMapCpu({ seed: data.mapSeed, source: 'match' });
+        } catch (error) {
+          loggers.network.warn('phase map CPU prep failed', error);
+        }
       }
       setGamePhase(data.phase as any);
       setPhaseEndTime(data.endTime);

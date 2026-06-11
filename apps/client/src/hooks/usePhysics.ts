@@ -12,6 +12,7 @@ import {
 import {
   recordPhysicsQueryDropped,
   recordPhysicsQueryTime,
+  recordStartupStageTime,
   recordSystemTime,
   setTemporaryColliderCountProvider,
 } from '../utils/perfMarks';
@@ -388,7 +389,9 @@ function finishProceduralColliderLoad(manifest: VoxelMapManifest, colliderSignat
   loadedProceduralMapColliderSignature = colliderSignature;
   activeProceduralMap = manifest;
   buildActiveProceduralChunkLookup(manifest);
-  recordSystemTime('mapColliderLoad', performance.now() - loadStart);
+  const loadMs = performance.now() - loadStart;
+  recordSystemTime('mapColliderLoad', loadMs);
+  recordStartupStageTime('colliderLoad', loadMs);
   console.log(`[Physics] Procedural map colliders loaded: ${manifest.colliders.length} colliders`);
 }
 

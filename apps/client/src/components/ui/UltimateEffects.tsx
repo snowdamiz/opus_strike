@@ -1,62 +1,8 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState } from 'react';
 import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 
 const PHANTOM_VEIL_DURATION_MS = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 6) * 1000;
-
-interface VeilTrace {
-  id: number;
-  x: number;
-  y: number;
-  length: number;
-  angle: number;
-  duration: number;
-  delay: number;
-  opacity: number;
-  color: string;
-}
-
-type VeilTraceStyle = CSSProperties & {
-  '--trace-rotation': string;
-};
-
-function createVeilTraces(): VeilTrace[] {
-  const colors = ['34, 211, 238', '196, 181, 253', '248, 250, 252'];
-
-  return Array.from({ length: 42 }, (_, id) => {
-    const side = Math.floor(Math.random() * 4);
-    const color = colors[id % colors.length];
-    let x = Math.random() * 100;
-    let y = Math.random() * 100;
-    let angle = -16 + Math.random() * 32;
-
-    if (side === 0) {
-      y = Math.random() * 18;
-      angle += 8;
-    } else if (side === 1) {
-      x = 82 + Math.random() * 18;
-      angle -= 76;
-    } else if (side === 2) {
-      y = 82 + Math.random() * 18;
-      angle -= 10;
-    } else {
-      x = Math.random() * 18;
-      angle += 76;
-    }
-
-    return {
-      id,
-      x,
-      y,
-      length: 72 + Math.random() * 160,
-      angle,
-      duration: 2.2 + Math.random() * 2.9,
-      delay: Math.random() * 2.8,
-      opacity: 0.18 + Math.random() * 0.36,
-      color,
-    };
-  });
-}
 
 /**
  * UltimateEffects - Full-screen visual effects for active local ultimates.
@@ -65,18 +11,6 @@ export function UltimateEffects() {
   const { ultimateEffectActive, ultimateEffectType, ultimateEffectEndTime } = useGameStore();
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [fadeOut, setFadeOut] = useState(false);
-  const [traces, setTraces] = useState<VeilTrace[]>([]);
-
-  const isPhantomVeil = ultimateEffectActive && ultimateEffectType === 'phantom_veil';
-
-  useEffect(() => {
-    if (!isPhantomVeil) {
-      setTraces([]);
-      return;
-    }
-
-    setTraces(createVeilTraces());
-  }, [isPhantomVeil, ultimateEffectEndTime]);
 
   useEffect(() => {
     if (!ultimateEffectActive) {
@@ -180,25 +114,6 @@ export function UltimateEffects() {
           }}
         />
 
-        {traces.map(trace => (
-          <div
-            key={trace.id}
-            className="absolute h-px"
-            style={{
-              left: `${trace.x}%`,
-              top: `${trace.y}%`,
-              width: trace.length,
-              opacity: trace.opacity,
-              transform: `rotate(${trace.angle}deg)`,
-              transformOrigin: 'center',
-              background: `linear-gradient(90deg, transparent, rgba(${trace.color}, 0.95), transparent)`,
-              boxShadow: `0 0 14px rgba(${trace.color}, 0.58)`,
-              animation: `phantomVeilTrace ${trace.duration}s ease-in-out ${trace.delay}s infinite`,
-              '--trace-rotation': `${trace.angle}deg`,
-            } as VeilTraceStyle}
-          />
-        ))}
-
         <div className="absolute left-1/2 top-1/2 h-28 w-28 -translate-x-1/2 -translate-y-1/2">
           <div
             className="absolute inset-5 rounded-full"
@@ -261,13 +176,6 @@ export function UltimateEffects() {
           @keyframes phantomVeilGrid {
             from { transform: translate3d(-18px, 0, 0); }
             to { transform: translate3d(18px, 0, 0); }
-          }
-
-          @keyframes phantomVeilTrace {
-            0% { transform: translate3d(-26px, 8px, 0) rotate(var(--trace-rotation, 0deg)) scaleX(0.18); opacity: 0; }
-            22% { opacity: 1; }
-            70% { opacity: 0.72; }
-            100% { transform: translate3d(36px, -12px, 0) rotate(var(--trace-rotation, 0deg)) scaleX(1); opacity: 0; }
           }
 
           @keyframes phantomVeilReticle {

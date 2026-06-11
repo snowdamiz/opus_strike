@@ -4,7 +4,7 @@ import type { AbilityDefinition } from '../types/ability.js';
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
   maxHealth: 200,
-  moveSpeed: 5.1,
+  moveSpeed: 4.08,
   jumpForce: 8.3,
   size: { width: 0.8, height: 1.8, depth: 0.8 },
 };
@@ -73,7 +73,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'blink',
     stats: {
       maxHealth: 175,
-      moveSpeed: 3.97,
+      moveSpeed: 3.18,
       jumpForce: 8.3,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
@@ -94,7 +94,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'grapple',
     stats: {
       maxHealth: 200,
-      moveSpeed: 4.54,
+      moveSpeed: 3.63,
       jumpForce: 7.9,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
@@ -115,7 +115,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'aerial',
     stats: {
       maxHealth: 200,
-      moveSpeed: 4.54,
+      moveSpeed: 3.63,
       jumpForce: 9.0,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
@@ -136,7 +136,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     movementFocus: 'temporal',
     stats: {
       maxHealth: 250,
-      moveSpeed: 4.35,
+      moveSpeed: 3.48,
       jumpForce: 8.1,
       size: { width: 0.78, height: 1.9, depth: 0.78 },
     },

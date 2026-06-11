@@ -8,7 +8,7 @@ import {
   type VoxelMapManifest,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
-import { setWorldDressingInstanceCount } from '../../../utils/perfMarks';
+import { recordStartupStageTime, recordSystemTime, setWorldDressingInstanceCount } from '../../../utils/perfMarks';
 
 interface SurfaceCell {
   x: number;
@@ -47,6 +47,7 @@ const DRESSING_GEOMETRIES = {
 };
 
 const dressingMatrixDummy = new THREE.Object3D();
+const dressingSetCache = new Map<string, DressingSet>();
 
 function chunkIndex(x: number, y: number, z: number, chunk: VoxelChunk): number {
   return x + chunk.size.x * (z + chunk.size.z * y);
@@ -371,6 +372,32 @@ function createDressingSet(manifest: VoxelMapManifest, densityScale: number, max
   return { tufts, pebbles, crystals };
 }
 
+function getCachedDressingSet(
+  manifest: VoxelMapManifest,
+  densityScale: number,
+  maxInstances = Number.POSITIVE_INFINITY
+): DressingSet {
+  const cacheKey = `${manifest.id}:${densityScale.toFixed(3)}:${Number.isFinite(maxInstances) ? Math.floor(maxInstances) : 'inf'}`;
+  const cached = dressingSetCache.get(cacheKey);
+  if (cached) {
+    recordSystemTime('worldDressingCacheHit', 0);
+    return cached;
+  }
+
+  const start = performance.now();
+  const dressing = createDressingSet(manifest, densityScale, maxInstances);
+  const buildMs = performance.now() - start;
+  recordSystemTime('worldDressingBuild', buildMs);
+  recordStartupStageTime('worldDressingBuild', buildMs);
+
+  dressingSetCache.set(cacheKey, dressing);
+  if (dressingSetCache.size > 8) {
+    const oldestKey = dressingSetCache.keys().next().value;
+    if (oldestKey) dressingSetCache.delete(oldestKey);
+  }
+  return dressing;
+}
+
 function useInstancedMatrices(ref: RefObject<THREE.InstancedMesh>, instances: DressingInstance[]): void {
   useLayoutEffect(() => {
     const mesh = ref.current;
@@ -436,7 +463,7 @@ export function WorldDressing({
   reflectionIntensity: number;
 }) {
   const palette = useMemo(() => getDressingPalette(manifest.theme), [manifest.theme]);
-  const dressing = useMemo(() => createDressingSet(manifest, densityScale, maxInstances), [densityScale, manifest, maxInstances]);
+  const dressing = useMemo(() => getCachedDressingSet(manifest, densityScale, maxInstances), [densityScale, manifest, maxInstances]);
   const instanceCount = dressing.tufts.length + dressing.pebbles.length + dressing.crystals.length;
   const resources = useMemo(() => {
     const tuftMaterial = new THREE.MeshStandardMaterial({

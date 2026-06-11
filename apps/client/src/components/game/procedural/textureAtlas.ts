@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
+import { recordStartupStageTime, recordSystemTime } from '../../../utils/perfMarks';
 
 export const ATLAS_COLUMNS = 6;
 export const ATLAS_ROWS = 5;
@@ -1803,8 +1804,12 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme, options: VoxelAtl
   const profile = getVoxelAtlasProfile(detail);
   const cacheKey = `${theme.id}:${detail}`;
   const cached = atlasTextureCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    recordSystemTime('voxelAtlasCacheHit', 0);
+    return cached;
+  }
 
+  const atlasStart = performance.now();
   TILE_SIZE = profile.tileSize;
   const color = createLayerContext();
   const emissive = createLayerContext();
@@ -1870,6 +1875,9 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme, options: VoxelAtl
   };
 
   atlasTextureCache.set(cacheKey, textures);
+  const atlasMs = performance.now() - atlasStart;
+  recordSystemTime(`voxelAtlasGenerate:${detail}`, atlasMs);
+  recordStartupStageTime('atlasGenerate', atlasMs);
   return textures;
 }
 

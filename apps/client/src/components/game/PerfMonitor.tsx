@@ -75,6 +75,27 @@ const EMPTY_CLIENT_SNAPSHOT: ClientPerfSnapshot = {
   temporaryColliders: 0,
   activeFrameSystems: 0,
   activeLights: 0,
+  startup: {
+    key: null,
+    mapSeed: null,
+    graphicsProfile: null,
+    heroId: null,
+    state: 'idle',
+    label: 'Resources',
+    progress: 0,
+    fallbackReason: null,
+    totalMs: 0,
+    topStage: null,
+    stages: [],
+    firstFiveSecondsFrame: {
+      frameMsP50: 0,
+      frameMsP95: 0,
+      frameMsP99: 0,
+      sampleCount: 0,
+      active: false,
+      elapsedMs: 0,
+    },
+  },
 };
 
 function PerfDisplay() {
@@ -263,6 +284,35 @@ function PerfDisplay() {
           <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Mesh p95</span>
             <span className="text-white/70 tabular-nums text-right">{data.client.voxelWorld.meshBuildMsP95.toFixed(1)}ms</span>
+          </div>
+        </div>
+
+        <div className="mt-3 pt-2 border-t border-white/10">
+          <div className="text-white/40 text-[9px] uppercase mb-1.5">Startup</div>
+          <div className="grid grid-cols-1 gap-y-1.5 text-[10px]">
+            <div className="flex justify-between gap-3">
+              <span className="text-white/40 shrink-0">{data.client.startup.label}</span>
+              <span className="text-white/70 tabular-nums text-right">
+                {Math.round(data.client.startup.progress * 100)}% {data.client.startup.state}
+              </span>
+            </div>
+            {data.client.startup.topStage && (
+              <div className="flex justify-between gap-3">
+                <span className="text-white/40 shrink-0">Top stage</span>
+                <span className="text-white/70 tabular-nums text-right">
+                  {data.client.startup.topStage.name} {data.client.startup.topStage.p95Ms.toFixed(1)}ms
+                </span>
+              </div>
+            )}
+            {data.client.startup.firstFiveSecondsFrame.sampleCount > 0 && (
+              <div className="flex justify-between gap-3">
+                <span className="text-white/40 shrink-0">Reveal p95/p99</span>
+                <span className="text-white/70 tabular-nums text-right">
+                  {data.client.startup.firstFiveSecondsFrame.frameMsP95.toFixed(1)}/
+                  {data.client.startup.firstFiveSecondsFrame.frameMsP99.toFixed(1)}ms
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

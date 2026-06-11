@@ -61,6 +61,7 @@ import {
 } from '../hooks/useAudio';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
+import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
 import type {
   BotDifficulty,
   HeroId,
@@ -2193,6 +2194,11 @@ export function setupPollingSync(
       const store = useGameStore.getState();
       if (typeof room.state.mapSeed === 'number' && room.state.mapSeed !== store.mapSeed) {
         useGameStore.getState().setMapSeed(room.state.mapSeed);
+        try {
+          prepareVoxelMapCpu({ seed: room.state.mapSeed, source: 'match' });
+        } catch (error) {
+          loggers.network.warn('fallback poll map CPU prep failed', error);
+        }
       }
 
       if (room.state.phase !== store.gamePhase) {

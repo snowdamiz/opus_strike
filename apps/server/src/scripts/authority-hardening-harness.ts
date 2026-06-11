@@ -13,7 +13,7 @@ process.env.ENTRY_TICKET_SECRET = process.env.ENTRY_TICKET_SECRET || 'authority-
 
 const heroStats: HeroStats = {
   maxHealth: 200,
-  moveSpeed: 4.54,
+  moveSpeed: 3.63,
   jumpForce: 8.3,
   size: { width: 0.8, height: 1.8, depth: 0.8 },
 };

@@ -61,6 +61,32 @@ export interface WorldVisualMetricSummary {
   fullRemoteBodies: number;
 }
 
+export interface StartupStageMetricSummary {
+  name: string;
+  lastMs: number;
+  p95Ms: number;
+  p99Ms: number;
+  sampleCount: number;
+}
+
+export interface StartupWarmupMetricSummary {
+  key: string | null;
+  mapSeed: number | null;
+  graphicsProfile: string | null;
+  heroId: string | null;
+  state: string;
+  label: string;
+  progress: number;
+  fallbackReason: string | null;
+  totalMs: number;
+  topStage: StartupStageMetricSummary | null;
+  stages: StartupStageMetricSummary[];
+  firstFiveSecondsFrame: FrameMetricSummary & {
+    active: boolean;
+    elapsedMs: number;
+  };
+}
+
 export interface ClientPerfSnapshot {
   frame: FrameMetricSummary;
   network: NetworkMetricSummary;
@@ -75,12 +101,15 @@ export interface ClientPerfSnapshot {
   temporaryColliders: number;
   activeFrameSystems: number;
   activeLights: number;
+  startup: StartupWarmupMetricSummary;
 }
 
 const FRAME_SAMPLE_LIMIT = 240;
 const SYSTEM_SAMPLE_LIMIT = 180;
+const STARTUP_STAGE_SAMPLE_LIMIT = 48;
 const SPAWN_WINDOW_MS = 3000;
 const NETWORK_WINDOW_MS = 1000;
+const STARTUP_REVEAL_SAMPLE_WINDOW_MS = 5000;
 const frameSamples: number[] = [];
 const voxelMeshBuildSamples: number[] = [];
 const frameSystems = new Set<string>();
@@ -117,6 +146,31 @@ let worldVisualMetrics: WorldVisualMetricSummary = {
   worldDressingInstances: 0,
   fullRemoteBodies: 0,
 };
+let startupWarmupMetrics: StartupWarmupMetricSummary = {
+  key: null,
+  mapSeed: null,
+  graphicsProfile: null,
+  heroId: null,
+  state: 'idle',
+  label: 'Resources',
+  progress: 0,
+  fallbackReason: null,
+  totalMs: 0,
+  topStage: null,
+  stages: [],
+  firstFiveSecondsFrame: {
+    frameMsP50: 0,
+    frameMsP95: 0,
+    frameMsP99: 0,
+    sampleCount: 0,
+    active: false,
+    elapsedMs: 0,
+  },
+};
+let startupWarmupStartedAt = 0;
+let startupRevealStartedAt = 0;
+const startupStageSamples = new Map<string, SystemSamples>();
+const startupRevealFrameSamples: number[] = [];
 
 interface SystemSamples {
   samples: number[];
@@ -173,9 +227,18 @@ function pruneSpawnMarkers(now: number): void {
 }
 
 export function recordFrameSample(deltaSeconds: number): void {
-  frameSamples.push(deltaSeconds * 1000);
+  const frameMs = deltaSeconds * 1000;
+  frameSamples.push(frameMs);
   if (frameSamples.length > FRAME_SAMPLE_LIMIT) {
     frameSamples.shift();
+  }
+
+  if (startupRevealStartedAt > 0) {
+    const now = performance.now();
+    const elapsedMs = now - startupRevealStartedAt;
+    if (elapsedMs <= STARTUP_REVEAL_SAMPLE_WINDOW_MS) {
+      startupRevealFrameSamples.push(frameMs);
+    }
   }
 }
 
@@ -191,6 +254,22 @@ export function recordSystemTime(name: string, ms: number): void {
   entry.lastMs = ms;
   entry.samples.push(ms);
   if (entry.samples.length > SYSTEM_SAMPLE_LIMIT) {
+    entry.samples.shift();
+  }
+}
+
+export function recordStartupStageTime(name: string, ms: number): void {
+  if (!Number.isFinite(ms) || ms < 0) return;
+
+  let entry = startupStageSamples.get(name);
+  if (!entry) {
+    entry = { samples: [], lastMs: 0 };
+    startupStageSamples.set(name, entry);
+  }
+
+  entry.lastMs = ms;
+  entry.samples.push(ms);
+  if (entry.samples.length > STARTUP_STAGE_SAMPLE_LIMIT) {
     entry.samples.shift();
   }
 }
@@ -336,10 +415,113 @@ export function setTemporaryColliderCountProvider(provider: () => number): void 
   temporaryColliderCountProvider = provider;
 }
 
+function getStartupStageSummaries(): StartupStageMetricSummary[] {
+  return Array.from(startupStageSamples.entries())
+    .map(([name, entry]) => ({
+      name,
+      lastMs: entry.lastMs,
+      p95Ms: percentile(entry.samples, 0.95),
+      p99Ms: percentile(entry.samples, 0.99),
+      sampleCount: entry.samples.length,
+    }))
+    .sort((a, b) => b.p95Ms - a.p95Ms);
+}
+
+function getStartupRevealFrameSummary(now: number): StartupWarmupMetricSummary['firstFiveSecondsFrame'] {
+  if (startupRevealStartedAt === 0) {
+    return {
+      frameMsP50: 0,
+      frameMsP95: 0,
+      frameMsP99: 0,
+      sampleCount: 0,
+      active: false,
+      elapsedMs: 0,
+    };
+  }
+
+  const elapsedMs = now - startupRevealStartedAt;
+  return {
+    frameMsP50: percentile(startupRevealFrameSamples, 0.5),
+    frameMsP95: percentile(startupRevealFrameSamples, 0.95),
+    frameMsP99: percentile(startupRevealFrameSamples, 0.99),
+    sampleCount: startupRevealFrameSamples.length,
+    active: elapsedMs <= STARTUP_REVEAL_SAMPLE_WINDOW_MS,
+    elapsedMs: Math.min(elapsedMs, STARTUP_REVEAL_SAMPLE_WINDOW_MS),
+  };
+}
+
+export function beginStartupWarmupSession(input: {
+  key: string;
+  mapSeed: number;
+  graphicsProfile: string;
+  heroId: string | null;
+}): void {
+  startupWarmupStartedAt = performance.now();
+  startupRevealStartedAt = 0;
+  startupRevealFrameSamples.length = 0;
+  startupStageSamples.clear();
+  startupWarmupMetrics = {
+    key: input.key,
+    mapSeed: input.mapSeed >>> 0,
+    graphicsProfile: input.graphicsProfile,
+    heroId: input.heroId,
+    state: 'preparingCpu',
+    label: 'Resources',
+    progress: 0.08,
+    fallbackReason: null,
+    totalMs: 0,
+    topStage: null,
+    stages: [],
+    firstFiveSecondsFrame: {
+      frameMsP50: 0,
+      frameMsP95: 0,
+      frameMsP99: 0,
+      sampleCount: 0,
+      active: false,
+      elapsedMs: 0,
+    },
+  };
+}
+
+export function updateStartupWarmupMetrics(input: {
+  state: string;
+  label: string;
+  progress: number;
+  fallbackReason?: string | null;
+}): void {
+  const now = performance.now();
+  const stages = getStartupStageSummaries();
+  startupWarmupMetrics = {
+    ...startupWarmupMetrics,
+    state: input.state,
+    label: input.label,
+    progress: Math.min(1, Math.max(0, input.progress)),
+    fallbackReason: input.fallbackReason ?? null,
+    totalMs: startupWarmupStartedAt > 0 ? now - startupWarmupStartedAt : 0,
+    stages,
+    topStage: stages[0] ?? null,
+    firstFiveSecondsFrame: getStartupRevealFrameSummary(now),
+  };
+}
+
+export function markStartupRevealStart(key: string): void {
+  if (startupWarmupMetrics.key !== key) return;
+  if (startupRevealStartedAt > 0) return;
+
+  startupRevealStartedAt = performance.now();
+  startupRevealFrameSamples.length = 0;
+}
+
 export function getClientPerfSnapshot(): ClientPerfSnapshot {
   const now = performance.now();
   pruneNetwork(now);
   pruneSpawnMarkers(now);
+  updateStartupWarmupMetrics({
+    state: startupWarmupMetrics.state,
+    label: startupWarmupMetrics.label,
+    progress: startupWarmupMetrics.progress,
+    fallbackReason: startupWarmupMetrics.fallbackReason,
+  });
 
   const messagesPerSecond: Record<string, number> = {};
   const bytesPerSecond: Record<string, number> = {};
@@ -403,5 +585,6 @@ export function getClientPerfSnapshot(): ClientPerfSnapshot {
     temporaryColliders: temporaryColliderCountProvider(),
     activeFrameSystems: frameSystems.size,
     activeLights,
+    startup: startupWarmupMetrics,
   };
 }
