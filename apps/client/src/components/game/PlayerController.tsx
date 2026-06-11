@@ -619,9 +619,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       cameraControl.updateCameraRotation(camera, false, false, dt);
       camera.position.set(position.x, position.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
 
+      const latestMovement = useGameStore.getState().localPlayer?.movement ?? localPlayer.movement;
       updateLocalPlayer({
         movement: {
-          ...localPlayer.movement,
+          ...latestMovement,
           isGrounded: false,
           isSprinting: frameInput.sprint,
           isCrouching: frameInput.crouch || isControlPressed,
@@ -1014,8 +1015,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
 
     const traceGrapplePoint = hookshotAbilities.grappleTargetRef.current ?? hookshotAbilities.swingAttachPointRef.current;
+    const latestLocalMovement = useGameStore.getState().localPlayer?.movement ?? localPlayer.movement;
     const localMovementForTrace: PlayerMovementState = {
-      ...localPlayer.movement,
+      ...latestLocalMovement,
       isGrounded: movement.refs.isGrounded.current,
       isSprinting: movement.refs.isSprinting.current,
       isCrouching: movement.refs.isCrouching.current,

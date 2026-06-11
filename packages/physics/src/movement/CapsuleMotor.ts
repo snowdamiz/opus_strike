@@ -975,11 +975,13 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     const friction = Math.pow(SLIDE_FRICTION, dt * 60);
     velocity.x *= friction;
     velocity.z *= friction;
+    const slideSpeedAfterFriction = horizontalSpeed(velocity);
 
-    if (hasMovementInput) {
+    if (hasMovementInput && slideSpeedAfterFriction > EPSILON) {
       const steer = input.heroStats.moveSpeed * 2.5 * dt;
       velocity.x += wishDir.x * steer;
       velocity.z += wishDir.z * steer;
+      velocity = clampHorizontalSpeed(velocity, slideSpeedAfterFriction);
     }
 
     velocity = clampHorizontalSpeed(velocity, sprintSpeed * SLIDE_MAX_SPEED_MULTIPLIER);

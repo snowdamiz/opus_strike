@@ -168,6 +168,38 @@ function runDuplicateAckNoop() {
   assert.equal(controller.getBufferedCommandCount(), 0);
 }
 
+function runNoCorrectionAckRefreshesAuthorityOwnedResources() {
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  controller.step(command(1, MOVEMENT_BUTTON_MOVE_FORWARD), context());
+  const stateAtAck = controller.getState();
+  const authorityMovement = {
+    ...stateAtAck.movement,
+    isJetpacking: true,
+    jetpackFuel: 42,
+  };
+
+  const metrics = controller.reconcile({
+    serverTick: 1,
+    serverTime: 50,
+    ackSeq: 1,
+    movementEpoch: 0,
+    position: stateAtAck.position,
+    velocity: stateAtAck.velocity,
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: authorityMovement,
+  }, context(), 60);
+
+  assert.equal(metrics.corrected, false, 'authority-owned resource updates should not create movement corrections');
+  assert.equal(controller.getState().movement.isJetpacking, true, 'authority-owned active status should refresh prediction state');
+  assert.equal(controller.getState().movement.jetpackFuel, 42, 'fuel-only authority updates should refresh prediction state');
+
+  controller.step(command(2, MOVEMENT_BUTTON_MOVE_FORWARD), context());
+  assert.equal(controller.getState().movement.isJetpacking, true, 'local prediction should preserve refreshed active status');
+  assert.equal(controller.getState().movement.jetpackFuel, 42, 'local prediction should preserve refreshed Blaze fuel');
+}
+
 function runSlideRequiresFreshCrouchPress() {
   const controller = new MovementPredictionController();
   controller.initialize(createSimulationState(), 0, 0);
@@ -831,6 +863,45 @@ function runSlideAlongWall() {
   assert.ok(result.velocity.z < -7, `slide wall response should keep tangent velocity, got ${result.velocity.z}`);
 }
 
+function runHeldSlideGraduallyLosesSpeed() {
+  let state = createSimulationState();
+  const speeds = [];
+
+  for (let step = 0; step < 24; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.phantom.stats,
+      input: {
+        ...createEmptyInputState(),
+        moveForward: true,
+        sprint: true,
+        crouch: true,
+        crouchPressed: step === 0,
+      },
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+
+    assert.equal(state.movement.isSliding, true, `slide should still be active at step ${step}`);
+    speeds.push(speed2D(state.velocity));
+  }
+
+  for (let index = 1; index < speeds.length; index++) {
+    assert.ok(
+      speeds[index] <= speeds[index - 1] + EPSILON,
+      `held slide speed should not be replenished by input at step ${index}: ${speeds[index - 1]} -> ${speeds[index]}`
+    );
+  }
+
+  assert.ok(
+    speeds[speeds.length - 1] < speeds[0] * 0.7,
+    `held slide should gradually lose meaningful speed, got ${speeds[0]} -> ${speeds[speeds.length - 1]}`
+  );
+}
+
 function runSlideJump() {
   const movement = createMovementState();
   movement.isSliding = true;
@@ -1033,6 +1104,7 @@ function runHookshotSwingStep() {
 runDeterministicReplay();
 runYawConvention();
 runDuplicateAckNoop();
+runNoCorrectionAckRefreshesAuthorityOwnedResources();
 runSlideRequiresFreshCrouchPress();
 runHeldCommandStripsEdgeButtons();
 runCorrectionReplay();
@@ -1053,6 +1125,7 @@ runDiagonalCornerSlide();
 runLedgeExitMomentum();
 runSlideLedgeExitMomentum();
 runSlideAlongWall();
+runHeldSlideGraduallyLosesSpeed();
 runSlideJump();
 runLandingContact();
 runTemporaryWallRevisionCollision();

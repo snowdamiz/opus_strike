@@ -87,9 +87,16 @@ function movementModesDiffer(a: PlayerMovementState, b: PlayerMovementState): bo
     a.isWallRunning !== b.isWallRunning ||
     a.wallRunSide !== b.wallRunSide ||
     a.isGrappling !== b.isGrappling ||
-    a.isJetpacking !== b.isJetpacking ||
     a.isGliding !== b.isGliding
   );
+}
+
+function applyAuthorityOwnedMovementResources(
+  target: PlayerMovementState,
+  authority: PlayerMovementState
+): void {
+  target.isJetpacking = authority.isJetpacking;
+  target.jetpackFuel = authority.jetpackFuel;
 }
 
 function correctionDurationMs(positionError: number): number {
@@ -282,6 +289,10 @@ export class MovementPredictionController {
       modesDiffer;
 
     if (!shouldCorrect) {
+      if (this.state) {
+        applyAuthorityOwnedMovementResources(this.state.movement, authoritativeState.movement);
+      }
+
       return {
         ackSeq: authority.ackSeq,
         positionError,
