@@ -83,6 +83,57 @@ pnpm run dev:client  # Start client on http://localhost:3000
 pnpm run dev:server  # Start server on ws://localhost:2567
 ```
 
+### Distributed Colyseus Development
+
+Local distributed mode uses Redis for Colyseus presence, room discovery, seat reservations, and lightweight wager notifications.
+
+```bash
+pnpm db:up
+pnpm db:migrate
+
+# terminal 1
+pnpm dev:server:distributed:a
+
+# terminal 2
+pnpm dev:server:distributed:b
+
+# optional Node-only verification harness
+pnpm --filter @voxel-strike/server harness:colyseus-distributed
+```
+
+Required production variables for a single direct-address deployment:
+
+- `COLYSEUS_DISTRIBUTED=1`
+- `COLYSEUS_REDIS_URL` or `REDIS_URL`
+- `COLYSEUS_PUBLIC_ADDRESS`, when each room-owning process has a stable direct address
+- `COLYSEUS_REQUIRE_PUBLIC_ADDRESS=1`, to fail fast if routing depends on direct process addresses
+
+Fly production uses Fly managed Upstash Redis plus `fly-replay` routing so multiple Machines can share the normal app hostname:
+
+```bash
+# Create the managed Redis database in the same region as the server app.
+fly redis create --name opus-strike-redis --region iad --no-replicas
+
+# Copy the Private URL from this status output.
+fly redis status opus-strike-redis
+
+# Store the private Redis URL as a server secret. Do not put it in fly.toml.
+fly secrets set -a opus-strike-server COLYSEUS_REDIS_URL='<private redis URL>'
+
+# Deploy the server and then run at least two Machines.
+fly deploy -a opus-strike-server --config apps/server/fly.toml
+fly scale count 2 -a opus-strike-server
+```
+
+The checked-in `apps/server/fly.toml` enables:
+
+- `COLYSEUS_DISTRIBUTED=1`
+- `COLYSEUS_ROUTING_STRATEGY=fly_replay`
+- `COLYSEUS_PUBLIC_ADDRESS=opus-strike-server.fly.dev`
+- `COLYSEUS_REQUIRE_PUBLIC_ADDRESS=1`
+
+Fly provides `FLY_APP_NAME`, `FLY_MACHINE_ID`, and `FLY_REGION` at runtime. Each server process registers its Colyseus `processId` to `FLY_MACHINE_ID` in Redis with a heartbeat. WebSocket joins to a room owned by another process return `fly-replay: instance=<machine id>` before the upgrade, so the Fly proxy routes the connection to the room-owning Machine. `/health` reports Redis, distributed matchmaking, and Fly replay registration status.
+
 ### Voice Chat
 
 Team voice uses LiveKit through backend-issued, short-lived room tokens. For local development, start the bundled LiveKit service and set the server environment:

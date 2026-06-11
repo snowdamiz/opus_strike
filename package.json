@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "dev": "turbo run dev",
-    "dev:all": "pnpm db:up && pnpm db:migrate && concurrently -n db,server,client -c magenta,green,cyan \"docker compose logs -f postgres\" \"pnpm dev:server\" \"pnpm dev:client\"",
+    "dev:all": "pnpm db:up && pnpm db:migrate && concurrently -n db,redis,server,client -c magenta,yellow,green,cyan \"docker compose logs -f postgres\" \"docker compose logs -f redis\" \"pnpm dev:server\" \"pnpm dev:client\"",
     "build": "turbo run build",
     "build:client": "turbo run build --filter=@voxel-strike/client",
     "build:server": "turbo run build --filter=@voxel-strike/server",
@@ -19,13 +19,16 @@
     "test:movement": "pnpm --filter @voxel-strike/physics test:movement",
     "smoke:procedural-buildings": "pnpm --filter @voxel-strike/shared smoke:buildings",
     "clean": "turbo run clean",
-    "db:up": "docker compose up -d --wait postgres",
+    "db:up": "docker compose up -d --wait postgres redis",
     "db:down": "docker compose down",
     "db:generate": "pnpm --filter @voxel-strike/server db:generate",
     "db:migrate": "pnpm --filter @voxel-strike/server db:migrate",
     "db:push": "pnpm --filter @voxel-strike/server db:push",
     "dev:client": "turbo run dev --filter=@voxel-strike/client",
-    "dev:server": "turbo run dev --filter=@voxel-strike/server"
+    "dev:server": "turbo run dev --filter=@voxel-strike/server",
+    "dev:server:distributed:a": "COLYSEUS_DISTRIBUTED=1 COLYSEUS_REDIS_URL=redis://localhost:6379 PORT=2567 COLYSEUS_PUBLIC_ADDRESS=localhost:2567 pnpm dev:server",
+    "dev:server:distributed:b": "COLYSEUS_DISTRIBUTED=1 COLYSEUS_REDIS_URL=redis://localhost:6379 PORT=2568 COLYSEUS_PUBLIC_ADDRESS=localhost:2568 pnpm dev:server",
+    "test:distributed": "pnpm --filter @voxel-strike/server test:distributed-runtime"
   },
   "devDependencies": {
     "concurrently": "10.0.3",

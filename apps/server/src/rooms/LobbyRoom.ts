@@ -18,6 +18,7 @@ import {
 import { serializeRankPayload } from '../ranking/serialization';
 import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
 import { wagerService, type CreateWagerOptions, type LobbyWagerSnapshot, type LockedWagerContext, type WagerPaymentStatusChanged } from '../wagers/service';
+import { wagerEventBus } from '../wagers/eventBus';
 import type { WagerRosterPlayer } from '../wagers/math';
 import {
   isBotDifficulty,
@@ -90,6 +91,7 @@ const MAX_PLAYERS_PER_TEAM = DEFAULT_GAME_CONFIG.teamSize;
 const QUICK_PLAY_REQUIRED_PLAYERS = DEFAULT_GAME_CONFIG.maxPlayers;
 const MAP_VOTE_OPTION_COUNT = 3;
 const MAP_VOTE_DURATION_MS = 30000;
+const WAGER_SAFETY_REFRESH_MS = 10_000;
 const MAP_NAME_SUFFIXES = [
   'Crucible',
   'Relay',
@@ -155,6 +157,9 @@ export class LobbyRoom extends Room<LobbyState> {
       console.error('[LobbyRoom] Failed to apply payment status update:', error);
     });
   };
+  private unsubscribeWagerPaymentStatusChanged: (() => Promise<void>) | null = null;
+  private wagerSafetyRefreshInterval: ReturnType<typeof setInterval> | null = null;
+  private disposed = false;
   private matchMode: MatchMode = 'custom';
   private isQuickPlayQueue = false;
   private isRankedQueue = false;
@@ -204,7 +209,8 @@ export class LobbyRoom extends Room<LobbyState> {
     this.state.status = this.isMatchmakingQueue() ? 'matchmaking' : 'waiting';
     this.state.defaultBotDifficulty = this.normalizeDifficulty(options.defaultBotDifficulty);
     this.state.botFillMode = options.botFillMode || 'manual';
-    wagerService.on('paymentStatusChanged', this.onWagerPaymentStatusChanged);
+    this.subscribeToWagerEvents();
+    this.startWagerSafetyRefresh();
 
     // Set metadata for lobby listing
     this.updateMetadata();
@@ -570,10 +576,18 @@ export class LobbyRoom extends Room<LobbyState> {
     this.broadcastMatchmakingStatus();
   }
 
-  onDispose() {
+  async onDispose() {
+    this.disposed = true;
     console.log('Lobby room disposing:', this.roomId);
     this.clearMapVoteTimer();
-    wagerService.off('paymentStatusChanged', this.onWagerPaymentStatusChanged);
+    this.stopWagerSafetyRefresh();
+    if (this.unsubscribeWagerPaymentStatusChanged) {
+      const unsubscribe = this.unsubscribeWagerPaymentStatusChanged;
+      this.unsubscribeWagerPaymentStatusChanged = null;
+      await unsubscribe().catch((error) => {
+        console.error('[LobbyRoom] Failed to unsubscribe from wager events:', error);
+      });
+    }
     if (this.state.wagerEnabled && this.state.status !== 'in_game' && !this.state.gameRoomId) {
       wagerService.refundLobbyBeforeGame(this.state.lobbyId, 'lobby_dispose').catch((error) => {
         console.error('[LobbyRoom] Failed to refund disposed lobby wager:', error);
@@ -1534,6 +1548,52 @@ export class LobbyRoom extends Room<LobbyState> {
       .catch((error) => {
         console.error('[LobbyRoom] Ranked auto-start payment gate failed:', error);
       });
+  }
+
+  private subscribeToWagerEvents(): void {
+    wagerEventBus.subscribeToLobby(this.state.lobbyId, this.onWagerPaymentStatusChanged)
+      .then((unsubscribe) => {
+        if (this.disposed) {
+          unsubscribe().catch((error) => {
+            console.error('[LobbyRoom] Failed to unsubscribe from wager events:', error);
+          });
+          return;
+        }
+        this.unsubscribeWagerPaymentStatusChanged = unsubscribe;
+      })
+      .catch((error) => {
+        console.error('[LobbyRoom] Failed to subscribe to wager events:', error);
+      });
+  }
+
+  private startWagerSafetyRefresh(): void {
+    this.wagerSafetyRefreshInterval = setInterval(() => {
+      if (!this.shouldRefreshPreGameWager()) return;
+      this.refreshWagerState()
+        .then(() => {
+          this.broadcastLobbyState();
+          this.broadcastMatchmakingStatus();
+          this.tryStartMatchmakingMapVote();
+        })
+        .catch((error) => {
+          console.error('[LobbyRoom] Failed to refresh wager state:', error);
+        });
+    }, WAGER_SAFETY_REFRESH_MS);
+    this.wagerSafetyRefreshInterval.unref?.();
+  }
+
+  private stopWagerSafetyRefresh(): void {
+    if (!this.wagerSafetyRefreshInterval) return;
+    clearInterval(this.wagerSafetyRefreshInterval);
+    this.wagerSafetyRefreshInterval = null;
+  }
+
+  private shouldRefreshPreGameWager(): boolean {
+    return Boolean(
+      this.state.wagerEnabled
+        && !this.state.gameRoomId
+        && this.state.status !== 'in_game'
+    );
   }
 
   private isMatchmakingQueue(): boolean {

@@ -11,12 +11,30 @@ import matchmakingRoutes from './matchmaking/routes';
 import wagerRoutes from './wagers/routes';
 import { voiceService } from './voice/VoiceService';
 import { wagerService } from './wagers/service';
+import {
+  createDistributedColyseusOptions,
+  getColyseusRuntimeConfig,
+  validateColyseusRuntimeConfig,
+} from './config/colyseus';
+import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
+import {
+  installFlyReplayUpgradeRouter,
+  registerFlyReplayProcessRoute,
+  type FlyReplayProcessRouteHandle,
+} from './runtime/flyReplayRouting';
+import { loggers } from './utils/logger';
 
 const app = express();
 const httpServer = createServer(app);
+const colyseusRuntime = getColyseusRuntimeConfig();
+validateColyseusRuntimeConfig(colyseusRuntime);
+const sharedRedisClient = colyseusRuntime.distributed ? getSharedRedisClient(colyseusRuntime) : null;
+let flyReplayRouteHandle: FlyReplayProcessRouteHandle | null = null;
 
 // Create Colyseus server
 const gameServer = new Server({
+  ...createDistributedColyseusOptions(colyseusRuntime),
+  gracefullyShutdown: false,
   transport: new WebSocketTransport({
     server: httpServer,
     pingInterval: 5000,
@@ -31,6 +49,13 @@ gameServer
   .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'rankedCoverChargeLamports'])
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
+
+installFlyReplayUpgradeRouter({
+  server: httpServer,
+  config: colyseusRuntime,
+  redis: sharedRedisClient,
+  getLocalProcessId: () => matchMaker.processId,
+});
 
 function readOriginList(value: string | undefined): string[] {
   if (!value) return [];
@@ -84,8 +109,58 @@ app.use('/matchmaking', matchmakingRoutes);
 app.use('/wagers', wagerRoutes);
 
 // Health check endpoint
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
+app.get('/health', async (_req, res) => {
+  const redis = await pingRedis(sharedRedisClient);
+  let matchmakerQueryHealthy = true;
+  let visibleLobbyRoomCount = 0;
+  let matchmakerError: string | undefined;
+
+  try {
+    visibleLobbyRoomCount = (await matchMaker.query({ name: 'lobby_room' })).length;
+  } catch (error) {
+    matchmakerQueryHealthy = false;
+    matchmakerError = error instanceof Error ? error.message : String(error);
+  }
+
+  const healthy = (!colyseusRuntime.distributed || redis.ok) && matchmakerQueryHealthy;
+
+  res.status(healthy ? 200 : 503).json({
+    status: healthy ? 'ok' : 'degraded',
+    process: {
+      pid: process.pid,
+      colyseusProcessId: matchMaker.processId,
+      publicAddress: colyseusRuntime.publicAddress ?? null,
+      flyMachineId: colyseusRuntime.flyReplay.machineId ?? null,
+      flyRegion: colyseusRuntime.flyReplay.region ?? null,
+    },
+    distributed: {
+      enabled: colyseusRuntime.distributed,
+      redisConfigured: Boolean(colyseusRuntime.redisUrl),
+      requirePublicAddress: colyseusRuntime.requirePublicAddress,
+      redis,
+    },
+    routing: {
+      strategy: colyseusRuntime.routingStrategy,
+      flyReplay: {
+        enabled: colyseusRuntime.flyReplay.enabled,
+        appName: colyseusRuntime.flyReplay.appName ?? null,
+        machineId: colyseusRuntime.flyReplay.machineId ?? null,
+        region: colyseusRuntime.flyReplay.region ?? null,
+        registered: Boolean(flyReplayRouteHandle),
+        processRegistryTtlMs: colyseusRuntime.flyReplay.processRegistryTtlMs,
+        processRegistryHeartbeatMs: colyseusRuntime.flyReplay.processRegistryHeartbeatMs,
+        replayTimeout: colyseusRuntime.flyReplay.replayTimeout,
+        replayFallback: colyseusRuntime.flyReplay.replayFallback,
+      },
+    },
+    colyseus: {
+      localRoomCount: matchMaker.stats.local.roomCount,
+      localCcu: matchMaker.stats.local.ccu,
+      visibleLobbyRoomCount,
+      matchmakerQueryHealthy,
+      matchmakerError,
+    },
+  });
 });
 
 app.get('/voice/status', (_req, res) => {
@@ -194,26 +269,91 @@ app.get('/lobbies/stream', async (req, res) => {
 
 const PORT = parseInt(process.env.PORT || '2567', 10);
 
-httpServer.listen(PORT, () => {
+async function startServer(): Promise<void> {
+  try {
+    if (colyseusRuntime.flyReplay.enabled) {
+      if (!sharedRedisClient) throw new Error('Fly replay routing requires Redis');
+      flyReplayRouteHandle = await registerFlyReplayProcessRoute(
+        sharedRedisClient,
+        colyseusRuntime,
+        matchMaker.processId
+      );
+    }
+
+    await gameServer.listen(PORT);
+  } catch (error) {
+    await flyReplayRouteHandle?.close();
+    flyReplayRouteHandle = null;
+    throw error;
+  }
+
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                     SLOP HEROES SERVER                     ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  WebSocket:  ws://localhost:${PORT}                          ║
 ║  Health:     http://localhost:${PORT}/health                 ║
+║  Distributed:${colyseusRuntime.distributed ? ' enabled ' : ' disabled'}                              ║
 ╚═══════════════════════════════════════════════════════════╝
   `);
-});
 
-wagerService.startBackgroundJobs();
+  if (colyseusRuntime.distributed) {
+    loggers.room.info('Colyseus distributed runtime enabled', {
+      publicAddress: colyseusRuntime.publicAddress ?? null,
+      redisUrlConfigured: Boolean(colyseusRuntime.redisUrl),
+      routingStrategy: colyseusRuntime.routingStrategy,
+      flyMachineId: colyseusRuntime.flyReplay.machineId ?? null,
+      processId: matchMaker.processId,
+      pid: process.pid,
+    });
+  }
+
+  wagerService.startBackgroundJobs();
+}
+
+let shutdownStarted = false;
+
+async function shutdown(signal: string): Promise<void> {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+
+  loggers.room.info('Graceful shutdown starting', {
+    signal,
+    processId: matchMaker.processId,
+    pid: process.pid,
+  });
+
+  try {
+    wagerService.stopBackgroundJobs();
+    await flyReplayRouteHandle?.close();
+    flyReplayRouteHandle = null;
+    await gameServer.gracefullyShutdown(false);
+    await closeSharedRedisClient();
+    loggers.room.info('Graceful shutdown finished', {
+      signal,
+      processId: matchMaker.processId,
+      pid: process.pid,
+    });
+    process.exit(0);
+  } catch (error) {
+    loggers.room.error('Graceful shutdown failed', {
+      signal,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    process.exit(1);
+  }
+}
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('Shutting down...');
-  gameServer.gracefullyShutdown();
+  void shutdown('SIGTERM');
 });
 
 process.on('SIGINT', () => {
-  console.log('Shutting down...');
-  gameServer.gracefullyShutdown();
+  void shutdown('SIGINT');
+});
+
+startServer().catch((error) => {
+  loggers.room.error('Failed to start server', error);
+  process.exit(1);
 });

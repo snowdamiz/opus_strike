@@ -111,6 +111,12 @@ importers:
 
   apps/server:
     dependencies:
+      '@colyseus/redis-driver':
+        specifier: ^0.15.6
+        version: 0.15.6(@colyseus/schema@2.0.37)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      '@colyseus/redis-presence':
+        specifier: ^0.15.6
+        version: 0.15.6(@colyseus/schema@2.0.37)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       '@colyseus/schema':
         specifier: ^2.0.0
         version: 2.0.37
@@ -150,6 +156,9 @@ importers:
       express:
         specifier: ^4.21.1
         version: 4.21.2
+      ioredis:
+        specifier: ^5.8.2
+        version: 5.8.2
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.2
@@ -175,6 +184,9 @@ importers:
       '@types/node':
         specifier: ^22.8.4
         version: 22.19.1
+      colyseus.js:
+        specifier: ^0.15.25
+        version: 0.15.28(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       tsx:
         specifier: ^4.20.6
         version: 4.20.6

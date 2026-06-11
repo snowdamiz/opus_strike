@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
+import { matchMaker } from 'colyseus';
 import {
   Connection,
   Message,
@@ -13,6 +14,8 @@ import {
 import type { MatchMode } from '@voxel-strike/shared';
 import prisma from '../db';
 import { loggers } from '../utils/logger';
+import { getColyseusRuntimeConfig } from '../config/colyseus';
+import { getSharedRedisClient } from '../config/redis';
 import {
   assertPublicKey,
   assertWagerPaymentsConfigured,
@@ -29,6 +32,8 @@ import {
   type WagerRosterPlayer,
   type WagerStartEligibility,
 } from './math';
+import { wagerEventBus } from './eventBus';
+import { runWithRedisOwnerLock, type RedisOwnerLockClient } from './workerLock';
 import {
   createWagerMemo,
   findWagerMemoInParsedTransaction,
@@ -58,6 +63,10 @@ type WageredLobbyStatus =
   | 'failed';
 
 type TransferKind = 'winner_payout' | 'developer_fee' | 'refund';
+
+const WAGER_BACKGROUND_LOCK_TTL_MS = 45_000;
+const WAGER_BACKGROUND_LOCK_HEARTBEAT_MS = 15_000;
+const WAGER_TRANSFER_RETRY_GRACE_MS = 60_000;
 
 export interface CreateWagerOptions {
   enabled?: boolean;
@@ -1000,14 +1009,14 @@ export class WagerService extends EventEmitter {
     this.backgroundStarted = true;
 
     const run = () => {
-      this.runBackgroundOnce().catch((error) => {
+      this.runBackgroundJobWithLock('pass', () => this.runBackgroundOnce()).catch((error) => {
         loggers.room.error('Wager background job failed', error);
       });
     };
 
     this.backgroundTimers.push(setInterval(run, 30_000));
     this.backgroundTimers.push(setInterval(() => {
-      this.checkTreasuryBalance().catch((error) => {
+      this.runBackgroundJobWithLock('treasury-balance', () => this.checkTreasuryBalance()).catch((error) => {
         loggers.room.error('Wager treasury balance check failed', error);
       });
     }, 120_000));
@@ -1018,6 +1027,70 @@ export class WagerService extends EventEmitter {
     for (const timer of this.backgroundTimers) clearInterval(timer);
     this.backgroundTimers = [];
     this.backgroundStarted = false;
+  }
+
+  private async runBackgroundJobWithLock(jobName: string, fn: () => Promise<void>): Promise<void> {
+    const colyseusConfig = getColyseusRuntimeConfig();
+    if (!colyseusConfig.distributed) {
+      await fn();
+      return;
+    }
+
+    const redis = getSharedRedisClient(colyseusConfig);
+    if (!redis) {
+      throw new Error('Distributed wager background jobs require Redis');
+    }
+
+    const lockKey = `wager:background:${jobName}:lock`;
+    const ownerToken = `${matchMaker.processId || process.pid}:${process.pid}:${randomUUID()}`;
+    const result = await runWithRedisOwnerLock(redis as RedisOwnerLockClient, {
+      key: lockKey,
+      ttlMs: WAGER_BACKGROUND_LOCK_TTL_MS,
+      heartbeatMs: WAGER_BACKGROUND_LOCK_HEARTBEAT_MS,
+      ownerToken,
+      onAcquired: () => {
+        loggers.room.debug('Wager background lock acquired', {
+          jobName,
+          lockKey,
+          processId: matchMaker.processId,
+          pid: process.pid,
+        });
+      },
+      onSkipped: () => {
+        loggers.room.debug('Wager background lock skipped', {
+          jobName,
+          lockKey,
+          processId: matchMaker.processId,
+          pid: process.pid,
+        });
+      },
+      onExtended: () => {
+        loggers.room.debug('Wager background lock renewed', {
+          jobName,
+          lockKey,
+          processId: matchMaker.processId,
+          pid: process.pid,
+        });
+      },
+      onExtendFailed: () => {
+        loggers.room.warn('Wager background lock renewal failed', {
+          jobName,
+          lockKey,
+          processId: matchMaker.processId,
+          pid: process.pid,
+        });
+      },
+      onReleased: () => {
+        loggers.room.debug('Wager background lock released', {
+          jobName,
+          lockKey,
+          processId: matchMaker.processId,
+          pid: process.pid,
+        });
+      },
+    }, fn);
+
+    if (!result.acquired) return;
   }
 
   async runBackgroundOnce(): Promise<void> {
@@ -1176,7 +1249,7 @@ export class WagerService extends EventEmitter {
       .filter((candidate) => isCreditedStatus(candidate.status))
       .reduce((sum, candidate) => sum + candidate.amountLamports, 0n);
 
-    this.emit('paymentStatusChanged', {
+    const payload = {
       lobbyId,
       userId: payment.userId,
       lobbyPlayerId: payment.lobbyPlayerId,
@@ -1191,7 +1264,16 @@ export class WagerService extends EventEmitter {
       refundNetLamports: payment.refundNetLamports?.toString() ?? null,
       refundFeeSource: payment.refundFeeSource,
       potLamports: bigintToJson(potLamports),
-    } satisfies WagerPaymentStatusChanged);
+    } satisfies WagerPaymentStatusChanged;
+
+    this.emit('paymentStatusChanged', payload);
+    await wagerEventBus.publishPaymentStatusChanged(payload).catch((error) => {
+      loggers.room.error('Failed to publish wager payment status event', {
+        lobbyId,
+        paymentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   private async estimateRefundTransferAudit(input: {
@@ -1272,6 +1354,17 @@ export class WagerService extends EventEmitter {
     });
     if (!payment || payment.status === 'refunded') return;
     if (payment.status !== 'credited' && payment.status !== 'refunding') return;
+    if (
+      payment.status === 'refunding'
+      && !payment.refundSignature
+      && payment.updatedAt.getTime() > Date.now() - WAGER_TRANSFER_RETRY_GRACE_MS
+    ) {
+      loggers.room.debug('Skipping recently claimed wager refund', {
+        paymentId: payment.id,
+        lobbyId: payment.wageredLobby.lobbyId,
+      });
+      return;
+    }
 
     let audit: RefundTransferAudit;
     try {
@@ -1290,8 +1383,8 @@ export class WagerService extends EventEmitter {
           grossLamports: payment.amountLamports,
         });
     } catch (error) {
-      await prisma.wagerPayment.update({
-        where: { id: payment.id },
+      const failedClaim = await prisma.wagerPayment.updateMany({
+        where: { id: payment.id, status: payment.status, updatedAt: payment.updatedAt },
         data: {
           status: 'refunding',
           refundReason: reason,
@@ -1302,12 +1395,14 @@ export class WagerService extends EventEmitter {
           lastError: `${reason}:${error instanceof Error ? error.message : String(error)}`,
         },
       });
-      await this.emitPaymentStatusChanged(payment.wageredLobby.lobbyId, payment.id);
+      if (failedClaim.count > 0) {
+        await this.emitPaymentStatusChanged(payment.wageredLobby.lobbyId, payment.id);
+      }
       throw error;
     }
 
-    await prisma.wagerPayment.update({
-      where: { id: payment.id },
+    const claim = await prisma.wagerPayment.updateMany({
+      where: { id: payment.id, status: payment.status, updatedAt: payment.updatedAt },
       data: {
         status: 'refunding',
         refundReason: reason,
@@ -1318,6 +1413,13 @@ export class WagerService extends EventEmitter {
         lastError: null,
       },
     });
+    if (claim.count === 0) {
+      loggers.room.debug('Wager refund claim lost to another worker', {
+        paymentId: payment.id,
+        lobbyId: payment.wageredLobby.lobbyId,
+      });
+      return;
+    }
     await this.emitPaymentStatusChanged(payment.wageredLobby.lobbyId, payment.id);
 
     try {
@@ -1333,8 +1435,8 @@ export class WagerService extends EventEmitter {
         },
       });
 
-      await prisma.wagerPayment.update({
-        where: { id: payment.id },
+      await prisma.wagerPayment.updateMany({
+        where: { id: payment.id, status: 'refunding' },
         data: {
           status: 'refunded',
           refundSignature: result.signature,
@@ -1348,8 +1450,8 @@ export class WagerService extends EventEmitter {
         },
       });
     } catch (error) {
-      await prisma.wagerPayment.update({
-        where: { id: payment.id },
+      await prisma.wagerPayment.updateMany({
+        where: { id: payment.id, status: 'refunding' },
         data: {
           status: 'refunding',
           lastError: `${reason}:${error instanceof Error ? error.message : String(error)}`,
@@ -1529,34 +1631,70 @@ export class WagerService extends EventEmitter {
       for (const transfer of settlement.transfers) {
         if (transfer.status === 'confirmed') continue;
         if (transfer.amountLamports <= 0n) {
-          await prisma.wagerSettlementTransfer.update({
-            where: { id: transfer.id },
+          await prisma.wagerSettlementTransfer.updateMany({
+            where: { id: transfer.id, status: transfer.status, updatedAt: transfer.updatedAt },
             data: { status: 'confirmed', confirmedAt: new Date(), lastError: null },
           });
           continue;
         }
+        if (
+          transfer.status === 'submitted'
+          && !transfer.signature
+          && transfer.updatedAt.getTime() > Date.now() - WAGER_TRANSFER_RETRY_GRACE_MS
+        ) {
+          loggers.room.debug('Skipping recently claimed wager settlement transfer', {
+            settlementId,
+            transferId: transfer.id,
+            kind: transfer.kind,
+          });
+          continue;
+        }
 
-        const result = await this.sendTreasuryTransfer({
-          recipientWallet: transfer.recipientWallet,
-          amountLamports: transfer.amountLamports,
-          existingSignature: transfer.signature,
-          onSubmitted: async (signature) => {
-            await prisma.wagerSettlementTransfer.update({
-              where: { id: transfer.id },
-              data: { signature, status: 'submitted', lastError: null },
-            });
-          },
+        const claim = await prisma.wagerSettlementTransfer.updateMany({
+          where: { id: transfer.id, status: transfer.status, updatedAt: transfer.updatedAt },
+          data: { status: 'submitted', lastError: null },
         });
+        if (claim.count === 0) {
+          loggers.room.debug('Wager settlement transfer claim lost to another worker', {
+            settlementId,
+            transferId: transfer.id,
+            kind: transfer.kind,
+          });
+          continue;
+        }
 
-        await prisma.wagerSettlementTransfer.update({
-          where: { id: transfer.id },
-          data: {
-            signature: result.signature,
-            status: 'confirmed',
-            confirmedAt: result.confirmedAt,
-            lastError: null,
-          },
-        });
+        try {
+          const result = await this.sendTreasuryTransfer({
+            recipientWallet: transfer.recipientWallet,
+            amountLamports: transfer.amountLamports,
+            existingSignature: transfer.signature,
+            onSubmitted: async (signature) => {
+              await prisma.wagerSettlementTransfer.update({
+                where: { id: transfer.id },
+                data: { signature, status: 'submitted', lastError: null },
+              });
+            },
+          });
+
+          await prisma.wagerSettlementTransfer.updateMany({
+            where: { id: transfer.id, status: 'submitted' },
+            data: {
+              signature: result.signature,
+              status: 'confirmed',
+              confirmedAt: result.confirmedAt,
+              lastError: null,
+            },
+          });
+        } catch (error) {
+          await prisma.wagerSettlementTransfer.updateMany({
+            where: { id: transfer.id, status: 'submitted' },
+            data: {
+              status: 'failed',
+              lastError: error instanceof Error ? error.message : String(error),
+            },
+          }).catch(() => undefined);
+          throw error;
+        }
       }
 
       await this.completeSettlement(settlementId);
@@ -1770,7 +1908,7 @@ export class WagerService extends EventEmitter {
     const config = this.getConfig();
     const settlements = await prisma.wagerSettlement.findMany({
       where: {
-        status: { in: ['pending', 'failed'] },
+        status: { in: ['pending', 'failed', 'processing'] },
         attemptCount: { lt: config.settlementMaxAttempts },
         updatedAt: { lt: new Date(Date.now() - config.settlementRetryMs) },
       },

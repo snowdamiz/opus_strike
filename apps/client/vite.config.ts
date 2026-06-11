@@ -50,9 +50,9 @@ export default defineConfig({
           if (id.includes('@dimforge/rapier3d-compat')) {
             return 'physics-vendor';
           }
-          if (id.includes('colyseus.js')) {
-            return 'network-vendor';
-          }
+          // Keep Colyseus with its transitive deps. Splitting it into a
+          // separate manual chunk can create a browser ESM cycle with the
+          // generic vendor chunk before axios/http helpers initialize.
           if (id.includes('@solana/web3.js') || id.includes('/bs58/') || id.includes('/buffer/')) {
             return 'wallet-vendor';
           }
