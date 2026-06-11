@@ -46,6 +46,24 @@ export const CHRONOS_TIMEBREAK_SHOCKWAVE_KNOCKBACK_FORCE = 13.5;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_VERTICAL_FORCE = 3.2;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS = 650;
 export const CHRONOS_TIMEBREAK_RELEASE_DELAY_MS = 420;
+export const CHRONOS_ASCENDANT_PARADOX_DURATION_MS = 10000;
+export const CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE = 18.5;
+export const CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE = 4.2;
+export const CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST = 0.75;
+export const CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN = 22;
+export const CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER = 1.38;
+export const CHRONOS_ASCENDANT_PARADOX_AIR_ACCEL_MULTIPLIER = 1.9;
+export const CHRONOS_ASCENDANT_PARADOX_GRAVITY_SCALE = 0.18;
+export const CHRONOS_ASCENDANT_PARADOX_VERTICAL_ACCEL = 22;
+export const CHRONOS_ASCENDANT_PARADOX_MAX_ASCEND_SPEED = 14;
+export const CHRONOS_ASCENDANT_PARADOX_MAX_DESCEND_SPEED = -5.5;
+export const CHRONOS_ASCENDANT_PARADOX_HOVER_DAMPING = 7.5;
+export const CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_DAMPING = 8;
+export const CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_STOP_SPEED = 0.12;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE = 24;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS = 3.8;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS = 360;
+export const CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED = 54;
 
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
@@ -274,7 +292,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 15,
     charges: 3,
     chargeRegenTime: 15,
-    description: 'Auto-target up to 3 teammates in the area and send green healing beams to them. 3 charges; cooldown begins after all charges are spent.',
+    description: 'Auto-target up to 3 teammates in the area, or Chronos if no teammate is nearby, and send green healing beams. 3 charges; cooldown begins after all charges are spent.',
   },
   chronos_timebreak: {
     id: 'chronos_timebreak',
@@ -290,7 +308,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'ultimate',
     targeting: 'self',
     cooldown: 0,
-    duration: 10,
+    duration: CHRONOS_ASCENDANT_PARADOX_DURATION_MS / 1000,
     resourceCost: 100,
     description: 'Lift off for 10 seconds and supercharge Verdant Pulse into larger green AOE blasts while airborne.',
   },

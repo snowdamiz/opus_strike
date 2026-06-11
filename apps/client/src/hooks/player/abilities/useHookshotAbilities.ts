@@ -383,12 +383,11 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     const now = Date.now();
     const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
 
-    // Start position
-    const startPos = {
-      x: ctx.localPlayer.position.x,
-      y: ctx.localPlayer.position.y + 1.5,
-      z: ctx.localPlayer.position.z,
-    };
+    const launchSide = 1;
+    const startPos = readHookshotHookSocketPosition(launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+      ...HOOKSHOT_CHAIN_SOCKET,
+      sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
+    });
 
     // Find target
     let targetX = startPos.x + direction.x * GRAPPLE_TRAP_MAX_RANGE;
@@ -474,6 +473,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       hookedPlayers: [],
     });
     markPredictedLocalAbilityVisual('hookshot_grapple_trap', ctx.localPlayer.id, trapId, {
+      launchSide,
       now,
     });
 

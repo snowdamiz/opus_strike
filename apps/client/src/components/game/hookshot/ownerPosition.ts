@@ -1,6 +1,5 @@
-import type { Player } from '@voxel-strike/shared';
+import { calculatePlayerSocketPosition, type Player } from '@voxel-strike/shared';
 import { visualStore } from '../../../store/visualStore';
-import { calculatePlayerSocketPosition } from '../../../hooks/player/constants';
 import {
   readRemoteModelSocketAny,
   writeRemoteModelSocketPosition,

@@ -30,6 +30,7 @@ import {
 } from '../../viewmodel/blazePose';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+  getChronosAscendantParadoxPose,
   getChronosLifelineConduitPose,
   getChronosPrimaryHeldBlend,
   getChronosPrimaryShotGlowBlend,
@@ -156,6 +157,7 @@ interface ChronosAegisPose {
   spread: number;
   shield: number;
   recoil: number;
+  spinBoost: number;
 }
 
 interface PhantomReloadPose {
@@ -309,6 +311,7 @@ const CHRONOS_AEGIS_IDLE_POSE: ChronosAegisPose = {
   spread: 0,
   shield: 0,
   recoil: 0,
+  spinBoost: 0,
 };
 const CHRONOS_STILL_MOVEMENT_BOB: ChronosMovementBobOffset = {
   horizontalX: 0,
@@ -3533,6 +3536,7 @@ function ChronosFloatingPyramidWeapon({
     const spread = aegisPose.spread;
     const shield = aegisPose.shield;
     const recoil = aegisPose.recoil;
+    const spinBoost = aegisPose.spinBoost;
     root.updateMatrixWorld(true);
     leftSocket.getWorldPosition(leftSocketWorldPosition);
     rightSocket.getWorldPosition(rightSocketWorldPosition);
@@ -3554,17 +3558,17 @@ function ChronosFloatingPyramidWeapon({
     if (pyramidRef.current) {
       const pyramidScale = 1 + CHRONOS_AEGIS_PYRAMID_GROWTH * spread + 0.18 * shield + 0.08 * recoil;
       primarySpinPhaseRef.current +=
-        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4);
+        Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4 + spinBoost * 3.8);
       pyramidRef.current.rotation.set(
         CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X - 0.08 * shield + Math.sin(t * 0.42) * 0.02 + 0.16 * recoil,
         Math.PI / 4 +
-          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread) +
+          t * (CHRONOS_WEAPON_PYRAMID_SPIN_SPEED + 0.5 * spread + 1.7 * spinBoost) +
           primarySpinPhaseRef.current,
         Math.sin(t * 0.5) * 0.018
       );
       pyramidRef.current.scale.setScalar(pyramidScale);
     }
-    const pyramidGlow = aegisGlow;
+    const pyramidGlow = Math.max(aegisGlow, spinBoost);
     pyramidFaceMaterial.opacity = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(
         CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY,
@@ -3853,6 +3857,7 @@ function ChronosViewmodel({
     );
     const lifelinePose = getChronosLifelineConduitPose(now);
     const timebreakPose = getChronosTimebreakPose(now);
+    const ascendantPose = getChronosAscendantParadoxPose(now);
 
     aegisPose.active = active || lifelinePose.glow > 0.01 || timebreakPose.glow > 0.01;
     aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow, timebreakPose.glow);
@@ -3863,6 +3868,7 @@ function ChronosViewmodel({
       CHRONOS_AEGIS_SHIELD_START,
       1
     );
+    aegisPose.spinBoost = ascendantPose.spinBoost;
   });
 
   return (

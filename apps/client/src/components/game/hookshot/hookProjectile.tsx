@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { doesSegmentHitPlayerCombatHitbox } from '@voxel-strike/shared';
 import { useGameStore, type HookProjectileData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
@@ -34,7 +35,7 @@ import { HookshotProjectileArrowHead } from './arrowHead';
 const HOOK_SPEED = 38;
 const HOOK_MAX_DISTANCE = 10; // Reduced for close-range
 const HOOK_DAMAGE = 25;
-const HOOK_HIT_RADIUS = 1.0;
+const HOOK_COLLISION_RADIUS = 0.22;
 const HOOK_RETRACT_SPEED = 50;
 
 // Get shared materials from centralized resources
@@ -88,6 +89,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
   const dirX = velX / speed;
   const dirY = velY / speed;
   const dirZ = velZ / speed;
+  const hookDirection = { x: dirX, y: dirY, z: dirZ };
   const launchSide = hook.launchSide ?? 1;
   const launchSocketOffset = {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
@@ -141,6 +143,8 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
     
     if (hookStateRef.current === 'extending') {
       // Move forward
+      const moveDistance = speed * delta;
+      const previousPosition = { x: curPos.x, y: curPos.y, z: curPos.z };
       curPos.x += velX * delta;
       curPos.y += velY * delta;
       curPos.z += velZ * delta;
@@ -174,12 +178,14 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
         for (const [playerId, player] of players) {
           if (playerId === localPlayer.id || player.state !== 'alive') continue;
           if (player.team === localPlayer.team) continue;
-          
-          const pdx = player.position.x - curPos.x;
-          const pdy = (player.position.y + 0.9) - curPos.y;
-          const pdz = player.position.z - curPos.z;
-          
-          if (pdx * pdx + pdy * pdy + pdz * pdz <= HOOK_HIT_RADIUS * HOOK_HIT_RADIUS) {
+
+          if (doesSegmentHitPlayerCombatHitbox(
+            previousPosition,
+            hookDirection,
+            moveDistance,
+            player,
+            HOOK_COLLISION_RADIUS
+          )) {
             hasHitRef.current = true;
             hookStateRef.current = 'retracting';
             break;

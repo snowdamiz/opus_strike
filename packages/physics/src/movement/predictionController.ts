@@ -29,6 +29,7 @@ export interface MovementPredictionContext {
   terrain: MovementTerrainAdapter;
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
+  chronosAscendantActive?: boolean;
 }
 
 export interface PredictionCommandRecord {
@@ -384,6 +385,7 @@ export class MovementPredictionController {
       terrain: context.terrain,
       flagCarrier: context.flagCarrier,
       activeSpeedMultiplier: context.activeSpeedMultiplier,
+      chronosAscendantActive: context.chronosAscendantActive,
     });
 
     return cloneMovementSimulationState(result);

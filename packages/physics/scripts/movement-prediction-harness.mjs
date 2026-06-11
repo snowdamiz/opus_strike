@@ -10,6 +10,7 @@ import {
 } from '../dist/index.js';
 import {
   HERO_DEFINITIONS,
+  CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN,
   MOVEMENT_BUTTON_ABILITY_1,
   MOVEMENT_BUTTON_CROUCH,
   MOVEMENT_BUTTON_CROUCH_PRESSED,
@@ -246,6 +247,99 @@ function runHeldCommandStripsEdgeButtons() {
   assert.equal(heldInput.reload, false);
   assert.equal(heldInput.ability1, false);
   assert.equal(heldInput.unstuck, false);
+}
+
+function runChronosAscendantReleaseDampsStrafe() {
+  let state = {
+    position: { x: 0, y: 6, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    movement: {
+      ...createMovementState(),
+      isGrounded: false,
+      isJetpacking: true,
+      isGliding: true,
+    },
+  };
+
+  const stepAscendant = (input) => simulateSharedMovement({
+    position: state.position,
+    velocity: state.velocity,
+    movement: state.movement,
+    heroStats: HERO_DEFINITIONS.chronos.stats,
+    input,
+    lookYaw: 0,
+    deltaTime: 1 / 60,
+    terrain,
+    activeSpeedMultiplier: 1.38,
+    chronosAscendantActive: true,
+  });
+
+  const strafeInput = {
+    ...createEmptyInputState(),
+    moveLeft: true,
+  };
+  for (let step = 0; step < 12; step++) {
+    state = stepAscendant(strafeInput);
+  }
+
+  const strafeSpeed = speed2D(state.velocity);
+  assert.ok(state.velocity.x < -0.5, `Ascendant strafe input should build left velocity, got ${state.velocity.x}`);
+
+  const releasedInput = createEmptyInputState();
+  for (let step = 0; step < 30; step++) {
+    state = stepAscendant(releasedInput);
+  }
+
+  assert.ok(
+    speed2D(state.velocity) < strafeSpeed * 0.12,
+    `released Ascendant strafe should damp horizontal speed, got ${speed2D(state.velocity)} from ${strafeSpeed}`
+  );
+  assert.ok(
+    Math.abs(state.velocity.x) < 0.2,
+    `released Ascendant left strafe should settle near zero X velocity, got ${state.velocity.x}`
+  );
+}
+
+function runChronosAscendantCapsElevation() {
+  const startY = 6;
+  let state = {
+    position: { x: 0, y: startY, z: 0 },
+    velocity: { x: 0, y: 18.5, z: 0 },
+    movement: {
+      ...createMovementState(),
+      isGrounded: false,
+      isJetpacking: true,
+      isGliding: true,
+      chronosAscendantStartY: startY,
+    },
+  };
+
+  const input = {
+    ...createEmptyInputState(),
+    jump: true,
+  };
+
+  for (let step = 0; step < 180; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.chronos.stats,
+      input,
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+      activeSpeedMultiplier: 1.38,
+      chronosAscendantActive: true,
+    });
+  }
+
+  const maxY = startY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN;
+  assert.ok(
+    state.position.y <= maxY + 0.001,
+    `Ascendant should cap elevation at ${maxY}, got ${state.position.y}`
+  );
+  assert.ok(state.velocity.y <= 0.001, `Ascendant upward velocity should stop at ceiling, got ${state.velocity.y}`);
 }
 
 function runCorrectionReplay() {
@@ -1107,6 +1201,8 @@ runDuplicateAckNoop();
 runNoCorrectionAckRefreshesAuthorityOwnedResources();
 runSlideRequiresFreshCrouchPress();
 runHeldCommandStripsEdgeButtons();
+runChronosAscendantReleaseDampsStrafe();
+runChronosAscendantCapsElevation();
 runCorrectionReplay();
 runOverwriteUpdatesLatestAckState();
 runOverwriteDefaultsToExternalCorrection();

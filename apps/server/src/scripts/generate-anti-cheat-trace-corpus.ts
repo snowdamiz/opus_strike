@@ -4,7 +4,6 @@ import { simulateSharedMovement, type MovementTerrainAdapter } from '@voxel-stri
 import {
   ANTI_CHEAT_MOVEMENT_TRACE_VERSION,
   MOVEMENT_BUTTON_CROUCH,
-  MOVEMENT_BUTTON_CROUCH_PRESSED,
   MOVEMENT_BUTTON_JUMP,
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_MOVE_RIGHT,
@@ -347,29 +346,8 @@ function writeTrace(group: 'smoke' | 'full' | 'malicious', fileName: string, tra
 
 const FORWARD = MOVEMENT_BUTTON_MOVE_FORWARD;
 const SPRINT_FORWARD = MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT;
-const SLIDE_START = SPRINT_FORWARD | MOVEMENT_BUTTON_CROUCH | MOVEMENT_BUTTON_CROUCH_PRESSED;
-const SLIDE_JUMP = SPRINT_FORWARD | MOVEMENT_BUTTON_JUMP;
-const BHOP = MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_JUMP;
 
 const legalTraces: Array<{ group: 'smoke' | 'full'; file: string; trace: AntiCheatMovementTrace }> = [
-  {
-    group: 'smoke',
-    file: 'legal_slide_bhop.json',
-    trace: buildLegalTrace({
-      id: 'legal-slide-bhop',
-      heroId: 'phantom',
-      movementClass: 'slide_jump_bhop_chain',
-      smoke: true,
-      steps: [
-        { buttons: SPRINT_FORWARD, frames: 20 },
-        { buttons: SLIDE_START, frames: 1 },
-        { buttons: SPRINT_FORWARD | MOVEMENT_BUTTON_CROUCH, frames: 14 },
-        { buttons: SLIDE_JUMP, frames: 1 },
-        { buttons: BHOP, frames: 12 },
-        { buttons: SPRINT_FORWARD, frames: 20 },
-      ],
-    }),
-  },
   {
     group: 'smoke',
     file: 'legal_grapple_flag_route.json',

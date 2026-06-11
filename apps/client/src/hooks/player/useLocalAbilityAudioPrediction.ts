@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef } from 'react';
 import {
   ABILITY_DEFINITIONS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
-  CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
-  CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
@@ -24,6 +22,7 @@ import { getLocalChronosTimebreakTempoMultiplier } from './chronosTimebreakTempo
 
 const LOCAL_AUDIO_PREDICTION_TTL_MS = 1500;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
+const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
 
 const predictedLocalAbilitySounds = new Map<string, {
   predictedAt: number;
@@ -102,7 +101,7 @@ export function useLocalAbilityAudioPrediction() {
   const phantomVoidRayChargeStartedAtRef = useRef(0);
   const phantomVoidRayReleasePlayedRef = useRef(false);
   const phantomVoidRayChargeAbortRef = useRef<AbortController | null>(null);
-  const chronosTimebreakReleaseTimeoutRef = useRef<number | null>(null);
+  const chronosAegisAbortRef = useRef<AbortController | null>(null);
   const predictedAbilityCooldownUntilRef = useRef<Record<string, number>>({});
   const predictedAbilityChargesRef = useRef<Record<string, number>>({});
   const predictedUltimateSpentRef = useRef<Record<string, boolean>>({});
@@ -114,10 +113,9 @@ export function useLocalAbilityAudioPrediction() {
     phantomVoidRayReleasePlayedRef.current = false;
   }, []);
 
-  const clearPredictedChronosTimebreakRelease = useCallback(() => {
-    if (chronosTimebreakReleaseTimeoutRef.current === null) return;
-    window.clearTimeout(chronosTimebreakReleaseTimeoutRef.current);
-    chronosTimebreakReleaseTimeoutRef.current = null;
+  const stopPredictedChronosAegis = useCallback(() => {
+    chronosAegisAbortRef.current?.abort();
+    chronosAegisAbortRef.current = null;
   }, []);
 
   const resetPredictedAbilitySounds = useCallback(() => {
@@ -132,8 +130,8 @@ export function useLocalAbilityAudioPrediction() {
     predictedLocalAbilitySounds.clear();
     resetPredictedLocalAbilityVisuals();
     stopPredictedPhantomVoidRayCharge();
-    clearPredictedChronosTimebreakRelease();
-  }, [clearPredictedChronosTimebreakRelease, stopPredictedPhantomVoidRayCharge]);
+    stopPredictedChronosAegis();
+  }, [stopPredictedChronosAegis, stopPredictedPhantomVoidRayCharge]);
 
   useEffect(() => resetPredictedAbilitySounds, [resetPredictedAbilitySounds]);
 
@@ -169,19 +167,24 @@ export function useLocalAbilityAudioPrediction() {
     });
   }, [stopPredictedPhantomVoidRayCharge]);
 
-  const playPredictedChronosTimebreak = useCallback((now: number) => {
-    clearPredictedChronosTimebreakRelease();
-    markPredictedLocalAbilitySound('chronos_timebreak', now);
-    void playSharedSound('chronosTimebreak', {
-      durationMs: Math.max(180, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS),
-      fadeOutMs: Math.min(140, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS),
-      volume: 0.72,
+  const startPredictedChronosAegis = useCallback((now: number) => {
+    stopPredictedChronosAegis();
+
+    const controller = new AbortController();
+    chronosAegisAbortRef.current = controller;
+    markPredictedLocalAbilitySound('chronos_aegis', now);
+    void playSharedSound('chronosAegis', {
+      signal: controller.signal,
     });
-    chronosTimebreakReleaseTimeoutRef.current = window.setTimeout(() => {
-      chronosTimebreakReleaseTimeoutRef.current = null;
-      void playSharedSound('chronosTimebreak', { volume: 1.05 });
-    }, CHRONOS_TIMEBREAK_RELEASE_DELAY_MS);
-  }, [clearPredictedChronosTimebreakRelease]);
+  }, [stopPredictedChronosAegis]);
+
+  const playPredictedChronosTimebreak = useCallback((now: number) => {
+    markPredictedLocalAbilitySound('chronos_timebreak', now);
+    void playSharedSound('chronosTimebreakCharge', {
+      durationMs: CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+      fadeOutMs: CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS,
+    });
+  }, []);
 
   const reservePredictedAbilitySound = useCallback((
     abilityId: string,
@@ -273,6 +276,7 @@ export function useLocalAbilityAudioPrediction() {
       predictedAbilityChargesRef.current = {};
       predictedUltimateSpentRef.current = {};
       stopPredictedPhantomVoidRayCharge();
+      stopPredictedChronosAegis();
       syncPredictedPhantomAmmo(phantomPrimaryAmmo);
     } else {
       syncPredictedPhantomAmmo(phantomPrimaryAmmo);
@@ -345,16 +349,6 @@ export function useLocalAbilityAudioPrediction() {
         }
         break;
       case 'chronos': {
-        const primaryReady = primaryHoldStartedAtRef.current > 0 &&
-          now - primaryHoldStartedAtRef.current >= CHRONOS_VERDANT_PULSE_FIRE_READY_MS / tempoMultiplier;
-        if (
-          primaryPressed &&
-          primaryReady &&
-          canPlayPrimary(now, CHRONOS_VERDANT_PULSE_COOLDOWN_MS / tempoMultiplier)
-        ) {
-          markPredictedLocalAbilitySound('chronos_verdant_pulse', now);
-          void playSharedSound('chronosPulse');
-        }
         break;
       }
     }
@@ -369,8 +363,7 @@ export function useLocalAbilityAudioPrediction() {
       ) {
         playHookshotCastSounds('hookshot_heavy_attack', 'hookshotSecondary', 1.05);
       } else if (heroId === 'chronos') {
-        markPredictedLocalAbilitySound('chronos_aegis', now);
-        void playSharedSound('chronosAegis');
+        startPredictedChronosAegis(now);
       }
     }
 
@@ -394,6 +387,10 @@ export function useLocalAbilityAudioPrediction() {
       }
     }
 
+    if (!inputState.secondaryFire && previousInput.secondaryFire && heroId === 'chronos') {
+      stopPredictedChronosAegis();
+    }
+
     if (inputState.ability1 && !previousInput.ability1) {
       if (heroId === 'phantom' && !shadowStepTargeting && canReservePredictedSkillSound('phantom_blink', false, shadowStepTargeting)) {
         markPredictedLocalAbilitySound('phantom_blink', now);
@@ -411,7 +408,7 @@ export function useLocalAbilityAudioPrediction() {
         canReservePredictedSkillSound('chronos_lifeline_conduit', false, shadowStepTargeting)
       ) {
         markPredictedLocalAbilitySound('chronos_lifeline_conduit', now);
-        void playSharedSound('chronosAegis', { volume: 0.65 });
+        void playSharedSound('chronosLifeline');
       }
     }
 
@@ -442,7 +439,9 @@ export function useLocalAbilityAudioPrediction() {
     canPlaySecondary,
     playPredictedChronosTimebreak,
     reservePredictedAbilitySound,
+    startPredictedChronosAegis,
     startPredictedPhantomVoidRayCharge,
+    stopPredictedChronosAegis,
     stopPredictedPhantomVoidRayCharge,
     syncPredictedPhantomAmmo,
   ]);

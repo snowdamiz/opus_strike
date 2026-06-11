@@ -2,6 +2,7 @@ import {
   ALL_HERO_IDS,
   clampLookPitch,
   normalizeLookYaw,
+  sanitizeAbilityCastOriginHints,
 } from '@voxel-strike/shared';
 import type { BotDifficulty, HeroId, PlayerInput, Team } from '@voxel-strike/shared';
 
@@ -143,6 +144,7 @@ export function parsePlayerInputPayload(value: unknown, receivedAt = Date.now())
   const clientFrameRateBand = typeof value.clientFrameRateBand === 'string' && CLIENT_FRAME_RATE_BANDS.has(value.clientFrameRateBand)
     ? value.clientFrameRateBand
     : undefined;
+  const abilityCastHints = sanitizeAbilityCastOriginHints(value.abilityCastHints);
 
   return { ok: true, input: {
     tick: Math.max(0, Math.trunc(tick)),
@@ -166,6 +168,7 @@ export function parsePlayerInputPayload(value: unknown, receivedAt = Date.now())
     timestamp,
     unstuck: unstuck ?? undefined,
     clientFrameRateBand,
+    abilityCastHints,
     position: position ?? undefined,
     velocity: velocity ?? undefined,
     devFly: devFly ?? undefined,

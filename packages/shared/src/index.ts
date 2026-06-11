@@ -18,6 +18,7 @@ export * from './constants/heroes.js';
 
 // Utils
 export * from './utils/math.js';
+export * from './utils/playerGeometry.js';
 
 // Progression
 export * from './progression/leveling.js';

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { Player, Team } from '@voxel-strike/shared';
+import { doesSegmentHitPlayerCombatHitbox, type Player, type Team } from '@voxel-strike/shared';
 import { useGameStore, type DireBallData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
@@ -12,8 +12,6 @@ import { triggerTerrainImpact } from '../TerrainImpactEffects';
 const DIRE_BALL_LIFETIME_MS = 3000;
 const BALL_RADIUS = 0.21;
 const PARTICLES_PER_BALL = 30;
-const NPC_HIT_RADIUS = 1.2;
-const NPC_HIT_RADIUS_SQ = NPC_HIT_RADIUS * NPC_HIT_RADIUS;
 export const DIRE_BALL_CAPACITY = 96;
 
 interface MutableVec3 {
@@ -597,10 +595,7 @@ export function DireBallsManager() {
         if (player.id === slot.ownerId) continue;
         if (slot.ownerTeam && player.team === slot.ownerTeam) continue;
 
-        const dx = player.position.x - slot.position.x;
-        const dy = player.position.y + 0.9 - slot.position.y;
-        const dz = player.position.z - slot.position.z;
-        if (dx * dx + dy * dy + dz * dz <= NPC_HIT_RADIUS_SQ) {
+        if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, BALL_RADIUS)) {
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;

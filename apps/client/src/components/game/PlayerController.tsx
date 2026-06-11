@@ -46,6 +46,7 @@ import {
   EYE_HEIGHT,
 } from '../../hooks/player';
 import { useLocalAbilityAudioPrediction } from '../../hooks/player/useLocalAbilityAudioPrediction';
+import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
 import {
   ABILITY_DEFINITIONS,
   CHRONOS_LIFELINE_RADIUS,
@@ -57,6 +58,7 @@ import {
   HERO_DEFINITIONS,
   type HeroId,
   type MatchMode,
+  type AbilityCastOriginHint,
   type MovementCommand,
   type MovementCorrectionReason,
   type PlayerMovementState,
@@ -228,6 +230,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const lastTraceRef = useRef(0);
   const movementCommandAccumulatorRef = useRef(0);
   const pendingMovementCommandsRef = useRef<MovementCommand[]>([]);
+  const latestAbilityCastHintsRef = useRef<AbilityCastOriginHint[]>([]);
   const lastCrouchHeldRef = useRef(false);
   const pendingCrouchPressedRef = useRef(false);
   const lastHeroIdRef = useRef<string | null>(null);
@@ -279,7 +282,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       if (dx * dx + dy * dy + dz * dz <= radiusSq) return true;
     }
 
-    return false;
+    return localPlayer.heroId === 'chronos' && localPlayer.state === 'alive';
   }, []);
 
   // Hero stats cache
@@ -349,7 +352,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     if (!isPointerLocked) {
       requestPointerLock();
     } else if (bombTargeting && blazeAbilities.bombValidRef.current && blazeAbilities.bombTargetRef.current) {
-      requestBlazeBombDrop();
+      requestBlazeBombDrop({
+        abilityCastHints: latestAbilityCastHintsRef.current.filter((hint) => hint.abilityId === 'blaze_bomb'),
+      });
       blazeAbilities.executeBombDrop(playerSounds);
     } else if (grappleTrapTargeting && hookshotAbilities.grappleTrapValidRef.current && hookshotAbilities.grappleTrapTargetRef.current) {
       setGrappleTrapTargeting(false);
@@ -847,6 +852,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
             blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
           } else if (heroId === 'hookshot') {
             hookshotAbilities.executeGrappleTrap(abilityCtx, updateLocalPlayer);
+          } else if (heroId === 'chronos') {
+            if (chronosAbilities.executeAscendantParadox(abilityCtx, abilitySystem.setAbilityActive)) {
+              predictedState = getCurrentPredictedState(predictedState);
+              position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
+              velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
+            }
           }
         }
       }
@@ -933,6 +944,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       reload: reloadForServer,
       ability2: currentTargeting ? false : ability2ForServer,
     };
+    const abilityCastHints = buildAbilityCastOriginHints(abilityCtx, commandInput, {
+      bombTargeting: currentBombTargeting,
+    });
+    latestAbilityCastHintsRef.current = abilityCastHints ?? [];
 
     movementCommandAccumulatorRef.current = Math.min(
       movementCommandAccumulatorRef.current + dt,
@@ -950,6 +965,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         clientTimeMs: now,
         unstuck: pendingUnstuckInputRef.current,
         crouchPressed: pendingCrouchPressedRef.current,
+        abilityCastHints,
       });
       pendingUnstuckInputRef.current = false;
       pendingCrouchPressedRef.current = false;

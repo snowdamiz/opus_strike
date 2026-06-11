@@ -1,6 +1,5 @@
 import type * as THREE from 'three';
-
-export const BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME = 'blaze.rocket.staffTip';
+export { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '@voxel-strike/shared';
 
 export const BLAZE_ROCKET_READY_TRANSITION_SECONDS = 0.22;
 export const BLAZE_ROCKET_JUMP_READY_MS = 150;

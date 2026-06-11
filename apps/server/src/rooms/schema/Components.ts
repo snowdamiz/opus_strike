@@ -36,6 +36,7 @@ export class MovementState extends Schema {
   isJetpacking: boolean = false;
   jetpackFuel: number = 100;
   isGliding: boolean = false;
+  chronosAscendantStartY: number = 0;
 }
 defineTypes(MovementState, {
   isGrounded: 'boolean',
@@ -49,6 +50,7 @@ defineTypes(MovementState, {
   isJetpacking: 'boolean',
   jetpackFuel: 'number',
   isGliding: 'boolean',
+  chronosAscendantStartY: 'number',
 });
 
 export class AbilityStateSchema extends Schema {

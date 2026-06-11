@@ -1,3 +1,5 @@
+import type { Vec3 } from './vector.js';
+
 export type AbilityType = 
   | 'movement'
   | 'offensive'
@@ -41,3 +43,9 @@ export interface AbilityCast {
   targetPosition?: { x: number; y: number; z: number };
 }
 
+export interface AbilityCastOriginHint {
+  abilityId: string;
+  socketName: string;
+  origin: Vec3;
+  sampledAtMs?: number;
+}

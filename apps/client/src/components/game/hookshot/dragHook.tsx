@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { doesSegmentHitPlayerCombatHitbox } from '@voxel-strike/shared';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { DRAG_HOOK_MAX_DISTANCE, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
@@ -35,7 +36,7 @@ import { HookshotProjectileArrowHead } from './arrowHead';
 const DRAG_HOOK_SPEED = 45;
 const DRAG_HOOK_DAMAGE = 40;
 const DRAG_HOOK_RETRACT_SPEED = 55;
-const DRAG_HOOK_HIT_RADIUS = 1.2;
+const DRAG_HOOK_COLLISION_RADIUS = 0.28;
 
 // Get shared materials from centralized resources
 const getHookMaterials = () => getHookshotMaterials();
@@ -99,6 +100,7 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   const dirX = velX / speed;
   const dirY = velY / speed;
   const dirZ = velZ / speed;
+  const hookDirection = { x: dirX, y: dirY, z: dirZ };
   const launchSide = hook.launchSide ?? 1;
   const launchSocketOffset = {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
@@ -151,6 +153,8 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     
     if (hookStateRef.current === 'extending') {
       // Move forward - SAME AS LEFT CLICK
+      const moveDistance = speed * delta;
+      const previousPosition = { x: curPos.x, y: curPos.y, z: curPos.z };
       curPos.x += velX * delta;
       curPos.y += velY * delta;
       curPos.z += velZ * delta;
@@ -183,12 +187,14 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
         for (const [playerId, player] of players) {
           if (playerId === localPlayer.id || player.state !== 'alive') continue;
           if (player.team === localPlayer.team) continue;
-          
-          const pdx = player.position.x - curPos.x;
-          const pdy = (player.position.y + 0.9) - curPos.y;
-          const pdz = player.position.z - curPos.z;
-          
-          if (pdx * pdx + pdy * pdy + pdz * pdz <= DRAG_HOOK_HIT_RADIUS * DRAG_HOOK_HIT_RADIUS) {
+
+          if (doesSegmentHitPlayerCombatHitbox(
+            previousPosition,
+            hookDirection,
+            moveDistance,
+            player,
+            DRAG_HOOK_COLLISION_RADIUS
+          )) {
             hasHitRef.current = true;
             hookedTargetIdRef.current = playerId;
             hookStateRef.current = 'retracting';

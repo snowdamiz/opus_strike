@@ -13,9 +13,8 @@ import { useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import {
   BLAZE_FLAMETHROWER_MAX_FUEL,
-  BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
-  BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-  BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+  BLAZE_FLAMETHROWER_SOCKET,
+  BLAZE_ROCKET_STAFF_SOCKET,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import {
@@ -43,17 +42,6 @@ import {
 } from '../../../viewmodel/viewmodelSocketRegistry';
 import type { AbilityContext, PlayerSounds } from '../types';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
-
-const BLAZE_FLAMETHROWER_SOCKET = {
-  handHeight: BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-  forwardOffset: BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
-  sideOffset: BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-};
-const BLAZE_ROCKET_STAFF_SOCKET = {
-  handHeight: 0.24,
-  forwardOffset: 0.64,
-  sideOffset: 0.22,
-};
 
 function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
   return {

@@ -5,6 +5,7 @@ import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
 import {
   MOVEMENT_PROTOCOL_VERSION,
+  type AbilityCastOriginHint,
   type BotDifficulty,
   type GameEndEvent,
   type HeroId,
@@ -83,7 +84,7 @@ interface NetworkContextType {
   disconnect: () => void;
   sendInput: (input: PlayerInput) => void;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
-  requestBlazeBombDrop: () => void;
+  requestBlazeBombDrop: (payload?: { abilityCastHints?: AbilityCastOriginHint[] }) => void;
   reportBlazeRocketImpact: (rocketId: string, position: { x: number; y: number; z: number }) => void;
   selectHero: (heroId: HeroId) => void;
   devSetHero: (heroId: HeroId) => void;
@@ -93,6 +94,7 @@ interface NetworkContextType {
   setDevImmune: (enabled: boolean) => void;
   setDevTimeFrozen: (enabled: boolean) => void;
   setDevBotsRooted: (enabled: boolean) => void;
+  setDevBotBrainEnabled: (enabled: boolean) => void;
   addGameBot: (heroId: HeroId, team: Team) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
@@ -1215,8 +1217,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('movementCommands', packet);
   }, []);
 
-  const requestBlazeBombDrop = useCallback(() => {
-    gameRoomRef.current?.send('blazeBombDrop', {});
+  const requestBlazeBombDrop = useCallback((payload: { abilityCastHints?: AbilityCastOriginHint[] } = {}) => {
+    gameRoomRef.current?.send('blazeBombDrop', payload);
   }, []);
 
   const reportBlazeRocketImpact = useCallback((rocketId: string, position: { x: number; y: number; z: number }) => {
@@ -1264,6 +1266,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const setDevBotsRooted = useCallback((enabled: boolean) => {
     if (!config.isDev) return;
     gameRoomRef.current?.send('setDevBotsRooted', { enabled });
+  }, []);
+
+  const setDevBotBrainEnabled = useCallback((enabled: boolean) => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('setDevBotBrainEnabled', { enabled });
   }, []);
 
   const addGameBot = useCallback((heroId: HeroId, team: Team) => {
@@ -1345,6 +1352,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setDevImmune,
       setDevTimeFrozen,
       setDevBotsRooted,
+      setDevBotBrainEnabled,
       addGameBot,
       selectTeam,
       setReady,

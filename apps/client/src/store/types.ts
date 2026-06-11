@@ -243,6 +243,8 @@ export interface ChronosPulseData {
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
+  supercharged?: boolean;
+  radius?: number;
 }
 
 export interface ChronosTimebreakData {

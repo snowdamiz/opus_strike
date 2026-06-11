@@ -2,6 +2,7 @@ import type { Room } from 'colyseus.js';
 import * as THREE from 'three';
 import {
   ABILITY_DEFINITIONS,
+  CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
   type PublicRankSnapshot,
@@ -31,6 +32,7 @@ import {
 } from '../viewmodel/blazePose';
 import {
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+  triggerChronosAscendantParadoxPose,
   triggerChronosLifelineConduitPose,
   triggerChronosPrimaryShotGlow,
   triggerChronosTimebreakPose,
@@ -51,7 +53,12 @@ import {
 } from '../hooks/player/constants';
 import { shouldSuppressPredictedLocalAbilitySound } from '../hooks/player/useLocalAbilityAudioPrediction';
 import { consumePredictedLocalAbilityVisual } from '../hooks/player/useLocalAbilityVisualPrediction';
-import { playSharedSound, type SoundName } from '../hooks/useAudio';
+import {
+  CHRONOS_VERDANT_PULSE_SHOT_PITCH,
+  CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
+  playSharedSound,
+  type SoundName,
+} from '../hooks/useAudio';
 import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
 import type {
@@ -71,6 +78,7 @@ import type {
 const TRANSFORM_POSITION_SCALE = 100;
 const TRANSFORM_VELOCITY_SCALE = 100;
 const TRANSFORM_ANGLE_SCALE = 10000;
+const CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS = 110;
 const MOVEMENT_BIT_GROUNDED = 1 << 0;
 const MOVEMENT_BIT_SPRINTING = 1 << 1;
 const MOVEMENT_BIT_CROUCHING = 1 << 2;
@@ -143,6 +151,9 @@ function normalizeMovementState(
     isJetpacking: movement?.isJetpacking ?? base.isJetpacking,
     jetpackFuel: movement?.jetpackFuel ?? base.jetpackFuel,
     isGliding: movement?.isGliding ?? base.isGliding,
+    chronosAscendantStartY: Number.isFinite(movement?.chronosAscendantStartY)
+      ? movement.chronosAscendantStartY
+      : base.chronosAscendantStartY,
   };
 }
 
@@ -980,6 +991,7 @@ interface AbilityUsedMessage {
   impactTime?: number;
   active?: boolean;
   fuel?: number;
+  supercharged?: boolean;
 }
 
 function normalizeAimDirection(data: AbilityUsedMessage): { x: number; y: number; z: number } {
@@ -1110,13 +1122,18 @@ function playBlazeWorldSound(
 function playChronosWorldSound(
   sound: SoundName,
   position: { x: number; y: number; z: number } | undefined,
-  options: { durationMs?: number; fadeOutMs?: number; volume?: number } = {}
+  options: { durationMs?: number; fadeOutMs?: number; volume?: number; pitch?: number } = {}
 ): void {
+  if (sound === 'chronosPulse' || sound === 'chronosAegis' || sound === 'chronosTimebreak') {
+    return;
+  }
+
   void playSharedSound(sound, {
     position,
     durationMs: options.durationMs,
     fadeOutMs: options.fadeOutMs,
     volume: options.volume,
+    pitch: options.pitch,
   });
 }
 
@@ -1549,7 +1566,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
         data,
         localPlayerId,
         fallbackStartPosition,
-        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+        []
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, data.launchSide);
@@ -1819,10 +1836,15 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           startTime: now,
           ownerId: data.playerId,
           ownerTeam,
+          supercharged: data.supercharged,
+          radius: data.radius,
         });
       }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('chronos_verdant_pulse')) {
-        playChronosWorldSound('chronosPulse', startPosition);
+        playChronosWorldSound('phantomBasic', startPosition, {
+          pitch: CHRONOS_VERDANT_PULSE_SHOT_PITCH,
+          volume: CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
+        });
       }
       return true;
     }
@@ -1842,7 +1864,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         triggerChronosLifelineConduitPose(data.serverTime ?? now);
       }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit')) {
-        playChronosWorldSound('chronosAegis', startPosition, { volume: 0.65 });
+        playChronosWorldSound('chronosLifeline', startPosition);
       }
       return true;
     }
@@ -1864,29 +1886,31 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
       const releaseTime = data.releaseAt ?? now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
       const releaseDelay = Math.max(0, releaseTime - now);
-      const suppressLocalTimebreakSound = isLocalPlayer && shouldSuppressPredictedLocalAbilitySound('chronos_timebreak');
-      if (!suppressLocalTimebreakSound) {
-        playChronosWorldSound('chronosTimebreak', startPosition, {
-          durationMs: Math.max(180, releaseDelay),
-          fadeOutMs: Math.min(140, releaseDelay),
-          volume: 0.72,
+      const suppressLocalTimebreakCharge = isLocalPlayer && shouldSuppressPredictedLocalAbilitySound('chronos_timebreak');
+      if (!suppressLocalTimebreakCharge && releaseDelay > 0) {
+        playChronosWorldSound('chronosTimebreakCharge', startPosition, {
+          durationMs: releaseDelay,
+          fadeOutMs: Math.min(CHRONOS_TIMEBREAK_CHARGE_FADE_OUT_MS, releaseDelay),
         });
       }
 
       window.setTimeout(() => {
         const freshStore = useGameStore.getState();
-        const caster = data.playerId === (freshStore.localPlayer?.id ?? freshStore.playerId)
+        const freshLocalPlayerId = freshStore.localPlayer?.id ?? freshStore.playerId;
+        const isFreshLocalPlayer = data.playerId === freshLocalPlayerId;
+        const caster = isFreshLocalPlayer
           ? freshStore.localPlayer
           : freshStore.players.get(data.playerId);
-        const socketPose = data.playerId !== (freshStore.localPlayer?.id ?? freshStore.playerId)
+        const socketPose = !isFreshLocalPlayer
           ? readRemoteModelSocketAny(data.playerId, [CHRONOS_PRIMARY_ORB_SOCKET_NAME])
           : null;
         const casterPosition = caster?.position ?? data.position;
-        if (!casterPosition && !socketPose) return;
+        const fallbackEffectPosition = startPosition ?? data.startPosition;
+        if (!casterPosition && !socketPose && !fallbackEffectPosition) return;
 
         const effectPosition = socketPose
           ? toPlainPosition(socketPose.position)
-          : {
+          : fallbackEffectPosition ?? {
             x: casterPosition!.x,
             y: casterPosition!.y + 1.18,
             z: casterPosition!.z,
@@ -1903,10 +1927,89 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           duration: data.duration,
           radius: data.radius,
         });
-        if (!suppressLocalTimebreakSound) {
-          playChronosWorldSound('chronosTimebreak', effectPosition, { volume: 1.05 });
-        }
+        playChronosWorldSound('chronosPush', effectPosition, { volume: 1.05 });
       }, releaseDelay);
+      return true;
+    }
+
+    case 'chronos_ascendant_paradox': {
+      const durationMs = data.durationMs ?? (
+        typeof data.duration === 'number'
+          ? data.duration * 1000
+          : CHRONOS_ASCENDANT_PARADOX_DURATION_MS
+      );
+      const activatedAt = data.serverTime ?? now;
+      const predictedVisualId = isLocalPlayer
+        ? consumePredictedLocalAbilityVisual('chronos_ascendant_paradox', data.playerId)
+        : null;
+      const abilityState = {
+        abilityId: 'chronos_ascendant_paradox',
+        cooldownRemaining: 0,
+        charges: 1,
+        isActive: true,
+        activatedAt,
+      };
+
+      if (!predictedVisualId) {
+        triggerChronosAscendantParadoxPose(activatedAt);
+      }
+      if (position) {
+        playChronosWorldSound('chronosAegis', position, { volume: 0.9 });
+      }
+
+      if (isLocalPlayer && store.localPlayer) {
+        const nextMovement = {
+          ...store.localPlayer.movement,
+          isGrounded: false,
+          isSliding: false,
+          slideTimeRemaining: 0,
+          isJetpacking: true,
+          isGliding: true,
+          chronosAscendantStartY: store.localPlayer.movement.chronosAscendantStartY ?? store.localPlayer.position.y,
+        };
+        if (data.velocity) {
+          confirmLocalMovementTransform(store.localPlayer, {
+            position,
+            velocity: data.velocity,
+            movement: nextMovement,
+          }, store.localPlayer.lookYaw);
+          pushLocalPlayerImpulse({ ...data.velocity, mode: 'set' });
+        }
+        store.setUltimateEffect(true, 'chronos_ascendant_paradox', activatedAt + durationMs);
+        store.updateLocalPlayer({
+          ultimateCharge: 0,
+          position: position ?? store.localPlayer.position,
+          velocity: data.velocity ?? store.localPlayer.velocity,
+          movement: nextMovement,
+          abilities: {
+            ...store.localPlayer.abilities,
+            chronos_ascendant_paradox: abilityState,
+          },
+        });
+        return true;
+      }
+
+      const player = store.players.get(data.playerId);
+      if (player) {
+        store.updatePlayer(data.playerId, {
+          ...player,
+          position: position ?? player.position,
+          velocity: data.velocity ?? player.velocity,
+          movement: {
+            ...player.movement,
+            isGrounded: false,
+            isSliding: false,
+            slideTimeRemaining: 0,
+            isJetpacking: true,
+            isGliding: true,
+            chronosAscendantStartY: player.movement.chronosAscendantStartY ?? player.position.y,
+          },
+          abilities: {
+            ...player.abilities,
+            chronos_ascendant_paradox: abilityState,
+          },
+        });
+      }
       return true;
     }
 
@@ -2024,7 +2127,10 @@ export function setupCombatHandlers(room: Room) {
         }
         : {}
     );
-    if (data.abilityId === 'chronos_lifeline_conduit') {
+    if (
+      data.abilityId === 'chronos_lifeline_conduit' &&
+      (isRemoteSource || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit'))
+    ) {
       playChronosWorldSound('chronosLifeline', sourcePosition);
     }
   });

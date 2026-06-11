@@ -168,10 +168,13 @@ const SOUND_EFFECTS = {
   hookshotRetract: { path: '/sounds/hookshot_retract.mp3', volume: 0.42 },
 
   // Chronos Abilities
-  chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0.34 },
-  chronosAegis: { path: '/sounds/chronos_charge.mp3', volume: 0.24 },
+  chronosPulse: { path: '/sounds/chronos_charge.mp3', volume: 0 },
+  chronosAegis: { path: '/sounds/chronos_shield.mp3', volume: 0.696 },
   chronosLifeline: { path: '/sounds/choronos_heal.mp3', volume: 0.5 },
-  chronosTimebreak: { path: '/sounds/chronos_charge.mp3', volume: 0.62 },
+  chronosTimebreakCharge: { path: '/sounds/chronos_charge.mp3', volume: 0.72 },
+  chronosPush: { path: '/sounds/chronos_push.mp3', volume: 0.72 },
+  chronosTimebreak: { path: '/sounds/chronos_charge.mp3', volume: 0 },
+  chronosSuperchargedImpact: { path: '/sounds/magic_impact.mp3', volume: 0.72 },
   
   // Combat
   hit: { path: '/sounds/hit.mp3', volume: 0.6 },
@@ -203,6 +206,9 @@ const SOUND_EFFECTS = {
 export type SoundName = keyof typeof SOUND_EFFECTS;
 export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze' | 'hookshot' | 'chronos';
 
+export const CHRONOS_VERDANT_PULSE_SHOT_PITCH = 1.28;
+export const CHRONOS_VERDANT_PULSE_SHOT_VOLUME = 0.72;
+
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['buttonHover', 'buttonClick'],
@@ -210,7 +216,7 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
-  chronos: ['chronosPulse', 'chronosAegis', 'chronosLifeline', 'chronosTimebreak'],
+  chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
 };
 
 const MUSIC_SOUND_NAMES = new Set<SoundName>(['lobbyMusic', 'gameMusic']);

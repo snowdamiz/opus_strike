@@ -6,7 +6,7 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
-import { MOUSE_SENSITIVITY, PITCH_LIMIT } from '@voxel-strike/shared';
+import { MOUSE_SENSITIVITY, PITCH_LIMIT, PLAYER_EYE_HEIGHT } from '@voxel-strike/shared';
 import type { CameraRefs } from './types';
 import { consumeMobileLookDelta } from '../../store/mobileControlsStore';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -27,7 +27,7 @@ const SLIDE_FOV_BOOST = 8; // Increased FOV during slide
 const SLIDE_CAMERA_ROLL = 0.03; // Subtle roll during slide
 const CROUCH_HEIGHT_OFFSET = -0.3;
 const CROUCH_TRANSITION_SPEED = 12;
-const EYE_HEIGHT = 0.6;
+const EYE_HEIGHT = PLAYER_EYE_HEIGHT;
 
 export function useCamera(options: UseCameraOptions): UseCameraReturn {
   const { isPointerLocked } = options;

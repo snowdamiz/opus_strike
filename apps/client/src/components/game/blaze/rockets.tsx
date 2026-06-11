@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import type { Player } from '@voxel-strike/shared';
+import { doesSegmentHitPlayerCombatHitbox, type Player } from '@voxel-strike/shared';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -26,8 +26,6 @@ import {
 const MAX_ROCKETS = 50;
 const ROCKET_LIFETIME = 3000;
 const PROJECTILE_RADIUS = 0.21;
-const NPC_HIT_RADIUS = 1.2;
-const NPC_HIT_RADIUS_SQ = NPC_HIT_RADIUS * NPC_HIT_RADIUS;
 const ROCKET_IMPACT_SCALE = 1.15;
 const FIREBALL_FLICKER_RATE = 0.018;
 const FIREBALL_TRAIL_FLICKER_RATE = 0.024;
@@ -361,12 +359,7 @@ export function RocketsManager() {
         if (player.state !== 'alive') continue;
         if (player.team === slot.ownerTeam) continue;
 
-        const dx = player.position.x - slot.position.x;
-        const dy = (player.position.y + 0.9) - slot.position.y;
-        const dz = player.position.z - slot.position.z;
-        const distSq = dx * dx + dy * dy + dz * dz;
-
-        if (distSq <= NPC_HIT_RADIUS_SQ) {
+        if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, PROJECTILE_RADIUS)) {
           triggerTerrainImpact('blaze_rocket', slot.position, {
             direction: slot.direction,
             scale: ROCKET_IMPACT_SCALE,

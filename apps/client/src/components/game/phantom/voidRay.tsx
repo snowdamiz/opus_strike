@@ -2,9 +2,9 @@ import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import { doesSegmentHitPlayerCombatHitbox } from '@voxel-strike/shared';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
-import { TEMP_VECTORS } from '../effectResources';
 import { getFrameClock } from '../../../utils/frameClock';
 
 interface VoidRayProps {
@@ -29,7 +29,6 @@ const RAY_SUSTAIN_TIME = 0.44;
 const RAY_SPIN_DOWN_TIME = 0.32;
 const RAY_LIFETIME = RAY_SPIN_UP_TIME + RAY_SUSTAIN_TIME + RAY_SPIN_DOWN_TIME;
 const RAY_DAMAGE = 80;
-const PLAYER_HIT_RADIUS = 1.5;
 const SPIRAL_COUNT = 5;
 const PARTICLE_COUNT = 120;
 const SPARK_COUNT = 32;
@@ -717,20 +716,7 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
       if (localPlayer && player.team === localPlayer.team) continue;
       if (hitPlayersRef.current.has(playerId)) continue;
 
-      // Use pooled temp vectors to avoid per-frame allocations
-      const playerPos = TEMP_VECTORS.v5.set(player.position.x, player.position.y + 0.9, player.position.z);
-      const rayStart = TEMP_VECTORS.v6.set(startPosition.x, startPosition.y, startPosition.z);
-      const rayDir = TEMP_VECTORS.v7.copy(normalizedDirection);
-
-      const toPlayer = TEMP_VECTORS.v8.copy(playerPos).sub(rayStart);
-      const projectionLength = toPlayer.dot(rayDir);
-
-      if (projectionLength < 0 || projectionLength > currentLengthRef.current) continue;
-
-      const closestPoint = TEMP_VECTORS.v9.copy(rayStart).add(TEMP_VECTORS.v10.copy(rayDir).multiplyScalar(projectionLength));
-      const distanceSq = closestPoint.distanceToSquared(playerPos);
-
-      if (distanceSq <= (PLAYER_HIT_RADIUS + RAY_RADIUS) * (PLAYER_HIT_RADIUS + RAY_RADIUS)) {
+      if (doesSegmentHitPlayerCombatHitbox(startPosition, normalizedDirection, currentLengthRef.current, player, RAY_RADIUS)) {
         hitPlayersRef.current.add(playerId);
 
       }

@@ -22,6 +22,7 @@ export interface SharedMovementSimulationInput {
   terrain: MovementTerrainAdapter;
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
+  chronosAscendantActive?: boolean;
 }
 
 export interface SharedMovementSimulationResult {
@@ -46,6 +47,7 @@ export function simulateSharedMovement(input: SharedMovementSimulationInput): Sh
     modifiers: {
       flagCarrier: input.flagCarrier,
       activeSpeedMultiplier: input.activeSpeedMultiplier,
+      chronosAscendantActive: input.chronosAscendantActive,
     },
     dt: input.deltaTime,
   });

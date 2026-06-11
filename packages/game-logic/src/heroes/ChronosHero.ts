@@ -3,6 +3,7 @@ import {
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
 } from '@voxel-strike/shared';
 
@@ -18,7 +19,7 @@ export class ChronosHero extends HeroBase {
       case 'chronos_timebreak':
         return this.executeTimebreak(context);
       case 'chronos_ascendant_paradox':
-        return { success: false, message: 'Chronos abilities are metadata-only for now' };
+        return this.executeAscendantParadox(context);
       default:
         return { success: false, message: 'Unknown ability' };
     }
@@ -44,6 +45,17 @@ export class ChronosHero extends HeroBase {
         type: 'timebreak',
         position: context.position,
         radius: CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE,
+      },
+    };
+  }
+
+  private executeAscendantParadox(context: AbilityContext): AbilityResult {
+    return {
+      success: true,
+      effect: {
+        type: 'ascendant_paradox',
+        position: context.position,
+        radius: CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
       },
     };
   }

@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
-  BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
-  BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-  BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+  BLAZE_FLAMETHROWER_SOCKET,
+  calculatePlayerSocketPosition,
+  type Player,
 } from '@voxel-strike/shared';
-import type { Player } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import { playSharedLoop, setSharedLoopPosition, stopSharedLoop } from '../../hooks/useAudio';
@@ -46,8 +45,6 @@ function resolveRemoteFlamethrowerPose(player: Player | undefined): Flamethrower
   const cosPitch = Math.cos(pitch);
   const forwardX = -Math.sin(yaw);
   const forwardZ = -Math.cos(yaw);
-  const rightX = Math.cos(yaw);
-  const rightZ = -Math.sin(yaw);
 
   return {
     origin: socketPose
@@ -56,11 +53,7 @@ function resolveRemoteFlamethrowerPose(player: Player | undefined): Flamethrower
         y: socketPose.position.y,
         z: socketPose.position.z,
       }
-      : {
-        x: visualPosition.x + forwardX * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET + rightX * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-        y: visualPosition.y + BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-        z: visualPosition.z + forwardZ * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET + rightZ * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-      },
+      : calculatePlayerSocketPosition(visualPosition, yaw, BLAZE_FLAMETHROWER_SOCKET),
     direction: {
       x: forwardX * cosPitch,
       y: Math.sin(pitch),

@@ -1,5 +1,14 @@
 import type { HeroStats, PlayerInput, PlayerMovementState, Vec3 } from '@voxel-strike/shared';
 import {
+  CHRONOS_ASCENDANT_PARADOX_AIR_ACCEL_MULTIPLIER,
+  CHRONOS_ASCENDANT_PARADOX_GRAVITY_SCALE,
+  CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_DAMPING,
+  CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_STOP_SPEED,
+  CHRONOS_ASCENDANT_PARADOX_HOVER_DAMPING,
+  CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN,
+  CHRONOS_ASCENDANT_PARADOX_MAX_ASCEND_SPEED,
+  CHRONOS_ASCENDANT_PARADOX_MAX_DESCEND_SPEED,
+  CHRONOS_ASCENDANT_PARADOX_VERTICAL_ACCEL,
   BHOP_AIR_ACCEL,
   BHOP_AIR_SPEED_CAP,
   BHOP_GROUND_ACCEL,
@@ -93,6 +102,7 @@ export interface MovementSimulationState {
 export interface MovementModifiers {
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
+  chronosAscendantActive?: boolean;
 }
 
 export interface CapsuleMotorInput {
@@ -898,6 +908,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   const movement = copyMovementState(input.state.movement);
   const contacts: MovementContact[] = [];
   const modifiers = input.modifiers ?? {};
+  const chronosAscendantActive = Boolean(modifiers.chronosAscendantActive);
   const world = input.terrain;
 
   if (dt <= 0) {
@@ -918,7 +929,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   const wasSliding = movement.isSliding;
   const startHeight = bodyHeightForMovement(movement);
   const startGround = world.findGround(position, GROUND_SNAP_DISTANCE, PLAYER_RADIUS, startHeight);
-  const wasGrounded = Boolean(startGround?.walkable && velocity.y <= 0);
+  const wasGrounded = !chronosAscendantActive && Boolean(startGround?.walkable && velocity.y <= 0);
   movement.isGrounded = wasGrounded;
   if (startGround && wasGrounded && startGround.distance <= GROUND_SNAP_DISTANCE) {
     position = startGround.position;
@@ -1020,7 +1031,13 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
       }
       velocity = accelerate(velocity, wishDir, wishSpeed, BHOP_GROUND_ACCEL, dt);
     } else {
-      velocity = accelerate(velocity, wishDir, Math.min(wishSpeed, BHOP_AIR_SPEED_CAP), BHOP_AIR_ACCEL, dt);
+      const airWishSpeed = chronosAscendantActive
+        ? Math.max(BHOP_AIR_SPEED_CAP, wishSpeed * 0.92)
+        : Math.min(wishSpeed, BHOP_AIR_SPEED_CAP);
+      const airAcceleration = chronosAscendantActive
+        ? BHOP_AIR_ACCEL * CHRONOS_ASCENDANT_PARADOX_AIR_ACCEL_MULTIPLIER
+        : BHOP_AIR_ACCEL;
+      velocity = accelerate(velocity, wishDir, airWishSpeed, airAcceleration, dt);
     }
   }
 
@@ -1031,8 +1048,49 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     jumpedThisStep = true;
   }
 
-  if (!movement.isGrounded && !movement.isGrappling && !movement.isWallRunning) {
+  if (chronosAscendantActive) {
+    const ascendantStartY = Number.isFinite(movement.chronosAscendantStartY)
+      ? movement.chronosAscendantStartY!
+      : position.y;
+    const ascendantMaxY = ascendantStartY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN;
+
+    movement.isGrounded = false;
+    movement.isGliding = true;
+    movement.isJetpacking = true;
+    movement.isSliding = false;
+    movement.slideTimeRemaining = 0;
+    movement.chronosAscendantStartY = ascendantStartY;
+
+    if (!hasMovementInput) {
+      const horizontalDamping = Math.max(0, 1 - CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_DAMPING * dt);
+      velocity.x *= horizontalDamping;
+      velocity.z *= horizontalDamping;
+      if (horizontalSpeed(velocity) < CHRONOS_ASCENDANT_PARADOX_HORIZONTAL_STOP_SPEED) {
+        velocity.x = 0;
+        velocity.z = 0;
+      }
+    }
+
+    const verticalInput = (input.command.input.jump ? 1 : 0) - (input.command.input.crouch ? 1 : 0);
+    if (verticalInput !== 0) {
+      velocity.y += verticalInput * CHRONOS_ASCENDANT_PARADOX_VERTICAL_ACCEL * dt;
+    } else {
+      velocity.y += GRAVITY * CHRONOS_ASCENDANT_PARADOX_GRAVITY_SCALE * dt;
+      const damping = Math.max(0, 1 - CHRONOS_ASCENDANT_PARADOX_HOVER_DAMPING * dt);
+      velocity.y *= damping;
+    }
+    velocity.y = Math.max(
+      CHRONOS_ASCENDANT_PARADOX_MAX_DESCEND_SPEED,
+      Math.min(CHRONOS_ASCENDANT_PARADOX_MAX_ASCEND_SPEED, velocity.y)
+    );
+    if (position.y >= ascendantMaxY && velocity.y > 0) {
+      velocity.y = 0;
+    }
+  } else if (!movement.isGrounded && !movement.isGrappling && !movement.isWallRunning) {
+    movement.chronosAscendantStartY = undefined;
     velocity.y += GRAVITY * dt;
+  } else {
+    movement.chronosAscendantStartY = undefined;
   }
 
   const maxHorizontalSpeed = BHOP_MAX_VELOCITY * Math.max(1, modifiers.activeSpeedMultiplier ?? 1);
@@ -1056,11 +1114,21 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
   position = boundary.position;
   velocity = boundary.velocity;
 
+  if (chronosAscendantActive) {
+    const ascendantStartY = movement.chronosAscendantStartY ?? position.y;
+    const ascendantMaxY = ascendantStartY + CHRONOS_ASCENDANT_PARADOX_MAX_ELEVATION_GAIN;
+    if (position.y > ascendantMaxY) {
+      position.y = ascendantMaxY;
+      if (velocity.y > 0) velocity.y = 0;
+    }
+  }
+
   let snappedDown = false;
   const hasGroundContact = contacts.some((contact) => contact.normal.y >= WALKABLE_NORMAL_Y);
-  movement.isGrounded = hasGroundContact && !jumpedThisStep;
+  movement.isGrounded = !chronosAscendantActive && hasGroundContact && !jumpedThisStep;
 
   const canSnapDown =
+    !chronosAscendantActive &&
     !jumpedThisStep &&
     !movement.isGrappling &&
     !movement.isWallRunning &&

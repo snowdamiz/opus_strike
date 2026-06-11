@@ -1,7 +1,11 @@
-import type { MovementCommand, Player, SelfMovementAuthority, Vec3 } from '@voxel-strike/shared';
+import type { AbilityCastOriginHint, MovementCommand, Player, SelfMovementAuthority, Vec3 } from '@voxel-strike/shared';
 import {
   MOVEMENT_PROTOCOL_VERSION,
   ABILITY_DEFINITIONS,
+  CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PHANTOM_BLINK_DISTANCE,
@@ -123,6 +127,7 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
     terrain: getClientTerrainAdapter(),
     flagCarrier: player.hasFlag,
     activeSpeedMultiplier,
+    chronosAscendantActive: isChronosAscendantActive(player),
   };
 }
 
@@ -133,6 +138,7 @@ export function createLocalMovementCommand(input: InputState, options: {
   movementEpoch?: number;
   unstuck?: boolean;
   crouchPressed?: boolean;
+  abilityCastHints?: AbilityCastOriginHint[];
 }): MovementCommand {
   const command = sanitizeMovementCommand({
     seq: nextCommandSeq,
@@ -145,6 +151,7 @@ export function createLocalMovementCommand(input: InputState, options: {
     clientTimeMs: options.clientTimeMs,
     movementEpoch: options.movementEpoch ?? localMovementPrediction.getMovementEpoch(),
     collisionRevision: latestServerCollisionRevision,
+    abilityCastHints: options.abilityCastHints,
   });
   nextCommandSeq = nextMovementSeq(nextCommandSeq);
   return command;
@@ -163,6 +170,16 @@ function horizontalForwardFromYaw(yaw: number): { x: number; z: number } {
     x: -Math.sin(yaw),
     z: -Math.cos(yaw),
   };
+}
+
+function isChronosAscendantActive(player: Player, now = Date.now()): boolean {
+  if (player.heroId !== 'chronos') return false;
+
+  const ascendant = player.abilities?.['chronos_ascendant_paradox'];
+  if (!ascendant?.isActive) return false;
+
+  const activatedAt = ascendant.activatedAt ?? now;
+  return now - activatedAt < CHRONOS_ASCENDANT_PARADOX_DURATION_MS;
 }
 
 function resolveLocalPhantomBlinkDestination(
@@ -304,6 +321,33 @@ export function predictLocalBlazeRocketJump(player: Player, lookYaw: number): Mo
       isGrounded: false,
       isSliding: false,
       slideTimeRemaining: 0,
+    },
+  }, lookYaw);
+}
+
+export function predictLocalChronosAscendantParadox(player: Player, lookYaw: number): MovementSimulationState {
+  ensureLocalPredictionInitialized(player);
+  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
+  const forward = horizontalForwardFromYaw(lookYaw);
+
+  return applyLocalPredictedState(player.id, {
+    position: {
+      ...current.position,
+      y: current.position.y + CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
+    },
+    velocity: {
+      x: current.velocity.x + forward.x * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
+      y: Math.max(current.velocity.y, CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE),
+      z: current.velocity.z + forward.z * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
+    },
+    movement: {
+      ...current.movement,
+      isGrounded: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isJetpacking: true,
+      isGliding: true,
+      chronosAscendantStartY: current.position.y,
     },
   }, lookYaw);
 }

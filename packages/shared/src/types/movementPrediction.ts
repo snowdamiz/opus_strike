@@ -1,6 +1,7 @@
 import type { InputState } from './input.js';
 import type { PlayerMovementState } from './player.js';
 import type { Vec3 } from './vector.js';
+import type { AbilityCastOriginHint } from './ability.js';
 
 export const MOVEMENT_PROTOCOL_VERSION = 1;
 export const MOVEMENT_SUBSTEP_RATE = 60;
@@ -18,6 +19,8 @@ export const MOVEMENT_POSITION_EPSILON_METERS = 0.03;
 export const MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND = 0.05;
 export const MOVEMENT_MEDIUM_CORRECTION_METERS = 0.35;
 export const MOVEMENT_HARD_CORRECTION_METERS = 1.5;
+export const ABILITY_CAST_ORIGIN_HINT_QUANTUM = 0.01;
+export const MOVEMENT_MAX_ABILITY_CAST_HINTS = 6;
 
 export const MOVEMENT_BUTTON_MOVE_FORWARD = 1 << 0;
 export const MOVEMENT_BUTTON_MOVE_BACKWARD = 1 << 1;
@@ -86,6 +89,7 @@ export interface MovementCommand {
   clientTimeMs: number;
   movementEpoch: number;
   collisionRevision?: number;
+  abilityCastHints?: AbilityCastOriginHint[];
 }
 
 export interface MovementCommandPacket {
@@ -254,7 +258,82 @@ export function sanitizeMovementCommand(command: MovementCommand): MovementComma
     collisionRevision: Number.isFinite(command.collisionRevision)
       ? Math.max(0, Math.trunc(command.collisionRevision as number))
       : undefined,
+    abilityCastHints: sanitizeAbilityCastOriginHints(command.abilityCastHints),
   };
+}
+
+function quantizeCastOriginValue(value: number): number {
+  return Math.round(value / ABILITY_CAST_ORIGIN_HINT_QUANTUM) * ABILITY_CAST_ORIGIN_HINT_QUANTUM;
+}
+
+function sanitizeCastHintText(value: unknown, maxLength: number): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > maxLength) return null;
+  return trimmed;
+}
+
+export function quantizeAbilityCastOriginHint(hint: AbilityCastOriginHint): AbilityCastOriginHint {
+  return {
+    abilityId: hint.abilityId,
+    socketName: hint.socketName,
+    origin: {
+      x: quantizeCastOriginValue(hint.origin.x),
+      y: quantizeCastOriginValue(hint.origin.y),
+      z: quantizeCastOriginValue(hint.origin.z),
+    },
+    sampledAtMs: Number.isFinite(hint.sampledAtMs) ? Math.round(hint.sampledAtMs as number) : undefined,
+  };
+}
+
+export function sanitizeAbilityCastOriginHint(value: unknown): AbilityCastOriginHint | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+
+  const raw = value as Record<string, unknown>;
+  const abilityId = sanitizeCastHintText(raw.abilityId, 64);
+  const socketName = sanitizeCastHintText(raw.socketName, 96);
+  const origin = raw.origin;
+  if (!abilityId || !socketName || origin === null || typeof origin !== 'object' || Array.isArray(origin)) {
+    return null;
+  }
+
+  const rawOrigin = origin as Record<string, unknown>;
+  const x = coerceFiniteMovementNumber(rawOrigin.x);
+  const y = coerceFiniteMovementNumber(rawOrigin.y);
+  const z = coerceFiniteMovementNumber(rawOrigin.z);
+  if (x === null || y === null || z === null) return null;
+
+  const sampledAtMs = raw.sampledAtMs === undefined || raw.sampledAtMs === null
+    ? undefined
+    : coerceFiniteMovementNumber(raw.sampledAtMs);
+  if (sampledAtMs === null) return null;
+
+  return quantizeAbilityCastOriginHint({
+    abilityId,
+    socketName,
+    origin: { x, y, z },
+    sampledAtMs,
+  });
+}
+
+export function sanitizeAbilityCastOriginHints(value: unknown): AbilityCastOriginHint[] | undefined {
+  if (value === undefined || value === null) return undefined;
+
+  const rawHints = Array.isArray(value) ? value : [value];
+  const hints: AbilityCastOriginHint[] = [];
+  const seen = new Set<string>();
+
+  for (const rawHint of rawHints.slice(0, MOVEMENT_MAX_ABILITY_CAST_HINTS)) {
+    const hint = sanitizeAbilityCastOriginHint(rawHint);
+    if (!hint) continue;
+
+    const key = `${hint.abilityId}:${hint.socketName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    hints.push(hint);
+  }
+
+  return hints.length > 0 ? hints : undefined;
 }
 
 function coerceFiniteMovementNumber(value: unknown): number | null {
@@ -290,6 +369,7 @@ export function parseMovementCommandPayload(value: unknown): MovementCommand | n
   const collisionRevision = raw.collisionRevision === undefined || raw.collisionRevision === null
     ? undefined
     : coerceFiniteMovementNumber(raw.collisionRevision);
+  const abilityCastHints = sanitizeAbilityCastOriginHints(raw.abilityCastHints);
 
   if (
     seq === null ||
@@ -313,6 +393,7 @@ export function parseMovementCommandPayload(value: unknown): MovementCommand | n
     clientTimeMs,
     movementEpoch,
     collisionRevision,
+    abilityCastHints,
   });
 
   return isValidMovementCommand(sanitized) ? sanitized : null;

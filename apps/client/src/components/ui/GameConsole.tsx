@@ -233,7 +233,7 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /fly | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bots root | /bots release | /f | /time freeze'
+        ? 'Developer Console - /fly | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze'
         : 'Developer commands are disabled in this build',
       type: 'info',
     },
@@ -254,6 +254,7 @@ export function GameConsole() {
     setDevImmune,
     setDevTimeFrozen,
     setDevBotsRooted,
+    setDevBotBrainEnabled,
     addGameBot,
   } = useNetwork();
 
@@ -441,12 +442,21 @@ export function GameConsole() {
         }
 
         const action = parts[1]?.toLowerCase();
+
+        if (parts.length === 2 && (action === 'nobrain' || action === 'brain')) {
+          const enabled = action === 'brain';
+          setDevBotBrainEnabled(enabled);
+          addMessage(`Bot AI ${enabled ? 'enabled' : 'disabled'}.`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
         const heroName = parts[2];
         const heroId = heroName ? resolveHeroId(heroName) : null;
         const team = resolveTeam(parts[3]);
 
         if (parts.length !== 4 || action !== 'add' || !heroId || !team) {
-          addMessage('Usage: /bot add <hero> <red|blue>', 'error');
+          addMessage('Usage: /bot add <hero> <red|blue> | /bot nobrain | /bot brain', 'error');
           addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
           break;
         }
@@ -477,9 +487,9 @@ export function GameConsole() {
       }
 
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bots root, /bots release, /f, /time freeze`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze`, 'error');
     }
-  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotsRooted, setDevFly, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotBrainEnabled, setDevBotsRooted, setDevFly, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -549,7 +559,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, /end, /bot add <hero> <side>, /bots root, /f, or /time freeze...' : 'Developer commands disabled'}
+            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, /end, /bot add <hero> <side>, /bot nobrain, /bot brain, /bots root, /f, or /time freeze...' : 'Developer commands disabled'}
             autoComplete="off"
             spellCheck={false}
           />

@@ -1,13 +1,11 @@
 import { useRef, useMemo, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { PLAYER_HEIGHT, PLAYER_RADIUS } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, validateTeleportDestination } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
-
-const PLAYER_HEIGHT = 1.8;
-const PLAYER_RADIUS = 0.48;
 
 // Maximum teleport range
 const MAX_RANGE = 25;

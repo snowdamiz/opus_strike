@@ -20,6 +20,7 @@ export interface MovementShadowSimulationInput {
   terrain: MovementTerrainAdapter;
   flagCarrier: boolean;
   activeSpeedMultiplier: number;
+  chronosAscendantActive?: boolean;
   proposedPosition: Vec3;
   proposedVelocity: Vec3;
 }
@@ -171,6 +172,7 @@ export function advanceMovementShadowSimulation(input: MovementShadowSimulationI
     terrain: input.terrain,
     flagCarrier: input.flagCarrier,
     activeSpeedMultiplier: input.activeSpeedMultiplier,
+    chronosAscendantActive: input.chronosAscendantActive,
   });
 
   const sample = {

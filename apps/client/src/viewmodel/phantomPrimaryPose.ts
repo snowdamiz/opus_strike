@@ -1,11 +1,8 @@
 import type * as THREE from 'three';
-
-export const PHANTOM_PRIMARY_PALM_SOCKET_NAMES = {
-  [-1]: 'phantom.primary.leftPalm',
-  [1]: 'phantom.primary.rightPalm',
-} as const satisfies Record<-1 | 1, string>;
-
-export const PHANTOM_VOID_RAY_ORB_SOCKET_NAME = 'phantom.voidRay.orb';
+export {
+  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+} from '@voxel-strike/shared';
 
 export const PHANTOM_PRIMARY_READY_TRANSITION_SECONDS = 0.24;
 export const PHANTOM_PRIMARY_SHOT_PULSE_DURATION_SECONDS = 0.24;

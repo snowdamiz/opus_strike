@@ -19,7 +19,6 @@ import {
   getRankFromRating,
   toPublicRankSnapshot,
   isInsideBoundaryPolygon,
-  constrainToBoundaryPolygon,
   clampToBoundaryPolygon,
   isCollisionBlock,
   FLAG_CAPTURE_RADIUS,
@@ -34,10 +33,18 @@ import {
   BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
-  BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
-  BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-  BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+  BLAZE_FLAMETHROWER_SOCKET,
+  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+  BLAZE_ROCKET_STAFF_SOCKET,
   BLAZE_GEARSTORM_RADIUS,
+  CHRONOS_PRIMARY_ORB_SOCKET,
+  CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+  CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+  CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED,
+  CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
   CHRONOS_LIFELINE_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
@@ -52,13 +59,19 @@ import {
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   CHRONOS_VERDANT_PULSE_DAMAGE,
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
-  CHRONOS_VERDANT_PULSE_SPAWN_FORWARD_OFFSET,
   CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
+  HOOKSHOT_CHAIN_SOCKET,
+  HOOKSHOT_HOOK_SOCKET_NAMES,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_RELOAD_MS,
+  PHANTOM_DIRE_BALL_SOCKET,
+  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
+  PHANTOM_VOID_RAY_SOCKET,
+  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
+  PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   VOID_RAY_CHARGE_TIME,
@@ -72,15 +85,23 @@ import {
   MOVEMENT_MAX_COMMANDS_PER_SECOND,
   MOVEMENT_COMMAND_STALE_GRACE_STEPS,
   MOVEMENT_SERVER_CATCHUP_BUDGET,
+  inputStateToMovementButtons,
   movementButtonsToInputState,
   isMovementSeqAfter,
+  nextMovementSeq,
   movementSeqDistance,
   compareMovementSeq,
   parseMovementCommandPayload,
+  sanitizeAbilityCastOriginHints,
   normalizeLookYaw,
   clampLookPitch,
+  calculatePlayerSocketPosition,
+  getPlayerBodyAimPosition as getSharedPlayerBodyAimPosition,
+  getPlayerEyePosition as getSharedPlayerEyePosition,
+  getSegmentHitAgainstPlayerCombatHitbox,
 } from '@voxel-strike/shared';
 import type { 
+  AbilityCastOriginHint,
   BotDifficulty,
   HeroId, 
   Team, 
@@ -422,8 +443,9 @@ const BLAZE_BOMB_DAMAGE = 34;
 const BLAZE_BOMB_SPLASH_RADIUS = 4;
 const BLAZE_GEARSTORM_DAMAGE = 10;
 const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 500;
-const BLAZE_ROCKET_STAFF_SOCKET = { handHeight: 0.24, forwardOffset: 0.64, sideOffset: 0.22 };
-const CHRONOS_PRIMARY_ORB_SOCKET = { handHeight: -0.06, forwardOffset: 0.56, sideOffset: 0 };
+const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
+const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER = 1.7;
+const ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER = 1.15;
 
 interface BlazeRocketImpactMessage {
   rocketId: string;
@@ -580,10 +602,6 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
   blaze: { damage: BLAZE_BOMB_DAMAGE, range: BLAZE_BOMB_MAX_RANGE, cooldownMs: BLAZE_BOMB_COOLDOWN_MS, coneDot: Math.cos(0.32), radius: BLAZE_BOMB_SPLASH_RADIUS, damageType: 'bomb' },
 };
-const PHANTOM_DIRE_BALL_SOCKET = { handHeight: 0.2, forwardOffset: 0.62, sideOffset: 0.22 };
-const PHANTOM_VOID_RAY_SOCKET = { handHeight: -0.08, forwardOffset: 0.52, sideOffset: 0 };
-const HOOKSHOT_EYE_HEIGHT = 0.6;
-const HOOKSHOT_CHAIN_SOCKET = { handHeight: 0.16, forwardOffset: 0.62, sideOffset: 0.24 };
 const HOOKSHOT_SPEED = 38;
 const HOOKSHOT_MAX_DISTANCE = 14;
 const DRAG_HOOK_SPEED = 50;
@@ -642,6 +660,7 @@ export class GameRoom extends Room<GameState> {
   private devImmunePlayers: Set<string> = new Set();
   private devGameClockFrozen = false;
   private devBotsRooted = false;
+  private devBotBrainEnabled = true;
   private mapManifest: VoxelMapManifest | null = null;
   private proceduralTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
   private mapChunkLookup: Map<string, VoxelChunk> = new Map();
@@ -833,12 +852,12 @@ export class GameRoom extends Room<GameState> {
       this.handleBlazeRocketImpact(client, data);
     });
 
-    this.onMessage('blazeBombDrop', (client) => {
+    this.onMessage('blazeBombDrop', (client, data: unknown) => {
       if (!this.rateLimiter.consume(client.sessionId, 'blazeBombDrop', GAME_MESSAGE_RATE_LIMITS.blazeBombDrop)) {
         this.recordRateLimitDrop(client.sessionId, 'blazeBombDrop');
         return;
       }
-      this.handleBlazeBombDrop(client);
+      this.handleBlazeBombDrop(client, data);
     });
 
     this.onMessage('selectHero', (client, data: unknown) => {
@@ -1003,6 +1022,14 @@ export class GameRoom extends Room<GameState> {
           return;
         }
         this.handleSetDevBotsRooted(client, isRecord(data) && data.enabled === true);
+      });
+
+      this.onMessage('setDevBotBrainEnabled', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'setDevBotBrainEnabled', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'setDevBotBrainEnabled');
+          return;
+        }
+        this.handleSetDevBotBrainEnabled(client, isRecord(data) && data.enabled === true);
       });
 
       this.onMessage('devAddBot', (client, data: unknown) => {
@@ -1417,6 +1444,7 @@ export class GameRoom extends Room<GameState> {
 
       // Process active abilities (like Phantom Veil)
       updateActiveAbilities(player, now);
+      this.syncChronosAscendantMovementState(player, now);
     });
 
     // Update void zones (damage enemies inside)
@@ -1567,6 +1595,7 @@ export class GameRoom extends Room<GameState> {
         isJetpacking: player.movement.isJetpacking,
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
+        chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
       },
       abilities,
       stats: {
@@ -3033,7 +3062,7 @@ export class GameRoom extends Room<GameState> {
       authority.metrics.malformedCommands++;
       const commandShape = command && typeof command === 'object'
         ? Object.fromEntries(
-          ['seq', 'buttons', 'lookYaw', 'lookPitch', 'clientTimeMs', 'movementEpoch', 'collisionRevision']
+          ['seq', 'buttons', 'lookYaw', 'lookPitch', 'clientTimeMs', 'movementEpoch', 'collisionRevision', 'abilityCastHints']
             .map((key) => [key, typeof (command as Record<string, unknown>)[key]])
         )
         : undefined;
@@ -3240,8 +3269,44 @@ export class GameRoom extends Room<GameState> {
       lookPitch: command.lookPitch,
       timestamp: this.state.serverTime || Date.now(),
       unstuck: buttons.unstuck,
+      abilityCastHints: command.abilityCastHints,
       devFly: false,
     };
+  }
+
+  private enqueueServerOwnedMovementCommands(
+    player: Player,
+    input: PlayerInput,
+    now: number,
+    commandCount = SERVER_MOVEMENT_SUBSTEPS_PER_TICK
+  ): void {
+    const authority = this.getMovementAuthority(player.id);
+    let seq = authority.pendingCommands[authority.pendingCommands.length - 1]?.seq ?? authority.lastProcessedSeq;
+
+    for (let step = 0; step < commandCount; step++) {
+      seq = nextMovementSeq(seq);
+      authority.pendingCommands.push({
+        seq,
+        buttons: inputStateToMovementButtons(input, {
+          crouchPressed: step === 0 && Boolean(input.crouchPressed),
+          unstuck: step === 0 && Boolean(input.unstuck),
+        }),
+        lookYaw: normalizeLookYaw(input.lookYaw),
+        lookPitch: clampLookPitch(input.lookPitch),
+        clientTimeMs: now + step * MOVEMENT_SUBSTEP_SECONDS * 1000,
+        movementEpoch: authority.movementEpoch,
+        collisionRevision: this.getMovementCollisionRevision(now),
+      });
+    }
+
+    if (authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE) {
+      const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
+      authority.pendingCommands.splice(0, overflow);
+      authority.metrics.droppedCommands += overflow;
+      this.markMovementBarrier(player.id, 'queue_overflow');
+    }
+    authority.metrics.commandsReceived += commandCount;
+    authority.metrics.queueLength = authority.pendingCommands.length;
   }
 
   private getNextMovementCommand(authority: ServerMovementAuthorityState): MovementCommand | null {
@@ -3271,6 +3336,7 @@ export class GameRoom extends Room<GameState> {
     player.movement.isJetpacking = result.movement.isJetpacking;
     player.movement.jetpackFuel = result.movement.jetpackFuel;
     player.movement.isGliding = result.movement.isGliding;
+    player.movement.chronosAscendantStartY = result.movement.chronosAscendantStartY ?? 0;
   }
 
   private startHookshotGrappleAuthority(
@@ -3393,7 +3459,6 @@ export class GameRoom extends Room<GameState> {
   }
 
   private simulateAuthoritativeMovementStep(player: Player, input: PlayerInput, dt: number): void {
-    const previousPosition = this.vec3SchemaToPlain(player.position);
     const heroId = player.heroId as HeroId;
     const heroStats = getHeroStats(heroId);
     this.movementTerrain.collisionRevision = this.getMovementCollisionRevision();
@@ -3415,6 +3480,7 @@ export class GameRoom extends Room<GameState> {
         isJetpacking: player.movement.isJetpacking,
         jetpackFuel: player.movement.jetpackFuel,
         isGliding: player.movement.isGliding,
+        chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
       },
       heroStats,
       input,
@@ -3423,30 +3489,10 @@ export class GameRoom extends Room<GameState> {
       terrain: this.movementTerrain,
       flagCarrier: player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
+      chronosAscendantActive: this.isChronosAscendantActive(player),
     });
 
-    let nextPosition = result.position;
-    let nextVelocity = result.velocity;
-    if (player.isBot || this.spawnedNpcs.has(player.id)) {
-      if (this.isBotSpaceBlocked(previousPosition)) {
-        this.placePlayerAtSpawn(player);
-        return;
-      }
-
-      const resolved = this.resolveBotCollision(previousPosition, result.position);
-      nextPosition = resolved.position;
-      nextVelocity = {
-        ...result.velocity,
-        x: resolved.blockedX ? 0 : result.velocity.x,
-        z: resolved.blockedZ ? 0 : result.velocity.z,
-      };
-    }
-
-    this.applyMovementSimulationResult(player, {
-      position: nextPosition,
-      velocity: nextVelocity,
-      movement: result.movement,
-    });
+    this.applyMovementSimulationResult(player, result);
   }
 
   private sendSelfMovementAuthority(player: Player, client: Client, reason: MovementCorrectionReason | null): void {
@@ -3499,6 +3545,7 @@ export class GameRoom extends Room<GameState> {
       isJetpacking: player.movement.isJetpacking,
       jetpackFuel: player.movement.jetpackFuel,
       isGliding: player.movement.isGliding,
+      chronosAscendantStartY: player.movement.chronosAscendantStartY || undefined,
     };
   }
 
@@ -3574,6 +3621,7 @@ export class GameRoom extends Room<GameState> {
       terrain: this.movementTerrain,
       flagCarrier: player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
+      chronosAscendantActive: this.isChronosAscendantActive(player),
       proposedPosition,
       proposedVelocity,
     });
@@ -3769,7 +3817,10 @@ export class GameRoom extends Room<GameState> {
     this.markMovementBarrier(player.id, 'unstuck', { preserveQueuedCommands: true });
   }
 
-  private getChronosLifelineTargets(caster: Player): Player[] {
+  private getChronosLifelineTargets(
+    caster: Player,
+    options: { includeSelfFallback?: boolean } = {}
+  ): Player[] {
     const radiusSq = CHRONOS_LIFELINE_RADIUS * CHRONOS_LIFELINE_RADIUS;
     const candidates: Array<{
       player: Player;
@@ -3801,7 +3852,12 @@ export class GameRoom extends Room<GameState> {
         : a.healthScore - b.healthScore
     ));
 
-    return candidates.slice(0, CHRONOS_LIFELINE_MAX_TARGETS).map((candidate) => candidate.player);
+    const targets = candidates.slice(0, CHRONOS_LIFELINE_MAX_TARGETS).map((candidate) => candidate.player);
+    if (targets.length > 0 || !options.includeSelfFallback || caster.state !== 'alive') {
+      return targets;
+    }
+
+    return [caster];
   }
 
   private executeChronosLifelineConduit(
@@ -3873,21 +3929,61 @@ export class GameRoom extends Room<GameState> {
     return `${abilityId}_${playerId}_${this.phantomCastIdCounter++}`;
   }
 
+  private getAbilityCastOriginHint(
+    player: Player,
+    abilityId: string,
+    socketName: string
+  ): AbilityCastOriginHint | null {
+    const hints = player.lastInput?.abilityCastHints;
+    if (!hints || hints.length === 0) return null;
+
+    return hints.find((hint) => (
+      hint.abilityId === abilityId &&
+      hint.socketName === socketName &&
+      this.isFiniteVec3(hint.origin)
+    )) ?? null;
+  }
+
+  private resolveValidatedCastOriginHint(
+    player: Player,
+    abilityId: string,
+    socketName: string,
+    fallbackOrigin: PlainVec3
+  ): PlainVec3 {
+    const hint = this.getAbilityCastOriginHint(player, abilityId, socketName);
+    if (!hint) return fallbackOrigin;
+
+    const origin = hint.origin;
+    const playerCenter = this.vec3SchemaToPlain(player.position);
+    const distanceFromFallback = this.distance3D(origin, fallbackOrigin);
+    const distanceFromCenter = this.distance3D(origin, playerCenter);
+    const verticalFromCenter = Math.abs(origin.y - playerCenter.y);
+
+    if (
+      distanceFromFallback > ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK ||
+      distanceFromCenter > ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER ||
+      verticalFromCenter > ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER
+    ) {
+      return fallbackOrigin;
+    }
+
+    return this.hasLineOfSight(fallbackOrigin, origin) ? origin : fallbackOrigin;
+  }
+
   private getPhantomCastOrigin(
     player: Player,
     socket: { handHeight: number; forwardOffset: number; sideOffset: number },
-    launchSide: -1 | 1 = 1
+    launchSide: -1 | 1 = 1,
+    hint?: { abilityId: string; socketName: string }
   ): PlainVec3 {
-    const forwardX = -Math.sin(player.lookYaw);
-    const forwardZ = -Math.cos(player.lookYaw);
-    const rightX = Math.cos(player.lookYaw);
-    const rightZ = -Math.sin(player.lookYaw);
+    const fallbackOrigin = calculatePlayerSocketPosition(player.position, player.lookYaw, {
+      ...socket,
+      sideOffset: socket.sideOffset * launchSide,
+    });
 
-    return {
-      x: player.position.x + forwardX * socket.forwardOffset + rightX * socket.sideOffset * launchSide,
-      y: player.position.y + socket.handHeight,
-      z: player.position.z + forwardZ * socket.forwardOffset + rightZ * socket.sideOffset * launchSide,
-    };
+    return hint
+      ? this.resolveValidatedCastOriginHint(player, hint.abilityId, hint.socketName, fallbackOrigin)
+      : fallbackOrigin;
   }
 
   private normalize3D(vector: PlainVec3): PlainVec3 | null {
@@ -3910,11 +4006,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getHookshotAimOrigin(player: Player): PlainVec3 {
-    return {
-      x: player.position.x,
-      y: player.position.y + HOOKSHOT_EYE_HEIGHT,
-      z: player.position.z,
-    };
+    return getSharedPlayerEyePosition(player.position);
   }
 
   private raycastTerrain(start: PlainVec3, direction: PlainVec3, maxDistance: number, step = 0.35): PlainVec3 | null {
@@ -3952,10 +4044,19 @@ export class GameRoom extends Room<GameState> {
   private resolveHookshotLaunch(
     player: Player,
     launchSide: -1 | 1,
-    maxDistance: number
+    maxDistance: number,
+    abilityId: 'hookshot_basic_attack' | 'hookshot_heavy_attack'
   ): { startPosition: PlainVec3; aimDirection: PlainVec3 } {
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
-    const startPosition = this.getPhantomCastOrigin(player, HOOKSHOT_CHAIN_SOCKET, launchSide);
+    const startPosition = this.getPhantomCastOrigin(
+      player,
+      HOOKSHOT_CHAIN_SOCKET,
+      launchSide,
+      {
+        abilityId,
+        socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
+      }
+    );
     const aimOrigin = this.getHookshotAimOrigin(player);
     const aimPoint = this.raycastTerrain(aimOrigin, lookDirection, maxDistance)
       ?? this.addScaled3D(aimOrigin, lookDirection, maxDistance);
@@ -4012,11 +4113,16 @@ export class GameRoom extends Room<GameState> {
 
   private resolveHookshotTrapTarget(player: Player): { startPosition: PlainVec3; targetPosition: PlainVec3; velocity: PlainVec3 } {
     const direction = this.getForwardVector(player.lookYaw, player.lookPitch);
-    const startPosition = {
-      x: player.position.x,
-      y: player.position.y + 1.5,
-      z: player.position.z,
-    };
+    const launchSide = 1;
+    const startPosition = this.getPhantomCastOrigin(
+      player,
+      HOOKSHOT_CHAIN_SOCKET,
+      launchSide,
+      {
+        abilityId: 'hookshot_grapple_trap',
+        socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
+      }
+    );
 
     let targetPosition = this.addScaled3D(startPosition, direction, GRAPPLE_TRAP_MAX_RANGE);
     const directHit = this.raycastTerrain(this.getHookshotAimOrigin(player), direction, GRAPPLE_TRAP_MAX_RANGE + 10);
@@ -4196,11 +4302,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getBlazeAimOrigin(player: Player): PlainVec3 {
-    return {
-      x: player.position.x,
-      y: player.position.y + HOOKSHOT_EYE_HEIGHT,
-      z: player.position.z,
-    };
+    return getSharedPlayerEyePosition(player.position);
   }
 
   private resolveBlazeRocketCast(
@@ -4217,7 +4319,15 @@ export class GameRoom extends Room<GameState> {
     const castId = this.nextBlazeCastId(player.id, 'blaze_rocket', this.blazeRocketIdCounter++);
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getBlazeAimOrigin(player);
-    const startPosition = this.getPhantomCastOrigin(player, BLAZE_ROCKET_STAFF_SOCKET);
+    const startPosition = this.getPhantomCastOrigin(
+      player,
+      BLAZE_ROCKET_STAFF_SOCKET,
+      1,
+      {
+        abilityId: 'blaze_rocket',
+        socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+      }
+    );
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
     const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
     const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
@@ -4280,11 +4390,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getChronosAimOrigin(player: Player): PlainVec3 {
-    return {
-      x: player.position.x,
-      y: player.position.y + HOOKSHOT_EYE_HEIGHT,
-      z: player.position.z,
-    };
+    return getSharedPlayerEyePosition(player.position);
   }
 
   private resolveChronosVerdantPulseCast(
@@ -4298,7 +4404,15 @@ export class GameRoom extends Room<GameState> {
     const castId = this.nextPhantomCastId(player.id, 'chronos_verdant_pulse');
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getChronosAimOrigin(player);
-    const socketPosition = this.getPhantomCastOrigin(player, CHRONOS_PRIMARY_ORB_SOCKET);
+    const socketPosition = this.getPhantomCastOrigin(
+      player,
+      CHRONOS_PRIMARY_ORB_SOCKET,
+      1,
+      {
+        abilityId: 'chronos_verdant_pulse',
+        socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+      }
+    );
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
     const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
     const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
@@ -4316,17 +4430,17 @@ export class GameRoom extends Room<GameState> {
 
     return {
       castId,
-      startPosition: this.addScaled3D(
-        socketPosition,
-        aimDirection,
-        CHRONOS_VERDANT_PULSE_SPAWN_FORWARD_OFFSET
-      ),
+      startPosition: socketPosition,
       aimDirection,
     };
   }
 
   private broadcastChronosVerdantPulseCast(player: Player, attack: AttackConfig, now: number): void {
     const pulse = this.resolveChronosVerdantPulseCast(player, attack);
+    const supercharged = this.isChronosAscendantActive(player, now);
+    const pulseSpeed = supercharged
+      ? CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED
+      : CHRONOS_VERDANT_PULSE_SPEED;
 
     this.broadcast('abilityUsed', {
       playerId: player.id,
@@ -4336,13 +4450,15 @@ export class GameRoom extends Room<GameState> {
       startPosition: pulse.startPosition,
       aimDirection: pulse.aimDirection,
       velocity: {
-        x: pulse.aimDirection.x * CHRONOS_VERDANT_PULSE_SPEED,
-        y: pulse.aimDirection.y * CHRONOS_VERDANT_PULSE_SPEED,
-        z: pulse.aimDirection.z * CHRONOS_VERDANT_PULSE_SPEED,
+        x: pulse.aimDirection.x * pulseSpeed,
+        y: pulse.aimDirection.y * pulseSpeed,
+        z: pulse.aimDirection.z * pulseSpeed,
       },
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
       serverTime: now,
+      radius: supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS : undefined,
+      supercharged,
     });
   }
 
@@ -4379,7 +4495,15 @@ export class GameRoom extends Room<GameState> {
   private dropBlazeBomb(player: Player, attack: AttackConfig, now: number): void {
     const castId = this.nextBlazeCastId(player.id, 'blaze_bomb', this.blazeBombIdCounter++);
     const targetPosition = this.resolveBlazeBombTarget(player);
-    const startPosition = this.getPhantomCastOrigin(player, BLAZE_ROCKET_STAFF_SOCKET);
+    const startPosition = this.getPhantomCastOrigin(
+      player,
+      BLAZE_ROCKET_STAFF_SOCKET,
+      1,
+      {
+        abilityId: 'blaze_bomb',
+        socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+      }
+    );
     const impactTime = now + BLAZE_BOMB_FALL_DURATION_MS;
 
     this.queuePendingAreaDamage({
@@ -4424,7 +4548,13 @@ export class GameRoom extends Room<GameState> {
     const socket = abilityId === 'phantom_dire_ball'
       ? PHANTOM_DIRE_BALL_SOCKET
       : PHANTOM_VOID_RAY_SOCKET;
-    const startPosition = this.getPhantomCastOrigin(player, socket, launchSide);
+    const socketName = abilityId === 'phantom_dire_ball'
+      ? PHANTOM_PRIMARY_PALM_SOCKET_NAMES[launchSide]
+      : PHANTOM_VOID_RAY_ORB_SOCKET_NAME;
+    const startPosition = this.getPhantomCastOrigin(player, socket, launchSide, {
+      abilityId,
+      socketName,
+    });
     const magazine = abilityId === 'phantom_dire_ball'
       ? this.getOrCreatePhantomPrimaryMagazine(player)
       : null;
@@ -4453,7 +4583,15 @@ export class GameRoom extends Room<GameState> {
       abilityId: 'phantom_void_ray_charge',
       castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge'),
       position: this.vec3SchemaToPlain(player.position),
-      startPosition: this.getPhantomCastOrigin(player, PHANTOM_VOID_RAY_SOCKET),
+      startPosition: this.getPhantomCastOrigin(
+        player,
+        PHANTOM_VOID_RAY_SOCKET,
+        1,
+        {
+          abilityId: 'phantom_void_ray_charge',
+          socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+        }
+      ),
       aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
@@ -4487,7 +4625,7 @@ export class GameRoom extends Room<GameState> {
     const speed = abilityId === 'hookshot_basic_attack'
       ? HOOKSHOT_SPEED
       : DRAG_HOOK_SPEED;
-    const launch = this.resolveHookshotLaunch(player, launchSide, maxDistance);
+    const launch = this.resolveHookshotLaunch(player, launchSide, maxDistance, abilityId);
 
     this.broadcastPhantomCast({
       playerId: player.id,
@@ -4594,16 +4732,12 @@ export class GameRoom extends Room<GameState> {
     }
 
     const chronosLifelineTargets = player.heroId === 'chronos' && slot === 'ability1'
-      ? this.getChronosLifelineTargets(player)
+      ? this.getChronosLifelineTargets(player, { includeSelfFallback: true })
       : null;
     const hookshotGrappleTarget = player.heroId === 'hookshot' && slot === 'ability1'
       ? this.resolveHookshotGrappleTarget(player)
       : null;
 
-    if (player.heroId === 'chronos' && slot === 'ultimate') {
-      this.rejectAbilityOrCombat(player, 'chronos_ultimate_disabled');
-      return;
-    }
     if (player.heroId === 'chronos' && slot === 'ability1' && (!chronosLifelineTargets || chronosLifelineTargets.length === 0)) {
       this.rejectAbilityOrCombat(player, 'chronos_lifeline_no_targets', false);
       return;
@@ -4631,7 +4765,15 @@ export class GameRoom extends Room<GameState> {
         abilityId: result.abilityId,
         castId: this.nextPhantomCastId(player.id, result.abilityId),
         position: this.vec3SchemaToPlain(player.position),
-        startPosition: this.getPhantomCastOrigin(player, CHRONOS_PRIMARY_ORB_SOCKET),
+        startPosition: this.getPhantomCastOrigin(
+          player,
+          CHRONOS_PRIMARY_ORB_SOCKET,
+          1,
+          {
+            abilityId: 'chronos_lifeline_conduit',
+            socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          }
+        ),
         targetIds: chronosLifelineTargets.map((target) => target.id),
         ownerTeam: player.team,
         serverTime: usedAt,
@@ -4666,7 +4808,15 @@ export class GameRoom extends Room<GameState> {
 
       if (result.abilityId === 'hookshot_grapple' && hookshotGrappleTarget) {
         const launchSide = 1;
-        const startPosition = this.getPhantomCastOrigin(player, HOOKSHOT_CHAIN_SOCKET, launchSide);
+        const startPosition = this.getPhantomCastOrigin(
+          player,
+          HOOKSHOT_CHAIN_SOCKET,
+          launchSide,
+          {
+            abilityId: 'hookshot_grapple',
+            socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
+          }
+        );
         const aimDirection = this.normalize3D({
           x: hookshotGrappleTarget.x - startPosition.x,
           y: hookshotGrappleTarget.y - startPosition.y,
@@ -4758,6 +4908,8 @@ export class GameRoom extends Room<GameState> {
           },
           aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
           ownerTeam,
+          launchSide: 1,
+          launchYaw: player.lookYaw,
           serverTime: usedAt,
           radius: GRAPPLE_TRAP_RADIUS,
           duration: GRAPPLE_TRAP_DURATION,
@@ -4786,13 +4938,38 @@ export class GameRoom extends Room<GameState> {
       );
     }
 
+    const ascendantParadoxVelocity = result.abilityId === 'chronos_ascendant_paradox'
+      ? this.vec3SchemaToPlain(player.velocity)
+      : undefined;
+    const abilityStartPosition = result.abilityId === 'blaze_rocketjump'
+      ? this.getPhantomCastOrigin(
+        player,
+        BLAZE_ROCKET_STAFF_SOCKET,
+        1,
+        {
+          abilityId: 'blaze_rocketjump',
+          socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+        }
+      )
+      : result.abilityId === 'chronos_timebreak'
+        ? this.getPhantomCastOrigin(
+          player,
+          CHRONOS_PRIMARY_ORB_SOCKET,
+          1,
+          {
+            abilityId: 'chronos_timebreak',
+            socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          }
+        )
+        : startedAt;
+
     // Broadcast ability use
     this.broadcast('abilityUsed', {
       playerId: player.id,
       abilityId: result.abilityId,
       castId: this.nextPhantomCastId(player.id, result.abilityId),
       position: { x: player.position.x, y: player.position.y, z: player.position.z },
-      startPosition: startedAt,
+      startPosition: abilityStartPosition,
       direction: { 
         yaw: player.lookYaw, 
         pitch: player.lookPitch 
@@ -4800,6 +4977,8 @@ export class GameRoom extends Room<GameState> {
       aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
       velocity: result.abilityId === 'blaze_rocketjump'
         ? this.vec3SchemaToPlain(player.velocity)
+        : ascendantParadoxVelocity
+          ? ascendantParadoxVelocity
         : undefined,
       ownerTeam: player.team,
       serverTime: usedAt,
@@ -4811,6 +4990,11 @@ export class GameRoom extends Room<GameState> {
         : undefined,
       duration: result.abilityId === 'chronos_timebreak'
         ? result.abilityDef.duration
+        : result.abilityId === 'chronos_ascendant_paradox'
+          ? result.abilityDef.duration
+        : undefined,
+      durationMs: result.abilityId === 'chronos_ascendant_paradox'
+        ? CHRONOS_ASCENDANT_PARADOX_DURATION_MS
         : undefined,
       shockwaveDirection,
     });
@@ -5092,7 +5276,17 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const attack = mode === 'primary' ? PRIMARY_ATTACKS[heroId] : SECONDARY_ATTACKS[heroId];
+    let attack = mode === 'primary' ? PRIMARY_ATTACKS[heroId] : SECONDARY_ATTACKS[heroId];
+    if (heroId === 'chronos' && mode === 'primary' && attack && this.isChronosAscendantActive(player)) {
+      attack = {
+        ...attack,
+        damage: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
+        cooldownMs: CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
+        radius: CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+        range: Math.max(attack.range, 42),
+        damageType: 'ascendant_verdant_pulse',
+      };
+    }
     if (!attack) {
       this.rejectAbilityOrCombat(player, `attack_missing_config:${mode}`);
       return;
@@ -5185,7 +5379,7 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private handleBlazeBombDrop(client: Client): void {
+  private handleBlazeBombDrop(client: Client, data: unknown): void {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive' || player.heroId !== 'blaze') return;
     if (!player.lastInput?.secondaryFire) {
@@ -5198,6 +5392,15 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.blazeBombDropConsumedForHold.add(player.id);
+    const abilityCastHints = isRecord(data)
+      ? sanitizeAbilityCastOriginHints(data.abilityCastHints)
+      : undefined;
+    if (abilityCastHints && player.lastInput) {
+      player.lastInput = {
+        ...player.lastInput,
+        abilityCastHints,
+      };
+    }
     this.tryResolveAttack(player, 'secondary');
   }
 
@@ -5238,26 +5441,55 @@ export class GameRoom extends Room<GameState> {
     for (const target of this.getEnemyPlayers(source.team as Team)) {
       if (target.id === source.id) continue;
 
-      const targetPoint = this.getPlayerBodyAimPosition(target);
-      const toTarget = {
-        x: targetPoint.x - origin.x,
-        y: targetPoint.y - origin.y,
-        z: targetPoint.z - origin.z,
+      const hit = this.getAimHitAgainstPlayer(origin, forward, range, target);
+      if (!hit || hit.distance > bestDistance) continue;
+
+      const targetCenter = this.getPlayerBodyAimPosition(target);
+      const toCenter = {
+        x: targetCenter.x - origin.x,
+        y: targetCenter.y - origin.y,
+        z: targetCenter.z - origin.z,
       };
-      const distance = Math.sqrt(toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z);
-      if (distance <= 0.0001 || distance > range) continue;
-      if (!this.hasLineOfSight(origin, targetPoint)) continue;
+      const centerDistance = Math.sqrt(toCenter.x * toCenter.x + toCenter.y * toCenter.y + toCenter.z * toCenter.z);
+      if (centerDistance <= 0.0001) continue;
 
-      const dot = (toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z) / distance;
-      if (dot < minDot) continue;
+      const centerDot = this.clamp(
+        (toCenter.x * forward.x + toCenter.y * forward.y + toCenter.z * forward.z) / centerDistance,
+        -1,
+        1
+      );
+      const centerAngle = Math.acos(centerDot);
+      const coneAngle = Math.acos(this.clamp(minDot, -1, 1));
+      const hitboxAngle = Math.atan2(hit.radius, Math.max(hit.distance, hit.radius));
+      if (centerAngle > coneAngle + hitboxAngle) continue;
+      if (!this.hasLineOfSight(origin, hit.targetPoint)) continue;
 
-      if (distance < bestDistance) {
-        bestDistance = distance;
+      if (hit.distance < bestDistance) {
+        bestDistance = hit.distance;
         bestTarget = target;
       }
     }
 
     return bestTarget;
+  }
+
+  private getAimHitAgainstPlayer(
+    origin: PlainVec3,
+    direction: PlainVec3,
+    range: number,
+    target: Player,
+    extraRadius = 0
+  ) {
+    return getSegmentHitAgainstPlayerCombatHitbox(
+      origin,
+      direction,
+      range,
+      {
+        position: this.vec3SchemaToPlain(target.position),
+        heroId: target.heroId,
+      },
+      extraRadius
+    );
   }
 
   private applyAreaDamage(source: Player, center: { x: number; y: number; z: number }, radius: number, damage: number, damageType: string): void {
@@ -5555,8 +5787,42 @@ export class GameRoom extends Room<GameState> {
   private getActiveSpeedMultiplier(player: Player): number {
     let multiplier = 1;
     if (player.abilities.get('phantom_veil')?.isActive) multiplier *= 1.3;
+    if (this.isChronosAscendantActive(player)) {
+      multiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
+    }
     multiplier *= this.getChronosTimebreakTempoMultiplier(player);
     return multiplier;
+  }
+
+  private isChronosAscendantActive(player: Player, now = Date.now()): boolean {
+    if (player.heroId !== 'chronos' || player.state !== 'alive') return false;
+
+    const ascendant = player.abilities.get('chronos_ascendant_paradox');
+    if (!ascendant?.isActive) return false;
+
+    const activatedAt = ascendant.activatedAt || now;
+    return now - activatedAt < CHRONOS_ASCENDANT_PARADOX_DURATION_MS;
+  }
+
+  private syncChronosAscendantMovementState(player: Player, now = Date.now()): void {
+    if (player.heroId !== 'chronos') return;
+
+    const active = this.isChronosAscendantActive(player, now);
+    player.movement.isJetpacking = active;
+    player.movement.isGliding = active;
+    if (!active) {
+      player.movement.chronosAscendantStartY = 0;
+      return;
+    }
+
+    if (!Number.isFinite(player.movement.chronosAscendantStartY)) {
+      player.movement.chronosAscendantStartY = player.position.y;
+    }
+    if (active) {
+      player.movement.isGrounded = false;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+    }
   }
 
   private getChronosTimebreakTempoMultiplier(player: Player): number {
@@ -5766,16 +6032,21 @@ export class GameRoom extends Room<GameState> {
         return;
       }
 
+      if (!this.devBotBrainEnabled) {
+        this.disableBotBrainInput(bot, now);
+        this.enqueueServerOwnedMovementCommands(bot, bot.lastInput ?? this.createEmptyBotInput(bot, now), now);
+        return;
+      }
+
       if (!bot.hasFlag && performance.now() - budgetStart > BOT_AI_BUDGET_MS) {
         bot.lastInput = this.createEmptyBotInput(bot, now);
+        this.enqueueServerOwnedMovementCommands(bot, bot.lastInput, now);
         return;
       }
 
       const botInput = this.createBotInput(bot, brain, now, dt);
       bot.lastInput = botInput;
-      bot.lookYaw = botInput.lookYaw;
-      bot.lookPitch = botInput.lookPitch;
-      this.processPlayerInput(bot, botInput);
+      this.enqueueServerOwnedMovementCommands(bot, botInput, now);
     });
   }
 
@@ -5839,6 +6110,7 @@ export class GameRoom extends Room<GameState> {
     input.sprint = isLongMove || bot.hasFlag || (brain.intent !== 'fight_enemy' && brain.intent !== 'guard_own_flag');
     input.jump = recovering || brain.stuckTime > 0.35 || (input.sprint && !combatTarget && bot.movement.isGrounded && Math.random() < 0.015);
     input.crouch = input.sprint && isLongMove && !combatTarget && Math.random() < 0.1;
+    input.crouchPressed = input.crouch && !bot.lastInput?.crouch;
 
     if (now >= brain.nextFireDecisionAt) {
       brain.nextFireDecisionAt = now + this.randomBetween(skill.fireDecisionMs[0], skill.fireDecisionMs[1]) / tempoMultiplier;
@@ -5930,7 +6202,9 @@ export class GameRoom extends Room<GameState> {
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (blackboard.nearbyEnemyCount >= 2 || objectiveIntent);
         break;
       case 'chronos':
-        input.ability1 = pulseAbility && this.getChronosLifelineTargets(bot).length > 0;
+        input.ability1 = pulseAbility && this.getChronosLifelineTargets(bot, {
+          includeSelfFallback: bot.health < bot.maxHealth,
+        }).length > 0;
         input.ability2 = pulseAbility && (underPressure || blackboard.nearbyEnemyCount >= 2);
         input.ultimate = false;
         break;
@@ -6228,11 +6502,12 @@ export class GameRoom extends Room<GameState> {
     const targetDistance = this.distance3D(bot.position, target.position);
     const reactionLag = skill.reactionMs / 1000;
     const leadSeconds = Math.max(-0.22, Math.min(0.42, skill.aimLeadSeconds + targetDistance / 160 - reactionLag * 0.45));
+    const targetPoint = this.getPlayerBodyAimPosition(target);
 
     return {
-      x: target.position.x + target.velocity.x * leadSeconds,
-      y: target.position.y + 0.9 + target.velocity.y * leadSeconds,
-      z: target.position.z + target.velocity.z * leadSeconds,
+      x: targetPoint.x + target.velocity.x * leadSeconds,
+      y: targetPoint.y + target.velocity.y * leadSeconds,
+      z: targetPoint.z + target.velocity.z * leadSeconds,
     };
   }
 
@@ -6281,24 +6556,9 @@ export class GameRoom extends Room<GameState> {
     if (!attack) return false;
 
     const origin = this.getPlayerEyePosition(bot);
-    const targetPoint = this.getPlayerBodyAimPosition(target);
-    const toTarget = {
-      x: targetPoint.x - origin.x,
-      y: targetPoint.y - origin.y,
-      z: targetPoint.z - origin.z,
-    };
-    const distance = Math.sqrt(toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z);
-    if (distance <= 0.001 || distance > attack.range) return false;
-
     const forward = this.getForwardVector(yaw, pitch);
-    const dot = this.clamp(
-      (toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z) / distance,
-      -1,
-      1
-    );
-    const aimAngle = Math.acos(dot);
-    const allowedAngle = Math.acos(this.clamp(attack.coneDot, -1, 1)) * skill.aimFireToleranceScale;
-    return aimAngle <= allowedAngle;
+    const readinessPadding = Math.max(0, skill.aimFireToleranceScale - 1) * PLAYER_COMBAT_HITBOX_PADDING;
+    return this.getAimHitAgainstPlayer(origin, forward, attack.range, target, readinessPadding) !== null;
   }
 
   private getBotMoveDirection(
@@ -6409,9 +6669,10 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getYawPitchTowardPosition(source: Player, targetPosition: PlainVec3): { yaw: number; pitch: number } {
-    const dx = targetPosition.x - source.position.x;
-    const dy = targetPosition.y - (source.position.y + 1.2);
-    const dz = targetPosition.z - source.position.z;
+    const sourceEye = this.getPlayerEyePosition(source);
+    const dx = targetPosition.x - sourceEye.x;
+    const dy = targetPosition.y - sourceEye.y;
+    const dz = targetPosition.z - sourceEye.z;
     const horizontal = Math.sqrt(dx * dx + dz * dz);
     return {
       yaw: Math.atan2(-dx, -dz),
@@ -6420,10 +6681,10 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getYawPitchToward(source: Player, target: Player | { x: number; y: number; z: number }): { yaw: number; pitch: number } {
-    const targetPosition = 'position' in target ? target.position : target;
+    const targetPosition = 'position' in target ? this.getPlayerBodyAimPosition(target) : target;
     return this.getYawPitchTowardPosition(source, {
       x: targetPosition.x,
-      y: targetPosition.y + ('position' in target ? 0.9 : 0),
+      y: targetPosition.y,
       z: targetPosition.z,
     });
   }
@@ -6475,19 +6736,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getPlayerEyePosition(player: Player): PlainVec3 {
-    return {
-      x: player.position.x,
-      y: player.position.y + 1.2,
-      z: player.position.z,
-    };
+    return getSharedPlayerEyePosition(player.position);
   }
 
   private getPlayerBodyAimPosition(player: Player): PlainVec3 {
-    return {
-      x: player.position.x,
-      y: player.position.y + 0.9,
-      z: player.position.z,
-    };
+    return getSharedPlayerBodyAimPosition({
+      position: this.vec3SchemaToPlain(player.position),
+      heroId: player.heroId,
+    });
   }
 
   private getForwardVector(yaw: number, pitch: number): PlainVec3 {
@@ -6606,11 +6862,26 @@ export class GameRoom extends Room<GameState> {
     bot.movement.isWallRunning = false;
     bot.movement.wallRunSide = '';
     this.disablePlayerSkills(bot);
+    this.resetPlayerPressState(bot.id);
+  }
 
-    let pressState = playerPressState.get(bot.id);
+  private disableBotBrainInput(bot: Player, now: number): void {
+    bot.lastInput = this.createEmptyBotInput(bot, now);
+    bot.velocity.x = 0;
+    bot.velocity.z = 0;
+    bot.movement.isSprinting = false;
+    bot.movement.isCrouching = false;
+    bot.movement.isWallRunning = false;
+    bot.movement.wallRunSide = '';
+    this.disablePlayerSkills(bot);
+    this.resetPlayerPressState(bot.id);
+  }
+
+  private resetPlayerPressState(playerId: string): void {
+    let pressState = playerPressState.get(playerId);
     if (!pressState) {
-      this.initializePressState(bot.id);
-      pressState = playerPressState.get(bot.id)!;
+      this.initializePressState(playerId);
+      pressState = playerPressState.get(playerId)!;
     }
 
     pressState.primaryFire = false;
@@ -6843,6 +7114,32 @@ export class GameRoom extends Room<GameState> {
     this.broadcastStateStreams({ transforms: true, forceVitals: true });
   }
 
+  private handleSetDevBotBrainEnabled(client: Client, enabled: boolean): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    this.devBotBrainEnabled = enabled;
+
+    if (enabled) {
+      this.botBrains.forEach((brain) => {
+        brain.nextThinkAt = 0;
+        brain.nextBlackboardAt = 0;
+      });
+    } else {
+      const now = Date.now();
+      this.state.players.forEach((player) => {
+        if (player.isBot) {
+          this.disableBotBrainInput(player, now);
+        }
+      });
+    }
+
+    client.send('devBotBrainChanged', { enabled });
+    this.broadcastStateStreams({ transforms: true, forceVitals: true });
+  }
+
   private handleDevAddBot(client: Client, data: { heroId?: HeroId; team?: Team }): void {
     if (!this.isDevelopmentMode()) {
       client.send('devCommandError', { message: 'Developer commands are disabled' });
@@ -6897,6 +7194,8 @@ export class GameRoom extends Room<GameState> {
     this.botBrains.set(bot.id, this.createBotBrain(bot, botIndex));
     if (this.devBotsRooted) {
       this.rootBotMovementAndSkills(bot, now);
+    } else if (!this.devBotBrainEnabled) {
+      this.disableBotBrainInput(bot, now);
     }
     this.updateMetadata();
 
@@ -7087,65 +7386,6 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private isBotSpaceBlocked(position: { x: number; y: number; z: number }): boolean {
-    const manifest = this.getMapManifest();
-    if (!isInsideBoundaryPolygon(position.x, position.z, manifest.boundary)) {
-      return true;
-    }
-
-    const radius = 0.45;
-    const diagonal = radius * 0.707;
-    const offsets = [
-      { x: 0, z: 0 },
-      { x: radius, z: 0 },
-      { x: -radius, z: 0 },
-      { x: 0, z: radius },
-      { x: 0, z: -radius },
-      { x: diagonal, z: diagonal },
-      { x: diagonal, z: -diagonal },
-      { x: -diagonal, z: diagonal },
-      { x: -diagonal, z: -diagonal },
-    ];
-    const ySamples = [position.y - 0.35, position.y + 0.15, position.y + 0.65];
-
-    for (const y of ySamples) {
-      for (const offset of offsets) {
-        if (isCollisionBlock(this.getBlockAtWorld({
-          x: position.x + offset.x,
-          y,
-          z: position.z + offset.z,
-        }))) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  private isBotPathBlocked(
-    previous: { x: number; y: number; z: number },
-    next: { x: number; y: number; z: number }
-  ): boolean {
-    const dx = next.x - previous.x;
-    const dz = next.z - previous.z;
-    const distance = Math.sqrt(dx * dx + dz * dz);
-    const steps = Math.max(1, Math.ceil(distance / 0.25));
-
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      if (this.isBotSpaceBlocked({
-        x: previous.x + dx * t,
-        y: previous.y + (next.y - previous.y) * t,
-        z: previous.z + dz * t,
-      })) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   private isPlayerProposalSpaceBlocked(position: { x: number; y: number; z: number }): boolean {
     const manifest = this.getMapManifest();
     if (!isInsideBoundaryPolygon(position.x, position.z, manifest.boundary)) {
@@ -7204,31 +7444,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     return false;
-  }
-
-  private resolveBotCollision(
-    previous: { x: number; y: number; z: number },
-    desired: { x: number; y: number; z: number }
-  ): { position: { x: number; y: number; z: number }; blockedX: boolean; blockedZ: boolean } {
-    const manifest = this.getMapManifest();
-    const constrained = constrainToBoundaryPolygon(previous.x, previous.z, desired.x, desired.z, manifest.boundary);
-    const next = { ...desired, x: constrained.x, z: constrained.z };
-
-    if (!this.isBotPathBlocked(previous, next)) {
-      return { position: next, blockedX: false, blockedZ: false };
-    }
-
-    const xOnly = { ...next, z: previous.z };
-    if (!this.isBotPathBlocked(previous, xOnly)) {
-      return { position: xOnly, blockedX: false, blockedZ: true };
-    }
-
-    const zOnly = { ...next, x: previous.x };
-    if (!this.isBotPathBlocked(previous, zOnly)) {
-      return { position: zOnly, blockedX: true, blockedZ: false };
-    }
-
-    return { position: { ...previous, y: next.y }, blockedX: true, blockedZ: true };
   }
 
   private isFiniteVec3(position: { x: number; y: number; z: number }): boolean {
@@ -7647,28 +7862,14 @@ export class GameRoom extends Room<GameState> {
       y: Math.sin(pitch),
       z: -Math.cos(player.lookYaw) * cosPitch,
     };
-    const right = {
-      x: Math.cos(player.lookYaw),
-      y: 0,
-      z: -Math.sin(player.lookYaw),
-    };
-    const horizontalForward = {
-      x: -Math.sin(player.lookYaw),
-      z: -Math.cos(player.lookYaw),
-    };
 
     return {
-      origin: {
-        x:
-          player.position.x +
-          horizontalForward.x * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
-          right.x * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-        y: player.position.y + BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
-        z:
-          player.position.z +
-          horizontalForward.z * BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET +
-          right.z * BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
-      },
+      origin: this.resolveValidatedCastOriginHint(
+        player,
+        'blaze_flamethrower',
+        BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+        calculatePlayerSocketPosition(player.position, player.lookYaw, BLAZE_FLAMETHROWER_SOCKET)
+      ),
       direction: forward,
     };
   }
@@ -7751,15 +7952,16 @@ export class GameRoom extends Room<GameState> {
     for (const target of this.getEnemyPlayers(source.team as Team)) {
       if (target.id === source.id) continue;
       if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) continue;
+      const targetPoint = this.getPlayerBodyAimPosition(target);
 
       const toTarget = {
-        x: target.position.x - origin.x,
-        y: target.position.y + 0.9 - origin.y,
-        z: target.position.z - origin.z,
+        x: targetPoint.x - origin.x,
+        y: targetPoint.y - origin.y,
+        z: targetPoint.z - origin.z,
       };
       const distSq = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
       if (distSq > rangeSq || distSq <= 0.0001) continue;
-      if (!this.hasLineOfSight(origin, this.getPlayerBodyAimPosition(target))) continue;
+      if (!this.hasLineOfSight(origin, targetPoint)) continue;
 
       const distance = Math.sqrt(distSq);
       const dot = (
@@ -7930,17 +8132,6 @@ export class GameRoom extends Room<GameState> {
       if (lastInput && this.isDevelopmentMode() && lastInput.devFly) return;
       if (this.devBotsRooted && player.isBot) {
         this.rootBotMovementAndSkills(player, Date.now());
-        return;
-      }
-
-      if (player.isBot || this.spawnedNpcs.has(player.id)) {
-        if (!lastInput) return;
-        for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
-          this.simulateAuthoritativeMovementStep(player, lastInput, MOVEMENT_SUBSTEP_SECONDS);
-        }
-        if (player.position.y < -10) {
-          this.placePlayerAtSpawn(player, 'respawn');
-        }
         return;
       }
 

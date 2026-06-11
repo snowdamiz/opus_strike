@@ -1,6 +1,6 @@
 import type { Vec3, Quaternion } from './vector.js';
 import type { HeroId } from './hero.js';
-import type { AbilityState } from './ability.js';
+import type { AbilityCastOriginHint, AbilityState } from './ability.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 
 export type Team = 'red' | 'blue';
@@ -27,6 +27,7 @@ export interface PlayerMovementState {
   isJetpacking: boolean;
   jetpackFuel: number;
   isGliding: boolean;
+  chronosAscendantStartY?: number;
 }
 
 export interface PlayerInput {
@@ -51,6 +52,7 @@ export interface PlayerInput {
   timestamp: number;
   unstuck?: boolean;
   clientFrameRateBand?: string;
+  abilityCastHints?: AbilityCastOriginHint[];
   // Client position/velocity for sync (server-authoritative games should validate)
   position?: Vec3;
   velocity?: Vec3;

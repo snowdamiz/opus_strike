@@ -115,6 +115,11 @@ export const BLAZE_FLAMETHROWER_DAMAGE_INTERVAL = 250; // ms between damage tick
 export const BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT = 0.42;
 export const BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET = 0.18;
 export const BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET = 0.14;
+export const BLAZE_FLAMETHROWER_SOCKET = {
+  handHeight: BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT,
+  forwardOffset: BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET,
+  sideOffset: BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET,
+} as const;
 
 // Blaze Ultimate - Infernal Gearstorm
 export const BLAZE_GEARSTORM_RADIUS = 23.1; // 40% larger than the previous 16.5 radius
@@ -140,3 +145,65 @@ export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.48;
 export const PLAYER_CROUCH_HEIGHT = 1.0;
 export const PLAYER_MASS = 80;
+export const PLAYER_COMBAT_HITBOX_PADDING = 0.14;
+export const PLAYER_EYE_HEIGHT = 0.6;
+
+export interface SpawnOffset {
+  eyeHeight: number;
+  handDrop: number;
+  forwardOffset: number;
+}
+
+export interface PlayerSocketOffset {
+  handHeight: number;
+  forwardOffset: number;
+  sideOffset: number;
+}
+
+export const BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME = 'blaze.rocket.staffTip';
+export const PHANTOM_PRIMARY_PALM_SOCKET_NAMES = {
+  [-1]: 'phantom.primary.leftPalm',
+  [1]: 'phantom.primary.rightPalm',
+} as const satisfies Record<-1 | 1, string>;
+export const PHANTOM_VOID_RAY_ORB_SOCKET_NAME = 'phantom.voidRay.orb';
+export const HOOKSHOT_HOOK_SOCKET_NAMES = {
+  [-1]: 'hookshot.hook.leftTip',
+  [1]: 'hookshot.hook.rightTip',
+} as const satisfies Record<-1 | 1, string>;
+export const CHRONOS_PRIMARY_ORB_SOCKET_NAME = 'chronos.primary.orb';
+
+export const DEFAULT_SPAWN_OFFSET: SpawnOffset = {
+  eyeHeight: PLAYER_EYE_HEIGHT,
+  handDrop: 0.3,
+  forwardOffset: 0.8,
+};
+
+export const HOOKSHOT_CHAIN_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.16,
+  forwardOffset: 0.62,
+  sideOffset: 0.24,
+};
+
+export const PHANTOM_DIRE_BALL_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.2,
+  forwardOffset: 0.62,
+  sideOffset: 0.22,
+};
+
+export const PHANTOM_VOID_RAY_SOCKET: PlayerSocketOffset = {
+  handHeight: -0.08,
+  forwardOffset: 0.52,
+  sideOffset: 0,
+};
+
+export const BLAZE_ROCKET_STAFF_SOCKET: PlayerSocketOffset = {
+  handHeight: 0.24,
+  forwardOffset: 0.64,
+  sideOffset: 0.22,
+};
+
+export const CHRONOS_PRIMARY_ORB_SOCKET: PlayerSocketOffset = {
+  handHeight: -0.06,
+  forwardOffset: 0.56,
+  sideOffset: 0,
+};

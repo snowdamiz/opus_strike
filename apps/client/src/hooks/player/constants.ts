@@ -4,14 +4,24 @@
  * Centralized constants for player movement, physics, and abilities.
  */
 
-// ============================================================================
-// PLAYER DIMENSIONS
-// ============================================================================
-
-export const PLAYER_HEIGHT = 1.8;
-export const PLAYER_RADIUS = 0.48;
-export const PLAYER_CROUCH_HEIGHT = 1.0;
-export const EYE_HEIGHT = 0.6;
+export {
+  BLAZE_ROCKET_STAFF_SOCKET,
+  CHRONOS_PRIMARY_ORB_SOCKET,
+  DEFAULT_SPAWN_OFFSET,
+  HOOKSHOT_CHAIN_SOCKET,
+  PHANTOM_DIRE_BALL_SOCKET,
+  PHANTOM_VOID_RAY_SOCKET,
+  PLAYER_CROUCH_HEIGHT,
+  PLAYER_EYE_HEIGHT as EYE_HEIGHT,
+  PLAYER_HEIGHT,
+  PLAYER_RADIUS,
+  calculateHorizontalLookDirection,
+  calculateLookDirection,
+  calculatePlayerSocketPosition,
+  calculateProjectileSpawn,
+  type PlayerSocketOffset,
+  type SpawnOffset,
+} from '@voxel-strike/shared';
 
 // ============================================================================
 // GROUND & COLLISION
@@ -71,109 +81,3 @@ export const GRAPPLE_TRAP_GRAVITY = 25;
 // ============================================================================
 
 export const FUEL_UPDATE_THRESHOLD = 2;
-
-// ============================================================================
-// SPAWN HELPERS
-// ============================================================================
-
-export interface SpawnOffset {
-  eyeHeight: number;
-  handDrop: number;
-  forwardOffset: number;
-}
-
-export interface PlayerSocketOffset {
-  handHeight: number;
-  forwardOffset: number;
-  sideOffset: number;
-}
-
-export const DEFAULT_SPAWN_OFFSET: SpawnOffset = {
-  eyeHeight: 0.6,
-  handDrop: 0.3,
-  forwardOffset: 0.8,
-};
-
-export const HOOKSHOT_CHAIN_SOCKET: PlayerSocketOffset = {
-  handHeight: 0.16,
-  forwardOffset: 0.62,
-  sideOffset: 0.24,
-};
-
-export const PHANTOM_DIRE_BALL_SOCKET: PlayerSocketOffset = {
-  handHeight: 0.2,
-  forwardOffset: 0.62,
-  sideOffset: 0.22,
-};
-
-export const PHANTOM_VOID_RAY_SOCKET: PlayerSocketOffset = {
-  handHeight: -0.08,
-  forwardOffset: 0.52,
-  sideOffset: 0,
-};
-
-export const CHRONOS_PRIMARY_ORB_SOCKET: PlayerSocketOffset = {
-  handHeight: -0.06,
-  forwardOffset: 0.56,
-  sideOffset: 0,
-};
-
-/**
- * Calculate spawn position for projectile based on player position and look direction
- */
-export function calculateProjectileSpawn(
-  position: { x: number; y: number; z: number },
-  direction: { x: number; y: number; z: number },
-  offset: SpawnOffset = DEFAULT_SPAWN_OFFSET
-): { x: number; y: number; z: number } {
-  return {
-    x: position.x + direction.x * offset.forwardOffset,
-    y: position.y + offset.eyeHeight - offset.handDrop + direction.y * offset.forwardOffset,
-    z: position.z + direction.z * offset.forwardOffset,
-  };
-}
-
-/**
- * Calculate a stable player-relative socket position.
- *
- * Unlike projectile spawn, this uses yaw-only forward/side axes so the socket
- * stays attached to the player's body while the projectile can still aim with
- * full pitch via its velocity.
- */
-export function calculatePlayerSocketPosition(
-  position: { x: number; y: number; z: number },
-  yaw: number,
-  offset: PlayerSocketOffset
-): { x: number; y: number; z: number } {
-  const forwardX = -Math.sin(yaw);
-  const forwardZ = -Math.cos(yaw);
-  const rightX = Math.cos(yaw);
-  const rightZ = -Math.sin(yaw);
-
-  return {
-    x: position.x + forwardX * offset.forwardOffset + rightX * offset.sideOffset,
-    y: position.y + offset.handHeight,
-    z: position.z + forwardZ * offset.forwardOffset + rightZ * offset.sideOffset,
-  };
-}
-
-/**
- * Calculate look direction from yaw and pitch angles
- */
-export function calculateLookDirection(yaw: number, pitch: number): { x: number; y: number; z: number } {
-  return {
-    x: -Math.sin(yaw) * Math.cos(pitch),
-    y: Math.sin(pitch),
-    z: -Math.cos(yaw) * Math.cos(pitch),
-  };
-}
-
-/**
- * Calculate horizontal look direction (ignoring pitch)
- */
-export function calculateHorizontalLookDirection(yaw: number): { x: number; z: number } {
-  return {
-    x: -Math.sin(yaw),
-    z: -Math.cos(yaw),
-  };
-}

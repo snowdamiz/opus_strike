@@ -5,6 +5,9 @@ import {
   ABILITY_DEFINITIONS,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
+  CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_SHADOWSTEP_DISTANCE,
@@ -333,6 +336,25 @@ export function executeAbility(
     // ===== CHRONOS ABILITIES =====
     case 'chronos_timebreak': {
       abilityState.activatedAt = now + CHRONOS_TIMEBREAK_RELEASE_DELAY_MS;
+      break;
+    }
+
+    case 'chronos_ascendant_paradox': {
+      const forwardX = -Math.sin(player.lookYaw);
+      const forwardZ = -Math.cos(player.lookYaw);
+      abilityState.isActive = true;
+      abilityState.activatedAt = now;
+      player.movement.chronosAscendantStartY = player.position.y;
+      player.position.y += CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST;
+      player.velocity.x += forwardX * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE;
+      player.velocity.y = Math.max(player.velocity.y, CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE);
+      player.velocity.z += forwardZ * CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE;
+      player.movement.isGrounded = false;
+      player.movement.isSliding = false;
+      player.movement.slideTimeRemaining = 0;
+      player.movement.isJetpacking = true;
+      player.movement.isGliding = true;
+      context.markAuthoritativePosition?.(player.id, 650, 'knockback');
       break;
     }
 
