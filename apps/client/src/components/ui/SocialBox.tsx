@@ -94,10 +94,10 @@ async function socialApi<T>(endpoint: string, options?: RequestInit): Promise<T>
 function UsersIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M16 11a4 4 0 10-8 0 4 4 0 008 0z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 20a8 8 0 0116 0" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M18.5 8.5a3 3 0 110 6" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M20 20a5.5 5.5 0 00-3.5-5.1" />
+      <circle cx="9" cy="7" r="4" strokeWidth={1.8} />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M2 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M16 3.2a4 4 0 010 7.6" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M22 21v-2a4 4 0 00-3-3.85" />
     </svg>
   );
 }

@@ -336,7 +336,7 @@ export function MainMenu() {
                     <>
                       <button
                         onClick={handleDiscordSignIn}
-                        className="w-full py-4 rounded-xl font-display text-xl text-white border border-indigo-300/20 bg-indigo-500 hover:bg-indigo-400 shadow-[0_0_48px_rgba(99,102,241,0.32)] relative overflow-hidden group"
+                        className="w-full py-4 rounded-xl font-display text-xl text-white border border-accent-primary/25 bg-accent-primary hover:bg-[rgb(var(--color-accent-primary-hover))] shadow-glow-orange relative overflow-hidden group"
                       >
                         <span className="relative flex items-center justify-center gap-3">
                           <DiscordIcon className="w-6 h-6" />

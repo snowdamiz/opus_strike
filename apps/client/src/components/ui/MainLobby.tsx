@@ -1326,9 +1326,9 @@ function AuthModal({
           ? isDiscordPending
             ? <DiscordIcon className="w-6 h-6 text-indigo-200" />
             : <PhantomIcon className="w-6 h-6" />
-          : <SignInIcon className="w-6 h-6 text-indigo-100" />
+          : <SignInIcon className="w-6 h-6 text-accent-primary" />
       }
-      iconClassName="bg-gradient-to-br from-indigo-500/20 to-purple-600/10 border border-indigo-400/20"
+      iconClassName="bg-accent-primary/15 border border-accent-primary/20"
       size="sm"
       onClose={onClose}
       bodyClassName="p-5 space-y-3"
@@ -1421,7 +1421,7 @@ function AuthModal({
                 <>
                   <button
                     onClick={onDiscordSignIn}
-                    className="w-full py-3 rounded-lg font-display text-base text-white border border-indigo-300/20 bg-indigo-500 hover:bg-indigo-400 shadow-[0_0_36px_rgba(99,102,241,0.28)] relative overflow-hidden group"
+                    className="w-full py-3 rounded-lg font-display text-base text-white border border-accent-primary/25 bg-accent-primary hover:bg-[rgb(var(--color-accent-primary-hover))] shadow-glow-orange relative overflow-hidden group"
                   >
                     <span className="relative flex items-center justify-center gap-2.5">
                       <DiscordIcon className="w-5 h-5" />

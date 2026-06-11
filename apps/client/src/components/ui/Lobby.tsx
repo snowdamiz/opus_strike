@@ -182,6 +182,7 @@ export function Lobby() {
     isLobbyHost,
     isLoading,
     userStats,
+    matchmakingStatus,
     setAppPhase,
     clearMapVote,
   } = useGameStore();
@@ -218,6 +219,8 @@ export function Lobby() {
   const currentRank = currentPlayer?.rank ?? getRankForStats(userStats);
   const playerList = Array.from(lobbyPlayers.values());
   const wagerEnabled = currentLobbyWager.enabled;
+  const currentMatchMode = matchmakingStatus.matchMode ?? currentLobbyWager.matchMode ?? null;
+  const botsAllowed = !wagerEnabled && currentMatchMode === 'custom';
   const localPaymentStatus = currentPlayer?.paymentStatus || '';
   const localPlayerPaid = localPaymentStatus === 'credited' || localPaymentStatus === 'settled';
   const localPaymentConfirming = localPaymentStatus === 'intent_created' || localPaymentStatus === 'submitted' || localPaymentStatus === 'confirmed';
@@ -246,6 +249,10 @@ export function Lobby() {
   const readyCount = playerList.filter(p => p.isReady || p.isHost).length;
   const assignedCount = playerList.filter(p => p.team === 'red' || p.team === 'blue').length;
   const allPlayersAssigned = playerList.length > 0 && assignedCount === playerList.length;
+  const isProductionCustomLobby = import.meta.env.PROD
+    && (currentMatchMode === 'custom' || currentMatchMode === 'custom_wager');
+  const minimumParticipantsToStart = isProductionCustomLobby ? 2 : 1;
+  const hasMinimumParticipants = playerList.length >= minimumParticipantsToStart;
   const assignedHumanPlayers = playerList.filter((p) => !p.isBot && (p.team === 'red' || p.team === 'blue'));
   const unpaidHumanPlayers = wagerEnabled
     ? assignedHumanPlayers.filter((p) => p.paymentStatus !== 'credited' && p.paymentStatus !== 'settled')
@@ -253,7 +260,7 @@ export function Lobby() {
   const paidRedHumans = assignedHumanPlayers.filter((p) => p.team === 'red' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
   const paidBlueHumans = assignedHumanPlayers.filter((p) => p.team === 'blue' && (p.paymentStatus === 'credited' || p.paymentStatus === 'settled')).length;
   const wagerStartReady = !wagerEnabled || (unpaidHumanPlayers.length === 0 && paidRedHumans > 0 && paidBlueHumans > 0);
-  const canStart = isLobbyHost && allPlayersAssigned && wagerStartReady && (playerList.length === 1 || readyCount === playerList.length);
+  const canStart = isLobbyHost && hasMinimumParticipants && allPlayersAssigned && wagerStartReady && (playerList.length === 1 || readyCount === playerList.length);
 
   const solarPlayers = playerList.filter(p => p.team === 'red');
   const voidPlayers = playerList.filter(p => p.team === 'blue');
@@ -435,6 +442,7 @@ export function Lobby() {
             playerId={playerId}
             isSelected={currentTeam === 'red'}
             isLobbyHost={isLobbyHost}
+            botsAllowed={botsAllowed}
             onSelect={() => handleTeamChange('red')}
             onAddBot={handleAddBot}
             onKick={handleKick}
@@ -453,6 +461,7 @@ export function Lobby() {
             playerId={playerId}
             isSelected={currentTeam === 'blue'}
             isLobbyHost={isLobbyHost}
+            botsAllowed={botsAllowed}
             onSelect={() => handleTeamChange('blue')}
             onAddBot={handleAddBot}
             onKick={handleKick}
@@ -643,6 +652,7 @@ interface FactionPanelProps {
   playerId: string | null;
   isSelected: boolean;
   isLobbyHost: boolean;
+  botsAllowed: boolean;
   onSelect: () => void;
   onAddBot: (team: LobbyTeam) => void;
   onKick: (id: string) => void;
@@ -659,6 +669,7 @@ function FactionPanel({
   playerId,
   isSelected,
   isLobbyHost,
+  botsAllowed,
   onSelect,
   onAddBot,
   onKick,
@@ -672,7 +683,7 @@ function FactionPanel({
   const emptySlots = Math.max(0, maxPlayers - players.length);
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const canJoin = !isSelected && emptySlots > 0;
-  const canAddBot = isLobbyHost && emptySlots > 0;
+  const canAddBot = botsAllowed && isLobbyHost && emptySlots > 0;
   const factionTeam = faction.id as LobbyTeam;
 
   return (
@@ -722,6 +733,7 @@ function FactionPanel({
             player={player}
             isCurrentPlayer={player.id === playerId}
             isLobbyHost={isLobbyHost}
+            botsAllowed={botsAllowed}
             onKick={() => onKick(player.id)}
             onRemoveBot={() => onRemoveBot(player.id)}
             onBotTeamChange={(team) => onBotTeamChange(player.id, team)}
@@ -845,6 +857,7 @@ interface PlayerCardProps {
   player: LobbyPlayer;
   isCurrentPlayer: boolean;
   isLobbyHost: boolean;
+  botsAllowed: boolean;
   onKick: () => void;
   onRemoveBot: () => void;
   onBotTeamChange?: (team: LobbyTeam) => void;
@@ -858,6 +871,7 @@ function PlayerCard({
   player,
   isCurrentPlayer,
   isLobbyHost,
+  botsAllowed,
   onKick,
   onRemoveBot,
   onBotTeamChange,
@@ -869,7 +883,7 @@ function PlayerCard({
   const color = faction?.primaryColor || FACTIONS.red.primaryColor;
   const secondaryColor = faction?.secondaryColor || FACTIONS.red.secondaryColor;
   const { playButtonClick } = useUISounds();
-  const showBotControls = !player.isHost && Boolean(player.isBot) && isLobbyHost;
+  const showBotControls = botsAllowed && !player.isHost && Boolean(player.isBot) && isLobbyHost;
   const cardClass = compact
     ? showBotControls ? 'min-h-16 p-2' : 'h-14 p-2'
     : showBotControls ? 'min-h-[4.5rem] p-2.5' : 'h-16 p-2.5';

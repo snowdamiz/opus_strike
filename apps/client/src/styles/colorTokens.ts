@@ -76,9 +76,9 @@ export const FACTIONS = {
 } as const;
 
 export const WALLET_AUTH_COLORS = {
-  gradient: 'linear-gradient(135deg, #9945FF 0%, #7B3FE4 50%, #5B2CC9 100%)',
-  glow: '0 0 40px rgba(153, 69, 255, 0.3), inset 0 1px 0 rgba(255,255,255,0.2)',
-  subtleGlow: '0 0 30px rgba(153, 69, 255, 0.25), inset 0 1px 0 rgba(255,255,255,0.2)',
+  gradient: 'linear-gradient(135deg, rgb(var(--color-accent-primary)) 0%, rgb(var(--color-accent-primary-deep)) 100%)',
+  glow: '0 0 40px rgb(var(--color-accent-primary) / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.2)',
+  subtleGlow: '0 0 30px rgb(var(--color-accent-primary) / 0.25), inset 0 1px 0 rgb(255 255 255 / 0.2)',
   shimmer: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
 } as const;
 

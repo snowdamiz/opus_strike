@@ -89,6 +89,7 @@ interface MapVoteSession {
 const MAX_PARTICIPANTS = DEFAULT_GAME_CONFIG.maxPlayers;
 const MAX_PLAYERS_PER_TEAM = DEFAULT_GAME_CONFIG.teamSize;
 const QUICK_PLAY_REQUIRED_PLAYERS = DEFAULT_GAME_CONFIG.maxPlayers;
+const PRODUCTION_CUSTOM_MIN_PARTICIPANTS = 2;
 const MAP_VOTE_OPTION_COUNT = 3;
 const MAP_VOTE_DURATION_MS = 30000;
 const WAGER_SAFETY_REFRESH_MS = 10_000;
@@ -328,7 +329,9 @@ export class LobbyRoom extends Room<LobbyState> {
       this.handleChat(client, chat.message);
     });
 
-    const initialBotCount = Math.max(0, Math.min(MAX_PARTICIPANTS - 1, Math.floor(options.initialBotCount || 0)));
+    const initialBotCount = this.isWageredLobby()
+      ? 0
+      : Math.max(0, Math.min(MAX_PARTICIPANTS - 1, Math.floor(options.initialBotCount || 0)));
     for (let i = 0; i < initialBotCount; i++) {
       this.createBot({ difficulty: this.state.defaultBotDifficulty as BotDifficulty });
     }
@@ -668,8 +671,14 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
-    if (this.state.players.size < 1) {
-      client.send('error', { message: 'Need at least 1 player to start' });
+    const minimumParticipants = this.getMinimumParticipantsToStart();
+    if (this.state.players.size < minimumParticipants) {
+      const participantLabel = minimumParticipants === 1
+        ? 'player'
+        : this.isWageredLobby()
+          ? 'players'
+          : 'players or bots';
+      client.send('error', { message: `Need at least ${minimumParticipants} ${participantLabel} to start` });
       return;
     }
 
@@ -857,6 +866,9 @@ export class LobbyRoom extends Room<LobbyState> {
 
     try {
       if (this.state.wagerEnabled) {
+        if (this.getBotCount() > 0) {
+          throw new Error('Wagered lobbies do not allow bots');
+        }
         lockedWagerContext = await wagerService.lockLobbyRoster(this.state.lobbyId, this.buildWagerRoster());
       }
       const rankedEligible = this.isRankedMatchCandidate(playerAssignments, lockedWagerContext);
@@ -1031,6 +1043,10 @@ export class LobbyRoom extends Room<LobbyState> {
     data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }
   ): void {
     if (!this.isHost(client)) return;
+    if (this.isWageredLobby()) {
+      client.send('error', { message: 'Wagered lobbies do not allow bots' });
+      return;
+    }
 
     const bot = this.createBot(data);
     if (!bot) {
@@ -1085,6 +1101,10 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private createBot(data: { difficulty?: BotDifficulty; team?: string; name?: string; heroId?: HeroId | '' }): LobbyPlayer | null {
+    if (this.isWageredLobby()) {
+      return null;
+    }
+
     if (this.state.players.size >= this.state.maxParticipants) {
       return null;
     }
@@ -1297,6 +1317,26 @@ export class LobbyRoom extends Room<LobbyState> {
     return count;
   }
 
+  private getMinimumParticipantsToStart(): number {
+    if (this.isProductionCustomLobby()) {
+      return PRODUCTION_CUSTOM_MIN_PARTICIPANTS;
+    }
+
+    return 1;
+  }
+
+  private isProductionCustomLobby(): boolean {
+    return process.env.NODE_ENV === 'production'
+      && (this.matchMode === 'custom' || this.matchMode === 'custom_wager');
+  }
+
+  private isWageredLobby(): boolean {
+    return this.matchMode === 'ranked'
+      || this.matchMode === 'custom_wager'
+      || this.pendingWagerOptions?.enabled === true
+      || this.state?.wagerEnabled === true;
+  }
+
   private isHost(client: Client): boolean {
     if (this.isRankedQueue) {
       client.send('error', { message: 'Ranked lobbies do not allow host bot controls' });
@@ -1330,6 +1370,9 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!pending.enabled) return;
     if (authContext.kind !== 'authenticated') {
       throw new Error('Sign in before creating a wagered lobby');
+    }
+    if (this.getBotCount() > 0) {
+      throw new Error('Wagered lobbies do not allow bots');
     }
 
     const snapshot = await wagerService.createWageredLobby({
@@ -1479,6 +1522,17 @@ export class LobbyRoom extends Room<LobbyState> {
   private async ensureWagerStartEligible(client?: Client): Promise<boolean> {
     if (!this.state.wagerEnabled) return true;
     await this.refreshWagerState();
+    if (this.getBotCount() > 0) {
+      const payload = {
+        message: 'Wagered lobbies do not allow bots',
+        unpaidPlayers: [],
+        paidHumanCountByTeam: this.getPaidHumanCountByTeam(),
+        reasons: ['wager_bots_not_allowed'],
+      };
+      client?.send('wagerStartBlocked', payload);
+      client?.send('error', { message: payload.message });
+      return false;
+    }
     if (this.isRankedQueue && (this.getHumanCount() !== QUICK_PLAY_REQUIRED_PLAYERS || this.getBotCount() !== 0)) {
       const payload = {
         message: 'Ranked requires a full human roster before starting',
