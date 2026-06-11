@@ -1,0 +1,27 @@
+app-name: "opus-strike-server"
+regions: ["iad"]
+
+# First production rollout is capped at three created Machines. Raise the
+# demand-driven cap to six after one real traffic window looks stable. The
+# running-machine guard is outside that cap so an already-running Machine is
+# never selected for deletion just because demand has dropped.
+created-machine-count: "max(running_machines, min(max(ceil(demand_players / 48) + 1, 2), 3))"
+initial-machine-state: "stopped"
+interval: "15s"
+api-token: "${FAS_API_TOKEN}"
+verbose: true
+
+metric-collectors:
+  - type: "prometheus"
+    metric-name: "demand_players"
+    address: "${FAS_PROMETHEUS_ADDRESS}"
+    # Local CCU is additive across Machines. Lobby participant totals are
+    # global matchmaker query results and are intentionally not part of demand.
+    query: "sum(opus_strike_colyseus_local_ccu{app='opus-strike-server'}) or vector(0)"
+    token: "${FAS_PROMETHEUS_TOKEN}"
+
+  - type: "prometheus"
+    metric-name: "running_machines"
+    address: "${FAS_PROMETHEUS_ADDRESS}"
+    query: "count(fly_instance_up{app='opus-strike-server'}) or vector(0)"
+    token: "${FAS_PROMETHEUS_TOKEN}"

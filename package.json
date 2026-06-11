@@ -15,6 +15,7 @@
     "test:rank": "pnpm --filter @voxel-strike/shared test:rank",
     "test:ranking": "pnpm --filter @voxel-strike/server test:ranking",
     "test:wager": "pnpm --filter @voxel-strike/server test:wager",
+    "test:autoscaler": "pnpm --filter @voxel-strike/server test:autoscaler",
     "test:authority": "pnpm --filter @voxel-strike/server test:authority",
     "test:movement": "pnpm --filter @voxel-strike/physics test:movement",
     "smoke:procedural-buildings": "pnpm --filter @voxel-strike/shared smoke:buildings",
@@ -29,7 +30,9 @@
     "dev:server": "turbo run dev --filter=@voxel-strike/server",
     "dev:server:distributed:a": "COLYSEUS_DISTRIBUTED=1 COLYSEUS_REDIS_URL=redis://localhost:6379 PORT=2567 COLYSEUS_PUBLIC_ADDRESS=localhost:2567 pnpm dev:server",
     "dev:server:distributed:b": "COLYSEUS_DISTRIBUTED=1 COLYSEUS_REDIS_URL=redis://localhost:6379 PORT=2568 COLYSEUS_PUBLIC_ADDRESS=localhost:2568 pnpm dev:server",
-    "test:distributed": "pnpm --filter @voxel-strike/server test:distributed-runtime"
+    "test:distributed": "pnpm --filter @voxel-strike/server test:distributed-runtime",
+    "verify:autoscaler-live": "pnpm --filter @voxel-strike/server verify:autoscaler-live",
+    "simulate:autoscaler-demand": "pnpm --filter @voxel-strike/server simulate:autoscaler-demand"
   },
   "devDependencies": {
     "concurrently": "10.0.3",

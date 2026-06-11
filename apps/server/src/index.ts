@@ -23,6 +23,11 @@ import {
   registerFlyReplayProcessRoute,
   type FlyReplayProcessRouteHandle,
 } from './runtime/flyReplayRouting';
+import {
+  collectAutoscalerMetricSnapshot,
+  PROMETHEUS_CONTENT_TYPE,
+  renderPrometheusMetrics,
+} from './metrics/autoscalerMetrics';
 import { loggers } from './utils/logger';
 
 const app = express();
@@ -32,9 +37,20 @@ validateColyseusRuntimeConfig(colyseusRuntime);
 const sharedRedisClient = colyseusRuntime.distributed ? getSharedRedisClient(colyseusRuntime) : null;
 let flyReplayRouteHandle: FlyReplayProcessRouteHandle | null = null;
 
+function getAutoscalerMetricLabels() {
+  return {
+    colyseusProcessId: matchMaker.processId,
+    flyMachineId: colyseusRuntime.flyReplay.machineId,
+    flyRegion: colyseusRuntime.flyReplay.region,
+  };
+}
+
 // Create Colyseus server
 const gameServer = new Server({
   ...createDistributedColyseusOptions(colyseusRuntime),
+  selectProcessIdToCreateRoom: colyseusRuntime.roomCreateStrategy === 'local'
+    ? async () => matchMaker.processId
+    : undefined,
   gracefullyShutdown: false,
   transport: new WebSocketTransport({
     server: httpServer,
@@ -113,16 +129,13 @@ app.use('/wagers', wagerRoutes);
 // Health check endpoint
 app.get('/health', async (_req, res) => {
   const redis = await pingRedis(sharedRedisClient);
-  let matchmakerQueryHealthy = true;
-  let visibleLobbyRoomCount = 0;
-  let matchmakerError: string | undefined;
-
-  try {
-    visibleLobbyRoomCount = (await matchMaker.query({ name: 'lobby_room' })).length;
-  } catch (error) {
-    matchmakerQueryHealthy = false;
-    matchmakerError = error instanceof Error ? error.message : String(error);
-  }
+  const autoscalerMetrics = await collectAutoscalerMetricSnapshot({
+    matchMaker,
+    redisStatus: redis,
+    flyReplayRegistered: Boolean(flyReplayRouteHandle),
+    labels: getAutoscalerMetricLabels(),
+  });
+  const matchmakerQueryHealthy = autoscalerMetrics.matchmakerQueryUp === 1;
 
   const healthy = (!colyseusRuntime.distributed || redis.ok) && matchmakerQueryHealthy;
 
@@ -143,6 +156,7 @@ app.get('/health', async (_req, res) => {
     },
     routing: {
       strategy: colyseusRuntime.routingStrategy,
+      roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
       flyReplay: {
         enabled: colyseusRuntime.flyReplay.enabled,
         appName: colyseusRuntime.flyReplay.appName ?? null,
@@ -156,13 +170,27 @@ app.get('/health', async (_req, res) => {
       },
     },
     colyseus: {
-      localRoomCount: matchMaker.stats.local.roomCount,
-      localCcu: matchMaker.stats.local.ccu,
-      visibleLobbyRoomCount,
+      localRoomCount: autoscalerMetrics.localRoomCount,
+      localCcu: autoscalerMetrics.localCcu,
+      visibleLobbyRoomCount: autoscalerMetrics.visibleLobbyCount,
+      lobbyParticipants: autoscalerMetrics.lobbyParticipants,
       matchmakerQueryHealthy,
-      matchmakerError,
+      matchmakerError: autoscalerMetrics.matchmakerError,
     },
   });
+});
+
+app.get('/metrics', async (_req, res) => {
+  const redis = await pingRedis(sharedRedisClient);
+  const autoscalerMetrics = await collectAutoscalerMetricSnapshot({
+    matchMaker,
+    redisStatus: redis,
+    flyReplayRegistered: Boolean(flyReplayRouteHandle),
+    labels: getAutoscalerMetricLabels(),
+  });
+
+  res.header('Content-Type', PROMETHEUS_CONTENT_TYPE);
+  res.send(renderPrometheusMetrics(autoscalerMetrics));
 });
 
 app.get('/voice/status', (_req, res) => {
@@ -304,6 +332,7 @@ async function startServer(): Promise<void> {
       publicAddress: colyseusRuntime.publicAddress ?? null,
       redisUrlConfigured: Boolean(colyseusRuntime.redisUrl),
       routingStrategy: colyseusRuntime.routingStrategy,
+      roomCreateStrategy: colyseusRuntime.roomCreateStrategy,
       flyMachineId: colyseusRuntime.flyReplay.machineId ?? null,
       processId: matchMaker.processId,
       pid: process.pid,

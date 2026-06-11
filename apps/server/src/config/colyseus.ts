@@ -8,11 +8,13 @@ export interface ColyseusRuntimeConfig {
   publicAddress: string | undefined;
   requirePublicAddress: boolean;
   routingStrategy: ColyseusRoutingStrategy;
+  roomCreateStrategy: ColyseusRoomCreateStrategy;
   flyReplay: FlyReplayRuntimeConfig;
   nodeEnv: string;
 }
 
 export type ColyseusRoutingStrategy = 'direct' | 'fly_replay';
+export type ColyseusRoomCreateStrategy = 'least_loaded' | 'local';
 
 export interface FlyReplayRuntimeConfig {
   enabled: boolean;
@@ -86,10 +88,22 @@ function parseFlyReplayFallback(value: string | undefined): 'force_self' | 'pref
   throw new Error(`Unsupported COLYSEUS_FLY_REPLAY_FALLBACK "${fallback}"`);
 }
 
+function parseRoomCreateStrategy(
+  value: string | undefined,
+  routingStrategy: ColyseusRoutingStrategy
+): ColyseusRoomCreateStrategy {
+  const strategy = optionalEnv(value);
+  if (!strategy) return routingStrategy === 'fly_replay' ? 'local' : 'least_loaded';
+
+  if (strategy === 'least_loaded' || strategy === 'local') return strategy;
+  throw new Error(`Unsupported COLYSEUS_ROOM_CREATE_STRATEGY "${strategy}"`);
+}
+
 export function getColyseusRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ColyseusRuntimeConfig {
   const distributed = envFlag(env.COLYSEUS_DISTRIBUTED);
   const redisUrl = optionalEnv(env.COLYSEUS_REDIS_URL) ?? optionalEnv(env.REDIS_URL) ?? null;
   const routingStrategy = parseRoutingStrategy(env);
+  const roomCreateStrategy = parseRoomCreateStrategy(env.COLYSEUS_ROOM_CREATE_STRATEGY, routingStrategy);
   const flyAppName = optionalEnv(env.COLYSEUS_FLY_APP_NAME) ?? optionalEnv(env.FLY_APP_NAME);
   const flyReplayEnabled = routingStrategy === 'fly_replay';
   const publicAddress = optionalEnv(env.COLYSEUS_PUBLIC_ADDRESS)
@@ -107,6 +121,7 @@ export function getColyseusRuntimeConfig(env: NodeJS.ProcessEnv = process.env): 
     publicAddress,
     requirePublicAddress: envFlag(env.COLYSEUS_REQUIRE_PUBLIC_ADDRESS),
     routingStrategy,
+    roomCreateStrategy,
     flyReplay: {
       enabled: flyReplayEnabled,
       appName: flyAppName,

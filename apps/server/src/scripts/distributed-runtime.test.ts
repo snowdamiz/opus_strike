@@ -107,11 +107,26 @@ class FakeRedisLockClient implements RedisOwnerLockClient {
   }
 }
 
+interface FakeFlyReplayRouteRecord {
+  fields: Record<string, string>;
+  expiresAt: number | null;
+}
+
 class FakeFlyReplayRedisClient implements FlyReplayRedisClient {
-  readonly hashes = new Map<string, Record<string, string>>();
+  readonly hashes = new Map<string, FakeFlyReplayRouteRecord>();
+
+  constructor(private readonly now: () => number = () => Date.now()) {}
 
   async hgetall(key: string): Promise<Record<string, string>> {
-    return this.hashes.get(key) ?? {};
+    const record = this.hashes.get(key);
+    if (!record) return {};
+
+    if (record.expiresAt !== null && record.expiresAt <= this.now()) {
+      this.hashes.delete(key);
+      return {};
+    }
+
+    return record.fields;
   }
 
   async eval(
@@ -134,15 +149,20 @@ class FakeFlyReplayRedisClient implements FlyReplayRedisClient {
         updatedAtMs,
       ] = args;
 
+      const ttlMs = Number(args[8]);
+
       this.hashes.set(key, {
-        processId,
-        machineId,
-        appName,
-        region,
-        publicAddress,
-        pid,
-        ownerToken,
-        updatedAtMs,
+        fields: {
+          processId,
+          machineId,
+          appName,
+          region,
+          publicAddress,
+          pid,
+          ownerToken,
+          updatedAtMs,
+        },
+        expiresAt: Number.isFinite(ttlMs) ? this.now() + ttlMs : null,
       });
       return 1;
     }
@@ -150,7 +170,7 @@ class FakeFlyReplayRedisClient implements FlyReplayRedisClient {
     if (script.includes('HGET')) {
       const ownerToken = String(args[0]);
       const route = this.hashes.get(key);
-      if (route?.ownerToken === ownerToken) {
+      if (route?.fields.ownerToken === ownerToken) {
         this.hashes.delete(key);
         return 1;
       }
@@ -180,6 +200,7 @@ function runConfigTests(): void {
   assert.equal(local.distributed, false);
   assert.equal(local.redisUrl, null);
   assert.equal(local.routingStrategy, 'direct');
+  assert.equal(local.roomCreateStrategy, 'least_loaded');
 
   const distributed = getColyseusRuntimeConfig({
     COLYSEUS_DISTRIBUTED: '1',
@@ -192,6 +213,7 @@ function runConfigTests(): void {
   assert.equal(distributed.redisUrl, 'redis://redis.example:6379');
   assert.equal(distributed.publicAddress, 'server-a.example');
   assert.equal(distributed.routingStrategy, 'direct');
+  assert.equal(distributed.roomCreateStrategy, 'least_loaded');
   assert.doesNotThrow(() => validateColyseusRuntimeConfig(distributed));
 
   const flyReplay = getColyseusRuntimeConfig({
@@ -207,7 +229,18 @@ function runConfigTests(): void {
   assert.equal(flyReplay.flyReplay.appName, 'opus-strike-server');
   assert.equal(flyReplay.flyReplay.machineId, 'machine-local');
   assert.equal(flyReplay.publicAddress, 'opus-strike-server.fly.dev');
+  assert.equal(flyReplay.roomCreateStrategy, 'local');
   assert.doesNotThrow(() => validateColyseusRuntimeConfig(flyReplay));
+
+  const explicitLeastLoaded = getColyseusRuntimeConfig({
+    COLYSEUS_DISTRIBUTED: '1',
+    COLYSEUS_REDIS_URL: 'redis://localhost:6379',
+    COLYSEUS_ROUTING_STRATEGY: 'fly_replay',
+    COLYSEUS_ROOM_CREATE_STRATEGY: 'least_loaded',
+    FLY_APP_NAME: 'opus-strike-server',
+    FLY_MACHINE_ID: 'machine-local',
+  });
+  assert.equal(explicitLeastLoaded.roomCreateStrategy, 'least_loaded');
 
   assert.throws(
     () => validateColyseusRuntimeConfig(getColyseusRuntimeConfig({ COLYSEUS_DISTRIBUTED: '1' })),
@@ -261,6 +294,12 @@ function runConfigTests(): void {
       FLY_APP_NAME: 'opus-strike-server',
     })),
     /requires FLY_MACHINE_ID/
+  );
+  assert.throws(
+    () => getColyseusRuntimeConfig({
+      COLYSEUS_ROOM_CREATE_STRATEGY: 'round_robin',
+    }),
+    /Unsupported COLYSEUS_ROOM_CREATE_STRATEGY/
   );
 }
 
@@ -441,10 +480,30 @@ async function runFlyReplayRoutingTests(): Promise<void> {
   });
   assert.match(staleSocket.text(), /410 Gone/);
   assert.match(staleSocket.text(), /Room owner route is stale/);
+  assert.doesNotMatch(staleSocket.text(), /fly-replay:/i);
 
   await staleHandle.close();
   await remoteHandle.close();
   assert.equal(await lookupFlyReplayProcessRoute(redis, 'remote-process'), null);
+
+  let now = 10_000;
+  const expiringRedis = new FakeFlyReplayRedisClient(() => now);
+  const expiringConfig = getColyseusRuntimeConfig({
+    COLYSEUS_DISTRIBUTED: '1',
+    COLYSEUS_REDIS_URL: 'redis://fly-managed-redis.internal:6379',
+    COLYSEUS_ROUTING_STRATEGY: 'fly_replay',
+    COLYSEUS_PUBLIC_ADDRESS: 'opus-strike-server.fly.dev',
+    COLYSEUS_FLY_PROCESS_REGISTRY_TTL_MS: '20',
+    FLY_APP_NAME: 'opus-strike-server',
+    FLY_MACHINE_ID: 'machine-expiring',
+    FLY_REGION: 'iad',
+  });
+
+  const expiringHandle = await registerFlyReplayProcessRoute(expiringRedis, expiringConfig, 'expiring-process');
+  assert.equal((await lookupFlyReplayProcessRoute(expiringRedis, 'expiring-process'))?.machineId, 'machine-expiring');
+  now += expiringConfig.flyReplay.processRegistryTtlMs + 1;
+  assert.equal(await lookupFlyReplayProcessRoute(expiringRedis, 'expiring-process'), null);
+  await expiringHandle.close();
 }
 
 async function main(): Promise<void> {

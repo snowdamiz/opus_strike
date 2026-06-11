@@ -1,0 +1,25 @@
+app = "opus-strike-server-autoscaler"
+primary_region = "iad"
+
+[build]
+  image = "flyio/fly-autoscaler:0.3.1"
+
+[env]
+  FAS_APP_NAME = "opus-strike-server"
+  FAS_PROMETHEUS_ADDRESS = "https://api.fly.io/prometheus/personal"
+
+[experimental]
+  cmd = ["serve", "--config", "/etc/fly-autoscaler.yml"]
+
+[metrics]
+  port = 9090
+  path = "/metrics"
+
+[[files]]
+  guest_path = "/etc/fly-autoscaler.yml"
+  local_path = "fly-autoscaler.yml"
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

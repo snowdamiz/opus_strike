@@ -19,6 +19,8 @@ primary_region = "iad"
   COLYSEUS_ROUTING_STRATEGY = "fly_replay"
   COLYSEUS_PUBLIC_ADDRESS = "opus-strike-server.fly.dev"
   COLYSEUS_REQUIRE_PUBLIC_ADDRESS = "1"
+  COLYSEUS_PRESENCE_SHORT_TIMEOUT = "10000"
+  COLYSEUS_ROOM_CREATE_STRATEGY = "local"
 
 [http_service]
   internal_port = 2567
@@ -32,6 +34,10 @@ primary_region = "iad"
     type = "connections"
     soft_limit = 64
     hard_limit = 96
+
+[metrics]
+  port = 2567
+  path = "/metrics"
 
 [[vm]]
   memory = "1gb"
