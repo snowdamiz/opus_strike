@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "prisma generate && tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "prisma generate && tsc --noEmit",
     "test:auth": "tsx src/scripts/auth-service.test.ts",
     "test:authority": "tsx src/scripts/authority-hardening-harness.ts",
     "test:matchmaking": "tsx src/scripts/matchmaking-skill.test.ts",
