@@ -832,7 +832,7 @@ function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateP
 
   return (
     <sprite position={[0, height + 0.58, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
-      <spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} toneMapped={false} />
+      <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
     </sprite>
   );
 }
