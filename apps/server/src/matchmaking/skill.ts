@@ -58,7 +58,6 @@ export function getRankDivisionLabel(divisionIndex: number): string {
 
 export function getAllowedRankDivisionDistance(waitMs: number): number {
   const elapsed = Math.max(0, waitMs);
-  if (elapsed < 30_000) return 1;
   if (elapsed < 60_000) return 2;
   if (elapsed < 90_000) return 4;
 

@@ -16,6 +16,10 @@ const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
 const FLAG_CLEAR_RADIUS = 4.3;
 const SPAWN_CLEAR_RADIUS = 3.6;
 const BOUNDARY_SEAM_SEAL_THICKNESS = PLAYER_RADIUS + 0.25 * 3;
+const UNSAFE_WALL_NOTCH_MAX_AREA_CELLS = Math.max(
+  2,
+  Math.max(1, Math.ceil((PLAYER_RADIUS * 2) / 0.25) - 1) - 1
+);
 const FLAG_DISTANCE_AUDIT_CLEARANCE = 8.7;
 const SPAWN_DISTANCE_AUDIT_CLEARANCE = 5;
 const SPAWN_DISTANCE_AUDIT_BASE_RADIUS = 4.41;
@@ -293,6 +297,160 @@ function countUnsafeCornerPocketColumns(manifest) {
       if (blockingSides >= 3 && targetTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
         count++;
       }
+    }
+  }
+
+  return count;
+}
+
+function countTallNeighborSamples(topRows, manifest, x, z, currentTopRow) {
+  let count = 0;
+
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      if (dx === 0 && dz === 0) continue;
+
+      const neighborX = x + dx;
+      const neighborZ = z + dz;
+      if (
+        neighborX < 1 ||
+        neighborX >= manifest.size.x - 1 ||
+        neighborZ < 1 ||
+        neighborZ >= manifest.size.z - 1
+      ) {
+        continue;
+      }
+
+      const neighborTopRow = topRows[neighborX + neighborZ * manifest.size.x];
+      if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+        count++;
+      }
+    }
+  }
+
+  return count;
+}
+
+function shouldAuditWallNotchColumn(manifest, x, z) {
+  const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
+  const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
+
+  return isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary);
+}
+
+function isWallNotchCandidate(topRows, manifest, x, z) {
+  const currentTopRow = topRows[x + z * manifest.size.x];
+
+  return (
+    currentTopRow > 0 &&
+    shouldAuditWallNotchColumn(manifest, x, z) &&
+    !isProtectedGameplayClearanceColumn(manifest, x, z) &&
+    countTallNeighborSamples(topRows, manifest, x, z, currentTopRow) >= 2
+  );
+}
+
+function countUnsafeWallNotchColumns(manifest) {
+  const topRows = getCollisionTopRows(manifest);
+  const visited = new Uint8Array(topRows.length);
+  const directions = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+  ];
+  let count = 0;
+
+  for (let startX = 1; startX < manifest.size.x - 1; startX++) {
+    for (let startZ = 1; startZ < manifest.size.z - 1; startZ++) {
+      const startIndex = startX + startZ * manifest.size.x;
+      if (visited[startIndex]) continue;
+      if (!isWallNotchCandidate(topRows, manifest, startX, startZ)) continue;
+
+      const cells = [];
+      const queue = [startIndex];
+      let highPerimeterEdges = 0;
+      let maxTopRow = 0;
+      let targetTopRow = Number.POSITIVE_INFINITY;
+      let touchesProtectedGameplay = false;
+      let minX = startX;
+      let maxX = startX;
+      let minZ = startZ;
+      let maxZ = startZ;
+      let openPerimeterEdges = 0;
+      let tallNeighborSamples = 0;
+      visited[startIndex] = 1;
+
+      for (let cursor = 0; cursor < queue.length; cursor++) {
+        const cellIndex = queue[cursor];
+        const x = cellIndex % manifest.size.x;
+        const z = Math.floor(cellIndex / manifest.size.x);
+        const currentTopRow = topRows[cellIndex];
+
+        cells.push(cellIndex);
+        maxTopRow = Math.max(maxTopRow, currentTopRow);
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minZ = Math.min(minZ, z);
+        maxZ = Math.max(maxZ, z);
+        tallNeighborSamples += countTallNeighborSamples(topRows, manifest, x, z, currentTopRow);
+        if (isProtectedGameplayClearanceColumn(manifest, x, z)) {
+          touchesProtectedGameplay = true;
+        }
+
+        for (const direction of directions) {
+          const neighborX = x + direction.dx;
+          const neighborZ = z + direction.dz;
+
+          if (
+            neighborX <= 0 ||
+            neighborX >= manifest.size.x - 1 ||
+            neighborZ <= 0 ||
+            neighborZ >= manifest.size.z - 1
+          ) {
+            openPerimeterEdges++;
+            continue;
+          }
+
+          const neighborIndex = neighborX + neighborZ * manifest.size.x;
+          const neighborTopRow = topRows[neighborIndex];
+
+          if (
+            isWallNotchCandidate(topRows, manifest, neighborX, neighborZ) &&
+            Math.abs(neighborTopRow - currentTopRow) <= MAX_NAVIGATION_STEP_ROWS
+          ) {
+            if (!visited[neighborIndex]) {
+              visited[neighborIndex] = 1;
+              queue.push(neighborIndex);
+            }
+            continue;
+          }
+
+          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+            highPerimeterEdges++;
+            targetTopRow = Math.min(targetTopRow, neighborTopRow);
+          } else {
+            openPerimeterEdges++;
+          }
+        }
+      }
+
+      const width = maxX - minX + 1;
+      const depth = maxZ - minZ + 1;
+      const narrowEnough =
+        cells.length <= UNSAFE_WALL_NOTCH_MAX_AREA_CELLS &&
+        Math.min(width, depth) === 1 &&
+        Math.max(width, depth) <= UNSAFE_WALL_NOTCH_MAX_AREA_CELLS;
+
+      if (!narrowEnough) continue;
+      if (touchesProtectedGameplay) continue;
+      if (!Number.isFinite(targetTopRow)) continue;
+      if (targetTopRow - maxTopRow <= MAX_NAVIGATION_STEP_ROWS) continue;
+      if (highPerimeterEdges < 2) continue;
+      if (highPerimeterEdges <= openPerimeterEdges) continue;
+      if (tallNeighborSamples < cells.length * 2) continue;
+      if (openPerimeterEdges > 2) continue;
+
+      count += cells.length;
     }
   }
 
@@ -839,6 +997,7 @@ function inspectMap(seed, options) {
   const flagObstructions = countFlagObstructions(manifest, manifest.flagZones.red) + countFlagObstructions(manifest, manifest.flagZones.blue);
   const unsafeGrooveColumns = countUnsafeNarrowGrooveColumns(manifest);
   const unsafeCornerPocketColumns = countUnsafeCornerPocketColumns(manifest);
+  const unsafeWallNotchColumns = countUnsafeWallNotchColumns(manifest);
   const unsafeTrappedBasinColumns = countUnsafeTrappedBasinColumns(manifest);
   const unsafeBoundarySeamColumns = countUnsafeBoundarySeamColumns(manifest);
   const acceptedBuildings = diagnostics.buildings.acceptedPlans;
@@ -879,6 +1038,7 @@ function inspectMap(seed, options) {
   assertCondition(flagObstructions === 0, failures, `seed ${seed}: ${flagObstructions} solid blocks obstruct flag zones`);
   assertCondition(unsafeGrooveColumns === 0, failures, `seed ${seed}: ${unsafeGrooveColumns} unsafe narrow groove columns remain`);
   assertCondition(unsafeCornerPocketColumns === 0, failures, `seed ${seed}: ${unsafeCornerPocketColumns} unsafe corner pocket columns remain`);
+  assertCondition(unsafeWallNotchColumns === 0, failures, `seed ${seed}: ${unsafeWallNotchColumns} unsafe wall notch columns remain`);
   assertCondition(unsafeTrappedBasinColumns === 0, failures, `seed ${seed}: ${unsafeTrappedBasinColumns} unsafe trapped basin columns remain`);
   assertCondition(unsafeBoundarySeamColumns === 0, failures, `seed ${seed}: ${unsafeBoundarySeamColumns} unsafe boundary seam columns remain`);
   assertCondition(structureBlocks > 0, failures, `seed ${seed}: no structure blocks generated`);

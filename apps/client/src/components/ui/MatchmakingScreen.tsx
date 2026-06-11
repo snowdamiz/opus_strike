@@ -7,11 +7,13 @@ import { useAudio, useUISounds } from '../../hooks/useAudio';
 import { useGameStore } from '../../store/gameStore';
 import { deserializeWagerPaymentTransaction, lamportsToSolDisplay } from '../../utils/wagerPayments';
 import { LobbyBackdrop } from './LobbyBackdrop';
-import { RankBadge, getRankForStats } from './RankBadge';
+import { RankIcon, getRankForStats } from './RankBadge';
 
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
+
+const MIN_RANK_SEARCH_DISTANCE = 2;
 
 export function MatchmakingScreen() {
   const { playerName, playerId, currentLobbyId, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore();
@@ -47,6 +49,10 @@ export function MatchmakingScreen() {
   const searchLabel = matchmakingStatus.averageVisibleRank
     ?? matchmakingStatus.rankBandLabel
     ?? currentRank.label;
+  const displayedRankSearchDistance = Math.max(
+    MIN_RANK_SEARCH_DISTANCE,
+    matchmakingStatus.rankSearchDistance ?? MIN_RANK_SEARCH_DISTANCE
+  );
   const [isPaying, setIsPaying] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const localPaymentStatus = currentPlayer?.paymentStatus || '';
@@ -167,10 +173,9 @@ export function MatchmakingScreen() {
               : `${playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.`}
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-            <RankBadge rank={currentRank} />
+            <RankIcon rank={currentRank} size={30} labelled />
             <span className="font-body text-xs uppercase tracking-wider text-white/40">
-              Searching near {searchLabel}
-              {matchmakingStatus.rankSearchDistance !== null ? ` +/-${matchmakingStatus.rankSearchDistance}` : ''}
+              Searching near {searchLabel} +/-{displayedRankSearchDistance}
             </span>
           </div>
 

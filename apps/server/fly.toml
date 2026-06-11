@@ -23,10 +23,15 @@ primary_region = "iad"
 [http_service]
   internal_port = 2567
   force_https = true
-  auto_stop_machines = "off"
+  auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 2
   processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 64
+    hard_limit = 96
 
 [[vm]]
   memory = "1gb"

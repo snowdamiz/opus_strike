@@ -42,7 +42,7 @@ assert.ok(strongPlayer > 1300, `expected strong player rating above Gold 3 thres
 
 assert.equal(normalizeRankDivisionIndex(99), 23);
 assert.equal(normalizeRankDivisionIndex('not-real'), DEFAULT_RANK_DIVISION_INDEX);
-assert.equal(getAllowedRankDivisionDistance(0), 1);
+assert.equal(getAllowedRankDivisionDistance(0), 2);
 assert.equal(getAllowedRankDivisionDistance(30_000), 2);
 assert.equal(getAllowedRankDivisionDistance(90_000), 6);
 

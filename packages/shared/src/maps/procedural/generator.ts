@@ -153,6 +153,7 @@ const UNSAFE_GROOVE_MAX_WIDTH_CELLS = Math.max(
   Math.ceil((PLAYER_RADIUS * 2) / Math.min(PROCEDURAL_VOXEL_SIZE.x, PROCEDURAL_VOXEL_SIZE.z)) - 1
 );
 const UNSAFE_GROOVE_SEAL_PASSES = Math.max(8, UNSAFE_GROOVE_MAX_WIDTH_CELLS * 6);
+const UNSAFE_WALL_NOTCH_MAX_AREA_CELLS = Math.max(2, UNSAFE_GROOVE_MAX_WIDTH_CELLS - 1);
 const UNSAFE_BASIN_MAX_AREA_CELLS = Math.max(144, (UNSAFE_GROOVE_MAX_WIDTH_CELLS + 9) ** 2);
 const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
 const BOUNDARY_SEAM_SEAL_THICKNESS = PLAYER_RADIUS + PROCEDURAL_VOXEL_SIZE.x * 3;
@@ -4385,6 +4386,181 @@ function sealUnsafeCornerPockets(
   return sealedAny;
 }
 
+function countTallNeighborSamples(
+  topRows: Uint16Array,
+  size: VoxelSize,
+  x: number,
+  z: number,
+  currentTopRow: number
+): number {
+  let count = 0;
+
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dz = -1; dz <= 1; dz++) {
+      if (dx === 0 && dz === 0) continue;
+
+      const neighborX = x + dx;
+      const neighborZ = z + dz;
+      if (neighborX < 1 || neighborX >= size.x - 1 || neighborZ < 1 || neighborZ >= size.z - 1) continue;
+
+      const neighborTopRow = topRows[neighborX + neighborZ * size.x];
+      if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+        count++;
+      }
+    }
+  }
+
+  return count;
+}
+
+function isWallNotchCandidate(
+  topRows: Uint16Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>,
+  x: number,
+  z: number
+): boolean {
+  const currentTopRow = topRows[x + z * size.x];
+
+  return (
+    currentTopRow > 0 &&
+    shouldSealGrooveColumn(origin, layout, x, z) &&
+    !isProtectedGameplayClearanceColumn(origin, layout, x, z) &&
+    countTallNeighborSamples(topRows, size, x, z, currentTopRow) >= 2
+  );
+}
+
+function sealUnsafeWallNotches(
+  setBlock: BlockSetter,
+  blocks: Uint8Array,
+  topRows: Uint16Array,
+  origin: { x: number; z: number },
+  size: VoxelSize,
+  layout: ReturnType<typeof createProceduralCTFLayout>
+): boolean {
+  const visited = new Uint8Array(topRows.length);
+  const directions: GridDirection[] = [
+    { dx: 1, dz: 0 },
+    { dx: -1, dz: 0 },
+    { dx: 0, dz: 1 },
+    { dx: 0, dz: -1 },
+  ];
+  let sealedAny = false;
+
+  for (let startX = 1; startX < size.x - 1; startX++) {
+    for (let startZ = 1; startZ < size.z - 1; startZ++) {
+      const startIndex = startX + startZ * size.x;
+      if (visited[startIndex]) continue;
+      if (!isWallNotchCandidate(topRows, origin, size, layout, startX, startZ)) continue;
+
+      const component: BasinComponent & {
+        minX: number;
+        maxX: number;
+        minZ: number;
+        maxZ: number;
+        openPerimeterEdges: number;
+        tallNeighborSamples: number;
+      } = {
+        cells: [],
+        highSideSamples: [],
+        highPerimeterEdges: 0,
+        maxTopRow: 0,
+        perimeterEdges: 0,
+        targetTopRow: Number.POSITIVE_INFINITY,
+        touchesProtectedGameplay: false,
+        minX: startX,
+        maxX: startX,
+        minZ: startZ,
+        maxZ: startZ,
+        openPerimeterEdges: 0,
+        tallNeighborSamples: 0,
+      };
+      const queue: number[] = [startIndex];
+      visited[startIndex] = 1;
+
+      for (let cursor = 0; cursor < queue.length; cursor++) {
+        const cellIndex = queue[cursor];
+        const x = cellIndex % size.x;
+        const z = Math.floor(cellIndex / size.x);
+        const currentTopRow = topRows[cellIndex];
+
+        component.cells.push(cellIndex);
+        component.maxTopRow = Math.max(component.maxTopRow, currentTopRow);
+        component.minX = Math.min(component.minX, x);
+        component.maxX = Math.max(component.maxX, x);
+        component.minZ = Math.min(component.minZ, z);
+        component.maxZ = Math.max(component.maxZ, z);
+        component.tallNeighborSamples += countTallNeighborSamples(topRows, size, x, z, currentTopRow);
+
+        if (isProtectedGameplayClearanceColumn(origin, layout, x, z)) {
+          component.touchesProtectedGameplay = true;
+        }
+
+        for (const direction of directions) {
+          const neighborX = x + direction.dx;
+          const neighborZ = z + direction.dz;
+
+          if (neighborX <= 0 || neighborX >= size.x - 1 || neighborZ <= 0 || neighborZ >= size.z - 1) {
+            component.perimeterEdges++;
+            component.openPerimeterEdges++;
+            continue;
+          }
+
+          const neighborIndex = neighborX + neighborZ * size.x;
+          const neighborTopRow = topRows[neighborIndex];
+
+          if (
+            isWallNotchCandidate(topRows, origin, size, layout, neighborX, neighborZ) &&
+            Math.abs(neighborTopRow - currentTopRow) <= MAX_NAVIGATION_STEP_ROWS
+          ) {
+            if (!visited[neighborIndex]) {
+              visited[neighborIndex] = 1;
+              queue.push(neighborIndex);
+            }
+            continue;
+          }
+
+          component.perimeterEdges++;
+
+          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
+            component.highPerimeterEdges++;
+            component.targetTopRow = Math.min(component.targetTopRow, neighborTopRow);
+
+            if (component.highSideSamples.length < 2) {
+              component.highSideSamples.push({ x: neighborX, z: neighborZ });
+            }
+          } else {
+            component.openPerimeterEdges++;
+          }
+        }
+      }
+
+      const width = component.maxX - component.minX + 1;
+      const depth = component.maxZ - component.minZ + 1;
+      const narrowEnough =
+        component.cells.length <= UNSAFE_WALL_NOTCH_MAX_AREA_CELLS &&
+        Math.min(width, depth) === 1 &&
+        Math.max(width, depth) <= UNSAFE_WALL_NOTCH_MAX_AREA_CELLS;
+
+      if (!narrowEnough) continue;
+      if (component.touchesProtectedGameplay) continue;
+      if (!Number.isFinite(component.targetTopRow)) continue;
+      if (component.targetTopRow - component.maxTopRow <= MAX_NAVIGATION_STEP_ROWS) continue;
+      if (component.highPerimeterEdges < 2) continue;
+      if (component.highPerimeterEdges <= component.openPerimeterEdges) continue;
+      if (component.tallNeighborSamples < component.cells.length * 2) continue;
+      if (component.openPerimeterEdges > 2) continue;
+
+      if (sealTrappedBasinComponent(setBlock, blocks, topRows, size, component)) {
+        sealedAny = true;
+      }
+    }
+  }
+
+  return sealedAny;
+}
+
 function sealUnsafeNarrowGrooves(
   setBlock: BlockSetter,
   blocks: Uint8Array,
@@ -4399,10 +4575,11 @@ function sealUnsafeNarrowGrooves(
     const sealedX = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'x');
     const sealedZ = sealNarrowGrooveRunsForAxis(setBlock, blocks, topRows, origin, size, layout, 'z');
     const sealedPockets = sealUnsafeCornerPockets(setBlock, blocks, topRows, origin, size, layout);
+    const sealedNotches = sealUnsafeWallNotches(setBlock, blocks, topRows, origin, size, layout);
     const sealedBasins = sealUnsafeTrappedBasins(setBlock, blocks, topRows, origin, size, layout);
     const sealedBoundarySeams = sealUnsafeBoundarySeams(setBlock, blocks, topRows, origin, size, layout);
 
-    if (!sealedX && !sealedZ && !sealedPockets && !sealedBasins && !sealedBoundarySeams) return sealedPasses;
+    if (!sealedX && !sealedZ && !sealedPockets && !sealedNotches && !sealedBasins && !sealedBoundarySeams) return sealedPasses;
     sealedPasses++;
   }
 
