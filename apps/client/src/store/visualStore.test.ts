@@ -5,6 +5,7 @@ import {
 import {
   addRemoteTransformSnapshot,
   clearVisualState,
+  pruneRemoteTransformHistories,
   sampleRemoteTransformInto,
   visualStore,
   type SampledRemoteTransform,
@@ -59,6 +60,23 @@ assert.equal(target.velocity.x, 1);
 assert.equal(target.movementBits, 12);
 assert.equal(target.movementEpoch, 1);
 assert.equal(target.stale, false);
+
+addRemoteTransformSnapshot('remote-b', {
+  serverTick: 25,
+  serverTime: 1250,
+  position: { x: 20, y: 1, z: 0 },
+  velocity: { x: 0, y: 0, z: 0 },
+  lookYaw: 0,
+  lookPitch: 0,
+  movementBits: 0,
+  wallRunSide: 0,
+  movementEpoch: 1,
+});
+assert.equal(visualStore.getState().remoteTransformHistories.has('remote-b'), true);
+
+pruneRemoteTransformHistories(new Set(['remote-a']));
+assert.equal(visualStore.getState().remoteTransformHistories.has('remote-a'), true);
+assert.equal(visualStore.getState().remoteTransformHistories.has('remote-b'), false);
 
 const missingTarget = makeTarget();
 assert.equal(sampleRemoteTransformInto('missing', missingTarget), false);

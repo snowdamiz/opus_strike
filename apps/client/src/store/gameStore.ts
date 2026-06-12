@@ -137,8 +137,6 @@ interface CoreState {
   // Slide visual effects
   slideIntensity: number;
 
-  // Debug mode (performance monitor)
-  debugMode: boolean;
 }
 
 interface CoreActions {
@@ -186,8 +184,6 @@ interface CoreActions {
   clearClientCooldowns: () => void;
   requestUnstuck: () => boolean;
   setSlideIntensity: (intensity: number) => void;
-  setDebugMode: (enabled: boolean) => void;
-  toggleDebugMode: () => void;
 
   // Ghost cleanup
   cleanupGhostPlayers: () => void;
@@ -268,7 +264,6 @@ const coreInitialState: CoreState = {
   unstuckCooldownUntil: 0,
   unstuckRequestId: 0,
   slideIntensity: 0,
-  debugMode: false,
 };
 
 const initialState = {
@@ -735,9 +730,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   },
 
   setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
-
-  setDebugMode: (enabled) => set((state) => state.debugMode === enabled ? state : { debugMode: enabled }),
-  toggleDebugMode: () => set((state) => ({ debugMode: !state.debugMode })),
 
   // ==================== RESET ACTIONS ====================
 

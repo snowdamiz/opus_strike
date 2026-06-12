@@ -2485,20 +2485,3 @@ input[type="color"]::-webkit-color-swatch {
 .animate-bg-pan {
   animation: bg-pan 22s ease-in-out infinite;
 }
-
-/* ===== R3F-PERF CUSTOMIZATION ===== */
-/* Override r3f-perf internal styles to match game theme */
-#r3f-perf-panel {
-  font-family: 'JetBrains Mono', monospace !important;
-}
-
-/* Custom graph colors via CSS filters if direct theming isn't enough */
-#r3f-perf-panel canvas {
-  opacity: 0.8;
-  filter: hue-rotate(45deg) brightness(1.2);
-}
-
-/* Ensure text is readable */
-#r3f-perf-panel * {
-  text-shadow: 0 0 5px rgba(0, 0, 0, 0.8);
-}

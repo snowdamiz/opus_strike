@@ -14,6 +14,7 @@ import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import {
   pushLocalPlayerImpulse,
   addRemoteTransformSnapshot,
+  pruneRemoteTransformHistories,
   setChronosAegisVisualState,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
@@ -65,7 +66,6 @@ import {
   playSharedSound,
   type SoundName,
 } from '../hooks/useAudio';
-import { recordNetworkMessage } from '../utils/perfMarks';
 import { loggers } from '../utils/logger';
 import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
 import type {
@@ -73,6 +73,7 @@ import type {
   HeroId,
   MatchSnapshotMessage,
   Player,
+  PlayerVitalsAbilitySnapshot,
   PlayerMovementState,
   PlayerTransformsMessage,
   PlayerTransformsV2Message,
@@ -382,7 +383,35 @@ function rememberPlayerNetId(vitals: PlayerVitalsSnapshot): void {
   netIdByPlayerId.set(vitals.id, vitals.netId);
 }
 
-function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, existing?: Player): Player {
+type NetworkAbilityVitals = PlayerVitalsAbilitySnapshot & { cooldownRemaining?: number };
+
+function normalizeAbilityVitals(
+  abilities: Record<string, NetworkAbilityVitals> | undefined,
+  serverTime: number,
+  fallback?: Player['abilities']
+): Player['abilities'] {
+  if (!abilities) return fallback || {};
+
+  const normalized: Player['abilities'] = {};
+  for (const [abilityId, ability] of Object.entries(abilities)) {
+    const cooldownUntil = Number.isFinite(ability.cooldownUntil)
+      ? ability.cooldownUntil
+      : Number.isFinite(ability.cooldownRemaining)
+        ? serverTime + Math.max(0, ability.cooldownRemaining || 0) * 1000
+        : 0;
+    normalized[abilityId] = {
+      abilityId: ability.abilityId || abilityId,
+      cooldownRemaining: Math.max(0, (cooldownUntil - serverTime) / 1000),
+      charges: ability.charges,
+      isActive: ability.isActive,
+      activatedAt: ability.activatedAt,
+    };
+  }
+
+  return normalized;
+}
+
+function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number, existing?: Player): Player {
   return {
     id: vitals.id,
     name: vitals.name || existing?.name || 'Unknown',
@@ -402,7 +431,7 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, existing?: Player)
     maxHealth: vitals.maxHealth,
     ultimateCharge: vitals.ultimateCharge,
     movement: normalizeMovementState(vitals.movement, existing?.movement),
-    abilities: vitals.abilities || existing?.abilities || {},
+    abilities: normalizeAbilityVitals(vitals.abilities, serverTime, existing?.abilities),
     hasFlag: vitals.hasFlag,
     respawnTime: vitals.respawnTime,
     spawnProtectionUntil: vitals.spawnProtectionUntil,
@@ -601,8 +630,6 @@ export function setupPlayerJoinedHandler(
     rank?: PublicRankSnapshot;
     position?: { x: number; y: number; z: number };
   }) => {
-    loggers.network.debug('player joined message', data.playerName, data.playerId);
-
     if (data.playerId !== sessionId) {
       // Skip ghost players
       if (data.playerName === localPlayerName) {
@@ -744,7 +771,6 @@ export function setupPlayerTransformsHandler(
   };
 
   room.onMessage('playerTransforms', (data: PlayerTransformsMessage) => {
-    recordNetworkMessage('playerTransforms', data);
     useGameStore.setState({
       tick: data.tick,
       serverTime: data.serverTime,
@@ -756,17 +782,21 @@ export function setupPlayerTransformsHandler(
   });
 
   room.onMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
-    recordNetworkMessage('playerTransformsV2', data);
     useGameStore.setState({
       tick: data.tick,
       serverTime: data.serverTime,
     });
 
+    const fullSnapshotPlayerIds = data.full ? new Set<string>() : null;
     for (const packedTransform of data.players) {
       const transform = unpackPackedTransform(packedTransform);
       const playerId = playerIdByNetId.get(transform.netId);
       if (!playerId) continue;
+      fullSnapshotPlayerIds?.add(playerId);
       handleTransform(playerId, transform, data.tick, data.serverTime);
+    }
+    if (fullSnapshotPlayerIds) {
+      pruneRemoteTransformHistories(fullSnapshotPlayerIds);
     }
   });
 }
@@ -779,7 +809,6 @@ export function setupSelfMovementAuthorityHandler(
 
   room.onMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
     hasReceivedSelfMovementAuthority = true;
-    recordNetworkMessage('selfMovementAuthority', authority);
     recordMovementTraceAuthorityAck(authority);
     const store = useGameStore.getState();
     const localPlayer = store.localPlayer;
@@ -818,7 +847,6 @@ export function setupPlayerVitalsHandler(
   actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer' | 'removePlayer'>
 ) {
   room.onMessage('playerVitals', (data: PlayerVitalsMessage) => {
-    recordNetworkMessage('playerVitals', data);
     useGameStore.setState({
       tick: data.tick,
       serverTime: data.serverTime,
@@ -842,7 +870,7 @@ export function setupPlayerVitalsHandler(
       const store = useGameStore.getState();
       if (vitals.id === sessionId) {
         const existing = store.localPlayer || store.players.get(vitals.id);
-        const next = createPlayerFromVitals(vitals, existing || undefined);
+        const next = createPlayerFromVitals(vitals, data.serverTime, existing || undefined);
         actions.setLocalPlayer(next);
         if (!existing) {
           syncLocalVisualPosition(next);
@@ -851,7 +879,7 @@ export function setupPlayerVitalsHandler(
       }
 
       const existing = store.players.get(vitals.id);
-      const next = createPlayerFromVitals(vitals, existing);
+      const next = createPlayerFromVitals(vitals, data.serverTime, existing);
       actions.updatePlayer(vitals.id, next);
     }
   });
@@ -859,7 +887,6 @@ export function setupPlayerVitalsHandler(
 
 export function setupMatchSnapshotHandler(room: Room) {
   room.onMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
-    recordNetworkMessage('matchSnapshot', data);
     const store = useGameStore.getState();
     useGameStore.setState({
       tick: data.tick,
@@ -889,12 +916,10 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
     ownerId: string;
     ownerTeam: 'red' | 'blue';
   }) => {
-    loggers.effects.debug('void zone created by', data.ownerId);
     useGameStore.getState().addVoidZone(data);
   });
 
   room.onMessage('voidZoneExpired', (data: { id: string }) => {
-    loggers.effects.debug('void zone expired', data.id);
     useGameStore.getState().removeVoidZone(data.id);
   });
 }
@@ -2145,8 +2170,6 @@ export function setupCombatHandlers(room: Room) {
     killerId: string;
     position: { x: number; y: number; z: number };
   }) => {
-    loggers.network.debug('player killed', data.victimId, data.killerId);
-
     const players = useGameStore.getState().players;
     useCombatFeedbackStore.getState().addKillFeedEvent({
       killerName: players.get(data.killerId)?.name ?? 'Unknown',
@@ -2155,8 +2178,6 @@ export function setupCombatHandlers(room: Room) {
   });
 
   room.onMessage('abilityUsed', (data: AbilityUsedMessage) => {
-    loggers.network.debug('ability used', data.abilityId, data.playerId, data.success);
-
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     if (handlePhantomAbilityUsed(data, localPlayerId)) return;
@@ -2206,7 +2227,6 @@ export function setupPollingSync(
       }
 
       if (room.state.phase !== store.gamePhase) {
-        loggers.network.debug('phase synced from fallback poll', room.state.phase);
         actions.setGamePhase(room.state.phase as any);
       }
     }

@@ -3,7 +3,6 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import type { Player } from '@voxel-strike/shared';
-import { recordSystemTime, registerFrameSystem } from '../../utils/perfMarks';
 import { getFrameClock } from '../../utils/frameClock';
 import { SHARED_GEOMETRIES } from './effectResources';
 import {
@@ -326,10 +325,7 @@ export function PhantomEffectsManager() {
   const lastVeilKeyRef = useRef('');
   const lastRevisionRef = useRef(0);
 
-  useEffect(() => registerFrameSystem('phantom-effects'), []);
-
   useFrame((_, delta) => {
-    const frameStart = performance.now();
     const frameClock = getFrameClock();
     const snapshot = collectActivePhantomEffects(
       frameClock.nowMs,
@@ -368,7 +364,6 @@ export function PhantomEffectsManager() {
     }
 
     lastRevisionRef.current = snapshot.revision;
-    recordSystemTime('phantomEffects', performance.now() - frameStart);
   });
   
   return (

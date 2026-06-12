@@ -91,12 +91,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.012083333333333331
+        "z": -0.009666666666666665
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -0.7249999999999999
+        "z": -0.58
       },
       "movement": {
         "isGrounded": true,
@@ -150,12 +150,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.033749999999999995
+        "z": -0.026499999999999996
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -1.2999999999999998
+        "z": -1.0099999999999998
       },
       "movement": {
         "isGrounded": true,
@@ -209,12 +209,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.06499999999999999
+        "z": -0.05049999999999999
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -1.8749999999999998
+        "z": -1.4399999999999997
       },
       "movement": {
         "isGrounded": true,
@@ -268,12 +268,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.10520833333333332
+        "z": -0.08166666666666665
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.4124999999999996
+        "z": -1.8699999999999997
       },
       "movement": {
         "isGrounded": true,
@@ -327,12 +327,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.15347916666666664
+        "z": -0.11938333333333331
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.8962499999999993
+        "z": -2.2629999999999995
       },
       "movement": {
         "isGrounded": true,
@@ -386,12 +386,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.20900624999999995
+        "z": -0.16299499999999997
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -3.331624999999999
+        "z": -2.6167
       },
       "movement": {
         "isGrounded": true,
@@ -445,12 +445,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.2710639583333333
+        "z": -0.21191216666666662
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -3.7234624999999992
+        "z": -2.93503
       },
       "movement": {
         "isGrounded": true,
@@ -504,12 +504,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.33899922916666664
+        "z": -0.2656042833333333
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.076116249999999
+        "z": -3.221527
       },
       "movement": {
         "isGrounded": true,
@@ -563,12 +563,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.41149922916666665
+        "z": -0.323593855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.4793743
       },
       "movement": {
         "isGrounded": true,
@@ -622,12 +622,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.48399922916666666
+        "z": -0.381593855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -681,12 +681,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.5564992291666666
+        "z": -0.439593855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -740,12 +740,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.6289992291666666
+        "z": -0.497593855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -799,12 +799,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.7014992291666666
+        "z": -0.5555938549999999
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -858,12 +858,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.7739992291666666
+        "z": -0.613593855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -917,12 +917,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.8464992291666666
+        "z": -0.671593855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -976,12 +976,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.9189992291666667
+        "z": -0.7295938550000001
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1035,12 +1035,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -0.9914992291666667
+        "z": -0.7875938550000001
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1094,12 +1094,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.0639992291666667
+        "z": -0.8455938550000002
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1153,12 +1153,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.1364992291666667
+        "z": -0.9035938550000002
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1212,12 +1212,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.2089992291666667
+        "z": -0.9615938550000003
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1271,12 +1271,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.2814992291666667
+        "z": -1.0195938550000003
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1330,12 +1330,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.3539992291666667
+        "z": -1.0775938550000004
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1389,12 +1389,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.4264992291666667
+        "z": -1.1355938550000004
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1448,12 +1448,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.4989992291666667
+        "z": -1.1935938550000005
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.35
+        "z": -3.48
       },
       "movement": {
         "isGrounded": true,
@@ -1507,12 +1507,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.5787492291666667
+        "z": -1.2573938550000006
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.784999999999999
+        "z": -3.8280000000000003
       },
       "movement": {
         "isGrounded": true,
@@ -1566,12 +1566,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.6650242291666668
+        "z": -1.3264138550000006
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.1765
+        "z": -4.1412
       },
       "movement": {
         "isGrounded": true,
@@ -1625,12 +1625,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.7520242291666668
+        "z": -1.3960138550000005
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -1684,12 +1684,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.8390242291666667
+        "z": -1.4656138550000004
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -1743,12 +1743,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -1.9260242291666667
+        "z": -1.5352138550000003
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -1802,12 +1802,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.0130242291666667
+        "z": -1.6048138550000002
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -1861,12 +1861,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.100024229166667
+        "z": -1.674413855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -1920,12 +1920,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.187024229166667
+        "z": -1.744013855
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -1979,12 +1979,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.2740242291666672
+        "z": -1.8136138549999998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2038,12 +2038,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.3610242291666674
+        "z": -1.8832138549999997
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2097,12 +2097,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.4480242291666676
+        "z": -1.9528138549999996
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2156,12 +2156,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.535024229166668
+        "z": -2.0224138549999995
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2215,12 +2215,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.622024229166668
+        "z": -2.0920138549999994
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2274,12 +2274,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.709024229166668
+        "z": -2.1616138549999993
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2333,12 +2333,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.7960242291666684
+        "z": -2.231213854999999
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2392,12 +2392,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.8830242291666686
+        "z": -2.300813854999999
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2451,12 +2451,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -2.9700242291666687
+        "z": -2.370413854999999
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2510,12 +2510,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.057024229166669
+        "z": -2.440013854999999
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2569,12 +2569,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.144024229166669
+        "z": -2.5096138549999987
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2628,12 +2628,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.2310242291666693
+        "z": -2.5792138549999986
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2687,12 +2687,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.3180242291666695
+        "z": -2.6488138549999984
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2746,12 +2746,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.4050242291666697
+        "z": -2.7184138549999983
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2805,12 +2805,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.49202422916667
+        "z": -2.788013854999998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2864,12 +2864,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.57902422916667
+        "z": -2.857613854999998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -5.22
+        "z": -4.176
       },
       "movement": {
         "isGrounded": true,
@@ -2923,12 +2923,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.65732422916667
+        "z": -2.920253854999998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.6979999999999995
+        "z": -3.7584
       },
       "movement": {
         "isGrounded": true,
@@ -2982,12 +2982,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.72779422916667
+        "z": -2.9766298549999983
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -4.228199999999999
+        "z": -3.38256
       },
       "movement": {
         "isGrounded": true,
@@ -3041,12 +3041,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.7912172291666697
+        "z": -3.0273682549999985
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -3.8053799999999995
+        "z": -3.044304
       },
       "movement": {
         "isGrounded": true,
@@ -3100,12 +3100,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.84829792916667
+        "z": -3.0730328149999986
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -3.4248419999999995
+        "z": -2.7398736
       },
       "movement": {
         "isGrounded": true,
@@ -3159,12 +3159,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.89967055916667
+        "z": -3.1141309189999986
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -3.0823577999999996
+        "z": -2.46588624
       },
       "movement": {
         "isGrounded": true,
@@ -3218,12 +3218,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.94590592616667
+        "z": -3.1511192125999985
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.7741220199999996
+        "z": -2.219297616
       },
       "movement": {
         "isGrounded": true,
@@ -3277,12 +3277,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -3.9875177564666697
+        "z": -3.1844086768399986
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.496709818
+        "z": -1.9973678544
       },
       "movement": {
         "isGrounded": true,
@@ -3336,12 +3336,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.024968403736669
+        "z": -3.2143691946559985
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.2470388362
+        "z": -1.79763106896
       },
       "movement": {
         "isGrounded": true,
@@ -3395,12 +3395,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.061218403736669
+        "z": -3.2433691946559984
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3454,12 +3454,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.097468403736669
+        "z": -3.2723691946559983
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3513,12 +3513,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.133718403736669
+        "z": -3.301369194655998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3572,12 +3572,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.169968403736669
+        "z": -3.330369194655998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3631,12 +3631,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.206218403736669
+        "z": -3.359369194655998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3690,12 +3690,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.242468403736669
+        "z": -3.388369194655998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3749,12 +3749,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.278718403736669
+        "z": -3.417369194655998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3808,12 +3808,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.3149684037366685
+        "z": -3.446369194655998
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3867,12 +3867,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.351218403736668
+        "z": -3.4753691946559977
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3926,12 +3926,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.387468403736668
+        "z": -3.5043691946559976
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -3985,12 +3985,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.423718403736668
+        "z": -3.5333691946559975
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -4044,12 +4044,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.459968403736668
+        "z": -3.5623691946559974
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -4103,12 +4103,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.496218403736668
+        "z": -3.5913691946559974
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -4162,12 +4162,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.532468403736668
+        "z": -3.6203691946559973
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -4221,12 +4221,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.568718403736668
+        "z": -3.649369194655997
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -4280,12 +4280,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.604968403736668
+        "z": -3.678369194655997
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -2.175
+        "z": -1.74
       },
       "movement": {
         "isGrounded": true,
@@ -4339,12 +4339,12 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
         "y": 0,
-        "z": -1.305
+        "z": -1.044
       },
       "movement": {
         "isGrounded": true,
@@ -4398,7 +4398,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4457,7 +4457,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4516,7 +4516,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4575,7 +4575,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4634,7 +4634,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4693,7 +4693,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4752,7 +4752,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4811,7 +4811,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4870,7 +4870,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4929,7 +4929,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -4988,7 +4988,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -5047,7 +5047,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -5106,7 +5106,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -5165,7 +5165,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,
@@ -5224,7 +5224,7 @@
       "rapierPosition": {
         "x": 0,
         "y": 0.9,
-        "z": -4.6267184037366675
+        "z": -3.695769194655997
       },
       "rapierVelocity": {
         "x": 0,

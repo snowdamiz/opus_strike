@@ -13,7 +13,7 @@ import {
   type MinimapSurfaceKind,
 } from './minimapData';
 
-const STATIC_RENDER_VERSION = 1;
+const STATIC_RENDER_VERSION = 2;
 const MAX_STATIC_CANVAS_CACHE_SIZE = 8;
 const topBlockCache = new Map<string, Uint8Array>();
 const staticCanvasCache = new Map<string, HTMLCanvasElement>();
@@ -87,7 +87,7 @@ function renderStaticLayer(
   const heightRange = getHeightRange(manifest.heightfield.topSolidRows);
 
   ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = 'rgba(2, 6, 12, 0.92)';
+  ctx.fillStyle = 'rgba(2, 6, 12, 0.5)';
   ctx.fillRect(0, 0, size, size);
 
   const minX = Math.floor(projection.offsetX);

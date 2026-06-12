@@ -4,12 +4,6 @@ import {
   type VoxelChunk,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
-import {
-  recordStartupStageTime,
-  recordSystemTime,
-  recordVoxelMapGenerated,
-  recordVoxelWorldRegions,
-} from '../perfMarks';
 
 const VOXEL_REGION_CHUNK_SPAN = 4;
 const MAX_PREPARED_MAPS = 4;
@@ -95,18 +89,6 @@ function evictLeastRecentlyUsedPreparedMap(): void {
   }
 }
 
-function recordManifestMetrics(manifest: VoxelMapManifest, generationMs: number): void {
-  recordSystemTime('startupMapManifest', generationMs);
-  recordStartupStageTime('mapManifest', generationMs);
-  recordVoxelMapGenerated({
-    generationMs,
-    totalChunkSlots: manifest.stats.totalChunkSlots ?? manifest.stats.chunkCount,
-    renderableChunks: manifest.stats.renderableChunkCount ?? manifest.stats.chunkCount,
-    emptyChunkSlots: manifest.stats.emptyChunkSlots ?? 0,
-    colliders: manifest.stats.colliderCount,
-  });
-}
-
 export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVoxelMap {
   const generatorVersion = options.generatorVersion ?? CONSTRUCTED_MAP_MANIFEST_VERSION;
   const key = getMapPrepCacheKey({ seed: options.seed, generatorVersion });
@@ -115,23 +97,14 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
   if (cached) {
     cached.lastUsedAtMs = nowMs();
     cached.cacheHits++;
-    recordSystemTime('startupMapPrepCacheHit', 0);
     return cached;
   }
 
   const source = options.source ?? 'match';
-  const manifestStart = nowMs();
   const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed);
-  const generationMs = options.manifest ? 0 : nowMs() - manifestStart;
-  recordManifestMetrics(manifest, generationMs);
 
-  const regionStart = nowMs();
   const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);
   const renderableRegions = createVoxelChunkRegions(renderableChunks);
-  const regionBatchMs = nowMs() - regionStart;
-  recordSystemTime('voxelRegionBatch', regionBatchMs);
-  recordStartupStageTime('regionBatch', regionBatchMs);
-  recordVoxelWorldRegions(renderableRegions.length);
 
   const entry: PreparedVoxelMap = {
     key,

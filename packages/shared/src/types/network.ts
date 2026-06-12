@@ -108,7 +108,17 @@ export interface PlayerTransformsV2Message {
   version: 2;
   tick: number;
   serverTime: number;
+  streamEpoch?: number;
+  full?: boolean;
   players: PackedPlayerTransform[];
+}
+
+export interface PlayerVitalsAbilitySnapshot {
+  abilityId: string;
+  cooldownUntil: number;
+  charges: number;
+  isActive: boolean;
+  activatedAt?: number;
 }
 
 export interface PlayerVitalsSnapshot {
@@ -128,7 +138,7 @@ export interface PlayerVitalsSnapshot {
   ultimateCharge: number;
   hasFlag: boolean;
   movement: PlayerSnapshot['movement'];
-  abilities: PlayerSnapshot['abilities'];
+  abilities: Record<string, PlayerVitalsAbilitySnapshot>;
   stats: NonNullable<PlayerSnapshot['stats']>;
   respawnTime: number | null;
   spawnProtectionUntil: number | null;

@@ -5,16 +5,12 @@ import {
   buildVoxelRegionGeometryData,
   type VoxelMeshGeometryData,
 } from './meshGeometryData';
-import { recordStartupStageTime, recordSystemTime, recordVoxelMeshBuild } from '../../../utils/perfMarks';
-
-type MeshMetricName = 'voxelMeshBuild' | 'voxelRegionMeshBuild' | 'voxelRegionMeshBuildWorker';
 
 interface PendingRegionRequest {
   resolve: (geometry: THREE.BufferGeometry) => void;
   reject: (error: Error) => void;
   manifest: VoxelMapManifest;
   cacheKey: string;
-  metricName: MeshMetricName;
 }
 
 interface MeshWorkerResponse {
@@ -50,14 +46,11 @@ function waitForNextFrame(): Promise<void> {
 function createGeometryFromData(
   manifest: VoxelMapManifest,
   cacheKey: string,
-  data: VoxelMeshGeometryData,
-  metricName: MeshMetricName,
-  buildMs: number
+  data: VoxelMeshGeometryData
 ): THREE.BufferGeometry {
   const cached = geometryCache.get(cacheKey);
   if (cached) return cached;
 
-  const materializeStart = performance.now();
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
@@ -70,11 +63,6 @@ function createGeometryFromData(
   geometry.computeBoundingSphere();
 
   geometryCache.set(cacheKey, geometry);
-  const materializeMs = performance.now() - materializeStart;
-  recordVoxelMeshBuild(buildMs);
-  recordSystemTime(metricName, buildMs);
-  recordSystemTime('voxelGeometryMaterialize', materializeMs);
-  recordStartupStageTime('geometryMaterialization', materializeMs);
   return geometry;
 }
 
@@ -121,9 +109,7 @@ function getMeshWorker(): Worker | null {
           uvs: message.uvs,
           tileOrigins: message.tileOrigins,
           indices: message.indices,
-        },
-        pending.metricName,
-        message.buildMs ?? 0
+        }
       );
       pending.resolve(geometry);
     };
@@ -170,9 +156,8 @@ export function buildVoxelChunkGeometry(manifest: VoxelMapManifest, chunk: Voxel
   const cached = geometryCache.get(cacheKey);
   if (cached) return cached;
 
-  const buildStart = performance.now();
   const data = buildVoxelChunkGeometryData(manifest, chunk);
-  return createGeometryFromData(manifest, cacheKey, data, 'voxelMeshBuild', performance.now() - buildStart);
+  return createGeometryFromData(manifest, cacheKey, data);
 }
 
 export function buildVoxelRegionGeometry(
@@ -184,9 +169,8 @@ export function buildVoxelRegionGeometry(
   const cached = geometryCache.get(cacheKey);
   if (cached) return cached;
 
-  const buildStart = performance.now();
   const data = buildVoxelRegionGeometryData(manifest, chunks);
-  return createGeometryFromData(manifest, cacheKey, data, 'voxelRegionMeshBuild', performance.now() - buildStart);
+  return createGeometryFromData(manifest, cacheKey, data);
 }
 
 export function buildVoxelRegionGeometryAsync(
@@ -220,7 +204,6 @@ export function buildVoxelRegionGeometryAsync(
       reject,
       manifest,
       cacheKey,
-      metricName: 'voxelRegionMeshBuildWorker',
     });
   });
 
@@ -255,8 +238,7 @@ export async function prebuildVoxelRegionGeometries(
   } = {}
 ): Promise<void> {
   const frameBudgetMs = options.frameBudgetMs ?? 4;
-  const dispatchStart = performance.now();
-  let frameStart = dispatchStart;
+  let frameStart = performance.now();
   let dispatched = 0;
 
   for (const region of regions) {
@@ -271,10 +253,6 @@ export async function prebuildVoxelRegionGeometries(
       frameStart = performance.now();
     }
   }
-
-  const dispatchMs = performance.now() - dispatchStart;
-  recordSystemTime('voxelRegionPrebuildDispatch', dispatchMs);
-  recordStartupStageTime('workerMeshDispatch', dispatchMs);
 }
 
 export function clearVoxelGeometryCache(manifestId?: string): void {

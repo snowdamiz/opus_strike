@@ -43,8 +43,7 @@ const featureQualityOptions = [
 
 const fpsDisplayModeOptions = [
   { value: 'off', label: 'Off' },
-  { value: 'fps', label: 'FPS Only' },
-  { value: 'full', label: 'Full' },
+  { value: 'fps', label: 'FPS' },
 ];
 
 const graphicsPresetOptions = [
@@ -457,7 +456,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Show FPS" description="Display frame rate counter or diagnostics panel">
+                <SettingRow label="Show FPS" description="Display frame rate counter">
                   <SelectInput
                     value={settings.showFPS}
                     onChange={(v) => updateSetting('showFPS', v as ClientSettings['showFPS'])}

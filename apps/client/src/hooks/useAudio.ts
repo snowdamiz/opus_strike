@@ -1,6 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { loadSettings, type ClientSettings } from '../store/settingsStore';
-import { recordSpawnMarker, recordSystemTime } from '../utils/perfMarks';
 
 interface AudioConfig {
   masterVolume: number;  // 0-100
@@ -550,17 +549,7 @@ export async function playSharedSound(
   const audioCtx = ctx;
   if (options?.signal?.aborted) return;
 
-  const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
-  if (name === 'phantomBasic') {
-    recordSpawnMarker('audio:phantomBasic');
-  }
-
-  const loadStart = hadLoadedBuffer ? 0 : performance.now();
   const sound = await loadSharedSound(name);
-  if (!hadLoadedBuffer) {
-    recordSystemTime('audioLoads', performance.now() - loadStart);
-    recordSpawnMarker(`audioLoad:${name}`);
-  }
   if (options?.signal?.aborted) return;
 
   if (!sound?.buffer) {
@@ -830,17 +819,7 @@ export function useAudio() {
     const audioCtx = ctx;
     if (options?.signal?.aborted) return;
 
-    const hadLoadedBuffer = Boolean(sharedSounds.get(name)?.buffer);
-    if (name === 'phantomBasic') {
-      recordSpawnMarker('audio:phantomBasic');
-    }
-
-    const loadStart = hadLoadedBuffer ? 0 : performance.now();
     const sound = await loadSound(name);
-    if (!hadLoadedBuffer) {
-      recordSystemTime('audioLoads', performance.now() - loadStart);
-      recordSpawnMarker(`audioLoad:${name}`);
-    }
     if (options?.signal?.aborted) return;
 
     if (!sound?.buffer) {

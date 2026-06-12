@@ -6,7 +6,6 @@ import {
   type Vec3,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
-import { getClientPerfSnapshot } from './perfMarks';
 
 export interface LocalCombatStressScenarioOptions {
   seed?: number;
@@ -18,7 +17,6 @@ export interface LocalCombatStressScenarioOptions {
 
 export interface LocalCombatStressScenarioHandle {
   stop: () => void;
-  snapshot: typeof getClientPerfSnapshot;
 }
 
 interface ActiveStressScenario {
@@ -295,7 +293,6 @@ export function runLocalCombatStressScenario(
 
   return {
     stop,
-    snapshot: getClientPerfSnapshot,
   };
 }
 
@@ -305,7 +302,6 @@ export function installLocalCombatStressScenario(): void {
   window.__opusStrikeStress = {
     run: runLocalCombatStressScenario,
     clear: clearLocalCombatStressScenario,
-    snapshot: getClientPerfSnapshot,
   };
 }
 
@@ -314,7 +310,6 @@ declare global {
     __opusStrikeStress?: {
       run: typeof runLocalCombatStressScenario;
       clear: typeof clearLocalCombatStressScenario;
-      snapshot: typeof getClientPerfSnapshot;
     };
   }
 }

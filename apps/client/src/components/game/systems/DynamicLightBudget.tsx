@@ -1,7 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, type ForwardedRef } from 'react';
 import { useFrame, type ThreeElements } from '@react-three/fiber';
 import * as THREE from 'three';
-import { registerFrameSystem } from '../../../utils/perfMarks';
 
 type PointLightProps = ThreeElements['pointLight'];
 
@@ -85,8 +84,6 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
   const accumulatorRef = useRef(0);
   const rankedRef = useRef<RankedLight[]>([]);
   const selectedRef = useRef(new Set<BudgetedLightRecord>());
-
-  useEffect(() => registerFrameSystem('dynamic-light-budget'), []);
 
   useFrame(({ camera }, delta) => {
     accumulatorRef.current += delta;

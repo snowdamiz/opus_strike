@@ -8,7 +8,6 @@ import { VoxelRegionMesh, type VoxelMeshBuildMode } from './VoxelChunkMesh';
 import { WorldDressing } from './WorldDressing';
 import { clearVoxelGeometryCache, prebuildVoxelRegionGeometries } from './meshBuilder';
 import type { VoxelMaterialDetail, WorldPerformanceBudget } from '../visualQuality';
-import { recordStartupStageTime, recordVoxelWorldRegions } from '../../../utils/perfMarks';
 import {
   prepareVoxelMapCpu,
   type PreparedVoxelMap,
@@ -77,10 +76,6 @@ export function VoxelMap({
   const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
   const collidersLoadedRef = useRef(false);
   const didSignalReadyRef = useRef<string | null>(null);
-  const colliderWaitStartRef = useRef(0);
-  const terrainWaitStartRef = useRef(performance.now());
-  const recordedTerrainReadyKeyRef = useRef<string | null>(null);
-  const recordedColliderReadyKeyRef = useRef<string | null>(null);
   const regionRevealBudgetRef = useRef(performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
   const shouldRevealAllRegions = meshBuildMode === 'sync' || !progressiveReveal;
   const [visibleRegionCount, setVisibleRegionCount] = useState(() => (
@@ -95,12 +90,6 @@ export function VoxelMap({
   useEffect(() => {
     regionRevealBudgetRef.current = Math.max(1, performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
   }, [performanceBudget?.maxGeneratedRegionMeshesPerFrame]);
-
-  useEffect(() => {
-    terrainWaitStartRef.current = performance.now();
-    recordedTerrainReadyKeyRef.current = null;
-    recordedColliderReadyKeyRef.current = null;
-  }, [manifest.id]);
 
   useEffect(() => {
     if (!prebuildRegions) return;
@@ -168,10 +157,6 @@ export function VoxelMap({
     });
   }, [manifest.id]);
 
-  useEffect(() => {
-    recordVoxelWorldRegions(renderableRegions.length);
-  }, [renderableRegions]);
-
   useEffect(() => () => {
     clearVoxelGeometryCache(manifest.id);
   }, [manifest.id]);
@@ -186,18 +171,12 @@ export function VoxelMap({
     if (!enablePhysics) return undefined;
 
     collidersLoadedRef.current = false;
-    colliderWaitStartRef.current = performance.now();
     setMapBoundaryPolygon(manifest.boundary);
 
     const markCollidersReady = () => {
       if (cancelled) return;
       collidersLoadedRef.current = true;
       setCollidersReady(true);
-      const readyKey = `${manifest.id}:colliders`;
-      if (recordedColliderReadyKeyRef.current !== readyKey) {
-        recordedColliderReadyKeyRef.current = readyKey;
-        recordStartupStageTime('colliders', performance.now() - colliderWaitStartRef.current);
-      }
     };
 
     if (areProceduralMapCollidersLoaded(manifest)) {
@@ -247,15 +226,6 @@ export function VoxelMap({
     readyRegionCount >= renderableRegions.length
   );
   const isReady = terrainReady && collidersReady;
-
-  useEffect(() => {
-    if (!terrainReady) return;
-
-    const readyKey = `${manifest.id}:terrain:${renderableRegions.length}`;
-    if (recordedTerrainReadyKeyRef.current === readyKey) return;
-    recordedTerrainReadyKeyRef.current = readyKey;
-    recordStartupStageTime('meshes', performance.now() - terrainWaitStartRef.current);
-  }, [manifest.id, renderableRegions.length, terrainReady]);
 
   useEffect(() => {
     onWarmupStatus?.({

@@ -7,7 +7,7 @@ export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
 export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic';
-export type FpsDisplayMode = 'off' | 'fps' | 'full';
+export type FpsDisplayMode = 'off' | 'fps';
 export type KeybindAction = keyof InputState | 'scoreboard' | 'pushToTalk';
 export type Keybindings = Record<KeybindAction, string>;
 
@@ -174,9 +174,9 @@ function pickBoolean(value: unknown, fallback: boolean): boolean {
 }
 
 function pickFpsDisplayMode(value: unknown, fallback: FpsDisplayMode): FpsDisplayMode {
-  if (value === true) return 'full';
+  if (value === true || value === 'full') return 'fps';
   if (value === false) return 'off';
-  return pickOption(value, ['off', 'fps', 'full'] as const, fallback);
+  return pickOption(value, ['off', 'fps'] as const, fallback);
 }
 
 function pickKeybindingCode(value: unknown, fallback: string): string {
@@ -289,7 +289,7 @@ export function loadSettings(): ClientSettings {
     const saved = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
     return saved ? sanitizeSettings(JSON.parse(saved)) : defaultSettings;
   } catch (error) {
-    loggers.perf.warn('failed to load settings', error);
+    loggers.room.warn('failed to load settings', error);
     return defaultSettings;
   }
 }

@@ -23,13 +23,7 @@ import {
 } from '../../viewmodel/phantomPrimaryPose';
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
-import { loggers } from '../../utils/logger';
-import { setFullRemoteBodyCount } from '../../utils/perfMarks';
 import type { RemotePlayerQualityConfig } from './visualQuality';
-
-// Debug: track last logged state to avoid spam
-let lastLoggedPlayerCount = -1;
-let lastLoggedOtherCount = -1;
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
@@ -65,6 +59,8 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
   const [fullBodyAllowedIds, setFullBodyAllowedIds] = useState<Set<string>>(() => new Set());
   const otherPlayersRef = useRef<Player[]>(otherPlayers);
   const fullBodyCandidateRef = useRef<Player[]>([]);
+  const fullBodyAllowedIdListRef = useRef<string[]>([]);
+  const fullBodyAllowedSignatureRef = useRef('');
   const fullBodyLodAccumulatorRef = useRef(LOD_UPDATE_INTERVAL);
   otherPlayersRef.current = otherPlayers;
 
@@ -91,40 +87,17 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
     });
 
     const limit = Math.max(0, config.maxFullBodies);
-    setFullBodyAllowedIds((current) => {
-      let changed = current.size !== Math.min(limit, candidates.length);
-      const next = new Set<string>();
-      for (let i = 0; i < candidates.length && i < limit; i++) {
-        const id = candidates[i].id;
-        next.add(id);
-        if (!current.has(id)) changed = true;
-      }
-      return changed ? next : current;
-    });
+    const nextIds = fullBodyAllowedIdListRef.current;
+    nextIds.length = 0;
+    for (let i = 0; i < candidates.length && i < limit; i++) {
+      nextIds.push(candidates[i].id);
+    }
+    const nextSignature = nextIds.join('|');
+    if (nextSignature !== fullBodyAllowedSignatureRef.current) {
+      fullBodyAllowedSignatureRef.current = nextSignature;
+      setFullBodyAllowedIds(new Set(nextIds));
+    }
   });
-
-  useEffect(() => {
-    setFullRemoteBodyCount(fullBodyAllowedIds.size);
-    return () => setFullRemoteBodyCount(0);
-  }, [fullBodyAllowedIds.size]);
-
-  // Only log when counts change
-  if (players.size !== lastLoggedPlayerCount || otherPlayers.length !== lastLoggedOtherCount) {
-    loggers.effects.debug('OtherPlayers', {
-      totalInStore: players.size,
-      otherPlayersToRender: otherPlayers.length,
-      playerId,
-      localPlayerId,
-      gamePhase,
-      allPlayerIds: allPlayers.map(p => `${p.id.slice(0,6)}(${p.state})`),
-      otherPlayerPositions: otherPlayers.map(p => ({ 
-        id: p.id.slice(0,6), 
-        pos: `(${p.position.x.toFixed(1)}, ${p.position.y.toFixed(1)}, ${p.position.z.toFixed(1)})` 
-      })),
-    });
-    lastLoggedPlayerCount = players.size;
-    lastLoggedOtherCount = otherPlayers.length;
-  }
 
   return (
     <group>
@@ -364,7 +337,6 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   const initializedRef = useRef(false);
   const distantUpdateAccumulatorRef = useRef(0);
   const remoteEpochRef = useRef<number | null>(null);
-  const hasLoggedRef = useRef(false);
   const sampledTransformRef = useRef<SampledRemoteTransform>({
     position: { x: 0, y: 0, z: 0 },
     velocity: { x: 0, y: 0, z: 0 },
@@ -376,13 +348,6 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
     extrapolatedMs: 0,
     stale: false,
   });
-  
-  // Debug log once when component first renders
-  if (!hasLoggedRef.current) {
-    loggers.effects.debug('OtherPlayer mounted', player.id.slice(0,6), player.name, player.position);
-    hasLoggedRef.current = true;
-  }
-
   // VISUAL_STORE_VERIFICATION: This component reads visualStore.getState() in useFrame.
   // Verify with React DevTools profiler that OtherPlayers does NOT re-render when player positions update at 60fps.
   // Expected: OtherPlayers renders only when players Map changes (add/remove), not on position updates.

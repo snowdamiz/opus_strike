@@ -384,9 +384,11 @@ function HookshotShotCounter() {
 export function HUD() {
   const {
     localPlayer,
+    gamePhase,
     redScore,
     blueScore,
     roundTimeRemaining,
+    phaseEndTime,
     redFlag,
     blueFlag,
     clientCooldowns,
@@ -405,9 +407,11 @@ export function HUD() {
   } = useGameStore(
     useShallow(state => ({
       localPlayer: state.localPlayer,
+      gamePhase: state.gamePhase,
       redScore: state.redScore,
       blueScore: state.blueScore,
       roundTimeRemaining: state.roundTimeRemaining,
+      phaseEndTime: state.phaseEndTime,
       redFlag: state.redFlag,
       blueFlag: state.blueFlag,
       clientCooldowns: state.clientCooldowns,
@@ -473,6 +477,9 @@ export function HUD() {
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+  const displayedRoundTimeRemaining = gamePhase === 'playing' && phaseEndTime
+    ? Math.max(0, Math.ceil((phaseEndTime - Date.now()) / 1000))
+    : roundTimeRemaining;
 
   return (
     <div className="absolute inset-0 pointer-events-none select-none z-hud">
@@ -628,10 +635,10 @@ export function HUD() {
 
               {/* Timer */}
               <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
-                <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${roundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
-                    roundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
+                <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${displayedRoundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
+                    displayedRoundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
                   }`}>
-                  {formatTime(roundTimeRemaining)}
+                  {formatTime(displayedRoundTimeRemaining)}
                 </span>
                 <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
               </div>

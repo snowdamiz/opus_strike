@@ -8,7 +8,6 @@ import {
   type VoxelMapManifest,
   type VoxelMapTheme,
 } from '@voxel-strike/shared';
-import { recordStartupStageTime, recordSystemTime, setWorldDressingInstanceCount } from '../../../utils/perfMarks';
 
 interface SurfaceCell {
   x: number;
@@ -380,15 +379,10 @@ function getCachedDressingSet(
   const cacheKey = `${manifest.id}:${densityScale.toFixed(3)}:${Number.isFinite(maxInstances) ? Math.floor(maxInstances) : 'inf'}`;
   const cached = dressingSetCache.get(cacheKey);
   if (cached) {
-    recordSystemTime('worldDressingCacheHit', 0);
     return cached;
   }
 
-  const start = performance.now();
   const dressing = createDressingSet(manifest, densityScale, maxInstances);
-  const buildMs = performance.now() - start;
-  recordSystemTime('worldDressingBuild', buildMs);
-  recordStartupStageTime('worldDressingBuild', buildMs);
 
   dressingSetCache.set(cacheKey, dressing);
   if (dressingSetCache.size > 8) {
@@ -464,7 +458,6 @@ export function WorldDressing({
 }) {
   const palette = useMemo(() => getDressingPalette(manifest.theme), [manifest.theme]);
   const dressing = useMemo(() => getCachedDressingSet(manifest, densityScale, maxInstances), [densityScale, manifest, maxInstances]);
-  const instanceCount = dressing.tufts.length + dressing.pebbles.length + dressing.crystals.length;
   const resources = useMemo(() => {
     const tuftMaterial = new THREE.MeshStandardMaterial({
       color: palette.tuft,
@@ -504,11 +497,6 @@ export function WorldDressing({
     },
     [resources]
   );
-
-  useEffect(() => {
-    setWorldDressingInstanceCount(instanceCount);
-    return () => setWorldDressingInstanceCount(0);
-  }, [instanceCount]);
 
   return (
     <group name="procedural-world-dressing">

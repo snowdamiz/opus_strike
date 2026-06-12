@@ -5,7 +5,6 @@ import { doesSegmentHitPlayerCombatHitbox, type Player, type Team } from '@voxel
 import { useGameStore, type DireBallData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
-import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
@@ -508,7 +507,6 @@ export function DireBallsManager() {
   }, []);
 
   useEffect(() => () => particleGeometry.dispose(), [particleGeometry]);
-  useEffect(() => registerFrameSystem('phantom-projectiles'), []);
 
   useEffect(() => {
     const pool = poolRef.current;
@@ -534,7 +532,6 @@ export function DireBallsManager() {
     const pool = poolRef.current;
     if (!pool) return;
 
-    const frameStart = performance.now();
     const clock = getFrameClock();
     const delta = clock.clampedDeltaSeconds;
     const elapsedSeconds = clock.elapsedSeconds;
@@ -554,7 +551,6 @@ export function DireBallsManager() {
     const positions = particleGeometry.attributes.position.array as Float32Array;
     let instanceIndex = 0;
     let particleOffset = 0;
-    let physicsMs = 0;
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {
@@ -567,7 +563,6 @@ export function DireBallsManager() {
       if (moveDistance > 0.001 && isPhysicsReady()) {
         const world = getPhysicsWorld();
         if (world) {
-          const physicsStart = performance.now();
           rayDirectionRef.current.x = slot.direction.x;
           rayDirectionRef.current.y = slot.direction.y;
           rayDirectionRef.current.z = slot.direction.z;
@@ -575,7 +570,6 @@ export function DireBallsManager() {
             priority: 'visual',
             feature: 'projectile:phantomDireBall',
           });
-          physicsMs += performance.now() - physicsStart;
 
           if (hit && hit.distance <= moveDistance + BALL_RADIUS) {
             triggerTerrainImpact('phantom_dire_ball', hit.point, {
@@ -644,11 +638,6 @@ export function DireBallsManager() {
       removeDireBalls(removals);
       removals.length = 0;
     }
-
-    if (physicsMs > 0) {
-      recordSystemTime('physicsQueries', physicsMs);
-    }
-    recordSystemTime('phantomProjectiles', performance.now() - frameStart);
   });
 
   return (

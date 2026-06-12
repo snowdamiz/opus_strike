@@ -1,20 +1,16 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { cleanupExpiredTemporaryWallColliders } from '../../../hooks/usePhysics';
 import { useGameStore } from '../../../store/gameStore';
 import { updateFrameClock } from '../../../utils/frameClock';
-import { recordFrameSample, registerFrameSystem } from '../../../utils/perfMarks';
 
 const CLEANUP_INTERVAL_MS = 100;
 
 export function GameplayFrameSystems() {
   const cleanupAccumulatorRef = useRef(0);
 
-  useEffect(() => registerFrameSystem('gameplay-cleanup'), []);
-
   useFrame((state, delta) => {
     const clock = updateFrameClock(state.clock.elapsedTime, delta);
-    recordFrameSample(delta);
 
     cleanupAccumulatorRef.current += clock.clampedDeltaSeconds * 1000;
     if (cleanupAccumulatorRef.current < CLEANUP_INTERVAL_MS) return;

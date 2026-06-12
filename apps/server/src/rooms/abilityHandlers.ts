@@ -86,8 +86,6 @@ export function initializePlayerAbilities(player: Player, heroId: HeroId): void 
     ultimateState.isActive = false;
     player.abilities.set(ultimateId, ultimateState);
   }
-
-  console.log(`Initialized abilities for ${player.name}: ${ability1Id}, ${ability2Id}, ${ultimateId}`);
 }
 
 /**
@@ -150,20 +148,17 @@ export function tryUseAbility(
   const cooldownStartsAfterActive = COOLDOWN_AFTER_ACTIVE_ABILITIES.has(abilityId);
 
   if (abilityState.isActive) {
-    console.log(`${player.name} tried to use ${abilityDef.name} but it's already active`);
     return { success: false, reason: 'Active' };
   }
 
   // Check if on cooldown
   if (!hasMultipleCharges && abilityState.cooldownRemaining > 0) {
-    console.log(`${player.name} tried to use ${abilityDef.name} but it's on cooldown (${abilityState.cooldownRemaining.toFixed(1)}s)`);
     return { success: false, reason: 'On cooldown' };
   }
 
   // Check charges for multi-charge abilities
   if (hasMultipleCharges) {
     if (abilityState.charges <= 0) {
-      console.log(`${player.name} tried to use ${abilityDef.name} but has no charges`);
       return { success: false, reason: 'No charges' };
     }
   }
@@ -171,15 +166,11 @@ export function tryUseAbility(
   // Check ultimate charge
   if (slot === 'ultimate') {
     if (player.ultimateCharge < 100) {
-      console.log(`${player.name} tried to use ultimate but only has ${player.ultimateCharge.toFixed(0)}%`);
       return { success: false, reason: 'Ultimate not ready' };
     }
     // Consume ultimate charge
     player.ultimateCharge = 0;
   }
-
-  // Use the ability
-  console.log(`${player.name} used ${abilityDef.name}!`);
 
   // Handle charges vs cooldown
   if (hasMultipleCharges) {

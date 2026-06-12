@@ -85,9 +85,19 @@ const GROUND_FLAME_OFFSET = 0.12;
 const COG_TEETH = 18;
 const COG_DEPTH = 0.34;
 const COG_FIRE_ORANGE = 0xff6a00;
+const COG_RISE_DURATION_MS = 760;
+const COG_RISE_STAGGER_MS = 260;
+const COG_SINK_DURATION_MS = 920;
+const COG_SINK_STAGGER_MS = 320;
+const COG_BURY_DEPTH = 2.45;
 const GROUND_FLAME_PLANE_ANGLES = [0, Math.PI / 2, Math.PI / 4, -Math.PI / 4];
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+function smoothstep01(value: number): number {
+  const t = clamp01(value);
+  return t * t * (3 - 2 * t);
+}
 
 function createGearShape(teeth: number, rootRadius: number, outerRadius: number, innerRadius: number): THREE.Shape {
   const shape = new THREE.Shape();
@@ -487,11 +497,20 @@ function InfernalGearstormEffect({ strike }: { strike: AirStrikeData }) {
       const cogGroup = cogRefs.current[index];
       if (!cogGroup) return;
 
+      const phaseRatio = (cog.phase % (Math.PI * 2)) / (Math.PI * 2);
+      const riseDelay = phaseRatio * COG_RISE_STAGGER_MS;
+      const sinkDelay = (1 - phaseRatio) * COG_SINK_STAGGER_MS;
+      const riseProgress = smoothstep01((elapsed - riseDelay) / COG_RISE_DURATION_MS);
+      const sinkProgress = smoothstep01((AIR_STRIKE_DURATION - elapsed - sinkDelay) / COG_SINK_DURATION_MS);
+      const liftProgress = Math.min(riseProgress, sinkProgress);
       const orbitAngle = cog.angle + elapsedSeconds * cog.orbitSpeed;
-      cogGroup.visible = true;
+      const airborneY = cog.groundY + cog.height + Math.sin(elapsedSeconds * cog.bobSpeed + cog.phase) * cog.bobAmount;
+      const buriedY = cog.groundY - COG_BURY_DEPTH * cog.size;
+
+      cogGroup.visible = liftProgress > 0.001;
       cogGroup.position.set(
         strike.centerPosition.x + Math.cos(orbitAngle) * cog.radius,
-        cog.groundY + cog.height + Math.sin(elapsedSeconds * cog.bobSpeed + cog.phase) * cog.bobAmount,
+        THREE.MathUtils.lerp(buriedY, airborneY, liftProgress),
         strike.centerPosition.z + Math.sin(orbitAngle) * cog.radius
       );
       cogGroup.rotation.set(

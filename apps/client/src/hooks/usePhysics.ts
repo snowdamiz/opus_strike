@@ -9,13 +9,6 @@ import {
   type VoxelChunk,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
-import {
-  recordPhysicsQueryDropped,
-  recordPhysicsQueryTime,
-  recordStartupStageTime,
-  recordSystemTime,
-  setTemporaryColliderCountProvider,
-} from '../utils/perfMarks';
 
 interface PhysicsContext {
   world: RAPIER.World | null;
@@ -260,7 +253,6 @@ function tryConsumeVisualPhysicsQuery(feature: string): boolean {
   }
 
   if (visualPhysicsQueriesUsed >= visualPhysicsQueryBudgetPerFrame) {
-    recordPhysicsQueryDropped(feature);
     return false;
   }
 
@@ -271,10 +263,6 @@ function tryConsumeVisualPhysicsQuery(feature: string): boolean {
 function shouldRunPhysicsQuery(options?: PhysicsQueryOptions): boolean {
   if (options?.priority !== 'visual') return true;
   return tryConsumeVisualPhysicsQuery(options.feature ?? 'visual');
-}
-
-function recordPhysicsQueryDuration(queryStart: number, options?: PhysicsQueryOptions): void {
-  recordPhysicsQueryTime(performance.now() - queryStart, options?.feature ?? 'global');
 }
 
 /**
@@ -289,7 +277,6 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
   const colliderSignature = getProceduralMapColliderSignature(manifest);
 
   if (loadedProceduralMapId === manifest.id && loadedProceduralMapColliderSignature === colliderSignature) {
-    console.log('[Physics] Procedural map colliders already loaded, skipping');
     return true;
   }
 
@@ -314,7 +301,6 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
   loadedProceduralMapId = null;
   loadedProceduralMapColliderSignature = null;
 
-  console.log(`[Physics] Loading procedural map colliders for ${manifest.id}...`);
   const loadStart = performance.now();
 
   if (manifest.colliders.length > 0) {
@@ -389,10 +375,6 @@ function finishProceduralColliderLoad(manifest: VoxelMapManifest, colliderSignat
   loadedProceduralMapColliderSignature = colliderSignature;
   activeProceduralMap = manifest;
   buildActiveProceduralChunkLookup(manifest);
-  const loadMs = performance.now() - loadStart;
-  recordSystemTime('mapColliderLoad', loadMs);
-  recordStartupStageTime('colliderLoad', loadMs);
-  console.log(`[Physics] Procedural map colliders loaded: ${manifest.colliders.length} colliders`);
 }
 
 /**
@@ -423,7 +405,6 @@ export function raycast(
     return null;
   }
   if (!shouldRunPhysicsQuery(options)) return null;
-  const queryStart = performance.now();
   
   try {
     // Create ray - Rapier accepts plain objects
@@ -449,8 +430,6 @@ export function raycast(
     }
   } catch (error) {
     console.error('[Physics] Raycast error:', error);
-  } finally {
-    recordPhysicsQueryDuration(queryStart, options);
   }
 
   return null;
@@ -474,7 +453,6 @@ export function raycastDirection(
     return null;
   }
   if (!shouldRunPhysicsQuery(options)) return null;
-  const queryStart = performance.now();
   
   try {
     const origin = { x: originX, y: originY, z: originZ };
@@ -505,8 +483,6 @@ export function raycastDirection(
     }
   } catch (error) {
     console.error('[Physics] raycastDirection error:', error);
-  } finally {
-    recordPhysicsQueryDuration(queryStart, options);
   }
   
   return null;
@@ -567,8 +543,6 @@ export function checkGroundWithNormal(
   const heightfieldGround = checkProceduralHeightfieldGround(x, y, z, maxDist);
   if (heightfieldGround) return heightfieldGround;
   if (!shouldRunPhysicsQuery(options)) return null;
-
-  const queryStart = performance.now();
   
   try {
     const origin = { x, y, z };
@@ -591,8 +565,6 @@ export function checkGroundWithNormal(
     }
   } catch (e) {
     console.error('[Physics] checkGroundWithNormal error:', e);
-  } finally {
-    recordPhysicsQueryDuration(queryStart, options);
   }
   return null;
 }
@@ -650,7 +622,6 @@ export function hasPlayerBodyClearance(
   playerHeight: number = PLAYER_HEIGHT
 ): boolean {
   if (!rapierInstance || !worldInstance) return true;
-  const queryStart = performance.now();
 
   try {
     const query = createPlayerBodyQuery(x, y, z, playerRadius, playerHeight);
@@ -671,8 +642,6 @@ export function hasPlayerBodyClearance(
   } catch (e) {
     console.error('[Physics] hasPlayerBodyClearance error:', e);
     return false;
-  } finally {
-    recordPhysicsQueryTime(performance.now() - queryStart);
   }
 }
 
@@ -692,7 +661,6 @@ export function checkPlayerBodyMovement(
   if (!rapierInstance || !worldInstance) {
     return { blocked: false, normal: { x: 0, y: 0, z: 0 }, timeOfImpact: Infinity };
   }
-  const queryStart = performance.now();
 
   try {
     const query = createPlayerBodyQuery(x, y, z, playerRadius, playerHeight);
@@ -748,8 +716,6 @@ export function checkPlayerBodyMovement(
   } catch (e) {
     console.error('[Physics] checkPlayerBodyMovement error:', e);
     return { blocked: true, normal: { x: 0, y: 0, z: 0 }, timeOfImpact: 0 };
-  } finally {
-    recordPhysicsQueryTime(performance.now() - queryStart);
   }
 }
 
@@ -793,9 +759,7 @@ export function validateTeleportDestination(
       { x: targetX, y: adjustedFeetY + 0.3, z: targetZ },
       { x: 0, y: 1, z: 0 }
     );
-    const headroomQueryStart = performance.now();
     const hitUp = worldInstance.castRay(rayUp, playerHeight - 0.2, true);
-    recordPhysicsQueryTime(performance.now() - headroomQueryStart);
     if (hitUp && hitUp.timeOfImpact < playerHeight - 0.5) {
       return { valid: false, reason: 'Not enough headroom' };
     }
@@ -835,7 +799,6 @@ export function checkWallCollision(
   }
   const ndx = dirX / len;
   const ndz = dirZ / len;
-  const queryStart = performance.now();
   
   try {
     // Cast rays at multiple heights to detect walls
@@ -888,8 +851,6 @@ export function checkWallCollision(
     }
   } catch (e) {
     console.error('[Physics] checkWallCollision error:', e);
-  } finally {
-    recordPhysicsQueryTime(performance.now() - queryStart);
   }
   
   return { hit: false, distance: Infinity, normal: { x: 0, y: 0, z: 0 }, pushBack: { x: 0, z: 0 } };
@@ -1028,6 +989,5 @@ export {
 function initializeTemporaryWallSystem() {
   if (rapierInstance && worldInstance) {
     initTemporaryWallSystem(rapierInstance, worldInstance);
-    setTemporaryColliderCountProvider(getTemporaryWallColliderCount);
   }
 }

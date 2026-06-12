@@ -346,8 +346,26 @@ function writeTrace(group: 'smoke' | 'full' | 'malicious', fileName: string, tra
 
 const FORWARD = MOVEMENT_BUTTON_MOVE_FORWARD;
 const SPRINT_FORWARD = MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT;
+const SPRINT_JUMP_FORWARD = SPRINT_FORWARD | MOVEMENT_BUTTON_JUMP;
 
 const legalTraces: Array<{ group: 'smoke' | 'full'; file: string; trace: AntiCheatMovementTrace }> = [
+  {
+    group: 'smoke',
+    file: 'legal_slide_jump_bhop_chain.json',
+    trace: buildLegalTrace({
+      id: 'legal-slide-jump-bhop-chain',
+      heroId: 'phantom',
+      movementClass: 'slide_jump_bhop_chain',
+      smoke: true,
+      steps: [
+        { buttons: SPRINT_FORWARD, frames: 12 },
+        { buttons: SPRINT_FORWARD | MOVEMENT_BUTTON_CROUCH, frames: 10 },
+        { buttons: SPRINT_JUMP_FORWARD, frames: 1 },
+        { buttons: SPRINT_FORWARD, frames: 20 },
+        { buttons: FORWARD, frames: 12 },
+      ],
+    }),
+  },
   {
     group: 'smoke',
     file: 'legal_grapple_flag_route.json',
@@ -439,7 +457,7 @@ const legalTraces: Array<{ group: 'smoke' | 'full'; file: string; trace: AntiChe
     trace: buildLegalTrace({
       id: 'legal-air-strafe-fall',
       heroId: 'hookshot',
-      movementClass: 'air_strafe_fall',
+      movementClass: 'wallrun_glide_fall',
       steps: [
         { buttons: SPRINT_FORWARD, frames: 8 },
         { buttons: SPRINT_FORWARD | MOVEMENT_BUTTON_JUMP, frames: 1 },

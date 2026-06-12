@@ -180,7 +180,6 @@ export class LobbyRoom extends Room<LobbyState> {
   onCreate(options: JoinOptions) {
     this.autoDispose = true;
     assertUsableEntryTicketSecret();
-    console.log('Lobby room created:', this.roomId);
     const initialMatchmakingTicket = options.matchmakingMode === true
       ? verifyMatchmakingTicket(options.matchmakingTicket)
       : null;
@@ -365,18 +364,12 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.playerAuthContexts.set(client.sessionId, authContext);
 
-    console.log(`[LobbyRoom] Player joining: sessionId=${client.sessionId}, name=${authContext.displayName}, clientId=${options.clientId}, userId=${authContext.userId}`);
-    console.log(`[LobbyRoom] Current players in lobby: ${this.state.players.size}, clientId map size: ${this.clientIdToSessionId.size}`);
-
     // Handle reconnection: identity comes from auth or explicit guest mode, not localStorage clientId.
     const identityKey = authContext.userId;
     if (identityKey) {
       const existingSessionId = this.clientIdToSessionId.get(identityKey);
-      console.log(`[LobbyRoom] Checking for existing session with identity ${identityKey}: found=${existingSessionId}`);
       
       if (existingSessionId && existingSessionId !== client.sessionId) {
-        console.log(`[LobbyRoom] DUPLICATE DETECTED! Kicking old session: ${existingSessionId}`);
-        
         // Find and disconnect the old client
         const oldClient = this.clients.find(c => c.sessionId === existingSessionId);
         if (oldClient) {
@@ -520,8 +513,6 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   onLeave(client: Client, consented: boolean) {
-    console.log('Player left lobby:', client.sessionId, 'consented:', consented);
-
     const player = this.state.players.get(client.sessionId);
     const wasHost = player?.isHost;
     const authContext = this.playerAuthContexts.get(client.sessionId);
@@ -581,7 +572,6 @@ export class LobbyRoom extends Room<LobbyState> {
 
   async onDispose() {
     this.disposed = true;
-    console.log('Lobby room disposing:', this.roomId);
     this.clearMapVoteTimer();
     this.stopWagerSafetyRefresh();
     if (this.unsubscribeWagerPaymentStatusChanged) {
@@ -657,7 +647,6 @@ export class LobbyRoom extends Room<LobbyState> {
     }
 
     if (this.state.status === 'starting' || this.state.status === 'in_game') {
-      console.log('[LobbyRoom] Game already starting/started, ignoring duplicate startGame request');
       return;
     }
     
@@ -725,8 +714,6 @@ export class LobbyRoom extends Room<LobbyState> {
 
     this.updateMetadata({ status: 'map_vote' });
     this.broadcastMapVoteStarted();
-
-    console.log('[LobbyRoom] Map vote started');
   }
 
   private handleMapVotePreviewsReady(client: Client): void {
@@ -844,8 +831,6 @@ export class LobbyRoom extends Room<LobbyState> {
       votes: this.getMapVoteRecords(),
     });
 
-    console.log('[LobbyRoom] Map vote finalized', selectedOption.id, selectedOption.seed);
-
     try {
       await this.createGameFromLobby(selectedOption.seed);
     } catch (error) {
@@ -919,8 +904,6 @@ export class LobbyRoom extends Room<LobbyState> {
           wager: lockedWagerContext,
         });
       }
-
-      console.log('Game room created:', gameRoom.roomId, 'from lobby:', this.roomId);
 
       // Dispose this lobby after a short delay
       setTimeout(() => {

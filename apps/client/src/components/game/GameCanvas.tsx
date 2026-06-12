@@ -8,7 +8,6 @@ import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
 import { OtherPlayers } from './OtherPlayers';
-import { PerfMonitor } from './PerfMonitor';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
@@ -25,13 +24,6 @@ import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
-import {
-  beginStartupWarmupSession,
-  getClientPerfSnapshot,
-  recordStartupStageTime,
-  setActiveLightCount,
-  updateStartupWarmupMetrics,
-} from '../../utils/perfMarks';
 import {
   getMapPrepCacheKey,
 } from '../../utils/mapWarmup/mapPrepCache';
@@ -116,25 +108,6 @@ function SceneReadySignal({
       window.cancelAnimationFrame(secondFrame);
     };
   }, [onReady, ready, readyKey]);
-
-  return null;
-}
-
-function SceneLightCounter() {
-  const { scene } = useThree();
-  const accumulatorRef = useRef(0);
-
-  useFrame((_, delta) => {
-    accumulatorRef.current += delta;
-    if (accumulatorRef.current < 0.5) return;
-    accumulatorRef.current = 0;
-
-    let lights = 0;
-    scene.traverse((object) => {
-      if ((object as THREE.Light).isLight) lights++;
-    });
-    setActiveLightCount(lights);
-  });
 
   return null;
 }
@@ -230,13 +203,11 @@ function SceneGpuWarmup({
         }
       }
       const textureUploadMs = performance.now() - textureUploadStart;
-      recordStartupStageTime('textureUpload', textureUploadMs);
       onStageDone('textures', textureUploadMs);
 
       const compileStart = performance.now();
       gl.compile(scene, camera);
       const compileMs = performance.now() - compileStart;
-      recordStartupStageTime('rendererCompile', compileMs);
       onStageDone('shaders', compileMs);
 
       const shadowReflectionStart = performance.now();
@@ -247,23 +218,18 @@ function SceneGpuWarmup({
         gl.render(scene, camera);
       }
       const shadowReflectionMs = performance.now() - shadowReflectionStart;
-      recordStartupStageTime('shadowReflectionWarmup', shadowReflectionMs);
       onStageDone('shadowsReflections', shadowReflectionMs);
 
       const gameplayObjectStart = performance.now();
       await waitForAnimationFrame();
       const gameplayObjectMs = performance.now() - gameplayObjectStart;
-      recordStartupStageTime('gameplayObjectMount', gameplayObjectMs);
       onStageDone('gameplayObjects', gameplayObjectMs);
 
-      const hiddenRenderStart = performance.now();
       for (let frame = 0; frame < GPU_WARMUP_RENDER_FRAMES; frame++) {
         await waitForAnimationFrame();
         if (cancelled || timedOut) return;
         gl.render(scene, camera);
       }
-      const hiddenRenderMs = performance.now() - hiddenRenderStart;
-      recordStartupStageTime('hiddenWarmupRender', hiddenRenderMs);
 
       if (cancelled || timedOut) return;
       completedKeyRef.current = warmupKey;
@@ -316,6 +282,7 @@ function WarmupSettlingFrames({
 
 const FEATURE_QUALITY_STEPS = ['off', 'minimum', 'low', 'medium', 'high', 'ultra'] as const;
 const RESOLUTION_QUALITY_STEPS = ['minimum', 'low', 'medium', 'high', 'ultra'] as const;
+const ADAPTIVE_QUALITY_SAMPLE_LIMIT = 120;
 
 function stepDown<T extends string>(value: T, steps: readonly T[]): T {
   const index = steps.indexOf(value);
@@ -326,15 +293,33 @@ function AdaptiveQualityController() {
   const settings = useSettingsStore(state => state.settings);
   const accumulatorRef = useRef(0);
   const overBudgetSecondsRef = useRef(0);
+  const frameSamplesRef = useRef<number[]>([]);
+  const frameSampleIndexRef = useRef(0);
 
   useFrame((_, delta) => {
-    if (!settings.adaptiveQuality) return;
+    if (!settings.adaptiveQuality) {
+      accumulatorRef.current = 0;
+      overBudgetSecondsRef.current = 0;
+      frameSamplesRef.current.length = 0;
+      frameSampleIndexRef.current = 0;
+      return;
+    }
+
+    const frameSamples = frameSamplesRef.current;
+    const frameMs = delta * 1000;
+    if (frameSamples.length < ADAPTIVE_QUALITY_SAMPLE_LIMIT) {
+      frameSamples.push(frameMs);
+    } else {
+      frameSamples[frameSampleIndexRef.current] = frameMs;
+      frameSampleIndexRef.current = (frameSampleIndexRef.current + 1) % ADAPTIVE_QUALITY_SAMPLE_LIMIT;
+    }
 
     accumulatorRef.current += delta;
     if (accumulatorRef.current < 2) return;
     accumulatorRef.current = 0;
 
-    const p95 = getClientPerfSnapshot().frame.frameMsP95;
+    const sortedSamples = [...frameSamples].sort((a, b) => a - b);
+    const p95 = sortedSamples[Math.floor((sortedSamples.length - 1) * 0.95)] ?? 0;
     if (p95 < 22) {
       overBudgetSecondsRef.current = Math.max(0, overBudgetSecondsRef.current - 2);
       return;
@@ -429,17 +414,6 @@ interface GameCanvasProps {
   startupRampActive?: boolean;
 }
 
-function getGraphicsProfileKey(settings: ReturnType<typeof useSettingsStore.getState>['settings']): string {
-  return [
-    settings.graphicsPreset,
-    settings.resolutionScale,
-    settings.materialQuality,
-    settings.shadowQuality,
-    settings.reflectionQuality,
-    settings.environmentQuality,
-  ].join(':');
-}
-
 export function GameCanvas({
   onReady,
   onWarmupUpdate,
@@ -447,12 +421,9 @@ export function GameCanvas({
 }: GameCanvasProps) {
   const gamePhase = useGameStore((state) => state.gamePhase);
   const mapSeed = useGameStore((state) => state.mapSeed);
-  const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
-  const debugMode = useGameStore((state) => state.debugMode);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
   const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed }), [mapSeed]);
-  const graphicsProfileKey = useMemo(() => getGraphicsProfileKey(settings), [settings]);
   const [warmupSnapshot, dispatchWarmup] = useReducer(
     reduceMapWarmup,
     createMapWarmupSnapshot(warmupKey, mapSeed)
@@ -469,7 +440,6 @@ export function GameCanvas({
     [mapTheme]
   );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
-  const showFullPerfOverlay = debugMode || settings.showFPS === 'full';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
   const shouldMountGameplayObjects = isPlaying || warmupSnapshot.canShowGameplayObjects;
   const effectiveEnvironmentConfig = startupRampActive
@@ -506,30 +476,14 @@ export function GameCanvas({
   useEffect(() => {
     completedWarmupStagesRef.current = new Set();
     didStartGpuRef.current = null;
-    beginStartupWarmupSession({
-      key: warmupKey,
-      mapSeed,
-      graphicsProfile: graphicsProfileKey,
-      heroId: localHeroId,
-    });
     dispatchWarmup({ type: 'startCpu', key: warmupKey, mapSeed });
     markWarmupStageDone('resources', 0);
   }, [mapSeed, markWarmupStageDone, warmupKey]);
 
   useEffect(() => {
-    updateStartupWarmupMetrics({
-      state: warmupSnapshot.state,
-      label: warmupSnapshot.label,
-      progress: warmupSnapshot.progress,
-      fallbackReason: warmupSnapshot.fallbackReason,
-    });
     onWarmupUpdate?.(warmupSnapshot);
   }, [
     onWarmupUpdate,
-    warmupSnapshot.fallbackReason,
-    warmupSnapshot.label,
-    warmupSnapshot.progress,
-    warmupSnapshot.state,
     warmupSnapshot,
   ]);
 
@@ -607,7 +561,6 @@ export function GameCanvas({
         <PhysicsBudgetApplier maxVisualQueriesPerFrame={qualityConfig.budgets.maxVisualPhysicsQueriesPerFrame} />
         <GameplayFrameSystems />
         <DynamicLightBudgetSystem maxLights={effectiveDynamicLights.maxDynamicLights} />
-        {showFullPerfOverlay && <SceneLightCounter />}
         <AdaptiveQualityController />
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={effectiveEnvironmentConfig} />
@@ -641,10 +594,6 @@ export function GameCanvas({
             <BudgetedPointLight budgetPriority={0.3} position={[40, 10, 0]} intensity={38} color="#4a9cff" distance={30} decay={2} />
           </>
         )}
-
-        {/* Performance monitor */}
-        <PerfMonitor />
-
 
         {/* World */}
         <VoxelWorld

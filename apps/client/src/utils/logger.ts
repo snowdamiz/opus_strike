@@ -70,7 +70,6 @@ export const loggers = {
   auth: createLogger('auth'),
   effects: createLogger('effects'),
   network: createLogger('network'),
-  perf: createLogger('perf'),
   physics: createLogger('physics'),
   room: createLogger('room'),
   voice: createLogger('voice'),

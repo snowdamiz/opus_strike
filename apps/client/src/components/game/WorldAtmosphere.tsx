@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { EnvironmentQualityConfig } from './visualQuality';
-import { setAtmosphereParticleCount } from '../../utils/perfMarks';
 
 interface WorldAtmosphereProps {
   theme: VoxelMapTheme;
@@ -1157,13 +1156,7 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
     () => createThemeColor(theme.sunColor, '#ffffff', theme.id === 'basalt' ? 0.25 : 0.1),
     [theme]
   );
-  const activeParticleCount = atmosphereProfiles.reduce((sum, profile) => sum + profile.count, 0);
-
   useEffect(() => () => skyMaterial.dispose(), [skyMaterial]);
-  useEffect(() => {
-    setAtmosphereParticleCount(activeParticleCount);
-    return () => setAtmosphereParticleCount(0);
-  }, [activeParticleCount]);
 
   return (
     <group name="world-atmosphere">

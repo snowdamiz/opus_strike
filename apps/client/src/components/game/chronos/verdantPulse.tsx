@@ -9,7 +9,6 @@ import {
 import { useGameStore, type ChronosPulseData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
-import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
@@ -285,9 +284,6 @@ export function ChronosPulsesManager() {
   if (!poolRef.current) {
     poolRef.current = new ChronosPulseRuntimePool(CHRONOS_PULSE_CAPACITY);
   }
-
-  useEffect(() => registerFrameSystem('chronos-pulses'), []);
-
   useEffect(() => {
     const pool = poolRef.current;
     if (!pool) return;
@@ -310,12 +306,10 @@ export function ChronosPulsesManager() {
     const pool = poolRef.current;
     if (!pool) return;
 
-    const frameStart = performance.now();
     const store = useGameStore.getState();
     const clock = getFrameClock();
     const delta = clock.clampedDeltaSeconds;
     let instanceIndex = 0;
-    let physicsMs = 0;
     let lightX = 0;
     let lightY = 0;
     let lightZ = 0;
@@ -339,7 +333,6 @@ export function ChronosPulsesManager() {
       if (moveDistance > 0.001 && isPhysicsReady()) {
         const world = getPhysicsWorld();
         if (world) {
-          const physicsStart = performance.now();
           const hit = raycast(
             world,
             slot.position,
@@ -350,7 +343,6 @@ export function ChronosPulsesManager() {
               feature: 'projectile:chronosPulse',
             }
           );
-          physicsMs += performance.now() - physicsStart;
           if (hit && hit.distance <= moveDistance + collisionRadius) {
             triggerTerrainImpact('chronos_pulse', hit.point, {
               normal: hit.normal,
@@ -447,11 +439,6 @@ export function ChronosPulsesManager() {
       removeChronosPulses(removals);
       removals.length = 0;
     }
-
-    if (physicsMs > 0) {
-      recordSystemTime('physicsQueries', physicsMs);
-    }
-    recordSystemTime('chronosPulses', performance.now() - frameStart);
   });
 
   return (

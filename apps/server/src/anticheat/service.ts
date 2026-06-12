@@ -28,11 +28,83 @@ function scoreBand(score: number): string {
 
 export class AntiCheatEvidenceStore {
   private lastRetentionPruneAt = 0;
+  private readonly signalQueue: Array<{
+    signal: AntiCheatSignal;
+    change: AntiCheatScoreChange;
+    resolve: (result: { caseId: string | null }) => void;
+  }> = [];
+  private readonly flushWaiters: Array<() => void> = [];
+  private activeSignalWrites = 0;
+  private readonly maxQueuedSignals = 1000;
+  private readonly signalWriteConcurrency = 2;
 
   constructor(private readonly prisma: PrismaClient) {}
 
   async recordSignal(signal: AntiCheatSignal, change: AntiCheatScoreChange): Promise<{ caseId: string | null }> {
     if (!getAntiCheatConfig().enabled) return { caseId: null };
+    if (
+      this.signalQueue.length >= this.maxQueuedSignals &&
+      (signal.severity === 'low' || signal.severity === 'medium')
+    ) {
+      loggers.room.warn('Dropping anti-cheat signal due to persistence backlog', {
+        eventType: signal.eventType,
+        roomId: signal.roomId,
+        queued: this.signalQueue.length,
+      });
+      return { caseId: null };
+    }
+
+    return new Promise((resolve) => {
+      const job = { signal, change, resolve };
+      if (signal.severity === 'high' || signal.severity === 'critical') {
+        this.signalQueue.unshift(job);
+      } else {
+        this.signalQueue.push(job);
+      }
+      this.drainSignalQueue();
+    });
+  }
+
+  async flush(timeoutMs = 5000): Promise<void> {
+    if (this.signalQueue.length === 0 && this.activeSignalWrites === 0) return;
+
+    await new Promise<void>((resolve) => {
+      const waiter = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      const timeout = setTimeout(() => {
+        const index = this.flushWaiters.indexOf(waiter);
+        if (index >= 0) this.flushWaiters.splice(index, 1);
+        resolve();
+      }, timeoutMs);
+      this.flushWaiters.push(waiter);
+      this.drainSignalQueue();
+    });
+  }
+
+  private drainSignalQueue(): void {
+    while (this.activeSignalWrites < this.signalWriteConcurrency && this.signalQueue.length > 0) {
+      const job = this.signalQueue.shift()!;
+      this.activeSignalWrites++;
+      void this.persistSignal(job.signal, job.change)
+        .then(job.resolve)
+        .finally(() => {
+          this.activeSignalWrites--;
+          this.resolveFlushWaitersIfIdle();
+          this.drainSignalQueue();
+        });
+    }
+  }
+
+  private resolveFlushWaitersIfIdle(): void {
+    if (this.signalQueue.length > 0 || this.activeSignalWrites > 0) return;
+    while (this.flushWaiters.length > 0) {
+      this.flushWaiters.shift()?.();
+    }
+  }
+
+  private async persistSignal(signal: AntiCheatSignal, change: AntiCheatScoreChange): Promise<{ caseId: string | null }> {
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {

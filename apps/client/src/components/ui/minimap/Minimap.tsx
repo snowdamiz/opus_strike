@@ -96,9 +96,9 @@ export function Minimap() {
       aria-hidden="true"
     >
       <div
-        className="relative h-full w-full overflow-hidden rounded-lg border border-cyan-100/18 bg-slate-950/72 shadow-[0_10px_28px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md"
+        className="relative h-full w-full overflow-hidden rounded-lg border border-cyan-100/10 bg-slate-950/72 shadow-[0_10px_28px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md"
         style={{
-          boxShadow: '0 12px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 24px rgba(34, 211, 238, 0.06)',
+          boxShadow: '0 12px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255,255,255,0.04), inset 0 0 24px rgba(34, 211, 238, 0.03)',
         }}
       >
         <canvas ref={staticCanvasRef} className="absolute inset-0 h-full w-full" />
@@ -106,10 +106,6 @@ export function Minimap() {
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),transparent_28%,transparent_72%,rgba(6,182,212,0.07))]" />
         <div className="absolute inset-x-2 top-2 h-px bg-gradient-to-r from-transparent via-cyan-100/30 to-transparent" />
         <div className="absolute inset-x-2 bottom-2 h-px bg-gradient-to-r from-transparent via-cyan-100/18 to-transparent" />
-        <div className="absolute left-2 top-2 h-2 w-2 border-l border-t border-cyan-100/34" />
-        <div className="absolute right-2 top-2 h-2 w-2 border-r border-t border-cyan-100/34" />
-        <div className="absolute bottom-2 left-2 h-2 w-2 border-b border-l border-cyan-100/26" />
-        <div className="absolute bottom-2 right-2 h-2 w-2 border-b border-r border-cyan-100/26" />
       </div>
     </div>
   );

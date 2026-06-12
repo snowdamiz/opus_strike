@@ -9,7 +9,6 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
-import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import {
   getFireballCoreMaterial,
@@ -280,9 +279,6 @@ export function RocketsManager() {
   if (!poolRef.current) {
     poolRef.current = new RocketRuntimePool(MAX_ROCKETS);
   }
-
-  useEffect(() => registerFrameSystem('blaze-rockets'), []);
-
   useEffect(() => {
     const pool = poolRef.current;
     if (!pool) return;
@@ -305,11 +301,9 @@ export function RocketsManager() {
     const pool = poolRef.current;
     if (!pool) return;
 
-    const frameStart = performance.now();
     const store = useGameStore.getState();
     const clock = getFrameClock();
     const delta = clock.clampedDeltaSeconds;
-    let physicsMs = 0;
     let instanceIndex = 0;
     let lightX = 0;
     let lightY = 0;
@@ -333,12 +327,10 @@ export function RocketsManager() {
       if (moveDistance > 0.001 && isPhysicsReady()) {
         const world = getPhysicsWorld();
         if (world) {
-          const physicsStart = performance.now();
           const hit = raycast(world, slot.position, slot.direction, moveDistance + PROJECTILE_RADIUS, {
             priority: 'visual',
             feature: 'projectile:blazeRocket',
           });
-          physicsMs += performance.now() - physicsStart;
           if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
             triggerTerrainImpact('blaze_rocket', hit.point, {
               normal: hit.normal,
@@ -420,11 +412,6 @@ export function RocketsManager() {
       removeRockets(removals);
       removals.length = 0;
     }
-
-    if (physicsMs > 0) {
-      recordSystemTime('physicsQueries', physicsMs);
-    }
-    recordSystemTime('blazeRockets', performance.now() - frameStart);
   });
 
   return (

@@ -9,7 +9,6 @@ import {
   SHARED_GEOMETRIES,
 } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
-import { recordSpawnMarker, recordSystemTime, registerFrameSystem } from '../../utils/perfMarks';
 import { getFrameClock } from '../../utils/frameClock';
 import type { EffectQualityConfig } from './visualQuality';
 
@@ -438,7 +437,6 @@ export function triggerTerrainImpact(
     const activePooledImpacts = phantomDireImpactSlots.reduce((count, slot) => count + (slot.active ? 1 : 0), 0);
     if (activePooledImpacts >= activeImpactConfig.maxActiveImpacts) return;
     claimPooledPhantomDireImpact(position, normal, (options.scale ?? 1) * style.scale, frameNow);
-    recordSpawnMarker('impact:phantomDireBall');
     terrainImpactRevision++;
     return;
   }
@@ -525,14 +523,11 @@ export function TerrainImpactEffectsManager({ config }: { config: EffectQualityC
   const lastCountRef = useRef(0);
   const lastRevisionRef = useRef(0);
   const [, setVersion] = useState(0);
-
-  useEffect(() => registerFrameSystem('terrain-impacts'), []);
   useEffect(() => {
     activeImpactConfig = config;
   }, [config]);
 
   useFrame(() => {
-    const frameStart = performance.now();
     const frameNow = getFrameClock().nowMs;
     const changed = compactActiveTerrainImpacts(frameNow);
     syncActiveTerrainImpacts(activeEffectsRef.current);
@@ -547,8 +542,6 @@ export function TerrainImpactEffectsManager({ config }: { config: EffectQualityC
       lastRevisionRef.current = terrainImpactRevision;
       setVersion(v => v + 1);
     }
-
-    recordSystemTime('terrainImpacts', performance.now() - frameStart);
   });
 
   return (

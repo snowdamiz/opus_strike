@@ -20,7 +20,6 @@ import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
 import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCache';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
-import { markStartupRevealStart, recordStartupStageTime } from './utils/perfMarks';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
@@ -104,7 +103,6 @@ export function App() {
     }
 
     let cancelled = false;
-    const preloadStart = performance.now();
     setAreMatchResourcesReady(false);
 
     (async () => {
@@ -119,7 +117,6 @@ export function App() {
         console.warn('[App] Match resource preload failed', error);
       } finally {
         if (!cancelled) {
-          recordStartupStageTime('resources', performance.now() - preloadStart);
           setAreMatchResourcesReady(true);
         }
       }
@@ -311,15 +308,11 @@ export function App() {
     if (revealedWarmupKeyRef.current === warmupKey) return;
 
     revealedWarmupKeyRef.current = warmupKey;
-    markStartupRevealStart(warmupKey);
-
     if (isStartupQualityRampDisabled()) return;
 
-    const rampStart = performance.now();
     setIsStartupRampActive(true);
     const timeout = window.setTimeout(() => {
       setIsStartupRampActive(false);
-      recordStartupStageTime('startupQualityRamp', performance.now() - rampStart);
     }, STARTUP_QUALITY_RAMP_MS);
 
     return () => {

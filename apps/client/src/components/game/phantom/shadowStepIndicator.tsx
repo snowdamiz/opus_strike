@@ -5,7 +5,6 @@ import { PLAYER_HEIGHT, PLAYER_RADIUS } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, validateTeleportDestination } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
-import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 
 // Maximum teleport range
 const MAX_RANGE = 25;
@@ -329,16 +328,12 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
     sizeAttenuation: true,
   }), []);
 
-  useEffect(() => registerFrameSystem('shadow-step-targeting'), []);
-
   useFrame((state) => {
-    const frameStart = performance.now();
     const frameClock = getFrameClock();
     if (!isActive || !localPlayer || !indicatorRef.current) {
       if (indicatorRef.current) {
         indicatorRef.current.visible = false;
       }
-      recordSystemTime('shadowStepTargeting', performance.now() - frameStart);
       return;
     }
 
@@ -539,8 +534,6 @@ export function ShadowStepIndicator({ isActive, onTargetUpdate }: ShadowStepIndi
       lastTargetReportAtRef.current = frameClock.nowMs;
       onTargetUpdate(reportedTargetRef.current, isValid);
     }
-
-    recordSystemTime('shadowStepTargeting', performance.now() - frameStart);
   });
 
   if (!isActive) return null;

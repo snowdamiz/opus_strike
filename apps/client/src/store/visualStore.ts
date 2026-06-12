@@ -390,6 +390,18 @@ export const addRemoteTransformSnapshot = (
   history.latestReceivedAtMs = receivedAtMs;
 };
 
+export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<string>): void => {
+  const state = visualStore.getState();
+  for (const playerId of state.remoteTransformHistories.keys()) {
+    if (!activePlayerIds.has(playerId)) {
+      state.remoteTransformHistories.delete(playerId);
+      state.interpolationTargets.delete(playerId);
+      state.playerPositions.delete(playerId);
+      state.playerRotations.delete(playerId);
+    }
+  }
+};
+
 export const sampleRemoteTransformInto = (
   playerId: string,
   target: SampledRemoteTransform,

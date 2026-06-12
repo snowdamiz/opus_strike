@@ -7,7 +7,6 @@
 import { useRef, useCallback } from 'react';
 import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
-import { recordSystemTime } from '../../utils/perfMarks';
 import type { AbilityActiveState } from './types';
 import { getLocalChronosTimebreakTempoMultiplier } from './chronosTimebreakTempo';
 
@@ -226,7 +225,6 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
 
   // Update active abilities and return speed multiplier
   const updateActiveAbilities = useCallback((dt: number): { speedMultiplier: number } => {
-    const frameStart = performance.now();
     const now = Date.now();
     let speedMultiplier = 1;
 
@@ -302,8 +300,6 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
     }
 
     speedMultiplier *= tempoMultiplier;
-
-    recordSystemTime('abilitySystem', performance.now() - frameStart);
 
     return { speedMultiplier };
   }, [setClientCharges, setClientCooldown, startClientCooldown]);
