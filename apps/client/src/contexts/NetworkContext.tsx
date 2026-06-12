@@ -44,6 +44,14 @@ import {
 import { projectileInitialState } from '../store/slices/projectiles';
 
 type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
+type CreateLobbyOptions = {
+  initialBotCount?: number;
+  botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
+  defaultBotDifficulty?: BotDifficulty;
+  wager?: CreateLobbyWagerOptions;
+  mapSeed?: number;
+};
+type StartPracticeGameOptions = { mapSeed?: number };
 
 // ============================================================================
 // CONTEXT TYPE
@@ -57,16 +65,11 @@ interface NetworkContextType {
     playerName: string,
     lobbyName?: string,
     isPrivate?: boolean,
-    options?: {
-      initialBotCount?: number;
-      botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
-      defaultBotDifficulty?: BotDifficulty;
-      wager?: CreateLobbyWagerOptions;
-    }
+    options?: CreateLobbyOptions
   ) => Promise<void>;
   quickPlay: (playerName: string) => Promise<void>;
   rankedPlay: (playerName: string) => Promise<void>;
-  startPracticeGame: (playerName?: string) => void;
+  startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
@@ -404,7 +407,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
   }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests]);
 
-  const startPracticeGame = useCallback((playerName?: string) => {
+  const startPracticeGame = useCallback((playerName?: string, options?: StartPracticeGameOptions) => {
     const name = resolvePracticePlayerName(playerName);
 
     cleanupExistingConnections();
@@ -421,7 +424,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (practiceStartTokenRef.current !== startToken) return;
 
       try {
-        const seed = createRandomSeed();
+        const seed = typeof options?.mapSeed === 'number'
+          ? options.mapSeed >>> 0
+          : createRandomSeed();
         const preparedMap = prepareVoxelMapCpu({ seed, source: 'match' });
         const spawnPoints = [
           ...preparedMap.manifest.spawnPoints.red,
@@ -832,12 +837,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     playerName: string,
     lobbyName?: string,
     isPrivate?: boolean,
-    options?: {
-      initialBotCount?: number;
-      botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
-      defaultBotDifficulty?: BotDifficulty;
-      wager?: CreateLobbyWagerOptions;
-    }
+    options?: CreateLobbyOptions
   ) => {
     setLoading(true);
 
@@ -860,6 +860,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         botFillMode: options?.botFillMode || 'manual',
         defaultBotDifficulty: options?.defaultBotDifficulty || 'normal',
         wager: options?.wager,
+        mapSeed: config.isDev && typeof options?.mapSeed === 'number'
+          ? options.mapSeed >>> 0
+          : undefined,
       });
 
       setupLobbyListeners(lobbyRoomRef.current, playerName);

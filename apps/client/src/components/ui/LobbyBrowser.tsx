@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useGameStore, LobbyInfo } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
+import { config } from '../../config/environment';
 import type { BotDifficulty } from '@voxel-strike/shared';
+import { parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
 import { lamportsToSolDisplay, solInputToLamports } from '../../utils/wagerPayments';
 
 export function LobbyBrowser() {
@@ -13,6 +15,7 @@ export function LobbyBrowser() {
   const [defaultBotDifficulty, setDefaultBotDifficulty] = useState<BotDifficulty>('normal');
   const [wagerEnabled, setWagerEnabled] = useState(false);
   const [coverChargeSol, setCoverChargeSol] = useState('0.01');
+  const [mapSeedInput, setMapSeedInput] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -22,6 +25,7 @@ export function LobbyBrowser() {
   const handleCreateLobby = async () => {
     setError(null);
     try {
+      const mapSeed = config.isDev ? parseOptionalMapSeedInput(mapSeedInput) : undefined;
       await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate, {
         initialBotCount,
         botFillMode: 'manual',
@@ -29,6 +33,7 @@ export function LobbyBrowser() {
         wager: wagerEnabled
           ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
           : { enabled: false },
+        mapSeed,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -135,6 +140,24 @@ export function LobbyBrowser() {
                     className="input w-full px-3 py-2.5"
                   />
                 </div>
+
+                {config.isDev && (
+                  <div>
+                    <label className="block text-xs text-white/40 font-body uppercase tracking-wider mb-2">
+                      Map Seed
+                    </label>
+                    <input
+                      type="text"
+                      value={mapSeedInput}
+                      onChange={(e) => {
+                        setMapSeedInput(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder="Random"
+                      className="input w-full px-3 py-2.5"
+                    />
+                  </div>
+                )}
 
                 <label className="flex items-center gap-3 p-3 bg-black/20 border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors">
                   <div className="relative">

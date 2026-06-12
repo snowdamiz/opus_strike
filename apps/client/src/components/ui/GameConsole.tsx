@@ -18,6 +18,36 @@ interface ConsoleMessage {
 
 let messageId = 0;
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Fall through to the selection-based copy path below.
+    }
+  }
+
+  if (typeof document === 'undefined') return false;
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 // Helper to check if a player ID is an NPC (server-spawned NPCs have npc_ prefix)
 export function isNpcId(playerId: string): boolean {
   return playerId.startsWith('npc_');
@@ -224,8 +254,8 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze'
-        : 'Developer commands are disabled in this build',
+        ? 'Developer Console - /seed copy | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze'
+        : 'Game Chat - /seed copy',
       type: 'info',
     },
   ]);
@@ -303,7 +333,7 @@ export function GameConsole() {
     setMessages(prev => [...prev, { id: messageId++, text, type }]);
   }, []);
 
-  const executeCommand = useCallback((cmd: string) => {
+  const executeCommand = useCallback(async (cmd: string) => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
 
@@ -318,6 +348,29 @@ export function GameConsole() {
     const command = parts[0].toLowerCase();
 
     switch (command) {
+      case '/seed': {
+        const action = parts[1]?.toLowerCase();
+        const seed = useGameStore.getState().mapSeed >>> 0;
+
+        if (!action) {
+          addMessage(`Current seed: ${seed}`, 'info');
+          break;
+        }
+
+        if (parts.length !== 2 || action !== 'copy') {
+          addMessage('Usage: /seed copy', 'error');
+          break;
+        }
+
+        const copied = await copyTextToClipboard(String(seed));
+        if (copied) {
+          addMessage(`Copied seed ${seed} to clipboard.`, 'info');
+        } else {
+          addMessage(`Clipboard unavailable. Current seed: ${seed}`, 'error');
+        }
+        break;
+      }
+
       case '/immune': {
         if (!config.isDev) {
           addMessage('Developer commands are disabled outside development builds.', 'error');
@@ -460,13 +513,13 @@ export function GameConsole() {
       }
 
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: /seed copy, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze`, 'error');
     }
   }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    executeCommand(input);
+    void executeCommand(input);
     setInput('');
   };
 
@@ -532,7 +585,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /fly, /immune, /hero <hero>, /end, /bot add <hero> <side>, /bot nobrain, /bot brain, /bots root, /f, or /time freeze...' : 'Developer commands disabled'}
+            placeholder={config.isDev ? 'Type /seed copy, /immune, /hero <hero>, /end, /bot add <hero> <side>, /bot nobrain, /bot brain, /bots root, /f, or /time freeze...' : 'Type /seed copy...'}
             autoComplete="off"
             spellCheck={false}
           />
@@ -540,7 +593,7 @@ export function GameConsole() {
 
         {/* Help hint */}
         <div className="text-xs text-gray-500 px-3 pb-2">
-          Press Enter to open | ESC to close | Dev commands only run in development
+          Press Enter to open | ESC to close | /seed copy works in any match
         </div>
       </div>
     </>

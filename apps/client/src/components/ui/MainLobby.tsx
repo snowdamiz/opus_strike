@@ -10,10 +10,12 @@ import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewC
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton } from './SocialBox';
 import { useUISounds } from '../../hooks/useAudio';
+import { config } from '../../config/environment';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
+import { parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
 import { solInputToLamports } from '../../utils/wagerPayments';
 import { RankIcon, getRankForStats } from './RankBadge';
 
@@ -138,6 +140,7 @@ export function MainLobby() {
   const [showSocial, setShowSocial] = useState(false);
   const [showPlayDialog, setShowPlayDialog] = useState(false);
   const [showCreateLobby, setShowCreateLobby] = useState(false);
+  const [showPracticeSetup, setShowPracticeSetup] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
   const heroAnimationMode = LOBBY_HERO_ANIMATION_MODE;
 
@@ -313,10 +316,10 @@ export function MainLobby() {
     setFeaturedHero(heroId);
   };
 
-  const handleCreateLobby = async (lobbyName: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }) => {
+  const handleCreateLobby = async (lobbyName: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => {
     setError(null);
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate, { wager });
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate, { wager, mapSeed });
       setShowCreateLobby(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -332,9 +335,10 @@ export function MainLobby() {
     }
   };
 
-  const handlePracticeGame = () => {
+  const handlePracticeGame = (mapSeed?: number) => {
     setError(null);
-    startPracticeGame(playerName);
+    startPracticeGame(playerName, { mapSeed });
+    setShowPracticeSetup(false);
   };
 
   const handleRankedPlay = async () => {
@@ -518,9 +522,12 @@ export function MainLobby() {
           hasFullFunctionality={hasFullFunctionality}
           isLinkingPhantom={isLinkingPhantom}
           onQuickPlay={handleQuickPlay}
-          onPracticeGame={handlePracticeGame}
           onRankedPlay={handleRankedPlay}
           onLinkPhantom={handleLinkPhantom}
+          onOpenPracticeSetup={() => {
+            setShowPlayDialog(false);
+            setShowPracticeSetup(true);
+          }}
           onOpenCreateLobby={() => {
             setShowPlayDialog(false);
             setShowCreateLobby(true);
@@ -535,6 +542,14 @@ export function MainLobby() {
           error={error}
           onClose={() => setShowCreateLobby(false)}
           onCreate={handleCreateLobby}
+        />
+      )}
+      {showPracticeSetup && (
+        <PracticeSetupModal
+          isLoading={isLoading}
+          error={error}
+          onClose={() => setShowPracticeSetup(false)}
+          onStart={handlePracticeGame}
         />
       )}
 
@@ -752,9 +767,9 @@ interface PlayDialogProps {
   hasFullFunctionality: boolean;
   isLinkingPhantom: boolean;
   onQuickPlay: () => void;
-  onPracticeGame: () => void;
   onRankedPlay: () => void;
   onLinkPhantom: () => void;
+  onOpenPracticeSetup: () => void;
   onOpenCreateLobby: () => void;
   onClose: () => void;
 }
@@ -767,9 +782,9 @@ function PlayDialog({
   hasFullFunctionality,
   isLinkingPhantom,
   onQuickPlay,
-  onPracticeGame,
   onRankedPlay,
   onLinkPhantom,
+  onOpenPracticeSetup,
   onOpenCreateLobby,
   onClose,
 }: PlayDialogProps) {
@@ -897,7 +912,7 @@ function PlayDialog({
 
               <button
                 type="button"
-                onClick={() => runAction(onPracticeGame)}
+                onClick={() => runAction(onOpenPracticeSetup)}
                 disabled={isLoading}
                 className="play-pay-option play-pay-option-compact"
               >
@@ -917,6 +932,84 @@ function PlayDialog({
         </div>
       </section>
     </div>
+  );
+}
+
+interface PracticeSetupModalProps {
+  isLoading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onStart: (mapSeed?: number) => void;
+}
+
+function PracticeSetupModal({ isLoading, error, onClose, onStart }: PracticeSetupModalProps) {
+  const [mapSeedInput, setMapSeedInput] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    setLocalError(null);
+
+    try {
+      onStart(parseOptionalMapSeedInput(mapSeedInput));
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : 'Invalid map seed');
+    }
+  };
+
+  return (
+    <GameDialog
+      title="PRACTICE"
+      icon={(
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
+        </svg>
+      )}
+      size="sm"
+      onClose={onClose}
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
+            Map Seed
+          </label>
+          <input
+            type="text"
+            value={mapSeedInput}
+            onChange={(event) => {
+              setMapSeedInput(event.target.value);
+              setLocalError(null);
+            }}
+            placeholder="Random"
+            className="input w-full px-3.5 py-2.5 text-base rounded-lg"
+            autoFocus
+          />
+        </div>
+
+        {(error || localError) && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+            <p className="text-red-400 text-sm font-body">{localError || error}</p>
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-lg font-display text-sm text-white/60 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white"
+          >
+            CANCEL
+          </button>
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="flex-1 py-2.5 rounded-lg font-display text-sm text-white bg-orange-500 hover:bg-orange-400 disabled:opacity-50"
+          >
+            {isLoading ? 'STARTING...' : 'START'}
+          </button>
+        </div>
+      </form>
+    </GameDialog>
   );
 }
 
@@ -990,7 +1083,7 @@ interface CreateLobbyModalProps {
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
-  onCreate: (name: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }) => void;
+  onCreate: (name: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => void;
 }
 
 function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: CreateLobbyModalProps) {
@@ -998,17 +1091,19 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
   const [isPrivate, setIsPrivate] = useState(false);
   const [wagerEnabled, setWagerEnabled] = useState(false);
   const [coverChargeSol, setCoverChargeSol] = useState('0.01');
+  const [mapSeedInput, setMapSeedInput] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError(null);
     try {
+      const mapSeed = config.isDev ? parseOptionalMapSeedInput(mapSeedInput) : undefined;
       onCreate(lobbyName, isPrivate, wagerEnabled
         ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
-        : { enabled: false });
+        : { enabled: false }, mapSeed);
     } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Invalid wager amount');
+      setLocalError(err instanceof Error ? err.message : 'Invalid lobby settings');
     }
   };
 
@@ -1042,6 +1137,24 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
             Leave empty for default name
           </p>
         </div>
+
+        {config.isDev && (
+          <div>
+            <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
+              Map Seed
+            </label>
+            <input
+              type="text"
+              value={mapSeedInput}
+              onChange={(e) => {
+                setMapSeedInput(e.target.value);
+                setLocalError(null);
+              }}
+              placeholder="Random"
+              className="input w-full px-3.5 py-2.5 text-base rounded-lg"
+            />
+          </div>
+        )}
 
         {/* Private Toggle */}
         <div

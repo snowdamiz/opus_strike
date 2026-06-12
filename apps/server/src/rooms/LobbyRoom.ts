@@ -50,6 +50,7 @@ interface JoinOptions {
   botFillMode?: 'manual' | 'fill_even' | 'fill_empty';
   defaultBotDifficulty?: BotDifficulty;
   wager?: CreateWagerOptions;
+  mapSeed?: number;
 }
 
 interface ParticipantAssignment {
@@ -166,6 +167,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private rankBandId = DEFAULT_RANK_DIVISION_INDEX;
   private rankedEntryQuoteId: string | null = null;
   private pendingWagerOptions: CreateWagerOptions | undefined;
+  private customMapSeed: number | null = null;
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -187,6 +189,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.rankBandId = this.resolveRoomRankBand(options, initialMatchmakingTicket);
     this.rankedEntryQuoteId = this.isRankedQueue ? initialMatchmakingTicket?.rankedEntryQuoteId ?? null : null;
     this.pendingWagerOptions = this.isMatchmakingQueue() ? undefined : options.wager;
+    this.customMapSeed = this.resolveCustomMapSeed(options);
 
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
@@ -1130,27 +1133,36 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private createMapVoteOptions(): MapVoteOption[] {
+    if (this.customMapSeed !== null) {
+      return [this.createMapVoteOption(this.customMapSeed, 0)];
+    }
+
     const source = hashSeed(Date.now() ^ Math.imul(this.botIdCounter + 1, 0x632be59b));
     const themeIndices = getShuffledThemeIndices(source);
 
     return Array.from({ length: MAP_VOTE_OPTION_COUNT }, (_, index) => {
       const themeIndex = themeIndices[index % themeIndices.length];
       const seed = createSeedForTheme(themeIndex, source ^ Math.imul(index + 1, 0x85ebca6b));
-      const theme = getVoxelMapTheme(seed);
-      const preview = createProceduralMapPreview(seed);
-      const suffix = MAP_NAME_SUFFIXES[hashSeed(seed ^ index) % MAP_NAME_SUFFIXES.length];
-
-      return {
-        id: `map_${index + 1}`,
-        seed,
-        name: `${preview.name} ${suffix}`,
-        themeId: preview.themeId || theme.id,
-        themeName: preview.themeName || theme.name,
-        topologyId: preview.topologyId,
-        preview: preview.preview,
-        score: preview.diagnostics.score,
-      };
+      return this.createMapVoteOption(seed, index);
     });
+  }
+
+  private createMapVoteOption(seed: number, index: number): MapVoteOption {
+    const normalizedSeed = seed >>> 0;
+    const theme = getVoxelMapTheme(normalizedSeed);
+    const preview = createProceduralMapPreview(normalizedSeed);
+    const suffix = MAP_NAME_SUFFIXES[hashSeed(normalizedSeed ^ index) % MAP_NAME_SUFFIXES.length];
+
+    return {
+      id: `map_${index + 1}`,
+      seed: normalizedSeed,
+      name: `${preview.name} ${suffix}`,
+      themeId: preview.themeId || theme.id,
+      themeName: preview.themeName || theme.name,
+      topologyId: preview.topologyId,
+      preview: preview.preview,
+      score: preview.diagnostics.score,
+    };
   }
 
   private getMapVoteRecords(): MapVoteRecord[] {
@@ -1622,6 +1634,13 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private isMatchmakingQueue(): boolean {
     return this.matchMode === 'quick_play' || this.matchMode === 'ranked';
+  }
+
+  private resolveCustomMapSeed(options: JoinOptions): number | null {
+    const seed = options.mapSeed;
+    if (process.env.NODE_ENV === 'production' || this.isMatchmakingQueue()) return null;
+    if (typeof seed !== 'number' || !Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return null;
+    return seed >>> 0;
   }
 
   private resolveRoomMatchMode(
