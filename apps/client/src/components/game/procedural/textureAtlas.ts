@@ -4,6 +4,7 @@ import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
 export const ATLAS_COLUMNS = 6;
 export const ATLAS_ROWS = 5;
 export const DEFAULT_TILE_SIZE = 128;
+export const MEDIUM_DETAIL_TILE_SIZE = 80;
 export const LOW_DETAIL_TILE_SIZE = 64;
 export let TILE_SIZE = DEFAULT_TILE_SIZE;
 export const ATLAS_UV_PADDING = 0.006;
@@ -1720,20 +1721,44 @@ function createTexture(canvas: HTMLCanvasElement, colorSpace: THREE.ColorSpace, 
 function getVoxelAtlasProfile(detail: VoxelAtlasDetail): {
   tileSize: number;
   anisotropy: number;
-  fullSurfaceMaps: boolean;
+  paintMode: 'simple' | 'detailed';
+  surfaceResponseMaps: boolean;
+  fineDetailMaps: boolean;
+  repeatEdgeCropPixels: number;
+  uvPadding: number;
 } {
   if (detail === 'low') {
     return {
       tileSize: LOW_DETAIL_TILE_SIZE,
       anisotropy: 1,
-      fullSurfaceMaps: false,
+      paintMode: 'simple',
+      surfaceResponseMaps: false,
+      fineDetailMaps: false,
+      repeatEdgeCropPixels: 7,
+      uvPadding: 0.004,
+    };
+  }
+
+  if (detail === 'medium') {
+    return {
+      tileSize: MEDIUM_DETAIL_TILE_SIZE,
+      anisotropy: 2,
+      paintMode: 'detailed',
+      surfaceResponseMaps: false,
+      fineDetailMaps: false,
+      repeatEdgeCropPixels: 9,
+      uvPadding: 0.005,
     };
   }
 
   return {
     tileSize: DEFAULT_TILE_SIZE,
-    anisotropy: detail === 'high' ? 8 : 4,
-    fullSurfaceMaps: true,
+    anisotropy: 8,
+    paintMode: 'detailed',
+    surfaceResponseMaps: true,
+    fineDetailMaps: true,
+    repeatEdgeCropPixels: ATLAS_REPEAT_EDGE_CROP_PIXELS,
+    uvPadding: ATLAS_UV_PADDING,
   };
 }
 
@@ -1812,10 +1837,11 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme, options: VoxelAtl
   TILE_SIZE = profile.tileSize;
   const color = createLayerContext();
   const emissive = createLayerContext();
-  const bump = profile.fullSurfaceMaps ? createLayerContext() : null;
-  const roughness = profile.fullSurfaceMaps ? createLayerContext() : null;
-  const metalness = profile.fullSurfaceMaps ? createLayerContext() : null;
-  const ao = profile.fullSurfaceMaps ? createLayerContext() : null;
+  const shouldPaintDetailMaps = profile.paintMode === 'detailed';
+  const bump = shouldPaintDetailMaps ? createLayerContext() : null;
+  const roughness = shouldPaintDetailMaps ? createLayerContext() : null;
+  const metalness = shouldPaintDetailMaps ? createLayerContext() : null;
+  const ao = shouldPaintDetailMaps ? createLayerContext() : null;
 
   const contexts: AtlasContexts = {
     color: color.context,
@@ -1830,7 +1856,7 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme, options: VoxelAtl
     context.clearRect(0, 0, ATLAS_COLUMNS * TILE_SIZE, ATLAS_ROWS * TILE_SIZE);
   }
 
-  if (profile.fullSurfaceMaps) {
+  if (profile.paintMode === 'detailed') {
     paintGrassTop(contexts, TILE_MAP.grass_top, theme);
     paintGrassSide(contexts, TILE_MAP.grass_side, theme.ground.top, theme.ground.dirt);
     paintDirtTile(contexts, TILE_MAP.dirt, theme.ground.dirt);
@@ -1862,14 +1888,14 @@ export function createVoxelAtlasTextures(theme: VoxelMapTheme, options: VoxelAtl
 
   const textures: VoxelAtlasTextures = {
     color: createTexture(color.canvas, THREE.SRGBColorSpace, profile.anisotropy),
-    bump: bump ? createTexture(bump.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
-    roughness: roughness ? createTexture(roughness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
-    metalness: metalness ? createTexture(metalness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    bump: profile.fineDetailMaps && bump ? createTexture(bump.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    roughness: profile.surfaceResponseMaps && roughness ? createTexture(roughness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    metalness: profile.surfaceResponseMaps && metalness ? createTexture(metalness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
     emissive: createTexture(emissive.canvas, THREE.SRGBColorSpace, profile.anisotropy),
-    ao: ao ? createTexture(ao.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    ao: profile.fineDetailMaps && ao ? createTexture(ao.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
     tileSize: profile.tileSize,
-    repeatEdgeCropPixels: detail === 'low' ? 7 : ATLAS_REPEAT_EDGE_CROP_PIXELS,
-    uvPadding: detail === 'low' ? 0.004 : ATLAS_UV_PADDING,
+    repeatEdgeCropPixels: profile.repeatEdgeCropPixels,
+    uvPadding: profile.uvPadding,
     anisotropy: profile.anisotropy,
   };
 

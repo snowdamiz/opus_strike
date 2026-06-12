@@ -30,11 +30,6 @@ interface VoxelMapProps {
   onReady?: () => void;
 }
 
-interface ReadyRegionsState {
-  manifestId: string;
-  ids: Set<string>;
-}
-
 export interface VoxelMapWarmupStatus {
   preparedMap: PreparedVoxelMap;
   manifest: VoxelMapManifest;
@@ -77,14 +72,13 @@ export function VoxelMap({
   const collidersLoadedRef = useRef(false);
   const didSignalReadyRef = useRef<string | null>(null);
   const regionRevealBudgetRef = useRef(performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
+  const readyRegionManifestIdRef = useRef(manifest.id);
+  const readyRegionIdsRef = useRef<Set<string>>(new Set());
   const shouldRevealAllRegions = meshBuildMode === 'sync' || !progressiveReveal;
   const [visibleRegionCount, setVisibleRegionCount] = useState(() => (
     shouldRevealAllRegions ? renderableRegions.length : 0
   ));
-  const [readyRegions, setReadyRegions] = useState<ReadyRegionsState>(() => ({
-    manifestId: manifest.id,
-    ids: new Set(),
-  }));
+  const [readyRegionCount, setReadyRegionCount] = useState(0);
   const [collidersReady, setCollidersReady] = useState(!enablePhysics);
 
   useEffect(() => {
@@ -144,17 +138,22 @@ export function VoxelMap({
   }, [manifest.id, renderableRegions, shouldRevealAllRegions]);
 
   const handleRegionGeometryReady = useCallback((regionId: string) => {
-    setReadyRegions((current) => {
-      const currentIds = current.manifestId === manifest.id ? current.ids : new Set<string>();
-      if (currentIds.has(regionId)) return current;
+    if (readyRegionManifestIdRef.current !== manifest.id) {
+      readyRegionManifestIdRef.current = manifest.id;
+      readyRegionIdsRef.current = new Set();
+      setReadyRegionCount(0);
+    }
 
-      const nextIds = new Set(currentIds);
-      nextIds.add(regionId);
-      return {
-        manifestId: manifest.id,
-        ids: nextIds,
-      };
-    });
+    if (readyRegionIdsRef.current.has(regionId)) return;
+    readyRegionIdsRef.current.add(regionId);
+    setReadyRegionCount(readyRegionIdsRef.current.size);
+  }, [manifest.id]);
+
+  useEffect(() => {
+    if (readyRegionManifestIdRef.current === manifest.id) return;
+    readyRegionManifestIdRef.current = manifest.id;
+    readyRegionIdsRef.current = new Set();
+    setReadyRegionCount(0);
   }, [manifest.id]);
 
   useEffect(() => () => {
@@ -220,12 +219,16 @@ export function VoxelMap({
     };
   }, [enablePhysics, manifest]);
 
-  const readyRegionCount = readyRegions.manifestId === manifest.id ? readyRegions.ids.size : 0;
+  const effectiveReadyRegionCount = readyRegionManifestIdRef.current === manifest.id ? readyRegionCount : 0;
   const terrainReady = (
     visibleRegionCount >= renderableRegions.length &&
-    readyRegionCount >= renderableRegions.length
+    effectiveReadyRegionCount >= renderableRegions.length
   );
   const isReady = terrainReady && collidersReady;
+  const visibleRegions = useMemo(
+    () => renderableRegions.slice(0, visibleRegionCount),
+    [renderableRegions, visibleRegionCount]
+  );
 
   useEffect(() => {
     onWarmupStatus?.({
@@ -233,7 +236,7 @@ export function VoxelMap({
       manifest,
       renderableRegionCount: renderableRegions.length,
       visibleRegionCount,
-      readyRegionCount,
+      readyRegionCount: effectiveReadyRegionCount,
       terrainReady,
       collidersReady,
       ready: isReady,
@@ -244,7 +247,7 @@ export function VoxelMap({
     manifest,
     onWarmupStatus,
     preparedMap,
-    readyRegionCount,
+    effectiveReadyRegionCount,
     renderableRegions.length,
     terrainReady,
     visibleRegionCount,
@@ -262,7 +265,7 @@ export function VoxelMap({
 
   return (
     <group name="procedural-voxel-map">
-      {renderableRegions.slice(0, visibleRegionCount).map((region) => (
+      {visibleRegions.map((region) => (
         <VoxelRegionMesh
           key={`${manifest.id}:${region.id}`}
           region={region}

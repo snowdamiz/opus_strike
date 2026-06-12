@@ -283,6 +283,7 @@ function WarmupSettlingFrames({
 
 const FEATURE_QUALITY_STEPS = ['off', 'minimum', 'low', 'medium', 'high', 'ultra'] as const;
 const RESOLUTION_QUALITY_STEPS = ['minimum', 'low', 'medium', 'high', 'ultra'] as const;
+const MATERIAL_QUALITY_STEPS = ['low', 'medium', 'high'] as const;
 
 function stepDown<T extends string>(value: T, steps: readonly T[]): T {
   const index = steps.indexOf(value);
@@ -326,6 +327,7 @@ function AdaptiveQualityController() {
       environmentQuality: stepDown(settings.environmentQuality, FEATURE_QUALITY_STEPS),
       shadowQuality: stepDown(settings.shadowQuality, FEATURE_QUALITY_STEPS),
       resolutionScale: stepDown(settings.resolutionScale, RESOLUTION_QUALITY_STEPS),
+      materialQuality: stepDown(settings.materialQuality, MATERIAL_QUALITY_STEPS),
     };
 
     const shouldEnterPotato =
@@ -333,6 +335,7 @@ function AdaptiveQualityController() {
       nextSettings.environmentQuality === 'off' &&
       nextSettings.shadowQuality === 'off' &&
       nextSettings.resolutionScale === 'minimum' &&
+      nextSettings.materialQuality === 'low' &&
       settings.graphicsPreset !== 'potato';
 
     if (shouldEnterPotato) {
@@ -348,7 +351,8 @@ function AdaptiveQualityController() {
       nextSettings.reflectionQuality !== settings.reflectionQuality ||
       nextSettings.environmentQuality !== settings.environmentQuality ||
       nextSettings.shadowQuality !== settings.shadowQuality ||
-      nextSettings.resolutionScale !== settings.resolutionScale
+      nextSettings.resolutionScale !== settings.resolutionScale ||
+      nextSettings.materialQuality !== settings.materialQuality
     ) {
       useSettingsStore.getState().applySettings(nextSettings);
     }

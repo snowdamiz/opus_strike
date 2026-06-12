@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import type { MeshStandardMaterial } from 'three';
+import type { Material } from 'three';
 import type { VoxelChunk, VoxelMapManifest } from '@voxel-strike/shared';
 import {
   buildVoxelChunkGeometry,
@@ -12,7 +12,7 @@ import {
 interface VoxelChunkMeshProps {
   chunk: VoxelChunk;
   manifest: VoxelMapManifest;
-  material: MeshStandardMaterial;
+  material: Material;
   shadowsEnabled: boolean;
 }
 
@@ -25,7 +25,7 @@ export interface VoxelChunkRegion {
 interface VoxelRegionMeshProps {
   region: VoxelChunkRegion;
   manifest: VoxelMapManifest;
-  material: MeshStandardMaterial;
+  material: Material;
   shadowsEnabled: boolean;
   buildMode?: VoxelMeshBuildMode;
   onGeometryReady?: (regionId: string) => void;

@@ -35,6 +35,12 @@ interface DressingSet {
   crystals: DressingInstance[];
 }
 
+interface ProtectedSurfaceZone {
+  x: number;
+  z: number;
+  radiusSq: number;
+}
+
 const MAX_TUFTS = 520;
 const MAX_PEBBLES = 260;
 const MAX_CRYSTALS = 140;
@@ -172,13 +178,18 @@ function worldPositionForSurface(
   ];
 }
 
-function isProtectedSurface(manifest: VoxelMapManifest, worldX: number, worldZ: number): boolean {
-  for (const flag of [manifest.flagZones.red, manifest.flagZones.blue]) {
-    if (distanceSq(worldX, worldZ, flag.x, flag.z) < 7.5 ** 2) return true;
-  }
+function createProtectedSurfaceZones(manifest: VoxelMapManifest): ProtectedSurfaceZone[] {
+  return [
+    { x: manifest.flagZones.red.x, z: manifest.flagZones.red.z, radiusSq: 7.5 ** 2 },
+    { x: manifest.flagZones.blue.x, z: manifest.flagZones.blue.z, radiusSq: 7.5 ** 2 },
+    ...manifest.spawnPoints.red.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
+    ...manifest.spawnPoints.blue.map((spawn) => ({ x: spawn.x, z: spawn.z, radiusSq: 5.8 ** 2 })),
+  ];
+}
 
-  for (const spawn of [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue]) {
-    if (distanceSq(worldX, worldZ, spawn.x, spawn.z) < 5.8 ** 2) return true;
+function isProtectedSurface(zones: ProtectedSurfaceZone[], worldX: number, worldZ: number): boolean {
+  for (const zone of zones) {
+    if (distanceSq(worldX, worldZ, zone.x, zone.z) < zone.radiusSq) return true;
   }
 
   return false;
@@ -300,21 +311,28 @@ function createDressingSet(manifest: VoxelMapManifest, densityScale: number, max
   const maxPebbles = Math.min(Math.round(MAX_PEBBLES * safeDensityScale), Math.ceil(safeMaxInstances * 0.28));
   const maxCrystals = Math.min(Math.round(MAX_CRYSTALS * safeDensityScale), Math.ceil(safeMaxInstances * 0.14));
   const surfaces = getTopSurfaces(manifest);
+  const protectedZones = createProtectedSurfaceZones(manifest);
   const densities = getBiomeDensities(manifest.theme);
   const tufts: DressingInstance[] = [];
   const pebbles: DressingInstance[] = [];
   const crystals: DressingInstance[] = [];
 
+  scan:
   for (let z = 2; z < manifest.size.z - 2; z += 2) {
     for (let x = 2; x < manifest.size.x - 2; x += 2) {
       const surface = surfaces[x + z * manifest.size.x];
       if (!surface || !isNaturalSurface(surface.blockId)) continue;
-      if (tufts.length + pebbles.length + crystals.length >= safeMaxInstances) break;
+      if (
+        tufts.length + pebbles.length + crystals.length >= safeMaxInstances ||
+        (tufts.length >= maxTufts && pebbles.length >= maxPebbles && crystals.length >= maxCrystals)
+      ) {
+        break scan;
+      }
 
       const jitterX = (hashCell(manifest.seed, x, z, 0x51) - 0.5) * manifest.voxelSize.x * 0.7;
       const jitterZ = (hashCell(manifest.seed, x, z, 0x7a) - 0.5) * manifest.voxelSize.z * 0.7;
       const [worldX, worldY, worldZ] = worldPositionForSurface(manifest, surface, jitterX, jitterZ);
-      if (isProtectedSurface(manifest, worldX, worldZ)) continue;
+      if (isProtectedSurface(protectedZones, worldX, worldZ)) continue;
 
       const rotationY = hashCell(manifest.seed, x, z, 0xa11) * Math.PI * 2;
       const tuftRoll = hashCell(manifest.seed, x, z, 0x7475);

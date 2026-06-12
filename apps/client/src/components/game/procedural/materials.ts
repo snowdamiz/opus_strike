@@ -185,20 +185,35 @@ float metalnessFactor = metalness;
 export function useVoxelMaterial(
   theme: VoxelMapTheme,
   { reflectionIntensity, detail }: VoxelMaterialOptions
-): THREE.MeshStandardMaterial {
+): THREE.Material {
   const material = useMemo(() => {
     const atlas = createVoxelAtlasTextures(theme, { detail });
-    const useSurfaceResponseMaps = detail !== 'low';
-    const useFineDetailMaps = detail === 'high';
+    const useSurfaceResponseMaps = Boolean(atlas.roughness && atlas.metalness);
+    const useFineDetailMaps = Boolean(atlas.bump && atlas.ao);
+
+    if (detail !== 'high') {
+      const material = new THREE.MeshLambertMaterial({
+        map: atlas.color,
+        color: '#ffffff',
+        emissive: '#ffffff',
+        emissiveMap: atlas.emissive,
+        emissiveIntensity: detail === 'low' ? 0.72 : 0.92,
+      });
+
+      material.name = 'procedural-voxel-atlas-lambert-material';
+      material.onBeforeCompile = (shader) => patchVoxelAtlasShader(shader, atlas);
+      material.customProgramCacheKey = () => `${VOXEL_ATLAS_SHADER_KEY}:${material.type}:${detail}:${atlas.tileSize}`;
+      return material;
+    }
 
     const parameters: THREE.MeshStandardMaterialParameters = {
       map: atlas.color,
       bumpScale: useFineDetailMaps ? 0.08 : 0,
-      roughness: detail === 'low' ? 0.92 : 0.96,
-      metalness: detail === 'low' ? 0.35 : 1,
+      roughness: 0.96,
+      metalness: 1,
       emissive: '#ffffff',
       emissiveMap: atlas.emissive,
-      emissiveIntensity: detail === 'low' ? 0.92 : 1.08,
+      emissiveIntensity: 1.08,
       aoMapIntensity: useFineDetailMaps ? 0.82 : 0,
       color: '#ffffff',
     };
@@ -218,7 +233,7 @@ export function useVoxelMaterial(
     material.envMapIntensity = reflectionIntensity;
     material.name = 'procedural-voxel-atlas-material';
     material.onBeforeCompile = (shader) => patchVoxelAtlasShader(shader, atlas);
-    material.customProgramCacheKey = () => `${VOXEL_ATLAS_SHADER_KEY}:${detail}:${atlas.tileSize}`;
+    material.customProgramCacheKey = () => `${VOXEL_ATLAS_SHADER_KEY}:${material.type}:${detail}:${atlas.tileSize}`;
     return material;
   }, [detail, reflectionIntensity, theme]);
 
