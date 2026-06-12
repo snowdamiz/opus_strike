@@ -414,7 +414,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
-                <SettingRow label="Material Detail" description="Surface maps, bump detail, and occlusion">
+                <SettingRow label="Material Detail" description="Diffuse terrain tile resolution and color detail">
                   <SelectInput
                     value={settings.materialQuality}
                     onChange={(v) => updateSetting('materialQuality', v as ClientSettings['materialQuality'])}

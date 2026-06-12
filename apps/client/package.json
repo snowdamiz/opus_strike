@@ -13,6 +13,7 @@
     "test:voice": "tsx src/store/voiceStore.test.ts && tsx src/components/ui/VoiceHud.test.ts",
     "test:visual-store": "tsx src/store/visualStore.test.ts && tsx src/store/projectileSlicePerformance.test.ts && tsx src/components/game/performanceUtils.test.ts",
     "test:model-system": "tsx src/model-system/heroModelSystem.test.ts",
+    "test:terrain-textures": "tsx src/components/game/procedural/proceduralTerrainTexturePlan.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"

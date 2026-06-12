@@ -1,63 +1,87 @@
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
-import {
-  ATLAS_COLUMNS,
-  ATLAS_ROWS,
-  createVoxelAtlasTextures,
-  type VoxelAtlasTextures,
-} from './textureAtlas';
+import { createVoxelTerrainTextures } from './terrainTextures';
 import type { VoxelMaterialDetail } from '../visualQuality';
 
 interface VoxelMaterialOptions {
-  reflectionIntensity: number;
   detail: VoxelMaterialDetail;
 }
 
 type ShaderParameters = Parameters<THREE.Material['onBeforeCompile']>[0];
 
-const VOXEL_ATLAS_SHADER_KEY = 'voxel-atlas-tile-repeat-v2';
+const TERRAIN_TEXTURE_SHADER_KEY = 'voxel-terrain-array-diffuse-texture-v2';
 
-const VOXEL_ATLAS_VERTEX_PARS = `
-attribute vec2 voxelTileOrigin;
+const TERRAIN_VERTEX_PARS = `
+attribute float voxelTextureLayer;
 varying vec2 vVoxelTileUv;
-varying vec2 vVoxelTileOrigin;
+varying float vVoxelTextureLayer;
+varying vec3 vVoxelWorldPosition;
 `;
 
-const VOXEL_ATLAS_VERTEX_ASSIGN = `
+const TERRAIN_VERTEX_ASSIGN = `
 vVoxelTileUv = uv;
-vVoxelTileOrigin = voxelTileOrigin;
+vVoxelTextureLayer = voxelTextureLayer;
+vVoxelWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
 `;
 
-const VOXEL_ATLAS_FRAGMENT_PARS = `
-uniform vec2 voxelAtlasTileSize;
-uniform vec2 voxelAtlasRepeatInset;
+const TERRAIN_FRAGMENT_PARS = `
+uniform float voxelMacroTintStrength;
 varying vec2 vVoxelTileUv;
-varying vec2 vVoxelTileOrigin;
+varying float vVoxelTextureLayer;
+varying vec3 vVoxelWorldPosition;
 
-vec2 voxelAtlasLocalUv(vec2 tileUv) {
+vec2 voxelTerrainLocalUv(vec2 tileUv) {
   vec2 mirroredUv = mod(tileUv, 2.0);
   return 1.0 - abs(mirroredUv - 1.0);
 }
 
-vec2 voxelAtlasInnerSize() {
-  return voxelAtlasTileSize - voxelAtlasRepeatInset * 2.0;
+float voxelTerrainLayer() {
+  return floor(vVoxelTextureLayer + 0.5);
 }
 
-vec2 voxelAtlasUv(vec2 tileUv) {
-  return vVoxelTileOrigin + voxelAtlasRepeatInset + voxelAtlasLocalUv(tileUv) * voxelAtlasInnerSize();
+vec4 voxelTerrainTextureSample(sampler2DArray textureMap, vec2 tileUv) {
+  vec2 textureUv = voxelTerrainLocalUv(tileUv);
+  vec2 stableDx = dFdx(tileUv) * 1.45;
+  vec2 stableDy = dFdy(tileUv) * 1.45;
+
+  return textureGrad(textureMap, vec3(textureUv, voxelTerrainLayer()), stableDx, stableDy);
 }
 
-vec4 voxelAtlasTexture2D(sampler2D atlasMap, vec2 tileUv) {
-  vec2 atlasUv = voxelAtlasUv(tileUv);
-  vec2 atlasDx = dFdx(tileUv) * voxelAtlasInnerSize();
-  vec2 atlasDy = dFdy(tileUv) * voxelAtlasInnerSize();
+float voxelTerrainHash(vec2 cell, float layer) {
+  vec3 p = fract(vec3(cell.xyx) * 0.1031 + vec3(layer * 0.017, layer * 0.071, layer * 0.113));
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
 
-  #ifdef texture2DGradEXT
-    return texture2DGradEXT(atlasMap, atlasUv, atlasDx, atlasDy);
-  #else
-    return texture2D(atlasMap, atlasUv);
-  #endif
+float voxelTerrainSmoothNoise(vec2 point, float layer) {
+  vec2 cell = floor(point);
+  vec2 local = fract(point);
+  vec2 curve = local * local * (3.0 - 2.0 * local);
+  float a = voxelTerrainHash(cell, layer);
+  float b = voxelTerrainHash(cell + vec2(1.0, 0.0), layer);
+  float c = voxelTerrainHash(cell + vec2(0.0, 1.0), layer);
+  float d = voxelTerrainHash(cell + vec2(1.0, 1.0), layer);
+  return mix(mix(a, b, curve.x), mix(c, d, curve.x), curve.y);
+}
+
+vec3 voxelTerrainMacroTint(vec3 worldPosition) {
+  if (voxelMacroTintStrength <= 0.0) {
+    return vec3(1.0);
+  }
+
+  float layer = voxelTerrainLayer();
+  vec2 layerOffset = vec2(layer * 17.13, layer * 9.71);
+  vec2 lowFrequencyPoint = worldPosition.xz * 0.048 + layerOffset;
+  float broad = voxelTerrainSmoothNoise(lowFrequencyPoint, layer);
+  float broader = voxelTerrainSmoothNoise(lowFrequencyPoint * 0.43 + 19.0, layer + 11.0);
+  float noiseValue = broad * 0.68 + broader * 0.32;
+  vec3 coolTint = vec3(0.965, 0.99, 1.035);
+  vec3 warmTint = vec3(1.04, 1.015, 0.965);
+  vec3 hueTint = mix(coolTint, warmTint, smoothstep(0.18, 0.82, noiseValue));
+  float valueTint = 1.0 + (noiseValue - 0.5) * 0.075;
+
+  return mix(vec3(1.0), hueTint * valueTint, voxelMacroTintStrength);
 }
 `;
 
@@ -65,37 +89,65 @@ function replaceShaderChunk(source: string, chunk: string, replacement: string):
   return source.replace(`#include <${chunk}>`, replacement);
 }
 
-function patchVoxelAtlasShader(shader: ShaderParameters, atlas: VoxelAtlasTextures): void {
-  shader.uniforms.voxelAtlasTileSize = { value: new THREE.Vector2(1 / ATLAS_COLUMNS, 1 / ATLAS_ROWS) };
-  shader.uniforms.voxelAtlasRepeatInset = {
-    value: new THREE.Vector2(
-      Math.max(atlas.uvPadding, atlas.repeatEdgeCropPixels / (ATLAS_COLUMNS * atlas.tileSize)),
-      Math.max(atlas.uvPadding, atlas.repeatEdgeCropPixels / (ATLAS_ROWS * atlas.tileSize))
-    ),
-  };
+function getMacroTintStrength(detail: VoxelMaterialDetail): number {
+  if (detail === 'low') return 0;
+  if (detail === 'medium') return 0.18;
+  return 0.34;
+}
+
+function getEmissiveIntensity(detail: VoxelMaterialDetail): number {
+  if (detail === 'low') return 0.72;
+  if (detail === 'medium') return 0.92;
+  return 1.08;
+}
+
+function patchTerrainTextureShader(
+  shader: ShaderParameters,
+  detail: VoxelMaterialDetail
+): void {
+  shader.uniforms.voxelMacroTintStrength = { value: getMacroTintStrength(detail) };
 
   shader.vertexShader = replaceShaderChunk(
     shader.vertexShader,
     'uv_pars_vertex',
-    `#include <uv_pars_vertex>\n${VOXEL_ATLAS_VERTEX_PARS}`
+    `#include <uv_pars_vertex>\n${TERRAIN_VERTEX_PARS}`
   );
   shader.vertexShader = replaceShaderChunk(
     shader.vertexShader,
     'uv_vertex',
-    `#include <uv_vertex>\n${VOXEL_ATLAS_VERTEX_ASSIGN}`
+    `#include <uv_vertex>\n${TERRAIN_VERTEX_ASSIGN}`
   );
 
   shader.fragmentShader = replaceShaderChunk(
     shader.fragmentShader,
     'uv_pars_fragment',
-    `#include <uv_pars_fragment>\n${VOXEL_ATLAS_FRAGMENT_PARS}`
+    `#include <uv_pars_fragment>\n${TERRAIN_FRAGMENT_PARS}`
+  );
+  shader.fragmentShader = replaceShaderChunk(
+    shader.fragmentShader,
+    'map_pars_fragment',
+`
+#ifdef USE_MAP
+  uniform sampler2DArray map;
+#endif
+`
+  );
+  shader.fragmentShader = replaceShaderChunk(
+    shader.fragmentShader,
+    'emissivemap_pars_fragment',
+`
+#ifdef USE_EMISSIVEMAP
+  uniform sampler2DArray emissiveMap;
+#endif
+`
   );
   shader.fragmentShader = replaceShaderChunk(
     shader.fragmentShader,
     'map_fragment',
-    `
+`
 #ifdef USE_MAP
-  vec4 sampledDiffuseColor = voxelAtlasTexture2D(map, vVoxelTileUv);
+  vec4 sampledDiffuseColor = voxelTerrainTextureSample(map, vVoxelTileUv);
+  sampledDiffuseColor.rgb *= voxelTerrainMacroTint(vVoxelWorldPosition);
   diffuseColor *= sampledDiffuseColor;
 #endif
 `
@@ -103,80 +155,10 @@ function patchVoxelAtlasShader(shader: ShaderParameters, atlas: VoxelAtlasTextur
   shader.fragmentShader = replaceShaderChunk(
     shader.fragmentShader,
     'emissivemap_fragment',
-    `
+`
 #ifdef USE_EMISSIVEMAP
-  vec4 emissiveColor = voxelAtlasTexture2D(emissiveMap, vVoxelTileUv);
+  vec4 emissiveColor = voxelTerrainTextureSample(emissiveMap, vVoxelTileUv);
   totalEmissiveRadiance *= emissiveColor.rgb;
-#endif
-`
-  );
-  shader.fragmentShader = replaceShaderChunk(
-    shader.fragmentShader,
-    'roughnessmap_fragment',
-    `
-float roughnessFactor = roughness;
-#ifdef USE_ROUGHNESSMAP
-  vec4 texelRoughness = voxelAtlasTexture2D(roughnessMap, vVoxelTileUv);
-  roughnessFactor *= texelRoughness.g;
-#endif
-`
-  );
-  shader.fragmentShader = replaceShaderChunk(
-    shader.fragmentShader,
-    'metalnessmap_fragment',
-    `
-float metalnessFactor = metalness;
-#ifdef USE_METALNESSMAP
-  vec4 texelMetalness = voxelAtlasTexture2D(metalnessMap, vVoxelTileUv);
-  metalnessFactor *= texelMetalness.b;
-#endif
-`
-  );
-  shader.fragmentShader = replaceShaderChunk(
-    shader.fragmentShader,
-    'bumpmap_pars_fragment',
-    `
-#ifdef USE_BUMPMAP
-  uniform sampler2D bumpMap;
-  uniform float bumpScale;
-  vec2 dHdxy_fwd() {
-    vec2 dTileUvDx = dFdx(vVoxelTileUv);
-    vec2 dTileUvDy = dFdy(vVoxelTileUv);
-    float Hll = bumpScale * voxelAtlasTexture2D(bumpMap, vVoxelTileUv).x;
-    float dBx = bumpScale * voxelAtlasTexture2D(bumpMap, vVoxelTileUv + dTileUvDx).x - Hll;
-    float dBy = bumpScale * voxelAtlasTexture2D(bumpMap, vVoxelTileUv + dTileUvDy).x - Hll;
-    return vec2(dBx, dBy);
-  }
-  vec3 perturbNormalArb(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDirection) {
-    vec3 vSigmaX = normalize(dFdx(surf_pos.xyz));
-    vec3 vSigmaY = normalize(dFdy(surf_pos.xyz));
-    vec3 vN = surf_norm;
-    vec3 R1 = cross(vSigmaY, vN);
-    vec3 R2 = cross(vN, vSigmaX);
-    float fDet = dot(vSigmaX, R1) * faceDirection;
-    vec3 vGrad = sign(fDet) * (dHdxy.x * R1 + dHdxy.y * R2);
-    return normalize(abs(fDet) * surf_norm - vGrad);
-  }
-#endif
-`
-  );
-  shader.fragmentShader = replaceShaderChunk(
-    shader.fragmentShader,
-    'aomap_fragment',
-    `
-#ifdef USE_AOMAP
-  float ambientOcclusion = (voxelAtlasTexture2D(aoMap, vVoxelTileUv).r - 1.0) * aoMapIntensity + 1.0;
-  reflectedLight.indirectDiffuse *= ambientOcclusion;
-  #if defined(USE_CLEARCOAT)
-    clearcoatSpecularIndirect *= ambientOcclusion;
-  #endif
-  #if defined(USE_SHEEN)
-    sheenSpecularIndirect *= ambientOcclusion;
-  #endif
-  #if defined(USE_ENVMAP) && defined(STANDARD)
-    float dotNV = saturate(dot(geometryNormal, geometryViewDir));
-    reflectedLight.indirectSpecular *= computeSpecularOcclusion(dotNV, ambientOcclusion, material.roughness);
-  #endif
 #endif
 `
   );
@@ -184,58 +166,25 @@ float metalnessFactor = metalness;
 
 export function useVoxelMaterial(
   theme: VoxelMapTheme,
-  { reflectionIntensity, detail }: VoxelMaterialOptions
+  { detail }: VoxelMaterialOptions
 ): THREE.Material {
   const material = useMemo(() => {
-    const atlas = createVoxelAtlasTextures(theme, { detail });
-    const useSurfaceResponseMaps = Boolean(atlas.roughness && atlas.metalness);
-    const useFineDetailMaps = Boolean(atlas.bump && atlas.ao);
-
-    if (detail !== 'high') {
-      const material = new THREE.MeshLambertMaterial({
-        map: atlas.color,
-        color: '#ffffff',
-        emissive: '#ffffff',
-        emissiveMap: atlas.emissive,
-        emissiveIntensity: detail === 'low' ? 0.72 : 0.92,
-      });
-
-      material.name = 'procedural-voxel-atlas-lambert-material';
-      material.onBeforeCompile = (shader) => patchVoxelAtlasShader(shader, atlas);
-      material.customProgramCacheKey = () => `${VOXEL_ATLAS_SHADER_KEY}:${material.type}:${detail}:${atlas.tileSize}`;
-      return material;
-    }
-
-    const parameters: THREE.MeshStandardMaterialParameters = {
-      map: atlas.color,
-      bumpScale: useFineDetailMaps ? 0.08 : 0,
-      roughness: 0.96,
-      metalness: 1,
-      emissive: '#ffffff',
-      emissiveMap: atlas.emissive,
-      emissiveIntensity: 1.08,
-      aoMapIntensity: useFineDetailMaps ? 0.82 : 0,
+    const textures = createVoxelTerrainTextures(theme, { detail });
+    const material = new THREE.MeshLambertMaterial({
+      map: textures.color,
       color: '#ffffff',
-    };
+      emissive: '#ffffff',
+      emissiveMap: textures.emissive,
+      emissiveIntensity: getEmissiveIntensity(detail),
+    });
 
-    if (useSurfaceResponseMaps && atlas.roughness && atlas.metalness) {
-      parameters.roughnessMap = atlas.roughness;
-      parameters.metalnessMap = atlas.metalness;
-    }
-
-    if (useFineDetailMaps && atlas.bump && atlas.ao) {
-      parameters.bumpMap = atlas.bump;
-      parameters.aoMap = atlas.ao;
-    }
-
-    const material = new THREE.MeshStandardMaterial(parameters);
-
-    material.envMapIntensity = reflectionIntensity;
-    material.name = 'procedural-voxel-atlas-material';
-    material.onBeforeCompile = (shader) => patchVoxelAtlasShader(shader, atlas);
-    material.customProgramCacheKey = () => `${VOXEL_ATLAS_SHADER_KEY}:${material.type}:${detail}:${atlas.tileSize}`;
+    material.name = 'procedural-voxel-diffuse-terrain-material';
+    material.onBeforeCompile = (shader) => patchTerrainTextureShader(shader, detail);
+    material.customProgramCacheKey = () => (
+      `${TERRAIN_TEXTURE_SHADER_KEY}:${material.type}:${detail}:${textures.tileSize}`
+    );
     return material;
-  }, [detail, reflectionIntensity, theme]);
+  }, [detail, theme]);
 
   useEffect(
     () => () => {

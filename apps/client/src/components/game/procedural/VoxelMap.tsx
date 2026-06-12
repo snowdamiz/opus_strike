@@ -68,7 +68,7 @@ export function VoxelMap({
   }, [mapSeed, providedManifest]);
   const manifest = preparedMap.manifest;
   const renderableRegions = preparedMap.renderableRegions;
-  const material = useVoxelMaterial(manifest.theme, { reflectionIntensity, detail: materialDetail });
+  const material = useVoxelMaterial(manifest.theme, { detail: materialDetail });
   const collidersLoadedRef = useRef(false);
   const didSignalReadyRef = useRef<string | null>(null);
   const regionRevealBudgetRef = useRef(performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
