@@ -1704,7 +1704,9 @@ function createLayerContext(): { canvas: HTMLCanvasElement; context: CanvasRende
 function createTexture(canvas: HTMLCanvasElement, colorSpace: THREE.ColorSpace, anisotropy: number): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = colorSpace;
-  texture.magFilter = THREE.NearestFilter;
+  // Three.js skips EXT_texture_filter_anisotropic when magnification is nearest,
+  // which makes the high-frequency atlas crawl on angled surfaces during motion.
+  texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
