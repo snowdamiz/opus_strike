@@ -312,6 +312,21 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
+function sameShadowArrivalIds(effects: readonly ShadowArrivalData[], ids: readonly string[]): boolean {
+  if (effects.length !== ids.length) return false;
+  for (let i = 0; i < effects.length; i++) {
+    if (effects[i].id !== ids[i]) return false;
+  }
+  return true;
+}
+
+function copyShadowArrivalIds(effects: readonly ShadowArrivalData[], target: string[]): void {
+  target.length = effects.length;
+  for (let i = 0; i < effects.length; i++) {
+    target[i] = effects[i].id;
+  }
+}
+
 function getPhantomVeilPlayerPosition(playerId: string): { x: number; y: number; z: number } | undefined {
   const store = useGameStore.getState();
   if (store.localPlayer?.id === playerId) return store.localPlayer.position;
@@ -326,20 +341,17 @@ export function PhantomEffectsManager() {
   const activeShadowArrivalsRef = useRef<ShadowArrivalData[]>([]);
   const blinkRenderSlotsRef = useRef<BlinkRenderSlot[]>([]);
 
-  // Version counters to trigger re-renders only when effect counts change
-  const [, setBlinkVersion] = useState(0);
+  // Shadow arrivals mount/unmount React nodes. Blink teleports stay pooled and update imperatively.
   const [, setShadowVersion] = useState(0);
   const [activeVeilIds, setActiveVeilIds] = useState<string[]>([]);
   const activeVeilIdsRef = useRef<string[]>([]);
   const scratchVeilIdsRef = useRef<string[]>([]);
   const veilScanAccumulatorRef = useRef(ACTIVE_VEIL_SCAN_INTERVAL_MS);
-  const lastBlinkCountRef = useRef(0);
-  const lastShadowCountRef = useRef(0);
-  const lastRevisionRef = useRef(0);
+  const activeShadowArrivalIdsRef = useRef<string[]>([]);
 
   useFrame((_, delta) => {
     const frameClock = getFrameClock();
-    const snapshot = collectActivePhantomEffects(
+    collectActivePhantomEffects(
       frameClock.nowMs,
       activeBlinkEffectsRef.current,
       activeShadowArrivalsRef.current
@@ -352,19 +364,8 @@ export function PhantomEffectsManager() {
       frameClock.elapsedSeconds
     );
 
-    if (
-      snapshot.blinkCount !== lastBlinkCountRef.current ||
-      snapshot.revision !== lastRevisionRef.current
-    ) {
-      lastBlinkCountRef.current = snapshot.blinkCount;
-      setBlinkVersion(version => version + 1);
-    }
-
-    if (
-      snapshot.shadowCount !== lastShadowCountRef.current ||
-      snapshot.revision !== lastRevisionRef.current
-    ) {
-      lastShadowCountRef.current = snapshot.shadowCount;
+    if (!sameShadowArrivalIds(activeShadowArrivalsRef.current, activeShadowArrivalIdsRef.current)) {
+      copyShadowArrivalIds(activeShadowArrivalsRef.current, activeShadowArrivalIdsRef.current);
       setShadowVersion(version => version + 1);
     }
 
@@ -378,8 +379,6 @@ export function PhantomEffectsManager() {
         setActiveVeilIds(committedIds);
       }
     }
-
-    lastRevisionRef.current = snapshot.revision;
   });
   
   return (

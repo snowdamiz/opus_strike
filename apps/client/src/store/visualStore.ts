@@ -134,6 +134,8 @@ export interface CombatVisualFrameCache {
   alivePlayers: CombatVisualPlayer[];
   byTeam: Record<Team, CombatVisualPlayer[]>;
   buckets: Map<number, Map<number, CombatVisualPlayer[]>>;
+  activeBuckets: CombatVisualPlayer[][];
+  activeBucketSet: Set<CombatVisualPlayer[]>;
   entryPool: CombatVisualPlayer[];
   cellSize: number;
 }
@@ -169,6 +171,8 @@ const createCombatFrameCache = (): CombatVisualFrameCache => ({
     blue: [],
   },
   buckets: new Map(),
+  activeBuckets: [],
+  activeBucketSet: new Set(),
   entryPool: [],
   cellSize: COMBAT_VISUAL_CELL_SIZE,
 });
@@ -502,23 +506,35 @@ export const sampleRemoteTransform = (
   return sampleRemoteTransformInto(playerId, sampled, nowMs) ? sampled : null;
 };
 
-function clearCombatBuckets(buckets: CombatVisualFrameCache['buckets']): void {
-  for (const zBuckets of buckets.values()) {
-    for (const bucket of zBuckets.values()) {
-      bucket.length = 0;
-    }
+function clearActiveCombatBuckets(cache: CombatVisualFrameCache): void {
+  for (let i = 0; i < cache.activeBuckets.length; i++) {
+    cache.activeBuckets[i].length = 0;
   }
+  cache.activeBuckets.length = 0;
+  cache.activeBucketSet.clear();
+}
+
+function markActiveCombatBucket(
+  cache: CombatVisualFrameCache,
+  bucket: CombatVisualPlayer[]
+): void {
+  if (cache.activeBucketSet.has(bucket)) {
+    return;
+  }
+
+  cache.activeBucketSet.add(bucket);
+  cache.activeBuckets.push(bucket);
 }
 
 function getCombatBucket(
-  buckets: CombatVisualFrameCache['buckets'],
+  cache: CombatVisualFrameCache,
   cellX: number,
   cellZ: number
 ): CombatVisualPlayer[] {
-  let zBuckets = buckets.get(cellX);
+  let zBuckets = cache.buckets.get(cellX);
   if (!zBuckets) {
     zBuckets = new Map();
-    buckets.set(cellX, zBuckets);
+    cache.buckets.set(cellX, zBuckets);
   }
 
   let bucket = zBuckets.get(cellZ);
@@ -526,6 +542,7 @@ function getCombatBucket(
     bucket = [];
     zBuckets.set(cellZ, bucket);
   }
+  markActiveCombatBucket(cache, bucket);
   return bucket;
 }
 
@@ -546,7 +563,7 @@ export const rebuildCombatVisualFrameCache = (
   cache.alivePlayers.length = 0;
   cache.byTeam.red.length = 0;
   cache.byTeam.blue.length = 0;
-  clearCombatBuckets(cache.buckets);
+  clearActiveCombatBuckets(cache);
 
   let entryIndex = 0;
   for (const player of players) {
@@ -575,7 +592,7 @@ export const rebuildCombatVisualFrameCache = (
     cache.byTeam[player.team].push(visualPlayer);
 
     const bucket = getCombatBucket(
-      cache.buckets,
+      cache,
       Math.floor(visualPlayer.x / cache.cellSize),
       Math.floor(visualPlayer.z / cache.cellSize)
     );
@@ -645,6 +662,8 @@ export const clearCombatVisualFrameCache = (): void => {
   cache.alivePlayers.length = 0;
   cache.byTeam.red.length = 0;
   cache.byTeam.blue.length = 0;
+  cache.activeBuckets.length = 0;
+  cache.activeBucketSet.clear();
   cache.buckets.clear();
 };
 

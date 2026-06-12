@@ -204,6 +204,84 @@ type GameStore = CoreState & CoreActions & ProjectileSlice;
 
 const MAX_PENDING_INPUTS = 128;
 
+type GameStatePlayerSnapshot = GameStateSync['players'][number];
+
+function createEmptyPlayerStats(): Player['stats'] {
+  return {
+    kills: 0,
+    deaths: 0,
+    assists: 0,
+    flagCaptures: 0,
+    flagReturns: 0,
+  };
+}
+
+function applyPlayerSnapshotInPlace(player: Player, snapshot: GameStatePlayerSnapshot): void {
+  player.position = snapshot.position;
+  player.velocity = snapshot.velocity;
+  player.lookYaw = snapshot.lookYaw;
+  player.lookPitch = snapshot.lookPitch;
+  player.health = snapshot.health;
+  player.maxHealth = snapshot.maxHealth ?? player.maxHealth;
+  player.state = snapshot.state;
+  player.movement = snapshot.movement;
+  player.abilities = snapshot.abilities;
+  player.hasFlag = snapshot.hasFlag;
+  player.name = snapshot.name ?? player.name;
+  player.team = snapshot.team ?? player.team;
+  player.heroId = snapshot.heroId !== undefined ? snapshot.heroId : player.heroId;
+  player.isBot = snapshot.isBot ?? player.isBot;
+  player.rank = snapshot.rank ?? player.rank;
+  player.stats = snapshot.stats ?? player.stats;
+}
+
+function createPlayerFromSnapshot(snapshot: GameStatePlayerSnapshot): Player {
+  return {
+    id: snapshot.id,
+    name: snapshot.name ?? 'Unknown',
+    team: snapshot.team ?? 'red',
+    heroId: snapshot.heroId ?? null,
+    state: snapshot.state,
+    isReady: true,
+    isBot: Boolean(snapshot.isBot),
+    rank: snapshot.rank,
+    position: snapshot.position,
+    velocity: snapshot.velocity,
+    lookYaw: snapshot.lookYaw,
+    lookPitch: snapshot.lookPitch,
+    health: snapshot.health,
+    maxHealth: snapshot.maxHealth ?? 100,
+    ultimateCharge: 0,
+    movement: snapshot.movement,
+    abilities: snapshot.abilities,
+    hasFlag: snapshot.hasFlag,
+    respawnTime: null,
+    spawnProtectionUntil: null,
+    stats: snapshot.stats ?? createEmptyPlayerStats(),
+  };
+}
+
+function mergePlayerSnapshot(existingPlayer: Player, snapshot: GameStatePlayerSnapshot): Player {
+  const nextPlayer = { ...existingPlayer };
+  applyPlayerSnapshotInPlace(nextPlayer, snapshot);
+  return nextPlayer;
+}
+
+function hasPlayerRosterChanged(
+  existingPlayers: Map<string, Player>,
+  snapshots: readonly GameStatePlayerSnapshot[]
+): boolean {
+  if (existingPlayers.size !== snapshots.length) return true;
+
+  for (let i = 0; i < snapshots.length; i++) {
+    if (!existingPlayers.has(snapshots[i].id)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ============================================================================
 // INITIAL STATE
 // ============================================================================
@@ -388,37 +466,15 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     // when players are added/removed. Position data flows to visualStore (non-reactive)
     // for 60fps interpolation, while gameStore tracks authoritative game state.
     const { playerId, players: existingPlayers } = get();
+    const rosterChanged = hasPlayerRosterChanged(existingPlayers, state.players);
 
-    // Build set of snapshot IDs for removal detection
-    const snapshotIds = new Set(state.players.map(p => p.id));
-
-    // Check if any players need to be removed (not in snapshot)
-    let needsRemoval = false;
-    for (const [id] of existingPlayers) {
-      if (!snapshotIds.has(id)) {
-        needsRemoval = true;
-        break;
-      }
-    }
-
-    // If no removals needed, update in-place without changing Map reference
-    if (!needsRemoval) {
+    // If the roster is unchanged, update in-place without changing the Map reference.
+    if (!rosterChanged) {
       // Update existing players in-place for position/rotation data
       for (const snapshot of state.players) {
         const existingPlayer = existingPlayers.get(snapshot.id);
         if (existingPlayer) {
-          // Update in-place for position/rotation (high-frequency, visual-only)
-          existingPlayer.position = snapshot.position;
-          existingPlayer.velocity = snapshot.velocity;
-          existingPlayer.lookYaw = snapshot.lookYaw;
-          existingPlayer.lookPitch = snapshot.lookPitch;
-
-          // Update other fields (these are game events that MAY warrant re-renders)
-          existingPlayer.health = snapshot.health;
-          existingPlayer.state = snapshot.state;
-          existingPlayer.movement = snapshot.movement;
-          existingPlayer.abilities = snapshot.abilities;
-          existingPlayer.hasFlag = snapshot.hasFlag;
+          applyPlayerSnapshotInPlace(existingPlayer, snapshot);
         }
       }
 
@@ -446,23 +502,22 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       return;
     }
 
-    // If removals needed, create new Map (changes reference, triggers re-render)
+    // If players joined/left, create a new Map. This is the slow path and triggers
+    // render updates for components whose mounted player set needs to change.
     const players = new Map<string, Player>();
     for (const snapshot of state.players) {
       const existingPlayer = existingPlayers.get(snapshot.id);
-      if (existingPlayer) {
-        players.set(snapshot.id, {
-          ...existingPlayer,
-          position: snapshot.position,
-          velocity: snapshot.velocity,
-          lookYaw: snapshot.lookYaw,
-          lookPitch: snapshot.lookPitch,
-          health: snapshot.health,
-          state: snapshot.state,
-          movement: snapshot.movement,
-          abilities: snapshot.abilities,
-          hasFlag: snapshot.hasFlag,
-        });
+      players.set(
+        snapshot.id,
+        existingPlayer
+          ? mergePlayerSnapshot(existingPlayer, snapshot)
+          : createPlayerFromSnapshot(snapshot)
+      );
+    }
+
+    for (const [id] of existingPlayers) {
+      if (!players.has(id)) {
+        removePlayerVisualState(id);
       }
     }
 
