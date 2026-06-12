@@ -4,6 +4,7 @@ import {
   getRankFromRating,
   getRankTheme,
   type PublicRankSnapshot,
+  type RankTheme,
   type RankSummary,
 } from '@voxel-strike/shared';
 import type { UserStats } from '../../store/gameStore';
@@ -15,11 +16,46 @@ function rankLabel(rank: RankLike): string {
 }
 
 function rankTier(rank: RankLike): PublicRankSnapshot['tier'] {
-  return (rank?.tier ?? 'unranked') as PublicRankSnapshot['tier'];
+  switch (rank?.tier) {
+    case 'plastic':
+    case 'bronze':
+    case 'silver':
+    case 'gold':
+    case 'diamond':
+    case 'unemployed':
+    case 'unranked':
+      return rank.tier;
+    default:
+      return 'unranked';
+  }
 }
 
-function rankIconKey(rank: RankLike): string {
-  return rank?.iconKey ?? 'unranked';
+function rankDivision(rank: RankLike): number {
+  const division = rank?.division;
+  if (typeof division !== 'number' || !Number.isFinite(division)) return 0;
+  return Math.max(0, Math.min(4, Math.floor(division)));
+}
+
+function RankDivisionMarks({ division, theme }: { division: number; theme: RankTheme }) {
+  if (division <= 0) return null;
+
+  const startX = 32 - ((division - 1) * 6) / 2;
+
+  return (
+    <g>
+      {Array.from({ length: division }, (_, index) => {
+        const cx = startX + index * 6;
+        const path = `M${cx - 2} 55h4`;
+
+        return (
+          <g key={index}>
+            <path d={path} stroke="#020617" strokeOpacity="0.42" strokeWidth="4.8" strokeLinecap="round" />
+            <path d={path} stroke={theme.foreground} strokeWidth="2.6" strokeLinecap="round" />
+          </g>
+        );
+      })}
+    </g>
+  );
 }
 
 export function getRankForStats(stats: UserStats | null | undefined): RankSummary {
@@ -39,10 +75,13 @@ export function RankIcon({
 }) {
   const tier = rankTier(rank);
   const theme = getRankTheme(tier);
-  const iconKey = rankIconKey(rank);
   const label = rankLabel(rank);
+  const division = rankDivision(rank);
   const aria = labelled ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true };
-  const gradientId = `rank-gradient-${useId().replace(/:/g, '')}`;
+  const id = useId().replace(/:/g, '');
+  const gradientId = `rank-gradient-${id}`;
+  const edgeGradientId = `rank-edge-${id}`;
+  const shineGradientId = `rank-shine-${id}`;
 
   return (
     <svg
@@ -53,58 +92,122 @@ export function RankIcon({
       viewBox="0 0 64 64"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      style={{ color: theme.primary }}
+      style={{ color: theme.primary, filter: `drop-shadow(0 0 8px ${theme.glow})` }}
     >
       <defs>
         <linearGradient id={gradientId} x1="12" y1="8" x2="52" y2="58" gradientUnits="userSpaceOnUse">
           <stop stopColor={theme.accent} />
-          <stop offset="0.55" stopColor={theme.primary} />
+          <stop offset="0.42" stopColor={theme.primary} />
           <stop offset="1" stopColor={theme.secondary} />
         </linearGradient>
+        <linearGradient id={edgeGradientId} x1="13" y1="7" x2="51" y2="58" gradientUnits="userSpaceOnUse">
+          <stop stopColor={theme.foreground} stopOpacity="0.95" />
+          <stop offset="0.62" stopColor={theme.accent} stopOpacity="0.82" />
+          <stop offset="1" stopColor={theme.secondary} stopOpacity="0.95" />
+        </linearGradient>
+        <radialGradient
+          id={shineGradientId}
+          cx="0"
+          cy="0"
+          r="1"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(23 16) rotate(45) scale(30 24)"
+        >
+          <stop stopColor="#ffffff" stopOpacity="0.55" />
+          <stop offset="0.45" stopColor="#ffffff" stopOpacity="0.16" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
       </defs>
-      {iconKey === 'plastic-plate' && (
+      {tier === 'plastic' && (
         <>
-          <path d="M16 18l16-8 16 8v24L32 54 16 42V18z" fill={`url(#${gradientId})`} stroke={theme.foreground} strokeWidth="2" />
-          <path d="M25 17l5 9-7 8 10 5-2 10" stroke={theme.secondary} strokeWidth="3" strokeLinecap="round" />
+          <path
+            d="M17 14.5L39 9l14 12-5 26-17 9.5-18-11-3-22.5 7-8.5Z"
+            fill={`url(#${gradientId})`}
+            stroke={`url(#${edgeGradientId})`}
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+          <path d="M17 14.5L39 9l14 12-5 26-17 9.5-18-11-3-22.5 7-8.5Z" fill={`url(#${shineGradientId})`} />
+          <path d="M25 19l9 8-7 6 11 10" stroke={theme.secondary} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.72" />
+          <path d="M41 18l-5 9 10 2" stroke={theme.foreground} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.62" />
         </>
       )}
-      {iconKey === 'bronze-shield' && (
+      {tier === 'bronze' && (
         <>
-          <path d="M14 14h36v18c0 12-7.2 20-18 24-10.8-4-18-12-18-24V14z" fill={`url(#${gradientId})`} stroke={theme.accent} strokeWidth="2" />
-          <path d="M23 25h18M21 34h22M26 43h12" stroke={theme.foreground} strokeWidth="4" strokeLinecap="round" />
+          <path
+            d="M15 12.5h34l4.5 7.5-4.5 21.5C46.8 49.5 40.8 55 32 58.5c-8.8-3.5-14.8-9-17-17L10.5 20 15 12.5Z"
+            fill={`url(#${gradientId})`}
+            stroke={`url(#${edgeGradientId})`}
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+          <path d="M15 12.5h34l4.5 7.5-4.5 21.5C46.8 49.5 40.8 55 32 58.5c-8.8-3.5-14.8-9-17-17L10.5 20 15 12.5Z" fill={`url(#${shineGradientId})`} />
+          <path d="M20 20h24l-3 18.5c-1.5 5.8-4.5 10-9 12.5-4.5-2.5-7.5-6.7-9-12.5L20 20Z" stroke={theme.foreground} strokeWidth="2.4" strokeLinejoin="round" strokeOpacity="0.44" />
+          <path d="M32 18v30" stroke={theme.secondary} strokeWidth="2.2" strokeLinecap="round" strokeOpacity="0.58" />
         </>
       )}
-      {iconKey === 'silver-crest' && (
+      {tier === 'silver' && (
         <>
-          <path d="M32 7l20 14-8 32H20l-8-32L32 7z" fill={`url(#${gradientId})`} stroke={theme.accent} strokeWidth="2" />
-          <path d="M32 13v34M18 24h28M23 44l18-20" stroke={theme.secondary} strokeWidth="3" strokeLinecap="round" />
+          <path
+            d="M32 6.5l8.5 11 14 3.5-8.5 11 2 15.5L32 42l-16 5.5 2-15.5-8.5-11 14-3.5L32 6.5Z"
+            fill={`url(#${gradientId})`}
+            stroke={`url(#${edgeGradientId})`}
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+          <path d="M32 6.5l8.5 11 14 3.5-8.5 11 2 15.5L32 42l-16 5.5 2-15.5-8.5-11 14-3.5L32 6.5Z" fill={`url(#${shineGradientId})`} />
+          <path d="M32 14v27M20 24.5h24M23 40.5l9-26 9 26" stroke={theme.secondary} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.72" />
         </>
       )}
-      {iconKey === 'gold-crown' && (
+      {tier === 'gold' && (
         <>
-          <path d="M13 48h38l4-29-13 11L32 12 22 30 9 19l4 29z" fill={`url(#${gradientId})`} stroke={theme.foreground} strokeWidth="2" strokeLinejoin="round" />
-          <path d="M18 54h28" stroke={theme.accent} strokeWidth="4" strokeLinecap="round" />
+          <path
+            d="M9 49h46l3-31-14.5 10L32 8.5 20.5 28 6 18l3 31Z"
+            fill={`url(#${gradientId})`}
+            stroke={`url(#${edgeGradientId})`}
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+          <path d="M9 49h46l3-31-14.5 10L32 8.5 20.5 28 6 18l3 31Z" fill={`url(#${shineGradientId})`} />
+          <path d="M16 48h32M21 38h22M32 13v23" stroke={theme.foreground} strokeWidth="2.6" strokeLinecap="round" strokeOpacity="0.62" />
+          <circle cx="32" cy="31" r="3" fill={theme.foreground} fillOpacity="0.78" />
         </>
       )}
-      {iconKey === 'diamond-crystal' && (
+      {tier === 'diamond' && (
         <>
-          <path d="M32 6l20 18-20 34L12 24 32 6z" fill={`url(#${gradientId})`} stroke={theme.accent} strokeWidth="2" />
-          <path d="M12 24h40M22 24l10 34 10-34M22 24l10-18 10 18" stroke={theme.foreground} strokeOpacity="0.72" strokeWidth="2" />
+          <path
+            d="M32 5.5l22 17.5-22 36-22-36L32 5.5Z"
+            fill={`url(#${gradientId})`}
+            stroke={`url(#${edgeGradientId})`}
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+          <path d="M32 5.5l22 17.5-22 36-22-36L32 5.5Z" fill={`url(#${shineGradientId})`} />
+          <path d="M10 23h44M20.5 23L32 59M43.5 23L32 59M20.5 23L32 5.5l11.5 17.5M32 5.5V23" stroke={theme.foreground} strokeOpacity="0.68" strokeWidth="1.9" strokeLinejoin="round" />
         </>
       )}
-      {iconKey === 'unemployed-briefcase' && (
+      {tier === 'unemployed' && (
         <>
-          <path d="M14 24h36v27H14V24z" fill={`url(#${gradientId})`} stroke={theme.accent} strokeWidth="2" />
-          <path d="M25 24v-6h14v6M14 34h36M29 36h6" stroke={theme.foreground} strokeWidth="3" strokeLinecap="round" />
-          <path d="M24 10l8 7 8-7" stroke={theme.accent} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M18 22h28l7 7v21l-7 7H18l-7-7V29l7-7Z"
+            fill={`url(#${gradientId})`}
+            stroke={`url(#${edgeGradientId})`}
+            strokeWidth="2.2"
+            strokeLinejoin="round"
+          />
+          <path d="M18 22h28l7 7v21l-7 7H18l-7-7V29l7-7Z" fill={`url(#${shineGradientId})`} />
+          <path d="M24 22v-7h16v7M12 34h40M25 44h14" stroke={theme.foreground} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" strokeOpacity="0.72" />
+          <path d="M23 51l18-20" stroke={theme.accent} strokeWidth="3.1" strokeLinecap="round" strokeOpacity="0.86" />
         </>
       )}
-      {iconKey === 'unranked' && (
+      {tier === 'unranked' && (
         <>
-          <circle cx="32" cy="32" r="22" fill={`url(#${gradientId})`} stroke={theme.accent} strokeWidth="2" />
-          <path d="M22 32h20M32 22v20" stroke={theme.foreground} strokeWidth="4" strokeLinecap="round" />
+          <circle cx="32" cy="32" r="22" fill={`url(#${gradientId})`} stroke={`url(#${edgeGradientId})`} strokeWidth="2.2" />
+          <circle cx="32" cy="32" r="22" fill={`url(#${shineGradientId})`} />
+          <path d="M21 32h22M32 21v22" stroke={theme.foreground} strokeWidth="4" strokeLinecap="round" strokeOpacity="0.72" />
         </>
       )}
+      <RankDivisionMarks division={division} theme={theme} />
     </svg>
   );
 }

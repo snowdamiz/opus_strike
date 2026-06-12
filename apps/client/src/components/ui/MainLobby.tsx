@@ -1,5 +1,5 @@
-import { type CSSProperties, useState, useEffect, useRef } from 'react';
-import { useGameStore, LobbyInfo } from '../../store/gameStore';
+import { type CSSProperties, useState, useEffect, useRef, useId } from 'react';
+import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
@@ -14,7 +14,7 @@ import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
-import { lamportsToSolDisplay, solInputToLamports } from '../../utils/wagerPayments';
+import { solInputToLamports } from '../../utils/wagerPayments';
 import { RankIcon, getRankForStats } from './RankBadge';
 
 // Phantom wallet icon component
@@ -103,8 +103,8 @@ type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
 const LOBBY_HERO_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
 
 export function MainLobby() {
-  const { playerName, availableLobbies, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
-  const { watchLobbies, createLobby, quickPlay, rankedPlay, startPracticeGame, joinLobby } = useNetwork();
+  const { playerName, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
+  const { createLobby, quickPlay, rankedPlay, startPracticeGame } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -136,8 +136,8 @@ export function MainLobby() {
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showSocial, setShowSocial] = useState(false);
+  const [showPlayDialog, setShowPlayDialog] = useState(false);
   const [showCreateLobby, setShowCreateLobby] = useState(false);
-  const [showBrowseGames, setShowBrowseGames] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
   const heroAnimationMode = LOBBY_HERO_ANIMATION_MODE;
 
@@ -313,12 +313,6 @@ export function MainLobby() {
     setFeaturedHero(heroId);
   };
 
-  useEffect(() => {
-    if (activeTab === 'play') {
-      return watchLobbies();
-    }
-  }, [watchLobbies, activeTab]);
-
   const handleCreateLobby = async (lobbyName: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }) => {
     setError(null);
     try {
@@ -357,16 +351,6 @@ export function MainLobby() {
       await rankedPlay(playerName);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to enter ranked');
-    }
-  };
-
-  const handleJoinLobby = async (lobbyId: string) => {
-    setError(null);
-    try {
-      await joinLobby(playerName, lobbyId);
-      setShowBrowseGames(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to join lobby');
     }
   };
 
@@ -488,21 +472,13 @@ export function MainLobby() {
         {activeTab === 'play' && (
           <PlayTab
             isLoading={isLoading}
-            error={error}
             featuredHero={featuredHero}
             heroInfo={heroInfo}
             heroColor={heroColor}
             heroAnimationMode={heroAnimationMode}
-            lobbyCount={availableLobbies.length}
             isAuthenticated={isAuthenticated}
-            hasFullFunctionality={hasFullFunctionality}
-            isLinkingPhantom={isLinkingPhantom}
-            onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
-            onPracticeGame={handlePracticeGame}
-            onRankedPlay={handleRankedPlay}
-            onLinkPhantom={handleLinkPhantom}
-            onOpenCreateLobby={isAuthenticated ? () => setShowCreateLobby(true) : handleSignInClick}
-            onOpenBrowseGames={() => setShowBrowseGames(true)}
+            onOpenPlayDialog={() => setShowPlayDialog(true)}
+            onSignIn={handleSignInClick}
             onPrevHero={handlePrevHero}
             onNextHero={handleNextHero}
             onSelectHero={handleSelectHero}
@@ -533,6 +509,25 @@ export function MainLobby() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showPlayDialog && (
+        <PlayDialog
+          error={error}
+          heroColor={heroColor}
+          isLoading={isLoading}
+          isAuthenticated={isAuthenticated}
+          hasFullFunctionality={hasFullFunctionality}
+          isLinkingPhantom={isLinkingPhantom}
+          onQuickPlay={handleQuickPlay}
+          onPracticeGame={handlePracticeGame}
+          onRankedPlay={handleRankedPlay}
+          onLinkPhantom={handleLinkPhantom}
+          onOpenCreateLobby={() => {
+            setShowPlayDialog(false);
+            setShowCreateLobby(true);
+          }}
+          onClose={() => setShowPlayDialog(false)}
+        />
+      )}
       {showCreateLobby && (
         <CreateLobbyModal
           playerName={playerName}
@@ -540,14 +535,6 @@ export function MainLobby() {
           error={error}
           onClose={() => setShowCreateLobby(false)}
           onCreate={handleCreateLobby}
-        />
-      )}
-      {showBrowseGames && (
-        <BrowseGamesModal
-          availableLobbies={availableLobbies}
-          isLoading={isLoading}
-          onJoinLobby={handleJoinLobby}
-          onClose={() => setShowBrowseGames(false)}
         />
       )}
 
@@ -587,21 +574,13 @@ export function MainLobby() {
 // Play Tab Component
 interface PlayTabProps {
   isLoading: boolean;
-  error: string | null;
   featuredHero: HeroId;
   heroInfo: (typeof HERO_DEFINITIONS)[HeroId];
   heroColor: string;
   heroAnimationMode: HeroPreviewAnimationMode;
-  lobbyCount: number;
   isAuthenticated: boolean;
-  hasFullFunctionality: boolean;
-  isLinkingPhantom: boolean;
-  onQuickPlay: () => void;
-  onPracticeGame: () => void;
-  onRankedPlay: () => void;
-  onLinkPhantom: () => void;
-  onOpenCreateLobby: () => void;
-  onOpenBrowseGames: () => void;
+  onOpenPlayDialog: () => void;
+  onSignIn: () => void;
   onPrevHero: () => void;
   onNextHero: () => void;
   onSelectHero: (heroId: HeroId) => void;
@@ -609,21 +588,13 @@ interface PlayTabProps {
 
 function PlayTab({
   isLoading,
-  error,
   featuredHero,
   heroInfo,
   heroColor,
   heroAnimationMode,
-  lobbyCount,
   isAuthenticated,
-  hasFullFunctionality,
-  isLinkingPhantom,
-  onQuickPlay,
-  onPracticeGame,
-  onRankedPlay,
-  onLinkPhantom,
-  onOpenCreateLobby,
-  onOpenBrowseGames,
+  onOpenPlayDialog,
+  onSignIn,
   onPrevHero,
   onNextHero,
   onSelectHero,
@@ -631,12 +602,12 @@ function PlayTab({
   const { playButtonClick } = useUISounds();
   const featuredPreviewClassName =
     heroAnimationMode === 'showcaseLoop'
-      ? 'relative -mt-[clamp(2rem,6vh,5rem)] h-[clamp(20rem,50vh,36rem)] w-[clamp(18rem,36vw,34rem)]'
+      ? 'relative -mt-[clamp(1.6rem,5vh,4rem)] h-[clamp(16rem,40vh,29rem)] w-[clamp(14.5rem,29vw,27rem)]'
       : heroAnimationMode === 'jump'
-      ? 'relative -mt-[clamp(5rem,14vh,10rem)] h-[clamp(22rem,56vh,40rem)] w-[clamp(15rem,32vw,30rem)]'
+      ? 'relative -mt-[clamp(4rem,11vh,8rem)] h-[clamp(17.5rem,45vh,32rem)] w-[clamp(12rem,26vw,24rem)]'
       : heroAnimationMode === 'slide'
-        ? 'relative h-[clamp(18rem,44vh,32rem)] w-[clamp(18rem,36vw,34rem)]'
-      : 'relative h-[clamp(17rem,42vh,30rem)] w-[clamp(15rem,32vw,30rem)]';
+        ? 'relative h-[clamp(14.5rem,35vh,26rem)] w-[clamp(14.5rem,29vw,27rem)]'
+      : 'relative h-[clamp(13.5rem,34vh,24rem)] w-[clamp(12rem,26vw,24rem)]';
 
   return (
     <div className="play-tab-shell h-full menu-content">
@@ -724,147 +695,220 @@ function PlayTab({
               );
             })}
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              playButtonClick();
+              if (isAuthenticated) {
+                onOpenPlayDialog();
+              } else {
+                onSignIn();
+              }
+            }}
+            disabled={isAuthenticated && isLoading}
+            className="play-main-cta group"
+            style={{
+              background: isAuthenticated
+                ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
+                : WALLET_AUTH_COLORS.gradient,
+              boxShadow: isAuthenticated
+                ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
+                : WALLET_AUTH_COLORS.glow,
+            }}
+          >
+            <span
+              className="absolute inset-0 opacity-0 group-hover:opacity-100"
+              style={{ background: WALLET_AUTH_COLORS.shimmer }}
+            />
+            <span className="relative flex items-center justify-center gap-2">
+              {isAuthenticated ? (
+                <>
+                  <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  PLAY
+                </>
+              ) : (
+                <>
+                  <SignInIcon className="h-5 w-5 sm:h-6 sm:w-6" />
+                  SIGN IN
+                </>
+              )}
+            </span>
+          </button>
         </div>
+      </div>
+      </div>
+    </div>
+  );
+}
 
-        </div>
+interface PlayDialogProps {
+  error: string | null;
+  heroColor: string;
+  isLoading: boolean;
+  isAuthenticated: boolean;
+  hasFullFunctionality: boolean;
+  isLinkingPhantom: boolean;
+  onQuickPlay: () => void;
+  onPracticeGame: () => void;
+  onRankedPlay: () => void;
+  onLinkPhantom: () => void;
+  onOpenCreateLobby: () => void;
+  onClose: () => void;
+}
 
-        <div className="play-column-divider" aria-hidden="true" />
+function PlayDialog({
+  error,
+  heroColor,
+  isLoading,
+  isAuthenticated,
+  hasFullFunctionality,
+  isLinkingPhantom,
+  onQuickPlay,
+  onPracticeGame,
+  onRankedPlay,
+  onLinkPhantom,
+  onOpenCreateLobby,
+  onClose,
+}: PlayDialogProps) {
+  const { playButtonClick } = useUISounds();
+  const titleId = useId();
+  const dialogStyle = { '--play-dialog-accent': heroColor } as CSSProperties;
 
-        <div className="play-actions-column">
-          <div className="play-actions-copy">
-            <p className="font-display text-xl text-white sm:text-2xl xl:text-3xl">CHOOSE A MATCH</p>
+  const runAction = (action: () => void) => {
+    playButtonClick();
+    action();
+  };
+
+  return (
+    <div className="play-pay-dialog-root fixed inset-0 z-modal flex items-center justify-center p-[clamp(1rem,2vw,2rem)]">
+      <div className="play-pay-dialog-scrim absolute inset-0" onClick={onClose} />
+
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="play-pay-dialog relative w-full"
+        style={dialogStyle}
+      >
+        <header className="play-pay-dialog-header">
+          <div className="min-w-0">
+            <p className="play-pay-dialog-kicker">MATCH DESK</p>
+            <h2 id={titleId} className="play-pay-dialog-title">Choose a match</h2>
           </div>
 
-        {/* Action Buttons */}
-        <div className="play-action-stack w-[clamp(18rem,25vw,34rem)] space-y-1.5 lg:space-y-2 xl:space-y-2.5">
+          <button
+            type="button"
+            onClick={onClose}
+            className="play-pay-dialog-close"
+            aria-label="Close play dialog"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+
+        <div className="play-pay-dialog-body">
           {error && (
-            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
-              <p className="text-red-400 text-sm font-body text-center">{error}</p>
+            <div className="play-pay-dialog-error">
+              <p>{error}</p>
             </div>
           )}
 
           {isAuthenticated && !hasFullFunctionality && (
-            <div className="p-3 bg-amber-500/10 border border-amber-400/20 rounded-lg mb-4">
-              <p className="text-amber-100 text-xs sm:text-sm font-body text-center">
-                Phantom is required for full functionality.
-              </p>
+            <div className="play-pay-dialog-wallet">
+              <div>
+                <p className="font-display text-sm text-amber-50">PHANTOM REQUIRED</p>
+                <p className="mt-1 text-xs leading-relaxed text-amber-100/60">Link Phantom before entering ranked SOL queues.</p>
+              </div>
               <button
                 type="button"
-                onClick={onLinkPhantom}
+                onClick={() => runAction(onLinkPhantom)}
                 disabled={isLinkingPhantom}
-                className="mt-2 w-full py-2 rounded-lg font-display text-xs text-amber-50 bg-amber-500/20 border border-amber-300/20 hover:bg-amber-500/30 disabled:opacity-60"
+                className="play-pay-dialog-wallet-button"
               >
-                {isLinkingPhantom ? 'CONNECTING...' : 'LINK PHANTOM'}
+                {isLinkingPhantom ? 'LINKING...' : 'LINK'}
               </button>
             </div>
           )}
 
-          <button
- onClick={() => { playButtonClick(); onQuickPlay(); }}
- disabled={isLoading}
- className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 2xl:py-4 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl 2xl:text-2xl text-white border border-white/10 hover:border-white/30 relative overflow-hidden group"
- style={{
- background: isAuthenticated
- ? `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`
- : WALLET_AUTH_COLORS.gradient,
- boxShadow: isAuthenticated
- ? `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`
- : WALLET_AUTH_COLORS.glow,
- }}
- >
- {/* Button shimmer effect */}
- <div
- className="absolute inset-0 opacity-0 group-hover:opacity-100"
- style={{
- background: WALLET_AUTH_COLORS.shimmer,
- }}
- />
- <span className="relative flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5">
- {isAuthenticated ? (
- <>
- <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" fill="currentColor" viewBox="0 0 24 24">
- <path d="M8 5v14l11-7z" />
- </svg>
- {isLoading ? 'STARTING...' : 'QUICK PLAY'}
- </>
- ) : (
- <>
- <SignInIcon className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 xl:w-7 xl:h-7" />
- SIGN IN TO PLAY
- </>
- )}
- </span>
- </button>
+          <div className="play-pay-dialog-grid">
+            <button
+              type="button"
+              onClick={() => runAction(onQuickPlay)}
+              disabled={isLoading}
+              className="play-pay-option play-pay-option-primary"
+            >
+              <span className="play-pay-option-icon">
+                <svg fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+              <span className="play-pay-option-copy">
+                <span className="play-pay-option-title">{isLoading ? 'STARTING...' : 'QUICK PLAY'}</span>
+                <span className="play-pay-option-subtitle">Instant casual queue</span>
+              </span>
+            </button>
 
-          <button
-            onClick={() => { playButtonClick(); onPracticeGame(); }}
-            disabled={isLoading}
-            className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl text-cyan-50 border border-cyan-300/25 bg-cyan-500/12 hover:border-cyan-200/45 hover:bg-cyan-500/20 disabled:opacity-60 flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5"
-          >
-            <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
-            </svg>
-            PRACTICE
-          </button>
+            <button
+              type="button"
+              onClick={() => runAction(onRankedPlay)}
+              disabled={isLoading || isLinkingPhantom}
+              className="play-pay-option play-pay-option-ranked"
+            >
+              <span className="play-pay-option-icon">
+                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
+                </svg>
+              </span>
+              <span className="play-pay-option-copy">
+                <span className="play-pay-option-title">{isLoading ? 'PREPARING...' : 'RANKED $5 SOL'}</span>
+                <span className="play-pay-option-subtitle">Winner claims the opposing pot</span>
+              </span>
+              <span className="play-pay-option-badge">$5</span>
+            </button>
 
-          <button
-            onClick={() => { playButtonClick(); onRankedPlay(); }}
-            disabled={isLoading || isLinkingPhantom}
-            className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl text-amber-50 border border-amber-300/25 bg-amber-500/12 hover:border-amber-200/45 hover:bg-amber-500/20 disabled:opacity-60 flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5"
-          >
-            <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
-            </svg>
-            {isLoading ? 'PREPARING...' : isAuthenticated && hasFullFunctionality ? 'RANKED $5 SOL' : 'RANKED'}
-          </button>
+            <div className="play-pay-option-row">
+              <button
+                type="button"
+                onClick={() => runAction(onOpenCreateLobby)}
+                disabled={isLoading}
+                className="play-pay-option play-pay-option-compact"
+              >
+                <span className="play-pay-option-icon">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                </span>
+                <span className="play-pay-option-copy">
+                  <span className="play-pay-option-title">CREATE GAME</span>
+                </span>
+              </button>
 
-          <div className="play-secondary-actions grid grid-cols-2 gap-1 sm:gap-1.5 lg:gap-2 xl:gap-2.5">
- <button
- onClick={() => { playButtonClick(); onOpenCreateLobby(); }}
- disabled={isLoading}
- className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2"
- >
- {isAuthenticated ? (
- <>
- <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
- </svg>
- CREATE GAME
- </>
- ) : (
- <>
- <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
- </svg>
- SIGN IN
- </>
- )}
- </button>
+              <button
+                type="button"
+                onClick={() => runAction(onPracticeGame)}
+                disabled={isLoading}
+                className="play-pay-option play-pay-option-compact"
+              >
+                <span className="play-pay-option-icon">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
+                  </svg>
+                </span>
+                <span className="play-pay-option-copy">
+                  <span className="play-pay-option-title">PRACTICE</span>
+                </span>
+              </button>
+            </div>
 
- <button
- onClick={() => { playButtonClick(); onOpenBrowseGames(); }}
- className="py-1.5 sm:py-2 lg:py-2.5 xl:py-3 2xl:py-3.5 rounded-md sm:rounded-lg lg:rounded-xl font-display text-[10px] sm:text-xs lg:text-sm xl:text-base text-white/80 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20 flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2"
- >
- <svg className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
- </svg>
- BROWSE GAMES
- {lobbyCount > 0 && (
- <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">
- {lobbyCount}
- </span>
- )}
- </button>
           </div>
-        </div>
 
-          <ul className="play-ranked-notes">
-            <li>$5 SOL entry locks your ranked queue slot.</li>
-            <li>Win the match to claim the losing side's pot.</li>
-            <li>Rating updates when the match ends.</li>
-          </ul>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -930,59 +974,6 @@ function DeferredFeaturedHeroPreview({
       animationMode={animationMode}
       className={className}
     />
-  );
-}
-
-// Browse Games Modal
-interface BrowseGamesModalProps {
-  availableLobbies: LobbyInfo[];
-  isLoading: boolean;
-  onJoinLobby: (lobbyId: string) => void;
-  onClose: () => void;
-}
-
-function BrowseGamesModal({
-  availableLobbies,
-  isLoading,
-  onJoinLobby,
-  onClose
-}: BrowseGamesModalProps) {
-  return (
-    <GameDialog
-      title="BROWSE GAMES"
-      icon={(
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-      )}
-      iconClassName="bg-cyan-500/15 text-cyan-300"
-      size="lg"
-      onClose={onClose}
-      bodyClassName="max-h-[min(56vh,32rem)] overflow-y-auto custom-scrollbar"
-    >
-      {availableLobbies.length === 0 ? (
-        <div className="py-12 text-center">
-          <div className="w-14 h-14 mx-auto mb-4 rounded-xl bg-white/5 flex items-center justify-center">
-            <svg className="w-7 h-7 text-white/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-          <p className="font-display text-lg text-white/40">NO GAMES FOUND</p>
-          <p className="mt-2 text-white/20 text-sm font-body">Create one to get started!</p>
-        </div>
-      ) : (
-        <div className="p-3 space-y-2">
-          {availableLobbies.map((lobby) => (
-            <LobbyRow
-              key={lobby.roomId}
-              lobby={lobby}
-              onJoin={() => onJoinLobby(lobby.roomId)}
-              disabled={isLoading}
-            />
-          ))}
-        </div>
-      )}
-    </GameDialog>
   );
 }
 
@@ -1126,96 +1117,6 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
         </div>
       </form>
     </GameDialog>
-  );
-}
-
-// Lobby Row Component
-interface LobbyRowProps {
-  lobby: LobbyInfo;
-  onJoin: () => void;
-  disabled?: boolean;
-}
-
-function LobbyRow({ lobby, onJoin, disabled }: LobbyRowProps) {
-  const humanCount = lobby.humanCount ?? lobby.playerCount;
-  const botCount = lobby.botCount ?? 0;
-  const participantCount = lobby.participantCount ?? humanCount + botCount;
-  const maxParticipants = lobby.maxParticipants ?? lobby.maxPlayers;
-  const capacityPercent = Math.min(100, (participantCount / Math.max(1, maxParticipants)) * 100);
-  const isFull = humanCount >= lobby.maxPlayers || participantCount >= maxParticipants;
-  const isInGame = lobby.status === 'in_game' || lobby.status === 'starting';
-  const canJoin = !isFull && !isInGame;
-
-  return (
-    <div className="flex items-center gap-3 p-3 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] transition-colors group">
-      {/* Icon */}
-      <div className={`w-10 h-10 rounded-lg flex shrink-0 items-center justify-center ${canJoin ? 'bg-orange-500/10' : 'bg-white/5'
-        }`}>
-        {isInGame ? (
-          <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        ) : (
-          <svg className={`w-5 h-5 ${canJoin ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <h3 className="font-display text-base text-white truncate">{lobby.name}</h3>
-          {isInGame && (
-            <span className="px-2 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-display rounded-full animate-pulse">
-              IN GAME
-            </span>
-          )}
-          {!isInGame && isFull && (
-            <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-[10px] font-display rounded-full">
-              FULL
-            </span>
-          )}
-          {lobby.wager?.enabled && (
-            <span className="px-2 py-0.5 bg-cyan-500/15 text-cyan-200 text-[10px] font-display rounded-full">
-              {lamportsToSolDisplay(lobby.wager.coverChargeLamports)} SOL
-            </span>
-          )}
-        </div>
-
-        {/* Player count */}
-        <div className="flex items-center gap-3">
-          <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden max-w-40">
-            <div
-              className={`h-full rounded-full transition-all ${isFull ? 'bg-red-500' : isInGame ? 'bg-amber-500' : 'bg-orange-500'
-                }`}
-              style={{ width: `${capacityPercent}%` }}
-            />
-          </div>
-          <span className="text-xs text-white/50 font-mono">
-            {participantCount}/{maxParticipants}
-          </span>
-          {lobby.wager?.enabled && (
-            <span className="text-xs text-cyan-200/70 font-mono">
-              POT {lamportsToSolDisplay(lobby.wager.potLamports)}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Join Button */}
- <button
- onClick={onJoin}
- disabled={disabled || !canJoin}
- className={`px-4 py-2 rounded-lg font-display text-xs ${canJoin
- ? 'bg-orange-500 text-white hover:bg-orange-400 '
- : 'bg-white/5 text-white/30 cursor-not-allowed'
- }`}
- >
- {isInGame ? 'LIVE' : isFull ? 'FULL' : 'JOIN'}
- </button>
-    </div>
   );
 }
 
