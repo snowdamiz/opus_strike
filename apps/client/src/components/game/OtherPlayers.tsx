@@ -23,9 +23,9 @@ interface OtherPlayersProps {
 
 export function OtherPlayers({ config }: OtherPlayersProps) {
   // NOTE: This component subscribes to gameStore.players but does NOT re-render on
-  // position updates because updateGameState() updates Map entries in-place (same Map
-  // reference). The Map reference only changes when players are added/removed. Position
-  // interpolation reads from visualStore in useFrame (non-reactive, 60fps).
+  // v2 transform position updates because remote player entries are mutated in-place.
+  // The Map reference only changes when players are added/removed. Position interpolation
+  // reads from visualStore in useFrame (non-reactive, 60fps).
   const { players, playerId, localPlayerId, gamePhase } = useGameStore(
     useShallow(state => ({
       players: state.players,

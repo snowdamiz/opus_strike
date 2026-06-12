@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import type { MovementCommand } from '@voxel-strike/shared';
 import { MovementCommandQueue } from '../rooms/MovementCommandQueue';
+import {
+  SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
+  SERVER_MOVEMENT_TARGET_PENDING_COMMANDS,
+  getMovementCommandDrainDecision,
+} from '../rooms/movementCommandDrain';
 
 function command(seq: number): MovementCommand {
   return {
@@ -46,5 +51,84 @@ wrap.push(command(0xffffffff));
 wrap.push(command(0));
 wrap.push(command(1));
 assert.deepEqual(wrap.toArray().map((item) => item.seq), [0xffffffff, 0, 1]);
+
+const emptyDrain = getMovementCommandDrainDecision(0);
+assert.equal(emptyDrain.budget, 0);
+assert.equal(emptyDrain.underflow, true);
+
+const warmupDrain = getMovementCommandDrainDecision(SERVER_MOVEMENT_TARGET_PENDING_COMMANDS - 1);
+assert.equal(warmupDrain.budget, 0);
+assert.equal(warmupDrain.underflow, true);
+
+const steadyDrain = getMovementCommandDrainDecision(SERVER_MOVEMENT_TARGET_PENDING_COMMANDS);
+assert.equal(steadyDrain.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+assert.equal(steadyDrain.underflow, false);
+assert.equal(steadyDrain.catchup, false);
+
+const barrierDrain = getMovementCommandDrainDecision(1, { hasAuthorityBarrier: true });
+assert.equal(barrierDrain.budget, 1);
+assert.equal(barrierDrain.underflow, false);
+
+const catchupDrain = getMovementCommandDrainDecision(
+  SERVER_MOVEMENT_TARGET_PENDING_COMMANDS + SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 3
+);
+assert.equal(catchupDrain.catchup, true);
+assert.ok(catchupDrain.budget > SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+
+function simulateDrainCadence(arrivalsPerTick: readonly number[]) {
+  const cadenceQueue = new MovementCommandQueue(128);
+  let seq = 1;
+  const samples: Array<{
+    before: number;
+    after: number;
+    processed: number;
+    underflow: boolean;
+    catchup: boolean;
+  }> = [];
+
+  for (const arrivals of arrivalsPerTick) {
+    for (let index = 0; index < arrivals; index++) {
+      cadenceQueue.push(command(seq++));
+    }
+
+    const before = cadenceQueue.length;
+    const decision = getMovementCommandDrainDecision(before);
+    let processed = 0;
+    for (let step = 0; step < decision.budget; step++) {
+      if (cadenceQueue.pop()) processed++;
+    }
+
+    samples.push({
+      before,
+      after: cadenceQueue.length,
+      processed,
+      underflow: decision.underflow,
+      catchup: decision.catchup,
+    });
+  }
+
+  return samples;
+}
+
+const steadyCadence = simulateDrainCadence(Array.from({ length: 90 }, () => SERVER_MOVEMENT_SUBSTEPS_PER_TICK));
+assert.equal(steadyCadence[0].underflow, true, 'first localhost tick should warm the input buffer');
+for (const sample of steadyCadence.slice(1)) {
+  assert.equal(sample.before, SERVER_MOVEMENT_TARGET_PENDING_COMMANDS);
+  assert.equal(sample.processed, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+  assert.equal(sample.after, SERVER_MOVEMENT_TARGET_PENDING_COMMANDS - SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+  assert.equal(sample.underflow, false);
+  assert.equal(sample.catchup, false);
+}
+
+const burstCadence = simulateDrainCadence([
+  SERVER_MOVEMENT_TARGET_PENDING_COMMANDS + SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 4,
+  0,
+  0,
+]);
+assert.equal(burstCadence[0].catchup, true);
+assert.ok(
+  burstCadence[0].processed < burstCadence[0].before,
+  'catchup must drain backlog gradually instead of reflecting packet bursts'
+);
 
 console.log('movement command queue tests passed');

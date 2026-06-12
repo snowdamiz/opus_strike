@@ -404,6 +404,48 @@ function runCorrectionReplay() {
   assert.equal(Number.isFinite(controller.getState().position.x), true);
 }
 
+function runClientAuthoritativeAckDoesNotMovePresentation() {
+  const input = createEmptyInputState();
+  input.moveForward = true;
+  const buttons = inputStateToMovementButtons(input);
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  const commands = Array.from({ length: 8 }, (_, index) => command(index + 1, buttons));
+  for (const movementCommand of commands) {
+    controller.step(movementCommand, context());
+  }
+
+  const beforeAck = controller.getState();
+  const predictedAtAck = new MovementPredictionController();
+  predictedAtAck.initialize(createSimulationState(), 0, 0);
+  for (const movementCommand of commands.slice(0, 4)) {
+    predictedAtAck.step(movementCommand, context());
+  }
+  const ackState = predictedAtAck.getState();
+  const metrics = controller.acknowledgeAuthority({
+    serverTick: 100,
+    serverTime: 1000,
+    ackSeq: 4,
+    movementEpoch: 0,
+    position: { x: ackState.position.x + 0.4, y: ackState.position.y, z: ackState.position.z },
+    velocity: { ...ackState.velocity, x: ackState.velocity.x + 0.2 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: {
+      ...ackState.movement,
+      isJetpacking: true,
+      jetpackFuel: 41,
+    },
+    correctionReason: 'normal',
+  }, context(), 1100);
+
+  assert.equal(metrics.corrected, false);
+  assert.equal(metrics.replayedCommands, 0);
+  assert.equal(controller.getBufferedCommandCount(), 4);
+  assertVecNear(controller.getState().position, beforeAck.position, 'client-owned ack position');
+  assert.equal(controller.getState().movement.jetpackFuel, 41);
+}
+
 function runOverwriteUpdatesLatestAckState() {
   const controller = new MovementPredictionController();
   controller.initialize(createSimulationState(), 0, 0);
@@ -1104,6 +1146,7 @@ runHeldCommandStripsEdgeButtons();
 runChronosAscendantReleaseDampsStrafe();
 runChronosAscendantCapsElevation();
 runCorrectionReplay();
+runClientAuthoritativeAckDoesNotMovePresentation();
 runOverwriteUpdatesLatestAckState();
 runOverwriteDefaultsToExternalCorrection();
 runEpochBarrier();

@@ -12,6 +12,7 @@ import {
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_SHADOWSTEP_DISTANCE,
   inputStateToMovementButtons,
+  compareMovementSeq,
   isMovementSeqAfter,
   nextMovementSeq,
   createProceduralTerrainLookup,
@@ -27,6 +28,7 @@ import {
   sweepCapsulePathClear,
   type MovementCollisionWorld,
   type MovementPredictionContext,
+  type PredictionCorrectionMetrics,
   type MovementSimulationState,
 } from '@voxel-strike/physics';
 import type { MovementTerrainAdapter } from '@voxel-strike/physics';
@@ -36,12 +38,21 @@ import { setPlayerVisualTransform } from '../store/visualStore';
 
 export const localMovementPrediction = new MovementPredictionController();
 
+const MAX_PENDING_SELF_AUTHORITY_MESSAGES = 32;
+
 let nextCommandSeq = 1;
 let predictedPlayerId: string | null = null;
 let cachedMapId: string | null = null;
 let cachedTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
 let cachedCollisionWorld: { mapId: string | null; revision: number; world: MovementCollisionWorld } | null = null;
 let latestServerCollisionRevision = 0;
+const pendingSelfMovementAuthorities: SelfMovementAuthority[] = [];
+
+export interface AppliedSelfMovementAuthority {
+  authority: SelfMovementAuthority;
+  result: PredictionCorrectionMetrics;
+  state: MovementSimulationState;
+}
 
 const fallbackTerrain: MovementTerrainAdapter = {
   getGroundY: () => 0,
@@ -59,6 +70,7 @@ export function resetLocalMovementPrediction(
   cachedTerrainLookup = null;
   cachedCollisionWorld = null;
   latestServerCollisionRevision = 0;
+  pendingSelfMovementAuthorities.length = 0;
   if (state) {
     localMovementPrediction.initialize(state, movementEpoch, 0);
   } else {
@@ -413,21 +425,67 @@ function advanceNextCommandSeqPastAck(ackSeq: number): void {
   }
 }
 
-export function applySelfMovementAuthority(player: Player, authority: SelfMovementAuthority) {
+export function enqueueSelfMovementAuthority(authority: SelfMovementAuthority): void {
+  pendingSelfMovementAuthorities.push(authority);
+  if (pendingSelfMovementAuthorities.length > MAX_PENDING_SELF_AUTHORITY_MESSAGES) {
+    pendingSelfMovementAuthorities.splice(
+      0,
+      pendingSelfMovementAuthorities.length - MAX_PENDING_SELF_AUTHORITY_MESSAGES
+    );
+  }
+}
+
+function compareSelfAuthorityOrder(a: SelfMovementAuthority, b: SelfMovementAuthority): number {
+  if (a.movementEpoch !== b.movementEpoch) {
+    return a.movementEpoch - b.movementEpoch;
+  }
+  return compareMovementSeq(a.ackSeq, b.ackSeq);
+}
+
+function isSelfAuthorityBarrier(authority: SelfMovementAuthority): boolean {
+  return Boolean(authority.correctionReason && authority.correctionReason !== 'normal');
+}
+
+export function drainSelfMovementAuthorities(player: Player, nowMs: number): AppliedSelfMovementAuthority[] {
+  if (pendingSelfMovementAuthorities.length === 0) return [];
+
+  const authorities = pendingSelfMovementAuthorities.splice(0);
+  authorities.sort(compareSelfAuthorityOrder);
+  const applied: AppliedSelfMovementAuthority[] = [];
+
+  for (const authority of authorities) {
+    const predictionEpoch = localMovementPrediction.getMovementEpoch();
+    const staleEpoch = authority.movementEpoch < predictionEpoch;
+    const staleAck =
+      authority.movementEpoch === predictionEpoch &&
+      compareMovementSeq(authority.ackSeq, localMovementPrediction.getLastAckSeq()) <= 0;
+
+    if ((staleEpoch || staleAck) && !isSelfAuthorityBarrier(authority)) {
+      continue;
+    }
+
+    const application = applySelfMovementAuthority(player, authority, nowMs);
+    applied.push({ authority, ...application });
+  }
+
+  return applied;
+}
+
+export function applySelfMovementAuthority(player: Player, authority: SelfMovementAuthority, nowMs = Date.now()) {
   ensureLocalPredictionInitialized(player);
   const nextCollisionRevision = authority.collisionRevision ?? latestServerCollisionRevision;
   if (nextCollisionRevision !== latestServerCollisionRevision) {
     cachedCollisionWorld = null;
   }
   latestServerCollisionRevision = nextCollisionRevision;
-  const result = localMovementPrediction.reconcile(
+  const result = localMovementPrediction.acknowledgeAuthority(
     authority,
     getLocalPredictionContext(player),
-    Date.now()
+    nowMs
   );
   advanceNextCommandSeqPastAck(authority.ackSeq);
   const state = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
-  setPredictedVisuals(player.id, state.position, authority.lookYaw);
+  setPredictedVisuals(player.id, state.position, authority.lookYaw, nowMs);
   return { result, state };
 }
 
@@ -449,8 +507,8 @@ export function getCurrentPredictedState(fallback: MovementSimulationState): Mov
   return localMovementPrediction.getState() ?? fallback;
 }
 
-export function setPredictedVisuals(playerId: string, position: Vec3, lookYaw: number): void {
-  const visualPosition = localMovementPrediction.getVisualPosition(Date.now());
+export function setPredictedVisuals(playerId: string, position: Vec3, lookYaw: number, nowMs = Date.now()): void {
+  const visualPosition = localMovementPrediction.getVisualPosition(nowMs);
   setPlayerVisualTransform(playerId, {
     x: visualPosition.x,
     y: visualPosition.y,

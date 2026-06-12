@@ -296,10 +296,11 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       rankDivisionIndex: context.rankDivisionIndex,
       targetRankDivisionIndex,
       placementRemaining: context.rank.rankedPlacementsRemaining,
-      rankedTokenSymbol: tokenHold.tokenSymbol,
+      rankedTokenAddress: tokenHold.tokenAddress,
+      rankedTokenDecimals: tokenHold.tokenDecimals ?? undefined,
       rankedTokenHoldUsdCents: tokenHold.usdCents,
-      rankedTokenRequiredLamports: tokenHold.requiredLamports,
-      rankedTokenBalanceLamports: tokenHold.balanceLamports,
+      rankedTokenRequiredBaseUnits: tokenHold.requiredTokenBaseUnits,
+      rankedTokenBalanceBaseUnits: tokenHold.balanceTokenBaseUnits,
       rankedTokenCheckedAt: Date.parse(tokenHold.checkedAt),
     });
 

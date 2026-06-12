@@ -75,6 +75,7 @@ import {
   confirmLocalMovementTransform,
   createLocalMovementCommand,
   createMovementCommandPacket,
+  drainSelfMovementAuthorities,
   ensureLocalPredictionInitialized,
   getCurrentPredictedState,
   getCurrentPredictedVisualPosition,
@@ -84,6 +85,12 @@ import {
   predictLocalPhantomBlink,
   stepLocalMovementPrediction,
 } from '../../movement/localPrediction';
+import {
+  recordAuthorityFrameApplied,
+  recordLocalReactiveUpdate,
+  recordMovementCommandGenerated,
+  recordMovementCommandsSent,
+} from '../../movement/networkDiagnostics';
 
 // Component imports for targeting indicators
 import { BombTargetingIndicator, triggerAirStrike, triggerRocketJumpExplosion } from './BlazeEffects';
@@ -102,7 +109,8 @@ const TERRAIN_STEP_VISUAL_UP_RATE = 16;
 const TERRAIN_STEP_VISUAL_DOWN_RATE = 28;
 const TERRAIN_STEP_VISUAL_MAX_RISE_SPEED = 3.2;
 const TERRAIN_STEP_VISUAL_MAX_DROP_SPEED = 6.5;
-const MOVEMENT_COMMAND_SEND_INTERVAL_MS = 1000 / 30;
+const MOVEMENT_COMMAND_TARGET_PACKET_SIZE = 3;
+const MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS = 1000 / TICK_RATE;
 const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
   isGrounded: true,
   isSprinting: false,
@@ -315,13 +323,18 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const flushMovementCommands = useCallback((nowMs: number, force = false) => {
     const pending = pendingMovementCommandsRef.current;
     if (pending.length === 0) return;
-    if (!force && pending.length < MOVEMENT_MAX_PACKET_COMMANDS && nowMs - lastSendRef.current < MOVEMENT_COMMAND_SEND_INTERVAL_MS) {
+    if (!force && pending.length < MOVEMENT_COMMAND_TARGET_PACKET_SIZE && nowMs - lastSendRef.current < MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS) {
       return;
     }
 
     while (pending.length > 0) {
-      const packetCommands = pending.splice(0, MOVEMENT_MAX_PACKET_COMMANDS);
+      const pendingBeforeFlush = pending.length;
+      const packetSize = pending.length > MOVEMENT_MAX_PACKET_COMMANDS
+        ? MOVEMENT_MAX_PACKET_COMMANDS
+        : Math.min(pending.length, MOVEMENT_COMMAND_TARGET_PACKET_SIZE);
+      const packetCommands = pending.splice(0, packetSize);
       sendMovementCommands(createMovementCommandPacket(packetCommands));
+      recordMovementCommandsSent(packetCommands.length, pendingBeforeFlush);
     }
     lastSendRef.current = nowMs;
   }, [sendMovementCommands]);
@@ -511,9 +524,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
   // Main game loop. Run early so viewmodel/effects sample the updated camera and predicted velocity.
   useFrame((frameState, delta) => {
-    const localPlayer = useGameStore.getState().localPlayer;
+    let localPlayer = useGameStore.getState().localPlayer;
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
-    const now = getFrameClock().epochNowMs;
+    const frameClock = getFrameClock();
+    const now = frameClock.epochNowMs;
+    const frameNowMs = frameClock.nowMs;
 
     if (!localPlayer) {
       setLocalViewmodelMovement({
@@ -536,6 +551,50 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
       return;
+    }
+
+    const appliedAuthorities = drainSelfMovementAuthorities(localPlayer, frameNowMs);
+    if (appliedAuthorities.length > 0) {
+      recordAuthorityFrameApplied(appliedAuthorities.map((application) => application.result));
+
+      let reactiveAuthority = appliedAuthorities[appliedAuthorities.length - 1] ?? null;
+      for (let index = appliedAuthorities.length - 1; index >= 0; index--) {
+        const application = appliedAuthorities[index];
+        if (
+          (application.authority.correctionReason && application.authority.correctionReason !== 'normal') ||
+          application.result.mediumCorrection ||
+          application.result.hardCorrection
+        ) {
+          reactiveAuthority = application;
+          break;
+        }
+      }
+
+      if (
+        reactiveAuthority &&
+        (
+          (reactiveAuthority.authority.correctionReason && reactiveAuthority.authority.correctionReason !== 'normal') ||
+          reactiveAuthority.result.mediumCorrection ||
+          reactiveAuthority.result.hardCorrection
+        )
+      ) {
+        const updates = {
+          position: { ...reactiveAuthority.state.position },
+          velocity: { ...reactiveAuthority.state.velocity },
+          lookYaw: reactiveAuthority.authority.lookYaw,
+          lookPitch: reactiveAuthority.authority.lookPitch,
+          movement: {
+            ...reactiveAuthority.state.movement,
+            grapplePoint: reactiveAuthority.state.movement.grapplePoint
+              ? { ...reactiveAuthority.state.movement.grapplePoint }
+              : null,
+          },
+        };
+        updateLocalPlayer(updates);
+        recordLocalReactiveUpdate('selfAuthority');
+        localPlayer = { ...localPlayer, ...updates };
+      }
+
     }
 
     if (lastHeroIdRef.current !== localPlayer.heroId) {
@@ -1056,6 +1115,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         crouchPressed: pendingCrouchPressedRef.current,
         abilityCastHints,
       });
+      recordMovementCommandGenerated();
       pendingUnstuckInputRef.current = false;
       pendingCrouchPressedRef.current = false;
       pendingMovementCommandsRef.current.push(command);
@@ -1069,7 +1129,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
     velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
-    const visualPosition = getCurrentPredictedVisualPosition(predictedState.position, now);
+    const visualPosition = getCurrentPredictedVisualPosition(predictedState.position, frameNowMs);
     const smoothedVisualY = smoothTerrainVisualY(
       movement.refs.smoothedY.current,
       visualPosition.y,

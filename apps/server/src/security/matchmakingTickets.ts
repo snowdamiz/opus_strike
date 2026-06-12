@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { PublicKey } from '@solana/web3.js';
 import { getEntryTicketSecret } from '../config/security';
 import {
   DEFAULT_MATCHMAKING_RATING,
@@ -18,10 +19,11 @@ export interface MatchmakingTicketClaims {
   rankedEntryQuoteId?: string;
   coverChargeLamports?: string;
   rankedEntryQuoteExpiresAt?: number;
-  rankedTokenSymbol?: string;
+  rankedTokenAddress?: string;
+  rankedTokenDecimals?: number;
   rankedTokenHoldUsdCents?: number;
-  rankedTokenRequiredLamports?: string;
-  rankedTokenBalanceLamports?: string;
+  rankedTokenRequiredBaseUnits?: string;
+  rankedTokenBalanceBaseUnits?: string;
   rankedTokenCheckedAt?: number;
   issuedAt: number;
   expiresAt: number;
@@ -38,10 +40,11 @@ export interface CreateMatchmakingTicketInput {
   rankedEntryQuoteId?: string;
   coverChargeLamports?: string;
   rankedEntryQuoteExpiresAt?: number;
-  rankedTokenSymbol?: string;
+  rankedTokenAddress?: string;
+  rankedTokenDecimals?: number;
   rankedTokenHoldUsdCents?: number;
-  rankedTokenRequiredLamports?: string;
-  rankedTokenBalanceLamports?: string;
+  rankedTokenRequiredBaseUnits?: string;
+  rankedTokenBalanceBaseUnits?: string;
   rankedTokenCheckedAt?: number;
   ttlMs?: number;
 }
@@ -74,6 +77,15 @@ function safeEqual(a: string, b: string): boolean {
   return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
 }
 
+function isCanonicalSolanaAddress(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return new PublicKey(value).toBase58() === value;
+  } catch {
+    return false;
+  }
+}
+
 export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
   ticket: string;
   claims: MatchmakingTicketClaims;
@@ -90,10 +102,11 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     rankedEntryQuoteId: input.mode === 'ranked' ? input.rankedEntryQuoteId : undefined,
     coverChargeLamports: input.mode === 'ranked' ? input.coverChargeLamports : undefined,
     rankedEntryQuoteExpiresAt: input.mode === 'ranked' ? input.rankedEntryQuoteExpiresAt : undefined,
-    rankedTokenSymbol: input.mode === 'ranked' ? input.rankedTokenSymbol : undefined,
+    rankedTokenAddress: input.mode === 'ranked' ? input.rankedTokenAddress : undefined,
+    rankedTokenDecimals: input.mode === 'ranked' ? input.rankedTokenDecimals : undefined,
     rankedTokenHoldUsdCents: input.mode === 'ranked' ? input.rankedTokenHoldUsdCents : undefined,
-    rankedTokenRequiredLamports: input.mode === 'ranked' ? input.rankedTokenRequiredLamports : undefined,
-    rankedTokenBalanceLamports: input.mode === 'ranked' ? input.rankedTokenBalanceLamports : undefined,
+    rankedTokenRequiredBaseUnits: input.mode === 'ranked' ? input.rankedTokenRequiredBaseUnits : undefined,
+    rankedTokenBalanceBaseUnits: input.mode === 'ranked' ? input.rankedTokenBalanceBaseUnits : undefined,
     rankedTokenCheckedAt: input.mode === 'ranked' ? input.rankedTokenCheckedAt : undefined,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
@@ -139,20 +152,24 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     && !Number.isFinite(claims.rankedEntryQuoteExpiresAt)
   ) return null;
   if (
-    claims.rankedTokenSymbol !== undefined
-    && typeof claims.rankedTokenSymbol !== 'string'
+    claims.rankedTokenAddress !== undefined
+    && !isCanonicalSolanaAddress(claims.rankedTokenAddress)
+  ) return null;
+  if (
+    claims.rankedTokenDecimals !== undefined
+    && (!Number.isInteger(claims.rankedTokenDecimals) || claims.rankedTokenDecimals < 0 || claims.rankedTokenDecimals > 255)
   ) return null;
   if (
     claims.rankedTokenHoldUsdCents !== undefined
     && (!Number.isInteger(claims.rankedTokenHoldUsdCents) || claims.rankedTokenHoldUsdCents < 0)
   ) return null;
   if (
-    claims.rankedTokenRequiredLamports !== undefined
-    && (typeof claims.rankedTokenRequiredLamports !== 'string' || !/^[0-9]+$/.test(claims.rankedTokenRequiredLamports))
+    claims.rankedTokenRequiredBaseUnits !== undefined
+    && (typeof claims.rankedTokenRequiredBaseUnits !== 'string' || !/^[0-9]+$/.test(claims.rankedTokenRequiredBaseUnits))
   ) return null;
   if (
-    claims.rankedTokenBalanceLamports !== undefined
-    && (typeof claims.rankedTokenBalanceLamports !== 'string' || !/^[0-9]+$/.test(claims.rankedTokenBalanceLamports))
+    claims.rankedTokenBalanceBaseUnits !== undefined
+    && (typeof claims.rankedTokenBalanceBaseUnits !== 'string' || !/^[0-9]+$/.test(claims.rankedTokenBalanceBaseUnits))
   ) return null;
   if (
     claims.rankedTokenCheckedAt !== undefined
@@ -169,10 +186,11 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     rankedEntryQuoteId: mode === 'ranked' ? claims.rankedEntryQuoteId : undefined,
     coverChargeLamports: mode === 'ranked' ? claims.coverChargeLamports : undefined,
     rankedEntryQuoteExpiresAt: mode === 'ranked' ? claims.rankedEntryQuoteExpiresAt : undefined,
-    rankedTokenSymbol: mode === 'ranked' ? claims.rankedTokenSymbol : undefined,
+    rankedTokenAddress: mode === 'ranked' ? claims.rankedTokenAddress : undefined,
+    rankedTokenDecimals: mode === 'ranked' ? claims.rankedTokenDecimals : undefined,
     rankedTokenHoldUsdCents: mode === 'ranked' ? claims.rankedTokenHoldUsdCents : undefined,
-    rankedTokenRequiredLamports: mode === 'ranked' ? claims.rankedTokenRequiredLamports : undefined,
-    rankedTokenBalanceLamports: mode === 'ranked' ? claims.rankedTokenBalanceLamports : undefined,
+    rankedTokenRequiredBaseUnits: mode === 'ranked' ? claims.rankedTokenRequiredBaseUnits : undefined,
+    rankedTokenBalanceBaseUnits: mode === 'ranked' ? claims.rankedTokenBalanceBaseUnits : undefined,
     rankedTokenCheckedAt: mode === 'ranked' ? claims.rankedTokenCheckedAt : undefined,
   };
 }

@@ -21,7 +21,12 @@ import {
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
-import { applySelfMovementAuthority, confirmLocalMovementTransform } from '../movement/localPrediction';
+import { confirmLocalMovementTransform, enqueueSelfMovementAuthority } from '../movement/localPrediction';
+import {
+  recordAuthorityAckReceived,
+  recordLocalReactiveUpdate,
+  recordTransformMessage,
+} from '../movement/networkDiagnostics';
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
@@ -66,12 +71,10 @@ import type {
   Player,
   PlayerVitalsAbilitySnapshot,
   PlayerMovementState,
-  PlayerTransformsMessage,
   PlayerTransformsV2Message,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
   PackedPlayerTransform,
-  QuantizedPlayerTransform,
   SelfMovementAuthority,
   Team,
 } from '@voxel-strike/shared';
@@ -95,6 +98,21 @@ const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
+
+interface UnpackedPlayerTransform {
+  netId: number;
+  px: number;
+  py: number;
+  pz: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  yaw: number;
+  pitch: number;
+  movementBits: number;
+  wallRunSide: -1 | 0 | 1;
+  movementEpoch: number;
+}
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -305,9 +323,9 @@ function syncLocalVisualPosition(player: Player): void {
   setPlayerVisualTransform(player.id, player.position, player.lookYaw);
 }
 
-type MovementBitsTransform = Pick<QuantizedPlayerTransform, 'movementBits' | 'wallRunSide'>;
+type MovementBitsTransform = Pick<UnpackedPlayerTransform, 'movementBits' | 'wallRunSide'>;
 
-function dequantizeTransform(transform: Pick<QuantizedPlayerTransform, 'px' | 'py' | 'pz' | 'vx' | 'vy' | 'vz' | 'yaw' | 'pitch'>) {
+function dequantizeTransform(transform: Pick<UnpackedPlayerTransform, 'px' | 'py' | 'pz' | 'vx' | 'vy' | 'vz' | 'yaw' | 'pitch'>) {
   return {
     position: {
       x: transform.px / TRANSFORM_POSITION_SCALE,
@@ -342,7 +360,7 @@ function movementFromBits(
   };
 }
 
-function unpackPackedTransform(transform: PackedPlayerTransform): Omit<QuantizedPlayerTransform, 'id'> & { netId: number } {
+function unpackPackedTransform(transform: PackedPlayerTransform): UnpackedPlayerTransform {
   return {
     netId: transform[0],
     px: transform[1],
@@ -429,23 +447,63 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
   };
 }
 
-function cloneMovementForStore(movement: PlayerMovementState): PlayerMovementState {
+function isDefaultBootstrapPosition(player: Player): boolean {
+  return (
+    player.position.x === 0 &&
+    player.position.y === 1 &&
+    player.position.z === 0
+  );
+}
+
+function shouldPreservePredictionOwnedLocalSimulation(
+  existing: Player | undefined,
+  nextState: Player['state'],
+  nextHeroId: Player['heroId']
+): existing is Player {
+  return Boolean(
+    existing &&
+    hasReceivedSelfMovementAuthority &&
+    existing.state === 'alive' &&
+    nextState === 'alive' &&
+    existing.heroId === nextHeroId &&
+    !isDefaultBootstrapPosition(existing)
+  );
+}
+
+function createLocalPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number, existing?: Player): Player {
+  const next = createPlayerFromVitals(vitals, serverTime, existing);
+  if (!shouldPreservePredictionOwnedLocalSimulation(existing, vitals.state, vitals.heroId)) {
+    return next;
+  }
+
   return {
-    ...movement,
-    grapplePoint: movement.grapplePoint ? { ...movement.grapplePoint } : null,
+    ...next,
+    position: existing.position,
+    velocity: existing.velocity,
+    lookYaw: existing.lookYaw,
+    lookPitch: existing.lookPitch,
+    movement: existing.movement,
   };
 }
 
-function applySelfAuthorityToPlayerInPlace(
-  player: Player,
-  state: { position: Player['position']; velocity: Player['velocity']; movement: PlayerMovementState },
-  authority: SelfMovementAuthority
-): void {
-  player.position = { ...state.position };
-  player.velocity = { ...state.velocity };
-  player.lookYaw = authority.lookYaw;
-  player.lookPitch = authority.lookPitch;
-  player.movement = cloneMovementForStore(state.movement);
+function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapshot, serverTime: number): void {
+  player.name = vitals.name || player.name;
+  player.team = vitals.team;
+  player.heroId = vitals.heroId;
+  player.state = vitals.state;
+  player.isReady = vitals.isReady;
+  player.isBot = Boolean(vitals.isBot);
+  player.botDifficulty = vitals.botDifficulty || player.botDifficulty;
+  player.botProfileId = vitals.botProfileId || player.botProfileId;
+  player.rank = normalizeRankSnapshot(vitals, player.rank);
+  player.health = vitals.health;
+  player.maxHealth = vitals.maxHealth;
+  player.ultimateCharge = vitals.ultimateCharge;
+  player.abilities = normalizeAbilityVitals(vitals.abilities, serverTime, player.abilities);
+  player.hasFlag = vitals.hasFlag;
+  player.respawnTime = vitals.respawnTime;
+  player.spawnProtectionUntil = vitals.spawnProtectionUntil;
+  player.stats = vitals.stats || player.stats;
 }
 
 // ============================================================================
@@ -484,13 +542,19 @@ export function syncPlayerFromSchema(
     const store = useGameStore.getState();
     if (store.localPlayer) {
       const nextState = schemaPlayer.state || store.localPlayer.state;
+      const nextHeroId = (schemaPlayer.heroId || store.localPlayer.heroId) as HeroId | null;
+      const preserveLocalSimulation = shouldPreservePredictionOwnedLocalSimulation(
+        store.localPlayer,
+        nextState,
+        nextHeroId
+      );
       const nextPosition = getSchemaPosition(schemaPlayer);
       const shouldSyncPosition = nextPosition
-        ? shouldSyncLocalPosition(store.localPlayer, nextState, nextPosition)
+        ? !preserveLocalSimulation && shouldSyncLocalPosition(store.localPlayer, nextState, nextPosition)
         : false;
       const updated = {
         ...store.localPlayer,
-        heroId: schemaPlayer.heroId || store.localPlayer.heroId,
+        heroId: nextHeroId,
         team: schemaPlayer.team || store.localPlayer.team,
         isBot: Boolean(schemaPlayer.isBot ?? store.localPlayer.isBot),
         botDifficulty: schemaPlayer.botDifficulty || store.localPlayer.botDifficulty,
@@ -501,11 +565,13 @@ export function syncPlayerFromSchema(
         state: nextState,
         position: shouldSyncPosition ? nextPosition! : store.localPlayer.position,
         velocity: shouldSyncPosition ? getSchemaVelocity(schemaPlayer, store.localPlayer.velocity) : store.localPlayer.velocity,
-        lookYaw: schemaPlayer.lookYaw ?? store.localPlayer.lookYaw,
-        lookPitch: schemaPlayer.lookPitch ?? store.localPlayer.lookPitch,
+        lookYaw: preserveLocalSimulation ? store.localPlayer.lookYaw : schemaPlayer.lookYaw ?? store.localPlayer.lookYaw,
+        lookPitch: preserveLocalSimulation ? store.localPlayer.lookPitch : schemaPlayer.lookPitch ?? store.localPlayer.lookPitch,
         // Explicitly preserve ultimateCharge - it's managed by playerVitals.
         ultimateCharge: store.localPlayer.ultimateCharge,
-        movement: normalizeMovementState(schemaPlayer.movement, store.localPlayer.movement),
+        movement: preserveLocalSimulation
+          ? store.localPlayer.movement
+          : normalizeMovementState(schemaPlayer.movement, store.localPlayer.movement),
       };
       actions.setLocalPlayer(updated);
       if (shouldSyncPosition) {
@@ -539,13 +605,19 @@ export function processPlayerDuringPoll(
     const freshStore = useGameStore.getState();
     if (freshStore.localPlayer) {
       const nextState = schemaPlayer.state || freshStore.localPlayer.state;
+      const nextHeroId = (schemaPlayer.heroId || freshStore.localPlayer.heroId) as HeroId | null;
+      const preserveLocalSimulation = shouldPreservePredictionOwnedLocalSimulation(
+        freshStore.localPlayer,
+        nextState,
+        nextHeroId
+      );
       const nextPosition = getSchemaPosition(schemaPlayer);
       const shouldSyncPosition = nextPosition
-        ? shouldSyncLocalPosition(freshStore.localPlayer, nextState, nextPosition)
+        ? !preserveLocalSimulation && shouldSyncLocalPosition(freshStore.localPlayer, nextState, nextPosition)
         : false;
       const updated = {
         ...freshStore.localPlayer,
-        heroId: schemaPlayer.heroId || freshStore.localPlayer.heroId,
+        heroId: nextHeroId,
         team: schemaPlayer.team || freshStore.localPlayer.team,
         isBot: Boolean(schemaPlayer.isBot ?? freshStore.localPlayer.isBot),
         botDifficulty: schemaPlayer.botDifficulty || freshStore.localPlayer.botDifficulty,
@@ -556,10 +628,12 @@ export function processPlayerDuringPoll(
         state: nextState,
         position: shouldSyncPosition ? nextPosition! : freshStore.localPlayer.position,
         velocity: shouldSyncPosition ? getSchemaVelocity(schemaPlayer, freshStore.localPlayer.velocity) : freshStore.localPlayer.velocity,
-        lookYaw: schemaPlayer.lookYaw ?? freshStore.localPlayer.lookYaw,
-        lookPitch: schemaPlayer.lookPitch ?? freshStore.localPlayer.lookPitch,
+        lookYaw: preserveLocalSimulation ? freshStore.localPlayer.lookYaw : schemaPlayer.lookYaw ?? freshStore.localPlayer.lookYaw,
+        lookPitch: preserveLocalSimulation ? freshStore.localPlayer.lookPitch : schemaPlayer.lookPitch ?? freshStore.localPlayer.lookPitch,
         ultimateCharge: freshStore.localPlayer.ultimateCharge,
-        movement: normalizeMovementState(schemaPlayer.movement, freshStore.localPlayer.movement),
+        movement: preserveLocalSimulation
+          ? freshStore.localPlayer.movement
+          : normalizeMovementState(schemaPlayer.movement, freshStore.localPlayer.movement),
       };
       actions.setLocalPlayer(updated);
       if (shouldSyncPosition) {
@@ -700,16 +774,17 @@ export function setupPlayerTransformsHandler(
 ) {
   const handleTransform = (
     playerId: string,
-    transform: Omit<QuantizedPlayerTransform, 'id'>,
+    transform: UnpackedPlayerTransform,
     tick: number,
-    serverTime: number
-  ): void => {
+    serverTime: number,
+    allowSelfBootstrap: boolean
+  ): 'remote' | 'self' | 'ignored' => {
     const decoded = dequantizeTransform(transform);
 
     if (playerId === sessionId) {
-      if (!hasReceivedSelfMovementAuthority) {
+      if (allowSelfBootstrap && !hasReceivedSelfMovementAuthority) {
         const localPlayer = useGameStore.getState().localPlayer;
-        if (!localPlayer) return;
+        if (!localPlayer) return 'self';
 
         const nextMovement = movementFromBits(transform, localPlayer.movement);
         const shouldSyncPosition = shouldSyncLocalPosition(localPlayer, localPlayer.state, decoded.position);
@@ -724,20 +799,19 @@ export function setupPlayerTransformsHandler(
           };
           actions.setLocalPlayer(updated);
           syncLocalVisualPosition(updated);
+          recordLocalReactiveUpdate('transforms');
         }
       }
 
-      // Local correction is private and sequence-aware; shared transform entries
-      // are retained only for migration and ignored during normal prediction.
-      return;
+      return 'self';
     }
 
     const store = useGameStore.getState();
     const existingPlayer = store.players.get(playerId);
-    if (!existingPlayer) return;
+    if (!existingPlayer) return 'ignored';
     if (existingPlayer.name === localPlayerName) {
       loggers.network.sample('ghost-transform', 5000, 'ignoring ghost transform', playerId);
-      return;
+      return 'ignored';
     }
 
     const wasGrappling = existingPlayer.movement.isGrappling;
@@ -777,88 +851,50 @@ export function setupPlayerTransformsHandler(
       chronosAegisActive,
       Date.now()
     );
+    return 'remote';
   };
 
-  room.onMessage('playerTransforms', (data: PlayerTransformsMessage) => {
-    useGameStore.setState({
-      tick: data.tick,
-      serverTime: data.serverTime,
-    });
-
-    for (const transform of data.players) {
-      handleTransform(transform.id, transform, data.tick, data.serverTime);
-    }
-  });
-
   room.onMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
-    useGameStore.setState({
-      tick: data.tick,
-      serverTime: data.serverTime,
-    });
-
     const fullSnapshotPlayerIds = data.full ? new Set<string>() : null;
+    let selfTransformCount = 0;
+    let remoteTransformCount = 0;
     for (const packedTransform of data.players) {
       const transform = unpackPackedTransform(packedTransform);
       const playerId = playerIdByNetId.get(transform.netId);
       if (!playerId) continue;
       fullSnapshotPlayerIds?.add(playerId);
-      handleTransform(playerId, transform, data.tick, data.serverTime);
+      const result = handleTransform(playerId, transform, data.tick, data.serverTime, data.full === true);
+      if (result === 'self') {
+        selfTransformCount++;
+      } else if (result === 'remote') {
+        remoteTransformCount++;
+      }
+    }
+    if (remoteTransformCount > 0) {
+      useGameStore.setState({
+        tick: data.tick,
+        serverTime: data.serverTime,
+      });
     }
     if (fullSnapshotPlayerIds) {
       pruneRemoteTransformHistories(fullSnapshotPlayerIds);
     }
+    recordTransformMessage({
+      transformCount: data.players.length,
+      selfTransformCount,
+      remoteTransformCount,
+    });
   });
 }
 
-export function setupSelfMovementAuthorityHandler(
-  room: Room,
-  actions: Pick<GameStoreActions, 'setLocalPlayer'>
-) {
+export function setupSelfMovementAuthorityHandler(room: Room) {
   hasReceivedSelfMovementAuthority = false;
 
   room.onMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
     hasReceivedSelfMovementAuthority = true;
     recordMovementTraceAuthorityAck(authority);
-    const store = useGameStore.getState();
-    const localPlayer = store.localPlayer;
-    if (!localPlayer) return;
-
-    const { result, state } = applySelfMovementAuthority(localPlayer, authority);
-    const shouldPublishReactiveUpdate =
-      Boolean(authority.correctionReason) ||
-      result.mediumCorrection ||
-      result.hardCorrection;
-
-    if (shouldPublishReactiveUpdate) {
-      actions.setLocalPlayer({
-        ...localPlayer,
-        position: { ...state.position },
-        velocity: { ...state.velocity },
-        lookYaw: authority.lookYaw,
-        lookPitch: authority.lookPitch,
-        movement: cloneMovementForStore(state.movement),
-      });
-    } else {
-      applySelfAuthorityToPlayerInPlace(localPlayer, state, authority);
-      const indexedPlayer = store.players.get(localPlayer.id);
-      if (indexedPlayer && indexedPlayer !== localPlayer) {
-        applySelfAuthorityToPlayerInPlace(indexedPlayer, state, authority);
-      }
-    }
-
-    if (result.hardCorrection) {
-      loggers.network.sample('local-hard-correction', 1500, 'hard movement correction', {
-        ackSeq: result.ackSeq,
-        reason: authority.correctionReason,
-        positionError: result.positionError,
-      });
-    } else if (result.corrected) {
-      loggers.network.sample('local-movement-correction', 1500, 'movement correction', {
-        ackSeq: result.ackSeq,
-        positionError: result.positionError,
-        replayedCommands: result.replayedCommands,
-      });
-    }
+    recordAuthorityAckReceived(authority);
+    enqueueSelfMovementAuthority(authority);
   });
 }
 
@@ -869,16 +905,14 @@ export function setupPlayerVitalsHandler(
   actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer' | 'removePlayer'>
 ) {
   room.onMessage('playerVitals', (data: PlayerVitalsMessage) => {
-    useGameStore.setState({
-      tick: data.tick,
-      serverTime: data.serverTime,
-    });
+    let shouldPublishTiming = false;
 
     for (const removedId of data.removedPlayerIds || []) {
       stopRemotePhantomCharge(removedId);
       stopObservedAbilityCastEffects(removedId);
       forgetPlayerNetId(removedId);
       actions.removePlayer(removedId);
+      shouldPublishTiming = true;
     }
 
     for (const vitals of data.players) {
@@ -892,8 +926,20 @@ export function setupPlayerVitalsHandler(
       const store = useGameStore.getState();
       if (vitals.id === sessionId) {
         const existing = store.localPlayer || store.players.get(vitals.id);
-        const next = createPlayerFromVitals(vitals, data.serverTime, existing || undefined);
+        const existingPlayer = existing || undefined;
+        if (shouldPreservePredictionOwnedLocalSimulation(existingPlayer, vitals.state, vitals.heroId)) {
+          applyLocalVitalsPatchInPlace(existingPlayer, vitals, data.serverTime);
+          const indexedPlayer = store.players.get(vitals.id);
+          if (indexedPlayer && indexedPlayer !== existingPlayer) {
+            applyLocalVitalsPatchInPlace(indexedPlayer, vitals, data.serverTime);
+          }
+          continue;
+        }
+
+        const next = createLocalPlayerFromVitals(vitals, data.serverTime, existing || undefined);
         actions.setLocalPlayer(next);
+        recordLocalReactiveUpdate('vitals');
+        shouldPublishTiming = true;
         if (!existing) {
           syncLocalVisualPosition(next);
         }
@@ -903,6 +949,14 @@ export function setupPlayerVitalsHandler(
       const existing = store.players.get(vitals.id);
       const next = createPlayerFromVitals(vitals, data.serverTime, existing);
       actions.updatePlayer(vitals.id, next);
+      shouldPublishTiming = true;
+    }
+
+    if (shouldPublishTiming) {
+      useGameStore.setState({
+        tick: data.tick,
+        serverTime: data.serverTime,
+      });
     }
   });
 }

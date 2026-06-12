@@ -8,8 +8,11 @@ import { Vec3Schema, AbilityStateSchema } from './schema/Components';
 import { PlayerSpatialIndex } from './PlayerSpatialIndex';
 import { MovementCommandQueue } from './MovementCommandQueue';
 import {
+  SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
+  getMovementCommandDrainDecision,
+} from './movementCommandDrain';
+import {
   DEFAULT_GAME_CONFIG,
-  TICK_RATE,
   TICK_INTERVAL_MS,
   HERO_DEFINITIONS,
   ABILITY_DEFINITIONS,
@@ -70,13 +73,11 @@ import {
   UNSTUCK_COOLDOWN_MS,
   findUnstuckTerrainTeleport,
   MOVEMENT_PROTOCOL_VERSION,
-  MOVEMENT_SUBSTEP_RATE,
   MOVEMENT_SUBSTEP_SECONDS,
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_MAX_SERVER_QUEUE,
   MOVEMENT_MAX_COMMANDS_PER_SECOND,
   MOVEMENT_COMMAND_STALE_GRACE_STEPS,
-  MOVEMENT_SERVER_CATCHUP_BUDGET,
   inputStateToMovementButtons,
   movementButtonsToInputState,
   isMovementSeqAfter,
@@ -111,13 +112,11 @@ import type {
   MatchSnapshotMessage,
   PlayerPingRequestMessage,
   PlayerPingsMessage,
-  PlayerTransformsMessage,
   PlayerTransformsV2Message,
   PlayerVitalsAbilitySnapshot,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
   PackedPlayerTransform,
-  QuantizedPlayerTransform,
   VoxelChunk,
   VoxelMapManifest,
 } from '@voxel-strike/shared';
@@ -338,6 +337,7 @@ interface ServerMovementAuthorityState {
   metrics: MovementTelemetrySnapshot;
   commandWindowStartedAt: number;
   commandsInWindow: number;
+  lastAuthoritySentAt: number;
   lastSafe: LastSafeMovementState | null;
   objectiveSuppressedUntil: number;
   shadow: MovementShadowSimulationState;
@@ -550,7 +550,6 @@ const TRANSFORM_HIGH_RELEVANCE_DISTANCE_SQ = 48 * 48;
 const RECENT_COMBAT_TRANSFORM_MS = 650;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
-const SERVER_MOVEMENT_SUBSTEPS_PER_TICK = Math.max(1, Math.round(MOVEMENT_SUBSTEP_RATE / TICK_RATE));
 const ROOM_LOAD_SAMPLE_COUNT = 240;
 const MOVEMENT_BIT_GROUNDED = 1 << 0;
 const MOVEMENT_BIT_SPRINTING = 1 << 1;
@@ -1582,23 +1581,6 @@ export class GameRoom extends Room<GameState> {
     return Math.round((now + ability.cooldownRemaining * 1000) / 100) * 100;
   }
 
-  private buildPlayerTransform(id: string, player: Player): QuantizedPlayerTransform {
-    return {
-      id,
-      px: this.quantize(player.position.x, TRANSFORM_POSITION_SCALE),
-      py: this.quantize(player.position.y, TRANSFORM_POSITION_SCALE),
-      pz: this.quantize(player.position.z, TRANSFORM_POSITION_SCALE),
-      vx: this.quantize(player.velocity.x, TRANSFORM_VELOCITY_SCALE),
-      vy: this.quantize(player.velocity.y, TRANSFORM_VELOCITY_SCALE),
-      vz: this.quantize(player.velocity.z, TRANSFORM_VELOCITY_SCALE),
-      yaw: this.quantize(player.lookYaw, TRANSFORM_ANGLE_SCALE),
-      pitch: this.quantize(player.lookPitch, TRANSFORM_ANGLE_SCALE),
-      movementBits: this.getMovementBits(player),
-      wallRunSide: player.movement.wallRunSide === 'left' ? -1 : player.movement.wallRunSide === 'right' ? 1 : 0,
-      movementEpoch: this.getMovementAuthority(id).movementEpoch,
-    };
-  }
-
   private buildPackedPlayerTransform(id: string, player: Player): PackedPlayerTransform {
     return [
       this.getPlayerNetId(id),
@@ -1719,7 +1701,7 @@ export class GameRoom extends Room<GameState> {
       previous.maxHealth !== next.maxHealth ||
       Math.round(previous.ultimateCharge) !== Math.round(next.ultimateCharge) ||
       previous.hasFlag !== next.hasFlag ||
-      this.haveMovementVitalsChanged(previous.movement, next.movement) ||
+      (next.state !== 'alive' && this.haveMovementVitalsChanged(previous.movement, next.movement)) ||
       this.haveAbilityVitalsChanged(previous.abilities, next.abilities) ||
       this.haveStatVitalsChanged(previous.stats, next.stats) ||
       previous.respawnTime !== next.respawnTime ||
@@ -2209,21 +2191,6 @@ export class GameRoom extends Room<GameState> {
     this.broadcastTracked('playerPings', this.buildPlayerPingsMessage());
   }
 
-  private buildPlayerTransformsPayload(): PlayerTransformsMessage {
-    const players: QuantizedPlayerTransform[] = [];
-
-    this.state.players.forEach((player, id) => {
-      if (player.state !== 'alive' && player.state !== 'spawning') return;
-      players.push(this.buildPlayerTransform(id, player));
-    });
-
-    return {
-      tick: this.state.tick,
-      serverTime: this.state.serverTime,
-      players,
-    };
-  }
-
   private buildPlayerTransformsV2Payload(options: {
     force?: boolean;
     recipient?: Player | null;
@@ -2240,6 +2207,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.forEach((player, id) => {
       if (player.state !== 'alive' && player.state !== 'spawning') return;
+      if (!force && options.recipientId && id === options.recipientId) return;
       const transform = this.buildPackedPlayerTransform(id, player);
       const signature = this.getPackedTransformSignature(transform);
       const previousSignature = signatures.get(id);
@@ -2374,7 +2342,12 @@ export class GameRoom extends Room<GameState> {
       metrics: {
         commandsReceived: 0,
         commandsProcessed: 0,
+        commandsProcessedLastTick: 0,
         queueLength: 0,
+        queueLengthBeforeTick: 0,
+        queueLengthAfterTick: 0,
+        underflowTicks: 0,
+        catchupTicks: 0,
         duplicateCommands: 0,
         droppedCommands: 0,
         lateCommands: 0,
@@ -2390,9 +2363,12 @@ export class GameRoom extends Room<GameState> {
         rateLimitDrops: 0,
         staleCollisionRevisionDrops: 0,
         lastAckSeq: 0,
+        authoritySends: 0,
+        lastAckIntervalMs: 0,
       },
       commandWindowStartedAt: Date.now(),
       commandsInWindow: 0,
+      lastAuthoritySentAt: 0,
       lastSafe: null,
       objectiveSuppressedUntil: 0,
       shadow: createMovementShadowSimulationState(),
@@ -3773,9 +3749,10 @@ export class GameRoom extends Room<GameState> {
 
   private sendSelfMovementAuthority(player: Player, client: Client, reason: MovementCorrectionReason | null): void {
     const authority = this.getMovementAuthority(player.id);
+    const now = this.state.serverTime || Date.now();
     const payload: SelfMovementAuthority = {
       serverTick: this.state.tick,
-      serverTime: this.state.serverTime,
+      serverTime: now,
       ackSeq: authority.lastProcessedSeq,
       movementEpoch: authority.movementEpoch,
       position: this.vec3SchemaToPlain(player.position),
@@ -3802,6 +3779,11 @@ export class GameRoom extends Room<GameState> {
       collisionRevision: this.getMovementCollisionRevision(),
     };
     this.sendTracked(client, 'selfMovementAuthority', payload);
+    if (authority.lastAuthoritySentAt > 0) {
+      authority.metrics.lastAckIntervalMs = Math.max(0, now - authority.lastAuthoritySentAt);
+    }
+    authority.lastAuthoritySentAt = now;
+    authority.metrics.authoritySends = (authority.metrics.authoritySends ?? 0) + 1;
     authority.correctionReason = null;
   }
 
@@ -8273,7 +8255,17 @@ export class GameRoom extends Room<GameState> {
       const authority = this.getMovementAuthority(player.id);
       let processedThisTick = 0;
       const queuedCommandCount = authority.pendingCommands.length;
-      if (queuedCommandCount === 0) {
+      authority.metrics.queueLengthBeforeTick = queuedCommandCount;
+      authority.metrics.commandsProcessedLastTick = 0;
+
+      const drainDecision = getMovementCommandDrainDecision(queuedCommandCount, {
+        hasAuthorityBarrier: Boolean(authority.correctionReason),
+      });
+
+      if (drainDecision.underflow) {
+        authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;
+        authority.metrics.queueLength = authority.pendingCommands.length;
+        authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
         if (player.position.y < -10) {
           this.placePlayerAtSpawn(player, 'respawn');
         }
@@ -8284,18 +8276,11 @@ export class GameRoom extends Room<GameState> {
         }
         return;
       }
+      if (drainDecision.catchup) {
+        authority.metrics.catchupTicks = (authority.metrics.catchupTicks ?? 0) + 1;
+      }
 
-      const substepBudget = queuedCommandCount
-        ? Math.min(
-          queuedCommandCount,
-          SERVER_MOVEMENT_SUBSTEPS_PER_TICK + Math.max(
-            0,
-            Math.min(MOVEMENT_SERVER_CATCHUP_BUDGET, queuedCommandCount - SERVER_MOVEMENT_SUBSTEPS_PER_TICK)
-          )
-        )
-        : 0;
-
-      for (let step = 0; step < substepBudget; step++) {
+      for (let step = 0; step < drainDecision.budget; step++) {
         const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
         const epochBeforeStep = authority.movementEpoch;
         const command = this.getNextMovementCommand(authority);
@@ -8324,6 +8309,8 @@ export class GameRoom extends Room<GameState> {
       }
 
       authority.metrics.queueLength = authority.pendingCommands.length;
+      authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
+      authority.metrics.commandsProcessedLastTick = processedThisTick;
       authority.metrics.lastAckSeq = authority.lastProcessedSeq;
       if (processedThisTick > 0 && authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE / 2) {
         const stale = Math.max(0, authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE / 2);

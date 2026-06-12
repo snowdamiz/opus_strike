@@ -26,8 +26,6 @@ export type ClientMessage =
 
 // Server -> Client Messages
 export type ServerMessage = 
-  | { type: 'gameState'; payload: GameStateSync }
-  | { type: 'playerTransforms'; payload: PlayerTransformsMessage }
   | { type: 'playerTransformsV2'; payload: PlayerTransformsV2Message }
   | { type: 'selfMovementAuthority'; payload: SelfMovementAuthority }
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
@@ -52,40 +50,6 @@ export type ServerMessage =
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
   | { type: 'damage'; payload: DamageEvent };
-
-export interface GameStateSync {
-  tick: number;
-  serverTime: number;
-  phase: GamePhase;
-  mapSeed: number;
-  players: PlayerSnapshot[];
-  redScore: number;
-  blueScore: number;
-  redFlag: FlagSync;
-  blueFlag: FlagSync;
-  roundTimeRemaining: number;
-}
-
-export interface QuantizedPlayerTransform {
-  id: string;
-  px: number;
-  py: number;
-  pz: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  yaw: number;
-  pitch: number;
-  movementBits: number;
-  wallRunSide: -1 | 0 | 1;
-  movementEpoch: number;
-}
-
-export interface PlayerTransformsMessage {
-  tick: number;
-  serverTime: number;
-  players: QuantizedPlayerTransform[];
-}
 
 export type PackedPlayerTransform = [
   netId: number,

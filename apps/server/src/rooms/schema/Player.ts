@@ -21,7 +21,7 @@ export class Player extends Schema {
   rankIsRanked: boolean = false;
   rankPlacementRemaining: number = 5;
 
-  // Runtime transform; streamed through playerTransforms instead of Colyseus patches.
+  // Runtime transform; streamed through selfMovementAuthority/playerTransformsV2 instead of Colyseus patches.
   position: Vec3Schema = new Vec3Schema();
   velocity: Vec3Schema = new Vec3Schema();
   lookYaw: number = 0;

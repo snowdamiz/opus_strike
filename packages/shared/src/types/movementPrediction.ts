@@ -15,8 +15,8 @@ export const MOVEMENT_COMMAND_STALE_GRACE_STEPS = 6;
 export const MOVEMENT_SERVER_CATCHUP_BUDGET = 4;
 export const MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS = 100;
 export const MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS = 100;
-export const MOVEMENT_POSITION_EPSILON_METERS = 0.03;
-export const MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND = 0.05;
+export const MOVEMENT_POSITION_EPSILON_METERS = 0.07;
+export const MOVEMENT_VELOCITY_EPSILON_METERS_PER_SECOND = 0.08;
 export const MOVEMENT_MEDIUM_CORRECTION_METERS = 0.35;
 export const MOVEMENT_HARD_CORRECTION_METERS = 1.5;
 export const ABILITY_CAST_ORIGIN_HINT_QUANTUM = 0.01;
@@ -115,7 +115,12 @@ export interface SelfMovementAuthority {
 export interface MovementTelemetrySnapshot {
   commandsReceived: number;
   commandsProcessed: number;
+  commandsProcessedLastTick?: number;
   queueLength: number;
+  queueLengthBeforeTick?: number;
+  queueLengthAfterTick?: number;
+  underflowTicks?: number;
+  catchupTicks?: number;
   duplicateCommands: number;
   droppedCommands: number;
   lateCommands: number;
@@ -137,6 +142,8 @@ export interface MovementTelemetrySnapshot {
   shadowMaxVelocityDrift?: number;
   shadowMovementMismatches?: number;
   lastAckSeq: number;
+  authoritySends?: number;
+  lastAckIntervalMs?: number;
 }
 
 const UINT32_MAX = 0xffffffff;

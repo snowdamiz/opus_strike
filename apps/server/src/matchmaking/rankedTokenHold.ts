@@ -1,9 +1,9 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { envFlag } from '../config/security';
 
-const LAMPORTS_PER_SOL = 1_000_000_000n;
 const MICRO_USD_PER_USD = 1_000_000n;
 const MICRO_USD_PER_CENT = 10_000n;
+export const RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
 const DEFAULT_RANKED_TOKEN_HOLD_USD_CENTS = 2_000;
 const DEFAULT_RANKED_TOKEN_HOLD_PRICE_STALE_MS = 60 * 1000;
 const DEFAULT_RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS = 5 * 1000;
@@ -12,7 +12,8 @@ type RankedTokenPriceSource = 'env' | 'coingecko';
 
 interface CachedPrice {
   source: RankedTokenPriceSource;
-  solUsdPriceMicroUsd: bigint;
+  tokenAddress: string;
+  tokenUsdPriceMicroUsd: bigint;
   fetchedAt: number;
 }
 
@@ -20,7 +21,7 @@ let cachedPrice: CachedPrice | null = null;
 
 export interface RankedTokenHoldRuntimeConfig {
   enabled: boolean;
-  tokenSymbol: 'SOL';
+  tokenAddress: string;
   usdCents: number;
   cluster: string;
   rpcUrl: string;
@@ -31,12 +32,13 @@ export interface RankedTokenHoldRuntimeConfig {
 
 export interface RankedTokenHoldingStatus {
   eligible: boolean;
-  tokenSymbol: 'SOL';
+  tokenAddress: string;
+  tokenDecimals: number | null;
   usdCents: number;
-  solUsdPrice: string;
-  solUsdPriceMicroUsd: string;
-  requiredLamports: string;
-  balanceLamports: string;
+  tokenUsdPrice: string;
+  tokenUsdPriceMicroUsd: string;
+  requiredTokenBaseUnits: string;
+  balanceTokenBaseUnits: string;
   cluster: string;
   priceSource: RankedTokenPriceSource;
   checkedAt: string;
@@ -63,6 +65,20 @@ function normalizePriceSource(value: string | undefined): RankedTokenPriceSource
   const normalized = value.trim().toLowerCase();
   if (normalized === 'env' || normalized === 'coingecko') return normalized;
   throw new Error('RANKED_TOKEN_HOLD_PRICE_SOURCE must be "env" or "coingecko"');
+}
+
+function rankedTokenAddressEnv(): string {
+  const raw = process.env.RANKED_TOKEN_HOLD_TOKEN_ADDRESS
+    || RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS;
+
+  let tokenAddress: string;
+  try {
+    tokenAddress = new PublicKey(raw).toBase58();
+  } catch {
+    throw new Error('RANKED_TOKEN_HOLD_TOKEN_ADDRESS must be a valid Solana token address');
+  }
+
+  return tokenAddress;
 }
 
 function parseDecimalToMicroUsd(value: string, fieldName: string): bigint {
@@ -100,9 +116,16 @@ function ceilDiv(numerator: bigint, denominator: bigint): bigint {
   return (numerator + denominator - 1n) / denominator;
 }
 
-function calculateRequiredLamports(usdCents: number, solUsdPriceMicroUsd: bigint): bigint {
+function tokenBaseUnitScale(decimals: number): bigint {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+    throw new Error('Token decimals must be an integer between 0 and 255');
+  }
+  return 10n ** BigInt(decimals);
+}
+
+function calculateRequiredTokenBaseUnits(usdCents: number, tokenUsdPriceMicroUsd: bigint, tokenDecimals: number): bigint {
   const requiredMicroUsd = BigInt(usdCents) * MICRO_USD_PER_CENT;
-  return ceilDiv(requiredMicroUsd * LAMPORTS_PER_SOL, solUsdPriceMicroUsd);
+  return ceilDiv(requiredMicroUsd * tokenBaseUnitScale(tokenDecimals), tokenUsdPriceMicroUsd);
 }
 
 function parseWalletAddress(walletAddress: string): PublicKey {
@@ -120,99 +143,211 @@ function parseWalletAddress(walletAddress: string): PublicKey {
 export function getRankedTokenHoldRuntimeConfig(): RankedTokenHoldRuntimeConfig {
   return {
     enabled: envFlag('RANKED_TOKEN_HOLD_ENABLED', true),
-    tokenSymbol: 'SOL',
+    tokenAddress: rankedTokenAddressEnv(),
     usdCents: intEnv('RANKED_TOKEN_HOLD_USD_CENTS', DEFAULT_RANKED_TOKEN_HOLD_USD_CENTS, { min: 1, max: 1_000_000 }),
     cluster: process.env.SOLANA_CLUSTER || 'mainnet-beta',
     rpcUrl: process.env.RANKED_TOKEN_HOLD_RPC_URL || process.env.SOLANA_RPC_URL || '',
-    priceSource: normalizePriceSource(process.env.RANKED_TOKEN_HOLD_PRICE_SOURCE ?? process.env.RANKED_ENTRY_PRICE_SOURCE),
+    priceSource: normalizePriceSource(process.env.RANKED_TOKEN_HOLD_PRICE_SOURCE),
     priceStaleMs: intEnv('RANKED_TOKEN_HOLD_PRICE_STALE_MS', DEFAULT_RANKED_TOKEN_HOLD_PRICE_STALE_MS, { min: 5_000, max: 60 * 60 * 1000 }),
     rpcTimeoutMs: intEnv('RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS', DEFAULT_RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS, { min: 1_000, max: 60_000 }),
   };
 }
 
 async function fetchEnvPriceMicroUsd(): Promise<bigint> {
-  const explicitMicro = process.env.RANKED_TOKEN_HOLD_SOL_USD_MICRO_USD
-    || process.env.RANKED_ENTRY_SOL_USD_MICRO_USD;
+  const explicitMicro = process.env.RANKED_TOKEN_HOLD_TOKEN_USD_MICRO_USD;
   if (explicitMicro) {
     if (!/^[0-9]+$/.test(explicitMicro)) {
-      throw new Error('RANKED_TOKEN_HOLD_SOL_USD_MICRO_USD must be an unsigned integer');
+      throw new Error('RANKED_TOKEN_HOLD_TOKEN_USD_MICRO_USD must be an unsigned integer');
     }
     const parsed = BigInt(explicitMicro);
     if (parsed <= 0n) {
-      throw new Error('RANKED_TOKEN_HOLD_SOL_USD_MICRO_USD must be greater than zero');
+      throw new Error('RANKED_TOKEN_HOLD_TOKEN_USD_MICRO_USD must be greater than zero');
     }
     return parsed;
   }
 
-  const decimal = process.env.RANKED_TOKEN_HOLD_SOL_USD_PRICE
-    || process.env.RANKED_ENTRY_SOL_USD_PRICE
-    || process.env.SOL_USD_PRICE;
+  const decimal = process.env.RANKED_TOKEN_HOLD_TOKEN_USD_PRICE;
   if (!decimal) {
-    throw new Error('RANKED_TOKEN_HOLD_SOL_USD_PRICE is required when RANKED_TOKEN_HOLD_PRICE_SOURCE=env');
+    throw new Error('RANKED_TOKEN_HOLD_TOKEN_USD_PRICE is required when RANKED_TOKEN_HOLD_PRICE_SOURCE=env');
   }
-  return parseDecimalToMicroUsd(decimal, 'RANKED_TOKEN_HOLD_SOL_USD_PRICE');
+  return parseDecimalToMicroUsd(decimal, 'RANKED_TOKEN_HOLD_TOKEN_USD_PRICE');
 }
 
-async function fetchCoingeckoPriceMicroUsd(): Promise<bigint> {
+async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', {
+    const response = await fetch(url, {
       signal: controller.signal,
       headers: { accept: 'application/json' },
     });
     if (!response.ok) {
       throw new Error(`CoinGecko responded with HTTP ${response.status}`);
     }
-    const payload = await response.json() as { solana?: { usd?: unknown } };
-    const price = payload.solana?.usd;
-    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
-      throw new Error('CoinGecko response did not include a usable SOL/USD price');
-    }
-    return parseDecimalToMicroUsd(price.toFixed(6), 'CoinGecko SOL/USD price');
+    return response.json();
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function resolveSolUsdPriceMicroUsd(config: RankedTokenHoldRuntimeConfig): Promise<bigint> {
+function coingeckoUsdPrice(payload: unknown, tokenAddress: string): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const data = payload as Record<string, unknown>;
+  const direct = data[tokenAddress] ?? data[tokenAddress.toLowerCase()];
+  const candidates = [
+    direct,
+    ...Object.values(data),
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const price = (candidate as { usd?: unknown }).usd;
+    if (typeof price === 'number' && Number.isFinite(price) && price > 0) return price;
+  }
+
+  return null;
+}
+
+async function fetchCoingeckoPriceMicroUsd(tokenAddress: string): Promise<bigint> {
+  const payload = tokenAddress === RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS
+    ? await fetchJsonWithTimeout('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', 5_000)
+    : await fetchJsonWithTimeout(`https://api.coingecko.com/api/v3/simple/token_price/solana?contract_addresses=${encodeURIComponent(tokenAddress)}&vs_currencies=usd`, 5_000);
+  const price = tokenAddress === RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS
+    ? (payload as { solana?: { usd?: unknown } })?.solana?.usd
+    : coingeckoUsdPrice(payload, tokenAddress);
+
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+    throw new Error('CoinGecko response did not include a usable token/USD price');
+  }
+
+  return parseDecimalToMicroUsd(price.toFixed(6), 'CoinGecko token/USD price');
+}
+
+async function resolveTokenUsdPriceMicroUsd(config: RankedTokenHoldRuntimeConfig): Promise<bigint> {
   const now = Date.now();
   if (
     cachedPrice
     && cachedPrice.source === config.priceSource
+    && cachedPrice.tokenAddress === config.tokenAddress
     && now - cachedPrice.fetchedAt <= config.priceStaleMs
   ) {
-    return cachedPrice.solUsdPriceMicroUsd;
+    return cachedPrice.tokenUsdPriceMicroUsd;
   }
 
-  const solUsdPriceMicroUsd = config.priceSource === 'coingecko'
-    ? await fetchCoingeckoPriceMicroUsd()
+  const tokenUsdPriceMicroUsd = config.priceSource === 'coingecko'
+    ? await fetchCoingeckoPriceMicroUsd(config.tokenAddress)
     : await fetchEnvPriceMicroUsd();
 
   cachedPrice = {
     source: config.priceSource,
-    solUsdPriceMicroUsd,
+    tokenAddress: config.tokenAddress,
+    tokenUsdPriceMicroUsd,
     fetchedAt: now,
   };
-  return solUsdPriceMicroUsd;
+  return tokenUsdPriceMicroUsd;
 }
 
-async function getBalanceWithTimeout(
-  connection: Connection,
-  walletAddress: PublicKey,
-  timeoutMs: number
-): Promise<number> {
+async function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs: number): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
     return await Promise.race([
-      connection.getBalance(walletAddress, 'confirmed'),
+      promise,
       new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Timed out checking ranked SOL balance')), timeoutMs);
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
       }),
     ]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+interface TokenHoldingBalance {
+  balanceBaseUnits: bigint;
+  decimals: number;
+}
+
+function parseTokenAccountBalance(account: unknown, expectedMint: string): TokenHoldingBalance | null {
+  if (!account || typeof account !== 'object') return null;
+  const data = (account as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') return null;
+  const parsed = (data as { parsed?: unknown }).parsed;
+  if (!parsed || typeof parsed !== 'object') return null;
+  const info = (parsed as { info?: unknown }).info;
+  if (!info || typeof info !== 'object') return null;
+  if ((info as { mint?: unknown }).mint !== expectedMint) return null;
+  const tokenAmount = (info as { tokenAmount?: unknown }).tokenAmount;
+  if (!tokenAmount || typeof tokenAmount !== 'object') return null;
+
+  const amount = (tokenAmount as { amount?: unknown }).amount;
+  const decimals = (tokenAmount as { decimals?: unknown }).decimals;
+  if (typeof amount !== 'string' || !/^[0-9]+$/.test(amount)) return null;
+  if (typeof decimals !== 'number' || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) return null;
+
+  return {
+    balanceBaseUnits: BigInt(amount),
+    decimals,
+  };
+}
+
+async function getNativeSolBalance(
+  connection: Connection,
+  walletAddress: PublicKey,
+  timeoutMs: number
+): Promise<TokenHoldingBalance> {
+  const balance = await withTimeout(
+    connection.getBalance(walletAddress, 'confirmed'),
+    'Timed out checking ranked SOL balance',
+    timeoutMs
+  );
+
+  return {
+    balanceBaseUnits: BigInt(balance),
+    decimals: 9,
+  };
+}
+
+async function getSplTokenMintDecimals(
+  connection: Connection,
+  tokenMint: PublicKey,
+  timeoutMs: number
+): Promise<number> {
+  const supply = await withTimeout(
+    connection.getTokenSupply(tokenMint, 'confirmed'),
+    'Timed out checking ranked token mint',
+    timeoutMs
+  );
+  const decimals = supply.value.decimals;
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+    throw new Error('Ranked token mint returned invalid decimals');
+  }
+  return decimals;
+}
+
+async function getSplTokenBalance(
+  connection: Connection,
+  walletAddress: PublicKey,
+  tokenMint: PublicKey,
+  timeoutMs: number
+): Promise<TokenHoldingBalance> {
+  const tokenAccounts = await withTimeout(
+    connection.getParsedTokenAccountsByOwner(walletAddress, { mint: tokenMint }, 'confirmed'),
+    'Timed out checking ranked token balance',
+    timeoutMs
+  );
+
+  let balanceBaseUnits = 0n;
+  let decimals: number | null = null;
+  for (const tokenAccount of tokenAccounts.value) {
+    const parsedBalance = parseTokenAccountBalance(tokenAccount.account, tokenMint.toBase58());
+    if (!parsedBalance) continue;
+    balanceBaseUnits += parsedBalance.balanceBaseUnits;
+    decimals = parsedBalance.decimals;
+  }
+
+  return {
+    balanceBaseUnits,
+    decimals: decimals ?? await getSplTokenMintDecimals(connection, tokenMint, timeoutMs),
+  };
 }
 
 export async function getRankedTokenHoldingStatus(walletAddress: string): Promise<RankedTokenHoldingStatus> {
@@ -222,12 +357,13 @@ export async function getRankedTokenHoldingStatus(walletAddress: string): Promis
   if (!config.enabled) {
     return {
       eligible: true,
-      tokenSymbol: config.tokenSymbol,
+      tokenAddress: config.tokenAddress,
+      tokenDecimals: null,
       usdCents: config.usdCents,
-      solUsdPrice: '0',
-      solUsdPriceMicroUsd: '0',
-      requiredLamports: '0',
-      balanceLamports: '0',
+      tokenUsdPrice: '0',
+      tokenUsdPriceMicroUsd: '0',
+      requiredTokenBaseUnits: '0',
+      balanceTokenBaseUnits: '0',
       cluster: config.cluster,
       priceSource: config.priceSource,
       checkedAt: checkedAt.toISOString(),
@@ -239,19 +375,27 @@ export async function getRankedTokenHoldingStatus(walletAddress: string): Promis
   }
 
   const publicKey = parseWalletAddress(walletAddress);
-  const solUsdPriceMicroUsd = await resolveSolUsdPriceMicroUsd(config);
-  const requiredLamports = calculateRequiredLamports(config.usdCents, solUsdPriceMicroUsd);
+  const tokenMint = new PublicKey(config.tokenAddress);
   const connection = new Connection(config.rpcUrl, 'confirmed');
-  const balanceLamports = BigInt(await getBalanceWithTimeout(connection, publicKey, config.rpcTimeoutMs));
+  const balance = config.tokenAddress === RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS
+    ? await getNativeSolBalance(connection, publicKey, config.rpcTimeoutMs)
+    : await getSplTokenBalance(connection, publicKey, tokenMint, config.rpcTimeoutMs);
+  const tokenUsdPriceMicroUsd = await resolveTokenUsdPriceMicroUsd(config);
+  const requiredTokenBaseUnits = calculateRequiredTokenBaseUnits(
+    config.usdCents,
+    tokenUsdPriceMicroUsd,
+    balance.decimals
+  );
 
   return {
-    eligible: balanceLamports >= requiredLamports,
-    tokenSymbol: config.tokenSymbol,
+    eligible: balance.balanceBaseUnits >= requiredTokenBaseUnits,
+    tokenAddress: config.tokenAddress,
+    tokenDecimals: balance.decimals,
     usdCents: config.usdCents,
-    solUsdPrice: formatMicroUsd(solUsdPriceMicroUsd),
-    solUsdPriceMicroUsd: solUsdPriceMicroUsd.toString(),
-    requiredLamports: requiredLamports.toString(),
-    balanceLamports: balanceLamports.toString(),
+    tokenUsdPrice: formatMicroUsd(tokenUsdPriceMicroUsd),
+    tokenUsdPriceMicroUsd: tokenUsdPriceMicroUsd.toString(),
+    requiredTokenBaseUnits: requiredTokenBaseUnits.toString(),
+    balanceTokenBaseUnits: balance.balanceBaseUnits.toString(),
     cluster: config.cluster,
     priceSource: config.priceSource,
     checkedAt: checkedAt.toISOString(),
@@ -262,7 +406,7 @@ export async function assertRankedTokenHoldingEligibility(walletAddress: string)
   const status = await getRankedTokenHoldingStatus(walletAddress);
   if (!status.eligible) {
     throw Object.assign(
-      new Error(`Ranked requires holding at least ${formatUsdCents(status.usdCents)} worth of ${status.tokenSymbol}`),
+      new Error(`Ranked requires holding at least ${formatUsdCents(status.usdCents)} worth of the configured token`),
       { statusCode: 403, tokenHold: status }
     );
   }

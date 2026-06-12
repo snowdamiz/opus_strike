@@ -139,12 +139,13 @@ interface RankedTicketResponse {
   targetRankLabel: string;
   tokenHold: {
     eligible: boolean;
-    tokenSymbol: 'SOL';
+    tokenAddress: string;
+    tokenDecimals: number | null;
     usdCents: number;
-    solUsdPrice: string;
-    solUsdPriceMicroUsd: string;
-    requiredLamports: string;
-    balanceLamports: string;
+    tokenUsdPrice: string;
+    tokenUsdPriceMicroUsd: string;
+    requiredTokenBaseUnits: string;
+    balanceTokenBaseUnits: string;
     cluster: string;
     priceSource: string;
     checkedAt: string;
@@ -935,7 +936,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const clientId = getClientId();
       const rankedTicket = await requestRankedTicket();
 
-      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredLamports);
+      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredTokenBaseUnits);
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
@@ -1196,7 +1197,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
     setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
-    setupSelfMovementAuthorityHandler(room, { setLocalPlayer });
+    setupSelfMovementAuthorityHandler(room);
     setupPlayerVitalsHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer, removePlayer });
     setupMatchSnapshotHandler(room);
     setupVoidZoneHandlers(room, sessionId);
