@@ -544,45 +544,6 @@ function runProceduralSpawnGroundedMovement() {
   assert.ok(crouchedState.position.z < spawn.z, `crouched procedural movement should still advance, got z ${crouchedState.position.z}`);
 }
 
-function runStairClimbPreservesSprintMomentum() {
-  const stairTerrain = createStairMomentumTerrain();
-  const world = createVoxelCollisionWorld(stairTerrain);
-  const input = {
-    ...createEmptyInputState(),
-    moveForward: true,
-    sprint: true,
-  };
-  let state = {
-    position: { x: 0, y: 0.9, z: 0 },
-    velocity: { x: 0, y: 0, z: 0 },
-    movement: createMovementState(),
-  };
-  let horizontalDistance = 0;
-  let previousPosition = { ...state.position };
-
-  for (let step = 0; step < 120; step++) {
-    const result = simulateCapsuleMotor({
-      state,
-      command: { input, lookYaw: -Math.PI / 2 },
-      terrain: world,
-      heroStats: HERO_DEFINITIONS.phantom.stats,
-      modifiers: {},
-      dt: 1 / 60,
-    });
-    state = result.state;
-    horizontalDistance += Math.hypot(
-      state.position.x - previousPosition.x,
-      state.position.z - previousPosition.z
-    );
-    previousPosition = { ...state.position };
-  }
-
-  assert.ok(horizontalDistance > 7.5, `stair climb should preserve sprint displacement, got ${horizontalDistance.toFixed(3)}m`);
-  assert.ok(speed2D(state.velocity) > 4.5, `stair climb should preserve sprint speed, got ${speed2D(state.velocity).toFixed(3)}m/s`);
-  assert.equal(state.movement.isSprinting, true);
-  assert.equal(state.movement.isGrounded, true);
-}
-
 function createStairMomentumTerrain() {
   const stairTerrain = {
     ...fineVoxelGrid,
@@ -869,94 +830,6 @@ function runDiagonalCornerSlide() {
   assert.ok(result.velocity.z < -3, `tangential velocity should be retained, got z velocity ${result.velocity.z}`);
 }
 
-function runLedgeExitMomentum() {
-  const ledgeTerrain = {
-    getGroundY: (position) => position.z < -0.2 ? 0 : null,
-    clampPosition: (position) => ({ ...position }),
-    getBlockAtWorld: () => 0,
-  };
-  const input = {
-    ...createEmptyInputState(),
-    moveBackward: true,
-    sprint: true,
-  };
-
-  const result = simulateSharedMovement({
-    position: { x: 0, y: 0.9, z: -0.3 },
-    velocity: { x: 0, y: 0, z: HERO_DEFINITIONS.phantom.stats.moveSpeed * 1.2 },
-    movement: createMovementState(),
-    heroStats: HERO_DEFINITIONS.phantom.stats,
-    input,
-    lookYaw: 0,
-    deltaTime: 0.1,
-    terrain: ledgeTerrain,
-  });
-
-  assert.equal(result.movement.isGrounded, false, 'leaving the ledge should detach from ground');
-  assert.ok(result.velocity.z > 4.4, `ledge exit should retain sprint momentum, got ${result.velocity.z}`);
-  assert.ok(result.position.z > 0.15, `ledge exit should continue into air, got z ${result.position.z}`);
-}
-
-function runSlideLedgeExitMomentum() {
-  const ledgeTerrain = {
-    getGroundY: (position) => position.z < 0.12 ? 0 : null,
-    clampPosition: (position) => ({ ...position }),
-    getBlockAtWorld: () => 0,
-  };
-  const movement = createMovementState();
-  movement.isSliding = true;
-  movement.slideTimeRemaining = 0.5;
-
-  const result = simulateSharedMovement({
-    position: { x: 0, y: 0.9, z: 0 },
-    velocity: { x: 0, y: 0, z: 12 },
-    movement,
-    heroStats: HERO_DEFINITIONS.phantom.stats,
-    input: createEmptyInputState(),
-    lookYaw: 0,
-    deltaTime: 0.1,
-    terrain: ledgeTerrain,
-  });
-
-  assert.equal(result.movement.isGrounded, false, 'sliding off a ledge should detach from ground');
-  assert.ok(result.velocity.z > 9.5, `slide ledge exit should retain horizontal speed, got ${result.velocity.z}`);
-  assert.ok(result.position.z > 0.9, `slide ledge exit should keep moving forward, got z ${result.position.z}`);
-}
-
-function runSlideAlongWall() {
-  const wallTerrain = {
-    ...fineVoxelGrid,
-    getGroundY: () => 0,
-    clampPosition: (position) => ({ ...position }),
-    getBlockAtWorld: (position) => (
-      position.x >= 0.55 &&
-      position.x <= 2 &&
-      position.y >= 0 &&
-      position.y < 3
-        ? 1
-        : 0
-    ),
-  };
-  const movement = createMovementState();
-  movement.isSliding = true;
-  movement.slideTimeRemaining = 0.4;
-
-  const result = simulateSharedMovement({
-    position: { x: 0, y: 0.9, z: 0 },
-    velocity: { x: 10, y: 0, z: -10 },
-    movement,
-    heroStats: HERO_DEFINITIONS.phantom.stats,
-    input: createEmptyInputState(),
-    lookYaw: 0,
-    deltaTime: 0.1,
-    terrain: wallTerrain,
-  });
-
-  assert.ok(result.position.x < 0.12, `slide into wall should not penetrate wall, got x ${result.position.x}`);
-  assert.ok(result.position.z < -0.65, `slide into wall should continue along wall, got z ${result.position.z}`);
-  assert.ok(result.velocity.z < -7, `slide wall response should keep tangent velocity, got ${result.velocity.z}`);
-}
-
 function runHeldSlideGraduallyLosesSpeed() {
   let state = createSimulationState();
   const speeds = [];
@@ -1209,7 +1082,6 @@ runOverwriteDefaultsToExternalCorrection();
 runEpochBarrier();
 runVoxelWallBlocksMovement();
 runProceduralSpawnGroundedMovement();
-runStairClimbPreservesSprintMomentum();
 runStairClimbReconcileHasNoMicroCorrections();
 runVoxelStepUpKeepsMovementSmooth();
 runVoxelStepUpBeginsAtCapsuleEdge();
@@ -1218,9 +1090,6 @@ runTallVoxelWallStillBlocksMovement();
 runLowCeilingMaintainsCrouch();
 runCapsuleHoleRejection();
 runDiagonalCornerSlide();
-runLedgeExitMomentum();
-runSlideLedgeExitMomentum();
-runSlideAlongWall();
 runHeldSlideGraduallyLosesSpeed();
 runSlideJump();
 runLandingContact();

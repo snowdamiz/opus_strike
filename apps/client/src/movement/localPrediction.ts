@@ -24,6 +24,7 @@ import {
   computeAnchorWallAabbs,
   createVoxelCollisionWorld,
   sweepCapsulePathClear,
+  type MovementCollisionWorld,
   type MovementPredictionContext,
   type MovementSimulationState,
 } from '@voxel-strike/physics';
@@ -38,6 +39,7 @@ let nextCommandSeq = 1;
 let predictedPlayerId: string | null = null;
 let cachedMapId: string | null = null;
 let cachedTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
+let cachedCollisionWorld: { mapId: string | null; revision: number; world: MovementCollisionWorld } | null = null;
 let latestServerCollisionRevision = 0;
 
 const fallbackTerrain: MovementTerrainAdapter = {
@@ -54,6 +56,7 @@ export function resetLocalMovementPrediction(
   predictedPlayerId = playerId;
   cachedMapId = null;
   cachedTerrainLookup = null;
+  cachedCollisionWorld = null;
   latestServerCollisionRevision = 0;
   if (state) {
     localMovementPrediction.initialize(state, movementEpoch, 0);
@@ -103,12 +106,26 @@ function getClientTerrainAdapter(): MovementTerrainAdapter {
     origin: lookup.origin,
     voxelSize: lookup.voxelSize,
     collisionRevision: latestServerCollisionRevision,
+    cacheStaticAabbs: true,
     getCollisionAabbs: (bounds) => computeAnchorWallAabbs(
       useGameStore.getState().earthWalls,
       Date.now(),
       bounds
     ),
   };
+}
+
+function getClientCollisionWorld(): MovementCollisionWorld {
+  const terrain = getClientTerrainAdapter();
+  const mapId = cachedMapId;
+  const revision = latestServerCollisionRevision;
+  if (cachedCollisionWorld && cachedCollisionWorld.mapId === mapId && cachedCollisionWorld.revision === revision) {
+    return cachedCollisionWorld.world;
+  }
+
+  const world = createVoxelCollisionWorld(terrain);
+  cachedCollisionWorld = { mapId, revision, world };
+  return world;
 }
 
 export function getLocalPredictionContext(player: Player): MovementPredictionContext {
@@ -125,6 +142,7 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
   return {
     heroStats: getHeroStats(player.heroId ?? 'phantom'),
     terrain: getClientTerrainAdapter(),
+    collisionWorld: getClientCollisionWorld(),
     flagCarrier: player.hasFlag,
     activeSpeedMultiplier,
     chronosAscendantActive: isChronosAscendantActive(player),
@@ -189,7 +207,7 @@ function resolveLocalPhantomBlinkDestination(
   distance: number
 ): Vec3 {
   const lookup = getClientProceduralTerrainLookup();
-  const world = createVoxelCollisionWorld(getClientTerrainAdapter());
+  const world = getClientCollisionWorld();
   const forward = horizontalForwardFromYaw(yaw);
   const start = state.position;
   const verticalOffset = pitch < -0.3 ? 2 : 0;
@@ -248,7 +266,7 @@ export function predictLocalPhantomShadowStep(player: Player, lookYaw: number): 
   const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
   const forward = horizontalForwardFromYaw(lookYaw);
   const lookup = getClientProceduralTerrainLookup();
-  const world = createVoxelCollisionWorld(getClientTerrainAdapter());
+  const world = getClientCollisionWorld();
   const rawPosition = {
     x: current.position.x + forward.x * PHANTOM_SHADOWSTEP_DISTANCE,
     y: current.position.y,
@@ -391,7 +409,11 @@ function advanceNextCommandSeqPastAck(ackSeq: number): void {
 
 export function applySelfMovementAuthority(player: Player, authority: SelfMovementAuthority) {
   ensureLocalPredictionInitialized(player);
-  latestServerCollisionRevision = authority.collisionRevision ?? latestServerCollisionRevision;
+  const nextCollisionRevision = authority.collisionRevision ?? latestServerCollisionRevision;
+  if (nextCollisionRevision !== latestServerCollisionRevision) {
+    cachedCollisionWorld = null;
+  }
+  latestServerCollisionRevision = nextCollisionRevision;
   const result = localMovementPrediction.reconcile(
     authority,
     getLocalPredictionContext(player),

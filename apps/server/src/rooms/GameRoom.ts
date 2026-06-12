@@ -139,6 +139,7 @@ import {
   type HookshotSwingState,
   type MovementAabb,
   type MovementCollisionBounds,
+  type MovementCollisionWorld,
   type MovementTerrainAdapter,
 } from '@voxel-strike/physics';
 import { TickMetrics } from '../perf/tickMetrics';
@@ -665,11 +666,13 @@ export class GameRoom extends Room<GameState> {
   private proceduralTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
   private mapChunkLookup: Map<string, VoxelChunk> = new Map();
   private movementCollisionRevision = 0;
+  private movementCollisionWorldCache: { revision: number; world: MovementCollisionWorld } | null = null;
   private movementTerrain: MovementTerrainAdapter = {
     getGroundY: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getGroundY(position),
     clampPosition: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().clampToPlayableMap(position),
     getBlockAtWorld: (position: { x: number; y: number; z: number }) => this.getProceduralTerrainLookup().getBlockAtWorld(position),
     collisionRevision: 0,
+    cacheStaticAabbs: true,
     getCollisionAabbs: (bounds: MovementCollisionBounds) => this.getHookshotAnchorWallAabbs(bounds),
   };
   
@@ -3322,8 +3325,7 @@ export class GameRoom extends Room<GameState> {
       deltaTime: dt,
     });
 
-    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision(now);
-    const world = createVoxelCollisionWorld(this.movementTerrain);
+    const world = this.getMovementCollisionWorld(now);
     const swingDelta = {
       x: result.position.x - previousPosition.x,
       y: result.position.y - previousPosition.y,
@@ -3378,10 +3380,15 @@ export class GameRoom extends Room<GameState> {
     player.movement.slideTimeRemaining = 0;
   }
 
-  private simulateAuthoritativeMovementStep(player: Player, input: PlayerInput, dt: number): void {
+  private simulateAuthoritativeMovementStep(
+    player: Player,
+    input: PlayerInput,
+    dt: number,
+    now = this.state.serverTime || Date.now()
+  ): void {
     const heroId = player.heroId as HeroId;
     const heroStats = getHeroStats(heroId);
-    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision();
+    const collisionWorld = this.getMovementCollisionWorld(now);
     const result = simulateSharedMovement({
       position: this.vec3SchemaToPlain(player.position),
       velocity: this.vec3SchemaToPlain(player.velocity),
@@ -3407,6 +3414,7 @@ export class GameRoom extends Room<GameState> {
       lookYaw: player.lookYaw,
       deltaTime: dt,
       terrain: this.movementTerrain,
+      collisionWorld,
       flagCarrier: player.hasFlag,
       activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
       chronosAscendantActive: this.isChronosAscendantActive(player),
@@ -4571,8 +4579,7 @@ export class GameRoom extends Room<GameState> {
     const forward = this.forward2D(player.lookYaw);
     const start = this.vec3SchemaToPlain(player.position);
     const verticalOffset = player.lookPitch < -0.3 ? 2 : 0;
-    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision();
-    const world = createVoxelCollisionWorld(this.movementTerrain);
+    const world = this.getMovementCollisionWorld();
 
     for (let testDistance = distance; testDistance >= 2; testDistance -= 0.5) {
       const candidate = this.clampToPlayableMap({
@@ -4592,8 +4599,7 @@ export class GameRoom extends Room<GameState> {
   private resolvePhantomShadowStepDestination(player: Player, distance: number): PlainVec3 {
     const forward = this.forward2D(player.lookYaw);
     const start = this.vec3SchemaToPlain(player.position);
-    this.movementTerrain.collisionRevision = this.getMovementCollisionRevision();
-    const world = createVoxelCollisionWorld(this.movementTerrain);
+    const world = this.getMovementCollisionWorld();
 
     for (let testDistance = distance; testDistance >= 1.5; testDistance -= 0.5) {
       const candidate = this.clampToPlayableMap({
@@ -7167,6 +7173,7 @@ export class GameRoom extends Room<GameState> {
     this.hookshotAnchorWalls = [];
     this.movementCollisionRevision = 0;
     this.movementTerrain.collisionRevision = 0;
+    this.movementCollisionWorldCache = null;
   }
 
   private bumpMovementCollisionRevision(): void {
@@ -7175,6 +7182,7 @@ export class GameRoom extends Room<GameState> {
       this.movementCollisionRevision = 1;
     }
     this.movementTerrain.collisionRevision = this.movementCollisionRevision;
+    this.movementCollisionWorldCache = null;
   }
 
   private pruneExpiredHookshotAnchorWalls(now = Date.now()): void {
@@ -7191,6 +7199,19 @@ export class GameRoom extends Room<GameState> {
   private getMovementCollisionRevision(now = Date.now()): number {
     this.pruneExpiredHookshotAnchorWalls(now);
     return this.movementCollisionRevision;
+  }
+
+  private getMovementCollisionWorld(now = Date.now()): MovementCollisionWorld {
+    const revision = this.getMovementCollisionRevision(now);
+    const cached = this.movementCollisionWorldCache;
+    if (cached && cached.revision === revision) {
+      return cached.world;
+    }
+
+    this.movementTerrain.collisionRevision = revision;
+    const world = createVoxelCollisionWorld(this.movementTerrain);
+    this.movementCollisionWorldCache = { revision, world };
+    return world;
   }
 
   private getHookshotAnchorWallAabbs(bounds: MovementCollisionBounds): MovementAabb[] {
@@ -8065,7 +8086,7 @@ export class GameRoom extends Room<GameState> {
           !lastInput.position &&
           !lastInput.velocity
         ) {
-          this.simulateAuthoritativeMovementStep(player, lastInput, TICK_INTERVAL_MS / 1000);
+          this.simulateAuthoritativeMovementStep(player, lastInput, TICK_INTERVAL_MS / 1000, tickTime);
           this.updateLastSafeMovement(player, lastInput.tick, tickTime);
         }
 
@@ -8109,7 +8130,7 @@ export class GameRoom extends Room<GameState> {
           continue;
         }
 
-        this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS);
+        this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
         this.stepHookshotGrappleAuthority(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
         this.processPlayerInput(player, input);
         this.updateLastSafeMovement(player, input.tick, stepNow);

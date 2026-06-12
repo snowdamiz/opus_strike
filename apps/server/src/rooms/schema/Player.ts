@@ -21,13 +21,13 @@ export class Player extends Schema {
   rankIsRanked: boolean = false;
   rankPlacementRemaining: number = 5;
 
-  // Transform
+  // Runtime transform; streamed through playerTransforms instead of Colyseus patches.
   position: Vec3Schema = new Vec3Schema();
   velocity: Vec3Schema = new Vec3Schema();
   lookYaw: number = 0;
   lookPitch: number = 0;
 
-  // Stats
+  // Runtime vitals; streamed through playerVitals instead of Colyseus patches.
   health: number = 100;
   maxHealth: number = 100;
   ultimateCharge: number = 0;
@@ -74,21 +74,4 @@ defineTypes(Player, {
   rankIconKey: 'string',
   rankIsRanked: 'boolean',
   rankPlacementRemaining: 'number',
-  position: Vec3Schema,
-  velocity: Vec3Schema,
-  lookYaw: 'number',
-  lookPitch: 'number',
-  health: 'number',
-  maxHealth: 'number',
-  ultimateCharge: 'number',
-  movement: MovementState,
-  abilities: { map: AbilityStateSchema },
-  hasFlag: 'boolean',
-  respawnTime: 'number',
-  spawnProtectionUntil: 'number',
-  kills: 'number',
-  deaths: 'number',
-  assists: 'number',
-  flagCaptures: 'number',
-  flagReturns: 'number',
 });

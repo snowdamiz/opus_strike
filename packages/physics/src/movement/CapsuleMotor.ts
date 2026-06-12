@@ -55,6 +55,7 @@ export interface VoxelMovementTerrainAdapter {
   origin?: Vec3;
   voxelSize?: Vec3;
   collisionRevision?: number;
+  cacheStaticAabbs?: boolean;
   getCollisionAabbs?: (bounds: MovementCollisionBounds) => readonly MovementAabb[];
 }
 
@@ -152,6 +153,7 @@ const DEFAULT_VOXEL_SIZE: Vec3 = {
   z: PROCEDURAL_VOXEL_SIZE.z,
 };
 const EPSILON = 0.00001;
+const STATIC_AABB_CACHE_LIMIT = 512;
 
 function cloneVec3(value: Vec3): Vec3 {
   return { x: value.x, y: value.y, z: value.z };
@@ -515,12 +517,43 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     0.04,
     Math.min(voxelSize.x, voxelSize.y, voxelSize.z, PLAYER_RADIUS * 0.35)
   );
+  const staticAabbCache = new Map<string, readonly MovementAabb[]>();
+
+  function staticAabbCacheKey(bounds: MovementCollisionBounds): string {
+    const gx0 = Math.floor((bounds.min.x - origin.x) / voxelSize.x) - 1;
+    const gy0 = Math.floor((bounds.min.y - origin.y) / voxelSize.y) - 1;
+    const gz0 = Math.floor((bounds.min.z - origin.z) / voxelSize.z) - 1;
+    const gx1 = Math.floor((bounds.max.x - origin.x) / voxelSize.x) + 1;
+    const gy1 = Math.floor((bounds.max.y - origin.y) / voxelSize.y) + 1;
+    const gz1 = Math.floor((bounds.max.z - origin.z) / voxelSize.z) + 1;
+    return `${gx0},${gy0},${gz0}:${gx1},${gy1},${gz1}:${bounds.min.y.toFixed(4)},${bounds.max.y.toFixed(4)}`;
+  }
+
+  function collectStaticAabbs(expanded: MovementCollisionBounds): readonly MovementAabb[] {
+    if (!terrain.getBlockAtWorld) return [];
+
+    const cacheKey = staticAabbCacheKey(expanded);
+    const cached = staticAabbCache.get(cacheKey);
+    if (cached) return cached;
+
+    const staticAabbs = mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
+    if (staticAabbCache.size >= STATIC_AABB_CACHE_LIMIT) {
+      const oldestKey = staticAabbCache.keys().next().value;
+      if (oldestKey) {
+        staticAabbCache.delete(oldestKey);
+      }
+    }
+    staticAabbCache.set(cacheKey, staticAabbs);
+    return staticAabbs;
+  }
 
   function collectAabbs(bounds: MovementCollisionBounds): MovementAabb[] {
     const expanded = expandBounds(bounds, { x: SKIN_WIDTH, y: SKIN_WIDTH, z: SKIN_WIDTH });
-    const staticAabbs = mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
+    const staticAabbs = terrain.cacheStaticAabbs
+      ? collectStaticAabbs(expanded)
+      : mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
     const dynamicAabbs = terrain.getCollisionAabbs?.(expanded) ?? [];
-    if (dynamicAabbs.length === 0) return staticAabbs;
+    if (dynamicAabbs.length === 0) return [...staticAabbs];
     return [
       ...staticAabbs,
       ...dynamicAabbs.filter((aabb) => boundsOverlap(expanded, { min: aabb.min, max: aabb.max })),

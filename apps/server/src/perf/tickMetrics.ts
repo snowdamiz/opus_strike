@@ -47,7 +47,11 @@ export class TickMetrics {
   private tickMaxMs = 0;
   private lastSummaryAt = Date.now();
 
-  constructor(private readonly roomId: string, private readonly enabled = process.env.NODE_ENV !== 'production' || process.env.DEBUG_PERF === '1') {}
+  constructor(
+    private readonly roomId: string,
+    private readonly enabled = process.env.NODE_ENV !== 'production' || process.env.DEBUG_PERF === '1',
+    private readonly estimateNetworkBytes = process.env.DEBUG_PERF_BYTES === '1'
+  ) {}
 
   time<T>(section: TickSection, fn: () => T): T {
     if (!this.enabled) return fn();
@@ -79,7 +83,9 @@ export class TickMetrics {
 
     const stats = this.network.get(type) ?? { messages: 0, bytes: 0 };
     stats.messages++;
-    stats.bytes += approxBytes(payload);
+    if (this.estimateNetworkBytes) {
+      stats.bytes += approxBytes(payload);
+    }
     this.network.set(type, stats);
   }
 

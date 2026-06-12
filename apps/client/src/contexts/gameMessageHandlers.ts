@@ -574,7 +574,20 @@ export function setupPlayerJoinedHandler(
       }
 
       const currentStore = useGameStore.getState();
-      if (!currentStore.players.has(data.playerId)) {
+      const existingPlayer = currentStore.players.get(data.playerId);
+      if (existingPlayer) {
+        updatePlayer(data.playerId, {
+          ...existingPlayer,
+          name: data.playerName || existingPlayer.name,
+          team: (data.team || existingPlayer.team) as Team,
+          heroId: (data.heroId || existingPlayer.heroId) as HeroId | null,
+          isBot: Boolean(data.isBot ?? existingPlayer.isBot),
+          botDifficulty: data.botDifficulty || existingPlayer.botDifficulty,
+          botProfileId: data.botProfileId || existingPlayer.botProfileId,
+          rank: data.rank || existingPlayer.rank,
+          position: data.position || existingPlayer.position,
+        });
+      } else {
         const newPlayer: Player = {
           id: data.playerId,
           name: data.playerName,

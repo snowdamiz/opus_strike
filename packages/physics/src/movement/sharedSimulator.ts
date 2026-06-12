@@ -2,6 +2,7 @@ import type { HeroStats, PlayerInput, PlayerMovementState, Vec3 } from '@voxel-s
 import {
   createVoxelCollisionWorld,
   simulateCapsuleMotor,
+  type MovementCollisionWorld,
   type VoxelMovementTerrainAdapter,
 } from './CapsuleMotor.js';
 
@@ -20,6 +21,7 @@ export interface SharedMovementSimulationInput {
   lookYaw: number;
   deltaTime: number;
   terrain: MovementTerrainAdapter;
+  collisionWorld?: MovementCollisionWorld;
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
   chronosAscendantActive?: boolean;
@@ -42,7 +44,7 @@ export function simulateSharedMovement(input: SharedMovementSimulationInput): Sh
       input: input.input,
       lookYaw: input.lookYaw,
     },
-    terrain: createVoxelCollisionWorld(input.terrain),
+    terrain: input.collisionWorld ?? createVoxelCollisionWorld(input.terrain),
     heroStats: input.heroStats,
     modifiers: {
       flagCarrier: input.flagCarrier,

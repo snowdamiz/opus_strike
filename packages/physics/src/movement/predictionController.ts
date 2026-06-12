@@ -17,6 +17,7 @@ import {
   movementButtonsToInputState,
 } from '@voxel-strike/shared';
 import { simulateSharedMovement, type MovementTerrainAdapter } from './sharedSimulator.js';
+import type { MovementCollisionWorld } from './CapsuleMotor.js';
 
 export interface MovementSimulationState {
   position: Vec3;
@@ -27,6 +28,7 @@ export interface MovementSimulationState {
 export interface MovementPredictionContext {
   heroStats: HeroStats;
   terrain: MovementTerrainAdapter;
+  collisionWorld?: MovementCollisionWorld;
   flagCarrier?: boolean;
   activeSpeedMultiplier?: number;
   chronosAscendantActive?: boolean;
@@ -383,6 +385,7 @@ export class MovementPredictionController {
       lookYaw: command.lookYaw,
       deltaTime: MOVEMENT_SUBSTEP_SECONDS,
       terrain: context.terrain,
+      collisionWorld: context.collisionWorld,
       flagCarrier: context.flagCarrier,
       activeSpeedMultiplier: context.activeSpeedMultiplier,
       chronosAscendantActive: context.chronosAscendantActive,
