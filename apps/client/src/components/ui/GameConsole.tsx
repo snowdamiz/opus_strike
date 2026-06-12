@@ -114,19 +114,10 @@ export function isGameConsoleOpen(): boolean {
   return isConsoleOpenGlobal;
 }
 
-let devFlyModeGlobal = false;
 let devImmuneModeGlobal = false;
-
-export function isDevFlyMode(): boolean {
-  return config.isDev && devFlyModeGlobal;
-}
 
 function isDevImmuneMode(): boolean {
   return config.isDev && devImmuneModeGlobal;
-}
-
-function setDevFlyMode(enabled: boolean) {
-  devFlyModeGlobal = config.isDev && enabled;
 }
 
 function setDevImmuneMode(enabled: boolean) {
@@ -233,7 +224,7 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /fly | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze'
+        ? 'Developer Console - /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze'
         : 'Developer commands are disabled in this build',
       type: 'info',
     },
@@ -250,7 +241,6 @@ export function GameConsole() {
     devSetHero,
     devFillUltimate,
     devEndGame,
-    setDevFly,
     setDevImmune,
     setDevTimeFrozen,
     setDevBotsRooted,
@@ -328,23 +318,6 @@ export function GameConsole() {
     const command = parts[0].toLowerCase();
 
     switch (command) {
-      case '/fly': {
-        if (!config.isDev) {
-          addMessage('Developer commands are disabled outside development builds.', 'error');
-          break;
-        }
-
-        const nextFlyMode = !isDevFlyMode();
-        setDevFlyMode(nextFlyMode);
-        setDevFly(nextFlyMode);
-        if (nextFlyMode) {
-          disableActiveSkillState();
-        }
-        addMessage(`Fly mode ${nextFlyMode ? 'ON - invulnerable' : 'OFF'}`, 'info');
-        setTimeout(() => setIsOpen(false), 100);
-        break;
-      }
-
       case '/immune': {
         if (!config.isDev) {
           addMessage('Developer commands are disabled outside development builds.', 'error');
@@ -487,9 +460,9 @@ export function GameConsole() {
       }
 
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /fly, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze`, 'error');
     }
-  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotBrainEnabled, setDevBotsRooted, setDevFly, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

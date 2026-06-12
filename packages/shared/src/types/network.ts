@@ -1,4 +1,4 @@
-import type { BotDifficulty, PlayerInput, PlayerSnapshot, PlayerStats, Team } from './player.js';
+import type { BotDifficulty, PlayerSnapshot, PlayerStats, Team } from './player.js';
 import type { HeroId } from './hero.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
@@ -10,14 +10,12 @@ import type { MatchMode } from './matchMode.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
-  | { type: 'input'; payload: PlayerInput }
   | { type: 'movementCommands'; payload: MovementCommandPacket }
   | { type: 'playerPingResponse'; payload: PlayerPingResponseMessage }
   | { type: 'selectHero'; payload: { heroId: HeroId } }
   | { type: 'devSetHero'; payload: { heroId: HeroId } }
   | { type: 'devFillUltimate'; payload: Record<string, never> }
   | { type: 'devEndGame'; payload: Record<string, never> }
-  | { type: 'setDevFly'; payload: { enabled: boolean } }
   | { type: 'setDevImmune'; payload: { enabled: boolean } }
   | { type: 'setDevTimeFrozen'; payload: { enabled: boolean } }
   | { type: 'selectTeam'; payload: { team: Team } }

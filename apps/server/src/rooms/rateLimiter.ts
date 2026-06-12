@@ -38,7 +38,6 @@ export class MessageRateLimiter {
 }
 
 export const GAME_MESSAGE_RATE_LIMITS = {
-  input: { limit: 90, intervalMs: 1000 },
   movementCommands: { limit: 35, intervalMs: 1000 },
   chat: { limit: 4, intervalMs: 5000 },
   selection: { limit: 6, intervalMs: 3000 },

@@ -10,7 +10,6 @@ import {
   type GameEndEvent,
   type HeroId,
   type Team,
-  type PlayerInput,
   type PublicRankSnapshot,
   type MovementCommandPacket,
   type PlayerPingRequestMessage,
@@ -83,7 +82,6 @@ interface NetworkContextType {
   joinGameRoom: (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => Promise<void>;
   leaveGame: () => void;
   disconnect: () => void;
-  sendInput: (input: PlayerInput) => void;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
   requestBlazeBombDrop: (payload?: { abilityCastHints?: AbilityCastOriginHint[] }) => void;
   reportBlazeRocketImpact: (rocketId: string, position: { x: number; y: number; z: number }) => void;
@@ -91,7 +89,6 @@ interface NetworkContextType {
   devSetHero: (heroId: HeroId) => void;
   devFillUltimate: () => void;
   devEndGame: () => void;
-  setDevFly: (enabled: boolean) => void;
   setDevImmune: (enabled: boolean) => void;
   setDevTimeFrozen: (enabled: boolean) => void;
   setDevBotsRooted: (enabled: boolean) => void;
@@ -1219,10 +1216,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   // ==================== GAME ACTIONS ====================
 
-  const sendInput = useCallback((input: PlayerInput) => {
-    gameRoomRef.current?.send('input', input);
-  }, []);
-
   const sendMovementCommands = useCallback((packet: MovementCommandPacket) => {
     if (packet.commands.length === 0) return;
     gameRoomRef.current?.send('movementCommands', packet);
@@ -1257,11 +1250,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     if (!config.isDev) return;
     loggers.network.debug('sending development game end');
     gameRoomRef.current?.send('devEndGame', {});
-  }, []);
-
-  const setDevFly = useCallback((enabled: boolean) => {
-    if (!config.isDev) return;
-    gameRoomRef.current?.send('setDevFly', { enabled });
   }, []);
 
   const setDevImmune = useCallback((enabled: boolean) => {
@@ -1351,7 +1339,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       joinGameRoom,
       leaveGame,
       disconnect,
-      sendInput,
       sendMovementCommands,
       requestBlazeBombDrop,
       reportBlazeRocketImpact,
@@ -1359,7 +1346,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       devSetHero,
       devFillUltimate,
       devEndGame,
-      setDevFly,
       setDevImmune,
       setDevTimeFrozen,
       setDevBotsRooted,

@@ -153,7 +153,6 @@ import {
   assertUsableEntryTicketSecret,
   isDevelopmentToolsEnabled,
   isDirectGameRoomJoinAllowed,
-  isHardenedMovementEnabled,
 } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { verifyGameEntryTicket, type GameEntryTicketClaims } from '../security/entryTickets';
@@ -186,7 +185,7 @@ import {
   type AntiCheatIntegrityGate,
   type MovementShadowSimulationState,
 } from '../anticheat';
-import { validateMovementProposal, type LastSafeMovementState } from './movementValidation';
+import type { LastSafeMovementState } from './movementValidation';
 import {
   GAME_MESSAGE_RATE_LIMITS,
   MessageRateLimiter,
@@ -200,7 +199,6 @@ import {
   validateBotIdPayload,
   validateChatPayload,
   validateHeroPayload,
-  parsePlayerInputPayload,
   validateReadyPayload,
   validateTeamPayload,
   validateVec3,
@@ -340,7 +338,6 @@ interface ServerMovementAuthorityState {
   commandsInWindow: number;
   lastSafe: LastSafeMovementState | null;
   objectiveSuppressedUntil: number;
-  transformProposalHoldUntil: number;
   shadow: MovementShadowSimulationState;
 }
 
@@ -626,7 +623,6 @@ const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
 };
 const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
 const OBJECTIVE_SUPPRESSION_MS = 650;
-const HARD_CORRECTION_PROPOSAL_HOLD_MS = 160;
 const DAMAGE_CAP_WINDOW_MS = 1000;
 const DAMAGE_CAP_PER_SOURCE_TARGET_MULTIPLIER = 2.25;
 const MAX_SECURITY_EVENTS = 2000;
@@ -689,7 +685,6 @@ export class GameRoom extends Room<GameState> {
   private npcIdCounter: number = 0;
   private devBotIdCounter: number = 0;
   private spawnedNpcs: Set<string> = new Set(); // Track NPC IDs
-  private authoritativePositionUntil: Map<string, number> = new Map();
   private movementAuthorities: Map<string, ServerMovementAuthorityState> = new Map();
   private flamethrowerLastDamageTick: Map<string, number> = new Map();
   private botBrains: Map<string, BotBrain> = new Map();
@@ -698,7 +693,6 @@ export class GameRoom extends Room<GameState> {
   private processedBlazeRocketImpacts: Map<string, number> = new Map();
   private damageHistory: Map<string, Map<string, { damage: number; timestamp: number }>> = new Map();
   private unstuckCooldownUntil: Map<string, number> = new Map();
-  private devInvulnerablePlayers: Set<string> = new Set();
   private devImmunePlayers: Set<string> = new Set();
   private devGameClockFrozen = false;
   private devBotsRooted = false;
@@ -880,28 +874,6 @@ export class GameRoom extends Room<GameState> {
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
 
     // Handle messages
-    this.onMessage('input', (client, rawInput: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'input', GAME_MESSAGE_RATE_LIMITS.input)) {
-        this.recordRateLimitDrop(client.sessionId, 'input');
-        return;
-      }
-      const inputResult = parsePlayerInputPayload(rawInput);
-      if (!inputResult.ok) {
-        const authority = this.getMovementAuthority(client.sessionId);
-        authority.metrics.malformedCommands++;
-        this.recordSecurityEvent({
-          type: 'malformed_message',
-          playerId: client.sessionId,
-          userId: this.getPlayerUserId(client.sessionId),
-          movementEpoch: authority.movementEpoch,
-          reason: 'input',
-          detail: { validationReason: inputResult.reason },
-        });
-        return;
-      }
-      this.handleInput(client, inputResult.input);
-    });
-
     this.onMessage('movementCommands', (client, packet: MovementCommandPacket) => {
       if (!this.rateLimiter.consume(client.sessionId, 'movementCommands', GAME_MESSAGE_RATE_LIMITS.movementCommands)) {
         this.recordRateLimitDrop(client.sessionId, 'movementCommands');
@@ -1040,14 +1012,6 @@ export class GameRoom extends Room<GameState> {
           return;
         }
         this.handleKillAllNpcs(client);
-      });
-
-      this.onMessage('setDevFly', (client, data: unknown) => {
-        if (!this.rateLimiter.consume(client.sessionId, 'setDevFly', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
-          this.recordRateLimitDrop(client.sessionId, 'setDevFly');
-          return;
-        }
-        this.handleSetDevFly(client, isRecord(data) && data.enabled === true);
       });
 
       this.onMessage('setDevImmune', (client, data: unknown) => {
@@ -1313,14 +1277,12 @@ export class GameRoom extends Room<GameState> {
     this.hookshotGrapples.delete(client.sessionId);
     this.blazeBombDropConsumedForHold.delete(client.sessionId);
     this.blazeFlamethrowerActivePlayers.delete(client.sessionId);
-    this.authoritativePositionUntil.delete(client.sessionId);
     this.movementAuthorities.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
     this.blazeRocketImpactCooldownUntil.delete(client.sessionId);
     this.unstuckCooldownUntil.delete(client.sessionId);
     this.deleteProcessedBlazeRocketImpactsForPlayer(client.sessionId);
-    this.devInvulnerablePlayers.delete(client.sessionId);
     this.devImmunePlayers.delete(client.sessionId);
     this.playerAuthContexts.delete(client.sessionId);
     this.playerEntryTickets.delete(client.sessionId);
@@ -2418,7 +2380,6 @@ export class GameRoom extends Room<GameState> {
       commandsInWindow: 0,
       lastSafe: null,
       objectiveSuppressedUntil: 0,
-      transformProposalHoldUntil: 0,
       shadow: createMovementShadowSimulationState(),
     };
   }
@@ -2443,10 +2404,6 @@ export class GameRoom extends Room<GameState> {
   private removeOldestPendingCommands(authority: ServerMovementAuthorityState, count: number): void {
     if (count <= 0) return;
     authority.pendingCommands.dropOldest(count);
-  }
-
-  private clearPendingCommands(authority: ServerMovementAuthorityState): void {
-    authority.pendingCommands.clear();
   }
 
   private getNextMovementCommand(authority: ServerMovementAuthorityState): MovementCommand | null {
@@ -3073,19 +3030,6 @@ export class GameRoom extends Room<GameState> {
     loggers.room.warn('authority event', event);
   }
 
-  private ensureLastSafeMovement(player: Player, acceptedAt = Date.now()): LastSafeMovementState {
-    const authority = this.getMovementAuthority(player.id);
-    if (!authority.lastSafe) {
-      authority.lastSafe = {
-        position: this.vec3SchemaToPlain(player.position),
-        velocity: this.vec3SchemaToPlain(player.velocity),
-        acceptedAt,
-        sequence: 0,
-      };
-    }
-    return authority.lastSafe;
-  }
-
   private updateLastSafeMovement(player: Player, sequence: number, acceptedAt = Date.now()): void {
     const authority = this.getMovementAuthority(player.id);
     authority.lastSafe = {
@@ -3094,16 +3038,6 @@ export class GameRoom extends Room<GameState> {
       acceptedAt,
       sequence,
     };
-  }
-
-  private restoreLastSafeMovement(player: Player): void {
-    const lastSafe = this.ensureLastSafeMovement(player);
-    player.position.x = lastSafe.position.x;
-    player.position.y = lastSafe.position.y;
-    player.position.z = lastSafe.position.z;
-    player.velocity.x = lastSafe.velocity.x;
-    player.velocity.y = lastSafe.velocity.y;
-    player.velocity.z = lastSafe.velocity.z;
   }
 
   private suppressObjectives(playerId: string, reason: string, now = Date.now()): void {
@@ -3222,7 +3156,6 @@ export class GameRoom extends Room<GameState> {
     }
     this.replacePendingCommands(authority, preservedCommands.slice(-MOVEMENT_MAX_SERVER_QUEUE));
     authority.correctionReason = reason;
-    authority.transformProposalHoldUntil = Date.now() + HARD_CORRECTION_PROPOSAL_HOLD_MS;
     this.forceTransformFullSync();
     const player = this.state.players.get(playerId);
     if (player) {
@@ -3461,7 +3394,6 @@ export class GameRoom extends Room<GameState> {
       timestamp: this.state.serverTime || Date.now(),
       unstuck: buttons.unstuck,
       abilityCastHints: command.abilityCastHints,
-      devFly: false,
     };
   }
 
@@ -3776,7 +3708,7 @@ export class GameRoom extends Room<GameState> {
     const config = getAntiCheatConfig();
     if (config.movementAuthorityMode !== 'shadow' && config.movementAuthorityMode !== 'strict') return false;
     if (config.movementDriftSampleRate <= 0) return false;
-    if (input.devFly || input.unstuck) return false;
+    if (input.unstuck) return false;
     if (Math.random() > config.movementDriftSampleRate) return false;
     if (authority.shadow.initialized && input.tick <= authority.shadow.lastSequence) {
       authority.shadow = createMovementShadowSimulationState();
@@ -3843,143 +3775,6 @@ export class GameRoom extends Room<GameState> {
       objectiveSuppressed: this.isObjectiveSuppressed(player.id, now),
       sampledAt: now,
     });
-  }
-
-  private handleInput(client: Client, input: PlayerInput & { position?: { x: number; y: number; z: number }; velocity?: { x: number; y: number; z: number } }) {
-    const player = this.state.players.get(client.sessionId);
-    if (!player || player.state !== 'alive') return;
-    const now = Date.now();
-    const authority = this.getMovementAuthority(client.sessionId);
-
-    // Store input for processing
-    player.lastInput = input;
-
-    // Update look direction immediately
-    player.lookYaw = normalizeLookYaw(input.lookYaw);
-    player.lookPitch = clampLookPitch(input.lookPitch);
-
-    if (this.isDevelopmentMode() && input.devFly && this.devInvulnerablePlayers.has(client.sessionId)) {
-      this.disablePlayerSkills(player);
-      if (input.position && this.isFiniteVec3(input.position)) {
-        player.position.x = input.position.x;
-        player.position.y = input.position.y;
-        player.position.z = input.position.z;
-      }
-      if (input.velocity && this.isFiniteVec3(input.velocity)) {
-        player.velocity.x = input.velocity.x;
-        player.velocity.y = input.velocity.y;
-        player.velocity.z = input.velocity.z;
-      }
-      this.updateLastSafeMovement(player, input.tick, now);
-      return;
-    }
-
-    const hasMovementProposal = Boolean(input.position || input.velocity);
-    const canAcceptMovementProposal = (
-      getAntiCheatConfig().allowClientTransformProposals &&
-      now >= (this.authoritativePositionUntil.get(client.sessionId) ?? 0) &&
-      now >= authority.transformProposalHoldUntil
-    );
-
-    if (hasMovementProposal && !canAcceptMovementProposal && !getAntiCheatConfig().allowClientTransformProposals) {
-      this.recordSecurityEvent({
-        type: 'movement_command_reject',
-        playerId: client.sessionId,
-        userId: this.getPlayerUserId(client.sessionId),
-        movementEpoch: authority.movementEpoch,
-        movementSequence: input.tick,
-        reason: 'client_transform_proposal_disabled',
-        position: this.vec3SchemaToPlain(player.position),
-      });
-    }
-
-    if (hasMovementProposal && canAcceptMovementProposal) {
-      this.clearPendingCommands(authority);
-      authority.metrics.queueLength = 0;
-
-      const proposedPosition = input.position ?? this.vec3SchemaToPlain(player.position);
-      const proposedVelocity = input.velocity ?? this.vec3SchemaToPlain(player.velocity);
-
-      if (!isHardenedMovementEnabled()) {
-        this.recordMovementShadowSimulation(player, input, proposedPosition, proposedVelocity, now);
-        if (this.isFiniteVec3(proposedPosition)) {
-          const bounds = this.getMapWorldBounds();
-          player.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, proposedPosition.x));
-          player.position.y = Math.max(-10, Math.min(100, proposedPosition.y));
-          player.position.z = Math.max(bounds.minZ, Math.min(bounds.maxZ, proposedPosition.z));
-        }
-        if (this.isFiniteVec3(proposedVelocity)) {
-          player.velocity.x = proposedVelocity.x;
-          player.velocity.y = proposedVelocity.y;
-          player.velocity.z = proposedVelocity.z;
-        }
-        this.updateLastSafeMovement(player, input.tick, now);
-      } else {
-        const lastSafe = this.ensureLastSafeMovement(player, now);
-        const worldBounds = this.getMapWorldBounds();
-        const validation = validateMovementProposal({
-          previous: lastSafe,
-          proposedPosition,
-          proposedVelocity,
-          inputSequence: input.tick,
-          receivedAt: now,
-          heroStats: getHeroStats(player.heroId as HeroId),
-          movement: {
-            isSliding: player.movement.isSliding,
-            isGrappling: player.movement.isGrappling,
-            isJetpacking: player.movement.isJetpacking,
-            isGliding: player.movement.isGliding,
-          },
-          activeSpeedMultiplier: this.getActiveSpeedMultiplier(player),
-          flagCarrier: player.hasFlag,
-          bounds: {
-            minX: worldBounds.minX,
-            maxX: worldBounds.maxX,
-            minY: -20,
-            maxY: 120,
-            minZ: worldBounds.minZ,
-            maxZ: worldBounds.maxZ,
-          },
-          isInsidePlayableArea: (position) => isInsideBoundaryPolygon(position.x, position.z, this.getMapManifest().boundary),
-          isSpaceBlocked: (position) => this.isPlayerProposalSpaceBlocked(position),
-          isPathBlocked: (from, to) => this.isPlayerProposalPathBlocked(from, to),
-        });
-
-        if (validation.accepted) {
-          this.recordMovementShadowSimulation(player, input, proposedPosition, proposedVelocity, now);
-          player.position.x = proposedPosition.x;
-          player.position.y = proposedPosition.y;
-          player.position.z = proposedPosition.z;
-          player.velocity.x = proposedVelocity.x;
-          player.velocity.y = proposedVelocity.y;
-          player.velocity.z = proposedVelocity.z;
-          authority.correctionReason = null;
-          this.updateLastSafeMovement(player, input.tick, now);
-        } else {
-          const reason = validation.reason ?? 'invalid_transform';
-          this.restoreLastSafeMovement(player);
-          this.incrementCorrectionMetric(authority, reason);
-          this.recordSecurityEvent({
-            type: 'movement_correction',
-            playerId: player.id,
-            userId: this.getPlayerUserId(player.id),
-            movementEpoch: authority.movementEpoch,
-            reason,
-            position: this.vec3SchemaToPlain(player.position),
-            detail: validation.metrics,
-          });
-          this.markMovementBarrier(player.id, reason, { preserveQueuedCommands: false });
-          this.sendSelfMovementAuthority(player, client, reason);
-        }
-      }
-    }
-
-    if (input.unstuck) {
-      this.tryApplyUnstuck(player);
-    }
-
-    // Handle ability inputs (detect key press, not hold)
-    this.processPlayerInput(player, input);
   }
 
   private tryApplyUnstuck(player: Player): void {
@@ -4508,7 +4303,6 @@ export class GameRoom extends Room<GameState> {
         if (pullDirection) {
           target.velocity.x += pullDirection.x * 2.5;
           target.velocity.z += pullDirection.z * 2.5;
-          this.authoritativePositionUntil.set(target.id, now + 350);
           this.markMovementBarrier(target.id, 'knockback');
         }
 
@@ -5012,8 +4806,7 @@ export class GameRoom extends Room<GameState> {
         createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
         resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
         resolvePhantomShadowStepDestination: (caster, distance) => this.resolvePhantomShadowStepDestination(caster, distance),
-        markAuthoritativePosition: (playerId, durationMs, reason = 'teleport') => {
-          this.authoritativePositionUntil.set(playerId, Date.now() + durationMs);
+        markAuthoritativePosition: (playerId, _durationMs, reason = 'teleport') => {
           this.markMovementBarrier(playerId, reason, { preserveQueuedCommands: true });
         },
       });
@@ -5835,10 +5628,7 @@ export class GameRoom extends Room<GameState> {
 
     const now = Date.now();
     if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) return false;
-    if (
-      this.isDevelopmentMode()
-      && (this.devInvulnerablePlayers.has(target.id) || this.devImmunePlayers.has(target.id))
-    ) {
+    if (this.isDevelopmentMode() && this.devImmunePlayers.has(target.id)) {
       return false;
     }
 
@@ -5999,7 +5789,6 @@ export class GameRoom extends Room<GameState> {
       target.movement.isGrounded = false;
       target.movement.isSliding = false;
       target.movement.slideTimeRemaining = 0;
-      this.authoritativePositionUntil.set(target.id, now + CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS);
       this.markMovementBarrier(target.id, 'knockback');
 
       const targetClient = this.clients.find((client) => client.sessionId === target.id);
@@ -7297,16 +7086,6 @@ export class GameRoom extends Room<GameState> {
     return isDevelopmentToolsEnabled();
   }
 
-  private handleSetDevFly(client: Client, enabled: boolean): void {
-    if (!this.isDevelopmentMode()) return;
-
-    if (enabled) {
-      this.devInvulnerablePlayers.add(client.sessionId);
-    } else {
-      this.devInvulnerablePlayers.delete(client.sessionId);
-    }
-  }
-
   private handleSetDevImmune(client: Client, enabled: boolean): void {
     if (!this.isDevelopmentMode()) return;
 
@@ -7713,66 +7492,6 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private isPlayerProposalSpaceBlocked(position: { x: number; y: number; z: number }): boolean {
-    const manifest = this.getMapManifest();
-    if (!isInsideBoundaryPolygon(position.x, position.z, manifest.boundary)) {
-      return true;
-    }
-
-    const radius = 0.42;
-    const diagonal = radius * 0.707;
-    const offsets = [
-      { x: 0, z: 0 },
-      { x: radius, z: 0 },
-      { x: -radius, z: 0 },
-      { x: 0, z: radius },
-      { x: 0, z: -radius },
-      { x: diagonal, z: diagonal },
-      { x: diagonal, z: -diagonal },
-      { x: -diagonal, z: diagonal },
-      { x: -diagonal, z: -diagonal },
-    ];
-    const ySamples = [position.y + 0.2, position.y + 0.9, position.y + 1.55];
-
-    for (const y of ySamples) {
-      for (const offset of offsets) {
-        if (isCollisionBlock(this.getBlockAtWorld({
-          x: position.x + offset.x,
-          y,
-          z: position.z + offset.z,
-        }))) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  private isPlayerProposalPathBlocked(
-    previous: { x: number; y: number; z: number },
-    next: { x: number; y: number; z: number }
-  ): boolean {
-    const dx = next.x - previous.x;
-    const dy = next.y - previous.y;
-    const dz = next.z - previous.z;
-    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const steps = Math.max(1, Math.ceil(distance / 0.5));
-
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      if (this.isPlayerProposalSpaceBlocked({
-        x: previous.x + dx * t,
-        y: previous.y + dy * t,
-        z: previous.z + dz * t,
-      })) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   private isFiniteVec3(position: { x: number; y: number; z: number }): boolean {
     return Number.isFinite(position.x) && Number.isFinite(position.y) && Number.isFinite(position.z);
   }
@@ -8020,7 +7739,6 @@ export class GameRoom extends Room<GameState> {
       player.state = 'alive';
       player.health = player.maxHealth;
       player.spawnProtectionUntil = now + this.config.spawnProtectionSeconds * 1000;
-      this.authoritativePositionUntil.set(player.id, now + 1200);
       player.velocity.x = 0;
       player.velocity.y = 0;
       player.velocity.z = 0;
@@ -8463,8 +8181,6 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach(player => {
       if (player.state !== 'alive') return;
 
-      const lastInput = player.lastInput;
-      if (lastInput && this.isDevelopmentMode() && lastInput.devFly) return;
       if (this.devBotsRooted && player.isBot) {
         this.rootBotMovementAndSkills(player, Date.now());
         return;
@@ -8474,16 +8190,6 @@ export class GameRoom extends Room<GameState> {
       let processedThisTick = 0;
       const queuedCommandCount = authority.pendingCommands.length;
       if (queuedCommandCount === 0) {
-        if (
-          getAntiCheatConfig().movementAuthorityMode !== 'strict' &&
-          lastInput &&
-          !lastInput.position &&
-          !lastInput.velocity
-        ) {
-          this.simulateAuthoritativeMovementStep(player, lastInput, TICK_INTERVAL_MS / 1000, tickTime);
-          this.updateLastSafeMovement(player, lastInput.tick, tickTime);
-        }
-
         if (player.position.y < -10) {
           this.placePlayerAtSpawn(player, 'respawn');
         }
@@ -8606,7 +8312,6 @@ export class GameRoom extends Room<GameState> {
     player.velocity.x = 0;
     player.velocity.y = 0;
     player.velocity.z = 0;
-    this.authoritativePositionUntil.set(player.id, Date.now() + 1200);
     this.markMovementBarrier(player.id, reason);
   }
 

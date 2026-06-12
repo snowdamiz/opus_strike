@@ -53,10 +53,6 @@ export interface PlayerInput {
   unstuck?: boolean;
   clientFrameRateBand?: string;
   abilityCastHints?: AbilityCastOriginHint[];
-  // Client position/velocity for sync (server-authoritative games should validate)
-  position?: Vec3;
-  velocity?: Vec3;
-  devFly?: boolean;
 }
 
 export interface PlayerStats {

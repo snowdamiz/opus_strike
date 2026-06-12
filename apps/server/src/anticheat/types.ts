@@ -63,7 +63,6 @@ export interface AntiCheatRuntimeConfig {
   payoutHoldsEnabled: boolean;
   manualAccountActionsEnabled: boolean;
   banRequiresElevatedRole: boolean;
-  allowClientTransformProposals: boolean;
   clientHintsEnabled: boolean;
   movementAuthorityMode: MovementAuthorityMode;
   movementParityGateRequired: boolean;

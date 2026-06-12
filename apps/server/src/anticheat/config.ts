@@ -72,7 +72,6 @@ export function getAntiCheatConfig(): AntiCheatRuntimeConfig {
     payoutHoldsEnabled: envBool('ANTICHEAT_PAYOUT_HOLDS_ENABLED', false),
     manualAccountActionsEnabled: envBool('ANTICHEAT_MANUAL_ACCOUNT_ACTIONS_ENABLED', false),
     banRequiresElevatedRole: envBool('ANTICHEAT_BAN_REQUIRES_ELEVATED_ROLE', true),
-    allowClientTransformProposals: envBool('ANTICHEAT_ALLOW_CLIENT_TRANSFORM_PROPOSALS', false),
     clientHintsEnabled: envBool('ANTICHEAT_CLIENT_HINTS_ENABLED', true),
     movementAuthorityMode: movementParityGate.effectiveMode,
     movementParityGateRequired,

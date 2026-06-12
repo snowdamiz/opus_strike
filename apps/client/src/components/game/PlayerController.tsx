@@ -35,7 +35,6 @@ import { setBlazeBombTargetHeld, setBlazeFlamethrowerHeld, setBlazeRocketHeld } 
 import {
   setChronosPrimaryHeld,
 } from '../../viewmodel/chronosPose';
-import { isDevFlyMode } from '../ui/GameConsole';
 import {
   useCamera,
   useMovement,
@@ -84,9 +83,6 @@ import { BombTargetingIndicator } from './BlazeEffects';
 import { GrappleTrapTargetingIndicator } from './HookshotEffects';
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
-const DEV_FLY_SPEED = 14;
-const DEV_FLY_FAST_MULTIPLIER = 1.8;
-const DEV_FLY_VERTICAL_SPEED = 10;
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
 const TERRAIN_STEP_VISUAL_SNAP_THRESHOLD = 1.35;
 const TERRAIN_STEP_VISUAL_UP_RATE = 16;
@@ -212,7 +208,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   // Input and network
   const { inputState, isPointerLocked, isControlPressed, isTouchInputActive, requestPointerLock, exitPointerLock } = useInput();
   usePhysics();
-  const { sendInput, sendMovementCommands, requestBlazeBombDrop } = useNetwork();
+  const { sendMovementCommands, requestBlazeBombDrop } = useNetwork();
 
   // Audio hooks
   const {
@@ -380,7 +376,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   }, [
     enabled, isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, grappleTrapTargeting,
     phantomAbilities, blazeAbilities, hookshotAbilities, playerSounds, abilitySystem, movement,
-    cameraControl, sendInput, requestBlazeBombDrop, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
+    cameraControl, requestBlazeBombDrop, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
   ]);
 
   // Canvas click listener
@@ -551,7 +547,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
     const frameInput = (isPointerLocked || isTouchInputActive) ? inputState : INACTIVE_INPUT_STATE;
-    const devFlyMode = isDevFlyMode();
     const hasMovementInput = (
       frameInput.moveForward ||
       frameInput.moveBackward ||
@@ -596,114 +591,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
       setPlayerVisualPosition(localPlayer.id, visualPos);
       setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
-      return;
-    }
-
-    if (devFlyMode) {
-      setPhantomPrimaryHeld(false, now);
-      setBlazeRocketHeld(false, now);
-      setBlazeBombTargetHeld(false, now);
-      setChronosPrimaryHeld(false, now);
-      resetBlazeFlamethrower(now);
-      reloadPressedRef.current = frameInput.reload;
-      pendingReloadInputRef.current = false;
-      pendingUnstuckInputRef.current = false;
-      resetMovementCommandBuffer();
-      movement.refs.slideIntensity.current = 0;
-      resetPredictedAbilitySounds();
-      blazeAbilities.resetRocketJump();
-      const position = positionRef.current;
-      const visualPos = visualStore.getState().playerPositions.get(localPlayer.id);
-      if (visualPos) {
-        position.set(visualPos.x, visualPos.y, visualPos.z);
-      } else {
-        position.set(localPlayer.position.x, localPlayer.position.y, localPlayer.position.z);
-      }
-
-      const moveDirection = movement.calculateMoveDirection(frameInput, cameraControl.refs.yaw.current);
-      const flySpeed = DEV_FLY_SPEED * (frameInput.sprint ? DEV_FLY_FAST_MULTIPLIER : 1);
-      const verticalInput = (frameInput.jump ? 1 : 0) - (frameInput.crouch || isControlPressed ? 1 : 0);
-      const velocity = movement.refs.velocity.current;
-
-      velocity.set(
-        moveDirection.x * flySpeed,
-        verticalInput * DEV_FLY_VERTICAL_SPEED,
-        moveDirection.z * flySpeed
-      );
-      const horizontalFlySpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-      setLocalViewmodelMovement({
-        hasMovementInput,
-        isSprinting: frameInput.sprint,
-        horizontalSpeed: horizontalFlySpeed,
-        updatedAtMs: now,
-      });
-      position.x += velocity.x * dt;
-      position.y += velocity.y * dt;
-      position.z += velocity.z * dt;
-
-      movement.refs.isGrounded.current = false;
-      movement.refs.wasGrounded.current = false;
-      movement.refs.canJump.current = false;
-      movement.refs.isSliding.current = false;
-      movement.refs.slideTime.current = 0;
-      movement.refs.smoothedY.current = null;
-
-      abilitySystem.abilityPressedRef.current.ability1 = frameInput.ability1;
-      abilitySystem.abilityPressedRef.current.ability2 = frameInput.ability2;
-      abilitySystem.abilityPressedRef.current.ultimate = frameInput.ultimate;
-      abilitySystem.abilityActiveRef.current = {};
-      hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
-
-      cameraControl.updateCameraRotation(camera, false, false, dt);
-      camera.position.set(position.x, position.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
-
-      const latestMovement = useGameStore.getState().localPlayer?.movement ?? localPlayer.movement;
-      setLocalVisualMovement({
-        ...latestMovement,
-        isGrounded: false,
-        isSprinting: frameInput.sprint,
-        isCrouching: frameInput.crouch || isControlPressed,
-        isSliding: false,
-        slideTimeRemaining: 0,
-        isGrappling: false,
-        grapplePoint: null,
-        isJetpacking: false,
-        isGliding: false,
-      });
-
-      setPlayerVisualPosition(localPlayer.id, { x: position.x, y: position.y, z: position.z });
-      setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
-      setLocalSlideIntensity(0);
-      wasSlidingLastFrameRef.current = false;
-      updateWalkingSound(0, false, false, DEV_FLY_SPEED, false);
-
-      tickRef.current++;
-      if (now - lastSendRef.current >= 1000 / TICK_RATE) {
-        lastSendRef.current = now;
-        sendInput({
-          tick: tickRef.current,
-          moveForward: frameInput.moveForward,
-          moveBackward: frameInput.moveBackward,
-          moveLeft: frameInput.moveLeft,
-          moveRight: frameInput.moveRight,
-          jump: frameInput.jump,
-          crouch: frameInput.crouch || isControlPressed,
-          sprint: frameInput.sprint,
-          primaryFire: false,
-          secondaryFire: false,
-          reload: false,
-          ability1: false,
-          ability2: false,
-          ultimate: false,
-          interact: frameInput.interact,
-          lookYaw: cameraControl.refs.yaw.current,
-          lookPitch: cameraControl.refs.pitch.current,
-          timestamp: now,
-          position: { x: position.x, y: position.y, z: position.z },
-          velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
-          devFly: true,
-        });
-      }
       return;
     }
 

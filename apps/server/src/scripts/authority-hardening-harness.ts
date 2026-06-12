@@ -4,7 +4,7 @@ import type { HeroStats, Vec3 } from '@voxel-strike/shared';
 import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryTickets';
 import { MessageRateLimiter } from '../rooms/rateLimiter';
 import { validateMovementProposal, type MovementBounds } from '../rooms/movementValidation';
-import { parsePlayerInputPayload, validatePlayerInputPayload, validateTeamPayload } from '../rooms/protocolValidation';
+import { validateTeamPayload } from '../rooms/protocolValidation';
 import { Player } from '../rooms/schema/Player';
 import { AbilityStateSchema } from '../rooms/schema/Components';
 import { executeAbility } from '../rooms/abilityHandlers';
@@ -135,78 +135,6 @@ function runTicketTests(): void {
 function runProtocolTests(): void {
   assert.equal(validateTeamPayload({ team: 'green' }), null);
   assert.deepEqual(validateTeamPayload({ team: 'blue' }), 'blue');
-
-  const validInput = validatePlayerInputPayload({
-    tick: 1,
-    moveForward: true,
-    moveBackward: false,
-    moveLeft: false,
-    moveRight: false,
-    jump: false,
-    crouch: false,
-    sprint: true,
-    primaryFire: false,
-    secondaryFire: false,
-    reload: false,
-    ability1: false,
-    ability2: false,
-    ultimate: false,
-    interact: false,
-    lookYaw: 0,
-    lookPitch: 0,
-    timestamp: 123,
-    position: { x: 0, y: 5, z: 0 },
-    velocity: { x: 1, y: 0, z: 0 },
-  });
-  assert.equal(validInput?.sprint, true);
-  assert.equal(validatePlayerInputPayload({ ...validInput, position: { x: Infinity, y: 0, z: 0 } }), null);
-
-  const tolerantInput = parsePlayerInputPayload({
-    tick: 2,
-    moveForward: 1,
-    moveBackward: 0,
-    moveLeft: false,
-    moveRight: false,
-    jump: false,
-    crouch: false,
-    sprint: false,
-    primaryFire: false,
-    secondaryFire: false,
-    reload: false,
-    ability1: false,
-    ability2: false,
-    ultimate: false,
-    lookYaw: 0,
-    lookPitch: 0,
-    timestamp: null,
-    unstuck: null,
-    position: null,
-  }, 124);
-  if (!tolerantInput.ok) throw new Error(`expected tolerant input to parse: ${tolerantInput.reason}`);
-  assert.equal(tolerantInput.input.moveForward, true);
-  assert.equal(tolerantInput.input.moveBackward, false);
-  assert.equal(tolerantInput.input.interact, false);
-  assert.equal(tolerantInput.input.timestamp, 124);
-  assert.equal(tolerantInput.input.unstuck, undefined);
-  assert.equal(tolerantInput.input.position, undefined);
-
-  const bigintTimestampInput = parsePlayerInputPayload({ ...validInput, timestamp: 1781072315413n }, 125);
-  if (!bigintTimestampInput.ok) throw new Error(`expected bigint timestamp to parse: ${bigintTimestampInput.reason}`);
-  assert.equal(bigintTimestampInput.input.timestamp, 1781072315413);
-
-  const stringTimestampInput = parsePlayerInputPayload({ ...validInput, timestamp: '1781072315414' }, 126);
-  if (!stringTimestampInput.ok) throw new Error(`expected string timestamp to parse: ${stringTimestampInput.reason}`);
-  assert.equal(stringTimestampInput.input.timestamp, 1781072315414);
-
-  const invalidTimestampInput = parsePlayerInputPayload({ ...validInput, timestamp: { value: 1 } }, 127);
-  if (!invalidTimestampInput.ok) throw new Error(`expected invalid timestamp to fall back: ${invalidTimestampInput.reason}`);
-  assert.equal(invalidTimestampInput.input.timestamp, 127);
-
-  const invalidInput = parsePlayerInputPayload({ ...validInput, reload: 'yes' });
-  assert.equal(invalidInput.ok, false);
-  if (!invalidInput.ok) {
-    assert.equal(invalidInput.reason, 'reload');
-  }
 }
 
 function runMovementCommandPayloadTests(): void {

@@ -1,35 +1,12 @@
 import {
   ALL_HERO_IDS,
-  clampLookPitch,
-  normalizeLookYaw,
-  sanitizeAbilityCastOriginHints,
 } from '@voxel-strike/shared';
-import type { BotDifficulty, HeroId, PlayerInput, Team } from '@voxel-strike/shared';
+import type { BotDifficulty, HeroId, Team } from '@voxel-strike/shared';
 
 type RecordValue = Record<string, unknown>;
-type PlayerInputValidationResult =
-  | { ok: true; input: PlayerInput }
-  | { ok: false; reason: string };
 
 const MAX_TEXT_LENGTH = 200;
 const MAX_NAME_LENGTH = 24;
-const CLIENT_FRAME_RATE_BANDS = new Set(['90fps+', '45-90fps', '30-45fps', 'sub30fps', 'unknown']);
-const REQUIRED_INPUT_BOOLEANS = [
-  'moveForward',
-  'moveBackward',
-  'moveLeft',
-  'moveRight',
-  'jump',
-  'crouch',
-  'sprint',
-  'primaryFire',
-  'secondaryFire',
-  'reload',
-  'ability1',
-  'ability2',
-  'ultimate',
-  'interact',
-] as const;
 
 export function isRecord(value: unknown): value is RecordValue {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -61,46 +38,11 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function finiteNumberLike(value: unknown): number | null {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-  if (typeof value === 'bigint') {
-    const parsed = Number(value);
-    return Number.isSafeInteger(parsed) ? parsed : null;
-  }
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function inputTimestampValue(value: unknown, receivedAt: number): number {
-  const fallback = Number.isFinite(receivedAt) ? receivedAt : Date.now();
-  if (value === undefined || value === null) return fallback;
-  return finiteNumberLike(value) ?? fallback;
-}
-
 function booleanValue(value: unknown): boolean | null {
   if (typeof value === 'boolean') return value;
   if (value === 0) return false;
   if (value === 1) return true;
   return null;
-}
-
-function inputBooleanValue(value: unknown): boolean | null {
-  if (value === undefined || value === null) return false;
-  return booleanValue(value);
-}
-
-function optionalBooleanValue(value: unknown): boolean | null | undefined {
-  if (value === undefined || value === null) return undefined;
-  return booleanValue(value);
-}
-
-function invalidPlayerInput(reason: string): PlayerInputValidationResult {
-  return { ok: false, reason };
 }
 
 export function validateVec3(value: unknown): { x: number; y: number; z: number } | null {
@@ -110,74 +52,6 @@ export function validateVec3(value: unknown): { x: number; y: number; z: number 
   const z = finiteNumber(value.z);
   if (x === null || y === null || z === null) return null;
   return { x, y, z };
-}
-
-export function parsePlayerInputPayload(value: unknown, receivedAt = Date.now()): PlayerInputValidationResult {
-  if (!isRecord(value)) return invalidPlayerInput('not_object');
-
-  const tick = finiteNumber(value.tick);
-  const timestamp = inputTimestampValue(value.timestamp, receivedAt);
-  const lookYaw = finiteNumber(value.lookYaw);
-  const lookPitch = finiteNumber(value.lookPitch);
-  if (tick === null) return invalidPlayerInput('tick');
-  if (lookYaw === null) return invalidPlayerInput('lookYaw');
-  if (lookPitch === null) return invalidPlayerInput('lookPitch');
-
-  const booleans: Record<string, boolean> = {};
-  for (const key of REQUIRED_INPUT_BOOLEANS) {
-    const parsed = inputBooleanValue(value[key]);
-    if (parsed === null) return invalidPlayerInput(key);
-    booleans[key] = parsed;
-  }
-
-  const position = value.position == null ? undefined : validateVec3(value.position);
-  const velocity = value.velocity == null ? undefined : validateVec3(value.velocity);
-  if (value.position != null && !position) return invalidPlayerInput('position');
-  if (value.velocity != null && !velocity) return invalidPlayerInput('velocity');
-
-  const crouchPressed = optionalBooleanValue(value.crouchPressed);
-  const unstuck = optionalBooleanValue(value.unstuck);
-  const devFly = optionalBooleanValue(value.devFly);
-  if (crouchPressed === null) return invalidPlayerInput('crouchPressed');
-  if (unstuck === null) return invalidPlayerInput('unstuck');
-  if (devFly === null) return invalidPlayerInput('devFly');
-  const clientFrameRateBand = typeof value.clientFrameRateBand === 'string' && CLIENT_FRAME_RATE_BANDS.has(value.clientFrameRateBand)
-    ? value.clientFrameRateBand
-    : undefined;
-  const abilityCastHints = sanitizeAbilityCastOriginHints(value.abilityCastHints);
-
-  return { ok: true, input: {
-    tick: Math.max(0, Math.trunc(tick)),
-    moveForward: booleans.moveForward,
-    moveBackward: booleans.moveBackward,
-    moveLeft: booleans.moveLeft,
-    moveRight: booleans.moveRight,
-    jump: booleans.jump,
-    crouch: booleans.crouch,
-    crouchPressed: crouchPressed ?? undefined,
-    sprint: booleans.sprint,
-    primaryFire: booleans.primaryFire,
-    secondaryFire: booleans.secondaryFire,
-    reload: booleans.reload,
-    ability1: booleans.ability1,
-    ability2: booleans.ability2,
-    ultimate: booleans.ultimate,
-    interact: booleans.interact,
-    lookYaw: normalizeLookYaw(lookYaw),
-    lookPitch: clampLookPitch(lookPitch),
-    timestamp,
-    unstuck: unstuck ?? undefined,
-    clientFrameRateBand,
-    abilityCastHints,
-    position: position ?? undefined,
-    velocity: velocity ?? undefined,
-    devFly: devFly ?? undefined,
-  } };
-}
-
-export function validatePlayerInputPayload(value: unknown): PlayerInput | null {
-  const result = parsePlayerInputPayload(value);
-  return result.ok ? result.input : null;
 }
 
 export function validateReadyPayload(value: unknown): boolean | null {

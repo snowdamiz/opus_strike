@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve } from 'node:path';
 import { Client, type Room } from 'colyseus.js';
-import { DEFAULT_GAME_CONFIG } from '@voxel-strike/shared';
+import {
+  DEFAULT_GAME_CONFIG,
+  MOVEMENT_PROTOCOL_VERSION,
+  inputStateToMovementButtons,
+} from '@voxel-strike/shared';
 
 interface ManagedServer {
   name: string;
@@ -155,10 +159,8 @@ async function killServer(server: ManagedServer, signal: NodeJS.Signals = 'SIGTE
   ]);
 }
 
-function inputPayload(tick: number): Record<string, unknown> {
-  return {
-    tick,
-    timestamp: Date.now(),
+function movementCommandPacket(tick: number): Record<string, unknown> {
+  const input = {
     moveForward: tick % 2 === 0,
     moveBackward: false,
     moveLeft: false,
@@ -173,8 +175,20 @@ function inputPayload(tick: number): Record<string, unknown> {
     ability2: false,
     ultimate: false,
     interact: false,
-    lookYaw: 0,
-    lookPitch: 0,
+  };
+
+  return {
+    protocolVersion: MOVEMENT_PROTOCOL_VERSION,
+    firstSeq: tick,
+    commands: [{
+      seq: tick,
+      buttons: inputStateToMovementButtons(input),
+      lookYaw: 0,
+      lookPitch: 0,
+      clientTimeMs: Date.now(),
+      movementEpoch: 0,
+      collisionRevision: 0,
+    }],
   };
 }
 
@@ -277,7 +291,7 @@ async function main(): Promise<void> {
     await delay(500);
     for (let tick = 1; tick <= 5; tick++) {
       for (const room of gameRooms) {
-        room.send('input', inputPayload(tick));
+        room.send('movementCommands', movementCommandPacket(tick));
       }
       await delay(50);
     }
@@ -289,7 +303,7 @@ async function main(): Promise<void> {
     for (let tick = 6; tick <= 8; tick++) {
       for (const room of gameRooms) {
         assert.equal(room.connection.isOpen, true, 'game connection should remain open after non-owner shutdown');
-        room.send('input', inputPayload(tick));
+        room.send('movementCommands', movementCommandPacket(tick));
       }
       await delay(50);
     }
