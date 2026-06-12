@@ -30,6 +30,7 @@ export type ClientMessage =
 export type ServerMessage = 
   | { type: 'gameState'; payload: GameStateSync }
   | { type: 'playerTransforms'; payload: PlayerTransformsMessage }
+  | { type: 'playerTransformsV2'; payload: PlayerTransformsV2Message }
   | { type: 'selfMovementAuthority'; payload: SelfMovementAuthority }
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
   | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
@@ -88,8 +89,31 @@ export interface PlayerTransformsMessage {
   players: QuantizedPlayerTransform[];
 }
 
+export type PackedPlayerTransform = [
+  netId: number,
+  px: number,
+  py: number,
+  pz: number,
+  vx: number,
+  vy: number,
+  vz: number,
+  yaw: number,
+  pitch: number,
+  movementBits: number,
+  wallRunSide: -1 | 0 | 1,
+  movementEpoch: number,
+];
+
+export interface PlayerTransformsV2Message {
+  version: 2;
+  tick: number;
+  serverTime: number;
+  players: PackedPlayerTransform[];
+}
+
 export interface PlayerVitalsSnapshot {
   id: string;
+  netId: number;
   name: string;
   team: Team;
   heroId: HeroId | null;

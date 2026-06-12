@@ -1189,12 +1189,12 @@ function updatePhantomLocomotionRuntime(
     : horizontalDistance / frameSeconds;
   const walkSpeed = HERO_DEFINITIONS[heroId].stats.moveSpeed;
   const runSpeed = walkSpeed * SPRINT_MULTIPLIER;
-  const store = useGameStore.getState();
-  const movementState = store.localPlayer?.movement;
-  const isGrounded = movementState?.isGrounded ?? true;
-  const isSliding = movementState?.isSliding ?? false;
+  const visualState = visualStore.getState();
+  const movementState = visualState.localMovement;
+  const isGrounded = movementState.isGrounded;
+  const isSliding = movementState.isSliding;
   const targetSlideBlend = THREE.MathUtils.clamp(
-    Math.max(isSliding ? 1 : 0, store.slideIntensity),
+    Math.max(isSliding ? 1 : 0, visualState.slideIntensity),
     0,
     1
   );
@@ -1211,7 +1211,7 @@ function updatePhantomLocomotionRuntime(
   );
   const targetRunBlend = targetMovementBlend * Math.max(
     speedRunBlend,
-    movementState?.isSprinting ? 1 : 0
+    movementState.isSprinting ? 1 : 0
   );
   const targetSpeedBlend = THREE.MathUtils.clamp(horizontalSpeed / runSpeed, 0, 1.35);
 
@@ -2879,14 +2879,14 @@ function updateChronosMovementBobRuntime(
   const horizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
     ? 0
     : horizontalDistance / frameSeconds;
-  const store = useGameStore.getState();
-  const movementState = store.localPlayer?.movement;
-  const localMovement = visualStore.getState().localViewmodelMovement;
+  const visualState = visualStore.getState();
+  const movementState = visualState.localMovement;
+  const localMovement = visualState.localViewmodelMovement;
   const isLocalMovementFresh = Date.now() - localMovement.updatedAtMs <= CHRONOS_MOVEMENT_INPUT_FRESH_MS;
   const localHorizontalSpeed = isLocalMovementFresh ? localMovement.horizontalSpeed : 0;
   const localInputMoveBlend = isLocalMovementFresh && localMovement.hasMovementInput ? 1 : 0;
   const targetSlideBlend = THREE.MathUtils.clamp(
-    Math.max(movementState?.isSliding ? 1 : 0, store.slideIntensity),
+    Math.max(movementState.isSliding ? 1 : 0, visualState.slideIntensity),
     0,
     1
   );

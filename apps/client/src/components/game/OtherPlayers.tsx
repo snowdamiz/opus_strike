@@ -3,9 +3,10 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
-  sampleRemoteTransform,
+  sampleRemoteTransformInto,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
+  type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
@@ -61,21 +62,46 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
     // Show all other players in lobby, hero select, and during gameplay
     return true;
   });
-  const fullBodyAllowedIds = useMemo(() => {
+  const [fullBodyAllowedIds, setFullBodyAllowedIds] = useState<Set<string>>(() => new Set());
+  const otherPlayersRef = useRef<Player[]>(otherPlayers);
+  const fullBodyCandidateRef = useRef<Player[]>([]);
+  const fullBodyLodAccumulatorRef = useRef(LOD_UPDATE_INTERVAL);
+  otherPlayersRef.current = otherPlayers;
+
+  useFrame((_, delta) => {
+    fullBodyLodAccumulatorRef.current += delta;
+    if (fullBodyLodAccumulatorRef.current < LOD_UPDATE_INTERVAL) return;
+    fullBodyLodAccumulatorRef.current = 0;
+
     const visualState = visualStore.getState();
-    return new Set(
-      [...otherPlayers]
-        .sort((a, b) => {
-          if (a.hasFlag !== b.hasFlag) return a.hasFlag ? -1 : 1;
-          const aPos = visualState.playerPositions.get(a.id) ?? a.position;
-          const bPos = visualState.playerPositions.get(b.id) ?? b.position;
-          return camera.position.distanceToSquared(new THREE.Vector3(aPos.x, aPos.y, aPos.z)) -
-            camera.position.distanceToSquared(new THREE.Vector3(bPos.x, bPos.y, bPos.z));
-        })
-        .slice(0, Math.max(0, config.maxFullBodies))
-        .map((player) => player.id)
-    );
-  }, [camera.position, config.maxFullBodies, otherPlayers]);
+    const candidates = fullBodyCandidateRef.current;
+    candidates.length = 0;
+    candidates.push(...otherPlayersRef.current);
+    candidates.sort((a, b) => {
+      if (a.hasFlag !== b.hasFlag) return a.hasFlag ? -1 : 1;
+      const aPos = visualState.playerPositions.get(a.id) ?? a.position;
+      const bPos = visualState.playerPositions.get(b.id) ?? b.position;
+      const aDx = camera.position.x - aPos.x;
+      const aDy = camera.position.y - aPos.y;
+      const aDz = camera.position.z - aPos.z;
+      const bDx = camera.position.x - bPos.x;
+      const bDy = camera.position.y - bPos.y;
+      const bDz = camera.position.z - bPos.z;
+      return (aDx * aDx + aDy * aDy + aDz * aDz) - (bDx * bDx + bDy * bDy + bDz * bDz);
+    });
+
+    const limit = Math.max(0, config.maxFullBodies);
+    setFullBodyAllowedIds((current) => {
+      let changed = current.size !== Math.min(limit, candidates.length);
+      const next = new Set<string>();
+      for (let i = 0; i < candidates.length && i < limit; i++) {
+        const id = candidates[i].id;
+        next.add(id);
+        if (!current.has(id)) changed = true;
+      }
+      return changed ? next : current;
+    });
+  });
 
   useEffect(() => {
     setFullRemoteBodyCount(fullBodyAllowedIds.size);
@@ -339,6 +365,17 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   const distantUpdateAccumulatorRef = useRef(0);
   const remoteEpochRef = useRef<number | null>(null);
   const hasLoggedRef = useRef(false);
+  const sampledTransformRef = useRef<SampledRemoteTransform>({
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    extrapolatedMs: 0,
+    stale: false,
+  });
   
   // Debug log once when component first renders
   if (!hasLoggedRef.current) {
@@ -401,9 +438,10 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
       attackStartedAtMsRef.current = null;
     }
 
-    const sampledTransform = sampleRemoteTransform(player.id);
+    const sampledTransform = sampledTransformRef.current;
+    const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform);
     let snappedToSample = false;
-    if (sampledTransform) {
+    if (hasSampledTransform) {
       setPlayerVisualPosition(player.id, sampledTransform.position);
       setPlayerVisualRotation(player.id, sampledTransform.lookYaw);
       setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
@@ -431,7 +469,7 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
     }
 
     // Lerp current position toward target
-    if (!sampledTransform) {
+    if (!hasSampledTransform) {
       currentPosition.current.lerp(targetPosition.current, Math.min(1, stepDelta * 15));
     }
     groupRef.current.position.copy(currentPosition.current);
@@ -444,14 +482,14 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
       : 0;
     // Read rotation from visualStore non-reactively
     const targetRot = visualState.playerRotations.get(player.id);
-    const renderYaw = sampledTransform?.lookYaw ?? targetRot ?? player.lookYaw;
-    if (sampledTransform && !snappedToSample) {
+    const renderYaw = hasSampledTransform ? sampledTransform.lookYaw : targetRot ?? player.lookYaw;
+    if (hasSampledTransform && !snappedToSample) {
       groupRef.current.rotation.y = lerpAngle(
         groupRef.current.rotation.y,
         sampledTransform.lookYaw,
         smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, stepDelta)
       );
-    } else if (sampledTransform) {
+    } else if (hasSampledTransform) {
       groupRef.current.rotation.y = sampledTransform.lookYaw;
     } else if (targetRot !== undefined) {
       groupRef.current.rotation.y = targetRot;
@@ -470,7 +508,11 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
         renderYaw
       );
     } else {
-      setWalkDirectionFromVelocity(walkDirectionRef.current, sampledTransform?.velocity ?? player.velocity, renderYaw);
+      setWalkDirectionFromVelocity(
+        walkDirectionRef.current,
+        hasSampledTransform ? sampledTransform.velocity : player.velocity,
+        renderYaw
+      );
     }
 
     previousFramePosition.current.copy(currentPosition.current);

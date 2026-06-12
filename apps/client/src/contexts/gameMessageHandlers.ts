@@ -75,8 +75,10 @@ import type {
   Player,
   PlayerMovementState,
   PlayerTransformsMessage,
+  PlayerTransformsV2Message,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
+  PackedPlayerTransform,
   QuantizedPlayerTransform,
   SelfMovementAuthority,
   Team,
@@ -96,6 +98,8 @@ const MOVEMENT_BIT_JETPACKING = 1 << 6;
 const MOVEMENT_BIT_GLIDING = 1 << 7;
 const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const remotePhantomChargeControllers = new Map<string, AbortController>();
+const playerIdByNetId = new Map<number, string>();
+const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
@@ -310,7 +314,9 @@ function syncLocalVisualPosition(player: Player): void {
   setPlayerVisualRotation(player.id, player.lookYaw);
 }
 
-function dequantizeTransform(transform: QuantizedPlayerTransform) {
+type MovementBitsTransform = Pick<QuantizedPlayerTransform, 'movementBits' | 'wallRunSide'>;
+
+function dequantizeTransform(transform: Pick<QuantizedPlayerTransform, 'px' | 'py' | 'pz' | 'vx' | 'vy' | 'vz' | 'yaw' | 'pitch'>) {
   return {
     position: {
       x: transform.px / TRANSFORM_POSITION_SCALE,
@@ -328,7 +334,7 @@ function dequantizeTransform(transform: QuantizedPlayerTransform) {
 }
 
 function movementFromBits(
-  transform: QuantizedPlayerTransform,
+  transform: MovementBitsTransform,
   fallback: PlayerMovementState
 ): PlayerMovementState {
   return {
@@ -343,6 +349,37 @@ function movementFromBits(
     isJetpacking: Boolean(transform.movementBits & MOVEMENT_BIT_JETPACKING),
     isGliding: Boolean(transform.movementBits & MOVEMENT_BIT_GLIDING),
   };
+}
+
+function unpackPackedTransform(transform: PackedPlayerTransform): Omit<QuantizedPlayerTransform, 'id'> & { netId: number } {
+  return {
+    netId: transform[0],
+    px: transform[1],
+    py: transform[2],
+    pz: transform[3],
+    vx: transform[4],
+    vy: transform[5],
+    vz: transform[6],
+    yaw: transform[7],
+    pitch: transform[8],
+    movementBits: transform[9],
+    wallRunSide: transform[10],
+    movementEpoch: transform[11],
+  };
+}
+
+export function forgetPlayerNetId(playerId: string): void {
+  const netId = netIdByPlayerId.get(playerId);
+  if (netId !== undefined) {
+    playerIdByNetId.delete(netId);
+    netIdByPlayerId.delete(playerId);
+  }
+}
+
+function rememberPlayerNetId(vitals: PlayerVitalsSnapshot): void {
+  forgetPlayerNetId(vitals.id);
+  playerIdByNetId.set(vitals.netId, vitals.id);
+  netIdByPlayerId.set(vitals.id, vitals.netId);
 }
 
 function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, existing?: Player): Player {
@@ -625,6 +662,87 @@ export function setupPlayerTransformsHandler(
   localPlayerName: string,
   actions: Pick<GameStoreActions, 'setLocalPlayer'>
 ) {
+  const handleTransform = (
+    playerId: string,
+    transform: Omit<QuantizedPlayerTransform, 'id'>,
+    tick: number,
+    serverTime: number
+  ): void => {
+    const decoded = dequantizeTransform(transform);
+
+    if (playerId === sessionId) {
+      if (!hasReceivedSelfMovementAuthority) {
+        const localPlayer = useGameStore.getState().localPlayer;
+        if (!localPlayer) return;
+
+        const nextMovement = movementFromBits(transform, localPlayer.movement);
+        const shouldSyncPosition = shouldSyncLocalPosition(localPlayer, localPlayer.state, decoded.position);
+        if (shouldSyncPosition) {
+          const updated: Player = {
+            ...localPlayer,
+            position: decoded.position,
+            velocity: decoded.velocity,
+            lookYaw: decoded.lookYaw,
+            lookPitch: decoded.lookPitch,
+            movement: nextMovement,
+          };
+          actions.setLocalPlayer(updated);
+          syncLocalVisualPosition(updated);
+        }
+      }
+
+      // Local correction is private and sequence-aware; shared transform entries
+      // are retained only for migration and ignored during normal prediction.
+      return;
+    }
+
+    const store = useGameStore.getState();
+    const existingPlayer = store.players.get(playerId);
+    if (!existingPlayer) return;
+    if (existingPlayer.name === localPlayerName) {
+      loggers.network.sample('ghost-transform', 5000, 'ignoring ghost transform', playerId);
+      return;
+    }
+
+    const wasGrappling = existingPlayer.movement.isGrappling;
+    const nextMovement = movementFromBits(transform, existingPlayer.movement);
+    existingPlayer.position = decoded.position;
+    existingPlayer.velocity = decoded.velocity;
+    existingPlayer.lookYaw = decoded.lookYaw;
+    existingPlayer.lookPitch = decoded.lookPitch;
+    existingPlayer.movement = nextMovement;
+    if (wasGrappling && !nextMovement.isGrappling) {
+      const freshStore = useGameStore.getState();
+      for (const line of freshStore.grappleLines) {
+        if (line.ownerId === playerId) {
+          freshStore.removeGrappleLine(line.id);
+        }
+      }
+    }
+    addRemoteTransformSnapshot(playerId, {
+      serverTick: tick,
+      serverTime,
+      position: decoded.position,
+      velocity: decoded.velocity,
+      lookYaw: decoded.lookYaw,
+      lookPitch: decoded.lookPitch,
+      movementBits: transform.movementBits,
+      wallRunSide: transform.wallRunSide,
+      movementEpoch: transform.movementEpoch,
+    });
+    setPlayerVisualRotation(playerId, decoded.lookYaw);
+    const chronosAegisActive = existingPlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
+    const previousChronosAegis = visualStore.getState().chronosAegisStates.get(playerId);
+    if (chronosAegisActive && !previousChronosAegis?.active) {
+      playChronosWorldSound('chronosAegis', decoded.position);
+    }
+    setChronosAegisVisualState(
+      playerId,
+      chronosAegisActive,
+      Date.now()
+    );
+  };
+
   room.onMessage('playerTransforms', (data: PlayerTransformsMessage) => {
     recordNetworkMessage('playerTransforms', data);
     useGameStore.setState({
@@ -632,81 +750,23 @@ export function setupPlayerTransformsHandler(
       serverTime: data.serverTime,
     });
 
-    const store = useGameStore.getState();
-
     for (const transform of data.players) {
-      const decoded = dequantizeTransform(transform);
+      handleTransform(transform.id, transform, data.tick, data.serverTime);
+    }
+  });
 
-      if (transform.id === sessionId) {
-        if (!hasReceivedSelfMovementAuthority) {
-          const localPlayer = useGameStore.getState().localPlayer;
-          if (!localPlayer) continue;
+  room.onMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
+    recordNetworkMessage('playerTransformsV2', data);
+    useGameStore.setState({
+      tick: data.tick,
+      serverTime: data.serverTime,
+    });
 
-          const nextMovement = movementFromBits(transform, localPlayer.movement);
-          const shouldSyncPosition = shouldSyncLocalPosition(localPlayer, localPlayer.state, decoded.position);
-          if (shouldSyncPosition) {
-            const updated: Player = {
-              ...localPlayer,
-              position: decoded.position,
-              velocity: decoded.velocity,
-              lookYaw: decoded.lookYaw,
-              lookPitch: decoded.lookPitch,
-              movement: nextMovement,
-            };
-            actions.setLocalPlayer(updated);
-            syncLocalVisualPosition(updated);
-          }
-        }
-
-        // Local correction is private and sequence-aware; shared transform entries
-        // are retained only for migration and ignored during normal prediction.
-        continue;
-      }
-
-      const existingPlayer = store.players.get(transform.id);
-      if (!existingPlayer) continue;
-      if (existingPlayer.name === localPlayerName) {
-        loggers.network.sample('ghost-transform', 5000, 'ignoring ghost transform', transform.id);
-        continue;
-      }
-
-      const wasGrappling = existingPlayer.movement.isGrappling;
-      const nextMovement = movementFromBits(transform, existingPlayer.movement);
-      existingPlayer.position = decoded.position;
-      existingPlayer.velocity = decoded.velocity;
-      existingPlayer.lookYaw = decoded.lookYaw;
-      existingPlayer.lookPitch = decoded.lookPitch;
-      existingPlayer.movement = nextMovement;
-      if (wasGrappling && !nextMovement.isGrappling) {
-        const freshStore = useGameStore.getState();
-        for (const line of freshStore.grappleLines) {
-          if (line.ownerId === transform.id) {
-            freshStore.removeGrappleLine(line.id);
-          }
-        }
-      }
-      addRemoteTransformSnapshot(transform.id, {
-        serverTick: data.tick,
-        serverTime: data.serverTime,
-        position: decoded.position,
-        velocity: decoded.velocity,
-        lookYaw: decoded.lookYaw,
-        lookPitch: decoded.lookPitch,
-        movementBits: transform.movementBits,
-        wallRunSide: transform.wallRunSide,
-        movementEpoch: transform.movementEpoch,
-      });
-      setPlayerVisualRotation(transform.id, decoded.lookYaw);
-      const chronosAegisActive = existingPlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
-      const previousChronosAegis = visualStore.getState().chronosAegisStates.get(transform.id);
-      if (chronosAegisActive && !previousChronosAegis?.active) {
-        playChronosWorldSound('chronosAegis', decoded.position);
-      }
-      setChronosAegisVisualState(
-        transform.id,
-        chronosAegisActive,
-        Date.now()
-      );
+    for (const packedTransform of data.players) {
+      const transform = unpackPackedTransform(packedTransform);
+      const playerId = playerIdByNetId.get(transform.netId);
+      if (!playerId) continue;
+      handleTransform(playerId, transform, data.tick, data.serverTime);
     }
   });
 }
@@ -767,6 +827,7 @@ export function setupPlayerVitalsHandler(
     for (const removedId of data.removedPlayerIds || []) {
       stopRemotePhantomCharge(removedId);
       stopObservedAbilityCastEffects(removedId);
+      forgetPlayerNetId(removedId);
       actions.removePlayer(removedId);
     }
 
@@ -775,6 +836,8 @@ export function setupPlayerVitalsHandler(
         loggers.network.sample('ghost-vitals', 5000, 'ignoring ghost vitals', vitals.id);
         continue;
       }
+
+      rememberPlayerNetId(vitals);
 
       const store = useGameStore.getState();
       if (vitals.id === sessionId) {

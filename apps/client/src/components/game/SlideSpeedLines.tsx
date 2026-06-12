@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { useGameStore } from '../../store/gameStore';
+import { visualStore } from '../../store/visualStore';
 import type { EffectQualityConfig } from './visualQuality';
 
 const DEFAULT_LINE_COUNT = 36;
@@ -30,7 +30,6 @@ export function SlideSpeedLines({ config }: { config: EffectQualityConfig }) {
   const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const lineProgressRef = useRef<number[]>([]);
-  const slideIntensityRef = useRef(useGameStore.getState().slideIntensity);
   const lineCount = Math.min(DEFAULT_LINE_COUNT, Math.max(0, config.slideSpeedLineCount));
   
   const lineConfigs = useMemo<SpeedLine[]>(() => {
@@ -98,13 +97,6 @@ export function SlideSpeedLines({ config }: { config: EffectQualityConfig }) {
   }, [lineConfigs]);
 
   useEffect(() => {
-    return useGameStore.subscribe((state, previousState) => {
-      if (state.slideIntensity === previousState.slideIntensity) return;
-      slideIntensityRef.current = state.slideIntensity;
-    });
-  }, []);
-
-  useEffect(() => {
     return () => {
       lineGeometry.dispose();
       streakTexture?.dispose();
@@ -114,7 +106,7 @@ export function SlideSpeedLines({ config }: { config: EffectQualityConfig }) {
   useFrame((_, delta) => {
     if (!groupRef.current) return;
 
-    const slideIntensity = Math.min(1, Math.max(0, slideIntensityRef.current));
+    const slideIntensity = Math.min(1, Math.max(0, visualStore.getState().slideIntensity));
     
     if (slideIntensity < 0.01) {
       groupRef.current.visible = false;

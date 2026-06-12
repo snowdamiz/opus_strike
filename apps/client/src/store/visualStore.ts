@@ -3,6 +3,9 @@ import { useStore } from 'zustand';
 import {
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  type Player,
+  type PlayerMovementState,
+  type Team,
 } from '@voxel-strike/shared';
 
 // ============================================================================
@@ -58,8 +61,17 @@ export interface VisualState {
     updatedAtMs: number;
   };
 
+  /** High-frequency local movement used by first-person effects. */
+  localMovement: PlayerMovementState;
+
+  /** High-frequency slide intensity for UI and viewmodel effects. */
+  slideIntensity: number;
+
   /** Server-authoritative local velocity impulses to consume in PlayerController. */
   localPlayerImpulses: LocalPlayerImpulse[];
+
+  /** Shared per-frame player candidates for visual-only combat effects. */
+  combatFrameCache: CombatVisualFrameCache;
 }
 
 export interface LocalPlayerImpulse {
@@ -106,9 +118,60 @@ export interface SampledRemoteTransform {
   stale: boolean;
 }
 
+export interface CombatVisualPlayer {
+  player: Player;
+  id: string;
+  team: Team;
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface CombatVisualFrameCache {
+  frameKey: number;
+  builtAtMs: number;
+  sourceSize: number;
+  alivePlayers: CombatVisualPlayer[];
+  byTeam: Record<Team, CombatVisualPlayer[]>;
+  buckets: Map<string, CombatVisualPlayer[]>;
+  entryPool: CombatVisualPlayer[];
+  cellSize: number;
+}
+
 // ============================================================================
 // INITIAL STATE
 // ============================================================================
+
+const DEFAULT_LOCAL_MOVEMENT: PlayerMovementState = {
+  isGrounded: true,
+  isSprinting: false,
+  isCrouching: false,
+  isSliding: false,
+  slideTimeRemaining: 0,
+  isWallRunning: false,
+  wallRunSide: null,
+  isGrappling: false,
+  grapplePoint: null,
+  isJetpacking: false,
+  jetpackFuel: 0,
+  isGliding: false,
+};
+
+const COMBAT_VISUAL_CELL_SIZE = 8;
+
+const createCombatFrameCache = (): CombatVisualFrameCache => ({
+  frameKey: -1,
+  builtAtMs: 0,
+  sourceSize: 0,
+  alivePlayers: [],
+  byTeam: {
+    red: [],
+    blue: [],
+  },
+  buckets: new Map(),
+  entryPool: [],
+  cellSize: COMBAT_VISUAL_CELL_SIZE,
+});
 
 const initialVisualState: VisualState = {
   playerPositions: new Map(),
@@ -127,7 +190,10 @@ const initialVisualState: VisualState = {
     horizontalSpeed: 0,
     updatedAtMs: 0,
   },
+  localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+  slideIntensity: 0,
   localPlayerImpulses: [],
+  combatFrameCache: createCombatFrameCache(),
 };
 
 const REMOTE_HISTORY_LIMIT = 32;
@@ -201,6 +267,27 @@ export const setLocalViewmodelMovement = (
   current.isSprinting = movement.isSprinting;
   current.horizontalSpeed = movement.horizontalSpeed;
   current.updatedAtMs = movement.updatedAtMs;
+};
+
+export const setLocalVisualMovement = (movement: PlayerMovementState): void => {
+  const current = visualStore.getState().localMovement;
+  current.isGrounded = movement.isGrounded;
+  current.isSprinting = movement.isSprinting;
+  current.isCrouching = movement.isCrouching;
+  current.isSliding = movement.isSliding;
+  current.slideTimeRemaining = movement.slideTimeRemaining;
+  current.isWallRunning = movement.isWallRunning;
+  current.wallRunSide = movement.wallRunSide;
+  current.isGrappling = movement.isGrappling;
+  current.grapplePoint = movement.grapplePoint;
+  current.isJetpacking = movement.isJetpacking;
+  current.jetpackFuel = movement.jetpackFuel;
+  current.isGliding = movement.isGliding;
+  current.chronosAscendantStartY = movement.chronosAscendantStartY;
+};
+
+export const setLocalSlideIntensity = (intensity: number): void => {
+  visualStore.getState().slideIntensity = intensity;
 };
 
 export const pushLocalPlayerImpulse = (impulse: LocalPlayerImpulse): void => {
@@ -278,8 +365,24 @@ export const addRemoteTransformSnapshot = (
     histories.set(playerId, history);
   }
 
-  history.snapshots.push({ ...snapshot, receivedAtMs });
-  history.snapshots.sort((a, b) => a.serverTime - b.serverTime);
+  const fullSnapshot = { ...snapshot, receivedAtMs };
+  const snapshots = history.snapshots;
+  const latest = snapshots[snapshots.length - 1];
+  if (!latest || fullSnapshot.serverTime >= latest.serverTime) {
+    snapshots.push(fullSnapshot);
+  } else {
+    let low = 0;
+    let high = snapshots.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (snapshots[mid].serverTime <= fullSnapshot.serverTime) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    snapshots.splice(low, 0, fullSnapshot);
+  }
   if (history.snapshots.length > REMOTE_HISTORY_LIMIT) {
     history.snapshots.splice(0, history.snapshots.length - REMOTE_HISTORY_LIMIT);
   }
@@ -287,12 +390,13 @@ export const addRemoteTransformSnapshot = (
   history.latestReceivedAtMs = receivedAtMs;
 };
 
-export const sampleRemoteTransform = (
+export const sampleRemoteTransformInto = (
   playerId: string,
+  target: SampledRemoteTransform,
   nowMs = Date.now()
-): SampledRemoteTransform | null => {
+): boolean => {
   const history = visualStore.getState().remoteTransformHistories.get(playerId);
-  if (!history || history.snapshots.length === 0) return null;
+  if (!history || history.snapshots.length === 0) return false;
 
   const snapshots = history.snapshots;
   const latest = snapshots[snapshots.length - 1];
@@ -313,45 +417,179 @@ export const sampleRemoteTransform = (
   if (next) {
     const span = Math.max(1, next.serverTime - previous.serverTime);
     const t = Math.max(0, Math.min(1, (renderServerTime - previous.serverTime) / span));
-    return {
-      position: {
-        x: lerp(previous.position.x, next.position.x, t),
-        y: lerp(previous.position.y, next.position.y, t),
-        z: lerp(previous.position.z, next.position.z, t),
-      },
-      velocity: {
-        x: lerp(previous.velocity.x, next.velocity.x, t),
-        y: lerp(previous.velocity.y, next.velocity.y, t),
-        z: lerp(previous.velocity.z, next.velocity.z, t),
-      },
-      lookYaw: lerpYaw(previous.lookYaw, next.lookYaw, t),
-      lookPitch: lerp(previous.lookPitch, next.lookPitch, t),
-      movementBits: next.movementBits,
-      wallRunSide: next.wallRunSide,
-      movementEpoch: next.movementEpoch,
-      extrapolatedMs: 0,
-      stale: false,
-    };
+    target.position.x = lerp(previous.position.x, next.position.x, t);
+    target.position.y = lerp(previous.position.y, next.position.y, t);
+    target.position.z = lerp(previous.position.z, next.position.z, t);
+    target.velocity.x = lerp(previous.velocity.x, next.velocity.x, t);
+    target.velocity.y = lerp(previous.velocity.y, next.velocity.y, t);
+    target.velocity.z = lerp(previous.velocity.z, next.velocity.z, t);
+    target.lookYaw = lerpYaw(previous.lookYaw, next.lookYaw, t);
+    target.lookPitch = lerp(previous.lookPitch, next.lookPitch, t);
+    target.movementBits = next.movementBits;
+    target.wallRunSide = next.wallRunSide;
+    target.movementEpoch = next.movementEpoch;
+    target.extrapolatedMs = 0;
+    target.stale = false;
+    return true;
   }
 
   const extrapolatedMs = Math.max(0, renderServerTime - latest.serverTime);
   const cappedMs = Math.min(extrapolatedMs, MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS);
   const dt = cappedMs / 1000;
-  return {
-    position: {
-      x: latest.position.x + latest.velocity.x * dt,
-      y: latest.position.y + latest.velocity.y * dt,
-      z: latest.position.z + latest.velocity.z * dt,
-    },
-    velocity: { ...latest.velocity },
-    lookYaw: latest.lookYaw,
-    lookPitch: latest.lookPitch,
-    movementBits: latest.movementBits,
-    wallRunSide: latest.wallRunSide,
-    movementEpoch: latest.movementEpoch,
-    extrapolatedMs,
-    stale: extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
+  target.position.x = latest.position.x + latest.velocity.x * dt;
+  target.position.y = latest.position.y + latest.velocity.y * dt;
+  target.position.z = latest.position.z + latest.velocity.z * dt;
+  target.velocity.x = latest.velocity.x;
+  target.velocity.y = latest.velocity.y;
+  target.velocity.z = latest.velocity.z;
+  target.lookYaw = latest.lookYaw;
+  target.lookPitch = latest.lookPitch;
+  target.movementBits = latest.movementBits;
+  target.wallRunSide = latest.wallRunSide;
+  target.movementEpoch = latest.movementEpoch;
+  target.extrapolatedMs = extrapolatedMs;
+  target.stale = extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
+  return true;
+};
+
+export const sampleRemoteTransform = (
+  playerId: string,
+  nowMs = Date.now()
+): SampledRemoteTransform | null => {
+  const sampled: SampledRemoteTransform = {
+    position: { x: 0, y: 0, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    movementBits: 0,
+    wallRunSide: 0,
+    movementEpoch: 0,
+    extrapolatedMs: 0,
+    stale: false,
   };
+  return sampleRemoteTransformInto(playerId, sampled, nowMs) ? sampled : null;
+};
+
+function getCombatBucketKey(x: number, z: number, cellSize: number): string {
+  return `${Math.floor(x / cellSize)}:${Math.floor(z / cellSize)}`;
+}
+
+export const rebuildCombatVisualFrameCache = (
+  players: Iterable<Player>,
+  frameKey: number,
+  nowMs = Date.now(),
+  sourceSize = -1
+): CombatVisualFrameCache => {
+  const cache = visualStore.getState().combatFrameCache;
+  if (cache.frameKey === frameKey && (sourceSize < 0 || cache.sourceSize === sourceSize)) {
+    return cache;
+  }
+
+  cache.frameKey = frameKey;
+  cache.builtAtMs = nowMs;
+  cache.sourceSize = sourceSize;
+  cache.alivePlayers.length = 0;
+  cache.byTeam.red.length = 0;
+  cache.byTeam.blue.length = 0;
+  cache.buckets.clear();
+
+  let entryIndex = 0;
+  for (const player of players) {
+    if (player.state !== 'alive') continue;
+    let visualPlayer = cache.entryPool[entryIndex];
+    if (!visualPlayer) {
+      visualPlayer = {
+        player,
+        id: player.id,
+        team: player.team,
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+      };
+      cache.entryPool[entryIndex] = visualPlayer;
+    } else {
+      visualPlayer.player = player;
+      visualPlayer.id = player.id;
+      visualPlayer.team = player.team;
+      visualPlayer.x = player.position.x;
+      visualPlayer.y = player.position.y;
+      visualPlayer.z = player.position.z;
+    }
+    entryIndex++;
+    cache.alivePlayers.push(visualPlayer);
+    cache.byTeam[player.team].push(visualPlayer);
+
+    const bucketKey = getCombatBucketKey(visualPlayer.x, visualPlayer.z, cache.cellSize);
+    let bucket = cache.buckets.get(bucketKey);
+    if (!bucket) {
+      bucket = [];
+      cache.buckets.set(bucketKey, bucket);
+    }
+    bucket.push(visualPlayer);
+  }
+
+  return cache;
+};
+
+export const fillCombatVisualEnemyPlayers = (
+  cache: CombatVisualFrameCache,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  target: Player[],
+  center?: { x: number; z: number },
+  radius?: number
+): Player[] => {
+  target.length = 0;
+
+  if (center && typeof radius === 'number') {
+    const minCellX = Math.floor((center.x - radius) / cache.cellSize);
+    const maxCellX = Math.floor((center.x + radius) / cache.cellSize);
+    const minCellZ = Math.floor((center.z - radius) / cache.cellSize);
+    const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
+    const radiusSq = radius * radius;
+
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const bucket = cache.buckets.get(`${cellX}:${cellZ}`);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (visualPlayer.id === ownerId) continue;
+          if (ownerTeam && visualPlayer.team === ownerTeam) continue;
+          const dx = visualPlayer.x - center.x;
+          const dz = visualPlayer.z - center.z;
+          if (dx * dx + dz * dz <= radiusSq) {
+            target.push(visualPlayer.player);
+          }
+        }
+      }
+    }
+    return target;
+  }
+
+  const source = ownerTeam
+    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
+    : cache.alivePlayers;
+
+  for (let i = 0; i < source.length; i++) {
+    const visualPlayer = source[i];
+    if (visualPlayer.id !== ownerId) {
+      target.push(visualPlayer.player);
+    }
+  }
+
+  return target;
+};
+
+export const clearCombatVisualFrameCache = (): void => {
+  const cache = visualStore.getState().combatFrameCache;
+  cache.frameKey = -1;
+  cache.builtAtMs = 0;
+  cache.sourceSize = 0;
+  cache.alivePlayers.length = 0;
+  cache.byTeam.red.length = 0;
+  cache.byTeam.blue.length = 0;
+  cache.buckets.clear();
 };
 
 /**
@@ -450,7 +688,10 @@ export const clearVisualState = (): void => {
       horizontalSpeed: 0,
       updatedAtMs: 0,
     },
+    localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
+    slideIntensity: 0,
     localPlayerImpulses: [],
+    combatFrameCache: createCombatFrameCache(),
   }));
 };
 

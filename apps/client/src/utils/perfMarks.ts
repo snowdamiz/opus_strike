@@ -87,6 +87,10 @@ export interface StartupWarmupMetricSummary {
   };
 }
 
+export interface GameStoreMutationMetricSummary {
+  mutationsPerSecond: number;
+}
+
 export interface ClientPerfSnapshot {
   frame: FrameMetricSummary;
   network: NetworkMetricSummary;
@@ -102,6 +106,7 @@ export interface ClientPerfSnapshot {
   activeFrameSystems: number;
   activeLights: number;
   startup: StartupWarmupMetricSummary;
+  gameStoreMutations: GameStoreMutationMetricSummary;
 }
 
 const FRAME_SAMPLE_LIMIT = 240;
@@ -198,6 +203,8 @@ const networkSamples: NetworkSample[] = [];
 const systemSamples = new Map<string, SystemSamples>();
 const spawnMarkers: SpawnMarker[] = [];
 const physicsFeatureWindow = new Map<string, PhysicsFeatureWindow>();
+const gameStoreMutationSamples: number[] = [];
+let gameStoreMutationObserverStarted = false;
 
 function percentile(values: number[], p: number): number {
   if (values.length === 0) return 0;
@@ -224,6 +231,20 @@ function pruneSpawnMarkers(now: number): void {
   while (spawnMarkers.length > 0 && now - spawnMarkers[0].time > SPAWN_WINDOW_MS) {
     spawnMarkers.shift();
   }
+}
+
+function pruneGameStoreMutationSamples(now: number): void {
+  while (gameStoreMutationSamples.length > 0 && now - gameStoreMutationSamples[0] > NETWORK_WINDOW_MS) {
+    gameStoreMutationSamples.shift();
+  }
+}
+
+function ensureGameStoreMutationObserver(): void {
+  if (gameStoreMutationObserverStarted) return;
+  gameStoreMutationObserverStarted = true;
+  useGameStore.subscribe(() => {
+    gameStoreMutationSamples.push(performance.now());
+  });
 }
 
 export function recordFrameSample(deltaSeconds: number): void {
@@ -513,9 +534,11 @@ export function markStartupRevealStart(key: string): void {
 }
 
 export function getClientPerfSnapshot(): ClientPerfSnapshot {
+  ensureGameStoreMutationObserver();
   const now = performance.now();
   pruneNetwork(now);
   pruneSpawnMarkers(now);
+  pruneGameStoreMutationSamples(now);
   updateStartupWarmupMetrics({
     state: startupWarmupMetrics.state,
     label: startupWarmupMetrics.label,
@@ -586,5 +609,8 @@ export function getClientPerfSnapshot(): ClientPerfSnapshot {
     activeFrameSystems: frameSystems.size,
     activeLights,
     startup: startupWarmupMetrics,
+    gameStoreMutations: {
+      mutationsPerSecond: gameStoreMutationSamples.length,
+    },
   };
 }

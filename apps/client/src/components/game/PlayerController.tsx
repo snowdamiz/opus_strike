@@ -20,6 +20,8 @@ import {
   visualStore,
   setChronosAegisVisualState,
   setLocalViewmodelMovement,
+  setLocalSlideIntensity,
+  setLocalVisualMovement,
   setPlayerVisualPosition,
   setPlayerVisualRotation,
   setFlamethrowerVisualPose,
@@ -91,6 +93,20 @@ const TERRAIN_STEP_VISUAL_UP_RATE = 16;
 const TERRAIN_STEP_VISUAL_DOWN_RATE = 28;
 const TERRAIN_STEP_VISUAL_MAX_RISE_SPEED = 3.2;
 const TERRAIN_STEP_VISUAL_MAX_DROP_SPEED = 6.5;
+const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
+  isGrounded: true,
+  isSprinting: false,
+  isCrouching: false,
+  isSliding: false,
+  slideTimeRemaining: 0,
+  isWallRunning: false,
+  wallRunSide: null,
+  isGrappling: false,
+  grapplePoint: null,
+  isJetpacking: false,
+  jetpackFuel: 0,
+  isGliding: false,
+};
 
 function frameRateBand(deltaSeconds: number): string {
   if (deltaSeconds <= 1 / 90) return '90fps+';
@@ -238,6 +254,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const pendingReloadInputRef = useRef(false);
   const lastUnstuckRequestIdRef = useRef(0);
   const pendingUnstuckInputRef = useRef(false);
+  const wasSlidingLastFrameRef = useRef(false);
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
@@ -247,6 +264,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     pendingMovementCommandsRef.current = [];
     lastCrouchHeldRef.current = false;
     pendingCrouchPressedRef.current = false;
+    wasSlidingLastFrameRef.current = false;
   }, []);
 
   const flushMovementCommands = useCallback((nowMs: number, force = false) => {
@@ -453,7 +471,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       pendingUnstuckInputRef.current = false;
       resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
-      useGameStore.getState().setSlideIntensity(0);
+      setLocalSlideIntensity(0);
+      setLocalVisualMovement(INACTIVE_LOCAL_MOVEMENT);
+      wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
@@ -514,7 +534,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       movement.refs.isSliding.current = false;
       movement.refs.slideTime.current = 0;
       movement.refs.smoothedY.current = null;
-      useGameStore.getState().setSlideIntensity(0);
+      setLocalSlideIntensity(0);
+      setLocalVisualMovement(INACTIVE_LOCAL_MOVEMENT);
+      wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
       blazeAbilities.resetRocketJump();
 
@@ -555,7 +577,18 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       pendingUnstuckInputRef.current = false;
       resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
-      useGameStore.getState().setSlideIntensity(0);
+      setLocalSlideIntensity(0);
+      setLocalVisualMovement({
+        ...localPlayer.movement,
+        isSprinting: false,
+        isSliding: false,
+        slideTimeRemaining: 0,
+        isGrappling: false,
+        grapplePoint: null,
+        isJetpacking: false,
+        isGliding: false,
+      });
+      wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
       blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
@@ -625,24 +658,23 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       camera.position.set(position.x, position.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, position.z);
 
       const latestMovement = useGameStore.getState().localPlayer?.movement ?? localPlayer.movement;
-      updateLocalPlayer({
-        movement: {
-          ...latestMovement,
-          isGrounded: false,
-          isSprinting: frameInput.sprint,
-          isCrouching: frameInput.crouch || isControlPressed,
-          isSliding: false,
-          slideTimeRemaining: 0,
-          isGrappling: false,
-          grapplePoint: null,
-          isJetpacking: false,
-          isGliding: false,
-        },
+      setLocalVisualMovement({
+        ...latestMovement,
+        isGrounded: false,
+        isSprinting: frameInput.sprint,
+        isCrouching: frameInput.crouch || isControlPressed,
+        isSliding: false,
+        slideTimeRemaining: 0,
+        isGrappling: false,
+        grapplePoint: null,
+        isJetpacking: false,
+        isGliding: false,
       });
 
       setPlayerVisualPosition(localPlayer.id, { x: position.x, y: position.y, z: position.z });
       setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
-      useGameStore.getState().setSlideIntensity(0);
+      setLocalSlideIntensity(0);
+      wasSlidingLastFrameRef.current = false;
       updateWalkingSound(0, false, false, DEV_FLY_SPEED, false);
 
       tickRef.current++;
@@ -1002,6 +1034,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     movement.refs.smoothedY.current = smoothedVisualY;
 
     const isSliding = predictedState.movement.isSliding;
+    const wasSlidingBeforeFrame = wasSlidingLastFrameRef.current;
+    wasSlidingLastFrameRef.current = isSliding;
     const justLanded = predictedState.movement.isGrounded && !wasGroundedBeforePrediction;
     if (heroId === 'hookshot' && predictedState.movement.isGrounded && !wasGroundedBeforePrediction) {
       hookshotAbilities.handleSwingTerrainContact();
@@ -1045,12 +1079,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         : localPlayer.movement.grapplePoint,
     };
 
-    // Update game store with movement state ONLY (position/rotation go to visualStore below)
-    // Position/velocity/rotation data flows ONLY to visualStore (non-reactive) to avoid React re-renders
-    // Game state tracks only game events: movement flags, abilities, damage, etc.
-    updateLocalPlayer({
-      movement: localMovementForTrace,
-    });
+    setLocalVisualMovement(localMovementForTrace);
 
     // Update visual store for non-reactive position access.
     setPlayerVisualPosition(localPlayer.id, smoothedVisualPosition);
@@ -1059,7 +1088,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const slideIntensity = isSliding
       ? Math.min(1, Math.max(0.25, predictedState.movement.slideTimeRemaining / 0.8))
       : 0;
-    useGameStore.getState().setSlideIntensity(slideIntensity);
+    setLocalSlideIntensity(slideIntensity);
 
     if (now - lastTraceRef.current >= 1000 / TICK_RATE) {
       lastTraceRef.current = now;
@@ -1124,7 +1153,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           collisionRevision: getLocalMovementCollisionRevision(),
         },
         unstuck: unstuckForServer,
-        crouchPressed: movement.refs.isSliding.current && !localPlayer.movement.isSliding,
+        crouchPressed: isSliding && !wasSlidingBeforeFrame,
         correctionReason: traceMovementBarrier ?? undefined,
       });
     }

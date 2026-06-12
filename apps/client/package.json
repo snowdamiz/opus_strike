@@ -11,6 +11,7 @@
     "lint": "pnpm lint:tokens",
     "lint:tokens": "node scripts/lint-design-tokens.mjs",
     "test:voice": "tsx src/store/voiceStore.test.ts && tsx src/components/ui/VoiceHud.test.ts",
+    "test:visual-store": "tsx src/store/visualStore.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"

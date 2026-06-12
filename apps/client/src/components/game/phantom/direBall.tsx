@@ -8,6 +8,7 @@ import { getFrameClock } from '../../../utils/frameClock';
 import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
+import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
 const BALL_RADIUS = 0.21;
@@ -545,10 +546,8 @@ export function DireBallsManager() {
 
     const store = useGameStore.getState();
     const enemies = enemyPlayersRef.current;
-    enemies.length = 0;
-    for (const [, player] of store.players) {
-      if (player.state === 'alive') enemies.push(player);
-    }
+    const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
+    fillCombatVisualEnemyPlayers(combatCache, null, '', enemies);
 
     const removals = removalsRef.current;
     removals.length = 0;

@@ -14,6 +14,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { playSharedSound } from '../../../hooks/useAudio';
+import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
@@ -323,10 +324,8 @@ export function ChronosPulsesManager() {
     removals.length = 0;
 
     const enemies = enemyPlayersRef.current;
-    enemies.length = 0;
-    for (const [, player] of store.players) {
-      if (player.state === 'alive') enemies.push(player);
-    }
+    const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
+    fillCombatVisualEnemyPlayers(combatCache, null, '', enemies);
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {

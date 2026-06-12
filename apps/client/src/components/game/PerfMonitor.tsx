@@ -75,6 +75,9 @@ const EMPTY_CLIENT_SNAPSHOT: ClientPerfSnapshot = {
   temporaryColliders: 0,
   activeFrameSystems: 0,
   activeLights: 0,
+  gameStoreMutations: {
+    mutationsPerSecond: 0,
+  },
   startup: {
     key: null,
     mapSeed: null,
@@ -242,6 +245,10 @@ function PerfDisplay() {
           <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Frame p95</span>
             <span className="text-white/70 tabular-nums text-right">{data.client.frame.frameMsP95.toFixed(1)}ms</span>
+          </div>
+          <div className="flex justify-between gap-3">
+            <span className="text-white/40 shrink-0">Store Mut/s</span>
+            <span className="text-white/70 tabular-nums text-right">{data.client.gameStoreMutations.mutationsPerSecond}</span>
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-white/40 shrink-0">Effects</span>

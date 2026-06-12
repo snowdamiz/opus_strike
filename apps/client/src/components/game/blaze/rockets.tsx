@@ -10,6 +10,7 @@ import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { recordSystemTime, registerFrameSystem } from '../../../utils/perfMarks';
+import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import {
   getFireballCoreMaterial,
   getFireballInnerMaterial,
@@ -318,10 +319,8 @@ export function RocketsManager() {
     removals.length = 0;
 
     const enemies = enemyPlayersRef.current;
-    enemies.length = 0;
-    for (const [, player] of store.players) {
-      if (player.state === 'alive') enemies.push(player);
-    }
+    const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
+    fillCombatVisualEnemyPlayers(combatCache, null, '', enemies);
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {

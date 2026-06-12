@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useGameStore } from '../../store/gameStore';
+import { visualStore } from '../../store/visualStore';
 
 function applySlideIntensity(element: HTMLDivElement | null, value: number): void {
   if (!element) return;
@@ -23,12 +23,20 @@ export function SlideEffects() {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    applySlideIntensity(overlayRef.current, useGameStore.getState().slideIntensity);
+    let animationFrame = 0;
+    let lastIntensity = -1;
 
-    return useGameStore.subscribe((state, previousState) => {
-      if (state.slideIntensity === previousState.slideIntensity) return;
-      applySlideIntensity(overlayRef.current, state.slideIntensity);
-    });
+    const update = () => {
+      const intensity = visualStore.getState().slideIntensity;
+      if (intensity !== lastIntensity) {
+        lastIntensity = intensity;
+        applySlideIntensity(overlayRef.current, intensity);
+      }
+      animationFrame = requestAnimationFrame(update);
+    };
+
+    update();
+    return () => cancelAnimationFrame(animationFrame);
   }, []);
 
   return (

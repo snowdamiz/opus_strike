@@ -32,6 +32,7 @@ import {
   setupVoidZoneHandlers,
   setupCombatHandlers,
   setupPollingSync,
+  forgetPlayerNetId,
   stopRemotePhantomCharge,
 } from './gameMessageHandlers';
 import { loggers } from '../utils/logger';
@@ -1041,6 +1042,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     room.onMessage('playerLeft', (data: { playerId: string }) => {
       loggers.network.debug('player left', data.playerId);
       stopRemotePhantomCharge(data.playerId);
+      forgetPlayerNetId(data.playerId);
       removePlayer(data.playerId);
     });
 

@@ -4,6 +4,7 @@ import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
 import { Player } from './schema/Player';
 import { Vec3Schema, AbilityStateSchema } from './schema/Components';
+import { PlayerSpatialIndex } from './PlayerSpatialIndex';
 import {
   DEFAULT_GAME_CONFIG,
   TICK_RATE,
@@ -120,8 +121,10 @@ import type {
   PlayerPingRequestMessage,
   PlayerPingsMessage,
   PlayerTransformsMessage,
+  PlayerTransformsV2Message,
   PlayerVitalsMessage,
   PlayerVitalsSnapshot,
+  PackedPlayerTransform,
   QuantizedPlayerTransform,
   VoxelChunk,
   VoxelMapManifest,
@@ -690,6 +693,10 @@ export class GameRoom extends Room<GameState> {
   private playerPingMs = new Map<string, number>();
   private playerPingsDirty = true;
   private knownPlayerIds = new Set<string>();
+  private playerNetIds = new Map<string, number>();
+  private nextPlayerNetId = 1;
+  private readonly playerSpatialIndex = new PlayerSpatialIndex(8);
+  private readonly spatialQueryScratch: Player[] = [];
   private alivePlayers: Player[] = [];
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
   private losCache = new Map<string, { result: boolean; expiresAt: number }>();
@@ -698,6 +705,7 @@ export class GameRoom extends Room<GameState> {
   private readonly usedEntryTicketNonces = new Set<string>();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   private readonly playerEntryTickets = new Map<string, GameEntryTicketClaims>();
+  private readonly clientsBySessionId = new Map<string, Client>();
   private readonly securityEvents: SecurityEvent[] = [];
   private readonly antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
   private antiCheat: AntiCheatRoomRuntime | null = null;
@@ -843,6 +851,10 @@ export class GameRoom extends Room<GameState> {
 
     this.onMessage('movementCommands', (client, packet: MovementCommandPacket) => {
       this.metrics?.time('input', () => {
+        if (!this.rateLimiter.consume(client.sessionId, 'movementCommands', GAME_MESSAGE_RATE_LIMITS.movementCommands)) {
+          this.recordRateLimitDrop(client.sessionId, 'movementCommands');
+          return;
+        }
         this.handleMovementCommandPacket(client, packet);
       });
     });
@@ -1129,11 +1141,13 @@ export class GameRoom extends Room<GameState> {
         this.unstuckCooldownUntil.delete(existingSessionId);
         this.movementAuthorities.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
+        this.clientsBySessionId.delete(existingSessionId);
         this.playerAuthContexts.delete(existingSessionId);
         this.playerEntryTickets.delete(existingSessionId);
         this.rateLimiter.clearScope(existingSessionId);
         this.knownPlayerIds.delete(existingSessionId);
         this.playerVitalSignatures.delete(existingSessionId);
+        this.playerNetIds.delete(existingSessionId);
         this.pendingPlayerPings.delete(existingSessionId);
         this.playerPingMs.delete(existingSessionId);
         this.playerPingsDirty = true;
@@ -1203,6 +1217,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.set(client.sessionId, player);
+    this.clientsBySessionId.set(client.sessionId, client);
     this.knownPlayerIds.add(client.sessionId);
     this.playerPingsDirty = true;
     this.updateMetadata();
@@ -1255,8 +1270,10 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.state.players.delete(client.sessionId);
+    this.clientsBySessionId.delete(client.sessionId);
     this.knownPlayerIds.delete(client.sessionId);
     this.playerVitalSignatures.delete(client.sessionId);
+    this.playerNetIds.delete(client.sessionId);
     playerPressState.delete(client.sessionId);
     this.phantomPrimaryMagazines.delete(client.sessionId);
     this.phantomPrimaryHoldStartedAt.delete(client.sessionId);
@@ -1383,21 +1400,13 @@ export class GameRoom extends Room<GameState> {
   }
 
   private rebuildPlayerSpatialIndex(): void {
-    this.alivePlayers = [];
-    this.alivePlayersByTeam.red = [];
-    this.alivePlayersByTeam.blue = [];
-
-    this.state.players.forEach((player) => {
-      if (player.state !== 'alive') return;
-      this.alivePlayers.push(player);
-      if (player.team === 'red' || player.team === 'blue') {
-        this.alivePlayersByTeam[player.team].push(player);
-      }
-    });
+    this.playerSpatialIndex.rebuild(this.state.players.values());
+    this.alivePlayers = this.playerSpatialIndex.getAlivePlayers();
+    this.alivePlayersByTeam = this.playerSpatialIndex.getAlivePlayersByTeam();
   }
 
   private getEnemyPlayers(team: Team): Player[] {
-    return this.alivePlayersByTeam[team === 'red' ? 'blue' : 'red'];
+    return this.playerSpatialIndex.getEnemyPlayers(team);
   }
 
   private updateCountdown() {
@@ -1512,6 +1521,15 @@ export class GameRoom extends Room<GameState> {
     return bits;
   }
 
+  private getPlayerNetId(playerId: string): number {
+    let netId = this.playerNetIds.get(playerId);
+    if (netId === undefined) {
+      netId = this.nextPlayerNetId++;
+      this.playerNetIds.set(playerId, netId);
+    }
+    return netId;
+  }
+
   private buildPlayerTransform(id: string, player: Player): QuantizedPlayerTransform {
     return {
       id,
@@ -1527,6 +1545,23 @@ export class GameRoom extends Room<GameState> {
       wallRunSide: player.movement.wallRunSide === 'left' ? -1 : player.movement.wallRunSide === 'right' ? 1 : 0,
       movementEpoch: this.getMovementAuthority(id).movementEpoch,
     };
+  }
+
+  private buildPackedPlayerTransform(id: string, player: Player): PackedPlayerTransform {
+    return [
+      this.getPlayerNetId(id),
+      this.quantize(player.position.x, TRANSFORM_POSITION_SCALE),
+      this.quantize(player.position.y, TRANSFORM_POSITION_SCALE),
+      this.quantize(player.position.z, TRANSFORM_POSITION_SCALE),
+      this.quantize(player.velocity.x, TRANSFORM_VELOCITY_SCALE),
+      this.quantize(player.velocity.y, TRANSFORM_VELOCITY_SCALE),
+      this.quantize(player.velocity.z, TRANSFORM_VELOCITY_SCALE),
+      this.quantize(player.lookYaw, TRANSFORM_ANGLE_SCALE),
+      this.quantize(player.lookPitch, TRANSFORM_ANGLE_SCALE),
+      this.getMovementBits(player),
+      player.movement.wallRunSide === 'left' ? -1 : player.movement.wallRunSide === 'right' ? 1 : 0,
+      this.getMovementAuthority(id).movementEpoch,
+    ];
   }
 
   private applyPlayerRank(
@@ -1570,6 +1605,7 @@ export class GameRoom extends Room<GameState> {
 
     return {
       id,
+      netId: this.getPlayerNetId(id),
       name: player.name,
       team: player.team as Team,
       heroId: (player.heroId || null) as HeroId | null,
@@ -1618,6 +1654,7 @@ export class GameRoom extends Room<GameState> {
 
     return (
       previous.name !== next.name ||
+      previous.netId !== next.netId ||
       previous.team !== next.team ||
       previous.heroId !== next.heroId ||
       previous.state !== next.state ||
@@ -1974,9 +2011,9 @@ export class GameRoom extends Room<GameState> {
     } satisfies PlayerVitalsMessage);
     this.sendWithMetrics(client, 'playerPings', this.buildPlayerPingsMessage());
 
-    const transformPayload = this.buildPlayerTransformsPayload();
+    const transformPayload = this.buildPlayerTransformsV2Payload();
     if (transformPayload.players.length > 0) {
-      this.sendWithMetrics(client, 'playerTransforms', transformPayload);
+      this.sendWithMetrics(client, 'playerTransformsV2', transformPayload);
     }
   }
 
@@ -2055,10 +2092,26 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private buildPlayerTransformsV2Payload(): PlayerTransformsV2Message {
+    const players: PackedPlayerTransform[] = [];
+
+    this.state.players.forEach((player, id) => {
+      if (player.state !== 'alive' && player.state !== 'spawning') return;
+      players.push(this.buildPackedPlayerTransform(id, player));
+    });
+
+    return {
+      version: 2,
+      tick: this.state.tick,
+      serverTime: this.state.serverTime,
+      players,
+    };
+  }
+
   private broadcastPlayerTransforms(): void {
-    const payload = this.buildPlayerTransformsPayload();
+    const payload = this.buildPlayerTransformsV2Payload();
     if (payload.players.length > 0) {
-      this.broadcastWithMetrics('playerTransforms', payload);
+      this.broadcastWithMetrics('playerTransformsV2', payload);
     }
   }
 
@@ -2086,6 +2139,7 @@ export class GameRoom extends Room<GameState> {
         removedPlayerIds.push(id);
         this.knownPlayerIds.delete(id);
         this.playerVitalSignatures.delete(id);
+        this.playerNetIds.delete(id);
       }
     });
 
@@ -3120,6 +3174,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    let needsQueueSort = false;
     for (const rawCommand of packet.commands) {
       if (authority.commandsInWindow >= MOVEMENT_MAX_COMMANDS_PER_SECOND) {
         authority.metrics.droppedCommands++;
@@ -3143,10 +3198,16 @@ export class GameRoom extends Room<GameState> {
 
       authority.commandsInWindow++;
       authority.metrics.commandsReceived++;
+      const lastQueued = authority.pendingCommands[authority.pendingCommands.length - 1];
+      if (lastQueued && !isMovementSeqAfter(command.seq, lastQueued.seq)) {
+        needsQueueSort = true;
+      }
       authority.pendingCommands.push(command);
     }
 
-    authority.pendingCommands.sort((a, b) => compareMovementSeq(a.seq, b.seq));
+    if (needsQueueSort) {
+      authority.pendingCommands.sort((a, b) => compareMovementSeq(a.seq, b.seq));
+    }
     if (authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE) {
       const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
       authority.pendingCommands.splice(0, overflow);
@@ -4168,7 +4229,13 @@ export class GameRoom extends Room<GameState> {
       if (!owner) return true;
 
       const radiusSq = storm.radius * storm.radius;
-      for (const target of this.getEnemyPlayers(storm.ownerTeam)) {
+      const targets = this.playerSpatialIndex.queryRadius(
+        storm.position,
+        storm.radius,
+        this.spatialQueryScratch,
+        { team: storm.ownerTeam === 'red' ? 'blue' : 'red' }
+      );
+      for (const target of targets) {
         if (target.state !== 'alive') continue;
 
         const dx = target.position.x - storm.position.x;
@@ -4197,17 +4264,23 @@ export class GameRoom extends Room<GameState> {
 
       const owner = this.state.players.get(trap.ownerId) ?? null;
       const radiusSq = trap.radius * trap.radius;
-      this.state.players.forEach((target) => {
-        if (target.id === trap.ownerId) return;
-        if (target.state !== 'alive') return;
-        if (target.team === trap.ownerTeam) return;
+      const targets = this.playerSpatialIndex.queryRadius(
+        trap.position,
+        trap.radius,
+        this.spatialQueryScratch,
+        { team: trap.ownerTeam === 'red' ? 'blue' : 'red', excludeId: trap.ownerId }
+      );
+      for (const target of targets) {
+        if (target.id === trap.ownerId) continue;
+        if (target.state !== 'alive') continue;
+        if (target.team === trap.ownerTeam) continue;
 
         const dx = target.position.x - trap.position.x;
         const dz = target.position.z - trap.position.z;
-        if (dx * dx + dz * dz > radiusSq) return;
+        if (dx * dx + dz * dz > radiusSq) continue;
 
         const lastDamage = trap.lastDamageTick.get(target.id) || 0;
-        if (now - lastDamage < GRAPPLE_TRAP_DAMAGE_INTERVAL_MS) return;
+        if (now - lastDamage < GRAPPLE_TRAP_DAMAGE_INTERVAL_MS) continue;
         trap.lastDamageTick.set(target.id, now);
 
         const pullDirection = this.direction2DFromTo(target.position, trap.position);
@@ -4219,7 +4292,7 @@ export class GameRoom extends Room<GameState> {
         }
 
         this.applyDamage(target, GRAPPLE_TRAP_DAMAGE, owner ? trap.ownerId : null, 'grapple_trap');
-      });
+      }
 
       return true;
     });
@@ -5363,8 +5436,14 @@ export class GameRoom extends Room<GameState> {
     const forward = this.getForwardVector(source.lookYaw, source.lookPitch);
     let bestTarget: Player | null = null;
     let bestDistance = range;
+    const candidates = this.playerSpatialIndex.queryConeCandidates(
+      origin,
+      range,
+      this.spatialQueryScratch,
+      { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
+    );
 
-    for (const target of this.getEnemyPlayers(source.team as Team)) {
+    for (const target of candidates) {
       if (target.id === source.id) continue;
 
       const hit = this.getAimHitAgainstPlayer(origin, forward, range, target);
@@ -5420,7 +5499,13 @@ export class GameRoom extends Room<GameState> {
 
   private applyAreaDamage(source: Player, center: { x: number; y: number; z: number }, radius: number, damage: number, damageType: string): void {
     const radiusSq = radius * radius;
-    for (const target of this.getEnemyPlayers(source.team as Team)) {
+    const targets = this.playerSpatialIndex.queryRadius(
+      center,
+      radius,
+      this.spatialQueryScratch,
+      { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
+    );
+    for (const target of targets) {
       if (target.id === source.id) continue;
 
       const dx = target.position.x - center.x;
@@ -6159,38 +6244,46 @@ export class GameRoom extends Room<GameState> {
     let alliedCarrier: Player | null = null;
     let nearbyEnemyCount = 0;
     let nearbyAllyCount = 0;
+    const nearbyRangeSq = 16 * 16;
 
-    for (const candidate of this.alivePlayers) {
+    for (const candidate of this.alivePlayersByTeam[botTeam]) {
       if (candidate.id === bot.id) continue;
 
       const distance = this.distance3D(bot.position, candidate.position);
-      if (candidate.team === bot.team) {
-        allies.push(candidate);
-        if (distance < nearestAllyDistance) {
-          nearestAlly = candidate;
-          nearestAllyDistance = distance;
-        }
-        if (candidate.hasFlag) {
-          alliedCarrier = candidate;
-        }
-        if (distance <= 16) nearbyAllyCount++;
-      } else {
-        if (!this.canBotPerceiveEnemy(bot, candidate, distance)) continue;
-        enemies.push(candidate);
-        if (distance < nearestEnemyDistance) {
-          nearestEnemy = candidate;
-          nearestEnemyDistance = distance;
-        }
-        const healthRatio = candidate.health / Math.max(1, candidate.maxHealth);
-        if (healthRatio < weakestEnemyHealthRatio && distance <= BOT_AWARENESS_RANGE) {
-          weakestEnemy = candidate;
-          weakestEnemyHealthRatio = healthRatio;
-        }
-        if (candidate.hasFlag) {
-          enemyCarrier = candidate;
-        }
-        if (distance <= 16) nearbyEnemyCount++;
+      allies.push(candidate);
+      if (distance < nearestAllyDistance) {
+        nearestAlly = candidate;
+        nearestAllyDistance = distance;
       }
+      if (candidate.hasFlag) {
+        alliedCarrier = candidate;
+      }
+      const allyDx = candidate.position.x - bot.position.x;
+      const allyDy = candidate.position.y - bot.position.y;
+      const allyDz = candidate.position.z - bot.position.z;
+      if (allyDx * allyDx + allyDy * allyDy + allyDz * allyDz <= nearbyRangeSq) nearbyAllyCount++;
+    }
+
+    for (const candidate of this.alivePlayersByTeam[enemyTeam]) {
+      const distance = this.distance3D(bot.position, candidate.position);
+      if (!this.canBotPerceiveEnemy(bot, candidate, distance)) continue;
+      enemies.push(candidate);
+      if (distance < nearestEnemyDistance) {
+        nearestEnemy = candidate;
+        nearestEnemyDistance = distance;
+      }
+      const healthRatio = candidate.health / Math.max(1, candidate.maxHealth);
+      if (healthRatio < weakestEnemyHealthRatio && distance <= BOT_AWARENESS_RANGE) {
+        weakestEnemy = candidate;
+        weakestEnemyHealthRatio = healthRatio;
+      }
+      if (candidate.hasFlag) {
+        enemyCarrier = candidate;
+      }
+      const enemyDx = candidate.position.x - bot.position.x;
+      const enemyDy = candidate.position.y - bot.position.y;
+      const enemyDz = candidate.position.z - bot.position.z;
+      if (enemyDx * enemyDx + enemyDy * enemyDy + enemyDz * enemyDz <= nearbyRangeSq) nearbyEnemyCount++;
     }
 
     const ownFlag = this.getFlagByTeam(botTeam);
@@ -7776,7 +7869,12 @@ export class GameRoom extends Room<GameState> {
 
     // Apply damage to players in active void zones
     for (const zone of this.voidZones) {
-      const targets = this.alivePlayersByTeam[zone.ownerTeam === 'red' ? 'blue' : 'red'];
+      const targets = this.playerSpatialIndex.queryRadius(
+        zone.position,
+        zone.radius,
+        this.spatialQueryScratch,
+        { team: zone.ownerTeam === 'red' ? 'blue' : 'red', excludeId: zone.ownerId }
+      );
       for (const player of targets) {
         if (player.id === zone.ownerId) continue;
         if (player.spawnProtectionUntil && now < player.spawnProtectionUntil) continue;
@@ -7889,8 +7987,14 @@ export class GameRoom extends Room<GameState> {
     const { origin, direction: forward } = this.getBlazeFlamethrowerPose(source);
 
     const rangeSq = BLAZE_FLAMETHROWER_RANGE * BLAZE_FLAMETHROWER_RANGE;
+    const candidates = this.playerSpatialIndex.queryConeCandidates(
+      origin,
+      BLAZE_FLAMETHROWER_RANGE,
+      this.spatialQueryScratch,
+      { team: source.team === 'red' ? 'blue' : 'red', excludeId: source.id }
+    );
 
-    for (const target of this.getEnemyPlayers(source.team as Team)) {
+    for (const target of candidates) {
       if (target.id === source.id) continue;
       if (target.spawnProtectionUntil && now < target.spawnProtectionUntil) continue;
       const targetPoint = this.getPlayerBodyAimPosition(target);
@@ -8063,7 +8167,6 @@ export class GameRoom extends Room<GameState> {
   }
 
   private updatePhysics() {
-    const clientsById = new Map(this.clients.map((client) => [client.sessionId, client]));
     const tickTime = this.state.serverTime || Date.now();
 
     this.state.players.forEach(player => {
@@ -8094,7 +8197,7 @@ export class GameRoom extends Room<GameState> {
           this.placePlayerAtSpawn(player, 'respawn');
         }
 
-        const client = clientsById.get(player.id);
+        const client = this.clientsBySessionId.get(player.id);
         if (client && authority.correctionReason) {
           this.sendSelfMovementAuthority(player, client, authority.correctionReason);
         }
@@ -8152,7 +8255,7 @@ export class GameRoom extends Room<GameState> {
         this.placePlayerAtSpawn(player, 'respawn');
       }
 
-      const client = clientsById.get(player.id);
+      const client = this.clientsBySessionId.get(player.id);
       if (client && (processedThisTick > 0 || authority.correctionReason)) {
         this.sendSelfMovementAuthority(player, client, authority.correctionReason);
       }
@@ -8451,6 +8554,7 @@ export class GameRoom extends Room<GameState> {
     // Remove NPC from game
     this.state.players.delete(npc.id);
     this.spawnedNpcs.delete(npc.id);
+    this.playerNetIds.delete(npc.id);
     this.updateMetadata();
 
     // Broadcast player left
