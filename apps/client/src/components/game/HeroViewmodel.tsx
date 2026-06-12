@@ -1184,12 +1184,17 @@ function updatePhantomLocomotionRuntime(
   previousPosition.copy(camera.position);
 
   const frameSeconds = Math.max(delta, 1 / 120);
-  const horizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
+  const cameraHorizontalSpeed = horizontalDistance > PHANTOM_LOCOMOTION_TELEPORT_DISTANCE
     ? 0
     : horizontalDistance / frameSeconds;
+  const visualState = visualStore.getState();
+  const localMovement = visualState.localViewmodelMovement;
+  const isLocalMovementFresh = Date.now() - localMovement.updatedAtMs <= CHRONOS_MOVEMENT_INPUT_FRESH_MS;
+  const horizontalSpeed = isLocalMovementFresh
+    ? localMovement.horizontalSpeed
+    : cameraHorizontalSpeed;
   const walkSpeed = HERO_DEFINITIONS[heroId].stats.moveSpeed;
   const runSpeed = walkSpeed * SPRINT_MULTIPLIER;
-  const visualState = visualStore.getState();
   const movementState = visualState.localMovement;
   const isGrounded = movementState.isGrounded;
   const isSliding = movementState.isSliding;

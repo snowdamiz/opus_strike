@@ -86,7 +86,6 @@ function movementModesDiffer(a: PlayerMovementState, b: PlayerMovementState): bo
     a.isGrounded !== b.isGrounded ||
     a.isSliding !== b.isSliding ||
     a.isCrouching !== b.isCrouching ||
-    a.isSprinting !== b.isSprinting ||
     a.isWallRunning !== b.isWallRunning ||
     a.wallRunSide !== b.wallRunSide ||
     a.isGrappling !== b.isGrappling ||

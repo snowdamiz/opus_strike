@@ -444,7 +444,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     };
   }, [phantomAbilities, blazeAbilities, hookshotAbilities]);
 
-  // Main game loop
+  // Main game loop. Run early so viewmodel/effects sample the updated camera and predicted velocity.
   useFrame((frameState, delta) => {
     const localPlayer = useGameStore.getState().localPlayer;
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
@@ -1044,7 +1044,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         correctionReason: traceMovementBarrier ?? undefined,
       });
     }
-  });
+  }, -100);
 
   // Render targeting indicators
   return (

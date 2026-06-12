@@ -201,6 +201,32 @@ function runNoCorrectionAckRefreshesAuthorityOwnedResources() {
   assert.equal(controller.getState().movement.jetpackFuel, 42, 'local prediction should preserve refreshed Blaze fuel');
 }
 
+function runSprintModeMismatchDoesNotCorrect() {
+  const controller = new MovementPredictionController();
+  controller.initialize(createSimulationState(), 0, 0);
+  controller.step(command(1, MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT), context());
+  const stateAtAck = controller.getState();
+  const authorityMovement = {
+    ...stateAtAck.movement,
+    isSprinting: !stateAtAck.movement.isSprinting,
+  };
+
+  const metrics = controller.reconcile({
+    serverTick: 1,
+    serverTime: 50,
+    ackSeq: 1,
+    movementEpoch: 0,
+    position: stateAtAck.position,
+    velocity: stateAtAck.velocity,
+    lookYaw: 0,
+    lookPitch: 0,
+    movement: authorityMovement,
+  }, context(), 60);
+
+  assert.equal(metrics.corrected, false, 'sprint animation flag drift should not replay movement prediction');
+  assert.equal(controller.getBufferedCommandCount(), 0);
+}
+
 function runSlideRequiresFreshCrouchPress() {
   const controller = new MovementPredictionController();
   controller.initialize(createSimulationState(), 0, 0);
@@ -1072,6 +1098,7 @@ runDeterministicReplay();
 runYawConvention();
 runDuplicateAckNoop();
 runNoCorrectionAckRefreshesAuthorityOwnedResources();
+runSprintModeMismatchDoesNotCorrect();
 runSlideRequiresFreshCrouchPress();
 runHeldCommandStripsEdgeButtons();
 runChronosAscendantReleaseDampsStrafe();
