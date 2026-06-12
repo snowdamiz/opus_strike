@@ -2692,19 +2692,14 @@ export class GameRoom extends Room<GameState> {
     participants: MatchParticipantSnapshot[],
     forcedByPlayerId?: string
   ): boolean {
-    if (!this.wagerContext) return false;
-    const paidUserIds = new Set(this.wagerContext.paidPlayers.map((player) => player.userId));
-
     return Boolean(
       ledger.rankedEligible
       && ledger.matchMode === 'ranked'
+      && this.matchMode === 'ranked'
       && !forcedByPlayerId
-      && this.wagerContext.matchMode === 'ranked'
       && this.spawnedNpcs.size === 0
       && participants.length === this.rankedRequiredHumanPlayers
-      && this.wagerContext.paidPlayers.length === this.rankedRequiredHumanPlayers
       && participants.every((participant) => participant.userId && !participant.userId.startsWith('guest:'))
-      && participants.every((participant) => paidUserIds.has(participant.userId))
     );
   }
 

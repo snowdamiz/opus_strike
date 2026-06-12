@@ -1,6 +1,6 @@
 import { createContext, useContext, useRef, useCallback, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, RankedEntryQuote, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
+import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
 import {
@@ -133,7 +133,18 @@ interface RankedTicketResponse {
   isGuest: false;
   targetRankDivisionIndex: number;
   targetRankLabel: string;
-  quote: RankedEntryQuote;
+  tokenHold: {
+    eligible: boolean;
+    tokenSymbol: 'SOL';
+    usdCents: number;
+    solUsdPrice: string;
+    solUsdPriceMicroUsd: string;
+    requiredLamports: string;
+    balanceLamports: string;
+    cluster: string;
+    priceSource: string;
+    checkedAt: string;
+  };
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
@@ -155,26 +166,12 @@ async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
   return response.json();
 }
 
-async function requestRankedEntryQuote(): Promise<RankedEntryQuote> {
-  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-entry-quote`, {
-    credentials: 'include',
-  });
-
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Failed to create ranked entry quote' }));
-    throw new Error(payload.error || 'Failed to create ranked entry quote');
-  }
-
-  const data = await response.json();
-  return data.quote;
-}
-
-async function requestRankedTicket(quoteId: string): Promise<RankedTicketResponse> {
+async function requestRankedTicket(): Promise<RankedTicketResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-ticket`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quoteId }),
+    body: JSON.stringify({}),
   });
 
   if (!response.ok) {
@@ -911,10 +908,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       const client = getClient();
       const clientId = getClientId();
-      const quote = await requestRankedEntryQuote();
-      const rankedTicket = await requestRankedTicket(quote.quoteId);
+      const rankedTicket = await requestRankedTicket();
 
-      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.quote.coverChargeLamports);
+      loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredLamports);
 
       lobbyRoomRef.current = await client.joinOrCreate('lobby_room', {
         playerName,
@@ -924,8 +920,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         matchMode: 'ranked',
         matchmakingTicket: rankedTicket.ticket,
         rankBandId: rankedTicket.targetRankDivisionIndex,
-        rankedEntryQuoteId: rankedTicket.quote.quoteId,
-        rankedCoverChargeLamports: rankedTicket.quote.coverChargeLamports,
         clientId,
         initialBotCount: 0,
         botFillMode: 'manual',
@@ -936,12 +930,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       setPlayerId(lobbyRoomRef.current.sessionId);
       setCurrentLobbyWager({
-        enabled: true,
+        enabled: false,
         matchMode: 'ranked',
-        rankedEntryQuoteId: rankedTicket.quote.quoteId,
-        rankedEntryQuoteExpiresAt: rankedTicket.quote.expiresAt,
         token: 'SOL',
-        coverChargeLamports: rankedTicket.quote.coverChargeLamports,
       });
       setMatchmakingStatus({
         matchMode: 'ranked',
@@ -953,8 +944,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: 0,
         provisionalHumanCount: 1,
         requiredPlayers: null,
-        rankedCoverChargeLamports: rankedTicket.quote.coverChargeLamports,
-        rankedEntryQuoteId: rankedTicket.quote.quoteId,
+        rankedCoverChargeLamports: null,
+        rankedEntryQuoteId: null,
       });
       setAppPhase('matchmaking');
       setConnected(true);

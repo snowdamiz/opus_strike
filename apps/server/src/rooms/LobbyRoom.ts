@@ -44,7 +44,6 @@ interface JoinOptions {
   matchmakingTicket?: string;
   rankBandId?: number;
   rankedEntryQuoteId?: string;
-  rankedCoverChargeLamports?: string;
   clientId?: string; // Persistent client ID for reconnection detection
   authToken?: string;
   initialBotCount?: number;
@@ -166,7 +165,6 @@ export class LobbyRoom extends Room<LobbyState> {
   private isRankedQueue = false;
   private rankBandId = DEFAULT_RANK_DIVISION_INDEX;
   private rankedEntryQuoteId: string | null = null;
-  private rankedCoverChargeLamports: string | null = null;
   private pendingWagerOptions: CreateWagerOptions | undefined;
   
   // Track clientId -> sessionId mapping for reconnection detection
@@ -188,15 +186,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.isRankedQueue = this.matchMode === 'ranked';
     this.rankBandId = this.resolveRoomRankBand(options, initialMatchmakingTicket);
     this.rankedEntryQuoteId = this.isRankedQueue ? initialMatchmakingTicket?.rankedEntryQuoteId ?? null : null;
-    this.rankedCoverChargeLamports = this.isRankedQueue ? initialMatchmakingTicket?.coverChargeLamports ?? null : null;
-    if (this.isRankedQueue && (!this.rankedEntryQuoteId || !this.rankedCoverChargeLamports)) {
-      throw new Error('Ranked matchmaking requires a signed ranked entry quote');
-    }
-    this.pendingWagerOptions = this.isRankedQueue
-      ? { enabled: true, coverChargeLamports: this.rankedCoverChargeLamports!, token: 'SOL' }
-      : this.isMatchmakingQueue()
-        ? undefined
-        : options.wager;
+    this.pendingWagerOptions = this.isMatchmakingQueue() ? undefined : options.wager;
 
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
@@ -656,7 +646,7 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
     if (this.isRankedQueue) {
-      client.send('error', { message: 'Ranked matches start automatically after all payments are credited' });
+      client.send('error', { message: 'Ranked matches start automatically after the roster is full' });
       return;
     }
 
@@ -1418,17 +1408,14 @@ export class LobbyRoom extends Room<LobbyState> {
     playerAssignments: ParticipantAssignment[],
     lockedWagerContext: LockedWagerContext | null
   ): boolean {
-    if (this.matchMode !== 'ranked' || !lockedWagerContext || !this.state.wagerEnabled) return false;
+    if (this.matchMode !== 'ranked' || lockedWagerContext || this.state.wagerEnabled) return false;
     if (this.getHumanCount() !== QUICK_PLAY_REQUIRED_PLAYERS || this.getBotCount() !== 0) return false;
     if (playerAssignments.length !== QUICK_PLAY_REQUIRED_PLAYERS) return false;
     if (playerAssignments.some((assignment) => assignment.isBot)) return false;
-    if (lockedWagerContext.paidPlayers.length !== QUICK_PLAY_REQUIRED_PLAYERS) return false;
-
-    const paidUserIds = new Set(lockedWagerContext.paidPlayers.map((player) => player.userId));
 
     return playerAssignments.every((assignment) => (
       this.playerAuthContexts.get(assignment.playerId)?.kind === 'authenticated'
-      && paidUserIds.has(this.playerAuthContexts.get(assignment.playerId)!.userId)
+      && this.playerMatchmakingTickets.get(assignment.playerId)?.mode === 'ranked'
     ));
   }
 
@@ -1575,7 +1562,7 @@ export class LobbyRoom extends Room<LobbyState> {
       return;
     }
 
-    if (this.getBotCount() !== 0 || this.getPaidHumanCount() < QUICK_PLAY_REQUIRED_PLAYERS) return;
+    if (this.getBotCount() !== 0) return;
 
     this.ensureWagerStartEligible()
       .then((canStart) => {
@@ -1666,7 +1653,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (this.isRankedQueue) {
       return authContext.kind === 'authenticated'
         && ticket.userId === authContext.userId
-        && ticket.coverChargeLamports === this.rankedCoverChargeLamports;
+        && ticket.mode === 'ranked';
     }
 
     if (authContext.kind === 'authenticated') {
@@ -1728,7 +1715,7 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.isMatchmakingQueue()) return {};
     const averageCompetitiveRating = this.getAverageCompetitiveRating();
     const humanCount = this.getHumanCount();
-    const queuedHumanCount = this.isRankedQueue ? this.getPaidHumanCount() : humanCount;
+    const queuedHumanCount = humanCount;
 
     return {
       matchMode: this.matchMode,
@@ -1741,8 +1728,6 @@ export class LobbyRoom extends Room<LobbyState> {
       requiredPlayers: QUICK_PLAY_REQUIRED_PLAYERS,
       queuedHumanCount,
       provisionalHumanCount: Math.max(0, humanCount - queuedHumanCount),
-      rankedCoverChargeLamports: this.rankedCoverChargeLamports ?? undefined,
-      rankedEntryQuoteId: this.rankedEntryQuoteId ?? undefined,
       rankedEligible: this.isRankedQueue
         && queuedHumanCount === QUICK_PLAY_REQUIRED_PLAYERS
         && humanCount === QUICK_PLAY_REQUIRED_PLAYERS
@@ -1771,9 +1756,7 @@ export class LobbyRoom extends Room<LobbyState> {
       matchmakingMode: this.isMatchmakingQueue(),
       rankBandId: this.isMatchmakingQueue() ? this.rankBandId : undefined,
       requiredPlayers: this.isMatchmakingQueue() ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
-      queuedHumanCount: this.isRankedQueue ? this.getPaidHumanCount() : humanCount,
-      rankedCoverChargeLamports: this.rankedCoverChargeLamports ?? undefined,
-      rankedEntryQuoteId: this.rankedEntryQuoteId ?? undefined,
+      queuedHumanCount: humanCount,
       wagerEnabled: this.state.wagerEnabled,
       wagerStatus: this.state.wagerStatus || undefined,
       wagerToken: this.state.wagerToken || undefined,

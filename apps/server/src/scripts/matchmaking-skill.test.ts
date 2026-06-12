@@ -73,14 +73,20 @@ const ranked = createMatchmakingTicket({
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
   targetRankDivisionIndex: getRankDivisionIndex(strongPlayer),
   placementRemaining: 0,
-  rankedEntryQuoteId: 'quote_1',
-  coverChargeLamports: '33000000',
-  rankedEntryQuoteExpiresAt: claims.issuedAt + 60_000,
+  rankedTokenSymbol: 'SOL',
+  rankedTokenHoldUsdCents: 2000,
+  rankedTokenRequiredLamports: '120000000',
+  rankedTokenBalanceLamports: '140000000',
+  rankedTokenCheckedAt: claims.issuedAt,
 });
 const rankedVerified = verifyMatchmakingTicket(ranked.ticket, ranked.claims.issuedAt + 1);
 assert.ok(rankedVerified);
 assert.equal(rankedVerified.mode, 'ranked');
-assert.equal(rankedVerified.rankedEntryQuoteId, 'quote_1');
-assert.equal(rankedVerified.coverChargeLamports, '33000000');
+assert.equal(rankedVerified.rankedEntryQuoteId, undefined);
+assert.equal(rankedVerified.coverChargeLamports, undefined);
+assert.equal(rankedVerified.rankedTokenSymbol, 'SOL');
+assert.equal(rankedVerified.rankedTokenHoldUsdCents, 2000);
+assert.equal(rankedVerified.rankedTokenRequiredLamports, '120000000');
+assert.equal(rankedVerified.rankedTokenBalanceLamports, '140000000');
 
 console.log('matchmaking skill tests passed');

@@ -18,6 +18,11 @@ export interface MatchmakingTicketClaims {
   rankedEntryQuoteId?: string;
   coverChargeLamports?: string;
   rankedEntryQuoteExpiresAt?: number;
+  rankedTokenSymbol?: string;
+  rankedTokenHoldUsdCents?: number;
+  rankedTokenRequiredLamports?: string;
+  rankedTokenBalanceLamports?: string;
+  rankedTokenCheckedAt?: number;
   issuedAt: number;
   expiresAt: number;
   nonce: string;
@@ -33,6 +38,11 @@ export interface CreateMatchmakingTicketInput {
   rankedEntryQuoteId?: string;
   coverChargeLamports?: string;
   rankedEntryQuoteExpiresAt?: number;
+  rankedTokenSymbol?: string;
+  rankedTokenHoldUsdCents?: number;
+  rankedTokenRequiredLamports?: string;
+  rankedTokenBalanceLamports?: string;
+  rankedTokenCheckedAt?: number;
   ttlMs?: number;
 }
 
@@ -80,6 +90,11 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     rankedEntryQuoteId: input.mode === 'ranked' ? input.rankedEntryQuoteId : undefined,
     coverChargeLamports: input.mode === 'ranked' ? input.coverChargeLamports : undefined,
     rankedEntryQuoteExpiresAt: input.mode === 'ranked' ? input.rankedEntryQuoteExpiresAt : undefined,
+    rankedTokenSymbol: input.mode === 'ranked' ? input.rankedTokenSymbol : undefined,
+    rankedTokenHoldUsdCents: input.mode === 'ranked' ? input.rankedTokenHoldUsdCents : undefined,
+    rankedTokenRequiredLamports: input.mode === 'ranked' ? input.rankedTokenRequiredLamports : undefined,
+    rankedTokenBalanceLamports: input.mode === 'ranked' ? input.rankedTokenBalanceLamports : undefined,
+    rankedTokenCheckedAt: input.mode === 'ranked' ? input.rankedTokenCheckedAt : undefined,
     issuedAt: now,
     expiresAt: now + (input.ttlMs ?? DEFAULT_TICKET_TTL_MS),
     nonce: crypto.randomBytes(16).toString('hex'),
@@ -114,12 +129,35 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
   if (normalizeRankDivisionIndex(claims.rankDivisionIndex) !== claims.rankDivisionIndex) return null;
   if (normalizeRankDivisionIndex(claims.targetRankDivisionIndex) !== claims.targetRankDivisionIndex) return null;
 
-  if (mode === 'ranked') {
-    if (typeof claims.rankedEntryQuoteId !== 'string' || !claims.rankedEntryQuoteId) return null;
-    if (typeof claims.coverChargeLamports !== 'string' || !/^[0-9]+$/.test(claims.coverChargeLamports)) return null;
-    if (BigInt(claims.coverChargeLamports) <= 0n) return null;
-    if (!Number.isFinite(claims.rankedEntryQuoteExpiresAt) || Number(claims.rankedEntryQuoteExpiresAt) < now) return null;
-  }
+  if (
+    claims.coverChargeLamports !== undefined
+    && (typeof claims.coverChargeLamports !== 'string' || !/^[0-9]+$/.test(claims.coverChargeLamports))
+  ) return null;
+  if (claims.coverChargeLamports !== undefined && BigInt(claims.coverChargeLamports) <= 0n) return null;
+  if (
+    claims.rankedEntryQuoteExpiresAt !== undefined
+    && !Number.isFinite(claims.rankedEntryQuoteExpiresAt)
+  ) return null;
+  if (
+    claims.rankedTokenSymbol !== undefined
+    && typeof claims.rankedTokenSymbol !== 'string'
+  ) return null;
+  if (
+    claims.rankedTokenHoldUsdCents !== undefined
+    && (!Number.isInteger(claims.rankedTokenHoldUsdCents) || claims.rankedTokenHoldUsdCents < 0)
+  ) return null;
+  if (
+    claims.rankedTokenRequiredLamports !== undefined
+    && (typeof claims.rankedTokenRequiredLamports !== 'string' || !/^[0-9]+$/.test(claims.rankedTokenRequiredLamports))
+  ) return null;
+  if (
+    claims.rankedTokenBalanceLamports !== undefined
+    && (typeof claims.rankedTokenBalanceLamports !== 'string' || !/^[0-9]+$/.test(claims.rankedTokenBalanceLamports))
+  ) return null;
+  if (
+    claims.rankedTokenCheckedAt !== undefined
+    && !Number.isFinite(claims.rankedTokenCheckedAt)
+  ) return null;
 
   return {
     ...claims,
@@ -131,5 +169,10 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     rankedEntryQuoteId: mode === 'ranked' ? claims.rankedEntryQuoteId : undefined,
     coverChargeLamports: mode === 'ranked' ? claims.coverChargeLamports : undefined,
     rankedEntryQuoteExpiresAt: mode === 'ranked' ? claims.rankedEntryQuoteExpiresAt : undefined,
+    rankedTokenSymbol: mode === 'ranked' ? claims.rankedTokenSymbol : undefined,
+    rankedTokenHoldUsdCents: mode === 'ranked' ? claims.rankedTokenHoldUsdCents : undefined,
+    rankedTokenRequiredLamports: mode === 'ranked' ? claims.rankedTokenRequiredLamports : undefined,
+    rankedTokenBalanceLamports: mode === 'ranked' ? claims.rankedTokenBalanceLamports : undefined,
+    rankedTokenCheckedAt: mode === 'ranked' ? claims.rankedTokenCheckedAt : undefined,
   };
 }

@@ -69,7 +69,7 @@ const gameServer = new Server({
 gameServer.define('game_room', GameRoom);
 gameServer
   .define('lobby_room', LobbyRoom)
-  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId', 'rankedCoverChargeLamports'])
+  .filterBy(['isPrivate', 'matchmakingMode', 'matchMode', 'rankBandId'])
   .sortBy({ clients: -1 })
   .enableRealtimeListing();
 

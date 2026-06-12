@@ -6,9 +6,9 @@ import { isGuestPlayAllowed } from '../config/security';
 import { parseCookies, verifyAuthToken } from '../auth/session';
 import { createMatchmakingTicket } from '../security/matchmakingTickets';
 import {
-  createRankedEntryQuote,
-  getValidRankedEntryQuote,
-} from './rankedEntry';
+  assertRankedTokenHoldingEligibility,
+  getRankedTokenHoldingStatus,
+} from './rankedTokenHold';
 import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
@@ -136,7 +136,6 @@ async function chooseMatchmakingRankBand(input: {
   mode: 'quick_play' | 'ranked';
   playerRating: number;
   playerDivisionIndex: number;
-  coverChargeLamports?: string;
 }): Promise<number> {
   const now = Date.now();
   const rooms = await matchMaker.query({ name: 'lobby_room' });
@@ -146,11 +145,6 @@ async function chooseMatchmakingRankBand(input: {
     if (room.locked || metadata.matchmakingMode !== true || metadata.status !== 'matchmaking') return [];
     const mode = metadata.matchMode === 'ranked' ? 'ranked' : 'quick_play';
     if (mode !== input.mode) return [];
-    if (
-      input.mode === 'ranked'
-      && metadata.rankedCoverChargeLamports !== input.coverChargeLamports
-    ) return [];
-
     const rankBandId = normalizeRankDivisionIndex(metadata.rankBandId);
     const averageCompetitiveRating = typeof metadata.averageCompetitiveRating === 'number'
       ? metadata.averageCompetitiveRating
@@ -268,17 +262,17 @@ router.get('/quick-play-ticket', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/ranked-entry-quote', async (req: Request, res: Response) => {
+router.get('/ranked-token-hold-status', async (req: Request, res: Response) => {
   try {
     const context = await getMatchmakingUserContext(req, { allowGuest: false });
     if (!context.walletAddress) {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
     }
 
-    res.json({ quote: await createRankedEntryQuote(context.userId) });
+    res.json({ tokenHold: await getRankedTokenHoldingStatus(context.walletAddress) });
   } catch (error) {
-    console.error('[matchmaking] Failed to create ranked entry quote:', error);
-    sendRouteError(res, error, 'Failed to create ranked entry quote');
+    console.error('[matchmaking] Failed to check ranked token holding:', error);
+    sendRouteError(res, error, 'Failed to check ranked token holding');
   }
 });
 
@@ -289,24 +283,12 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       throw Object.assign(new Error('A linked Solana wallet is required for ranked'), { statusCode: 400 });
     }
 
-    const quoteId = typeof req.body?.quoteId === 'string' ? req.body.quoteId : '';
-    if (!quoteId) {
-      throw Object.assign(new Error('quoteId is required'), { statusCode: 400 });
-    }
-
-    const quote = await getValidRankedEntryQuote({
-      quoteId,
-      userId: context.userId,
-    });
-    const coverChargeLamports = quote.coverChargeLamports.toString();
+    const tokenHold = await assertRankedTokenHoldingEligibility(context.walletAddress);
     const targetRankDivisionIndex = await chooseMatchmakingRankBand({
       mode: 'ranked',
       playerRating: context.competitiveRating,
       playerDivisionIndex: context.rankDivisionIndex,
-      coverChargeLamports,
     });
-    const now = Date.now();
-    const ttlMs = Math.max(1, Math.min(60_000, quote.expiresAt.getTime() - now));
     const { ticket, claims } = createMatchmakingTicket({
       mode: 'ranked',
       userId: context.userId,
@@ -314,10 +296,11 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       rankDivisionIndex: context.rankDivisionIndex,
       targetRankDivisionIndex,
       placementRemaining: context.rank.rankedPlacementsRemaining,
-      rankedEntryQuoteId: quote.id,
-      coverChargeLamports,
-      rankedEntryQuoteExpiresAt: quote.expiresAt.getTime(),
-      ttlMs,
+      rankedTokenSymbol: tokenHold.tokenSymbol,
+      rankedTokenHoldUsdCents: tokenHold.usdCents,
+      rankedTokenRequiredLamports: tokenHold.requiredLamports,
+      rankedTokenBalanceLamports: tokenHold.balanceLamports,
+      rankedTokenCheckedAt: Date.parse(tokenHold.checkedAt),
     });
 
     res.json({
@@ -330,15 +313,7 @@ router.post('/ranked-ticket', async (req: Request, res: Response) => {
       isGuest: false,
       targetRankDivisionIndex,
       targetRankLabel: getRankDivisionLabel(targetRankDivisionIndex),
-      quote: {
-        quoteId: quote.id,
-        usdCents: quote.usdCents,
-        solUsdPriceMicroUsd: quote.solUsdPriceMicroUsd.toString(),
-        coverChargeLamports,
-        priceSource: quote.priceSource,
-        expiresAt: quote.expiresAt.toISOString(),
-        cluster: quote.cluster,
-      },
+      tokenHold,
     });
   } catch (error) {
     console.error('[matchmaking] Failed to issue ranked ticket:', error);

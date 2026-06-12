@@ -822,7 +822,7 @@ function PlayDialog({
             <div className="play-pay-dialog-wallet">
               <div>
                 <p className="font-display text-sm text-amber-50">PHANTOM REQUIRED</p>
-                <p className="mt-1 text-xs leading-relaxed text-amber-100/60">Link Phantom before entering ranked SOL queues.</p>
+                <p className="mt-1 text-xs leading-relaxed text-amber-100/60">Link Phantom before entering ranked queues.</p>
               </div>
               <button
                 type="button"
@@ -856,10 +856,9 @@ function PlayDialog({
                 </svg>
               </span>
               <span className="play-pay-option-copy">
-                <span className="play-pay-option-title">{isLoading ? 'PREPARING...' : 'RANKED $5 SOL'}</span>
-                <span className="play-pay-option-subtitle">Winner claims the opposing pot</span>
+                <span className="play-pay-option-title">{isLoading ? 'PREPARING...' : 'RANKED'}</span>
+                <span className="play-pay-option-subtitle">Competitive queue</span>
               </span>
-              <span className="play-pay-option-badge">$5</span>
             </button>
 
             <button
@@ -892,7 +891,7 @@ function PlayDialog({
                   </svg>
                 </span>
                 <span className="play-pay-option-copy">
-                  <span className="play-pay-option-title">CREATE GAME</span>
+                  <span className="play-pay-option-title">CUSTOM GAME</span>
                 </span>
               </button>
 
@@ -1015,7 +1014,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
 
   return (
     <GameDialog
-      title="CREATE GAME"
+      title="CUSTOM GAME"
       icon={(
         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
