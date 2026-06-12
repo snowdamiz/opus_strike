@@ -120,7 +120,6 @@ export function MainLobby() {
     suggestedPlayerName,
     hasFullFunctionality,
     connect,
-    disconnect,
     logout,
     authenticate,
     signInWithDiscord,
@@ -382,21 +381,20 @@ export function MainLobby() {
 
       {/* Top Navigation Bar */}
       <nav className="absolute top-0 left-0 right-0 z-20">
-        <div className="menu-nav flex items-center justify-between gap-4">
-          {/* Logo & Tabs */}
-          <div className="flex min-w-0 items-center gap-4 xl:gap-6">
-            <div className="flex shrink-0 items-center gap-3">
-              <div className="w-10 h-10 xl:w-12 xl:h-12 relative flex items-center justify-center">
-                <SlopHeroesMark className="w-full h-full" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="font-display text-lg xl:text-xl text-white tracking-wider whitespace-nowrap">SLOP HEROES</h1>
-                <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
-              </div>
+        <div className="menu-nav main-lobby-nav">
+          {/* Logo */}
+          <div className="main-lobby-brand flex min-w-0 shrink-0 items-center gap-3">
+            <div className="w-10 h-10 xl:w-12 xl:h-12 relative flex items-center justify-center">
+              <SlopHeroesMark className="w-full h-full" />
             </div>
+            <div className="min-w-0">
+              <h1 className="font-display text-lg xl:text-xl text-white tracking-wider whitespace-nowrap">SLOP HEROES</h1>
+              <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
+            </div>
+          </div>
 
-            <div className="flex min-w-0 items-center ml-2 xl:ml-8">
-              {(['play', 'heroes', 'stats', 'loadout'] as MainTab[]).map((tab) => (
+          <div className="main-lobby-tabs flex min-w-0 items-center">
+            {(['play', 'heroes', 'stats', 'loadout'] as MainTab[]).map((tab) => (
  <button
  key={tab}
  onClick={() => { playButtonClick(); setActiveTab(tab); }}
@@ -408,12 +406,11 @@ export function MainLobby() {
  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-orange-500" />
  )}
  </button>
-              ))}
-            </div>
+            ))}
           </div>
 
           {/* Right side controls */}
-          <div className="flex shrink-0 items-center gap-3 xl:gap-4">
+          <div className="main-lobby-controls flex shrink-0 items-center gap-3 xl:gap-4">
             <SocialButton
               onClick={() => {
                 playButtonClick();
@@ -435,7 +432,7 @@ export function MainLobby() {
 
             {/* Conditional: Show sign-in button or profile card */}
             {isAuthenticated && user ? (
-              <div className="flex items-center gap-3 py-1 pl-1 pr-0 rounded-lg group">
+              <div className="flex items-center gap-3 py-1 pl-1 pr-2 rounded-lg">
                 <div
                   className="flex h-11 w-11 shrink-0 items-center justify-center"
                   title={currentRank.label}
@@ -446,16 +443,6 @@ export function MainLobby() {
                   <p className="font-display text-white text-sm">{playerName}</p>
                   <p className="mt-1 font-display text-[10px] uppercase leading-none text-white/70">{currentRank.label}</p>
                 </div>
-                {/* Disconnect button on hover */}
- <button
- onClick={handleDisconnect}
- className="w-8 h-8 shrink-0 opacity-60 group-hover:opacity-100 rounded-lg flex items-center justify-center hover:bg-white/10"
- title="Disconnect wallet"
- >
- <svg className="w-4 h-4 text-white/40 hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
- </svg>
- </button>
               </div>
             ) : (
  <button
@@ -746,9 +733,6 @@ function PlayTab({
         <div className="play-actions-column">
           <div className="play-actions-copy">
             <p className="font-display text-xl text-white sm:text-2xl xl:text-3xl">CHOOSE A MATCH</p>
-            <p className="mt-1 max-w-sm font-body text-xs leading-relaxed text-white/45 sm:text-sm">
-              Jump straight in, browse custom rooms, or queue ranked for SOL stakes.
-            </p>
           </div>
 
         {/* Action Buttons */}
