@@ -21,7 +21,7 @@ interface MeshWorkerResponse {
   positions?: Float32Array;
   normals?: Float32Array;
   uvs?: Float32Array;
-  tileOrigins?: Float32Array;
+  tileLayers?: Float32Array;
   indices?: Uint16Array | Uint32Array;
   buildMs?: number;
   message?: string;
@@ -56,7 +56,7 @@ function createGeometryFromData(
   geometry.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
   geometry.setAttribute('uv2', new THREE.BufferAttribute(data.uvs, 2));
-  geometry.setAttribute('voxelTileOrigin', new THREE.BufferAttribute(data.tileOrigins, 2));
+  geometry.setAttribute('voxelTileLayer', new THREE.BufferAttribute(data.tileLayers, 1));
   geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
   geometry.scale(manifest.voxelSize.x, manifest.voxelSize.y, manifest.voxelSize.z);
   geometry.translate(manifest.origin.x, manifest.origin.y, manifest.origin.z);
@@ -95,7 +95,7 @@ function getMeshWorker(): Worker | null {
       if (!pending) return;
       pendingRegionRequests.delete(message.requestId);
 
-      if (!message.positions || !message.normals || !message.uvs || !message.tileOrigins || !message.indices) {
+      if (!message.positions || !message.normals || !message.uvs || !message.tileLayers || !message.indices) {
         pending.reject(new Error('Voxel mesh worker returned incomplete geometry data'));
         return;
       }
@@ -107,7 +107,7 @@ function getMeshWorker(): Worker | null {
           positions: message.positions,
           normals: message.normals,
           uvs: message.uvs,
-          tileOrigins: message.tileOrigins,
+          tileLayers: message.tileLayers,
           indices: message.indices,
         }
       );

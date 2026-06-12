@@ -1,6 +1,6 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
-import { Environment, OrbitControls, Grid } from '@react-three/drei';
+import { Environment, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { getVoxelMapTheme } from '@voxel-strike/shared';
 import { VoxelWorld } from './VoxelWorld';
@@ -428,14 +428,6 @@ export function GameCanvas({
   const completedWarmupStagesRef = useRef<Set<MapWarmupStageId>>(new Set());
   const didStartGpuRef = useRef<string | null>(null);
   const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
-  const gridCellColor = useMemo(
-    () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
-    [mapTheme]
-  );
-  const gridSectionColor = useMemo(
-    () => new THREE.Color(mapTheme.structures.accent).lerp(new THREE.Color('#ffffff'), 0.18).getStyle(),
-    [mapTheme]
-  );
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
   const shouldMountGameplayObjects = isPlaying || warmupSnapshot.canShowGameplayObjects;
@@ -601,21 +593,6 @@ export function GameCanvas({
           performanceBudget={qualityConfig.budgets}
           prebuildRegions
           onWarmupStatus={handleVoxelWarmupStatus}
-        />
-
-        {/* Grid helper for visibility */}
-        <Grid 
-          args={[100, 100]} 
-          position={[0, 0.01, 0]}
-          cellSize={2}
-          cellThickness={0.22}
-          cellColor={gridCellColor}
-          sectionSize={10}
-          sectionThickness={0.55}
-          sectionColor={gridSectionColor}
-          fadeDistance={78}
-          fadeStrength={1.45}
-          followCamera={false}
         />
 
         {/* Physics boots immediately; player input/simulation waits for terrain readiness. */}
