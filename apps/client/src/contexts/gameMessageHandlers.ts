@@ -33,23 +33,14 @@ import {
 import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
 import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
+import { triggerBlazeRocketJumpStaffSlam } from '../viewmodel/blazePose';
 import {
-  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-  triggerBlazeRocketJumpStaffSlam,
-} from '../viewmodel/blazePose';
-import {
-  CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   triggerChronosAscendantParadoxPose,
   triggerChronosLifelineConduitPose,
   triggerChronosPrimaryShotGlow,
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../viewmodel/hookshotPose';
-import {
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-} from '../viewmodel/phantomPrimaryPose';
-import { readRemoteModelSocketAny } from '../viewmodel/remoteModelSocketRegistry';
+import { resolveAbilitySocketOrigin } from '../model-system/abilitySocketResolver';
 import {
   DRAG_HOOK_SPEED,
   BLAZE_BOMB_FALL_DURATION,
@@ -992,22 +983,19 @@ function toPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: numb
   };
 }
 
-function socketNamesForSide(
-  sockets: Readonly<Record<-1 | 1, string>>,
-  side: -1 | 1 | undefined
-): readonly string[] {
-  return side ? [sockets[side]] : [sockets[1], sockets[-1]];
-}
-
 function resolveObservedStartPosition(
   data: AbilityUsedMessage,
   localPlayerId: string | null,
-  fallback: { x: number; y: number; z: number } | undefined,
-  socketNames: readonly string[]
+  fallback: { x: number; y: number; z: number } | undefined
 ): { x: number; y: number; z: number } | undefined {
   if (data.playerId !== localPlayerId) {
-    const socketPose = readRemoteModelSocketAny(data.playerId, socketNames);
-    if (socketPose) return toPlainPosition(socketPose.position);
+    const resolvedOrigin = resolveAbilitySocketOrigin({
+      ownerScope: 'remoteBody',
+      playerId: data.playerId,
+      abilityId: data.abilityId,
+      side: data.launchSide,
+    });
+    if (resolvedOrigin) return toPlainPosition(resolvedOrigin.position);
   }
 
   return fallback;
@@ -1246,8 +1234,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        socketNamesForSide(PHANTOM_PRIMARY_PALM_SOCKET_NAMES, data.launchSide)
+        fallbackStartPosition
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, launchSide);
@@ -1284,8 +1271,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        [PHANTOM_VOID_RAY_ORB_SOCKET_NAME]
+        fallbackStartPosition
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId);
@@ -1297,7 +1283,6 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           id: `phantom_void_ray_charge_${data.playerId}`,
           playerId: data.playerId,
           abilityId: 'phantom_void_ray_charge',
-          socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
           startPosition,
           startTime: visualStartTime,
           endTime: visualStartTime + (data.durationMs ?? VOID_RAY_CHARGE_TIME),
@@ -1337,8 +1322,7 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        [PHANTOM_VOID_RAY_ORB_SOCKET_NAME]
+        fallbackStartPosition
       );
       stopRemotePhantomCharge(data.playerId);
       stopObservedAbilityCastEffects(data.playerId, 'phantom_void_ray_charge');
@@ -1425,8 +1409,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+        fallbackStartPosition
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, launchSide);
@@ -1461,8 +1444,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+        fallbackStartPosition
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, launchSide);
@@ -1496,8 +1478,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+        fallbackStartPosition
       );
       if (!startPosition || !targetPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, launchSide);
@@ -1544,8 +1525,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        []
+        fallbackStartPosition
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, data.launchSide);
@@ -1574,8 +1554,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        socketNamesForSide(HOOKSHOT_HOOK_SOCKET_NAMES, data.launchSide)
+        fallbackStartPosition
       );
       if (!startPosition || !targetPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, data.launchSide);
@@ -1626,8 +1605,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME]
+        fallbackStartPosition
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId);
@@ -1657,8 +1635,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        [BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME]
+        fallbackStartPosition
       );
       if (!startPosition || !targetPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId);
@@ -1793,8 +1770,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        [CHRONOS_PRIMARY_ORB_SOCKET_NAME]
+        fallbackStartPosition
       );
       if (!startPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId);
@@ -1832,8 +1808,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        [CHRONOS_PRIMARY_ORB_SOCKET_NAME]
+        fallbackStartPosition
       );
       triggerObservedRemoteAttack(data, localPlayerId);
       const predictedVisualId = isLocalPlayer
@@ -1850,7 +1825,6 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           id: `${castId}_cast`,
           playerId: data.playerId,
           abilityId: 'chronos_lifeline_conduit',
-          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
           startPosition,
           startTime: now,
           endTime: now + Math.max(160, releaseDelay),
@@ -1869,8 +1843,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       const startPosition = resolveObservedStartPosition(
         data,
         localPlayerId,
-        fallbackStartPosition,
-        [CHRONOS_PRIMARY_ORB_SOCKET_NAME]
+        fallbackStartPosition
       );
       triggerObservedRemoteAttack(data, localPlayerId);
       const predictedVisualId = isLocalPlayer
@@ -1894,7 +1867,6 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           id: `${castId}_cast`,
           playerId: data.playerId,
           abilityId: 'chronos_timebreak',
-          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
           startPosition,
           startTime: now,
           endTime: now + releaseDelay,
@@ -1912,15 +1884,19 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         const caster = isFreshLocalPlayer
           ? freshStore.localPlayer
           : freshStore.players.get(data.playerId);
-        const socketPose = !isFreshLocalPlayer
-          ? readRemoteModelSocketAny(data.playerId, [CHRONOS_PRIMARY_ORB_SOCKET_NAME])
+        const resolvedOrigin = !isFreshLocalPlayer
+          ? resolveAbilitySocketOrigin({
+            ownerScope: 'remoteBody',
+            playerId: data.playerId,
+            abilityId: 'chronos_timebreak',
+          })
           : null;
         const casterPosition = caster?.position ?? data.position;
         const fallbackEffectPosition = startPosition ?? data.startPosition;
-        if (!casterPosition && !socketPose && !fallbackEffectPosition) return;
+        if (!casterPosition && !resolvedOrigin && !fallbackEffectPosition) return;
 
-        const effectPosition = socketPose
-          ? toPlainPosition(socketPose.position)
+        const effectPosition = resolvedOrigin
+          ? toPlainPosition(resolvedOrigin.position)
           : fallbackEffectPosition ?? {
             x: casterPosition!.x,
             y: casterPosition!.y + 1.18,
@@ -1969,7 +1945,6 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           id: `${castId}_cast`,
           playerId: data.playerId,
           abilityId: 'chronos_ascendant_paradox',
-          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
           startPosition: position
             ? { x: position.x, y: position.y + 1.12, z: position.z }
             : undefined,
@@ -2136,11 +2111,15 @@ export function setupCombatHandlers(room: Room) {
     if (data.abilityId === 'chronos_lifeline_conduit') {
       stopObservedAbilityCastEffects(data.sourceId, 'chronos_lifeline_conduit');
     }
-    const sourceSocketPose = isRemoteSource
-      ? readRemoteModelSocketAny(data.sourceId, [CHRONOS_PRIMARY_ORB_SOCKET_NAME])
+    const sourceOrigin = isRemoteSource
+      ? resolveAbilitySocketOrigin({
+        ownerScope: 'remoteBody',
+        playerId: data.sourceId,
+        abilityId: 'chronos_lifeline_conduit',
+      })
       : null;
-    const sourcePosition = sourceSocketPose
-      ? toPlainPosition(sourceSocketPose.position)
+    const sourcePosition = sourceOrigin
+      ? toPlainPosition(sourceOrigin.position)
       : data.sourcePosition;
 
     addChronosLifelineEffects(
@@ -2151,8 +2130,8 @@ export function setupCombatHandlers(room: Room) {
       undefined,
       isRemoteSource
         ? {
-          sourceIsExact: Boolean(sourceSocketPose),
-          sourceSocketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+          sourceIsExact: Boolean(sourceOrigin),
+          sourceAbilityId: 'chronos_lifeline_conduit',
           sourcePlayerId: data.sourceId,
         }
         : {}

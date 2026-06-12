@@ -31,16 +31,14 @@ import {
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   type PhantomPrimaryPoseSampleContext,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../../viewmodel/phantomPrimaryPose';
 import {
-  sampleViewmodelPose,
-  type ViewmodelSocketPose,
-} from '../../../viewmodel/viewmodelSocketRegistry';
+  resolveAbilitySocketOrigin,
+  type ResolvedAbilitySocketOrigin,
+} from '../../../model-system/abilitySocketResolver';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 
@@ -114,33 +112,40 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     ctx: AbilityContext,
     launchSide: -1 | 1,
     now: number
-  ): ViewmodelSocketPose | null {
+  ): ResolvedAbilitySocketOrigin | null {
     if (!ctx.camera) return null;
-    return sampleViewmodelPose<PhantomPrimaryPoseSampleContext>(
-      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[launchSide],
-      {
+    return resolveAbilitySocketOrigin({
+      ownerScope: 'localViewmodel',
+      abilityId: 'phantom_dire_ball',
+      side: launchSide,
+      sampledContext: {
         camera: ctx.camera,
         elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
         side: launchSide,
         actionTimeSeconds: PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
         timestampMs: ctx.viewmodelNowMs ?? now,
-      }
-    );
+      } satisfies PhantomPrimaryPoseSampleContext,
+      preferSampled: true,
+      warnOnSampleDrift: true,
+    });
   }
 
   function samplePhantomVoidRaySpawn(
     ctx: AbilityContext,
     now: number
-  ): ViewmodelSocketPose | null {
+  ): ResolvedAbilitySocketOrigin | null {
     if (!ctx.camera) return null;
-    return sampleViewmodelPose<PhantomVoidRayOrbPoseSampleContext>(
-      PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-      {
+    return resolveAbilitySocketOrigin({
+      ownerScope: 'localViewmodel',
+      abilityId: 'phantom_void_ray',
+      sampledContext: {
         camera: ctx.camera,
         elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
         timestampMs: ctx.viewmodelNowMs ?? now,
-      }
-    );
+      } satisfies PhantomVoidRayOrbPoseSampleContext,
+      preferSampled: true,
+      warnOnSampleDrift: true,
+    });
   }
 
   const completePhantomPrimaryReload = useCallback(() => {

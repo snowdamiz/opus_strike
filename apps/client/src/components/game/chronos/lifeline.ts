@@ -18,7 +18,7 @@ export interface ChronosLifelineEffectTarget {
 
 interface ChronosLifelineEffectOptions {
   sourceIsExact?: boolean;
-  sourceSocketName?: string;
+  sourceAbilityId?: string;
   sourcePlayerId?: string;
 }
 
@@ -45,7 +45,7 @@ export function addChronosLifelineEffects(
       type: 'lifeline',
       position: source.clone(),
       endPosition: end.clone(),
-      sourceSocketName: options.sourceSocketName,
+      sourceAbilityId: options.sourceAbilityId,
       sourcePlayerId: options.sourcePlayerId,
       duration: durationMs,
     });

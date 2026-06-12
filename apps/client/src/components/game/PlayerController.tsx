@@ -36,6 +36,10 @@ import {
   setChronosPrimaryHeld,
 } from '../../viewmodel/chronosPose';
 import {
+  defaultViewmodelPoseRuntime,
+  resetViewmodelPoseRuntime,
+} from '../../viewmodel/viewmodelPoseRuntime';
+import {
   useCamera,
   useMovement,
   useAbilitySystem,
@@ -279,6 +283,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const lastUnstuckRequestIdRef = useRef(0);
   const pendingUnstuckInputRef = useRef(false);
   const wasSlidingLastFrameRef = useRef(false);
+  const lastViewmodelPoseResetKeyRef = useRef<string | null>(null);
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
@@ -363,6 +368,18 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     startFlamethrowerSound, stopFlamethrowerSound,
   };
 
+  const resetViewmodelPoseState = useCallback((reason: string, heroId: HeroId | null, timestampMs = Date.now()) => {
+    const resetKey = `${reason}:${heroId ?? 'none'}`;
+    if (lastViewmodelPoseResetKeyRef.current === resetKey) return;
+
+    lastViewmodelPoseResetKeyRef.current = resetKey;
+    resetViewmodelPoseRuntime(defaultViewmodelPoseRuntime, heroId);
+    setPhantomPrimaryHeld(false, timestampMs);
+    setBlazeRocketHeld(false, timestampMs);
+    setBlazeBombTargetHeld(false, timestampMs);
+    setChronosPrimaryHeld(false, timestampMs);
+  }, []);
+
   const resetBlazeFlamethrower = useCallback((timestampMs = Date.now()) => {
     const store = useGameStore.getState();
     const hadFlamethrowerState =
@@ -383,9 +400,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   useEffect(() => {
     return () => {
       resetBlazeFlamethrower();
+      resetViewmodelPoseState('unmount', lastHeroIdRef.current as HeroId | null);
       setChronosPrimaryHeld(false);
     };
-  }, [resetBlazeFlamethrower]);
+  }, [resetBlazeFlamethrower, resetViewmodelPoseState]);
 
   // Handle targeting confirmations via click
   const handleClick = useCallback(() => {
@@ -488,10 +506,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         horizontalSpeed: 0,
         updatedAtMs: now,
       });
-      setPhantomPrimaryHeld(false, now);
-      setBlazeRocketHeld(false, now);
-      setBlazeBombTargetHeld(false, now);
-      setChronosPrimaryHeld(false, now);
+      resetViewmodelPoseState('no-local-player', null, now);
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
@@ -526,10 +541,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       setGrappleTrapTargeting(false, false);
       setFlamethrowerActive(false);
       phantomAbilities.resetPhantomPrimaryMagazine();
-      setPhantomPrimaryHeld(false, now);
-      setBlazeRocketHeld(false, now);
-      setBlazeBombTargetHeld(false, now);
-      setChronosPrimaryHeld(false, now);
+      resetViewmodelPoseState('hero-swap', localPlayer.heroId as HeroId, now);
       resetBlazeFlamethrower(now);
       blazeAbilities.resetRocketJump();
     }
@@ -543,10 +555,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         horizontalSpeed: 0,
         updatedAtMs: now,
       });
-      setPhantomPrimaryHeld(false, now);
-      setBlazeRocketHeld(false, now);
-      setBlazeBombTargetHeld(false, now);
-      setChronosPrimaryHeld(false, now);
+      resetViewmodelPoseState('disabled', localPlayer.heroId as HeroId, now);
       setChronosAegisVisualState(localPlayer.id, false, now);
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
@@ -577,7 +586,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
-    const frameInput = (isPointerLocked || isTouchInputActive) ? inputState : INACTIVE_INPUT_STATE;
+    const hasControlInput = isPointerLocked || isTouchInputActive;
+    const frameInput = hasControlInput ? inputState : INACTIVE_INPUT_STATE;
     const hasMovementInput = (
       frameInput.moveForward ||
       frameInput.moveBackward ||
@@ -592,10 +602,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         horizontalSpeed: 0,
         updatedAtMs: now,
       });
-      setPhantomPrimaryHeld(false, now);
-      setBlazeRocketHeld(false, now);
-      setBlazeBombTargetHeld(false, now);
-      setChronosPrimaryHeld(false, now);
+      resetViewmodelPoseState('inactive-player', localPlayer.heroId as HeroId, now);
       setChronosAegisVisualState(localPlayer.id, false, now);
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
@@ -627,6 +634,13 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     // Get hero stats (cached)
     const heroId = localPlayer.heroId as HeroId;
+    defaultViewmodelPoseRuntime.heroId = heroId;
+    if (hasControlInput) {
+      lastViewmodelPoseResetKeyRef.current = null;
+    } else {
+      resetViewmodelPoseState('input-inactive', heroId, now);
+    }
+
     if (cachedHeroStatsRef.current.heroId !== heroId) {
       cachedHeroStatsRef.current.heroId = heroId;
       cachedHeroStatsRef.current.stats = getHeroStats(heroId);

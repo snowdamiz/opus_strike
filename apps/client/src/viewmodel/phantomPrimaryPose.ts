@@ -1,4 +1,8 @@
 import type * as THREE from 'three';
+import {
+  defaultViewmodelPoseRuntime,
+  type ViewmodelPoseRuntime,
+} from './viewmodelPoseRuntime';
 export {
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
@@ -27,23 +31,29 @@ export interface PhantomVoidRayOrbPoseSampleContext {
   timestampMs?: number;
 }
 
-let phantomPrimaryHeld = false;
-let holdChangedAtMs = 0;
-let holdBlendAtChange = 0;
+export function setPhantomPrimaryHeld(
+  held: boolean,
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  const state = runtime.phantom.primary;
+  if (state.held === held) return;
 
-export function setPhantomPrimaryHeld(held: boolean, timestampMs = Date.now()): void {
-  if (phantomPrimaryHeld === held) return;
-
-  holdBlendAtChange = getPhantomPrimaryHeldBlend(timestampMs);
-  phantomPrimaryHeld = held;
-  holdChangedAtMs = timestampMs;
+  state.blendAtChange = getPhantomPrimaryHeldBlend(timestampMs, runtime);
+  state.held = held;
+  state.changedAtMs = timestampMs;
+  runtime.revision += 1;
 }
 
-export function getPhantomPrimaryHeldBlend(timestampMs = Date.now()): number {
-  const targetBlend = phantomPrimaryHeld ? 1 : 0;
-  const elapsedSeconds = Math.max(0, timestampMs - holdChangedAtMs) / 1000;
+export function getPhantomPrimaryHeldBlend(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): number {
+  const state = runtime.phantom.primary;
+  const targetBlend = state.held ? 1 : 0;
+  const elapsedSeconds = Math.max(0, timestampMs - state.changedAtMs) / 1000;
   const progress = smoothstep(0, PHANTOM_PRIMARY_READY_TRANSITION_SECONDS, elapsedSeconds);
-  return holdBlendAtChange + (targetBlend - holdBlendAtChange) * progress;
+  return state.blendAtChange + (targetBlend - state.blendAtChange) * progress;
 }
 
 export function getPhantomPrimaryShotPulse(timeSeconds: number): number {

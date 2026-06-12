@@ -1,9 +1,4 @@
 import {
-  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-  CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-  HOOKSHOT_HOOK_SOCKET_NAMES,
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   quantizeAbilityCastOriginHint,
   type AbilityCastOriginHint,
   type InputState,
@@ -14,49 +9,41 @@ import {
   getBlazeFlamethrowerHeldBlend,
   type BlazeRocketStaffPoseSampleContext,
 } from '../../viewmodel/blazePose';
-import {
-  CHRONOS_PRIMARY_ORB_SOCKET_NAME as CHRONOS_VIEWMODEL_PRIMARY_ORB_SOCKET_NAME,
-  type ChronosPrimaryOrbPoseSampleContext,
-} from '../../viewmodel/chronosPose';
+import type { ChronosPrimaryOrbPoseSampleContext } from '../../viewmodel/chronosPose';
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES as PHANTOM_VIEWMODEL_PRIMARY_PALM_SOCKET_NAMES,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME as PHANTOM_VIEWMODEL_VOID_RAY_ORB_SOCKET_NAME,
   type PhantomPrimaryPoseSampleContext,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
-import { HOOKSHOT_HOOK_SOCKET_NAMES as HOOKSHOT_VIEWMODEL_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
 import {
-  readViewmodelSocket,
-  sampleViewmodelPose,
-  type ViewmodelSocketPose,
-} from '../../viewmodel/viewmodelSocketRegistry';
+  resolveAbilitySocketOrigin,
+  type ResolvedAbilitySocketOrigin,
+} from '../../model-system/abilitySocketResolver';
 import type { AbilityContext } from './types';
 
 interface BuildAbilityCastOriginHintOptions {
   bombTargeting?: boolean;
 }
 
-function plainOrigin(pose: ViewmodelSocketPose): { x: number; y: number; z: number } {
+function plainOrigin(origin: ResolvedAbilitySocketOrigin): { x: number; y: number; z: number } {
   return {
-    x: pose.position.x,
-    y: pose.position.y,
-    z: pose.position.z,
+    x: origin.position.x,
+    y: origin.position.y,
+    z: origin.position.z,
   };
 }
 
-function hintFromPose(
+function hintFromOrigin(
   abilityId: string,
-  socketName: string,
-  pose: ViewmodelSocketPose | null
+  origin: ResolvedAbilitySocketOrigin | null
 ): AbilityCastOriginHint | null {
-  if (!pose) return null;
+  if (!origin) return null;
 
   return quantizeAbilityCastOriginHint({
     abilityId,
-    socketName,
-    origin: plainOrigin(pose),
-    sampledAtMs: pose.timestampMs,
+    socketName: origin.socketName,
+    origin: plainOrigin(origin),
+    sampledAtMs: origin.timestampMs,
   });
 }
 
@@ -74,67 +61,101 @@ function pushHint(
   hints.push(hint);
 }
 
-function sampleBlazeStaffPose(
+function resolveBlazeStaffOrigin(
   ctx: AbilityContext,
+  abilityId: string,
   now: number,
   holdBlend: number
-): ViewmodelSocketPose | null {
+): ResolvedAbilitySocketOrigin | null {
   if (!ctx.camera) return null;
 
-  return sampleViewmodelPose<BlazeRocketStaffPoseSampleContext>(
-    BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-    {
+  return resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId,
+    sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
       holdBlend,
       timestampMs: ctx.viewmodelNowMs ?? now,
-    }
-  );
+    } satisfies BlazeRocketStaffPoseSampleContext,
+    preferSampled: true,
+    warnOnSampleDrift: true,
+  });
 }
 
-function samplePhantomPrimaryPose(
+function resolvePhantomPrimaryOrigin(
   ctx: AbilityContext,
+  abilityId: string,
   side: -1 | 1,
   now: number
-): ViewmodelSocketPose | null {
+): ResolvedAbilitySocketOrigin | null {
   if (!ctx.camera) return null;
 
-  return sampleViewmodelPose<PhantomPrimaryPoseSampleContext>(
-    PHANTOM_VIEWMODEL_PRIMARY_PALM_SOCKET_NAMES[side],
-    {
+  return resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId,
+    side,
+    sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
       side,
       actionTimeSeconds: PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
       timestampMs: ctx.viewmodelNowMs ?? now,
-    }
-  );
+    } satisfies PhantomPrimaryPoseSampleContext,
+    preferSampled: true,
+    warnOnSampleDrift: true,
+  });
 }
 
-function samplePhantomVoidRayPose(ctx: AbilityContext, now: number): ViewmodelSocketPose | null {
+function resolvePhantomVoidRayOrigin(
+  ctx: AbilityContext,
+  abilityId: string,
+  now: number
+): ResolvedAbilitySocketOrigin | null {
   if (!ctx.camera) return null;
 
-  return sampleViewmodelPose<PhantomVoidRayOrbPoseSampleContext>(
-    PHANTOM_VIEWMODEL_VOID_RAY_ORB_SOCKET_NAME,
-    {
+  return resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId,
+    sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
       timestampMs: ctx.viewmodelNowMs ?? now,
-    }
-  );
+    } satisfies PhantomVoidRayOrbPoseSampleContext,
+    preferSampled: true,
+    warnOnSampleDrift: true,
+  });
 }
 
-function sampleChronosPrimaryPose(ctx: AbilityContext, now: number): ViewmodelSocketPose | null {
+function resolveChronosPrimaryOrigin(
+  ctx: AbilityContext,
+  abilityId: string,
+  now: number
+): ResolvedAbilitySocketOrigin | null {
   if (!ctx.camera) return null;
 
-  return sampleViewmodelPose<ChronosPrimaryOrbPoseSampleContext>(
-    CHRONOS_VIEWMODEL_PRIMARY_ORB_SOCKET_NAME,
-    {
+  return resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId,
+    sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
       timestampMs: ctx.viewmodelNowMs ?? now,
-    }
-  );
+    } satisfies ChronosPrimaryOrbPoseSampleContext,
+    preferSampled: true,
+    warnOnSampleDrift: true,
+  });
+}
+
+function resolveLiveLocalOrigin(
+  abilityId: string,
+  side?: -1 | 1
+): ResolvedAbilitySocketOrigin | null {
+  return resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId,
+    side,
+  });
 }
 
 export function buildAbilityCastOriginHints(
@@ -154,26 +175,30 @@ export function buildAbilityCastOriginHints(
         pushHint(
           hints,
           seen,
-          hintFromPose(
+          hintFromOrigin(
             'phantom_dire_ball',
-            PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side],
-            samplePhantomPrimaryPose(ctx, side, now)
+            resolvePhantomPrimaryOrigin(ctx, 'phantom_dire_ball', side, now)
           )
         );
       }
     }
 
     if (input.secondaryFire) {
-      const voidRayPose = samplePhantomVoidRayPose(ctx, now);
       pushHint(
         hints,
         seen,
-        hintFromPose('phantom_void_ray_charge', PHANTOM_VOID_RAY_ORB_SOCKET_NAME, voidRayPose)
+        hintFromOrigin(
+          'phantom_void_ray_charge',
+          resolvePhantomVoidRayOrigin(ctx, 'phantom_void_ray_charge', now)
+        )
       );
       pushHint(
         hints,
         seen,
-        hintFromPose('phantom_void_ray', PHANTOM_VOID_RAY_ORB_SOCKET_NAME, voidRayPose)
+        hintFromOrigin(
+          'phantom_void_ray',
+          resolvePhantomVoidRayOrigin(ctx, 'phantom_void_ray', now)
+        )
       );
     }
   }
@@ -184,10 +209,9 @@ export function buildAbilityCastOriginHints(
         pushHint(
           hints,
           seen,
-          hintFromPose(
+          hintFromOrigin(
             'hookshot_basic_attack',
-            HOOKSHOT_HOOK_SOCKET_NAMES[side],
-            readViewmodelSocket(HOOKSHOT_VIEWMODEL_HOOK_SOCKET_NAMES[side])
+            resolveLiveLocalOrigin('hookshot_basic_attack', side)
           )
         );
       }
@@ -197,10 +221,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'hookshot_heavy_attack',
-          HOOKSHOT_HOOK_SOCKET_NAMES[1],
-          readViewmodelSocket(HOOKSHOT_VIEWMODEL_HOOK_SOCKET_NAMES[1])
+          resolveLiveLocalOrigin('hookshot_heavy_attack')
         )
       );
     }
@@ -209,10 +232,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'hookshot_grapple',
-          HOOKSHOT_HOOK_SOCKET_NAMES[1],
-          readViewmodelSocket(HOOKSHOT_VIEWMODEL_HOOK_SOCKET_NAMES[1])
+          resolveLiveLocalOrigin('hookshot_grapple')
         )
       );
     }
@@ -221,10 +243,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'hookshot_grapple_trap',
-          HOOKSHOT_HOOK_SOCKET_NAMES[1],
-          readViewmodelSocket(HOOKSHOT_VIEWMODEL_HOOK_SOCKET_NAMES[1])
+          resolveLiveLocalOrigin('hookshot_grapple_trap')
         )
       );
     }
@@ -235,10 +256,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'blaze_rocket',
-          BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-          sampleBlazeStaffPose(ctx, now, 1)
+          resolveBlazeStaffOrigin(ctx, 'blaze_rocket', now, 1)
         )
       );
     }
@@ -247,10 +267,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'blaze_flamethrower',
-          BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-          sampleBlazeStaffPose(ctx, now, getBlazeFlamethrowerHeldBlend(now))
+          resolveBlazeStaffOrigin(ctx, 'blaze_flamethrower', now, getBlazeFlamethrowerHeldBlend(now))
         )
       );
     }
@@ -259,10 +278,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'blaze_bomb',
-          BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-          sampleBlazeStaffPose(ctx, now, getBlazeBombTargetHeldBlend(now))
+          resolveBlazeStaffOrigin(ctx, 'blaze_bomb', now, getBlazeBombTargetHeldBlend(now))
         )
       );
     }
@@ -271,10 +289,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'blaze_rocketjump',
-          BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-          sampleBlazeStaffPose(ctx, now + BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS, 1)
+          resolveBlazeStaffOrigin(ctx, 'blaze_rocketjump', now + BLAZE_ROCKET_JUMP_IMPACT_DELAY_MS, 1)
         )
       );
     }
@@ -285,10 +302,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'chronos_verdant_pulse',
-          CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-          sampleChronosPrimaryPose(ctx, now)
+          resolveChronosPrimaryOrigin(ctx, 'chronos_verdant_pulse', now)
         )
       );
     }
@@ -297,10 +313,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'chronos_lifeline_conduit',
-          CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-          sampleChronosPrimaryPose(ctx, now)
+          resolveChronosPrimaryOrigin(ctx, 'chronos_lifeline_conduit', now)
         )
       );
     }
@@ -309,10 +324,9 @@ export function buildAbilityCastOriginHints(
       pushHint(
         hints,
         seen,
-        hintFromPose(
+        hintFromOrigin(
           'chronos_timebreak',
-          CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-          sampleChronosPrimaryPose(ctx, now)
+          resolveChronosPrimaryOrigin(ctx, 'chronos_timebreak', now)
         )
       );
     }

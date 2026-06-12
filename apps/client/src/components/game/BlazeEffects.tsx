@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import {
-  BLAZE_FLAMETHROWER_SOCKET,
-  calculatePlayerSocketPosition,
-  type Player,
-} from '@voxel-strike/shared';
+import { type Player } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
 import { playSharedLoop, setSharedLoopPosition, stopSharedLoop } from '../../hooks/useAudio';
 import { visualStore } from '../../store/visualStore';
-import { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '../../viewmodel/blazePose';
-import { readRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
+import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
 import {
   RocketsManager,
   RocketJumpExplosions,
@@ -39,21 +34,29 @@ function resolveRemoteFlamethrowerPose(player: Player | undefined): Flamethrower
 
   const visualState = visualStore.getState();
   const visualPosition = visualState.playerPositions.get(player.id) ?? player.position;
-  const socketPose = readRemoteModelSocket(player.id, BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME);
   const yaw = visualState.playerRotations.get(player.id) ?? player.lookYaw;
   const pitch = player.lookPitch;
   const cosPitch = Math.cos(pitch);
   const forwardX = -Math.sin(yaw);
   const forwardZ = -Math.cos(yaw);
+  const socketOrigin = resolveAbilitySocketOrigin({
+    ownerScope: 'remoteBody',
+    playerId: player.id,
+    abilityId: 'blaze_flamethrower',
+    fallback: {
+      position: visualPosition,
+      yaw,
+    },
+  });
 
   return {
-    origin: socketPose
+    origin: socketOrigin
       ? {
-        x: socketPose.position.x,
-        y: socketPose.position.y,
-        z: socketPose.position.z,
+        x: socketOrigin.position.x,
+        y: socketOrigin.position.y,
+        z: socketOrigin.position.z,
       }
-      : calculatePlayerSocketPosition(visualPosition, yaw, BLAZE_FLAMETHROWER_SOCKET),
+      : visualPosition,
     direction: {
       x: forwardX * cosPitch,
       y: Math.sin(pitch),

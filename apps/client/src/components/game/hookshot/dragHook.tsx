@@ -14,8 +14,7 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
-import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
+import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import {
   HEAVY_HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -47,13 +46,11 @@ const DRAG_HOOK_OUTER_GLOW_MATERIAL = new THREE.MeshBasicMaterial({
 });
 
 function writeLocalDragHookSocketPosition(out: { x: number; y: number; z: number }, launchSide: -1 | 1): boolean {
-  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
-  if (!socketPose) return false;
-
-  out.x = socketPose.position.x;
-  out.y = socketPose.position.y;
-  out.z = socketPose.position.z;
-  return true;
+  return writeAbilitySocketOrigin(out, {
+    ownerScope: 'localViewmodel',
+    abilityId: 'hookshot_heavy_attack',
+    side: launchSide,
+  });
 }
 
 interface DragHookProps {
@@ -107,7 +104,8 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     yaw: hook.launchYaw,
-    socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
+    abilityId: 'hookshot_heavy_attack',
+    side: launchSide,
   };
   
   const removeDragHook = useGameStore(state => state.removeDragHook);

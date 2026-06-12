@@ -14,8 +14,7 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
-import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
+import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -42,13 +41,11 @@ const HOOK_RETRACT_SPEED = 50;
 const getHookMaterials = () => getHookshotMaterials();
 
 function writeLocalHookSocketPosition(out: { x: number; y: number; z: number }, launchSide: -1 | 1): boolean {
-  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
-  if (!socketPose) return false;
-
-  out.x = socketPose.position.x;
-  out.y = socketPose.position.y;
-  out.z = socketPose.position.z;
-  return true;
+  return writeAbilitySocketOrigin(out, {
+    ownerScope: 'localViewmodel',
+    abilityId: 'hookshot_basic_attack',
+    side: launchSide,
+  });
 }
 
 interface HookProjectileProps {
@@ -96,7 +93,8 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     yaw: hook.launchYaw,
-    socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
+    abilityId: 'hookshot_basic_attack',
+    side: launchSide,
   };
   
   // Get store actions once (not in useFrame)

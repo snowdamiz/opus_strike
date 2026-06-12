@@ -1,8 +1,7 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { readViewmodelSocket } from '../../viewmodel/viewmodelSocketRegistry';
-import { readRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
+import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
 
 interface Effect {
   id: string;
@@ -10,7 +9,7 @@ interface Effect {
   position: THREE.Vector3;
   direction?: THREE.Vector3;
   endPosition?: THREE.Vector3;
-  sourceSocketName?: string;
+  sourceAbilityId?: string;
   sourcePlayerId?: string;
   startTime: number;
   duration: number;
@@ -301,14 +300,14 @@ function LifelineBeamEffect({ effect }: EffectProps) {
     const group = groupRef.current;
     if (!group) return;
 
-    const socketPose = effect.sourceSocketName
-      ? (
-        effect.sourcePlayerId
-          ? readRemoteModelSocket(effect.sourcePlayerId, effect.sourceSocketName)
-          : readViewmodelSocket(effect.sourceSocketName)
-      )
+    const socketOrigin = effect.sourceAbilityId
+      ? resolveAbilitySocketOrigin({
+        ownerScope: effect.sourcePlayerId ? 'remoteBody' : 'localViewmodel',
+        playerId: effect.sourcePlayerId,
+        abilityId: effect.sourceAbilityId,
+      })
       : null;
-    source.copy(socketPose?.position ?? effect.position);
+    source.copy(socketOrigin?.position ?? effect.position);
     end.copy(effect.endPosition ?? source);
     direction.copy(end).sub(source);
     const length = Math.max(0.001, direction.length());

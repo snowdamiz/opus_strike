@@ -1,4 +1,5 @@
 import { calculatePlayerSocketPosition, type Player } from '@voxel-strike/shared';
+import { resolveAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import { visualStore } from '../../../store/visualStore';
 import {
   readRemoteModelSocketAny,
@@ -17,6 +18,8 @@ interface OwnerVisualOffset {
   yaw?: number;
   socketName?: string;
   socketNames?: readonly string[];
+  abilityId?: string;
+  side?: -1 | 1;
 }
 
 export function getOwnerVisualPosition(
@@ -27,6 +30,22 @@ export function getOwnerVisualPosition(
   localPlayer: Player | null,
   offset: OwnerVisualOffset = {}
 ): Position {
+  if (offset.abilityId) {
+    const resolvedOrigin = resolveAbilitySocketOrigin({
+      ownerScope: 'remoteBody',
+      playerId: ownerId,
+      abilityId: offset.abilityId,
+      side: offset.side,
+    });
+    if (resolvedOrigin) {
+      return {
+        x: resolvedOrigin.position.x,
+        y: resolvedOrigin.position.y,
+        z: resolvedOrigin.position.z,
+      };
+    }
+  }
+
   const remoteSocketNames = offset.socketNames ?? (offset.socketName ? [offset.socketName] : undefined);
   const socketPose = remoteSocketNames ? readRemoteModelSocketAny(ownerId, remoteSocketNames) : null;
   if (socketPose) {
@@ -62,6 +81,21 @@ export function writeOwnerVisualPosition(
   localPlayer: Player | null,
   offset: OwnerVisualOffset = {}
 ): Position {
+  if (offset.abilityId) {
+    const resolvedOrigin = resolveAbilitySocketOrigin({
+      ownerScope: 'remoteBody',
+      playerId: ownerId,
+      abilityId: offset.abilityId,
+      side: offset.side,
+    });
+    if (resolvedOrigin) {
+      out.x = resolvedOrigin.position.x;
+      out.y = resolvedOrigin.position.y;
+      out.z = resolvedOrigin.position.z;
+      return out;
+    }
+  }
+
   const remoteSocketNames = offset.socketNames ?? (offset.socketName ? [offset.socketName] : undefined);
   if (remoteSocketNames && writeRemoteModelSocketPosition(out, ownerId, remoteSocketNames)) {
     return out;

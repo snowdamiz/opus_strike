@@ -36,12 +36,7 @@ import {
   BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
-  BLAZE_FLAMETHROWER_SOCKET,
-  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-  BLAZE_ROCKET_STAFF_SOCKET,
   BLAZE_GEARSTORM_RADIUS,
-  CHRONOS_PRIMARY_ORB_SOCKET,
-  CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
@@ -64,15 +59,9 @@ import {
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
-  HOOKSHOT_CHAIN_SOCKET,
-  HOOKSHOT_HOOK_SOCKET_NAMES,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_RELOAD_MS,
-  PHANTOM_DIRE_BALL_SOCKET,
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
-  PHANTOM_VOID_RAY_SOCKET,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_HEIGHT,
@@ -98,6 +87,7 @@ import {
   normalizeLookYaw,
   clampLookPitch,
   calculatePlayerSocketPosition,
+  resolveAbilitySocket,
   getPlayerBodyAimPosition as getSharedPlayerBodyAimPosition,
   getPlayerEyePosition as getSharedPlayerEyePosition,
   getSegmentHitAgainstPlayerCombatHitbox,
@@ -4135,6 +4125,27 @@ export class GameRoom extends Room<GameState> {
       : fallbackOrigin;
   }
 
+  private getAbilitySocketCastOrigin(
+    player: Player,
+    abilityId: string,
+    launchSide: -1 | 1 = 1
+  ): PlainVec3 {
+    const resolved = resolveAbilitySocket({ abilityId, side: launchSide });
+    if (!resolved) {
+      return this.vec3SchemaToPlain(player.position);
+    }
+
+    const fallbackOrigin = calculatePlayerSocketPosition(
+      player.position,
+      player.lookYaw,
+      resolved.fallbackOffset
+    );
+    const socketName = resolved.socketNames[0];
+    return socketName
+      ? this.resolveValidatedCastOriginHint(player, abilityId, socketName, fallbackOrigin)
+      : fallbackOrigin;
+  }
+
   private normalize3D(vector: PlainVec3): PlainVec3 | null {
     const length = Math.sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
     if (length <= 0.0001) return null;
@@ -4197,15 +4208,7 @@ export class GameRoom extends Room<GameState> {
     abilityId: 'hookshot_basic_attack' | 'hookshot_heavy_attack'
   ): { startPosition: PlainVec3; aimDirection: PlainVec3 } {
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
-    const startPosition = this.getPhantomCastOrigin(
-      player,
-      HOOKSHOT_CHAIN_SOCKET,
-      launchSide,
-      {
-        abilityId,
-        socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
-      }
-    );
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
     const aimOrigin = this.getHookshotAimOrigin(player);
     const aimPoint = this.raycastTerrain(aimOrigin, lookDirection, maxDistance)
       ?? this.addScaled3D(aimOrigin, lookDirection, maxDistance);
@@ -4263,15 +4266,7 @@ export class GameRoom extends Room<GameState> {
   private resolveHookshotTrapTarget(player: Player): { startPosition: PlainVec3; targetPosition: PlainVec3; velocity: PlainVec3 } {
     const direction = this.getForwardVector(player.lookYaw, player.lookPitch);
     const launchSide = 1;
-    const startPosition = this.getPhantomCastOrigin(
-      player,
-      HOOKSHOT_CHAIN_SOCKET,
-      launchSide,
-      {
-        abilityId: 'hookshot_grapple_trap',
-        socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
-      }
-    );
+    const startPosition = this.getAbilitySocketCastOrigin(player, 'hookshot_grapple_trap', launchSide);
 
     let targetPosition = this.addScaled3D(startPosition, direction, GRAPPLE_TRAP_MAX_RANGE);
     const directHit = this.raycastTerrain(this.getHookshotAimOrigin(player), direction, GRAPPLE_TRAP_MAX_RANGE + 10);
@@ -4503,15 +4498,7 @@ export class GameRoom extends Room<GameState> {
     const castId = this.nextBlazeCastId(player.id, 'blaze_rocket', this.blazeRocketIdCounter++);
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getBlazeAimOrigin(player);
-    const startPosition = this.getPhantomCastOrigin(
-      player,
-      BLAZE_ROCKET_STAFF_SOCKET,
-      1,
-      {
-        abilityId: 'blaze_rocket',
-        socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-      }
-    );
+    const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_rocket');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
     const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
     const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
@@ -4588,15 +4575,7 @@ export class GameRoom extends Room<GameState> {
     const castId = this.nextPhantomCastId(player.id, 'chronos_verdant_pulse');
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
     const aimOrigin = this.getChronosAimOrigin(player);
-    const socketPosition = this.getPhantomCastOrigin(
-      player,
-      CHRONOS_PRIMARY_ORB_SOCKET,
-      1,
-      {
-        abilityId: 'chronos_verdant_pulse',
-        socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-      }
-    );
+    const socketPosition = this.getAbilitySocketCastOrigin(player, 'chronos_verdant_pulse');
     const terrainHit = this.raycastTerrain(aimOrigin, lookDirection, CHRONOS_VERDANT_PULSE_AIM_DISTANCE);
     const target = this.findTargetInAimCone(player, attack.range, attack.coneDot);
     const targetPoint = target ? this.getPlayerBodyAimPosition(target) : null;
@@ -4679,15 +4658,7 @@ export class GameRoom extends Room<GameState> {
   private dropBlazeBomb(player: Player, attack: AttackConfig, now: number): void {
     const castId = this.nextBlazeCastId(player.id, 'blaze_bomb', this.blazeBombIdCounter++);
     const targetPosition = this.resolveBlazeBombTarget(player);
-    const startPosition = this.getPhantomCastOrigin(
-      player,
-      BLAZE_ROCKET_STAFF_SOCKET,
-      1,
-      {
-        abilityId: 'blaze_bomb',
-        socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-      }
-    );
+    const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_bomb');
     const impactTime = now + BLAZE_BOMB_FALL_DURATION_MS;
 
     this.queuePendingAreaDamage({
@@ -4729,16 +4700,7 @@ export class GameRoom extends Room<GameState> {
     const launchSide = abilityId === 'phantom_dire_ball'
       ? this.getNextPhantomPrimaryLaunchSide(player.id)
       : 1;
-    const socket = abilityId === 'phantom_dire_ball'
-      ? PHANTOM_DIRE_BALL_SOCKET
-      : PHANTOM_VOID_RAY_SOCKET;
-    const socketName = abilityId === 'phantom_dire_ball'
-      ? PHANTOM_PRIMARY_PALM_SOCKET_NAMES[launchSide]
-      : PHANTOM_VOID_RAY_ORB_SOCKET_NAME;
-    const startPosition = this.getPhantomCastOrigin(player, socket, launchSide, {
-      abilityId,
-      socketName,
-    });
+    const startPosition = this.getAbilitySocketCastOrigin(player, abilityId, launchSide);
     const magazine = abilityId === 'phantom_dire_ball'
       ? this.getOrCreatePhantomPrimaryMagazine(player)
       : null;
@@ -4767,15 +4729,7 @@ export class GameRoom extends Room<GameState> {
       abilityId: 'phantom_void_ray_charge',
       castId: this.nextPhantomCastId(player.id, 'phantom_void_ray_charge'),
       position: this.vec3SchemaToPlain(player.position),
-      startPosition: this.getPhantomCastOrigin(
-        player,
-        PHANTOM_VOID_RAY_SOCKET,
-        1,
-        {
-          abilityId: 'phantom_void_ray_charge',
-          socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-        }
-      ),
+      startPosition: this.getAbilitySocketCastOrigin(player, 'phantom_void_ray_charge'),
       aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
@@ -4947,15 +4901,7 @@ export class GameRoom extends Room<GameState> {
         abilityId: result.abilityId,
         castId: this.nextPhantomCastId(player.id, result.abilityId),
         position: this.vec3SchemaToPlain(player.position),
-        startPosition: this.getPhantomCastOrigin(
-          player,
-          CHRONOS_PRIMARY_ORB_SOCKET,
-          1,
-          {
-            abilityId: 'chronos_lifeline_conduit',
-            socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-          }
-        ),
+        startPosition: this.getAbilitySocketCastOrigin(player, 'chronos_lifeline_conduit'),
         targetIds: chronosLifelineTargets.map((target) => target.id),
         ownerTeam: player.team,
         serverTime: usedAt,
@@ -4989,15 +4935,7 @@ export class GameRoom extends Room<GameState> {
 
       if (result.abilityId === 'hookshot_grapple' && hookshotGrappleTarget) {
         const launchSide = 1;
-        const startPosition = this.getPhantomCastOrigin(
-          player,
-          HOOKSHOT_CHAIN_SOCKET,
-          launchSide,
-          {
-            abilityId: 'hookshot_grapple',
-            socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
-          }
-        );
+        const startPosition = this.getAbilitySocketCastOrigin(player, 'hookshot_grapple', launchSide);
         const aimDirection = this.normalize3D({
           x: hookshotGrappleTarget.x - startPosition.x,
           y: hookshotGrappleTarget.y - startPosition.y,
@@ -5123,25 +5061,9 @@ export class GameRoom extends Room<GameState> {
       ? this.vec3SchemaToPlain(player.velocity)
       : undefined;
     const abilityStartPosition = result.abilityId === 'blaze_rocketjump'
-      ? this.getPhantomCastOrigin(
-        player,
-        BLAZE_ROCKET_STAFF_SOCKET,
-        1,
-        {
-          abilityId: 'blaze_rocketjump',
-          socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-        }
-      )
+      ? this.getAbilitySocketCastOrigin(player, 'blaze_rocketjump')
       : result.abilityId === 'chronos_timebreak'
-        ? this.getPhantomCastOrigin(
-          player,
-          CHRONOS_PRIMARY_ORB_SOCKET,
-          1,
-          {
-            abilityId: 'chronos_timebreak',
-            socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-          }
-        )
+        ? this.getAbilitySocketCastOrigin(player, 'chronos_timebreak')
         : startedAt;
 
     // Broadcast ability use
@@ -8078,12 +8000,7 @@ export class GameRoom extends Room<GameState> {
     };
 
     return {
-      origin: this.resolveValidatedCastOriginHint(
-        player,
-        'blaze_flamethrower',
-        BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-        calculatePlayerSocketPosition(player.position, player.lookYaw, BLAZE_FLAMETHROWER_SOCKET)
-      ),
+      origin: this.getAbilitySocketCastOrigin(player, 'blaze_flamethrower'),
       direction: forward,
     };
   }

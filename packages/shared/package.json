@@ -18,6 +18,7 @@
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "test:rank": "pnpm build && node scripts/ranking.test.mjs",
+    "test:model-sockets": "pnpm build && node scripts/ability-socket-catalog.test.mjs",
     "smoke:buildings": "pnpm build && node scripts/procedural-building-smoke.mjs",
     "clean": "rm -rf dist"
   },

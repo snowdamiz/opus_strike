@@ -28,7 +28,6 @@ import {
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
-  BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
   clearBlazeRocketJumpStaffSlam,
   getBlazeFlamethrowerHeldBlend,
   setBlazeFlamethrowerHeld,
@@ -38,9 +37,9 @@ import {
   type BlazeRocketStaffPoseSampleContext,
 } from '../../../viewmodel/blazePose';
 import {
-  sampleViewmodelPose,
-  type ViewmodelSocketPose,
-} from '../../../viewmodel/viewmodelSocketRegistry';
+  resolveAbilitySocketOrigin,
+  type ResolvedAbilitySocketOrigin,
+} from '../../../model-system/abilitySocketResolver';
 import type { AbilityContext, PlayerSounds } from '../types';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
@@ -54,22 +53,26 @@ function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z
 
 function sampleBlazeStaffTipPose(
   ctx: AbilityContext,
+  abilityId: string,
   nowMs: number,
   holdBlend: number
-): ViewmodelSocketPose | null {
+): ResolvedAbilitySocketOrigin | null {
   if (!ctx.camera) return null;
 
   ctx.camera.updateMatrixWorld();
 
-  return sampleViewmodelPose<BlazeRocketStaffPoseSampleContext>(
-    BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-    {
+  return resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId,
+    sampledContext: {
       camera: ctx.camera,
       elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
       holdBlend,
       timestampMs: ctx.viewmodelNowMs ?? nowMs,
-    }
-  );
+    } satisfies BlazeRocketStaffPoseSampleContext,
+    preferSampled: true,
+    warnOnSampleDrift: true,
+  });
 }
 
 function calculateBlazeFlamethrowerPose(
@@ -196,7 +199,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     rocketIdRef.current += 1;
     const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const holdBlend = 1;
-    const staffTipPose = sampleBlazeStaffTipPose(ctx, now, holdBlend);
+    const staffTipPose = sampleBlazeStaffTipPose(ctx, 'blaze_rocket', now, holdBlend);
     const startPosition = staffTipPose
       ? vectorToPlainPosition(staffTipPose.position)
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, BLAZE_ROCKET_STAFF_SOCKET);
@@ -301,7 +304,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
       setFlamethrowerActive(true);
 
       const holdBlend = getBlazeFlamethrowerHeldBlend(timestampMs);
-      const staffTipPose = sampleBlazeStaffTipPose(ctx, now, holdBlend);
+      const staffTipPose = sampleBlazeStaffTipPose(ctx, 'blaze_flamethrower', now, holdBlend);
       const staffTipOrigin = staffTipPose ? vectorToPlainPosition(staffTipPose.position) : undefined;
       const { origin, direction } = calculateBlazeFlamethrowerPose(ctx, staffTipOrigin);
       setFlamethrowerVisualPose(origin, direction);

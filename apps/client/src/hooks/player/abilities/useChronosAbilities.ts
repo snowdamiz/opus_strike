@@ -18,7 +18,6 @@ import {
 } from '../constants';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import {
-  CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   triggerChronosAscendantParadoxPose,
   triggerChronosLifelineConduitPose,
   triggerChronosPrimaryShotGlow,
@@ -26,9 +25,9 @@ import {
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../../viewmodel/chronosPose';
 import {
-  sampleViewmodelPose,
-  type ViewmodelSocketPose,
-} from '../../../viewmodel/viewmodelSocketRegistry';
+  resolveAbilitySocketOrigin,
+  type ResolvedAbilitySocketOrigin,
+} from '../../../model-system/abilitySocketResolver';
 import {
   CHRONOS_VERDANT_PULSE_SHOT_PITCH,
   CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
@@ -69,16 +68,19 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
   const timebreakIdRef = useRef(0);
   const primaryHoldStartedAtRef = useRef(0);
 
-  function sampleChronosPrimarySpawn(ctx: AbilityContext, now: number): ViewmodelSocketPose | null {
+  function sampleChronosPrimarySpawn(ctx: AbilityContext, now: number): ResolvedAbilitySocketOrigin | null {
     if (!ctx.camera) return null;
-    return sampleViewmodelPose<ChronosPrimaryOrbPoseSampleContext>(
-      CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-      {
+    return resolveAbilitySocketOrigin({
+      ownerScope: 'localViewmodel',
+      abilityId: 'chronos_verdant_pulse',
+      sampledContext: {
         camera: ctx.camera,
         elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
         timestampMs: ctx.viewmodelNowMs ?? now,
-      }
-    );
+      } satisfies ChronosPrimaryOrbPoseSampleContext,
+      preferSampled: true,
+      warnOnSampleDrift: true,
+    });
   }
 
   const executeLifelineConduit = useCallback((

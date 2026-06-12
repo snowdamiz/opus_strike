@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
-import { readRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
+import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
 import { SHARED_GEOMETRIES } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 
@@ -17,7 +17,7 @@ export interface ObservedAbilityCastEffectInput {
   id: string;
   playerId: string;
   abilityId: ObservedAbilityCastEffectKind;
-  socketName: string;
+  socketName?: string;
   startPosition?: { x: number; y: number; z: number };
   startTime?: number;
   endTime: number;
@@ -26,7 +26,8 @@ export interface ObservedAbilityCastEffectInput {
   scale?: number;
 }
 
-interface ObservedAbilityCastEffectData extends Required<Omit<ObservedAbilityCastEffectInput, 'startPosition' | 'scale'>> {
+interface ObservedAbilityCastEffectData extends Required<Omit<ObservedAbilityCastEffectInput, 'socketName' | 'startPosition' | 'scale'>> {
+  socketName?: string;
   startPosition?: { x: number; y: number; z: number };
   scale: number;
 }
@@ -112,9 +113,13 @@ function writeObservedCastPosition(
   effect: ObservedAbilityCastEffectData,
   target: THREE.Vector3
 ): boolean {
-  const socketPose = readRemoteModelSocket(effect.playerId, effect.socketName);
-  if (socketPose) {
-    target.copy(socketPose.position);
+  const resolvedOrigin = resolveAbilitySocketOrigin({
+    ownerScope: 'remoteBody',
+    playerId: effect.playerId,
+    abilityId: effect.abilityId,
+  });
+  if (resolvedOrigin) {
+    target.copy(resolvedOrigin.position);
     return true;
   }
 

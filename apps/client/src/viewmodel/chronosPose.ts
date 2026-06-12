@@ -5,6 +5,11 @@ import {
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
 } from '@voxel-strike/shared';
+import {
+  defaultViewmodelPoseRuntime,
+  type ChronosViewmodelPoseRuntime,
+  type ViewmodelPoseRuntime,
+} from './viewmodelPoseRuntime';
 
 export { CHRONOS_PRIMARY_ORB_SOCKET_NAME };
 export const CHRONOS_PRIMARY_READY_TRANSITION_SECONDS = 0.18;
@@ -32,35 +37,48 @@ export interface ChronosPrimaryOrbPoseSampleContext {
   timestampMs?: number;
 }
 
-let chronosPrimaryHeld = false;
-let chronosPrimaryHoldChangedAtMs = 0;
-let chronosPrimaryHoldBlendAtChange = 0;
-let chronosPrimaryShotGlowStartedAtMs = -Infinity;
-let chronosLifelineConduitStartedAtMs = -Infinity;
-let chronosTimebreakStartedAtMs = -Infinity;
-let chronosAscendantParadoxStartedAtMs = -Infinity;
-
-export function setChronosPrimaryHeld(held: boolean, timestampMs = Date.now()): void {
-  if (chronosPrimaryHeld === held) return;
-
-  chronosPrimaryHoldBlendAtChange = getChronosPrimaryHeldBlend(timestampMs);
-  chronosPrimaryHeld = held;
-  chronosPrimaryHoldChangedAtMs = timestampMs;
+function chronosRuntime(runtime: ViewmodelPoseRuntime): ChronosViewmodelPoseRuntime {
+  return runtime.chronos;
 }
 
-export function getChronosPrimaryHeldBlend(timestampMs = Date.now()): number {
-  const targetBlend = chronosPrimaryHeld ? 1 : 0;
-  const elapsedSeconds = Math.max(0, timestampMs - chronosPrimaryHoldChangedAtMs) / 1000;
+export function setChronosPrimaryHeld(
+  held: boolean,
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  const state = chronosRuntime(runtime).primary;
+  if (state.held === held) return;
+
+  state.blendAtChange = getChronosPrimaryHeldBlend(timestampMs, runtime);
+  state.held = held;
+  state.changedAtMs = timestampMs;
+  runtime.revision += 1;
+}
+
+export function getChronosPrimaryHeldBlend(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): number {
+  const state = chronosRuntime(runtime).primary;
+  const targetBlend = state.held ? 1 : 0;
+  const elapsedSeconds = Math.max(0, timestampMs - state.changedAtMs) / 1000;
   const progress = smoothstep(0, CHRONOS_PRIMARY_READY_TRANSITION_SECONDS, elapsedSeconds);
-  return chronosPrimaryHoldBlendAtChange + (targetBlend - chronosPrimaryHoldBlendAtChange) * progress;
+  return state.blendAtChange + (targetBlend - state.blendAtChange) * progress;
 }
 
-export function triggerChronosPrimaryShotGlow(timestampMs = Date.now()): void {
-  chronosPrimaryShotGlowStartedAtMs = timestampMs;
+export function triggerChronosPrimaryShotGlow(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  chronosRuntime(runtime).primaryShotGlowStartedAtMs = timestampMs;
+  runtime.revision += 1;
 }
 
-export function getChronosPrimaryShotGlowBlend(timestampMs = Date.now()): number {
-  const elapsedSeconds = (timestampMs - chronosPrimaryShotGlowStartedAtMs) / 1000;
+export function getChronosPrimaryShotGlowBlend(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): number {
+  const elapsedSeconds = (timestampMs - chronosRuntime(runtime).primaryShotGlowStartedAtMs) / 1000;
   if (elapsedSeconds < 0 || elapsedSeconds > CHRONOS_PRIMARY_SHOT_GLOW_FADE_END_SECONDS) return 0;
 
   const attack = smoothstep(0, CHRONOS_PRIMARY_SHOT_GLOW_ATTACK_SECONDS, elapsedSeconds);
@@ -74,20 +92,35 @@ export function getChronosPrimaryShotGlowBlend(timestampMs = Date.now()): number
   return Math.max(0, Math.min(1, attack * fade));
 }
 
-export function triggerChronosLifelineConduitPose(timestampMs = Date.now()): void {
-  chronosLifelineConduitStartedAtMs = timestampMs;
+export function triggerChronosLifelineConduitPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  chronosRuntime(runtime).lifelineConduitStartedAtMs = timestampMs;
+  runtime.revision += 1;
 }
 
-export function triggerChronosTimebreakPose(timestampMs = Date.now()): void {
-  chronosTimebreakStartedAtMs = timestampMs;
+export function triggerChronosTimebreakPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  chronosRuntime(runtime).timebreakStartedAtMs = timestampMs;
+  runtime.revision += 1;
 }
 
-export function triggerChronosAscendantParadoxPose(timestampMs = Date.now()): void {
-  chronosAscendantParadoxStartedAtMs = timestampMs;
+export function triggerChronosAscendantParadoxPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  chronosRuntime(runtime).ascendantParadoxStartedAtMs = timestampMs;
+  runtime.revision += 1;
 }
 
-export function getChronosLifelineConduitPose(timestampMs = Date.now()): { glow: number; spread: number } {
-  const elapsedSeconds = (timestampMs - chronosLifelineConduitStartedAtMs) / 1000;
+export function getChronosLifelineConduitPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): { glow: number; spread: number } {
+  const elapsedSeconds = (timestampMs - chronosRuntime(runtime).lifelineConduitStartedAtMs) / 1000;
   if (elapsedSeconds < 0 || elapsedSeconds > CHRONOS_LIFELINE_POSE_FADE_END_SECONDS) {
     return { glow: 0, spread: 0 };
   }
@@ -114,8 +147,11 @@ export function getChronosLifelineConduitPose(timestampMs = Date.now()): { glow:
   };
 }
 
-export function getChronosTimebreakPose(timestampMs = Date.now()): { glow: number; spread: number; recoil: number } {
-  const elapsedSeconds = (timestampMs - chronosTimebreakStartedAtMs) / 1000;
+export function getChronosTimebreakPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): { glow: number; spread: number; recoil: number } {
+  const elapsedSeconds = (timestampMs - chronosRuntime(runtime).timebreakStartedAtMs) / 1000;
   if (elapsedSeconds < 0 || elapsedSeconds > CHRONOS_TIMEBREAK_POSE_FADE_END_SECONDS) {
     return { glow: 0, spread: 0, recoil: 0 };
   }
@@ -148,8 +184,11 @@ export function getChronosTimebreakPose(timestampMs = Date.now()): { glow: numbe
   };
 }
 
-export function getChronosAscendantParadoxPose(timestampMs = Date.now()): { spinBoost: number } {
-  const elapsedSeconds = (timestampMs - chronosAscendantParadoxStartedAtMs) / 1000;
+export function getChronosAscendantParadoxPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): { spinBoost: number } {
+  const elapsedSeconds = (timestampMs - chronosRuntime(runtime).ascendantParadoxStartedAtMs) / 1000;
   const durationSeconds = CHRONOS_ASCENDANT_PARADOX_DURATION_MS / 1000;
   if (elapsedSeconds < 0 || elapsedSeconds > durationSeconds + CHRONOS_ASCENDANT_POSE_FADE_SECONDS) {
     return { spinBoost: 0 };

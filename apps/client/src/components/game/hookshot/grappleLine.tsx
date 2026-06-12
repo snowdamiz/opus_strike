@@ -14,8 +14,7 @@ import {
   getHookshotMaterials,
   TEMP_VECTORS,
 } from '../effectResources';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
-import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
+import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -36,13 +35,11 @@ import { HookshotProjectileArrowHead } from './arrowHead';
 const getHookMaterials = () => getHookshotMaterials();
 
 function writeLocalGrappleSocketPosition(out: { x: number; y: number; z: number }, launchSide: -1 | 1): boolean {
-  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
-  if (!socketPose) return false;
-
-  out.x = socketPose.position.x;
-  out.y = socketPose.position.y;
-  out.z = socketPose.position.z;
-  return true;
+  return writeAbilitySocketOrigin(out, {
+    ownerScope: 'localViewmodel',
+    abilityId: 'hookshot_grapple',
+    side: launchSide,
+  });
 }
 
 interface GrappleLineProps {
@@ -84,7 +81,8 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
     forwardOffset: HOOKSHOT_CHAIN_SOCKET.forwardOffset,
     sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     yaw: line.launchYaw,
-    socketName: HOOKSHOT_HOOK_SOCKET_NAMES[launchSide],
+    abilityId: 'hookshot_grapple',
+    side: launchSide,
   };
   
   const removeGrappleLine = useGameStore(state => state.removeGrappleLine);

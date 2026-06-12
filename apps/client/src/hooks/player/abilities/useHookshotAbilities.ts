@@ -38,8 +38,7 @@ import {
 } from '../constants';
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import type { AbilityContext } from '../types';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../../viewmodel/hookshotPose';
-import { readViewmodelSocket } from '../../../viewmodel/viewmodelSocketRegistry';
+import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
 export interface UseHookshotAbilitiesReturn {
@@ -86,17 +85,16 @@ export interface UseHookshotAbilitiesReturn {
 
 const WEB_SWING_DURATION_SECONDS = 2.75;
 
-function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
-  return {
-    x: vector.x,
-    y: vector.y,
-    z: vector.z,
-  };
-}
-
-function readHookshotHookSocketPosition(launchSide: -1 | 1): { x: number; y: number; z: number } | null {
-  const socketPose = readViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[launchSide]);
-  return socketPose ? vectorToPlainPosition(socketPose.position) : null;
+function readHookshotHookSocketPosition(
+  abilityId: string,
+  launchSide: -1 | 1
+): { x: number; y: number; z: number } | null {
+  const origin = { x: 0, y: 0, z: 0 };
+  return writeAbilitySocketOrigin(origin, {
+    ownerScope: 'localViewmodel',
+    abilityId,
+    side: launchSide,
+  }) ? origin : null;
 }
 
 function calculateHookshotLaunch(
@@ -226,7 +224,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     lastHookTimeRef.current = now;
     hookProjectileIdRef.current++;
     const launchSide = hookProjectileIdRef.current % 2 === 1 ? 1 : -1;
-    const socketSpawnPos = readHookshotHookSocketPosition(launchSide);
+    const socketSpawnPos = readHookshotHookSocketPosition('hookshot_basic_attack', launchSide);
     const { spawnPos, direction } = calculateHookshotLaunch(
       ctx,
       launchSide,
@@ -267,7 +265,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     lastDragHookTimeRef.current = now;
     dragHookIdRef.current++;
     const launchSide = 1;
-    const socketSpawnPos = readHookshotHookSocketPosition(launchSide);
+    const socketSpawnPos = readHookshotHookSocketPosition('hookshot_heavy_attack', launchSide);
     const { spawnPos, direction } = calculateHookshotLaunch(
       ctx,
       launchSide,
@@ -311,7 +309,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleLineIdRef.current++;
     const lineId = `grapple_${ctx.localPlayer.id}_${grappleLineIdRef.current}`;
     const launchSide = 1;
-    const startPos = readHookshotHookSocketPosition(launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+    const startPos = readHookshotHookSocketPosition('hookshot_grapple', launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
       ...HOOKSHOT_CHAIN_SOCKET,
       sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     });
@@ -384,7 +382,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
 
     const launchSide = 1;
-    const startPos = readHookshotHookSocketPosition(launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
+    const startPos = readHookshotHookSocketPosition('hookshot_grapple_trap', launchSide) ?? calculatePlayerSocketPosition(ctx.position, ctx.yaw, {
       ...HOOKSHOT_CHAIN_SOCKET,
       sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     });

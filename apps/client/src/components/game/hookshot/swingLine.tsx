@@ -54,7 +54,15 @@ export const SwingLineEffect = React.memo(({ line }: SwingLineProps) => {
     
     const { localPlayer, players } = useGameStore.getState();
     
-    const playerPos = writeOwnerVisualPosition(ownerVisualPositionRef.current, line.ownerId, 0.6, line.startPosition, players, localPlayer);
+    const playerPos = writeOwnerVisualPosition(
+      ownerVisualPositionRef.current,
+      line.ownerId,
+      0.6,
+      line.startPosition,
+      players,
+      localPlayer,
+      { abilityId: 'hookshot_swing' }
+    );
     
     const toTargetX = line.attachPoint.x - playerPos.x;
     const toTargetY = line.attachPoint.y - playerPos.y;

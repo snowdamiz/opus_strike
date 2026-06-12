@@ -39,10 +39,11 @@ import {
 } from '../../viewmodel/chronosPose';
 import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
 import {
-  registerViewmodelPoseSampler,
-  registerViewmodelSocket,
+  registerViewmodelPoseSamplers,
+  useRegisteredViewmodelSocket,
+  viewmodelPoseDraftFromMatrix,
   type ViewmodelSocketPoseDraft,
-} from '../../viewmodel/viewmodelSocketRegistry';
+} from '../../viewmodel/viewmodelKit';
 import { visualStore } from '../../store/visualStore';
 import {
   BLAZE_COLORS,
@@ -331,7 +332,6 @@ const phantomWristMatrix = new THREE.Matrix4();
 const phantomPalmMatrix = new THREE.Matrix4();
 const phantomSocketMatrix = new THREE.Matrix4();
 const phantomWorldMatrix = new THREE.Matrix4();
-const phantomWorldPosition = new THREE.Vector3();
 const phantomWorldQuaternion = new THREE.Quaternion();
 const blazeClosedHandInnerMatrix = new THREE.Matrix4();
 const blazeStaffMatrix = new THREE.Matrix4();
@@ -1345,13 +1345,7 @@ function samplePhantomPrimaryPalmSocket(
     locomotion,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function composePhantomVoidRayOrbMatrix({
@@ -1403,13 +1397,7 @@ function samplePhantomVoidRayOrbSocket(
     targetingBlend,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function PhantomAnimatedForearm({
@@ -1516,10 +1504,7 @@ function PhantomPoseableHand({
   const thumbSide = -side;
   const reloadGlowMaterial = useMemo(createPhantomReloadGlowMaterial, []);
 
-  useEffect(() => {
-    if (!socketRef.current) return undefined;
-    return registerViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef.current);
-  }, [side]);
+  useRegisteredViewmodelSocket(PHANTOM_PRIMARY_PALM_SOCKET_NAMES[side], socketRef);
 
   useEffect(() => () => {
     reloadGlowMaterial.dispose();
@@ -1963,10 +1948,7 @@ function HookshotSimpleHookHand({
   const fingerRefs = useRef<(THREE.Group | null)[]>([]);
   const hookMaterials = getHookshotMaterials();
 
-  useEffect(() => {
-    if (!hookSocketRef.current) return undefined;
-    return registerViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[side], hookSocketRef.current);
-  }, [side]);
+  useRegisteredViewmodelSocket(HOOKSHOT_HOOK_SOCKET_NAMES[side], hookSocketRef);
 
   const isHookProjectileDetached = useGameStore(
     useShallow(state => {
@@ -2417,13 +2399,7 @@ function sampleBlazeRocketStaffTipSocket(
     locomotion,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMaterial {
@@ -2510,10 +2486,7 @@ function BlazeWizardStaff({
   const chargeHaloMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6f1f), []);
   const shockwaveMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
 
-  useEffect(() => {
-    if (!socketRef.current) return undefined;
-    return registerViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef.current);
-  }, []);
+  useRegisteredViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef);
 
   useEffect(() => () => {
     chargeCoreMaterial.dispose();
@@ -3268,13 +3241,7 @@ function sampleChronosPrimaryOrbSocket(
     aegisPose,
   });
 
-  worldMatrix.decompose(phantomWorldPosition, phantomWorldQuaternion, phantomWorldScale);
-
-  return {
-    position: phantomWorldPosition.clone(),
-    quaternion: phantomWorldQuaternion.clone(),
-    timestampMs,
-  };
+  return viewmodelPoseDraftFromMatrix(worldMatrix, timestampMs);
 }
 
 function ChronosPhantomForearm({
@@ -3514,10 +3481,7 @@ function ChronosFloatingPyramidWeapon({
     toneMapped: false,
   }), []);
 
-  useEffect(() => {
-    if (!orbRef.current) return undefined;
-    return registerViewmodelSocket(CHRONOS_PRIMARY_ORB_SOCKET_NAME, orbRef.current);
-  }, []);
+  useRegisteredViewmodelSocket(CHRONOS_PRIMARY_ORB_SOCKET_NAME, orbRef);
 
   useFrame((state, delta) => {
     const weapon = weaponRef.current;
@@ -3815,16 +3779,18 @@ function ChronosViewmodel({
   const aegisPoseRef = useRef<ChronosAegisPose>({ ...CHRONOS_AEGIS_IDLE_POSE });
 
   useEffect(() => (
-    registerViewmodelPoseSampler<ChronosPrimaryOrbPoseSampleContext>(
-      CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-      (context) => sampleChronosPrimaryOrbSocket(
-        context,
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        movementBobRef.current,
-        aegisPoseRef.current
-      )
-    )
+    registerViewmodelPoseSamplers([
+      {
+        socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
+        sampler: (context: ChronosPrimaryOrbPoseSampleContext) => sampleChronosPrimaryOrbSocket(
+          context,
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          movementBobRef.current,
+          aegisPoseRef.current
+        ),
+      },
+    ])
   ), [actionBlendRef, targetingBlendRef]);
 
   useFrame((_, delta) => {
@@ -3950,52 +3916,50 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
   useEffect(() => {
     if (heroId !== 'phantom') return undefined;
 
-    const unregisterLeft = registerViewmodelPoseSampler<PhantomPrimaryPoseSampleContext>(
-      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
-      (context) => samplePhantomPrimaryPalmSocket(
-        { ...context, side: -1 },
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        phantomLocomotionRef.current
-      )
-    );
-    const unregisterRight = registerViewmodelPoseSampler<PhantomPrimaryPoseSampleContext>(
-      PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
-      (context) => samplePhantomPrimaryPalmSocket(
-        { ...context, side: 1 },
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        phantomLocomotionRef.current
-      )
-    );
-    const unregisterVoidRayOrb = registerViewmodelPoseSampler<PhantomVoidRayOrbPoseSampleContext>(
-      PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-      (context) => samplePhantomVoidRayOrbSocket(
-        context,
-        actionBlendRef.current,
-        targetingBlendRef.current
-      )
-    );
-
-    return () => {
-      unregisterLeft();
-      unregisterRight();
-      unregisterVoidRayOrb();
-    };
+    return registerViewmodelPoseSamplers([
+      {
+        socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
+        sampler: (context: PhantomPrimaryPoseSampleContext) => samplePhantomPrimaryPalmSocket(
+          { ...context, side: -1 },
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          phantomLocomotionRef.current
+        ),
+      },
+      {
+        socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
+        sampler: (context: PhantomPrimaryPoseSampleContext) => samplePhantomPrimaryPalmSocket(
+          { ...context, side: 1 },
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          phantomLocomotionRef.current
+        ),
+      },
+      {
+        socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
+        sampler: (context: PhantomVoidRayOrbPoseSampleContext) => samplePhantomVoidRayOrbSocket(
+          context,
+          actionBlendRef.current,
+          targetingBlendRef.current
+        ),
+      },
+    ]);
   }, [heroId]);
 
   useEffect(() => {
     if (heroId !== 'blaze') return undefined;
 
-    return registerViewmodelPoseSampler<BlazeRocketStaffPoseSampleContext>(
-      BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-      (context) => sampleBlazeRocketStaffTipSocket(
-        context,
-        actionBlendRef.current,
-        targetingBlendRef.current,
-        phantomLocomotionRef.current
-      )
-    );
+    return registerViewmodelPoseSamplers([
+      {
+        socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
+        sampler: (context: BlazeRocketStaffPoseSampleContext) => sampleBlazeRocketStaffTipSocket(
+          context,
+          actionBlendRef.current,
+          targetingBlendRef.current,
+          phantomLocomotionRef.current
+        ),
+      },
+    ]);
   }, [heroId]);
 
   useFrame((state, delta) => {
