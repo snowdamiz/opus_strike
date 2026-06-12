@@ -11,6 +11,13 @@ interface AudioConfig {
 interface SoundEffect {
   buffer: AudioBuffer | null;
   volume: number;
+  playbackDurationRatio?: number;
+}
+
+interface SoundDefinition {
+  path: string;
+  volume: number;
+  playbackDurationRatio?: number;
 }
 
 export interface PlaySoundOptions {
@@ -189,7 +196,7 @@ const SOUND_EFFECTS = {
   
   // UI
   buttonHover: { path: '/sounds/button.mp3', volume: 0.4 },
-  buttonClick: { path: '/sounds/button_press.mp3', volume: 0.1 },
+  buttonClick: { path: '/sounds/button.mp3', volume: 0.1, playbackDurationRatio: 0.15 },
   countdownTick: { path: '/sounds/tick.mp3', volume: 0.65 },
   countdown: { path: '/sounds/countdown.mp3', volume: 0.6 },
   matchStart: { path: '/sounds/match_start.mp3', volume: 0.8 },
@@ -200,7 +207,7 @@ const SOUND_EFFECTS = {
   // Music (equal base volume, controlled by settings)
   lobbyMusic: { path: '/sounds/lobby.mp3', volume: 0.3 },
   gameMusic: { path: '/sounds/game.mp3', volume: 0.3 },
-} as const;
+} as const satisfies Record<string, SoundDefinition>;
 
 export type SoundName = keyof typeof SOUND_EFFECTS;
 export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze' | 'hookshot' | 'chronos';
@@ -220,6 +227,13 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
 
 const MUSIC_SOUND_NAMES = new Set<SoundName>(['lobbyMusic', 'gameMusic']);
 const MAX_CONCURRENT_AUDIO_DECODES = 2;
+const GLOBAL_BUTTON_SOUND_SELECTOR = [
+  'button',
+  '[role="button"]',
+  'input[type="button"]',
+  'input[type="reset"]',
+  'input[type="submit"]',
+].join(',');
 
 let activeAudioDecodes = 0;
 const queuedAudioDecodeJobs: Array<() => void> = [];
@@ -259,6 +273,35 @@ function decodeAudioDataLimited(ctx: AudioContext, arrayBuffer: ArrayBuffer): Pr
 
 function clampAudioVolume(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function getPlaybackDurationMs(sound: SoundEffect, options?: PlaySoundOptions): number | undefined {
+  const explicitDurationMs = options?.durationMs === undefined
+    ? undefined
+    : Math.max(0, options.durationMs);
+  const ratio = sound.playbackDurationRatio;
+
+  if (ratio === undefined || !sound.buffer) {
+    return explicitDurationMs;
+  }
+
+  const ratioDurationMs = sound.buffer.duration * 1000 * Math.max(0, Math.min(1, ratio));
+  return explicitDurationMs === undefined
+    ? ratioDurationMs
+    : Math.min(explicitDurationMs, ratioDurationMs);
+}
+
+function getButtonSoundTarget(target: EventTarget | null): Element | null {
+  if (typeof Element === 'undefined') return null;
+  if (!(target instanceof Element)) return null;
+
+  const button = target.closest(GLOBAL_BUTTON_SOUND_SELECTOR);
+  if (!button) return null;
+
+  if (button.hasAttribute('disabled')) return null;
+  if (button.getAttribute('aria-disabled') === 'true') return null;
+
+  return button;
 }
 
 function ensureSharedAudioContext(): AudioContext | null {
@@ -486,9 +529,11 @@ export function setAudioListenerTransform(
 
 async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   if (MUSIC_SOUND_NAMES.has(name)) {
+    const musicSoundDef: SoundDefinition = SOUND_EFFECTS[name];
     const musicEffect = sharedSounds.get(name) ?? {
       buffer: null,
-      volume: SOUND_EFFECTS[name].volume,
+      volume: musicSoundDef.volume,
+      playbackDurationRatio: musicSoundDef.playbackDurationRatio,
     };
     sharedSounds.set(name, musicEffect);
     return musicEffect;
@@ -505,7 +550,7 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   const pending = sharedSoundLoads.get(name);
   if (pending) return pending;
 
-  const soundDef = SOUND_EFFECTS[name];
+  const soundDef: SoundDefinition = SOUND_EFFECTS[name];
   const loadPromise = (async () => {
     try {
       const response = await fetch(soundDef.path);
@@ -519,6 +564,7 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
       const effect: SoundEffect = {
         buffer,
         volume: soundDef.volume,
+        playbackDurationRatio: soundDef.playbackDurationRatio,
       };
 
       sharedSounds.set(name, effect);
@@ -636,9 +682,10 @@ export async function playSharedSound(
     Math.max(0, sound.buffer.duration - 0.001)
   );
   source.start(0, startOffsetSeconds);
-  if (options?.durationMs !== undefined) {
-    const durationMs = Math.max(0, options.durationMs);
-    const fadeOutMs = Math.min(durationMs, Math.max(0, options.fadeOutMs ?? 0));
+  const playbackDurationMs = getPlaybackDurationMs(sound, options);
+  if (playbackDurationMs !== undefined) {
+    const durationMs = Math.max(0, playbackDurationMs);
+    const fadeOutMs = Math.min(durationMs, Math.max(0, options?.fadeOutMs ?? 0));
     if (fadeOutMs > 0) {
       fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), durationMs - fadeOutMs);
     } else {
@@ -907,9 +954,10 @@ export function useAudio() {
       Math.max(0, sound.buffer.duration - 0.001)
     );
     source.start(0, startOffsetSeconds);
-    if (options?.durationMs !== undefined) {
-      const durationMs = Math.max(0, options.durationMs);
-      const fadeOutMs = Math.min(durationMs, Math.max(0, options.fadeOutMs ?? 0));
+    const playbackDurationMs = getPlaybackDurationMs(sound, options);
+    if (playbackDurationMs !== undefined) {
+      const durationMs = Math.max(0, playbackDurationMs);
+      const fadeOutMs = Math.min(durationMs, Math.max(0, options?.fadeOutMs ?? 0));
       if (fadeOutMs > 0) {
         fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), durationMs - fadeOutMs);
       } else {
@@ -1297,22 +1345,35 @@ export function useAbilitySounds() {
 
 // UI sound effects hook
 export function useUISounds() {
-  const { playSound, preloadSounds } = useAudio();
-
-  useEffect(() => {
-    void preloadSounds(['buttonClick']);
-  }, [preloadSounds]);
-
   const playButtonHover = useCallback(() => {}, []);
-
-  const playButtonClick = useCallback(() => {
-    playSound('buttonClick');
-  }, [playSound]);
+  const playButtonClick = useCallback(() => {}, []);
 
   return {
     playButtonHover,
     playButtonClick,
   };
+}
+
+export function useGlobalButtonSounds() {
+  const { preloadSounds } = useAudio();
+
+  useEffect(() => {
+    void preloadSounds(['buttonClick']);
+  }, [preloadSounds]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleButtonClick = (event: MouseEvent) => {
+      if (!getButtonSoundTarget(event.target)) return;
+      void playSharedSound('buttonClick');
+    };
+
+    document.addEventListener('click', handleButtonClick, true);
+    return () => {
+      document.removeEventListener('click', handleButtonClick, true);
+    };
+  }, []);
 }
 
 // Music state (shared singleton)

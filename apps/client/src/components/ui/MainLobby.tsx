@@ -838,27 +838,18 @@ function PlayDialog({
           <div className="play-pay-dialog-grid">
             <button
               type="button"
-              onClick={() => runAction(onQuickPlay)}
-              disabled={isLoading}
-              className="play-pay-option play-pay-option-primary"
-            >
-              <span className="play-pay-option-icon">
-                <svg fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z" />
-                </svg>
-              </span>
-              <span className="play-pay-option-copy">
-                <span className="play-pay-option-title">{isLoading ? 'STARTING...' : 'QUICK PLAY'}</span>
-                <span className="play-pay-option-subtitle">Instant casual queue</span>
-              </span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => runAction(onRankedPlay)}
               disabled={isLoading || isLinkingPhantom}
               className="play-pay-option play-pay-option-ranked"
+              style={{
+                background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
+                boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
+              }}
             >
+              <span
+                className="play-pay-option-shimmer"
+                style={{ background: WALLET_AUTH_COLORS.shimmer }}
+              />
               <span className="play-pay-option-icon">
                 <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3l2.6 5.3 5.8.8-4.2 4.1 1 5.8L12 16.3 6.8 19l1-5.8L3.6 9.1l5.8-.8L12 3z" />
@@ -869,6 +860,23 @@ function PlayDialog({
                 <span className="play-pay-option-subtitle">Winner claims the opposing pot</span>
               </span>
               <span className="play-pay-option-badge">$5</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => runAction(onQuickPlay)}
+              disabled={isLoading}
+              className="play-pay-option"
+            >
+              <span className="play-pay-option-icon">
+                <svg fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </span>
+              <span className="play-pay-option-copy">
+                <span className="play-pay-option-title">{isLoading ? 'STARTING...' : 'QUICK PLAY'}</span>
+                <span className="play-pay-option-subtitle">Instant casual queue</span>
+              </span>
             </button>
 
             <div className="play-pay-option-row">

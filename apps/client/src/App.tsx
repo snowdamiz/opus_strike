@@ -15,7 +15,7 @@ import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
-import { useAudio, useMusic } from './hooks/useAudio';
+import { useAudio, useGlobalButtonSounds, useMusic } from './hooks/useAudio';
 import { prewarmBlazeEffects, prewarmPhantomEffects } from './components/game/effectResources';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
@@ -82,6 +82,7 @@ export function App() {
   const revealedWarmupKeyRef = useRef<string | null>(null);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
   const { preloadSoundGroup, preloadHeroSounds } = useAudio();
+  useGlobalButtonSounds();
   const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
   const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
   const shouldPrepareMatchWorld = (
