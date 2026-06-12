@@ -4,11 +4,11 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
   sampleRemoteTransformInto,
-  setPlayerVisualPosition,
-  setPlayerVisualRotation,
+  setPlayerVisualTransform,
   type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
+import { getFrameClock } from '../../utils/frameClock';
 import { useShallow } from 'zustand/shallow';
 import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-strike/shared';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
@@ -106,7 +106,16 @@ function setWalkDirectionFromVelocity(
   velocity: { x: number; z: number },
   yaw: number
 ): void {
-  const speed = getHorizontalSpeed(velocity);
+  setWalkDirectionFromComponents(target, velocity.x, velocity.z, yaw);
+}
+
+function setWalkDirectionFromComponents(
+  target: HeroWalkDirection,
+  velocityX: number,
+  velocityZ: number,
+  yaw: number
+): void {
+  const speed = Math.sqrt(velocityX * velocityX + velocityZ * velocityZ);
   if (speed <= 0.001) {
     target.forward = 1;
     target.right = 0;
@@ -118,8 +127,8 @@ function setWalkDirectionFromVelocity(
   const rightX = Math.cos(yaw);
   const rightZ = -Math.sin(yaw);
 
-  target.forward = (velocity.x * forwardX + velocity.z * forwardZ) / speed;
-  target.right = (velocity.x * rightX + velocity.z * rightZ) / speed;
+  target.forward = (velocityX * forwardX + velocityZ * forwardZ) / speed;
+  target.right = (velocityX * rightX + velocityZ * rightZ) / speed;
 }
 
 function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
@@ -198,6 +207,7 @@ function OtherPlayer({ player, config }: OtherPlayerProps) {
   useFrame((_, delta) => {
     if (!groupRef.current) return;
     const stepDelta = delta;
+    const frameNowMs = getFrameClock().epochNowMs;
 
     const frameIsVeiled = hasActivePhantomVeil(player);
     if (frameIsVeiled !== isVeiledRef.current) {
@@ -224,7 +234,7 @@ function OtherPlayer({ player, config }: OtherPlayerProps) {
     const visualState = visualStore.getState();
     const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
     if (remoteAttackState) {
-      const attackAgeMs = Date.now() - remoteAttackState.startedAtMs;
+      const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
       isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
       attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
       attackSideRef.current = remoteAttackState.side;
@@ -238,11 +248,10 @@ function OtherPlayer({ player, config }: OtherPlayerProps) {
     }
 
     const sampledTransform = sampledTransformRef.current;
-    const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform);
+    const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform, frameNowMs);
     let snappedToSample = false;
     if (hasSampledTransform) {
-      setPlayerVisualPosition(player.id, sampledTransform.position);
-      setPlayerVisualRotation(player.id, sampledTransform.lookYaw);
+      setPlayerVisualTransform(player.id, sampledTransform.position, sampledTransform.lookYaw);
       setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
       const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
       const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >
@@ -298,12 +307,10 @@ function OtherPlayer({ player, config }: OtherPlayerProps) {
     }
 
     if (visualHorizontalSpeed > VISUAL_MOVING_SPEED && stepDelta > 0) {
-      setWalkDirectionFromVelocity(
+      setWalkDirectionFromComponents(
         walkDirectionRef.current,
-        {
-          x: (currentPosition.current.x - previousFramePosition.current.x) / stepDelta,
-          z: (currentPosition.current.z - previousFramePosition.current.z) / stepDelta,
-        },
+        currentPosition.current.x - previousFramePosition.current.x,
+        currentPosition.current.z - previousFramePosition.current.z,
         renderYaw
       );
     } else {

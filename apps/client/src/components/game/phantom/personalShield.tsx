@@ -6,6 +6,7 @@ import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { PHANTOM_COLORS, SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
 const SHIELD_RADIUS = 1.58;
@@ -20,34 +21,45 @@ const LOCAL_BUBBLE_OPACITY = 0.07;
 const LOCAL_WIREFRAME_OPACITY = 0.2;
 const LOCAL_RIM_OPACITY = 0.16;
 const LOCAL_RING_OPACITY = 0.24;
+const ACTIVE_ID_SCAN_INTERVAL_MS = 80;
+const PHANTOM_PURPLE_COLOR = new THREE.Color(PHANTOM_COLORS.purple);
+const PHANTOM_LIGHT_PURPLE_COLOR = new THREE.Color(PHANTOM_COLORS.lightPurple);
+const PHANTOM_VIOLET_COLOR = new THREE.Color(PHANTOM_COLORS.violet);
 
 function hasActivePersonalShield(player: Player | null | undefined): boolean {
   if (!player || player.state !== 'alive' || player.heroId !== 'phantom') return false;
   return Boolean(player.abilities?.[PHANTOM_PERSONAL_SHIELD_ABILITY_ID]?.isActive);
 }
 
-function getShieldAbilityStart(player: Player): number {
-  return player.abilities?.[PHANTOM_PERSONAL_SHIELD_ABILITY_ID]?.activatedAt ?? Date.now();
+function getShieldAbilityStart(player: Player, now: number): number {
+  return player.abilities?.[PHANTOM_PERSONAL_SHIELD_ABILITY_ID]?.activatedAt ?? now;
 }
 
-function collectActiveShieldIds(): string[] {
+function collectActiveShieldIds(target: string[]): string[] {
   const store = useGameStore.getState();
-  const ids: string[] = [];
-  const seen = new Set<string>();
+  const localPlayerId = store.localPlayer?.id ?? null;
+  target.length = 0;
 
   const addPlayer = (player: Player | null | undefined) => {
-    if (!hasActivePersonalShield(player) || !player || seen.has(player.id)) return;
-    ids.push(player.id);
-    seen.add(player.id);
+    if (!hasActivePersonalShield(player) || !player) return;
+    target.push(player.id);
   };
 
   addPlayer(store.localPlayer);
   for (const player of store.players.values()) {
+    if (player.id === localPlayerId) continue;
     addPlayer(player);
   }
 
-  ids.sort();
-  return ids;
+  return target;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 function getShieldPlayer(playerId: string): Player | null {
@@ -116,6 +128,7 @@ function PhantomPersonalShieldBubble({ playerId }: { playerId: string }) {
   useFrame(() => {
     const group = groupRef.current;
     const player = getShieldPlayer(playerId);
+    const now = getFrameClock().epochNowMs;
     if (!group || !player || !hasActivePersonalShield(player)) {
       if (group) group.visible = false;
       return;
@@ -125,7 +138,7 @@ function PhantomPersonalShieldBubble({ playerId }: { playerId: string }) {
     const isLocalPlayer = useGameStore.getState().localPlayer?.id === playerId;
     const abilityDef = ABILITY_DEFINITIONS[PHANTOM_PERSONAL_SHIELD_ABILITY_ID];
     const duration = abilityDef?.duration ?? 6;
-    const elapsed = Math.max(0, (Date.now() - getShieldAbilityStart(player)) / 1000);
+    const elapsed = Math.max(0, (now - getShieldAbilityStart(player, now)) / 1000);
     const remaining = Math.max(0, duration - elapsed);
     const fadeIn = Math.min(1, elapsed / SHIELD_FADE_IN_SECONDS);
     const fadeOut = Math.min(1, remaining / SHIELD_FADE_OUT_SECONDS);
@@ -151,10 +164,10 @@ function PhantomPersonalShieldBubble({ playerId }: { playerId: string }) {
     ringMaterial.opacity = (isLocalPlayer ? LOCAL_RING_OPACITY : REMOTE_RING_OPACITY) * intensity;
 
     const huePulse = (Math.sin(elapsed * 4.4) + 1) * 0.5;
-    bubbleMaterial.color.set(PHANTOM_COLORS.purple).lerp(new THREE.Color(PHANTOM_COLORS.lightPurple), huePulse * 0.28);
-    wireMaterial.color.set(PHANTOM_COLORS.lightPurple).lerp(new THREE.Color(PHANTOM_COLORS.violet), huePulse * 0.16);
-    rimMaterial.color.set(PHANTOM_COLORS.violet).lerp(new THREE.Color(PHANTOM_COLORS.lightPurple), huePulse * 0.18);
-    ringMaterial.color.set(PHANTOM_COLORS.purple).lerp(new THREE.Color(PHANTOM_COLORS.violet), huePulse * 0.2);
+    bubbleMaterial.color.copy(PHANTOM_PURPLE_COLOR).lerp(PHANTOM_LIGHT_PURPLE_COLOR, huePulse * 0.28);
+    wireMaterial.color.copy(PHANTOM_LIGHT_PURPLE_COLOR).lerp(PHANTOM_VIOLET_COLOR, huePulse * 0.16);
+    rimMaterial.color.copy(PHANTOM_VIOLET_COLOR).lerp(PHANTOM_LIGHT_PURPLE_COLOR, huePulse * 0.18);
+    ringMaterial.color.copy(PHANTOM_PURPLE_COLOR).lerp(PHANTOM_VIOLET_COLOR, huePulse * 0.2);
 
     if (bubbleRef.current) bubbleRef.current.scale.setScalar(1);
     if (wireRef.current) wireRef.current.scale.setScalar(1.01 + Math.sin(elapsed * 5.2) * 0.004);
@@ -183,14 +196,21 @@ function PhantomPersonalShieldBubble({ playerId }: { playerId: string }) {
 
 export function PhantomPersonalShieldsManager() {
   const [activeIds, setActiveIds] = useState<string[]>([]);
-  const activeKeyRef = useRef('');
+  const activeIdsRef = useRef<string[]>([]);
+  const scratchIdsRef = useRef<string[]>([]);
+  const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
 
-  useFrame(() => {
-    const nextIds = collectActiveShieldIds();
-    const nextKey = nextIds.join('|');
-    if (nextKey === activeKeyRef.current) return;
-    activeKeyRef.current = nextKey;
-    setActiveIds(nextIds);
+  useFrame((_, delta) => {
+    scanAccumulatorRef.current += delta * 1000;
+    if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) return;
+    scanAccumulatorRef.current = 0;
+
+    const nextIds = collectActiveShieldIds(scratchIdsRef.current);
+    if (sameIds(nextIds, activeIdsRef.current)) return;
+
+    const committedIds = nextIds.slice();
+    activeIdsRef.current = committedIds;
+    setActiveIds(committedIds);
   });
 
   return (

@@ -10,6 +10,7 @@ import {
   CHRONOS_AEGIS_PANEL_WIDTH,
   createChronosAegisPanelGeometry,
 } from './aegisGeometry';
+import { getFrameClock } from '../../../utils/frameClock';
 
 const CHRONOS_AEGIS_COLOR = 0x22c55e;
 const CHRONOS_AEGIS_EDGE_COLOR = 0x86efac;
@@ -23,6 +24,7 @@ const CHRONOS_AEGIS_FADE_IN_SECONDS = 0.18;
 const CHRONOS_AEGIS_FILL_OPACITY = 0.2;
 const CHRONOS_AEGIS_EDGE_OPACITY = 0.72;
 const CHRONOS_AEGIS_WIRE_OPACITY = 0.28;
+const ACTIVE_ID_SCAN_INTERVAL_MS = 80;
 
 function createAegisFillMaterial(): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
@@ -60,12 +62,11 @@ function createAegisWireMaterial(): THREE.MeshBasicMaterial {
   });
 }
 
-function collectActiveChronosAegisIds(): string[] {
+function collectActiveChronosAegisIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
   const localPlayerId = store.localPlayer?.id;
   const visual = visualStore.getState();
-  const now = Date.now();
-  const ids: string[] = [];
+  target.length = 0;
 
   for (const player of store.players.values()) {
     if (player.id === localPlayerId) continue;
@@ -74,11 +75,18 @@ function collectActiveChronosAegisIds(): string[] {
     const aegis = visual.chronosAegisStates.get(player.id);
     if (!aegis?.active || now - aegis.updatedAtMs > CHRONOS_AEGIS_STALE_MS) continue;
 
-    ids.push(player.id);
+    target.push(player.id);
   }
 
-  ids.sort();
-  return ids;
+  return target;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 function ChronosAegisShield({ playerId }: { playerId: string }) {
@@ -128,7 +136,7 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
       return;
     }
 
-    const now = Date.now();
+    const now = getFrameClock().epochNowMs;
     if (now - aegis.updatedAtMs > CHRONOS_AEGIS_STALE_MS) {
       group.visible = false;
       return;
@@ -196,15 +204,21 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
 
 export function ChronosAegisManager() {
   const [activeIds, setActiveIds] = useState<string[]>([]);
-  const activeKeyRef = useRef('');
+  const activeIdsRef = useRef<string[]>([]);
+  const scratchIdsRef = useRef<string[]>([]);
+  const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
 
-  useFrame(() => {
-    const nextIds = collectActiveChronosAegisIds();
-    const nextKey = nextIds.join('|');
-    if (nextKey === activeKeyRef.current) return;
+  useFrame((_, delta) => {
+    scanAccumulatorRef.current += delta * 1000;
+    if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) return;
+    scanAccumulatorRef.current = 0;
 
-    activeKeyRef.current = nextKey;
-    setActiveIds(nextIds);
+    const nextIds = collectActiveChronosAegisIds(scratchIdsRef.current, getFrameClock().epochNowMs);
+    if (sameIds(nextIds, activeIdsRef.current)) return;
+
+    const committedIds = nextIds.slice();
+    activeIdsRef.current = committedIds;
+    setActiveIds(committedIds);
   });
 
   return (

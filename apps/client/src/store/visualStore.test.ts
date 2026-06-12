@@ -11,6 +11,7 @@ import {
   pruneRemoteTransformHistories,
   rebuildCombatVisualFrameCache,
   sampleRemoteTransformInto,
+  setPlayerVisualTransform,
   visualStore,
   type SampledRemoteTransform,
 } from './visualStore';
@@ -129,6 +130,10 @@ assert.equal(visualStore.getState().remoteTransformHistories.has('remote-b'), fa
 const missingTarget = makeTarget();
 assert.equal(sampleRemoteTransformInto('missing', missingTarget), false);
 
+setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25);
+assert.deepEqual(visualStore.getState().playerPositions.get('remote-a'), { x: 3, y: 4, z: 5 });
+assert.equal(visualStore.getState().playerRotations.get('remote-a'), 1.25);
+
 const combatPlayers = [
   makePlayer('owner', 'red', 0, 0),
   makePlayer('near-blue', 'blue', 1, 1),
@@ -137,6 +142,8 @@ const combatPlayers = [
   makePlayer('dead-blue', 'blue', 1, 0, 'dead'),
 ];
 const combatCache = rebuildCombatVisualFrameCache(combatPlayers, 2000, 2000, combatPlayers.length);
+const firstCombatBucket = combatCache.buckets.get(0)?.get(0);
+assert.ok(firstCombatBucket);
 const nearbyEnemies: Player[] = [];
 fillCombatVisualEnemyPlayers(combatCache, 'red', 'owner', nearbyEnemies, { x: 0, z: 0 }, 4);
 assert.deepEqual(nearbyEnemies.map((player) => player.id), ['near-blue']);
@@ -144,5 +151,8 @@ assert.deepEqual(nearbyEnemies.map((player) => player.id), ['near-blue']);
 const allEnemies: Player[] = [];
 fillCombatVisualEnemyPlayers(combatCache, 'red', 'owner', allEnemies);
 assert.deepEqual(allEnemies.map((player) => player.id), ['near-blue', 'far-blue']);
+
+const rebuiltCombatCache = rebuildCombatVisualFrameCache(combatPlayers, 2001, 2001, combatPlayers.length);
+assert.equal(rebuiltCombatCache.buckets.get(0)?.get(0), firstCombatBucket);
 
 console.log('visualStore remote transform tests passed');

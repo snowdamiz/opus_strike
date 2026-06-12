@@ -35,6 +35,7 @@ import {
   getPartGeometry,
   groupRiggedParts,
 } from '../../model-system/heroRig';
+import { getFrameClock } from '../../utils/frameClock';
 import type {
   HeroAnimationMode,
   HeroBoneName,
@@ -313,7 +314,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     let activeAttackSide = configuredAttackSide;
 
     if (attacking && providedAttackStartedAtMs && providedAttackStartedAtMs > 0) {
-      attackProgress = clamp01((Date.now() - providedAttackStartedAtMs) / (attackDuration * 1000));
+      attackProgress = clamp01((getFrameClock().epochNowMs - providedAttackStartedAtMs) / (attackDuration * 1000));
       attacking = attackProgress < 1;
     } else if (attacking) {
       const attackCycle = t / attackDuration;

@@ -22,8 +22,7 @@ import {
   setLocalViewmodelMovement,
   setLocalSlideIntensity,
   setLocalVisualMovement,
-  setPlayerVisualPosition,
-  setPlayerVisualRotation,
+  setPlayerVisualTransform,
   setFlamethrowerVisualPose,
 } from '../../store/visualStore';
 import { useInput } from '../../hooks/useInput';
@@ -50,6 +49,7 @@ import {
   PLAYER_HEIGHT,
   EYE_HEIGHT,
 } from '../../hooks/player';
+import { getFrameClock } from '../../utils/frameClock';
 import { useLocalAbilityAudioPrediction } from '../../hooks/player/useLocalAbilityAudioPrediction';
 import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
 import {
@@ -169,11 +169,25 @@ function resolveTraceMatchMode(): MatchMode {
     (store.currentLobbyWager.enabled ? 'custom_wager' : 'custom');
 }
 
-function activeAbilityIdsForTrace(playerAbilities: Record<string, { isActive?: boolean }> | undefined): string[] {
-  return Object.entries(playerAbilities ?? {})
-    .filter(([, ability]) => ability?.isActive)
-    .map(([abilityId]) => abilityId)
-    .sort();
+function writeActiveAbilityIdsForTrace(
+  playerAbilities: Record<string, { isActive?: boolean }> | undefined,
+  target: string[]
+): string[] {
+  target.length = 0;
+  if (!playerAbilities) return target;
+
+  for (const abilityId in playerAbilities) {
+    if (playerAbilities[abilityId]?.isActive) {
+      target.push(abilityId);
+    }
+  }
+  target.sort();
+  return target;
+}
+
+function pushUniqueTraceAbilityId(target: string[], abilityId: string | undefined): void {
+  if (!abilityId || target.includes(abilityId)) return;
+  target.push(abilityId);
 }
 
 function buildPracticeAbilityState(
@@ -272,6 +286,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const tickRef = useRef(0);
   const lastSendRef = useRef(0);
   const lastTraceRef = useRef(0);
+  const traceAbilityIdsRef = useRef<string[]>([]);
   const movementCommandAccumulatorRef = useRef(0);
   const pendingMovementCommandsRef = useRef<MovementCommand[]>([]);
   const latestAbilityCastHintsRef = useRef<AbilityCastOriginHint[]>([]);
@@ -497,7 +512,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   useFrame((frameState, delta) => {
     const localPlayer = useGameStore.getState().localPlayer;
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
-    const now = Date.now();
+    const now = getFrameClock().epochNowMs;
 
     if (!localPlayer) {
       setLocalViewmodelMovement({
@@ -579,8 +594,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
       camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
-      setPlayerVisualPosition(localPlayer.id, visualPos);
-      setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
+      setPlayerVisualTransform(localPlayer.id, visualPos, cameraControl.refs.yaw.current);
       return;
     }
 
@@ -627,8 +641,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
       camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
-      setPlayerVisualPosition(localPlayer.id, visualPos);
-      setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
+      setPlayerVisualTransform(localPlayer.id, visualPos, cameraControl.refs.yaw.current);
       return;
     }
 
@@ -1125,8 +1138,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     setLocalVisualMovement(localMovementForTrace);
 
     // Update visual store for non-reactive position access.
-    setPlayerVisualPosition(localPlayer.id, smoothedVisualPosition);
-    setPlayerVisualRotation(localPlayer.id, cameraControl.refs.yaw.current);
+    setPlayerVisualTransform(localPlayer.id, smoothedVisualPosition, cameraControl.refs.yaw.current);
 
     const slideIntensity = isSliding
       ? Math.min(1, Math.max(0.25, predictedState.movement.slideTimeRemaining / 0.8))
@@ -1136,13 +1148,14 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     if (now - lastTraceRef.current >= 1000 / TICK_RATE) {
       lastTraceRef.current = now;
       const storeForTrace = useGameStore.getState();
-      const traceAbilityIds = activeAbilityIdsForTrace(localPlayer.abilities);
-      if (frameInput.ability1 && heroDef?.ability1.abilityId) traceAbilityIds.push(heroDef.ability1.abilityId);
-      if (frameInput.ability2 && heroDef?.ability2.abilityId) traceAbilityIds.push(heroDef.ability2.abilityId);
-      if (frameInput.ultimate && heroDef?.ultimate.abilityId) traceAbilityIds.push(heroDef.ultimate.abilityId);
-      if (shadowStepTargeting) traceAbilityIds.push('phantom_shadow_step_targeting');
-      if (bombTargeting) traceAbilityIds.push('blaze_bomb_targeting');
-      if (grappleTrapTargeting) traceAbilityIds.push('hookshot_grapple_trap_targeting');
+      const traceAbilityIds = writeActiveAbilityIdsForTrace(localPlayer.abilities, traceAbilityIdsRef.current);
+      if (frameInput.ability1) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability1.abilityId);
+      if (frameInput.ability2) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability2.abilityId);
+      if (frameInput.ultimate) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ultimate.abilityId);
+      if (shadowStepTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'phantom_shadow_step_targeting');
+      if (bombTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'blaze_bomb_targeting');
+      if (grappleTrapTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'hookshot_grapple_trap_targeting');
+      traceAbilityIds.sort();
       const traceGroundY = localMovementForTrace.isGrounded
         ? position.y - PLAYER_HEIGHT / 2
         : null;
@@ -1179,7 +1192,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         health: localPlayer.health,
         flagCarrier: localPlayer.hasFlag,
         activeAbilityState: {
-          activeAbilityIds: Array.from(new Set(traceAbilityIds)).sort(),
+          activeAbilityIds: traceAbilityIds,
           activeSpeedMultiplier: speedMultiplier,
           movementBarrier: traceMovementBarrier === 'unstuck' ||
             traceMovementBarrier === 'teleport' ||

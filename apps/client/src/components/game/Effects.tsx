@@ -2,6 +2,7 @@ import { useRef, useEffect, useMemo, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
+import { getFrameClock } from '../../utils/frameClock';
 
 interface Effect {
   id: string;
@@ -96,7 +97,7 @@ export function Effects() {
   const lastCleanupRef = useRef(0);
 
   useFrame(() => {
-    const now = Date.now();
+    const now = getFrameClock().epochNowMs;
 
     // Only clean up every 100ms to avoid excessive processing
     if (now - lastCleanupRef.current < 100) return;

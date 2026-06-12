@@ -6,6 +6,7 @@ import { visualStore } from '../../store/visualStore';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
 import { SHARED_GEOMETRIES } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
+import { getFrameClock } from '../../utils/frameClock';
 
 export type ObservedAbilityCastEffectKind =
   | 'phantom_void_ray_charge'
@@ -87,10 +88,7 @@ export function stopObservedAbilityCastEffects(playerId: string, abilityId?: Obs
   }
 }
 
-function collectObservedAbilityCastEffects(now: number): {
-  effects: ObservedAbilityCastEffectData[];
-  revision: number;
-} {
+function pruneObservedAbilityCastEffects(now: number): number {
   let changed = false;
   for (const [id, effect] of activeObservedCastEffects) {
     if (now > effect.endTime + CAST_EFFECT_FADE_OUT_MS) {
@@ -103,10 +101,7 @@ function collectObservedAbilityCastEffects(now: number): {
     nextObservedCastRevision();
   }
 
-  return {
-    effects: Array.from(activeObservedCastEffects.values()),
-    revision: observedCastRevision,
-  };
+  return observedCastRevision;
 }
 
 function writeObservedCastPosition(
@@ -219,7 +214,7 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
       return;
     }
 
-    const now = Date.now();
+    const now = getFrameClock().epochNowMs;
     const elapsedMs = Math.max(0, now - effect.startTime);
     const durationMs = Math.max(MIN_CAST_EFFECT_DURATION_MS, effect.endTime - effect.startTime);
     const charge = clamp01(elapsedMs / durationMs);
@@ -304,11 +299,11 @@ export function ObservedAbilityCastEffectsManager() {
   const lastRevisionRef = useRef(-1);
 
   useFrame(() => {
-    const snapshot = collectObservedAbilityCastEffects(Date.now());
-    if (snapshot.revision === lastRevisionRef.current) return;
+    const revision = pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
+    if (revision === lastRevisionRef.current) return;
 
-    lastRevisionRef.current = snapshot.revision;
-    setEffects(snapshot.effects);
+    lastRevisionRef.current = revision;
+    setEffects(Array.from(activeObservedCastEffects.values()));
   });
 
   return (

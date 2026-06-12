@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type GameStateSync, type PlayerPingsMessage } from '@voxel-strike/shared';
-import { removePlayerVisualState, setPlayerVisualPosition, setPlayerVisualRotation } from './visualStore';
+import { removePlayerVisualState, setPlayerVisualTransform } from './visualStore';
 
 // Import types
 import type {
@@ -441,8 +441,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
       // Update visual store with authoritative server positions for interpolation
       state.players.forEach((snapshot) => {
-        setPlayerVisualPosition(snapshot.id, snapshot.position);
-        setPlayerVisualRotation(snapshot.id, snapshot.lookYaw);
+        setPlayerVisualTransform(snapshot.id, snapshot.position, snapshot.lookYaw);
       });
       return;
     }
@@ -485,8 +484,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
     // Update visual store with authoritative server positions for interpolation
     players.forEach((player, id) => {
-      setPlayerVisualPosition(id, player.position);
-      setPlayerVisualRotation(id, player.lookYaw);
+      setPlayerVisualTransform(id, player.position, player.lookYaw);
     });
   },
 
@@ -531,8 +529,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
     // Update visual store for bulk player updates (initial sync)
     players.forEach((player, id) => {
-      setPlayerVisualPosition(id, player.position);
-      setPlayerVisualRotation(id, player.lookYaw);
+      setPlayerVisualTransform(id, player.position, player.lookYaw);
     });
   },
 
@@ -549,8 +546,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     });
 
     // Update visual store for individual player updates
-    setPlayerVisualPosition(playerId, player.position);
-    setPlayerVisualRotation(playerId, player.lookYaw);
+    setPlayerVisualTransform(playerId, player.position, player.lookYaw);
   },
 
   removePlayer: (playerId) => {

@@ -35,6 +35,7 @@ const BLINK_PILLAR_MATERIAL = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide,
 });
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
+const ACTIVE_VEIL_SCAN_INTERVAL_MS = 80;
 
 interface BlinkRenderSlot {
   effectId: string;
@@ -267,39 +268,48 @@ function PooledBlinkTeleportSlots({ renderSlots }: { renderSlots: BlinkRenderSlo
   );
 }
 
-function hasActivePhantomVeil(player: Player | null | undefined, now: number): boolean {
+function hasActivePhantomVeil(
+  player: Player | null | undefined,
+  now: number,
+  localUltimateActive = false
+): boolean {
   if (!player || player.state !== 'alive' || player.heroId !== 'phantom') return false;
   const veil = player.abilities?.[PHANTOM_VEIL_ABILITY_ID];
   if (veil?.isActive) return true;
 
+  return localUltimateActive;
+}
+
+function collectActivePhantomVeilIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
-  return Boolean(
-    store.localPlayer?.id === player.id &&
+  const localPlayerId = store.localPlayer?.id ?? null;
+  const localUltimateActive = Boolean(
     store.ultimateEffectActive &&
     store.ultimateEffectType === PHANTOM_VEIL_ABILITY_ID &&
     store.ultimateEffectEndTime > now
   );
-}
+  target.length = 0;
 
-function collectActivePhantomVeilIds(): string[] {
-  const store = useGameStore.getState();
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  const now = Date.now();
-
-  const addPlayer = (player: Player | null | undefined) => {
-    if (!hasActivePhantomVeil(player, now) || !player || seen.has(player.id)) return;
-    ids.push(player.id);
-    seen.add(player.id);
+  const addPlayer = (player: Player | null | undefined, isLocalPlayer = false) => {
+    if (!hasActivePhantomVeil(player, now, isLocalPlayer && localUltimateActive) || !player) return;
+    target.push(player.id);
   };
 
-  addPlayer(store.localPlayer);
+  addPlayer(store.localPlayer, true);
   for (const player of store.players.values()) {
+    if (player.id === localPlayerId) continue;
     addPlayer(player);
   }
 
-  ids.sort();
-  return ids;
+  return target;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 function getPhantomVeilPlayerPosition(playerId: string): { x: number; y: number; z: number } | undefined {
@@ -320,9 +330,11 @@ export function PhantomEffectsManager() {
   const [, setBlinkVersion] = useState(0);
   const [, setShadowVersion] = useState(0);
   const [activeVeilIds, setActiveVeilIds] = useState<string[]>([]);
+  const activeVeilIdsRef = useRef<string[]>([]);
+  const scratchVeilIdsRef = useRef<string[]>([]);
+  const veilScanAccumulatorRef = useRef(ACTIVE_VEIL_SCAN_INTERVAL_MS);
   const lastBlinkCountRef = useRef(0);
   const lastShadowCountRef = useRef(0);
-  const lastVeilKeyRef = useRef('');
   const lastRevisionRef = useRef(0);
 
   useFrame((_, delta) => {
@@ -356,11 +368,15 @@ export function PhantomEffectsManager() {
       setShadowVersion(version => version + 1);
     }
 
-    const nextVeilIds = collectActivePhantomVeilIds();
-    const nextVeilKey = nextVeilIds.join('|');
-    if (nextVeilKey !== lastVeilKeyRef.current) {
-      lastVeilKeyRef.current = nextVeilKey;
-      setActiveVeilIds(nextVeilIds);
+    veilScanAccumulatorRef.current += delta * 1000;
+    if (veilScanAccumulatorRef.current >= ACTIVE_VEIL_SCAN_INTERVAL_MS) {
+      veilScanAccumulatorRef.current = 0;
+      const nextVeilIds = collectActivePhantomVeilIds(scratchVeilIdsRef.current, frameClock.epochNowMs);
+      if (!sameIds(nextVeilIds, activeVeilIdsRef.current)) {
+        const committedIds = nextVeilIds.slice();
+        activeVeilIdsRef.current = committedIds;
+        setActiveVeilIds(committedIds);
+      }
     }
 
     lastRevisionRef.current = snapshot.revision;

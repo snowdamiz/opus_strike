@@ -10,6 +10,7 @@ import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFrameClock } from '../../../utils/frameClock';
 
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
 const ASCENDANT_GREEN = 0x22c55e;
@@ -27,6 +28,10 @@ const REMOTE_BUBBLE_OPACITY = 0.12;
 const REMOTE_WIRE_OPACITY = 0.32;
 const REMOTE_RING_OPACITY = 0.42;
 const REMOTE_RIM_OPACITY = 0.3;
+const ACTIVE_ID_SCAN_INTERVAL_MS = 80;
+const ASCENDANT_GREEN_COLOR = new THREE.Color(ASCENDANT_GREEN);
+const ASCENDANT_LIGHT_COLOR = new THREE.Color(ASCENDANT_LIGHT);
+const ASCENDANT_DEEP_COLOR = new THREE.Color(ASCENDANT_DEEP);
 
 function hasActiveAscendant(player: Player | null | undefined, now = Date.now()): boolean {
   if (!player || player.state !== 'alive' || player.heroId !== 'chronos') return false;
@@ -38,8 +43,8 @@ function hasActiveAscendant(player: Player | null | undefined, now = Date.now())
   return now - activatedAt < CHRONOS_ASCENDANT_PARADOX_DURATION_MS;
 }
 
-function getAscendantStart(player: Player): number {
-  return player.abilities?.[CHRONOS_ASCENDANT_ABILITY_ID]?.activatedAt ?? Date.now();
+function getAscendantStart(player: Player, now: number): number {
+  return player.abilities?.[CHRONOS_ASCENDANT_ABILITY_ID]?.activatedAt ?? now;
 }
 
 function getAscendantDurationSeconds(): number {
@@ -47,25 +52,31 @@ function getAscendantDurationSeconds(): number {
     CHRONOS_ASCENDANT_PARADOX_DURATION_MS / 1000;
 }
 
-function collectActiveAscendantIds(): string[] {
+function collectActiveAscendantIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  const now = Date.now();
+  const localPlayerId = store.localPlayer?.id ?? null;
+  target.length = 0;
 
   const addPlayer = (player: Player | null | undefined) => {
-    if (!player || seen.has(player.id) || !hasActiveAscendant(player, now)) return;
-    ids.push(player.id);
-    seen.add(player.id);
+    if (!player || !hasActiveAscendant(player, now)) return;
+    target.push(player.id);
   };
 
   addPlayer(store.localPlayer);
   for (const player of store.players.values()) {
+    if (player.id === localPlayerId) continue;
     addPlayer(player);
   }
 
-  ids.sort();
-  return ids;
+  return target;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 function getAscendantPlayer(playerId: string): Player | null {
@@ -121,7 +132,7 @@ function ChronosAscendantBubble({ playerId }: { playerId: string }) {
   useFrame(() => {
     const group = groupRef.current;
     const player = getAscendantPlayer(playerId);
-    const now = Date.now();
+    const now = getFrameClock().epochNowMs;
     if (!group || !player || !hasActiveAscendant(player, now)) {
       if (group) group.visible = false;
       return;
@@ -130,7 +141,7 @@ function ChronosAscendantBubble({ playerId }: { playerId: string }) {
     const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
     const isLocalPlayer = useGameStore.getState().localPlayer?.id === playerId;
     const duration = getAscendantDurationSeconds();
-    const elapsed = Math.max(0, (now - getAscendantStart(player)) / 1000);
+    const elapsed = Math.max(0, (now - getAscendantStart(player, now)) / 1000);
     const remaining = Math.max(0, duration - elapsed);
     const fadeIn = Math.min(1, elapsed / FADE_IN_SECONDS);
     const fadeOut = Math.min(1, remaining / FADE_OUT_SECONDS);
@@ -162,9 +173,9 @@ function ChronosAscendantBubble({ playerId }: { playerId: string }) {
     }
 
     const huePulse = (Math.sin(elapsed * 4.7) + 1) * 0.5;
-    bubbleMaterialRef.current.color.setHex(ASCENDANT_DEEP).lerp(new THREE.Color(ASCENDANT_GREEN), 0.45 + huePulse * 0.24);
-    wireMaterialRef.current.color.setHex(ASCENDANT_LIGHT).lerp(new THREE.Color(ASCENDANT_GREEN), huePulse * 0.2);
-    ringMaterialRef.current.color.setHex(ASCENDANT_GREEN).lerp(new THREE.Color(ASCENDANT_LIGHT), huePulse * 0.26);
+    bubbleMaterialRef.current.color.copy(ASCENDANT_DEEP_COLOR).lerp(ASCENDANT_GREEN_COLOR, 0.45 + huePulse * 0.24);
+    wireMaterialRef.current.color.copy(ASCENDANT_LIGHT_COLOR).lerp(ASCENDANT_GREEN_COLOR, huePulse * 0.2);
+    ringMaterialRef.current.color.copy(ASCENDANT_GREEN_COLOR).lerp(ASCENDANT_LIGHT_COLOR, huePulse * 0.26);
 
     if (bubbleRef.current) bubbleRef.current.scale.setScalar(1);
     if (wireRef.current) wireRef.current.scale.setScalar(1.012 + Math.sin(elapsed * 7.2) * 0.006);
@@ -192,15 +203,21 @@ function ChronosAscendantBubble({ playerId }: { playerId: string }) {
 
 export function ChronosAscendantManager() {
   const [activeIds, setActiveIds] = useState<string[]>([]);
-  const activeKeyRef = useRef('');
+  const activeIdsRef = useRef<string[]>([]);
+  const scratchIdsRef = useRef<string[]>([]);
+  const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
 
-  useFrame(() => {
-    const nextIds = collectActiveAscendantIds();
-    const nextKey = nextIds.join('|');
-    if (nextKey === activeKeyRef.current) return;
+  useFrame((_, delta) => {
+    scanAccumulatorRef.current += delta * 1000;
+    if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) return;
+    scanAccumulatorRef.current = 0;
 
-    activeKeyRef.current = nextKey;
-    setActiveIds(nextIds);
+    const nextIds = collectActiveAscendantIds(scratchIdsRef.current, getFrameClock().epochNowMs);
+    if (sameIds(nextIds, activeIdsRef.current)) return;
+
+    const committedIds = nextIds.slice();
+    activeIdsRef.current = committedIds;
+    setActiveIds(committedIds);
   });
 
   return (

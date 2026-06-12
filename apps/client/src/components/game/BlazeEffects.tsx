@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { type Player } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
-import { useShallow } from 'zustand/shallow';
 import { playSharedLoop, setSharedLoopPosition, stopSharedLoop } from '../../hooks/useAudio';
 import { visualStore } from '../../store/visualStore';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
@@ -26,6 +25,35 @@ export {
 // ============================================================================
 // BLAZE EFFECTS MANAGER
 // ============================================================================
+
+const REMOTE_FLAMETHROWER_SCAN_INTERVAL_MS = 80;
+
+function collectRemoteFlamethrowerPlayerIds(target: string[]): string[] {
+  const state = useGameStore.getState();
+  const localPlayerId = state.localPlayer?.id ?? state.playerId;
+  target.length = 0;
+
+  for (const player of state.players.values()) {
+    if (
+      player.id !== localPlayerId &&
+      player.heroId === 'blaze' &&
+      player.state === 'alive' &&
+      player.movement.isJetpacking
+    ) {
+      target.push(player.id);
+    }
+  }
+
+  return target;
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
 
 function resolveRemoteFlamethrowerPose(player: Player | undefined): FlamethrowerPose | null {
   if (!player || player.state !== 'alive' || player.heroId !== 'blaze' || !player.movement.isJetpacking) {
@@ -96,17 +124,23 @@ function RemoteBlazeFlamethrower({ playerId }: { playerId: string }) {
 export function BlazeEffectsManager() {
   const bombs = useGameStore(state => state.bombs);
   const flamethrowerActive = useGameStore(state => state.flamethrowerActive);
-  const remoteFlamethrowerPlayerIds = useGameStore(
-    useShallow(state => Array.from(state.players.values())
-      .filter(player => (
-        player.id !== (state.localPlayer?.id ?? state.playerId) &&
-        player.heroId === 'blaze' &&
-        player.state === 'alive' &&
-        player.movement.isJetpacking
-      ))
-      .map(player => player.id)
-    )
-  );
+  const [remoteFlamethrowerPlayerIds, setRemoteFlamethrowerPlayerIds] = useState<string[]>([]);
+  const activeRemoteIdsRef = useRef<string[]>([]);
+  const scratchRemoteIdsRef = useRef<string[]>([]);
+  const scanAccumulatorRef = useRef(REMOTE_FLAMETHROWER_SCAN_INTERVAL_MS);
+
+  useFrame((_, delta) => {
+    scanAccumulatorRef.current += delta * 1000;
+    if (scanAccumulatorRef.current < REMOTE_FLAMETHROWER_SCAN_INTERVAL_MS) return;
+    scanAccumulatorRef.current = 0;
+
+    const nextIds = collectRemoteFlamethrowerPlayerIds(scratchRemoteIdsRef.current);
+    if (sameIds(nextIds, activeRemoteIdsRef.current)) return;
+
+    const committedIds = nextIds.slice();
+    activeRemoteIdsRef.current = committedIds;
+    setRemoteFlamethrowerPlayerIds(committedIds);
+  });
   
   return (
     <group>

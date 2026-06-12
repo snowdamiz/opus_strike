@@ -16,8 +16,8 @@ import {
   addRemoteTransformSnapshot,
   pruneRemoteTransformHistories,
   setChronosAegisVisualState,
-  setPlayerVisualPosition,
   setPlayerVisualRotation,
+  setPlayerVisualTransform,
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
@@ -302,8 +302,7 @@ function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPos
 }
 
 function syncLocalVisualPosition(player: Player): void {
-  setPlayerVisualPosition(player.id, player.position);
-  setPlayerVisualRotation(player.id, player.lookYaw);
+  setPlayerVisualTransform(player.id, player.position, player.lookYaw);
 }
 
 type MovementBitsTransform = Pick<QuantizedPlayerTransform, 'movementBits' | 'wallRunSide'>;

@@ -31,7 +31,7 @@ import {
 import type { MovementTerrainAdapter } from '@voxel-strike/physics';
 import { getActiveProceduralMap } from '../hooks/usePhysics';
 import { useGameStore } from '../store/gameStore';
-import { setPlayerVisualPosition, setPlayerVisualRotation } from '../store/visualStore';
+import { setPlayerVisualTransform } from '../store/visualStore';
 
 export const localMovementPrediction = new MovementPredictionController();
 
@@ -445,12 +445,11 @@ export function getCurrentPredictedState(fallback: MovementSimulationState): Mov
 
 export function setPredictedVisuals(playerId: string, position: Vec3, lookYaw: number): void {
   const visualPosition = localMovementPrediction.getVisualPosition(Date.now());
-  setPlayerVisualPosition(playerId, {
+  setPlayerVisualTransform(playerId, {
     x: visualPosition.x,
     y: visualPosition.y,
     z: visualPosition.z,
-  });
-  setPlayerVisualRotation(playerId, lookYaw);
+  }, lookYaw);
 }
 
 export function getCurrentPredictedPosition(fallback: Vec3): Vec3 {

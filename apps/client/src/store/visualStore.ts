@@ -133,7 +133,7 @@ export interface CombatVisualFrameCache {
   sourceSize: number;
   alivePlayers: CombatVisualPlayer[];
   byTeam: Record<Team, CombatVisualPlayer[]>;
-  buckets: Map<string, CombatVisualPlayer[]>;
+  buckets: Map<number, Map<number, CombatVisualPlayer[]>>;
   entryPool: CombatVisualPlayer[];
   cellSize: number;
 }
@@ -257,6 +257,23 @@ export const setPlayerVisualPosition = (
  */
 export const setPlayerVisualRotation = (playerId: string, rotation: number): void => {
   visualStore.getState().playerRotations.set(playerId, rotation);
+};
+
+export const setPlayerVisualTransform = (
+  playerId: string,
+  position: { x: number; y: number; z: number },
+  rotation: number
+): void => {
+  const state = visualStore.getState();
+  const current = state.playerPositions.get(playerId);
+  if (current) {
+    current.x = position.x;
+    current.y = position.y;
+    current.z = position.z;
+  } else {
+    state.playerPositions.set(playerId, { x: position.x, y: position.y, z: position.z });
+  }
+  state.playerRotations.set(playerId, rotation);
 };
 
 export const setLocalViewmodelMovement = (
@@ -485,8 +502,31 @@ export const sampleRemoteTransform = (
   return sampleRemoteTransformInto(playerId, sampled, nowMs) ? sampled : null;
 };
 
-function getCombatBucketKey(x: number, z: number, cellSize: number): string {
-  return `${Math.floor(x / cellSize)}:${Math.floor(z / cellSize)}`;
+function clearCombatBuckets(buckets: CombatVisualFrameCache['buckets']): void {
+  for (const zBuckets of buckets.values()) {
+    for (const bucket of zBuckets.values()) {
+      bucket.length = 0;
+    }
+  }
+}
+
+function getCombatBucket(
+  buckets: CombatVisualFrameCache['buckets'],
+  cellX: number,
+  cellZ: number
+): CombatVisualPlayer[] {
+  let zBuckets = buckets.get(cellX);
+  if (!zBuckets) {
+    zBuckets = new Map();
+    buckets.set(cellX, zBuckets);
+  }
+
+  let bucket = zBuckets.get(cellZ);
+  if (!bucket) {
+    bucket = [];
+    zBuckets.set(cellZ, bucket);
+  }
+  return bucket;
 }
 
 export const rebuildCombatVisualFrameCache = (
@@ -506,7 +546,7 @@ export const rebuildCombatVisualFrameCache = (
   cache.alivePlayers.length = 0;
   cache.byTeam.red.length = 0;
   cache.byTeam.blue.length = 0;
-  cache.buckets.clear();
+  clearCombatBuckets(cache.buckets);
 
   let entryIndex = 0;
   for (const player of players) {
@@ -534,12 +574,11 @@ export const rebuildCombatVisualFrameCache = (
     cache.alivePlayers.push(visualPlayer);
     cache.byTeam[player.team].push(visualPlayer);
 
-    const bucketKey = getCombatBucketKey(visualPlayer.x, visualPlayer.z, cache.cellSize);
-    let bucket = cache.buckets.get(bucketKey);
-    if (!bucket) {
-      bucket = [];
-      cache.buckets.set(bucketKey, bucket);
-    }
+    const bucket = getCombatBucket(
+      cache.buckets,
+      Math.floor(visualPlayer.x / cache.cellSize),
+      Math.floor(visualPlayer.z / cache.cellSize)
+    );
     bucket.push(visualPlayer);
   }
 
@@ -564,8 +603,10 @@ export const fillCombatVisualEnemyPlayers = (
     const radiusSq = radius * radius;
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      const zBuckets = cache.buckets.get(cellX);
+      if (!zBuckets) continue;
       for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-        const bucket = cache.buckets.get(`${cellX}:${cellZ}`);
+        const bucket = zBuckets.get(cellZ);
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const visualPlayer = bucket[i];
