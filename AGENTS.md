@@ -1,2 +1,3 @@
 - Dont test in the browser, leave that to the user
 - NEVER use worktrees or branches for work unless explicitly asked to
+- Never leave legacy code around. Confirm its legacy and always remove unless asked not to.

@@ -58,14 +58,6 @@ export interface MapConstructionResult {
   moduleDefinitions: ModuleDefinition[];
 }
 
-export interface TerrainConstraintSample {
-  influence: number;
-  targetHeightRows: number | null;
-  maxStepRows: number;
-  priority: number;
-  constraintIds: string[];
-}
-
 export interface CompiledMapDiagnosticInput {
   stats: VoxelMapStats;
   stageTimingsMs?: Record<string, number>;
@@ -91,6 +83,15 @@ const STREAM_NAMES = [
 const TOPOLOGIES: MapTopologyId[] = ['lane_triad', 'diamond', 'hourglass', 'ring', 'split_level'];
 const DEFAULT_PAD_HEIGHT_ROWS = Math.round(5 / PROCEDURAL_VOXEL_SIZE.y);
 const PLAYER_TRAVEL_SPEED = 7.6;
+const OPTIONAL_GENERATED_SLOT_ROLES = new Set<TacticalSlotRole>([
+  'defender_perch',
+  'flank_landmark',
+  'soft_cover_cluster',
+  'underpass',
+  'elevated_bridge',
+  'traversal_ramp',
+  'tunnel_entrance',
+]);
 
 export const MAP_MODULE_DEFINITIONS: ModuleDefinition[] = [
   {
@@ -1373,54 +1374,6 @@ export function createProceduralMapPreview(seed = 0): ProceduralMapPreview {
   };
 }
 
-export function sampleTerrainConstraints(
-  constraints: TerrainConstraint[],
-  worldX: number,
-  worldZ: number
-): TerrainConstraintSample {
-  let influence = 0;
-  let targetHeightRows: number | null = null;
-  let maxStepRows = 3;
-  let priority = 0;
-  const constraintIds: string[] = [];
-
-  for (const constraint of constraints) {
-    let distance = Infinity;
-    if (constraint.center) {
-      distance = distance2D({ x: worldX, z: worldZ }, constraint.center);
-    }
-    if (constraint.points && constraint.points.length > 1) {
-      for (let index = 1; index < constraint.points.length; index++) {
-        distance = Math.min(distance, distanceToSegment({ x: worldX, z: worldZ }, constraint.points[index - 1], constraint.points[index]));
-      }
-    }
-
-    const radius = Math.max(0.001, constraint.radius);
-    if (distance > radius) continue;
-
-    const localInfluence = Math.pow(1 - distance / radius, 1.7) * constraint.priority;
-    if (localInfluence <= 0.001) continue;
-
-    constraintIds.push(constraint.id);
-    if (localInfluence > influence) {
-      influence = localInfluence;
-      targetHeightRows = constraint.targetHeightRows ?? targetHeightRows;
-      maxStepRows = constraint.maxStepRows;
-      priority = constraint.priority;
-    } else if (constraint.targetHeightRows !== undefined && targetHeightRows !== null) {
-      targetHeightRows = Math.round(lerp(targetHeightRows, constraint.targetHeightRows, localInfluence / Math.max(influence, 0.001)));
-    }
-  }
-
-  return {
-    influence: clamp(influence, 0, 1),
-    targetHeightRows,
-    maxStepRows,
-    priority,
-    constraintIds,
-  };
-}
-
 export function finalizeCompiledMapDiagnostics(
   blueprint: MapBlueprint,
   input: CompiledMapDiagnosticInput
@@ -1448,8 +1401,14 @@ export function finalizeCompiledMapDiagnostics(
   if (input.stats.solidBlocks > 0 && input.stats.solidBlocks > 0.9 * 1_750_000) {
     diagnostics.warnings.push('solid block count is close to budget');
   }
-  if (input.rejectedModuleReasons && Object.keys(input.rejectedModuleReasons).length > 0) {
-    diagnostics.warnings.push('one or more planned modules were rejected by local validators');
+  const slotRoles = new Map(blueprint.tacticalSlots.map((slot) => [slot.id, slot.role]));
+  const rejectedCriticalSlots = blueprint.moduleInstances.filter(
+    (instance) =>
+      instance.validation.status !== 'accepted' &&
+      !OPTIONAL_GENERATED_SLOT_ROLES.has(slotRoles.get(instance.slotId) ?? 'soft_cover_cluster')
+  );
+  if (rejectedCriticalSlots.length > 0) {
+    diagnostics.warnings.push('one or more critical tactical slots did not receive generated map geometry');
   }
   if ((input.repairActions?.spawn_sightline_baffle ?? 0) > 0) {
     diagnostics.warnings.push('spawn sightline needed voxel-level repair');

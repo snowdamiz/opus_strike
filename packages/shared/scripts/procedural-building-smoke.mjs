@@ -1,33 +1,13 @@
 #!/usr/bin/env node
 
-import { getBlockNumericId, isCollisionBlock, isSolidBlock } from '../dist/maps/procedural/blocks.js';
-import { DEFAULT_GAME_CONFIG } from '../dist/constants/game.js';
-import { PLAYER_RADIUS } from '../dist/constants/physics.js';
+import { isCollisionBlock } from '../dist/maps/procedural/blocks.js';
+import { PLAYER_HEIGHT } from '../dist/constants/physics.js';
 import { generateProceduralVoxelMapWithDiagnostics } from '../dist/maps/procedural/generator.js';
 
 const DEFAULT_SEQUENTIAL_SEEDS = 20;
 const DEFAULT_RANDOM_SEEDS = 8;
 const DEFAULT_MAX_COLLIDERS = 48_000;
-const DEFAULT_MAX_FAILURE_RATE = 0.95;
-const DEFAULT_MIN_SIGNATURE_VARIETY = 0.58;
 const KNOWN_REGRESSION_SEEDS = [0, 1, 2, 42, 1337, 0x57564f58, 0xdecafbad, 0xc0ffee];
-const MAX_NAVIGATION_STEP_ROWS = 2;
-const UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO = 0.55;
-const FLAG_CLEAR_RADIUS = 4.3;
-const SPAWN_CLEAR_RADIUS = 3.6;
-const BOUNDARY_SEAM_SEAL_THICKNESS = PLAYER_RADIUS + 0.25 * 3;
-const UNSAFE_WALL_NOTCH_MAX_AREA_CELLS = Math.max(
-  2,
-  Math.max(1, Math.ceil((PLAYER_RADIUS * 2) / 0.25) - 1) - 1
-);
-const FLAG_DISTANCE_AUDIT_CLEARANCE = 8.7;
-const SPAWN_DISTANCE_AUDIT_CLEARANCE = 5;
-const SPAWN_DISTANCE_AUDIT_BASE_RADIUS = 4.41;
-const SPAWN_DISTANCE_AUDIT_MIN_RADIUS = 3.24;
-const SPAWN_DISTANCE_AUDIT_GRID_STEP = 1.75;
-const SPAWN_DISTANCE_AUDIT_PAIR_LIMIT = 128;
-const SPAWN_POINT_COUNT = DEFAULT_GAME_CONFIG.teamSize;
-const SPAWN_DISTANCE_AUDIT_ARC_ANGLES = [-54, -18, 18, 54];
 
 function parseArgs(argv) {
   const options = {
@@ -36,8 +16,6 @@ function parseArgs(argv) {
     randomCount: DEFAULT_RANDOM_SEEDS,
     debugSeed: null,
     maxColliders: DEFAULT_MAX_COLLIDERS,
-    maxFailureRate: DEFAULT_MAX_FAILURE_RATE,
-    minSignatureVariety: DEFAULT_MIN_SIGNATURE_VARIETY,
     knownSeeds: false,
     json: false,
   };
@@ -60,12 +38,6 @@ function parseArgs(argv) {
       index++;
     } else if (arg === '--max-colliders' && next) {
       options.maxColliders = Number(next);
-      index++;
-    } else if (arg === '--max-failure-rate' && next) {
-      options.maxFailureRate = Number(next);
-      index++;
-    } else if (arg === '--min-signature-variety' && next) {
-      options.minSignatureVariety = Number(next);
       index++;
     } else if (arg === '--known') {
       options.knownSeeds = true;
@@ -90,18 +62,11 @@ function mulberry32(seed) {
 }
 
 function createSeedList(options) {
-  if (Number.isFinite(options.debugSeed)) {
-    return [options.debugSeed >>> 0];
-  }
-
-  if (options.knownSeeds) {
-    return KNOWN_REGRESSION_SEEDS.map((seed) => seed >>> 0);
-  }
+  if (Number.isFinite(options.debugSeed)) return [options.debugSeed >>> 0];
+  if (options.knownSeeds) return KNOWN_REGRESSION_SEEDS.map((seed) => seed >>> 0);
 
   const seeds = [];
-  for (let index = 0; index < options.count; index++) {
-    seeds.push((options.start + index) >>> 0);
-  }
+  for (let index = 0; index < options.count; index++) seeds.push((options.start + index) >>> 0);
 
   const random = mulberry32(0x51f15eed ^ options.start ^ options.count);
   for (let index = 0; index < options.randomCount; index++) {
@@ -111,55 +76,16 @@ function createSeedList(options) {
   return [...new Set(seeds)];
 }
 
-function countStructureBlocks(manifest) {
-  const structureIds = new Set([
-    getBlockNumericId('metal'),
-    getBlockNumericId('glass'),
-    getBlockNumericId('neon_red'),
-    getBlockNumericId('neon_blue'),
-  ]);
-  let count = 0;
-
-  for (const chunk of manifest.chunks) {
-    for (const block of chunk.blocks) {
-      if (structureIds.has(block)) count++;
-    }
-  }
-
-  return count;
-}
-
 function chunkIndex(x, y, z, size) {
   return x + size.x * (z + size.z * y);
 }
 
-function getManifestBlock(manifest, x, y, z) {
-  if (x < 0 || x >= manifest.size.x || y < 0 || y >= manifest.size.y || z < 0 || z >= manifest.size.z) return getBlockNumericId('air');
-
-  const chunkSize = manifest.chunkSize;
-  const chunkCoord = {
-    x: Math.floor(x / chunkSize.x),
-    y: Math.floor(y / chunkSize.y),
-    z: Math.floor(z / chunkSize.z),
-  };
-  const chunk = manifest.chunks.find(
-    (candidate) =>
-      candidate.coord.x === chunkCoord.x &&
-      candidate.coord.y === chunkCoord.y &&
-      candidate.coord.z === chunkCoord.z
-  );
-
-  if (!chunk) return getBlockNumericId('air');
-
-  const localX = x - chunkCoord.x * chunkSize.x;
-  const localY = y - chunkCoord.y * chunkSize.y;
-  const localZ = z - chunkCoord.z * chunkSize.z;
-
-  return chunk.blocks[chunkIndex(localX, localY, localZ, chunk.size)];
+function assertCondition(condition, failures, message) {
+  if (!condition) failures.push(message);
 }
 
-function getCollisionTopRows(manifest) {
-  const topRows = new Uint16Array(manifest.size.x * manifest.size.z);
+function getSolidOccupancy(manifest) {
+  const solid = new Uint8Array(manifest.size.x * manifest.size.y * manifest.size.z);
 
   for (const chunk of manifest.chunks) {
     const originX = chunk.coord.x * manifest.chunkSize.x;
@@ -171,1069 +97,208 @@ function getCollisionTopRows(manifest) {
         for (let x = 0; x < chunk.size.x; x++) {
           const block = chunk.blocks[chunkIndex(x, y, z, chunk.size)];
           if (!isCollisionBlock(block)) continue;
-
-          const globalX = originX + x;
-          const globalY = originY + y;
-          const globalZ = originZ + z;
-          const topIndex = globalX + globalZ * manifest.size.x;
-          topRows[topIndex] = Math.max(topRows[topIndex], globalY + 1);
+          solid[chunkIndex(originX + x, originY + y, originZ + z, manifest.size)] = 1;
         }
       }
     }
   }
 
-  return topRows;
+  return solid;
 }
 
-function countUnsafeNarrowGrooveColumns(manifest) {
-  const topRows = getCollisionTopRows(manifest);
-  const counted = new Uint8Array(manifest.size.x * manifest.size.z);
-  const maxUnsafeWidthCells = Math.max(
-    1,
-    Math.ceil((PLAYER_RADIUS * 2) / Math.min(manifest.voxelSize.x, manifest.voxelSize.z)) - 1
-  );
-  const markRun = (cells) => {
-    for (const cell of cells) {
-      const worldX = manifest.origin.x + (cell.x + 0.5) * manifest.voxelSize.x;
-      const worldZ = manifest.origin.z + (cell.z + 0.5) * manifest.voxelSize.z;
-      if (!isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary)) continue;
-
-      counted[cell.x + cell.z * manifest.size.x] = 1;
-    }
-  };
-  const scanAxis = (axis) => {
-    const movingLimit = axis === 'x' ? manifest.size.x : manifest.size.z;
-    const fixedLimit = axis === 'x' ? manifest.size.z : manifest.size.x;
-    const toCell = (moving, fixed) => axis === 'x' ? { x: moving, z: fixed } : { x: fixed, z: moving };
-    const getTopRow = (moving, fixed) => {
-      const cell = toCell(moving, fixed);
-      return topRows[cell.x + cell.z * manifest.size.x];
-    };
-    const scanDirection = (direction) => {
-      for (let fixed = 1; fixed < fixedLimit - 1; fixed++) {
-        let moving = direction === 1 ? 1 : movingLimit - 2;
-
-        while (moving > 0 && moving < movingLimit - 1) {
-          const openingSideTopRow = getTopRow(moving - direction, fixed);
-          const currentTopRow = getTopRow(moving, fixed);
-
-          if (openingSideTopRow === 0 || openingSideTopRow - currentTopRow <= MAX_NAVIGATION_STEP_ROWS) {
-            moving += direction;
-            continue;
-          }
-
-          const cells = [];
-          let maxRunTopRow = 0;
-          let cursor = moving;
-
-          while (
-            cursor > 0 &&
-            cursor < movingLimit - 1 &&
-            openingSideTopRow - getTopRow(cursor, fixed) > MAX_NAVIGATION_STEP_ROWS
-          ) {
-            const cell = toCell(cursor, fixed);
-            cells.push(cell);
-            maxRunTopRow = Math.max(maxRunTopRow, topRows[cell.x + cell.z * manifest.size.x]);
-            cursor += direction;
-          }
-
-          const closingSideTopRow = getTopRow(cursor, fixed);
-          const targetTopRow = Math.min(openingSideTopRow, closingSideTopRow);
-
-          if (
-            closingSideTopRow > 0 &&
-            cells.length <= maxUnsafeWidthCells &&
-            targetTopRow - maxRunTopRow > MAX_NAVIGATION_STEP_ROWS
-          ) {
-            markRun(cells);
-          }
-
-          moving = cursor;
-        }
-      }
-    };
-
-    scanDirection(1);
-    scanDirection(-1);
-  };
-
-  scanAxis('x');
-  scanAxis('z');
-
-  return counted.reduce((count, value) => count + value, 0);
-}
-
-function countUnsafeCornerPocketColumns(manifest) {
-  const topRows = getCollisionTopRows(manifest);
+function countFloatingSolidComponents(manifest) {
+  const solid = getSolidOccupancy(manifest);
+  const visited = new Uint8Array(solid.length);
+  const queue = [];
   const directions = [
-    { dx: 1, dz: 0 },
-    { dx: -1, dz: 0 },
-    { dx: 0, dz: 1 },
-    { dx: 0, dz: -1 },
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
   ];
-  let count = 0;
+  let floating = 0;
+  let largestFloating = 0;
 
-  for (let x = 1; x < manifest.size.x - 1; x++) {
-    for (let z = 1; z < manifest.size.z - 1; z++) {
-      const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
-      const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
-      if (!isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary)) continue;
+  for (let y = 0; y < manifest.size.y; y++) {
+    for (let z = 0; z < manifest.size.z; z++) {
+      for (let x = 0; x < manifest.size.x; x++) {
+        const start = chunkIndex(x, y, z, manifest.size);
+        if (!solid[start] || visited[start]) continue;
 
-      const currentTopRow = topRows[x + z * manifest.size.x];
-      if (currentTopRow === 0) continue;
+        visited[start] = 1;
+        queue.length = 0;
+        queue.push(start);
+        let touchesGround = y === 0;
+        let count = 0;
 
-      let blockingSides = 0;
-      let targetTopRow = Number.POSITIVE_INFINITY;
+        for (let cursor = 0; cursor < queue.length; cursor++) {
+          const current = queue[cursor];
+          const cx = current % manifest.size.x;
+          const cy = Math.floor(current / (manifest.size.x * manifest.size.z));
+          const cz = Math.floor((current - cy * manifest.size.x * manifest.size.z) / manifest.size.x);
+          count++;
+          if (cy === 0) touchesGround = true;
 
-      for (const direction of directions) {
-        const neighborTopRow = topRows[x + direction.dx + (z + direction.dz) * manifest.size.x];
-
-        if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
-          blockingSides++;
-          targetTopRow = Math.min(targetTopRow, neighborTopRow);
-        }
-      }
-
-      if (blockingSides >= 3 && targetTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
-        count++;
-      }
-    }
-  }
-
-  return count;
-}
-
-function countTallNeighborSamples(topRows, manifest, x, z, currentTopRow) {
-  let count = 0;
-
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dz = -1; dz <= 1; dz++) {
-      if (dx === 0 && dz === 0) continue;
-
-      const neighborX = x + dx;
-      const neighborZ = z + dz;
-      if (
-        neighborX < 1 ||
-        neighborX >= manifest.size.x - 1 ||
-        neighborZ < 1 ||
-        neighborZ >= manifest.size.z - 1
-      ) {
-        continue;
-      }
-
-      const neighborTopRow = topRows[neighborX + neighborZ * manifest.size.x];
-      if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
-        count++;
-      }
-    }
-  }
-
-  return count;
-}
-
-function shouldAuditWallNotchColumn(manifest, x, z) {
-  const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
-  const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
-
-  return isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary);
-}
-
-function isWallNotchCandidate(topRows, manifest, x, z) {
-  const currentTopRow = topRows[x + z * manifest.size.x];
-
-  return (
-    currentTopRow > 0 &&
-    shouldAuditWallNotchColumn(manifest, x, z) &&
-    !isProtectedGameplayClearanceColumn(manifest, x, z) &&
-    countTallNeighborSamples(topRows, manifest, x, z, currentTopRow) >= 2
-  );
-}
-
-function countUnsafeWallNotchColumns(manifest) {
-  const topRows = getCollisionTopRows(manifest);
-  const visited = new Uint8Array(topRows.length);
-  const directions = [
-    { dx: 1, dz: 0 },
-    { dx: -1, dz: 0 },
-    { dx: 0, dz: 1 },
-    { dx: 0, dz: -1 },
-  ];
-  let count = 0;
-
-  for (let startX = 1; startX < manifest.size.x - 1; startX++) {
-    for (let startZ = 1; startZ < manifest.size.z - 1; startZ++) {
-      const startIndex = startX + startZ * manifest.size.x;
-      if (visited[startIndex]) continue;
-      if (!isWallNotchCandidate(topRows, manifest, startX, startZ)) continue;
-
-      const cells = [];
-      const queue = [startIndex];
-      let highPerimeterEdges = 0;
-      let maxTopRow = 0;
-      let targetTopRow = Number.POSITIVE_INFINITY;
-      let touchesProtectedGameplay = false;
-      let minX = startX;
-      let maxX = startX;
-      let minZ = startZ;
-      let maxZ = startZ;
-      let openPerimeterEdges = 0;
-      let tallNeighborSamples = 0;
-      visited[startIndex] = 1;
-
-      for (let cursor = 0; cursor < queue.length; cursor++) {
-        const cellIndex = queue[cursor];
-        const x = cellIndex % manifest.size.x;
-        const z = Math.floor(cellIndex / manifest.size.x);
-        const currentTopRow = topRows[cellIndex];
-
-        cells.push(cellIndex);
-        maxTopRow = Math.max(maxTopRow, currentTopRow);
-        minX = Math.min(minX, x);
-        maxX = Math.max(maxX, x);
-        minZ = Math.min(minZ, z);
-        maxZ = Math.max(maxZ, z);
-        tallNeighborSamples += countTallNeighborSamples(topRows, manifest, x, z, currentTopRow);
-        if (isProtectedGameplayClearanceColumn(manifest, x, z)) {
-          touchesProtectedGameplay = true;
-        }
-
-        for (const direction of directions) {
-          const neighborX = x + direction.dx;
-          const neighborZ = z + direction.dz;
-
-          if (
-            neighborX <= 0 ||
-            neighborX >= manifest.size.x - 1 ||
-            neighborZ <= 0 ||
-            neighborZ >= manifest.size.z - 1
-          ) {
-            openPerimeterEdges++;
-            continue;
-          }
-
-          const neighborIndex = neighborX + neighborZ * manifest.size.x;
-          const neighborTopRow = topRows[neighborIndex];
-
-          if (
-            isWallNotchCandidate(topRows, manifest, neighborX, neighborZ) &&
-            Math.abs(neighborTopRow - currentTopRow) <= MAX_NAVIGATION_STEP_ROWS
-          ) {
-            if (!visited[neighborIndex]) {
-              visited[neighborIndex] = 1;
-              queue.push(neighborIndex);
+          for (const [dx, dy, dz] of directions) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            const nz = cz + dz;
+            if (nx < 0 || nx >= manifest.size.x || ny < 0 || ny >= manifest.size.y || nz < 0 || nz >= manifest.size.z) {
+              continue;
             }
-            continue;
-          }
-
-          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
-            highPerimeterEdges++;
-            targetTopRow = Math.min(targetTopRow, neighborTopRow);
-          } else {
-            openPerimeterEdges++;
+            const next = chunkIndex(nx, ny, nz, manifest.size);
+            if (!solid[next] || visited[next]) continue;
+            visited[next] = 1;
+            queue.push(next);
           }
         }
+
+        if (!touchesGround) {
+          floating++;
+          largestFloating = Math.max(largestFloating, count);
+        }
       }
-
-      const width = maxX - minX + 1;
-      const depth = maxZ - minZ + 1;
-      const narrowEnough =
-        cells.length <= UNSAFE_WALL_NOTCH_MAX_AREA_CELLS &&
-        Math.min(width, depth) === 1 &&
-        Math.max(width, depth) <= UNSAFE_WALL_NOTCH_MAX_AREA_CELLS;
-
-      if (!narrowEnough) continue;
-      if (touchesProtectedGameplay) continue;
-      if (!Number.isFinite(targetTopRow)) continue;
-      if (targetTopRow - maxTopRow <= MAX_NAVIGATION_STEP_ROWS) continue;
-      if (highPerimeterEdges < 2) continue;
-      if (highPerimeterEdges <= openPerimeterEdges) continue;
-      if (tallNeighborSamples < cells.length * 2) continue;
-      if (openPerimeterEdges > 2) continue;
-
-      count += cells.length;
     }
   }
 
-  return count;
+  return { floating, largestFloating };
 }
 
-function getUnsafeBasinMaxAreaCells(manifest) {
-  const maxUnsafeWidthCells = Math.max(
-    1,
-    Math.ceil((PLAYER_RADIUS * 2) / Math.min(manifest.voxelSize.x, manifest.voxelSize.z)) - 1
+function getGroundYBelow(manifest, point) {
+  const gx = Math.floor((point.x - manifest.origin.x) / manifest.voxelSize.x);
+  const gz = Math.floor((point.z - manifest.origin.z) / manifest.voxelSize.z);
+  const startY = Math.min(
+    manifest.size.y - 1,
+    Math.max(0, Math.floor((point.y - PLAYER_HEIGHT / 2 - manifest.origin.y) / manifest.voxelSize.y))
   );
 
-  return Math.max(144, (maxUnsafeWidthCells + 9) ** 2);
-}
+  if (gx < 0 || gx >= manifest.size.x || gz < 0 || gz >= manifest.size.z) return null;
 
-function isProtectedGameplayClearanceColumn(manifest, x, z) {
-  const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
-  const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
-
-  for (const flag of [manifest.flagZones.red, manifest.flagZones.blue]) {
-    if (Math.hypot(worldX - flag.x, worldZ - flag.z) <= FLAG_CLEAR_RADIUS + manifest.voxelSize.x * 2) {
-      return true;
+  const solid = getSolidOccupancy(manifest);
+  for (let y = startY; y >= 0; y--) {
+    if (solid[chunkIndex(gx, y, gz, manifest.size)]) {
+      return manifest.origin.y + (y + 1) * manifest.voxelSize.y;
     }
   }
 
-  for (const spawn of [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue]) {
-    if (Math.hypot(worldX - spawn.x, worldZ - spawn.z) <= SPAWN_CLEAR_RADIUS + manifest.voxelSize.x * 2) {
-      return true;
-    }
-  }
-
-  return false;
+  return null;
 }
 
-function shouldAuditBasinColumn(manifest, x, z) {
-  const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
-  const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
-
-  return isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary);
-}
-
-function countUnsafeTrappedBasinColumns(manifest) {
-  const topRows = getCollisionTopRows(manifest);
-  const visited = new Uint8Array(topRows.length);
-  const directions = [
-    { dx: 1, dz: 0 },
-    { dx: -1, dz: 0 },
-    { dx: 0, dz: 1 },
-    { dx: 0, dz: -1 },
-  ];
-  const maxAreaCells = getUnsafeBasinMaxAreaCells(manifest);
+function summarizeHeightRows(manifest) {
+  let min = Infinity;
+  let max = -Infinity;
+  let sum = 0;
   let count = 0;
 
-  for (let startX = 1; startX < manifest.size.x - 1; startX++) {
-    for (let startZ = 1; startZ < manifest.size.z - 1; startZ++) {
-      const startIndex = startX + startZ * manifest.size.x;
-      if (visited[startIndex] || topRows[startIndex] === 0) continue;
-      if (!shouldAuditBasinColumn(manifest, startX, startZ)) continue;
-
-      const cells = [];
-      const queue = [startIndex];
-      let highPerimeterEdges = 0;
-      let maxTopRow = 0;
-      let perimeterEdges = 0;
-      let targetTopRow = Number.POSITIVE_INFINITY;
-      let touchesProtectedGameplay = false;
-      visited[startIndex] = 1;
-
-      for (let cursor = 0; cursor < queue.length; cursor++) {
-        const cellIndex = queue[cursor];
-        const x = cellIndex % manifest.size.x;
-        const z = Math.floor(cellIndex / manifest.size.x);
-        const currentTopRow = topRows[cellIndex];
-
-        cells.push(cellIndex);
-        maxTopRow = Math.max(maxTopRow, currentTopRow);
-        if (isProtectedGameplayClearanceColumn(manifest, x, z)) {
-          touchesProtectedGameplay = true;
-        }
-
-        for (const direction of directions) {
-          const neighborX = x + direction.dx;
-          const neighborZ = z + direction.dz;
-
-          if (
-            neighborX <= 0 ||
-            neighborX >= manifest.size.x - 1 ||
-            neighborZ <= 0 ||
-            neighborZ >= manifest.size.z - 1
-          ) {
-            perimeterEdges++;
-            continue;
-          }
-
-          const neighborIndex = neighborX + neighborZ * manifest.size.x;
-          const neighborTopRow = topRows[neighborIndex];
-
-          if (neighborTopRow === 0 || !shouldAuditBasinColumn(manifest, neighborX, neighborZ)) {
-            perimeterEdges++;
-            continue;
-          }
-
-          if (Math.abs(neighborTopRow - currentTopRow) <= MAX_NAVIGATION_STEP_ROWS) {
-            if (!visited[neighborIndex]) {
-              visited[neighborIndex] = 1;
-              queue.push(neighborIndex);
-            }
-            continue;
-          }
-
-          perimeterEdges++;
-
-          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
-            highPerimeterEdges++;
-            targetTopRow = Math.min(targetTopRow, neighborTopRow);
-          }
-        }
-      }
-
-      if (cells.length > maxAreaCells) continue;
-      if (touchesProtectedGameplay) continue;
-      if (!Number.isFinite(targetTopRow)) continue;
-      if (targetTopRow - maxTopRow <= MAX_NAVIGATION_STEP_ROWS) continue;
-      if (highPerimeterEdges < 4 || perimeterEdges === 0) continue;
-      if (highPerimeterEdges / perimeterEdges < UNSAFE_BASIN_MIN_HIGH_EDGE_RATIO) continue;
-
-      count += cells.length;
-    }
+  for (const row of manifest.heightfield.topSolidRows) {
+    if (row === 0) continue;
+    min = Math.min(min, row);
+    max = Math.max(max, row);
+    sum += row;
+    count++;
   }
 
-  return count;
+  return { min, max, average: count === 0 ? 0 : sum / count };
 }
 
-function countUnsafeBoundarySeamColumns(manifest) {
-  const topRows = getCollisionTopRows(manifest);
-  const sampleRadiusCells = Math.max(2, Math.ceil((PLAYER_RADIUS * 2) / manifest.voxelSize.x));
-  let count = 0;
-
-  for (let x = 1; x < manifest.size.x - 1; x++) {
-    for (let z = 1; z < manifest.size.z - 1; z++) {
-      const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
-      const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
-      if (!isInsideBoundaryPolygon(worldX, worldZ, manifest.boundary)) continue;
-      const boundaryDistance = distanceToBoundary(worldX, worldZ, manifest.boundary);
-      if (boundaryDistance > BOUNDARY_SEAM_SEAL_THICKNESS) continue;
-      if (isProtectedGameplayClearanceColumn(manifest, x, z)) continue;
-
-      const currentTopRow = topRows[x + z * manifest.size.x];
-      let highInwardSamples = 0;
-
-      for (let dx = -sampleRadiusCells; dx <= sampleRadiusCells; dx++) {
-        for (let dz = -sampleRadiusCells; dz <= sampleRadiusCells; dz++) {
-          if (dx === 0 && dz === 0) continue;
-          if (dx * dx + dz * dz > sampleRadiusCells ** 2) continue;
-
-          const neighborX = x + dx;
-          const neighborZ = z + dz;
-          if (neighborX < 1 || neighborX >= manifest.size.x - 1 || neighborZ < 1 || neighborZ >= manifest.size.z - 1) continue;
-
-          const neighborWorldX = manifest.origin.x + (neighborX + 0.5) * manifest.voxelSize.x;
-          const neighborWorldZ = manifest.origin.z + (neighborZ + 0.5) * manifest.voxelSize.z;
-          if (!isInsideBoundaryPolygon(neighborWorldX, neighborWorldZ, manifest.boundary)) continue;
-          if (distanceToBoundary(neighborWorldX, neighborWorldZ, manifest.boundary) <= boundaryDistance + manifest.voxelSize.x * 0.5) continue;
-
-          const neighborTopRow = topRows[neighborX + neighborZ * manifest.size.x];
-          if (neighborTopRow - currentTopRow > MAX_NAVIGATION_STEP_ROWS) {
-            highInwardSamples++;
-          }
-        }
-      }
-
-      if (highInwardSamples >= 3) count++;
-    }
-  }
-
-  return count;
-}
-
-function worldToGrid(value, origin, voxelSize, max) {
-  return Math.max(0, Math.min(max - 1, Math.floor((value - origin) / voxelSize)));
-}
-
-function countFlagObstructions(manifest, flag) {
-  const radius = 4.3;
-  const gx0 = worldToGrid(flag.x - radius, manifest.origin.x, manifest.voxelSize.x, manifest.size.x);
-  const gx1 = worldToGrid(flag.x + radius, manifest.origin.x, manifest.voxelSize.x, manifest.size.x);
-  const gz0 = worldToGrid(flag.z - radius, manifest.origin.z, manifest.voxelSize.z, manifest.size.z);
-  const gz1 = worldToGrid(flag.z + radius, manifest.origin.z, manifest.voxelSize.z, manifest.size.z);
-  const flagRow = Math.max(1, Math.floor((flag.y - manifest.origin.y) / manifest.voxelSize.y));
-  let obstructions = 0;
-
-  for (let x = gx0; x <= gx1; x++) {
-    for (let z = gz0; z <= gz1; z++) {
-      const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
-      const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
-      if (Math.hypot(worldX - flag.x, worldZ - flag.z) > radius) continue;
-
-      for (let y = flagRow + 1; y <= Math.min(manifest.size.y - 1, flagRow + 12); y++) {
-        if (isSolidBlock(getManifestBlock(manifest, x, y, z))) {
-          obstructions++;
-        }
-      }
-    }
-  }
-
-  return obstructions;
-}
-
-function formatReasonCounts(reasonCounts) {
-  return Object.entries(reasonCounts)
-    .sort(([, countA], [, countB]) => countB - countA)
-    .slice(0, 8)
-    .map(([reason, count]) => `${reason}:${count}`)
-    .join(', ') || 'none';
-}
-
-function isInsideBoundaryPolygon(x, z, polygon) {
-  let inside = false;
-
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].x;
-    const zi = polygon[i].z;
-    const xj = polygon[j].x;
-    const zj = polygon[j].z;
-
-    if (((zi > z) !== (zj > z)) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-}
-
-function distanceToSegment(pointX, pointZ, startX, startZ, endX, endZ) {
-  const dx = endX - startX;
-  const dz = endZ - startZ;
-  const lengthSq = dx * dx + dz * dz;
-
-  if (lengthSq <= 0.0001) {
-    return Math.hypot(pointX - startX, pointZ - startZ);
-  }
-
-  const t = Math.max(0, Math.min(1, ((pointX - startX) * dx + (pointZ - startZ) * dz) / lengthSq));
-  return Math.hypot(pointX - (startX + dx * t), pointZ - (startZ + dz * t));
-}
-
-function distanceToBoundary(worldX, worldZ, boundary) {
-  let closest = Number.POSITIVE_INFINITY;
-
-  for (let index = 0; index < boundary.length; index++) {
-    const start = boundary[index];
-    const end = boundary[(index + 1) % boundary.length];
-    closest = Math.min(closest, distanceToSegment(worldX, worldZ, start.x, start.z, end.x, end.z));
-  }
-
-  return closest;
-}
-
-function snapHalfStep(value) {
-  return Math.round(value * 2) / 2;
-}
-
-function dot(a, b) {
-  return a.x * b.x + a.z * b.z;
-}
-
-function normalize(vector, fallback = { x: 0, z: 1 }) {
-  const length = Math.hypot(vector.x, vector.z);
-  if (length < 0.0001) return fallback;
-
-  return {
-    x: vector.x / length,
-    z: vector.z / length,
-  };
-}
-
-function getSpawnArcAuditCandidate(flag, outward, arcAngle, radius) {
-  const tangent = { x: -outward.z, z: outward.x };
-  const angle = (arcAngle * Math.PI) / 180;
-
-  return {
-    x: snapHalfStep(flag.x + outward.x * Math.cos(angle) * radius + tangent.x * Math.sin(angle) * radius),
-    z: snapHalfStep(flag.z + outward.z * Math.cos(angle) * radius + tangent.z * Math.sin(angle) * radius),
-  };
-}
-
-function isBoundarySafeAuditPoint(x, z, boundary, minBoundaryDistance) {
-  return isInsideBoundaryPolygon(x, z, boundary) && distanceToBoundary(x, z, boundary) >= minBoundaryDistance;
-}
-
-function canFitSpawnArcAudit(boundary, flag, outward) {
-  const spawns = [];
-
-  for (let index = 0; index < SPAWN_DISTANCE_AUDIT_ARC_ANGLES.length; index++) {
-    const arcAngle = SPAWN_DISTANCE_AUDIT_ARC_ANGLES[index];
-
-    for (let attempts = 0; attempts < 28; attempts++) {
-      const centerBias = Math.abs(arcAngle) < 1 ? 0.27 : 0.63;
-      const radius = Math.max(
-        SPAWN_DISTANCE_AUDIT_MIN_RADIUS,
-        SPAWN_DISTANCE_AUDIT_BASE_RADIUS + centerBias - attempts * 0.108
-      );
-      const candidate = getSpawnArcAuditCandidate(flag, outward, arcAngle, radius);
-      const flagOffset = { x: candidate.x - flag.x, z: candidate.z - flag.z };
-
-      if (dot(flagOffset, outward) < 1.44) continue;
-      if (!isBoundarySafeAuditPoint(candidate.x, candidate.z, boundary, SPAWN_DISTANCE_AUDIT_CLEARANCE)) continue;
-      if (!spawns.every((spawn) => Math.hypot(spawn.x - candidate.x, spawn.z - candidate.z) >= 2.0)) continue;
-
-      spawns.push(candidate);
-      break;
-    }
-  }
-
-  for (let offset = 0; spawns.length < SPAWN_POINT_COUNT && offset < 18; offset++) {
-    const direction = offset % 2 === 0 ? 1 : -1;
-    const radius = Math.max(SPAWN_DISTANCE_AUDIT_MIN_RADIUS, SPAWN_DISTANCE_AUDIT_BASE_RADIUS - offset * 0.135);
-    const candidate = getSpawnArcAuditCandidate(flag, outward, direction * (28 + offset * 4), radius);
-    const flagOffset = { x: candidate.x - flag.x, z: candidate.z - flag.z };
-
-    if (dot(flagOffset, outward) < 1.26) continue;
-    if (!isBoundarySafeAuditPoint(candidate.x, candidate.z, boundary, SPAWN_DISTANCE_AUDIT_CLEARANCE)) continue;
-    if (!spawns.every((spawn) => Math.hypot(spawn.x - candidate.x, spawn.z - candidate.z) >= 2.1)) continue;
-
-    spawns.push(candidate);
-  }
-
-  return spawns.length === SPAWN_POINT_COUNT;
-}
-
-function getSpawnSafeFlagCandidateDistance(manifest) {
-  const candidates = [];
-  const rankedPairs = [];
-  const minX = manifest.origin.x + FLAG_DISTANCE_AUDIT_CLEARANCE;
-  const maxX = manifest.origin.x + manifest.size.x * manifest.voxelSize.x - FLAG_DISTANCE_AUDIT_CLEARANCE;
-  const minZ = manifest.origin.z + FLAG_DISTANCE_AUDIT_CLEARANCE;
-  const maxZ = manifest.origin.z + manifest.size.z * manifest.voxelSize.z - FLAG_DISTANCE_AUDIT_CLEARANCE;
-
-  for (let x = minX; x <= maxX; x += SPAWN_DISTANCE_AUDIT_GRID_STEP) {
-    for (let z = minZ; z <= maxZ; z += SPAWN_DISTANCE_AUDIT_GRID_STEP) {
-      const candidate = { x: snapHalfStep(x), z: snapHalfStep(z) };
-      if (!isBoundarySafeAuditPoint(candidate.x, candidate.z, manifest.boundary, FLAG_DISTANCE_AUDIT_CLEARANCE)) continue;
-
-      candidates.push(candidate);
-    }
-  }
-
-  for (let indexA = 0; indexA < candidates.length; indexA++) {
-    for (let indexB = indexA + 1; indexB < candidates.length; indexB++) {
-      const a = candidates[indexA];
-      const b = candidates[indexB];
-      const distanceSq = (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
-
-      if (rankedPairs.length < SPAWN_DISTANCE_AUDIT_PAIR_LIMIT) {
-        rankedPairs.push({ a, b, distanceSq });
-        rankedPairs.sort((pairA, pairB) => pairB.distanceSq - pairA.distanceSq);
-        continue;
-      }
-
-      if (distanceSq <= rankedPairs[rankedPairs.length - 1].distanceSq) continue;
-
-      rankedPairs[rankedPairs.length - 1] = { a, b, distanceSq };
-      rankedPairs.sort((pairA, pairB) => pairB.distanceSq - pairA.distanceSq);
-    }
-  }
-
-  for (const pair of rankedPairs) {
-    const redOutward = normalize({ x: pair.a.x - pair.b.x, z: pair.a.z - pair.b.z });
-    const blueOutward = normalize({ x: pair.b.x - pair.a.x, z: pair.b.z - pair.a.z });
-
-    if (canFitSpawnArcAudit(manifest.boundary, pair.a, redOutward) && canFitSpawnArcAudit(manifest.boundary, pair.b, blueOutward)) {
-      return Math.sqrt(pair.distanceSq);
-    }
-  }
-
-  return rankedPairs.length > 0 ? Math.sqrt(rankedPairs[0].distanceSq) : 0;
-}
-
-function getBoundaryShapeStats(manifest) {
-  const boundary = manifest.boundary;
-  let area = 0;
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let minZ = Number.POSITIVE_INFINITY;
-  let maxZ = Number.NEGATIVE_INFINITY;
-  let insideColumns = 0;
-  let outsideColumns = 0;
-  let filledOutsideColumns = 0;
-  let nearOutsideColumns = 0;
-  let filledNearOutsideColumns = 0;
-  let farOutsideColumns = 0;
-  let filledFarOutsideColumns = 0;
-
-  for (let index = 0; index < boundary.length; index++) {
-    const point = boundary[index];
-    const next = boundary[(index + 1) % boundary.length];
-    area += point.x * next.z - next.x * point.z;
-    minX = Math.min(minX, point.x);
-    maxX = Math.max(maxX, point.x);
-    minZ = Math.min(minZ, point.z);
-    maxZ = Math.max(maxZ, point.z);
-  }
-
-  area = Math.abs(area) * 0.5;
-
-  for (let x = 0; x < manifest.heightfield.size.x; x++) {
-    for (let z = 0; z < manifest.heightfield.size.z; z++) {
-      const worldX = manifest.heightfield.origin.x + (x + 0.5) * manifest.heightfield.voxelSize.x;
-      const worldZ = manifest.heightfield.origin.z + (z + 0.5) * manifest.heightfield.voxelSize.z;
-      const inside = isInsideBoundaryPolygon(worldX, worldZ, boundary);
-      const boundaryDistance = distanceToBoundary(worldX, worldZ, boundary);
-      const solid = manifest.heightfield.topSolidRows[x + z * manifest.heightfield.size.x] > 0;
-
-      if (inside) {
-        insideColumns++;
-      } else {
-        outsideColumns++;
-        if (solid) filledOutsideColumns++;
-        if (boundaryDistance <= 3.0) {
-          nearOutsideColumns++;
-          if (solid) filledNearOutsideColumns++;
-        } else {
-          farOutsideColumns++;
-          if (solid) filledFarOutsideColumns++;
-        }
-      }
-    }
-  }
-
-  const boundingArea = Math.max(1, (maxX - minX) * (maxZ - minZ));
-
-  return {
-    boundaryPointCount: boundary.length,
-    area,
-    boundingArea,
-    areaRatio: area / boundingArea,
-    insideColumns,
-    outsideColumns,
-    outsideFilledRatio: outsideColumns === 0 ? 0 : filledOutsideColumns / outsideColumns,
-    nearOutsideFilledRatio: nearOutsideColumns === 0 ? 0 : filledNearOutsideColumns / nearOutsideColumns,
-    farOutsideFilledRatio: farOutsideColumns === 0 ? 0 : filledFarOutsideColumns / farOutsideColumns,
-    signature: `${boundary.length}:${Math.round((area / boundingArea) * 100)}:${Math.round((maxX - minX) / Math.max(1, maxZ - minZ) * 10)}`,
-  };
-}
-
-function getGameplayBoundaryStats(manifest) {
-  const spawns = [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue];
-  const flags = [manifest.flagZones.red, manifest.flagZones.blue];
-  const spawnDistances = spawns.map((spawn) => distanceToBoundary(spawn.x, spawn.z, manifest.boundary));
-  const flagDistances = flags.map((flag) => distanceToBoundary(flag.x, flag.z, manifest.boundary));
-  const allGameplayPoints = [...spawns, ...flags];
-
-  return {
-    allInsideBoundary: allGameplayPoints.every((point) => isInsideBoundaryPolygon(point.x, point.z, manifest.boundary)),
-    minSpawnBoundaryDistance: Math.min(...spawnDistances),
-    minFlagBoundaryDistance: Math.min(...flagDistances),
-  };
-}
-
-function averagePoint(points) {
-  return {
-    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
-    z: points.reduce((sum, point) => sum + point.z, 0) / points.length,
-  };
-}
-
-function getSpawnArcStats(manifest) {
-  const getTeamStats = (spawns, flag, opponentFlag) => {
-    const outward = normalize({
-      x: flag.x - opponentFlag.x,
-      z: flag.z - opponentFlag.z,
-    });
-    const distances = spawns.map((spawn) => Math.hypot(spawn.x - flag.x, spawn.z - flag.z));
-    const outwardDistances = spawns.map((spawn) => dot({ x: spawn.x - flag.x, z: spawn.z - flag.z }, outward));
-    let minPairDistance = Number.POSITIVE_INFINITY;
-
-    for (let i = 0; i < spawns.length; i++) {
-      for (let j = i + 1; j < spawns.length; j++) {
-        minPairDistance = Math.min(minPairDistance, Math.hypot(spawns[i].x - spawns[j].x, spawns[i].z - spawns[j].z));
-      }
-    }
-
-    return {
-      minDistanceToFlag: Math.min(...distances),
-      maxDistanceToFlag: Math.max(...distances),
-      minOutwardDistance: Math.min(...outwardDistances),
-      minPairDistance,
-    };
-  };
-  const redCenter = averagePoint(manifest.spawnPoints.red);
-  const blueCenter = averagePoint(manifest.spawnPoints.blue);
-  const red = getTeamStats(manifest.spawnPoints.red, manifest.flagZones.red, manifest.flagZones.blue);
-  const blue = getTeamStats(manifest.spawnPoints.blue, manifest.flagZones.blue, manifest.flagZones.red);
-  const flagDistance = Math.hypot(
-    manifest.flagZones.red.x - manifest.flagZones.blue.x,
-    manifest.flagZones.red.z - manifest.flagZones.blue.z
-  );
-
-  return {
-    red,
-    blue,
-    flagDistance,
-    bestSpawnSafeFlagDistance: getSpawnSafeFlagCandidateDistance(manifest),
-    teamCenterDistance: Math.hypot(redCenter.x - blueCenter.x, redCenter.z - blueCenter.z),
-    mapLongAxis: Math.max(manifest.size.x * manifest.voxelSize.x, manifest.size.z * manifest.voxelSize.z),
-  };
-}
-
-function assertCondition(condition, failures, message) {
-  if (!condition) failures.push(message);
-}
-
-function summarizeBlueprint(manifest, diagnostics) {
-  const mapDiagnostics = diagnostics.map || manifest.construction?.diagnostics;
-  return {
-    familyId: manifest.familyId,
-    topologyId: manifest.topologyId,
-    themeId: manifest.themeId,
-    score: mapDiagnostics?.score ?? 0,
-    candidateCount: mapDiagnostics?.candidateCount ?? 0,
-    rejectedCandidates: mapDiagnostics?.rejectedCandidates ?? [],
-    routeChoiceCount: manifest.gameplay?.lanes?.filter((lane) => lane.kind === 'primary' || lane.kind === 'flank').length ?? 0,
-    laneLengths: mapDiagnostics?.laneLengths ?? {},
-    laneWidths: mapDiagnostics?.laneWidths ?? {},
-    coverDensityByLane: mapDiagnostics?.coverDensityByLane ?? {},
-    maxSightlineLength: mapDiagnostics?.maxSightlineLength ?? 0,
-    tacticalSlotCount: manifest.construction?.tacticalSlots?.length ?? 0,
-    moduleInstanceCount: manifest.construction?.moduleInstances?.length ?? 0,
-    terrainConstraintCount: manifest.construction?.terrainConstraints?.length ?? 0,
-    moduleCountsByRole: mapDiagnostics?.moduleCountsByRole ?? {},
-    repairActions: mapDiagnostics?.repairActions ?? diagnostics.repairActions ?? {},
-    warnings: mapDiagnostics?.warnings ?? [],
-    stageTimingsMs: mapDiagnostics?.stageTimingsMs ?? diagnostics.stageTimingsMs ?? {},
-  };
-}
-
-function inspectMap(seed, options) {
+function auditSeed(seed, options) {
   const { manifest, diagnostics } = generateProceduralVoxelMapWithDiagnostics(seed);
   const failures = [];
-  const structureBlocks = countStructureBlocks(manifest);
-  const shapeStats = getBoundaryShapeStats(manifest);
-  const gameplayBoundaryStats = getGameplayBoundaryStats(manifest);
-  const spawnArcStats = getSpawnArcStats(manifest);
-  const flagObstructions = countFlagObstructions(manifest, manifest.flagZones.red) + countFlagObstructions(manifest, manifest.flagZones.blue);
-  const unsafeGrooveColumns = countUnsafeNarrowGrooveColumns(manifest);
-  const unsafeCornerPocketColumns = countUnsafeCornerPocketColumns(manifest);
-  const unsafeWallNotchColumns = countUnsafeWallNotchColumns(manifest);
-  const unsafeTrappedBasinColumns = countUnsafeTrappedBasinColumns(manifest);
-  const unsafeBoundarySeamColumns = countUnsafeBoundarySeamColumns(manifest);
-  const acceptedBuildings = diagnostics.buildings.acceptedPlans;
-  const blueprintMetrics = summarizeBlueprint(manifest, diagnostics);
-  const mediumEntranceFailures = acceptedBuildings.filter(
-    (entry) => entry.metrics.footprintCellCount >= 90 && entry.metrics.entranceCount < 2
-  );
-  const entranceClearanceFailures = acceptedBuildings.filter(
-    (entry) => entry.metrics.minEntranceHeightRows < 12 || entry.metrics.minEntranceWidthCells < 6
-  );
-  const flatLargeBuildings = acceptedBuildings.filter(
-    (entry) => entry.metrics.footprintCellCount >= 140 && entry.intent !== 'bridge_outpost' && entry.metrics.variedRoofCellCount <= 0
-  );
-  const protectedFailures = acceptedBuildings.filter((entry) => entry.metrics.minProtectedZoneDistance < 0);
-  const heightFailures = acceptedBuildings.filter((entry) => entry.metrics.maxFloorRow + entry.metrics.maxHeightRows >= manifest.size.y - 2);
+  const moduleInstances = manifest.construction?.moduleInstances ?? [];
+  const acceptedModules = moduleInstances.filter((instance) => instance.validation?.status === 'accepted');
+  const objectRoles = new Set(moduleInstances.flatMap((instance) => instance.roleTags ?? []));
+  const floating = countFloatingSolidComponents(manifest);
+  const heightRows = summarizeHeightRows(manifest);
 
-  assertCondition(manifest.spawnPoints.red.length === SPAWN_POINT_COUNT, failures, `seed ${seed}: expected ${SPAWN_POINT_COUNT} red spawns`);
-  assertCondition(manifest.spawnPoints.blue.length === SPAWN_POINT_COUNT, failures, `seed ${seed}: expected ${SPAWN_POINT_COUNT} blue spawns`);
-  assertCondition(Boolean(manifest.flagZones.red && manifest.flagZones.blue), failures, `seed ${seed}: missing flag zones`);
-  assertCondition(manifest.stats.colliderCount > 0, failures, `seed ${seed}: no colliders generated`);
+  assertCondition(manifest.size.x > 0 && manifest.size.y > 0 && manifest.size.z > 0, failures, `seed ${seed}: invalid map size`);
+  assertCondition(manifest.chunks.length > 0, failures, `seed ${seed}: no chunks generated`);
+  assertCondition(manifest.colliders.length > 0, failures, `seed ${seed}: no colliders generated`);
   assertCondition(manifest.stats.colliderCount <= options.maxColliders, failures, `seed ${seed}: collider count ${manifest.stats.colliderCount} > ${options.maxColliders}`);
-  assertCondition(shapeStats.boundaryPointCount >= 13 && shapeStats.boundaryPointCount <= 16, failures, `seed ${seed}: boundary point count ${shapeStats.boundaryPointCount} is outside the moderated range`);
-  assertCondition(shapeStats.areaRatio > 0.45 && shapeStats.areaRatio < 0.94, failures, `seed ${seed}: boundary area ratio ${shapeStats.areaRatio.toFixed(2)} is too extreme`);
-  assertCondition(manifest.size.x * manifest.voxelSize.x >= 66 && manifest.size.z * manifest.voxelSize.z >= 54.5, failures, `seed ${seed}: map footprint is too small`);
-  assertCondition(shapeStats.outsideFilledRatio < 0.65, failures, `seed ${seed}: ${shapeStats.outsideFilledRatio.toFixed(2)} outside-boundary columns are still filled`);
-  assertCondition(shapeStats.farOutsideFilledRatio < 0.025, failures, `seed ${seed}: ${shapeStats.farOutsideFilledRatio.toFixed(2)} far outside-boundary columns are filled`);
-  assertCondition(shapeStats.nearOutsideFilledRatio > 0.4, failures, `seed ${seed}: boundary wall shell is too sparse`);
-  assertCondition(shapeStats.insideColumns > 1600, failures, `seed ${seed}: generated boundary has too little playable terrain`);
-  assertCondition(gameplayBoundaryStats.allInsideBoundary, failures, `seed ${seed}: gameplay point outside movement boundary`);
-  assertCondition(gameplayBoundaryStats.minSpawnBoundaryDistance >= 5.0, failures, `seed ${seed}: spawn boundary clearance ${gameplayBoundaryStats.minSpawnBoundaryDistance.toFixed(2)} is too low`);
-  assertCondition(gameplayBoundaryStats.minFlagBoundaryDistance >= 4.8, failures, `seed ${seed}: flag boundary clearance ${gameplayBoundaryStats.minFlagBoundaryDistance.toFixed(2)} is too low`);
-  assertCondition(spawnArcStats.red.minDistanceToFlag >= 2.8 && spawnArcStats.blue.minDistanceToFlag >= 2.8, failures, `seed ${seed}: spawn arc is too close to a flag`);
-  assertCondition(spawnArcStats.red.maxDistanceToFlag <= 6.6 && spawnArcStats.blue.maxDistanceToFlag <= 6.6, failures, `seed ${seed}: spawn arc is too far from a flag`);
-  assertCondition(spawnArcStats.red.minOutwardDistance >= 1.2 && spawnArcStats.blue.minOutwardDistance >= 1.2, failures, `seed ${seed}: spawn arc is not behind the flag`);
-  assertCondition(spawnArcStats.red.minPairDistance >= 1.8 && spawnArcStats.blue.minPairDistance >= 1.8, failures, `seed ${seed}: same-team spawns are too clustered`);
-  assertCondition(spawnArcStats.flagDistance >= spawnArcStats.bestSpawnSafeFlagDistance * 0.96, failures, `seed ${seed}: flag distance ${spawnArcStats.flagDistance.toFixed(2)} left too much safe separation unused (${spawnArcStats.bestSpawnSafeFlagDistance.toFixed(2)} possible)`);
-  assertCondition(spawnArcStats.teamCenterDistance >= spawnArcStats.mapLongAxis * 0.68, failures, `seed ${seed}: team spawn centers are not far enough apart`);
-  assertCondition(flagObstructions === 0, failures, `seed ${seed}: ${flagObstructions} solid blocks obstruct flag zones`);
-  assertCondition(unsafeGrooveColumns === 0, failures, `seed ${seed}: ${unsafeGrooveColumns} unsafe narrow groove columns remain`);
-  assertCondition(unsafeCornerPocketColumns === 0, failures, `seed ${seed}: ${unsafeCornerPocketColumns} unsafe corner pocket columns remain`);
-  assertCondition(unsafeWallNotchColumns === 0, failures, `seed ${seed}: ${unsafeWallNotchColumns} unsafe wall notch columns remain`);
-  assertCondition(unsafeTrappedBasinColumns === 0, failures, `seed ${seed}: ${unsafeTrappedBasinColumns} unsafe trapped basin columns remain`);
-  assertCondition(unsafeBoundarySeamColumns === 0, failures, `seed ${seed}: ${unsafeBoundarySeamColumns} unsafe boundary seam columns remain`);
-  assertCondition(structureBlocks > 0, failures, `seed ${seed}: no structure blocks generated`);
-  assertCondition(structureBlocks < 11_000, failures, `seed ${seed}: structure block count ${structureBlocks} is too cluttered`);
-  assertCondition(diagnostics.buildings.attempted > 0, failures, `seed ${seed}: no building plans attempted`);
-  assertCondition(diagnostics.buildings.accepted > 0, failures, `seed ${seed}: no building plans accepted`);
-  assertCondition(manifest.version >= 2, failures, `seed ${seed}: manifest version does not include construction metadata`);
-  assertCondition(Boolean(manifest.gameplay?.routeGraph?.nodes?.length), failures, `seed ${seed}: missing semantic route graph`);
-  assertCondition(blueprintMetrics.candidateCount >= 2, failures, `seed ${seed}: blueprint candidate scoring did not run`);
-  assertCondition(blueprintMetrics.routeChoiceCount >= 3, failures, `seed ${seed}: semantic route graph has too few route choices`);
-  assertCondition(blueprintMetrics.tacticalSlotCount >= 10, failures, `seed ${seed}: not enough tactical slots generated`);
-  assertCondition(blueprintMetrics.moduleInstanceCount >= 10, failures, `seed ${seed}: module grammar did not instantiate expected modules`);
-  assertCondition(blueprintMetrics.terrainConstraintCount >= 12, failures, `seed ${seed}: terrain constraints missing from blueprint`);
-  assertCondition(blueprintMetrics.score >= 55, failures, `seed ${seed}: blueprint score ${blueprintMetrics.score.toFixed(1)} is too low`);
-  assertCondition(mediumEntranceFailures.length === 0, failures, `seed ${seed}: medium/large building with fewer than 2 entrances`);
-  assertCondition(entranceClearanceFailures.length === 0, failures, `seed ${seed}: accepted building with too-narrow or too-short entrance`);
-  assertCondition(flatLargeBuildings.length === 0, failures, `seed ${seed}: large accepted building without roofline variation`);
-  assertCondition(protectedFailures.length === 0, failures, `seed ${seed}: building overlapped protected spawn/flag area`);
-  assertCondition(heightFailures.length === 0, failures, `seed ${seed}: building exceeded map height bounds`);
+  assertCondition(manifest.spawnPoints.red.length >= 4 && manifest.spawnPoints.blue.length >= 4, failures, `seed ${seed}: missing team spawn points`);
+  assertCondition(Boolean(manifest.flagZones.red && manifest.flagZones.blue), failures, `seed ${seed}: missing flag zones`);
+  assertCondition(moduleInstances.length >= 18, failures, `seed ${seed}: expected authored objects, got ${moduleInstances.length}`);
+  assertCondition(acceptedModules.length === moduleInstances.length, failures, `seed ${seed}: rejected generated module instances`);
+  assertCondition(objectRoles.has('base_shell'), failures, `seed ${seed}: missing base structure`);
+  assertCondition(objectRoles.has('spawn_shelter'), failures, `seed ${seed}: missing spawn shelter`);
+  assertCondition(objectRoles.has('flag_stand'), failures, `seed ${seed}: missing flag plinth`);
+  assertCondition(objectRoles.has('route_cover'), failures, `seed ${seed}: missing route cover`);
+  assertCondition(Object.keys(manifest.construction?.diagnostics?.repairActions ?? {}).length === 0, failures, `seed ${seed}: legacy repair actions are still present`);
+  assertCondition(floating.floating === 0, failures, `seed ${seed}: ${floating.floating} floating solid components, largest=${floating.largestFloating}`);
+
+  for (const spawn of [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue]) {
+    const groundY = getGroundYBelow(manifest, spawn);
+    assertCondition(groundY !== null, failures, `seed ${seed}: spawn has no solid ground below`);
+    if (groundY !== null) {
+      const expectedCenterY = groundY + PLAYER_HEIGHT / 2;
+      assertCondition(
+        Math.abs(spawn.y - expectedCenterY) <= 0.25,
+        failures,
+        `seed ${seed}: spawn y ${spawn.y.toFixed(2)} is not aligned to ground ${groundY.toFixed(2)}`
+      );
+    }
+  }
 
   return {
     seed,
-    manifest,
-    diagnostics,
-    blueprintMetrics,
-    shapeStats,
-    structureBlocks,
     failures,
+    stats: manifest.stats,
+    themeId: manifest.themeId,
+    topologyId: manifest.topologyId,
+    objectSummary: diagnostics.objectSummary ?? {},
+    moduleCount: moduleInstances.length,
+    heightRows,
+    floating,
   };
 }
 
-function printDebug(results) {
-  for (const result of results) {
-    const { diagnostics } = result;
-    console.log(`\nDebug seed ${result.seed}`);
-    console.log(`theme=${result.manifest.theme.id} colliders=${result.manifest.stats.colliderCount} structureBlocks=${result.structureBlocks}`);
-    console.log(`topology=${result.blueprintMetrics.topologyId} score=${result.blueprintMetrics.score.toFixed(1)} candidates=${result.blueprintMetrics.candidateCount} routeChoices=${result.blueprintMetrics.routeChoiceCount}`);
-    console.log(`laneLengths=${Object.entries(result.blueprintMetrics.laneLengths).map(([lane, length]) => `${lane}:${length.toFixed(1)}`).join(',')}`);
-    console.log(`moduleRoles=${formatReasonCounts(result.blueprintMetrics.moduleCountsByRole)}`);
-    console.log(`repairActions=${formatReasonCounts(result.blueprintMetrics.repairActions) || 'none'}`);
-    console.log(`mapWarnings=${result.blueprintMetrics.warnings.join('|') || 'none'}`);
-    console.log(`shapePoints=${result.shapeStats.boundaryPointCount} areaRatio=${result.shapeStats.areaRatio.toFixed(2)} outsideFilled=${result.shapeStats.outsideFilledRatio.toFixed(3)} farOutsideFilled=${result.shapeStats.farOutsideFilledRatio.toFixed(3)}`);
-    console.log(`buildingAttempts=${diagnostics.buildings.attempted} accepted=${diagnostics.buildings.accepted} rejected=${diagnostics.buildings.rejected}`);
-    console.log(`rejectionReasons=${formatReasonCounts(diagnostics.buildings.rejectionReasons)}`);
-    console.log('acceptedPlans=');
-
-    for (const entry of diagnostics.buildings.acceptedPlans) {
-      console.log(
-        `  ${entry.intent} ${entry.signature} center=(${entry.center.x.toFixed(2)},${entry.center.z.toFixed(2)}) ` +
-          `entrances=${entry.metrics.entranceCount} cells=${entry.metrics.footprintCellCount} maxH=${entry.metrics.maxHeightRows}`
-      );
-    }
-
-    if (diagnostics.buildings.rejectedPlans.length > 0) {
-      console.log('sampleRejectedPlans=');
-      for (const entry of diagnostics.buildings.rejectedPlans.slice(0, 12)) {
-        console.log(`  ${entry.intent} reasons=${entry.reasons.join('|') || 'unknown'} ${entry.signature}`);
-      }
-    }
-  }
-}
-
-function createJsonReport(results, summary, failures) {
-  return {
-    generatedAt: new Date().toISOString(),
-    summary,
-    failures,
-    seeds: results.map((result) => ({
-      seed: result.seed,
-      manifestId: result.manifest.id,
-      version: result.manifest.version,
-      themeId: result.manifest.theme.id,
-      stats: result.manifest.stats,
-      shapeStats: result.shapeStats,
-      structureBlocks: result.structureBlocks,
-      buildings: {
-        attempted: result.diagnostics.buildings.attempted,
-        accepted: result.diagnostics.buildings.accepted,
-        rejected: result.diagnostics.buildings.rejected,
-        rejectionReasons: result.diagnostics.buildings.rejectionReasons,
-        acceptedPlans: result.diagnostics.buildings.acceptedPlans.map((entry) => ({
-          intent: entry.intent,
-          center: entry.center,
-          signature: entry.signature,
-          metrics: entry.metrics,
-        })),
-      },
-      blueprint: result.blueprintMetrics,
-      failures: result.failures,
-    })),
-  };
+function formatObjectSummary(summary) {
+  return Object.entries(summary)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}:${value}`)
+    .join(', ');
 }
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
   const seeds = createSeedList(options);
-  const results = [];
-  const failures = [];
-  const themes = new Set();
-  const shapeSignatures = new Set();
-  const signatures = [];
-  let totalAttempts = 0;
-  let totalAccepted = 0;
-  let totalRejected = 0;
-  let totalStructureBlocks = 0;
-  let maxColliderCount = 0;
-
-  for (const seed of seeds) {
-    const result = inspectMap(seed, options);
-    results.push(result);
-    failures.push(...result.failures);
-    themes.add(result.manifest.theme.id);
-    shapeSignatures.add(result.shapeStats.signature);
-    totalAttempts += result.diagnostics.buildings.attempted;
-    totalAccepted += result.diagnostics.buildings.accepted;
-    totalRejected += result.diagnostics.buildings.rejected;
-    totalStructureBlocks += result.structureBlocks;
-    maxColliderCount = Math.max(maxColliderCount, result.manifest.stats.colliderCount);
-    signatures.push(...result.diagnostics.buildings.acceptedPlans.map((entry) => entry.signature));
-  }
-
-  const failureRate = totalAttempts === 0 ? 1 : totalRejected / totalAttempts;
-  const uniqueSignatureCount = new Set(signatures).size;
-  const signatureVariety = signatures.length === 0 ? 0 : uniqueSignatureCount / signatures.length;
-  const distinctThemeTarget = Math.min(3, seeds.length);
-  const topologyCounts = results.reduce((counts, result) => {
-    counts[result.blueprintMetrics.topologyId] = (counts[result.blueprintMetrics.topologyId] ?? 0) + 1;
-    return counts;
-  }, {});
-  const averageBlueprintScore =
-    results.reduce((sum, result) => sum + result.blueprintMetrics.score, 0) / Math.max(1, results.length);
-  const totalRepairActions = results.reduce((counts, result) => {
-    for (const [action, count] of Object.entries(result.blueprintMetrics.repairActions)) {
-      counts[action] = (counts[action] ?? 0) + count;
-    }
-    return counts;
-  }, {});
-  const topRejectionReasons = results.reduce((counts, result) => {
-    for (const [reason, count] of Object.entries(result.diagnostics.buildings.rejectionReasons)) {
-      counts[reason] = (counts[reason] ?? 0) + count;
-    }
-    return counts;
-  }, {});
-
-  if (seeds.length > 1) {
-    assertCondition(failureRate <= options.maxFailureRate, failures, `building validation failure rate ${failureRate.toFixed(2)} > ${options.maxFailureRate}`);
-  }
-  assertCondition(themes.size >= distinctThemeTarget, failures, `theme distribution too narrow: ${themes.size}/${distinctThemeTarget}`);
-  assertCondition(signatureVariety >= options.minSignatureVariety, failures, `building signature variety ${signatureVariety.toFixed(2)} < ${options.minSignatureVariety}`);
-  assertCondition(shapeSignatures.size >= Math.min(6, seeds.length), failures, `map shape variety too narrow: ${shapeSignatures.size}/${Math.min(6, seeds.length)}`);
-
-  const summary = {
-    seedCount: seeds.length,
-    mapCount: results.length,
-    themes: [...themes],
-    maxColliderCount,
-    shapeSignatureCount: shapeSignatures.size,
-    buildingAttempts: totalAttempts,
-    buildingAccepted: totalAccepted,
-    buildingRejected: totalRejected,
-    buildingFailureRate: failureRate,
-    signatureVariety,
-    totalStructureBlocks,
-    topologyCounts,
-    averageBlueprintScore,
-    repairActions: totalRepairActions,
-    topRejectionReasons,
-  };
+  const results = seeds.map((seed) => auditSeed(seed, options));
+  const failures = results.flatMap((result) => result.failures);
 
   if (options.json) {
-    console.log(JSON.stringify(createJsonReport(results, summary, failures), null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          seeds,
+          failures,
+          results: results.map((result) => ({
+            seed: result.seed,
+            stats: result.stats,
+            themeId: result.themeId,
+            topologyId: result.topologyId,
+            moduleCount: result.moduleCount,
+            objectSummary: result.objectSummary,
+            heightRows: result.heightRows,
+            floating: result.floating,
+          })),
+        },
+        null,
+        2
+      )
+    );
   } else {
-    console.log(`Procedural building smoke: seeds=${seeds.length}`);
-    console.log(`maps=${results.length} themes=${[...themes].join(',')} maxColliders=${maxColliderCount}`);
-    console.log(`shapeSignatures=${shapeSignatures.size} samples=${[...shapeSignatures].slice(0, 6).join(',')}`);
-    console.log(`buildingAttempts=${totalAttempts} accepted=${totalAccepted} rejected=${totalRejected} failureRate=${failureRate.toFixed(2)}`);
-    console.log(`topologies=${formatReasonCounts(topologyCounts)} averageBlueprintScore=${averageBlueprintScore.toFixed(1)}`);
-    console.log(`repairActions=${formatReasonCounts(totalRepairActions) || 'none'}`);
-    console.log(`signatureVariety=${signatureVariety.toFixed(2)} uniqueSignatures=${uniqueSignatureCount}/${signatures.length}`);
-    console.log(`structureBlocks=${totalStructureBlocks}`);
-    console.log(`topRejectionReasons=${formatReasonCounts(topRejectionReasons)}`);
-
-    if (Number.isFinite(options.debugSeed)) {
-      printDebug(results);
-    }
-  }
-
-  if (failures.length > 0 && !options.json) {
-    console.error('\nFailures:');
-    for (const failure of failures) {
-      console.error(`- ${failure}`);
+    console.log(`Fresh procedural map smoke: seeds=${seeds.length}`);
+    for (const result of results) {
+      console.log(
+        `seed=${result.seed} theme=${result.themeId} topology=${result.topologyId} chunks=${result.stats.chunkCount} colliders=${result.stats.colliderCount} modules=${result.moduleCount} heightRows=${result.heightRows.min}-${result.heightRows.max} objects=[${formatObjectSummary(result.objectSummary)}]`
+      );
     }
   }
 
   if (failures.length > 0) {
+    console.error('\nFailures:');
+    for (const failure of failures) console.error(`- ${failure}`);
     process.exitCode = 1;
   }
 }

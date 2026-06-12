@@ -1,7 +1,7 @@
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
-export const CONSTRUCTED_MAP_MANIFEST_VERSION = 2;
+export const CONSTRUCTED_MAP_MANIFEST_VERSION = 3;
 
 export type VoxelBlockId =
   | 'air'
