@@ -1,29 +1,36 @@
 import * as THREE from 'three';
 import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
 
-const TILE_GRID_COLUMNS = 6;
-const TILE_GRID_ROWS = 5;
+export const ATLAS_COLUMNS = 6;
+export const ATLAS_ROWS = 5;
 export const DEFAULT_TILE_SIZE = 128;
 export const MEDIUM_DETAIL_TILE_SIZE = 80;
 export const LOW_DETAIL_TILE_SIZE = 64;
 export let TILE_SIZE = DEFAULT_TILE_SIZE;
+export const ATLAS_UV_PADDING = 0.006;
+export const ATLAS_REPEAT_EDGE_CROP_PIXELS = 14;
 
 export type VoxelFaceDirection = 'top' | 'bottom' | 'side';
 
-interface TextureTile {
+export interface AtlasTile {
   x: number;
   y: number;
 }
 
-export interface VoxelTerrainTextures {
-  color: THREE.DataArrayTexture;
-  emissive: THREE.DataArrayTexture;
+export interface VoxelAtlasTextures {
+  color: THREE.CanvasTexture;
+  bump?: THREE.CanvasTexture;
+  roughness?: THREE.CanvasTexture;
+  metalness?: THREE.CanvasTexture;
+  emissive: THREE.CanvasTexture;
+  ao?: THREE.CanvasTexture;
   tileSize: number;
+  repeatEdgeCropPixels: number;
+  uvPadding: number;
   anisotropy: number;
-  layerCount: number;
 }
 
-interface TerrainTextureContexts {
+interface AtlasContexts {
   color: CanvasRenderingContext2D;
   bump: CanvasRenderingContext2D;
   roughness: CanvasRenderingContext2D;
@@ -32,15 +39,15 @@ interface TerrainTextureContexts {
   ao: CanvasRenderingContext2D;
 }
 
-export type VoxelTerrainTextureDetail = 'low' | 'medium' | 'high';
+export type VoxelAtlasDetail = 'low' | 'medium' | 'high';
 
-interface VoxelTerrainTextureOptions {
-  detail?: VoxelTerrainTextureDetail;
+interface VoxelAtlasOptions {
+  detail?: VoxelAtlasDetail;
 }
 
-const terrainTextureCache = new Map<string, VoxelTerrainTextures>();
+const atlasTextureCache = new Map<string, VoxelAtlasTextures>();
 
-const TILE_MAP: Record<string, TextureTile> = {
+const TILE_MAP: Record<string, AtlasTile> = {
   grass_top: { x: 0, y: 0 },
   grass_side: { x: 1, y: 0 },
   dirt: { x: 2, y: 0 },
@@ -67,9 +74,6 @@ const TILE_MAP: Record<string, TextureTile> = {
   moss: { x: 5, y: 3 },
   lava: { x: 0, y: 4 },
 };
-
-const TILE_LAYER_ORDER = Object.values(TILE_MAP);
-const TILE_LAYER_BY_COORD = new Map(TILE_LAYER_ORDER.map((tile, layer) => [`${tile.x}:${tile.y}`, layer]));
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -112,15 +116,11 @@ function toneHex(hex: string, saturation = 1.12, brightness = 1.02): string {
   return `#${((1 << 24) | (nextR << 16) | (nextG << 8) | nextB).toString(16).slice(1)}`;
 }
 
-function tileOrigin(tile: TextureTile): { x: number; y: number } {
+function tileOrigin(tile: AtlasTile): { x: number; y: number } {
   return {
     x: tile.x * TILE_SIZE,
     y: tile.y * TILE_SIZE,
   };
-}
-
-function tileLayer(tile: TextureTile): number {
-  return TILE_LAYER_BY_COORD.get(`${tile.x}:${tile.y}`) ?? TILE_LAYER_BY_COORD.get(`${TILE_MAP.stone.x}:${TILE_MAP.stone.y}`) ?? 0;
 }
 
 function hash2(x: number, y: number, seed: number): number {
@@ -136,20 +136,20 @@ function layeredNoise(x: number, y: number, seed: number): number {
   return fine * 0.42 + medium * 0.34 + broad * 0.24;
 }
 
-function fillTile(context: CanvasRenderingContext2D, tile: TextureTile, color: string): void {
+function fillTile(context: CanvasRenderingContext2D, tile: AtlasTile, color: string): void {
   const { x, y } = tileOrigin(tile);
   context.fillStyle = color;
   context.fillRect(x, y, TILE_SIZE, TILE_SIZE);
 }
 
-function fillGrayTile(context: CanvasRenderingContext2D, tile: TextureTile, value: number): void {
+function fillGrayTile(context: CanvasRenderingContext2D, tile: AtlasTile, value: number): void {
   const gray = clamp(Math.round(value * 255), 0, 255);
   fillTile(context, tile, `rgb(${gray}, ${gray}, ${gray})`);
 }
 
 function paintNoisyColor(
   context: CanvasRenderingContext2D,
-  tile: TextureTile,
+  tile: AtlasTile,
   base: string,
   light: string,
   dark: string,
@@ -182,7 +182,7 @@ function paintNoisyColor(
 
 function paintNoisyGray(
   context: CanvasRenderingContext2D,
-  tile: TextureTile,
+  tile: AtlasTile,
   base: number,
   amount: number,
   seed: number
@@ -199,7 +199,7 @@ function paintNoisyGray(
   }
 }
 
-function paintEdgeAo(context: CanvasRenderingContext2D, tile: TextureTile, strength: number): void {
+function paintEdgeAo(context: CanvasRenderingContext2D, tile: AtlasTile, strength: number): void {
   const { x, y } = tileOrigin(tile);
 
   for (let py = 0; py < TILE_SIZE; py++) {
@@ -215,8 +215,8 @@ function paintEdgeAo(context: CanvasRenderingContext2D, tile: TextureTile, stren
 }
 
 function paintUtilityMaps(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   options: {
     bump: number;
     bumpNoise?: number;
@@ -243,8 +243,8 @@ function withAlpha(context: CanvasRenderingContext2D, alpha: number, paint: () =
 }
 
 function paintPackPixelClusters(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   colors: string[],
   seed: number,
   count: number,
@@ -280,8 +280,8 @@ function paintPackPixelClusters(
 }
 
 function paintTileEdgePixelFrame(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   light: string,
   shadow: string,
   inset = 3
@@ -304,8 +304,8 @@ function paintTileEdgePixelFrame(
 }
 
 function paintInsetBevel(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   light: string,
   shadow: string,
   inset = 4,
@@ -342,7 +342,7 @@ function paintInsetBevel(
 
 function paintTileGlow(
   context: CanvasRenderingContext2D,
-  tile: TextureTile,
+  tile: AtlasTile,
   color: string,
   alpha: number,
   inset = 0
@@ -364,7 +364,7 @@ function paintTileGlow(
 
 function paintSpeckles(
   context: CanvasRenderingContext2D,
-  tile: TextureTile,
+  tile: AtlasTile,
   colors: string[],
   count: number,
   seed: number,
@@ -411,8 +411,8 @@ function strokeJitterLine(
 }
 
 function paintMicroScratches(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   color: string,
   seed: number,
   count = 18,
@@ -453,8 +453,8 @@ function paintMicroScratches(
 }
 
 function paintCracks(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   color: string,
   seed: number,
   count = 6
@@ -478,8 +478,8 @@ function paintCracks(
 }
 
 function paintCircuitTraces(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   color: string,
   seed: number,
   count = 7
@@ -522,7 +522,7 @@ function paintCircuitTraces(
 
 function strokePanelLines(
   context: CanvasRenderingContext2D,
-  tile: TextureTile,
+  tile: AtlasTile,
   color: string,
   lineWidth = 2
 ): void {
@@ -538,7 +538,7 @@ function strokePanelLines(
   context.stroke();
 }
 
-function paintGrassTop(contexts: TerrainTextureContexts, tile: TextureTile, theme: VoxelMapTheme): void {
+function paintGrassTop(contexts: AtlasContexts, tile: AtlasTile, theme: VoxelMapTheme): void {
   const base = theme.ground.top;
   const light = shadeHex(base, 42);
   const dark = shadeHex(theme.ground.side, -22);
@@ -624,7 +624,7 @@ function paintGrassTop(contexts: TerrainTextureContexts, tile: TextureTile, them
   paintTileEdgePixelFrame(contexts, tile, mixHex(light, '#ffffff', 0.18), mixHex(dark, '#000000', 0.16), 3);
 }
 
-function paintGrassSide(contexts: TerrainTextureContexts, tile: TextureTile, grass: string, dirt: string): void {
+function paintGrassSide(contexts: AtlasContexts, tile: AtlasTile, grass: string, dirt: string): void {
   const { x, y } = tileOrigin(tile);
   const darkDirt = shadeHex(dirt, -36);
   const rootColor = mixHex(grass, dirt, 0.42);
@@ -681,7 +681,7 @@ function paintGrassSide(contexts: TerrainTextureContexts, tile: TextureTile, gra
   paintTileEdgePixelFrame(contexts, tile, mixHex(grass, '#ffffff', 0.14), shadeHex(dirt, -48), 3);
 }
 
-function paintDirtTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string): void {
+function paintDirtTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
   const { x, y } = tileOrigin(tile);
 
   paintNoisyColor(contexts.color, tile, base, shadeHex(base, 24), shadeHex(base, -42), 0xd127, 0.72);
@@ -744,7 +744,7 @@ function paintDirtTile(contexts: TerrainTextureContexts, tile: TextureTile, base
   paintTileEdgePixelFrame(contexts, tile, shadeHex(base, 24), shadeHex(base, -52), 3);
 }
 
-function paintStoneTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string, accent: string): void {
+function paintStoneTile(contexts: AtlasContexts, tile: AtlasTile, base: string, accent: string): void {
   const { x, y } = tileOrigin(tile);
 
   paintNoisyColor(contexts.color, tile, base, shadeHex(base, 34), shadeHex(base, -46), 0x5705e, 0.78);
@@ -803,7 +803,7 @@ function paintStoneTile(contexts: TerrainTextureContexts, tile: TextureTile, bas
   paintTileEdgePixelFrame(contexts, tile, mixHex(base, '#ffffff', 0.15), shadeHex(base, -64), 3);
 }
 
-function paintMetalTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string, accent: string): void {
+function paintMetalTile(contexts: AtlasContexts, tile: AtlasTile, base: string, accent: string): void {
   const { x, y } = tileOrigin(tile);
   const cold = mixHex(base, '#93b7cc', 0.18);
   const dark = shadeHex(base, -44);
@@ -887,7 +887,7 @@ function paintMetalTile(contexts: TerrainTextureContexts, tile: TextureTile, bas
   contexts.emissive.fillRect(x + TILE_SIZE - 30, y + TILE_SIZE - 17, 16, 4);
 }
 
-function paintGlassTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string, accent: string): void {
+function paintGlassTile(contexts: AtlasContexts, tile: AtlasTile, base: string, accent: string): void {
   const { x, y } = tileOrigin(tile);
   const bright = mixHex(base, '#ffffff', 0.54);
   const deep = mixHex(base, '#16263c', 0.5);
@@ -970,7 +970,7 @@ function paintGlassTile(contexts: TerrainTextureContexts, tile: TextureTile, bas
   });
 }
 
-function paintNeonTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string, glow: string, seed: number): void {
+function paintNeonTile(contexts: AtlasContexts, tile: AtlasTile, base: string, glow: string, seed: number): void {
   const { x, y } = tileOrigin(tile);
 
   paintNoisyColor(contexts.color, tile, base, shadeHex(base, 18), shadeHex(base, -36), seed, 0.34);
@@ -1054,8 +1054,8 @@ function paintNeonTile(contexts: TerrainTextureContexts, tile: TextureTile, base
 }
 
 function paintPadTile(
-  contexts: TerrainTextureContexts,
-  tile: TextureTile,
+  contexts: AtlasContexts,
+  tile: AtlasTile,
   base: string,
   accent: string,
   secondary: string,
@@ -1142,7 +1142,7 @@ function paintPadTile(
   }
 }
 
-function paintBarrierTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string, accent: string): void {
+function paintBarrierTile(contexts: AtlasContexts, tile: AtlasTile, base: string, accent: string): void {
   const { x, y } = tileOrigin(tile);
 
   paintNoisyColor(contexts.color, tile, base, shadeHex(base, 18), shadeHex(base, -38), 0xba881e, 0.48);
@@ -1208,7 +1208,7 @@ function paintBarrierTile(contexts: TerrainTextureContexts, tile: TextureTile, b
   contexts.emissive.fillRect(x + TILE_SIZE - 30, y + TILE_SIZE - 24, 12, 4);
 }
 
-function paintWoodTile(contexts: TerrainTextureContexts, tile: TextureTile): void {
+function paintWoodTile(contexts: AtlasContexts, tile: AtlasTile): void {
   const { x, y } = tileOrigin(tile);
   const base = '#7b4a27';
 
@@ -1295,7 +1295,7 @@ function getLeafPalette(theme: VoxelMapTheme): { base: string; light: string; da
   return { base: '#2f8f45', light: '#79cf62', dark: '#1c5730' };
 }
 
-function paintLeavesTile(contexts: TerrainTextureContexts, tile: TextureTile, theme: VoxelMapTheme): void {
+function paintLeavesTile(contexts: AtlasContexts, tile: AtlasTile, theme: VoxelMapTheme): void {
   const palette = getLeafPalette(theme);
   const { x, y } = tileOrigin(tile);
 
@@ -1360,7 +1360,7 @@ function paintLeavesTile(contexts: TerrainTextureContexts, tile: TextureTile, th
   paintTileEdgePixelFrame(contexts, tile, mixHex(palette.light, '#ffffff', 0.16), mixHex(palette.dark, '#000000', 0.12), 3);
 }
 
-function paintCactusTile(contexts: TerrainTextureContexts, tile: TextureTile): void {
+function paintCactusTile(contexts: AtlasContexts, tile: AtlasTile): void {
   const { x, y } = tileOrigin(tile);
   const base = '#3f8f4a';
   const light = '#8bd06d';
@@ -1426,7 +1426,7 @@ function paintCactusTile(contexts: TerrainTextureContexts, tile: TextureTile): v
   paintTileEdgePixelFrame(contexts, tile, mixHex(light, '#ffffff', 0.16), mixHex(dark, '#000000', 0.14), 3);
 }
 
-function paintSandTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string): void {
+function paintSandTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
   const { x, y } = tileOrigin(tile);
   const light = mixHex(base, '#fff3b0', 0.34);
   const dark = shadeHex(base, -34);
@@ -1455,7 +1455,7 @@ function paintSandTile(contexts: TerrainTextureContexts, tile: TextureTile, base
   paintTileEdgePixelFrame(contexts, tile, light, shadeHex(dark, -16), 3);
 }
 
-function paintSnowTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string): void {
+function paintSnowTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
   const light = mixHex(base, '#ffffff', 0.62);
   const blue = mixHex(base, '#9edcff', 0.36);
 
@@ -1474,7 +1474,7 @@ function paintSnowTile(contexts: TerrainTextureContexts, tile: TextureTile, base
   paintTileEdgePixelFrame(contexts, tile, '#ffffff', mixHex(blue, '#5c8ca8', 0.26), 3);
 }
 
-function paintIceTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string, accent: string): void {
+function paintIceTile(contexts: AtlasContexts, tile: AtlasTile, base: string, accent: string): void {
   const { x, y } = tileOrigin(tile);
   const bright = mixHex(base, '#ffffff', 0.68);
   const deep = mixHex(base, '#356e95', 0.48);
@@ -1508,7 +1508,7 @@ function paintIceTile(contexts: TerrainTextureContexts, tile: TextureTile, base:
   paintInsetBevel(contexts, tile, '#ffffff', mixHex(deep, '#000000', 0.24), 5, 2);
 }
 
-function paintAshTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string): void {
+function paintAshTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
   const light = shadeHex(base, 32);
   const dark = shadeHex(base, -46);
 
@@ -1528,7 +1528,7 @@ function paintAshTile(contexts: TerrainTextureContexts, tile: TextureTile, base:
   paintTileEdgePixelFrame(contexts, tile, light, shadeHex(dark, -18), 3);
 }
 
-function paintObsidianTile(contexts: TerrainTextureContexts, tile: TextureTile, accent: string): void {
+function paintObsidianTile(contexts: AtlasContexts, tile: AtlasTile, accent: string): void {
   const base = '#16131a';
   const purple = '#3b314c';
   const deep = '#050407';
@@ -1550,7 +1550,7 @@ function paintObsidianTile(contexts: TerrainTextureContexts, tile: TextureTile, 
   paintTileEdgePixelFrame(contexts, tile, '#4b405b', '#030205', 3);
 }
 
-function paintLavaTile(contexts: TerrainTextureContexts, tile: TextureTile): void {
+function paintLavaTile(contexts: AtlasContexts, tile: AtlasTile): void {
   const { x, y } = tileOrigin(tile);
   const base = '#2d0d08';
   const hot = '#ffb347';
@@ -1594,7 +1594,7 @@ function paintLavaTile(contexts: TerrainTextureContexts, tile: TextureTile): voi
   paintTileEdgePixelFrame(contexts, tile, glow, '#160503', 3);
 }
 
-function paintBambooTile(contexts: TerrainTextureContexts, tile: TextureTile): void {
+function paintBambooTile(contexts: AtlasContexts, tile: AtlasTile): void {
   const { x, y } = tileOrigin(tile);
   const base = '#5a9b43';
   const light = '#b6d56a';
@@ -1631,7 +1631,7 @@ function paintBambooTile(contexts: TerrainTextureContexts, tile: TextureTile): v
   paintTileEdgePixelFrame(contexts, tile, light, shadeHex(dark, -8), 3);
 }
 
-function paintBlossomLeavesTile(contexts: TerrainTextureContexts, tile: TextureTile): void {
+function paintBlossomLeavesTile(contexts: AtlasContexts, tile: AtlasTile): void {
   const palette = { base: '#f19abd', light: '#ffd4e4', dark: '#a64d75' };
   const { x, y } = tileOrigin(tile);
 
@@ -1669,7 +1669,7 @@ function paintBlossomLeavesTile(contexts: TerrainTextureContexts, tile: TextureT
   paintTileEdgePixelFrame(contexts, tile, '#ffe3ee', '#823658', 3);
 }
 
-function paintMossTile(contexts: TerrainTextureContexts, tile: TextureTile, base: string): void {
+function paintMossTile(contexts: AtlasContexts, tile: AtlasTile, base: string): void {
   const light = mixHex(base, '#d9f99d', 0.42);
   const dark = mixHex(base, '#183f20', 0.5);
 
@@ -1690,49 +1690,27 @@ function paintMossTile(contexts: TerrainTextureContexts, tile: TextureTile, base
 
 function createLayerContext(): { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D } {
   const canvas = document.createElement('canvas');
-  canvas.width = TILE_GRID_COLUMNS * TILE_SIZE;
-  canvas.height = TILE_GRID_ROWS * TILE_SIZE;
+  canvas.width = ATLAS_COLUMNS * TILE_SIZE;
+  canvas.height = ATLAS_ROWS * TILE_SIZE;
   const context = canvas.getContext('2d');
 
   if (!context) {
-    throw new Error('Unable to create voxel terrain texture canvas');
+    throw new Error('Unable to create voxel texture atlas');
   }
 
   context.imageSmoothingEnabled = false;
   return { canvas, context };
 }
 
-function createTexture(
-  canvas: HTMLCanvasElement,
-  colorSpace: THREE.ColorSpace,
-  anisotropy: number
-): THREE.DataArrayTexture {
-  const layerCount = TILE_LAYER_ORDER.length;
-  const data = new Uint8Array(TILE_SIZE * TILE_SIZE * layerCount * 4);
-  const context = canvas.getContext('2d');
-
-  if (!context) {
-    throw new Error('Unable to read voxel terrain texture canvas');
-  }
-
-  for (let layer = 0; layer < layerCount; layer++) {
-    const tile = TILE_LAYER_ORDER[layer];
-    const imageData = context.getImageData(tile.x * TILE_SIZE, tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE).data;
-    const layerOffset = layer * TILE_SIZE * TILE_SIZE * 4;
-
-    for (let row = 0; row < TILE_SIZE; row++) {
-      const sourceStart = (TILE_SIZE - 1 - row) * TILE_SIZE * 4;
-      const targetStart = layerOffset + row * TILE_SIZE * 4;
-      data.set(imageData.subarray(sourceStart, sourceStart + TILE_SIZE * 4), targetStart);
-    }
-  }
-
-  const texture = new THREE.DataArrayTexture(data, TILE_SIZE, TILE_SIZE, layerCount);
+function createTexture(canvas: HTMLCanvasElement, colorSpace: THREE.ColorSpace, anisotropy: number): THREE.CanvasTexture {
+  const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = colorSpace;
+  // Three.js skips EXT_texture_filter_anisotropic when magnification is nearest,
+  // which makes the high-frequency atlas crawl on angled surfaces during motion.
   texture.magFilter = THREE.LinearFilter;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.wrapS = THREE.MirroredRepeatWrapping;
-  texture.wrapT = THREE.MirroredRepeatWrapping;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true;
   texture.anisotropy = anisotropy;
   texture.needsUpdate = true;
@@ -1740,36 +1718,52 @@ function createTexture(
   return texture;
 }
 
-function getVoxelTerrainTextureProfile(detail: VoxelTerrainTextureDetail): {
+function getVoxelAtlasProfile(detail: VoxelAtlasDetail): {
   tileSize: number;
   anisotropy: number;
   paintMode: 'simple' | 'detailed';
+  surfaceResponseMaps: boolean;
+  fineDetailMaps: boolean;
+  repeatEdgeCropPixels: number;
+  uvPadding: number;
 } {
   if (detail === 'low') {
     return {
       tileSize: LOW_DETAIL_TILE_SIZE,
       anisotropy: 1,
       paintMode: 'simple',
+      surfaceResponseMaps: false,
+      fineDetailMaps: false,
+      repeatEdgeCropPixels: 7,
+      uvPadding: 0.004,
     };
   }
 
   if (detail === 'medium') {
     return {
       tileSize: MEDIUM_DETAIL_TILE_SIZE,
-      anisotropy: 1,
+      anisotropy: 2,
       paintMode: 'detailed',
+      surfaceResponseMaps: false,
+      fineDetailMaps: false,
+      repeatEdgeCropPixels: 9,
+      uvPadding: 0.005,
     };
   }
 
   return {
     tileSize: DEFAULT_TILE_SIZE,
-    anisotropy: 1,
+    anisotropy: 8,
     paintMode: 'detailed',
+    surfaceResponseMaps: true,
+    fineDetailMaps: true,
+    repeatEdgeCropPixels: ATLAS_REPEAT_EDGE_CROP_PIXELS,
+    uvPadding: ATLAS_UV_PADDING,
   };
 }
 
-function paintLowDetailTileSet(contexts: Pick<TerrainTextureContexts, 'color' | 'emissive'>, theme: VoxelMapTheme): void {
-  const colorByTile = new Map<TextureTile, string>([
+function paintLowDetailTileSet(contexts: Pick<AtlasContexts, 'color' | 'emissive'>, theme: VoxelMapTheme): void {
+  const colorByTile = new Map<AtlasTile, string>([
     [TILE_MAP.grass_top, theme.ground.top],
     [TILE_MAP.grass_side, theme.ground.side],
     [TILE_MAP.dirt, theme.ground.dirt],
@@ -1831,11 +1825,11 @@ function paintLowDetailTileSet(contexts: Pick<TerrainTextureContexts, 'color' | 
   }
 }
 
-export function createVoxelTerrainTextures(theme: VoxelMapTheme, options: VoxelTerrainTextureOptions = {}): VoxelTerrainTextures {
+export function createVoxelAtlasTextures(theme: VoxelMapTheme, options: VoxelAtlasOptions = {}): VoxelAtlasTextures {
   const detail = options.detail ?? 'high';
-  const profile = getVoxelTerrainTextureProfile(detail);
+  const profile = getVoxelAtlasProfile(detail);
   const cacheKey = `${theme.id}:${detail}`;
-  const cached = terrainTextureCache.get(cacheKey);
+  const cached = atlasTextureCache.get(cacheKey);
   if (cached) {
     return cached;
   }
@@ -1849,7 +1843,7 @@ export function createVoxelTerrainTextures(theme: VoxelMapTheme, options: VoxelT
   const metalness = shouldPaintDetailMaps ? createLayerContext() : null;
   const ao = shouldPaintDetailMaps ? createLayerContext() : null;
 
-  const contexts: TerrainTextureContexts = {
+  const contexts: AtlasContexts = {
     color: color.context,
     bump: bump?.context ?? color.context,
     roughness: roughness?.context ?? color.context,
@@ -1859,7 +1853,7 @@ export function createVoxelTerrainTextures(theme: VoxelMapTheme, options: VoxelT
   };
 
   for (const context of new Set(Object.values(contexts))) {
-    context.clearRect(0, 0, TILE_GRID_COLUMNS * TILE_SIZE, TILE_GRID_ROWS * TILE_SIZE);
+    context.clearRect(0, 0, ATLAS_COLUMNS * TILE_SIZE, ATLAS_ROWS * TILE_SIZE);
   }
 
   if (profile.paintMode === 'detailed') {
@@ -1892,26 +1886,31 @@ export function createVoxelTerrainTextures(theme: VoxelMapTheme, options: VoxelT
     paintLowDetailTileSet({ color: color.context, emissive: emissive.context }, theme);
   }
 
-  const textures: VoxelTerrainTextures = {
+  const textures: VoxelAtlasTextures = {
     color: createTexture(color.canvas, THREE.SRGBColorSpace, profile.anisotropy),
+    bump: profile.fineDetailMaps && bump ? createTexture(bump.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    roughness: profile.surfaceResponseMaps && roughness ? createTexture(roughness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
+    metalness: profile.surfaceResponseMaps && metalness ? createTexture(metalness.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
     emissive: createTexture(emissive.canvas, THREE.SRGBColorSpace, profile.anisotropy),
+    ao: profile.fineDetailMaps && ao ? createTexture(ao.canvas, THREE.NoColorSpace, profile.anisotropy) : undefined,
     tileSize: profile.tileSize,
+    repeatEdgeCropPixels: profile.repeatEdgeCropPixels,
+    uvPadding: profile.uvPadding,
     anisotropy: profile.anisotropy,
-    layerCount: TILE_LAYER_ORDER.length,
   };
 
-  terrainTextureCache.set(cacheKey, textures);
+  atlasTextureCache.set(cacheKey, textures);
   return textures;
 }
 
-function getTextureTileForBlock(blockId: VoxelBlockId, face: VoxelFaceDirection): TextureTile {
+export function createVoxelAtlasTexture(theme: VoxelMapTheme): THREE.CanvasTexture {
+  return createVoxelAtlasTextures(theme).color;
+}
+
+export function getTileForBlock(blockId: VoxelBlockId, face: VoxelFaceDirection): AtlasTile {
   if (blockId === 'grass') {
     return face === 'top' ? TILE_MAP.grass_top : face === 'bottom' ? TILE_MAP.dirt : TILE_MAP.grass_side;
   }
 
   return TILE_MAP[blockId] ?? TILE_MAP.stone;
-}
-
-export function getTileLayerForBlock(blockId: VoxelBlockId, face: VoxelFaceDirection): number {
-  return tileLayer(getTextureTileForBlock(blockId, face));
 }

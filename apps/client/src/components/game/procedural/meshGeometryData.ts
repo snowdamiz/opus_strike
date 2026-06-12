@@ -4,13 +4,13 @@ import {
   type VoxelChunk,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
-import { getTileLayerForBlock, type VoxelFaceDirection } from './terrainTextures';
+import { ATLAS_COLUMNS, ATLAS_ROWS, getTileForBlock, type VoxelFaceDirection } from './textureAtlas';
 
 export interface VoxelMeshGeometryData {
   positions: Float32Array;
   normals: Float32Array;
   uvs: Float32Array;
-  tileLayers: Float32Array;
+  tileOrigins: Float32Array;
   indices: Uint16Array | Uint32Array;
 }
 
@@ -108,7 +108,7 @@ interface MeshBufferBuilders {
   positions: FloatBuilder;
   normals: FloatBuilder;
   uvs: FloatBuilder;
-  tileLayers: FloatBuilder;
+  tileOrigins: FloatBuilder;
   indices: IndexBuilder;
 }
 
@@ -119,7 +119,7 @@ function createMeshBufferBuilders(chunks: VoxelChunk[]): MeshBufferBuilders {
     positions: new FloatBuilder(estimatedVertices * 3),
     normals: new FloatBuilder(estimatedVertices * 3),
     uvs: new FloatBuilder(estimatedVertices * 2),
-    tileLayers: new FloatBuilder(estimatedVertices),
+    tileOrigins: new FloatBuilder(estimatedVertices * 2),
     indices: new IndexBuilder(estimatedFaces * 6),
   };
 }
@@ -174,10 +174,21 @@ function pushUv(
   repeatWidth: number,
   repeatHeight: number
 ): void {
-  const tileLayer = getTileLayerForBlock(getBlockId(blockId), face);
+  const tile = getTileForBlock(getBlockId(blockId), face);
+  const tileOriginU = tile.x / ATLAS_COLUMNS;
+  const tileOriginV = 1 - (tile.y + 1) / ATLAS_ROWS;
 
   buffers.uvs.push(0, 0, repeatWidth, 0, repeatWidth, repeatHeight, 0, repeatHeight);
-  buffers.tileLayers.push(tileLayer, tileLayer, tileLayer, tileLayer);
+  buffers.tileOrigins.push(
+    tileOriginU,
+    tileOriginV,
+    tileOriginU,
+    tileOriginV,
+    tileOriginU,
+    tileOriginV,
+    tileOriginU,
+    tileOriginV
+  );
 }
 
 function pushQuad(
@@ -386,7 +397,7 @@ export function buildVoxelRegionGeometryData(manifest: VoxelMapManifest, chunks:
     positions: buffers.positions.finish(),
     normals: buffers.normals.finish(),
     uvs: buffers.uvs.finish(),
-    tileLayers: buffers.tileLayers.finish(),
+    tileOrigins: buffers.tileOrigins.finish(),
     indices: buffers.indices.finish(vertexCount),
   };
 }
