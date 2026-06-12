@@ -8,7 +8,6 @@ export type TickSection =
   | 'updateHookshotTraps'
   | 'updateBlazeFlamethrowers'
   | 'updateCTFObjectives'
-  | 'broadcastPlayerStates'
   | 'broadcastPlayerTransforms'
   | 'broadcastPlayerVitals'
   | 'broadcastMatchSnapshot'

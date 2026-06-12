@@ -29,7 +29,6 @@ import {
   setupSelfMovementAuthorityHandler,
   setupPlayerVitalsHandler,
   setupMatchSnapshotHandler,
-  setupPlayerStatesHandler,
   setupVoidZoneHandlers,
   setupCombatHandlers,
   setupPollingSync,
@@ -1027,7 +1026,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setupSelfMovementAuthorityHandler(room, { setLocalPlayer });
     setupPlayerVitalsHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer, removePlayer });
     setupMatchSnapshotHandler(room);
-    setupPlayerStatesHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer });
     setupVoidZoneHandlers(room, sessionId);
     setupCombatHandlers(room);
 
