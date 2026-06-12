@@ -429,6 +429,25 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
   };
 }
 
+function cloneMovementForStore(movement: PlayerMovementState): PlayerMovementState {
+  return {
+    ...movement,
+    grapplePoint: movement.grapplePoint ? { ...movement.grapplePoint } : null,
+  };
+}
+
+function applySelfAuthorityToPlayerInPlace(
+  player: Player,
+  state: { position: Player['position']; velocity: Player['velocity']; movement: PlayerMovementState },
+  authority: SelfMovementAuthority
+): void {
+  player.position = { ...state.position };
+  player.velocity = { ...state.velocity };
+  player.lookYaw = authority.lookYaw;
+  player.lookPitch = authority.lookPitch;
+  player.movement = cloneMovementForStore(state.movement);
+}
+
 // ============================================================================
 // STORE ACTION TYPES
 // ============================================================================
@@ -805,14 +824,27 @@ export function setupSelfMovementAuthorityHandler(
     if (!localPlayer) return;
 
     const { result, state } = applySelfMovementAuthority(localPlayer, authority);
-    actions.setLocalPlayer({
-      ...localPlayer,
-      position: state.position,
-      velocity: state.velocity,
-      lookYaw: authority.lookYaw,
-      lookPitch: authority.lookPitch,
-      movement: state.movement,
-    });
+    const shouldPublishReactiveUpdate =
+      Boolean(authority.correctionReason) ||
+      result.mediumCorrection ||
+      result.hardCorrection;
+
+    if (shouldPublishReactiveUpdate) {
+      actions.setLocalPlayer({
+        ...localPlayer,
+        position: { ...state.position },
+        velocity: { ...state.velocity },
+        lookYaw: authority.lookYaw,
+        lookPitch: authority.lookPitch,
+        movement: cloneMovementForStore(state.movement),
+      });
+    } else {
+      applySelfAuthorityToPlayerInPlace(localPlayer, state, authority);
+      const indexedPlayer = store.players.get(localPlayer.id);
+      if (indexedPlayer && indexedPlayer !== localPlayer) {
+        applySelfAuthorityToPlayerInPlace(indexedPlayer, state, authority);
+      }
+    }
 
     if (result.hardCorrection) {
       loggers.network.sample('local-hard-correction', 1500, 'hard movement correction', {

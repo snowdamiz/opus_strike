@@ -6,6 +6,7 @@ import {
   CHRONOS_ASCENDANT_PARADOX_LIFT_FORWARD_FORCE,
   CHRONOS_ASCENDANT_PARADOX_LIFT_POSITION_BOOST,
   CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
+  CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PHANTOM_BLINK_DISTANCE,
@@ -139,13 +140,18 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
     }
   }
 
+  const chronosAscendantActive = isChronosAscendantActive(player);
+  if (chronosAscendantActive) {
+    activeSpeedMultiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
+  }
+
   return {
     heroStats: getHeroStats(player.heroId ?? 'phantom'),
     terrain: getClientTerrainAdapter(),
     collisionWorld: getClientCollisionWorld(),
     flagCarrier: player.hasFlag,
     activeSpeedMultiplier,
-    chronosAscendantActive: isChronosAscendantActive(player),
+    chronosAscendantActive,
   };
 }
 

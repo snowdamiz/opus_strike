@@ -102,6 +102,7 @@ const TERRAIN_STEP_VISUAL_UP_RATE = 16;
 const TERRAIN_STEP_VISUAL_DOWN_RATE = 28;
 const TERRAIN_STEP_VISUAL_MAX_RISE_SPEED = 3.2;
 const TERRAIN_STEP_VISUAL_MAX_DROP_SPEED = 6.5;
+const MOVEMENT_COMMAND_SEND_INTERVAL_MS = 1000 / 30;
 const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
   isGrounded: true,
   isSprinting: false,
@@ -314,7 +315,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const flushMovementCommands = useCallback((nowMs: number, force = false) => {
     const pending = pendingMovementCommandsRef.current;
     if (pending.length === 0) return;
-    if (!force && pending.length < MOVEMENT_MAX_PACKET_COMMANDS && nowMs - lastSendRef.current < 1000 / TICK_RATE) {
+    if (!force && pending.length < MOVEMENT_MAX_PACKET_COMMANDS && nowMs - lastSendRef.current < MOVEMENT_COMMAND_SEND_INTERVAL_MS) {
       return;
     }
 
