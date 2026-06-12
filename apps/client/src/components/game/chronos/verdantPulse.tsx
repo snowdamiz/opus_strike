@@ -3,6 +3,8 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_RADIUS,
   doesSegmentHitPlayerCombatHitbox,
   type Player,
 } from '@voxel-strike/shared';
@@ -19,6 +21,7 @@ const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
 const CHRONOS_PULSE_RADIUS = 0.12;
 const CHRONOS_PULSE_COLLISION_RADIUS = 0.18;
+const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 const CHRONOS_IMPACT_CLIP_MS = 350;
 const CHRONOS_REGULAR_IMPACT_VOLUME = 0.78;
 const RING_FORWARD = new THREE.Vector3(0, 0, 1);
@@ -263,6 +266,14 @@ function setRingInstance(
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
+function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number): void {
+  if (!mesh) return;
+  mesh.count = count;
+  if (count > 0) {
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
 export function ChronosPulsesManager() {
   const storePulses = useGameStore(state => state.chronosPulses);
   const removeChronosPulses = useGameStore(state => state.removeChronosPulses);
@@ -306,7 +317,6 @@ export function ChronosPulsesManager() {
     const pool = poolRef.current;
     if (!pool) return;
 
-    const store = useGameStore.getState();
     const clock = getFrameClock();
     const delta = clock.clampedDeltaSeconds;
     let instanceIndex = 0;
@@ -317,9 +327,20 @@ export function ChronosPulsesManager() {
     const removals = removalsRef.current;
     removals.length = 0;
 
+    if (pool.activeCount === 0) {
+      setInstancedMeshCount(glowMeshRef.current, 0);
+      setInstancedMeshCount(coreMeshRef.current, 0);
+      setInstancedMeshCount(trailMeshRef.current, 0);
+      setInstancedMeshCount(frontRingMeshRef.current, 0);
+      setInstancedMeshCount(backRingMeshRef.current, 0);
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
+    }
+
+    const store = useGameStore.getState();
     const enemies = enemyPlayersRef.current;
     const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
-    fillCombatVisualEnemyPlayers(combatCache, null, '', enemies);
+    const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {
@@ -330,39 +351,40 @@ export function ChronosPulsesManager() {
 
       const moveDistance = slot.speed * delta;
       const collisionRadius = CHRONOS_PULSE_COLLISION_RADIUS * slot.radiusScale;
-      if (moveDistance > 0.001 && isPhysicsReady()) {
-        const world = getPhysicsWorld();
-        if (world) {
-          const hit = raycast(
-            world,
-            slot.position,
-            slot.direction,
-            moveDistance + collisionRadius,
-            {
-              priority: 'visual',
-              feature: 'projectile:chronosPulse',
-            }
-          );
-          if (hit && hit.distance <= moveDistance + collisionRadius) {
-            triggerTerrainImpact('chronos_pulse', hit.point, {
-              normal: hit.normal,
-              direction: slot.direction,
-              scale: 0.72 * slot.radiusScale,
-            });
-            playChronosImpact(hit.point, slot.supercharged);
-            removals.push(slot.id);
-            pool.deactivate(slotIndex);
-            return;
+      if (moveDistance > 0.001 && physicsWorld) {
+        const hit = raycast(
+          physicsWorld,
+          slot.position,
+          slot.direction,
+          moveDistance + collisionRadius,
+          {
+            priority: 'visual',
+            feature: 'projectile:chronosPulse',
           }
+        );
+        if (hit && hit.distance <= moveDistance + collisionRadius) {
+          triggerTerrainImpact('chronos_pulse', hit.point, {
+            normal: hit.normal,
+            direction: slot.direction,
+            scale: 0.72 * slot.radiusScale,
+          });
+          playChronosImpact(hit.point, slot.supercharged);
+          removals.push(slot.id);
+          pool.deactivate(slotIndex);
+          return;
         }
       }
 
+      fillCombatVisualEnemyPlayers(
+        combatCache,
+        slot.ownerTeam,
+        slot.ownerId,
+        enemies,
+        slot.position,
+        moveDistance + collisionRadius + PROJECTILE_COMBAT_QUERY_PADDING
+      );
       for (let i = 0; i < enemies.length; i++) {
         const player = enemies[i];
-        if (player.id === slot.ownerId) continue;
-        if (player.state !== 'alive') continue;
-        if (player.team === slot.ownerTeam) continue;
-
         if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, collisionRadius)) {
           playChronosImpact(slot.position, slot.supercharged);
           removals.push(slot.id);
@@ -413,18 +435,11 @@ export function ChronosPulsesManager() {
       slot.position.z += slot.velocity.z * delta;
     });
 
-    const meshes = [
-      glowMeshRef.current,
-      coreMeshRef.current,
-      trailMeshRef.current,
-      frontRingMeshRef.current,
-      backRingMeshRef.current,
-    ];
-    for (const mesh of meshes) {
-      if (!mesh) continue;
-      mesh.count = instanceIndex;
-      mesh.instanceMatrix.needsUpdate = true;
-    }
+    setInstancedMeshCount(glowMeshRef.current, instanceIndex);
+    setInstancedMeshCount(coreMeshRef.current, instanceIndex);
+    setInstancedMeshCount(trailMeshRef.current, instanceIndex);
+    setInstancedMeshCount(frontRingMeshRef.current, instanceIndex);
+    setInstancedMeshCount(backRingMeshRef.current, instanceIndex);
 
     if (lightRef.current) {
       if (instanceIndex > 0) {

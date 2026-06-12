@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import {
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  type Player,
+  type Team,
 } from '@voxel-strike/shared';
 import {
   addRemoteTransformSnapshot,
   clearVisualState,
+  fillCombatVisualEnemyPlayers,
   pruneRemoteTransformHistories,
+  rebuildCombatVisualFrameCache,
   sampleRemoteTransformInto,
   visualStore,
   type SampledRemoteTransform,
@@ -37,6 +41,50 @@ function addSnapshot(serverTime: number, x: number): void {
     wallRunSide: 0,
     movementEpoch: 1,
   });
+}
+
+function makePlayer(id: string, team: Team, x: number, z: number, state: Player['state'] = 'alive'): Player {
+  return {
+    id,
+    name: id,
+    team,
+    heroId: null,
+    state,
+    isReady: true,
+    isBot: false,
+    position: { x, y: 1, z },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    health: 100,
+    maxHealth: 100,
+    ultimateCharge: 0,
+    movement: {
+      isGrounded: true,
+      isSprinting: false,
+      isCrouching: false,
+      isSliding: false,
+      slideTimeRemaining: 0,
+      isWallRunning: false,
+      wallRunSide: null,
+      isGrappling: false,
+      grapplePoint: null,
+      isJetpacking: false,
+      jetpackFuel: 0,
+      isGliding: false,
+    },
+    abilities: {},
+    hasFlag: false,
+    respawnTime: null,
+    spawnProtectionUntil: null,
+    stats: {
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+      flagCaptures: 0,
+      flagReturns: 0,
+    },
+  };
 }
 
 clearVisualState();
@@ -80,5 +128,21 @@ assert.equal(visualStore.getState().remoteTransformHistories.has('remote-b'), fa
 
 const missingTarget = makeTarget();
 assert.equal(sampleRemoteTransformInto('missing', missingTarget), false);
+
+const combatPlayers = [
+  makePlayer('owner', 'red', 0, 0),
+  makePlayer('near-blue', 'blue', 1, 1),
+  makePlayer('far-blue', 'blue', 40, 0),
+  makePlayer('near-red', 'red', 1, 0),
+  makePlayer('dead-blue', 'blue', 1, 0, 'dead'),
+];
+const combatCache = rebuildCombatVisualFrameCache(combatPlayers, 2000, 2000, combatPlayers.length);
+const nearbyEnemies: Player[] = [];
+fillCombatVisualEnemyPlayers(combatCache, 'red', 'owner', nearbyEnemies, { x: 0, z: 0 }, 4);
+assert.deepEqual(nearbyEnemies.map((player) => player.id), ['near-blue']);
+
+const allEnemies: Player[] = [];
+fillCombatVisualEnemyPlayers(combatCache, 'red', 'owner', allEnemies);
+assert.deepEqual(allEnemies.map((player) => player.id), ['near-blue', 'far-blue']);
 
 console.log('visualStore remote transform tests passed');

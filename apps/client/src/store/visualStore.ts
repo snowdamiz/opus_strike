@@ -415,16 +415,19 @@ export const sampleRemoteTransformInto = (
   const estimatedServerTime = latest.serverTime + Math.max(0, nowMs - latest.receivedAtMs);
   const renderServerTime = estimatedServerTime - MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS;
 
-  let previous = snapshots[0];
-  let next: RemoteTransformSnapshot | null = null;
-  for (const snapshot of snapshots) {
-    if (snapshot.serverTime <= renderServerTime) {
-      previous = snapshot;
-      continue;
+  let low = 0;
+  let high = snapshots.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (snapshots[mid].serverTime <= renderServerTime) {
+      low = mid + 1;
+    } else {
+      high = mid;
     }
-    next = snapshot;
-    break;
   }
+
+  const previous = snapshots[Math.max(0, low - 1)];
+  const next = low < snapshots.length ? snapshots[low] : null;
 
   if (next) {
     const span = Math.max(1, next.serverTime - previous.serverTime);

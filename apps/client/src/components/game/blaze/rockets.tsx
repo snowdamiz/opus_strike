@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
-import { doesSegmentHitPlayerCombatHitbox, type Player } from '@voxel-strike/shared';
+import {
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_RADIUS,
+  doesSegmentHitPlayerCombatHitbox,
+  type Player,
+} from '@voxel-strike/shared';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -26,6 +31,7 @@ import {
 const MAX_ROCKETS = 50;
 const ROCKET_LIFETIME = 3000;
 const PROJECTILE_RADIUS = 0.21;
+const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 const ROCKET_IMPACT_SCALE = 1.15;
 const FIREBALL_FLICKER_RATE = 0.018;
 const FIREBALL_TRAIL_FLICKER_RATE = 0.024;
@@ -219,6 +225,14 @@ function setFireballPartInstance(
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
+function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number): void {
+  if (!mesh) return;
+  mesh.count = count;
+  if (count > 0) {
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
 export function prewarmRocketResources(renderer?: THREE.WebGLRenderer): void {
   getFireballCoreMaterial();
   getFireballInnerMaterial();
@@ -301,7 +315,6 @@ export function RocketsManager() {
     const pool = poolRef.current;
     if (!pool) return;
 
-    const store = useGameStore.getState();
     const clock = getFrameClock();
     const delta = clock.clampedDeltaSeconds;
     let instanceIndex = 0;
@@ -312,9 +325,21 @@ export function RocketsManager() {
     const removals = removalsRef.current;
     removals.length = 0;
 
+    if (pool.activeCount === 0) {
+      setInstancedMeshCount(fireballOuterMeshRef.current, 0);
+      setInstancedMeshCount(fireballInnerMeshRef.current, 0);
+      setInstancedMeshCount(fireballCoreMeshRef.current, 0);
+      setInstancedMeshCount(trailOuterMeshRef.current, 0);
+      setInstancedMeshCount(trailInnerMeshRef.current, 0);
+      setInstancedMeshCount(trailCoreMeshRef.current, 0);
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
+    }
+
+    const store = useGameStore.getState();
     const enemies = enemyPlayersRef.current;
     const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
-    fillCombatVisualEnemyPlayers(combatCache, null, '', enemies);
+    const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {
@@ -324,32 +349,33 @@ export function RocketsManager() {
       }
 
       const moveDistance = slot.speed * delta;
-      if (moveDistance > 0.001 && isPhysicsReady()) {
-        const world = getPhysicsWorld();
-        if (world) {
-          const hit = raycast(world, slot.position, slot.direction, moveDistance + PROJECTILE_RADIUS, {
-            priority: 'visual',
-            feature: 'projectile:blazeRocket',
+      if (moveDistance > 0.001 && physicsWorld) {
+        const hit = raycast(physicsWorld, slot.position, slot.direction, moveDistance + PROJECTILE_RADIUS, {
+          priority: 'visual',
+          feature: 'projectile:blazeRocket',
+        });
+        if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
+          triggerTerrainImpact('blaze_rocket', hit.point, {
+            normal: hit.normal,
+            direction: slot.direction,
+            scale: ROCKET_IMPACT_SCALE,
           });
-          if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
-            triggerTerrainImpact('blaze_rocket', hit.point, {
-              normal: hit.normal,
-              direction: slot.direction,
-              scale: ROCKET_IMPACT_SCALE,
-            });
-            removals.push(slot.id);
-            pool.deactivate(slotIndex);
-            return;
-          }
+          removals.push(slot.id);
+          pool.deactivate(slotIndex);
+          return;
         }
       }
 
+      fillCombatVisualEnemyPlayers(
+        combatCache,
+        slot.ownerTeam,
+        slot.ownerId,
+        enemies,
+        slot.position,
+        moveDistance + PROJECTILE_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
+      );
       for (let i = 0; i < enemies.length; i++) {
         const player = enemies[i];
-        if (player.id === slot.ownerId) continue;
-        if (player.state !== 'alive') continue;
-        if (player.team === slot.ownerTeam) continue;
-
         if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, PROJECTILE_RADIUS)) {
           triggerTerrainImpact('blaze_rocket', slot.position, {
             direction: slot.direction,
@@ -384,20 +410,12 @@ export function RocketsManager() {
       instanceIndex++;
     });
 
-    const meshes = [
-      fireballOuterMeshRef.current,
-      fireballInnerMeshRef.current,
-      fireballCoreMeshRef.current,
-      trailOuterMeshRef.current,
-      trailInnerMeshRef.current,
-      trailCoreMeshRef.current,
-    ];
-    for (let i = 0; i < meshes.length; i++) {
-      const mesh = meshes[i];
-      if (!mesh) continue;
-      mesh.count = instanceIndex;
-      mesh.instanceMatrix.needsUpdate = true;
-    }
+    setInstancedMeshCount(fireballOuterMeshRef.current, instanceIndex);
+    setInstancedMeshCount(fireballInnerMeshRef.current, instanceIndex);
+    setInstancedMeshCount(fireballCoreMeshRef.current, instanceIndex);
+    setInstancedMeshCount(trailOuterMeshRef.current, instanceIndex);
+    setInstancedMeshCount(trailInnerMeshRef.current, instanceIndex);
+    setInstancedMeshCount(trailCoreMeshRef.current, instanceIndex);
 
     if (lightRef.current) {
       if (instanceIndex > 0) {

@@ -80,10 +80,46 @@ interface RankedLight {
   score: number;
 }
 
+function insertRankedLight(
+  ranked: RankedLight[],
+  pool: RankedLight[],
+  record: BudgetedLightRecord,
+  score: number,
+  limit: number
+): void {
+  if (limit <= 0) return;
+
+  let insertIndex = ranked.length;
+  let entry: RankedLight;
+  if (insertIndex < limit) {
+    entry = pool[insertIndex];
+    if (!entry) {
+      entry = { record, score };
+      pool[insertIndex] = entry;
+    } else {
+      entry.record = record;
+      entry.score = score;
+    }
+    ranked.push(entry);
+  } else {
+    insertIndex = limit - 1;
+    entry = ranked[insertIndex];
+    if (!entry || score <= entry.score) return;
+    entry.record = record;
+    entry.score = score;
+  }
+
+  while (insertIndex > 0 && ranked[insertIndex - 1].score < score) {
+    ranked[insertIndex] = ranked[insertIndex - 1];
+    insertIndex--;
+  }
+  ranked[insertIndex] = entry;
+}
+
 export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
   const accumulatorRef = useRef(0);
   const rankedRef = useRef<RankedLight[]>([]);
-  const selectedRef = useRef(new Set<BudgetedLightRecord>());
+  const rankedPoolRef = useRef<RankedLight[]>([]);
 
   useFrame(({ camera }, delta) => {
     accumulatorRef.current += delta;
@@ -91,9 +127,9 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
     accumulatorRef.current = 0;
 
     const ranked = rankedRef.current;
-    const selected = selectedRef.current;
+    const rankedPool = rankedPoolRef.current;
+    const lightLimit = Math.max(0, Math.floor(maxLights));
     ranked.length = 0;
-    selected.clear();
 
     for (const record of budgetedLights) {
       const light = record.lightRef.current;
@@ -102,25 +138,23 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
         continue;
       }
 
+      light.visible = false;
       light.getWorldPosition(worldPosition);
       const radius = Math.max(1, record.radius || light.distance || 1);
       const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
-      ranked.push({
+      insertRankedLight(
+        ranked,
+        rankedPool,
         record,
-        score: record.priority * 1000 + light.intensity * 10 - distancePenalty * 140,
-      });
+        record.priority * 1000 + light.intensity * 10 - distancePenalty * 140,
+        lightLimit
+      );
     }
 
-    ranked.sort((a, b) => b.score - a.score);
-
-    for (let i = 0; i < Math.min(maxLights, ranked.length); i++) {
-      selected.add(ranked[i].record);
-    }
-
-    for (const record of budgetedLights) {
-      const light = record.lightRef.current;
+    for (let i = 0; i < ranked.length; i++) {
+      const light = ranked[i].record.lightRef.current;
       if (light) {
-        light.visible = selected.has(record);
+        light.visible = true;
       }
     }
   });

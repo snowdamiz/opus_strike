@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { doesSegmentHitPlayerCombatHitbox, type Player, type Team } from '@voxel-strike/shared';
+import {
+  PLAYER_COMBAT_HITBOX_PADDING,
+  PLAYER_RADIUS,
+  doesSegmentHitPlayerCombatHitbox,
+  type Player,
+  type Team,
+} from '@voxel-strike/shared';
 import { useGameStore, type DireBallData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
@@ -12,6 +18,7 @@ import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../
 const DIRE_BALL_LIFETIME_MS = 3000;
 const BALL_RADIUS = 0.21;
 const PARTICLES_PER_BALL = 30;
+const PROJECTILE_COMBAT_QUERY_PADDING = PLAYER_RADIUS + PLAYER_COMBAT_HITBOX_PADDING + 0.75;
 export const DIRE_BALL_CAPACITY = 96;
 
 interface MutableVec3 {
@@ -437,6 +444,14 @@ function setSphereInstance(
   mesh.setMatrixAt(index, dummy.matrix);
 }
 
+function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number): void {
+  if (!mesh) return;
+  mesh.count = count;
+  if (count > 0) {
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
 export function prewarmDireBallResources(renderer?: THREE.WebGLRenderer): void {
   const coreMaterial = getSharedCoreMaterial();
   const glowMaterial = getSharedGlowMaterial();
@@ -541,16 +556,25 @@ export function DireBallsManager() {
     coreMaterial.uniforms.time.value = elapsedSeconds;
     glowMaterial.uniforms.time.value = elapsedSeconds;
 
+    const removals = removalsRef.current;
+    removals.length = 0;
+    let instanceIndex = 0;
+    let particleOffset = 0;
+
+    if (pool.activeCount === 0) {
+      setInstancedMeshCount(coreMeshRef.current, 0);
+      setInstancedMeshCount(glowMeshRef.current, 0);
+      setInstancedMeshCount(innerMeshRef.current, 0);
+      setInstancedMeshCount(secondaryShellMeshRef.current, 0);
+      particleGeometry.setDrawRange(0, 0);
+      return;
+    }
+
     const store = useGameStore.getState();
     const enemies = enemyPlayersRef.current;
     const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
-    fillCombatVisualEnemyPlayers(combatCache, null, '', enemies);
-
-    const removals = removalsRef.current;
-    removals.length = 0;
+    const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
     const positions = particleGeometry.attributes.position.array as Float32Array;
-    let instanceIndex = 0;
-    let particleOffset = 0;
 
     pool.forEachActive((slot, slotIndex) => {
       if (clock.nowMs >= slot.expiresAtMs) {
@@ -560,34 +584,36 @@ export function DireBallsManager() {
       }
 
       const moveDistance = slot.speed * delta;
-      if (moveDistance > 0.001 && isPhysicsReady()) {
-        const world = getPhysicsWorld();
-        if (world) {
-          rayDirectionRef.current.x = slot.direction.x;
-          rayDirectionRef.current.y = slot.direction.y;
-          rayDirectionRef.current.z = slot.direction.z;
-          const hit = raycast(world, slot.position, rayDirectionRef.current, moveDistance + BALL_RADIUS, {
-            priority: 'visual',
-            feature: 'projectile:phantomDireBall',
-          });
+      if (moveDistance > 0.001 && physicsWorld) {
+        rayDirectionRef.current.x = slot.direction.x;
+        rayDirectionRef.current.y = slot.direction.y;
+        rayDirectionRef.current.z = slot.direction.z;
+        const hit = raycast(physicsWorld, slot.position, rayDirectionRef.current, moveDistance + BALL_RADIUS, {
+          priority: 'visual',
+          feature: 'projectile:phantomDireBall',
+        });
 
-          if (hit && hit.distance <= moveDistance + BALL_RADIUS) {
-            triggerTerrainImpact('phantom_dire_ball', hit.point, {
-              normal: hit.normal,
-              direction: slot.direction,
-            });
-            removals.push(slot.id);
-            pool.deactivate(slotIndex);
-            return;
-          }
+        if (hit && hit.distance <= moveDistance + BALL_RADIUS) {
+          triggerTerrainImpact('phantom_dire_ball', hit.point, {
+            normal: hit.normal,
+            direction: slot.direction,
+          });
+          removals.push(slot.id);
+          pool.deactivate(slotIndex);
+          return;
         }
       }
 
+      fillCombatVisualEnemyPlayers(
+        combatCache,
+        slot.ownerTeam,
+        slot.ownerId,
+        enemies,
+        slot.position,
+        moveDistance + BALL_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
+      );
       for (let i = 0; i < enemies.length; i++) {
         const player = enemies[i];
-        if (player.id === slot.ownerId) continue;
-        if (slot.ownerTeam && player.team === slot.ownerTeam) continue;
-
         if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, BALL_RADIUS)) {
           removals.push(slot.id);
           pool.deactivate(slotIndex);
@@ -615,20 +641,10 @@ export function DireBallsManager() {
       instanceIndex++;
     });
 
-    const coreMesh = coreMeshRef.current;
-    const glowMesh = glowMeshRef.current;
-    const innerMesh = innerMeshRef.current;
-    const secondaryShellMesh = secondaryShellMeshRef.current;
-    if (coreMesh && glowMesh && innerMesh && secondaryShellMesh) {
-      coreMesh.count = instanceIndex;
-      glowMesh.count = instanceIndex;
-      innerMesh.count = instanceIndex;
-      secondaryShellMesh.count = instanceIndex;
-      coreMesh.instanceMatrix.needsUpdate = true;
-      glowMesh.instanceMatrix.needsUpdate = true;
-      innerMesh.instanceMatrix.needsUpdate = true;
-      secondaryShellMesh.instanceMatrix.needsUpdate = true;
-    }
+    setInstancedMeshCount(coreMeshRef.current, instanceIndex);
+    setInstancedMeshCount(glowMeshRef.current, instanceIndex);
+    setInstancedMeshCount(innerMeshRef.current, instanceIndex);
+    setInstancedMeshCount(secondaryShellMeshRef.current, instanceIndex);
 
     particleGeometry.setDrawRange(0, particleOffset);
     const positionAttribute = particleGeometry.attributes.position as THREE.BufferAttribute;
