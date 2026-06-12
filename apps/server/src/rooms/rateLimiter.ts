@@ -45,6 +45,7 @@ export const GAME_MESSAGE_RATE_LIMITS = {
   blazeRocketImpact: { limit: 12, intervalMs: 5000 },
   devCommand: { limit: 6, intervalMs: 5000 },
   voiceToken: { limit: 4, intervalMs: 60000 },
+  playerReport: { limit: 3, intervalMs: 60000 },
 } satisfies Record<string, RateLimitRule>;
 
 export const LOBBY_MESSAGE_RATE_LIMITS = {

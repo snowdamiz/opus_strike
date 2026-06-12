@@ -11,7 +11,8 @@ export type AntiCheatCategory =
   | 'objective'
   | 'ranked'
   | 'wager'
-  | 'client_hint';
+  | 'client_hint'
+  | 'player_report';
 export type AntiCheatSeverity = 'low' | 'medium' | 'high' | 'critical';
 export type AntiCheatRetentionClass = 'short' | 'standard' | 'extended';
 export type AntiCheatMatchIntegrityStatus = 'clean' | 'suspicious' | 'compromised' | 'no_contest';

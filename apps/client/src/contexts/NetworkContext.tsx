@@ -104,6 +104,7 @@ interface NetworkContextType {
   addGameBot: (heroId: HeroId, team: Team) => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
+  reportPlayer: (targetPlayerId: string, reason?: string, details?: string) => Promise<void>;
   requestVoiceToken: (scope?: VoiceScope) => Promise<VoiceTokenResponse>;
 
   // NPC/Bot operations (for testing)
@@ -145,6 +146,13 @@ interface RankedTicketResponse {
     priceSource: string;
     checkedAt: string;
   };
+}
+
+interface PlayerReportResultMessage {
+  requestId?: string | null;
+  ok: boolean;
+  reportId?: string;
+  error?: string;
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
@@ -266,6 +274,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     reject: (error: Error) => void;
     timeoutId: number;
   }>());
+  const playerReportRequestsRef = useRef(new Map<string, {
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timeoutId: number;
+  }>());
 
   const {
     setConnected,
@@ -358,11 +371,20 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     voiceTokenRequestsRef.current.clear();
   }, []);
 
+  const rejectPendingPlayerReportRequests = useCallback((message: string) => {
+    playerReportRequestsRef.current.forEach((pending) => {
+      window.clearTimeout(pending.timeoutId);
+      pending.reject(new Error(message));
+    });
+    playerReportRequestsRef.current.clear();
+  }, []);
+
   const cleanupExistingConnections = useCallback(() => {
     practiceStartTokenRef.current += 1;
     isJoiningGameRef.current = false;
     disconnectVoice('network_cleanup');
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
+    rejectPendingPlayerReportRequests('connection cleaned up before report response');
 
     if (lobbyRoomRef.current) {
       try {
@@ -380,7 +402,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
       gameRoomRef.current = null;
     }
-  }, [rejectPendingVoiceTokenRequests]);
+  }, [rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests]);
 
   const startPracticeGame = useCallback((playerName?: string) => {
     const name = resolvePracticePlayerName(playerName);
@@ -1210,6 +1232,23 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       pending.resolve(data);
     });
 
+    room.onMessage('playerReportResult', (data: PlayerReportResultMessage) => {
+      const requestId = typeof data.requestId === 'string' ? data.requestId : '';
+      const pending = requestId ? playerReportRequestsRef.current.get(requestId) : null;
+      if (!pending) {
+        loggers.network.debug('received unmatched player report response', requestId);
+        return;
+      }
+
+      window.clearTimeout(pending.timeoutId);
+      playerReportRequestsRef.current.delete(requestId);
+      if (data.ok) {
+        pending.resolve();
+      } else {
+        pending.reject(new Error(data.error || 'Report failed'));
+      }
+    });
+
     room.onMessage('voiceTeamChanged', () => {
       disconnectVoice('voice_team_changed');
     });
@@ -1239,6 +1278,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       loggers.network.debug('left room', code);
       if (syncInterval) clearInterval(syncInterval);
       rejectPendingVoiceTokenRequests('game room left before voice token response');
+      rejectPendingPlayerReportRequests('game room left before report response');
       disconnectVoice('left_game_room');
       if (gameRoomRef.current === room) {
         gameRoomRef.current = null;
@@ -1254,7 +1294,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     });
 
     setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, setMatchSummary, setPlayerPings]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchSummary, setPlayerPings]);
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => {
     if (isJoiningGameRef.current) {
@@ -1314,6 +1354,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const leaveGame = useCallback(() => {
     disconnectVoice('leave_game');
     rejectPendingVoiceTokenRequests('left game before voice token response');
+    rejectPendingPlayerReportRequests('left game before report response');
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
@@ -1352,11 +1393,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     clearMatchSummary();
     setGamePhase('waiting' as any);
     setAppPhase('browsing_lobbies');
-  }, [setRoomId, setPlayerId, setConnected, setPracticeMode, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests]);
+  }, [setRoomId, setPlayerId, setConnected, setPracticeMode, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests]);
 
   const disconnect = useCallback(() => {
     disconnectVoice('network_disconnect');
     rejectPendingVoiceTokenRequests('network disconnected before voice token response');
+    rejectPendingPlayerReportRequests('network disconnected before report response');
     gameRoomRef.current?.leave();
     gameRoomRef.current = null;
     lobbyRoomRef.current?.leave();
@@ -1364,7 +1406,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     clientRef.current = null;
     isJoiningGameRef.current = false;
     reset();
-  }, [reset, rejectPendingVoiceTokenRequests]);
+  }, [reset, rejectPendingPlayerReportRequests, rejectPendingVoiceTokenRequests]);
 
   const requestVoiceToken = useCallback((scope: VoiceScope = 'match'): Promise<VoiceTokenResponse> => {
     const room = gameRoomRef.current;
@@ -1406,6 +1448,36 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   const reportBlazeRocketImpact = useCallback((rocketId: string, position: { x: number; y: number; z: number }) => {
     gameRoomRef.current?.send('blazeRocketImpact', { rocketId, position });
+  }, []);
+
+  const reportPlayer = useCallback((targetPlayerId: string, reason = 'cheating', details = ''): Promise<void> => {
+    const room = gameRoomRef.current;
+    const store = useGameStore.getState();
+    if (store.isPracticeMode) {
+      return Promise.reject(new Error('Reports are not available in practice mode'));
+    }
+    if (!room) {
+      return Promise.reject(new Error('Not connected to a game room'));
+    }
+
+    const requestId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return new Promise<void>((resolve, reject) => {
+      const timeoutId = window.setTimeout(() => {
+        playerReportRequestsRef.current.delete(requestId);
+        reject(new Error('Report request timed out'));
+      }, 8000);
+
+      playerReportRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
+      room.send('playerReport', {
+        requestId,
+        targetPlayerId,
+        reason,
+        details,
+      });
+    });
   }, []);
 
   const selectHero = useCallback((heroId: HeroId) => {
@@ -1577,6 +1649,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       addGameBot,
       selectTeam,
       setReady,
+      reportPlayer,
       requestVoiceToken,
       spawnNpc,
       damageNpc,

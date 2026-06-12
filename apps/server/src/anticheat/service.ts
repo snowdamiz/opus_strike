@@ -563,7 +563,7 @@ export class AntiCheatEvidenceStore {
     evidenceEventIds?: string[];
     expiresAt?: Date | null;
     elevated: boolean;
-  }): Promise<void> {
+  }): Promise<string> {
     const config = getAntiCheatConfig();
     if (!config.manualAccountActionsEnabled) {
       throw new Error('Manual anti-cheat account actions are disabled');
@@ -580,7 +580,7 @@ export class AntiCheatEvidenceStore {
       throw new Error('Elevated admin role is required for bans');
     }
 
-    await this.prisma.antiCheatAccountAction.create({
+    const action = await this.prisma.antiCheatAccountAction.create({
       data: {
         actionType: input.actionType,
         targetUserId: input.targetUserId,
@@ -593,6 +593,7 @@ export class AntiCheatEvidenceStore {
         immutableAudit: input.actionType === 'ban',
       },
     });
+    return action.id;
   }
 }
 

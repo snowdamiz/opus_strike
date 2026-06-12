@@ -580,3 +580,39 @@ model AntiCheatCase {
   @@index([matchMode, updatedAt])
   @@index([falsePositive, updatedAt])
 }
+
+model PlayerReport {
+  id                      String    @id @default(cuid())
+  status                  String    @default("open")
+  reason                  String
+  details                 String?
+  reporterUserId          String
+  reporterPlayerSessionId String
+  reporterName            String
+  targetUserId            String
+  targetPlayerSessionId   String
+  targetName              String
+  targetTeam              String?
+  roomId                  String
+  matchId                 String?
+  lobbyId                 String?
+  matchMode               MatchMode?
+  mapSeed                 Int?
+  serverTick              Int       @default(0)
+  evidenceEventId         String?
+  metadata                Json      @default("{}")
+  resolvedByUserId        String?
+  resolvedAt              DateTime?
+  resolution              String?
+  actionType              String?
+  accountActionId         String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([status, updatedAt])
+  @@index([targetUserId, createdAt])
+  @@index([reporterUserId, createdAt])
+  @@index([roomId, createdAt])
+  @@index([matchId, createdAt])
+  @@index([resolvedByUserId, resolvedAt])
+}

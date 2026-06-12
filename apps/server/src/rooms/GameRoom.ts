@@ -174,6 +174,7 @@ import {
   persistCompletedMatch,
   type MatchParticipantSnapshot,
 } from '../persistence/matchPersistence';
+import { serializeReportMetadata } from '../reports/playerReportService';
 import {
   AntiCheatEvidenceStore,
   AntiCheatRoomRuntime,
@@ -239,6 +240,17 @@ interface JoinOptions {
   clientBuildId?: string;
   movementProtocolVersion?: number;
 }
+
+const PLAYER_REPORT_REASONS = new Set([
+  'cheating',
+  'aimbot',
+  'wallhack',
+  'speed_hack',
+  'movement_exploit',
+  'ability_exploit',
+  'match_exploit',
+  'other',
+]);
 
 interface BotAssignment {
   playerId: string;
@@ -941,6 +953,19 @@ export class GameRoom extends Room<GameState> {
       const chat = validateChatPayload(data, { teamOnly: true });
       if (!chat) return;
       this.handleChat(client, chat.message, chat.teamOnly);
+    });
+
+    this.onMessage('playerReport', (client, data: unknown) => {
+      const requestId = this.readReportRequestId(data);
+      if (!this.rateLimiter.consume(client.sessionId, 'playerReport', GAME_MESSAGE_RATE_LIMITS.playerReport)) {
+        this.recordRateLimitDrop(client.sessionId, 'playerReport');
+        this.sendPlayerReportResult(client, requestId, {
+          ok: false,
+          error: 'Please wait before sending another report',
+        });
+        return;
+      }
+      void this.handlePlayerReport(client, data);
     });
 
     this.onMessage('requestVoiceToken', (client, data: unknown) => {
@@ -2489,6 +2514,153 @@ export class GameRoom extends Room<GameState> {
         },
         retentionClass: 'short',
       });
+    }
+  }
+
+  private readReportRequestId(data: unknown): string | null {
+    return isRecord(data) ? sanitizeShortText(data.requestId, 96) : null;
+  }
+
+  private normalizePlayerReportReason(value: unknown): string {
+    const normalized = sanitizeShortText(value, 64)?.toLowerCase().replace(/[^a-z0-9_]+/g, '_') ?? '';
+    return PLAYER_REPORT_REASONS.has(normalized) ? normalized : 'cheating';
+  }
+
+  private sendPlayerReportResult(
+    client: Client,
+    requestId: string | null,
+    result: { ok: true; reportId: string } | { ok: false; error: string }
+  ): void {
+    client.send('playerReportResult', {
+      requestId,
+      ...result,
+    });
+  }
+
+  private async handlePlayerReport(client: Client, data: unknown): Promise<void> {
+    const requestId = this.readReportRequestId(data);
+    const fail = (error: string) => this.sendPlayerReportResult(client, requestId, { ok: false, error });
+
+    if (!isRecord(data)) {
+      fail('Invalid report payload');
+      return;
+    }
+
+    const targetPlayerId = sanitizeShortText(data.targetPlayerId, 96);
+    if (!targetPlayerId) {
+      fail('Target player is required');
+      return;
+    }
+    if (targetPlayerId === client.sessionId) {
+      fail('You cannot report yourself');
+      return;
+    }
+
+    const reporter = this.state.players.get(client.sessionId);
+    const target = this.state.players.get(targetPlayerId);
+    if (!reporter) {
+      fail('Reporter is not in this match');
+      return;
+    }
+    if (!target) {
+      fail('Target player is no longer in this match');
+      return;
+    }
+    if (target.isBot || this.spawnedNpcs.has(target.id)) {
+      fail('Bots cannot be reported');
+      return;
+    }
+
+    const targetUserId = this.getDurableUserId(target.id);
+    const reporterUserId = this.getDurableUserId(client.sessionId);
+    if (!reporterUserId || !targetUserId) {
+      fail('Reports require authenticated player accounts');
+      return;
+    }
+    const reason = this.normalizePlayerReportReason(data.reason);
+    const details = sanitizeShortText(data.details, 1000);
+    const signal = this.antiCheat?.record({
+      eventType: 'player_report.cheating',
+      category: 'player_report',
+      source: 'game_room_player_report',
+      userId: targetUserId,
+      playerSessionId: target.id,
+      team: target.team,
+      heroId: target.heroId ?? null,
+      severity: 'medium',
+      confidence: 0.55,
+      reason,
+      details: {
+        reporterUserId,
+        reporterPlayerSessionId: client.sessionId,
+        reporterName: reporter.name,
+        targetName: target.name,
+        targetTeam: target.team,
+        details,
+      },
+      retentionClass: 'extended',
+    });
+
+    try {
+      const report = await prisma.playerReport.create({
+        data: {
+          status: 'open',
+          reason,
+          details,
+          reporterUserId,
+          reporterPlayerSessionId: client.sessionId,
+          reporterName: reporter.name,
+          targetUserId,
+          targetPlayerSessionId: target.id,
+          targetName: target.name,
+          targetTeam: target.team,
+          roomId: this.roomId,
+          matchId: this.matchPersistenceLedger?.matchId ?? null,
+          lobbyId: this.lobbyId,
+          matchMode: this.matchMode,
+          mapSeed: this.state.mapSeed,
+          serverTick: this.state.tick,
+          evidenceEventId: signal?.eventId ?? null,
+          metadata: serializeReportMetadata({
+            targetHeroId: target.heroId ?? null,
+            reporterTeam: reporter.team,
+            targetStats: {
+              kills: target.kills,
+              deaths: target.deaths,
+              assists: target.assists,
+              flagCaptures: target.flagCaptures,
+              flagReturns: target.flagReturns,
+            },
+            reporterPosition: {
+              x: reporter.position.x,
+              y: reporter.position.y,
+              z: reporter.position.z,
+            },
+            targetPosition: {
+              x: target.position.x,
+              y: target.position.y,
+              z: target.position.z,
+            },
+          }),
+        },
+      });
+
+      loggers.room.info('Player report created', {
+        reportId: report.id,
+        reporterUserId,
+        targetUserId,
+        roomId: this.roomId,
+        matchId: this.matchPersistenceLedger?.matchId ?? null,
+      });
+      this.sendPlayerReportResult(client, requestId, { ok: true, reportId: report.id });
+    } catch (error) {
+      loggers.room.error('Failed to create player report', {
+        reporterUserId,
+        targetUserId,
+        roomId: this.roomId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      fail('Failed to submit report');
     }
   }
 

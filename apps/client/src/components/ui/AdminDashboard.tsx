@@ -71,6 +71,37 @@ interface LobbyRoomOverview {
   isPublic: boolean;
 }
 
+interface PlayerReportOverview {
+  id: string;
+  status: string;
+  reason: string;
+  details: string | null;
+  reporterUserId: string;
+  reporterPlayerSessionId: string;
+  reporterName: string;
+  reporterUser: { id: string; name: string; walletAddress: string | null } | null;
+  targetUserId: string;
+  targetPlayerSessionId: string;
+  targetName: string;
+  targetTeam: string | null;
+  targetUser: { id: string; name: string; walletAddress: string | null } | null;
+  roomId: string;
+  matchId: string | null;
+  lobbyId: string | null;
+  matchMode: string | null;
+  mapSeed: number | null;
+  serverTick: number;
+  evidenceEventId: string | null;
+  resolvedByUserId: string | null;
+  resolvedByUser: { id: string; name: string; walletAddress: string | null } | null;
+  resolvedAt: string | null;
+  resolution: string | null;
+  actionType: string | null;
+  accountActionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface AdminOverview {
   generatedAt: string;
   status: 'ok' | 'degraded' | string;
@@ -78,6 +109,7 @@ interface AdminOverview {
     userId: string;
     name: string;
     walletAddress: string;
+    elevatedAntiCheatRole?: boolean;
   };
   totals: {
     runningMachines: number;
@@ -94,6 +126,10 @@ interface AdminOverview {
   rooms: {
     game: GameRoomOverview[];
     lobbies: LobbyRoomOverview[];
+  };
+  playerReports?: {
+    reports: PlayerReportOverview[];
+    counts: Record<string, number>;
   };
   diagnostics: {
     distributed: boolean;
@@ -335,10 +371,106 @@ function LobbiesTable({ lobbies }: { lobbies: LobbyRoomOverview[] }) {
   );
 }
 
+function ActionButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="h-8 rounded-md border border-white/10 bg-white/[0.04] px-2.5 font-body text-xs font-semibold uppercase tracking-[0.06em] text-white/70 transition hover:border-accent-primary/45 hover:bg-white/[0.08] hover:text-white disabled:cursor-wait disabled:opacity-45"
+    >
+      {children}
+    </button>
+  );
+}
+
+function PlayerReportsTable({
+  reports,
+  busyId,
+  onSetStatus,
+  onAccountAction,
+}: {
+  reports: PlayerReportOverview[];
+  busyId: string | null;
+  onSetStatus: (report: PlayerReportOverview, status: string) => void;
+  onAccountAction: (report: PlayerReportOverview, actionType: 'suspension' | 'ban') => void;
+}) {
+  if (reports.length === 0) return <EmptyTable label="No player reports." />;
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[1180px] table-fixed border-collapse">
+        <thead>
+          <tr>
+            <HeaderCell>Report</HeaderCell>
+            <HeaderCell>Status</HeaderCell>
+            <HeaderCell>Target</HeaderCell>
+            <HeaderCell>Reporter</HeaderCell>
+            <HeaderCell>Match</HeaderCell>
+            <HeaderCell>Reason</HeaderCell>
+            <HeaderCell>Actions</HeaderCell>
+          </tr>
+        </thead>
+        <tbody>
+          {reports.map((report) => (
+            <tr key={report.id} className="hover:bg-white/[0.025]">
+              <Cell mono>
+                <div className="break-all text-white">{report.id}</div>
+                <div className="mt-1 font-body text-xs text-white/40">{formatAge(Date.parse(report.createdAt))}</div>
+              </Cell>
+              <Cell>
+                <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-xs uppercase tracking-[0.08em] text-white/70">
+                  {report.status}
+                </span>
+              </Cell>
+              <Cell>
+                <div className="truncate text-white">{report.targetUser?.name || report.targetName}</div>
+                <div className="mt-1 break-all font-mono text-xs text-white/40">{report.targetUserId}</div>
+                {report.targetTeam && <div className="mt-1 text-xs text-white/35">{report.targetTeam}</div>}
+              </Cell>
+              <Cell>
+                <div className="truncate text-white/80">{report.reporterUser?.name || report.reporterName}</div>
+                <div className="mt-1 break-all font-mono text-xs text-white/40">{report.reporterUserId}</div>
+              </Cell>
+              <Cell>
+                <div className="break-all font-mono text-xs text-white/80">{report.matchId || report.roomId}</div>
+                <div className="mt-1 text-xs text-white/40">{report.matchMode || 'unknown'} seed {report.mapSeed ?? '-'}</div>
+              </Cell>
+              <Cell>
+                <div className="text-white/80">{report.reason}</div>
+                {report.details && <div className="mt-1 line-clamp-2 text-xs text-white/40">{report.details}</div>}
+                {report.resolution && <div className="mt-2 line-clamp-2 text-xs text-emerald-100/55">{report.resolution}</div>}
+              </Cell>
+              <Cell>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton disabled={busyId === report.id} onClick={() => onSetStatus(report, 'reviewing')}>Review</ActionButton>
+                  <ActionButton disabled={busyId === report.id} onClick={() => onSetStatus(report, 'cleared')}>Clear</ActionButton>
+                  <ActionButton disabled={busyId === report.id} onClick={() => onSetStatus(report, 'dismissed')}>Dismiss</ActionButton>
+                  <ActionButton disabled={busyId === report.id} onClick={() => onAccountAction(report, 'suspension')}>Suspend</ActionButton>
+                  <ActionButton disabled={busyId === report.id} onClick={() => onAccountAction(report, 'ban')}>Ban</ActionButton>
+                </div>
+              </Cell>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function AdminDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [busyReportId, setBusyReportId] = useState<string | null>(null);
 
   const loadOverview = useCallback(async () => {
     setError(null);
@@ -360,6 +492,53 @@ export function AdminDashboard() {
     }
   }, []);
 
+  const postAdminJson = useCallback(async (endpoint: string, payload: unknown) => {
+    setError(null);
+    const response = await fetch(`${config.serverHttpUrl}${endpoint}`, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload ?? {}),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ error: `Admin request failed (${response.status})` }));
+      throw new Error(data.error || `Admin request failed (${response.status})`);
+    }
+
+    await loadOverview();
+  }, [loadOverview]);
+
+  const updateReportStatus = useCallback((report: PlayerReportOverview, status: string) => {
+    const note = window.prompt(status === 'cleared' ? 'Clear note' : 'Review note', '') ?? '';
+    if ((status === 'cleared' || status === 'dismissed') && !window.confirm(`${status} report ${report.id}?`)) return;
+
+    setBusyReportId(report.id);
+    postAdminJson(`/admin/api/player-reports/${encodeURIComponent(report.id)}/status`, { status, note })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyReportId(null));
+  }, [postAdminJson]);
+
+  const applyReportAccountAction = useCallback((report: PlayerReportOverview, actionType: 'suspension' | 'ban') => {
+    const reason = window.prompt(`${actionType} reason`, report.reason);
+    if (!reason) return;
+    const expiresAt = actionType === 'suspension'
+      ? window.prompt('Suspension expiration, ISO or local datetime', '')
+      : '';
+    if (actionType === 'suspension' && !expiresAt) return;
+    if (!window.confirm(`${actionType} ${report.targetUser?.name || report.targetName}?`)) return;
+
+    setBusyReportId(report.id);
+    postAdminJson(`/admin/api/player-reports/${encodeURIComponent(report.id)}/account-actions`, {
+      actionType,
+      reason,
+      expiresAt: expiresAt || null,
+    })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyReportId(null));
+  }, [postAdminJson]);
+
   useEffect(() => {
     void loadOverview();
     const interval = window.setInterval(() => void loadOverview(), 3000);
@@ -368,11 +547,13 @@ export function AdminDashboard() {
 
   const metrics = useMemo(() => {
     if (!overview) return [];
+    const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
     return [
       { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: `${formatNumber(overview.totals.serverProcesses)} processes` },
       { label: 'Game Players', value: formatNumber(overview.totals.playersInGame), sublabel: `${formatNumber(overview.totals.botsInGame)} bots` },
       { label: 'Game Rooms', value: formatNumber(overview.totals.gameRooms), sublabel: `${formatNumber(overview.totals.participantsInGame)} participants` },
       { label: 'Lobby Participants', value: formatNumber(overview.totals.lobbyParticipants), sublabel: `${formatNumber(overview.totals.lobbyRooms)} lobbies` },
+      { label: 'Player Reports', value: formatNumber(activeReports), sublabel: `${formatNumber(overview.playerReports?.reports.length ?? 0)} listed` },
       { label: 'Connected Clients', value: formatNumber(overview.totals.totalConnectedClients), sublabel: overview.diagnostics.redis.ok ? 'redis ok' : `redis ${overview.diagnostics.redis.status}` },
     ];
   }, [overview]);
@@ -416,7 +597,7 @@ export function AdminDashboard() {
 
         {overview ? (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
               {metrics.map((metric) => (
                 <MetricTile key={metric.label} {...metric} />
               ))}
@@ -432,6 +613,18 @@ export function AdminDashboard() {
 
             <Section title="Lobbies" meta={`${formatNumber(overview.rooms.lobbies.length)} active`}>
               <LobbiesTable lobbies={overview.rooms.lobbies} />
+            </Section>
+
+            <Section
+              title="Player Reports"
+              meta={`${formatNumber((overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0))} active`}
+            >
+              <PlayerReportsTable
+                reports={overview.playerReports?.reports ?? []}
+                busyId={busyReportId}
+                onSetStatus={updateReportStatus}
+                onAccountAction={applyReportAccountAction}
+              />
             </Section>
           </>
         ) : (

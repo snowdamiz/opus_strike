@@ -12,6 +12,13 @@ import {
   type AntiCheatAccountActionType,
   type AntiCheatCaseStatus,
 } from '../anticheat';
+import {
+  buildPlayerReportResolution,
+  buildReportActionResolution,
+  createPlayerReportUpdate,
+  isPlayerReportStatus,
+  listPlayerReportQueue,
+} from '../reports/playerReportService';
 import { wagerService } from '../wagers/service';
 import {
   collectLocalAdminMachineSnapshot,
@@ -407,11 +414,12 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
     antiCheatEvidenceStore.listReviewData(),
+    listPlayerReportQueue(prisma),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -513,6 +521,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       warnings,
     },
     antiCheat,
+    playerReports,
   };
 }
 
@@ -733,6 +742,14 @@ function renderAdminHtml(): string {
         <span class="muted" id="lobby-count"></span>
       </div>
       <div class="table-wrap" id="lobbies"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Player Reports</h2>
+        <span class="muted" id="player-report-count"></span>
+      </div>
+      <div class="table-wrap" id="player-reports"></div>
     </section>
 
     <section>
@@ -961,6 +978,54 @@ function renderAdminHtml(): string {
       }).catch((error) => alert(error.message));
     };
 
+    window.reportSetStatus = (reportId, status) => {
+      const note = prompt(status === 'cleared' ? 'Clear note' : 'Review note') || '';
+      if ((status === 'cleared' || status === 'dismissed') && !confirm(status + ' report ' + reportId + '?')) return;
+      postJson('/admin/api/player-reports/' + encodeURIComponent(reportId) + '/status', { status, note })
+        .catch((error) => alert(error.message));
+    };
+    window.reportAccountAction = (reportId, actionType) => {
+      const reason = prompt(actionType + ' reason');
+      if (!reason) return;
+      const expiresAt = actionType === 'suspension'
+        ? prompt('Suspension expiration, ISO or local datetime')
+        : '';
+      if (actionType === 'suspension' && !expiresAt) return;
+      if (!confirm(actionType + ' from report ' + reportId + '?')) return;
+      postJson('/admin/api/player-reports/' + encodeURIComponent(reportId) + '/account-actions', {
+        actionType,
+        reason,
+        expiresAt: expiresAt || null,
+      }).catch((error) => alert(error.message));
+    };
+
+    function renderPlayerReports(data) {
+      const queue = data.playerReports || { reports: [], counts: {} };
+      const reports = queue.reports || [];
+      const openCount = Number(queue.counts?.open || 0) + Number(queue.counts?.reviewing || 0);
+      document.getElementById('player-report-count').textContent = num(openCount) + ' active / ' + num(reports.length) + ' listed';
+      document.getElementById('player-reports').innerHTML = reports.length === 0
+        ? '<div class="empty">No player reports.</div>'
+        : '<table><thead><tr><th>Report</th><th>Status</th><th>Target</th><th>Reporter</th><th>Match</th><th>Reason</th><th>Actions</th></tr></thead><tbody>' +
+          reports.map((report) => (
+            '<tr>' +
+            '<td><span class="mono">' + escapeHtml(report.id) + '</span><br><span class="muted">' + escapeHtml(age(Date.parse(report.createdAt))) + '</span></td>' +
+            '<td><span class="pill">' + escapeHtml(report.status) + '</span></td>' +
+            '<td>' + escapeHtml(report.targetUser?.name || report.targetName) + '<br><span class="muted mono">' + escapeHtml(report.targetUserId) + '</span></td>' +
+            '<td>' + escapeHtml(report.reporterUser?.name || report.reporterName) + '<br><span class="muted mono">' + escapeHtml(report.reporterUserId) + '</span></td>' +
+            '<td><span class="mono">' + escapeHtml(report.matchId || report.roomId) + '</span><br><span class="muted">' + escapeHtml(report.matchMode || 'unknown') + ' seed ' + escapeHtml(report.mapSeed ?? '') + '</span></td>' +
+            '<td>' + escapeHtml(report.reason) + (report.details ? '<br><span class="muted">' + escapeHtml(report.details) + '</span>' : '') + '</td>' +
+            '<td><div class="actions">' +
+            '<button onclick="reportSetStatus(\\'' + escapeHtml(report.id) + '\\',\\'reviewing\\')">Review</button>' +
+            '<button onclick="reportSetStatus(\\'' + escapeHtml(report.id) + '\\',\\'cleared\\')">Clear</button>' +
+            '<button onclick="reportSetStatus(\\'' + escapeHtml(report.id) + '\\',\\'dismissed\\')">Dismiss</button>' +
+            '<button onclick="reportAccountAction(\\'' + escapeHtml(report.id) + '\\',\\'suspension\\')">Suspend</button>' +
+            '<button onclick="reportAccountAction(\\'' + escapeHtml(report.id) + '\\',\\'ban\\')">Ban</button>' +
+            '</div></td>' +
+            '</tr>'
+          )).join('') + '</tbody></table>';
+    }
+
     function renderAntiCheat(data) {
       const antiCheat = data.antiCheat || { cases: [], payoutHolds: [], accountActions: [], config: {} };
       const cases = antiCheat.cases || [];
@@ -1062,6 +1127,7 @@ function renderAdminHtml(): string {
         renderMachines(data);
         renderGameRooms(data);
         renderLobbies(data);
+        renderPlayerReports(data);
         renderAntiCheat(data);
       } catch (error) {
         const el = document.getElementById('status');
@@ -1109,6 +1175,99 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect anti-cheat overview' });
+    }
+  });
+
+  router.post('/api/player-reports/:reportId/status', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const status = req.body?.status;
+    if (!isPlayerReportStatus(status)) {
+      res.status(400).json({ error: 'Invalid report status' });
+      return;
+    }
+
+    const note = readRequestString(req.body?.note, 800);
+    try {
+      await prisma.playerReport.update({
+        where: { id: req.params.reportId },
+        data: createPlayerReportUpdate({
+          status,
+          actorUserId: adminUser.id,
+          resolution: buildPlayerReportResolution({
+            status,
+            actorName: adminUser.name,
+            note,
+          }),
+        }),
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/player-reports/:reportId/account-actions', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const actionType = readRequestString(req.body?.actionType, 64) as AntiCheatAccountActionType;
+    if (!['suspension', 'ban', 'lift_suspension', 'lift_ban'].includes(actionType)) {
+      res.status(400).json({ error: 'Invalid account action type' });
+      return;
+    }
+
+    const reason = readRequestString(req.body?.reason, 800);
+    if (!reason) {
+      res.status(400).json({ error: 'Reason is required' });
+      return;
+    }
+
+    const expiresAtRaw = readRequestString(req.body?.expiresAt, 64);
+    const expiresAt = expiresAtRaw ? new Date(expiresAtRaw) : null;
+    if (expiresAtRaw && Number.isNaN(expiresAt?.getTime())) {
+      res.status(400).json({ error: 'Invalid expiration' });
+      return;
+    }
+
+    try {
+      const report = await prisma.playerReport.findUniqueOrThrow({
+        where: { id: req.params.reportId },
+      });
+      if (!report.targetUserId) {
+        res.status(400).json({ error: 'Report target has no linked account for account actions' });
+        return;
+      }
+
+      const accountActionId = await antiCheatEvidenceStore.createAccountAction({
+        actorUserId: adminUser.id,
+        targetUserId: report.targetUserId,
+        actionType,
+        reason,
+        evidenceCaseId: null,
+        evidenceEventIds: report.evidenceEventId ? [report.evidenceEventId] : [],
+        expiresAt,
+        elevated: adminUser.elevatedAntiCheatRole,
+      });
+
+      await prisma.playerReport.update({
+        where: { id: report.id },
+        data: {
+          status: 'actioned',
+          resolvedByUserId: adminUser.id,
+          resolvedAt: new Date(),
+          resolution: buildReportActionResolution({
+            actionType,
+            actorName: adminUser.name,
+            reason,
+          }),
+          actionType,
+          accountActionId,
+        },
+      });
+
+      res.json({ ok: true, accountActionId });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 
