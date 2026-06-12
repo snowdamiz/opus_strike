@@ -38,6 +38,7 @@ import {
   type ReflectionQualityConfig,
   type ShadowQualityConfig,
 } from './visualQuality';
+import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
 
 function CameraSettingsApplier({ fov }: { fov: number }) {
@@ -282,7 +283,6 @@ function WarmupSettlingFrames({
 
 const FEATURE_QUALITY_STEPS = ['off', 'minimum', 'low', 'medium', 'high', 'ultra'] as const;
 const RESOLUTION_QUALITY_STEPS = ['minimum', 'low', 'medium', 'high', 'ultra'] as const;
-const ADAPTIVE_QUALITY_SAMPLE_LIMIT = 120;
 
 function stepDown<T extends string>(value: T, steps: readonly T[]): T {
   const index = steps.indexOf(value);
@@ -293,33 +293,24 @@ function AdaptiveQualityController() {
   const settings = useSettingsStore(state => state.settings);
   const accumulatorRef = useRef(0);
   const overBudgetSecondsRef = useRef(0);
-  const frameSamplesRef = useRef<number[]>([]);
-  const frameSampleIndexRef = useRef(0);
+  const frameHistogramRef = useRef(new FrameTimeHistogram());
 
   useFrame((_, delta) => {
     if (!settings.adaptiveQuality) {
       accumulatorRef.current = 0;
       overBudgetSecondsRef.current = 0;
-      frameSamplesRef.current.length = 0;
-      frameSampleIndexRef.current = 0;
+      frameHistogramRef.current.reset();
       return;
     }
 
-    const frameSamples = frameSamplesRef.current;
-    const frameMs = delta * 1000;
-    if (frameSamples.length < ADAPTIVE_QUALITY_SAMPLE_LIMIT) {
-      frameSamples.push(frameMs);
-    } else {
-      frameSamples[frameSampleIndexRef.current] = frameMs;
-      frameSampleIndexRef.current = (frameSampleIndexRef.current + 1) % ADAPTIVE_QUALITY_SAMPLE_LIMIT;
-    }
+    frameHistogramRef.current.record(delta * 1000);
 
     accumulatorRef.current += delta;
     if (accumulatorRef.current < 2) return;
     accumulatorRef.current = 0;
 
-    const sortedSamples = [...frameSamples].sort((a, b) => a - b);
-    const p95 = sortedSamples[Math.floor((sortedSamples.length - 1) * 0.95)] ?? 0;
+    const p95 = frameHistogramRef.current.percentile(0.95);
+    frameHistogramRef.current.reset();
     if (p95 < 22) {
       overBudgetSecondsRef.current = Math.max(0, overBudgetSecondsRef.current - 2);
       return;
@@ -423,6 +414,7 @@ export function GameCanvas({
   const mapSeed = useGameStore((state) => state.mapSeed);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
+  const canvasAntialiasRef = useRef(qualityConfig.render.antialias);
   const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed }), [mapSeed]);
   const [warmupSnapshot, dispatchWarmup] = useReducer(
     reduceMapWarmup,
@@ -522,7 +514,6 @@ export function GameCanvas({
 
   return (
     <Canvas
-      key={`aa:${settings.antialiasing}`}
       shadows={qualityConfig.shadows.enabled}
       dpr={qualityConfig.render.dpr}
       camera={{ 
@@ -532,7 +523,7 @@ export function GameCanvas({
         position: [0, 2, 10], // Start at a reasonable height
       }}
       gl={{ 
-        antialias: qualityConfig.render.antialias,
+        antialias: canvasAntialiasRef.current,
         powerPreference: 'high-performance',
       }}
       onCreated={({ gl }) => {

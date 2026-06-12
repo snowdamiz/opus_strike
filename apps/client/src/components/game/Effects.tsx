@@ -19,6 +19,7 @@ interface Effect {
 // Global effect manager
 const effects: Effect[] = [];
 let effectIdCounter = 0;
+const MAX_GLOBAL_EFFECTS = 96;
 const EXPLOSION_PARTICLE_INDICES = Array.from({ length: 20 }, (_, i) => i);
 const BLINK_RING_GEOMETRY = new THREE.RingGeometry(0.5, 0.7, 6);
 const EXPLOSION_BOX_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
@@ -26,12 +27,63 @@ const HIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.3, 8, 8);
 const LIFELINE_BEAM_GEOMETRY = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
 const LIFELINE_AXIS = new THREE.Vector3(0, 1, 0);
 
+export interface GlobalEffectStats {
+  active: number;
+  capacity: number;
+  pressure: number;
+}
+
+function isEffectAlive(effect: Effect, now: number): boolean {
+  return now - effect.startTime < effect.duration;
+}
+
+function compactExpiredEffects(now: number): boolean {
+  let writeIndex = 0;
+  for (let readIndex = 0; readIndex < effects.length; readIndex++) {
+    const effect = effects[readIndex];
+    if (!isEffectAlive(effect, now)) continue;
+    effects[writeIndex++] = effect;
+  }
+  if (writeIndex === effects.length) return false;
+  effects.length = writeIndex;
+  return true;
+}
+
+function dropOldestNonCriticalEffect(): void {
+  let dropIndex = 0;
+  for (let index = 0; index < effects.length; index++) {
+    const effect = effects[index];
+    if (effect.type !== 'lifeline' && effect.type !== 'heal') {
+      dropIndex = index;
+      break;
+    }
+  }
+  for (let index = dropIndex + 1; index < effects.length; index++) {
+    effects[index - 1] = effects[index];
+  }
+  effects.length = Math.max(0, effects.length - 1);
+}
+
 export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
+  const now = Date.now();
+  compactExpiredEffects(now);
+  if (effects.length >= MAX_GLOBAL_EFFECTS) {
+    dropOldestNonCriticalEffect();
+  }
   effects.push({
     ...effect,
     id: `effect_${effectIdCounter++}`,
-    startTime: Date.now(),
+    startTime: now,
   });
+}
+
+export function getGlobalEffectStats(now = Date.now()): GlobalEffectStats {
+  compactExpiredEffects(now);
+  return {
+    active: effects.length,
+    capacity: MAX_GLOBAL_EFFECTS,
+    pressure: effects.length / MAX_GLOBAL_EFFECTS,
+  };
 }
 
 export function Effects() {
@@ -51,17 +103,12 @@ export function Effects() {
     if (now - lastCleanupRef.current < 100) return;
     lastCleanupRef.current = now;
 
-    // Clean up expired effects
-    const currentEffects = effects.filter(e => now - e.startTime < e.duration);
-    effects.length = 0;
-    effects.push(...currentEffects);
-
-    // Update ref with current effects (no re-render triggered)
-    activeEffectsRef.current = currentEffects;
+    compactExpiredEffects(now);
+    activeEffectsRef.current = effects;
 
     // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
-    if (currentEffects.length !== lastEffectCountRef.current) {
-      lastEffectCountRef.current = currentEffects.length;
+    if (effects.length !== lastEffectCountRef.current) {
+      lastEffectCountRef.current = effects.length;
       setEffectsVersion(v => v + 1);
     }
   });

@@ -8,15 +8,18 @@ const LEVEL_WEIGHT: Record<LogLevel, number> = {
   error: 40,
 };
 
-const DEFAULT_LEVEL: LogLevel = import.meta.env.DEV ? 'warn' : 'error';
+const viteEnv = ((import.meta as ImportMeta & {
+  env?: Record<string, string | boolean | undefined>;
+}).env ?? {});
+const DEFAULT_LEVEL: LogLevel = viteEnv.DEV ? 'warn' : 'error';
 
 function envFlag(name: string): boolean {
-  const value = import.meta.env[name];
+  const value = viteEnv[name];
   return value === '1' || value === 'true' || value === 'TRUE';
 }
 
 function envLevel(): LogLevel {
-  const value = String(import.meta.env.VITE_LOG_LEVEL || '').toLowerCase();
+  const value = String(viteEnv.VITE_LOG_LEVEL || '').toLowerCase();
   if (value === 'debug' || value === 'info' || value === 'warn' || value === 'error') {
     return value;
   }

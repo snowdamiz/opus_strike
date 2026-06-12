@@ -24,6 +24,7 @@ import {
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 import type { RemotePlayerQualityConfig } from './visualQuality';
+import { selectRemoteFullBodyIds, type RemoteLodCandidate } from './remotePlayerLod';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
@@ -58,11 +59,14 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
   });
   const [fullBodyAllowedIds, setFullBodyAllowedIds] = useState<Set<string>>(() => new Set());
   const otherPlayersRef = useRef<Player[]>(otherPlayers);
-  const fullBodyCandidateRef = useRef<Player[]>([]);
+  const fullBodyCandidateRef = useRef<RemoteLodCandidate[]>([]);
+  const fullBodyCandidateDistanceRef = useRef<number[]>([]);
   const fullBodyAllowedIdListRef = useRef<string[]>([]);
+  const fullBodyAllowedIdsRef = useRef(fullBodyAllowedIds);
   const fullBodyAllowedSignatureRef = useRef('');
   const fullBodyLodAccumulatorRef = useRef(LOD_UPDATE_INTERVAL);
   otherPlayersRef.current = otherPlayers;
+  fullBodyAllowedIdsRef.current = fullBodyAllowedIds;
 
   useFrame((_, delta) => {
     fullBodyLodAccumulatorRef.current += delta;
@@ -71,27 +75,35 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
 
     const visualState = visualStore.getState();
     const candidates = fullBodyCandidateRef.current;
-    candidates.length = 0;
-    candidates.push(...otherPlayersRef.current);
-    candidates.sort((a, b) => {
-      if (a.hasFlag !== b.hasFlag) return a.hasFlag ? -1 : 1;
-      const aPos = visualState.playerPositions.get(a.id) ?? a.position;
-      const bPos = visualState.playerPositions.get(b.id) ?? b.position;
-      const aDx = camera.position.x - aPos.x;
-      const aDy = camera.position.y - aPos.y;
-      const aDz = camera.position.z - aPos.z;
-      const bDx = camera.position.x - bPos.x;
-      const bDy = camera.position.y - bPos.y;
-      const bDz = camera.position.z - bPos.z;
-      return (aDx * aDx + aDy * aDy + aDz * aDz) - (bDx * bDx + bDy * bDy + bDz * bDz);
-    });
-
-    const limit = Math.max(0, config.maxFullBodies);
-    const nextIds = fullBodyAllowedIdListRef.current;
-    nextIds.length = 0;
-    for (let i = 0; i < candidates.length && i < limit; i++) {
-      nextIds.push(candidates[i].id);
+    const playersToSample = otherPlayersRef.current;
+    candidates.length = playersToSample.length;
+    for (let index = 0; index < playersToSample.length; index++) {
+      const player = playersToSample[index];
+      let candidate = candidates[index];
+      if (!candidate) {
+        candidate = {
+          id: player.id,
+          team: player.team,
+          hasFlag: player.hasFlag,
+          position: player.position,
+        };
+        candidates[index] = candidate;
+      }
+      candidate.id = player.id;
+      candidate.team = player.team;
+      candidate.hasFlag = player.hasFlag;
+      candidate.position = visualState.playerPositions.get(player.id) ?? player.position;
     }
+
+    const nextIds = fullBodyAllowedIdListRef.current;
+    selectRemoteFullBodyIds(
+      candidates,
+      camera.position,
+      config.maxFullBodies,
+      fullBodyAllowedIdsRef.current,
+      nextIds,
+      fullBodyCandidateDistanceRef.current
+    );
     const nextSignature = nextIds.join('|');
     if (nextSignature !== fullBodyAllowedSignatureRef.current) {
       fullBodyAllowedSignatureRef.current = nextSignature;
@@ -713,6 +725,7 @@ interface NameplateProps {
 
 const NAMEPLATE_CANVAS_WIDTH = 256;
 const NAMEPLATE_CANVAS_HEIGHT = 72;
+const NAMEPLATE_HEALTH_BUCKETS = 40;
 
 function roundedRectPath(
   ctx: CanvasRenderingContext2D,
@@ -815,6 +828,7 @@ function drawNameplateTexture(
 function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateProps) {
   const teamColor = getTeamColor(team);
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
+  const quantizedHealthPercent = Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
   const heroColor = heroId ? HERO_ICON_COLORS[heroId].primary : teamColor;
   const texture = useMemo(() => {
     const canvas = document.createElement('canvas');
@@ -829,9 +843,9 @@ function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateP
   }, []);
 
   useEffect(() => {
-    drawNameplateTexture(texture.image as HTMLCanvasElement, name, teamColor, heroColor, healthPercent);
+    drawNameplateTexture(texture.image as HTMLCanvasElement, name, teamColor, heroColor, quantizedHealthPercent);
     texture.needsUpdate = true;
-  }, [healthPercent, heroColor, name, teamColor, texture]);
+  }, [heroColor, name, quantizedHealthPercent, teamColor, texture]);
 
   useEffect(() => () => texture.dispose(), [texture]);
 

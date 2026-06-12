@@ -26,17 +26,89 @@ function scoreBand(score: number): string {
   return 'normal_noise';
 }
 
+export interface AntiCheatSignalQueueJob {
+  signal: AntiCheatSignal;
+  change: AntiCheatScoreChange;
+  queuedAt: number;
+  resolve: (result: { caseId: string | null }) => void;
+}
+
+export interface AntiCheatQueueHealth {
+  depth: number;
+  highPriorityDepth: number;
+  lowPriorityDepth: number;
+  activeWrites: number;
+  droppedLowMediumSignals: number;
+  highCriticalLatencyMaxMs: number;
+  lastFlushDurationMs: number;
+  dbErrorCount: number;
+}
+
+export class AntiCheatSignalPriorityQueue {
+  private readonly highPriority: AntiCheatSignalQueueJob[] = [];
+  private readonly lowPriority: AntiCheatSignalQueueJob[] = [];
+  private highHead = 0;
+  private lowHead = 0;
+
+  get length(): number {
+    return this.highPriority.length - this.highHead + this.lowPriority.length - this.lowHead;
+  }
+
+  get highPriorityLength(): number {
+    return this.highPriority.length - this.highHead;
+  }
+
+  get lowPriorityLength(): number {
+    return this.lowPriority.length - this.lowHead;
+  }
+
+  push(job: AntiCheatSignalQueueJob, highPriority: boolean): void {
+    if (highPriority) {
+      this.highPriority.push(job);
+    } else {
+      this.lowPriority.push(job);
+    }
+  }
+
+  shift(): AntiCheatSignalQueueJob | undefined {
+    if (this.highHead < this.highPriority.length) {
+      const job = this.highPriority[this.highHead++];
+      this.compactIfNeeded(this.highPriority, 'high');
+      return job;
+    }
+    if (this.lowHead < this.lowPriority.length) {
+      const job = this.lowPriority[this.lowHead++];
+      this.compactIfNeeded(this.lowPriority, 'low');
+      return job;
+    }
+    return undefined;
+  }
+
+  private compactIfNeeded(queue: AntiCheatSignalQueueJob[], lane: 'high' | 'low'): void {
+    const head = lane === 'high' ? this.highHead : this.lowHead;
+    if (head < 64 || head * 2 < queue.length) return;
+
+    queue.copyWithin(0, head);
+    queue.length -= head;
+    if (lane === 'high') {
+      this.highHead = 0;
+    } else {
+      this.lowHead = 0;
+    }
+  }
+}
+
 export class AntiCheatEvidenceStore {
   private lastRetentionPruneAt = 0;
-  private readonly signalQueue: Array<{
-    signal: AntiCheatSignal;
-    change: AntiCheatScoreChange;
-    resolve: (result: { caseId: string | null }) => void;
-  }> = [];
+  private readonly signalQueue = new AntiCheatSignalPriorityQueue();
   private readonly flushWaiters: Array<() => void> = [];
   private activeSignalWrites = 0;
   private readonly maxQueuedSignals = 1000;
   private readonly signalWriteConcurrency = 2;
+  private droppedLowMediumSignals = 0;
+  private highCriticalLatencyMaxMs = 0;
+  private lastFlushDurationMs = 0;
+  private dbErrorCount = 0;
 
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -51,31 +123,31 @@ export class AntiCheatEvidenceStore {
         roomId: signal.roomId,
         queued: this.signalQueue.length,
       });
+      this.droppedLowMediumSignals++;
       return { caseId: null };
     }
 
     return new Promise((resolve) => {
-      const job = { signal, change, resolve };
-      if (signal.severity === 'high' || signal.severity === 'critical') {
-        this.signalQueue.unshift(job);
-      } else {
-        this.signalQueue.push(job);
-      }
+      const job = { signal, change, queuedAt: Date.now(), resolve };
+      this.signalQueue.push(job, signal.severity === 'high' || signal.severity === 'critical');
       this.drainSignalQueue();
     });
   }
 
   async flush(timeoutMs = 5000): Promise<void> {
     if (this.signalQueue.length === 0 && this.activeSignalWrites === 0) return;
+    const startedAt = Date.now();
 
     await new Promise<void>((resolve) => {
       const waiter = () => {
         clearTimeout(timeout);
+        this.lastFlushDurationMs = Date.now() - startedAt;
         resolve();
       };
       const timeout = setTimeout(() => {
         const index = this.flushWaiters.indexOf(waiter);
         if (index >= 0) this.flushWaiters.splice(index, 1);
+        this.lastFlushDurationMs = Date.now() - startedAt;
         resolve();
       }, timeoutMs);
       this.flushWaiters.push(waiter);
@@ -86,6 +158,9 @@ export class AntiCheatEvidenceStore {
   private drainSignalQueue(): void {
     while (this.activeSignalWrites < this.signalWriteConcurrency && this.signalQueue.length > 0) {
       const job = this.signalQueue.shift()!;
+      if (job.signal.severity === 'high' || job.signal.severity === 'critical') {
+        this.highCriticalLatencyMaxMs = Math.max(this.highCriticalLatencyMaxMs, Date.now() - job.queuedAt);
+      }
       this.activeSignalWrites++;
       void this.persistSignal(job.signal, job.change)
         .then(job.resolve)
@@ -102,6 +177,19 @@ export class AntiCheatEvidenceStore {
     while (this.flushWaiters.length > 0) {
       this.flushWaiters.shift()?.();
     }
+  }
+
+  getQueueHealth(): AntiCheatQueueHealth {
+    return {
+      depth: this.signalQueue.length,
+      highPriorityDepth: this.signalQueue.highPriorityLength,
+      lowPriorityDepth: this.signalQueue.lowPriorityLength,
+      activeWrites: this.activeSignalWrites,
+      droppedLowMediumSignals: this.droppedLowMediumSignals,
+      highCriticalLatencyMaxMs: this.highCriticalLatencyMaxMs,
+      lastFlushDurationMs: this.lastFlushDurationMs,
+      dbErrorCount: this.dbErrorCount,
+    };
   }
 
   private async persistSignal(signal: AntiCheatSignal, change: AntiCheatScoreChange): Promise<{ caseId: string | null }> {
@@ -220,6 +308,7 @@ export class AntiCheatEvidenceStore {
 
       return result;
     } catch (error) {
+      this.dbErrorCount++;
       loggers.room.error('Failed to persist anti-cheat signal', {
         eventType: signal.eventType,
         roomId: signal.roomId,

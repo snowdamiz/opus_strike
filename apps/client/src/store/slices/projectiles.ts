@@ -227,47 +227,60 @@ function appendUnique<T extends { id: string }>(items: T[], item: T, limit: numb
 }
 
 function removeById<T extends { id: string }>(items: T[], id: string): T[] {
-  let changed = false;
-  const next = items.filter((item) => {
-    const keep = item.id !== id;
-    if (!keep) changed = true;
-    return keep;
-  });
-  return changed ? next : items;
+  const index = items.findIndex((item) => item.id === id);
+  if (index < 0) return items;
+
+  const next = items.slice();
+  next.splice(index, 1);
+  return next;
 }
 
 function removeByIds<T extends { id: string }>(items: T[], ids: readonly string[]): T[] {
   if (ids.length === 0) return items;
 
-  const idSet = new Set(ids);
   let changed = false;
-  const next = items.filter((item) => {
-    const keep = !idSet.has(item.id);
-    if (!keep) changed = true;
-    return keep;
-  });
-  return changed ? next : items;
+  for (const item of items) {
+    if (ids.includes(item.id)) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) return items;
+
+  const idSet = ids.length > 4 ? new Set(ids) : null;
+  const next: T[] = [];
+  for (const item of items) {
+    const remove = idSet ? idSet.has(item.id) : ids.includes(item.id);
+    if (!remove) next.push(item);
+  }
+  return next;
 }
 
 function updateById<T extends { id: string }>(items: T[], id: string, updates: Partial<T>): T[] {
-  let changed = false;
-  const next = items.map((item) => {
-    if (item.id !== id) return item;
-    changed = true;
-    return { ...item, ...updates };
-  });
-  return changed ? next : items;
+  const index = items.findIndex((item) => item.id === id);
+  if (index < 0) return items;
+
+  const next = items.slice();
+  next[index] = { ...items[index], ...updates };
+  return next;
 }
 
 function filterExpired<T>(items: T[], keep: (item: T, now: number) => boolean): T[] {
   const now = Date.now();
-  let changed = false;
-  const next = items.filter((item) => {
-    const shouldKeep = keep(item, now);
-    if (!shouldKeep) changed = true;
-    return shouldKeep;
-  });
-  return changed ? next : items;
+  let firstExpiredIndex = -1;
+  for (let index = 0; index < items.length; index++) {
+    if (!keep(items[index], now)) {
+      firstExpiredIndex = index;
+      break;
+    }
+  }
+  if (firstExpiredIndex < 0) return items;
+
+  const next = items.slice(0, firstExpiredIndex);
+  for (let index = firstExpiredIndex + 1; index < items.length; index++) {
+    if (keep(items[index], now)) next.push(items[index]);
+  }
+  return next;
 }
 
 function sameVec3(

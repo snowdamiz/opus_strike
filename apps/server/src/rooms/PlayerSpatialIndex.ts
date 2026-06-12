@@ -7,7 +7,7 @@ interface QueryOptions {
 }
 
 export class PlayerSpatialIndex {
-  private readonly buckets = new Map<string, Player[]>();
+  private readonly buckets = new Map<number, Player[]>();
   private readonly alivePlayers: Player[] = [];
   private readonly alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
 
@@ -63,7 +63,7 @@ export class PlayerSpatialIndex {
 
     for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
       for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-        const bucket = this.buckets.get(`${cellX}:${cellZ}`);
+        const bucket = this.buckets.get(this.getBucketKeyForCell(cellX, cellZ));
         if (!bucket) continue;
 
         for (const player of bucket) {
@@ -90,7 +90,15 @@ export class PlayerSpatialIndex {
     return this.queryRadius(origin, range, out, options);
   }
 
-  private getBucketKey(x: number, z: number): string {
-    return `${Math.floor(x / this.cellSize)}:${Math.floor(z / this.cellSize)}`;
+  private getBucketKey(x: number, z: number): number {
+    return this.getBucketKeyForCell(
+      Math.floor(x / this.cellSize),
+      Math.floor(z / this.cellSize)
+    );
+  }
+
+  private getBucketKeyForCell(cellX: number, cellZ: number): number {
+    const offset = 1 << 20;
+    return (cellX + offset) * (offset * 2) + (cellZ + offset);
   }
 }

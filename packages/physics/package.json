@@ -18,6 +18,7 @@
     "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
     "test:movement": "pnpm --filter @voxel-strike/shared build && pnpm build && node scripts/movement-prediction-harness.mjs",
+    "bench:movement": "pnpm --filter @voxel-strike/shared build && pnpm build && node scripts/capsule-motor-benchmark.mjs",
     "clean": "rm -rf dist"
   },
   "dependencies": {

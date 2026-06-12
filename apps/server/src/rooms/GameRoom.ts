@@ -1,10 +1,12 @@
 import type { IncomingMessage } from 'http';
 import { randomUUID } from 'node:crypto';
+import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node:perf_hooks';
 import { Room, Client } from 'colyseus';
 import { GameState } from './schema/GameState';
 import { Player } from './schema/Player';
 import { Vec3Schema, AbilityStateSchema } from './schema/Components';
 import { PlayerSpatialIndex } from './PlayerSpatialIndex';
+import { MovementCommandQueue } from './MovementCommandQueue';
 import {
   DEFAULT_GAME_CONFIG,
   TICK_RATE,
@@ -91,7 +93,6 @@ import {
   isMovementSeqAfter,
   nextMovementSeq,
   movementSeqDistance,
-  compareMovementSeq,
   parseMovementCommandPayload,
   sanitizeAbilityCastOriginHints,
   normalizeLookYaw,
@@ -330,8 +331,7 @@ interface BlazeGearstormInstance {
 }
 
 interface ServerMovementAuthorityState {
-  pendingCommands: MovementCommand[];
-  pendingCommandSeqs: Set<number>;
+  pendingCommands: MovementCommandQueue;
   lastProcessedSeq: number;
   movementEpoch: number;
   correctionReason: MovementCorrectionReason | null;
@@ -356,6 +356,30 @@ interface SecurityEvent {
   position?: PlainVec3;
   serverTime: number;
   detail?: Record<string, unknown>;
+}
+
+interface CustomMessageMetric {
+  messages: number;
+  recipients: number;
+  bytes: number;
+}
+
+interface RoomLoadSnapshot {
+  tickDurationP50Ms: number;
+  tickDurationP95Ms: number;
+  tickDurationP99Ms: number;
+  eventLoopDelayP95Ms: number;
+  eventLoopDelayP99Ms: number;
+  customMessageBytes: number;
+  customMessageCount: number;
+  antiCheatQueueDepth: number;
+  antiCheatDroppedLowMediumSignals: number;
+  antiCheatDbErrors: number;
+}
+
+interface TransformReplicationState {
+  signatures: Map<string, string>;
+  heartbeatAt: Map<string, number>;
 }
 
 type MatchPersistenceState = 'active' | 'persisting' | 'persisted' | 'failed';
@@ -418,6 +442,14 @@ interface BotBlackboard {
   enemyFlagAtBase: boolean;
   nearbyEnemyCount: number;
   nearbyAllyCount: number;
+}
+
+type BotRouteGraph = NonNullable<NonNullable<VoxelMapManifest['gameplay']>['routeGraph']>;
+type BotRouteNode = BotRouteGraph['nodes'][number];
+
+interface BotRoutePlan {
+  forward: BotRouteNode[];
+  reverse: BotRouteNode[];
 }
 
 interface AttackConfig {
@@ -514,10 +546,13 @@ const TRANSFORM_ANGLE_SCALE = 10000;
 const PLAYER_VITALS_INTERVAL_MS = 125;
 const PLAYER_VITALS_RECONCILE_INTERVAL_MS = 2500;
 const TRANSFORM_HEARTBEAT_INTERVAL_MS = 250;
+const DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS = 750;
+const TRANSFORM_HIGH_RELEVANCE_DISTANCE_SQ = 48 * 48;
 const RECENT_COMBAT_TRANSFORM_MS = 650;
 const MATCH_SNAPSHOT_DRIFT_SYNC_INTERVAL_MS = 2000;
 const LOW_FREQUENCY_STATE_INTERVAL_MS = 250;
 const SERVER_MOVEMENT_SUBSTEPS_PER_TICK = Math.max(1, Math.round(MOVEMENT_SUBSTEP_RATE / TICK_RATE));
+const ROOM_LOAD_SAMPLE_COUNT = 240;
 const MOVEMENT_BIT_GROUNDED = 1 << 0;
 const MOVEMENT_BIT_SPRINTING = 1 << 1;
 const MOVEMENT_BIT_CROUCHING = 1 << 2;
@@ -669,6 +704,7 @@ export class GameRoom extends Room<GameState> {
   private devBotsRooted = false;
   private devBotBrainEnabled = true;
   private mapManifest: VoxelMapManifest | null = null;
+  private botRoutePlans: Record<Team, BotRoutePlan> | null = null;
   private proceduralTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
   private mapChunkLookup: Map<string, VoxelChunk> = new Map();
   private movementCollisionRevision = 0;
@@ -694,6 +730,7 @@ export class GameRoom extends Room<GameState> {
   private playerVitalReconcileAt = new Map<string, number>();
   private playerTransformSignatures = new Map<string, string>();
   private playerTransformHeartbeatAt = new Map<string, number>();
+  private transformRecipientStates = new Map<string, TransformReplicationState>();
   private recentCombatTransformUntil = new Map<string, number>();
   private transformStreamEpoch = 0;
   private matchSnapshotSignature = '';
@@ -705,6 +742,11 @@ export class GameRoom extends Room<GameState> {
   private nextPlayerNetId = 1;
   private readonly playerSpatialIndex = new PlayerSpatialIndex(8);
   private readonly spatialQueryScratch: Player[] = [];
+  private readonly customMessageMetrics = new Map<string, CustomMessageMetric>();
+  private readonly tickDurationSamplesMs = new Float64Array(ROOM_LOAD_SAMPLE_COUNT);
+  private tickDurationSampleIndex = 0;
+  private tickDurationSampleCount = 0;
+  private eventLoopDelay: IntervalHistogram | null = null;
   private readonly currentPlayerIdsScratch = new Set<string>();
   private readonly activeBlazePlayersScratch = new Set<string>();
   private readonly urgentBotIdsScratch: string[] = [];
@@ -799,6 +841,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   onCreate(options: CreateOptions) {
+    this.eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+    this.eventLoopDelay.enable();
     this.lobbyId = options.lobbyId || null;
     this.lobbyName = options.lobbyName || null;
     this.matchMode = options.matchMode ?? options.wagerContext?.matchMode ?? (options.wagerContext ? 'custom_wager' : 'custom');
@@ -1137,7 +1181,7 @@ export class GameRoom extends Room<GameState> {
         this.clearPlayerReplicationState(existingSessionId);
         
         // Broadcast that old player left
-        this.broadcast('playerLeft', { playerId: existingSessionId });
+        this.broadcastTracked('playerLeft', { playerId: existingSessionId });
       }
       
       // Register this identity mapping. The local clientId is not used as identity.
@@ -1165,7 +1209,7 @@ export class GameRoom extends Room<GameState> {
 
     // Send existing players to the new client BEFORE adding the new player
     this.state.players.forEach((existingPlayer, id) => {
-      client.send('playerJoined', {
+      this.sendTracked(client, 'playerJoined', {
         playerId: id,
         playerName: existingPlayer.name,
         team: existingPlayer.team,
@@ -1213,7 +1257,7 @@ export class GameRoom extends Room<GameState> {
     this.registerMatchParticipant(player);
 
     // Broadcast join to all clients (including the new one)
-    this.broadcast('playerJoined', {
+    this.broadcastTracked('playerJoined', {
       playerId: client.sessionId,
       playerName: player.name,
       team: player.team,
@@ -1294,7 +1338,7 @@ export class GameRoom extends Room<GameState> {
       this.sessionIdToClientId.delete(client.sessionId);
     }
 
-    this.broadcast('playerLeft', {
+    this.broadcastTracked('playerLeft', {
       playerId: client.sessionId,
     });
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
@@ -1305,6 +1349,7 @@ export class GameRoom extends Room<GameState> {
 
   onDispose() {
     loggers.room.info('Room disposing', this.roomId);
+    this.eventLoopDelay?.disable();
     this.antiCheat?.flushAggregates();
     void this.antiCheatEvidenceStore.flush();
     this.state.players.forEach((player, playerId) => {
@@ -1335,35 +1380,40 @@ export class GameRoom extends Room<GameState> {
   }
 
   private tick() {
-    this.state.tick++;
-    this.state.serverTime = Date.now();
-    const dt = TICK_INTERVAL_MS / 1000;
-    this.rebuildPlayerSpatialIndex();
-    this.updateBots(this.state.serverTime, dt);
+    const tickStartedAt = performance.now();
+    try {
+      this.state.tick++;
+      this.state.serverTime = Date.now();
+      const dt = TICK_INTERVAL_MS / 1000;
+      this.rebuildPlayerSpatialIndex();
+      this.updateBots(this.state.serverTime, dt);
 
-    // Update based on phase
-    switch (this.state.phase) {
-      case 'hero_select':
-        if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
-          this.lastLowFrequencyStateAt = this.state.serverTime;
-          this.broadcastStateStreams({ transforms: false });
-        }
-        break;
-      case 'countdown':
-        this.updateCountdown();
-        this.updatePhysics();
-        this.broadcastStateStreams({ transforms: true });
-        break;
-      case 'playing':
-        this.updatePlaying();
-        break;
-      case 'round_end':
-        this.updateRoundEnd();
-        if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
-          this.lastLowFrequencyStateAt = this.state.serverTime;
-          this.broadcastStateStreams({ transforms: false });
-        }
-        break;
+      // Update based on phase
+      switch (this.state.phase) {
+        case 'hero_select':
+          if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
+            this.lastLowFrequencyStateAt = this.state.serverTime;
+            this.broadcastStateStreams({ transforms: false });
+          }
+          break;
+        case 'countdown':
+          this.updateCountdown();
+          this.updatePhysics();
+          this.broadcastStateStreams({ transforms: true });
+          break;
+        case 'playing':
+          this.updatePlaying();
+          break;
+        case 'round_end':
+          this.updateRoundEnd();
+          if (this.state.serverTime - this.lastLowFrequencyStateAt >= LOW_FREQUENCY_STATE_INTERVAL_MS) {
+            this.lastLowFrequencyStateAt = this.state.serverTime;
+            this.broadcastStateStreams({ transforms: false });
+          }
+          break;
+      }
+    } finally {
+      this.recordTickDuration(performance.now() - tickStartedAt);
     }
   }
 
@@ -1482,6 +1532,7 @@ export class GameRoom extends Room<GameState> {
     this.transformStreamEpoch++;
     this.playerTransformSignatures.clear();
     this.playerTransformHeartbeatAt.clear();
+    this.transformRecipientStates.clear();
   }
 
   private clearPlayerReplicationState(playerId: string): void {
@@ -1490,6 +1541,11 @@ export class GameRoom extends Room<GameState> {
     this.playerVitalReconcileAt.delete(playerId);
     this.playerTransformSignatures.delete(playerId);
     this.playerTransformHeartbeatAt.delete(playerId);
+    this.transformRecipientStates.delete(playerId);
+    for (const state of this.transformRecipientStates.values()) {
+      state.signatures.delete(playerId);
+      state.heartbeatAt.delete(playerId);
+    }
     this.recentCombatTransformUntil.delete(playerId);
     this.playerNetIds.delete(playerId);
     this.playerPingMs.delete(playerId);
@@ -1515,6 +1571,33 @@ export class GameRoom extends Room<GameState> {
       (this.recentCombatTransformUntil.get(id) ?? 0) > now ||
       this.isVisibleAbilityActive(player)
     );
+  }
+
+  private getTransformReplicationState(recipientId: string): TransformReplicationState {
+    let state = this.transformRecipientStates.get(recipientId);
+    if (!state) {
+      state = {
+        signatures: new Map<string, string>(),
+        heartbeatAt: new Map<string, number>(),
+      };
+      this.transformRecipientStates.set(recipientId, state);
+    }
+    return state;
+  }
+
+  private isHighRelevanceTransform(
+    recipient: Player | null,
+    targetId: string,
+    target: Player,
+    now: number
+  ): boolean {
+    if (this.shouldSendFullRateTransform(targetId, target, now)) return true;
+    if (!recipient) return true;
+    if (recipient.id === targetId) return true;
+
+    const dx = recipient.position.x - target.position.x;
+    const dz = recipient.position.z - target.position.z;
+    return dx * dx + dz * dz <= TRANSFORM_HIGH_RELEVANCE_DISTANCE_SQ;
   }
 
   private getAbilityCooldownUntil(ability: AbilityStateSchema, now: number): number {
@@ -1965,6 +2048,7 @@ export class GameRoom extends Room<GameState> {
 
   private updateMetadata(): void {
     const counts = this.getPopulationCounts();
+    const load = this.getRoomLoadSnapshot();
     this.setMetadata({
       name: this.lobbyName || `Game ${this.roomId.slice(0, 6)}`,
       status: this.state.phase,
@@ -1981,28 +2065,117 @@ export class GameRoom extends Room<GameState> {
       rankedEligibleCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
       wagerEnabled: Boolean(this.wagerContext),
+      tickDurationP95Ms: load.tickDurationP95Ms,
+      tickDurationP99Ms: load.tickDurationP99Ms,
+      eventLoopDelayP95Ms: load.eventLoopDelayP95Ms,
+      eventLoopDelayP99Ms: load.eventLoopDelayP99Ms,
+      customMessageBytes: load.customMessageBytes,
+      customMessageCount: load.customMessageCount,
+      antiCheatQueueDepth: load.antiCheatQueueDepth,
+      antiCheatDroppedLowMediumSignals: load.antiCheatDroppedLowMediumSignals,
+      antiCheatDbErrors: load.antiCheatDbErrors,
     });
   }
 
+  getCustomMessageMetricsSnapshot(): Record<string, CustomMessageMetric> {
+    const snapshot: Record<string, CustomMessageMetric> = {};
+    for (const [type, metric] of this.customMessageMetrics) {
+      snapshot[type] = { ...metric };
+    }
+    return snapshot;
+  }
+
+  getRoomLoadSnapshot(): RoomLoadSnapshot {
+    const tickP50 = this.getTickDurationPercentile(0.5);
+    const tickP95 = this.getTickDurationPercentile(0.95);
+    const tickP99 = this.getTickDurationPercentile(0.99);
+    let customMessageBytes = 0;
+    let customMessageCount = 0;
+    for (const metric of this.customMessageMetrics.values()) {
+      customMessageBytes += metric.bytes;
+      customMessageCount += metric.messages;
+    }
+    const antiCheatQueue = this.antiCheatEvidenceStore.getQueueHealth();
+    return {
+      tickDurationP50Ms: tickP50,
+      tickDurationP95Ms: tickP95,
+      tickDurationP99Ms: tickP99,
+      eventLoopDelayP95Ms: this.eventLoopDelay ? this.eventLoopDelay.percentile(95) / 1_000_000 : 0,
+      eventLoopDelayP99Ms: this.eventLoopDelay ? this.eventLoopDelay.percentile(99) / 1_000_000 : 0,
+      customMessageBytes,
+      customMessageCount,
+      antiCheatQueueDepth: antiCheatQueue.depth,
+      antiCheatDroppedLowMediumSignals: antiCheatQueue.droppedLowMediumSignals,
+      antiCheatDbErrors: antiCheatQueue.dbErrorCount,
+    };
+  }
+
+  private recordTickDuration(durationMs: number): void {
+    this.tickDurationSamplesMs[this.tickDurationSampleIndex] = Math.max(0, durationMs);
+    this.tickDurationSampleIndex = (this.tickDurationSampleIndex + 1) % this.tickDurationSamplesMs.length;
+    this.tickDurationSampleCount = Math.min(this.tickDurationSamplesMs.length, this.tickDurationSampleCount + 1);
+  }
+
+  private getTickDurationPercentile(percentile: number): number {
+    if (this.tickDurationSampleCount === 0) return 0;
+
+    const samples: number[] = [];
+    for (let index = 0; index < this.tickDurationSampleCount; index++) {
+      samples.push(this.tickDurationSamplesMs[index]);
+    }
+    samples.sort((a, b) => a - b);
+    return samples[Math.min(samples.length - 1, Math.floor((samples.length - 1) * percentile))] ?? 0;
+  }
+
+  private estimateMessageBytes(payload: unknown): number {
+    try {
+      return Buffer.byteLength(JSON.stringify(payload));
+    } catch {
+      return 0;
+    }
+  }
+
+  private recordCustomMessage(type: string, payload: unknown, recipients: number): void {
+    if (recipients <= 0) return;
+
+    const metric = this.customMessageMetrics.get(type) ?? { messages: 0, recipients: 0, bytes: 0 };
+    const bytes = this.estimateMessageBytes(payload);
+    metric.messages++;
+    metric.recipients += recipients;
+    metric.bytes += bytes * recipients;
+    this.customMessageMetrics.set(type, metric);
+  }
+
+  private sendTracked(client: Client, type: string, payload: unknown): void {
+    this.recordCustomMessage(type, payload, 1);
+    client.send(type, payload);
+  }
+
+  private broadcastTracked(type: string, payload: unknown): void {
+    this.recordCustomMessage(type, payload, this.clients.length);
+    this.broadcast(type, payload);
+  }
+
   private sendCurrentSnapshots(client: Client): void {
-    client.send('matchSnapshot', this.buildMatchSnapshot());
-    client.send('playerVitals', {
+    const matchSnapshot = this.buildMatchSnapshot();
+    this.sendTracked(client, 'matchSnapshot', matchSnapshot);
+    this.sendTracked(client, 'playerVitals', {
       tick: this.state.tick,
       serverTime: this.state.serverTime,
       players: Array.from(this.state.players, ([id, player]) => this.buildPlayerVitals(id, player)),
     } satisfies PlayerVitalsMessage);
-    client.send('playerPings', this.buildPlayerPingsMessage());
+    this.sendTracked(client, 'playerPings', this.buildPlayerPingsMessage());
 
     const transformPayload = this.buildPlayerTransformsV2Payload({ force: true });
     if (transformPayload.players.length > 0 || transformPayload.full) {
-      client.send('playerTransformsV2', transformPayload);
+      this.sendTracked(client, 'playerTransformsV2', transformPayload);
     }
   }
 
   private requestPlayerPing(client: Client, now: number): void {
     const nonce = `${this.state.tick}:${++this.pingProbeSequence}:${client.sessionId}`;
     this.pendingPlayerPings.set(client.sessionId, { nonce, sentAt: now });
-    client.send('playerPingRequest', { nonce } satisfies PlayerPingRequestMessage);
+    this.sendTracked(client, 'playerPingRequest', { nonce } satisfies PlayerPingRequestMessage);
   }
 
   private handlePlayerPingResponse(client: Client, data: unknown): void {
@@ -2056,7 +2229,7 @@ export class GameRoom extends Room<GameState> {
     if (!force && !this.playerPingsDirty) return;
 
     this.playerPingsDirty = false;
-    this.broadcast('playerPings', this.buildPlayerPingsMessage());
+    this.broadcastTracked('playerPings', this.buildPlayerPingsMessage());
   }
 
   private buildPlayerTransformsPayload(): PlayerTransformsMessage {
@@ -2074,24 +2247,37 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private buildPlayerTransformsV2Payload(options: { force?: boolean } = {}): PlayerTransformsV2Message {
+  private buildPlayerTransformsV2Payload(options: {
+    force?: boolean;
+    recipient?: Player | null;
+    recipientId?: string;
+  } = {}): PlayerTransformsV2Message {
     const players: PackedPlayerTransform[] = [];
     const now = this.state.serverTime || Date.now();
     const force = options.force === true;
+    const replicationState = options.recipientId
+      ? this.getTransformReplicationState(options.recipientId)
+      : null;
+    const signatures = replicationState?.signatures ?? this.playerTransformSignatures;
+    const heartbeatAt = replicationState?.heartbeatAt ?? this.playerTransformHeartbeatAt;
 
     this.state.players.forEach((player, id) => {
       if (player.state !== 'alive' && player.state !== 'spawning') return;
       const transform = this.buildPackedPlayerTransform(id, player);
       const signature = this.getPackedTransformSignature(transform);
-      const previousSignature = this.playerTransformSignatures.get(id);
-      const lastHeartbeatAt = this.playerTransformHeartbeatAt.get(id) ?? 0;
-      const heartbeatDue = now - lastHeartbeatAt >= TRANSFORM_HEARTBEAT_INTERVAL_MS;
-      const fullRate = this.shouldSendFullRateTransform(id, player, now);
+      const previousSignature = signatures.get(id);
+      const lastHeartbeatAt = heartbeatAt.get(id) ?? 0;
+      const highRelevance = this.isHighRelevanceTransform(options.recipient ?? null, id, player, now);
+      const heartbeatInterval = highRelevance
+        ? TRANSFORM_HEARTBEAT_INTERVAL_MS
+        : DISTANT_TRANSFORM_HEARTBEAT_INTERVAL_MS;
+      const heartbeatDue = now - lastHeartbeatAt >= heartbeatInterval;
+      const changed = signature !== previousSignature;
 
-      if (force || fullRate || signature !== previousSignature || heartbeatDue) {
+      if (force || (highRelevance && changed) || heartbeatDue) {
         players.push(transform);
-        this.playerTransformSignatures.set(id, signature);
-        this.playerTransformHeartbeatAt.set(id, now);
+        signatures.set(id, signature);
+        heartbeatAt.set(id, now);
       }
     });
 
@@ -2106,9 +2292,16 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastPlayerTransforms(force = false): void {
-    const payload = this.buildPlayerTransformsV2Payload({ force });
-    if (payload.players.length > 0 || payload.full) {
-      this.broadcast('playerTransformsV2', payload);
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      const payload = this.buildPlayerTransformsV2Payload({
+        force,
+        recipient,
+        recipientId: client.sessionId,
+      });
+      if (payload.players.length > 0 || payload.full) {
+        this.sendTracked(client, 'playerTransformsV2', payload);
+      }
     }
   }
 
@@ -2145,7 +2338,7 @@ export class GameRoom extends Room<GameState> {
     if (players.length === 0 && removedPlayerIds.length === 0 && !force) return;
 
     this.lastVitalsBroadcastAt = now;
-    this.broadcast('playerVitals', {
+    this.broadcastTracked('playerVitals', {
       tick: this.state.tick,
       serverTime: this.state.serverTime,
       players,
@@ -2162,7 +2355,7 @@ export class GameRoom extends Room<GameState> {
 
     this.lastMatchSnapshotBroadcastAt = now;
     this.matchSnapshotSignature = signature;
-    this.broadcast('matchSnapshot', snapshot);
+    this.broadcastTracked('matchSnapshot', snapshot);
   }
 
   private broadcastStateStreams(options: { transforms?: boolean; vitals?: boolean; match?: boolean; forceTransforms?: boolean; forceVitals?: boolean; forceMatch?: boolean } = {}): void {
@@ -2197,8 +2390,7 @@ export class GameRoom extends Room<GameState> {
 
   private createMovementAuthorityState(): ServerMovementAuthorityState {
     return {
-      pendingCommands: [],
-      pendingCommandSeqs: new Set(),
+      pendingCommands: new MovementCommandQueue(MOVEMENT_MAX_SERVER_QUEUE + MOVEMENT_MAX_PACKET_COMMANDS),
       lastProcessedSeq: 0,
       movementEpoch: 0,
       correctionReason: null,
@@ -2240,40 +2432,26 @@ export class GameRoom extends Room<GameState> {
     return created;
   }
 
-  private rebuildPendingCommandSeqs(authority: ServerMovementAuthorityState): void {
-    authority.pendingCommandSeqs.clear();
-    for (const command of authority.pendingCommands) {
-      authority.pendingCommandSeqs.add(command.seq);
-    }
-  }
-
   private replacePendingCommands(authority: ServerMovementAuthorityState, commands: MovementCommand[]): void {
-    authority.pendingCommands = commands;
-    this.rebuildPendingCommandSeqs(authority);
+    authority.pendingCommands.replace(commands);
   }
 
   private pushPendingCommand(authority: ServerMovementAuthorityState, command: MovementCommand): void {
     authority.pendingCommands.push(command);
-    authority.pendingCommandSeqs.add(command.seq);
   }
 
   private removeOldestPendingCommands(authority: ServerMovementAuthorityState, count: number): void {
     if (count <= 0) return;
-    const removed = authority.pendingCommands.splice(0, count);
-    for (const command of removed) {
-      authority.pendingCommandSeqs.delete(command.seq);
-    }
+    authority.pendingCommands.dropOldest(count);
   }
 
   private clearPendingCommands(authority: ServerMovementAuthorityState): void {
-    authority.pendingCommands.length = 0;
-    authority.pendingCommandSeqs.clear();
+    authority.pendingCommands.clear();
   }
 
   private getNextMovementCommand(authority: ServerMovementAuthorityState): MovementCommand | null {
-    const command = authority.pendingCommands.shift();
+    const command = authority.pendingCommands.pop();
     if (command) {
-      authority.pendingCommandSeqs.delete(command.seq);
       authority.lastProcessedSeq = command.seq;
       return command;
     }
@@ -3160,7 +3338,7 @@ export class GameRoom extends Room<GameState> {
       return null;
     }
 
-    if (authority.pendingCommandSeqs.has(sanitized.seq)) {
+    if (authority.pendingCommands.hasSeq(sanitized.seq)) {
       authority.metrics.duplicateCommands++;
       this.recordSecurityEvent({
         type: 'movement_command_reject',
@@ -3211,7 +3389,6 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    let needsQueueSort = false;
     for (const rawCommand of packet.commands) {
       if (authority.commandsInWindow >= MOVEMENT_MAX_COMMANDS_PER_SECOND) {
         authority.metrics.droppedCommands++;
@@ -3235,16 +3412,9 @@ export class GameRoom extends Room<GameState> {
 
       authority.commandsInWindow++;
       authority.metrics.commandsReceived++;
-      const lastQueued = authority.pendingCommands[authority.pendingCommands.length - 1];
-      if (lastQueued && !isMovementSeqAfter(command.seq, lastQueued.seq)) {
-        needsQueueSort = true;
-      }
       this.pushPendingCommand(authority, command);
     }
 
-    if (needsQueueSort) {
-      authority.pendingCommands.sort((a, b) => compareMovementSeq(a.seq, b.seq));
-    }
     if (authority.pendingCommands.length > MOVEMENT_MAX_SERVER_QUEUE) {
       const overflow = authority.pendingCommands.length - MOVEMENT_MAX_SERVER_QUEUE;
       this.removeOldestPendingCommands(authority, overflow);
@@ -3302,7 +3472,7 @@ export class GameRoom extends Room<GameState> {
     commandCount = SERVER_MOVEMENT_SUBSTEPS_PER_TICK
   ): void {
     const authority = this.getMovementAuthority(player.id);
-    let seq = authority.pendingCommands[authority.pendingCommands.length - 1]?.seq ?? authority.lastProcessedSeq;
+    let seq = authority.pendingCommands.peekLast()?.seq ?? authority.lastProcessedSeq;
 
     for (let step = 0; step < commandCount; step++) {
       seq = nextMovementSeq(seq);
@@ -3542,7 +3712,7 @@ export class GameRoom extends Room<GameState> {
       correctionReason: reason ?? undefined,
       collisionRevision: this.getMovementCollisionRevision(),
     };
-    client.send('selfMovementAuthority', payload);
+    this.sendTracked(client, 'selfMovementAuthority', payload);
     authority.correctionReason = null;
   }
 
@@ -3910,7 +4080,7 @@ export class GameRoom extends Room<GameState> {
     abilityState.activatedAt = now;
 
     if (healedTargets.length > 0) {
-      this.broadcast('playerHealed', {
+      this.broadcastTracked('playerHealed', {
         sourceId: caster.id,
         abilityId: 'chronos_lifeline_conduit',
         sourcePosition: this.vec3SchemaToPlain(caster.position),
@@ -4421,7 +4591,7 @@ export class GameRoom extends Room<GameState> {
       resolveAt: rocket.impactTime,
     });
 
-    this.broadcast('abilityUsed', {
+    this.broadcastTracked('abilityUsed', {
       playerId: player.id,
       abilityId: 'blaze_rocket',
       castId: rocket.castId,
@@ -4495,7 +4665,7 @@ export class GameRoom extends Room<GameState> {
       ? CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED
       : CHRONOS_VERDANT_PULSE_SPEED;
 
-    this.broadcast('abilityUsed', {
+    this.broadcastTracked('abilityUsed', {
       playerId: player.id,
       abilityId: 'chronos_verdant_pulse',
       castId: pulse.castId,
@@ -4569,7 +4739,7 @@ export class GameRoom extends Room<GameState> {
       resolveAt: impactTime,
     });
 
-    this.broadcast('abilityUsed', {
+    this.broadcastTracked('abilityUsed', {
       playerId: player.id,
       abilityId: 'blaze_bomb',
       castId,
@@ -4586,7 +4756,7 @@ export class GameRoom extends Room<GameState> {
   }
 
   private broadcastPhantomCast(payload: PhantomCastPayload): void {
-    this.broadcast('abilityUsed', payload);
+    this.broadcastTracked('abilityUsed', payload);
   }
 
   private broadcastPhantomAttackCast(
@@ -4811,7 +4981,7 @@ export class GameRoom extends Room<GameState> {
       const releaseAt = usedAt + CHRONOS_LIFELINE_RELEASE_DELAY_MS;
       result.abilityState.activatedAt = usedAt;
 
-      this.broadcast('abilityUsed', {
+      this.broadcastTracked('abilityUsed', {
         playerId: player.id,
         abilityId: result.abilityId,
         castId: this.nextPhantomCastId(player.id, result.abilityId),
@@ -4881,7 +5051,7 @@ export class GameRoom extends Room<GameState> {
           usedAt
         );
 
-        this.broadcast('abilityUsed', {
+        this.broadcastTracked('abilityUsed', {
           playerId: player.id,
           abilityId: result.abilityId,
           castId,
@@ -4913,7 +5083,7 @@ export class GameRoom extends Room<GameState> {
           ownerId: player.id,
           ownerTeam,
         });
-        this.broadcast('abilityUsed', {
+        this.broadcastTracked('abilityUsed', {
           playerId: player.id,
           abilityId: result.abilityId,
           castId,
@@ -4945,7 +5115,7 @@ export class GameRoom extends Room<GameState> {
           lastDamageTick: new Map(),
         });
 
-        this.broadcast('abilityUsed', {
+        this.broadcastTracked('abilityUsed', {
           playerId: player.id,
           abilityId: result.abilityId,
           castId: trapId,
@@ -5015,7 +5185,7 @@ export class GameRoom extends Room<GameState> {
         : startedAt;
 
     // Broadcast ability use
-    this.broadcast('abilityUsed', {
+    this.broadcastTracked('abilityUsed', {
       playerId: player.id,
       abilityId: result.abilityId,
       castId: this.nextPhantomCastId(player.id, result.abilityId),
@@ -5161,7 +5331,8 @@ export class GameRoom extends Room<GameState> {
 
     const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
     const client = this.clients.find((candidate) => candidate.sessionId === player.id);
-    client?.send('phantomPrimaryState', {
+    if (!client) return;
+    this.sendTracked(client, 'phantomPrimaryState', {
       ammo: magazine.ammo,
       reloading: magazine.reloadUntil > now,
       reloadStartedAt: magazine.reloadUntil > now ? magazine.reloadStartedAt : 0,
@@ -5697,7 +5868,7 @@ export class GameRoom extends Room<GameState> {
       this.recentCombatTransformUntil.set(source.id, now + RECENT_COMBAT_TRANSFORM_MS);
     }
 
-    this.broadcast('playerDamaged', {
+    this.broadcastTracked('playerDamaged', {
       targetId: target.id,
       damage,
       sourceId,
@@ -5967,7 +6138,7 @@ export class GameRoom extends Room<GameState> {
         enemyFlag.droppedAt = 0;
         player.hasFlag = true;
         this.recordObjectiveEvent(player, 'pickup', enemyTeam, now);
-        this.broadcast('flagPickup', {
+        this.broadcastTracked('flagPickup', {
           team: enemyTeam,
           playerId: player.id,
           position: this.vec3SchemaToPlain(player.position),
@@ -6022,7 +6193,7 @@ export class GameRoom extends Room<GameState> {
 
     this.recordObjectiveEvent(player, 'capture', capturedTeam, now);
 
-    this.broadcast('flagCapture', {
+    this.broadcastTracked('flagCapture', {
       team: capturedTeam,
       playerId: player.id,
       position: this.vec3SchemaToPlain(player.position),
@@ -6048,7 +6219,7 @@ export class GameRoom extends Room<GameState> {
     flag.droppedAt = 0;
 
     if (broadcast) {
-      this.broadcast('flagReturn', {
+      this.broadcastTracked('flagReturn', {
         team,
         playerId,
         position: this.vec3SchemaToPlain(flag.position),
@@ -6453,8 +6624,8 @@ export class GameRoom extends Room<GameState> {
   private getSemanticBotRouteTarget(bot: Player, intent: BotIntent, blackboard: BotBlackboard): { x: number; y: number; z: number } | null {
     const team = bot.team as Team;
     const manifest = this.getMapManifest();
-    const routeGraph = manifest.gameplay?.routeGraph;
-    if (!routeGraph) return null;
+    const routePlan = this.botRoutePlans?.[team];
+    if (!routePlan) return null;
 
     if (intent === 'guard_own_flag') {
       const defensive = manifest.gameplay.bases[team]?.defensivePositions[0];
@@ -6465,13 +6636,7 @@ export class GameRoom extends Room<GameState> {
       return null;
     }
 
-    const route = routeGraph.primaryRouteNodeIds[team];
-    if (!route || route.length < 2) return null;
-
-    const orderedRoute = intent === 'seek_enemy_flag' ? route : [...route].reverse();
-    const nodes = orderedRoute
-      .map((nodeId) => routeGraph.nodes.find((node) => node.id === nodeId))
-      .filter((node): node is (typeof routeGraph.nodes)[number] => Boolean(node));
+    const nodes = intent === 'seek_enemy_flag' ? routePlan.forward : routePlan.reverse;
     if (nodes.length < 2) return null;
 
     let nearestIndex = 0;
@@ -7314,7 +7479,7 @@ export class GameRoom extends Room<GameState> {
     }
     this.updateMetadata();
 
-    this.broadcast('playerJoined', {
+    this.broadcastTracked('playerJoined', {
       playerId: bot.id,
       playerName: bot.name,
       team: bot.team,
@@ -7356,6 +7521,7 @@ export class GameRoom extends Room<GameState> {
     for (const chunk of this.mapManifest.chunks) {
       this.mapChunkLookup.set(this.getChunkKey(chunk.coord.x, chunk.coord.y, chunk.coord.z), chunk);
     }
+    this.botRoutePlans = this.buildBotRoutePlans(this.mapManifest);
     this.movementTerrain.origin = this.mapManifest.origin;
     this.movementTerrain.voxelSize = this.mapManifest.voxelSize;
     this.hookshotAnchorWalls = [];
@@ -7422,6 +7588,34 @@ export class GameRoom extends Room<GameState> {
       this.refreshMapManifest();
     }
     return this.mapManifest!;
+  }
+
+  private buildBotRoutePlans(manifest: VoxelMapManifest): Record<Team, BotRoutePlan> | null {
+    const routeGraph = manifest.gameplay?.routeGraph;
+    if (!routeGraph) return null;
+
+    const nodeById = new Map<string, BotRouteNode>();
+    for (const node of routeGraph.nodes) {
+      nodeById.set(node.id, node);
+    }
+
+    const plans: Record<Team, BotRoutePlan> = {
+      red: { forward: [], reverse: [] },
+      blue: { forward: [], reverse: [] },
+    };
+
+    for (const team of ['red', 'blue'] as const) {
+      const route = routeGraph.primaryRouteNodeIds[team] ?? [];
+      for (const nodeId of route) {
+        const node = nodeById.get(nodeId);
+        if (node) plans[team].forward.push(node);
+      }
+      for (let index = plans[team].forward.length - 1; index >= 0; index--) {
+        plans[team].reverse.push(plans[team].forward[index]);
+      }
+    }
+
+    return plans;
   }
 
   private getProceduralTerrainLookup(): ReturnType<typeof createProceduralTerrainLookup> {
@@ -7775,7 +7969,7 @@ export class GameRoom extends Room<GameState> {
       }
     });
 
-    this.broadcast('phaseChange', {
+    this.broadcastTracked('phaseChange', {
       phase: 'hero_select',
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
@@ -7794,7 +7988,7 @@ export class GameRoom extends Room<GameState> {
       this.placePlayerAtSpawn(player);
     });
 
-    this.broadcast('phaseChange', {
+    this.broadcastTracked('phaseChange', {
       phase: 'countdown',
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
@@ -7848,7 +8042,7 @@ export class GameRoom extends Room<GameState> {
     // Reset flags
     this.resetFlags();
 
-    this.broadcast('phaseChange', {
+    this.broadcastTracked('phaseChange', {
       phase: 'playing',
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
@@ -7865,7 +8059,7 @@ export class GameRoom extends Room<GameState> {
     const winningTeam = this.state.redTeam.score > this.state.blueTeam.score ? 'red' : 
                         this.state.blueTeam.score > this.state.redTeam.score ? 'blue' : null;
 
-    this.broadcast('roundEnd', {
+    this.broadcastTracked('roundEnd', {
       winningTeam,
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
@@ -7891,7 +8085,7 @@ export class GameRoom extends Room<GameState> {
     };
     const endedAt = Date.now();
 
-    this.broadcast('gameEnd', this.buildGameEndEvent(finalScore, winningTeam, endedAt, forcedByPlayerId));
+    this.broadcastTracked('gameEnd', this.buildGameEndEvent(finalScore, winningTeam, endedAt, forcedByPlayerId));
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
     this.persistMatchLedger(finalScore, winningTeam, forcedByPlayerId);
@@ -7956,7 +8150,7 @@ export class GameRoom extends Room<GameState> {
       const zone = this.voidZones[readIndex];
       const elapsed = (now - zone.startTime) / 1000;
       if (elapsed >= zone.duration) {
-        this.broadcast('voidZoneExpired', { id: zone.id });
+        this.broadcastTracked('voidZoneExpired', { id: zone.id });
         continue;
       }
       this.voidZones[writeIndex++] = zone;
@@ -8020,7 +8214,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     const pose = this.getBlazeFlamethrowerPose(player);
-    this.broadcast('abilityUsed', {
+    this.broadcastTracked('abilityUsed', {
       playerId: player.id,
       abilityId: 'blaze_flamethrower',
       castId: `blaze_flamethrower_${player.id}_${active ? 'start' : 'stop'}_${now}`,
@@ -8169,7 +8363,7 @@ export class GameRoom extends Room<GameState> {
       this.damageHistory.delete(player.id);
     }
 
-    this.broadcast('playerKilled', {
+    this.broadcastTracked('playerKilled', {
       victimId: player.id,
       killerId,
       assistIds,
@@ -8193,7 +8387,7 @@ export class GameRoom extends Room<GameState> {
     this.voidZones.push(zone);
 
     // Broadcast zone creation to all clients
-    this.broadcast('voidZoneCreated', {
+    this.broadcastTracked('voidZoneCreated', {
       id: zone.id,
       position: zone.position,
       radius: zone.radius,
@@ -8234,7 +8428,7 @@ export class GameRoom extends Room<GameState> {
     player.hasFlag = false;
     this.recordObjectiveEvent(player, 'drop', player.team === 'red' ? 'blue' : 'red', Date.now());
 
-    this.broadcast('flagDrop', {
+    this.broadcastTracked('flagDrop', {
       team: player.team === 'red' ? 'blue' : 'red',
       playerId: player.id,
       position: { x: flag.position.x, y: flag.position.y, z: flag.position.z },
@@ -8493,7 +8687,7 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
 
     // Broadcast NPC spawn to all clients
-    this.broadcast('playerJoined', {
+    this.broadcastTracked('playerJoined', {
       playerId: npcId,
       playerName: npcName,
       team: team,
@@ -8546,7 +8740,7 @@ export class GameRoom extends Room<GameState> {
     npc.health = Math.max(0, npc.health - damage);
 
     // Broadcast damage event
-    this.broadcast('playerDamaged', {
+    this.broadcastTracked('playerDamaged', {
       targetId: targetId,
       damage: damage,
       sourceId: client.sessionId,
@@ -8627,7 +8821,7 @@ export class GameRoom extends Room<GameState> {
     const killer = this.state.players.get(killerId);
     
     // Broadcast kill event
-    this.broadcast('playerKilled', {
+    this.broadcastTracked('playerKilled', {
       victimId: npc.id,
       killerId,
       position: { x: npc.position.x, y: npc.position.y, z: npc.position.z },
@@ -8647,7 +8841,7 @@ export class GameRoom extends Room<GameState> {
     this.updateMetadata();
 
     // Broadcast player left
-    this.broadcast('playerLeft', {
+    this.broadcastTracked('playerLeft', {
       playerId: npc.id,
       isNpc: true,
     });

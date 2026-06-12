@@ -276,17 +276,19 @@ function expandBounds(bounds: MovementCollisionBounds, amount: Vec3): MovementCo
 
 function sweptCapsuleBounds(position: Vec3, delta: Vec3, height: number, radius: number): MovementCollisionBounds {
   const start = capsuleBounds(position, height, radius);
-  const end = capsuleBounds(add(position, delta), height, radius);
+  const endX = position.x + delta.x;
+  const endFeetY = feetY(position) + delta.y;
+  const endZ = position.z + delta.z;
   return {
     min: {
-      x: Math.min(start.min.x, end.min.x),
-      y: Math.min(start.min.y, end.min.y),
-      z: Math.min(start.min.z, end.min.z),
+      x: Math.min(start.min.x, endX - radius),
+      y: Math.min(start.min.y, endFeetY),
+      z: Math.min(start.min.z, endZ - radius),
     },
     max: {
-      x: Math.max(start.max.x, end.max.x),
-      y: Math.max(start.max.y, end.max.y),
-      z: Math.max(start.max.z, end.max.z),
+      x: Math.max(start.max.x, endX + radius),
+      y: Math.max(start.max.y, endFeetY + height),
+      z: Math.max(start.max.z, endZ + radius),
     },
   };
 }
@@ -324,27 +326,38 @@ function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb
   if (distanceSq > EPSILON) {
     const distance = Math.sqrt(distanceSq);
     return {
-      normal: normalize(vector),
+      normal: {
+        x: vector.x / distance,
+        y: vector.y / distance,
+        z: vector.z / distance,
+      },
       depth: radius - distance,
       aabb,
     };
   }
 
   const centerY = (segment.minY + segment.maxY) * 0.5;
-  const candidates: Array<{ normal: Vec3; depth: number }> = [
-    { normal: { x: -1, y: 0, z: 0 }, depth: position.x - aabb.min.x + radius },
-    { normal: { x: 1, y: 0, z: 0 }, depth: aabb.max.x - position.x + radius },
-    { normal: { x: 0, y: 0, z: -1 }, depth: position.z - aabb.min.z + radius },
-    { normal: { x: 0, y: 0, z: 1 }, depth: aabb.max.z - position.z + radius },
-    { normal: { x: 0, y: -1, z: 0 }, depth: centerY - aabb.min.y + radius },
-    { normal: { x: 0, y: 1, z: 0 }, depth: aabb.max.y - centerY + radius },
-  ].filter((candidate) => Number.isFinite(candidate.depth) && candidate.depth >= 0);
+  let bestDepth = Infinity;
+  let bestNormalX = 0;
+  let bestNormalY = 1;
+  let bestNormalZ = 0;
+  const consider = (depth: number, normalX: number, normalY: number, normalZ: number): void => {
+    if (!Number.isFinite(depth) || depth < 0 || depth >= bestDepth) return;
+    bestDepth = depth;
+    bestNormalX = normalX;
+    bestNormalY = normalY;
+    bestNormalZ = normalZ;
+  };
+  consider(position.x - aabb.min.x + radius, -1, 0, 0);
+  consider(aabb.max.x - position.x + radius, 1, 0, 0);
+  consider(position.z - aabb.min.z + radius, 0, 0, -1);
+  consider(aabb.max.z - position.z + radius, 0, 0, 1);
+  consider(centerY - aabb.min.y + radius, 0, -1, 0);
+  consider(aabb.max.y - centerY + radius, 0, 1, 0);
 
-  candidates.sort((a, b) => a.depth - b.depth);
-  const best = candidates[0] ?? { normal: { x: 0, y: 1, z: 0 }, depth: radius };
   return {
-    normal: best.normal,
-    depth: best.depth,
+    normal: { x: bestNormalX, y: bestNormalY, z: bestNormalZ },
+    depth: Number.isFinite(bestDepth) ? bestDepth : radius,
     aabb,
   };
 }
@@ -376,17 +389,16 @@ function collectVoxelAabbs(
   const gz1 = Math.floor((bounds.max.z - origin.z) / voxelSize.z) + 1;
 
   const aabbs: MovementAabb[] = [];
+  const sample = { x: 0, y: 0, z: 0 };
   for (let y = gy0; y <= gy1; y++) {
     for (let z = gz0; z <= gz1; z++) {
       let runStart: number | null = null;
       for (let x = gx0; x <= gx1 + 1; x++) {
         let solid = false;
         if (x <= gx1) {
-          const sample = {
-            x: origin.x + (x + 0.5) * voxelSize.x,
-            y: origin.y + (y + 0.5) * voxelSize.y,
-            z: origin.z + (z + 0.5) * voxelSize.z,
-          };
+          sample.x = origin.x + (x + 0.5) * voxelSize.x;
+          sample.y = origin.y + (y + 0.5) * voxelSize.y;
+          sample.z = origin.z + (z + 0.5) * voxelSize.z;
           const block = terrain.getBlockAtWorld(sample);
           solid = isCollisionBlock(block);
 
@@ -397,15 +409,15 @@ function collectVoxelAabbs(
               z: sample.z,
             });
             const neighborDistance = Math.max(PLAYER_RADIUS, voxelSize.x, voxelSize.z);
-            const neighborGroundSamples = [
-              terrain.getGroundY({ x: sample.x - neighborDistance, y: sample.y, z: sample.z }),
-              terrain.getGroundY({ x: sample.x + neighborDistance, y: sample.y, z: sample.z }),
-              terrain.getGroundY({ x: sample.x, y: sample.y, z: sample.z - neighborDistance }),
-              terrain.getGroundY({ x: sample.x, y: sample.y, z: sample.z + neighborDistance }),
-            ].filter((value): value is number => value !== null);
-            const lowestNeighborGroundY = neighborGroundSamples.length > 0
-              ? Math.min(...neighborGroundSamples)
-              : groundY;
+            let lowestNeighborGroundY = groundY;
+            const leftGroundY = terrain.getGroundY({ x: sample.x - neighborDistance, y: sample.y, z: sample.z });
+            if (leftGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? leftGroundY : Math.min(lowestNeighborGroundY, leftGroundY);
+            const rightGroundY = terrain.getGroundY({ x: sample.x + neighborDistance, y: sample.y, z: sample.z });
+            if (rightGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? rightGroundY : Math.min(lowestNeighborGroundY, rightGroundY);
+            const backGroundY = terrain.getGroundY({ x: sample.x, y: sample.y, z: sample.z - neighborDistance });
+            if (backGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? backGroundY : Math.min(lowestNeighborGroundY, backGroundY);
+            const forwardGroundY = terrain.getGroundY({ x: sample.x, y: sample.y, z: sample.z + neighborDistance });
+            if (forwardGroundY !== null) lowestNeighborGroundY = lowestNeighborGroundY === null ? forwardGroundY : Math.min(lowestNeighborGroundY, forwardGroundY);
             const localRise = groundY !== null && lowestNeighborGroundY !== null
               ? groundY - lowestNeighborGroundY
               : Infinity;
@@ -518,6 +530,7 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     Math.min(voxelSize.x, voxelSize.y, voxelSize.z, PLAYER_RADIUS * 0.35)
   );
   const staticAabbCache = new Map<string, readonly MovementAabb[]>();
+  const combinedAabbScratch: MovementAabb[] = [];
 
   function staticAabbCacheKey(bounds: MovementCollisionBounds): string {
     const gx0 = Math.floor((bounds.min.x - origin.x) / voxelSize.x) - 1;
@@ -547,26 +560,42 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     return staticAabbs;
   }
 
-  function collectAabbs(bounds: MovementCollisionBounds): MovementAabb[] {
+  function collectAabbs(bounds: MovementCollisionBounds): readonly MovementAabb[] {
     const expanded = expandBounds(bounds, { x: SKIN_WIDTH, y: SKIN_WIDTH, z: SKIN_WIDTH });
     const staticAabbs = terrain.cacheStaticAabbs
       ? collectStaticAabbs(expanded)
       : mergeAabbRuns(collectVoxelAabbs(terrain, expanded, origin, voxelSize));
     const dynamicAabbs = terrain.getCollisionAabbs?.(expanded) ?? [];
-    if (dynamicAabbs.length === 0) return [...staticAabbs];
-    return [
-      ...staticAabbs,
-      ...dynamicAabbs.filter((aabb) => boundsOverlap(expanded, { min: aabb.min, max: aabb.max })),
-    ];
+    if (dynamicAabbs.length === 0) return staticAabbs;
+
+    combinedAabbScratch.length = 0;
+    for (const aabb of staticAabbs) combinedAabbScratch.push(aabb);
+    for (const aabb of dynamicAabbs) {
+      if (boundsOverlap(expanded, { min: aabb.min, max: aabb.max })) {
+        combinedAabbScratch.push(aabb);
+      }
+    }
+    return combinedAabbScratch;
   }
 
   function testCapsuleAgainstAabbs(position: Vec3, height: number, radius: number, aabbs: readonly MovementAabb[]): MovementOverlap[] {
     const overlaps: MovementOverlap[] = [];
+    let bestIndex = -1;
+    let bestDepth = -Infinity;
     for (const aabb of aabbs) {
       const overlap = overlapCapsuleAabb(position, height, radius, aabb);
-      if (overlap) overlaps.push(overlap);
+      if (!overlap) continue;
+      if (overlap.depth > bestDepth) {
+        bestDepth = overlap.depth;
+        if (bestIndex >= 0) {
+          overlaps.push(overlaps[0]);
+        }
+        overlaps[0] = overlap;
+        bestIndex = 0;
+      } else {
+        overlaps.push(overlap);
+      }
     }
-    overlaps.sort((a, b) => b.depth - a.depth);
     return overlaps;
   }
 
@@ -634,21 +663,16 @@ export function createVoxelCollisionWorld(terrain: VoxelMovementTerrainAdapter):
     if (!terrain.getGroundY) return null;
 
     const sampleRadius = radius * 0.72;
-    const samples = [
-      { x: 0, z: 0 },
-      { x: sampleRadius, z: 0 },
-      { x: -sampleRadius, z: 0 },
-      { x: 0, z: sampleRadius },
-      { x: 0, z: -sampleRadius },
-    ];
     const probeY = position.y + STEP_HEIGHT + 0.25;
     let bestGroundY: number | null = null;
 
-    for (const sample of samples) {
+    for (let index = 0; index < 5; index++) {
+      const offsetX = index === 1 ? sampleRadius : index === 2 ? -sampleRadius : 0;
+      const offsetZ = index === 3 ? sampleRadius : index === 4 ? -sampleRadius : 0;
       const groundY = terrain.getGroundY({
-        x: position.x + sample.x,
+        x: position.x + offsetX,
         y: probeY,
-        z: position.z + sample.z,
+        z: position.z + offsetZ,
       });
       if (groundY === null) continue;
       const distance = feetY(position) - groundY;

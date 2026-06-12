@@ -11,6 +11,7 @@ import {
   normalizeAntiCheatSignal,
   resetAntiCheatConfigForTests,
   updateMatchRisk,
+  AntiCheatSignalPriorityQueue,
 } from '../anticheat';
 
 function withEnv<T>(patch: Record<string, string | undefined>, fn: () => T): T {
@@ -184,6 +185,48 @@ withEnv({
   assert.equal(getAntiCheatConfig().movementAuthorityMode, 'strict');
   assert.equal(getAntiCheatConfig().movementParityGate.passed, true);
   assert.equal(getAntiCheatConfig().movementParityGate.traceCount, 3);
+});
+
+withEnv({ ANTICHEAT_ENABLED: 'true' }, () => {
+  const queue = new AntiCheatSignalPriorityQueue();
+  const makeJob = (severity: 'low' | 'medium' | 'high' | 'critical', eventType: string) => ({
+    signal: normalizeAntiCheatSignal({
+      eventType,
+      category: 'movement',
+      source: 'test',
+      roomId: 'room-a',
+      matchMode: 'ranked',
+      severity,
+      confidence: 1,
+    }),
+    change: {
+      userId: null,
+      playerSessionId: null,
+      scoreBefore: 0,
+      scoreAfter: 0,
+      scoreDelta: 0,
+      integrityStatus: 'clean' as const,
+      casePriority: null,
+      shouldCreateCase: false,
+      affectsRankedOrWager: false,
+    },
+    queuedAt: Date.now(),
+    resolve: () => undefined,
+  });
+
+  queue.push(makeJob('low', 'low-a'), false);
+  queue.push(makeJob('medium', 'medium-a'), false);
+  queue.push(makeJob('critical', 'critical-a'), true);
+  queue.push(makeJob('high', 'high-a'), true);
+
+  assert.equal(queue.length, 4);
+  assert.equal(queue.highPriorityLength, 2);
+  assert.equal(queue.lowPriorityLength, 2);
+  assert.equal(queue.shift()?.signal.eventType, 'critical-a');
+  assert.equal(queue.shift()?.signal.eventType, 'high-a');
+  assert.equal(queue.shift()?.signal.eventType, 'low-a');
+  assert.equal(queue.shift()?.signal.eventType, 'medium-a');
+  assert.equal(queue.shift(), undefined);
 });
 
 console.log('anti-cheat service tests passed');
