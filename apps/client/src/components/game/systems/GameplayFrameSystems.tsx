@@ -17,19 +17,7 @@ export function GameplayFrameSystems() {
     cleanupAccumulatorRef.current = 0;
 
     const store = useGameStore.getState();
-    store.clearExpiredRockets();
-    store.clearExpiredBombs();
-    store.clearExpiredDireBalls();
-    store.clearExpiredVoidRays();
-    store.clearExpiredVoidZones();
-    store.clearExpiredChronosPulses();
-    store.clearExpiredChronosTimebreaks();
-    store.clearExpiredHookProjectiles();
-    store.clearExpiredDragHooks();
-    store.clearExpiredGrappleTraps();
-    store.clearExpiredSwingLines();
-    store.clearExpiredGrappleLines();
-    store.clearExpiredEarthWalls();
+    store.clearExpiredProjectiles();
     cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
   });
 

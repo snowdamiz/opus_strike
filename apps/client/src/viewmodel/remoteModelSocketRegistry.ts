@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export type RemoteModelSocketSource = 'fullBody' | 'simplifiedBody';
+export type RemoteModelSocketSource = 'fullBody';
 
 export interface RemoteModelSocketPose {
   playerId: string;

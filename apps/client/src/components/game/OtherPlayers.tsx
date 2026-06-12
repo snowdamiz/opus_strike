@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
@@ -14,24 +14,14 @@ import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-st
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
-import { BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME } from '../../viewmodel/blazePose';
-import { CHRONOS_PRIMARY_ORB_SOCKET_NAME } from '../../viewmodel/chronosPose';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
-import {
-  PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
-  PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-} from '../../viewmodel/phantomPrimaryPose';
-import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 import type { RemotePlayerQualityConfig } from './visualQuality';
-import { selectRemoteFullBodyIds, type RemoteLodCandidate } from './remotePlayerLod';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
 }
 
 export function OtherPlayers({ config }: OtherPlayersProps) {
-  const { camera } = useThree();
   // NOTE: This component subscribes to gameStore.players but does NOT re-render on
   // position updates because updateGameState() updates Map entries in-place (same Map
   // reference). The Map reference only changes when players are added/removed. Position
@@ -57,59 +47,6 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
     // Show all other players in lobby, hero select, and during gameplay
     return true;
   });
-  const [fullBodyAllowedIds, setFullBodyAllowedIds] = useState<Set<string>>(() => new Set());
-  const otherPlayersRef = useRef<Player[]>(otherPlayers);
-  const fullBodyCandidateRef = useRef<RemoteLodCandidate[]>([]);
-  const fullBodyCandidateDistanceRef = useRef<number[]>([]);
-  const fullBodyAllowedIdListRef = useRef<string[]>([]);
-  const fullBodyAllowedIdsRef = useRef(fullBodyAllowedIds);
-  const fullBodyAllowedSignatureRef = useRef('');
-  const fullBodyLodAccumulatorRef = useRef(LOD_UPDATE_INTERVAL);
-  otherPlayersRef.current = otherPlayers;
-  fullBodyAllowedIdsRef.current = fullBodyAllowedIds;
-
-  useFrame((_, delta) => {
-    fullBodyLodAccumulatorRef.current += delta;
-    if (fullBodyLodAccumulatorRef.current < LOD_UPDATE_INTERVAL) return;
-    fullBodyLodAccumulatorRef.current = 0;
-
-    const visualState = visualStore.getState();
-    const candidates = fullBodyCandidateRef.current;
-    const playersToSample = otherPlayersRef.current;
-    candidates.length = playersToSample.length;
-    for (let index = 0; index < playersToSample.length; index++) {
-      const player = playersToSample[index];
-      let candidate = candidates[index];
-      if (!candidate) {
-        candidate = {
-          id: player.id,
-          team: player.team,
-          hasFlag: player.hasFlag,
-          position: player.position,
-        };
-        candidates[index] = candidate;
-      }
-      candidate.id = player.id;
-      candidate.team = player.team;
-      candidate.hasFlag = player.hasFlag;
-      candidate.position = visualState.playerPositions.get(player.id) ?? player.position;
-    }
-
-    const nextIds = fullBodyAllowedIdListRef.current;
-    selectRemoteFullBodyIds(
-      candidates,
-      camera.position,
-      config.maxFullBodies,
-      fullBodyAllowedIdsRef.current,
-      nextIds,
-      fullBodyCandidateDistanceRef.current
-    );
-    const nextSignature = nextIds.join('|');
-    if (nextSignature !== fullBodyAllowedSignatureRef.current) {
-      fullBodyAllowedSignatureRef.current = nextSignature;
-      setFullBodyAllowedIds(new Set(nextIds));
-    }
-  });
 
   return (
     <group>
@@ -118,7 +55,6 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
           key={player.id}
           player={player}
           config={config}
-          allowFullBody={player.hasFlag || fullBodyAllowedIds.has(player.id)}
         />
       ))}
     </group>
@@ -128,7 +64,6 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
 interface OtherPlayerProps {
   player: Player;
   config: RemotePlayerQualityConfig;
-  allowFullBody: boolean;
 }
 
 const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
@@ -136,7 +71,6 @@ const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
 const NETWORK_MOVING_SPEED = 0.45;
 const VISUAL_MOVING_SPEED = 0.18;
 const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
-const LOD_UPDATE_INTERVAL = 0.25;
 const REMOTE_SAMPLE_POSITION_SMOOTHING = 28;
 const REMOTE_SAMPLE_ROTATION_SMOOTHING = 32;
 const REMOTE_SAMPLE_SNAP_DISTANCE = 3.5;
@@ -145,56 +79,6 @@ const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 const PHANTOM_VEIL_BODY_OPACITY = 0.12;
 const PHANTOM_VEIL_OPACITY_DAMP_RATE = 12;
-const REMOTE_SIMPLIFIED_GEOMETRIES = {
-  torso: new THREE.BoxGeometry(1, 1, 1),
-  head: new THREE.BoxGeometry(1, 1, 1),
-  flag: new THREE.BoxGeometry(1, 1, 1),
-  markerRing: new THREE.RingGeometry(0.24, 0.34, 18),
-  markerCore: new THREE.OctahedronGeometry(0.28, 0),
-};
-const remoteBodyMaterialCache = new Map<string, THREE.MeshStandardMaterial>();
-const remoteMarkerMaterialCache = new Map<string, THREE.MeshBasicMaterial>();
-
-type RemotePlayerLodTier = 0 | 1 | 2;
-
-interface SimplifiedRemoteSocketMarker {
-  socketName: string;
-  position: [number, number, number];
-}
-
-function getSharedRemoteBodyMaterial(
-  color: string,
-  emissiveIntensity: number,
-  roughness = 0.7
-): THREE.MeshStandardMaterial {
-  const key = `${color}:${emissiveIntensity}:${roughness}`;
-  let material = remoteBodyMaterialCache.get(key);
-  if (!material) {
-    material = new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity,
-      roughness,
-    });
-    remoteBodyMaterialCache.set(key, material);
-  }
-  return material;
-}
-
-function getSharedRemoteMarkerMaterial(color: string, opacity = 1): THREE.MeshBasicMaterial {
-  const key = `${color}:${opacity}`;
-  let material = remoteMarkerMaterialCache.get(key);
-  if (!material) {
-    material = new THREE.MeshBasicMaterial({
-      color,
-      transparent: opacity < 1,
-      opacity,
-      side: THREE.DoubleSide,
-    });
-    remoteMarkerMaterialCache.set(key, material);
-  }
-  return material;
-}
 
 function setPlayerRenderOrigin(
   target: THREE.Vector3,
@@ -238,54 +122,6 @@ function setWalkDirectionFromVelocity(
   target.right = (velocity.x * rightX + velocity.z * rightZ) / speed;
 }
 
-function createSimplifiedRemoteSocketMarkers(
-  heroId: HeroId,
-  height: number
-): SimplifiedRemoteSocketMarker[] {
-  switch (heroId) {
-    case 'phantom':
-      return [
-        {
-          socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1],
-          position: [-0.34, -height * 0.08, -0.32],
-        },
-        {
-          socketName: PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1],
-          position: [0.34, -height * 0.08, -0.32],
-        },
-        {
-          socketName: PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
-          position: [0, 0, -0.34],
-        },
-      ];
-    case 'hookshot':
-      return [
-        {
-          socketName: HOOKSHOT_HOOK_SOCKET_NAMES[-1],
-          position: [-0.42, -height * 0.06, -0.38],
-        },
-        {
-          socketName: HOOKSHOT_HOOK_SOCKET_NAMES[1],
-          position: [0.42, -height * 0.06, -0.38],
-        },
-      ];
-    case 'blaze':
-      return [
-        {
-          socketName: BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
-          position: [0.34, height * 0.34, -0.32],
-        },
-      ];
-    case 'chronos':
-      return [
-        {
-          socketName: CHRONOS_PRIMARY_ORB_SOCKET_NAME,
-          position: [0, height * 0.02, -0.34],
-        },
-      ];
-  }
-}
-
 function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
   const movement = player.movement;
@@ -317,12 +153,9 @@ function hasActivePhantomVeil(player: Player): boolean {
   return Boolean(veil?.isActive);
 }
 
-function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
+function OtherPlayer({ player, config }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
-  const { camera } = useThree();
-  const [lodTier, setLodTier] = useState<RemotePlayerLodTier>(0);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
-  const lodAccumulatorRef = useRef(0);
   const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
   const playerHeight = heroStats?.size.height ?? 1.8;
   const hasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
@@ -347,7 +180,6 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   const isVeiledRef = useRef(isVeiled);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
-  const distantUpdateAccumulatorRef = useRef(0);
   const remoteEpochRef = useRef<number | null>(null);
   const sampledTransformRef = useRef<SampledRemoteTransform>({
     position: { x: 0, y: 0, z: 0 },
@@ -365,17 +197,7 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
   // Expected: OtherPlayers renders only when players Map changes (add/remove), not on position updates.
   useFrame((_, delta) => {
     if (!groupRef.current) return;
-    let stepDelta = delta;
-
-    if (lodTier === 2) {
-      distantUpdateAccumulatorRef.current += delta;
-      const updateInterval = 1 / Math.max(1, config.distantAnimationFps);
-      if (distantUpdateAccumulatorRef.current < updateInterval) return;
-      stepDelta = distantUpdateAccumulatorRef.current;
-      distantUpdateAccumulatorRef.current = 0;
-    } else {
-      distantUpdateAccumulatorRef.current = 0;
-    }
+    const stepDelta = delta;
 
     const frameIsVeiled = hasActivePhantomVeil(player);
     if (frameIsVeiled !== isVeiledRef.current) {
@@ -503,67 +325,39 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
     isSlidingRef.current = player.movement.isSliding;
     movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
     isMovingRef.current = frameIsMoving;
-
-    lodAccumulatorRef.current += stepDelta;
-    if (lodAccumulatorRef.current >= LOD_UPDATE_INTERVAL) {
-      lodAccumulatorRef.current = 0;
-      const distanceSq = camera.position.distanceToSquared(groupRef.current.position);
-      const nextTier: RemotePlayerLodTier = player.hasFlag
-        ? 0
-        : allowFullBody && distanceSq < config.nearDistance * config.nearDistance
-          ? 0
-          : distanceSq < config.midDistance * config.midDistance
-            ? 1
-            : 2;
-      setLodTier((current) => current === nextTier ? current : nextTier);
-    }
   });
 
   return (
     <group ref={groupRef}>
       {/* Player body */}
-      {lodTier === 0 ? (
-        <HeroVoxelBody
-          socketOwnerId={player.id}
-          heroId={player.heroId}
-          team={player.team}
-          height={playerHeight}
-          postureScaleY={postureScaleY}
-          postureScaleYRef={postureScaleYRef}
-          isBot={player.isBot}
-          isMoving={initialIsMoving}
-          isMovingRef={isMovingRef}
-          isCrouching={player.movement.isCrouching}
-          isCrouchingRef={isCrouchingRef}
-          isSliding={player.movement.isSliding}
-          isSlidingRef={isSlidingRef}
-          isAttackingRef={isAttackingRef}
-          attackStartedAtMsRef={attackStartedAtMsRef}
-          attackSideRef={attackSideRef}
-          movementPose={initialMovementPose}
-          movementPoseRef={movementPoseRef}
-          walkDirectionRef={walkDirectionRef}
-          hasFlag={player.hasFlag}
-          castShadow={!isVeiled}
-          bodyOpacity={isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1}
-          bodyOpacityRef={bodyOpacityRef}
-        />
-      ) : lodTier === 1 ? (
-        <SimplifiedRemoteBody
-          socketOwnerId={player.id}
-          heroId={player.heroId}
-          team={player.team}
-          height={playerHeight}
-          postureScaleYRef={postureScaleYRef}
-          hasFlag={player.hasFlag}
-          bodyVisible={!isVeiled}
-        />
-      ) : (
-        !isVeiled && <RemotePlayerMarker team={player.team} isBot={player.isBot} hasFlag={player.hasFlag} />
-      )}
+      <HeroVoxelBody
+        socketOwnerId={player.id}
+        heroId={player.heroId}
+        team={player.team}
+        height={playerHeight}
+        postureScaleY={postureScaleY}
+        postureScaleYRef={postureScaleYRef}
+        isBot={player.isBot}
+        isMoving={initialIsMoving}
+        isMovingRef={isMovingRef}
+        isCrouching={player.movement.isCrouching}
+        isCrouchingRef={isCrouchingRef}
+        isSliding={player.movement.isSliding}
+        isSlidingRef={isSlidingRef}
+        isAttackingRef={isAttackingRef}
+        attackStartedAtMsRef={attackStartedAtMsRef}
+        attackSideRef={attackSideRef}
+        movementPose={initialMovementPose}
+        movementPoseRef={movementPoseRef}
+        walkDirectionRef={walkDirectionRef}
+        hasFlag={player.hasFlag}
+        castShadow={!isVeiled}
+        bodyOpacity={isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1}
+        bodyOpacityRef={bodyOpacityRef}
+      />
 
       {/* Nameplate */}
-      {!isVeiled && config.showNameplates && lodTier <= 1 && (
+      {!isVeiled && config.showNameplates && (
         <Nameplate
           heroId={player.heroId}
           name={player.name}
@@ -574,12 +368,12 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
         />
       )}
 
-      {!isVeiled && config.showBeacons && lodTier <= 1 && (
+      {!isVeiled && config.showBeacons && (
         <PlayerVisibilityBeacon
           team={player.team}
           height={visibleHeight}
           isBot={player.isBot}
-          animate={config.animateFarMarkers}
+          animate={config.animateBeacons}
         />
       )}
 
@@ -593,125 +387,6 @@ function OtherPlayer({ player, config, allowFullBody }: OtherPlayerProps) {
 
 function getTeamColor(team: Team): string {
   return team === 'red' ? '#ef4444' : '#38bdf8';
-}
-
-function getHeroAccent(heroId: HeroId | null, team: Team): string {
-  return heroId ? HERO_ICON_COLORS[heroId].primary : getTeamColor(team);
-}
-
-function SimplifiedRemoteBody({
-  socketOwnerId,
-  heroId,
-  team,
-  height,
-  postureScaleYRef,
-  hasFlag,
-  bodyVisible = true,
-}: {
-  socketOwnerId?: string;
-  heroId: HeroId | null;
-  team: Team;
-  height: number;
-  postureScaleYRef: MutableRefObject<number>;
-  hasFlag: boolean;
-  bodyVisible?: boolean;
-}) {
-  const groupRef = useRef<THREE.Group>(null);
-  const socketRefs = useRef<Record<string, THREE.Group | null>>({});
-  const resolvedHero = heroId ?? 'phantom';
-  const teamColor = getTeamColor(team);
-  const accent = getHeroAccent(heroId, team);
-  const torsoMaterial = getSharedRemoteBodyMaterial(teamColor, 0.18, 0.72);
-  const headMaterial = getSharedRemoteBodyMaterial(accent, 0.25, 0.66);
-  const flagMaterial = getSharedRemoteBodyMaterial('#facc15', 0.55, 0.58);
-  const socketMarkers = useMemo(
-    () => createSimplifiedRemoteSocketMarkers(resolvedHero, height),
-    [height, resolvedHero]
-  );
-
-  useEffect(() => {
-    if (!socketOwnerId) return undefined;
-
-    const cleanups: Array<() => void> = [];
-    for (const marker of socketMarkers) {
-      const socketObject = socketRefs.current[marker.socketName];
-      if (!socketObject) continue;
-      cleanups.push(registerRemoteModelSocket(
-        socketOwnerId,
-        marker.socketName,
-        socketObject,
-        'simplifiedBody'
-      ));
-    }
-
-    return () => {
-      cleanups.forEach((cleanup) => cleanup());
-    };
-  }, [socketMarkers, socketOwnerId]);
-
-  useFrame(() => {
-    if (!groupRef.current) return;
-    groupRef.current.scale.y = postureScaleYRef.current;
-  });
-
-  return (
-    <group ref={groupRef} position={[0, height * 0.5, 0]} dispose={null}>
-      {bodyVisible && (
-        <>
-          <mesh
-            geometry={REMOTE_SIMPLIFIED_GEOMETRIES.torso}
-            material={torsoMaterial}
-            scale={[0.62, height * 0.72, 0.42]}
-          />
-          <mesh
-            geometry={REMOTE_SIMPLIFIED_GEOMETRIES.head}
-            material={headMaterial}
-            position={[0, height * 0.43, 0]}
-            scale={[0.42, 0.34, 0.36]}
-          />
-          {hasFlag && (
-            <mesh
-              geometry={REMOTE_SIMPLIFIED_GEOMETRIES.flag}
-              material={flagMaterial}
-              position={[0, height * 0.7, -0.28]}
-              scale={[0.18, 0.42, 0.04]}
-            />
-          )}
-        </>
-      )}
-      {socketMarkers.map((marker) => (
-        <group
-          key={`${resolvedHero}-simplified-socket-${marker.socketName}`}
-          ref={(node) => {
-            socketRefs.current[marker.socketName] = node;
-          }}
-          position={marker.position}
-        />
-      ))}
-    </group>
-  );
-}
-
-function RemotePlayerMarker({ team, isBot, hasFlag }: { team: Team; isBot?: boolean; hasFlag: boolean }) {
-  const color = getTeamColor(team);
-  const scale = hasFlag ? 1.35 : isBot ? 1.1 : 1;
-  const ringMaterial = getSharedRemoteMarkerMaterial(color, 0.86);
-  const coreMaterial = getSharedRemoteMarkerMaterial(hasFlag ? '#facc15' : color);
-
-  return (
-    <group position={[0, 1.1, 0]} scale={scale} dispose={null}>
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.markerRing}
-        material={ringMaterial}
-        rotation={[Math.PI / 2, 0, 0]}
-      />
-      <mesh
-        geometry={REMOTE_SIMPLIFIED_GEOMETRIES.markerCore}
-        material={coreMaterial}
-        position={[0, 0.18, 0]}
-      />
-    </group>
-  );
 }
 
 interface NameplateProps {

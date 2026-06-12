@@ -52,7 +52,6 @@ export interface WorldPerformanceBudget {
   materials: number;
   maxAtmosphereParticles: number;
   maxWorldDressingInstances: number;
-  maxFullRemoteBodies: number;
   maxGeneratedRegionMeshesPerFrame: number;
   maxVisualPhysicsQueriesPerFrame: number;
 }
@@ -67,13 +66,9 @@ export interface EffectQualityConfig {
 }
 
 export interface RemotePlayerQualityConfig {
-  maxFullBodies: number;
-  nearDistance: number;
-  midDistance: number;
-  animateFarMarkers: boolean;
+  animateBeacons: boolean;
   showNameplates: boolean;
   showBeacons: boolean;
-  distantAnimationFps: number;
 }
 
 export interface ViewmodelQualityConfig {
@@ -316,7 +311,6 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     materials: 180,
     maxAtmosphereParticles: 50,
     maxWorldDressingInstances: 100,
-    maxFullRemoteBodies: 1,
     maxGeneratedRegionMeshesPerFrame: 1,
     maxVisualPhysicsQueriesPerFrame: 18,
   },
@@ -331,7 +325,6 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     materials: 260,
     maxAtmosphereParticles: 120,
     maxWorldDressingInstances: 220,
-    maxFullRemoteBodies: 2,
     maxGeneratedRegionMeshesPerFrame: 2,
     maxVisualPhysicsQueriesPerFrame: 28,
   },
@@ -346,7 +339,6 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     materials: 360,
     maxAtmosphereParticles: 300,
     maxWorldDressingInstances: 460,
-    maxFullRemoteBodies: 3,
     maxGeneratedRegionMeshesPerFrame: 2,
     maxVisualPhysicsQueriesPerFrame: 36,
   },
@@ -361,7 +353,6 @@ export const WORLD_PERFORMANCE_BUDGETS: Record<GraphicsPreset, WorldPerformanceB
     materials: 640,
     maxAtmosphereParticles: 980,
     maxWorldDressingInstances: 920,
-    maxFullRemoteBodies: 8,
     maxGeneratedRegionMeshesPerFrame: 4,
     maxVisualPhysicsQueriesPerFrame: 72,
   },
@@ -404,40 +395,24 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
 
 const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityConfig> = {
   potato: {
-    maxFullBodies: 1,
-    nearDistance: 10,
-    midDistance: 28,
-    animateFarMarkers: false,
+    animateBeacons: false,
     showNameplates: false,
     showBeacons: false,
-    distantAnimationFps: 8,
   },
   competitive: {
-    maxFullBodies: 2,
-    nearDistance: 16,
-    midDistance: 34,
-    animateFarMarkers: false,
+    animateBeacons: false,
     showNameplates: true,
     showBeacons: false,
-    distantAnimationFps: 12,
   },
   balanced: {
-    maxFullBodies: 3,
-    nearDistance: 18,
-    midDistance: 38,
-    animateFarMarkers: true,
+    animateBeacons: true,
     showNameplates: true,
     showBeacons: true,
-    distantAnimationFps: 18,
   },
   cinematic: {
-    maxFullBodies: 8,
-    nearDistance: 24,
-    midDistance: 52,
-    animateFarMarkers: true,
+    animateBeacons: true,
     showNameplates: true,
     showBeacons: true,
-    distantAnimationFps: 30,
   },
 };
 

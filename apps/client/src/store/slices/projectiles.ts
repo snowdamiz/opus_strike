@@ -151,6 +151,9 @@ export interface ProjectileActions {
   updateEarthWall: (id: string, updates: Partial<EarthWallData>) => void;
   removeEarthWall: (id: string) => void;
   clearExpiredEarthWalls: () => void;
+
+  // Batched per-frame cleanup
+  clearExpiredProjectiles: () => void;
 }
 
 export type ProjectileSlice = ProjectileState & ProjectileActions;
@@ -266,7 +269,10 @@ function updateById<T extends { id: string }>(items: T[], id: string, updates: P
 }
 
 function filterExpired<T>(items: T[], keep: (item: T, now: number) => boolean): T[] {
-  const now = Date.now();
+  return filterExpiredAt(items, Date.now(), keep);
+}
+
+function filterExpiredAt<T>(items: T[], now: number, keep: (item: T, now: number) => boolean): T[] {
   let firstExpiredIndex = -1;
   for (let index = 0; index < items.length; index++) {
     if (!keep(items[index], now)) {
@@ -657,5 +663,98 @@ export const createProjectileSlice: StateCreator<
       return elapsed < w.duration + 1.5;
     });
     return earthWalls === state.earthWalls ? state : { earthWalls };
+  }),
+
+  clearExpiredProjectiles: () => set((state) => {
+    const now = Date.now();
+    let changed = false;
+    const next: Partial<ProjectileState> = {};
+
+    const voidZones = filterExpiredAt(state.voidZones, now, (z) => (now - z.startTime) / 1000 < z.duration);
+    if (voidZones !== state.voidZones) {
+      next.voidZones = voidZones;
+      changed = true;
+    }
+
+    const direBalls = filterExpiredAt(state.direBalls, now, (b) => now - b.startTime < 3000);
+    if (direBalls !== state.direBalls) {
+      next.direBalls = direBalls;
+      changed = true;
+    }
+
+    const voidRays = filterExpiredAt(state.voidRays, now, (r) => now - r.startTime < VOID_RAY_VISUAL_RETENTION_MS);
+    if (voidRays !== state.voidRays) {
+      next.voidRays = voidRays;
+      changed = true;
+    }
+
+    const rockets = filterExpiredAt(state.rockets, now, (r) => now - r.startTime < 3000);
+    if (rockets !== state.rockets) {
+      next.rockets = rockets;
+      changed = true;
+    }
+
+    const bombs = filterExpiredAt(state.bombs, now, (b) => now - b.startTime < 5000);
+    if (bombs !== state.bombs) {
+      next.bombs = bombs;
+      changed = true;
+    }
+
+    const chronosPulses = filterExpiredAt(state.chronosPulses, now, (pulse) => now - pulse.startTime < 3000);
+    if (chronosPulses !== state.chronosPulses) {
+      next.chronosPulses = chronosPulses;
+      changed = true;
+    }
+
+    const chronosTimebreaks = filterExpiredAt(
+      state.chronosTimebreaks,
+      now,
+      (timebreak) => now - timebreak.releaseTime < CHRONOS_TIMEBREAK_VISUAL_LIFETIME_MS
+    );
+    if (chronosTimebreaks !== state.chronosTimebreaks) {
+      next.chronosTimebreaks = chronosTimebreaks;
+      changed = true;
+    }
+
+    const hookProjectiles = filterExpiredAt(state.hookProjectiles, now, (h) => now - h.startTime < 2000);
+    if (hookProjectiles !== state.hookProjectiles) {
+      next.hookProjectiles = hookProjectiles;
+      changed = true;
+    }
+
+    const dragHooks = filterExpiredAt(state.dragHooks, now, (h) => now - h.startTime < 5000);
+    if (dragHooks !== state.dragHooks) {
+      next.dragHooks = dragHooks;
+      changed = true;
+    }
+
+    const grappleTraps = filterExpiredAt(state.grappleTraps, now, (t) => (now - t.startTime) / 1000 < t.duration);
+    if (grappleTraps !== state.grappleTraps) {
+      next.grappleTraps = grappleTraps;
+      changed = true;
+    }
+
+    const swingLines = filterExpiredAt(state.swingLines, now, (l) => (now - l.startTime) / 1000 < l.duration);
+    if (swingLines !== state.swingLines) {
+      next.swingLines = swingLines;
+      changed = true;
+    }
+
+    const grappleLines = filterExpiredAt(state.grappleLines, now, (l) => now - l.startTime < 6000);
+    if (grappleLines !== state.grappleLines) {
+      next.grappleLines = grappleLines;
+      changed = true;
+    }
+
+    const earthWalls = filterExpiredAt(state.earthWalls, now, (w) => {
+      const elapsed = (now - w.startTime) / 1000;
+      return elapsed < w.duration + 1.5;
+    });
+    if (earthWalls !== state.earthWalls) {
+      next.earthWalls = earthWalls;
+      changed = true;
+    }
+
+    return changed ? next : state;
   }),
 });

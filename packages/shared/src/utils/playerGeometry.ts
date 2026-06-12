@@ -34,6 +34,12 @@ export interface PlayerCombatHitResult {
   radius: number;
 }
 
+const DEFAULT_PLAYER_SIZE = {
+  width: PLAYER_RADIUS * 2,
+  height: PLAYER_HEIGHT,
+  depth: PLAYER_RADIUS * 2,
+};
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -46,11 +52,7 @@ function getHeroSize(heroId: PlayerGeometryTarget['heroId']) {
   const definition = typeof heroId === 'string'
     ? HERO_DEFINITIONS[heroId as HeroId]
     : null;
-  return definition?.stats.size ?? {
-    width: PLAYER_RADIUS * 2,
-    height: PLAYER_HEIGHT,
-    depth: PLAYER_RADIUS * 2,
-  };
+  return definition?.stats.size ?? DEFAULT_PLAYER_SIZE;
 }
 
 /**
@@ -284,5 +286,70 @@ export function doesSegmentHitPlayerCombatHitbox(
   target: PlayerGeometryTarget,
   extraRadius = 0
 ): boolean {
-  return getSegmentHitAgainstPlayerCombatHitbox(start, direction, distance, target, extraRadius) !== null;
+  const size = getHeroSize(target.heroId);
+  const baseRadius = Math.max(size.width, size.depth) / 2 + PLAYER_COMBAT_HITBOX_PADDING;
+  const radius = baseRadius + extraRadius;
+  const segmentHalfHeight = Math.max(0, size.height / 2 + PLAYER_COMBAT_HITBOX_PADDING - baseRadius);
+  const center = target.position;
+
+  if (distance <= 0.0001) {
+    const closestY = clamp(
+      start.y,
+      center.y - segmentHalfHeight,
+      center.y + segmentHalfHeight
+    );
+    const dx = start.x - center.x;
+    const dy = start.y - closestY;
+    const dz = start.z - center.z;
+    return dx * dx + dy * dy + dz * dz <= radius * radius;
+  }
+
+  const firstDx = direction.x * distance;
+  const firstDy = direction.y * distance;
+  const firstDz = direction.z * distance;
+  const secondDy = segmentHalfHeight * 2;
+  const rx = start.x - center.x;
+  const ry = start.y - (center.y - segmentHalfHeight);
+  const rz = start.z - center.z;
+
+  const a = firstDx * firstDx + firstDy * firstDy + firstDz * firstDz;
+  const e = secondDy * secondDy;
+  const radiusSq = radius * radius;
+
+  if (a <= 0.000001 && e <= 0.000001) {
+    return rx * rx + ry * ry + rz * rz <= radiusSq;
+  }
+
+  let firstT = 0;
+  let secondT = 0;
+  if (a <= 0.000001) {
+    secondT = clamp(ry / e, 0, 1);
+  } else {
+    const c = firstDx * rx + firstDy * ry + firstDz * rz;
+    if (e <= 0.000001) {
+      firstT = clamp(-c / a, 0, 1);
+    } else {
+      const b = firstDy * secondDy;
+      const f = secondDy * ry;
+      const denom = a * e - b * b;
+
+      firstT = denom !== 0 ? clamp((b * f - c * e) / denom, 0, 1) : 0;
+      const secondNumerator = b * firstT + f;
+
+      if (secondNumerator < 0) {
+        secondT = 0;
+        firstT = clamp(-c / a, 0, 1);
+      } else if (secondNumerator > e) {
+        secondT = 1;
+        firstT = clamp((b - c) / a, 0, 1);
+      } else {
+        secondT = secondNumerator / e;
+      }
+    }
+  }
+
+  const closestDx = rx + firstDx * firstT;
+  const closestDy = ry + firstDy * firstT - secondDy * secondT;
+  const closestDz = rz + firstDz * firstT;
+  return closestDx * closestDx + closestDy * closestDy + closestDz * closestDz <= radiusSq;
 }

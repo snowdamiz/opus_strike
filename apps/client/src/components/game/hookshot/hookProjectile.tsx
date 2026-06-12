@@ -70,6 +70,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
   const hasHitRef = useRef(false);
   const hookStateRef = useRef<'extending' | 'retracting'>(hook.state as 'extending' | 'retracting');
   const currentPosRef = useRef({ x: hook.position.x, y: hook.position.y, z: hook.position.z });
+  const previousPosRef = useRef({ x: hook.position.x, y: hook.position.y, z: hook.position.z });
   const playerPosRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
   const ownerVisualPositionRef = useRef({ x: hook.startPosition.x, y: hook.startPosition.y, z: hook.startPosition.z });
   const smoothedSocketRef = useRef(new THREE.Vector3(hook.startPosition.x, hook.startPosition.y, hook.startPosition.z));
@@ -144,7 +145,10 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
     if (hookStateRef.current === 'extending') {
       // Move forward
       const moveDistance = speed * delta;
-      const previousPosition = { x: curPos.x, y: curPos.y, z: curPos.z };
+      const previousPosition = previousPosRef.current;
+      previousPosition.x = curPos.x;
+      previousPosition.y = curPos.y;
+      previousPosition.z = curPos.z;
       curPos.x += velX * delta;
       curPos.y += velY * delta;
       curPos.z += velZ * delta;
