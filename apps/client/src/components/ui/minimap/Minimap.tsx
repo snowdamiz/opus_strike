@@ -26,10 +26,11 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayer, mapSeed } = useGameStore(
+  const { localPlayer, mapSeed, isPracticeMode } = useGameStore(
     useShallow((state) => ({
       localPlayer: state.localPlayer,
       mapSeed: state.mapSeed,
+      isPracticeMode: state.isPracticeMode,
     }))
   );
 
@@ -85,7 +86,7 @@ export function Minimap() {
     return () => {
       window.cancelAnimationFrame(rafId);
     };
-  }, [devicePixelRatio, localPlayerId, localPlayerTeam, manifest, projection, size]);
+  }, [devicePixelRatio, isPracticeMode, localPlayerId, localPlayerTeam, manifest, projection, size]);
 
   if (!localPlayer) return null;
 
@@ -132,7 +133,7 @@ function drawLiveOverlay(
 
   const visualState = visualStore.getState();
   const teammates = selectVisibleTeammates(localPlayer, store.players.values());
-  const teamColor = getTeamColor(localPlayer.team);
+  const teamColor = store.isPracticeMode ? '#e5e7eb' : getTeamColor(localPlayer.team);
 
   for (const teammate of teammates) {
     const position = visualState.playerPositions.get(teammate.id) ?? teammate.position;

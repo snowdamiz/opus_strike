@@ -113,7 +113,7 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
 
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
-  const { watchLobbies, createLobby, quickPlay, rankedPlay, joinLobby } = useNetwork();
+  const { watchLobbies, createLobby, quickPlay, rankedPlay, startPracticeGame, joinLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -387,6 +387,11 @@ export function MainLobby() {
     }
   };
 
+  const handlePracticeGame = () => {
+    setError(null);
+    startPracticeGame(playerName);
+  };
+
   const handleRankedPlay = async () => {
     setError(null);
     if (!isAuthenticated) {
@@ -554,6 +559,7 @@ export function MainLobby() {
             hasFullFunctionality={hasFullFunctionality}
             isLinkingPhantom={isLinkingPhantom}
             onQuickPlay={isAuthenticated ? handleQuickPlay : handleSignInClick}
+            onPracticeGame={handlePracticeGame}
             onRankedPlay={handleRankedPlay}
             onLinkPhantom={handleLinkPhantom}
             onOpenCreateLobby={isAuthenticated ? () => setShowCreateLobby(true) : handleSignInClick}
@@ -652,6 +658,7 @@ interface PlayTabProps {
   hasFullFunctionality: boolean;
   isLinkingPhantom: boolean;
   onQuickPlay: () => void;
+  onPracticeGame: () => void;
   onRankedPlay: () => void;
   onLinkPhantom: () => void;
   onOpenCreateLobby: () => void;
@@ -673,6 +680,7 @@ function PlayTab({
   hasFullFunctionality,
   isLinkingPhantom,
   onQuickPlay,
+  onPracticeGame,
   onRankedPlay,
   onLinkPhantom,
   onOpenCreateLobby,
@@ -849,6 +857,17 @@ function PlayTab({
  )}
  </span>
  </button>
+
+          <button
+            onClick={() => { playButtonClick(); onPracticeGame(); }}
+            disabled={isLoading}
+            className="w-full py-1.5 sm:py-2 md:py-2.5 lg:py-3 xl:py-3.5 rounded-lg sm:rounded-xl font-display text-sm sm:text-base md:text-lg xl:text-xl text-cyan-50 border border-cyan-300/25 bg-cyan-500/12 hover:border-cyan-200/45 hover:bg-cyan-500/20 disabled:opacity-60 flex items-center justify-center gap-1.5 sm:gap-2 lg:gap-2.5"
+          >
+            <svg className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M12 3v6m0 0l4 7a3 3 0 01-2.6 4.5H10.6A3 3 0 018 16l4-7zm-3.5 11h7" />
+            </svg>
+            PRACTICE
+          </button>
 
           <button
             onClick={() => { playButtonClick(); onRankedPlay(); }}

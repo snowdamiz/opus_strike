@@ -411,6 +411,7 @@ export function GameCanvas({
   startupRampActive = false,
 }: GameCanvasProps) {
   const gamePhase = useGameStore((state) => state.gamePhase);
+  const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = getVisualQualityConfig(settings);
@@ -622,7 +623,7 @@ export function GameCanvas({
         {/* Gameplay objects mount during warmup so first-use shaders and buffers are paid before input. */}
         {shouldMountGameplayObjects && (
           <>
-            <Flags />
+            {!isPracticeMode && <Flags />}
             <Effects />
             <SlideSpeedLines config={effectiveEffectsConfig} />
             <HeroViewmodel config={qualityConfig.viewmodel} />

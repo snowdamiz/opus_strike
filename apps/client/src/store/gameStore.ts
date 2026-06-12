@@ -75,6 +75,7 @@ interface CoreState {
   roomId: string | null;
   playerId: string | null;
   playerName: string;
+  isPracticeMode: boolean;
 
   // App phase (different from game phase)
   appPhase: AppPhase;
@@ -147,6 +148,7 @@ interface CoreActions {
   setRoomId: (roomId: string | null) => void;
   setPlayerId: (playerId: string | null) => void;
   setPlayerName: (name: string) => void;
+  setPracticeMode: (enabled: boolean) => void;
   setAppPhase: (phase: AppPhase) => void;
   setMatchmakingStatus: (status: MatchmakingStatus) => void;
   setGamePhase: (phase: GamePhase) => void;
@@ -213,6 +215,7 @@ const coreInitialState: CoreState = {
   roomId: null,
   playerId: null,
   playerName: '',
+  isPracticeMode: false,
   appPhase: 'menu',
   availableLobbies: [],
   currentLobbyId: null,
@@ -295,6 +298,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setRoomId: (roomId) => set((state) => state.roomId === roomId ? state : { roomId }),
   setPlayerId: (playerId) => set((state) => state.playerId === playerId ? state : { playerId }),
   setPlayerName: (name) => set((state) => state.playerName === name ? state : { playerName: name }),
+  setPracticeMode: (enabled) => set((state) => state.isPracticeMode === enabled ? state : { isPracticeMode: enabled }),
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
   setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
   setGamePhase: (phase) => set((state) => state.gamePhase === phase ? state : { gamePhase: phase }),

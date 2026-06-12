@@ -64,6 +64,7 @@ export function App() {
   const gamePhase = useGameStore((state) => state.gamePhase);
   const matchSummary = useGameStore((state) => state.matchSummary);
   const isLoading = useGameStore((state) => state.isLoading);
+  const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
@@ -391,7 +392,7 @@ export function App() {
               onScoreboardChange={setShowScoreboard}
             />
             <Suspense fallback={null}>
-              {showScoreboard && <Scoreboard />}
+              {showScoreboard && !isPracticeMode && <Scoreboard />}
             </Suspense>
           </>
         )}

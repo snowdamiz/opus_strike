@@ -12,6 +12,7 @@ export function HeroSelect() {
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId);
   const localIsReady = useGameStore((state) => state.localPlayer?.isReady ?? false);
   const phaseEndTime = useGameStore((state) => state.phaseEndTime);
+  const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const { selectHero, setReady, leaveGame } = useNetwork();
   const { playButtonClick } = useUISounds();
   const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
@@ -109,11 +110,13 @@ export function HeroSelect() {
             </div>
           </div>
 
-          <PhaseCountdownTimer
-            phaseEndTime={phaseEndTime}
-            disabled={isLockedIn}
-            onExpired={handleTimerExpired}
-          />
+          {!isPracticeMode && (
+            <PhaseCountdownTimer
+              phaseEndTime={phaseEndTime}
+              disabled={isLockedIn}
+              onExpired={handleTimerExpired}
+            />
+          )}
 
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
             <button

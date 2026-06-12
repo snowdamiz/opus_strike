@@ -21,6 +21,7 @@ import {
   BLAZE_ROCKET_FIRE_INTERVAL,
   BLAZE_ROCKET_SPEED,
   BLAZE_BOMB_COOLDOWN,
+  BLAZE_BOMB_FALL_DURATION,
   calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
@@ -217,7 +218,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   }, []);
 
   // Execute Meteor Strike
-  const executeBombDrop = useCallback((_sounds: PlayerSounds) => {
+  const executeBombDrop = useCallback((sounds: PlayerSounds) => {
     if (!bombTargetRef.current || !bombValidRef.current) return;
 
     const now = Date.now();
@@ -227,9 +228,33 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     triggerBlazeStaffShockwave(now);
 
     lastBombTimeRef.current = now;
+    const store = useGameStore.getState();
+
+    if (store.isPracticeMode && store.localPlayer?.heroId === 'blaze') {
+      const targetPosition = vectorToPlainPosition(bombTargetRef.current);
+      const startPosition = {
+        x: store.localPlayer.position.x,
+        y: store.localPlayer.position.y + 1.35,
+        z: store.localPlayer.position.z,
+      };
+      store.addBomb({
+        id: `practice_blaze_bomb_${store.localPlayer.id}_${now}`,
+        targetPosition,
+        startPosition,
+        startTime: now,
+        impactTime: now + BLAZE_BOMB_FALL_DURATION,
+        ownerId: store.localPlayer.id,
+        ownerTeam: (store.localPlayer.team || 'red') as 'red' | 'blue',
+        hasExploded: false,
+      });
+      sounds.playBlazeBombFall();
+      window.setTimeout(() => {
+        sounds.playBlazeBombExplode();
+      }, BLAZE_BOMB_FALL_DURATION);
+    }
 
     // Exit targeting mode
-    useGameStore.getState().setBombTargeting(false, false);
+    store.setBombTargeting(false, false);
     bombTargetRef.current = null;
     bombValidRef.current = false;
     setBlazeBombTargetHeld(false, now);
@@ -244,17 +269,20 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   ) => {
     const now = Date.now();
     const timestampMs = ctx.viewmodelNowMs ?? now;
-    const localPlayer = useGameStore.getState().localPlayer;
-    const serverFuel = localPlayer?.heroId === 'blaze'
-      ? (localPlayer.movement?.jetpackFuel ?? BLAZE_FLAMETHROWER_MAX_FUEL)
-      : BLAZE_FLAMETHROWER_MAX_FUEL;
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
+    const canUsePracticeFuel = store.isPracticeMode && localPlayer?.heroId === 'blaze' && localPlayer.state === 'alive';
+    let serverFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
+    if (!canUsePracticeFuel && localPlayer?.heroId === 'blaze') {
+      serverFuel = localPlayer.movement?.jetpackFuel ?? BLAZE_FLAMETHROWER_MAX_FUEL;
+    }
+    const isHoldingFlamethrower = ctx.inputState.ability1 && serverFuel > 0;
     const serverActive = Boolean(
       localPlayer?.heroId === 'blaze' &&
       localPlayer.state === 'alive' &&
-      localPlayer.movement?.isJetpacking &&
+      (localPlayer.movement?.isJetpacking || (canUsePracticeFuel && isHoldingFlamethrower)) &&
       serverFuel > 0
     );
-    const isHoldingFlamethrower = ctx.inputState.ability1 && serverFuel > 0;
     const shouldPlayLocalFlamethrowerSound = isHoldingFlamethrower;
 
     flamethrowerFuelRef.current = serverFuel;

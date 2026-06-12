@@ -4,6 +4,8 @@ import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, M
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
 import {
+  createRandomSeed,
+  getHeroStats,
   MOVEMENT_PROTOCOL_VERSION,
   type AbilityCastOriginHint,
   type BotDifficulty,
@@ -35,6 +37,11 @@ import {
   stopRemotePhantomCharge,
 } from './gameMessageHandlers';
 import { loggers } from '../utils/logger';
+import {
+  movementStateFromPlayer,
+  resetLocalMovementPrediction,
+} from '../movement/localPrediction';
+import { projectileInitialState } from '../store/slices/projectiles';
 
 type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
 
@@ -59,6 +66,7 @@ interface NetworkContextType {
   ) => Promise<void>;
   quickPlay: (playerName: string) => Promise<void>;
   rankedPlay: (playerName: string) => Promise<void>;
+  startPracticeGame: (playerName?: string) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
   setLobbyReady: (ready: boolean) => void;
@@ -203,6 +211,22 @@ async function preflightWageredLobby(wager: CreateLobbyWagerOptions | undefined)
   });
 }
 
+function createPracticePlayerId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `practice:${crypto.randomUUID()}`;
+  }
+
+  return `practice:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
+function resolvePracticePlayerName(playerName?: string): string {
+  const requestedName = playerName?.trim();
+  if (requestedName) return requestedName;
+
+  const storeName = useGameStore.getState().playerName.trim();
+  return storeName || 'Practice';
+}
+
 // ============================================================================
 // PROVIDER COMPONENT
 // ============================================================================
@@ -223,6 +247,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLoading,
     setRoomId,
     setPlayerId,
+    setPlayerName,
+    setPracticeMode,
     setAppPhase,
     setGamePhase,
     setPhaseEndTime,
@@ -328,6 +354,81 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       gameRoomRef.current = null;
     }
   }, [rejectPendingVoiceTokenRequests]);
+
+  const startPracticeGame = useCallback((playerName?: string) => {
+    const seed = createRandomSeed();
+    const preparedMap = prepareVoxelMapCpu({ seed, source: 'match' });
+    const spawnPoints = [
+      ...preparedMap.manifest.spawnPoints.red,
+      ...preparedMap.manifest.spawnPoints.blue,
+    ];
+    const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
+    const name = resolvePracticePlayerName(playerName);
+    const playerId = createPracticePlayerId();
+    const player = createDefaultLocalPlayer(playerId, name);
+
+    player.state = 'selecting';
+    player.position = { ...spawn };
+    player.team = 'red';
+    player.isReady = false;
+    player.heroId = null;
+    player.hasFlag = false;
+
+    cleanupExistingConnections();
+    resetLobby();
+    rejectPendingVoiceTokenRequests('practice mode started');
+    setPlayerName(name);
+    setPracticeMode(true);
+
+    useGameStore.setState({
+      ...projectileInitialState,
+      isConnected: false,
+      isLoading: false,
+      roomId: null,
+      playerId,
+      appPhase: 'in_game',
+      gamePhase: 'hero_select',
+      matchSummary: null,
+      appliedExperienceMatchId: null,
+      tick: 0,
+      serverTime: Date.now(),
+      mapSeed: seed,
+      redScore: 0,
+      blueScore: 0,
+      redFlag: null,
+      blueFlag: null,
+      players: new Map([[playerId, player]]),
+      localPlayer: player,
+      playerPings: new Map(),
+      roundTimeRemaining: 0,
+      phaseEndTime: null,
+      pendingInputs: [],
+      lastProcessedTick: 0,
+      shadowStepTargeting: false,
+      shadowStepValid: false,
+      ultimateEffectActive: false,
+      ultimateEffectType: null,
+      ultimateEffectEndTime: 0,
+      clientCooldowns: {},
+      clientCharges: {},
+      unstuckCooldownUntil: 0,
+      unstuckRequestId: 0,
+      slideIntensity: 0,
+    });
+    resetLocalMovementPrediction(movementStateFromPlayer(player), 0, player.id);
+    setRoomId(null);
+    setConnected(false);
+
+    loggers.network.info('started local practice', seed);
+  }, [
+    cleanupExistingConnections,
+    rejectPendingVoiceTokenRequests,
+    resetLobby,
+    setConnected,
+    setPlayerName,
+    setPracticeMode,
+    setRoomId,
+  ]);
 
   const setupLobbyListeners = useCallback((room: Room, playerName: string) => {
     room.onMessage('lobbyState', (data: {
@@ -670,6 +771,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     try {
       await preflightWageredLobby(options?.wager);
       cleanupExistingConnections();
+      setPracticeMode(false);
 
       const client = getClient();
       const clientId = getClientId();
@@ -702,13 +804,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobby, setIsLobbyHost, setAppPhase, setConnected, setPracticeMode]);
 
   const quickPlay = useCallback(async (playerName: string) => {
     setLoading(true);
 
     try {
       cleanupExistingConnections();
+      setPracticeMode(false);
 
       const client = getClient();
       const clientId = getClientId();
@@ -743,13 +846,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
 
   const rankedPlay = useCallback(async (playerName: string) => {
     setLoading(true);
 
     try {
       cleanupExistingConnections();
+      setPracticeMode(false);
 
       const client = getClient();
       const clientId = getClientId();
@@ -808,13 +912,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
 
   const joinLobby = useCallback(async (playerName: string, lobbyId: string) => {
     setLoading(true);
 
     try {
       cleanupExistingConnections();
+      setPracticeMode(false);
 
       const client = getClient();
       const clientId = getClientId();
@@ -839,7 +944,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       throw error;
     }
-  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected]);
+  }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setAppPhase, setConnected, setPracticeMode]);
 
   const leaveLobby = useCallback(() => {
     disconnectVoice('leave_lobby');
@@ -1097,13 +1202,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       setConnected(false);
       setRoomId(null);
+      setPracticeMode(false);
       setGamePhase('waiting');
       resetLobby();
       setAppPhase('browsing_lobbies');
     });
 
     setConnected(true);
-  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, resetLobby, rejectPendingVoiceTokenRequests, setMatchSummary, setPlayerPings]);
+  }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, setMatchSummary, setPlayerPings]);
 
   const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string) => {
     if (isJoiningGameRef.current) {
@@ -1127,6 +1233,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       useGameStore.getState().setPlayers(new Map());
       clearMatchSummary();
+      setPracticeMode(false);
       setGamePhase('waiting');
       setPhaseEndTime(null);
 
@@ -1157,7 +1264,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       isJoiningGameRef.current = false;
       throw error;
     }
-  }, [getClient, setupGameListeners, setLoading, setRoomId, setAppPhase, clearMatchSummary, setGamePhase, setPhaseEndTime]);
+  }, [getClient, setupGameListeners, setLoading, setRoomId, setAppPhase, clearMatchSummary, setPracticeMode, setGamePhase, setPhaseEndTime]);
 
   const leaveGame = useCallback(() => {
     disconnectVoice('leave_game');
@@ -1168,12 +1275,39 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     lobbyRoomRef.current = null;
     isJoiningGameRef.current = false;
     setRoomId(null);
+    setPlayerId(null);
     setConnected(false);
+    setPracticeMode(false);
+    useGameStore.setState({
+      ...projectileInitialState,
+      redScore: 0,
+      blueScore: 0,
+      redFlag: null,
+      blueFlag: null,
+      players: new Map(),
+      localPlayer: null,
+      playerPings: new Map(),
+      roundTimeRemaining: 0,
+      phaseEndTime: null,
+      pendingInputs: [],
+      lastProcessedTick: 0,
+      shadowStepTargeting: false,
+      shadowStepValid: false,
+      ultimateEffectActive: false,
+      ultimateEffectType: null,
+      ultimateEffectEndTime: 0,
+      clientCooldowns: {},
+      clientCharges: {},
+      unstuckCooldownUntil: 0,
+      unstuckRequestId: 0,
+      slideIntensity: 0,
+    });
+    resetLocalMovementPrediction();
     resetLobby();
     clearMatchSummary();
     setGamePhase('waiting' as any);
     setAppPhase('browsing_lobbies');
-  }, [setRoomId, setConnected, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests]);
+  }, [setRoomId, setPlayerId, setConnected, setPracticeMode, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests]);
 
   const disconnect = useCallback(() => {
     disconnectVoice('network_disconnect');
@@ -1230,6 +1364,22 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const selectHero = useCallback((heroId: HeroId) => {
+    const store = useGameStore.getState();
+    if (store.isPracticeMode) {
+      const localPlayer = store.localPlayer;
+      if (!localPlayer) return;
+
+      const heroStats = getHeroStats(heroId);
+      store.updateLocalPlayer({
+        heroId,
+        health: heroStats.maxHealth,
+        maxHealth: heroStats.maxHealth,
+        ultimateCharge: 100,
+        isReady: false,
+      });
+      return;
+    }
+
     loggers.network.debug('sending selectHero', heroId);
     gameRoomRef.current?.send('selectHero', { heroId });
   }, []);
@@ -1283,9 +1433,37 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setReady = useCallback((ready: boolean) => {
+    const store = useGameStore.getState();
+    if (store.isPracticeMode) {
+      const localPlayer = store.localPlayer;
+      if (!localPlayer) return;
+
+      const heroId = localPlayer.heroId ?? 'phantom';
+      const heroStats = getHeroStats(heroId);
+      const nextPlayer = {
+        ...localPlayer,
+        heroId,
+        isReady: ready,
+        state: ready ? 'alive' as const : 'selecting' as const,
+        health: heroStats.maxHealth,
+        maxHealth: heroStats.maxHealth,
+        ultimateCharge: 100,
+      };
+
+      store.setLocalPlayer(nextPlayer);
+      if (ready) {
+        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), 0, nextPlayer.id);
+        setGamePhase('playing');
+      } else {
+        setGamePhase('hero_select');
+      }
+      setPhaseEndTime(null);
+      return;
+    }
+
     loggers.network.debug('sending ready', ready);
     gameRoomRef.current?.send('ready', { ready });
-  }, []);
+  }, [setGamePhase, setPhaseEndTime]);
 
   // ==================== NPC OPERATIONS ====================
 
@@ -1318,6 +1496,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       createLobby,
       quickPlay,
       rankedPlay,
+      startPracticeGame,
       joinLobby,
       leaveLobby,
       setLobbyReady,

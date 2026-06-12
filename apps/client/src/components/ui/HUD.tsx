@@ -384,6 +384,7 @@ function HookshotShotCounter() {
 export function HUD() {
   const {
     localPlayer,
+    isPracticeMode,
     gamePhase,
     redScore,
     blueScore,
@@ -407,6 +408,7 @@ export function HUD() {
   } = useGameStore(
     useShallow(state => ({
       localPlayer: state.localPlayer,
+      isPracticeMode: state.isPracticeMode,
       gamePhase: state.gamePhase,
       redScore: state.redScore,
       blueScore: state.blueScore,
@@ -534,7 +536,7 @@ export function HUD() {
       {showDamageNumbers && <DamageNumberStack events={damageNumbers} />}
       {showKillFeed && <KillFeed events={killFeed} />}
       <Minimap />
-      <VoiceHud />
+      {!isPracticeMode && <VoiceHud />}
 
       {/* Meteor Strike targeting instructions */}
       {bombTargeting && (
@@ -560,142 +562,144 @@ export function HUD() {
       )}
 
       {/* ===== TOP CENTER - Score Panel (Redesigned) ===== */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
-        <div className="relative">
-          {/* Main score container */}
-          <div
-            className="flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
-            style={{
-              background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
-              boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.05)',
-            }}
-          >
-            {/* Solar Vanguard Side */}
-            <div className="relative group">
-              <div
-                className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
-                style={{
-                  background: FACTIONS.red.gradient,
-                }}
-              >
-                {/* Animated glow effect */}
+      {!isPracticeMode && (
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 max-w-[92vw]">
+          <div className="relative">
+            {/* Main score container */}
+            <div
+              className="flex items-stretch rounded-b-xl overflow-hidden backdrop-blur-md"
+              style={{
+                background: 'linear-gradient(180deg, rgb(var(--color-strike-bg) / 0.95) 0%, rgb(var(--color-strike-elevated) / 0.9) 100%)',
+                boxShadow: '0 6px 24px rgba(0, 0, 0, 0.46), inset 0 -1px 0 rgba(255,255,255,0.05)',
+              }}
+            >
+              {/* Solar Vanguard Side */}
+              <div className="relative group">
                 <div
-                  className="absolute inset-0 opacity-50"
+                  className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
                   style={{
-                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.hudGlowColor} 0%, transparent 70%)`,
+                    background: FACTIONS.red.gradient,
+                  }}
+                >
+                  {/* Animated glow effect */}
+                  <div
+                    className="absolute inset-0 opacity-50"
+                    style={{
+                      background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.red.hudGlowColor} 0%, transparent 70%)`,
+                    }}
+                  />
+
+                  <SolarIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
+                  <span
+                    className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
+                    style={{ textShadow: `0 0 20px ${FACTIONS.red.hudGlowColor}` }}
+                  >
+                    {redScore}
+                  </span>
+
+                  {/* Flag carrier indicator */}
+                  {redFlag?.carrierId && (
+                    <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
+                      <span className="text-[9px]">🏴</span>
+                      <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Faction label */}
+                <div
+                  className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
+                  style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
+                >
+                  <span
+                    className="text-[6px] sm:text-[7px] font-display tracking-[0.2em]"
+                    style={{ color: `${FACTIONS.red.primaryColor}b3` }}
+                  >
+                    SOLAR
+                  </span>
+                </div>
+              </div>
+
+              {/* Center Divider + Timer */}
+              <div className="relative flex items-center">
+                {/* Diagonal dividers */}
+                <div
+                  className="absolute -left-2 top-0 bottom-0 w-4 z-10"
+                  style={{
+                    background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
+                  }}
+                />
+                <div
+                  className="absolute -right-2 top-0 bottom-0 w-4 z-10"
+                  style={{
+                    background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
                   }}
                 />
 
-                <SolarIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
-                <span
-                  className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
-                  style={{ textShadow: `0 0 20px ${FACTIONS.red.hudGlowColor}` }}
-                >
-                  {redScore}
-                </span>
-
-                {/* Flag carrier indicator */}
-                {redFlag?.carrierId && (
-                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
-                    <span className="text-[9px]">🏴</span>
-                    <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
-                  </div>
-                )}
+                {/* Timer */}
+                <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
+                  <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${displayedRoundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
+                      displayedRoundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
+                    }`}>
+                    {formatTime(displayedRoundTimeRemaining)}
+                  </span>
+                  <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
+                </div>
               </div>
 
-              {/* Faction label */}
-              <div
-                className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
-                style={{ background: `linear-gradient(180deg, ${FACTIONS.red.primaryColor}30, transparent)` }}
-              >
-                <span
-                  className="text-[6px] sm:text-[7px] font-display tracking-[0.2em]"
-                  style={{ color: `${FACTIONS.red.primaryColor}b3` }}
-                >
-                  SOLAR
-                </span>
-              </div>
-            </div>
-
-            {/* Center Divider + Timer */}
-            <div className="relative flex items-center">
-              {/* Diagonal dividers */}
-              <div
-                className="absolute -left-2 top-0 bottom-0 w-4 z-10"
-                style={{
-                  background: 'linear-gradient(135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
-                }}
-              />
-              <div
-                className="absolute -right-2 top-0 bottom-0 w-4 z-10"
-                style={{
-                  background: 'linear-gradient(-135deg, transparent 45%, rgba(10,10,15,0.95) 45%, rgba(10,10,15,0.95) 55%, transparent 55%)',
-                }}
-              />
-
-              {/* Timer */}
-              <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
-                <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${displayedRoundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
-                    displayedRoundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
-                  }`}>
-                  {formatTime(displayedRoundTimeRemaining)}
-                </span>
-                <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
-              </div>
-            </div>
-
-            {/* Void Legion Side */}
-            <div className="relative group">
-              <div
-                className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
-                style={{
-                  background: FACTIONS.blue.gradient,
-                }}
-              >
-                {/* Animated glow effect */}
+              {/* Void Legion Side */}
+              <div className="relative group">
                 <div
-                  className="absolute inset-0 opacity-50"
+                  className="w-[clamp(3rem,5.5vw,5.75rem)] h-[clamp(2.25rem,3.4vw,3.25rem)] flex items-center justify-center gap-1 sm:gap-1.5 relative overflow-hidden"
                   style={{
-                    background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.hudGlowColor} 0%, transparent 70%)`,
+                    background: FACTIONS.blue.gradient,
                   }}
-                />
-
-                <span
-                  className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
-                  style={{ textShadow: `0 0 20px ${FACTIONS.blue.hudGlowColor}` }}
                 >
-                  {blueScore}
-                </span>
-                <VoidIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
+                  {/* Animated glow effect */}
+                  <div
+                    className="absolute inset-0 opacity-50"
+                    style={{
+                      background: `radial-gradient(ellipse at 50% 100%, ${FACTIONS.blue.hudGlowColor} 0%, transparent 70%)`,
+                    }}
+                  />
 
-                {/* Flag carrier indicator */}
-                {blueFlag?.carrierId && (
-                  <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
-                    <span className="text-[9px]">🏴</span>
-                    <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
-                  </div>
-                )}
-              </div>
+                  <span
+                    className="font-display text-xl sm:text-2xl lg:text-3xl text-white tabular-nums drop-shadow-lg relative z-10"
+                    style={{ textShadow: `0 0 20px ${FACTIONS.blue.hudGlowColor}` }}
+                  >
+                    {blueScore}
+                  </span>
+                  <VoidIconSmall className="w-3.5 h-3.5 sm:w-4 sm:h-4 lg:w-[18px] lg:h-[18px] text-white/80 relative z-10" />
 
-              {/* Faction label */}
-              <div
-                className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
-                style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
-              >
-                <span className="text-[6px] sm:text-[7px] font-display tracking-[0.2em] text-cyan-300/70">VOID</span>
+                  {/* Flag carrier indicator */}
+                  {blueFlag?.carrierId && (
+                    <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-black/40 rounded-full">
+                      <span className="text-[9px]">🏴</span>
+                      <span className="text-[8px] text-amber-300 font-display tracking-wider">FLAG</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Faction label */}
+                <div
+                  className="absolute -bottom-3 left-0 right-0 h-3 flex items-center justify-center"
+                  style={{ background: `linear-gradient(180deg, ${FACTIONS.blue.primaryColor}30, transparent)` }}
+                >
+                  <span className="text-[6px] sm:text-[7px] font-display tracking-[0.2em] text-cyan-300/70">VOID</span>
+                </div>
               </div>
             </div>
+
+            {/* Bottom accent line */}
+            <div
+              className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/4 h-px"
+              style={{
+                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
+              }}
+            />
           </div>
-
-          {/* Bottom accent line */}
-          <div
-            className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/4 h-px"
-            style={{
-              background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)',
-            }}
-          />
         </div>
-      </div>
+      )}
 
       {/* ===== BOTTOM LEFT - Health ===== */}
       <div
