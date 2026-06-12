@@ -6,10 +6,9 @@ import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
-import { HeroPreviewCanvas } from './HeroPreviewCanvas';
+import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton } from './SocialBox';
-import type { HeroAnimationMode } from '../game/HeroVoxelBody';
 import { useUISounds } from '../../hooks/useAudio';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
@@ -101,15 +100,7 @@ function PwaInstallButton({ onInstall }: { onInstall: () => void }) {
 
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
-
-function isTextEntryTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  );
-}
+const LOBBY_HERO_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
 
 export function MainLobby() {
   const { playerName, availableLobbies, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
@@ -149,7 +140,7 @@ export function MainLobby() {
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showBrowseGames, setShowBrowseGames] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
-  const [heroAnimationMode, setHeroAnimationMode] = useState<HeroAnimationMode>('idle');
+  const heroAnimationMode = LOBBY_HERO_ANIMATION_MODE;
 
   // Authentication states
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -322,45 +313,6 @@ export function MainLobby() {
   const handleSelectHero = (heroId: HeroId) => {
     setFeaturedHero(heroId);
   };
-
-  useEffect(() => {
-    const handleHeroAnimationKey = (event: KeyboardEvent) => {
-      if (
-        activeTab !== 'play' ||
-        showSettings ||
-        showSocial ||
-        showCreateLobby ||
-        showBrowseGames ||
-        showAuthModal ||
-        event.defaultPrevented ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        isTextEntryTarget(event.target)
-      ) {
-        return;
-      }
-
-      if (event.key === '1') {
-        setHeroAnimationMode('walk');
-      } else if (event.key === '2') {
-        setHeroAnimationMode('jump');
-      } else if (event.key === '3') {
-        setHeroAnimationMode('crouchWalkLoop');
-      } else if (event.key === '4') {
-        setHeroAnimationMode('run');
-      } else if (event.key === '5') {
-        setHeroAnimationMode('slide');
-      } else if (event.key === '6') {
-        setHeroAnimationMode('attack');
-      } else if (event.key === '0') {
-        setHeroAnimationMode('idle');
-      }
-    };
-
-    window.addEventListener('keydown', handleHeroAnimationKey);
-    return () => window.removeEventListener('keydown', handleHeroAnimationKey);
-  }, [activeTab, showAuthModal, showBrowseGames, showCreateLobby, showSettings, showSocial]);
 
   useEffect(() => {
     if (activeTab === 'play') {
@@ -652,7 +604,7 @@ interface PlayTabProps {
   featuredHero: HeroId;
   heroInfo: (typeof HERO_DEFINITIONS)[HeroId];
   heroColor: string;
-  heroAnimationMode: HeroAnimationMode;
+  heroAnimationMode: HeroPreviewAnimationMode;
   lobbyCount: number;
   isAuthenticated: boolean;
   hasFullFunctionality: boolean;
@@ -691,7 +643,9 @@ function PlayTab({
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
   const featuredPreviewClassName =
-    heroAnimationMode === 'jump'
+    heroAnimationMode === 'showcaseLoop'
+      ? 'relative -mt-[clamp(2rem,6vh,5rem)] h-[clamp(20rem,50vh,36rem)] w-[clamp(18rem,36vw,34rem)]'
+      : heroAnimationMode === 'jump'
       ? 'relative -mt-[clamp(5rem,14vh,10rem)] h-[clamp(22rem,56vh,40rem)] w-[clamp(15rem,32vw,30rem)]'
       : heroAnimationMode === 'slide'
         ? 'relative h-[clamp(18rem,44vh,32rem)] w-[clamp(18rem,36vw,34rem)]'
@@ -941,7 +895,7 @@ function DeferredFeaturedHeroPreview({
   heroId: HeroId;
   accentColor: string;
   initialYaw: number;
-  animationMode: HeroAnimationMode;
+  animationMode: HeroPreviewAnimationMode;
   className: string;
 }) {
   const [shouldMountPreview, setShouldMountPreview] = useState(false);

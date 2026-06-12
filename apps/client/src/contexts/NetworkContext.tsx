@@ -227,6 +227,33 @@ function resolvePracticePlayerName(playerName?: string): string {
   return storeName || 'Practice';
 }
 
+function runAfterNextPaint(callback: () => void): void {
+  if (typeof window === 'undefined') {
+    setTimeout(callback, 0);
+    return;
+  }
+
+  let hasRun = false;
+  const runOnce = () => {
+    if (hasRun) return;
+    hasRun = true;
+    callback();
+  };
+
+  if (typeof window.requestAnimationFrame !== 'function') {
+    window.setTimeout(runOnce, 0);
+    return;
+  }
+
+  const fallbackTimeout = window.setTimeout(runOnce, 100);
+  window.requestAnimationFrame(() => {
+    window.setTimeout(() => {
+      window.clearTimeout(fallbackTimeout);
+      runOnce();
+    }, 0);
+  });
+}
+
 // ============================================================================
 // PROVIDER COMPONENT
 // ============================================================================
@@ -236,6 +263,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const lobbyRoomRef = useRef<Room | null>(null);
   const gameRoomRef = useRef<Room | null>(null);
   const isJoiningGameRef = useRef(false);
+  const practiceStartTokenRef = useRef(0);
   const voiceTokenRequestsRef = useRef(new Map<string, {
     resolve: (response: VoiceTokenResponse) => void;
     reject: (error: Error) => void;
@@ -249,6 +277,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setPlayerId,
     setPlayerName,
     setPracticeMode,
+    setPracticePreparing,
     setAppPhase,
     setGamePhase,
     setPhaseEndTime,
@@ -333,6 +362,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cleanupExistingConnections = useCallback(() => {
+    practiceStartTokenRef.current += 1;
     isJoiningGameRef.current = false;
     disconnectVoice('network_cleanup');
     rejectPendingVoiceTokenRequests('connection cleaned up before voice token response');
@@ -356,76 +386,100 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [rejectPendingVoiceTokenRequests]);
 
   const startPracticeGame = useCallback((playerName?: string) => {
-    const seed = createRandomSeed();
-    const preparedMap = prepareVoxelMapCpu({ seed, source: 'match' });
-    const spawnPoints = [
-      ...preparedMap.manifest.spawnPoints.red,
-      ...preparedMap.manifest.spawnPoints.blue,
-    ];
-    const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
     const name = resolvePracticePlayerName(playerName);
-    const playerId = createPracticePlayerId();
-    const player = createDefaultLocalPlayer(playerId, name);
-
-    player.state = 'selecting';
-    player.position = { ...spawn };
-    player.team = 'red';
-    player.isReady = false;
-    player.heroId = null;
-    player.hasFlag = false;
 
     cleanupExistingConnections();
     resetLobby();
     rejectPendingVoiceTokenRequests('practice mode started');
     setPlayerName(name);
     setPracticeMode(true);
+    setLoading(false);
+    setPracticePreparing(true);
 
-    useGameStore.setState({
-      ...projectileInitialState,
-      isConnected: false,
-      isLoading: false,
-      roomId: null,
-      playerId,
-      appPhase: 'in_game',
-      gamePhase: 'hero_select',
-      matchSummary: null,
-      appliedExperienceMatchId: null,
-      tick: 0,
-      serverTime: Date.now(),
-      mapSeed: seed,
-      redScore: 0,
-      blueScore: 0,
-      redFlag: null,
-      blueFlag: null,
-      players: new Map([[playerId, player]]),
-      localPlayer: player,
-      playerPings: new Map(),
-      roundTimeRemaining: 0,
-      phaseEndTime: null,
-      pendingInputs: [],
-      lastProcessedTick: 0,
-      shadowStepTargeting: false,
-      shadowStepValid: false,
-      ultimateEffectActive: false,
-      ultimateEffectType: null,
-      ultimateEffectEndTime: 0,
-      clientCooldowns: {},
-      clientCharges: {},
-      unstuckCooldownUntil: 0,
-      unstuckRequestId: 0,
-      slideIntensity: 0,
+    const startToken = ++practiceStartTokenRef.current;
+
+    runAfterNextPaint(() => {
+      if (practiceStartTokenRef.current !== startToken) return;
+
+      try {
+        const seed = createRandomSeed();
+        const preparedMap = prepareVoxelMapCpu({ seed, source: 'match' });
+        const spawnPoints = [
+          ...preparedMap.manifest.spawnPoints.red,
+          ...preparedMap.manifest.spawnPoints.blue,
+        ];
+        const spawn = spawnPoints[Math.floor(Math.random() * spawnPoints.length)] ?? { x: 0, y: 1, z: 0 };
+        const playerId = createPracticePlayerId();
+        const player = createDefaultLocalPlayer(playerId, name);
+
+        player.state = 'selecting';
+        player.position = { ...spawn };
+        player.team = 'red';
+        player.isReady = false;
+        player.heroId = null;
+        player.hasFlag = false;
+
+        useGameStore.setState({
+          ...projectileInitialState,
+          isConnected: false,
+          isLoading: false,
+          isPracticeMode: true,
+          isPracticePreparing: false,
+          roomId: null,
+          playerId,
+          appPhase: 'in_game',
+          gamePhase: 'hero_select',
+          matchSummary: null,
+          appliedExperienceMatchId: null,
+          tick: 0,
+          serverTime: Date.now(),
+          mapSeed: seed,
+          redScore: 0,
+          blueScore: 0,
+          redFlag: null,
+          blueFlag: null,
+          players: new Map([[playerId, player]]),
+          localPlayer: player,
+          playerPings: new Map(),
+          roundTimeRemaining: 0,
+          phaseEndTime: null,
+          pendingInputs: [],
+          lastProcessedTick: 0,
+          shadowStepTargeting: false,
+          shadowStepValid: false,
+          ultimateEffectActive: false,
+          ultimateEffectType: null,
+          ultimateEffectEndTime: 0,
+          clientCooldowns: {},
+          clientCharges: {},
+          unstuckCooldownUntil: 0,
+          unstuckRequestId: 0,
+          slideIntensity: 0,
+        });
+        resetLocalMovementPrediction(movementStateFromPlayer(player), 0, player.id);
+        setRoomId(null);
+        setConnected(false);
+
+        loggers.network.info('started local practice', seed);
+      } catch (error) {
+        loggers.network.error('failed to start local practice', error);
+        practiceStartTokenRef.current += 1;
+        useGameStore.setState({
+          isPracticePreparing: false,
+          isPracticeMode: false,
+          appPhase: 'menu',
+          gamePhase: 'waiting',
+        });
+      }
     });
-    resetLocalMovementPrediction(movementStateFromPlayer(player), 0, player.id);
-    setRoomId(null);
-    setConnected(false);
-
-    loggers.network.info('started local practice', seed);
   }, [
     cleanupExistingConnections,
     rejectPendingVoiceTokenRequests,
     resetLobby,
     setConnected,
+    setLoading,
     setPlayerName,
+    setPracticePreparing,
     setPracticeMode,
     setRoomId,
   ]);

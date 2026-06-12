@@ -8,6 +8,7 @@ import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
 import { HeroSelect } from './components/ui/HeroSelect';
 import { LoadingScreen } from './components/ui/LoadingScreen';
+import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
 import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
 import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 import { TeleportEffects } from './components/ui/TeleportEffects';
@@ -65,6 +66,7 @@ export function App() {
   const matchSummary = useGameStore((state) => state.matchSummary);
   const isLoading = useGameStore((state) => state.isLoading);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
+  const isPracticePreparing = useGameStore((state) => state.isPracticePreparing);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
@@ -321,6 +323,10 @@ export function App() {
       setIsStartupRampActive(false);
     };
   }, [isActiveGame, isMatchLoadingVisible, isMatchSceneReady, warmupKey]);
+
+  if (isPracticePreparing) {
+    return <PracticeLoadingScreen />;
+  }
 
   if (isLoading) {
     return <LoadingScreen />;

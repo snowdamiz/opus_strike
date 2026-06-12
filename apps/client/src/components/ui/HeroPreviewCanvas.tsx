@@ -12,6 +12,8 @@ import { useHeroPreviewRotation } from './useHeroPreviewRotation';
 
 type HeroPreviewSize = 'featured' | 'detail' | 'compact' | 'card';
 type HeroPreviewActionMode = Exclude<HeroAnimationMode, 'crouchWalkLoop'>;
+export type HeroPreviewAnimationMode = HeroAnimationMode | 'showcaseLoop';
+type HeroPreviewLoopMode = Extract<HeroPreviewAnimationMode, 'crouchWalkLoop' | 'slide' | 'showcaseLoop'>;
 type Vector3Tuple = [number, number, number];
 type DprSetting = number | [number, number];
 
@@ -29,7 +31,7 @@ interface HeroPreviewCanvasProps {
   isBot?: boolean;
   hasFlag?: boolean;
   postureScaleY?: number;
-  animationMode?: HeroAnimationMode;
+  animationMode?: HeroPreviewAnimationMode;
   'aria-label'?: string;
 }
 
@@ -145,6 +147,49 @@ const RUN_SLIDE_LOOP_SEQUENCE: Array<{ mode: HeroPreviewActionMode; duration: nu
   { mode: 'run', duration: 0.7 },
 ];
 const RUN_SLIDE_LOOP_DURATION = RUN_SLIDE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
+const SHOWCASE_LOOP_SEQUENCE: Array<{ mode: HeroPreviewActionMode; duration: number }> = [
+  { mode: 'idle', duration: 1.15 },
+  { mode: 'walk', duration: 1.05 },
+  { mode: 'crouchWalk', duration: 1.2 },
+  { mode: 'crouch', duration: 0.55 },
+  { mode: 'walk', duration: 0.7 },
+  { mode: 'run', duration: 0.95 },
+  { mode: 'slide', duration: 1.2 },
+  { mode: 'run', duration: 0.65 },
+  { mode: 'jump', duration: 1.25 },
+  { mode: 'idle', duration: 0.6 },
+  { mode: 'attack', duration: 1.45 },
+  { mode: 'idle', duration: 0.9 },
+];
+const SHOWCASE_LOOP_DURATION = SHOWCASE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
+const PREVIEW_LOOP_CONFIG: Record<
+  HeroPreviewLoopMode,
+  {
+    sequence: Array<{ mode: HeroPreviewActionMode; duration: number }>;
+    duration: number;
+    initialMode: HeroPreviewActionMode;
+    fallbackMode: HeroPreviewActionMode;
+  }
+> = {
+  crouchWalkLoop: {
+    sequence: CROUCH_WALK_LOOP_SEQUENCE,
+    duration: CROUCH_WALK_LOOP_DURATION,
+    initialMode: 'idle',
+    fallbackMode: 'idle',
+  },
+  slide: {
+    sequence: RUN_SLIDE_LOOP_SEQUENCE,
+    duration: RUN_SLIDE_LOOP_DURATION,
+    initialMode: 'run',
+    fallbackMode: 'run',
+  },
+  showcaseLoop: {
+    sequence: SHOWCASE_LOOP_SEQUENCE,
+    duration: SHOWCASE_LOOP_DURATION,
+    initialMode: 'idle',
+    fallbackMode: 'idle',
+  },
+};
 const SLIDE_PREVIEW_YAW = -Math.PI / 2;
 const PREVIEW_CLEAR_COLOR_VAR = '--color-strike-canvas';
 const PREVIEW_OFFSCREEN_ROOT_ID = 'hero-preview-offscreen-root';
@@ -236,6 +281,10 @@ function getLoopMode(
   }
 
   return fallbackMode;
+}
+
+function isPreviewLoopMode(animationMode: HeroPreviewAnimationMode): animationMode is HeroPreviewLoopMode {
+  return animationMode === 'crouchWalkLoop' || animationMode === 'slide' || animationMode === 'showcaseLoop';
 }
 
 export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
@@ -472,7 +521,7 @@ interface HeroPreviewSceneProps {
   hasFlag: boolean;
   postureScaleY: number;
   idleAnimation: boolean;
-  animationMode: HeroAnimationMode;
+  animationMode: HeroPreviewAnimationMode;
 }
 
 function HeroPreviewScene({
@@ -494,15 +543,15 @@ function HeroPreviewScene({
   const rootRef = useRef<THREE.Group>(null);
   const idleYawRef = useRef(0);
   const loopStartedAtRef = useRef<number | null>(null);
-  const [loopAnimationMode, setLoopAnimationMode] = useState<HeroPreviewActionMode>('idle');
-  const bodyAnimationMode: HeroPreviewActionMode = animationMode === 'slide'
-    ? loopAnimationMode === 'slide' ? 'slide' : 'run'
-    : animationMode === 'crouchWalkLoop'
-      ? loopAnimationMode === 'walk' || loopAnimationMode === 'crouchWalk' ? loopAnimationMode : 'idle'
-      : animationMode;
+  const isLoopingPreview = isPreviewLoopMode(animationMode);
+  const loopConfig = isLoopingPreview ? PREVIEW_LOOP_CONFIG[animationMode] : null;
+  const [loopAnimationMode, setLoopAnimationMode] = useState<HeroPreviewActionMode>(
+    () => loopConfig?.initialMode ?? 'idle'
+  );
+  const bodyAnimationMode: HeroPreviewActionMode = isLoopingPreview ? loopAnimationMode : animationMode;
   const actionFraming = bodyAnimationMode === 'jump'
     ? config.jumpFraming
-    : animationMode === 'slide' || bodyAnimationMode === 'slide'
+    : bodyAnimationMode === 'slide'
       ? config.slideFraming
       : undefined;
   const activePostureScaleY = postureScaleY;
@@ -523,23 +572,26 @@ function HeroPreviewScene({
   }, [animationMode, heroId]);
 
   useEffect(() => {
-    if (animationMode === 'crouchWalkLoop' || animationMode === 'slide') {
+    if (loopConfig) {
       loopStartedAtRef.current = null;
-      setLoopAnimationMode(animationMode === 'slide' ? 'run' : 'idle');
+      setLoopAnimationMode(loopConfig.initialMode);
     }
-  }, [animationMode, heroId]);
+  }, [animationMode, heroId, loopConfig]);
 
   useFrame((state, delta) => {
     if (!rootRef.current) return;
 
-    if (animationMode === 'crouchWalkLoop' || animationMode === 'slide') {
+    if (loopConfig) {
       if (loopStartedAtRef.current === null) {
         loopStartedAtRef.current = state.clock.elapsedTime;
       }
       const elapsedLoopTime = state.clock.elapsedTime - loopStartedAtRef.current;
-      const nextLoopMode = animationMode === 'slide'
-        ? getLoopMode(RUN_SLIDE_LOOP_SEQUENCE, RUN_SLIDE_LOOP_DURATION, elapsedLoopTime, 'run')
-        : getLoopMode(CROUCH_WALK_LOOP_SEQUENCE, CROUCH_WALK_LOOP_DURATION, elapsedLoopTime, 'idle');
+      const nextLoopMode = getLoopMode(
+        loopConfig.sequence,
+        loopConfig.duration,
+        elapsedLoopTime,
+        loopConfig.fallbackMode
+      );
       setLoopAnimationMode((currentMode) => currentMode === nextLoopMode ? currentMode : nextLoopMode);
     }
 

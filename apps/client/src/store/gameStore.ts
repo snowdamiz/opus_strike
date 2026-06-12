@@ -76,6 +76,7 @@ interface CoreState {
   playerId: string | null;
   playerName: string;
   isPracticeMode: boolean;
+  isPracticePreparing: boolean;
 
   // App phase (different from game phase)
   appPhase: AppPhase;
@@ -149,6 +150,7 @@ interface CoreActions {
   setPlayerId: (playerId: string | null) => void;
   setPlayerName: (name: string) => void;
   setPracticeMode: (enabled: boolean) => void;
+  setPracticePreparing: (preparing: boolean) => void;
   setAppPhase: (phase: AppPhase) => void;
   setMatchmakingStatus: (status: MatchmakingStatus) => void;
   setGamePhase: (phase: GamePhase) => void;
@@ -216,6 +218,7 @@ const coreInitialState: CoreState = {
   playerId: null,
   playerName: '',
   isPracticeMode: false,
+  isPracticePreparing: false,
   appPhase: 'menu',
   availableLobbies: [],
   currentLobbyId: null,
@@ -298,7 +301,18 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   setRoomId: (roomId) => set((state) => state.roomId === roomId ? state : { roomId }),
   setPlayerId: (playerId) => set((state) => state.playerId === playerId ? state : { playerId }),
   setPlayerName: (name) => set((state) => state.playerName === name ? state : { playerName: name }),
-  setPracticeMode: (enabled) => set((state) => state.isPracticeMode === enabled ? state : { isPracticeMode: enabled }),
+  setPracticeMode: (enabled) => set((state) => {
+    if (enabled) {
+      return state.isPracticeMode ? state : { isPracticeMode: true };
+    }
+
+    return state.isPracticeMode || state.isPracticePreparing
+      ? { isPracticeMode: false, isPracticePreparing: false }
+      : state;
+  }),
+  setPracticePreparing: (preparing) => set((state) => (
+    state.isPracticePreparing === preparing ? state : { isPracticePreparing: preparing }
+  )),
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
   setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
   setGamePhase: (phase) => set((state) => state.gamePhase === phase ? state : { gamePhase: phase }),
