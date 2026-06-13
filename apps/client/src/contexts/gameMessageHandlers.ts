@@ -41,7 +41,7 @@ import {
   stopObservedAbilityCastEffects,
 } from '../components/game/ObservedAbilityCastEffects';
 import { triggerTeleportEffect } from '../components/ui/TeleportEffects';
-import { addChronosLifelineEffects } from '../components/game/chronos/lifeline';
+import { addChronosLifelineEffects, addChronosSelfHealPulseEffect } from '../components/game/chronos/lifeline';
 import { addChronosTimebreakEffect } from '../components/game/chronos/timebreak';
 import { triggerBlazeRocketJumpStaffSlam } from '../viewmodel/blazePose';
 import {
@@ -51,6 +51,11 @@ import {
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
 import { resolveAbilitySocketOrigin } from '../model-system/abilitySocketResolver';
+import {
+  chronosOrbForwardFromYaw,
+  offsetChronosOrbVisualPlainPosition,
+  type Vec3Like,
+} from '../model-system/chronosOrbVisualOrigin';
 import {
   DRAG_HOOK_SPEED,
   BLAZE_BOMB_FALL_DURATION,
@@ -75,6 +80,7 @@ import { loggers } from '../utils/logger';
 import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
 import type {
   BotDifficulty,
+  ChronosAegisBrokenEvent,
   HeroId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
@@ -122,6 +128,7 @@ interface UnpackedPlayerTransform {
   movementBits: number;
   wallRunSide: -1 | 0 | 1;
   movementEpoch: number;
+  chronosAegisShieldRatio: number;
 }
 
 // ============================================================================
@@ -487,6 +494,7 @@ function unpackPackedTransform(transform: PackedPlayerTransform): UnpackedPlayer
     movementBits: transform[9],
     wallRunSide: transform[10],
     movementEpoch: transform[11],
+    chronosAegisShieldRatio: (transform[12] ?? 255) / 255,
   };
 }
 
@@ -962,7 +970,8 @@ export function setupPlayerTransformsHandler(
     setChronosAegisVisualState(
       playerId,
       chronosAegisActive,
-      Date.now()
+      Date.now(),
+      transform.chronosAegisShieldRatio
     );
     return 'remote';
   };
@@ -1008,6 +1017,15 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
     recordMovementTraceAuthorityAck(authority);
     recordAuthorityAckReceived(authority);
     enqueueSelfMovementAuthority(authority);
+    const localPlayer = useGameStore.getState().localPlayer;
+    if (localPlayer?.heroId === 'chronos') {
+      setChronosAegisVisualState(
+        localPlayer.id,
+        Boolean(authority.chronosAegisActive),
+        Date.now(),
+        authority.chronosAegisShieldRatio
+      );
+    }
   });
 }
 
@@ -1155,6 +1173,7 @@ interface AbilityUsedMessage {
   startPosition?: { x: number; y: number; z: number };
   targetPosition?: { x: number; y: number; z: number };
   targetIds?: string[];
+  mode?: 'allies' | 'self';
   aimDirection?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };
   maxDistance?: number;
@@ -1214,6 +1233,51 @@ function toPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: numb
   };
 }
 
+function resolvePlayerFlatForward(playerId: string): Vec3Like | null {
+  const store = useGameStore.getState();
+  const visual = visualStore.getState();
+  const yaw = visual.playerRotations.get(playerId)
+    ?? store.players.get(playerId)?.lookYaw
+    ?? (store.localPlayer?.id === playerId ? store.localPlayer.lookYaw : undefined);
+  return typeof yaw === 'number' && Number.isFinite(yaw)
+    ? chronosOrbForwardFromYaw(yaw)
+    : null;
+}
+
+function resolveChronosOrbVisualDirection(data: AbilityUsedMessage): Vec3Like | null {
+  if (data.aimDirection) return data.aimDirection;
+  if (
+    typeof data.direction?.x === 'number' &&
+    typeof data.direction?.y === 'number' &&
+    typeof data.direction?.z === 'number'
+  ) {
+    return {
+      x: data.direction.x,
+      y: data.direction.y,
+      z: data.direction.z,
+    };
+  }
+
+  const yaw = typeof data.direction?.yaw === 'number'
+    ? data.direction.yaw
+    : typeof data.launchYaw === 'number'
+      ? data.launchYaw
+      : undefined;
+  if (typeof yaw === 'number' && Number.isFinite(yaw)) {
+    const pitch = typeof data.direction?.pitch === 'number' && Number.isFinite(data.direction.pitch)
+      ? data.direction.pitch
+      : 0;
+    const cosPitch = Math.cos(pitch);
+    return {
+      x: -Math.sin(yaw) * cosPitch,
+      y: Math.sin(pitch),
+      z: -Math.cos(yaw) * cosPitch,
+    };
+  }
+
+  return resolvePlayerFlatForward(data.playerId);
+}
+
 function resolveObservedStartPosition(
   data: AbilityUsedMessage,
   localPlayerId: string | null,
@@ -1226,7 +1290,13 @@ function resolveObservedStartPosition(
       abilityId: data.abilityId,
       side: data.launchSide,
     });
-    if (resolvedOrigin) return toPlainPosition(resolvedOrigin.position);
+    if (resolvedOrigin) {
+      return offsetChronosOrbVisualPlainPosition(
+        toPlainPosition(resolvedOrigin.position),
+        resolveChronosOrbVisualDirection(data),
+        data.abilityId
+      );
+    }
   }
 
   return fallback;
@@ -2272,6 +2342,21 @@ export function setupCombatHandlers(room: Room) {
     applyPhantomPrimaryState(data);
   });
 
+  room.onMessage('chronosAegisBroken', (data: ChronosAegisBrokenEvent) => {
+    const now = Date.now();
+    setChronosAegisVisualState(data.playerId, false, now, 0);
+    addEffect({
+      type: 'chronosAegisBreak',
+      position: new THREE.Vector3(data.position.x, data.position.y, data.position.z),
+      direction: new THREE.Vector3(data.direction.x, data.direction.y, data.direction.z),
+      duration: 720,
+    });
+    playChronosWorldSound('chronosSuperchargedImpact', data.position, {
+      volume: 0.86,
+      pitch: 1.12,
+    });
+  });
+
   room.onMessage('playerDamaged', (data: {
     targetId: string;
     damage: number;
@@ -2346,36 +2431,60 @@ export function setupCombatHandlers(room: Room) {
     }
 
     const isRemoteSource = data.sourceId !== localPlayerId;
-    if (data.abilityId === 'chronos_lifeline_conduit') {
+    const isChronosLifeline = data.abilityId === 'chronos_lifeline_conduit';
+    const selfHealTarget = isChronosLifeline
+      ? data.targets.find((target) => target.targetId === data.sourceId)
+      : undefined;
+
+    if (isChronosLifeline) {
       stopObservedAbilityCastEffects(data.sourceId, 'chronos_lifeline_conduit');
     }
-    const sourceOrigin = isRemoteSource
+    const sourceOrigin = isChronosLifeline
       ? resolveAbilitySocketOrigin({
-        ownerScope: 'remoteBody',
-        playerId: data.sourceId,
+        ownerScope: isRemoteSource ? 'remoteBody' : 'localViewmodel',
+        playerId: isRemoteSource ? data.sourceId : undefined,
         abilityId: 'chronos_lifeline_conduit',
       })
       : null;
-    const sourcePosition = sourceOrigin
-      ? toPlainPosition(sourceOrigin.position)
-      : data.sourcePosition;
+    const sourcePosition = isChronosLifeline
+      ? offsetChronosOrbVisualPlainPosition(
+        sourceOrigin ? toPlainPosition(sourceOrigin.position) : data.sourcePosition,
+        resolvePlayerFlatForward(data.sourceId),
+        'chronos_lifeline_conduit'
+      )
+      : sourceOrigin
+        ? toPlainPosition(sourceOrigin.position)
+        : data.sourcePosition;
 
-    addChronosLifelineEffects(
-      sourcePosition,
-      data.targets.map((target) => ({
-        position: target.position,
-      })),
-      undefined,
-      isRemoteSource
-        ? {
+    if (selfHealTarget) {
+      addChronosSelfHealPulseEffect(
+        sourcePosition,
+        selfHealTarget.position,
+        undefined,
+        {
           sourceIsExact: Boolean(sourceOrigin),
           sourceAbilityId: 'chronos_lifeline_conduit',
-          sourcePlayerId: data.sourceId,
+          sourcePlayerId: isRemoteSource ? data.sourceId : undefined,
         }
-        : {}
-    );
+      );
+    } else {
+      addChronosLifelineEffects(
+        sourcePosition,
+        data.targets.map((target) => ({
+          position: target.position,
+        })),
+        undefined,
+        isChronosLifeline
+          ? {
+            sourceIsExact: Boolean(sourceOrigin),
+            sourceAbilityId: 'chronos_lifeline_conduit',
+            sourcePlayerId: isRemoteSource ? data.sourceId : undefined,
+          }
+          : {}
+      );
+    }
     if (
-      data.abilityId === 'chronos_lifeline_conduit' &&
+      isChronosLifeline &&
       (isRemoteSource || !shouldSuppressPredictedLocalAbilitySound('chronos_lifeline_conduit'))
     ) {
       playChronosWorldSound('chronosLifeline', sourcePosition);

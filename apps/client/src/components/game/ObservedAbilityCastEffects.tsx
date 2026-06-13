@@ -4,6 +4,10 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
+import {
+  chronosOrbForwardFromYaw,
+  offsetChronosOrbVisualVector,
+} from '../../model-system/chronosOrbVisualOrigin';
 import { SHARED_GEOMETRIES } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
@@ -46,6 +50,19 @@ function nextObservedCastRevision(): void {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function offsetObservedChronosCastPosition(
+  effect: ObservedAbilityCastEffectData,
+  target: THREE.Vector3
+): void {
+  const store = useGameStore.getState();
+  const yaw = visualStore.getState().playerRotations.get(effect.playerId)
+    ?? store.players.get(effect.playerId)?.lookYaw
+    ?? (store.localPlayer?.id === effect.playerId ? store.localPlayer.lookYaw : undefined);
+  if (typeof yaw !== 'number' || !Number.isFinite(yaw)) return;
+
+  offsetChronosOrbVisualVector(target, chronosOrbForwardFromYaw(yaw), effect.abilityId);
 }
 
 export function startObservedAbilityCastEffect(effect: ObservedAbilityCastEffectInput): void {
@@ -115,6 +132,7 @@ function writeObservedCastPosition(
   });
   if (resolvedOrigin) {
     target.copy(resolvedOrigin.position);
+    offsetObservedChronosCastPosition(effect, target);
     return true;
   }
 
@@ -125,6 +143,7 @@ function writeObservedCastPosition(
       visualPosition.y + PLAYER_CAST_FALLBACK_HEIGHT,
       visualPosition.z
     );
+    offsetObservedChronosCastPosition(effect, target);
     return true;
   }
 
@@ -137,6 +156,7 @@ function writeObservedCastPosition(
       player.position.y + PLAYER_CAST_FALLBACK_HEIGHT,
       player.position.z
     );
+    offsetObservedChronosCastPosition(effect, target);
     return true;
   }
 

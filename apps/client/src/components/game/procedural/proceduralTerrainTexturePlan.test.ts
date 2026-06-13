@@ -53,7 +53,10 @@ assert.doesNotMatch(materialSource, /MeshStandardMaterial/);
 assert.doesNotMatch(materialSource, /envMapIntensity|roughnessMap|metalnessMap|bumpMap|aoMap/);
 assert.doesNotMatch(materialSource, /voxelAtlas|voxelTileOrigin|createVoxelAtlasTextures/);
 assert.doesNotMatch(materialSource, /map:\s*textures\.color|emissiveMap:\s*textures\.emissive/);
+assert.doesNotMatch(materialSource, /voxelMacroTint|voxelMacroTintStrength|vVoxelWorldPosition/);
 assert.doesNotMatch(terrainTexturesSource, /CanvasTexture|roughness|metalness|bump|aoMap|createVoxelAtlas/);
+assert.doesNotMatch(terrainTexturesSource, /VoxelTerrainTextureDetail|DEFAULT_TILE_SIZE|MEDIUM_DETAIL_TILE_SIZE|getTerrainTextureProfile/);
+assert.doesNotMatch(terrainTexturesSource, /paintGrassTop|paintMetalTile|paintGlassTile|paintPadTile/);
 assert.doesNotMatch(terrainTexturesSource, /fillRect\(x \+ inset, y \+ inset, TILE_SIZE - inset \* 2, 2\)/);
 assert.doesNotMatch(terrainTexturesSource, /bottom - 2/);
 

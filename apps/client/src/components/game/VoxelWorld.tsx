@@ -1,6 +1,6 @@
 import { VoxelMap } from './procedural';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
-import type { VoxelMaterialDetail, WorldPerformanceBudget } from './visualQuality';
+import type { WorldPerformanceBudget } from './visualQuality';
 
 interface VoxelWorldProps {
   seed?: number;
@@ -9,7 +9,6 @@ interface VoxelWorldProps {
   dressingShadows: boolean;
   dressingDensity: number;
   reflectionIntensity: number;
-  materialDetail: VoxelMaterialDetail;
   performanceBudget: WorldPerformanceBudget;
   prebuildRegions?: boolean;
   onWarmupStatus?: (status: VoxelMapWarmupStatus) => void;
@@ -23,7 +22,6 @@ export function VoxelWorld({
   dressingShadows,
   dressingDensity,
   reflectionIntensity,
-  materialDetail,
   performanceBudget,
   prebuildRegions = false,
   onWarmupStatus,
@@ -38,7 +36,6 @@ export function VoxelWorld({
         dressingShadows={dressingShadows}
         dressingDensity={dressingDensity}
         reflectionIntensity={reflectionIntensity}
-        materialDetail={materialDetail}
         performanceBudget={performanceBudget}
         prebuildRegions={prebuildRegions}
         onWarmupStatus={onWarmupStatus}

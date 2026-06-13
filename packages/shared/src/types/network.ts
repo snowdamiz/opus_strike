@@ -49,7 +49,15 @@ export type ServerMessage =
   | { type: 'devCommandError'; payload: { message: string } }
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
+  | { type: 'chronosAegisBroken'; payload: ChronosAegisBrokenEvent }
   | { type: 'damage'; payload: DamageEvent };
+
+export interface ChronosAegisBrokenEvent {
+  playerId: string;
+  position: Vec3;
+  direction: Vec3;
+  serverTime: number;
+}
 
 export type PackedPlayerTransform = [
   netId: number,
@@ -64,6 +72,7 @@ export type PackedPlayerTransform = [
   movementBits: number,
   wallRunSide: -1 | 0 | 1,
   movementEpoch: number,
+  chronosAegisShield: number,
 ];
 
 export interface PlayerTransformsV2Message {

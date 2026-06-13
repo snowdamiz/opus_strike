@@ -2,6 +2,8 @@ import {
   ABILITY_CARD_STATS,
   ABILITY_DEFINITIONS,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
+  CHRONOS_AEGIS_SHIELD_MAX_HP,
+  CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
   CHRONOS_VERDANT_PULSE_COOLDOWN_MS,
   PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
 } from '@voxel-strike/shared';
@@ -157,9 +159,10 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
     {
       input: 'RMB',
       name: 'Aegis of Ages',
-      description: 'Hold a forward shield that blocks enemy damage for Chronos and allies behind it.',
+      description: `Hold a ${CHRONOS_AEGIS_SHIELD_MAX_HP} HP forward shield that blocks enemy damage for Chronos and allies behind it. Recharges slowly while lowered.`,
       cooldown: 0,
       iconType: 'aegisofages',
+      meta: [`${CHRONOS_AEGIS_SHIELD_MAX_HP} HP`, `${CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND}/s recharge`],
     },
   ],
 };

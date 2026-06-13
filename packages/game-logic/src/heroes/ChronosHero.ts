@@ -1,6 +1,7 @@
 import { HeroBase, AbilityContext, AbilityResult } from './HeroBase.js';
 import {
-  CHRONOS_LIFELINE_HEAL,
+  CHRONOS_LIFELINE_ALLY_HEAL,
+  CHRONOS_LIFELINE_SELF_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
@@ -32,8 +33,9 @@ export class ChronosHero extends HeroBase {
         type: 'lifeline_conduit',
         position: context.position,
         radius: CHRONOS_LIFELINE_RADIUS,
-        value: CHRONOS_LIFELINE_HEAL,
+        value: CHRONOS_LIFELINE_ALLY_HEAL,
         maxDistance: CHRONOS_LIFELINE_MAX_TARGETS,
+        selfValue: CHRONOS_LIFELINE_SELF_HEAL,
       },
     };
   }

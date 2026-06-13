@@ -28,6 +28,7 @@ import {
   resolveAbilitySocketOrigin,
   type ResolvedAbilitySocketOrigin,
 } from '../../../model-system/abilitySocketResolver';
+import { offsetChronosOrbVisualPlainPosition } from '../../../model-system/chronosOrbVisualOrigin';
 import {
   CHRONOS_VERDANT_PULSE_SHOT_PITCH,
   CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
@@ -162,7 +163,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
 
   const fireVerdantPulse = useCallback((ctx: AbilityContext): void => {
     const now = Date.now();
-    if (!ctx.inputState.primaryFire) {
+    if (ctx.inputState.ability1 || !ctx.inputState.primaryFire) {
       primaryHoldStartedAtRef.current = 0;
       return;
     }
@@ -185,13 +186,18 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
     pulseIdRef.current += 1;
     const direction = calculateLookDirection(ctx.yaw, ctx.pitch);
     const sampledSpawn = sampleChronosPrimarySpawn(ctx, now);
-    const startPosition = sampledSpawn
+    const socketPosition = sampledSpawn
       ? {
         x: sampledSpawn.position.x,
         y: sampledSpawn.position.y,
         z: sampledSpawn.position.z,
       }
       : calculatePlayerSocketPosition(ctx.position, ctx.yaw, CHRONOS_PRIMARY_ORB_SOCKET);
+    const startPosition = offsetChronosOrbVisualPlainPosition(
+      socketPosition,
+      direction,
+      'chronos_verdant_pulse'
+    );
     const visualId = `predicted_chronos_pulse_${ctx.localPlayer.id}_${pulseIdRef.current}`;
 
     triggerChronosPrimaryShotGlow(now);

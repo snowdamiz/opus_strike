@@ -169,7 +169,6 @@ function MapPreviewCanvas({
           dressingShadows={false}
           dressingDensity={0.5}
           reflectionIntensity={0.35}
-          materialDetail="medium"
           meshBuildMode="sync"
           progressiveReveal={false}
           onReady={handleMapReady}

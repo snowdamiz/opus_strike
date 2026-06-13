@@ -22,6 +22,7 @@ export interface BlazeViewmodelPoseRuntime {
 
 export interface ChronosViewmodelPoseRuntime {
   primary: HeldBlendRuntime;
+  lifelineQueued: HeldBlendRuntime;
   primaryShotGlowStartedAtMs: number;
   lifelineConduitStartedAtMs: number;
   timebreakStartedAtMs: number;
@@ -62,6 +63,7 @@ export function createViewmodelPoseRuntime(heroId: HeroId | null = null): Viewmo
     },
     chronos: {
       primary: createHeldBlendRuntime(),
+      lifelineQueued: createHeldBlendRuntime(),
       primaryShotGlowStartedAtMs: -Infinity,
       lifelineConduitStartedAtMs: -Infinity,
       timebreakStartedAtMs: -Infinity,
@@ -84,4 +86,3 @@ export function resetViewmodelPoseRuntime(
   runtime.chronos = next.chronos;
   return runtime;
 }
-

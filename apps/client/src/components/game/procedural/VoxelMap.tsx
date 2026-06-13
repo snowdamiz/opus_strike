@@ -7,7 +7,7 @@ import { useVoxelMaterial } from './materials';
 import { VoxelRegionMesh, type VoxelMeshBuildMode } from './VoxelChunkMesh';
 import { WorldDressing } from './WorldDressing';
 import { clearVoxelGeometryCache, prebuildVoxelRegionGeometries } from './meshBuilder';
-import type { VoxelMaterialDetail, WorldPerformanceBudget } from '../visualQuality';
+import type { WorldPerformanceBudget } from '../visualQuality';
 import {
   prepareVoxelMapCpu,
   type PreparedVoxelMap,
@@ -21,7 +21,6 @@ interface VoxelMapProps {
   dressingShadows: boolean;
   dressingDensity: number;
   reflectionIntensity: number;
-  materialDetail: VoxelMaterialDetail;
   performanceBudget?: WorldPerformanceBudget;
   meshBuildMode?: VoxelMeshBuildMode;
   progressiveReveal?: boolean;
@@ -49,7 +48,6 @@ export function VoxelMap({
   dressingShadows,
   dressingDensity,
   reflectionIntensity,
-  materialDetail,
   performanceBudget,
   meshBuildMode = 'async',
   progressiveReveal = true,
@@ -68,7 +66,7 @@ export function VoxelMap({
   }, [mapSeed, providedManifest]);
   const manifest = preparedMap.manifest;
   const renderableRegions = preparedMap.renderableRegions;
-  const material = useVoxelMaterial(manifest.theme, { detail: materialDetail });
+  const material = useVoxelMaterial(manifest.theme);
   const collidersLoadedRef = useRef(false);
   const didSignalReadyRef = useRef<string | null>(null);
   const regionRevealBudgetRef = useRef(performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);

@@ -110,6 +110,8 @@ export interface SelfMovementAuthority {
   movement: PlayerMovementState;
   correctionReason?: MovementCorrectionReason;
   collisionRevision?: number;
+  chronosAegisActive?: boolean;
+  chronosAegisShieldRatio?: number;
 }
 
 export interface MovementTelemetrySnapshot {

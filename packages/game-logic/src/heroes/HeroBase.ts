@@ -29,6 +29,7 @@ export interface AbilityEffectData {
   targetIds?: string[];
   duration?: number;
   value?: number;
+  selfValue?: number;
   radius?: number;
   maxDistance?: number;
 }

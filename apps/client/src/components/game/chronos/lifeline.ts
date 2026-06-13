@@ -56,3 +56,34 @@ export function addChronosLifelineEffects(
     });
   }
 }
+
+export function addChronosSelfHealPulseEffect(
+  sourcePosition: Vec3Like,
+  targetPosition: Vec3Like,
+  durationMs = CHRONOS_LIFELINE_BEAM_DURATION_MS,
+  options: ChronosLifelineEffectOptions = {}
+): void {
+  const source = new THREE.Vector3(
+    sourcePosition.x,
+    sourcePosition.y + (options.sourceIsExact ? 0 : CHRONOS_LIFELINE_SOURCE_HEIGHT),
+    sourcePosition.z
+  );
+  const target = new THREE.Vector3(
+    targetPosition.x,
+    targetPosition.y + CHRONOS_LIFELINE_TARGET_HEIGHT,
+    targetPosition.z
+  );
+
+  addEffect({
+    type: 'chronosSelfHealPulse',
+    position: source,
+    sourceAbilityId: options.sourceAbilityId,
+    sourcePlayerId: options.sourcePlayerId,
+    duration: durationMs + 140,
+  });
+  addEffect({
+    type: 'heal',
+    position: target,
+    duration: durationMs + 160,
+  });
+}

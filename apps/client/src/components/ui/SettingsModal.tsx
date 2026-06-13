@@ -26,12 +26,6 @@ const resolutionScaleOptions = [
   { value: 'ultra', label: 'Ultra' },
 ];
 
-const materialQualityOptions = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-];
-
 const featureQualityOptions = [
   { value: 'off', label: 'Off' },
   { value: 'minimum', label: 'Minimum' },
@@ -411,14 +405,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   <ToggleInput
                     value={settings.antialiasing}
                     onChange={(v) => updateSetting('antialiasing', v)}
-                  />
-                </SettingRow>
-
-                <SettingRow label="Material Detail" description="Diffuse terrain tile resolution and color detail">
-                  <SelectInput
-                    value={settings.materialQuality}
-                    onChange={(v) => updateSetting('materialQuality', v as ClientSettings['materialQuality'])}
-                    options={materialQualityOptions}
                   />
                 </SettingRow>
 

@@ -47,7 +47,8 @@ export const HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND = 15;
 export const HOOKSHOT_GRAPPLE_TRAP_DAMAGE_INTERVAL_MS = 1000;
 
 export const CHRONOS_LIFELINE_RADIUS = 14;
-export const CHRONOS_LIFELINE_HEAL = 40;
+export const CHRONOS_LIFELINE_ALLY_HEAL = 70;
+export const CHRONOS_LIFELINE_SELF_HEAL = 25;
 export const CHRONOS_LIFELINE_MAX_TARGETS = 3;
 export const CHRONOS_LIFELINE_RELEASE_DELAY_MS = 210;
 export const CHRONOS_LIFELINE_BEAM_DURATION_MS = 620;
@@ -59,6 +60,8 @@ export const CHRONOS_VERDANT_PULSE_FIRE_READY_MS = 140;
 export const CHRONOS_VERDANT_PULSE_SPEED = 68;
 export const CHRONOS_VERDANT_PULSE_AIM_DISTANCE = 120;
 export const CHRONOS_VERDANT_PULSE_SPAWN_FORWARD_OFFSET = 0.82;
+export const CHRONOS_AEGIS_SHIELD_MAX_HP = 800;
+export const CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND = 80;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE = 11;
 export const CHRONOS_TIMEBREAK_RADIUS = CHRONOS_TIMEBREAK_SHOCKWAVE_RANGE;
 export const CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE = Math.PI / 5;
@@ -150,7 +153,8 @@ export const ABILITY_CARD_STATS = {
     { value: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE, label: 'dmg with AOE during F' },
   ],
   chronos_lifeline_conduit: [
-    { value: CHRONOS_LIFELINE_HEAL, label: 'heal' },
+    { value: CHRONOS_LIFELINE_ALLY_HEAL, label: 'ally heal' },
+    { value: CHRONOS_LIFELINE_SELF_HEAL, label: 'self heal' },
     { value: CHRONOS_LIFELINE_MAX_TARGETS, label: 'targets' },
   ],
 } as const satisfies Record<string, readonly AbilityCardStat[]>;
@@ -372,7 +376,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 15,
     charges: 3,
     chargeRegenTime: 15,
-    description: 'Auto-target up to 3 teammates in the area, or Chronos if no teammate is nearby, and send green healing beams. 3 charges; cooldown begins after all charges are spent.',
+    description: 'Press E to queue Lifeline. While the pyramid pulses, LMB heals up to 3 nearby teammates for a large amount; RMB heals only Chronos for less. 3 charges; cooldown begins after all charges are spent.',
   },
   chronos_timebreak: {
     id: 'chronos_timebreak',

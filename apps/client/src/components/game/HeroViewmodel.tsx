@@ -33,6 +33,7 @@ import {
 import {
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
   getChronosAscendantParadoxPose,
+  getChronosLifelineQueuedPose,
   getChronosLifelineConduitPose,
   getChronosPrimaryHeldBlend,
   getChronosPrimaryShotGlowBlend,
@@ -165,6 +166,8 @@ interface ChronosAegisPose {
   shield: number;
   recoil: number;
   spinBoost: number;
+  heartbeat: number;
+  durabilityRatio: number;
 }
 
 interface PhantomReloadPose {
@@ -280,6 +283,7 @@ const CHRONOS_WEAPON_PYRAMID_WIRE_GLOW_OPACITY = 1;
 const CHRONOS_WEAPON_PYRAMID_FORWARD_TILT_X = -0.18;
 const CHRONOS_WEAPON_PYRAMID_SPIN_SPEED = 0.22;
 const CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST = 0.86;
+const CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH = 0.085;
 const CHRONOS_AEGIS_VISUAL_STALE_MS = 220;
 const CHRONOS_AEGIS_BLEND_IN_SPEED = 6.8;
 const CHRONOS_AEGIS_BLEND_OUT_SPEED = 9;
@@ -291,6 +295,9 @@ const CHRONOS_AEGIS_VIEWMODEL_SHIELD_Z = -2.15;
 const CHRONOS_AEGIS_VIEWMODEL_EDGE_THICKNESS = 0.064;
 const CHRONOS_AEGIS_VIEWMODEL_WIDTH = CHRONOS_AEGIS_PANEL_WIDTH * 0.9;
 const CHRONOS_AEGIS_VIEWMODEL_HEIGHT = CHRONOS_AEGIS_PANEL_HEIGHT * 0.9;
+const CHRONOS_AEGIS_DAMAGE_EDGE_COLOR = 0xfde68a;
+const CHRONOS_AEGIS_DAMAGE_FILL_COLOR = 0xfacc15;
+const CHRONOS_AEGIS_CRACK_COLOR = 0xfff7c2;
 const PHANTOM_RELOAD_IDLE_POSE: PhantomReloadPose = {
   active: false,
   progress: 0,
@@ -323,6 +330,8 @@ const CHRONOS_AEGIS_IDLE_POSE: ChronosAegisPose = {
   shield: 0,
   recoil: 0,
   spinBoost: 0,
+  heartbeat: 0,
+  durabilityRatio: 1,
 };
 const CHRONOS_STILL_MOVEMENT_BOB: ChronosMovementBobOffset = {
   horizontalX: 0,
@@ -3563,6 +3572,7 @@ function ChronosFloatingPyramidWeapon({
     const shield = aegisPose.shield;
     const recoil = aegisPose.recoil;
     const spinBoost = aegisPose.spinBoost;
+    const heartbeat = aegisPose.heartbeat;
     root.updateMatrixWorld(true);
     leftSocket.getWorldPosition(leftSocketWorldPosition);
     rightSocket.getWorldPosition(rightSocketWorldPosition);
@@ -3582,7 +3592,11 @@ function ChronosFloatingPyramidWeapon({
     );
 
     if (pyramidRef.current) {
-      const pyramidScale = 1 + CHRONOS_AEGIS_PYRAMID_GROWTH * spread + 0.18 * shield + 0.08 * recoil;
+      const pyramidScale = 1 +
+        CHRONOS_AEGIS_PYRAMID_GROWTH * spread +
+        0.18 * shield +
+        0.08 * recoil +
+        CHRONOS_WEAPON_PYRAMID_HEARTBEAT_GROWTH * heartbeat;
       primarySpinPhaseRef.current +=
         Math.min(delta, 0.05) * CHRONOS_WEAPON_PYRAMID_PRIMARY_SPIN_BOOST * (primaryHeldBlend + recoil * 2.4 + spinBoost * 3.8);
       pyramidRef.current.rotation.set(
@@ -3594,7 +3608,7 @@ function ChronosFloatingPyramidWeapon({
       );
       pyramidRef.current.scale.setScalar(pyramidScale);
     }
-    const pyramidGlow = Math.max(aegisGlow, spinBoost);
+    const pyramidGlow = Math.max(aegisGlow, spinBoost, heartbeat);
     pyramidFaceMaterial.opacity = THREE.MathUtils.clamp(
       THREE.MathUtils.lerp(
         CHRONOS_WEAPON_PYRAMID_FACE_BASE_OPACITY,
@@ -3704,6 +3718,7 @@ function ChronosAegisViewmodelShield({
   const fillRef = useRef<THREE.Mesh>(null);
   const wireRef = useRef<THREE.Mesh>(null);
   const braceRef = useRef<THREE.Group>(null);
+  const crackRef = useRef<THREE.Group>(null);
   const fillGeometry = useMemo(
     () => createChronosAegisPanelGeometry(
       CHRONOS_AEGIS_VIEWMODEL_WIDTH,
@@ -3751,13 +3766,26 @@ function ChronosAegisViewmodelShield({
     wireframe: true,
     toneMapped: false,
   }), []);
+  const crackMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+    color: CHRONOS_AEGIS_CRACK_COLOR,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  }), []);
+  const fillFreshColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.accent), []);
+  const fillDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGE_FILL_COLOR), []);
+  const edgeFreshColor = useMemo(() => new THREE.Color(HERO_MATERIAL_COLORS.chronos.glow), []);
+  const edgeDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGE_EDGE_COLOR), []);
   useEffect(() => () => {
     fillGeometry.dispose();
     wireGeometry.dispose();
     fillMaterial.dispose();
     edgeMaterial.dispose();
     wireMaterial.dispose();
-  }, [edgeMaterial, fillGeometry, fillMaterial, wireGeometry, wireMaterial]);
+    crackMaterial.dispose();
+  }, [crackMaterial, edgeMaterial, fillGeometry, fillMaterial, wireGeometry, wireMaterial]);
 
   useFrame((state) => {
     const group = groupRef.current;
@@ -3770,6 +3798,8 @@ function ChronosAegisViewmodelShield({
     }
 
     const t = state.clock.elapsedTime;
+    const durability = THREE.MathUtils.clamp(aegisPoseRef.current.durabilityRatio, 0, 1);
+    const damage = 1 - durability;
     const shieldScale = THREE.MathUtils.lerp(0.52, 0.98, shield);
     const opacityPulse = 0.92 + Math.sin(t * 5.8) * 0.08;
     group.visible = true;
@@ -3781,13 +3811,23 @@ function ChronosAegisViewmodelShield({
     );
     group.scale.set(shieldScale, shieldScale, 1);
 
-    fillMaterial.opacity = 0.18 * shield * opacityPulse;
-    edgeMaterial.opacity = 0.72 * shield;
-    wireMaterial.opacity = 0.24 * shield;
+    fillMaterial.color.copy(fillFreshColor).lerp(fillDamagedColor, damage * 0.74);
+    edgeMaterial.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.86);
+    wireMaterial.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.68);
+
+    fillMaterial.opacity = (0.08 + durability * 0.1) * shield * opacityPulse;
+    edgeMaterial.opacity = (0.28 + durability * 0.44) * shield;
+    wireMaterial.opacity = (0.07 + durability * 0.17) * shield;
 
     if (fillRef.current) fillRef.current.scale.set(1, 1 + Math.sin(t * 4.1) * 0.006, 1);
-    if (wireRef.current) wireRef.current.scale.setScalar(0.985 + Math.sin(t * 5.6) * 0.004);
-    if (braceRef.current) braceRef.current.position.z = -0.018 + Math.sin(t * 3.8) * 0.006;
+    if (wireRef.current) wireRef.current.scale.setScalar(0.985 + Math.sin(t * 5.6) * (0.004 + damage * 0.014));
+    if (braceRef.current) braceRef.current.position.z = -0.018 + Math.sin(t * 3.8) * (0.006 + damage * 0.018);
+    if (crackRef.current) {
+      const crackPulse = 0.76 + Math.sin(t * 13.2) * 0.18;
+      crackMaterial.opacity = shield * THREE.MathUtils.smoothstep(damage, 0.08, 0.74) * crackPulse;
+      crackRef.current.position.x = Math.sin(t * 19.5) * damage * 0.018;
+      crackRef.current.position.y = Math.cos(t * 15.5) * damage * 0.012;
+    }
   });
 
   const halfWidth = CHRONOS_AEGIS_VIEWMODEL_WIDTH * 0.5;
@@ -3807,6 +3847,11 @@ function ChronosAegisViewmodelShield({
         <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[halfWidth, halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
         <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[-halfWidth, -halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
         <mesh geometry={SHARED_GEOMETRIES.box} material={edgeMaterial} position={[halfWidth, -halfHeight, 0.018]} scale={[edgeThickness * 2.2, edgeThickness * 2.2, 0.03]} frustumCulled={false} />
+      </group>
+      <group ref={crackRef} position={[0, 0, -0.03]}>
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterial} position={[-1.1, 0.42, 0]} rotation={[0, 0, -0.58]} scale={[0.022, 1.15, 0.016]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterial} position={[0.72, -0.18, 0]} rotation={[0, 0, 0.72]} scale={[0.018, 0.9, 0.016]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterial} position={[1.48, 0.48, 0]} rotation={[0, 0, -0.32]} scale={[0.016, 0.7, 0.016]} frustumCulled={false} />
       </group>
     </group>
   );
@@ -3884,11 +3929,12 @@ function ChronosViewmodel({
       CHRONOS_AEGIS_SPREAD_END
     );
     const lifelinePose = getChronosLifelineConduitPose(now);
+    const lifelineQueuedPose = getChronosLifelineQueuedPose(now);
     const timebreakPose = getChronosTimebreakPose(now);
     const ascendantPose = getChronosAscendantParadoxPose(now);
 
-    aegisPose.active = active || lifelinePose.glow > 0.01 || timebreakPose.glow > 0.01;
-    aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow, timebreakPose.glow);
+    aegisPose.active = active || lifelinePose.glow > 0.01 || lifelineQueuedPose.glow > 0.01 || timebreakPose.glow > 0.01;
+    aegisPose.blend = Math.max(aegisPose.aegisBlend, lifelinePose.glow, lifelineQueuedPose.glow, timebreakPose.glow);
     aegisPose.spread = Math.max(aegisSpread, lifelinePose.spread, timebreakPose.spread);
     aegisPose.recoil = timebreakPose.recoil;
     aegisPose.shield = THREE.MathUtils.smoothstep(
@@ -3897,6 +3943,8 @@ function ChronosViewmodel({
       1
     );
     aegisPose.spinBoost = ascendantPose.spinBoost;
+    aegisPose.heartbeat = lifelineQueuedPose.heartbeat;
+    aegisPose.durabilityRatio = aegisVisualState?.durabilityRatio ?? 1;
   });
 
   return (

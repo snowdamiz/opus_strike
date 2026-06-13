@@ -264,6 +264,10 @@ export function useLocalAbilityAudioPrediction() {
       hasChronosLifelineTarget,
     } = frame;
     const previousInput = previousInputRef.current;
+    const chronosLifelineCommitPressed = heroId === 'chronos' &&
+      inputState.ability1 &&
+      !previousInput.ability1 &&
+      (inputState.primaryFire || inputState.secondaryFire);
 
     if (currentHeroRef.current !== heroId) {
       currentHeroRef.current = heroId;
@@ -359,7 +363,7 @@ export function useLocalAbilityAudioPrediction() {
         canPlaySecondary(now, DRAG_HOOK_COOLDOWN / tempoMultiplier)
       ) {
         playHookshotCastSounds('hookshot_heavy_attack', 'hookshotSecondary', 1.05);
-      } else if (heroId === 'chronos') {
+      } else if (heroId === 'chronos' && !inputState.ability1) {
         startPredictedChronosAegis(now);
       }
     }
@@ -401,7 +405,8 @@ export function useLocalAbilityAudioPrediction() {
         playHookshotCastSounds('hookshot_grapple', 'hookshotGrapple');
       } else if (
         heroId === 'chronos' &&
-        (hasChronosLifelineTarget?.() ?? false) &&
+        chronosLifelineCommitPressed &&
+        (inputState.secondaryFire || (hasChronosLifelineTarget?.() ?? false)) &&
         canReservePredictedSkillSound('chronos_lifeline_conduit')
       ) {
         markPredictedLocalAbilitySound('chronos_lifeline_conduit', now);

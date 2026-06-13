@@ -48,6 +48,7 @@ import {
   CHRONOS_PRIMARY_RETURN_TO_IDLE_MS,
   CHRONOS_PRIMARY_SHOT_GLOW_DURATION_MS,
   CHRONOS_TIMEBREAK_POSE_DURATION_MS,
+  setChronosLifelineQueued,
   setChronosPrimaryHeld,
 } from '../../viewmodel/chronosPose';
 import {
@@ -74,7 +75,10 @@ import { useLocalAbilityAudioPrediction } from '../../hooks/player/useLocalAbili
 import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
 import {
   ABILITY_DEFINITIONS,
+  CHRONOS_LIFELINE_ALLY_HEAL,
+  CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
+  CHRONOS_LIFELINE_SELF_HEAL,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_SUBSTEP_SECONDS,
@@ -118,7 +122,7 @@ import {
 import { BombTargetingIndicator, triggerAirStrike, triggerRocketJumpExplosion } from './BlazeEffects';
 import { GrappleTrapTargetingIndicator } from './HookshotEffects';
 import { triggerBlinkEffect } from './PhantomEffects';
-import { addChronosLifelineEffects } from './chronos/lifeline';
+import { addChronosLifelineEffects, addChronosSelfHealPulseEffect } from './chronos/lifeline';
 import { addChronosTimebreakEffect } from './chronos/timebreak';
 import { triggerTeleportEffect } from '../ui/TeleportEffects';
 
@@ -241,6 +245,13 @@ function buildPracticeAbilityState(
 
 type CastActionFields = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1' | 'ability2' | 'ultimate'>;
 type ExclusiveHoldInput = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>;
+type ChronosLifelineMode = 'allies' | 'self';
+type ChronosPracticeLifelineTarget = {
+  id: string;
+  position: { x: number; y: number; z: number };
+  isLocal: boolean;
+  newHealth: number;
+};
 
 const EMPTY_EXCLUSIVE_HOLD_INPUT: ExclusiveHoldInput = {
   primaryFire: false,
@@ -299,10 +310,6 @@ function getExclusiveHeroInput(
     return withCastActionFields(input, { primaryFire: true });
   }
 
-  if (heroId === 'chronos' && input.secondaryFire && input.ability1) {
-    return withCastActionFields(input, { secondaryFire: true, ability1: true });
-  }
-
   if (input.secondaryFire) {
     return withCastActionFields(input, { secondaryFire: true });
   }
@@ -332,10 +339,6 @@ function getContinuingHeroHoldInput(
   }
 
   if (previousInput.secondaryFire && input.secondaryFire) {
-    if (heroId === 'chronos' && input.ability1) {
-      return { secondaryFire: true, ability1: true };
-    }
-
     return { secondaryFire: true };
   }
 
@@ -402,6 +405,9 @@ function movementClassForTrace(input: {
   if (input.heroId === 'phantom' && input.inputState.ability1) return 'blink';
   if (input.heroId === 'hookshot' && (input.inputState.ability1 || input.movement.isGrappling)) return 'grapple';
   if (input.heroId === 'hookshot' && input.inputState.ultimate) return 'grapple_trap';
+  if (input.heroId === 'chronos' && input.inputState.ability1) {
+    return input.inputState.secondaryFire ? 'chronos_lifeline_self' : 'chronos_lifeline_allies';
+  }
   if (input.unstuck) return 'unstuck';
   if (input.flagCarrier) return 'flag_route';
   return 'baseline';
@@ -486,6 +492,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const lastExclusiveHoldInputRef = useRef<ExclusiveHoldInput>({
     ...EMPTY_EXCLUSIVE_HOLD_INPUT,
   });
+  const chronosLifelineQueuedRef = useRef(false);
+  const chronosLifelineBlockPrimaryRef = useRef(false);
+  const chronosLifelineBlockSecondaryRef = useRef(false);
+  const chronosLifelineCommitHeldRef = useRef(false);
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
@@ -514,6 +524,18 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     actionLockUntilRef.current = 0;
     clearBlazeActionLock();
   }, [clearBlazeActionLock]);
+
+  const setChronosLifelineQueuedState = useCallback((
+    queued: boolean,
+    timestampMs = Date.now(),
+    input?: Pick<InputState, 'primaryFire' | 'secondaryFire'>
+  ) => {
+    chronosLifelineQueuedRef.current = queued;
+    chronosLifelineBlockPrimaryRef.current = queued && Boolean(input?.primaryFire);
+    chronosLifelineBlockSecondaryRef.current = queued && Boolean(input?.secondaryFire);
+    chronosLifelineCommitHeldRef.current = false;
+    setChronosLifelineQueued(queued, timestampMs);
+  }, []);
 
   const isHeroActionLocked = useCallback((heroId: HeroId, timestampMs = Date.now()) => (
     heroId === 'blaze'
@@ -559,7 +581,65 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       if (dx * dx + dy * dy + dz * dz <= radiusSq) return true;
     }
 
-    return localPlayer.heroId === 'chronos' && localPlayer.state === 'alive';
+    return false;
+  }, []);
+
+  const getChronosPracticeLifelineTargets = useCallback((
+    mode: ChronosLifelineMode,
+    healAmount: number
+  ): ChronosPracticeLifelineTarget[] => {
+    const store = useGameStore.getState();
+    const localPlayer = store.localPlayer;
+    if (!localPlayer || localPlayer.state !== 'alive') return [];
+
+    if (mode === 'self') {
+      return [{
+        id: localPlayer.id,
+        position: { ...localPlayer.position },
+        isLocal: true,
+        newHealth: Math.min(localPlayer.maxHealth, localPlayer.health + healAmount),
+      }];
+    }
+
+    const origin = visualStore.getState().playerPositions.get(localPlayer.id) ?? localPlayer.position;
+    const radiusSq = CHRONOS_LIFELINE_RADIUS * CHRONOS_LIFELINE_RADIUS;
+    const candidates: Array<ChronosPracticeLifelineTarget & { distanceSq: number; healthScore: number }> = [];
+
+    for (const candidate of store.players.values()) {
+      if (candidate.id === localPlayer.id) continue;
+      if (candidate.state !== 'alive') continue;
+      if (candidate.team !== localPlayer.team) continue;
+
+      const dx = candidate.position.x - origin.x;
+      const dy = candidate.position.y - origin.y;
+      const dz = candidate.position.z - origin.z;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq > radiusSq) continue;
+
+      candidates.push({
+        id: candidate.id,
+        position: { ...candidate.position },
+        isLocal: false,
+        newHealth: Math.min(candidate.maxHealth, candidate.health + healAmount),
+        distanceSq,
+        healthScore: candidate.health / Math.max(1, candidate.maxHealth),
+      });
+    }
+
+    candidates.sort((a, b) => (
+      a.healthScore === b.healthScore
+        ? a.distanceSq - b.distanceSq
+        : a.healthScore - b.healthScore
+    ));
+
+    return candidates
+      .slice(0, CHRONOS_LIFELINE_MAX_TARGETS)
+      .map((target) => ({
+        id: target.id,
+        position: target.position,
+        isLocal: target.isLocal,
+        newHealth: target.newHealth,
+      }));
   }, []);
 
   // Hero stats cache
@@ -608,7 +688,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     setBlazeRocketHeld(false, timestampMs);
     setBlazeBombTargetHeld(false, timestampMs);
     setChronosPrimaryHeld(false, timestampMs);
-  }, []);
+    setChronosLifelineQueuedState(false, timestampMs);
+  }, [setChronosLifelineQueuedState]);
 
   const resetBlazeFlamethrower = useCallback((timestampMs = Date.now()) => {
     const store = useGameStore.getState();
@@ -634,8 +715,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
       clearHeroActionLock();
       setChronosPrimaryHeld(false);
+      setChronosLifelineQueuedState(false);
     };
-  }, [clearHeroActionLock, resetBlazeFlamethrower, resetViewmodelPoseState]);
+  }, [clearHeroActionLock, resetBlazeFlamethrower, resetViewmodelPoseState, setChronosLifelineQueuedState]);
 
   // Handle targeting confirmations via click
   const handleClick = useCallback(() => {
@@ -1008,6 +1090,25 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const heroDef = HERO_DEFINITIONS[heroId];
     const bombTargetingForFrame = useGameStore.getState().bombTargeting;
     const previousHoldInput = lastExclusiveHoldInputRef.current;
+    const chronosLifelineQueuedAtFrameStart = heroId === 'chronos' && chronosLifelineQueuedRef.current;
+    if (!rawFrameInput.primaryFire) {
+      chronosLifelineBlockPrimaryRef.current = false;
+    }
+    if (!rawFrameInput.secondaryFire) {
+      chronosLifelineBlockSecondaryRef.current = false;
+    }
+    let chronosLifelineCommitMode: ChronosLifelineMode | null = null;
+    if (chronosLifelineQueuedAtFrameStart && !isHeroActionLocked(heroId, now)) {
+      if (rawFrameInput.primaryFire && !chronosLifelineBlockPrimaryRef.current) {
+        chronosLifelineCommitMode = 'allies';
+      } else if (rawFrameInput.secondaryFire && !chronosLifelineBlockSecondaryRef.current) {
+        chronosLifelineCommitMode = 'self';
+      }
+    }
+    const chronosLifelineCommitActive = chronosLifelineCommitMode !== null;
+    const chronosLifelineCommitPressed = chronosLifelineCommitActive && !chronosLifelineCommitHeldRef.current;
+    chronosLifelineCommitHeldRef.current = chronosLifelineCommitActive;
+
     if (previousHoldInput.primaryFire && !rawFrameInput.primaryFire) {
       lockHeroActions(heroId, getPrimaryReleaseLockMs(heroId), now);
     }
@@ -1026,14 +1127,25 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const lockedAllowedInput = heroId === 'chronos' && previousHoldInput.secondaryFire && rawFrameInput.secondaryFire
       ? { secondaryFire: true }
       : null;
-    frameInput = getExclusiveHeroInput(
-      heroId,
-      rawFrameInput,
-      isHeroActionLocked(heroId, now),
-      heroId === 'blaze' && bombTargetingForFrame,
-      continuingHoldInput,
-      lockedAllowedInput
-    );
+    if (chronosLifelineQueuedAtFrameStart) {
+      frameInput = chronosLifelineCommitMode === 'allies'
+        ? withCastActionFields(rawFrameInput, { primaryFire: true, ability1: true })
+        : chronosLifelineCommitMode === 'self'
+          ? withCastActionFields(rawFrameInput, { secondaryFire: true, ability1: true })
+          : withCastActionFields(rawFrameInput);
+    } else {
+      frameInput = getExclusiveHeroInput(
+        heroId,
+        rawFrameInput,
+        isHeroActionLocked(heroId, now),
+        heroId === 'blaze' && bombTargetingForFrame,
+        continuingHoldInput,
+        lockedAllowedInput
+      );
+      if (heroId === 'chronos' && frameInput.ability1) {
+        frameInput = withCastActionFields(frameInput);
+      }
+    }
     lastExclusiveHoldInputRef.current = getExclusiveHoldInput(frameInput);
 
     const reloadPressed = frameInput.reload && !reloadPressedRef.current;
@@ -1090,12 +1202,18 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       now
     );
     setChronosPrimaryHeld(
-      heroId === 'chronos' && frameInput.primaryFire,
+      heroId === 'chronos' && frameInput.primaryFire && !chronosLifelineCommitActive,
       now
     );
+    const chronosAegisDurability = heroId === 'chronos'
+      ? visualStore.getState().chronosAegisStates.get(localPlayer.id)?.durabilityRatio ?? 1
+      : 1;
     setChronosAegisVisualState(
       localPlayer.id,
-      heroId === 'chronos' && frameInput.secondaryFire,
+      heroId === 'chronos' &&
+        frameInput.secondaryFire &&
+        !chronosLifelineCommitActive &&
+        chronosAegisDurability > 0.005,
       now
     );
     if (heroDef) {
@@ -1116,12 +1234,80 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
       // Handle ability input
       if (heroId !== 'blaze') {
-        if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
-          if (!grappleTrapTargeting && abilitySystem.canUseAbility(heroDef.ability1.abilityId, false)) {
+        const ability1Id = heroDef.ability1.abilityId;
+        const chronosQueuePressed = heroId === 'chronos' &&
+          rawFrameInput.ability1 &&
+          !abilitySystem.abilityPressedRef.current.ability1;
+
+        if (heroId === 'chronos') {
+          if (chronosQueuePressed) {
+            if (chronosLifelineQueuedRef.current) {
+              setChronosLifelineQueuedState(false, now);
+            } else if (!grappleTrapTargeting && abilitySystem.canUseAbility(ability1Id, false)) {
+              setChronosLifelineQueuedState(true, now, rawFrameInput);
+            }
+          }
+
+          if (chronosLifelineCommitPressed && chronosLifelineCommitMode) {
+            const canCommitLifeline = abilitySystem.canUseAbility(ability1Id, false);
+            const hasCommitTargets = chronosLifelineCommitMode === 'self' || hasChronosLifelineTarget();
+
+            if (!canCommitLifeline) {
+              setChronosLifelineQueuedState(false, now);
+            } else if (hasCommitTargets) {
+              if (isPracticeMode) {
+                const healAmount = chronosLifelineCommitMode === 'self'
+                  ? CHRONOS_LIFELINE_SELF_HEAL
+                  : CHRONOS_LIFELINE_ALLY_HEAL;
+                const targets = getChronosPracticeLifelineTargets(chronosLifelineCommitMode, healAmount);
+                if (targets.length > 0 && abilitySystem.useAbilityCharge(ability1Id)) {
+                  if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
+                    lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
+                  }
+                  const store = useGameStore.getState();
+                  for (const target of targets) {
+                    if (target.isLocal) {
+                      store.updateLocalPlayer({ health: target.newHealth });
+                      continue;
+                    }
+
+                    const player = store.players.get(target.id);
+                    if (player) {
+                      store.updatePlayer(target.id, {
+                        ...player,
+                        health: target.newHealth,
+                      });
+                    }
+                  }
+                  if (chronosLifelineCommitMode === 'self') {
+                    addChronosSelfHealPulseEffect(
+                      { x: position.x, y: position.y, z: position.z },
+                      targets[0].position,
+                      undefined,
+                      { sourceAbilityId: 'chronos_lifeline_conduit' }
+                    );
+                  } else {
+                    addChronosLifelineEffects(
+                      { x: position.x, y: position.y, z: position.z },
+                      targets.map((target) => ({ position: target.position })),
+                      undefined,
+                      { sourceAbilityId: 'chronos_lifeline_conduit' }
+                    );
+                  }
+                  setChronosLifelineQueuedState(false, now);
+                }
+              } else if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
+                lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
+                setChronosLifelineQueuedState(false, now);
+              }
+            }
+          }
+        } else if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
+          if (!grappleTrapTargeting && abilitySystem.canUseAbility(ability1Id, false)) {
             if (heroId === 'phantom') {
               if (isPracticeMode) {
                 const startPosition = { x: position.x, y: position.y, z: position.z };
-                if (abilitySystem.useAbilityCharge(heroDef.ability1.abilityId)) {
+                if (abilitySystem.useAbilityCharge(ability1Id)) {
                   const nextState = predictLocalPhantomBlink(localPlayer, abilityCtx.yaw, abilityCtx.pitch);
                   applyPracticePredictedState(nextState);
                   triggerBlinkEffect(startPosition, nextState.position);
@@ -1148,24 +1334,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               if (hookshotAbilities.executeGrapple(abilityCtx)) {
                 lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
                 if (isPracticeMode) {
-                  abilitySystem.startClientCooldown(heroDef.ability1.abilityId);
+                  abilitySystem.startClientCooldown(ability1Id);
                 }
-              }
-            } else if (heroId === 'chronos' && hasChronosLifelineTarget()) {
-              if (isPracticeMode) {
-                if (abilitySystem.useAbilityCharge(heroDef.ability1.abilityId)) {
-                  if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
-                    lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
-                  }
-                  addChronosLifelineEffects(
-                    { x: position.x, y: position.y, z: position.z },
-                    [{ position: { x: position.x, y: position.y, z: position.z } }],
-                    undefined,
-                    { sourcePlayerId: localPlayer.id }
-                  );
-                }
-              } else if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
-                lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
               }
             }
           }

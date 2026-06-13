@@ -4,7 +4,6 @@ import { loggers } from '../utils/logger';
 
 export type GraphicsQuality = 'minimum' | 'low' | 'medium' | 'high' | 'ultra';
 export type GraphicsFeatureQuality = 'off' | GraphicsQuality;
-export type MaterialQuality = 'low' | 'medium' | 'high';
 export type CrosshairStyle = 'default' | 'dot' | 'circle' | 'cross';
 export type GraphicsPreset = 'potato' | 'competitive' | 'balanced' | 'cinematic';
 export type FpsDisplayMode = 'off' | 'fps';
@@ -40,7 +39,6 @@ export interface ClientSettings {
   graphicsPreset: GraphicsPreset;
   resolutionScale: GraphicsQuality;
   antialiasing: boolean;
-  materialQuality: MaterialQuality;
   shadowQuality: GraphicsFeatureQuality;
   reflectionQuality: GraphicsFeatureQuality;
   environmentQuality: GraphicsFeatureQuality;
@@ -76,7 +74,6 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   ClientSettings,
   | 'resolutionScale'
   | 'antialiasing'
-  | 'materialQuality'
   | 'shadowQuality'
   | 'reflectionQuality'
   | 'environmentQuality'
@@ -85,7 +82,6 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   potato: {
     resolutionScale: 'minimum',
     antialiasing: false,
-    materialQuality: 'low',
     shadowQuality: 'off',
     reflectionQuality: 'off',
     environmentQuality: 'off',
@@ -94,7 +90,6 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   competitive: {
     resolutionScale: 'low',
     antialiasing: false,
-    materialQuality: 'medium',
     shadowQuality: 'off',
     reflectionQuality: 'off',
     environmentQuality: 'low',
@@ -103,7 +98,6 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   balanced: {
     resolutionScale: 'medium',
     antialiasing: true,
-    materialQuality: 'medium',
     shadowQuality: 'medium',
     reflectionQuality: 'medium',
     environmentQuality: 'medium',
@@ -112,7 +106,6 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   cinematic: {
     resolutionScale: 'high',
     antialiasing: true,
-    materialQuality: 'high',
     shadowQuality: 'high',
     reflectionQuality: 'high',
     environmentQuality: 'high',
@@ -225,12 +218,6 @@ function sanitizeKeybindings(value: unknown, legacyPushToTalkKey?: unknown): Key
   return next;
 }
 
-function materialQualityFromLegacyPreset(quality: GraphicsQuality): MaterialQuality {
-  if (quality === 'minimum' || quality === 'low') return 'low';
-  if (quality === 'medium') return 'medium';
-  return 'high';
-}
-
 export function sanitizeSettings(value: unknown): ClientSettings {
   const raw = typeof value === 'object' && value !== null
     ? value as Partial<ClientSettings> & { quality?: unknown; pushToTalkKey?: unknown }
@@ -247,11 +234,6 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     graphicsPreset,
     resolutionScale: pickOption(raw.resolutionScale, qualityOptions, raw.quality ? legacyQuality : preset.resolutionScale),
     antialiasing: pickBoolean(raw.antialiasing, raw.quality ? legacyQuality === 'high' || legacyQuality === 'ultra' : preset.antialiasing),
-    materialQuality: pickOption(
-      raw.materialQuality,
-      ['low', 'medium', 'high'] as const,
-      raw.quality ? materialQualityFromLegacyPreset(legacyQuality) : preset.materialQuality
-    ),
     shadowQuality: pickOption(raw.shadowQuality, featureQualityOptions, preset.shadowQuality),
     reflectionQuality: pickOption(raw.reflectionQuality, featureQualityOptions, preset.reflectionQuality),
     environmentQuality: pickOption(raw.environmentQuality, featureQualityOptions, preset.environmentQuality),

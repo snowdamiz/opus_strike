@@ -19,6 +19,8 @@ import {
   resolveAbilitySocketOrigin,
   type ResolvedAbilitySocketOrigin,
 } from '../../model-system/abilitySocketResolver';
+import { offsetResolvedChronosOrbVisualOrigin } from '../../model-system/chronosOrbVisualOrigin';
+import { calculateLookDirection } from './constants';
 import type { AbilityContext } from './types';
 
 interface BuildAbilityCastOriginHintOptions {
@@ -134,7 +136,7 @@ function resolveChronosPrimaryOrigin(
 ): ResolvedAbilitySocketOrigin | null {
   if (!ctx.camera) return null;
 
-  return resolveAbilitySocketOrigin({
+  const origin = resolveAbilitySocketOrigin({
     ownerScope: 'localViewmodel',
     abilityId,
     sampledContext: {
@@ -145,6 +147,11 @@ function resolveChronosPrimaryOrigin(
     preferSampled: true,
     warnOnSampleDrift: true,
   });
+  return offsetResolvedChronosOrbVisualOrigin(
+    origin,
+    calculateLookDirection(ctx.yaw, ctx.pitch),
+    abilityId
+  );
 }
 
 function resolveLiveLocalOrigin(
@@ -298,7 +305,7 @@ export function buildAbilityCastOriginHints(
   }
 
   if (ctx.heroId === 'chronos') {
-    if (input.primaryFire) {
+    if (input.primaryFire && !input.ability1) {
       pushHint(
         hints,
         seen,

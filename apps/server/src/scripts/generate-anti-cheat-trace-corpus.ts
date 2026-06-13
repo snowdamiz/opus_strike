@@ -477,7 +477,7 @@ const legalTraces: Array<{ group: 'smoke' | 'full'; file: string; trace: AntiChe
       steps: [
         { buttons: SPRINT_FORWARD, frames: 24, abilityIds: ['chronos_timebreak'], activeSpeedMultiplier: 1.25 },
         { buttons: FORWARD, frames: 18, abilityIds: ['chronos_aegis'], activeSpeedMultiplier: 1 },
-        { buttons: FORWARD, frames: 18, abilityIds: ['chronos_lifeline'], activeSpeedMultiplier: 0.95 },
+        { buttons: FORWARD, frames: 18, abilityIds: ['chronos_lifeline_conduit'], activeSpeedMultiplier: 0.95 },
       ],
     }),
   },

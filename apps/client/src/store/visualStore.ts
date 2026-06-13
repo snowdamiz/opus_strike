@@ -50,7 +50,7 @@ export interface VisualState {
   flamethrowerDirection: { x: number; y: number; z: number };
 
   /** High-frequency Chronos RMB shield state for local and remote view effects. */
-  chronosAegisStates: Map<string, { active: boolean; activatedAtMs: number; updatedAtMs: number }>;
+  chronosAegisStates: Map<string, { active: boolean; activatedAtMs: number; updatedAtMs: number; durabilityRatio: number }>;
 
   /** Short-lived attack pose state for remote player bodies. */
   remotePlayerAttackStates: Map<string, RemotePlayerAttackState>;
@@ -718,10 +718,14 @@ export const removePlayerVisualState = (playerId: string): void => {
 export const setChronosAegisVisualState = (
   playerId: string,
   active: boolean,
-  timestampMs = Date.now()
+  timestampMs = Date.now(),
+  durabilityRatio?: number
 ): void => {
   const states = visualStore.getState().chronosAegisStates;
   const current = states.get(playerId);
+  const nextDurabilityRatio = durabilityRatio === undefined
+    ? current?.durabilityRatio ?? 1
+    : Math.max(0, Math.min(1, durabilityRatio));
 
   if (current) {
     if (active && !current.active) {
@@ -729,6 +733,7 @@ export const setChronosAegisVisualState = (
     }
     current.active = active;
     current.updatedAtMs = timestampMs;
+    current.durabilityRatio = nextDurabilityRatio;
     return;
   }
 
@@ -736,6 +741,7 @@ export const setChronosAegisVisualState = (
     active,
     activatedAtMs: active ? timestampMs : 0,
     updatedAtMs: timestampMs,
+    durabilityRatio: nextDurabilityRatio,
   });
 };
 

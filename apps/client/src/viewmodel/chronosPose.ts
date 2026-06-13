@@ -15,6 +15,8 @@ export { CHRONOS_PRIMARY_ORB_SOCKET_NAME };
 export const CHRONOS_PRIMARY_READY_TRANSITION_SECONDS = 0.18;
 export const CHRONOS_PRIMARY_RETURN_TO_IDLE_MS = CHRONOS_PRIMARY_READY_TRANSITION_SECONDS * 1000;
 export const CHRONOS_PRIMARY_FIRE_READY_BLEND = 0.86;
+const CHRONOS_LIFELINE_QUEUE_TRANSITION_SECONDS = 0.16;
+const CHRONOS_LIFELINE_QUEUE_HEARTBEAT_SECONDS = 0.82;
 const CHRONOS_PRIMARY_SHOT_GLOW_ATTACK_SECONDS = 0.035;
 const CHRONOS_PRIMARY_SHOT_GLOW_FADE_START_SECONDS = 0.055;
 const CHRONOS_PRIMARY_SHOT_GLOW_FADE_END_SECONDS = 0.21;
@@ -69,6 +71,50 @@ export function getChronosPrimaryHeldBlend(
   const elapsedSeconds = Math.max(0, timestampMs - state.changedAtMs) / 1000;
   const progress = smoothstep(0, CHRONOS_PRIMARY_READY_TRANSITION_SECONDS, elapsedSeconds);
   return state.blendAtChange + (targetBlend - state.blendAtChange) * progress;
+}
+
+export function setChronosLifelineQueued(
+  queued: boolean,
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  const state = chronosRuntime(runtime).lifelineQueued;
+  if (state.held === queued) return;
+
+  state.blendAtChange = getChronosLifelineQueuedBlend(timestampMs, runtime);
+  state.held = queued;
+  state.changedAtMs = timestampMs;
+  runtime.revision += 1;
+}
+
+export function getChronosLifelineQueuedBlend(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): number {
+  const state = chronosRuntime(runtime).lifelineQueued;
+  const targetBlend = state.held ? 1 : 0;
+  const elapsedSeconds = Math.max(0, timestampMs - state.changedAtMs) / 1000;
+  const progress = smoothstep(0, CHRONOS_LIFELINE_QUEUE_TRANSITION_SECONDS, elapsedSeconds);
+  return state.blendAtChange + (targetBlend - state.blendAtChange) * progress;
+}
+
+export function getChronosLifelineQueuedPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): { glow: number; heartbeat: number } {
+  const blend = getChronosLifelineQueuedBlend(timestampMs, runtime);
+  if (blend <= 0.001) return { glow: 0, heartbeat: 0 };
+
+  const elapsedSeconds = Math.max(0, timestampMs - chronosRuntime(runtime).lifelineQueued.changedAtMs) / 1000;
+  const phase = elapsedSeconds % CHRONOS_LIFELINE_QUEUE_HEARTBEAT_SECONDS;
+  const firstBeat = pulseWindow(phase, 0.03, 0.18);
+  const secondBeat = pulseWindow(phase, 0.24, 0.14) * 0.68;
+  const heartbeat = Math.max(firstBeat, secondBeat) * blend;
+
+  return {
+    glow: blend * (0.64 + heartbeat * 0.36),
+    heartbeat,
+  };
 }
 
 export function triggerChronosPrimaryShotGlow(
@@ -223,4 +269,11 @@ function smoothstep(edge0: number, edge1: number, value: number): number {
   if (edge0 === edge1) return value >= edge1 ? 1 : 0;
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+function pulseWindow(value: number, start: number, duration: number): number {
+  if (duration <= 0) return 0;
+  const t = (value - start) / duration;
+  if (t < 0 || t > 1) return 0;
+  return Math.sin(Math.PI * t) ** 2;
 }

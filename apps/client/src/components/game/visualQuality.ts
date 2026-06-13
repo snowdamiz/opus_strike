@@ -4,16 +4,12 @@ import type {
   GraphicsFeatureQuality,
   GraphicsPreset,
   GraphicsQuality,
-  MaterialQuality,
 } from '../../store/settingsStore';
-
-export type VoxelMaterialDetail = MaterialQuality;
 
 export interface RenderQualityConfig {
   dpr: [number, number];
   antialias: boolean;
   exposure: number;
-  materialDetail: VoxelMaterialDetail;
 }
 
 export interface ShadowQualityConfig {
@@ -469,7 +465,6 @@ export function getVisualQualityConfig(settings: Pick<
   ClientSettings,
   | 'resolutionScale'
   | 'antialiasing'
-  | 'materialQuality'
   | 'shadowQuality'
   | 'reflectionQuality'
   | 'environmentQuality'
@@ -495,7 +490,6 @@ export function getVisualQualityConfig(settings: Pick<
       ...renderConfig,
       antialias: settings.antialiasing,
       exposure: DEFAULT_RENDER_EXPOSURE,
-      materialDetail: settings.materialQuality,
     },
     shadows: SHADOW_QUALITY_CONFIG[settings.shadowQuality],
     reflections: REFLECTION_QUALITY_CONFIG[settings.reflectionQuality],

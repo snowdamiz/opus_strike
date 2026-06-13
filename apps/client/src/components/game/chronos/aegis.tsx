@@ -24,6 +24,9 @@ const CHRONOS_AEGIS_FADE_IN_SECONDS = 0.18;
 const CHRONOS_AEGIS_FILL_OPACITY = 0.2;
 const CHRONOS_AEGIS_EDGE_OPACITY = 0.72;
 const CHRONOS_AEGIS_WIRE_OPACITY = 0.28;
+const CHRONOS_AEGIS_DAMAGED_FILL_COLOR = 0xfacc15;
+const CHRONOS_AEGIS_DAMAGED_EDGE_COLOR = 0xfde68a;
+const CHRONOS_AEGIS_CRACK_COLOR = 0xfff7c2;
 const ACTIVE_ID_SCAN_INTERVAL_MS = 80;
 
 function createAegisFillMaterial(): THREE.MeshBasicMaterial {
@@ -62,6 +65,17 @@ function createAegisWireMaterial(): THREE.MeshBasicMaterial {
   });
 }
 
+function createAegisCrackMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: CHRONOS_AEGIS_CRACK_COLOR,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
 function collectActiveChronosAegisIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
   const localPlayerId = store.localPlayer?.id;
@@ -94,6 +108,7 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
   const fillRef = useRef<THREE.Mesh>(null);
   const wireRef = useRef<THREE.Mesh>(null);
   const braceRef = useRef<THREE.Group>(null);
+  const crackRef = useRef<THREE.Group>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const fillGeometry = useMemo(
     () => createChronosAegisPanelGeometry(
@@ -118,6 +133,11 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
   const fillMaterialRef = useRef(createAegisFillMaterial());
   const ringMaterialRef = useRef(createAegisRingMaterial());
   const wireMaterialRef = useRef(createAegisWireMaterial());
+  const crackMaterialRef = useRef(createAegisCrackMaterial());
+  const fillFreshColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_COLOR), []);
+  const fillDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGED_FILL_COLOR), []);
+  const edgeFreshColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_EDGE_COLOR), []);
+  const edgeDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGED_EDGE_COLOR), []);
 
   useEffect(() => () => {
     fillGeometry.dispose();
@@ -125,6 +145,7 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
     fillMaterialRef.current.dispose();
     ringMaterialRef.current.dispose();
     wireMaterialRef.current.dispose();
+    crackMaterialRef.current.dispose();
   }, [fillGeometry, wireGeometry]);
 
   useFrame(() => {
@@ -148,6 +169,8 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
     const forwardZ = -Math.cos(visualYaw);
     const elapsed = Math.max(0, (now - aegis.activatedAtMs) / 1000);
     const fade = THREE.MathUtils.smoothstep(elapsed, 0, CHRONOS_AEGIS_FADE_IN_SECONDS);
+    const durability = THREE.MathUtils.clamp(aegis.durabilityRatio, 0, 1);
+    const damage = 1 - durability;
     const pulse = 1 + Math.sin(elapsed * 5.4) * 0.018;
     const shieldScale = THREE.MathUtils.lerp(0.74, 1.05, fade) * pulse;
 
@@ -160,21 +183,31 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
     group.rotation.set(0, Math.atan2(forwardX, forwardZ), 0);
     group.scale.set(shieldScale, shieldScale, 1);
 
-    fillMaterialRef.current.opacity = CHRONOS_AEGIS_FILL_OPACITY * fade;
-    ringMaterialRef.current.opacity = CHRONOS_AEGIS_EDGE_OPACITY * fade;
-    wireMaterialRef.current.opacity = CHRONOS_AEGIS_WIRE_OPACITY * fade;
+    fillMaterialRef.current.color.copy(fillFreshColor).lerp(fillDamagedColor, damage * 0.74);
+    ringMaterialRef.current.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.86);
+    wireMaterialRef.current.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.68);
+
+    fillMaterialRef.current.opacity = CHRONOS_AEGIS_FILL_OPACITY * fade * (0.42 + durability * 0.58);
+    ringMaterialRef.current.opacity = CHRONOS_AEGIS_EDGE_OPACITY * fade * (0.42 + durability * 0.58);
+    wireMaterialRef.current.opacity = CHRONOS_AEGIS_WIRE_OPACITY * fade * (0.32 + durability * 0.68);
 
     if (fillRef.current) {
       fillRef.current.scale.set(1, 1 + Math.sin(elapsed * 4.2) * 0.006, 1);
     }
     if (wireRef.current) {
-      wireRef.current.scale.setScalar(0.97 + Math.sin(elapsed * 6.1) * 0.01);
+      wireRef.current.scale.setScalar(0.97 + Math.sin(elapsed * 6.1) * (0.01 + damage * 0.018));
     }
     if (braceRef.current) {
-      braceRef.current.position.z = 0.02 + Math.sin(elapsed * 4.8) * 0.008;
+      braceRef.current.position.z = 0.02 + Math.sin(elapsed * 4.8) * (0.008 + damage * 0.02);
+    }
+    if (crackRef.current) {
+      const crackPulse = 0.72 + Math.sin(elapsed * 13.4) * 0.16;
+      crackMaterialRef.current.opacity = fade * THREE.MathUtils.smoothstep(damage, 0.08, 0.74) * crackPulse;
+      crackRef.current.position.x = Math.sin(elapsed * 18.7) * damage * 0.04;
+      crackRef.current.position.y = Math.cos(elapsed * 16.2) * damage * 0.025;
     }
     if (lightRef.current) {
-      lightRef.current.intensity = 1.35 * fade;
+      lightRef.current.intensity = 1.35 * fade * (0.45 + durability * 0.55);
       lightRef.current.distance = 4.4;
     }
   });
@@ -196,6 +229,11 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
         <mesh geometry={SHARED_GEOMETRIES.box} material={ringMaterialRef.current} position={[halfWidth, halfHeight, 0.026]} scale={[edgeThickness * 2.1, edgeThickness * 2.1, 0.036]} frustumCulled={false} />
         <mesh geometry={SHARED_GEOMETRIES.box} material={ringMaterialRef.current} position={[-halfWidth, -halfHeight, 0.026]} scale={[edgeThickness * 2.1, edgeThickness * 2.1, 0.036]} frustumCulled={false} />
         <mesh geometry={SHARED_GEOMETRIES.box} material={ringMaterialRef.current} position={[halfWidth, -halfHeight, 0.026]} scale={[edgeThickness * 2.1, edgeThickness * 2.1, 0.036]} frustumCulled={false} />
+      </group>
+      <group ref={crackRef} position={[0, 0, 0.032]}>
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterialRef.current} position={[-1.35, 0.48, 0]} rotation={[0, 0, -0.56]} scale={[0.032, 1.26, 0.018]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterialRef.current} position={[0.76, -0.18, 0]} rotation={[0, 0, 0.7]} scale={[0.026, 0.98, 0.018]} frustumCulled={false} />
+        <mesh geometry={SHARED_GEOMETRIES.box} material={crackMaterialRef.current} position={[1.62, 0.52, 0]} rotation={[0, 0, -0.34]} scale={[0.024, 0.76, 0.018]} frustumCulled={false} />
       </group>
       <BudgetedPointLight ref={lightRef} budgetPriority={0.2} position={[0, 0, 0.08]} color={CHRONOS_AEGIS_COLOR} intensity={0} distance={4.4} decay={2} />
     </group>

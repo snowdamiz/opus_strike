@@ -53,10 +53,13 @@ import {
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED,
   CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
-  CHRONOS_LIFELINE_HEAL,
+  CHRONOS_AEGIS_SHIELD_MAX_HP,
+  CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
+  CHRONOS_LIFELINE_ALLY_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
+  CHRONOS_LIFELINE_SELF_HEAL,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_AUTHORITY_MS,
   CHRONOS_TIMEBREAK_SHOCKWAVE_HALF_ANGLE,
@@ -548,6 +551,7 @@ type PlayerPressState = {
   ability2: boolean;
   ultimate: boolean;
 };
+type ChronosLifelineMode = 'allies' | 'self';
 const playerPressState = new Map<string, PlayerPressState>();
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 const BOT_THINK_INTERVAL_MS = 200;
@@ -581,6 +585,7 @@ const MOVEMENT_BIT_GRAPPLING = 1 << 5;
 const MOVEMENT_BIT_JETPACKING = 1 << 6;
 const MOVEMENT_BIT_GLIDING = 1 << 7;
 const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
+const CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE = 255;
 const CHRONOS_AEGIS_SHIELD_HALF_WIDTH = 3.36;
 const CHRONOS_AEGIS_SHIELD_HALF_HEIGHT = 1.78;
 const CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET = 1.85;
@@ -711,6 +716,7 @@ export class GameRoom extends Room<GameState> {
   private blazeRocketImpactCooldownUntil: Map<string, number> = new Map();
   private processedBlazeRocketImpacts: Map<string, number> = new Map();
   private damageHistory: Map<string, Map<string, DamageHistoryEntry>> = new Map();
+  private chronosAegisShieldHp: Map<string, number> = new Map();
   private unstuckCooldownUntil: Map<string, number> = new Map();
   private devImmunePlayers: Set<string> = new Set();
   private devGameClockFrozen = false;
@@ -1310,6 +1316,7 @@ export class GameRoom extends Room<GameState> {
     this.blazeBombDropConsumedForHold.delete(client.sessionId);
     this.blazeFlamethrowerActivePlayers.delete(client.sessionId);
     this.movementAuthorities.delete(client.sessionId);
+    this.chronosAegisShieldHp.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
     this.blazeRocketImpactCooldownUntil.delete(client.sessionId);
@@ -1470,6 +1477,7 @@ export class GameRoom extends Room<GameState> {
       updateActiveAbilities(player, now);
       this.syncChronosAscendantMovementState(player, now);
     });
+    this.updateChronosAegisShields(dt);
 
     // Update void zones (damage enemies inside)
     this.updateVoidZones(now);
@@ -1562,6 +1570,7 @@ export class GameRoom extends Room<GameState> {
   private shouldSendFullRateTransform(id: string, player: Player, now: number): boolean {
     return (
       player.hasFlag ||
+      this.isChronosAegisActive(player) ||
       (this.recentCombatTransformUntil.get(id) ?? 0) > now ||
       this.isVisibleAbilityActive(player)
     );
@@ -1613,6 +1622,7 @@ export class GameRoom extends Room<GameState> {
       this.getMovementBits(player),
       player.movement.wallRunSide === 'left' ? -1 : player.movement.wallRunSide === 'right' ? 1 : 0,
       this.getMovementAuthority(id).movementEpoch,
+      this.getChronosAegisShieldByte(player),
     ];
   }
 
@@ -3795,6 +3805,8 @@ export class GameRoom extends Room<GameState> {
       },
       correctionReason: reason ?? undefined,
       collisionRevision: this.getMovementCollisionRevision(),
+      chronosAegisActive: this.isChronosAegisActive(player),
+      chronosAegisShieldRatio: this.getChronosAegisShieldRatio(player.id),
     };
     this.sendTracked(client, 'selfMovementAuthority', payload);
     if (authority.lastAuthoritySentAt > 0) {
@@ -3853,6 +3865,9 @@ export class GameRoom extends Room<GameState> {
     if (player.movement.isWallRunning) return 'wallrun';
     if (player.heroId === 'blaze' && input.ability2) return 'rocket_jump';
     if (player.heroId === 'phantom' && (input.ability1 || input.ability2)) return 'teleport_ability';
+    if (player.heroId === 'chronos' && input.ability1) {
+      return input.secondaryFire ? 'chronos_lifeline_self' : 'chronos_lifeline_allies';
+    }
     if (player.heroId === 'chronos' && input.ability2) return 'chronos_tempo';
     if (input.jump && !player.movement.isGrounded) return 'bhop_air';
     if (input.crouch) return 'crouch';
@@ -3956,10 +3971,7 @@ export class GameRoom extends Room<GameState> {
     this.markMovementBarrier(player.id, 'unstuck', { preserveQueuedCommands: true });
   }
 
-  private getChronosLifelineTargets(
-    caster: Player,
-    options: { includeSelfFallback?: boolean } = {}
-  ): Player[] {
+  private getChronosLifelineTargets(caster: Player): Player[] {
     const radiusSq = CHRONOS_LIFELINE_RADIUS * CHRONOS_LIFELINE_RADIUS;
     const candidates: Array<{
       player: Player;
@@ -3991,18 +4003,14 @@ export class GameRoom extends Room<GameState> {
         : a.healthScore - b.healthScore
     ));
 
-    const targets = candidates.slice(0, CHRONOS_LIFELINE_MAX_TARGETS).map((candidate) => candidate.player);
-    if (targets.length > 0 || !options.includeSelfFallback || caster.state !== 'alive') {
-      return targets;
-    }
-
-    return [caster];
+    return candidates.slice(0, CHRONOS_LIFELINE_MAX_TARGETS).map((candidate) => candidate.player);
   }
 
   private executeChronosLifelineConduit(
     caster: Player,
     abilityState: AbilityStateSchema,
-    targets: Player[]
+    targets: Player[],
+    healAmount: number
   ): void {
     const now = Date.now();
     const healedTargets: Array<{
@@ -4017,7 +4025,7 @@ export class GameRoom extends Room<GameState> {
       if (target.team !== caster.team) continue;
 
       const beforeHealth = target.health;
-      target.health = Math.min(target.maxHealth, target.health + CHRONOS_LIFELINE_HEAL);
+      target.health = Math.min(target.maxHealth, target.health + healAmount);
       const amount = target.health - beforeHealth;
 
       healedTargets.push({
@@ -4045,6 +4053,7 @@ export class GameRoom extends Room<GameState> {
   private scheduleChronosLifelineConduit(
     casterId: string,
     targetIds: string[],
+    healAmount: number,
     releaseAt: number
   ): void {
     const delayMs = Math.max(0, releaseAt - Date.now());
@@ -4060,7 +4069,7 @@ export class GameRoom extends Room<GameState> {
         .map((targetId) => this.state.players.get(targetId))
         .filter((target): target is Player => Boolean(target));
 
-      this.executeChronosLifelineConduit(caster, abilityState, targets);
+      this.executeChronosLifelineConduit(caster, abilityState, targets, healAmount);
     }, delayMs);
   }
 
@@ -4847,19 +4856,32 @@ export class GameRoom extends Room<GameState> {
     this.phantomVoidRayResolvedForPress.add(player.id);
   }
 
-  private handleAbilityUse(player: Player, slot: 'ability1' | 'ability2' | 'ultimate') {
+  private handleAbilityUse(
+    player: Player,
+    slot: 'ability1' | 'ability2' | 'ultimate',
+    options: { chronosLifelineMode?: ChronosLifelineMode } = {}
+  ) {
     if (player.state !== 'alive' || !isHeroId(player.heroId)) {
       this.rejectAbilityOrCombat(player, `invalid_state:${slot}`);
       return;
     }
 
-    const chronosLifelineTargets = player.heroId === 'chronos' && slot === 'ability1'
-      ? this.getChronosLifelineTargets(player, { includeSelfFallback: true })
+    const chronosLifelineMode = player.heroId === 'chronos' && slot === 'ability1'
+      ? options.chronosLifelineMode
+      : undefined;
+    const chronosLifelineTargets = chronosLifelineMode === 'allies'
+      ? this.getChronosLifelineTargets(player)
+      : chronosLifelineMode === 'self'
+        ? [player]
       : null;
     const hookshotGrappleTarget = player.heroId === 'hookshot' && slot === 'ability1'
       ? this.resolveHookshotGrappleTarget(player)
       : null;
 
+    if (player.heroId === 'chronos' && slot === 'ability1' && !chronosLifelineMode) {
+      this.rejectAbilityOrCombat(player, 'chronos_lifeline_mode_required', false);
+      return;
+    }
     if (player.heroId === 'chronos' && slot === 'ability1' && (!chronosLifelineTargets || chronosLifelineTargets.length === 0)) {
       this.rejectAbilityOrCombat(player, 'chronos_lifeline_no_targets', false);
       return;
@@ -4878,8 +4900,11 @@ export class GameRoom extends Room<GameState> {
     const startedAt = this.vec3SchemaToPlain(player.position);
     const usedAt = Date.now();
 
-    if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets) {
+    if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets && chronosLifelineMode) {
       const releaseAt = usedAt + CHRONOS_LIFELINE_RELEASE_DELAY_MS;
+      const healAmount = chronosLifelineMode === 'self'
+        ? CHRONOS_LIFELINE_SELF_HEAL
+        : CHRONOS_LIFELINE_ALLY_HEAL;
       result.abilityState.activatedAt = usedAt;
 
       this.broadcastTracked('abilityUsed', {
@@ -4889,6 +4914,7 @@ export class GameRoom extends Room<GameState> {
         position: this.vec3SchemaToPlain(player.position),
         startPosition: this.getAbilitySocketCastOrigin(player, 'chronos_lifeline_conduit'),
         targetIds: chronosLifelineTargets.map((target) => target.id),
+        mode: chronosLifelineMode,
         ownerTeam: player.team,
         serverTime: usedAt,
         releaseAt,
@@ -4896,6 +4922,7 @@ export class GameRoom extends Room<GameState> {
       this.scheduleChronosLifelineConduit(
         player.id,
         chronosLifelineTargets.map((target) => target.id),
+        healAmount,
         releaseAt
       );
       return;
@@ -5287,7 +5314,7 @@ export class GameRoom extends Room<GameState> {
   ): void {
     if (player.heroId !== 'chronos') return;
 
-    if (!input.primaryFire) {
+    if (!input.primaryFire || input.ability1) {
       this.chronosPrimaryHoldStartedAt.delete(player.id);
       return;
     }
@@ -5320,7 +5347,21 @@ export class GameRoom extends Room<GameState> {
     if (reloadPressed && !previous.reload) {
       this.reloadHeroPrimary(player, now);
     }
-    if (input.primaryFire) {
+    const chronosLifelineMode: ChronosLifelineMode | null =
+      player.heroId === 'chronos' && input.ability1
+        ? input.primaryFire
+          ? 'allies'
+          : input.secondaryFire
+            ? 'self'
+            : null
+        : null;
+    const isChronosLifelineCommit = chronosLifelineMode !== null;
+
+    if (isChronosLifelineCommit && !previous.ability1) {
+      this.handleAbilityUse(player, 'ability1', { chronosLifelineMode });
+    }
+
+    if (input.primaryFire && !isChronosLifelineCommit) {
       this.tryResolveAttack(player, 'primary');
     }
     if (player.heroId === 'phantom') {
@@ -5336,11 +5377,11 @@ export class GameRoom extends Room<GameState> {
           this.tryResolveAttack(player, 'secondary');
         }
       }
-    } else if (input.secondaryFire && !previous.secondaryFire) {
+    } else if (input.secondaryFire && !previous.secondaryFire && !isChronosLifelineCommit) {
       this.tryResolveAttack(player, 'secondary');
     }
 
-    if (input.ability1 && !previous.ability1) {
+    if (input.ability1 && !previous.ability1 && !isChronosLifelineCommit) {
       this.handleAbilityUse(player, 'ability1');
     }
     if (input.ability2 && !previous.ability2) {
@@ -5615,16 +5656,75 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private isChronosAegisActive(player: Player): boolean {
+  private getChronosAegisShieldHp(playerId: string): number {
+    return this.chronosAegisShieldHp.get(playerId) ?? CHRONOS_AEGIS_SHIELD_MAX_HP;
+  }
+
+  private setChronosAegisShieldHp(playerId: string, hp: number): void {
+    const clamped = Math.max(0, Math.min(CHRONOS_AEGIS_SHIELD_MAX_HP, hp));
+    if (clamped >= CHRONOS_AEGIS_SHIELD_MAX_HP) {
+      this.chronosAegisShieldHp.delete(playerId);
+    } else {
+      this.chronosAegisShieldHp.set(playerId, clamped);
+    }
+  }
+
+  private getChronosAegisShieldRatio(playerId: string): number {
+    return this.getChronosAegisShieldHp(playerId) / CHRONOS_AEGIS_SHIELD_MAX_HP;
+  }
+
+  private getChronosAegisShieldByte(player: Player): number {
+    if (player.heroId !== 'chronos') return CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE;
+    return Math.round(this.getChronosAegisShieldRatio(player.id) * CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE);
+  }
+
+  private isChronosAegisHeld(player: Player): boolean {
     return (
       player.heroId === 'chronos' &&
       player.state === 'alive' &&
-      Boolean(player.lastInput?.secondaryFire)
+      Boolean(player.lastInput?.secondaryFire) &&
+      !player.lastInput?.ability1
     );
   }
 
-  private isDamageBlockedByChronosAegis(target: Player, source: Player): boolean {
-    if (source.team === target.team) return false;
+  private isChronosAegisActive(player: Player): boolean {
+    return this.isChronosAegisHeld(player) && this.getChronosAegisShieldHp(player.id) > 0;
+  }
+
+  private getChronosAegisForward(player: Player): PlainVec3 {
+    return this.getForwardVector(player.lookYaw, 0);
+  }
+
+  private getChronosAegisCenter(player: Player, forward = this.getChronosAegisForward(player)): PlainVec3 {
+    return {
+      x: player.position.x + forward.x * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
+      y: player.position.y + CHRONOS_AEGIS_SHIELD_CENTER_Y_OFFSET,
+      z: player.position.z + forward.z * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
+    };
+  }
+
+  private updateChronosAegisShields(dt: number): void {
+    const recharge = CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND * dt;
+    this.state.players.forEach((player) => {
+      if (player.heroId !== 'chronos') {
+        this.chronosAegisShieldHp.delete(player.id);
+        return;
+      }
+      if (player.state !== 'alive') {
+        this.chronosAegisShieldHp.delete(player.id);
+        return;
+      }
+      if (this.isChronosAegisHeld(player)) return;
+
+      const hp = this.getChronosAegisShieldHp(player.id);
+      if (hp < CHRONOS_AEGIS_SHIELD_MAX_HP) {
+        this.setChronosAegisShieldHp(player.id, hp + recharge);
+      }
+    });
+  }
+
+  private getChronosAegisBlocker(target: Player, source: Player): Player | null {
+    if (source.team === target.team) return null;
 
     const sourcePoint = this.getPlayerEyePosition(source);
     const targetPoint = this.getPlayerBodyAimPosition(target);
@@ -5634,24 +5734,20 @@ export class GameRoom extends Room<GameState> {
       z: targetPoint.z - sourcePoint.z,
     };
 
-    let blocked = false;
+    let blocker: Player | null = null;
     this.state.players.forEach((aegisPlayer) => {
-      if (blocked) return;
+      if (blocker) return;
       if (aegisPlayer.team !== target.team) return;
       if (aegisPlayer.id === source.id) return;
       if (!this.isChronosAegisActive(aegisPlayer)) return;
 
-      const forward = this.getForwardVector(aegisPlayer.lookYaw, 0);
+      const forward = this.getChronosAegisForward(aegisPlayer);
       const right = {
         x: Math.cos(aegisPlayer.lookYaw),
         y: 0,
         z: -Math.sin(aegisPlayer.lookYaw),
       };
-      const center = {
-        x: aegisPlayer.position.x + forward.x * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
-        y: aegisPlayer.position.y + CHRONOS_AEGIS_SHIELD_CENTER_Y_OFFSET,
-        z: aegisPlayer.position.z + forward.z * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
-      };
+      const center = this.getChronosAegisCenter(aegisPlayer, forward);
       const toSource = {
         x: sourcePoint.x - center.x,
         y: sourcePoint.y - center.y,
@@ -5693,11 +5789,32 @@ export class GameRoom extends Room<GameState> {
         Math.abs(lateral) <= CHRONOS_AEGIS_SHIELD_HALF_WIDTH &&
         Math.abs(vertical) <= CHRONOS_AEGIS_SHIELD_HALF_HEIGHT
       ) {
-        blocked = true;
+        blocker = aegisPlayer;
       }
     });
 
-    return blocked;
+    return blocker;
+  }
+
+  private absorbDamageWithChronosAegis(blocker: Player, rawDamage: number, now: number): number {
+    const hp = this.getChronosAegisShieldHp(blocker.id);
+    if (hp <= 0) return rawDamage;
+
+    const absorbed = Math.min(hp, Math.max(0, rawDamage));
+    const nextHp = hp - absorbed;
+    this.setChronosAegisShieldHp(blocker.id, nextHp);
+    this.recentCombatTransformUntil.set(blocker.id, now + RECENT_COMBAT_TRANSFORM_MS);
+    if (nextHp <= 0) {
+      const direction = this.getChronosAegisForward(blocker);
+      this.broadcastTracked('chronosAegisBroken', {
+        playerId: blocker.id,
+        position: this.getChronosAegisCenter(blocker, direction),
+        direction,
+        serverTime: now,
+      });
+    }
+
+    return Math.max(0, rawDamage - absorbed);
   }
 
   private applyDamage(
@@ -5718,13 +5835,18 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
-    if (source && this.isDamageBlockedByChronosAegis(target, source)) {
-      return false;
-    }
-
     if (source && !this.consumeDamageBudget(source, target, rawDamage, damageType, now)) {
       this.rejectAbilityOrCombat(source, `damage_cap:${damageType}`);
       return false;
+    }
+
+    let damageToApply = rawDamage;
+    const aegisBlocker = source ? this.getChronosAegisBlocker(target, source) : null;
+    if (aegisBlocker) {
+      damageToApply = this.absorbDamageWithChronosAegis(aegisBlocker, damageToApply, now);
+      if (damageToApply <= 0) {
+        return false;
+      }
     }
 
     const phantomShield = target.abilities.get('phantom_personal_shield');
@@ -5734,7 +5856,7 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
-    const damage = Math.max(1, Math.round(rawDamage * this.getDamageTakenMultiplier(target)));
+    const damage = Math.max(1, Math.round(damageToApply * this.getDamageTakenMultiplier(target)));
     target.health = Math.max(0, target.health - damage);
     this.recentCombatTransformUntil.set(target.id, now + RECENT_COMBAT_TRANSFORM_MS);
     const sourcePosition = context.sourcePosition !== undefined
@@ -6394,10 +6516,23 @@ export class GameRoom extends Room<GameState> {
         input.ultimate = pulseUltimate && bot.ultimateCharge >= 100 && (blackboard.nearbyEnemyCount >= 2 || objectiveIntent);
         break;
       case 'chronos':
-        input.ability1 = pulseAbility && this.getChronosLifelineTargets(bot, {
-          includeSelfFallback: bot.health < bot.maxHealth,
-        }).length > 0;
-        input.ability2 = pulseAbility && (underPressure || blackboard.nearbyEnemyCount >= 2);
+        if (pulseAbility) {
+          const lifelineTargets = this.getChronosLifelineTargets(bot);
+          if (lifelineTargets.some((target) => target.health < target.maxHealth)) {
+            input.ability1 = true;
+            input.primaryFire = true;
+            input.secondaryFire = false;
+          } else if (bot.health < bot.maxHealth) {
+            input.ability1 = true;
+            input.primaryFire = false;
+            input.secondaryFire = true;
+          } else {
+            input.ability1 = false;
+          }
+        } else {
+          input.ability1 = false;
+        }
+        input.ability2 = !input.ability1 && pulseAbility && (underPressure || blackboard.nearbyEnemyCount >= 2);
         input.ultimate = false;
         break;
     }
@@ -7173,6 +7308,7 @@ export class GameRoom extends Room<GameState> {
     player.ultimateCharge = 0;
     this.phantomPrimaryHoldStartedAt.delete(player.id);
     this.chronosPrimaryHoldStartedAt.delete(player.id);
+    this.chronosAegisShieldHp.delete(player.id);
     if (heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     } else {
@@ -8308,6 +8444,9 @@ export class GameRoom extends Room<GameState> {
     }
     if (player.heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
+    }
+    if (player.heroId === 'chronos') {
+      this.chronosAegisShieldHp.delete(player.id);
     }
 
     // Reset ability cooldowns on respawn
