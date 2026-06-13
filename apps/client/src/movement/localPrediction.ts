@@ -419,14 +419,44 @@ function isSelfAuthorityBarrier(authority: SelfMovementAuthority): boolean {
   return Boolean(authority.correctionReason && authority.correctionReason !== 'normal');
 }
 
+function collapseNormalSelfAuthorities(authorities: SelfMovementAuthority[]): SelfMovementAuthority[] {
+  const collapsed: SelfMovementAuthority[] = [];
+  let latestNormal: SelfMovementAuthority | null = null;
+
+  const flushLatestNormal = () => {
+    if (latestNormal) {
+      collapsed.push(latestNormal);
+      latestNormal = null;
+    }
+  };
+
+  for (const authority of authorities) {
+    if (isSelfAuthorityBarrier(authority)) {
+      flushLatestNormal();
+      collapsed.push(authority);
+      continue;
+    }
+
+    if (latestNormal && latestNormal.movementEpoch !== authority.movementEpoch) {
+      flushLatestNormal();
+    }
+
+    latestNormal = authority;
+  }
+
+  flushLatestNormal();
+  return collapsed;
+}
+
 export function drainSelfMovementAuthorities(player: Player, nowMs: number): AppliedSelfMovementAuthority[] {
   if (pendingSelfMovementAuthorities.length === 0) return [];
 
   const authorities = pendingSelfMovementAuthorities.splice(0);
   authorities.sort(compareSelfAuthorityOrder);
+  const authoritiesToApply = collapseNormalSelfAuthorities(authorities);
   const applied: AppliedSelfMovementAuthority[] = [];
 
-  for (const authority of authorities) {
+  for (const authority of authoritiesToApply) {
     const predictionEpoch = localMovementPrediction.getMovementEpoch();
     const staleEpoch = authority.movementEpoch < predictionEpoch;
     const staleAck =
@@ -451,7 +481,7 @@ export function applySelfMovementAuthority(player: Player, authority: SelfMoveme
     cachedCollisionWorld = null;
   }
   latestServerCollisionRevision = nextCollisionRevision;
-  const result = localMovementPrediction.acknowledgeAuthority(
+  const result = localMovementPrediction.reconcile(
     authority,
     getLocalPredictionContext(player),
     nowMs

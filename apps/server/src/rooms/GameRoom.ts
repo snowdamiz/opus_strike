@@ -8746,9 +8746,7 @@ export class GameRoom extends Room<GameState> {
       authority.metrics.queueLengthBeforeTick = queuedCommandCount;
       authority.metrics.commandsProcessedLastTick = 0;
 
-      const drainDecision = getMovementCommandDrainDecision(queuedCommandCount, {
-        hasAuthorityBarrier: Boolean(authority.correctionReason),
-      });
+      const drainDecision = getMovementCommandDrainDecision(queuedCommandCount);
 
       if (drainDecision.underflow) {
         authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;

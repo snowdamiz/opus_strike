@@ -57,17 +57,21 @@ assert.equal(emptyDrain.budget, 0);
 assert.equal(emptyDrain.underflow, true);
 
 const warmupDrain = getMovementCommandDrainDecision(SERVER_MOVEMENT_TARGET_PENDING_COMMANDS - 1);
-assert.equal(warmupDrain.budget, 0);
-assert.equal(warmupDrain.underflow, true);
+assert.equal(warmupDrain.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+assert.equal(warmupDrain.underflow, false);
+
+const partialDrain = getMovementCommandDrainDecision(SERVER_MOVEMENT_SUBSTEPS_PER_TICK - 1);
+assert.equal(partialDrain.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK - 1);
+assert.equal(partialDrain.underflow, false);
 
 const steadyDrain = getMovementCommandDrainDecision(SERVER_MOVEMENT_TARGET_PENDING_COMMANDS);
 assert.equal(steadyDrain.budget, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
 assert.equal(steadyDrain.underflow, false);
 assert.equal(steadyDrain.catchup, false);
 
-const barrierDrain = getMovementCommandDrainDecision(1, { hasAuthorityBarrier: true });
-assert.equal(barrierDrain.budget, 1);
-assert.equal(barrierDrain.underflow, false);
+const singleCommandDrain = getMovementCommandDrainDecision(1);
+assert.equal(singleCommandDrain.budget, 1);
+assert.equal(singleCommandDrain.underflow, false);
 
 const catchupDrain = getMovementCommandDrainDecision(
   SERVER_MOVEMENT_TARGET_PENDING_COMMANDS + SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 3
@@ -111,11 +115,10 @@ function simulateDrainCadence(arrivalsPerTick: readonly number[]) {
 }
 
 const steadyCadence = simulateDrainCadence(Array.from({ length: 90 }, () => SERVER_MOVEMENT_SUBSTEPS_PER_TICK));
-assert.equal(steadyCadence[0].underflow, true, 'first localhost tick should warm the input buffer');
-for (const sample of steadyCadence.slice(1)) {
-  assert.equal(sample.before, SERVER_MOVEMENT_TARGET_PENDING_COMMANDS);
+for (const sample of steadyCadence) {
+  assert.equal(sample.before, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
   assert.equal(sample.processed, SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
-  assert.equal(sample.after, SERVER_MOVEMENT_TARGET_PENDING_COMMANDS - SERVER_MOVEMENT_SUBSTEPS_PER_TICK);
+  assert.equal(sample.after, 0);
   assert.equal(sample.underflow, false);
   assert.equal(sample.catchup, false);
 }
