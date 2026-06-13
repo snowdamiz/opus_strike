@@ -20,12 +20,62 @@ interface Effect {
 const effects: Effect[] = [];
 let effectIdCounter = 0;
 const MAX_GLOBAL_EFFECTS = 96;
-const EXPLOSION_PARTICLE_INDICES = Array.from({ length: 20 }, (_, i) => i);
+const EXPLOSION_PARTICLE_COUNT = 20;
 const BLINK_RING_GEOMETRY = new THREE.RingGeometry(0.5, 0.7, 6);
 const EXPLOSION_BOX_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
 const HIT_SPHERE_GEOMETRY = new THREE.SphereGeometry(0.3, 8, 8);
 const LIFELINE_BEAM_GEOMETRY = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
 const LIFELINE_AXIS = new THREE.Vector3(0, 1, 0);
+const EXPLOSION_INSTANCE_DUMMY = new THREE.Object3D();
+
+function hashEffectId(id: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function nextSeededUnit(seed: number): [number, number] {
+  const nextSeed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+  return [nextSeed / 0xffffffff, nextSeed];
+}
+
+function createExplosionDirections(effectId: string): Float32Array {
+  const directions = new Float32Array(EXPLOSION_PARTICLE_COUNT * 3);
+  let seed = hashEffectId(effectId);
+
+  for (let i = 0; i < EXPLOSION_PARTICLE_COUNT; i++) {
+    let rx: number;
+    let ry: number;
+    let rz: number;
+    [rx, seed] = nextSeededUnit(seed);
+    [ry, seed] = nextSeededUnit(seed);
+    [rz, seed] = nextSeededUnit(seed);
+
+    const x = rx * 2 - 1;
+    const y = ry;
+    const z = rz * 2 - 1;
+    const invLength = 1 / Math.max(0.0001, Math.hypot(x, y, z));
+    const offset = i * 3;
+    directions[offset] = x * invLength;
+    directions[offset + 1] = y * invLength;
+    directions[offset + 2] = z * invLength;
+  }
+
+  return directions;
+}
+
+function writeGrappleLinePositions(target: Float32Array, effect: Effect): void {
+  const end = effect.endPosition ?? effect.position;
+  target[0] = effect.position.x;
+  target[1] = effect.position.y;
+  target[2] = effect.position.z;
+  target[3] = end.x;
+  target[4] = end.y;
+  target[5] = end.z;
+}
 
 export interface GlobalEffectStats {
   active: number;
@@ -142,21 +192,32 @@ interface EffectProps {
 }
 
 function GrappleLine({ effect }: EffectProps) {
-  const lineRef = useRef<THREE.Line>(null!);
-  const lineObject = useMemo(() => new THREE.Line(), []);
-  const points = useMemo(() => [new THREE.Vector3(), new THREE.Vector3()], []);
+  const positions = useMemo(() => {
+    const initialPositions = new Float32Array(6);
+    writeGrappleLinePositions(initialPositions, effect);
+    return initialPositions;
+  }, [effect]);
+  const geometry = useMemo(() => {
+    const bufferGeometry = new THREE.BufferGeometry();
+    bufferGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    return bufferGeometry;
+  }, [positions]);
+  const lineObject = useMemo(() => {
+    const line = new THREE.Line(geometry);
+    line.frustumCulled = false;
+    return line;
+  }, [geometry]);
 
   useFrame(() => {
-    if (!lineRef.current || !effect.endPosition) return;
-
-    points[0].copy(effect.position);
-    points[1].copy(effect.endPosition);
-    lineRef.current.geometry.setFromPoints(points);
+    writeGrappleLinePositions(positions, effect);
+    const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
+    positionAttribute.needsUpdate = true;
   });
 
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
   return (
-    <primitive object={lineObject} ref={lineRef}>
-      <bufferGeometry />
+    <primitive object={lineObject}>
       <lineBasicMaterial color="#00ff88" linewidth={2} />
     </primitive>
   );
@@ -212,51 +273,47 @@ function BlinkEffect({ effect }: EffectProps) {
 }
 
 function ExplosionEffect({ effect }: EffectProps) {
-  const groupRef = useRef<THREE.Group>(null);
+  const meshRef = useRef<THREE.InstancedMesh>(null);
   const progress = useRef(0);
-  const particles = useRef<THREE.Vector3[]>([]);
-
-  useEffect(() => {
-    // Generate random particle directions
-    particles.current = Array.from({ length: 20 }, () => 
-      new THREE.Vector3(
-        (Math.random() - 0.5) * 2,
-        Math.random(),
-        (Math.random() - 0.5) * 2
-      ).normalize()
-    );
-  }, []);
+  const directions = useMemo(() => createExplosionDirections(effect.id), [effect.id]);
 
   useFrame((_, delta) => {
-    if (!groupRef.current) return;
+    const mesh = meshRef.current;
+    if (!mesh) return;
 
     progress.current += delta / (effect.duration / 1000);
     const t = Math.min(1, progress.current);
+    const scale = 1 - t * 0.5;
 
-    // Animate particles
-    groupRef.current.children.forEach((child, i) => {
-      const dir = particles.current[i];
-      if (dir && child instanceof THREE.Mesh) {
-        child.position.copy(dir).multiplyScalar(t * 3);
-        const mat = child.material as THREE.MeshBasicMaterial;
-        mat.opacity = 1 - t;
-        child.scale.setScalar(1 - t * 0.5);
-      }
-    });
+    for (let i = 0; i < EXPLOSION_PARTICLE_COUNT; i++) {
+      const offset = i * 3;
+      EXPLOSION_INSTANCE_DUMMY.position.set(
+        directions[offset] * t * 3,
+        directions[offset + 1] * t * 3,
+        directions[offset + 2] * t * 3
+      );
+      EXPLOSION_INSTANCE_DUMMY.scale.setScalar(scale);
+      EXPLOSION_INSTANCE_DUMMY.updateMatrix();
+      mesh.setMatrixAt(i, EXPLOSION_INSTANCE_DUMMY.matrix);
+    }
+
+    (mesh.material as THREE.MeshBasicMaterial).opacity = 1 - t;
+    mesh.instanceMatrix.needsUpdate = true;
   });
 
   return (
-    <group ref={groupRef} position={effect.position}>
-      {EXPLOSION_PARTICLE_INDICES.map((i) => (
-        <mesh key={i} geometry={EXPLOSION_BOX_GEOMETRY}>
-          <meshBasicMaterial 
-            color="#ff6b35"
-            transparent
-            opacity={1}
-          />
-        </mesh>
-      ))}
-    </group>
+    <instancedMesh
+      ref={meshRef}
+      args={[EXPLOSION_BOX_GEOMETRY, undefined, EXPLOSION_PARTICLE_COUNT]}
+      position={effect.position}
+      frustumCulled={false}
+    >
+      <meshBasicMaterial
+        color="#ff6b35"
+        transparent
+        opacity={1}
+      />
+    </instancedMesh>
   );
 }
 

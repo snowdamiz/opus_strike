@@ -155,7 +155,6 @@ export type AbilityIconType =
   | 'grapple'
   | 'anchorwall'
   | 'grappletrap'
-  | 'swing'
   | 'zipline'
   | 'flamethrower'
   | 'fireball'
@@ -196,8 +195,6 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <BarrierIcon size={size} color={color} className={className} />;
     case 'grappletrap':
       return <GrappleTrapIcon size={size} color={color} className={className} />;
-    case 'swing':
-      return <SwingLineIcon size={size} color={color} className={className} />;
     case 'flamethrower':
       return <FlamethrowerIcon size={size} color={color} className={className} />;
     case 'fireball':
@@ -242,7 +239,6 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     phantom_veil: 'veil',
     hookshot_grapple: 'grapple',
     hookshot_anchor_wall: 'anchorwall',
-    hookshot_swing: 'swing',
     hookshot_grapple_trap: 'grappletrap',
     blaze_flamethrower: 'flamethrower',
     blaze_bomb: 'meteorstrike',
@@ -365,17 +361,6 @@ function GrappleTrapIcon({ size, color, className }: IconProps) {
       <circle cx="12" cy="12" r="2.2" fill={color} />
       <path d="M12 3V8M12 16V21M3 12H8M16 12H21" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1.8 2.2" />
       <path d="M7.2 4.8L9 7M16.8 4.8L15 7M7.2 19.2L9 17M16.8 19.2L15 17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function SwingLineIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <circle cx="6" cy="5" r="2" fill={color} />
-      <path d="M6 5C7 13.5 12.2 18.5 20 19" stroke={color} strokeWidth="2" strokeLinecap="round" />
-      <circle cx="20" cy="19" r="2.6" fill={color} opacity="0.45" />
-      <path d="M15.8 15.4L19.8 19.2" stroke={color} strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }

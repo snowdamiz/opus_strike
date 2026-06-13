@@ -1037,9 +1037,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         }
         hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
 
-        // Update grapple and swing physics
+        // Update grapple physics
         hookshotAbilities.updateGrapplePhysics(abilityCtx);
-        hookshotAbilities.updateSwingPhysics(abilityCtx);
       }
 
       if (heroId === 'chronos') {
@@ -1062,7 +1061,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
           movement: {
             isGrappling: hookshotAbilities.isGrapplingRef.current || hookshotAbilities.isSwingingRef.current,
-            grapplePoint: hookshotAbilities.grappleTargetRef.current ?? hookshotAbilities.swingAttachPointRef.current ?? null,
+            grapplePoint: hookshotAbilities.grappleTargetRef.current,
           },
         },
         cameraControl.refs.yaw.current
@@ -1181,7 +1180,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       phantomAbilities.fireDireBall(abilityCtx, playerSounds);
     }
 
-    const traceGrapplePoint = hookshotAbilities.grappleTargetRef.current ?? hookshotAbilities.swingAttachPointRef.current;
+    const traceGrapplePoint = hookshotAbilities.grappleTargetRef.current;
     const latestLocalMovement = useGameStore.getState().localPlayer?.movement ?? localPlayer.movement;
     const localMovementForTrace: PlayerMovementState = {
       ...latestLocalMovement,

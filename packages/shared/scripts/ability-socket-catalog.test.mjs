@@ -24,7 +24,6 @@ const expectedAbilityIds = [
   'hookshot_grapple',
   'hookshot_grapple_trap',
   'hookshot_heavy_attack',
-  'hookshot_swing',
   'phantom_dire_ball',
   'phantom_void_ray',
   'phantom_void_ray_charge',

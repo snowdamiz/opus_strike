@@ -102,14 +102,6 @@ export const ABILITY_SOCKET_CATALOG = {
     socketNames: sideSocketNames(HOOKSHOT_HOOK_SOCKET_NAMES, 'right'),
     fallbackOffset: HOOKSHOT_CHAIN_SOCKET,
   },
-  hookshot_swing: {
-    abilityId: 'hookshot_swing',
-    heroId: 'hookshot',
-    socketRole: 'hookTip',
-    sideMode: 'right',
-    socketNames: sideSocketNames(HOOKSHOT_HOOK_SOCKET_NAMES, 'right'),
-    fallbackOffset: HOOKSHOT_CHAIN_SOCKET,
-  },
   hookshot_grapple_trap: {
     abilityId: 'hookshot_grapple_trap',
     heroId: 'hookshot',

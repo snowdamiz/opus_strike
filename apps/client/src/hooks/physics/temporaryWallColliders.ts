@@ -1,4 +1,4 @@
-import RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d-compat';
 
 // ============================================================================
 // TEMPORARY WALL COLLIDERS - Dynamic colliders for deployable ability walls

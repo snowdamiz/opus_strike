@@ -72,7 +72,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'flanker',
     movementFocus: 'blink',
     stats: {
-      maxHealth: 175,
+      maxHealth: 200,
       moveSpeed: 3.18,
       jumpForce: 8.3,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
@@ -93,7 +93,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'mobile',
     movementFocus: 'grapple',
     stats: {
-      maxHealth: 200,
+      maxHealth: 225,
       moveSpeed: 3.63,
       jumpForce: 7.9,
       size: { width: 0.8, height: 1.8, depth: 0.8 },
@@ -114,7 +114,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'assault',
     movementFocus: 'aerial',
     stats: {
-      maxHealth: 200,
+      maxHealth: 225,
       moveSpeed: 3.63,
       jumpForce: 9.0,
       size: { width: 0.9, height: 1.9, depth: 0.9 },
@@ -135,7 +135,7 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
     role: 'support-tank',
     movementFocus: 'temporal',
     stats: {
-      maxHealth: 250,
+      maxHealth: 275,
       moveSpeed: 3.48,
       jumpForce: 8.1,
       size: { width: 0.78, height: 1.9, depth: 0.78 },
@@ -218,15 +218,6 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 8,
     duration: 6.25,
     description: 'Launch a ground anchor that raises a solid barricade in your aim direction.',
-  },
-  hookshot_swing: {
-    id: 'hookshot_swing',
-    name: 'Swing Line',
-    type: 'movement',
-    targeting: 'direction',
-    cooldown: 8,
-    duration: 2.75,
-    description: 'Fire a rope that lets you swing in an arc, building momentum.',
   },
   hookshot_grapple_trap: {
     id: 'hookshot_grapple_trap',

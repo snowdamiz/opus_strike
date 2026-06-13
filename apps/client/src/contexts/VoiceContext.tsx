@@ -1,16 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import {
-  AudioPresets,
+import type {
   ConnectionState,
   LocalAudioTrack,
+  Participant,
+  RemoteAudioTrack,
+  RemoteParticipant,
+  RemoteTrack,
+  RemoteTrackPublication,
   Room as LiveKitRoom,
-  RoomEvent,
-  Track,
-  type Participant,
-  type RemoteAudioTrack,
-  type RemoteParticipant,
-  type RemoteTrack,
-  type RemoteTrackPublication,
 } from 'livekit-client';
 import type { Team } from '@voxel-strike/shared';
 import type { VoiceParticipantMetadata, VoiceTokenResponse } from '../voice/types';
@@ -32,6 +29,15 @@ interface VoiceContextType {
 }
 
 const VoiceContext = createContext<VoiceContextType | null>(null);
+
+type LiveKitModule = typeof import('livekit-client');
+
+let liveKitModulePromise: Promise<LiveKitModule> | null = null;
+
+function loadLiveKit(): Promise<LiveKitModule> {
+  liveKitModulePromise ??= import('livekit-client');
+  return liveKitModulePromise;
+}
 
 type AudioAttachment = {
   track: RemoteAudioTrack;
@@ -105,6 +111,7 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
   const localTeam = useGameStore((state) => state.localPlayer?.team ?? null);
   const settings = useSettingsStore((state) => state.settings);
   const settingsRef = useRef(settings);
+  const liveKitModuleRef = useRef<LiveKitModule | null>(null);
   const livekitRoomRef = useRef<LiveKitRoom | null>(null);
   const audioRootRef = useRef<HTMLDivElement | null>(null);
   const attachmentsRef = useRef(new Map<string, AudioAttachment>());
@@ -230,7 +237,13 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     publication: RemoteTrackPublication,
     participant: RemoteParticipant
   ) => {
-    if (track.kind !== Track.Kind.Audio || !publication.trackSid || attachmentsRef.current.has(publication.trackSid)) {
+    const livekit = liveKitModuleRef.current;
+    if (
+      !livekit ||
+      track.kind !== livekit.Track.Kind.Audio ||
+      !publication.trackSid ||
+      attachmentsRef.current.has(publication.trackSid)
+    ) {
       return;
     }
 
@@ -358,65 +371,76 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     });
     useVoiceStore.getState().setConnectionState('connecting');
 
-    const room = new LiveKitRoom({
+    let livekit: LiveKitModule;
+    try {
+      livekit = await loadLiveKit();
+      liveKitModuleRef.current = livekit;
+    } catch (error) {
+      useVoiceStore.getState().setConnectionState('error', error instanceof Error ? error.message : 'voice client failed to load');
+      loggers.audio.warn('voice client load failed', error);
+      connectingKeyRef.current = null;
+      return;
+    }
+
+    const room = new livekit.Room({
       dynacast: false,
       adaptiveStream: false,
       publishDefaults: {
-        audioPreset: AudioPresets.speech,
+        audioPreset: livekit.AudioPresets.speech,
         dtx: true,
         stopMicTrackOnMute: true,
       },
     });
     livekitRoomRef.current = room;
 
-    room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+    room.on(livekit.RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
       useVoiceStore.getState().setConnectionState(
-        state === ConnectionState.Connected
+        state === livekit.ConnectionState.Connected
           ? 'connected'
-          : state === ConnectionState.Reconnecting || state === ConnectionState.SignalReconnecting
+          : state === livekit.ConnectionState.Reconnecting || state === livekit.ConnectionState.SignalReconnecting
             ? 'reconnecting'
-            : state === ConnectionState.Disconnected
+            : state === livekit.ConnectionState.Disconnected
               ? 'disconnected'
               : 'connecting'
       );
     });
-    room.on(RoomEvent.Reconnecting, () => useVoiceStore.getState().markReconnect());
-    room.on(RoomEvent.SignalReconnecting, () => useVoiceStore.getState().markReconnect());
-    room.on(RoomEvent.Reconnected, () => useVoiceStore.getState().setConnectionState('connected'));
-    room.on(RoomEvent.Disconnected, () => {
+    room.on(livekit.RoomEvent.Reconnecting, () => useVoiceStore.getState().markReconnect());
+    room.on(livekit.RoomEvent.SignalReconnecting, () => useVoiceStore.getState().markReconnect());
+    room.on(livekit.RoomEvent.Reconnected, () => useVoiceStore.getState().setConnectionState('connected'));
+    room.on(livekit.RoomEvent.Disconnected, () => {
       detachRemoteAudio();
       useVoiceStore.getState().setLocalMicState(true, false);
       useVoiceStore.getState().setConnectionState('disconnected');
     });
-    room.on(RoomEvent.ParticipantConnected, (participant) => {
+    room.on(livekit.RoomEvent.ParticipantConnected, (participant) => {
       useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, false));
     });
-    room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+    room.on(livekit.RoomEvent.ParticipantDisconnected, (participant) => {
       useVoiceStore.getState().removeParticipant(participant.identity);
     });
-    room.on(RoomEvent.ParticipantMetadataChanged, (_prev, participant) => {
+    room.on(livekit.RoomEvent.ParticipantMetadataChanged, (_prev, participant) => {
       useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
     });
-    room.on(RoomEvent.TrackSubscribed, attachRemoteAudio);
-    room.on(RoomEvent.TrackUnsubscribed, (_track, publication) => {
+    room.on(livekit.RoomEvent.TrackSubscribed, attachRemoteAudio);
+    room.on(livekit.RoomEvent.TrackUnsubscribed, (_track, publication) => {
       detachRemoteAudio(publication.trackSid);
     });
-    room.on(RoomEvent.TrackMuted, (_publication, participant) => {
+    room.on(livekit.RoomEvent.TrackMuted, (_publication, participant) => {
       useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
     });
-    room.on(RoomEvent.TrackUnmuted, (_publication, participant) => {
+    room.on(livekit.RoomEvent.TrackUnmuted, (_publication, participant) => {
       useVoiceStore.getState().upsertParticipant(toVoiceParticipant(participant, participant.isLocal));
     });
-    room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+    room.on(livekit.RoomEvent.ActiveSpeakersChanged, (speakers) => {
       useVoiceStore.getState().setSpeakingIdentities(new Set(speakers.map((speaker) => speaker.identity)));
     });
-    room.on(RoomEvent.MediaDevicesChanged, () => {
+    room.on(livekit.RoomEvent.MediaDevicesChanged, () => {
       void refreshDevices();
     });
-    room.on(RoomEvent.LocalTrackPublished, () => {
+    room.on(livekit.RoomEvent.LocalTrackPublished, () => {
       useVoiceStore.getState().setLocalMicState(false, true);
     });
-    room.on(RoomEvent.LocalTrackUnpublished, () => {
+    room.on(livekit.RoomEvent.LocalTrackUnpublished, () => {
       useVoiceStore.getState().setLocalMicState(true, false);
     });
 
@@ -532,10 +556,12 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
         throw new Error('Unable to create processed microphone track');
       }
 
-      const localTrack = new LocalAudioTrack(processedTrack, audioConstraints, true, audioContext);
+      const livekit = liveKitModuleRef.current ?? await loadLiveKit();
+      liveKitModuleRef.current = livekit;
+      const localTrack = new livekit.LocalAudioTrack(processedTrack, audioConstraints, true, audioContext);
       await room.localParticipant.publishTrack(localTrack, {
-        source: Track.Source.Microphone,
-        audioPreset: AudioPresets.speech,
+        source: livekit.Track.Source.Microphone,
+        audioPreset: livekit.AudioPresets.speech,
         dtx: true,
         stopMicTrackOnMute: true,
         name: 'team-microphone',

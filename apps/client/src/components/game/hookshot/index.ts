@@ -9,6 +9,3 @@ export { GrappleTrapEffect, GrappleTrapTargetingIndicator } from './grappleTrap'
 export { EarthWallEffect } from './earthWall';
 
 export { GrappleLineEffect } from './grappleLine';
-
-export { SwingLineEffect } from './swingLine';
-

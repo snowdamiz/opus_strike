@@ -274,7 +274,7 @@ export function prewarmVoidZoneResources(renderer?: THREE.WebGLRenderer): void {
 
 const PARTICLE_COUNT = 40;
 const DEBRIS_COUNT = 12;
-const VOID_ZONE_DAMAGE = 15;
+const VOID_ZONE_DAMAGE = 12;
 const VOID_ZONE_DAMAGE_INTERVAL = 500;
 
 export const VoidZone = React.memo(({ position, radius, duration, startTime, ownerId }: VoidZoneProps) => {
@@ -482,6 +482,8 @@ export const VoidZone = React.memo(({ position, radius, duration, startTime, own
 
     const now = frameClock.nowMs;
     const { players, localPlayer } = useGameStore.getState();
+
+    if (now - startTime < VOID_ZONE_DAMAGE_INTERVAL) return;
     
     for (const [playerId, player] of players) {
       if (playerId === localPlayer?.id) continue;

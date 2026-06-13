@@ -14,7 +14,6 @@ import type {
   HookProjectileData,
   DragHookData,
   GrappleTrapData,
-  SwingLineData,
   GrappleLineData,
   EarthWallData,
 } from '../types';
@@ -55,7 +54,6 @@ export interface ProjectileState {
   hookProjectiles: HookProjectileData[];
   dragHooks: DragHookData[];
   grappleTraps: GrappleTrapData[];
-  swingLines: SwingLineData[];
   grappleLines: GrappleLineData[];
   earthWalls: EarthWallData[];
   grappleTrapTargeting: boolean;
@@ -134,12 +132,6 @@ export interface ProjectileActions {
   clearExpiredGrappleTraps: () => void;
   setGrappleTrapTargeting: (targeting: boolean, valid?: boolean) => void;
 
-  // Swing line actions
-  addSwingLine: (line: SwingLineData) => void;
-  updateSwingLine: (id: string, updates: Partial<SwingLineData>) => void;
-  removeSwingLine: (id: string) => void;
-  clearExpiredSwingLines: () => void;
-
   // Grapple line actions
   addGrappleLine: (line: GrappleLineData) => void;
   updateGrappleLine: (id: string, updates: Partial<GrappleLineData>) => void;
@@ -187,7 +179,6 @@ export const projectileInitialState: ProjectileState = {
   hookProjectiles: [],
   dragHooks: [],
   grappleTraps: [],
-  swingLines: [],
   grappleLines: [],
   earthWalls: [],
   grappleTrapTargeting: false,
@@ -209,7 +200,6 @@ const PROJECTILE_LIMITS = {
   hookProjectiles: 64,
   dragHooks: 32,
   grappleTraps: 32,
-  swingLines: 32,
   grappleLines: 48,
   earthWalls: 48,
 } as const;
@@ -598,27 +588,6 @@ export const createProjectileSlice: StateCreator<
     };
   }),
 
-  // ==================== SWING LINES ====================
-  addSwingLine: (line) => set((state) => {
-    const swingLines = appendUnique(state.swingLines, line, PROJECTILE_LIMITS.swingLines);
-    return swingLines === state.swingLines ? state : { swingLines };
-  }),
-
-  updateSwingLine: (id, updates) => set((state) => {
-    const swingLines = updateById(state.swingLines, id, updates);
-    return swingLines === state.swingLines ? state : { swingLines };
-  }),
-
-  removeSwingLine: (id) => set((state) => {
-    const swingLines = removeById(state.swingLines, id);
-    return swingLines === state.swingLines ? state : { swingLines };
-  }),
-
-  clearExpiredSwingLines: () => set((state) => {
-    const swingLines = filterExpired(state.swingLines, (l, now) => (now - l.startTime) / 1000 < l.duration);
-    return swingLines === state.swingLines ? state : { swingLines };
-  }),
-
   // ==================== GRAPPLE LINES ====================
   addGrappleLine: (line) => set((state) => {
     const grappleLines = appendUnique(state.grappleLines, line, PROJECTILE_LIMITS.grappleLines);
@@ -731,12 +700,6 @@ export const createProjectileSlice: StateCreator<
     const grappleTraps = filterExpiredAt(state.grappleTraps, now, (t) => (now - t.startTime) / 1000 < t.duration);
     if (grappleTraps !== state.grappleTraps) {
       next.grappleTraps = grappleTraps;
-      changed = true;
-    }
-
-    const swingLines = filterExpiredAt(state.swingLines, now, (l) => (now - l.startTime) / 1000 < l.duration);
-    if (swingLines !== state.swingLines) {
-      next.swingLines = swingLines;
       changed = true;
     }
 

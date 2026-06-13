@@ -460,10 +460,9 @@ interface AttackConfig {
   damageType: string;
 }
 
-const BLAZE_ROCKET_DAMAGE = 28;
-const BLAZE_ROCKET_SPLASH_RADIUS = 3.2;
-const BLAZE_ROCKET_FIRE_RATE_REDUCTION = 0.7;
-const BLAZE_ROCKET_FIRE_INTERVAL_MS = Math.round(250 / BLAZE_ROCKET_FIRE_RATE_REDUCTION);
+const BLAZE_ROCKET_DAMAGE = 24;
+const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
+const BLAZE_ROCKET_FIRE_INTERVAL_MS = 500;
 const BLAZE_ROCKET_BOT_COOLDOWN_MS = BLAZE_ROCKET_FIRE_INTERVAL_MS;
 const BLAZE_ROCKET_SPEED = 70;
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
@@ -7948,6 +7947,8 @@ export class GameRoom extends Room<GameState> {
 
     // Apply damage to players in active void zones
     for (const zone of this.voidZones) {
+      if (now - zone.startTime < VOID_ZONE_DAMAGE_INTERVAL) continue;
+
       const targets = this.playerSpatialIndex.queryRadius(
         zone.position,
         zone.radius,

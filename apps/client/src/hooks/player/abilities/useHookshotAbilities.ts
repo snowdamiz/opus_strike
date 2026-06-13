@@ -11,7 +11,7 @@
 
 import { useRef, useCallback } from 'react';
 import * as THREE from 'three';
-import { ABILITY_DEFINITIONS, GRAVITY } from '@voxel-strike/shared';
+import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 import {
   createHookshotSwingState,
   stepHookshotSwing,
@@ -46,7 +46,6 @@ export interface UseHookshotAbilitiesReturn {
   hookProjectileIdRef: React.MutableRefObject<number>;
   dragHookIdRef: React.MutableRefObject<number>;
   grappleTrapIdRef: React.MutableRefObject<number>;
-  swingLineIdRef: React.MutableRefObject<number>;
   grappleLineIdRef: React.MutableRefObject<number>;
   earthWallIdRef: React.MutableRefObject<number>;
   lastHookTimeRef: React.MutableRefObject<number>;
@@ -58,13 +57,8 @@ export interface UseHookshotAbilitiesReturn {
   grappleTargetRef: React.MutableRefObject<{ x: number; y: number; z: number } | null>;
   activeGrappleLineIdRef: React.MutableRefObject<string | null>;
 
-  // Swing state
+  // Grapple swing state
   isSwingingRef: React.MutableRefObject<boolean>;
-  swingAttachPointRef: React.MutableRefObject<{ x: number; y: number; z: number } | null>;
-  swingRopeLengthRef: React.MutableRefObject<number>;
-  swingInitialRopeLengthRef: React.MutableRefObject<number>;
-  swingMomentumRef: React.MutableRefObject<{ x: number; y: number; z: number }>;
-  activeSwingLineIdRef: React.MutableRefObject<string | null>;
 
   // Grapple trap targeting
   grappleTrapTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
@@ -78,12 +72,9 @@ export interface UseHookshotAbilitiesReturn {
   executeEarthWall: (ctx: AbilityContext) => void;
   executeGrappleTrap: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => void;
   updateGrapplePhysics: (ctx: AbilityContext) => void;
-  updateSwingPhysics: (ctx: AbilityContext) => void;
   handleSwingTerrainContact: () => void;
   handleGrappleTrapTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
-
-const WEB_SWING_DURATION_SECONDS = 2.75;
 
 function readHookshotHookSocketPosition(
   abilityId: string,
@@ -186,7 +177,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const hookProjectileIdRef = useRef(0);
   const dragHookIdRef = useRef(0);
   const grappleTrapIdRef = useRef(0);
-  const swingLineIdRef = useRef(0);
   const grappleLineIdRef = useRef(0);
   const earthWallIdRef = useRef(0);
 
@@ -201,13 +191,8 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const activeGrappleLineIdRef = useRef<string | null>(null);
   const activeGrappleStartTimeRef = useRef(0);
 
-  // Swing state
+  // Grapple swing state
   const isSwingingRef = useRef(false);
-  const swingAttachPointRef = useRef<{ x: number; y: number; z: number } | null>(null);
-  const swingRopeLengthRef = useRef(0);
-  const swingInitialRopeLengthRef = useRef(0);
-  const swingMomentumRef = useRef({ x: 0, y: 0, z: 0 });
-  const activeSwingLineIdRef = useRef<string | null>(null);
   const swingWasAirborneRef = useRef(false);
   const grappleSwingStateRef = useRef<HookshotSwingState | null>(null);
 
@@ -485,19 +470,12 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     if (activeGrappleLineIdRef.current) {
       store.removeGrappleLine(activeGrappleLineIdRef.current);
     }
-    if (activeSwingLineIdRef.current) {
-      store.updateSwingLine(activeSwingLineIdRef.current, { state: 'done', isActive: false });
-    }
 
     isGrapplingRef.current = false;
     isSwingingRef.current = false;
     grappleTargetRef.current = null;
     activeGrappleLineIdRef.current = null;
     activeGrappleStartTimeRef.current = 0;
-    swingAttachPointRef.current = null;
-    activeSwingLineIdRef.current = null;
-    swingRopeLengthRef.current = 0;
-    swingInitialRopeLengthRef.current = 0;
     swingWasAirborneRef.current = false;
     grappleSwingStateRef.current = null;
   }, []);
@@ -514,8 +492,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       grappleTargetRef.current = null;
       activeGrappleLineIdRef.current = null;
       activeGrappleStartTimeRef.current = 0;
-      swingRopeLengthRef.current = 0;
-      swingInitialRopeLengthRef.current = 0;
       swingWasAirborneRef.current = false;
       grappleSwingStateRef.current = null;
     };
@@ -562,9 +538,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
         ctx.isGrounded
       );
       swingWasAirborneRef.current = grappleSwingStateRef.current.wasAirborne;
-      swingRopeLengthRef.current = grappleSwingStateRef.current.ropeLength;
-      swingInitialRopeLengthRef.current = grappleSwingStateRef.current.initialRopeLength;
-      swingMomentumRef.current = { x: ctx.velocity.x, y: ctx.velocity.y, z: ctx.velocity.z };
       store.updateGrappleLine(lineId, { state: 'pulling' });
     }
 
@@ -591,194 +564,10 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleSwingStateRef.current = result.swing;
     if (result.swing) {
       swingWasAirborneRef.current = result.swing.wasAirborne;
-      swingRopeLengthRef.current = result.swing.ropeLength;
-      swingInitialRopeLengthRef.current = result.swing.initialRopeLength;
     } else {
       releaseGrappleSwing();
     }
   }, []);
-
-  // Update swing physics (Apex Pathfinder style)
-  const updateSwingPhysics = useCallback((ctx: AbilityContext) => {
-    // Phase 1: Wait for hook to reach target
-    if (activeSwingLineIdRef.current && swingAttachPointRef.current && !isSwingingRef.current) {
-      const swingLines = useGameStore.getState().swingLines;
-      const activeLine = swingLines.find(l => l.id === activeSwingLineIdRef.current);
-
-      if (activeLine && activeLine.state === 'attached') {
-        isSwingingRef.current = true;
-        useGameStore.getState().updateSwingLine(activeSwingLineIdRef.current, { state: 'swinging' });
-
-        const attach = swingAttachPointRef.current;
-        swingRopeLengthRef.current = Math.sqrt(
-          (attach.x - ctx.position.x) ** 2 +
-          (attach.y - ctx.position.y) ** 2 +
-          (attach.z - ctx.position.z) ** 2
-        );
-        swingInitialRopeLengthRef.current = swingRopeLengthRef.current;
-        swingMomentumRef.current = { x: ctx.velocity.x, y: ctx.velocity.y, z: ctx.velocity.z };
-        swingWasAirborneRef.current = !ctx.isGrounded;
-
-        // Initial pull
-        const toAttach = {
-          x: attach.x - ctx.position.x,
-          y: attach.y - ctx.position.y,
-          z: attach.z - ctx.position.z,
-        };
-        const dist = Math.sqrt(toAttach.x ** 2 + toAttach.y ** 2 + toAttach.z ** 2);
-        if (dist > 0) {
-          ctx.velocity.x += (toAttach.x / dist) * 12;
-          ctx.velocity.y += (toAttach.y / dist) * 12;
-          ctx.velocity.z += (toAttach.z / dist) * 12;
-        }
-      } else if (!activeLine) {
-        activeSwingLineIdRef.current = null;
-        swingAttachPointRef.current = null;
-      }
-    }
-
-    // Phase 2: Active swing
-    if (activeSwingLineIdRef.current && isSwingingRef.current && swingAttachPointRef.current) {
-      const attach = swingAttachPointRef.current;
-      const swingLines = useGameStore.getState().swingLines;
-      const activeLine = swingLines.find(l => l.id === activeSwingLineIdRef.current);
-      const elapsed = activeLine ? (Date.now() - activeLine.startTime) / 1000 : 0;
-      const duration = WEB_SWING_DURATION_SECONDS;
-
-      if (elapsed >= duration || !activeLine) {
-        isSwingingRef.current = false;
-        swingAttachPointRef.current = null;
-        activeSwingLineIdRef.current = null;
-        swingWasAirborneRef.current = false;
-        return;
-      }
-
-      if (ctx.isGrounded && swingWasAirborneRef.current) {
-        handleSwingTerrainContact();
-        return;
-      }
-      if (!ctx.isGrounded) {
-        swingWasAirborneRef.current = true;
-      }
-
-      // Rope direction
-      const toAttach = {
-        x: attach.x - ctx.position.x,
-        y: attach.y - ctx.position.y,
-        z: attach.z - ctx.position.z,
-      };
-      const currentLength = Math.sqrt(toAttach.x ** 2 + toAttach.y ** 2 + toAttach.z ** 2);
-      const ropeDir = {
-        x: toAttach.x / currentLength,
-        y: toAttach.y / currentLength,
-        z: toAttach.z / currentLength,
-      };
-
-      // Look direction slingshot effect
-      const lookDir = calculateLookDirection(ctx.yaw, ctx.pitch);
-      const lookDot = lookDir.x * ropeDir.x + lookDir.y * ropeDir.y + lookDir.z * ropeDir.z;
-      const slingshotFactor = 1 - lookDot;
-      const slingshotStrength = 25 * slingshotFactor;
-
-      const lookAlongRope = lookDir.x * ropeDir.x + lookDir.y * ropeDir.y + lookDir.z * ropeDir.z;
-      const lookPerp = {
-        x: lookDir.x - ropeDir.x * lookAlongRope,
-        y: lookDir.y - ropeDir.y * lookAlongRope,
-        z: lookDir.z - ropeDir.z * lookAlongRope,
-      };
-      const lookPerpLen = Math.sqrt(lookPerp.x ** 2 + lookPerp.y ** 2 + lookPerp.z ** 2);
-
-      if (lookPerpLen > 0.1) {
-        ctx.velocity.x += (lookPerp.x / lookPerpLen) * slingshotStrength * ctx.dt;
-        ctx.velocity.y += (lookPerp.y / lookPerpLen) * slingshotStrength * ctx.dt * 0.5;
-        ctx.velocity.z += (lookPerp.z / lookPerpLen) * slingshotStrength * ctx.dt;
-      }
-
-      // Strafe input momentum
-      const wishDir = { x: 0, y: 0, z: 0 };
-      if (ctx.inputState.moveForward) { wishDir.x -= Math.sin(ctx.yaw); wishDir.z -= Math.cos(ctx.yaw); }
-      if (ctx.inputState.moveBackward) { wishDir.x += Math.sin(ctx.yaw); wishDir.z += Math.cos(ctx.yaw); }
-      if (ctx.inputState.moveLeft) { wishDir.x -= Math.cos(ctx.yaw); wishDir.z += Math.sin(ctx.yaw); }
-      if (ctx.inputState.moveRight) { wishDir.x += Math.cos(ctx.yaw); wishDir.z -= Math.sin(ctx.yaw); }
-
-      const wishLen = Math.sqrt(wishDir.x ** 2 + wishDir.z ** 2);
-      if (wishLen > 0.1) {
-        wishDir.x /= wishLen;
-        wishDir.z /= wishLen;
-
-        const strafeAlongRope = wishDir.x * ropeDir.x + wishDir.z * ropeDir.z;
-        const strafePerp = {
-          x: wishDir.x - ropeDir.x * strafeAlongRope,
-          z: wishDir.z - ropeDir.z * strafeAlongRope,
-        };
-        const strafePerpLen = Math.sqrt(strafePerp.x ** 2 + strafePerp.z ** 2);
-
-        if (strafePerpLen > 0.1) {
-          ctx.velocity.x += (strafePerp.x / strafePerpLen) * 20 * ctx.dt;
-          ctx.velocity.z += (strafePerp.z / strafePerpLen) * 20 * ctx.dt;
-        }
-      }
-
-      // Gravity
-      ctx.velocity.y += GRAVITY * ctx.dt;
-
-      // Rope tension
-      const maxLength = swingInitialRopeLengthRef.current;
-      if (currentLength > maxLength) {
-        const velAlongRope = ctx.velocity.x * (-ropeDir.x) + ctx.velocity.y * (-ropeDir.y) + ctx.velocity.z * (-ropeDir.z);
-        if (velAlongRope > 0) {
-          ctx.velocity.x += ropeDir.x * velAlongRope;
-          ctx.velocity.y += ropeDir.y * velAlongRope;
-          ctx.velocity.z += ropeDir.z * velAlongRope;
-        }
-
-        const overExtend = currentLength - maxLength;
-        const tensionForce = overExtend * 50;
-        ctx.velocity.x += ropeDir.x * tensionForce * ctx.dt;
-        ctx.velocity.y += ropeDir.y * tensionForce * ctx.dt;
-        ctx.velocity.z += ropeDir.z * tensionForce * ctx.dt;
-
-        ctx.position.x = attach.x - ropeDir.x * maxLength;
-        ctx.position.y = attach.y - ropeDir.y * maxLength;
-        ctx.position.z = attach.z - ropeDir.z * maxLength;
-      }
-
-      // Natural pull
-      ctx.velocity.x += ropeDir.x * 8 * ctx.dt;
-      ctx.velocity.y += ropeDir.y * 8 * ctx.dt * 0.3;
-      ctx.velocity.z += ropeDir.z * 8 * ctx.dt;
-
-      // Pendulum boost
-      if (ctx.position.y < attach.y) {
-        const heightDiff = attach.y - ctx.position.y;
-        const swingBoost = Math.min(heightDiff * 0.5, 3);
-        const hSpeed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.z ** 2);
-        if (hSpeed > 0.1) {
-          ctx.velocity.x += (ctx.velocity.x / hSpeed) * swingBoost * ctx.dt;
-          ctx.velocity.z += (ctx.velocity.z / hSpeed) * swingBoost * ctx.dt;
-        }
-      }
-
-      // Jump to release
-      if (ctx.inputState.jump) {
-        const releaseBoost = 5;
-        const hSpeed = Math.sqrt(ctx.velocity.x ** 2 + ctx.velocity.z ** 2);
-        if (hSpeed > 0.1) {
-          ctx.velocity.x += (ctx.velocity.x / hSpeed) * releaseBoost;
-          ctx.velocity.z += (ctx.velocity.z / hSpeed) * releaseBoost;
-        }
-        ctx.velocity.y = Math.max(ctx.velocity.y, 8);
-
-        isSwingingRef.current = false;
-        swingAttachPointRef.current = null;
-        swingWasAirborneRef.current = false;
-        if (activeSwingLineIdRef.current) {
-          useGameStore.getState().updateSwingLine(activeSwingLineIdRef.current, { state: 'done', isActive: false });
-        }
-        activeSwingLineIdRef.current = null;
-      }
-    }
-  }, [handleSwingTerrainContact]);
 
   // Handle grapple trap target updates
   const handleGrappleTrapTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
@@ -795,7 +584,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     hookProjectileIdRef,
     dragHookIdRef,
     grappleTrapIdRef,
-    swingLineIdRef,
     grappleLineIdRef,
     earthWallIdRef,
     lastHookTimeRef,
@@ -805,11 +593,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     grappleTargetRef,
     activeGrappleLineIdRef,
     isSwingingRef,
-    swingAttachPointRef,
-    swingRopeLengthRef,
-    swingInitialRopeLengthRef,
-    swingMomentumRef,
-    activeSwingLineIdRef,
     grappleTrapTargetRef,
     grappleTrapValidRef,
     fireChainHook,
@@ -819,7 +602,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     executeEarthWall,
     executeGrappleTrap,
     updateGrapplePhysics,
-    updateSwingPhysics,
     handleSwingTerrainContact,
     handleGrappleTrapTargetUpdate,
   };

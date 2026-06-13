@@ -16,7 +16,6 @@ import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
 import { useAudio, useGlobalButtonSounds, useMusic } from './hooks/useAudio';
-import { prewarmBlazeEffects, prewarmPhantomEffects } from './components/game/effectResources';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
 import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCache';
@@ -111,11 +110,16 @@ export function App() {
 
     (async () => {
       try {
+        const heroEffectWarmup = localHeroId === 'phantom'
+          ? import('./components/game/effectPrewarm').then(({ prewarmPhantomEffects }) => prewarmPhantomEffects())
+          : localHeroId === 'blaze'
+            ? import('./components/game/effectPrewarm').then(({ prewarmBlazeEffects }) => prewarmBlazeEffects())
+            : Promise.resolve();
+
         await Promise.all([
           preloadSoundGroup('commonCombat'),
           preloadHeroSounds(localHeroId),
-          localHeroId === 'phantom' ? prewarmPhantomEffects() : Promise.resolve(),
-          localHeroId === 'blaze' ? prewarmBlazeEffects() : Promise.resolve(),
+          heroEffectWarmup,
         ]);
       } catch (error) {
         console.warn('[App] Match resource preload failed', error);

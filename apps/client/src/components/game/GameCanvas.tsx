@@ -19,7 +19,6 @@ import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
 import { ChronosAegisManager, ChronosAscendantManager, ChronosPulsesManager, ChronosTimebreakManager } from './chronos';
-import { prewarmBlazeEffects, prewarmPhantomEffects } from './effectResources';
 import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { useGameStore } from '../../store/gameStore';
@@ -537,10 +536,10 @@ export function GameCanvas({
         gl.toneMappingExposure = qualityConfig.render.exposure;
         gl.shadowMap.enabled = qualityConfig.shadows.enabled;
         gl.shadowMap.type = qualityConfig.shadows.type;
-        Promise.all([
+        import('./effectPrewarm').then(({ prewarmPhantomEffects, prewarmBlazeEffects }) => Promise.all([
           prewarmPhantomEffects(gl),
           prewarmBlazeEffects(gl),
-        ]).catch((error) => {
+        ])).catch((error) => {
           console.warn('[Effects] Prewarm failed', error);
         });
       }}

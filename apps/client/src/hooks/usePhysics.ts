@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d-compat';
 import {
   getBlockDefinition,
   GRAVITY,
@@ -16,17 +16,29 @@ interface PhysicsContext {
   isReady: boolean;
 }
 
+type RapierModule = typeof RAPIER;
+
 let rapierInstance: typeof RAPIER | null = null;
+let rapierInitPromise: Promise<RapierModule> | null = null;
 let worldInstance: RAPIER.World | null = null;
 let playerColliderInstance: RAPIER.Collider | null = null;
 let physicsReady = false;
 
 export async function initPhysics(): Promise<typeof RAPIER> {
   if (rapierInstance) return rapierInstance;
-  
-  await RAPIER.init();
-  rapierInstance = RAPIER;
-  return RAPIER;
+
+  rapierInitPromise ??= import('@dimforge/rapier3d-compat')
+    .then(async ({ default: RAPIER }) => {
+      await RAPIER.init();
+      rapierInstance = RAPIER;
+      return RAPIER;
+    })
+    .catch((error) => {
+      rapierInitPromise = null;
+      throw error;
+    });
+
+  return rapierInitPromise;
 }
 
 export function usePhysics(): PhysicsContext {

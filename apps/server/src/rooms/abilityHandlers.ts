@@ -21,7 +21,7 @@ const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>();
 // ============================================================================
 
 export const VOID_ZONE_RADIUS = 3;
-export const VOID_ZONE_DAMAGE = 15;
+export const VOID_ZONE_DAMAGE = 12;
 export const VOID_ZONE_DURATION = 4; // seconds
 export const VOID_ZONE_DAMAGE_INTERVAL = 500; // ms between damage ticks
 
@@ -278,12 +278,6 @@ export function executeAbility(
 
     // ===== HOOKSHOT ABILITIES =====
     case 'hookshot_grapple': {
-      abilityState.activatedAt = now;
-      break;
-    }
-
-    case 'hookshot_swing': {
-      abilityState.isActive = true;
       abilityState.activatedAt = now;
       break;
     }

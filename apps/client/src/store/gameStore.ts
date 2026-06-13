@@ -54,7 +54,6 @@ export type {
   HookProjectileData,
   DragHookData,
   GrappleTrapData,
-  SwingLineData,
   GrappleLineData,
   EarthWallData,
 } from './types';

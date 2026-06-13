@@ -304,18 +304,6 @@ export interface GrappleTrapData {
   hookedPlayers: string[]; // IDs of players hooked
 }
 
-export interface SwingLineData {
-  id: string;
-  startPosition: { x: number; y: number; z: number };
-  attachPoint: { x: number; y: number; z: number };
-  startTime: number;
-  duration: number;
-  ownerId: string;
-  isActive: boolean;
-  // Apex-style grapple state
-  state: 'extending' | 'attached' | 'swinging' | 'done';
-}
-
 export interface GrappleLineData {
   id: string;
   startPosition: { x: number; y: number; z: number };

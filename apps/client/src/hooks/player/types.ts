@@ -94,25 +94,6 @@ export interface TargetingRefs {
 }
 
 // ============================================================================
-// SWING/GRAPPLE STATE (Hookshot)
-// ============================================================================
-
-export interface SwingState {
-  isSwinging: boolean;
-  attachPoint: { x: number; y: number; z: number } | null;
-  ropeLength: number;
-  initialRopeLength: number;
-  momentum: { x: number; y: number; z: number };
-  activeLineId: string | null;
-}
-
-export interface GrappleState {
-  isGrappling: boolean;
-  target: { x: number; y: number; z: number } | null;
-  activeLineId: string | null;
-}
-
-// ============================================================================
 // HERO-SPECIFIC STATE
 // ============================================================================
 
@@ -137,7 +118,6 @@ export interface HookshotState {
   hookProjectileId: number;
   dragHookId: number;
   grappleTrapId: number;
-  swingLineId: number;
   grappleLineId: number;
   earthWallId: number;
   lastHookTime: number;

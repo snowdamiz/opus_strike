@@ -21,7 +21,6 @@ export class HookshotHero extends HeroBase {
       case 'hookshot_grapple':
         return this.executeGrapple(context);
       case 'hookshot_anchor_wall':
-      case 'hookshot_swing':
         return this.executeAnchorWall(context);
       case 'hookshot_grapple_trap':
         return this.executeGrappleTrap(context);

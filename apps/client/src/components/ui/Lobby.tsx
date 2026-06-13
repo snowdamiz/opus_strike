@@ -310,7 +310,7 @@ export function Lobby() {
 
       const intent = await createWagerPaymentIntent(currentLobbyId, payerWallet, currentPlayer.id);
       const paymentTransaction = await createWagerPaymentTransaction(intent.intentId);
-      const transaction = deserializeWagerPaymentTransaction(paymentTransaction.transactionBase64);
+      const transaction = await deserializeWagerPaymentTransaction(paymentTransaction.transactionBase64);
       const signedTransactionBase64 = await signTransaction(transaction);
       await submitWagerSignedPaymentTransaction(intent.intentId, signedTransactionBase64);
     } catch (err) {

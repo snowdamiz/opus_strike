@@ -6,7 +6,6 @@ import {
   GrappleTrapEffect,
   EarthWallEffect,
   GrappleLineEffect,
-  SwingLineEffect,
 } from './hookshot';
 
 // Re-export targeting indicator for external use
@@ -21,14 +20,12 @@ export function HookshotEffectsManager() {
     hookProjectiles,
     dragHooks,
     grappleTraps,
-    swingLines,
     grappleLines,
     earthWalls,
   } = useGameStore(useShallow(state => ({
     hookProjectiles: state.hookProjectiles,
     dragHooks: state.dragHooks,
     grappleTraps: state.grappleTraps,
-    swingLines: state.swingLines,
     grappleLines: state.grappleLines,
     earthWalls: state.earthWalls,
   })));
@@ -48,11 +45,6 @@ export function HookshotEffectsManager() {
       {/* Ultimate grapple traps */}
       {grappleTraps.map(trap => (
         <GrappleTrapEffect key={trap.id} trap={trap} />
-      ))}
-      
-      {/* Swing lines (legacy, kept for compatibility) */}
-      {swingLines.map(line => (
-        <SwingLineEffect key={line.id} line={line} />
       ))}
       
       {/* Grapple lines (E ability) */}

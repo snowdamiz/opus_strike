@@ -47,9 +47,23 @@ export default defineConfig({
           if (id.includes('@dimforge/rapier3d-compat')) {
             return 'physics-vendor';
           }
-          // Keep the React/R3F/Colyseus/Solana dependency graph together.
-          // Splitting these libraries by package creates browser ESM cycles
-          // where React can be read before its namespace export initializes.
+          if (id.includes('livekit-client')) {
+            return 'voice-vendor';
+          }
+          if (
+            id.includes('@solana/') ||
+            id.includes('@noble/') ||
+            id.includes('/bn.js/') ||
+            id.includes('/borsh/') ||
+            id.includes('/jayson/') ||
+            id.includes('/rpc-websockets/') ||
+            id.includes('/superstruct/')
+          ) {
+            return 'wallet-vendor';
+          }
+          // Keep the React/R3F/Colyseus dependency graph together. Splitting
+          // these libraries by package creates browser ESM cycles where React
+          // can be read before its namespace export initializes.
           return 'vendor';
         },
       },
