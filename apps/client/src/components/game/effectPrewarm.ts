@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import { initializeEffectResources } from './effectResources';
 import { prewarmBlazeMaterials } from './blaze/materials';
 import { prewarmRocketResources } from './blaze/rockets';
@@ -6,21 +5,19 @@ import { prewarmDireBallResources } from './phantom/direBall';
 import { getRiftMaterial, getShadowArrivalMaterial, getTrailMaterial } from './phantom/materials';
 import { prewarmVoidRayResources } from './phantom/voidRay';
 import { prewarmVoidZoneResources } from './phantom/voidZone';
-import { prewarmTerrainImpactResources } from './TerrainImpactEffects';
 
-export async function prewarmPhantomEffects(renderer?: THREE.WebGLRenderer): Promise<void> {
+export async function prewarmPhantomEffects(): Promise<void> {
   initializeEffectResources();
   getRiftMaterial();
   getTrailMaterial();
   getShadowArrivalMaterial();
-  prewarmDireBallResources(renderer);
-  prewarmTerrainImpactResources(renderer);
-  prewarmVoidRayResources(renderer);
-  prewarmVoidZoneResources(renderer);
+  prewarmDireBallResources();
+  prewarmVoidRayResources();
+  prewarmVoidZoneResources();
 }
 
-export async function prewarmBlazeEffects(renderer?: THREE.WebGLRenderer): Promise<void> {
+export async function prewarmBlazeEffects(): Promise<void> {
   initializeEffectResources();
   prewarmBlazeMaterials();
-  prewarmRocketResources(renderer);
+  prewarmRocketResources();
 }

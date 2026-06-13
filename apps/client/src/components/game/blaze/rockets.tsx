@@ -233,36 +233,13 @@ function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number):
   }
 }
 
-export function prewarmRocketResources(renderer?: THREE.WebGLRenderer): void {
+export function prewarmRocketResources(): void {
   getFireballCoreMaterial();
   getFireballInnerMaterial();
   getFireballOuterMaterial();
   getFireballTrailCoreMaterial();
   getFireballTrailInnerMaterial();
   getFireballTrailOuterMaterial();
-
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  const matrix = new THREE.Matrix4().makeScale(0.25, 0.25, 0.25);
-  camera.position.z = 3;
-
-  const meshes = [
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere12, getFireballOuterMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, getFireballInnerMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere6, getFireballCoreMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getFireballTrailOuterMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getFireballTrailInnerMaterial(), 1),
-    new THREE.InstancedMesh(SHARED_GEOMETRIES.cone8, getFireballTrailCoreMaterial(), 1),
-  ];
-
-  for (const mesh of meshes) {
-    mesh.setMatrixAt(0, matrix);
-    scene.add(mesh);
-  }
-
-  renderer.compile(scene, camera);
 }
 
 // ============================================================================

@@ -22,6 +22,7 @@ let cachedPrice: CachedPrice | null = null;
 export interface RankedTokenHoldRuntimeConfig {
   enabled: boolean;
   tokenAddress: string;
+  tokenSymbol: string;
   usdCents: number;
   cluster: string;
   rpcUrl: string;
@@ -33,6 +34,7 @@ export interface RankedTokenHoldRuntimeConfig {
 export interface RankedTokenHoldingStatus {
   eligible: boolean;
   tokenAddress: string;
+  tokenSymbol: string;
   tokenDecimals: number | null;
   usdCents: number;
   tokenUsdPrice: string;
@@ -79,6 +81,17 @@ function rankedTokenAddressEnv(): string {
   }
 
   return tokenAddress;
+}
+
+function rankedTokenSymbolEnv(tokenAddress: string): string {
+  const fallback = tokenAddress === RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS ? 'SOL' : 'TOKEN';
+  const raw = (process.env.RANKED_TOKEN_HOLD_TOKEN_SYMBOL || fallback).trim().replace(/^\$/, '').toUpperCase();
+
+  if (!/^[A-Z0-9]{1,12}$/.test(raw)) {
+    throw new Error('RANKED_TOKEN_HOLD_TOKEN_SYMBOL must be 1-12 letters or numbers');
+  }
+
+  return raw;
 }
 
 function parseDecimalToMicroUsd(value: string, fieldName: string): bigint {
@@ -141,9 +154,12 @@ function parseWalletAddress(walletAddress: string): PublicKey {
 }
 
 export function getRankedTokenHoldRuntimeConfig(): RankedTokenHoldRuntimeConfig {
+  const tokenAddress = rankedTokenAddressEnv();
+
   return {
     enabled: envFlag('RANKED_TOKEN_HOLD_ENABLED', true),
-    tokenAddress: rankedTokenAddressEnv(),
+    tokenAddress,
+    tokenSymbol: rankedTokenSymbolEnv(tokenAddress),
     usdCents: intEnv('RANKED_TOKEN_HOLD_USD_CENTS', DEFAULT_RANKED_TOKEN_HOLD_USD_CENTS, { min: 1, max: 1_000_000 }),
     cluster: process.env.SOLANA_CLUSTER || 'mainnet-beta',
     rpcUrl: process.env.RANKED_TOKEN_HOLD_RPC_URL || process.env.SOLANA_RPC_URL || '',
@@ -358,6 +374,7 @@ export async function getRankedTokenHoldingStatus(walletAddress: string): Promis
     return {
       eligible: true,
       tokenAddress: config.tokenAddress,
+      tokenSymbol: config.tokenSymbol,
       tokenDecimals: null,
       usdCents: config.usdCents,
       tokenUsdPrice: '0',
@@ -390,6 +407,7 @@ export async function getRankedTokenHoldingStatus(walletAddress: string): Promis
   return {
     eligible: balance.balanceBaseUnits >= requiredTokenBaseUnits,
     tokenAddress: config.tokenAddress,
+    tokenSymbol: config.tokenSymbol,
     tokenDecimals: balance.decimals,
     usdCents: config.usdCents,
     tokenUsdPrice: formatMicroUsd(tokenUsdPriceMicroUsd),

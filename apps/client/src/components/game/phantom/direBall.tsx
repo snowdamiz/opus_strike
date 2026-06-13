@@ -452,31 +452,12 @@ function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number):
   }
 }
 
-export function prewarmDireBallResources(renderer?: THREE.WebGLRenderer): void {
-  const coreMaterial = getSharedCoreMaterial();
-  const glowMaterial = getSharedGlowMaterial();
-  const innerCoreMaterial = getSharedInnerCoreMaterial();
-  const secondaryShellMaterial = getSharedSecondaryShellMaterial();
+export function prewarmDireBallResources(): void {
+  getSharedCoreMaterial();
+  getSharedGlowMaterial();
+  getSharedInnerCoreMaterial();
+  getSharedSecondaryShellMaterial();
   getSharedParticleMaterial();
-
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 3;
-
-  const matrix = new THREE.Matrix4().makeScale(BALL_RADIUS, BALL_RADIUS, BALL_RADIUS);
-  const core = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere16, coreMaterial, 1);
-  const glow = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere12, glowMaterial, 1);
-  const inner = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, innerCoreMaterial, 1);
-  const shell = new THREE.InstancedMesh(SHARED_GEOMETRIES.sphere8, secondaryShellMaterial, 1);
-
-  core.setMatrixAt(0, matrix);
-  glow.setMatrixAt(0, matrix);
-  inner.setMatrixAt(0, matrix);
-  shell.setMatrixAt(0, matrix);
-  scene.add(core, glow, inner, shell);
-  renderer.compile(scene, camera);
 }
 
 export function DireBallsManager() {

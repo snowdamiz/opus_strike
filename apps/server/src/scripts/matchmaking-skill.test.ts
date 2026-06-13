@@ -40,6 +40,18 @@ assert.equal(
   RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS
 );
 assert.equal(
+  withEnvValue('RANKED_TOKEN_HOLD_TOKEN_SYMBOL', undefined, () => getRankedTokenHoldRuntimeConfig().tokenSymbol),
+  'SOL'
+);
+assert.equal(
+  withEnvValue('RANKED_TOKEN_HOLD_TOKEN_SYMBOL', '$slop', () => getRankedTokenHoldRuntimeConfig().tokenSymbol),
+  'SLOP'
+);
+assert.throws(
+  () => withEnvValue('RANKED_TOKEN_HOLD_TOKEN_SYMBOL', 'too-long-symbol', () => getRankedTokenHoldRuntimeConfig()),
+  /RANKED_TOKEN_HOLD_TOKEN_SYMBOL must be 1-12 letters or numbers/
+);
+assert.equal(
   withEnvValue('RANKED_TOKEN_HOLD_TOKEN_ADDRESS', RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS, () => getRankedTokenHoldRuntimeConfig().tokenAddress),
   RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS
 );

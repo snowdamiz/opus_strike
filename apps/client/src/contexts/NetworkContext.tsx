@@ -69,6 +69,7 @@ interface NetworkContextType {
   ) => Promise<void>;
   quickPlay: (playerName: string) => Promise<void>;
   rankedPlay: (playerName: string) => Promise<void>;
+  getRankedTokenHoldStatus: () => Promise<RankedTokenHoldStatus>;
   startPracticeGame: (playerName?: string, options?: StartPracticeGameOptions) => void;
   joinLobby: (playerName: string, lobbyId: string) => Promise<void>;
   leaveLobby: () => void;
@@ -128,6 +129,21 @@ interface QuickPlayTicketResponse {
   targetRankLabel: string;
 }
 
+export interface RankedTokenHoldStatus {
+  eligible: boolean;
+  tokenAddress: string;
+  tokenSymbol?: string;
+  tokenDecimals: number | null;
+  usdCents: number;
+  tokenUsdPrice: string;
+  tokenUsdPriceMicroUsd: string;
+  requiredTokenBaseUnits: string;
+  balanceTokenBaseUnits: string;
+  cluster: string;
+  priceSource: string;
+  checkedAt: string;
+}
+
 interface RankedTicketResponse {
   ticket: string;
   mode: 'ranked';
@@ -137,19 +153,7 @@ interface RankedTicketResponse {
   isGuest: false;
   targetRankDivisionIndex: number;
   targetRankLabel: string;
-  tokenHold: {
-    eligible: boolean;
-    tokenAddress: string;
-    tokenDecimals: number | null;
-    usdCents: number;
-    tokenUsdPrice: string;
-    tokenUsdPriceMicroUsd: string;
-    requiredTokenBaseUnits: string;
-    balanceTokenBaseUnits: string;
-    cluster: string;
-    priceSource: string;
-    checkedAt: string;
-  };
+  tokenHold: RankedTokenHoldStatus;
 }
 
 interface PlayerReportResultMessage {
@@ -192,6 +196,20 @@ async function requestRankedTicket(): Promise<RankedTicketResponse> {
   }
 
   return response.json();
+}
+
+async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldStatus> {
+  const response = await fetch(`${getHttpUrl()}/matchmaking/ranked-token-hold-status`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to check ranked token holding' }));
+    throw new Error(payload.error || 'Failed to check ranked token holding');
+  }
+
+  const payload = await response.json() as { tokenHold: RankedTokenHoldStatus };
+  return payload.tokenHold;
 }
 
 async function wagerApiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -929,12 +947,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLoading(true);
 
     try {
-      cleanupExistingConnections();
-      setPracticeMode(false);
-
+      const rankedTicket = await requestRankedTicket();
       const client = getClient();
       const clientId = getClientId();
-      const rankedTicket = await requestRankedTicket();
+
+      cleanupExistingConnections();
+      setPracticeMode(false);
 
       loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredTokenBaseUnits);
 
@@ -984,6 +1002,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [getClient, cleanupExistingConnections, setupLobbyListeners, setLoading, setPlayerId, setCurrentLobbyWager, setMatchmakingStatus, setAppPhase, setConnected, setPracticeMode]);
+
+  const getRankedTokenHoldStatus = useCallback(() => requestRankedTokenHoldStatus(), []);
 
   const joinLobby = useCallback(async (playerName: string, lobbyId: string) => {
     setLoading(true);
@@ -1617,6 +1637,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       createLobby,
       quickPlay,
       rankedPlay,
+      getRankedTokenHoldStatus,
       startPracticeGame,
       joinLobby,
       leaveLobby,

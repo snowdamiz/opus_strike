@@ -375,23 +375,11 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export function prewarmVoidRayResources(renderer?: THREE.WebGLRenderer): void {
-  const spiralMaterial = getSpiralMaterial();
-  const coreMaterial = getCoreMaterial();
-  const glowMaterial = getGlowMaterial();
-  const spiralGeometries = getSharedSpiralGeometries();
-
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 4;
-
-  const spiral = new THREE.Mesh(spiralGeometries[0], spiralMaterial);
-  const core = new THREE.Mesh(RAY_BEAM_GEOMETRY, coreMaterial);
-  const glow = new THREE.Mesh(RAY_GLOW_GEOMETRY, glowMaterial);
-  scene.add(spiral, core, glow);
-  renderer.compile(scene, camera);
+export function prewarmVoidRayResources(): void {
+  getSpiralMaterial();
+  getCoreMaterial();
+  getGlowMaterial();
+  getSharedSpiralGeometries();
 }
 
 export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId }: VoidRayProps) => {

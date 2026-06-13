@@ -46,10 +46,13 @@ const materialSource = readFileSync(new URL('./materials.ts', import.meta.url), 
 assert.match(terrainTexturesSource, /new THREE\.DataArrayTexture/);
 assert.match(terrainTexturesSource, /createLinearGradient/);
 assert.match(materialSource, /sampler2DArray/);
+assert.match(materialSource, /voxelTerrainColorTexture/);
+assert.match(materialSource, /voxelTerrainEmissiveTexture/);
 assert.match(materialSource, /new THREE\.MeshLambertMaterial/);
 assert.doesNotMatch(materialSource, /MeshStandardMaterial/);
 assert.doesNotMatch(materialSource, /envMapIntensity|roughnessMap|metalnessMap|bumpMap|aoMap/);
 assert.doesNotMatch(materialSource, /voxelAtlas|voxelTileOrigin|createVoxelAtlasTextures/);
+assert.doesNotMatch(materialSource, /map:\s*textures\.color|emissiveMap:\s*textures\.emissive/);
 assert.doesNotMatch(terrainTexturesSource, /CanvasTexture|roughness|metalness|bump|aoMap|createVoxelAtlas/);
 assert.doesNotMatch(terrainTexturesSource, /fillRect\(x \+ inset, y \+ inset, TILE_SIZE - inset \* 2, 2\)/);
 assert.doesNotMatch(terrainTexturesSource, /bottom - 2/);

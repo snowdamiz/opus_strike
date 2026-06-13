@@ -1,4 +1,5 @@
 import type { ModuleInstance, VoxelMapManifest } from '@voxel-strike/shared';
+import { MINIMAP_COLORS } from '../../../styles/colorTokens';
 import {
   buildTopBlockIndex,
   classifyMinimapBlock,
@@ -87,7 +88,7 @@ function renderStaticLayer(
   const heightRange = getHeightRange(manifest.heightfield.topSolidRows);
 
   ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = 'rgba(2, 6, 12, 0.5)';
+  ctx.fillStyle = MINIMAP_COLORS.static.background;
   ctx.fillRect(0, 0, size, size);
 
   const minX = Math.floor(projection.offsetX);
@@ -115,10 +116,10 @@ function renderStaticLayer(
 
   drawModuleFootprints(ctx, manifest, projection);
   drawRoutes(ctx, manifest, projection);
-  drawObjectiveDiamond(ctx, projection, manifest.flagZones.red, '#fb7185');
-  drawObjectiveDiamond(ctx, projection, manifest.flagZones.blue, '#67e8f9');
-  drawSpawnPoints(ctx, projection, manifest.spawnPoints.red, '#f43f5e');
-  drawSpawnPoints(ctx, projection, manifest.spawnPoints.blue, '#06b6d4');
+  drawObjectiveDiamond(ctx, projection, manifest.flagZones.red, MINIMAP_COLORS.team.red);
+  drawObjectiveDiamond(ctx, projection, manifest.flagZones.blue, MINIMAP_COLORS.team.blue);
+  drawSpawnPoints(ctx, projection, manifest.spawnPoints.red, MINIMAP_COLORS.spawn.red);
+  drawSpawnPoints(ctx, projection, manifest.spawnPoints.blue, MINIMAP_COLORS.spawn.blue);
   drawBoundary(ctx, manifest, projection);
   drawScanGrid(ctx, projection);
 }
@@ -134,31 +135,27 @@ function getCachedTopBlockIndex(manifest: VoxelMapManifest): Uint8Array {
 }
 
 function getSurfaceColor(kind: MinimapSurfaceKind, heightRatio: number): string {
-  const terrainBase = Math.round(26 + heightRatio * 48);
-  const terrainGreen = Math.round(60 + heightRatio * 42);
-  const terrainBlue = Math.round(54 + heightRatio * 38);
-
   switch (kind) {
     case 'barrier':
-      return 'rgba(184, 197, 213, 0.66)';
+      return MINIMAP_COLORS.surface.barrier;
     case 'hazard':
-      return 'rgba(251, 113, 71, 0.78)';
+      return MINIMAP_COLORS.surface.hazard;
     case 'flag':
-      return 'rgba(250, 204, 21, 0.72)';
+      return MINIMAP_COLORS.surface.flag;
     case 'spawnRed':
-      return 'rgba(244, 63, 94, 0.84)';
+      return MINIMAP_COLORS.surface.spawnRed;
     case 'spawnBlue':
-      return 'rgba(6, 182, 212, 0.84)';
+      return MINIMAP_COLORS.surface.spawnBlue;
     case 'accentRed':
-      return 'rgba(248, 113, 113, 0.82)';
+      return MINIMAP_COLORS.surface.accentRed;
     case 'accentBlue':
-      return 'rgba(103, 232, 249, 0.82)';
+      return MINIMAP_COLORS.surface.accentBlue;
     case 'structure':
-      return `rgba(${Math.round(104 + heightRatio * 54)}, ${Math.round(119 + heightRatio * 62)}, ${Math.round(137 + heightRatio * 70)}, 0.72)`;
+      return MINIMAP_COLORS.surface.structure(heightRatio);
     case 'terrain':
-      return `rgba(${terrainBase}, ${terrainGreen}, ${terrainBlue}, 0.82)`;
+      return MINIMAP_COLORS.surface.terrain(heightRatio);
     default:
-      return 'rgba(5, 10, 16, 0.4)';
+      return MINIMAP_COLORS.surface.void;
   }
 }
 
@@ -181,8 +178,8 @@ function drawBoundary(
   });
   ctx.closePath();
   ctx.lineWidth = 1.4;
-  ctx.strokeStyle = 'rgba(226, 242, 255, 0.62)';
-  ctx.shadowColor = 'rgba(125, 211, 252, 0.34)';
+  ctx.strokeStyle = MINIMAP_COLORS.static.boundaryStroke;
+  ctx.shadowColor = MINIMAP_COLORS.static.boundaryShadow;
   ctx.shadowBlur = 4;
   ctx.stroke();
   ctx.restore();
@@ -210,8 +207,8 @@ function drawRoutes(
     ctx.lineTo(b.x, b.y);
     ctx.lineWidth = clamp(edge.width * projection.scale * 0.18, 0.8, 3.6);
     ctx.strokeStyle = edge.traversal === 'bridge'
-      ? 'rgba(226, 242, 255, 0.22)'
-      : 'rgba(148, 163, 184, 0.13)';
+      ? MINIMAP_COLORS.static.bridgeRoute
+      : MINIMAP_COLORS.static.route;
     ctx.stroke();
   }
   ctx.restore();
@@ -244,8 +241,8 @@ function drawModuleFootprint(
   ctx.save();
   ctx.translate(center.x, center.y);
   ctx.rotate(angle);
-  ctx.fillStyle = 'rgba(203, 213, 225, 0.16)';
-  ctx.strokeStyle = 'rgba(226, 242, 255, 0.22)';
+  ctx.fillStyle = MINIMAP_COLORS.static.moduleFill;
+  ctx.strokeStyle = MINIMAP_COLORS.static.moduleStroke;
   ctx.lineWidth = 1;
 
   if (instance.footprint.shape === 'rect') {
@@ -308,7 +305,7 @@ function drawObjectiveDiamond(
   ctx.translate(projected.x, projected.y);
   ctx.rotate(Math.PI / 4);
   ctx.fillStyle = color;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.78)';
+  ctx.strokeStyle = MINIMAP_COLORS.static.objectiveOutline;
   ctx.shadowColor = color;
   ctx.shadowBlur = 5;
   ctx.globalAlpha = 0.9;
@@ -320,7 +317,7 @@ function drawObjectiveDiamond(
 
 function drawScanGrid(ctx: CanvasRenderingContext2D, projection: MinimapProjection): void {
   ctx.save();
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+  ctx.strokeStyle = MINIMAP_COLORS.static.scanGrid;
   ctx.lineWidth = 1;
 
   const step = Math.max(18, Math.round(projection.contentWidth / 5));

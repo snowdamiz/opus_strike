@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/shallow';
 import type { Player, VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
+import { MINIMAP_COLORS } from '../../../styles/colorTokens';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../../utils/mapWarmup/mapPrepCache';
 import { getStaticMinimapLayer, resizeCanvas } from './minimapCanvas';
 import {
@@ -97,14 +98,14 @@ export function Minimap() {
       aria-hidden="true"
     >
       <div
-        className="relative h-full w-full overflow-hidden rounded-lg border border-cyan-100/10 bg-slate-950/72 shadow-[0_10px_28px_rgba(0,0,0,0.42),inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-md"
+        className="relative h-full w-full overflow-hidden rounded-lg border border-cyan-100/10 bg-slate-950/72 backdrop-blur-md"
         style={{
-          boxShadow: '0 12px 28px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255,255,255,0.04), inset 0 0 24px rgba(34, 211, 238, 0.03)',
+          boxShadow: MINIMAP_COLORS.frame.shadow,
         }}
       >
         <canvas ref={staticCanvasRef} className="absolute inset-0 h-full w-full" />
         <canvas ref={liveCanvasRef} className="absolute inset-0 h-full w-full" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),transparent_28%,transparent_72%,rgba(6,182,212,0.07))]" />
+        <div className="absolute inset-0" style={{ background: MINIMAP_COLORS.frame.overlay }} />
         <div className="absolute inset-x-2 top-2 h-px bg-gradient-to-r from-transparent via-cyan-100/30 to-transparent" />
         <div className="absolute inset-x-2 bottom-2 h-px bg-gradient-to-r from-transparent via-cyan-100/18 to-transparent" />
       </div>
@@ -133,7 +134,7 @@ function drawLiveOverlay(
 
   const visualState = visualStore.getState();
   const teammates = selectVisibleTeammates(localPlayer, store.players.values());
-  const teamColor = store.isPracticeMode ? '#e5e7eb' : getTeamColor(localPlayer.team);
+  const teamColor = store.isPracticeMode ? MINIMAP_COLORS.live.practiceTeam : getTeamColor(localPlayer.team);
 
   for (const teammate of teammates) {
     const position = visualState.playerPositions.get(teammate.id) ?? teammate.position;
@@ -200,7 +201,7 @@ function drawTeammateMarker(
   if (hasFlag) {
     ctx.beginPath();
     ctx.arc(point.x, point.y, 5.8, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(250, 204, 21, 0.88)';
+    ctx.strokeStyle = MINIMAP_COLORS.live.teammateFlagRing;
     ctx.lineWidth = 1.5;
     ctx.stroke();
   }
@@ -210,7 +211,7 @@ function drawTeammateMarker(
   ctx.fillStyle = color;
   ctx.fill();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+  ctx.strokeStyle = MINIMAP_COLORS.live.teammateOutline;
   ctx.stroke();
 
   ctx.beginPath();
@@ -239,7 +240,7 @@ function drawLocalMarker(
   if (hasFlag) {
     ctx.beginPath();
     ctx.arc(0, 0, 7.4, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(250, 204, 21, 0.92)';
+    ctx.strokeStyle = MINIMAP_COLORS.live.localFlagRing;
     ctx.lineWidth = 1.7;
     ctx.stroke();
   }
@@ -250,7 +251,7 @@ function drawLocalMarker(
   ctx.lineTo(0, 3.2);
   ctx.lineTo(-5.4, 5.7);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(248, 250, 252, 0.98)';
+  ctx.fillStyle = MINIMAP_COLORS.live.localFill;
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.7;
   ctx.fill();
@@ -266,7 +267,7 @@ function directionFromYaw(yaw: number): { x: number; y: number } {
 }
 
 function getTeamColor(team: Player['team']): string {
-  return team === 'red' ? '#fb7185' : '#67e8f9';
+  return team === 'red' ? MINIMAP_COLORS.team.red : MINIMAP_COLORS.team.blue;
 }
 
 function useDevicePixelRatio(): number {

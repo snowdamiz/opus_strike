@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
@@ -35,18 +35,18 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
     }))
   );
 
-  const allPlayers = Array.from(players.values());
+  const otherPlayers = useMemo(() => {
+    const nextPlayers: Player[] = [];
+    const hideDeadPlayers = gamePhase === 'playing' || gamePhase === 'countdown';
 
-  // Filter out local player, show all other players except dead ones (unless in respawn view)
-  const otherPlayers = allPlayers.filter((p) => {
-    if (p.id === playerId || p.id === localPlayerId) return false;
-    // Hide only dead players during active gameplay
-    if (p.state === 'dead' && (gamePhase === 'playing' || gamePhase === 'countdown')) {
-      return false;
+    for (const player of players.values()) {
+      if (player.id === playerId || player.id === localPlayerId) continue;
+      if (hideDeadPlayers && player.state === 'dead') continue;
+      nextPlayers.push(player);
     }
-    // Show all other players in lobby, hero select, and during gameplay
-    return true;
-  });
+
+    return nextPlayers;
+  }, [gamePhase, localPlayerId, playerId, players]);
 
   return (
     <group>
@@ -162,7 +162,7 @@ function hasActivePhantomVeil(player: Player): boolean {
   return Boolean(veil?.isActive);
 }
 
-function OtherPlayer({ player, config }: OtherPlayerProps) {
+const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
   const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
@@ -390,7 +390,7 @@ function OtherPlayer({ player, config }: OtherPlayerProps) {
       )}
     </group>
   );
-}
+});
 
 function getTeamColor(team: Team): string {
   return team === 'red' ? '#ef4444' : '#38bdf8';
@@ -507,7 +507,7 @@ function drawNameplateTexture(
   ctx.fill();
 }
 
-function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateProps) {
+const Nameplate = memo(function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateProps) {
   const teamColor = getTeamColor(team);
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
   const quantizedHealthPercent = Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
@@ -538,11 +538,24 @@ function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateP
       <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
     </sprite>
   );
+});
+
+const BEACON_TORUS_GEOMETRY = new THREE.TorusGeometry(0.42, 0.018, 6, 24);
+const BEACON_MATERIALS = {
+  red: new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.75 }),
+  redBot: new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.95 }),
+  blue: new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.75 }),
+  blueBot: new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.95 }),
+} as const;
+
+function getBeaconMaterial(team: Team, isBot?: boolean): THREE.MeshBasicMaterial {
+  if (team === 'red') return isBot ? BEACON_MATERIALS.redBot : BEACON_MATERIALS.red;
+  return isBot ? BEACON_MATERIALS.blueBot : BEACON_MATERIALS.blue;
 }
 
-function PlayerVisibilityBeacon({ team, height, isBot, animate }: { team: Team; height: number; isBot?: boolean; animate: boolean }) {
+const PlayerVisibilityBeacon = memo(function PlayerVisibilityBeacon({ team, height, isBot, animate }: { team: Team; height: number; isBot?: boolean; animate: boolean }) {
   const groupRef = useRef<THREE.Group>(null);
-  const color = team === 'red' ? '#ef4444' : '#38bdf8';
+  const material = getBeaconMaterial(team, isBot);
 
   useFrame((state) => {
     if (!animate || !groupRef.current) return;
@@ -551,13 +564,15 @@ function PlayerVisibilityBeacon({ team, height, isBot, animate }: { team: Team; 
 
   return (
     <group ref={groupRef} position={[0, height + 0.18, 0]}>
-      <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.42, 0.018, 6, 24]} />
-        <meshBasicMaterial color={color} transparent opacity={isBot ? 0.95 : 0.75} />
-      </mesh>
+      <mesh
+        rotation={[Math.PI / 2, 0, 0]}
+        geometry={BEACON_TORUS_GEOMETRY}
+        material={material}
+        dispose={null}
+      />
     </group>
   );
-}
+});
 
 interface FlagCarrierIndicatorProps {
   team: Team; // Team of the flag being carried

@@ -164,6 +164,7 @@ Server environment:
 
 - `RANKED_TOKEN_HOLD_ENABLED`: enable the gate. Default: `true`.
 - `RANKED_TOKEN_HOLD_TOKEN_ADDRESS`: ranked access token address. Default: `So11111111111111111111111111111111111111112` (native SOL).
+- `RANKED_TOKEN_HOLD_TOKEN_SYMBOL`: ticker shown in ranked UI. Default: `SOL` for native SOL, otherwise `TOKEN`.
 - `RANKED_TOKEN_HOLD_USD_CENTS`: required USD value in cents. Default: `2000` (`$20`).
 - `RANKED_TOKEN_HOLD_RPC_URL`: RPC URL for ranked hold checks. Falls back to `SOLANA_RPC_URL`.
 - `SOLANA_CLUSTER`: cluster label returned to clients. Default: `mainnet-beta`.

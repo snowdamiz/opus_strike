@@ -551,61 +551,6 @@ export function triggerTerrainImpact(
   claimGenericImpact(kind, style, position, normal, (options.scale ?? 1) * style.scale, frameNow);
 }
 
-export function prewarmTerrainImpactResources(renderer?: THREE.WebGLRenderer): void {
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 4;
-
-  const flashMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.flashColor,
-    transparent: true,
-    opacity: 0.8,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const coreMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.coreColor,
-    transparent: true,
-    opacity: 0.8,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const ringMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.ringColor,
-    transparent: true,
-    opacity: 0.7,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-  const smokeMaterial = new THREE.MeshBasicMaterial({
-    color: PHANTOM_DIRE_IMPACT_STYLE.smokeColor,
-    transparent: true,
-    opacity: 0.3,
-    depthWrite: false,
-  });
-
-  const flash = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, flashMaterial);
-  const core = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, coreMaterial);
-  const ring = new THREE.Mesh(SHARED_GEOMETRIES.ring24, ringMaterial);
-  const particle = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, coreMaterial);
-  const smoke = new THREE.Mesh(SHARED_GEOMETRIES.sphere8, smokeMaterial);
-  flash.scale.setScalar(0.5);
-  core.scale.setScalar(0.7);
-  ring.scale.setScalar(1.2);
-  particle.scale.setScalar(0.08);
-  smoke.scale.setScalar(0.2);
-  scene.add(flash, core, ring, particle, smoke);
-
-  renderer.compile(scene, camera);
-  flashMaterial.dispose();
-  coreMaterial.dispose();
-  ringMaterial.dispose();
-  smokeMaterial.dispose();
-}
-
 export function TerrainImpactEffectsManager({ config }: { config: EffectQualityConfig }) {
   const phantomRenderSlotsRef = useRef<PhantomDireImpactRenderSlot[]>([]);
   const genericRenderSlotsRef = useRef<GenericImpactRenderSlot[]>([]);

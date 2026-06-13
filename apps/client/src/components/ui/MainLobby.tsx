@@ -1,6 +1,6 @@
 import { type CSSProperties, useState, useEffect, useRef, useId } from 'react';
 import { useGameStore } from '../../store/gameStore';
-import { useNetwork } from '../../contexts/NetworkContext';
+import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
@@ -103,10 +103,29 @@ function PwaInstallButton({ onInstall }: { onInstall: () => void }) {
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
 const LOBBY_HERO_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
+const RANKED_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
+
+function formatRankedUsdCents(usdCents: number): string {
+  const normalizedCents = Number.isInteger(usdCents) && usdCents > 0 ? usdCents : 0;
+  const dollars = Math.floor(normalizedCents / 100);
+  const cents = normalizedCents % 100;
+  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
+}
+
+function formatRankedTokenLabel(status: RankedTokenHoldStatus): string {
+  const symbol = status.tokenSymbol?.trim().replace(/^\$/, '').toUpperCase();
+  if (symbol) return `$${symbol}`;
+  if (status.tokenAddress === RANKED_NATIVE_SOL_ADDRESS) return '$SOL';
+  return `$${status.tokenAddress.slice(0, 4)}...${status.tokenAddress.slice(-4)}`;
+}
+
+function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
+  return `${formatRankedUsdCents(status.usdCents)} hold`;
+}
 
 export function MainLobby() {
   const { playerName, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
-  const { createLobby, quickPlay, rankedPlay, startPracticeGame } = useNetwork();
+  const { createLobby, quickPlay, rankedPlay, getRankedTokenHoldStatus, startPracticeGame } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -142,6 +161,9 @@ export function MainLobby() {
   const [showCreateLobby, setShowCreateLobby] = useState(false);
   const [showPracticeSetup, setShowPracticeSetup] = useState(false);
   const [featuredHero, setFeaturedHero] = useState<HeroId>('blaze');
+  const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
+  const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
+  const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
   const heroAnimationMode = LOBBY_HERO_ANIMATION_MODE;
 
   // Authentication states
@@ -182,6 +204,38 @@ export function MainLobby() {
       setNewPlayerName((currentName) => currentName || suggestedPlayerName);
     }
   }, [isAuthenticated, isNewUser, suggestedPlayerName]);
+
+  useEffect(() => {
+    if (!showPlayDialog || !isAuthenticated || !hasFullFunctionality) {
+      setRankedTokenHoldStatus(null);
+      setRankedTokenHoldError(null);
+      setIsRankedTokenHoldLoading(false);
+      return;
+    }
+
+    let isCurrent = true;
+    setRankedTokenHoldStatus(null);
+    setRankedTokenHoldError(null);
+    setIsRankedTokenHoldLoading(true);
+
+    getRankedTokenHoldStatus()
+      .then((status) => {
+        if (!isCurrent) return;
+        setRankedTokenHoldStatus(status);
+      })
+      .catch((err) => {
+        if (!isCurrent) return;
+        setRankedTokenHoldError(err instanceof Error ? err.message : 'Failed to check ranked token holding');
+      })
+      .finally(() => {
+        if (!isCurrent) return;
+        setIsRankedTokenHoldLoading(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [getRankedTokenHoldStatus, hasFullFunctionality, isAuthenticated, showPlayDialog, user?.walletAddress, walletAddress]);
 
   const handleDiscordSignIn = () => {
     clearError();
@@ -349,6 +403,13 @@ export function MainLobby() {
     }
     if (!hasFullFunctionality) {
       await handleLinkPhantom();
+      return;
+    }
+    if (isRankedTokenHoldLoading) {
+      return;
+    }
+    if (rankedTokenHoldStatus?.eligible === false) {
+      setError(`Ranked requires ${rankedTokenHoldRequirement(rankedTokenHoldStatus)}.`);
       return;
     }
     try {
@@ -521,6 +582,9 @@ export function MainLobby() {
           isAuthenticated={isAuthenticated}
           hasFullFunctionality={hasFullFunctionality}
           isLinkingPhantom={isLinkingPhantom}
+          rankedTokenHoldStatus={rankedTokenHoldStatus}
+          isRankedTokenHoldLoading={isRankedTokenHoldLoading}
+          rankedTokenHoldError={rankedTokenHoldError}
           onQuickPlay={handleQuickPlay}
           onRankedPlay={handleRankedPlay}
           onLinkPhantom={handleLinkPhantom}
@@ -766,6 +830,9 @@ interface PlayDialogProps {
   isAuthenticated: boolean;
   hasFullFunctionality: boolean;
   isLinkingPhantom: boolean;
+  rankedTokenHoldStatus: RankedTokenHoldStatus | null;
+  isRankedTokenHoldLoading: boolean;
+  rankedTokenHoldError: string | null;
   onQuickPlay: () => void;
   onRankedPlay: () => void;
   onLinkPhantom: () => void;
@@ -781,6 +848,9 @@ function PlayDialog({
   isAuthenticated,
   hasFullFunctionality,
   isLinkingPhantom,
+  rankedTokenHoldStatus,
+  isRankedTokenHoldLoading,
+  rankedTokenHoldError,
   onQuickPlay,
   onRankedPlay,
   onLinkPhantom,
@@ -791,6 +861,22 @@ function PlayDialog({
   const { playButtonClick } = useUISounds();
   const titleId = useId();
   const dialogStyle = { '--play-dialog-accent': heroColor } as CSSProperties;
+  const shouldCheckRankedHold = isAuthenticated && hasFullFunctionality;
+  const isRankedHoldMissing = shouldCheckRankedHold && rankedTokenHoldStatus?.eligible === false;
+  const isRankedHoldPending = shouldCheckRankedHold && isRankedTokenHoldLoading;
+  const rankedRequirement = rankedTokenHoldStatus ? rankedTokenHoldRequirement(rankedTokenHoldStatus) : null;
+  const rankedTokenLabel = rankedTokenHoldStatus ? formatRankedTokenLabel(rankedTokenHoldStatus) : null;
+  const isRankedDisabled = isLoading || isLinkingPhantom || isRankedHoldPending || isRankedHoldMissing;
+  const rankedSubtitle = isRankedHoldMissing && rankedTokenHoldStatus && rankedTokenLabel
+    ? `Hold ${formatRankedUsdCents(rankedTokenHoldStatus.usdCents)} worth of ${rankedTokenLabel} to play`
+    : isRankedHoldPending
+      ? 'Checking token hold...'
+      : rankedTokenHoldError
+        ? 'Token check unavailable'
+        : 'Competitive queue';
+  const rankedTitle = isRankedHoldMissing && rankedRequirement
+    ? `Ranked requires ${rankedRequirement}`
+    : rankedTokenHoldError ?? 'Competitive queue';
 
   const runAction = (action: () => void) => {
     playButtonClick();
@@ -854,8 +940,9 @@ function PlayDialog({
             <button
               type="button"
               onClick={() => runAction(onRankedPlay)}
-              disabled={isLoading || isLinkingPhantom}
-              className="play-pay-option play-pay-option-ranked"
+              disabled={isRankedDisabled}
+              className={`play-pay-option play-pay-option-ranked${isRankedHoldMissing ? ' play-pay-option-ranked-locked' : ''}`}
+              title={rankedTitle}
               style={{
                 background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
                 boxShadow: `0 0 60px ${heroColor}40, inset 0 1px 0 rgba(255,255,255,0.2)`,
@@ -872,8 +959,13 @@ function PlayDialog({
               </span>
               <span className="play-pay-option-copy">
                 <span className="play-pay-option-title">{isLoading ? 'PREPARING...' : 'RANKED'}</span>
-                <span className="play-pay-option-subtitle">Competitive queue</span>
+                <span className="play-pay-option-subtitle">{rankedSubtitle}</span>
               </span>
+              {rankedTokenHoldStatus && rankedTokenLabel && (
+                <span className="play-pay-option-badge" title={`Hold token: ${rankedTokenHoldStatus.tokenAddress}`}>
+                  {rankedTokenLabel}
+                </span>
+              )}
             </button>
 
             <button

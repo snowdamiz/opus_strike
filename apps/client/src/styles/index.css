@@ -1387,6 +1387,47 @@ body,
   filter: brightness(1.05);
 }
 
+.play-pay-option-ranked:disabled:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  filter: none;
+}
+
+.play-pay-option-ranked-locked:disabled {
+  background: linear-gradient(135deg, rgb(var(--color-strike-panel) / 0.98), rgb(var(--color-strike-canvas) / 0.98)) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.035),
+    inset 0 0 0 1px rgb(255 255 255 / 0.025) !important;
+  border-color: rgb(255 255 255 / 0.07);
+  color: rgb(255 255 255 / 0.44);
+  cursor: not-allowed;
+  opacity: 1;
+  filter: none;
+}
+
+.play-pay-option-ranked-locked:disabled:hover {
+  border-color: rgb(255 255 255 / 0.07);
+}
+
+.play-pay-option-ranked-locked .play-pay-option-icon {
+  border-color: rgb(255 255 255 / 0.07);
+  background: rgb(0 0 0 / 0.24);
+  color: rgb(255 255 255 / 0.36);
+}
+
+.play-pay-option-ranked-locked .play-pay-option-title {
+  color: rgb(255 255 255 / 0.44);
+}
+
+.play-pay-option-ranked-locked .play-pay-option-subtitle {
+  color: rgb(255 255 255 / 0.28);
+}
+
+.play-pay-option-ranked-locked .play-pay-option-badge {
+  border-color: rgb(251 191 36 / 0.18);
+  background: rgb(251 191 36 / 0.055);
+  color: rgb(254 243 199 / 0.58);
+}
+
 .play-pay-option-ranked > :not(.play-pay-option-shimmer) {
   position: relative;
   z-index: 1;
@@ -1402,6 +1443,10 @@ body,
 
 .play-pay-option-ranked:hover .play-pay-option-shimmer {
   opacity: 1;
+}
+
+.play-pay-option-ranked-locked:hover .play-pay-option-shimmer {
+  opacity: 0;
 }
 
 .play-pay-option-icon {
@@ -1452,6 +1497,7 @@ body,
 }
 
 .play-pay-option-badge {
+  justify-self: end;
   border: 1px solid rgba(251, 191, 36, 0.38);
   border-radius: 999px;
   background: rgba(251, 191, 36, 0.1);
@@ -1460,6 +1506,7 @@ body,
   font-family: 'Exo 2', 'Rajdhani', sans-serif;
   font-size: 0.72rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 @media (max-width: 560px) {

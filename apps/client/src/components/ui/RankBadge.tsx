@@ -8,6 +8,7 @@ import {
   type RankSummary,
 } from '@voxel-strike/shared';
 import type { UserStats } from '../../store/gameStore';
+import { RANK_BADGE_COLORS } from '../../styles/colorTokens';
 
 type RankLike = PublicRankSnapshot | RankSummary | null | undefined;
 
@@ -49,7 +50,7 @@ function RankDivisionMarks({ division, theme }: { division: number; theme: RankT
 
         return (
           <g key={index}>
-            <path d={path} stroke="#020617" strokeOpacity="0.42" strokeWidth="4.8" strokeLinecap="round" />
+            <path d={path} stroke={RANK_BADGE_COLORS.divisionMarkShadow} strokeOpacity="0.42" strokeWidth="4.8" strokeLinecap="round" />
             <path d={path} stroke={theme.foreground} strokeWidth="2.6" strokeLinecap="round" />
           </g>
         );

@@ -10,7 +10,7 @@ interface VoxelMaterialOptions {
 
 type ShaderParameters = Parameters<THREE.Material['onBeforeCompile']>[0];
 
-const TERRAIN_TEXTURE_SHADER_KEY = 'voxel-terrain-array-diffuse-texture-v2';
+const TERRAIN_TEXTURE_SHADER_KEY = 'voxel-terrain-array-diffuse-texture-v3';
 
 const TERRAIN_VERTEX_PARS = `
 attribute float voxelTextureLayer;
@@ -26,6 +26,8 @@ vVoxelWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
 `;
 
 const TERRAIN_FRAGMENT_PARS = `
+uniform sampler2DArray voxelTerrainColorTexture;
+uniform sampler2DArray voxelTerrainEmissiveTexture;
 uniform float voxelMacroTintStrength;
 varying vec2 vVoxelTileUv;
 varying float vVoxelTextureLayer;
@@ -103,8 +105,11 @@ function getEmissiveIntensity(detail: VoxelMaterialDetail): number {
 
 function patchTerrainTextureShader(
   shader: ShaderParameters,
-  detail: VoxelMaterialDetail
+  detail: VoxelMaterialDetail,
+  textures: ReturnType<typeof createVoxelTerrainTextures>
 ): void {
+  shader.uniforms.voxelTerrainColorTexture = { value: textures.color };
+  shader.uniforms.voxelTerrainEmissiveTexture = { value: textures.emissive };
   shader.uniforms.voxelMacroTintStrength = { value: getMacroTintStrength(detail) };
 
   shader.vertexShader = replaceShaderChunk(
@@ -126,40 +131,28 @@ function patchTerrainTextureShader(
   shader.fragmentShader = replaceShaderChunk(
     shader.fragmentShader,
     'map_pars_fragment',
-`
-#ifdef USE_MAP
-  uniform sampler2DArray map;
-#endif
-`
+    ''
   );
   shader.fragmentShader = replaceShaderChunk(
     shader.fragmentShader,
     'emissivemap_pars_fragment',
-`
-#ifdef USE_EMISSIVEMAP
-  uniform sampler2DArray emissiveMap;
-#endif
-`
+    ''
   );
   shader.fragmentShader = replaceShaderChunk(
     shader.fragmentShader,
     'map_fragment',
 `
-#ifdef USE_MAP
-  vec4 sampledDiffuseColor = voxelTerrainTextureSample(map, vVoxelTileUv);
+  vec4 sampledDiffuseColor = voxelTerrainTextureSample(voxelTerrainColorTexture, vVoxelTileUv);
   sampledDiffuseColor.rgb *= voxelTerrainMacroTint(vVoxelWorldPosition);
   diffuseColor *= sampledDiffuseColor;
-#endif
 `
   );
   shader.fragmentShader = replaceShaderChunk(
     shader.fragmentShader,
     'emissivemap_fragment',
 `
-#ifdef USE_EMISSIVEMAP
-  vec4 emissiveColor = voxelTerrainTextureSample(emissiveMap, vVoxelTileUv);
+  vec4 emissiveColor = voxelTerrainTextureSample(voxelTerrainEmissiveTexture, vVoxelTileUv);
   totalEmissiveRadiance *= emissiveColor.rgb;
-#endif
 `
   );
 }
@@ -171,15 +164,13 @@ export function useVoxelMaterial(
   const material = useMemo(() => {
     const textures = createVoxelTerrainTextures(theme, { detail });
     const material = new THREE.MeshLambertMaterial({
-      map: textures.color,
       color: '#ffffff',
       emissive: '#ffffff',
-      emissiveMap: textures.emissive,
       emissiveIntensity: getEmissiveIntensity(detail),
     });
 
     material.name = 'procedural-voxel-diffuse-terrain-material';
-    material.onBeforeCompile = (shader) => patchTerrainTextureShader(shader, detail);
+    material.onBeforeCompile = (shader) => patchTerrainTextureShader(shader, detail, textures);
     material.customProgramCacheKey = () => (
       `${TERRAIN_TEXTURE_SHADER_KEY}:${material.type}:${detail}:${textures.tileSize}`
     );

@@ -255,21 +255,10 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export function prewarmVoidZoneResources(renderer?: THREE.WebGLRenderer): void {
-  const vortexMaterial = getVortexMaterial();
-  const eventHorizonMaterial = getEventHorizonMaterial();
-  const accretionMaterial = getAccretionMaterial();
-
-  if (!renderer) return;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
-  camera.position.z = 4;
-  const vortex = new THREE.Mesh(VOID_ZONE_VORTEX_GEOMETRY, vortexMaterial);
-  const eventHorizon = new THREE.Mesh(VOID_ZONE_EVENT_HORIZON_GEOMETRY, eventHorizonMaterial);
-  const accretion = new THREE.Mesh(VOID_ZONE_RING_MIDDLE_GEOMETRY, accretionMaterial);
-  scene.add(vortex, eventHorizon, accretion);
-  renderer.compile(scene, camera);
+export function prewarmVoidZoneResources(): void {
+  getVortexMaterial();
+  getEventHorizonMaterial();
+  getAccretionMaterial();
 }
 
 const PARTICLE_COUNT = 40;

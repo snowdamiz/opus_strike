@@ -115,23 +115,56 @@ function SceneReadySignal({
 const GPU_WARMUP_RENDER_FRAMES = 4;
 const GPU_WARMUP_TIMEOUT_MS = 2200;
 
+type AsyncCompileRenderer = THREE.WebGLRenderer & {
+  compileAsync?: (
+    scene: THREE.Object3D,
+    camera: THREE.Camera,
+    targetScene?: THREE.Scene | null
+  ) => Promise<unknown>;
+};
+
 function waitForAnimationFrame(): Promise<void> {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => resolve());
   });
 }
 
+async function compileSceneShaders(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera
+): Promise<void> {
+  const rendererWithAsyncCompile = renderer as AsyncCompileRenderer;
+  if (typeof rendererWithAsyncCompile.compileAsync === 'function') {
+    await rendererWithAsyncCompile.compileAsync(scene, camera);
+    return;
+  }
+
+  renderer.compile(scene, camera);
+}
+
+function addTextureValue(value: unknown, textures: Set<THREE.Texture>): void {
+  if (value && typeof value === 'object' && 'isTexture' in value && (value as THREE.Texture).isTexture) {
+    textures.add(value as THREE.Texture);
+  }
+}
+
 function collectMaterialTextures(material: THREE.Material): THREE.Texture[] {
-  const textures: THREE.Texture[] = [];
+  const textures = new Set<THREE.Texture>();
   const materialRecord = material as unknown as Record<string, unknown>;
 
   for (const value of Object.values(materialRecord)) {
-    if (value && typeof value === 'object' && 'isTexture' in value && (value as THREE.Texture).isTexture) {
-      textures.push(value as THREE.Texture);
+    addTextureValue(value, textures);
+  }
+
+  const shaderUniforms = (material as THREE.ShaderMaterial).uniforms;
+  if (shaderUniforms) {
+    for (const uniform of Object.values(shaderUniforms)) {
+      addTextureValue(uniform.value, textures);
     }
   }
 
-  return textures;
+  return Array.from(textures);
 }
 
 function collectSceneTextures(scene: THREE.Scene): THREE.Texture[] {
@@ -206,7 +239,8 @@ function SceneGpuWarmup({
       onStageDone('textures', textureUploadMs);
 
       const compileStart = performance.now();
-      gl.compile(scene, camera);
+      await compileSceneShaders(gl, scene, camera);
+      if (cancelled || timedOut) return;
       const compileMs = performance.now() - compileStart;
       onStageDone('shaders', compileMs);
 
@@ -417,7 +451,7 @@ export function GameCanvas({
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const settings = useSettingsStore(state => state.settings);
-  const qualityConfig = getVisualQualityConfig(settings);
+  const qualityConfig = useMemo(() => getVisualQualityConfig(settings), [settings]);
   const canvasAntialiasRef = useRef(qualityConfig.render.antialias);
   const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed }), [mapSeed]);
   const [warmupSnapshot, dispatchWarmup] = useReducer(
@@ -438,29 +472,38 @@ export function GameCanvas({
   const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
   const isWorldReady = warmupSnapshot.key === warmupKey && warmupSnapshot.canAcceptInput;
   const shouldMountGameplayObjects = isPlaying || warmupSnapshot.canShowGameplayObjects;
-  const effectiveEnvironmentConfig = startupRampActive
-    ? {
-      ...qualityConfig.environment,
-      particleDensity: Math.min(qualityConfig.environment.particleDensity, 0.35),
-      dustDevilDensity: 0,
-      dressingDensity: Math.min(qualityConfig.environment.dressingDensity, 0.55),
-      maxParticles: Math.min(qualityConfig.environment.maxParticles, 120),
-    }
-    : qualityConfig.environment;
-  const effectiveEffectsConfig = startupRampActive
-    ? {
-      ...qualityConfig.effects,
-      enableDecorativeLights: false,
-      maxActiveParticles: Math.min(qualityConfig.effects.maxActiveParticles, 80),
-      maxActiveTrails: Math.min(qualityConfig.effects.maxActiveTrails, 8),
-    }
-    : qualityConfig.effects;
-  const effectiveDynamicLights = startupRampActive
-    ? {
-      maxDynamicLights: Math.min(qualityConfig.dynamicLights.maxDynamicLights, 2),
-      staticAccentLights: false,
-    }
-    : qualityConfig.dynamicLights;
+  const effectiveEnvironmentConfig = useMemo(
+    () => startupRampActive
+      ? {
+        ...qualityConfig.environment,
+        particleDensity: Math.min(qualityConfig.environment.particleDensity, 0.35),
+        dustDevilDensity: 0,
+        dressingDensity: Math.min(qualityConfig.environment.dressingDensity, 0.55),
+        maxParticles: Math.min(qualityConfig.environment.maxParticles, 120),
+      }
+      : qualityConfig.environment,
+    [qualityConfig.environment, startupRampActive]
+  );
+  const effectiveEffectsConfig = useMemo(
+    () => startupRampActive
+      ? {
+        ...qualityConfig.effects,
+        enableDecorativeLights: false,
+        maxActiveParticles: Math.min(qualityConfig.effects.maxActiveParticles, 80),
+        maxActiveTrails: Math.min(qualityConfig.effects.maxActiveTrails, 8),
+      }
+      : qualityConfig.effects,
+    [qualityConfig.effects, startupRampActive]
+  );
+  const effectiveDynamicLights = useMemo(
+    () => startupRampActive
+      ? {
+        maxDynamicLights: Math.min(qualityConfig.dynamicLights.maxDynamicLights, 2),
+        staticAccentLights: false,
+      }
+      : qualityConfig.dynamicLights,
+    [qualityConfig.dynamicLights, startupRampActive]
+  );
   const effectiveDressingShadows = startupRampActive ? false : qualityConfig.shadows.dressingShadows;
 
   const markWarmupStageDone = useCallback((stage: MapWarmupStageId, durationMs?: number) => {
@@ -537,8 +580,8 @@ export function GameCanvas({
         gl.shadowMap.enabled = qualityConfig.shadows.enabled;
         gl.shadowMap.type = qualityConfig.shadows.type;
         import('./effectPrewarm').then(({ prewarmPhantomEffects, prewarmBlazeEffects }) => Promise.all([
-          prewarmPhantomEffects(gl),
-          prewarmBlazeEffects(gl),
+          prewarmPhantomEffects(),
+          prewarmBlazeEffects(),
         ])).catch((error) => {
           console.warn('[Effects] Prewarm failed', error);
         });
