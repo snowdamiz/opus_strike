@@ -4,6 +4,10 @@ import {
   VisibilityInterestManager,
   type VisibilityInterestPlayer,
 } from '../rooms/visibilityInterest';
+import {
+  buildPlayerInterestSnapshot,
+  getPlayerInterestSignature,
+} from '../rooms/playerInterestSnapshot';
 import type { Team, Vec3 } from '@voxel-strike/shared';
 
 function makePlayer(
@@ -42,6 +46,50 @@ function makeContext(options: {
 const self = makePlayer('red-a', 'red', 0, 0);
 const teammate = makePlayer('red-b', 'red', 12, 0);
 const enemy = makePlayer('blue-a', 'blue', 12, 0);
+
+{
+  const baseSnapshot = {
+    playerId: 'red-b',
+    state: 'visible' as const,
+    reason: 'team',
+    expiresAt: 1_150,
+  };
+  const refreshedSnapshot = {
+    ...baseSnapshot,
+    expiresAt: 1_350,
+  };
+
+  assert.equal(
+    getPlayerInterestSignature(baseSnapshot),
+    getPlayerInterestSignature(refreshedSnapshot),
+    'expiry-only interest refreshes should not trigger a new broadcast signature'
+  );
+  assert.notEqual(
+    getPlayerInterestSignature(baseSnapshot),
+    getPlayerInterestSignature({ ...baseSnapshot, state: 'hidden' }),
+    'state changes must still trigger a new broadcast signature'
+  );
+  assert.notEqual(
+    getPlayerInterestSignature(baseSnapshot),
+    getPlayerInterestSignature({
+      ...baseSnapshot,
+      state: 'last_known',
+      reason: 'last_known',
+      lastKnownPosition: { x: 4, y: 1, z: -2 },
+    }),
+    'last-known position changes must still trigger a new broadcast signature'
+  );
+}
+
+{
+  const manager = new VisibilityInterestManager({ visibleTtlMs: 150 });
+  const decision = manager.getRecipientInterest(self, teammate, makeContext({ now: 1_000 }));
+  const snapshot = buildPlayerInterestSnapshot(teammate.id, decision);
+
+  assert.equal(snapshot.state, 'visible');
+  assert.equal(snapshot.reason, 'team');
+  assert.equal('expiresAt' in snapshot, false);
+}
 
 {
   const manager = new VisibilityInterestManager();

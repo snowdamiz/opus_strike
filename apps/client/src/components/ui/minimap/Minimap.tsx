@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/shallow';
 import type { Player, VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 import { MINIMAP_COLORS } from '../../../styles/colorTokens';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../../utils/mapWarmup/mapPrepCache';
 import { getStaticMinimapLayer, resizeCanvas } from './minimapCanvas';
@@ -78,7 +79,9 @@ export function Minimap() {
     const draw = (now: number) => {
       if (now - lastDrawAt >= LIVE_OVERLAY_FRAME_MS) {
         lastDrawAt = now;
-        drawLiveOverlay(ctx, manifest, projection, size, devicePixelRatio);
+        measureFrameWork('ui.minimapOverlay', () => {
+          drawLiveOverlay(ctx, manifest, projection, size, devicePixelRatio);
+        });
       }
       rafId = window.requestAnimationFrame(draw);
     };

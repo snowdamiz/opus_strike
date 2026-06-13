@@ -20,7 +20,7 @@ import { BlazeEffectsManager } from './BlazeEffects';
 import { HookshotEffectsManager } from './HookshotEffects';
 import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
 import { ChronosAegisManager, ChronosAscendantManager, ChronosPulsesManager, ChronosTimebreakManager } from './chronos';
-import { GameplayFrameSystems } from './systems/GameplayFrameSystems';
+import { GameplayFrameSystems, GameplayFrameWorkBoundary } from './systems/GameplayFrameSystems';
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
@@ -979,6 +979,7 @@ export function GameCanvas({
 
         <SceneAtmosphereColors theme={mapTheme} />
         <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={warmupKey} />
+        <GameplayFrameWorkBoundary />
       </Suspense>
     </Canvas>
   );

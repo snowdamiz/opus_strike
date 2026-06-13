@@ -22,6 +22,7 @@ import {
   addRemoteTransformSnapshot,
   pruneRemoteTransformHistories,
   removePlayerLiveVisualState,
+  removePlayerVisualState,
   setChronosAegisVisualState,
   setPlayerVisualRotation,
   setPlayerVisualTransform,
@@ -30,6 +31,7 @@ import {
 } from '../store/visualStore';
 import { confirmLocalMovementTransform, enqueueSelfMovementAuthority } from '../movement/localPrediction';
 import {
+  measureFrameWork,
   recordAuthorityAckReceived,
   recordLocalReactiveUpdate,
   recordTransformMessage,
@@ -119,6 +121,12 @@ const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
+
+function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
+  return (data) => {
+    measureFrameWork(`network.${type}`, () => handler(data));
+  };
+}
 
 interface UnpackedPlayerTransform {
   netId: number;
@@ -703,7 +711,7 @@ export function setupPlayerJoinedHandler(
   localPlayerName: string,
   updatePlayer: GameStoreActions['updatePlayer']
 ) {
-  room.onMessage('playerJoined', (data: {
+  room.onMessage('playerJoined', measureNetworkMessage('playerJoined', (data: {
     playerId: string;
     playerName: string;
     team?: string;
@@ -766,7 +774,7 @@ export function setupPlayerJoinedHandler(
         updatePlayer(data.playerId, newPlayer);
       }
     }
-  });
+  }));
 }
 
 export function setupPlayerTransformsHandler(
@@ -859,7 +867,7 @@ export function setupPlayerTransformsHandler(
     return 'remote';
   };
 
-  room.onMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
+  room.onMessage('playerTransformsV2', measureNetworkMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
     const fullSnapshotPlayerIds = data.full ? new Set<string>() : null;
     let selfTransformCount = 0;
     let remoteTransformCount = 0;
@@ -894,11 +902,11 @@ export function setupPlayerTransformsHandler(
       selfTransformCount,
       remoteTransformCount,
     });
-  });
+  }));
 }
 
 export function setupPlayerInterestHandler(room: Room, sessionId: string) {
-  room.onMessage('playerInterest', (data: PlayerInterestMessage) => {
+  room.onMessage('playerInterest', measureNetworkMessage('playerInterest', (data: PlayerInterestMessage) => {
     const store = useGameStore.getState();
     let nextPlayers: Map<string, Player> | null = null;
     let nextLocalPlayer = store.localPlayer;
@@ -930,13 +938,13 @@ export function setupPlayerInterestHandler(room: Room, sessionId: string) {
     if (import.meta.env.DEV && typeof window !== 'undefined') {
       (window as unknown as { __voxelPlayerInterest?: PlayerInterestMessage }).__voxelPlayerInterest = data;
     }
-  });
+  }));
 }
 
 export function setupSelfMovementAuthorityHandler(room: Room) {
   hasReceivedSelfMovementAuthority = false;
 
-  room.onMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
+  room.onMessage('selfMovementAuthority', measureNetworkMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
     hasReceivedSelfMovementAuthority = true;
     recordMovementTraceAuthorityAck(authority);
     recordAuthorityAckReceived(authority);
@@ -950,24 +958,55 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
         authority.chronosAegisShieldRatio
       );
     }
-  });
+  }));
 }
 
 export function setupPlayerVitalsHandler(
   room: Room,
   sessionId: string,
-  localPlayerName: string,
-  actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer' | 'removePlayer'>
+  localPlayerName: string
 ) {
-  room.onMessage('playerVitals', (data: PlayerVitalsMessage) => {
+  room.onMessage('playerVitals', measureNetworkMessage('playerVitals', (data: PlayerVitalsMessage) => {
+    const initialStore = useGameStore.getState();
+    let nextPlayers = initialStore.players;
+    let nextLocalPlayer = initialStore.localPlayer;
+    let nextPlayerPings = initialStore.playerPings;
+    let playersChanged = false;
+    let playerPingsChanged = false;
     let shouldPublishTiming = false;
+    const liveVisualUpdates: Player[] = [];
+    const hiddenVisualUpdates: string[] = [];
+    const removedVisuals: string[] = [];
+    const localVisualSyncs: Player[] = [];
+
+    const writablePlayers = () => {
+      if (nextPlayers === initialStore.players) {
+        nextPlayers = new Map(initialStore.players);
+      }
+      playersChanged = true;
+      return nextPlayers;
+    };
+
+    const writablePlayerPings = () => {
+      if (nextPlayerPings === initialStore.playerPings) {
+        nextPlayerPings = new Map(initialStore.playerPings);
+      }
+      playerPingsChanged = true;
+      return nextPlayerPings;
+    };
 
     for (const removedId of data.removedPlayerIds || []) {
       stopRemotePhantomCharge(removedId);
       stopObservedAbilityCastEffects(removedId);
       clearDeathVisualsForPlayer(removedId);
       forgetPlayerNetId(removedId);
-      actions.removePlayer(removedId);
+      if (nextPlayers.has(removedId)) {
+        writablePlayers().delete(removedId);
+      }
+      if (nextPlayerPings.has(removedId)) {
+        writablePlayerPings().delete(removedId);
+      }
+      removedVisuals.push(removedId);
       shouldPublishTiming = true;
     }
 
@@ -979,15 +1018,14 @@ export function setupPlayerVitalsHandler(
 
       rememberPlayerNetId(vitals);
 
-      const store = useGameStore.getState();
       if (vitals.id === sessionId) {
-        const existing = store.localPlayer || store.players.get(vitals.id);
+        const existing = nextLocalPlayer || nextPlayers.get(vitals.id);
         const existingPlayer = existing || undefined;
         const previousState = existingPlayer?.state;
         const previousHeroId = existingPlayer?.heroId ?? null;
         if (shouldPreservePredictionOwnedLocalSimulation(existingPlayer, vitals.state, vitals.heroId)) {
           applyLocalVitalsPatchInPlace(existingPlayer, vitals, data.serverTime);
-          const indexedPlayer = store.players.get(vitals.id);
+          const indexedPlayer = nextPlayers.get(vitals.id);
           if (indexedPlayer && indexedPlayer !== existingPlayer) {
             applyLocalVitalsPatchInPlace(indexedPlayer, vitals, data.serverTime);
           }
@@ -999,6 +1037,9 @@ export function setupPlayerVitalsHandler(
             clearDeathVisualsForPlayer(vitals.id);
           } else {
             updateDeathVisualExpirationForPlayer(vitals.id, vitals.respawnTime);
+          }
+          if (nextLocalPlayer?.id === vitals.id) {
+            nextLocalPlayer = existingPlayer;
           }
           continue;
         }
@@ -1013,16 +1054,17 @@ export function setupPlayerVitalsHandler(
         } else {
           updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
         }
-        actions.setLocalPlayer(next);
+        writablePlayers().set(next.id, next);
+        nextLocalPlayer = next;
         recordLocalReactiveUpdate('vitals');
         shouldPublishTiming = true;
         if (!existing) {
-          syncLocalVisualPosition(next);
+          localVisualSyncs.push(next);
         }
         continue;
       }
 
-      const existing = store.players.get(vitals.id);
+      const existing = nextPlayers.get(vitals.id);
       const next = createPlayerFromVitals(vitals, data.serverTime, existing);
       if (
         next.state !== 'dead' ||
@@ -1033,24 +1075,40 @@ export function setupPlayerVitalsHandler(
       } else {
         updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
       }
-      actions.updatePlayer(vitals.id, next);
+      writablePlayers().set(vitals.id, next);
       if (shouldHideLiveVisuals(next.visibility)) {
-        clearHiddenLiveVisuals(next.id);
+        hiddenVisualUpdates.push(next.id);
+      } else {
+        liveVisualUpdates.push(next);
       }
       shouldPublishTiming = true;
     }
 
-    if (shouldPublishTiming) {
+    if (playersChanged || playerPingsChanged || shouldPublishTiming) {
       useGameStore.setState({
-        tick: data.tick,
-        serverTime: data.serverTime,
+        ...(playersChanged ? { players: nextPlayers, localPlayer: nextLocalPlayer } : {}),
+        ...(playerPingsChanged ? { playerPings: nextPlayerPings } : {}),
+        ...(shouldPublishTiming ? { tick: data.tick, serverTime: data.serverTime } : {}),
       });
     }
-  });
+
+    for (const removedId of removedVisuals) {
+      removePlayerVisualState(removedId);
+    }
+    for (const playerId of hiddenVisualUpdates) {
+      clearHiddenLiveVisuals(playerId);
+    }
+    for (const player of liveVisualUpdates) {
+      setPlayerVisualTransform(player.id, player.position, player.lookYaw);
+    }
+    for (const player of localVisualSyncs) {
+      syncLocalVisualPosition(player);
+    }
+  }));
 }
 
 export function setupMatchSnapshotHandler(room: Room) {
-  room.onMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
+  room.onMessage('matchSnapshot', measureNetworkMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
     const store = useGameStore.getState();
     if (data.phase !== 'playing' && data.phase !== 'countdown') {
       clearAllDeathVisuals();
@@ -1068,14 +1126,14 @@ export function setupMatchSnapshotHandler(room: Room) {
       roundTimeRemaining: data.roundTimeRemaining,
       phaseEndTime: data.phaseEndTime,
     });
-  });
+  }));
 }
 
 /**
  * Sets up void zone event handlers
  */
 export function setupVoidZoneHandlers(room: Room, sessionId: string) {
-  room.onMessage('voidZoneCreated', (data: {
+  room.onMessage('voidZoneCreated', measureNetworkMessage('voidZoneCreated', (data: {
     id: string;
     position: { x: number; y: number; z: number };
     radius: number;
@@ -1085,11 +1143,11 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
     ownerTeam: 'red' | 'blue';
   }) => {
     useGameStore.getState().addVoidZone(data);
-  });
+  }));
 
-  room.onMessage('voidZoneExpired', (data: { id: string }) => {
+  room.onMessage('voidZoneExpired', measureNetworkMessage('voidZoneExpired', (data: { id: string }) => {
     useGameStore.getState().removeVoidZone(data.id);
-  });
+  }));
 }
 
 interface AbilityUsedMessage {
@@ -2268,7 +2326,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
  * Sets up combat event handlers (damage, kills)
  */
 export function setupCombatHandlers(room: Room) {
-  room.onMessage('phantomPrimaryState', (data: {
+  room.onMessage('phantomPrimaryState', measureNetworkMessage('phantomPrimaryState', (data: {
     ammo: number;
     reloading: boolean;
     reloadStartedAt: number;
@@ -2276,9 +2334,9 @@ export function setupCombatHandlers(room: Room) {
     serverTime: number;
   }) => {
     applyPhantomPrimaryState(data);
-  });
+  }));
 
-  room.onMessage('chronosAegisBroken', (data: ChronosAegisBrokenEvent) => {
+  room.onMessage('chronosAegisBroken', measureNetworkMessage('chronosAegisBroken', (data: ChronosAegisBrokenEvent) => {
     const now = Date.now();
     setChronosAegisVisualState(data.playerId, false, now, 0);
     addEffect({
@@ -2291,9 +2349,9 @@ export function setupCombatHandlers(room: Room) {
       volume: 0.86,
       pitch: 1.12,
     });
-  });
+  }));
 
-  room.onMessage('playerDamaged', (data: {
+  room.onMessage('playerDamaged', measureNetworkMessage('playerDamaged', (data: {
     targetId: string;
     damage: number;
     sourceId: string | null;
@@ -2333,9 +2391,9 @@ export function setupCombatHandlers(room: Room) {
         duration: 260,
       });
     }
-  });
+  }));
 
-  room.onMessage('playerHealed', (data: {
+  room.onMessage('playerHealed', measureNetworkMessage('playerHealed', (data: {
     sourceId: string;
     abilityId: string;
     sourcePosition: { x: number; y: number; z: number };
@@ -2425,9 +2483,9 @@ export function setupCombatHandlers(room: Room) {
     ) {
       playChronosWorldSound('chronosLifeline', sourcePosition);
     }
-  });
+  }));
 
-  room.onMessage('playerKilled', (data: PlayerDeathEvent) => {
+  room.onMessage('playerKilled', measureNetworkMessage('playerKilled', (data: PlayerDeathEvent) => {
     addDeathVisualFromKillEvent(data);
 
     const players = useGameStore.getState().players;
@@ -2435,9 +2493,9 @@ export function setupCombatHandlers(room: Room) {
       killerName: data.killerId ? players.get(data.killerId)?.name ?? 'Unknown' : 'Unknown',
       victimName: players.get(data.victimId)?.name ?? 'Unknown',
     });
-  });
+  }));
 
-  room.onMessage('abilityUsed', (data: AbilityUsedMessage) => {
+  room.onMessage('abilityUsed', measureNetworkMessage('abilityUsed', (data: AbilityUsedMessage) => {
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     if (handlePhantomAbilityUsed(data, localPlayerId)) return;
@@ -2445,15 +2503,15 @@ export function setupCombatHandlers(room: Room) {
     if (handleBlazeAbilityUsed(data, localPlayerId)) return;
     if (handleChronosAbilityUsed(data, localPlayerId)) return;
 
-  });
+  }));
 
-  room.onMessage('chronosTimebreakImpulse', (data: {
+  room.onMessage('chronosTimebreakImpulse', measureNetworkMessage('chronosTimebreakImpulse', (data: {
     sourceId: string;
     sourcePosition: { x: number; y: number; z: number };
     impulse: { x: number; y: number; z: number };
   }) => {
     pushLocalPlayerImpulse(data.impulse);
-  });
+  }));
 }
 
 /**

@@ -9,6 +9,10 @@ import { PlayerSpatialIndex } from './PlayerSpatialIndex';
 import { MovementCommandQueue } from './MovementCommandQueue';
 import { estimateCustomMessageBytes } from './customMessageMetrics';
 import {
+  buildPlayerInterestSnapshot,
+  getPlayerInterestSignature,
+} from './playerInterestSnapshot';
+import {
   VisibilityInterestManager,
   type RecipientInterestDecision,
   type VisibilityInterestPlayer,
@@ -140,7 +144,6 @@ import type {
   PlayerPingRequestMessage,
   PlayerPingsMessage,
   PlayerInterestMessage,
-  PlayerInterestSnapshot,
   PlayerTransformsV2Message,
   PlayerVitalsAbilitySnapshot,
   PlayerVitalsMessage,
@@ -2546,19 +2549,7 @@ export class GameRoom extends Room<GameState> {
         const decision = recipient
           ? this.getRecipientInterest(recipient, target)
           : this.getRecipientInterest(null, target);
-        return {
-          playerId: targetId,
-          state: decision.state,
-          reason: decision.reason,
-          expiresAt: decision.expiresAt,
-          lastKnownPosition: decision.state === 'last_known' && decision.lastKnownPosition
-            ? {
-              x: Math.round(decision.lastKnownPosition.x * 10) / 10,
-              y: Math.round(decision.lastKnownPosition.y * 10) / 10,
-              z: Math.round(decision.lastKnownPosition.z * 10) / 10,
-            }
-            : undefined,
-        };
+        return buildPlayerInterestSnapshot(targetId, decision);
       }),
     } satisfies PlayerInterestMessage);
 
@@ -2773,22 +2764,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private getPlayerInterestSignature(snapshot: PlayerInterestSnapshot): string {
-    const lastKnown = snapshot.lastKnownPosition
-      ? [
-        Math.round(snapshot.lastKnownPosition.x * 10),
-        Math.round(snapshot.lastKnownPosition.y * 10),
-        Math.round(snapshot.lastKnownPosition.z * 10),
-      ].join(',')
-      : '';
-    return [
-      snapshot.state,
-      snapshot.reason ?? '',
-      snapshot.expiresAt ?? 0,
-      lastKnown,
-    ].join(':');
-  }
-
   private broadcastPlayerInterest(force = false): void {
     const now = this.state.serverTime || Date.now();
     if (!force && now - this.lastInterestBroadcastAt < PLAYER_INTEREST_INTERVAL_MS) return;
@@ -2800,25 +2775,13 @@ export class GameRoom extends Room<GameState> {
 
       const signatures = this.getInterestSignatureState(client.sessionId);
       const currentIds = new Set<string>();
-      const snapshots: PlayerInterestSnapshot[] = [];
+      const snapshots: ReturnType<typeof buildPlayerInterestSnapshot>[] = [];
 
       this.state.players.forEach((target, targetId) => {
         currentIds.add(targetId);
         const decision = this.getRecipientInterest(recipient, target, now);
-        const snapshot: PlayerInterestSnapshot = {
-          playerId: targetId,
-          state: decision.state,
-          reason: decision.reason,
-          expiresAt: decision.expiresAt,
-          lastKnownPosition: decision.state === 'last_known' && decision.lastKnownPosition
-            ? {
-              x: Math.round(decision.lastKnownPosition.x * 10) / 10,
-              y: Math.round(decision.lastKnownPosition.y * 10) / 10,
-              z: Math.round(decision.lastKnownPosition.z * 10) / 10,
-            }
-            : undefined,
-        };
-        const signature = this.getPlayerInterestSignature(snapshot);
+        const snapshot = buildPlayerInterestSnapshot(targetId, decision);
+        const signature = getPlayerInterestSignature(snapshot);
         if (force || signatures.get(targetId) !== signature) {
           signatures.set(targetId, signature);
           snapshots.push(snapshot);

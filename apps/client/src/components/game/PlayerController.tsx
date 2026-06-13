@@ -119,6 +119,7 @@ import {
   recordAuthorityDrainFrame,
   recordAuthorityFrameApplied,
   recordLocalReactiveUpdate,
+  measureFrameWork,
   recordMovementCommandGenerated,
   recordMovementCommandsSent,
   recordMovementFrameTiming,
@@ -891,6 +892,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
   // Main game loop. Run early so viewmodel/effects sample the updated camera and predicted velocity.
   useFrame((frameState, delta) => {
+    measureFrameWork('frame.playerController', () => {
     let localPlayer = useGameStore.getState().localPlayer;
     const isPlaying = gamePhase === 'playing' || gamePhase === 'countdown';
     const frameClock = getFrameClock();
@@ -1853,6 +1855,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         correctionReason: traceMovementBarrier ?? undefined,
       });
     }
+    });
   }, -100);
 
   // Render targeting indicators

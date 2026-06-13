@@ -3,6 +3,27 @@ import type { SelfMovementAuthority } from '@voxel-strike/shared';
 
 type LocalReactiveUpdateSource = 'vitals' | 'transforms' | 'selfAuthority' | 'localGameplay';
 
+export interface FrameWorkSample {
+  label: string;
+  durationMs: number;
+  endedAtMs: number;
+}
+
+export interface FrameWorkAggregate {
+  label: string;
+  count: number;
+  totalMs: number;
+  maxMs: number;
+}
+
+export interface HitchFrameWorkSample {
+  endedAtMs: number;
+  frameDeltaMs: number;
+  movementSubsteps: number;
+  totalMeasuredMs: number;
+  work: FrameWorkAggregate[];
+}
+
 export interface MovementNetworkDiagnosticsSnapshot {
   commandsGenerated: number;
   commandsSent: number;
@@ -35,9 +56,16 @@ export interface MovementNetworkDiagnosticsSnapshot {
   transformMessagesReceived: number;
   selfOnlyTransformMessages: number;
   remoteTransformSnapshotsAdded: number;
+  frameWorkSamples: FrameWorkSample[];
+  hitchFrameWork: HitchFrameWorkSample[];
 }
 
 const SAMPLE_LIMIT = 120;
+const FRAME_WORK_SAMPLE_LIMIT = 240;
+const HITCH_FRAME_WORK_SAMPLE_LIMIT = 40;
+const HITCH_FRAME_WORK_LABEL_LIMIT = 12;
+const MIN_FRAME_WORK_SAMPLE_MS = 0.02;
+const FRAME_HITCH_THRESHOLD_MS = 1000 / 30;
 
 const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   commandsGenerated: 0,
@@ -76,9 +104,13 @@ const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   transformMessagesReceived: 0,
   selfOnlyTransformMessages: 0,
   remoteTransformSnapshotsAdded: 0,
+  frameWorkSamples: [],
+  hitchFrameWork: [],
 };
 
 let lastAuthorityAckReceivedAtMs = 0;
+let lastFrameWorkMarkAtMs = 0;
+let activeFrameWorkStartedAtMs = 0;
 
 function nowMs(): number {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -89,6 +121,59 @@ function pushSample(samples: number[], value: number): void {
   if (samples.length > SAMPLE_LIMIT) {
     samples.splice(0, samples.length - SAMPLE_LIMIT);
   }
+}
+
+function pushWorkSample(sample: FrameWorkSample): void {
+  diagnostics.frameWorkSamples.push(sample);
+  if (diagnostics.frameWorkSamples.length > FRAME_WORK_SAMPLE_LIMIT) {
+    diagnostics.frameWorkSamples.splice(0, diagnostics.frameWorkSamples.length - FRAME_WORK_SAMPLE_LIMIT);
+  }
+}
+
+function pushHitchFrameWork(sample: HitchFrameWorkSample): void {
+  diagnostics.hitchFrameWork.push(sample);
+  if (diagnostics.hitchFrameWork.length > HITCH_FRAME_WORK_SAMPLE_LIMIT) {
+    diagnostics.hitchFrameWork.splice(0, diagnostics.hitchFrameWork.length - HITCH_FRAME_WORK_SAMPLE_LIMIT);
+  }
+}
+
+function cloneFrameWorkSample(sample: FrameWorkSample): FrameWorkSample {
+  return { ...sample };
+}
+
+function cloneHitchFrameWorkSample(sample: HitchFrameWorkSample): HitchFrameWorkSample {
+  return {
+    ...sample,
+    work: sample.work.map((entry) => ({ ...entry })),
+  };
+}
+
+function aggregateFrameWork(startedAfterMs: number, endedAtMs: number): FrameWorkAggregate[] {
+  if (startedAfterMs <= 0) return [];
+
+  const byLabel = new Map<string, FrameWorkAggregate>();
+  for (const sample of diagnostics.frameWorkSamples) {
+    if (sample.endedAtMs <= startedAfterMs || sample.endedAtMs > endedAtMs) continue;
+
+    const current = byLabel.get(sample.label);
+    if (current) {
+      current.count++;
+      current.totalMs += sample.durationMs;
+      current.maxMs = Math.max(current.maxMs, sample.durationMs);
+      continue;
+    }
+
+    byLabel.set(sample.label, {
+      label: sample.label,
+      count: 1,
+      totalMs: sample.durationMs,
+      maxMs: sample.durationMs,
+    });
+  }
+
+  return Array.from(byLabel.values())
+    .sort((a, b) => b.totalMs - a.totalMs || b.maxMs - a.maxMs)
+    .slice(0, HITCH_FRAME_WORK_LABEL_LIMIT);
 }
 
 function cloneDiagnostics(): MovementNetworkDiagnosticsSnapshot {
@@ -111,6 +196,8 @@ function cloneDiagnostics(): MovementNetworkDiagnosticsSnapshot {
     visualCorrectionMagnitudes: [...diagnostics.visualCorrectionMagnitudes],
     visualCorrectionDurationsMs: [...diagnostics.visualCorrectionDurationsMs],
     localReactiveUpdates: { ...diagnostics.localReactiveUpdates },
+    frameWorkSamples: diagnostics.frameWorkSamples.map(cloneFrameWorkSample),
+    hitchFrameWork: diagnostics.hitchFrameWork.map(cloneHitchFrameWorkSample),
   };
 }
 
@@ -149,7 +236,11 @@ export function resetMovementNetworkDiagnostics(): void {
   diagnostics.transformMessagesReceived = 0;
   diagnostics.selfOnlyTransformMessages = 0;
   diagnostics.remoteTransformSnapshotsAdded = 0;
+  diagnostics.frameWorkSamples.length = 0;
+  diagnostics.hitchFrameWork.length = 0;
   lastAuthorityAckReceivedAtMs = 0;
+  lastFrameWorkMarkAtMs = 0;
+  activeFrameWorkStartedAtMs = 0;
 }
 
 export function getMovementNetworkDiagnosticsSnapshot(): MovementNetworkDiagnosticsSnapshot {
@@ -175,6 +266,9 @@ export function recordMovementFrameTiming(input: {
   accumulatorAfterStepSeconds: number;
   catchup: boolean;
 }): void {
+  const recordedAtMs = nowMs();
+  const intervalStartedAtMs = lastFrameWorkMarkAtMs;
+  lastFrameWorkMarkAtMs = recordedAtMs;
   const frameDeltaMs = Math.max(0, input.frameDeltaSeconds * 1000);
   diagnostics.framesObserved++;
   pushSample(diagnostics.frameDeltaMs, frameDeltaMs);
@@ -182,8 +276,16 @@ export function recordMovementFrameTiming(input: {
   pushSample(diagnostics.movementSubstepsPerFrame, input.substepsThisFrame);
   pushSample(diagnostics.movementAccumulatorBeforeStepMs, Math.max(0, input.accumulatorBeforeStepSeconds * 1000));
   pushSample(diagnostics.movementAccumulatorAfterStepMs, Math.max(0, input.accumulatorAfterStepSeconds * 1000));
-  if (frameDeltaMs >= 1000 / 30) {
+  if (frameDeltaMs >= FRAME_HITCH_THRESHOLD_MS) {
     diagnostics.movementHitchFrames++;
+    const work = aggregateFrameWork(intervalStartedAtMs, recordedAtMs);
+    pushHitchFrameWork({
+      endedAtMs: recordedAtMs,
+      frameDeltaMs,
+      movementSubsteps: input.substepsThisFrame,
+      totalMeasuredMs: work.reduce((total, entry) => total + entry.totalMs, 0),
+      work,
+    });
   }
   if (input.catchup) {
     diagnostics.movementCatchupFrames++;
@@ -238,6 +340,42 @@ export function recordTransformMessage(input: {
     diagnostics.selfOnlyTransformMessages++;
   }
   diagnostics.remoteTransformSnapshotsAdded += input.remoteTransformCount;
+}
+
+export function recordFrameWorkDuration(label: string, startedAtMs: number, endedAtMs = nowMs()): void {
+  if (!import.meta.env.DEV) return;
+
+  const durationMs = Math.max(0, endedAtMs - startedAtMs);
+  if (!Number.isFinite(durationMs) || durationMs < MIN_FRAME_WORK_SAMPLE_MS) return;
+
+  pushWorkSample({
+    label,
+    durationMs,
+    endedAtMs,
+  });
+}
+
+export function measureFrameWork<T>(label: string, work: () => T): T {
+  if (!import.meta.env.DEV) return work();
+
+  const startedAtMs = nowMs();
+  try {
+    return work();
+  } finally {
+    recordFrameWorkDuration(label, startedAtMs);
+  }
+}
+
+export function beginFrameWorkTiming(): void {
+  if (!import.meta.env.DEV) return;
+  activeFrameWorkStartedAtMs = nowMs();
+}
+
+export function finishFrameWorkTiming(label: string): void {
+  if (!import.meta.env.DEV || activeFrameWorkStartedAtMs <= 0) return;
+
+  recordFrameWorkDuration(label, activeFrameWorkStartedAtMs);
+  activeFrameWorkStartedAtMs = 0;
 }
 
 if (import.meta.env.DEV && typeof window !== 'undefined') {

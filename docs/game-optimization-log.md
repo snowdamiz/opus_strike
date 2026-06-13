@@ -658,3 +658,218 @@ Confirmed:
   position error, replayed commands, or visual correction magnitude.
 - If adding more diagnostics, capture per-frame long-task labels or per-system timing
   around frames where `frameDeltaMs >= 30`.
+
+## Pass 006 - Hitch-Frame Work Attribution And Batched Vitals
+
+Date: June 13, 2026
+
+Status: Implemented and verified by automated checks. User feel validation and a new
+diagnostics capture are still needed in a local server-backed custom match.
+
+### Problem
+
+Pass 005 showed that server-backed custom matches still had worse frame pacing than the
+same-seed practice baseline, but the diagnostics only showed that hitches happened. They
+did not identify which server-mode client work ran around those hitch frames.
+
+### Evidence
+
+- Authority backlog, reconciliation, replay, transform churn, and custom-message byte
+  accounting remained clean across prior captures.
+- Server mode still had 26-33 ms p95/p99 frame deltas while practice mode stayed close
+  to one 60 Hz frame.
+- The remaining likely causes were server-mode-only client work: network message
+  handlers, React-visible store publishes, minimap/UI overlays, or R3F frame systems.
+- Code inspection found one concrete inefficiency in that path: one `playerVitals`
+  packet could publish the Zustand store once per changed player through repeated
+  `updatePlayer` calls.
+
+### Changes
+
+- Added hitch-frame work attribution to `window.__voxelMovementDiagnostics.snapshot()`:
+  - `frameWorkSamples` records recent named work samples.
+  - `hitchFrameWork` records work aggregated around frames where `frameDeltaMs >= 33.3`.
+- Instrumented coarse server-mode/client-frame work labels:
+  - `frame.r3fCallbacks`
+  - `frame.playerController`
+  - `frame.gameplayCleanup`
+  - `frame.dynamicLights`
+  - `ui.minimapOverlay`
+  - `network.<messageType>` for gameplay stream, combat, ping, phase, and lifecycle
+    messages.
+- Batched the `playerVitals` handler:
+  - A vitals packet now builds one next `players` map, one `localPlayer`, optional pings
+    cleanup, and one `tick/serverTime` update.
+  - Visual-store updates and removal cleanup still run explicitly after the store
+    publish.
+  - The old per-player store publish path was removed rather than kept as a legacy
+    fallback.
+
+### Verification
+
+Automated checks run:
+
+```bash
+pnpm --filter @voxel-strike/client typecheck
+pnpm --filter @voxel-strike/client test:visual-store
+git diff --check
+```
+
+Results:
+
+- Client TypeScript check passed.
+- Visual store, projectile slice performance, and game performance utility tests passed.
+- Whitespace diff check passed.
+
+Browser/gameplay testing was not run per repo instructions.
+
+### Result
+
+Expected:
+
+- Server-mode vitals bursts should cause less React/Zustand subscriber churn, especially
+  in bot-filled or high-player custom matches.
+- The next stutter capture can identify whether hitch intervals line up with network
+  handlers, the player controller, minimap overlay, R3F callbacks, or uninstrumented
+  render/GPU/browser work.
+
+Unconfirmed:
+
+- In-game feel still needs user validation.
+- A fresh `window.__voxelMovementDiagnostics.snapshot()` is needed to compare
+  `hitchFrameWork` against the previous server/practice frame pacing gap.
+
+### Follow-Ups
+
+- During a visible server-mode stutter, capture
+  `window.__voxelMovementDiagnostics.snapshot()` and inspect:
+  - `hitchFrameWork`
+  - `frameWorkSamples`
+  - `frameDeltaMs`
+  - `movementSubstepsPerFrame`
+  - `movementCatchupFrames`
+- If `hitchFrameWork.totalMeasuredMs` is high, drill into the largest labels.
+- If `frame.r3fCallbacks` is high but named child labels are low, instrument the active
+  effect or remote-player managers next.
+- If measured work is low while frame deltas remain high, investigate WebGL render/GPU
+  stalls, browser long tasks outside the app, or compositor work.
+
+## Pass 007 - Suppress Expiry-Only Player Interest Churn
+
+Date: June 13, 2026
+
+Status: Implemented and verified by automated checks. User feel validation and a new
+server-mode diagnostics capture are still needed.
+
+### Problem
+
+After Pass 006, a fresh server-mode capture still showed substantially more hitch and
+movement catchup frames than practice mode. The new hitch-frame attribution did not show
+large measured JavaScript work during those hitches, but it exposed a recurring
+server-mode-only message pattern.
+
+### Evidence
+
+Fresh user-provided captures:
+
+| Signal | Server | Practice |
+| --- | ---: | ---: |
+| Frames observed | 1794 | 2058 |
+| Retained frame delta p95 | 25.3 ms | 17.6 ms |
+| Retained frame delta p99 | 33.8 ms | 19.6 ms |
+| Retained frame delta max | 37.9 ms | 25.7 ms |
+| Movement hitch frames | 19 | 3 |
+| Movement catchup frames | 254 | 13 |
+| Movement substeps per retained frame p99 | 2 | 1 |
+| Commands per packet p99 | 4 | 3 |
+| Authority pending before drain p99 | 1 | n/a |
+| Authority drain duration p99 | 0.1 ms | n/a |
+| Position error p99 | 0 m | n/a |
+| Velocity error p99 | 0 m/s | n/a |
+| Replayed commands p99 | 0 | n/a |
+| Visual correction magnitude p99 | 0 | n/a |
+
+Hitch attribution from the server capture:
+
+- `network.playerInterest` appeared in 15 of 19 hitch intervals.
+- Total measured work during server hitches was still tiny: p95 was about 1.3 ms.
+- Individual `network.playerInterest` samples were about 0.1-0.2 ms, so the handler
+  cost itself was not large enough to explain the full 30-40 ms frames.
+- The retained server frame sequence showed long frames followed by very short frames
+  on an approximately 200 ms cadence.
+
+Code audit of that cadence:
+
+- `PLAYER_INTEREST_INTERVAL_MS` is 200 ms.
+- Visible interest TTL defaults to 150 ms.
+- `getPlayerInterestSignature` included `expiresAt`.
+- Stable visible/team/self interest could therefore produce a changed signature every
+  interest broadcast solely because the expiration timestamp refreshed.
+- The client only uses `playerInterest.players[].state`; it does not consume
+  `expiresAt`, `reason`, or `lastKnownPosition` for gameplay/render state.
+
+### Changes
+
+- Added `playerInterestSnapshot` helpers:
+  - `buildPlayerInterestSnapshot` shapes the server payload.
+  - `getPlayerInterestSignature` creates a stable signature from state, reason, and
+    last-known position.
+- Removed `expiresAt` from the player-interest payload sent by the game room.
+- Removed `expiresAt` from the player-interest signature so expiry-only refreshes no
+  longer trigger broadcasts.
+- Removed the old private `GameRoom.getPlayerInterestSignature` implementation rather
+  than leaving a legacy duplicate path.
+- Added focused coverage that:
+  - expiry-only interest refreshes keep the same signature
+  - state changes still change the signature
+  - last-known position changes still change the signature
+  - built player-interest snapshots omit `expiresAt`
+
+### Verification
+
+Automated checks run:
+
+```bash
+pnpm --filter @voxel-strike/server test:visibility-interest
+pnpm --filter @voxel-strike/server typecheck
+pnpm --filter @voxel-strike/client typecheck
+git diff --check
+```
+
+Results:
+
+- Visibility interest management tests passed, including the new stable-signature
+  assertions.
+- Server TypeScript check passed.
+- Client TypeScript check passed.
+- Whitespace diff check passed.
+
+Browser/gameplay testing was not run per repo instructions.
+
+### Result
+
+Expected:
+
+- Stable server-mode matches should stop receiving periodic `playerInterest` payloads
+  every ~200 ms when only interest expiry timestamps refresh.
+- The next server capture should show much lower `network.playerInterest` presence in
+  `hitchFrameWork`.
+
+Unconfirmed:
+
+- Whether removing the 200 ms player-interest churn fully closes the server-vs-practice
+  frame pacing gap still needs user validation.
+- If hitches remain while `network.playerInterest` disappears, the next target is likely
+  render/GPU/compositor work or another uninstrumented periodic system.
+
+### Follow-Ups
+
+- Capture another server-mode `window.__voxelMovementDiagnostics.snapshot()` after this
+  pass and compare:
+  - `hitchFrameWork`
+  - `frameDeltaMs`
+  - `movementCatchupFrames`
+  - `transformMessagesReceived`
+  - `localReactiveUpdates`
+- If `network.playerInterest` is gone but hitches persist, inspect unmeasured render
+  work around the remaining hitch cadence.

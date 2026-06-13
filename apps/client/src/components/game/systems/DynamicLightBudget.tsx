@@ -1,6 +1,7 @@
 import { forwardRef, useCallback, useEffect, useRef, type ForwardedRef } from 'react';
 import { useFrame, type ThreeElements } from '@react-three/fiber';
 import * as THREE from 'three';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 
 type PointLightProps = ThreeElements['pointLight'];
 
@@ -128,6 +129,7 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
   const rankedPoolRef = useRef<RankedLight[]>([]);
 
   useFrame(({ camera }, delta) => {
+    measureFrameWork('frame.dynamicLights', () => {
     accumulatorRef.current += delta;
     if (accumulatorRef.current < 0.08) return;
     accumulatorRef.current = 0;
@@ -184,6 +186,7 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
         setLightVisible(light, true);
       }
     }
+    });
   });
 
   return null;
