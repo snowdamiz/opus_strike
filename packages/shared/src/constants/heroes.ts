@@ -247,6 +247,14 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
   },
 
   // Blaze Abilities
+  blaze_bomb: {
+    id: 'blaze_bomb',
+    name: 'Meteor Strike',
+    type: 'offensive',
+    targeting: 'ground',
+    cooldown: 8,
+    description: 'Mark a target zone, then call a blazing meteor down at an angle.',
+  },
   blaze_flamethrower: {
     id: 'blaze_flamethrower',
     name: 'Flamethrower',

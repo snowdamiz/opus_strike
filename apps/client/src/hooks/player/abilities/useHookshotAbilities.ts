@@ -65,12 +65,12 @@ export interface UseHookshotAbilitiesReturn {
   grappleTrapValidRef: React.MutableRefObject<boolean>;
 
   // Methods
-  fireChainHook: (ctx: AbilityContext) => void;
-  fireDragHook: (ctx: AbilityContext) => void;
+  fireChainHook: (ctx: AbilityContext) => boolean;
+  fireDragHook: (ctx: AbilityContext) => boolean;
   canGrapple: (ctx: AbilityContext) => boolean;
   executeGrapple: (ctx: AbilityContext) => boolean;
-  executeEarthWall: (ctx: AbilityContext) => void;
-  executeGrappleTrap: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => void;
+  executeEarthWall: (ctx: AbilityContext) => boolean;
+  executeGrappleTrap: (ctx: AbilityContext, updateLocalPlayer: (data: any) => void) => boolean;
   updateGrapplePhysics: (ctx: AbilityContext) => void;
   handleSwingTerrainContact: () => void;
   handleGrappleTrapTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
@@ -204,7 +204,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
   const fireChainHook = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
-    if (now - lastHookTimeRef.current < HOOKSHOT_FIRE_INTERVAL / tempoMultiplier) return;
+    if (now - lastHookTimeRef.current < HOOKSHOT_FIRE_INTERVAL / tempoMultiplier) return false;
 
     lastHookTimeRef.current = now;
     hookProjectileIdRef.current++;
@@ -239,13 +239,14 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       launchSide,
       now,
     });
+    return true;
   }, []);
 
   // Fire Drag Hook (secondary fire)
   const fireDragHook = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
-    if (now - lastDragHookTimeRef.current < DRAG_HOOK_COOLDOWN / tempoMultiplier) return;
+    if (now - lastDragHookTimeRef.current < DRAG_HOOK_COOLDOWN / tempoMultiplier) return false;
 
     lastDragHookTimeRef.current = now;
     dragHookIdRef.current++;
@@ -279,6 +280,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       launchSide,
       now,
     });
+    return true;
   }, []);
 
   const canGrapple = useCallback((ctx: AbilityContext) => {
@@ -356,6 +358,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       wallSegments: [],
     });
     markPredictedLocalAbilityVisual('hookshot_anchor_wall', ctx.localPlayer.id, wallId);
+    return true;
   }, []);
 
   // Execute Grapple Trap (Ultimate)
@@ -461,6 +464,7 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
     });
 
     updateLocalPlayer({ ultimateCharge: 0 });
+    return true;
   }, []);
 
   const handleSwingTerrainContact = useCallback(() => {

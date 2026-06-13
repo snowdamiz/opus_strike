@@ -122,7 +122,7 @@ export const BLAZE_FLAMETHROWER_SOCKET = {
 } as const;
 
 // Blaze Ultimate - Infernal Gearstorm
-export const BLAZE_GEARSTORM_RADIUS = 23.1; // 40% larger than the previous 16.5 radius
+export const BLAZE_GEARSTORM_RADIUS = 13.9;
 
 // Rocket Jump
 export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 11;

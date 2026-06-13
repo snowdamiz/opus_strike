@@ -65,6 +65,7 @@ export interface UsePhantomAbilitiesReturn {
   voidRayChargingRef: React.MutableRefObject<boolean>;
   voidRayChargeStartRef: React.MutableRefObject<number>;
   voidRayIdRef: React.MutableRefObject<number>;
+  voidRayAwaitingReleaseRef: React.MutableRefObject<boolean>;
 
   // Methods
   updatePhantomPrimaryReload: (now?: number) => void;
@@ -89,7 +90,7 @@ export interface UsePhantomAbilitiesReturn {
     sounds: PlayerSounds,
     updateLocalPlayer: (data: any) => void,
     setAbilityActive: (id: string, active: boolean) => void
-  ) => void;
+  ) => boolean;
 }
 
 export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
@@ -358,7 +359,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     _updateLocalPlayer: (data: any) => void,
     _setAbilityActive: (id: string, active: boolean) => void
   ) => {
-    return undefined;
+    return true;
   }, []);
 
   return {
@@ -370,6 +371,7 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
     voidRayChargingRef,
     voidRayChargeStartRef,
     voidRayIdRef,
+    voidRayAwaitingReleaseRef,
     updatePhantomPrimaryReload,
     reloadPhantomPrimary,
     resetPhantomPrimaryMagazine,

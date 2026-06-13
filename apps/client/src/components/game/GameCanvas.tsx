@@ -39,6 +39,17 @@ import {
 } from './visualQuality';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
+import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
+
+const BLAZE_BACKGROUND_COLOR = new THREE.Color('#4a150c');
+const BLAZE_FOG_COLOR = new THREE.Color('#651b0e');
+const BLAZE_AMBIENT_COLOR = new THREE.Color('#ff8a35');
+const BLAZE_HEMISPHERE_SKY_COLOR = new THREE.Color('#ff6a1f');
+const BLAZE_HEMISPHERE_GROUND_COLOR = new THREE.Color('#541108');
+const BLAZE_SUN_LIGHT_COLOR = new THREE.Color('#ffb14a');
+const BLAZE_RIM_LIGHT_COLOR = new THREE.Color('#ff4020');
+
+type GameMapTheme = ReturnType<typeof getVoxelMapTheme>;
 
 function CameraSettingsApplier({ fov }: { fov: number }) {
   const { camera } = useThree();
@@ -79,6 +90,141 @@ function PhysicsBudgetApplier({ maxVisualQueriesPerFrame }: { maxVisualQueriesPe
   }, [maxVisualQueriesPerFrame]);
 
   return null;
+}
+
+function SceneAtmosphereColors({ theme }: { theme: GameMapTheme }) {
+  const { gl, scene } = useThree();
+  const fogRef = useRef<THREE.FogExp2>(null);
+  const backgroundColorRef = useRef(new THREE.Color(theme.skyColor));
+  const baseSkyColor = useMemo(() => new THREE.Color(theme.skyColor), [theme]);
+  const baseFogColor = useMemo(() => new THREE.Color(theme.fogColor), [theme]);
+  const fireBackgroundColor = useMemo(
+    () => new THREE.Color(theme.skyColor).lerp(BLAZE_BACKGROUND_COLOR, 0.82),
+    [theme]
+  );
+  const fireFogColor = useMemo(
+    () => new THREE.Color(theme.fogColor).lerp(BLAZE_FOG_COLOR, 0.76),
+    [theme]
+  );
+
+  useEffect(() => {
+    backgroundColorRef.current.copy(baseSkyColor);
+    scene.background = backgroundColorRef.current;
+    gl.setClearColor(backgroundColorRef.current, 1);
+
+    if (fogRef.current) {
+      fogRef.current.color.copy(baseFogColor);
+      fogRef.current.density = 0.0062;
+    }
+  }, [baseFogColor, baseSkyColor, gl, scene]);
+
+  useFrame(({ clock }) => {
+    const fireIntensity = getBlazeGearstormSkyIntensity();
+    const shimmer = fireIntensity * (0.95 + Math.sin(clock.elapsedTime * 5.2) * 0.05);
+
+    backgroundColorRef.current.copy(baseSkyColor).lerp(fireBackgroundColor, shimmer);
+    scene.background = backgroundColorRef.current;
+    gl.setClearColor(backgroundColorRef.current, 1);
+
+    if (fogRef.current) {
+      fogRef.current.color.copy(baseFogColor).lerp(fireFogColor, fireIntensity);
+      fogRef.current.density = THREE.MathUtils.lerp(0.0062, 0.009, fireIntensity);
+    }
+  });
+
+  return <fogExp2 ref={fogRef} attach="fog" args={[theme.fogColor, 0.0062]} />;
+}
+
+function ThemedWorldLighting({
+  shadows,
+  theme,
+}: {
+  shadows: ShadowQualityConfig;
+  theme: GameMapTheme;
+}) {
+  const ambientRef = useRef<THREE.AmbientLight>(null);
+  const hemisphereRef = useRef<THREE.HemisphereLight>(null);
+  const sunRef = useRef<THREE.DirectionalLight>(null);
+  const rimRef = useRef<THREE.DirectionalLight>(null);
+  const baseAmbientColor = useMemo(() => new THREE.Color(theme.ambientColor), [theme]);
+  const baseSkyColor = useMemo(() => new THREE.Color(theme.skyColor), [theme]);
+  const baseGroundColor = useMemo(() => new THREE.Color(theme.ground.side), [theme]);
+  const baseSunColor = useMemo(() => new THREE.Color(theme.sunColor), [theme]);
+  const baseRimColor = useMemo(() => new THREE.Color(theme.structures.glass), [theme]);
+  const fireAmbientColor = useMemo(
+    () => new THREE.Color(theme.ambientColor).lerp(BLAZE_AMBIENT_COLOR, 0.72),
+    [theme]
+  );
+  const fireSkyColor = useMemo(
+    () => new THREE.Color(theme.skyColor).lerp(BLAZE_HEMISPHERE_SKY_COLOR, 0.82),
+    [theme]
+  );
+  const fireGroundColor = useMemo(
+    () => new THREE.Color(theme.ground.side).lerp(BLAZE_HEMISPHERE_GROUND_COLOR, 0.7),
+    [theme]
+  );
+  const fireSunColor = useMemo(
+    () => new THREE.Color(theme.sunColor).lerp(BLAZE_SUN_LIGHT_COLOR, 0.86),
+    [theme]
+  );
+  const fireRimColor = useMemo(
+    () => new THREE.Color(theme.structures.glass).lerp(BLAZE_RIM_LIGHT_COLOR, 0.78),
+    [theme]
+  );
+
+  useFrame(({ clock }) => {
+    const fireIntensity = getBlazeGearstormSkyIntensity();
+    const pulse = fireIntensity * (0.9 + Math.sin(clock.elapsedTime * 7.1) * 0.1);
+
+    if (ambientRef.current) {
+      ambientRef.current.intensity = THREE.MathUtils.lerp(0.42, 0.62, pulse);
+      ambientRef.current.color.copy(baseAmbientColor).lerp(fireAmbientColor, fireIntensity);
+    }
+
+    if (hemisphereRef.current) {
+      hemisphereRef.current.intensity = THREE.MathUtils.lerp(1.65, 2.16, pulse);
+      hemisphereRef.current.color.copy(baseSkyColor).lerp(fireSkyColor, fireIntensity);
+      hemisphereRef.current.groundColor.copy(baseGroundColor).lerp(fireGroundColor, fireIntensity);
+    }
+
+    if (sunRef.current) {
+      sunRef.current.intensity = THREE.MathUtils.lerp(4.85, 6.45, pulse);
+      sunRef.current.color.copy(baseSunColor).lerp(fireSunColor, fireIntensity);
+    }
+
+    if (rimRef.current) {
+      rimRef.current.intensity = THREE.MathUtils.lerp(0.75, 1.25, pulse);
+      rimRef.current.color.copy(baseRimColor).lerp(fireRimColor, fireIntensity);
+    }
+  });
+
+  return (
+    <>
+      <ambientLight ref={ambientRef} intensity={0.42} color={theme.ambientColor} />
+      <hemisphereLight ref={hemisphereRef} args={[theme.skyColor, theme.ground.side, 1.65]} />
+      <directionalLight
+        ref={sunRef}
+        position={[58, 105, 34]}
+        intensity={4.85}
+        color={theme.sunColor}
+        castShadow={shadows.enabled}
+        shadow-mapSize={[shadows.mapSize, shadows.mapSize]}
+        shadow-camera-far={shadows.far}
+        shadow-camera-left={-shadows.volume}
+        shadow-camera-right={shadows.volume}
+        shadow-camera-top={shadows.volume}
+        shadow-camera-bottom={-shadows.volume}
+        shadow-bias={-0.00018}
+        shadow-normalBias={0.045}
+      />
+      <directionalLight
+        ref={rimRef}
+        position={[-60, 36, -70]}
+        intensity={0.75}
+        color={theme.structures.glass}
+      />
+    </>
+  );
 }
 
 function SceneReadySignal({
@@ -603,28 +749,8 @@ export function GameCanvas({
         <ReflectionEnvironment theme={mapTheme} config={qualityConfig.reflections} />
         <WorldAtmosphere theme={mapTheme} seed={mapSeed} config={effectiveEnvironmentConfig} />
 
-        {/* Lighting follows the generated map theme. */}
-        <ambientLight intensity={0.42} color={mapTheme.ambientColor} />
-        <hemisphereLight args={[mapTheme.skyColor, mapTheme.ground.side, 1.65]} />
-        <directionalLight
-          position={[58, 105, 34]}
-          intensity={4.85}
-          color={mapTheme.sunColor}
-          castShadow={qualityConfig.shadows.enabled}
-          shadow-mapSize={[qualityConfig.shadows.mapSize, qualityConfig.shadows.mapSize]}
-          shadow-camera-far={qualityConfig.shadows.far}
-          shadow-camera-left={-qualityConfig.shadows.volume}
-          shadow-camera-right={qualityConfig.shadows.volume}
-          shadow-camera-top={qualityConfig.shadows.volume}
-          shadow-camera-bottom={-qualityConfig.shadows.volume}
-          shadow-bias={-0.00018}
-          shadow-normalBias={0.045}
-        />
-        <directionalLight
-          position={[-60, 36, -70]}
-          intensity={0.75}
-          color={mapTheme.structures.glass}
-        />
+        {/* Lighting follows the generated map theme and leans fiery during Blaze's Gearstorm. */}
+        <ThemedWorldLighting theme={mapTheme} shadows={qualityConfig.shadows} />
         {effectiveDynamicLights.staticAccentLights && (
           <>
             <BudgetedPointLight budgetPriority={0.35} position={[0, 12, 0]} intensity={42} color={mapTheme.structures.accent} distance={72} decay={2} />
@@ -706,8 +832,7 @@ export function GameCanvas({
         {/* Orbit controls when not playing for looking around */}
         {!isPlaying && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
 
-        <fogExp2 attach="fog" args={[mapTheme.fogColor, 0.0062]} />
-        <color attach="background" args={[mapTheme.skyColor]} />
+        <SceneAtmosphereColors theme={mapTheme} />
         <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={warmupKey} />
       </Suspense>
     </Canvas>

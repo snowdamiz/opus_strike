@@ -12,6 +12,8 @@
 import { useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import {
+  BLAZE_FLAMETHROWER_FUEL_DRAIN,
+  BLAZE_FLAMETHROWER_FUEL_REGEN,
   BLAZE_FLAMETHROWER_MAX_FUEL,
   BLAZE_FLAMETHROWER_SOCKET,
   BLAZE_ROCKET_STAFF_SOCKET,
@@ -28,6 +30,9 @@ import {
 import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTempo';
 import { setFlamethrowerVisualPose } from '../../../store/visualStore';
 import {
+  BLAZE_ROCKET_JUMP_ANIMATION_DURATION_MS,
+  BLAZE_STAFF_RETURN_TO_IDLE_MS,
+  BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
   clearBlazeRocketJumpStaffSlam,
   getBlazeFlamethrowerHeldBlend,
   setBlazeFlamethrowerHeld,
@@ -41,6 +46,7 @@ import {
   type ResolvedAbilitySocketOrigin,
 } from '../../../model-system/abilitySocketResolver';
 import type { AbilityContext, PlayerSounds } from '../types';
+import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
 function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
@@ -98,8 +104,12 @@ export interface UseBlazeAbilitiesReturn {
   airStrikeValidRef: React.MutableRefObject<boolean>;
   secondaryFirePressedRef: React.MutableRefObject<boolean>;
   pendingRocketJumpRef: React.MutableRefObject<PendingRocketJump | null>;
+  actionLockUntilRef: React.MutableRefObject<number>;
 
   // Methods
+  lockActions: (durationMs: number, timestampMs?: number) => void;
+  clearActionLock: () => void;
+  isActionLocked: (timestampMs?: number) => boolean;
   handleBombTargeting: (ctx: AbilityContext, sounds: PlayerSounds) => void;
   fireRocket: (ctx: AbilityContext) => void;
   executeBombDrop: (sounds: PlayerSounds) => void;
@@ -145,6 +155,23 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const airStrikeTargetRef = useRef<THREE.Vector3 | null>(null);
   const airStrikeValidRef = useRef(false);
 
+  const actionLockUntilRef = useRef(0);
+
+  const lockActions = useCallback((durationMs: number, timestampMs = Date.now()) => {
+    actionLockUntilRef.current = Math.max(
+      actionLockUntilRef.current,
+      timestampMs + Math.max(0, durationMs)
+    );
+  }, []);
+
+  const clearActionLock = useCallback(() => {
+    actionLockUntilRef.current = 0;
+  }, []);
+
+  const isActionLocked = useCallback((timestampMs = Date.now()) => (
+    actionLockUntilRef.current > timestampMs
+  ), []);
+
   // Handle Meteor Strike targeting mode
   const handleBombTargeting = useCallback((ctx: AbilityContext, sounds: PlayerSounds) => {
     const store = useGameStore.getState();
@@ -176,6 +203,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
           bombTargetRef.current = null;
           bombValidRef.current = false;
           setBlazeBombTargetHeld(false, timestampMs);
+          lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, timestampMs);
         }
       } else {
         setBlazeBombTargetHeld(false, timestampMs);
@@ -229,9 +257,13 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     if (now - lastBombTimeRef.current < BLAZE_BOMB_COOLDOWN / tempoMultiplier) return;
 
     triggerBlazeStaffShockwave(now);
+    lockActions(BLAZE_STAFF_SHOCKWAVE_DURATION_MS + BLAZE_STAFF_RETURN_TO_IDLE_MS, now);
+    markPredictedLocalAbilitySound('blaze_bomb', now);
+    sounds.playBlazeBombRelease();
 
     lastBombTimeRef.current = now;
     const store = useGameStore.getState();
+    store.setClientCooldown('blaze_bomb', now + BLAZE_BOMB_COOLDOWN / tempoMultiplier);
 
     if (store.isPracticeMode && store.localPlayer?.heroId === 'blaze') {
       const targetPosition = vectorToPlainPosition(bombTargetRef.current);
@@ -275,9 +307,18 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     const store = useGameStore.getState();
     const localPlayer = store.localPlayer;
     const canUsePracticeFuel = store.isPracticeMode && localPlayer?.heroId === 'blaze' && localPlayer.state === 'alive';
-    let serverFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
-    if (!canUsePracticeFuel && localPlayer?.heroId === 'blaze') {
-      serverFuel = localPlayer.movement?.jetpackFuel ?? BLAZE_FLAMETHROWER_MAX_FUEL;
+    const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    const fuelStepSeconds = Math.min(Math.max(ctx.dt, 0), 0.1);
+    let serverFuel = localPlayer?.heroId === 'blaze'
+      ? localPlayer.movement?.jetpackFuel ?? BLAZE_FLAMETHROWER_MAX_FUEL
+      : BLAZE_FLAMETHROWER_MAX_FUEL;
+
+    if (canUsePracticeFuel) {
+      const isTryingToFire = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
+      const fuelDelta = (isTryingToFire ? -BLAZE_FLAMETHROWER_FUEL_DRAIN : BLAZE_FLAMETHROWER_FUEL_REGEN) *
+        fuelStepSeconds *
+        tempoMultiplier;
+      serverFuel = Math.max(0, Math.min(BLAZE_FLAMETHROWER_MAX_FUEL, flamethrowerFuelRef.current + fuelDelta));
     }
     const isHoldingFlamethrower = ctx.inputState.ability1 && serverFuel > 0;
     const serverActive = Boolean(
@@ -322,6 +363,7 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const executeRocketJump = useCallback((ctx: AbilityContext) => {
     const now = Date.now();
     triggerBlazeRocketJumpStaffSlam(now);
+    lockActions(BLAZE_ROCKET_JUMP_ANIMATION_DURATION_MS + BLAZE_STAFF_RETURN_TO_IDLE_MS, now);
     markPredictedLocalAbilityVisual('blaze_rocketjump', ctx.localPlayer.id, `predicted_blaze_rocketjump_${ctx.localPlayer.id}_${now}`, {
       now,
     });
@@ -357,6 +399,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   ) => {
     const localPlayer = useGameStore.getState().localPlayer;
     if (!localPlayer || (localPlayer.ultimateCharge ?? 0) < 100) return;
+
+    lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, ctx.viewmodelNowMs ?? Date.now());
 
     // Clear any stale target state from older targeting flows.
     useGameStore.getState().setAirStrikeTargeting(false, false);
@@ -398,6 +442,10 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     airStrikeValidRef,
     secondaryFirePressedRef,
     pendingRocketJumpRef,
+    actionLockUntilRef,
+    lockActions,
+    clearActionLock,
+    isActionLocked,
     handleBombTargeting,
     fireRocket,
     executeBombDrop,

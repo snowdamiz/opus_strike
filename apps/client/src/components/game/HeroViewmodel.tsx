@@ -14,6 +14,7 @@ import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
   PHANTOM_PRIMARY_PALM_SOCKET_NAMES,
   PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS,
+  PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   getPhantomPrimaryHeldBlend,
   getPhantomPrimaryShotPulse,
@@ -21,6 +22,7 @@ import {
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
 import {
+  BLAZE_STAFF_SHOCKWAVE_DURATION_MS,
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
   getBlazeRocketJumpStaffSlamPose,
   getBlazeStaffHeldBlend,
@@ -37,7 +39,11 @@ import {
   getChronosTimebreakPose,
   type ChronosPrimaryOrbPoseSampleContext,
 } from '../../viewmodel/chronosPose';
-import { HOOKSHOT_HOOK_SOCKET_NAMES } from '../../viewmodel/hookshotPose';
+import {
+  HOOKSHOT_HOOK_SOCKET_NAMES,
+  HOOKSHOT_PRIMARY_RECOIL_DURATION_SECONDS,
+  HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS,
+} from '../../viewmodel/hookshotPose';
 import {
   registerViewmodelPoseSamplers,
   useRegisteredViewmodelSocket,
@@ -216,11 +222,8 @@ const PHANTOM_IDLE_HAND_ROTATION = {
 const PHANTOM_RELOAD_PULLBACK_Z = 0.092;
 const PHANTOM_RELOAD_INWARD_X = 0.034;
 const PHANTOM_RELOAD_LIFT_Y = 0.018;
-const PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS = 0.5;
 const PHANTOM_VOID_RAY_ORB_POSITION = new THREE.Vector3(0, -0.472, -0.72);
 const PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION = new THREE.Vector3(0, -0.38, -2.15);
-const HOOKSHOT_PRIMARY_RECOIL_DURATION_SECONDS = 0.26;
-const HOOKSHOT_SECONDARY_POSE_DURATION_SECONDS = 1.25;
 const HOOKSHOT_LAUNCHER_TUBE_LENGTH = 0.096;
 const HOOKSHOT_LAUNCHER_TUBE_CENTER_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH * 0.5;
 const HOOKSHOT_LAUNCHER_TUBE_FRONT_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH;
@@ -230,6 +233,13 @@ const BLAZE_RIGHT_HAND_READY_BLEND = 0.035;
 const BLAZE_STAFF_POSITION = new THREE.Vector3(0.006, -0.034, -0.088);
 const BLAZE_STAFF_ROTATION = new THREE.Euler(-0.23, -0.075, 0.24, VIEWMODEL_ROOT_EULER_ORDER);
 const BLAZE_STAFF_TIP_LOCAL_POSITION = new THREE.Vector3(0, 0.592, 0);
+const BLAZE_STAFF_TIP_PRONG_ANGLES = [0, Math.PI / 2, Math.PI, Math.PI * 1.5] as const;
+const BLAZE_STAFF_TIP_FLAME_ANGLES = [
+  Math.PI / 4,
+  Math.PI * 0.75,
+  Math.PI * 1.25,
+  Math.PI * 1.75,
+] as const;
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
 const CHRONOS_MOVEMENT_BOB_WALK_SPEED = 5.35;
@@ -2413,8 +2423,6 @@ function createBlazeStaffChargeGlowMaterial(color: number): THREE.MeshBasicMater
   });
 }
 
-const BLAZE_STAFF_SHOCKWAVE_DURATION_MS = 460;
-
 function BlazePhantomForearm({
   side,
   materials,
@@ -2477,6 +2485,7 @@ function BlazeWizardStaff({
   const chargeCoreRef = useRef<THREE.Mesh>(null);
   const chargeHaloRef = useRef<THREE.Mesh>(null);
   const chargeRingRef = useRef<THREE.Mesh>(null);
+  const tipFlareRef = useRef<THREE.Group>(null);
   const shockwaveRef = useRef<THREE.Group>(null);
   const shockwaveShellRef = useRef<THREE.Mesh>(null);
   const shockwaveRingRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -2484,6 +2493,7 @@ function BlazeWizardStaff({
   const processedShockwaveRevisionRef = useRef(0);
   const chargeCoreMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff4a16), []);
   const chargeHaloMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff6f1f), []);
+  const tipFlareMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xffcf3a), []);
   const shockwaveMaterial = useMemo(() => createBlazeStaffChargeGlowMaterial(0xff5a18), []);
 
   useRegisteredViewmodelSocket(BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME, socketRef);
@@ -2491,8 +2501,9 @@ function BlazeWizardStaff({
   useEffect(() => () => {
     chargeCoreMaterial.dispose();
     chargeHaloMaterial.dispose();
+    tipFlareMaterial.dispose();
     shockwaveMaterial.dispose();
-  }, [chargeCoreMaterial, chargeHaloMaterial, shockwaveMaterial]);
+  }, [chargeCoreMaterial, chargeHaloMaterial, shockwaveMaterial, tipFlareMaterial]);
 
   useFrame((state) => {
     const staff = staffRef.current;
@@ -2502,6 +2513,19 @@ function BlazeWizardStaff({
     const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(nowMs);
     const holdBlend = getBlazeStaffHeldBlend(nowMs);
     writeBlazeStaffPose(staff, holdBlend, rocketJumpPose);
+
+    const tipFlare = tipFlareRef.current;
+    if (tipFlare) {
+      const idlePulse = 1 + Math.sin(state.clock.elapsedTime * 10.75) * 0.035;
+      const flareScale = idlePulse + holdBlend * 0.1 + rocketJumpPose.impactPulse * 0.18;
+      tipFlare.rotation.y = state.clock.elapsedTime * (0.32 + holdBlend * 0.72);
+      tipFlare.scale.setScalar(flareScale);
+      tipFlareMaterial.opacity = THREE.MathUtils.clamp(
+        0.34 + holdBlend * 0.32 + rocketJumpPose.impactPulse * 0.28,
+        0.26,
+        0.88
+      );
+    }
 
     const chargeGlow = chargeGlowRef.current;
     if (!chargeGlow) return;
@@ -2595,11 +2619,44 @@ function BlazeWizardStaff({
       ))}
 
       <group position={[0, 0.49, 0]}>
-        <mesh geometry={SHARED_GEOMETRIES.sphere12} material={materials.glass} scale={0.052} />
-        <mesh geometry={SHARED_GEOMETRIES.sphere16} material={materials.glow} scale={0.028} />
-        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.accent} rotation={[Math.PI / 2, 0, 0]} scale={[0.072, 0.072, 1]} />
-        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} rotation={[Math.PI / 2, 0, 0]} scale={[0.054, 0.054, 1]} />
-        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, 0.066, 0]} scale={[0.03, 0.082, 0.03]} />
+        <mesh geometry={SHARED_GEOMETRIES.cylinder12} material={materials.metal} position={[0, -0.048, 0]} scale={[0.056, 0.026, 0.056]} />
+        <mesh geometry={SHARED_GEOMETRIES.cylinderOpen12} material={materials.glow} position={[0, -0.012, 0]} scale={[0.056, 0.068, 0.056]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, 0.024, 0]} scale={[0.05, 0.074, 0.05]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glass} position={[0, -0.022, 0]} rotation={[Math.PI, 0, 0]} scale={[0.04, 0.054, 0.04]} />
+        <mesh geometry={SHARED_GEOMETRIES.cone8} material={materials.glow} position={[0, 0.061, 0]} scale={[0.031, 0.082, 0.031]} />
+        <mesh geometry={SHARED_GEOMETRIES.ring24} material={materials.accent} rotation={[Math.PI / 2, 0, 0]} scale={[0.082, 0.082, 1]} />
+        <mesh geometry={SHARED_GEOMETRIES.ring16} material={materials.glow} position={[0, 0.034, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[0.064, 0.064, 1]} />
+        {BLAZE_STAFF_TIP_PRONG_ANGLES.map(angle => (
+          <group key={`prong-${angle}`} rotation={[0, angle, 0]}>
+            <mesh
+              geometry={SHARED_GEOMETRIES.box}
+              material={materials.metal}
+              position={[0, 0.006, 0.058]}
+              rotation={[-0.34, 0, 0]}
+              scale={[0.016, 0.112, 0.022]}
+            />
+            <mesh
+              geometry={SHARED_GEOMETRIES.box}
+              material={materials.accent}
+              position={[0, 0.05, 0.062]}
+              rotation={[-0.34, 0, 0]}
+              scale={[0.009, 0.04, 0.012]}
+            />
+          </group>
+        ))}
+        <group ref={tipFlareRef}>
+          {BLAZE_STAFF_TIP_FLAME_ANGLES.map(angle => (
+            <group key={`flare-${angle}`} rotation={[0, angle, 0]}>
+              <mesh
+                geometry={SHARED_GEOMETRIES.cone6}
+                material={tipFlareMaterial}
+                position={[0, 0.034, 0.066]}
+                rotation={[-0.54, 0, 0]}
+                scale={[0.013, 0.068, 0.013]}
+              />
+            </group>
+          ))}
+        </group>
         <group ref={chargeGlowRef} visible={false}>
           <mesh ref={chargeCoreRef} geometry={SHARED_GEOMETRIES.sphere16} material={chargeCoreMaterial} scale={0.001} />
           <mesh ref={chargeHaloRef} geometry={SHARED_GEOMETRIES.sphere16} material={chargeHaloMaterial} scale={0.001} />

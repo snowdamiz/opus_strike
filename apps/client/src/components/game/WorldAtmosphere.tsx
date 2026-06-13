@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { EnvironmentQualityConfig } from './visualQuality';
+import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
 
 interface WorldAtmosphereProps {
   theme: VoxelMapTheme;
@@ -63,6 +64,11 @@ interface DustDevilConfig {
 
 const ATMOSPHERE_UPDATE_INTERVAL = 1 / 30;
 const ATMOSPHERE_MAX_STEP = 1 / 12;
+const SUN_POSITION: [number, number, number] = [92, 118, -76];
+const SUN_DIRECTION = new THREE.Vector3(...SUN_POSITION).normalize();
+const BLAZE_SUN_CORE_COLOR = new THREE.Color('#ffd36a');
+const BLAZE_SUN_CORONA_COLOR = new THREE.Color('#ff5a00');
+const BLAZE_SUN_OUTER_CORONA_COLOR = new THREE.Color('#ff2700');
 
 function getAtmosphereCount(profile: AtmosphereProfileInput): number {
   const multiplier =
@@ -94,6 +100,13 @@ const SKY_FRAGMENT_SHADER = `
 uniform vec3 topColor;
 uniform vec3 horizonColor;
 uniform vec3 hazeColor;
+uniform vec3 fireTopColor;
+uniform vec3 fireHorizonColor;
+uniform vec3 emberColor;
+uniform vec3 smokeColor;
+uniform vec3 sunDirection;
+uniform float fireIntensity;
+uniform float time;
 varying vec3 vWorldPosition;
 
 void main() {
@@ -102,6 +115,27 @@ void main() {
   float horizon = pow(1.0 - abs(direction.y), 3.0);
   vec3 color = mix(horizonColor, topColor, smoothstep(0.05, 1.0, height));
   color += hazeColor * horizon * 0.28;
+
+  float azimuth = atan(direction.z, direction.x);
+  float wave =
+    sin(azimuth * 7.0 + time * 1.55) * 0.5 +
+    sin(azimuth * 13.0 - time * 1.9 + direction.y * 4.0) * 0.32 +
+    sin((direction.x - direction.z) * 10.0 + time * 2.35) * 0.18;
+  float flame = smoothstep(0.18, 0.95, wave * 0.5 + 0.5);
+  float lowSky = 1.0 - smoothstep(0.5, 0.92, height);
+  float heatBand = horizon * (0.54 + flame * 0.46) * lowSky;
+  float smoke = smoothstep(0.5, 1.0, height) * (0.56 + flame * 0.18);
+  vec3 fireColor = mix(fireHorizonColor, emberColor, flame * 0.68 + horizon * 0.2);
+  color = mix(color, fireColor, fireIntensity * clamp(heatBand * 1.45 + lowSky * 0.12, 0.0, 0.82));
+  color = mix(color, fireTopColor, fireIntensity * smoke * 0.44);
+  color += emberColor * fireIntensity * flame * horizon * 0.18;
+
+  float sunFacing = max(dot(direction, normalize(sunDirection)), 0.0);
+  float corona = pow(sunFacing, 18.0);
+  float sunCore = pow(sunFacing, 220.0);
+  color += fireIntensity * (fireHorizonColor * corona * 0.42 + emberColor * sunCore * 1.15);
+  color = mix(color, smokeColor, fireIntensity * smoke * 0.2);
+
   gl_FragColor = vec4(color, 1.0);
 }
 `;
@@ -838,6 +872,13 @@ function getSkyUniforms(theme: VoxelMapTheme) {
     topColor: { value: createThemeColor(theme.skyColor, '#07111f', darken) },
     horizonColor: { value: createThemeColor(theme.fogColor, '#fff7e5', warmHorizon) },
     hazeColor: { value: createThemeColor(theme.structures.accent, theme.fogColor, 0.68) },
+    fireTopColor: { value: new THREE.Color('#2a0c0d') },
+    fireHorizonColor: { value: new THREE.Color('#ff5c1c') },
+    emberColor: { value: new THREE.Color('#ffd36a') },
+    smokeColor: { value: new THREE.Color('#17090b') },
+    sunDirection: { value: SUN_DIRECTION.clone() },
+    fireIntensity: { value: 0 },
+    time: { value: 0 },
   };
 }
 
@@ -1134,6 +1175,10 @@ function SandDevils({ profile, seed }: { profile: AtmosphereProfile; seed: numbe
 }
 
 export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
+  const sunGroupRef = useRef<THREE.Group>(null);
+  const sunMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const sunInnerCoronaMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const sunOuterCoronaMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const atmosphereProfiles = useMemo(
     () => scaleAtmosphereProfiles(getAtmosphereProfiles(theme, seed), config),
     [config, theme, seed]
@@ -1156,6 +1201,31 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
     () => createThemeColor(theme.sunColor, '#ffffff', theme.id === 'basalt' ? 0.25 : 0.1),
     [theme]
   );
+
+  useFrame(({ clock }) => {
+    const fireIntensity = getBlazeGearstormSkyIntensity();
+    skyMaterial.uniforms.fireIntensity.value = fireIntensity;
+    skyMaterial.uniforms.time.value = clock.elapsedTime;
+
+    const pulse = 0.92 + Math.sin(clock.elapsedTime * 7.4) * 0.08;
+
+    if (sunMaterialRef.current) {
+      sunMaterialRef.current.color.copy(sunColor).lerp(BLAZE_SUN_CORE_COLOR, fireIntensity);
+    }
+
+    if (sunInnerCoronaMaterialRef.current) {
+      sunInnerCoronaMaterialRef.current.opacity = fireIntensity * (0.2 + pulse * 0.12);
+    }
+
+    if (sunOuterCoronaMaterialRef.current) {
+      sunOuterCoronaMaterialRef.current.opacity = fireIntensity * (0.09 + pulse * 0.08);
+    }
+
+    if (sunGroupRef.current) {
+      sunGroupRef.current.scale.setScalar(1 + fireIntensity * (0.05 + pulse * 0.04));
+    }
+  });
+
   useEffect(() => () => skyMaterial.dispose(), [skyMaterial]);
 
   return (
@@ -1164,10 +1234,38 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
         <sphereGeometry args={[420, ...config.skySegments]} />
         <primitive object={skyMaterial} attach="material" />
       </mesh>
-      <mesh position={[92, 118, -76]} frustumCulled={false} renderOrder={-90}>
-        <sphereGeometry args={[7.5, ...config.sunSegments]} />
-        <meshBasicMaterial color={sunColor} toneMapped={false} fog={false} />
-      </mesh>
+      <group ref={sunGroupRef} position={SUN_POSITION} frustumCulled={false}>
+        <mesh frustumCulled={false} renderOrder={-92} scale={[3.45, 3.45, 3.45]}>
+          <sphereGeometry args={[7.5, ...config.sunSegments]} />
+          <meshBasicMaterial
+            ref={sunOuterCoronaMaterialRef}
+            color={BLAZE_SUN_OUTER_CORONA_COLOR}
+            transparent
+            opacity={0}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+            fog={false}
+          />
+        </mesh>
+        <mesh frustumCulled={false} renderOrder={-91} scale={[2.15, 2.15, 2.15]}>
+          <sphereGeometry args={[7.5, ...config.sunSegments]} />
+          <meshBasicMaterial
+            ref={sunInnerCoronaMaterialRef}
+            color={BLAZE_SUN_CORONA_COLOR}
+            transparent
+            opacity={0}
+            depthWrite={false}
+            blending={THREE.AdditiveBlending}
+            toneMapped={false}
+            fog={false}
+          />
+        </mesh>
+        <mesh frustumCulled={false} renderOrder={-90}>
+          <sphereGeometry args={[7.5, ...config.sunSegments]} />
+          <meshBasicMaterial ref={sunMaterialRef} color={sunColor} toneMapped={false} fog={false} />
+        </mesh>
+      </group>
       {atmosphereProfiles.map((profile, index) => {
         const profileSeed = seed ^ (0x5a7c0de + index * 0x27d4eb2d);
         return (

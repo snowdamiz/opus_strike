@@ -29,11 +29,30 @@ import { useInput } from '../../hooks/useInput';
 import { usePhysics } from '../../hooks/usePhysics';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '../../hooks/useAudio';
-import { setPhantomPrimaryHeld } from '../../viewmodel/phantomPrimaryPose';
-import { setBlazeBombTargetHeld, setBlazeFlamethrowerHeld, setBlazeRocketHeld } from '../../viewmodel/blazePose';
 import {
+  PHANTOM_PRIMARY_RETURN_TO_IDLE_MS,
+  PHANTOM_PRIMARY_SHOT_PULSE_DURATION_MS,
+  PHANTOM_VOID_RAY_RELEASE_LOCK_MS,
+  setPhantomPrimaryHeld,
+} from '../../viewmodel/phantomPrimaryPose';
+import {
+  BLAZE_STAFF_RETURN_TO_IDLE_MS,
+  setBlazeBombTargetHeld,
+  setBlazeFlamethrowerHeld,
+  setBlazeRocketHeld,
+} from '../../viewmodel/blazePose';
+import {
+  CHRONOS_ASCENDANT_CAST_LOCK_MS,
+  CHRONOS_LIFELINE_POSE_DURATION_MS,
+  CHRONOS_PRIMARY_RETURN_TO_IDLE_MS,
+  CHRONOS_PRIMARY_SHOT_GLOW_DURATION_MS,
+  CHRONOS_TIMEBREAK_POSE_DURATION_MS,
   setChronosPrimaryHeld,
 } from '../../viewmodel/chronosPose';
+import {
+  HOOKSHOT_PRIMARY_RECOIL_DURATION_MS,
+  HOOKSHOT_SECONDARY_POSE_DURATION_MS,
+} from '../../viewmodel/hookshotPose';
 import {
   defaultViewmodelPoseRuntime,
   resetViewmodelPoseRuntime,
@@ -65,6 +84,7 @@ import {
   type HeroId,
   type MatchMode,
   type AbilityCastOriginHint,
+  type InputState,
   type MovementCommand,
   type MovementCorrectionReason,
   type PlayerMovementState,
@@ -217,6 +237,157 @@ function buildPracticeAbilityState(
   };
 }
 
+type CastActionFields = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1' | 'ability2' | 'ultimate'>;
+type ExclusiveHoldInput = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>;
+
+const EMPTY_EXCLUSIVE_HOLD_INPUT: ExclusiveHoldInput = {
+  primaryFire: false,
+  secondaryFire: false,
+  ability1: false,
+};
+
+function withCastActionFields(input: InputState, actions: Partial<CastActionFields> = {}): InputState {
+  const primaryFire = actions.primaryFire ?? false;
+  const secondaryFire = actions.secondaryFire ?? false;
+  const ability1 = actions.ability1 ?? false;
+  const ability2 = actions.ability2 ?? false;
+  const ultimate = actions.ultimate ?? false;
+
+  if (
+    input.primaryFire === primaryFire &&
+    input.secondaryFire === secondaryFire &&
+    input.ability1 === ability1 &&
+    input.ability2 === ability2 &&
+    input.ultimate === ultimate
+  ) {
+    return input;
+  }
+
+  return {
+    ...input,
+    primaryFire,
+    secondaryFire,
+    ability1,
+    ability2,
+    ultimate,
+  };
+}
+
+function getExclusiveHeroInput(
+  heroId: HeroId,
+  input: InputState,
+  isActionLocked: boolean,
+  isBombTargeting: boolean,
+  continuingHoldInput: Partial<CastActionFields> | null = null,
+  lockedAllowedInput: Partial<CastActionFields> | null = null
+): InputState {
+  if (isActionLocked) {
+    return withCastActionFields(input, lockedAllowedInput ?? {});
+  }
+
+  if (isBombTargeting) {
+    return withCastActionFields(input, { secondaryFire: input.secondaryFire });
+  }
+
+  if (continuingHoldInput) {
+    return withCastActionFields(input, continuingHoldInput);
+  }
+
+  if (input.primaryFire) {
+    return withCastActionFields(input, { primaryFire: true });
+  }
+
+  if (heroId === 'chronos' && input.secondaryFire && input.ability1) {
+    return withCastActionFields(input, { secondaryFire: true, ability1: true });
+  }
+
+  if (input.secondaryFire) {
+    return withCastActionFields(input, { secondaryFire: true });
+  }
+
+  if (input.ability1) {
+    return withCastActionFields(input, { ability1: true });
+  }
+
+  if (input.ability2) {
+    return withCastActionFields(input, { ability2: true });
+  }
+
+  if (input.ultimate) {
+    return withCastActionFields(input, { ultimate: true });
+  }
+
+  return withCastActionFields(input);
+}
+
+function getContinuingHeroHoldInput(
+  heroId: HeroId,
+  input: InputState,
+  previousInput: ExclusiveHoldInput
+): Partial<CastActionFields> | null {
+  if (previousInput.primaryFire && input.primaryFire) {
+    return { primaryFire: true };
+  }
+
+  if (previousInput.secondaryFire && input.secondaryFire) {
+    if (heroId === 'chronos' && input.ability1) {
+      return { secondaryFire: true, ability1: true };
+    }
+
+    return { secondaryFire: true };
+  }
+
+  if (heroId === 'blaze' && previousInput.ability1 && input.ability1) {
+    return { ability1: true };
+  }
+
+  return null;
+}
+
+function getExclusiveHoldInput(input: InputState): ExclusiveHoldInput {
+  return {
+    primaryFire: input.primaryFire,
+    secondaryFire: input.secondaryFire,
+    ability1: input.ability1,
+  };
+}
+
+function getPrimaryReleaseLockMs(heroId: HeroId): number {
+  switch (heroId) {
+    case 'phantom':
+      return Math.max(PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, PHANTOM_PRIMARY_SHOT_PULSE_DURATION_MS);
+    case 'blaze':
+      return BLAZE_STAFF_RETURN_TO_IDLE_MS;
+    case 'chronos':
+      return Math.max(CHRONOS_PRIMARY_RETURN_TO_IDLE_MS, CHRONOS_PRIMARY_SHOT_GLOW_DURATION_MS);
+    case 'hookshot':
+      return 0;
+  }
+
+  return 0;
+}
+
+function getSecondaryReleaseLockMs(heroId: HeroId, didReleaseChargedVoidRay: boolean): number {
+  switch (heroId) {
+    case 'phantom':
+      return didReleaseChargedVoidRay
+        ? PHANTOM_VOID_RAY_RELEASE_LOCK_MS
+        : PHANTOM_PRIMARY_RETURN_TO_IDLE_MS;
+    case 'blaze':
+      return BLAZE_STAFF_RETURN_TO_IDLE_MS;
+    case 'chronos':
+      return CHRONOS_PRIMARY_RETURN_TO_IDLE_MS;
+    case 'hookshot':
+      return 0;
+  }
+
+  return 0;
+}
+
+function getAbility1ReleaseLockMs(heroId: HeroId): number {
+  return heroId === 'blaze' ? BLAZE_STAFF_RETURN_TO_IDLE_MS : 0;
+}
+
 function movementClassForTrace(input: {
   heroId: HeroId;
   movement: PlayerMovementState;
@@ -269,7 +440,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const {
     playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
     startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
-    playBlazeRocket, playBlazeBombTarget, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
+    playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
     startFlamethrowerSound, stopFlamethrowerSound,
   } = useAbilitySounds();
   const { updateWalkingSound, preloadWalkingSound } = useMovementSounds();
@@ -289,6 +460,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     updatePredictedAbilitySounds,
   } = useLocalAbilityAudioPrediction();
   const blazeFlamethrowerActiveRef = blazeAbilities.flamethrowerActiveRef;
+  const clearBlazeActionLock = blazeAbilities.clearActionLock;
+  const isBlazeActionLocked = blazeAbilities.isActionLocked;
+  const lockBlazeActions = blazeAbilities.lockActions;
 
   // Initialize refs
   const initializedRef = useRef(false);
@@ -308,6 +482,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const pendingUnstuckInputRef = useRef(false);
   const wasSlidingLastFrameRef = useRef(false);
   const lastViewmodelPoseResetKeyRef = useRef<string | null>(null);
+  const actionLockUntilRef = useRef(0);
+  const lastExclusiveHoldInputRef = useRef<ExclusiveHoldInput>({
+    ...EMPTY_EXCLUSIVE_HOLD_INPUT,
+  });
   const positionRef = useRef(new THREE.Vector3());
   const audioForwardRef = useRef(new THREE.Vector3());
   const audioUpRef = useRef(new THREE.Vector3(0, 1, 0));
@@ -319,6 +497,29 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     pendingCrouchPressedRef.current = false;
     wasSlidingLastFrameRef.current = false;
   }, []);
+
+  const lockHeroActions = useCallback((heroId: HeroId, durationMs: number, timestampMs = Date.now()) => {
+    if (heroId === 'blaze') {
+      lockBlazeActions(durationMs, timestampMs);
+      return;
+    }
+
+    actionLockUntilRef.current = Math.max(
+      actionLockUntilRef.current,
+      timestampMs + Math.max(0, durationMs)
+    );
+  }, [lockBlazeActions]);
+
+  const clearHeroActionLock = useCallback(() => {
+    actionLockUntilRef.current = 0;
+    clearBlazeActionLock();
+  }, [clearBlazeActionLock]);
+
+  const isHeroActionLocked = useCallback((heroId: HeroId, timestampMs = Date.now()) => (
+    heroId === 'blaze'
+      ? isBlazeActionLocked(timestampMs)
+      : actionLockUntilRef.current > timestampMs
+  ), [isBlazeActionLocked]);
 
   const flushMovementCommands = useCallback((nowMs: number, force = false) => {
     const pending = pendingMovementCommandsRef.current;
@@ -393,7 +594,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const playerSounds = {
     playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
     startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
-    playBlazeRocket, playBlazeBombTarget, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
+    playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
     startFlamethrowerSound, stopFlamethrowerSound,
   };
 
@@ -430,9 +631,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     return () => {
       resetBlazeFlamethrower();
       resetViewmodelPoseState('unmount', lastHeroIdRef.current as HeroId | null);
+      lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
+      clearHeroActionLock();
       setChronosPrimaryHeld(false);
     };
-  }, [resetBlazeFlamethrower, resetViewmodelPoseState]);
+  }, [clearHeroActionLock, resetBlazeFlamethrower, resetViewmodelPoseState]);
 
   // Handle targeting confirmations via click
   const handleClick = useCallback(() => {
@@ -548,6 +751,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       setLocalVisualMovement(INACTIVE_LOCAL_MOVEMENT);
       wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
+      lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
+      clearHeroActionLock();
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
       return;
@@ -608,6 +813,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       pendingUnstuckInputRef.current = false;
       resetMovementCommandBuffer();
       resetPredictedAbilitySounds();
+      lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
+      clearHeroActionLock();
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setChronosAegisVisualState(localPlayer.id, false, now);
       setShadowStepTargeting(false, false);
@@ -649,6 +856,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       setLocalVisualMovement(INACTIVE_LOCAL_MOVEMENT);
       wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
+      lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
+      clearHeroActionLock();
       blazeAbilities.resetRocketJump();
 
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
@@ -661,12 +870,13 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     // ESC/menu releases pointer lock, but local physics still needs to keep
     // grounding and server position sync alive instead of replaying stale input.
     const hasControlInput = isPointerLocked || isTouchInputActive;
-    const frameInput = hasControlInput ? inputState : INACTIVE_INPUT_STATE;
+    const rawFrameInput = hasControlInput ? inputState : INACTIVE_INPUT_STATE;
+    let frameInput = rawFrameInput;
     const hasMovementInput = (
-      frameInput.moveForward ||
-      frameInput.moveBackward ||
-      frameInput.moveLeft ||
-      frameInput.moveRight
+      rawFrameInput.moveForward ||
+      rawFrameInput.moveBackward ||
+      rawFrameInput.moveLeft ||
+      rawFrameInput.moveRight
     );
 
     if (!isPlaying || localPlayer.state !== 'alive') {
@@ -697,6 +907,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       });
       wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
+      lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
+      clearHeroActionLock();
       blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
@@ -776,6 +988,36 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     // Handle hero-specific abilities
     const heroDef = HERO_DEFINITIONS[heroId];
+    const bombTargetingForFrame = useGameStore.getState().bombTargeting;
+    const previousHoldInput = lastExclusiveHoldInputRef.current;
+    if (previousHoldInput.primaryFire && !rawFrameInput.primaryFire) {
+      lockHeroActions(heroId, getPrimaryReleaseLockMs(heroId), now);
+    }
+    if (previousHoldInput.secondaryFire && !rawFrameInput.secondaryFire) {
+      lockHeroActions(
+        heroId,
+        getSecondaryReleaseLockMs(heroId, phantomAbilities.voidRayAwaitingReleaseRef.current),
+        now
+      );
+    }
+    if (previousHoldInput.ability1 && !rawFrameInput.ability1) {
+      lockHeroActions(heroId, getAbility1ReleaseLockMs(heroId), now);
+    }
+
+    const continuingHoldInput = getContinuingHeroHoldInput(heroId, rawFrameInput, previousHoldInput);
+    const lockedAllowedInput = heroId === 'chronos' && previousHoldInput.secondaryFire && rawFrameInput.secondaryFire
+      ? { secondaryFire: true }
+      : null;
+    frameInput = getExclusiveHeroInput(
+      heroId,
+      rawFrameInput,
+      isHeroActionLocked(heroId, now),
+      heroId === 'blaze' && bombTargetingForFrame,
+      continuingHoldInput,
+      lockedAllowedInput
+    );
+    lastExclusiveHoldInputRef.current = getExclusiveHoldInput(frameInput);
+
     const reloadPressed = frameInput.reload && !reloadPressedRef.current;
     reloadPressedRef.current = frameInput.reload;
     if (reloadPressed) {
@@ -800,7 +1042,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       : heroId === 'chronos'
         ? frameInput.primaryFire
         : heroId === 'blaze'
-          ? frameInput.primaryFire && !bombTargeting
+          ? frameInput.primaryFire && !bombTargetingForFrame
           : frameInput.primaryFire;
     const ability2ForServer = shadowStepTargeting ? false : frameInput.ability2;
 
@@ -827,7 +1069,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     setPhantomPrimaryHeld(phantomPrimaryHeldForPose, now);
     setBlazeRocketHeld(
-      heroId === 'blaze' && !bombTargeting && frameInput.primaryFire,
+      heroId === 'blaze' && !bombTargetingForFrame && frameInput.primaryFire,
       now
     );
     setChronosPrimaryHeld(
@@ -846,7 +1088,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         inputState: frameInput,
         ultimateCharge: localPlayer.ultimateCharge ?? 0,
         shadowStepTargeting,
-        bombTargeting,
+        bombTargeting: bombTargetingForFrame,
         grappleTrapTargeting,
         phantomPrimaryAmmo: phantomAbilities.phantomPrimaryAmmoRef.current,
         phantomPrimaryReloading,
@@ -881,18 +1123,24 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                     ownerId: localPlayer.id,
                     ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
                   });
+                  lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
                 }
-              } else {
-                phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge);
+              } else if (phantomAbilities.executeBlink(abilityCtx, playerSounds, abilitySystem.useAbilityCharge)) {
+                lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
               }
             } else if (heroId === 'hookshot') {
-              if (hookshotAbilities.executeGrapple(abilityCtx) && isPracticeMode) {
-                abilitySystem.startClientCooldown(heroDef.ability1.abilityId);
+              if (hookshotAbilities.executeGrapple(abilityCtx)) {
+                lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
+                if (isPracticeMode) {
+                  abilitySystem.startClientCooldown(heroDef.ability1.abilityId);
+                }
               }
             } else if (heroId === 'chronos' && hasChronosLifelineTarget()) {
               if (isPracticeMode) {
                 if (abilitySystem.useAbilityCharge(heroDef.ability1.abilityId)) {
-                  chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge);
+                  if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
+                    lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
+                  }
                   addChronosLifelineEffects(
                     { x: position.x, y: position.y, z: position.z },
                     [{ position: { x: position.x, y: position.y, z: position.z } }],
@@ -900,13 +1148,13 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                     { sourcePlayerId: localPlayer.id }
                   );
                 }
-              } else {
-                chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge);
+              } else if (chronosAbilities.executeLifelineConduit(abilityCtx, abilitySystem.useAbilityCharge)) {
+                lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
               }
             }
           }
         }
-        abilitySystem.abilityPressedRef.current.ability1 = frameInput.ability1;
+        abilitySystem.abilityPressedRef.current.ability1 = rawFrameInput.ability1;
       }
 
       // Ability 2 (Q)
@@ -922,17 +1170,17 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
                 },
               });
-            } else {
-              phantomAbilities.executePersonalShield(
-                abilityCtx,
-                playerSounds,
-                abilitySystem.setAbilityActive,
-                abilitySystem.startClientCooldown,
-                updateLocalPlayer
-              );
+              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
+            } else if (phantomAbilities.executePersonalShield(
+              abilityCtx,
+              playerSounds,
+              abilitySystem.setAbilityActive,
+              abilitySystem.startClientCooldown,
+              updateLocalPlayer
+            )) {
+              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
             }
           } else if (heroId === 'blaze') {
-            // Blaze Q is Rocket Jump
             blazeAbilities.executeRocketJump(abilityCtx);
             if (isPracticeMode) {
               const startPosition = { x: position.x, y: position.y, z: position.z };
@@ -942,15 +1190,21 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
             }
           } else if (heroId === 'hookshot') {
-            hookshotAbilities.executeEarthWall(abilityCtx);
-            if (isPracticeMode) {
-              abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
+            if (hookshotAbilities.executeEarthWall(abilityCtx)) {
+              lockHeroActions(heroId, HOOKSHOT_PRIMARY_RECOIL_DURATION_MS, now);
+              if (isPracticeMode) {
+                abilitySystem.startClientCooldown(heroDef.ability2.abilityId);
+              }
             }
           } else if (heroId === 'chronos') {
-            if (chronosAbilities.executeTimebreak(
+            const didCastTimebreak = chronosAbilities.executeTimebreak(
               abilityCtx,
               abilitySystem.startClientCooldown
-            ) && isPracticeMode) {
+            );
+            if (didCastTimebreak) {
+              lockHeroActions(heroId, CHRONOS_TIMEBREAK_POSE_DURATION_MS, now);
+            }
+            if (didCastTimebreak && isPracticeMode) {
               const forward = {
                 x: -Math.sin(abilityCtx.yaw),
                 y: 0,
@@ -969,7 +1223,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           }
         }
       }
-      abilitySystem.abilityPressedRef.current.ability2 = frameInput.ability2;
+      abilitySystem.abilityPressedRef.current.ability2 = rawFrameInput.ability2;
 
       // Ultimate (F)
       if (frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
@@ -988,8 +1242,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
                 },
               });
-            } else {
-              phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive);
+              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
+            } else if (phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive)) {
+              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
             }
           } else if (heroId === 'blaze') {
             blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);
@@ -999,9 +1254,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               updateLocalPlayer({ ultimateCharge: 0 });
             }
           } else if (heroId === 'hookshot') {
-            hookshotAbilities.executeGrappleTrap(abilityCtx, updateLocalPlayer);
+            if (hookshotAbilities.executeGrappleTrap(abilityCtx, updateLocalPlayer)) {
+              lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
+            }
           } else if (heroId === 'chronos') {
             if (chronosAbilities.executeAscendantParadox(abilityCtx, abilitySystem.setAbilityActive)) {
+              lockHeroActions(heroId, CHRONOS_ASCENDANT_CAST_LOCK_MS, now);
               predictedState = getCurrentPredictedState(predictedState);
               position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
               velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
@@ -1009,7 +1267,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           }
         }
       }
-      abilitySystem.abilityPressedRef.current.ultimate = frameInput.ultimate;
+      abilitySystem.abilityPressedRef.current.ultimate = rawFrameInput.ultimate;
 
       // Hero-specific primary/secondary fire and hold abilities
       if (heroId === 'phantom' && !shadowStepTargeting) {
@@ -1030,10 +1288,14 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       if (heroId === 'hookshot' && !grappleTrapTargeting) {
         const secondaryPressed = frameInput.secondaryFire && !hookshotAbilities.secondaryFirePressedRef.current;
         if (frameInput.primaryFire) {
-          hookshotAbilities.fireChainHook(abilityCtx);
+          if (hookshotAbilities.fireChainHook(abilityCtx)) {
+            lockHeroActions(heroId, HOOKSHOT_PRIMARY_RECOIL_DURATION_MS, now);
+          }
         }
         if (secondaryPressed) {
-          hookshotAbilities.fireDragHook(abilityCtx);
+          if (hookshotAbilities.fireDragHook(abilityCtx)) {
+            lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
+          }
         }
         hookshotAbilities.secondaryFirePressedRef.current = frameInput.secondaryFire;
 

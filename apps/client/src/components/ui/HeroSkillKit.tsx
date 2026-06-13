@@ -89,10 +89,11 @@ export const HERO_CLICK_SKILLS: Record<HeroId, HeroClickSkill[]> = {
     },
     {
       input: 'RMB',
-      name: 'Meteor Strike',
-      description: 'Mark a target zone, then call a blazing meteor down at an angle.',
-      cooldown: 8,
-      iconType: 'meteorstrike',
+      abilityId: 'blaze_bomb',
+      name: ABILITY_DEFINITIONS.blaze_bomb.name,
+      description: ABILITY_DEFINITIONS.blaze_bomb.description,
+      cooldown: ABILITY_DEFINITIONS.blaze_bomb.cooldown,
+      iconType: getAbilityIconType('blaze_bomb'),
     },
   ],
   chronos: [

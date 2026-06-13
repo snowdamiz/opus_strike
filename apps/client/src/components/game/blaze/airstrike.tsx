@@ -70,6 +70,7 @@ let airStrikeIdCounter = 0;
 let airStrikeRevision = 0;
 
 export const AIR_STRIKE_DURATION = 5200;
+const GEARSTORM_SKY_AFTERGLOW_MS = 900;
 
 const GEARSTORM_RADIUS = BLAZE_GEARSTORM_RADIUS;
 const GEARSTORM_COG_COUNT = 60;
@@ -97,6 +98,21 @@ const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 function smoothstep01(value: number): number {
   const t = clamp01(value);
   return t * t * (3 - 2 * t);
+}
+
+export function getBlazeGearstormSkyIntensity(nowMs = getFrameClock().nowMs): number {
+  let intensity = 0;
+
+  for (const strike of airStrikes) {
+    const elapsed = nowMs - strike.frameStartTime;
+    if (elapsed < 0 || elapsed > AIR_STRIKE_DURATION + GEARSTORM_SKY_AFTERGLOW_MS) continue;
+
+    const fadeIn = smoothstep01(elapsed / 640);
+    const fadeOut = smoothstep01((AIR_STRIKE_DURATION + GEARSTORM_SKY_AFTERGLOW_MS - elapsed) / 1350);
+    intensity = Math.max(intensity, fadeIn * fadeOut);
+  }
+
+  return clamp01(intensity);
 }
 
 function createGearShape(teeth: number, rootRadius: number, outerRadius: number, innerRadius: number): THREE.Shape {

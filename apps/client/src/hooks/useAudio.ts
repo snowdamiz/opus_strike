@@ -158,6 +158,7 @@ const SOUND_EFFECTS = {
   // Blaze Abilities (using existing sounds as fallbacks)
   blazeRocket: { path: '/sounds/rocket_fire.mp3', volume: 0.4 },
   blazeBombTarget: { path: '/sounds/button.mp3', volume: 0.75 },
+  blazeBombRelease: { path: '/sounds/blaze_RMB_release.mp3', volume: 0.7 },
   blazeBombFall: { path: '/sounds/bomb_fall.mp3', volume: 0.8 },
   blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 1.862 },
   blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
@@ -214,13 +215,16 @@ export type SoundGroup = 'menu' | 'lobby' | 'commonCombat' | 'phantom' | 'blaze'
 
 export const CHRONOS_VERDANT_PULSE_SHOT_PITCH = 1.28;
 export const CHRONOS_VERDANT_PULSE_SHOT_VOLUME = 0.72;
+export const BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS = 260;
+export const BLAZE_BOMB_RELEASE_SOUND_DURATION_MS = 1100;
+export const BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS = 80;
 
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['buttonHover', 'buttonClick'],
   commonCombat: ['walk', 'slide', 'jetpack', 'countdownTick'],
   phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
-  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
+  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
   chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
 };
@@ -1296,6 +1300,14 @@ export function useAbilitySounds() {
   const playBlazeBombTarget = useCallback(() => {
     playSound('blazeBombTarget');
   }, [playSound]);
+
+  const playBlazeBombRelease = useCallback(() => {
+    playSound('blazeBombRelease', {
+      startOffsetMs: BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
+      durationMs: BLAZE_BOMB_RELEASE_SOUND_DURATION_MS,
+      fadeOutMs: BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS,
+    });
+  }, [playSound]);
   
   const playBlazeBombFall = useCallback(() => {
     playSound('blazeBombFall');
@@ -1334,6 +1346,7 @@ export function useAbilitySounds() {
     // Blaze
     playBlazeRocket,
     playBlazeBombTarget,
+    playBlazeBombRelease,
     playBlazeBombFall,
     playBlazeBombExplode,
     playBlazeRocketJump,

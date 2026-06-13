@@ -57,6 +57,9 @@ import {
 import { shouldSuppressPredictedLocalAbilitySound } from '../hooks/player/useLocalAbilityAudioPrediction';
 import { consumePredictedLocalAbilityVisual } from '../hooks/player/useLocalAbilityVisualPrediction';
 import {
+  BLAZE_BOMB_RELEASE_SOUND_DURATION_MS,
+  BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS,
+  BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
   CHRONOS_VERDANT_PULSE_SHOT_PITCH,
   CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
   playSharedSound,
@@ -1142,12 +1145,13 @@ function playHookshotShotSound(position: { x: number; y: number; z: number } | u
 function playBlazeWorldSound(
   sound: SoundName,
   position: { x: number; y: number; z: number } | undefined,
-  options: { durationMs?: number; fadeOutMs?: number; volume?: number; pitch?: number } = {}
+  options: { durationMs?: number; fadeOutMs?: number; startOffsetMs?: number; volume?: number; pitch?: number } = {}
 ): void {
   void playSharedSound(sound, {
     position,
     durationMs: options.durationMs,
     fadeOutMs: options.fadeOutMs,
+    startOffsetMs: options.startOffsetMs,
     volume: options.volume,
     pitch: options.pitch,
   });
@@ -1728,6 +1732,12 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         ? Math.max(0, data.impactTime - (data.serverTime ?? now))
         : BLAZE_BOMB_FALL_DURATION;
       const impactTime = now + impactDelay;
+      if (isLocalPlayer) {
+        const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
+        if (abilityDef?.cooldown) {
+          store.setClientCooldown(data.abilityId, now + abilityDef.cooldown * 1000);
+        }
+      }
       store.addBomb({
         id: castId,
         targetPosition,
@@ -1738,6 +1748,13 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         ownerTeam,
         hasExploded: false,
       });
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_bomb')) {
+        playBlazeWorldSound('blazeBombRelease', startPosition, {
+          startOffsetMs: BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
+          durationMs: BLAZE_BOMB_RELEASE_SOUND_DURATION_MS,
+          fadeOutMs: BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS,
+        });
+      }
       playBlazeWorldSound('blazeBombTarget', startPosition);
       playBlazeWorldSound('blazeBombFall', startPosition, {
         durationMs: impactDelay,
