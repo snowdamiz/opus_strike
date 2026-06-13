@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type PlayerPingsMessage } from '@voxel-strike/shared';
-import { removePlayerVisualState, setPlayerVisualTransform } from './visualStore';
+import { clearAllDeathVisuals, clearVisualState, removePlayerVisualState, setPlayerVisualTransform } from './visualStore';
 
 // Import types
 import type {
@@ -120,10 +120,6 @@ interface CoreState {
   pendingInputs: PlayerInput[];
   lastProcessedTick: number;
 
-  // UI State
-  shadowStepTargeting: boolean;
-  shadowStepValid: boolean;
-
   // Ultimate effect state
   ultimateEffectActive: boolean;
   ultimateEffectType: string | null;
@@ -179,7 +175,6 @@ interface CoreActions {
   clearMapVote: () => void;
 
   // UI Actions
-  setShadowStepTargeting: (targeting: boolean, valid?: boolean) => void;
   setUltimateEffect: (active: boolean, type?: string | null, endTime?: number) => void;
   setClientCooldown: (abilityId: string, endTime: number) => void;
   setClientCharges: (abilityId: string, charges: number) => void;
@@ -258,8 +253,6 @@ const coreInitialState: CoreState = {
   phaseEndTime: null,
   pendingInputs: [],
   lastProcessedTick: 0,
-  shadowStepTargeting: false,
-  shadowStepValid: false,
   ultimateEffectActive: false,
   ultimateEffectType: null,
   ultimateEffectEndTime: 0,
@@ -313,7 +306,12 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   )),
   setAppPhase: (phase) => set((state) => state.appPhase === phase ? state : { appPhase: phase }),
   setMatchmakingStatus: (status) => set({ matchmakingStatus: status }),
-  setGamePhase: (phase) => set((state) => state.gamePhase === phase ? state : { gamePhase: phase }),
+  setGamePhase: (phase) => {
+    if (phase !== 'playing' && phase !== 'countdown') {
+      clearAllDeathVisuals();
+    }
+    set((state) => state.gamePhase === phase ? state : { gamePhase: phase });
+  },
   setMatchSummary: (summary) => set((state) => {
     if (!summary) {
       return state.matchSummary === null ? state : { matchSummary: null };
@@ -584,15 +582,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   // ==================== UI ACTIONS ====================
 
-  setShadowStepTargeting: (targeting, valid = false) => set((state) => (
-    state.shadowStepTargeting === targeting && state.shadowStepValid === valid
-      ? state
-      : {
-        shadowStepTargeting: targeting,
-        shadowStepValid: valid
-      }
-  )),
-
   setUltimateEffect: (active, type = null, endTime = 0) => set((state) => (
     state.ultimateEffectActive === active &&
     state.ultimateEffectType === type &&
@@ -639,7 +628,10 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   // ==================== RESET ACTIONS ====================
 
-  reset: () => set(initialState),
+  reset: () => {
+    clearVisualState();
+    set(initialState);
+  },
 
   resetLobby: () => set({
     currentLobbyId: null,

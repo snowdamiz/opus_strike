@@ -185,7 +185,6 @@ function parseCommandParts(input: string): string[] {
 
 function disableActiveSkillState() {
   const store = useGameStore.getState();
-  store.setShadowStepTargeting(false, false);
   store.setBombTargeting(false, false);
   store.setAirStrikeTargeting(false, false);
   store.setGrappleTrapTargeting(false, false);

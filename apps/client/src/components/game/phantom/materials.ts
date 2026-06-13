@@ -7,7 +7,6 @@ import * as THREE from 'three';
 // Shared shader materials for blink effect
 let sharedRiftMaterial: THREE.ShaderMaterial | null = null;
 let sharedTrailMaterial: THREE.ShaderMaterial | null = null;
-let sharedShadowArrivalMaterial: THREE.ShaderMaterial | null = null;
 
 export function getRiftMaterial(): THREE.ShaderMaterial {
   if (!sharedRiftMaterial) {
@@ -177,88 +176,8 @@ export function getTrailMaterial(): THREE.ShaderMaterial {
   return sharedTrailMaterial;
 }
 
-export function getShadowArrivalMaterial(): THREE.ShaderMaterial {
-  if (!sharedShadowArrivalMaterial) {
-    sharedShadowArrivalMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        time: { value: 0 },
-        progress: { value: 0 },
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        uniform float time;
-        
-        void main() {
-          vUv = uv;
-          vPosition = position;
-          
-          // Shadow tendrils wave effect
-          vec3 pos = position;
-          float wave = sin(position.y * 5.0 + time * 10.0) * 0.1;
-          pos.x += wave * (1.0 - uv.y);
-          pos.z += wave * 0.5 * (1.0 - uv.y);
-          
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float time;
-        uniform float progress;
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        
-        float hash(vec2 p) {
-          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-        }
-        
-        void main() {
-          // Rising shadow effect
-          float rise = smoothstep(0.0, progress, vUv.y);
-          
-          // Shadow tendrils
-          float tendril = sin(vUv.x * 20.0 + time * 5.0) * 0.5 + 0.5;
-          tendril *= sin(vUv.x * 15.0 - time * 8.0) * 0.5 + 0.5;
-          
-          // Dark core with purple edge
-          vec3 shadowColor = vec3(0.05, 0.0, 0.1);
-          vec3 edgeColor = vec3(0.486, 0.227, 0.929);
-          vec3 glowColor = vec3(0.752, 0.518, 0.988);
-          
-          // Noise for organic feeling
-          float n = hash(vUv * 50.0 + time);
-          
-          // Color mixing
-          vec3 color = shadowColor;
-          float edgeFade = smoothstep(0.0, 0.3, vUv.y) * (1.0 - smoothstep(0.7, 1.0, vUv.y));
-          color = mix(color, edgeColor, tendril * edgeFade * 0.7);
-          color += glowColor * rise * (1.0 - vUv.y) * 0.3;
-          
-          // Particles/sparks
-          float spark = step(0.97, hash(vUv * 100.0 + time * 10.0));
-          color += glowColor * spark * 2.0;
-          
-          // Alpha - fade at edges
-          float alpha = rise * (1.0 - abs(vUv.x - 0.5) * 2.0);
-          alpha *= smoothstep(1.0, 0.8, progress); // Fade out at end
-          alpha *= 0.8 + tendril * 0.2;
-          
-          gl_FragColor = vec4(color, alpha);
-        }
-      `,
-      transparent: true,
-      side: THREE.DoubleSide,
-      blending: THREE.NormalBlending,
-      depthWrite: false,
-    });
-  }
-  return sharedShadowArrivalMaterial;
-}
-
 // ============================================================================
 // EFFECT DURATIONS
 // ============================================================================
 
 export const BLINK_EFFECT_DURATION = 600; // ms
-export const SHADOW_ARRIVAL_DURATION = 800; // ms
-

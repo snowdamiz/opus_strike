@@ -156,6 +156,12 @@ export interface PlayerDeathEvent {
   assistIds: string[];
   abilityId?: string;
   position: Vec3;
+  velocity?: Vec3;
+  sourcePosition?: Vec3 | null;
+  sourceDirection?: Vec3 | null;
+  damageType?: string;
+  occurredAt?: number;
+  respawnTime?: number | null;
 }
 
 export interface FlagEvent {

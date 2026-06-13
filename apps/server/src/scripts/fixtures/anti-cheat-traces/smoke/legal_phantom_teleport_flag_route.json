@@ -6,7 +6,7 @@
   "recordedBy": "fixture_generator",
   "heroId": "phantom",
   "matchMode": "ranked",
-  "movementClass": "blink_shadow_step_flag_route",
+  "movementClass": "blink_flag_route",
   "mapSeed": 20260611,
   "frameRateBand": "60fps",
   "pingBandMs": "0-50",

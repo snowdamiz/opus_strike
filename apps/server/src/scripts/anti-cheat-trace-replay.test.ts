@@ -23,7 +23,7 @@ for (const required of [
   'slide_jump_bhop_chain',
   'grapple_release_flag_carry',
   'rocket_jump_knockback',
-  'blink_shadow_step_flag_route',
+  'blink_flag_route',
   'walk_sprint_crouch',
   'wallrun_glide_fall',
   'timebreak_tempo_shield',

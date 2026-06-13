@@ -10,7 +10,6 @@ import {
   CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   PHANTOM_BLINK_DISTANCE,
-  PHANTOM_SHADOWSTEP_DISTANCE,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
@@ -195,10 +194,6 @@ export interface AbilityExecutionContext {
     player: Player,
     distance: number
   ) => { x: number; y: number; z: number };
-  resolvePhantomShadowStepDestination?: (
-    player: Player,
-    distance: number
-  ) => { x: number; y: number; z: number };
   markAuthoritativePosition?: (playerId: string, durationMs: number, reason?: 'teleport' | 'knockback') => void;
 }
 
@@ -241,26 +236,6 @@ export function executeAbility(
         player.id,
         player.team as 'red' | 'blue'
       );
-      break;
-    }
-
-    case 'phantom_shadowstep': {
-      abilityState.isActive = true;
-      abilityState.activatedAt = now;
-      const distance = PHANTOM_SHADOWSTEP_DISTANCE;
-      const yaw = player.lookYaw;
-      const fallbackDestination = {
-        x: player.position.x + -Math.sin(yaw) * distance,
-        y: player.position.y,
-        z: player.position.z + -Math.cos(yaw) * distance,
-      };
-      const destination = context.resolvePhantomShadowStepDestination?.(player, distance) ?? fallbackDestination;
-      player.position.x = destination.x;
-      player.position.y = destination.y;
-      player.position.z = destination.z;
-      player.movement.isSliding = false;
-      player.movement.slideTimeRemaining = 0;
-      context.markAuthoritativePosition?.(player.id, 450, 'teleport');
       break;
     }
 

@@ -107,7 +107,7 @@ export const JETPACK_MAX_VERTICAL_SPEED = 15;
 // Blaze Flamethrower
 export const BLAZE_FLAMETHROWER_MAX_FUEL = 100;
 export const BLAZE_FLAMETHROWER_FUEL_DRAIN = 50; // per second
-export const BLAZE_FLAMETHROWER_FUEL_REGEN = 18; // per second when grounded
+export const BLAZE_FLAMETHROWER_FUEL_REGEN = 18; // per second when not firing
 export const BLAZE_FLAMETHROWER_RANGE = 9;
 export const BLAZE_FLAMETHROWER_CONE_HALF_ANGLE = Math.PI / 5;
 export const BLAZE_FLAMETHROWER_DAMAGE = 6;

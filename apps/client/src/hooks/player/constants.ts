@@ -1,3 +1,5 @@
+import { BLAZE_ROCKET_FIRE_INTERVAL_MS } from '@voxel-strike/shared';
+
 /**
  * Player Controller Constants
  * 
@@ -52,7 +54,7 @@ export const PHANTOM_FIRE_INTERVAL = 1000 / PHANTOM_FIRE_RATE;
 export const PHANTOM_PROJECTILE_SPEED = 70;
 
 // Blaze
-export const BLAZE_ROCKET_FIRE_INTERVAL = 500;
+export const BLAZE_ROCKET_FIRE_INTERVAL = BLAZE_ROCKET_FIRE_INTERVAL_MS;
 export const BLAZE_ROCKET_SPEED = PHANTOM_PROJECTILE_SPEED;
 export const BLAZE_BOMB_COOLDOWN = 8000;
 export const BLAZE_BOMB_FALL_DURATION = 1500;

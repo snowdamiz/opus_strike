@@ -6,17 +6,15 @@ import type { Player } from '@voxel-strike/shared';
 import { getFrameClock } from '../../utils/frameClock';
 import { SHARED_GEOMETRIES } from './effectResources';
 import {
-  ShadowStepArrivalEffect,
   PhantomVeil3DEffect,
   BLINK_EFFECT_DURATION,
   collectActivePhantomEffects,
   type BlinkEffectData,
-  type ShadowArrivalData,
 } from './phantom';
 import { getRiftMaterial } from './phantom/materials';
 
 // Re-export trigger functions for external use
-export { triggerBlinkEffect, triggerShadowArrival } from './phantom';
+export { triggerBlinkEffect } from './phantom';
 
 // ============================================================================
 // PHANTOM EFFECTS MANAGER
@@ -312,21 +310,6 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
-function sameShadowArrivalIds(effects: readonly ShadowArrivalData[], ids: readonly string[]): boolean {
-  if (effects.length !== ids.length) return false;
-  for (let i = 0; i < effects.length; i++) {
-    if (effects[i].id !== ids[i]) return false;
-  }
-  return true;
-}
-
-function copyShadowArrivalIds(effects: readonly ShadowArrivalData[], target: string[]): void {
-  target.length = effects.length;
-  for (let i = 0; i < effects.length; i++) {
-    target[i] = effects[i].id;
-  }
-}
-
 function getPhantomVeilPlayerPosition(playerId: string): { x: number; y: number; z: number } | undefined {
   const store = useGameStore.getState();
   if (store.localPlayer?.id === playerId) return store.localPlayer.position;
@@ -338,23 +321,18 @@ export function PhantomEffectsManager() {
 
   // Use refs for effect arrays to avoid setState in useFrame (prevents 60fps re-renders)
   const activeBlinkEffectsRef = useRef<BlinkEffectData[]>([]);
-  const activeShadowArrivalsRef = useRef<ShadowArrivalData[]>([]);
   const blinkRenderSlotsRef = useRef<BlinkRenderSlot[]>([]);
 
-  // Shadow arrivals mount/unmount React nodes. Blink teleports stay pooled and update imperatively.
-  const [, setShadowVersion] = useState(0);
   const [activeVeilIds, setActiveVeilIds] = useState<string[]>([]);
   const activeVeilIdsRef = useRef<string[]>([]);
   const scratchVeilIdsRef = useRef<string[]>([]);
   const veilScanAccumulatorRef = useRef(ACTIVE_VEIL_SCAN_INTERVAL_MS);
-  const activeShadowArrivalIdsRef = useRef<string[]>([]);
 
   useFrame((_, delta) => {
     const frameClock = getFrameClock();
     collectActivePhantomEffects(
       frameClock.nowMs,
-      activeBlinkEffectsRef.current,
-      activeShadowArrivalsRef.current
+      activeBlinkEffectsRef.current
     );
     updatePooledBlinkEffects(
       blinkRenderSlotsRef.current,
@@ -363,11 +341,6 @@ export function PhantomEffectsManager() {
       delta,
       frameClock.elapsedSeconds
     );
-
-    if (!sameShadowArrivalIds(activeShadowArrivalsRef.current, activeShadowArrivalIdsRef.current)) {
-      copyShadowArrivalIds(activeShadowArrivalsRef.current, activeShadowArrivalIdsRef.current);
-      setShadowVersion(version => version + 1);
-    }
 
     veilScanAccumulatorRef.current += delta * 1000;
     if (veilScanAccumulatorRef.current >= ACTIVE_VEIL_SCAN_INTERVAL_MS) {
@@ -385,15 +358,6 @@ export function PhantomEffectsManager() {
     <group>
       {/* Blink teleport effects */}
       <PooledBlinkTeleportSlots renderSlots={blinkRenderSlotsRef.current} />
-
-      {/* Shadow Step arrival effects */}
-      {activeShadowArrivalsRef.current.map(effect => (
-        <ShadowStepArrivalEffect
-          key={effect.id}
-          position={effect.position}
-          startTime={effect.startTime}
-        />
-      ))}
 
       {/* Phantom Veil 3D effects */}
       {activeVeilIds.map(playerId => (

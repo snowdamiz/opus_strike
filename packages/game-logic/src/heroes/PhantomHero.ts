@@ -3,12 +3,8 @@ import { BLINK_MAX_DISTANCE } from '@voxel-strike/shared';
 import { vec3Scale, vec3Add, vec3Normalize } from '@voxel-strike/shared';
 
 export class PhantomHero extends HeroBase {
-  private passiveSpeedBoost: number = 0;
-  private lastDamageTime: number = 0;
   private isInvisible: boolean = false;
   private invisibleUntil: number = 0;
-  private shadowStepTarget: { x: number; y: number; z: number } | null = null;
-  private shadowStepTime: number = 0;
 
   constructor() {
     super('phantom');
@@ -18,8 +14,6 @@ export class PhantomHero extends HeroBase {
     switch (abilityId) {
       case 'phantom_blink':
         return this.executeBlink(context);
-      case 'phantom_shadowstep':
-        return this.executeShadowStep(context);
       case 'phantom_personal_shield':
         return this.executePersonalShield(context);
       case 'phantom_veil':
@@ -44,25 +38,6 @@ export class PhantomHero extends HeroBase {
         duration: 0.1,
       },
     };
-  }
-
-  private executeShadowStep(context: AbilityContext): AbilityResult {
-    if (context.targetPosition) {
-      // Mark location for delayed teleport
-      this.shadowStepTarget = context.targetPosition;
-      this.shadowStepTime = context.timestamp + 800; // 0.8 second delay
-
-      return {
-        success: true,
-        effect: {
-          type: 'shadow_step_mark',
-          position: context.targetPosition,
-          duration: 0.8,
-        },
-      };
-    }
-
-    return { success: false, message: 'No target position' };
   }
 
   private executePersonalShield(context: AbilityContext): AbilityResult {
@@ -91,22 +66,8 @@ export class PhantomHero extends HeroBase {
     };
   }
 
-  updatePassive(deltaTime: number): void {
+  updatePassive(_deltaTime: number): void {
     const now = Date.now();
-
-    // Shadow Step - check for passive speed boost
-    // 10% faster when not taking damage for 3 seconds
-    if (now - this.lastDamageTime >= 3000) {
-      this.passiveSpeedBoost = 0.1;
-    } else {
-      this.passiveSpeedBoost = 0;
-    }
-
-    // Check shadow step completion
-    if (this.shadowStepTarget && now >= this.shadowStepTime) {
-      // Teleport would be handled by movement system
-      this.shadowStepTarget = null;
-    }
 
     // Check invisibility end
     if (this.isInvisible && now >= this.invisibleUntil) {
@@ -115,7 +76,6 @@ export class PhantomHero extends HeroBase {
   }
 
   onDamageTaken(): void {
-    this.lastDamageTime = Date.now();
     // Break invisibility on damage
     if (this.isInvisible) {
       this.isInvisible = false;
@@ -129,15 +89,7 @@ export class PhantomHero extends HeroBase {
     }
   }
 
-  getPassiveSpeedBoost(): number {
-    return this.passiveSpeedBoost;
-  }
-
   isCurrentlyInvisible(): boolean {
     return this.isInvisible;
-  }
-
-  getShadowStepTarget(): { x: number; y: number; z: number } | null {
-    return this.shadowStepTarget;
   }
 }

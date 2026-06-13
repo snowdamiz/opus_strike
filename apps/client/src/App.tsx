@@ -10,7 +10,6 @@ import { HeroSelect } from './components/ui/HeroSelect';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
 import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
-import { ShadowStepOverlay } from './components/ui/ShadowStepOverlay';
 import { TeleportEffects } from './components/ui/TeleportEffects';
 import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
@@ -393,7 +392,6 @@ export function App() {
         {isActiveGame && isMatchSceneReady && (
           <>
             <HUD />
-            <ShadowStepOverlay />
             <TeleportEffects />
             <UltimateEffects />
             <SlideEffects />

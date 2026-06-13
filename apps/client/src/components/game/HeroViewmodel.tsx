@@ -470,7 +470,7 @@ function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
       return {
         active: store.voidRays.some(ray => ray.ownerId === localPlayerId),
         charging: store.voidRayCharging,
-        targeting: store.shadowStepTargeting,
+        targeting: false,
       };
     case 'hookshot':
       return {
@@ -4234,7 +4234,6 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
         actionTargeting: Boolean(
           viewmodelHeroId &&
           (
-            (viewmodelHeroId === 'phantom' && state.shadowStepTargeting) ||
             (viewmodelHeroId === 'blaze' && (state.bombTargeting || state.airStrikeTargeting)) ||
             (viewmodelHeroId === 'hookshot' && state.grappleTrapTargeting)
           )

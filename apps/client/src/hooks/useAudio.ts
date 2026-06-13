@@ -148,7 +148,6 @@ const SOUND_EFFECTS = {
   
   // Phantom Abilities (using shortened clips)
   phantomBlink: { path: '/sounds/blink.mp3', volume: 0.39 },
-  phantomShadowStep: { path: '/sounds/shadow_step_short.mp3', volume: 0.4 },
   phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
   phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1872 },
   phantomReload: { path: '/sounds/phantom_reload.mp3', volume: 0.27 },
@@ -163,7 +162,8 @@ const SOUND_EFFECTS = {
   blazeBombExplode: { path: '/sounds/bomb_explode.mp3', volume: 1.862 },
   blazeFlamethrower: { path: '/sounds/jetpack.mp3', volume: 0.3 },
   blazeRocketJump: { path: '/sounds/rocket_jump.mp3', volume: 0.6 },
-  blazeAirstrike: { path: '/sounds/airstrike.mp3', volume: 0.6 },
+  blazeAirstrikeFire: { path: '/sounds/blaze_F_fire.mp3', volume: 0.5 },
+  blazeAirstrikeGears: { path: '/sounds/blaze_F_gears.mp3', volume: 0.46 },
 
   // Hookshot Abilities
   hookshotShot: { path: '/sounds/hookshot_shot.mp3', volume: 0.58 },
@@ -218,19 +218,24 @@ export const CHRONOS_VERDANT_PULSE_SHOT_VOLUME = 0.72;
 export const BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS = 260;
 export const BLAZE_BOMB_RELEASE_SOUND_DURATION_MS = 1100;
 export const BLAZE_BOMB_RELEASE_SOUND_FADE_OUT_MS = 80;
+export const BLAZE_AIRSTRIKE_SOUND_DURATION_MS = 5200;
+export const BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS = 120;
+export const BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS = 360;
 
 const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['buttonHover', 'buttonClick'],
   commonCombat: ['walk', 'slide', 'jetpack', 'countdownTick'],
-  phantom: ['phantomBlink', 'phantomShadowStep', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
-  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrike'],
+  phantom: ['phantomBlink', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
+  blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrikeFire', 'blazeAirstrikeGears'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
   chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
 };
 
+const BLAZE_AIRSTRIKE_SOUND_LAYERS = ['blazeAirstrikeFire', 'blazeAirstrikeGears'] as const satisfies readonly SoundName[];
 const MUSIC_SOUND_NAMES = new Set<SoundName>(['lobbyMusic', 'gameMusic']);
 const MAX_CONCURRENT_AUDIO_DECODES = 2;
+const SHARED_SOUND_LAYER_START_DELAY_MS = 20;
 const GLOBAL_BUTTON_SOUND_SELECTOR = [
   'button',
   '[role="button"]',
@@ -293,6 +298,12 @@ function getPlaybackDurationMs(sound: SoundEffect, options?: PlaySoundOptions): 
   return explicitDurationMs === undefined
     ? ratioDurationMs
     : Math.min(explicitDurationMs, ratioDurationMs);
+}
+
+type LoadedSoundEffect = SoundEffect & { buffer: AudioBuffer };
+
+function hasLoadedSoundBuffer(sound: SoundEffect | null): sound is LoadedSoundEffect {
+  return Boolean(sound?.buffer);
 }
 
 function getButtonSoundTarget(target: EventTarget | null): Element | null {
@@ -585,28 +596,13 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   return loadPromise;
 }
 
-export async function playSharedSound(
-  name: SoundName,
-  options?: PlaySoundOptions
-): Promise<SoundPlayback | undefined> {
-  if (sharedConfig.muted) return;
-  if (options?.signal?.aborted) return;
-
-  const ctx = await ensureRunningAudioContext();
-  if (!ctx) {
-    return;
-  }
+function startSharedSoundBuffer(
+  ctx: AudioContext,
+  sound: LoadedSoundEffect,
+  options?: PlaySoundOptions,
+  startAt = ctx.currentTime
+): SoundPlayback {
   const audioCtx = ctx;
-  if (options?.signal?.aborted) return;
-
-  const sound = await loadSharedSound(name);
-  if (options?.signal?.aborted) return;
-
-  if (!sound?.buffer) {
-    console.warn(`[Audio] Cannot play ${name} - no buffer`);
-    return;
-  }
-
   const source = ctx.createBufferSource();
   source.buffer = sound.buffer;
 
@@ -617,9 +613,10 @@ export async function playSharedSound(
   const gainNode = ctx.createGain();
   const targetGain = (options?.volume ?? 1) * sound.volume * getSfxVolume();
   const fadeInMs = Math.max(0, options?.fadeInMs ?? 0);
-  gainNode.gain.value = fadeInMs > 0 ? 0 : targetGain;
+  const startTime = Math.max(ctx.currentTime, startAt);
+  gainNode.gain.setValueAtTime(fadeInMs > 0 ? 0 : targetGain, startTime);
   if (fadeInMs > 0) {
-    gainNode.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + fadeInMs / 1000);
+    gainNode.gain.linearRampToValueAtTime(targetGain, startTime + fadeInMs / 1000);
   }
   source.connect(gainNode);
 
@@ -685,19 +682,85 @@ export async function playSharedSound(
     Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
     Math.max(0, sound.buffer.duration - 0.001)
   );
-  source.start(0, startOffsetSeconds);
+  source.start(startTime, startOffsetSeconds);
   const playbackDurationMs = getPlaybackDurationMs(sound, options);
   if (playbackDurationMs !== undefined) {
     const durationMs = Math.max(0, playbackDurationMs);
     const fadeOutMs = Math.min(durationMs, Math.max(0, options?.fadeOutMs ?? 0));
+    const startDelayMs = Math.max(0, (startTime - audioCtx.currentTime) * 1000);
     if (fadeOutMs > 0) {
-      fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), durationMs - fadeOutMs);
+      fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), startDelayMs + durationMs - fadeOutMs);
     } else {
-      durationTimeout = window.setTimeout(stop, durationMs);
+      durationTimeout = window.setTimeout(stop, startDelayMs + durationMs);
     }
   }
 
   return { stop };
+}
+
+export async function playSharedSound(
+  name: SoundName,
+  options?: PlaySoundOptions
+): Promise<SoundPlayback | undefined> {
+  if (sharedConfig.muted) return;
+  if (options?.signal?.aborted) return;
+
+  const ctx = await ensureRunningAudioContext();
+  if (!ctx) return;
+  if (options?.signal?.aborted) return;
+
+  const sound = await loadSharedSound(name);
+  if (options?.signal?.aborted) return;
+
+  if (!hasLoadedSoundBuffer(sound)) {
+    console.warn(`[Audio] Cannot play ${name} - no buffer`);
+    return;
+  }
+
+  return startSharedSoundBuffer(ctx, sound, options);
+}
+
+export async function playSharedBlazeAirstrikeSound(
+  options?: PlaySoundOptions
+): Promise<SoundPlayback | undefined> {
+  if (sharedConfig.muted) return;
+  if (options?.signal?.aborted) return;
+
+  const ctx = await ensureRunningAudioContext();
+  if (!ctx) return;
+  if (options?.signal?.aborted) return;
+
+  const layerOptions: PlaySoundOptions = {
+    ...options,
+    durationMs: options?.durationMs ?? BLAZE_AIRSTRIKE_SOUND_DURATION_MS,
+    fadeInMs: options?.fadeInMs ?? BLAZE_AIRSTRIKE_SOUND_FADE_IN_MS,
+    fadeOutMs: options?.fadeOutMs ?? BLAZE_AIRSTRIKE_SOUND_FADE_OUT_MS,
+  };
+  const layers = await Promise.all(BLAZE_AIRSTRIKE_SOUND_LAYERS.map(async (name) => ({
+    name,
+    sound: await loadSharedSound(name),
+  })));
+  if (options?.signal?.aborted) return;
+
+  const startAt = ctx.currentTime + SHARED_SOUND_LAYER_START_DELAY_MS / 1000;
+  const playbacks: SoundPlayback[] = [];
+  for (const { name, sound } of layers) {
+    if (!hasLoadedSoundBuffer(sound)) {
+      console.warn(`[Audio] Cannot play ${name} - no buffer`);
+      continue;
+    }
+    playbacks.push(startSharedSoundBuffer(ctx, sound, layerOptions, startAt));
+  }
+
+  if (playbacks.length === 0) return;
+
+  return {
+    stop: () => {
+      for (const playback of playbacks) {
+        playback.stop();
+      }
+    },
+  };
 }
 
 export async function playSharedLoop(
@@ -860,117 +923,8 @@ export function useAudio() {
     name: SoundName, 
     options?: PlaySoundOptions
   ): Promise<SoundPlayback | undefined> => {
-    if (sharedConfig.muted) return;
-    if (options?.signal?.aborted) return;
-
-    const ctx = await ensureRunningAudioContext();
-    if (!ctx) {
-      return;
-    }
-    const audioCtx = ctx;
-    if (options?.signal?.aborted) return;
-
-    const sound = await loadSound(name);
-    if (options?.signal?.aborted) return;
-
-    if (!sound?.buffer) {
-      console.warn(`[Audio] Cannot play ${name} - no buffer`);
-      return;
-    }
-
-    // Create source
-    const source = ctx.createBufferSource();
-    source.buffer = sound.buffer;
-    
-    // Apply pitch
-    if (options?.pitch) {
-      source.playbackRate.value = options.pitch;
-    }
-
-    // Create gain node (SFX volume)
-    const gainNode = ctx.createGain();
-    const targetGain = (options?.volume ?? 1) * sound.volume * getSfxVolume();
-    const fadeInMs = Math.max(0, options?.fadeInMs ?? 0);
-    gainNode.gain.value = fadeInMs > 0 ? 0 : targetGain;
-    if (fadeInMs > 0) {
-      gainNode.gain.linearRampToValueAtTime(targetGain, ctx.currentTime + fadeInMs / 1000);
-    }
-
-    // Connect nodes
-    source.connect(gainNode);
-    
-    // Optional: 3D positioning with panner
-    if (options?.position) {
-      const panner = ctx.createPanner();
-      panner.setPosition(options.position.x, options.position.y, options.position.z);
-      gainNode.connect(panner);
-      panner.connect(ctx.destination);
-    } else {
-      gainNode.connect(ctx.destination);
-    }
-
-    let stopped = false;
-    let durationTimeout: number | null = null;
-    let fadeTimeout: number | null = null;
-
-    function cleanup() {
-      if (fadeTimeout !== null) {
-        window.clearTimeout(fadeTimeout);
-        fadeTimeout = null;
-      }
-      if (durationTimeout !== null) {
-        window.clearTimeout(durationTimeout);
-        durationTimeout = null;
-      }
-      options?.signal?.removeEventListener('abort', stop);
-    }
-
-    function stop() {
-      if (stopped) return;
-      stopped = true;
-      cleanup();
-      try {
-        source.stop();
-      } catch {
-        // Source may already have ended or been stopped by the scheduled duration.
-      }
-    }
-
-    function fadeOutAndStop(fadeOutMs: number) {
-      if (stopped) return;
-      fadeTimeout = null;
-      const fadeSeconds = fadeOutMs / 1000;
-      const currentTime = audioCtx.currentTime;
-      gainNode.gain.cancelScheduledValues(currentTime);
-      gainNode.gain.setValueAtTime(gainNode.gain.value, currentTime);
-      gainNode.gain.linearRampToValueAtTime(0, currentTime + fadeSeconds);
-      durationTimeout = window.setTimeout(stop, fadeOutMs);
-    }
-
-    options?.signal?.addEventListener('abort', stop, { once: true });
-    source.onended = () => {
-      stopped = true;
-      cleanup();
-    };
-
-    const startOffsetSeconds = Math.min(
-      Math.max(0, (options?.startOffsetMs ?? 0) / 1000),
-      Math.max(0, sound.buffer.duration - 0.001)
-    );
-    source.start(0, startOffsetSeconds);
-    const playbackDurationMs = getPlaybackDurationMs(sound, options);
-    if (playbackDurationMs !== undefined) {
-      const durationMs = Math.max(0, playbackDurationMs);
-      const fadeOutMs = Math.min(durationMs, Math.max(0, options?.fadeOutMs ?? 0));
-      if (fadeOutMs > 0) {
-        fadeTimeout = window.setTimeout(() => fadeOutAndStop(fadeOutMs), durationMs - fadeOutMs);
-      } else {
-        durationTimeout = window.setTimeout(stop, durationMs);
-      }
-    }
-
-    return { stop };
-  }, [loadSound, initAudio]);
+    return playSharedSound(name, options);
+  }, []);
 
   // Play looping sound
   const playLoop = useCallback(async (
@@ -1253,10 +1207,6 @@ export function useAbilitySounds() {
     playSound('phantomBlink', { durationMs: 900 });
   }, [playSound]);
 
-  const playPhantomShadowStep = useCallback(() => {
-    playSound('phantomShadowStep');
-  }, [playSound]);
-
   const playPhantomVeil = useCallback(() => {
     playSound('phantomVeil');
   }, [playSound]);
@@ -1321,10 +1271,6 @@ export function useAbilitySounds() {
     playSound('blazeRocketJump');
   }, [playSound]);
   
-  const playBlazeAirstrike = useCallback(() => {
-    playSound('blazeAirstrike');
-  }, [playSound]);
-  
   // Flamethrower loop controls
   const startFlamethrowerSound = useCallback(() => {
     playLoop('flamethrower', 'blazeFlamethrower', { fadeIn: 0.1 });
@@ -1337,7 +1283,6 @@ export function useAbilitySounds() {
   return {
     // Phantom
     playPhantomBlink,
-    playPhantomShadowStep,
     playPhantomVeil,
     playPhantomBasic,
     playPhantomVoidRay,
@@ -1350,7 +1295,6 @@ export function useAbilitySounds() {
     playBlazeBombFall,
     playBlazeBombExplode,
     playBlazeRocketJump,
-    playBlazeAirstrike,
     startFlamethrowerSound,
     stopFlamethrowerSound,
   } as const;

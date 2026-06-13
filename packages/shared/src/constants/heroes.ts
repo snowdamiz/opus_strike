@@ -24,7 +24,6 @@ export const PHANTOM_PRIMARY_FIRE_READY_MS = 240;
 export const PHANTOM_VOID_RAY_COOLDOWN_SECONDS = 3;
 export const PHANTOM_VOID_RAY_COOLDOWN_MS = PHANTOM_VOID_RAY_COOLDOWN_SECONDS * 1000;
 export const PHANTOM_BLINK_DISTANCE = 8;
-export const PHANTOM_SHADOWSTEP_DISTANCE = 12;
 
 export const CHRONOS_LIFELINE_RADIUS = 14;
 export const CHRONOS_LIFELINE_HEAL = 40;
@@ -65,6 +64,8 @@ export const CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS = 3.8;
 export const CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS = 360;
 export const CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED = 54;
 
+export const BLAZE_ROCKET_FIRE_INTERVAL_MS = 435;
+
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
     id: 'phantom',
@@ -78,8 +79,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
-      name: 'Shadow Step',
-      description: 'Move 10% faster when not taking damage for 3 seconds',
+      name: 'No Passive',
+      description: 'Phantom does not have a separate passive effect.',
     },
     ability1: { abilityId: 'phantom_blink', defaultKey: 'KeyE' },
     ability2: { abilityId: 'phantom_personal_shield', defaultKey: 'KeyQ' },
@@ -99,8 +100,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
       size: { width: 0.8, height: 1.8, depth: 0.8 },
     },
     passive: {
-      name: 'Momentum Master',
-      description: 'Gain 15% bonus speed after hook movement for 2 seconds',
+      name: 'No Passive',
+      description: 'Hookshot does not have a separate passive effect.',
     },
     ability1: { abilityId: 'hookshot_grapple', defaultKey: 'KeyE' },
     ability2: { abilityId: 'hookshot_anchor_wall', defaultKey: 'KeyQ' },
@@ -120,8 +121,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
       size: { width: 0.9, height: 1.9, depth: 0.9 },
     },
     passive: {
-      name: 'Afterburner',
-      description: 'Flamethrower fuel regenerates 50% faster after getting a kill',
+      name: 'No Passive',
+      description: 'Blaze does not have a separate passive effect.',
     },
     ability1: { abilityId: 'blaze_flamethrower', defaultKey: 'KeyE' },
     ability2: { abilityId: 'blaze_rocketjump', defaultKey: 'KeyQ' },
@@ -141,8 +142,8 @@ export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
       size: { width: 0.78, height: 1.9, depth: 0.78 },
     },
     passive: {
-      name: 'Temporal Bulwark',
-      description: 'A front-line support-tank built to stabilize allies with shields, healing, and tempo control.',
+      name: 'No Passive',
+      description: 'Chronos does not have a separate passive effect.',
     },
     ability1: { abilityId: 'chronos_lifeline_conduit', defaultKey: 'KeyE' },
     ability2: { abilityId: 'chronos_timebreak', defaultKey: 'KeyQ' },
@@ -162,16 +163,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 10,
     charges: 2,
     chargeRegenTime: 10, // Both charges reset after 10 seconds
-    description: 'Instantly teleport a short distance in your movement direction. 2 charges.',
-  },
-  phantom_shadowstep: {
-    id: 'phantom_shadowstep',
-    name: 'Shadow Step',
-    type: 'movement',
-    targeting: 'ground',
-    cooldown: 10,
-    duration: 0.8,
-    description: 'Mark a location and teleport there after a brief delay.',
+    description: 'Instantly teleport 8m in your movement direction, leaving a void zone at the destination. 2 charges.',
   },
   phantom_void_ray: {
     id: 'phantom_void_ray',
@@ -179,7 +171,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'offensive',
     targeting: 'direction',
     cooldown: PHANTOM_VOID_RAY_COOLDOWN_SECONDS,
-    description: 'Charge, then release a piercing beam at long range.',
+    description: 'Hold to charge for 1 second, then release a piercing long-range beam.',
   },
   phantom_personal_shield: {
     id: 'phantom_personal_shield',
@@ -234,7 +226,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Chain Hooks',
     type: 'offensive',
     targeting: 'direction',
-    cooldown: 0,
+    cooldown: 0.6,
     description: 'Fire short-range hooks attached by rope that shoot forward and retract.',
   },
   hookshot_heavy_attack: {
@@ -242,7 +234,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     name: 'Drag Hook',
     type: 'offensive',
     targeting: 'direction',
-    cooldown: 4,
+    cooldown: 3.6,
     description: 'Fire a long-range hook that attaches to enemy heroes and pulls them toward you.',
   },
 
@@ -261,7 +253,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'offensive',
     targeting: 'direction',
     cooldown: 0,
-    description: 'Hold to spray a short-range cone of flame. Consumes fuel that regenerates when grounded.',
+    description: 'Hold to spray a short-range cone of flame. Consumes fuel that regenerates when not firing.',
   },
   blaze_rocketjump: {
     id: 'blaze_rocketjump',

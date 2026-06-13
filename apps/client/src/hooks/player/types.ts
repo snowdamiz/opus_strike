@@ -156,7 +156,6 @@ export type TargetUpdateCallback = (position: THREE.Vector3 | null, isValid: boo
 
 export interface PlayerSounds {
   playPhantomBlink: () => void;
-  playPhantomShadowStep: () => void;
   playPhantomVeil: () => void;
   playPhantomBasic: () => void;
   playPhantomVoidRay: () => void;
@@ -168,7 +167,6 @@ export interface PlayerSounds {
   playBlazeBombFall: () => void;
   playBlazeBombExplode: () => void;
   playBlazeRocketJump: () => void;
-  playBlazeAirstrike: () => void;
   startFlamethrowerSound: () => void;
   stopFlamethrowerSound: () => void;
 }

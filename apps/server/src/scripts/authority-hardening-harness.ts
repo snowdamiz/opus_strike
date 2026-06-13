@@ -205,7 +205,6 @@ function runAbilityBarrierTests(): void {
   const context = {
     createVoidZone: () => undefined,
     resolvePhantomBlinkDestination: () => ({ x: 7, y: 6, z: 8 }),
-    resolvePhantomShadowStepDestination: () => ({ x: 3, y: 5, z: 4 }),
     markAuthoritativePosition: (playerId: string, durationMs: number, reason?: 'teleport' | 'knockback') => {
       marks.push({ playerId, durationMs, reason });
     },
@@ -220,15 +219,6 @@ function runAbilityBarrierTests(): void {
   );
   assert.equal(marks[marks.length - 1]?.reason, 'teleport');
   assert.equal(blinkPlayer.movement.isSliding, false);
-
-  const shadowPlayer = createAbilityHarnessPlayer('phantom');
-  executeAbility(shadowPlayer, 'phantom_shadowstep', new AbilityStateSchema(), {}, context);
-  assert.deepEqual(
-    { x: shadowPlayer.position.x, y: shadowPlayer.position.y, z: shadowPlayer.position.z },
-    { x: 3, y: 5, z: 4 },
-    'shadow-step should use capsule-validated resolver destination'
-  );
-  assert.equal(marks[marks.length - 1]?.reason, 'teleport');
 
   const rocketPlayer = createAbilityHarnessPlayer('blaze');
   executeAbility(rocketPlayer, 'blaze_rocketjump', new AbilityStateSchema(), {}, context);

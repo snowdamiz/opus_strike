@@ -148,7 +148,6 @@ export type AbilityIconType =
   | 'direball'
   | 'voidray'
   | 'blink'
-  | 'shadowstep'
   | 'veil'
   | 'chainhooks'
   | 'draghook'
@@ -180,8 +179,6 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <VoidRayIcon size={size} color={color} className={className} />;
     case 'blink':
       return <BlinkIcon size={size} color={color} className={className} />;
-    case 'shadowstep':
-      return <ShadowstepIcon size={size} color={color} className={className} />;
     case 'veil':
       return <VeilIcon size={size} color={color} className={className} />;
     case 'chainhooks':
@@ -234,7 +231,6 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
 export function getAbilityIconType(abilityId: string): AbilityIconType {
   const mapping: Record<string, AbilityIconType> = {
     phantom_blink: 'blink',
-    phantom_shadowstep: 'shadowstep',
     phantom_personal_shield: 'shield',
     phantom_veil: 'veil',
     hookshot_grapple: 'grapple',
@@ -292,18 +288,6 @@ function BlinkIcon({ size, color, className }: IconProps) {
       <path d="M8.5 12H14.5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray="1.5 2.5" />
       <path d="M14 9.5L16.5 12L14 14.5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M18.2 10.2H20.2M18.2 13.8H20.2" stroke="#0a0a0f" strokeWidth="1.2" strokeLinecap="round" opacity="0.7" />
-    </svg>
-  );
-}
-
-function ShadowstepIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <path d="M5 17.5C7.8 15.2 10.3 12.9 13 9.5" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="2 2.8" opacity="0.68" />
-      <path d="M15 4.5L20 7.2V12.8L15 15.5L10 12.8V7.2L15 4.5Z" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-      <path d="M13.2 10L15 8.2L16.8 10L15 11.8L13.2 10Z" fill={color} />
-      <ellipse cx="7.2" cy="17" rx="3.2" ry="1.7" fill={color} opacity="0.42" />
-      <ellipse cx="4.4" cy="19.5" rx="1.4" ry="0.8" fill={color} opacity="0.28" />
     </svg>
   );
 }

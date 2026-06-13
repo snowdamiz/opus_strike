@@ -61,6 +61,6 @@ export class ChronosHero extends HeroBase {
   }
 
   updatePassive(_deltaTime: number): void {
-    // Chronos passive metadata is wired, but no gameplay effect exists yet.
+    // No separate passive effect.
   }
 }

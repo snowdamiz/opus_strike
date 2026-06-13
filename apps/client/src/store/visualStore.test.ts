@@ -5,14 +5,22 @@ import {
   type Team,
 } from '@voxel-strike/shared';
 import {
+  addDeathVisual,
   addRemoteTransformSnapshot,
+  clearAllDeathVisuals,
+  clearDeathVisualsForPlayer,
+  clearExpiredDeathVisuals,
   clearVisualState,
   fillCombatVisualEnemyPlayers,
+  getDeathVisualForPlayer,
   pruneRemoteTransformHistories,
   rebuildCombatVisualFrameCache,
+  removeDeathVisual,
   sampleRemoteTransformInto,
   setPlayerVisualTransform,
+  updateDeathVisualExpirationForPlayer,
   visualStore,
+  type DeathVisualSnapshot,
   type SampledRemoteTransform,
 } from './visualStore';
 
@@ -88,6 +96,31 @@ function makePlayer(id: string, team: Team, x: number, z: number, state: Player[
   };
 }
 
+function makeDeathVisual(id: string, playerId: string, startedAtMs: number): DeathVisualSnapshot {
+  const player = makePlayer(playerId, 'blue', startedAtMs / 1000, 0);
+  return {
+    id,
+    playerId,
+    heroId: player.heroId,
+    team: player.team,
+    isBot: player.isBot,
+    name: player.name,
+    position: { ...player.position },
+    velocity: { ...player.velocity },
+    lookYaw: player.lookYaw,
+    lookPitch: player.lookPitch,
+    movement: {
+      ...player.movement,
+      grapplePoint: player.movement.grapplePoint ? { ...player.movement.grapplePoint } : null,
+    },
+    killerId: 'killer',
+    sourceDirection: { x: 1, y: 0, z: 0 },
+    startedAtMs,
+    expiresAtMs: startedAtMs + 1000,
+    local: false,
+  };
+}
+
 clearVisualState();
 addSnapshot(1200, 12);
 addSnapshot(1000, 10);
@@ -133,6 +166,39 @@ assert.equal(sampleRemoteTransformInto('missing', missingTarget), false);
 setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25);
 assert.deepEqual(visualStore.getState().playerPositions.get('remote-a'), { x: 3, y: 4, z: 5 });
 assert.equal(visualStore.getState().playerRotations.get('remote-a'), 1.25);
+
+const deathRevisionBeforeAdd = visualStore.getState().deathVisualRevision;
+assert.equal(addDeathVisual(makeDeathVisual('death-a', 'remote-a', 2000)), true);
+assert.equal(visualStore.getState().deathVisualRevision, deathRevisionBeforeAdd + 1);
+assert.equal(visualStore.getState().deathVisuals.size, 1);
+assert.equal(addDeathVisual(makeDeathVisual('death-a', 'remote-a', 2000)), false);
+assert.equal(visualStore.getState().deathVisuals.size, 1);
+
+assert.equal(addDeathVisual(makeDeathVisual('death-b', 'remote-a', 2600)), true);
+assert.equal(visualStore.getState().deathVisuals.has('death-a'), false);
+assert.equal(visualStore.getState().deathVisuals.has('death-b'), true);
+assert.equal(getDeathVisualForPlayer('remote-a', 2700)?.id, 'death-b');
+assert.equal(updateDeathVisualExpirationForPlayer('remote-a', 5200), true);
+assert.equal(visualStore.getState().deathVisuals.get('death-b')?.expiresAtMs, 5200);
+assert.equal(clearExpiredDeathVisuals(4000), 0);
+
+assert.equal(clearExpiredDeathVisuals(5300), 1);
+assert.equal(visualStore.getState().deathVisuals.size, 0);
+assert.equal(getDeathVisualForPlayer('remote-a', 5300), null);
+
+addDeathVisual(makeDeathVisual('death-c', 'remote-a', 5000));
+assert.equal(removeDeathVisual('missing'), false);
+assert.equal(removeDeathVisual('death-c'), true);
+assert.equal(visualStore.getState().deathVisuals.size, 0);
+
+addDeathVisual(makeDeathVisual('death-d', 'remote-a', 6000));
+addDeathVisual(makeDeathVisual('death-e', 'remote-b', 6100));
+assert.equal(clearDeathVisualsForPlayer('remote-a'), 1);
+assert.equal(visualStore.getState().deathVisuals.has('death-d'), false);
+assert.equal(visualStore.getState().deathVisuals.has('death-e'), true);
+assert.equal(clearAllDeathVisuals(), 1);
+assert.equal(visualStore.getState().deathVisuals.size, 0);
+clearVisualState();
 
 const combatPlayers = [
   makePlayer('owner', 'red', 0, 0),

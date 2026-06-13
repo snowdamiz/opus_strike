@@ -10,7 +10,6 @@ import {
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PHANTOM_BLINK_DISTANCE,
-  PHANTOM_SHADOWSTEP_DISTANCE,
   inputStateToMovementButtons,
   compareMovementSeq,
   isMovementSeqAfter,
@@ -273,33 +272,6 @@ export function predictLocalPhantomBlink(player: Player, lookYaw: number, lookPi
     movement: {
       ...current.movement,
       isGrounded: false,
-      isSliding: false,
-      slideTimeRemaining: 0,
-    },
-  }, lookYaw);
-}
-
-export function predictLocalPhantomShadowStep(player: Player, lookYaw: number): MovementSimulationState {
-  ensureLocalPredictionInitialized(player);
-  const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
-  const forward = horizontalForwardFromYaw(lookYaw);
-  const lookup = getClientProceduralTerrainLookup();
-  const world = getClientCollisionWorld();
-  const rawPosition = {
-    x: current.position.x + forward.x * PHANTOM_SHADOWSTEP_DISTANCE,
-    y: current.position.y,
-    z: current.position.z + forward.z * PHANTOM_SHADOWSTEP_DISTANCE,
-  };
-  const position = lookup ? lookup.clampToPlayableMap(rawPosition) : rawPosition;
-  const validatedPosition = sweepCapsulePathClear(world, current.position, position) && canCapsuleOccupy(world, position)
-    ? position
-    : current.position;
-
-  return applyLocalPredictedState(player.id, {
-    position: validatedPosition,
-    velocity: { ...current.velocity },
-    movement: {
-      ...current.movement,
       isSliding: false,
       slideTimeRemaining: 0,
     },

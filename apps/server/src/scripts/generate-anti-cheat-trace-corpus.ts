@@ -417,7 +417,7 @@ const legalTraces: Array<{ group: 'smoke' | 'full'; file: string; trace: AntiChe
     trace: buildLegalTrace({
       id: 'legal-phantom-teleport-flag-route',
       heroId: 'phantom',
-      movementClass: 'blink_shadow_step_flag_route',
+      movementClass: 'blink_flag_route',
       smoke: true,
       expectedCorrections: ['teleport'],
       steps: [

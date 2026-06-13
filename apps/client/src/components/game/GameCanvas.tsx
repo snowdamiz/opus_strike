@@ -8,6 +8,7 @@ import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
 import { OtherPlayers } from './OtherPlayers';
+import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
 import { SlideSpeedLines } from './SlideSpeedLines';
@@ -791,6 +792,7 @@ export function GameCanvas({
         
         {/* Other players - always rendered so players can see each other in lobby */}
         <OtherPlayers config={qualityConfig.remotePlayers} />
+        <RagdollManager config={qualityConfig.ragdolls} />
         
         {/* Gameplay objects mount during warmup so first-use shaders and buffers are paid before input. */}
         {shouldMountGameplayObjects && (

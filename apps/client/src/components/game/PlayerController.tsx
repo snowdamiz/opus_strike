@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
   consumeLocalPlayerImpulses,
+  getDeathVisualForPlayer,
   visualStore,
   setChronosAegisVisualState,
   setLocalViewmodelMovement,
@@ -418,14 +419,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
   // Store state and actions
   const updateLocalPlayer = useGameStore(state => state.updateLocalPlayer);
-  const setShadowStepTargeting = useGameStore(state => state.setShadowStepTargeting);
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
   const bombTargeting = useGameStore(state => state.bombTargeting);
   const setAirStrikeTargeting = useGameStore(state => state.setAirStrikeTargeting);
   const setFlamethrowerActive = useGameStore(state => state.setFlamethrowerActive);
   const setFlamethrowerFuel = useGameStore(state => state.setFlamethrowerFuel);
   const gamePhase = useGameStore(state => state.gamePhase);
-  const shadowStepTargeting = useGameStore(state => state.shadowStepTargeting);
   const grappleTrapTargeting = useGameStore(state => state.grappleTrapTargeting);
   const setGrappleTrapTargeting = useGameStore(state => state.setGrappleTrapTargeting);
   const localPlayerForInit = useGameStore(state => state.localPlayer);
@@ -438,9 +437,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
   // Audio hooks
   const {
-    playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
+    playPhantomBlink, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
     startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
-    playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
+    playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump,
     startFlamethrowerSound, stopFlamethrowerSound,
   } = useAbilitySounds();
   const { updateWalkingSound, preloadWalkingSound } = useMovementSounds();
@@ -592,9 +591,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
   // Create sound objects for passing to ability hooks
   const playerSounds = {
-    playPhantomBlink, playPhantomShadowStep, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
+    playPhantomBlink, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
     startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
-    playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump, playBlazeAirstrike,
+    playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump,
     startFlamethrowerSound, stopFlamethrowerSound,
   };
 
@@ -654,7 +653,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       setGrappleTrapTargeting(false);
     }
   }, [
-    enabled, isPointerLocked, requestPointerLock, shadowStepTargeting, bombTargeting, grappleTrapTargeting,
+    enabled, isPointerLocked, requestPointerLock, bombTargeting, grappleTrapTargeting,
     phantomAbilities, blazeAbilities, hookshotAbilities, playerSounds, abilitySystem, movement,
     cameraControl, requestBlazeBombDrop, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
     isPracticeMode,
@@ -673,21 +672,17 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   useEffect(() => {
     const handleCancel = (e: MouseEvent | KeyboardEvent) => {
       const store = useGameStore.getState();
-      const isShadowStepTargeting = store.shadowStepTargeting;
       const isBombTargeting = store.bombTargeting;
       const isAirStrikeTargeting = store.airStrikeTargeting;
       const isGrappleTrapTargeting = store.grappleTrapTargeting;
 
-      if (!isShadowStepTargeting && !isBombTargeting && !isAirStrikeTargeting && !isGrappleTrapTargeting) return;
+      if (!isBombTargeting && !isAirStrikeTargeting && !isGrappleTrapTargeting) return;
 
       const isRightClick = e instanceof MouseEvent && e.button === 2;
       const isEscape = e instanceof KeyboardEvent && e.code === 'Escape';
       if (isRightClick || isEscape) {
         e.preventDefault();
 
-        if (isShadowStepTargeting && (isRightClick || isEscape)) {
-          store.setShadowStepTargeting(false, false);
-        }
         if (isBombTargeting && isEscape) {
           store.setBombTargeting(false, false);
           blazeAbilities.bombTargetRef.current = null;
@@ -709,7 +704,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     const handleContextMenu = (e: MouseEvent) => {
       const store = useGameStore.getState();
-      if (store.shadowStepTargeting || store.bombTargeting || store.airStrikeTargeting || store.grappleTrapTargeting) {
+      if (store.bombTargeting || store.airStrikeTargeting || store.grappleTrapTargeting) {
         e.preventDefault();
       }
     };
@@ -755,6 +750,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       clearHeroActionLock();
       phantomAbilities.resetPhantomPrimaryMagazine();
       blazeAbilities.resetRocketJump();
+      cameraControl.resetDeathCamera(camera);
       return;
     }
 
@@ -817,7 +813,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       clearHeroActionLock();
       hookshotAbilities.secondaryFirePressedRef.current = false;
       setChronosAegisVisualState(localPlayer.id, false, now);
-      setShadowStepTargeting(false, false);
       setBombTargeting(false, false);
       setAirStrikeTargeting(false, false);
       setGrappleTrapTargeting(false, false);
@@ -829,6 +824,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
 
     const dt = Math.min(delta, 0.1);
+    const localDeathVisual = getDeathVisualForPlayer(localPlayer.id, now);
+    const hasLocalDeathVisual = Boolean(localDeathVisual?.local);
+    const isLocalAliveForCamera = isPlaying && localPlayer.state === 'alive' && !hasLocalDeathVisual;
+    if ((!isPlaying || isLocalAliveForCamera || localPlayer.state !== 'dead') && !hasLocalDeathVisual && cameraControl.isDeathCameraActive()) {
+      cameraControl.resetDeathCamera(camera);
+    }
 
     if (!enabled) {
       setLocalViewmodelMovement({
@@ -859,6 +860,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
       clearHeroActionLock();
       blazeAbilities.resetRocketJump();
+      cameraControl.resetDeathCamera(camera);
 
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
       cameraControl.updateCameraRotation(camera, false, false, dt);
@@ -879,7 +881,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       rawFrameInput.moveRight
     );
 
-    if (!isPlaying || localPlayer.state !== 'alive') {
+    if (!isPlaying || localPlayer.state !== 'alive' || hasLocalDeathVisual) {
       setLocalViewmodelMovement({
         hasMovementInput: false,
         isSprinting: false,
@@ -911,8 +913,23 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       clearHeroActionLock();
       blazeAbilities.resetRocketJump();
       const visualPos = visualStore.getState().playerPositions.get(localPlayer.id) || localPlayer.position;
-      cameraControl.updateCameraRotation(camera, false, false, dt);
-      camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
+      const shouldUseDeathCamera = isPlaying && (hasLocalDeathVisual || localPlayer.state === 'dead');
+      if (shouldUseDeathCamera) {
+        if (!cameraControl.isDeathCameraActive()) {
+          cameraControl.startDeathCamera(camera, visualPos, {
+            nowMs: now,
+            sourceDirection: localDeathVisual?.sourceDirection ?? null,
+          });
+        }
+        cameraControl.updateDeathCamera(camera, visualPos, dt, now);
+      } else {
+        cameraControl.updateCameraRotation(camera, false, false, dt);
+        camera.position.set(visualPos.x, visualPos.y + EYE_HEIGHT + cameraControl.refs.crouchHeight.current, visualPos.z);
+      }
+      camera.updateMatrixWorld();
+      camera.getWorldDirection(audioForwardRef.current);
+      audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+      setAudioListenerTransform(camera.position, audioForwardRef.current, audioUpRef.current);
       setPlayerVisualTransform(localPlayer.id, visualPos, cameraControl.refs.yaw.current);
       return;
     }
@@ -1033,7 +1050,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
     const phantomPrimaryHeldForPose = (
       heroId === 'phantom' &&
-      !shadowStepTargeting &&
       frameInput.primaryFire &&
       !phantomPrimaryReloading
     );
@@ -1044,7 +1060,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         : heroId === 'blaze'
           ? frameInput.primaryFire && !bombTargetingForFrame
           : frameInput.primaryFire;
-    const ability2ForServer = shadowStepTargeting ? false : frameInput.ability2;
+    const ability2ForServer = frameInput.ability2;
 
     // Create ability context
     const abilityCtx = {
@@ -1087,7 +1103,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         heroId,
         inputState: frameInput,
         ultimateCharge: localPlayer.ultimateCharge ?? 0,
-        shadowStepTargeting,
         bombTargeting: bombTargetingForFrame,
         grappleTrapTargeting,
         phantomPrimaryAmmo: phantomAbilities.phantomPrimaryAmmoRef.current,
@@ -1101,7 +1116,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       // Handle ability input
       if (heroId !== 'blaze') {
         if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
-          if (!shadowStepTargeting && !grappleTrapTargeting && abilitySystem.canUseAbility(heroDef.ability1.abilityId, false, shadowStepTargeting)) {
+          if (!grappleTrapTargeting && abilitySystem.canUseAbility(heroDef.ability1.abilityId, false)) {
             if (heroId === 'phantom') {
               if (isPracticeMode) {
                 const startPosition = { x: position.x, y: position.y, z: position.z };
@@ -1159,7 +1174,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
       // Ability 2 (Q)
       if (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
-        if (abilitySystem.canUseAbility(heroDef.ability2.abilityId, false, shadowStepTargeting)) {
+        if (abilitySystem.canUseAbility(heroDef.ability2.abilityId, false)) {
           if (heroId === 'phantom') {
             if (isPracticeMode) {
               const abilityId = heroDef.ability2.abilityId;
@@ -1227,7 +1242,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
       // Ultimate (F)
       if (frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
-        if (!shadowStepTargeting && abilitySystem.canUseAbility(heroDef.ultimate.abilityId, true, shadowStepTargeting)) {
+        if (abilitySystem.canUseAbility(heroDef.ultimate.abilityId, true)) {
           if (heroId === 'phantom') {
             if (isPracticeMode) {
               const abilityId = heroDef.ultimate.abilityId;
@@ -1270,7 +1285,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       abilitySystem.abilityPressedRef.current.ultimate = rawFrameInput.ultimate;
 
       // Hero-specific primary/secondary fire and hold abilities
-      if (heroId === 'phantom' && !shadowStepTargeting) {
+      if (heroId === 'phantom') {
         phantomAbilities.handleVoidRay(abilityCtx, playerSounds);
       }
 
@@ -1331,7 +1346,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
 
     const wasGroundedBeforePrediction = predictedState.movement.isGrounded;
-    const currentTargeting = useGameStore.getState().shadowStepTargeting;
     const currentBombTargeting = useGameStore.getState().bombTargeting;
     const phantomAutoReloadForServer = heroId === 'phantom' &&
       phantomAbilities.phantomPrimaryReloadingRef.current &&
@@ -1351,7 +1365,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       crouch: crouchHeld,
       primaryFire: heroId === 'blaze' && currentBombTargeting ? false : primaryFireForServer,
       reload: reloadForServer,
-      ability2: currentTargeting ? false : ability2ForServer,
+      ability2: ability2ForServer,
     };
     const abilityCastHints = buildAbilityCastOriginHints(abilityCtx, commandInput, {
       bombTargeting: currentBombTargeting,
@@ -1438,7 +1452,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     audioUpRef.current.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
     setAudioListenerTransform(camera.position, audioForwardRef.current, audioUpRef.current);
 
-    if (heroId === 'phantom' && !shadowStepTargeting) {
+    if (heroId === 'phantom') {
       phantomAbilities.fireDireBall(abilityCtx, playerSounds);
     }
 
@@ -1474,7 +1488,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       if (frameInput.ability1) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability1.abilityId);
       if (frameInput.ability2) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability2.abilityId);
       if (frameInput.ultimate) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ultimate.abilityId);
-      if (shadowStepTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'phantom_shadow_step_targeting');
       if (bombTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'blaze_bomb_targeting');
       if (grappleTrapTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'hookshot_grapple_trap_targeting');
       traceAbilityIds.sort();

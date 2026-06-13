@@ -38,7 +38,6 @@ export abstract class HeroBase {
   readonly definition: HeroDefinition;
   
   protected abilities: Map<string, AbilityState> = new Map();
-  protected passiveActive: boolean = true;
   protected ultimateCharge: number = 0;
 
   constructor(heroId: HeroId) {
@@ -82,7 +81,7 @@ export abstract class HeroBase {
       }
     });
 
-    // Update passive
+    // Update hero-specific timers/state.
     this.updatePassive(deltaTime);
   }
 

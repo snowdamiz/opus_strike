@@ -12,6 +12,11 @@ import {
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
 import {
+  addDeathVisual,
+  clearAllDeathVisuals,
+  clearDeathVisualsForPlayer,
+  DEATH_VISUAL_LIFETIME_MS,
+  updateDeathVisualExpirationForPlayer,
   pushLocalPlayerImpulse,
   addRemoteTransformSnapshot,
   pruneRemoteTransformHistories,
@@ -30,7 +35,7 @@ import {
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
-import { triggerBlinkEffect, triggerShadowArrival } from '../components/game/PhantomEffects';
+import { triggerBlinkEffect } from '../components/game/PhantomEffects';
 import {
   startObservedAbilityCastEffect,
   stopObservedAbilityCastEffects,
@@ -62,6 +67,7 @@ import {
   BLAZE_BOMB_RELEASE_SOUND_START_OFFSET_MS,
   CHRONOS_VERDANT_PULSE_SHOT_PITCH,
   CHRONOS_VERDANT_PULSE_SHOT_VOLUME,
+  playSharedBlazeAirstrikeSound,
   playSharedSound,
   type SoundName,
 } from '../hooks/useAudio';
@@ -71,6 +77,7 @@ import type {
   BotDifficulty,
   HeroId,
   MatchSnapshotMessage,
+  PlayerDeathEvent,
   Player,
   PlayerVitalsAbilitySnapshot,
   PlayerMovementState,
@@ -324,6 +331,109 @@ function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPos
 
 function syncLocalVisualPosition(player: Player): void {
   setPlayerVisualTransform(player.id, player.position, player.lookYaw);
+}
+
+function clonePlainVec3(source: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
+  return {
+    x: Number.isFinite(source.x) ? source.x : 0,
+    y: Number.isFinite(source.y) ? source.y : 0,
+    z: Number.isFinite(source.z) ? source.z : 0,
+  };
+}
+
+function normalizePlainVec3(
+  source: { x: number; y: number; z: number } | null | undefined
+): { x: number; y: number; z: number } | null {
+  if (!source) return null;
+
+  const length = Math.sqrt(source.x * source.x + source.y * source.y + source.z * source.z);
+  if (!Number.isFinite(length) || length <= 0.0001) return null;
+
+  return {
+    x: source.x / length,
+    y: source.y / length,
+    z: source.z / length,
+  };
+}
+
+function getPlayerSnapshotPosition(player: Player): { x: number; y: number; z: number } {
+  const visualPosition = visualStore.getState().playerPositions.get(player.id);
+  return clonePlainVec3(visualPosition ?? player.position);
+}
+
+function getKillerSourceDirection(
+  victimPosition: { x: number; y: number; z: number },
+  victim: Player,
+  killerId: string | null,
+  event: Partial<PlayerDeathEvent>,
+  players: Map<string, Player>
+): { x: number; y: number; z: number } | null {
+  const explicitDirection = normalizePlainVec3(event.sourceDirection);
+  if (explicitDirection) return explicitDirection;
+
+  const sourcePosition = event.sourcePosition ?? (killerId ? players.get(killerId)?.position : null);
+  if (sourcePosition) {
+    const visualSourcePosition = killerId
+      ? visualStore.getState().playerPositions.get(killerId) ?? sourcePosition
+      : sourcePosition;
+    const fromSource = normalizePlainVec3({
+      x: victimPosition.x - visualSourcePosition.x,
+      y: victimPosition.y - visualSourcePosition.y,
+      z: victimPosition.z - visualSourcePosition.z,
+    });
+    if (fromSource) return fromSource;
+  }
+
+  const velocityDirection = normalizePlainVec3(victim.velocity);
+  if (velocityDirection) return velocityDirection;
+
+  return normalizePlainVec3({
+    x: Math.sin(victim.lookYaw),
+    y: 0,
+    z: Math.cos(victim.lookYaw),
+  });
+}
+
+function addDeathVisualFromKillEvent(data: PlayerDeathEvent): void {
+  const store = useGameStore.getState();
+  const localPlayerId = store.localPlayer?.id ?? store.playerId;
+  const victim = store.players.get(data.victimId) ?? (
+    store.localPlayer?.id === data.victimId ? store.localPlayer : null
+  );
+  if (!victim) return;
+
+  const startedAtMs = Number.isFinite(data.occurredAt) ? data.occurredAt! : Date.now();
+  const position = data.position ? clonePlainVec3(data.position) : getPlayerSnapshotPosition(victim);
+  const visualPosition = visualStore.getState().playerPositions.get(victim.id);
+  const snapshotPosition = clonePlainVec3(visualPosition ?? position);
+  const velocity = data.velocity ? clonePlainVec3(data.velocity) : clonePlainVec3(victim.velocity);
+  const lookYaw = visualStore.getState().playerRotations.get(victim.id) ?? victim.lookYaw;
+  const killerId = data.killerId && data.killerId.length > 0 ? data.killerId : null;
+  const sourceDirection = getKillerSourceDirection(snapshotPosition, victim, killerId, data, store.players);
+  const expiresAtMs = Number.isFinite(data.respawnTime)
+    ? data.respawnTime!
+    : Number.isFinite(victim.respawnTime)
+      ? victim.respawnTime!
+      : startedAtMs + DEATH_VISUAL_LIFETIME_MS;
+
+  addDeathVisual({
+    id: `death:${victim.id}:${startedAtMs}`,
+    playerId: victim.id,
+    heroId: victim.heroId,
+    team: victim.team,
+    isBot: victim.isBot,
+    name: victim.name,
+    position: snapshotPosition,
+    velocity,
+    lookYaw,
+    lookPitch: victim.lookPitch,
+    movement: normalizeMovementState(victim.movement),
+    killerId,
+    sourceDirection,
+    startedAtMs,
+    expiresAtMs,
+    local: victim.id === localPlayerId,
+  });
 }
 
 type MovementBitsTransform = Pick<UnpackedPlayerTransform, 'movementBits' | 'wallRunSide'>;
@@ -913,6 +1023,7 @@ export function setupPlayerVitalsHandler(
     for (const removedId of data.removedPlayerIds || []) {
       stopRemotePhantomCharge(removedId);
       stopObservedAbilityCastEffects(removedId);
+      clearDeathVisualsForPlayer(removedId);
       forgetPlayerNetId(removedId);
       actions.removePlayer(removedId);
       shouldPublishTiming = true;
@@ -930,16 +1041,36 @@ export function setupPlayerVitalsHandler(
       if (vitals.id === sessionId) {
         const existing = store.localPlayer || store.players.get(vitals.id);
         const existingPlayer = existing || undefined;
+        const previousState = existingPlayer?.state;
+        const previousHeroId = existingPlayer?.heroId ?? null;
         if (shouldPreservePredictionOwnedLocalSimulation(existingPlayer, vitals.state, vitals.heroId)) {
           applyLocalVitalsPatchInPlace(existingPlayer, vitals, data.serverTime);
           const indexedPlayer = store.players.get(vitals.id);
           if (indexedPlayer && indexedPlayer !== existingPlayer) {
             applyLocalVitalsPatchInPlace(indexedPlayer, vitals, data.serverTime);
           }
+          if (
+            vitals.state !== 'dead' ||
+            (previousState === 'dead' && vitals.respawnTime === null) ||
+            previousHeroId !== vitals.heroId
+          ) {
+            clearDeathVisualsForPlayer(vitals.id);
+          } else {
+            updateDeathVisualExpirationForPlayer(vitals.id, vitals.respawnTime);
+          }
           continue;
         }
 
         const next = createLocalPlayerFromVitals(vitals, data.serverTime, existing || undefined);
+        if (
+          next.state !== 'dead' ||
+          (previousState === 'dead' && next.respawnTime === null) ||
+          previousHeroId !== next.heroId
+        ) {
+          clearDeathVisualsForPlayer(next.id);
+        } else {
+          updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
+        }
         actions.setLocalPlayer(next);
         recordLocalReactiveUpdate('vitals');
         shouldPublishTiming = true;
@@ -951,6 +1082,15 @@ export function setupPlayerVitalsHandler(
 
       const existing = store.players.get(vitals.id);
       const next = createPlayerFromVitals(vitals, data.serverTime, existing);
+      if (
+        next.state !== 'dead' ||
+        (existing?.state === 'dead' && next.respawnTime === null) ||
+        (existing && existing.heroId !== next.heroId)
+      ) {
+        clearDeathVisualsForPlayer(next.id);
+      } else {
+        updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
+      }
       actions.updatePlayer(vitals.id, next);
       shouldPublishTiming = true;
     }
@@ -967,6 +1107,9 @@ export function setupPlayerVitalsHandler(
 export function setupMatchSnapshotHandler(room: Room) {
   room.onMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
     const store = useGameStore.getState();
+    if (data.phase !== 'playing' && data.phase !== 'countdown') {
+      clearAllDeathVisuals();
+    }
     useGameStore.setState({
       tick: data.tick,
       serverTime: data.serverTime,
@@ -1459,13 +1602,6 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
       return true;
     }
 
-    case 'phantom_shadowstep':
-      if (!isLocalPlayer && position) {
-        triggerShadowArrival(position);
-        playPhantomWorldSound('phantomShadowStep', position);
-      }
-      return true;
-
     case 'phantom_personal_shield':
       applyConfirmedPhantomActiveAbility(data);
       return true;
@@ -1806,7 +1942,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       if (position) {
         triggerAirStrike(position);
         if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('blaze_airstrike')) {
-          playBlazeWorldSound('blazeAirstrike', position);
+          void playSharedBlazeAirstrikeSound({ position });
         }
       }
       if (isLocalPlayer && store.localPlayer) {
@@ -2246,14 +2382,12 @@ export function setupCombatHandlers(room: Room) {
     }
   });
 
-  room.onMessage('playerKilled', (data: {
-    victimId: string;
-    killerId: string;
-    position: { x: number; y: number; z: number };
-  }) => {
+  room.onMessage('playerKilled', (data: PlayerDeathEvent) => {
+    addDeathVisualFromKillEvent(data);
+
     const players = useGameStore.getState().players;
     useCombatFeedbackStore.getState().addKillFeedEvent({
-      killerName: players.get(data.killerId)?.name ?? 'Unknown',
+      killerName: data.killerId ? players.get(data.killerId)?.name ?? 'Unknown' : 'Unknown',
       victimName: players.get(data.victimId)?.name ?? 'Unknown',
     });
   });

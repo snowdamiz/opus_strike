@@ -930,7 +930,7 @@ function HUDSkillSlot({
   const hasCharges = maxCharges > 1;
   const noChargesLeft = hasCharges && charges === 0;
   const isUsable = !showActiveTimer && !onCooldown && !noChargesLeft && (!isUltimate || isUltReady);
-  const inputLabel = skill.input === 'PASSIVE' ? 'P' : skill.input;
+  const inputLabel = skill.input;
   const isWideInput = inputLabel.length > 1;
 
   return (

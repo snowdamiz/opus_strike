@@ -71,6 +71,12 @@ export interface RemotePlayerQualityConfig {
   showBeacons: boolean;
 }
 
+export interface RagdollQualityConfig {
+  maxHighQuality: number;
+  maxTotal: number;
+  castShadows: boolean;
+}
+
 export interface ViewmodelQualityConfig {
   tier: 'core' | 'standard' | 'full';
   allowDecorativeGlows: boolean;
@@ -84,6 +90,7 @@ export interface VisualQualityConfig {
   environment: EnvironmentQualityConfig;
   effects: EffectQualityConfig;
   remotePlayers: RemotePlayerQualityConfig;
+  ragdolls: RagdollQualityConfig;
   viewmodel: ViewmodelQualityConfig;
   budgets: WorldPerformanceBudget;
   dynamicLights: {
@@ -416,6 +423,29 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
   },
 };
 
+const RAGDOLL_QUALITY_CONFIG: Record<GraphicsPreset, RagdollQualityConfig> = {
+  potato: {
+    maxHighQuality: 0,
+    maxTotal: 4,
+    castShadows: false,
+  },
+  competitive: {
+    maxHighQuality: 3,
+    maxTotal: 8,
+    castShadows: false,
+  },
+  balanced: {
+    maxHighQuality: 8,
+    maxTotal: 16,
+    castShadows: true,
+  },
+  cinematic: {
+    maxHighQuality: 8,
+    maxTotal: 16,
+    castShadows: true,
+  },
+};
+
 const VIEWMODEL_QUALITY_CONFIG: Record<GraphicsPreset, ViewmodelQualityConfig> = {
   potato: {
     tier: 'core',
@@ -472,6 +502,10 @@ export function getVisualQualityConfig(settings: Pick<
     environment: ENVIRONMENT_QUALITY_CONFIG[settings.environmentQuality],
     effects: EFFECT_QUALITY_CONFIG[profile],
     remotePlayers: REMOTE_PLAYER_QUALITY_CONFIG[profile],
+    ragdolls: {
+      ...RAGDOLL_QUALITY_CONFIG[profile],
+      castShadows: RAGDOLL_QUALITY_CONFIG[profile].castShadows && SHADOW_QUALITY_CONFIG[settings.shadowQuality].enabled,
+    },
     viewmodel: VIEWMODEL_QUALITY_CONFIG[profile],
     budgets: WORLD_PERFORMANCE_BUDGETS[profile],
     dynamicLights,

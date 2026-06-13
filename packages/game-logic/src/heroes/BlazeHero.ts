@@ -12,8 +12,6 @@ import { vec3Scale, vec3Normalize } from '@voxel-strike/shared';
 
 export class BlazeHero extends HeroBase {
   private flamethrowerFuel: number = BLAZE_FLAMETHROWER_MAX_FUEL;
-  private passiveFuelRegenBonus: number = 0;
-  private lastKillTime: number = 0;
   private gearstormCenter: { x: number; y: number; z: number } | null = null;
   private gearstormEndTime: number = 0;
 
@@ -86,15 +84,8 @@ export class BlazeHero extends HeroBase {
     };
   }
 
-  updatePassive(deltaTime: number): void {
+  updatePassive(_deltaTime: number): void {
     const now = Date.now();
-
-    // Afterburner - 50% faster fuel regen after getting a kill
-    if (now - this.lastKillTime < 5000) {
-      this.passiveFuelRegenBonus = 0.5;
-    } else {
-      this.passiveFuelRegenBonus = 0;
-    }
 
     // Check ultimate end
     if (this.gearstormCenter && now >= this.gearstormEndTime) {
@@ -102,30 +93,19 @@ export class BlazeHero extends HeroBase {
     }
   }
 
-  onKill(): void {
-    this.lastKillTime = Date.now();
-  }
-
   consumeFuel(amount: number): void {
     this.flamethrowerFuel = Math.max(0, this.flamethrowerFuel - amount);
   }
 
-  regenerateFuel(deltaTime: number, isGrounded: boolean): void {
-    if (isGrounded) {
-      const regenRate = BLAZE_FLAMETHROWER_FUEL_REGEN * (1 + this.passiveFuelRegenBonus);
-      this.flamethrowerFuel = Math.min(
-        BLAZE_FLAMETHROWER_MAX_FUEL,
-        this.flamethrowerFuel + regenRate * deltaTime
-      );
-    }
+  regenerateFuel(deltaTime: number, _isGrounded?: boolean): void {
+    this.flamethrowerFuel = Math.min(
+      BLAZE_FLAMETHROWER_MAX_FUEL,
+      this.flamethrowerFuel + BLAZE_FLAMETHROWER_FUEL_REGEN * deltaTime
+    );
   }
 
   getFuel(): number {
     return this.flamethrowerFuel;
-  }
-
-  getPassiveFuelRegenBonus(): number {
-    return this.passiveFuelRegenBonus;
   }
 
   getAirstrikeTarget(): { x: number; y: number; z: number } | null {

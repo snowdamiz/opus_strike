@@ -159,9 +159,7 @@ function QuickStat({ label, value }: { label: string; value: number }) {
 function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
   const isClick = item.tone === 'click';
   const isUltimate = item.tone === 'ultimate';
-  const cooldown = item.cooldown;
-  const duration = item.duration;
-  const charges = item.charges;
+  const metaPills = getMetaPills(item);
 
   return (
     <div
@@ -190,13 +188,11 @@ function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
             </div>
             <p className="mt-1 text-white/70 text-[11px] font-body leading-snug">{item.description}</p>
 
-            {(cooldown !== undefined || duration || charges) && (
+            {metaPills.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                {cooldown !== undefined && cooldown > 0 && (
-                  <MetaPill color={isUltimate ? ABILITY_COLORS.ultimate : color}>{formatSeconds(cooldown)}</MetaPill>
-                )}
-                {duration && <MetaPill color={isUltimate ? ABILITY_COLORS.ultimate : color}>{duration}s active</MetaPill>}
-                {charges && <MetaPill color={isUltimate ? ABILITY_COLORS.ultimate : color}>x{charges}</MetaPill>}
+                {metaPills.map((pill) => (
+                  <MetaPill key={pill} color={isUltimate ? ABILITY_COLORS.ultimate : color}>{pill}</MetaPill>
+                ))}
               </div>
             )}
           </div>
@@ -204,6 +200,35 @@ function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
       </div>
     </div>
   );
+}
+
+function getMetaPills(item: HeroSkillItem): string[] {
+  const pills: string[] = [];
+  const suppressCooldown = item.input === 'LMB';
+  const cooldown = item.cooldown ?? 0;
+  const duration = item.duration ?? 0;
+  const charges = item.charges ?? 0;
+  const chargeRegenTime = item.chargeRegenTime ?? cooldown;
+  const resourceCost = item.resourceCost ?? 0;
+
+  if (charges > 1) {
+    pills.push(`${charges} charges`);
+    if (chargeRegenTime > 0) {
+      pills.push(`${formatSecondsValue(chargeRegenTime)} recharge`);
+    }
+  } else if (!suppressCooldown && cooldown > 0) {
+    pills.push(`${formatSecondsValue(cooldown)} cd`);
+  }
+
+  if (duration > 0) {
+    pills.push(`${formatSecondsValue(duration)} active`);
+  }
+
+  if (resourceCost > 0) {
+    pills.push(`${resourceCost} ult`);
+  }
+
+  return [...pills, ...(item.meta ?? [])];
 }
 
 function InputTag({ children, color }: { children: ReactNode; color: string }) {
@@ -231,6 +256,6 @@ function MetaPill({ children, color }: { children: ReactNode; color: string }) {
   );
 }
 
-function formatSeconds(seconds: number) {
-  return `${seconds < 1 ? seconds.toFixed(2).replace(/0$/, '') : seconds.toFixed(seconds % 1 === 0 ? 0 : 1)}s cd`;
+function formatSecondsValue(seconds: number) {
+  return `${seconds < 1 ? seconds.toFixed(2).replace(/0$/, '') : seconds.toFixed(seconds % 1 === 0 ? 0 : 1)}s`;
 }

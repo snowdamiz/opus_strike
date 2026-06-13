@@ -40,6 +40,7 @@ import {
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
   BLAZE_GEARSTORM_RADIUS,
+  BLAZE_ROCKET_FIRE_INTERVAL_MS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
@@ -255,6 +256,21 @@ type BotStrategicRole = 'runner' | 'fighter' | 'defender' | 'support';
 type PlainVec3 = { x: number; y: number; z: number };
 type PlainVec2 = { x: number; z: number };
 type PendingPlayerPing = { nonce: string; sentAt: number };
+
+interface DamageHistoryEntry {
+  damage: number;
+  timestamp: number;
+  damageType: string;
+  sourcePosition: PlainVec3 | null;
+  sourceDirection: PlainVec3 | null;
+}
+
+interface DamageContext {
+  abilityId?: string;
+  sourcePosition?: PlainVec3 | null;
+  sourceDirection?: PlainVec3 | null;
+}
+
 interface PhantomPrimaryMagazineState {
   ammo: number;
   reloadUntil: number;
@@ -462,8 +478,6 @@ interface AttackConfig {
 
 const BLAZE_ROCKET_DAMAGE = 24;
 const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
-const BLAZE_ROCKET_FIRE_INTERVAL_MS = 500;
-const BLAZE_ROCKET_BOT_COOLDOWN_MS = BLAZE_ROCKET_FIRE_INTERVAL_MS;
 const BLAZE_ROCKET_SPEED = 70;
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS = 300;
@@ -632,7 +646,7 @@ const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
 const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
   phantom: { damage: 18, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
   hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
-  blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_BOT_COOLDOWN_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
+  blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
   chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
 };
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
@@ -691,7 +705,7 @@ export class GameRoom extends Room<GameState> {
   private attackCooldownUntil: Map<string, number> = new Map();
   private blazeRocketImpactCooldownUntil: Map<string, number> = new Map();
   private processedBlazeRocketImpacts: Map<string, number> = new Map();
-  private damageHistory: Map<string, Map<string, { damage: number; timestamp: number }>> = new Map();
+  private damageHistory: Map<string, Map<string, DamageHistoryEntry>> = new Map();
   private unstuckCooldownUntil: Map<string, number> = new Map();
   private devImmunePlayers: Set<string> = new Set();
   private devGameClockFrozen = false;
@@ -4405,7 +4419,10 @@ export class GameRoom extends Room<GameState> {
         storm.lastDamageTick.set(target.id, now);
 
         const falloff = 1 - Math.sqrt(distSq) / storm.radius * 0.35;
-        this.applyDamage(target, Math.max(1, Math.round(storm.damage * falloff)), owner.id, 'airstrike');
+        this.applyDamage(target, Math.max(1, Math.round(storm.damage * falloff)), owner.id, 'airstrike', {
+          abilityId: 'blaze_airstrike',
+          sourcePosition: storm.position,
+        });
       }
 
       this.blazeGearstorms[writeIndex++] = storm;
@@ -4449,7 +4466,10 @@ export class GameRoom extends Room<GameState> {
           this.markMovementBarrier(target.id, 'knockback');
         }
 
-        this.applyDamage(target, GRAPPLE_TRAP_DAMAGE, owner ? trap.ownerId : null, 'grapple_trap');
+        this.applyDamage(target, GRAPPLE_TRAP_DAMAGE, owner ? trap.ownerId : null, 'grapple_trap', {
+          abilityId: 'hookshot_grapple_trap',
+          sourcePosition: trap.position,
+        });
       }
 
       this.hookshotTraps[writeIndex++] = trap;
@@ -4787,26 +4807,6 @@ export class GameRoom extends Room<GameState> {
     return start;
   }
 
-  private resolvePhantomShadowStepDestination(player: Player, distance: number): PlainVec3 {
-    const forward = this.forward2D(player.lookYaw);
-    const start = this.vec3SchemaToPlain(player.position);
-    const world = this.getMovementCollisionWorld();
-
-    for (let testDistance = distance; testDistance >= 1.5; testDistance -= 0.5) {
-      const candidate = this.clampToPlayableMap({
-        x: start.x + forward.x * testDistance,
-        y: start.y,
-        z: start.z + forward.z * testDistance,
-      });
-
-      if (!sweepCapsulePathClear(world, start, candidate)) continue;
-      if (!canCapsuleOccupy(world, candidate)) continue;
-      return candidate;
-    }
-
-    return start;
-  }
-
   private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {
     const wasCharging = this.phantomVoidRayChargeStartedAt.has(player.id);
 
@@ -4899,7 +4899,6 @@ export class GameRoom extends Room<GameState> {
       executeAbility(player, result.abilityId, result.abilityState, result.abilityDef, {
         createVoidZone: (position, ownerId, ownerTeam) => this.createVoidZone(position, ownerId, ownerTeam),
         resolvePhantomBlinkDestination: (caster, distance) => this.resolvePhantomBlinkDestination(caster, distance),
-        resolvePhantomShadowStepDestination: (caster, distance) => this.resolvePhantomShadowStepDestination(caster, distance),
         markAuthoritativePosition: (playerId, _durationMs, reason = 'teleport') => {
           this.markMovementBarrier(playerId, reason, { preserveQueuedCommands: true });
         },
@@ -5433,7 +5432,11 @@ export class GameRoom extends Room<GameState> {
     if (attack.radius && attack.radius > 0) {
       this.applyAreaDamage(player, primaryTarget.position, attack.radius, attack.damage, attack.damageType);
     } else {
-      this.applyDamage(primaryTarget, attack.damage, player.id, attack.damageType);
+      const sourcePosition = this.getPlayerEyePosition(player);
+      this.applyDamage(primaryTarget, attack.damage, player.id, attack.damageType, {
+        sourcePosition,
+        sourceDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+      });
     }
 
     if (heroId === 'hookshot' && mode === 'secondary') {
@@ -5601,7 +5604,9 @@ export class GameRoom extends Room<GameState> {
       if (distSq > radiusSq) continue;
 
       const falloff = 1 - Math.sqrt(distSq) / radius * 0.45;
-      this.applyDamage(target, Math.max(1, Math.round(damage * falloff)), source.id, damageType);
+      this.applyDamage(target, Math.max(1, Math.round(damage * falloff)), source.id, damageType, {
+        sourcePosition: center,
+      });
     }
   }
 
@@ -5690,7 +5695,13 @@ export class GameRoom extends Room<GameState> {
     return blocked;
   }
 
-  private applyDamage(target: Player, rawDamage: number, sourceId: string | null, damageType: string): boolean {
+  private applyDamage(
+    target: Player,
+    rawDamage: number,
+    sourceId: string | null,
+    damageType: string,
+    context: DamageContext = {}
+  ): boolean {
     if (target.state !== 'alive' || rawDamage <= 0) return false;
 
     const source = sourceId ? this.state.players.get(sourceId) : null;
@@ -5721,10 +5732,32 @@ export class GameRoom extends Room<GameState> {
     const damage = Math.max(1, Math.round(rawDamage * this.getDamageTakenMultiplier(target)));
     target.health = Math.max(0, target.health - damage);
     this.recentCombatTransformUntil.set(target.id, now + RECENT_COMBAT_TRANSFORM_MS);
+    const sourcePosition = context.sourcePosition !== undefined
+      ? context.sourcePosition
+      : source
+        ? this.vec3SchemaToPlain(source.position)
+        : null;
+    const sourceDirection = context.sourceDirection !== undefined
+      ? context.sourceDirection
+      : sourcePosition
+        ? this.normalize3D({
+          x: target.position.x - sourcePosition.x,
+          y: target.position.y - sourcePosition.y,
+          z: target.position.z - sourcePosition.z,
+        })
+        : null;
 
     if (source && source.id !== target.id) {
       source.ultimateCharge = Math.min(100, source.ultimateCharge + damage / Math.max(1, target.maxHealth) * 12);
-      this.recordDamage(target.id, source.id, damage, now);
+      this.recordDamage(
+        target.id,
+        source.id,
+        damage,
+        now,
+        damageType,
+        sourcePosition,
+        sourceDirection
+      );
       this.recentCombatTransformUntil.set(source.id, now + RECENT_COMBAT_TRANSFORM_MS);
     }
 
@@ -5734,21 +5767,34 @@ export class GameRoom extends Room<GameState> {
       sourceId,
       damageType,
       newHealth: target.health,
-      sourcePosition: source ? this.vec3SchemaToPlain(source.position) : null,
+      sourcePosition,
       targetPosition: this.vec3SchemaToPlain(target.position),
       sourceHeroId: source?.heroId || null,
       targetHeroId: target.heroId || null,
     });
 
     if (target.health <= 0) {
-      this.handlePlayerDeath(target, sourceId || '');
+      this.handlePlayerDeath(target, sourceId || '', {
+        abilityId: context.abilityId,
+        damageType,
+        sourcePosition,
+        sourceDirection,
+      });
       return true;
     }
 
     return false;
   }
 
-  private recordDamage(targetId: string, sourceId: string, damage: number, timestamp: number): void {
+  private recordDamage(
+    targetId: string,
+    sourceId: string,
+    damage: number,
+    timestamp: number,
+    damageType: string,
+    sourcePosition: PlainVec3 | null,
+    sourceDirection: PlainVec3 | null
+  ): void {
     let history = this.damageHistory.get(targetId);
     if (!history) {
       history = new Map();
@@ -5758,6 +5804,9 @@ export class GameRoom extends Room<GameState> {
     history.set(sourceId, {
       damage: (existing?.damage || 0) + damage,
       timestamp,
+      damageType,
+      sourcePosition: sourcePosition ? { ...sourcePosition } : null,
+      sourceDirection: sourceDirection ? { ...sourceDirection } : null,
     });
   }
 
@@ -7967,7 +8016,10 @@ export class GameRoom extends Room<GameState> {
         const lastDamage = zone.lastDamageTick.get(player.id) || 0;
         if (now - lastDamage >= VOID_ZONE_DAMAGE_INTERVAL) {
           zone.lastDamageTick.set(player.id, now);
-          this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone');
+          this.applyDamage(player, zone.damage, zone.ownerId, 'void_zone', {
+            abilityId: 'phantom_void_zone',
+            sourcePosition: zone.position,
+          });
         }
       }
     }
@@ -8099,11 +8151,15 @@ export class GameRoom extends Room<GameState> {
       const falloff = 1 - (distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
       const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));
       this.flamethrowerLastDamageTick.set(tickKey, now);
-      this.applyDamage(target, damage, source.id, 'flamethrower');
+      this.applyDamage(target, damage, source.id, 'flamethrower', {
+        abilityId: 'blaze_flamethrower',
+        sourcePosition: origin,
+        sourceDirection: forward,
+      });
     }
   }
 
-  private handlePlayerDeath(player: Player, killerId: string) {
+  private handlePlayerDeath(player: Player, killerId: string, context: DamageContext & { damageType?: string } = {}) {
     if (player.state === 'dead') return;
 
     const killer = this.state.players.get(killerId);
@@ -8134,25 +8190,36 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     const assistIds: string[] = [];
     const history = this.damageHistory.get(player.id);
+    let lastDamageEntry: DamageHistoryEntry | null = null;
     if (history) {
-      history.forEach((entry, sourceId) => {
-        if (sourceId === killerId) return;
-        if (now - entry.timestamp > DAMAGE_HISTORY_WINDOW_MS) return;
+      for (const [sourceId, entry] of history) {
+        if (!lastDamageEntry || entry.timestamp > lastDamageEntry.timestamp) {
+          lastDamageEntry = entry;
+        }
+        if (sourceId === killerId) continue;
+        if (now - entry.timestamp > DAMAGE_HISTORY_WINDOW_MS) continue;
         const assister = this.state.players.get(sourceId);
-        if (!assister || assister.team === player.team) return;
+        if (!assister || assister.team === player.team) continue;
         assister.assists++;
         this.recordMatchAssist(assister, player);
         assister.ultimateCharge = Math.min(100, assister.ultimateCharge + 8);
         assistIds.push(sourceId);
-      });
+      }
       this.damageHistory.delete(player.id);
     }
 
     this.broadcastTracked('playerKilled', {
       victimId: player.id,
-      killerId,
+      killerId: killerId || null,
       assistIds,
       position: { x: player.position.x, y: player.position.y, z: player.position.z },
+      velocity: { x: player.velocity.x, y: player.velocity.y, z: player.velocity.z },
+      sourcePosition: context.sourcePosition ?? lastDamageEntry?.sourcePosition ?? (killer ? this.vec3SchemaToPlain(killer.position) : null),
+      sourceDirection: context.sourceDirection ?? lastDamageEntry?.sourceDirection ?? null,
+      damageType: context.damageType ?? lastDamageEntry?.damageType,
+      abilityId: context.abilityId,
+      occurredAt: deathAt,
+      respawnTime: player.respawnTime || null,
     });
   }
 
@@ -8600,8 +8667,20 @@ export class GameRoom extends Room<GameState> {
     // Broadcast kill event
     this.broadcastTracked('playerKilled', {
       victimId: npc.id,
-      killerId,
+      killerId: killerId || null,
+      assistIds: [],
       position: { x: npc.position.x, y: npc.position.y, z: npc.position.z },
+      velocity: { x: npc.velocity.x, y: npc.velocity.y, z: npc.velocity.z },
+      sourcePosition: killer ? this.vec3SchemaToPlain(killer.position) : null,
+      sourceDirection: killer
+        ? this.normalize3D({
+          x: npc.position.x - killer.position.x,
+          y: npc.position.y - killer.position.y,
+          z: npc.position.z - killer.position.z,
+        })
+        : null,
+      occurredAt: Date.now(),
+      respawnTime: null,
       isNpc: true,
     });
 

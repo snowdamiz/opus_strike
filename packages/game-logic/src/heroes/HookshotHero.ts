@@ -3,8 +3,6 @@ import { GRAPPLE_MAX_DISTANCE } from '@voxel-strike/shared';
 import { vec3Scale, vec3Add, vec3Normalize } from '@voxel-strike/shared';
 
 export class HookshotHero extends HeroBase {
-  private momentumBoostUntil: number = 0;
-  private lastSwingEnd: number = 0;
   private activeGrappleTrap: { 
     position: { x: number; y: number; z: number }; 
     radius: number;
@@ -97,11 +95,6 @@ export class HookshotHero extends HeroBase {
   updatePassive(_deltaTime: number): void {
     const now = Date.now();
 
-    // Momentum Master - 15% bonus speed for 2 seconds after swinging
-    if (now - this.lastSwingEnd < 2000) {
-      this.momentumBoostUntil = this.lastSwingEnd + 2000;
-    }
-
     // Check grapple trap expiration
     if (this.activeGrappleTrap) {
       const elapsed = (now - this.activeGrappleTrap.startTime) / 1000;
@@ -109,14 +102,6 @@ export class HookshotHero extends HeroBase {
         this.activeGrappleTrap = null;
       }
     }
-  }
-
-  onSwingEnd(): void {
-    this.lastSwingEnd = Date.now();
-  }
-
-  getPassiveSpeedBoost(): number {
-    return Date.now() < this.momentumBoostUntil ? 0.15 : 0;
   }
 
   getActiveGrappleTrap(): { 

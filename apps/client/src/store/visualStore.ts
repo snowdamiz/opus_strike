@@ -3,9 +3,11 @@ import { useStore } from 'zustand';
 import {
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  type HeroId,
   type Player,
   type PlayerMovementState,
   type Team,
+  type Vec3,
 } from '@voxel-strike/shared';
 
 // ============================================================================
@@ -53,6 +55,12 @@ export interface VisualState {
   /** Short-lived attack pose state for remote player bodies. */
   remotePlayerAttackStates: Map<string, RemotePlayerAttackState>;
 
+  /** Short-lived client-only corpse visuals keyed by death visual id. */
+  deathVisuals: Map<string, DeathVisualSnapshot>;
+
+  /** Low-frequency version that changes only when death visuals are added/removed. */
+  deathVisualRevision: number;
+
   /** Current local movement snapshot for viewmodel-only animation. */
   localViewmodelMovement: {
     hasMovementInput: boolean;
@@ -85,6 +93,25 @@ export interface RemotePlayerAttackState {
   abilityId: string;
   startedAtMs: number;
   side: -1 | 1;
+}
+
+export interface DeathVisualSnapshot {
+  id: string;
+  playerId: string;
+  heroId: HeroId | null;
+  team: Team;
+  isBot: boolean;
+  name: string;
+  position: Vec3;
+  velocity: Vec3;
+  lookYaw: number;
+  lookPitch: number;
+  movement: PlayerMovementState;
+  killerId: string | null;
+  sourceDirection: Vec3 | null;
+  startedAtMs: number;
+  expiresAtMs: number;
+  local: boolean;
 }
 
 export interface RemoteTransformSnapshot {
@@ -188,6 +215,8 @@ const initialVisualState: VisualState = {
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
   chronosAegisStates: new Map(),
   remotePlayerAttackStates: new Map(),
+  deathVisuals: new Map(),
+  deathVisualRevision: 0,
   localViewmodelMovement: {
     hasMovementInput: false,
     isSprinting: false,
@@ -201,6 +230,8 @@ const initialVisualState: VisualState = {
 };
 
 const REMOTE_HISTORY_LIMIT = 32;
+
+export const DEATH_VISUAL_LIFETIME_MS = 5600;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -681,6 +712,7 @@ export const removePlayerVisualState = (playerId: string): void => {
   state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
   state.remotePlayerAttackStates.delete(playerId);
+  clearDeathVisualsForPlayer(playerId);
 };
 
 export const setChronosAegisVisualState = (
@@ -719,6 +751,158 @@ export const triggerRemotePlayerAttack = (
   });
 };
 
+function cloneMovementState(movement: PlayerMovementState): PlayerMovementState {
+  return {
+    ...movement,
+    grapplePoint: movement.grapplePoint ? { ...movement.grapplePoint } : null,
+  };
+}
+
+function cloneDeathVisualSnapshot(snapshot: DeathVisualSnapshot): DeathVisualSnapshot {
+  return {
+    ...snapshot,
+    position: { ...snapshot.position },
+    velocity: { ...snapshot.velocity },
+    sourceDirection: snapshot.sourceDirection ? { ...snapshot.sourceDirection } : null,
+    movement: cloneMovementState(snapshot.movement),
+  };
+}
+
+function bumpDeathVisualRevision(state = visualStore.getState()): void {
+  visualStore.setState({ deathVisualRevision: state.deathVisualRevision + 1 });
+}
+
+export const addDeathVisual = (snapshot: DeathVisualSnapshot): boolean => {
+  const state = visualStore.getState();
+  const visuals = state.deathVisuals;
+  const existingSameId = visuals.get(snapshot.id);
+
+  if (existingSameId) {
+    return false;
+  }
+
+  for (const [id, existing] of visuals) {
+    if (existing.playerId === snapshot.playerId) {
+      visuals.delete(id);
+    }
+  }
+
+  visuals.set(snapshot.id, cloneDeathVisualSnapshot(snapshot));
+  bumpDeathVisualRevision(state);
+  return true;
+};
+
+export const removeDeathVisual = (id: string): boolean => {
+  const state = visualStore.getState();
+  if (!state.deathVisuals.delete(id)) return false;
+  bumpDeathVisualRevision(state);
+  return true;
+};
+
+export const clearDeathVisualsForPlayer = (playerId: string): number => {
+  const state = visualStore.getState();
+  let removed = 0;
+
+  for (const [id, snapshot] of state.deathVisuals) {
+    if (snapshot.playerId === playerId) {
+      state.deathVisuals.delete(id);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    bumpDeathVisualRevision(state);
+  }
+
+  return removed;
+};
+
+export const clearAllDeathVisuals = (): number => {
+  const state = visualStore.getState();
+  const removed = state.deathVisuals.size;
+  if (removed === 0) return 0;
+
+  state.deathVisuals.clear();
+  bumpDeathVisualRevision(state);
+  return removed;
+};
+
+export const updateDeathVisualExpirationForPlayer = (
+  playerId: string,
+  expiresAtMs: number | null | undefined
+): boolean => {
+  if (!Number.isFinite(expiresAtMs)) return false;
+
+  const state = visualStore.getState();
+  let changed = false;
+
+  for (const [id, snapshot] of state.deathVisuals) {
+    if (snapshot.playerId !== playerId) continue;
+
+    const nextExpiresAtMs = Math.max(snapshot.startedAtMs + 1, expiresAtMs as number);
+    if (Math.abs(snapshot.expiresAtMs - nextExpiresAtMs) <= 1) continue;
+
+    state.deathVisuals.set(id, {
+      ...snapshot,
+      expiresAtMs: nextExpiresAtMs,
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    bumpDeathVisualRevision(state);
+  }
+
+  return changed;
+};
+
+export const clearExpiredDeathVisuals = (nowMs = Date.now()): number => {
+  const state = visualStore.getState();
+  let removed = 0;
+
+  for (const [id, snapshot] of state.deathVisuals) {
+    if (snapshot.expiresAtMs <= nowMs) {
+      state.deathVisuals.delete(id);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    bumpDeathVisualRevision(state);
+  }
+
+  return removed;
+};
+
+export const getDeathVisualForPlayer = (
+  playerId: string,
+  nowMs = Date.now()
+): DeathVisualSnapshot | null => {
+  let newest: DeathVisualSnapshot | null = null;
+
+  for (const snapshot of visualStore.getState().deathVisuals.values()) {
+    if (snapshot.playerId !== playerId || snapshot.expiresAtMs <= nowMs) continue;
+    if (!newest || snapshot.startedAtMs > newest.startedAtMs) {
+      newest = snapshot;
+    }
+  }
+
+  return newest;
+};
+
+export const getActiveDeathVisuals = (nowMs = Date.now()): DeathVisualSnapshot[] => {
+  const snapshots: DeathVisualSnapshot[] = [];
+
+  for (const snapshot of visualStore.getState().deathVisuals.values()) {
+    if (snapshot.expiresAtMs > nowMs) {
+      snapshots.push(snapshot);
+    }
+  }
+
+  snapshots.sort((a, b) => b.startedAtMs - a.startedAtMs);
+  return snapshots;
+};
+
 export const setFlamethrowerVisualPose = (
   origin: { x: number; y: number; z: number } | null,
   direction: { x: number; y: number; z: number }
@@ -746,7 +930,7 @@ export const setFlamethrowerVisualPose = (
  * Clear all visual state (e.g., on game reset or disconnect).
  */
 export const clearVisualState = (): void => {
-  visualStore.setState(() => ({
+  visualStore.setState((state) => ({
     playerPositions: new Map(),
     playerRotations: new Map(),
     cameraShake: { intensity: 0, time: 0 },
@@ -757,6 +941,8 @@ export const clearVisualState = (): void => {
     flamethrowerDirection: { x: 0, y: 0, z: -1 },
     chronosAegisStates: new Map(),
     remotePlayerAttackStates: new Map(),
+    deathVisuals: new Map(),
+    deathVisualRevision: state.deathVisualRevision + 1,
     localViewmodelMovement: {
       hasMovementInput: false,
       isSprinting: false,

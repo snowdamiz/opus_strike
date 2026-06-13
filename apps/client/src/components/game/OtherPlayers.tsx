@@ -132,12 +132,10 @@ function setWalkDirectionFromComponents(
 }
 
 function isPlayerMovingForAnimation(player: Player, visualHorizontalSpeed = 0): boolean {
+  if (player.state !== 'alive') return false;
+
   const networkHorizontalSpeed = getHorizontalSpeed(player.velocity);
   const movement = player.movement;
-
-  if (player.state !== 'alive') {
-    return networkHorizontalSpeed > NETWORK_MOVING_SPEED || visualHorizontalSpeed > VISUAL_MOVING_SPEED;
-  }
 
   return (
     networkHorizontalSpeed > NETWORK_MOVING_SPEED ||

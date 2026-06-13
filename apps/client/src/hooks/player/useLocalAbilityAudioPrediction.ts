@@ -10,7 +10,7 @@ import {
   type HeroId,
   type InputState,
 } from '@voxel-strike/shared';
-import { playSharedSound } from '../useAudio';
+import { playSharedBlazeAirstrikeSound, playSharedSound } from '../useAudio';
 import { resetPredictedLocalAbilityVisuals } from './useLocalAbilityVisualPrediction';
 import {
   BLAZE_ROCKET_FIRE_INTERVAL,
@@ -57,7 +57,6 @@ export interface LocalAbilityAudioPredictionFrame {
   heroId: HeroId;
   inputState: InputState;
   ultimateCharge: number;
-  shadowStepTargeting: boolean;
   bombTargeting: boolean;
   grappleTrapTargeting: boolean;
   phantomPrimaryAmmo: number;
@@ -255,7 +254,6 @@ export function useLocalAbilityAudioPrediction() {
       heroId,
       inputState,
       ultimateCharge,
-      shadowStepTargeting,
       bombTargeting,
       grappleTrapTargeting,
       phantomPrimaryAmmo,
@@ -318,7 +316,6 @@ export function useLocalAbilityAudioPrediction() {
         if (
           primaryPressed &&
           primaryReady &&
-          !shadowStepTargeting &&
           !phantomPrimaryReloading &&
           predictedPhantomAmmoRef.current > 0 &&
           canPlayPrimary(now, PHANTOM_FIRE_INTERVAL / tempoMultiplier)
@@ -392,20 +389,20 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.ability1 && !previousInput.ability1) {
-      if (heroId === 'phantom' && !shadowStepTargeting && canReservePredictedSkillSound('phantom_blink', false, shadowStepTargeting)) {
+      if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_blink')) {
         markPredictedLocalAbilitySound('phantom_blink', now);
         void playSharedSound('phantomBlink', { durationMs: 900, volume: 1.1 });
       } else if (
         heroId === 'hookshot' &&
         !grappleTrapTargeting &&
         (canUseHookshotGrapple?.() ?? false) &&
-        canReservePredictedSkillSound('hookshot_grapple', false, shadowStepTargeting)
+        canReservePredictedSkillSound('hookshot_grapple')
       ) {
         playHookshotCastSounds('hookshot_grapple', 'hookshotGrapple');
       } else if (
         heroId === 'chronos' &&
         (hasChronosLifelineTarget?.() ?? false) &&
-        canReservePredictedSkillSound('chronos_lifeline_conduit', false, shadowStepTargeting)
+        canReservePredictedSkillSound('chronos_lifeline_conduit')
       ) {
         markPredictedLocalAbilitySound('chronos_lifeline_conduit', now);
         void playSharedSound('chronosLifeline');
@@ -413,21 +410,21 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.ability2 && !previousInput.ability2) {
-      if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_rocketjump', false, shadowStepTargeting)) {
+      if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_rocketjump')) {
         markPredictedLocalAbilitySound('blaze_rocketjump', now);
         void playSharedSound('blazeRocketJump');
-      } else if (heroId === 'chronos' && canReservePredictedSkillSound('chronos_timebreak', false, shadowStepTargeting)) {
+      } else if (heroId === 'chronos' && canReservePredictedSkillSound('chronos_timebreak')) {
         playPredictedChronosTimebreak(now);
       }
     }
 
     if (inputState.ultimate && !previousInput.ultimate) {
-      if (heroId === 'phantom' && !shadowStepTargeting && canReservePredictedSkillSound('phantom_veil', true, shadowStepTargeting)) {
+      if (heroId === 'phantom' && canReservePredictedSkillSound('phantom_veil', true)) {
         markPredictedLocalAbilitySound('phantom_veil', now);
         void playSharedSound('phantomVeil');
-      } else if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_airstrike', true, shadowStepTargeting)) {
+      } else if (heroId === 'blaze' && canReservePredictedSkillSound('blaze_airstrike', true)) {
         markPredictedLocalAbilitySound('blaze_airstrike', now);
-        void playSharedSound('blazeAirstrike');
+        void playSharedBlazeAirstrikeSound();
       } else if (heroId === 'hookshot' && canReservePredictedSkillSound('hookshot_grapple_trap', true, grappleTrapTargeting)) {
         playHookshotCastSounds('hookshot_grapple_trap', 'hookshotTrap', 1.15);
       }
