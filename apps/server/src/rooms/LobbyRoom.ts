@@ -20,6 +20,7 @@ import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
 import { wagerService, type CreateWagerOptions, type LobbyWagerSnapshot, type LockedWagerContext, type WagerPaymentStatusChanged } from '../wagers/service';
 import { wagerEventBus } from '../wagers/eventBus';
 import type { WagerRosterPlayer } from '../wagers/math';
+import prisma from '../db';
 import {
   isBotDifficulty,
   isHeroId,
@@ -355,6 +356,19 @@ export class LobbyRoom extends Room<LobbyState> {
       this.playerMatchmakingTickets.set(client.sessionId, matchmakingTicket);
     }
 
+    let canJoinInviteOnlyLobby = false;
+    try {
+      canJoinInviteOnlyLobby = await this.canJoinInviteOnlyLobby(authContext);
+    } catch (error) {
+      console.error('[LobbyRoom] Failed to verify lobby invite access:', error);
+    }
+
+    if (!canJoinInviteOnlyLobby) {
+      client.send('error', { message: 'This lobby is invite only' });
+      client.leave();
+      return;
+    }
+
     this.playerAuthContexts.set(client.sessionId, authContext);
 
     // Handle reconnection: identity comes from auth or explicit guest mode, not localStorage clientId.
@@ -503,6 +517,33 @@ export class LobbyRoom extends Room<LobbyState> {
     this.updateMetadata();
     this.broadcastMatchmakingStatus();
     this.tryStartMatchmakingMapVote();
+  }
+
+  private async canJoinInviteOnlyLobby(authContext: RoomAuthContext): Promise<boolean> {
+    if (this.isMatchmakingQueue() || this.state.isPublic || this.getHumanCount() === 0) {
+      return true;
+    }
+
+    const existingSessionId = this.clientIdToSessionId.get(authContext.userId);
+    if (existingSessionId && this.state.players.has(existingSessionId)) {
+      return true;
+    }
+
+    if (authContext.kind !== 'authenticated') {
+      return false;
+    }
+
+    const invite = await prisma.lobbyInvite.findFirst({
+      where: {
+        lobbyId: this.roomId,
+        toUserId: authContext.userId,
+        status: 'accepted',
+        expiresAt: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+
+    return Boolean(invite);
   }
 
   onLeave(client: Client, consented: boolean) {

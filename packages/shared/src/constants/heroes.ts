@@ -1,5 +1,10 @@
 import type { HeroDefinition, HeroId, HeroStats } from '../types/hero.js';
 import type { AbilityDefinition } from '../types/ability.js';
+import {
+  BLAZE_FLAMETHROWER_DAMAGE,
+  BLAZE_FLAMETHROWER_FUEL_DRAIN,
+  BLAZE_FLAMETHROWER_FUEL_REGEN,
+} from './physics.js';
 
 // Default hero stats - used as fallback when no hero is selected
 export const DEFAULT_HERO_STATS: HeroStats = {
@@ -20,10 +25,26 @@ export function getHeroStats(heroId: HeroId | null | undefined): HeroStats {
 export const PHANTOM_PRIMARY_MAGAZINE_SIZE = 12;
 export const PHANTOM_PRIMARY_RELOAD_SECONDS = 2;
 export const PHANTOM_PRIMARY_RELOAD_MS = PHANTOM_PRIMARY_RELOAD_SECONDS * 1000;
+export const PHANTOM_DIRE_BALL_DAMAGE = 18;
 export const PHANTOM_PRIMARY_FIRE_READY_MS = 240;
+export const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
 export const PHANTOM_VOID_RAY_COOLDOWN_SECONDS = 3;
 export const PHANTOM_VOID_RAY_COOLDOWN_MS = PHANTOM_VOID_RAY_COOLDOWN_SECONDS * 1000;
+export const PHANTOM_VOID_RAY_DAMAGE = 34;
+export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray
 export const PHANTOM_BLINK_DISTANCE = 8;
+export const PHANTOM_VOID_ZONE_RADIUS = 3;
+export const PHANTOM_VOID_ZONE_DAMAGE = 12;
+export const PHANTOM_VOID_ZONE_DURATION_SECONDS = 4;
+export const PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS = 500;
+export const PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS = 1;
+export const PHANTOM_VEIL_SPEED_BONUS_PERCENT = 30;
+export const PHANTOM_VEIL_SPEED_MULTIPLIER = 1 + PHANTOM_VEIL_SPEED_BONUS_PERCENT / 100;
+
+export const HOOKSHOT_CHAIN_HOOKS_DAMAGE = 16;
+export const HOOKSHOT_DRAG_HOOK_DAMAGE = 24;
+export const HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND = 15;
+export const HOOKSHOT_GRAPPLE_TRAP_DAMAGE_INTERVAL_MS = 1000;
 
 export const CHRONOS_LIFELINE_RADIUS = 14;
 export const CHRONOS_LIFELINE_HEAL = 40;
@@ -65,6 +86,74 @@ export const CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS = 360;
 export const CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED = 54;
 
 export const BLAZE_ROCKET_FIRE_INTERVAL_MS = 435;
+export const BLAZE_ROCKET_DAMAGE = 24;
+export const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
+export const BLAZE_BOMB_DAMAGE = 34;
+export const BLAZE_BOMB_SPLASH_RADIUS = 4;
+export const BLAZE_GEARSTORM_DAMAGE = 10;
+export const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 500;
+
+export type AbilityCardStatFormat = 'number' | 'seconds';
+
+export interface AbilityCardStat {
+  value: number;
+  label: string;
+  format?: AbilityCardStatFormat;
+  prefix?: string;
+  suffix?: string;
+}
+
+export const ABILITY_CARD_STATS = {
+  phantom_dire_ball: [
+    { value: PHANTOM_DIRE_BALL_DAMAGE, label: 'dmg' },
+    { value: PHANTOM_PRIMARY_MAGAZINE_SIZE, label: 'ammo' },
+    { value: PHANTOM_PRIMARY_RELOAD_SECONDS, label: 'reload', format: 'seconds' },
+  ],
+  phantom_void_ray: [
+    { value: PHANTOM_VOID_RAY_DAMAGE, label: 'dmg' },
+    { value: VOID_RAY_CHARGE_TIME / 1000, label: 'charge', format: 'seconds' },
+  ],
+  phantom_blink: [
+    { value: PHANTOM_VOID_ZONE_DAMAGE, label: 'dmg/tick' },
+  ],
+  phantom_personal_shield: [
+    { value: PHANTOM_PERSONAL_SHIELD_ABSORBED_HITS, label: 'hit', prefix: 'absorbs ' },
+  ],
+  phantom_veil: [
+    { value: PHANTOM_VEIL_SPEED_BONUS_PERCENT, label: 'speed', prefix: '+', suffix: '%' },
+  ],
+  hookshot_basic_attack: [
+    { value: HOOKSHOT_CHAIN_HOOKS_DAMAGE, label: 'dmg' },
+  ],
+  hookshot_heavy_attack: [
+    { value: HOOKSHOT_DRAG_HOOK_DAMAGE, label: 'dmg' },
+  ],
+  hookshot_grapple_trap: [
+    { value: HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND, label: 'dmg/s' },
+  ],
+  blaze_rocket: [
+    { value: BLAZE_ROCKET_DAMAGE, label: 'dmg' },
+  ],
+  blaze_bomb: [
+    { value: BLAZE_BOMB_DAMAGE, label: 'dmg' },
+  ],
+  blaze_flamethrower: [
+    { value: BLAZE_FLAMETHROWER_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_FLAMETHROWER_FUEL_DRAIN, label: 'drain', suffix: '/s' },
+    { value: BLAZE_FLAMETHROWER_FUEL_REGEN, label: 'regen', suffix: '/s' },
+  ],
+  blaze_airstrike: [
+    { value: BLAZE_GEARSTORM_DAMAGE, label: 'dmg/tick' },
+  ],
+  chronos_verdant_pulse: [
+    { value: CHRONOS_VERDANT_PULSE_DAMAGE, label: 'dmg' },
+    { value: CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE, label: 'dmg with AOE during F' },
+  ],
+  chronos_lifeline_conduit: [
+    { value: CHRONOS_LIFELINE_HEAL, label: 'heal' },
+    { value: CHRONOS_LIFELINE_MAX_TARGETS, label: 'targets' },
+  ],
+} as const satisfies Record<string, readonly AbilityCardStat[]>;
 
 export const HERO_DEFINITIONS: Record<HeroId, HeroDefinition> = {
   phantom: {
@@ -163,7 +252,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 10,
     charges: 2,
     chargeRegenTime: 10, // Both charges reset after 10 seconds
-    description: 'Instantly teleport 8m in your movement direction, leaving a void zone at the destination. 2 charges.',
+    description: 'Instantly teleport in your movement direction, leaving a void zone at the destination. 2 charges.',
   },
   phantom_void_ray: {
     id: 'phantom_void_ray',
@@ -261,7 +350,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'movement',
     targeting: 'instant',
     cooldown: 8,
-    description: 'Launch yourself with an explosion. Deals damage to nearby enemies.',
+    description: 'Launch yourself upward and forward with an explosion.',
   },
   blaze_airstrike: {
     id: 'blaze_airstrike',
@@ -315,6 +404,3 @@ export function getAbilityDefinition(abilityId: string): AbilityDefinition | und
 }
 
 export const ALL_HERO_IDS: HeroId[] = Object.keys(HERO_DEFINITIONS) as HeroId[];
-
-// Phantom ability constants
-export const VOID_RAY_CHARGE_TIME = 1000; // milliseconds to fully charge void ray

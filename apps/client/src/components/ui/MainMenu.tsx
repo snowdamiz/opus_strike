@@ -82,14 +82,14 @@ export function MainMenu() {
     }
   }, [isConnected, isSessionLoading]);
 
-  // Handle user authenticated - proceed to lobby browser
+  // Handle user authenticated.
   useEffect(() => {
     if (isAuthenticated && user && !isNewUser) {
       // User exists, set their info and proceed
       storeSetPlayerName(user.name);
       setUser(user.id, user.name, user.stats);
       setWalletAddress(user.walletAddress ?? null);
-      setAppPhase('browsing_lobbies');
+      setAppPhase('menu');
     }
   }, [isAuthenticated, user, isNewUser]);
 
@@ -149,7 +149,7 @@ export function MainMenu() {
       storeSetPlayerName(registeredUser.name);
       setUser(registeredUser.id, registeredUser.name, registeredUser.stats);
       setWalletAddress(registeredUser.walletAddress ?? null);
-      setAppPhase('browsing_lobbies');
+      setAppPhase('menu');
     } catch (err: any) {
       setNameError(err.message || 'Registration failed');
     } finally {

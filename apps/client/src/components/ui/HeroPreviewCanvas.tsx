@@ -75,7 +75,7 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
     idleIntensity: 0.9,
     shadows: true,
     jumpFraming: {
-      fov: 44,
+      fov: 40,
       bodyLift: -0.22,
       floorScale: 1.08,
     },

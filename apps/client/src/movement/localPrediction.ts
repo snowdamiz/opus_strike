@@ -10,6 +10,7 @@ import {
   BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE,
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PHANTOM_BLINK_DISTANCE,
+  PHANTOM_VEIL_SPEED_MULTIPLIER,
   inputStateToMovementButtons,
   compareMovementSeq,
   isMovementSeqAfter,
@@ -147,7 +148,7 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
     const activatedAt = phantomVeil.activatedAt ?? Date.now();
     const durationMs = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 0) * 1000;
     if (durationMs <= 0 || Date.now() - activatedAt < durationMs) {
-      activeSpeedMultiplier *= 1.3;
+      activeSpeedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     }
   }
 

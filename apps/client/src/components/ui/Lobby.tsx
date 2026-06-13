@@ -58,6 +58,16 @@ function BotIcon({ className }: { className?: string }) {
   );
 }
 
+function InvitePlayerIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M15 19a6 6 0 00-12 0" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M9 11a4 4 0 100-8 4 4 0 000 8z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.1} d="M19 8v6m3-3h-6" />
+    </svg>
+  );
+}
+
 type LobbyTeam = 'red' | 'blue';
 type LobbyBotHero = HeroId | '';
 
@@ -221,6 +231,7 @@ export function Lobby() {
   const wagerEnabled = currentLobbyWager.enabled;
   const currentMatchMode = matchmakingStatus.matchMode ?? currentLobbyWager.matchMode ?? null;
   const botsAllowed = !wagerEnabled && currentMatchMode === 'custom';
+  const invitesAllowed = currentMatchMode === 'custom' || currentMatchMode === 'custom_wager';
   const localPaymentStatus = currentPlayer?.paymentStatus || '';
   const localPlayerPaid = localPaymentStatus === 'credited' || localPaymentStatus === 'settled';
   const localPaymentConfirming = localPaymentStatus === 'intent_created' || localPaymentStatus === 'submitted' || localPaymentStatus === 'confirmed';
@@ -269,12 +280,16 @@ export function Lobby() {
 
   const handleBack = () => {
     leaveLobby();
-    setAppPhase('browsing_lobbies');
+    setAppPhase('menu');
   };
 
   const handleAddBot = (team: LobbyTeam) => {
     playButtonClick();
     addLobbyBot({ difficulty: 'normal', team });
+  };
+
+  const handleInvitePlayer = () => {
+    setShowSocial(true);
   };
 
   const handleRemoveBot = (botId: string) => {
@@ -443,8 +458,10 @@ export function Lobby() {
             isSelected={currentTeam === 'red'}
             isLobbyHost={isLobbyHost}
             botsAllowed={botsAllowed}
+            invitesAllowed={invitesAllowed}
             onSelect={() => handleTeamChange('red')}
             onAddBot={handleAddBot}
+            onInvite={handleInvitePlayer}
             onKick={handleKick}
             onRemoveBot={handleRemoveBot}
             onBotTeamChange={handleBotTeamChange}
@@ -462,8 +479,10 @@ export function Lobby() {
             isSelected={currentTeam === 'blue'}
             isLobbyHost={isLobbyHost}
             botsAllowed={botsAllowed}
+            invitesAllowed={invitesAllowed}
             onSelect={() => handleTeamChange('blue')}
             onAddBot={handleAddBot}
+            onInvite={handleInvitePlayer}
             onKick={handleKick}
             onRemoveBot={handleRemoveBot}
             onBotTeamChange={handleBotTeamChange}
@@ -653,8 +672,10 @@ interface FactionPanelProps {
   isSelected: boolean;
   isLobbyHost: boolean;
   botsAllowed: boolean;
+  invitesAllowed: boolean;
   onSelect: () => void;
   onAddBot: (team: LobbyTeam) => void;
+  onInvite: () => void;
   onKick: (id: string) => void;
   onRemoveBot: (id: string) => void;
   onBotTeamChange: (id: string, team: LobbyTeam) => void;
@@ -670,8 +691,10 @@ function FactionPanel({
   isSelected,
   isLobbyHost,
   botsAllowed,
+  invitesAllowed,
   onSelect,
   onAddBot,
+  onInvite,
   onKick,
   onRemoveBot,
   onBotTeamChange,
@@ -684,6 +707,7 @@ function FactionPanel({
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const canJoin = !isSelected && emptySlots > 0;
   const canAddBot = botsAllowed && isLobbyHost && emptySlots > 0;
+  const canInvite = invitesAllowed && isLobbyHost && emptySlots > 0;
   const factionTeam = faction.id as LobbyTeam;
 
   return (
@@ -744,14 +768,16 @@ function FactionPanel({
           />
         ))}
 
-        {(canJoin || canAddBot) && (
+        {(canJoin || canAddBot || canInvite) && (
           <JoinTeamCard
             faction={faction}
             reverse={reverse}
             canJoin={canJoin}
             canAddBot={canAddBot}
+            canInvite={canInvite}
             onJoin={onSelect}
             onAddBot={() => onAddBot(factionTeam)}
+            onInvite={onInvite}
             compact
           />
         )}
@@ -765,17 +791,19 @@ interface JoinTeamCardProps {
   reverse?: boolean;
   canJoin: boolean;
   canAddBot: boolean;
+  canInvite: boolean;
   onJoin: () => void;
   onAddBot: () => void;
+  onInvite: () => void;
   compact?: boolean;
 }
 
-function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot, compact }: JoinTeamCardProps) {
+function JoinTeamCard({ faction, reverse, canJoin, canAddBot, canInvite, onJoin, onAddBot, onInvite, compact }: JoinTeamCardProps) {
   const Icon = faction.id === 'red' ? SolarIcon : VoidIcon;
   const { playButtonClick } = useUISounds();
   const containerClass = compact ? 'h-14 gap-2' : 'h-16 gap-2.5';
   const iconClass = compact ? 'h-10 w-10' : 'h-11 w-11';
-  const addBotClass = compact ? 'h-14 w-14' : 'h-16 w-16';
+  const actionButtonClass = compact ? 'h-14 w-14' : 'h-16 w-16';
 
   return (
     <div className={`flex w-full items-stretch ${containerClass} ${reverse ? 'flex-row-reverse' : ''}`}>
@@ -811,13 +839,29 @@ function JoinTeamCard({ faction, reverse, canJoin, canAddBot, onJoin, onAddBot, 
         </button>
       )}
 
+      {canInvite && (
+        <button
+          type="button"
+          onClick={() => { playButtonClick(); onInvite(); }}
+          aria-label="Invite player"
+          title="Invite player"
+          className={`group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-white/[0.045] text-white/55 transition-all hover:bg-white/[0.08] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30`}
+          style={{
+            borderColor: `${faction.primaryColor}28`,
+          }}
+        >
+          <InvitePlayerIcon className="h-5 w-5" />
+          <span className="absolute right-2 top-1.5 font-display text-[11px] leading-none" style={{ color: faction.primaryColor }}>+</span>
+        </button>
+      )}
+
       {canAddBot && (
         <button
           type="button"
           onClick={() => { playButtonClick(); onAddBot(); }}
           aria-label={`Add ${faction.name} bot`}
           title="Add bot"
-          className={`group relative flex ${addBotClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40`}
+          className={`group relative flex ${actionButtonClass} shrink-0 items-center justify-center rounded-xl border border-dashed bg-cyan-500/[0.055] text-cyan-300 transition-all hover:bg-cyan-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40`}
           style={{
             borderColor: `${faction.primaryColor}28`,
           }}

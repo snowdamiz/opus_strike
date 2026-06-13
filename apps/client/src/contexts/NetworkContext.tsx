@@ -1,6 +1,6 @@
 import { createContext, useContext, useRef, useCallback, ReactNode } from 'react';
 import { Client, Room } from 'colyseus.js';
-import { useGameStore, LobbyPlayer, LobbyInfo, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
+import { useGameStore, LobbyPlayer, LobbyWagerState, MapVoteOption, MapVoteRecord, WagerPaymentIntent, WagerPaymentTransaction } from '../store/gameStore';
 import { config } from '../config/environment';
 import { getClientId } from '../utils/clientId';
 import {
@@ -59,12 +59,9 @@ type StartPracticeGameOptions = { mapSeed?: number };
 
 interface NetworkContextType {
   // Lobby operations
-  fetchLobbies: () => Promise<LobbyInfo[]>;
-  watchLobbies: () => () => void;
   createLobby: (
     playerName: string,
     lobbyName?: string,
-    isPrivate?: boolean,
     options?: CreateLobbyOptions
   ) => Promise<void>;
   quickPlay: (playerName: string) => Promise<void>;
@@ -317,7 +314,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setLocalPlayer,
     updatePlayer,
     removePlayer,
-    setAvailableLobbies,
     setCurrentLobby,
     setCurrentLobbyWager,
     setLobbyPlayers,
@@ -345,45 +341,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ==================== LOBBY OPERATIONS ====================
-
-  const fetchLobbies = useCallback(async (): Promise<LobbyInfo[]> => {
-    try {
-      const response = await fetch(`${getHttpUrl()}/lobbies`);
-      const data = await response.json();
-      const lobbies = data.lobbies || [];
-      setAvailableLobbies(lobbies);
-      return lobbies;
-    } catch (error) {
-      loggers.network.error('failed to fetch lobbies', error);
-      return [];
-    }
-  }, [setAvailableLobbies]);
-
-  const watchLobbies = useCallback(() => {
-    if (typeof EventSource === 'undefined') {
-      fetchLobbies();
-      return () => {};
-    }
-
-    const events = new EventSource(`${getHttpUrl()}/lobbies/stream`);
-
-    events.addEventListener('lobbies', (event) => {
-      try {
-        const data = JSON.parse((event as MessageEvent).data);
-        setAvailableLobbies(data.lobbies || []);
-      } catch (error) {
-        loggers.network.error('failed to parse lobby stream event', error);
-      }
-    });
-
-    events.addEventListener('error', () => {
-      if (events.readyState === EventSource.CLOSED) {
-        fetchLobbies();
-      }
-    });
-
-    return () => events.close();
-  }, [fetchLobbies, setAvailableLobbies]);
 
   const rejectPendingVoiceTokenRequests = useCallback((message: string) => {
     voiceTokenRequestsRef.current.forEach((pending) => {
@@ -853,7 +810,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const createLobby = useCallback(async (
     playerName: string,
     lobbyName?: string,
-    isPrivate?: boolean,
     options?: CreateLobbyOptions
   ) => {
     setLoading(true);
@@ -871,7 +827,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lobbyRoomRef.current = await client.create('lobby_room', {
         playerName,
         lobbyName: lobbyName || `${playerName}'s Lobby`,
-        isPrivate: isPrivate || false,
+        isPrivate: true,
         clientId,
         initialBotCount: options?.initialBotCount || 0,
         botFillMode: options?.botFillMode || 'manual',
@@ -1043,7 +999,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
     isJoiningGameRef.current = false;
     resetLobby();
-    setAppPhase('browsing_lobbies');
+    setAppPhase('menu');
     setConnected(false);
   }, [resetLobby, setAppPhase, setConnected]);
 
@@ -1312,7 +1268,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPracticeMode(false);
       setGamePhase('waiting');
       resetLobby();
-      setAppPhase('browsing_lobbies');
+      setAppPhase('menu');
     });
 
     setConnected(true);
@@ -1412,7 +1368,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     resetLobby();
     clearMatchSummary();
     setGamePhase('waiting' as any);
-    setAppPhase('browsing_lobbies');
+    setAppPhase('menu');
   }, [setRoomId, setPlayerId, setConnected, setPracticeMode, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests]);
 
   const disconnect = useCallback(() => {
@@ -1628,8 +1584,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
   return (
     <NetworkContext.Provider value={{
-      fetchLobbies,
-      watchLobbies,
       createLobby,
       quickPlay,
       rankedPlay,

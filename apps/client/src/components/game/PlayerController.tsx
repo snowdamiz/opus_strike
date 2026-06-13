@@ -78,6 +78,7 @@ import {
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_SUBSTEP_SECONDS,
+  PHANTOM_VEIL_SPEED_MULTIPLIER,
   TICK_RATE,
   createEmptyInputState,
   getHeroStats,
@@ -1000,7 +1001,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     let { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
     if (localPlayer.heroId === 'phantom' && localPlayer.abilities?.['phantom_veil']?.isActive) {
-      speedMultiplier *= 1.3;
+      speedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     }
 
     // Handle hero-specific abilities

@@ -359,6 +359,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
         castShadow={!isVeiled}
         bodyOpacity={isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1}
         bodyOpacityRef={bodyOpacityRef}
+        showOutline={!isVeiled}
       />
 
       {/* Nameplate */}

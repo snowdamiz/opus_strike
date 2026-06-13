@@ -10,6 +10,10 @@ import {
   CHRONOS_ASCENDANT_PARADOX_LIFT_VERTICAL_FORCE,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
   PHANTOM_BLINK_DISTANCE,
+  PHANTOM_VOID_ZONE_DAMAGE,
+  PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
+  PHANTOM_VOID_ZONE_DURATION_SECONDS,
+  PHANTOM_VOID_ZONE_RADIUS,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
@@ -19,10 +23,10 @@ const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>();
 // VOID ZONE CONFIGURATION
 // ============================================================================
 
-export const VOID_ZONE_RADIUS = 3;
-export const VOID_ZONE_DAMAGE = 12;
-export const VOID_ZONE_DURATION = 4; // seconds
-export const VOID_ZONE_DAMAGE_INTERVAL = 500; // ms between damage ticks
+export const VOID_ZONE_RADIUS = PHANTOM_VOID_ZONE_RADIUS;
+export const VOID_ZONE_DAMAGE = PHANTOM_VOID_ZONE_DAMAGE;
+export const VOID_ZONE_DURATION = PHANTOM_VOID_ZONE_DURATION_SECONDS;
+export const VOID_ZONE_DAMAGE_INTERVAL = PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS;
 
 export interface VoidZone {
   id: string;

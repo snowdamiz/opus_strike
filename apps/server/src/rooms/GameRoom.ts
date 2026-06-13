@@ -40,7 +40,13 @@ import {
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
   BLAZE_GEARSTORM_RADIUS,
+  BLAZE_GEARSTORM_DAMAGE,
+  BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
+  BLAZE_ROCKET_DAMAGE,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
+  BLAZE_ROCKET_SPLASH_RADIUS,
+  BLAZE_BOMB_DAMAGE,
+  BLAZE_BOMB_SPLASH_RADIUS,
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS,
   CHRONOS_ASCENDANT_PARADOX_PULSE_DAMAGE,
@@ -63,10 +69,18 @@ import {
   CHRONOS_VERDANT_PULSE_FIRE_READY_MS,
   CHRONOS_VERDANT_PULSE_SPEED,
   GRAPPLE_MAX_DISTANCE,
+  HOOKSHOT_CHAIN_HOOKS_DAMAGE,
+  HOOKSHOT_DRAG_HOOK_DAMAGE,
+  HOOKSHOT_GRAPPLE_TRAP_DAMAGE_INTERVAL_MS,
+  HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND,
+  PHANTOM_DIRE_BALL_DAMAGE,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
+  PHANTOM_PRIMARY_COOLDOWN_MS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_RELOAD_MS,
+  PHANTOM_VEIL_SPEED_MULTIPLIER,
   PHANTOM_VOID_RAY_COOLDOWN_MS,
+  PHANTOM_VOID_RAY_DAMAGE,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
@@ -476,8 +490,6 @@ interface AttackConfig {
   damageType: string;
 }
 
-const BLAZE_ROCKET_DAMAGE = 24;
-const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
 const BLAZE_ROCKET_SPEED = 70;
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS = 300;
@@ -487,10 +499,6 @@ const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
 const BLAZE_BOMB_MAX_RANGE = 60;
 const BLAZE_BOMB_MIN_RANGE = 3;
-const BLAZE_BOMB_DAMAGE = 34;
-const BLAZE_BOMB_SPLASH_RADIUS = 4;
-const BLAZE_GEARSTORM_DAMAGE = 10;
-const BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS = 500;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER = 1.7;
 const ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER = 1.15;
@@ -635,7 +643,6 @@ const BOT_SKILL_PROFILES: Record<BotDifficulty, BotSkillProfile> = {
     retreatHealthRatio: 0.24,
   },
 };
-const PHANTOM_PRIMARY_COOLDOWN_MS = 250;
 const OBJECTIVE_SUPPRESSION_MS = 650;
 const DAMAGE_CAP_WINDOW_MS = 1000;
 const DAMAGE_CAP_PER_SOURCE_TARGET_MULTIPLIER = 2.25;
@@ -644,14 +651,14 @@ const SECURITY_EVENT_LOG_SAMPLE_MS = 5000;
 const MOVEMENT_CORRECTION_LOG_SAMPLE_MS = 1000;
 const MAX_SECURITY_LOG_SAMPLE_KEYS = 1024;
 const PRIMARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: 18, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
-  hookshot: { damage: 16, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
+  phantom: { damage: PHANTOM_DIRE_BALL_DAMAGE, range: 30, cooldownMs: PHANTOM_PRIMARY_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'dire_ball' },
+  hookshot: { damage: HOOKSHOT_CHAIN_HOOKS_DAMAGE, range: 22, cooldownMs: 600, coneDot: Math.cos(0.2), damageType: 'chain_hooks' },
   blaze: { damage: BLAZE_ROCKET_DAMAGE, range: 36, cooldownMs: BLAZE_ROCKET_FIRE_INTERVAL_MS, coneDot: Math.cos(0.22), radius: BLAZE_ROCKET_SPLASH_RADIUS, damageType: 'rocket' },
   chronos: { damage: CHRONOS_VERDANT_PULSE_DAMAGE, range: 34, cooldownMs: CHRONOS_VERDANT_PULSE_COOLDOWN_MS, coneDot: Math.cos(0.18), damageType: 'verdant_pulse' },
 };
 const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
-  phantom: { damage: 34, range: 42, cooldownMs: PHANTOM_VOID_RAY_COOLDOWN_MS, coneDot: Math.cos(0.12), damageType: 'void_ray' },
-  hookshot: { damage: 24, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
+  phantom: { damage: PHANTOM_VOID_RAY_DAMAGE, range: 42, cooldownMs: PHANTOM_VOID_RAY_COOLDOWN_MS, coneDot: Math.cos(0.12), damageType: 'void_ray' },
+  hookshot: { damage: HOOKSHOT_DRAG_HOOK_DAMAGE, range: 28, cooldownMs: 3600, coneDot: Math.cos(0.14), damageType: 'drag_hook' },
   blaze: { damage: BLAZE_BOMB_DAMAGE, range: BLAZE_BOMB_MAX_RANGE, cooldownMs: BLAZE_BOMB_COOLDOWN_MS, coneDot: Math.cos(0.32), radius: BLAZE_BOMB_SPLASH_RADIUS, damageType: 'bomb' },
 };
 const HOOKSHOT_SPEED = 38;
@@ -664,8 +671,6 @@ const GRAPPLE_TRAP_MAX_RANGE = 30;
 const GRAPPLE_TRAP_THROW_SPEED = 30;
 const GRAPPLE_TRAP_GRAVITY = 25;
 const GRAPPLE_TRAP_RADIUS = 8;
-const GRAPPLE_TRAP_DAMAGE = 15;
-const GRAPPLE_TRAP_DAMAGE_INTERVAL_MS = 1000;
 const GRAPPLE_TRAP_DURATION = 8;
 
 export class GameRoom extends Room<GameState> {
@@ -4456,7 +4461,7 @@ export class GameRoom extends Room<GameState> {
         if (dx * dx + dz * dz > radiusSq) continue;
 
         const lastDamage = trap.lastDamageTick.get(target.id) || 0;
-        if (now - lastDamage < GRAPPLE_TRAP_DAMAGE_INTERVAL_MS) continue;
+        if (now - lastDamage < HOOKSHOT_GRAPPLE_TRAP_DAMAGE_INTERVAL_MS) continue;
         trap.lastDamageTick.set(target.id, now);
 
         const pullDirection = this.direction2DFromTo(target.position, trap.position);
@@ -4466,7 +4471,7 @@ export class GameRoom extends Room<GameState> {
           this.markMovementBarrier(target.id, 'knockback');
         }
 
-        this.applyDamage(target, GRAPPLE_TRAP_DAMAGE, owner ? trap.ownerId : null, 'grapple_trap', {
+        this.applyDamage(target, HOOKSHOT_GRAPPLE_TRAP_DAMAGE_PER_SECOND, owner ? trap.ownerId : null, 'grapple_trap', {
           abilityId: 'hookshot_grapple_trap',
           sourcePosition: trap.position,
         });
@@ -5930,7 +5935,7 @@ export class GameRoom extends Room<GameState> {
 
   private getActiveSpeedMultiplier(player: Player): number {
     let multiplier = 1;
-    if (player.abilities.get('phantom_veil')?.isActive) multiplier *= 1.3;
+    if (player.abilities.get('phantom_veil')?.isActive) multiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     if (this.isChronosAscendantActive(player)) {
       multiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
     }

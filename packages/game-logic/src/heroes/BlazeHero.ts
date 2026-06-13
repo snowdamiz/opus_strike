@@ -63,7 +63,6 @@ export class BlazeHero extends HeroBase {
         type: 'rocket_jump',
         position: context.position,
         direction: launchForce,
-        value: 30, // Damage to nearby enemies
       },
     };
   }

@@ -1,15 +1,23 @@
-import { useState, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
-import { HeroPreviewCanvas } from './HeroPreviewCanvas';
+import { FeaturedHeroPreview, HERO_SHOWCASE_ANIMATION_MODE } from './FeaturedHeroPreview';
 import { HeroIcon } from './HeroIcons';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { ABILITY_COLORS, HERO_COLORS } from '../../styles/colorTokens';
 
 const SIDE_STACK_CLASS = 'flex flex-col gap-1.5 xl:gap-2';
+const GLASS_CARD_STYLE = {
+  backdropFilter: 'blur(12px) saturate(1.12)',
+  WebkitBackdropFilter: 'blur(12px) saturate(1.12)',
+} satisfies CSSProperties;
 
-export function HeroesPage() {
-  const [selectedHero, setSelectedHero] = useState<HeroId>('phantom');
+interface HeroesPageProps {
+  selectedHero: HeroId;
+  onSelectHero: (heroId: HeroId) => void;
+}
+
+export function HeroesPage({ selectedHero, onSelectHero }: HeroesPageProps) {
   const heroInfo = HERO_DEFINITIONS[selectedHero];
   const heroColor = HERO_COLORS[selectedHero];
   const kitItems = getHeroSkillItems(selectedHero);
@@ -31,21 +39,20 @@ export function HeroesPage() {
             return (
               <button
                 key={heroId}
-                onClick={() => setSelectedHero(heroId)}
-                className="group w-full relative overflow-hidden rounded-lg text-left transition-transform hover:-translate-y-0.5"
+                onClick={() => onSelectHero(heroId)}
+                className="group w-full relative overflow-hidden rounded-lg text-left"
                 style={{
+                  ...GLASS_CARD_STYLE,
                   background: isSelected
-                    ? `linear-gradient(135deg, ${color}24, rgb(var(--color-strike-surface) / 0.88) 58%)`
-                    : 'rgb(var(--color-strike-surface) / 0.76)',
-                  border: isSelected ? `1px solid ${color}aa` : '1px solid rgba(255,255,255,0.1)',
-                  boxShadow: isSelected ? `0 0 22px ${color}22, inset 0 1px 0 rgba(255,255,255,0.08)` : 'none',
+                    ? `linear-gradient(135deg, ${color}2b, rgb(var(--color-strike-surface) / 0.52) 62%)`
+                    : 'linear-gradient(135deg, rgba(255,255,255,0.045), rgb(var(--color-strike-surface) / 0.42))',
+                  border: isSelected ? `1px solid ${color}b5` : '1px solid rgba(255,255,255,0.13)',
+                  boxShadow: isSelected
+                    ? `0 12px 32px rgba(0,0,0,0.18), 0 0 22px ${color}28, inset 0 1px 0 rgba(255,255,255,0.1)`
+                    : '0 10px 28px rgba(0,0,0,0.13), inset 0 1px 0 rgba(255,255,255,0.07)',
                 }}
               >
-                <div
-                  className="absolute inset-x-0 top-0 h-px opacity-70"
-                  style={{ background: `linear-gradient(90deg, transparent, ${color}, transparent)` }}
-                />
-                <div className="relative flex items-center gap-2.5 p-2">
+                <div className="relative flex items-center gap-3 p-2.5">
                   <div
                     className="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0"
                     style={{
@@ -56,16 +63,13 @@ export function HeroesPage() {
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <h3
-                        className="font-display text-[15px] truncate leading-none"
-                        style={{ color: isSelected ? 'white' : 'rgba(255,255,255,0.78)' }}
-                      >
-                        {hero.name.toUpperCase()}
-                      </h3>
-                      <span className="font-mono text-[9px] text-white/30">{hero.stats.maxHealth}</span>
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5">
+                    <h3
+                      className="font-display text-[15px] truncate leading-none"
+                      style={{ color: isSelected ? 'white' : 'rgba(255,255,255,0.78)' }}
+                    >
+                      {hero.name.toUpperCase()}
+                    </h3>
+                    <div className="mt-1.5 flex items-center">
                       <span
                         className="text-[9px] px-1.5 py-0.5 rounded uppercase font-body font-semibold leading-none"
                         style={{
@@ -76,7 +80,6 @@ export function HeroesPage() {
                       >
                         {hero.role}
                       </span>
-                      <span className="text-[9px] uppercase text-white/35 font-body">{hero.movementFocus}</span>
                     </div>
                   </div>
                 </div>
@@ -87,18 +90,12 @@ export function HeroesPage() {
       </div>
 
       <div className="min-w-0 flex flex-col items-center justify-center relative">
-        <div
-          className="absolute left-1/2 top-[43%] h-[54%] w-[56%] -translate-x-1/2 -translate-y-1/2 opacity-30 blur-3xl pointer-events-none"
-          style={{ background: `radial-gradient(ellipse at center, ${heroColor}, transparent 68%)` }}
-        />
-
         <div className="relative flex flex-col items-center menu-compact-scale">
-          <HeroPreviewCanvas
+          <FeaturedHeroPreview
             heroId={selectedHero}
             accentColor={heroColor}
-            size="detail"
-            initialYaw={Math.PI - 0.2}
-            className="relative h-[clamp(17rem,42vh,29rem)] w-[clamp(15rem,28vw,28rem)]"
+            initialYaw={Math.PI - 0.18}
+            animationMode={HERO_SHOWCASE_ANIMATION_MODE}
           />
 
           <div className="text-center w-[clamp(18rem,24vw,34rem)] mt-3 xl:mt-4">
@@ -149,7 +146,7 @@ export function HeroesPage() {
 
 function QuickStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-strike-surface/75 px-3 py-2 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+    <div className="rounded-lg border border-white/10 bg-strike-surface/45 px-3.5 py-2.5 text-center shadow-[0_10px_26px_rgba(0,0,0,0.16),inset_0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-md">
       <span className="block font-display text-2xl text-white leading-none">{value}</span>
       <span className="mt-0.5 block text-[9px] text-white/45 font-mono uppercase tracking-[0.22em]">{label}</span>
     </div>
@@ -165,20 +162,27 @@ function AbilityCard({ item, color }: { item: HeroSkillItem; color: string }) {
     <div
       className="relative overflow-hidden rounded-lg"
       style={{
+        ...GLASS_CARD_STYLE,
         background: isUltimate
-          ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimatePanelStart}, rgb(var(--color-strike-surface) / 0.86) 62%)`
+          ? `linear-gradient(135deg, ${ABILITY_COLORS.ultimatePanelStart}, rgb(var(--color-strike-surface) / 0.46) 66%)`
           : isClick
-            ? `linear-gradient(135deg, ${color}18, rgb(var(--color-strike-surface) / 0.86) 54%)`
-            : 'rgb(var(--color-strike-surface) / 0.84)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        boxShadow: isUltimate ? `0 0 22px ${ABILITY_COLORS.ultimateGlow}` : 'inset 0 1px 0 rgba(255,255,255,0.05)',
+            ? `linear-gradient(135deg, ${color}18, rgb(var(--color-strike-surface) / 0.46) 58%)`
+            : 'linear-gradient(135deg, rgba(255,255,255,0.038), rgb(var(--color-strike-surface) / 0.4))',
+        border: '1px solid rgba(255,255,255,0.13)',
+        boxShadow: isUltimate
+          ? `0 12px 34px rgba(0,0,0,0.2), 0 0 22px ${ABILITY_COLORS.ultimateGlow}, inset 0 1px 0 rgba(255,255,255,0.1)`
+          : '0 12px 30px rgba(0,0,0,0.16), inset 0 1px 0 rgba(255,255,255,0.08)',
       }}
     >
+      <div className="absolute inset-x-0 top-0 h-px bg-white/15" />
       <div
-        className="absolute inset-x-0 top-0 h-px bg-white/10"
+        className="absolute inset-y-0 left-0 w-px opacity-70"
+        style={{
+          background: `linear-gradient(180deg, transparent, ${isUltimate ? ABILITY_COLORS.ultimate : color}66, transparent)`,
+        }}
       />
-      <div className="relative p-2.5">
-        <div className="flex items-start gap-2.5">
+      <div className="relative p-3">
+        <div className="flex items-start gap-3">
           <HeroSkillIcon item={item} color={color} />
 
           <div className="flex-1 min-w-0">
@@ -209,12 +213,11 @@ function getMetaPills(item: HeroSkillItem): string[] {
   const duration = item.duration ?? 0;
   const charges = item.charges ?? 0;
   const chargeRegenTime = item.chargeRegenTime ?? cooldown;
-  const resourceCost = item.resourceCost ?? 0;
 
   if (charges > 1) {
     pills.push(`${charges} charges`);
     if (chargeRegenTime > 0) {
-      pills.push(`${formatSecondsValue(chargeRegenTime)} recharge`);
+      pills.push(`${formatSecondsValue(chargeRegenTime)} cd`);
     }
   } else if (!suppressCooldown && cooldown > 0) {
     pills.push(`${formatSecondsValue(cooldown)} cd`);
@@ -224,18 +227,18 @@ function getMetaPills(item: HeroSkillItem): string[] {
     pills.push(`${formatSecondsValue(duration)} active`);
   }
 
-  if (resourceCost > 0) {
-    pills.push(`${resourceCost} ult`);
-  }
-
   return [...pills, ...(item.meta ?? [])];
 }
 
 function InputTag({ children, color }: { children: ReactNode; color: string }) {
   return (
     <span
-      className="shrink-0 rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-white"
-      style={{ background: `${color}26`, border: `1px solid ${color}66` }}
+      className="shrink-0 rounded-md px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em] text-white"
+      style={{
+        background: `${color}22`,
+        border: `1px solid ${color}70`,
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08)',
+      }}
     >
       {children}
     </span>
@@ -245,10 +248,11 @@ function InputTag({ children, color }: { children: ReactNode; color: string }) {
 function MetaPill({ children, color }: { children: ReactNode; color: string }) {
   return (
     <span
-      className="rounded px-1.5 py-0.5 text-[9px] font-mono font-medium text-white/80"
+      className="rounded-md px-2 py-0.5 text-[9px] font-mono font-medium text-white/80"
       style={{
-        background: `${color}1c`,
-        border: `1px solid ${color}44`,
+        background: `${color}18`,
+        border: `1px solid ${color}4f`,
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06)',
       }}
     >
       {children}

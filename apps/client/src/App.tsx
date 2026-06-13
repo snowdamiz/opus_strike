@@ -338,7 +338,7 @@ export function App() {
 
   // Show appropriate screen based on app phase
   // Authentication is now handled within MainLobby
-  if (appPhase === 'menu' || appPhase === 'browsing_lobbies') {
+  if (appPhase === 'menu') {
     return <MainLobby />;
   }
 

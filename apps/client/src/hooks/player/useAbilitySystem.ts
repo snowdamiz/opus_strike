@@ -5,7 +5,7 @@
  */
 
 import { useRef, useCallback } from 'react';
-import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
+import { ABILITY_DEFINITIONS, PHANTOM_VEIL_SPEED_MULTIPLIER } from '@voxel-strike/shared';
 import { useGameStore } from '../../store/gameStore';
 import type { AbilityActiveState } from './types';
 import { getLocalChronosTimebreakTempoMultiplier } from './chronosTimebreakTempo';
@@ -265,7 +265,7 @@ export function useAbilitySystem(): UseAbilitySystemReturn {
       }
 
       // Apply speed boosts for active abilities
-      if (abilityId === 'phantom_veil') speedMultiplier *= 1.3;
+      if (abilityId === 'phantom_veil') speedMultiplier *= PHANTOM_VEIL_SPEED_MULTIPLIER;
     }
 
     const cooldownAdjustmentMs = (tempoMultiplier - 1) * Math.max(0, dt) * 1000;

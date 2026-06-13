@@ -8,7 +8,6 @@ import type {
   Player,
   Vec3,
   PlayerInput,
-  LobbyInfo,
   LobbyPlayer,
   LobbyWagerState,
   MapVoteOption,
@@ -30,7 +29,6 @@ import {
 
 // Re-export all types for backwards compatibility
 export type {
-  LobbyInfo,
   LobbyPlayer,
   LobbyWagerState,
   MapVoteOption,
@@ -81,7 +79,6 @@ interface CoreState {
   appPhase: AppPhase;
 
   // Lobby state
-  availableLobbies: LobbyInfo[];
   currentLobbyId: string | null;
   currentLobbyName: string | null;
   currentLobbyWager: LobbyWagerState;
@@ -163,7 +160,6 @@ interface CoreActions {
   clearProcessedInputs: (tick: number) => void;
 
   // Lobby actions
-  setAvailableLobbies: (lobbies: LobbyInfo[]) => void;
   setCurrentLobby: (lobbyId: string | null, lobbyName: string | null) => void;
   setCurrentLobbyWager: (wager: LobbyWagerState) => void;
   setLobbyPlayers: (players: Map<string, LobbyPlayer>) => void;
@@ -213,7 +209,6 @@ const coreInitialState: CoreState = {
   isPracticeMode: false,
   isPracticePreparing: false,
   appPhase: 'menu',
-  availableLobbies: [],
   currentLobbyId: null,
   currentLobbyName: null,
   currentLobbyWager: { enabled: false },
@@ -533,8 +528,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   },
 
   // ==================== LOBBY ACTIONS ====================
-
-  setAvailableLobbies: (lobbies) => set({ availableLobbies: lobbies }),
 
   setCurrentLobby: (lobbyId, lobbyName) => set({
     currentLobbyId: lobbyId,

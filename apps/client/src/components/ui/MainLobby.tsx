@@ -6,9 +6,11 @@ import { HeroesPage } from './HeroesPage';
 import { StatsPage } from './StatsPage';
 import { SettingsModal } from './SettingsModal';
 import { GameDialog } from './GameDialog';
-import { HeroPreviewCanvas, type HeroPreviewAnimationMode } from './HeroPreviewCanvas';
+import type { HeroPreviewAnimationMode } from './HeroPreviewCanvas';
+import { FeaturedHeroPreview, HERO_SHOWCASE_ANIMATION_MODE } from './FeaturedHeroPreview';
 import { LobbyBackdrop } from './LobbyBackdrop';
 import { SocialBox, SocialButton } from './SocialBox';
+import { TopNavIconButton } from './TopNavIconButton';
 import { useUISounds } from '../../hooks/useAudio';
 import { config } from '../../config/environment';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
@@ -102,7 +104,6 @@ function PwaInstallButton({ onInstall }: { onInstall: () => void }) {
 
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
-const LOBBY_HERO_ANIMATION_MODE: HeroPreviewAnimationMode = 'showcaseLoop';
 const RANKED_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
 
 function formatRankedUsdCents(usdCents: number): string {
@@ -164,7 +165,7 @@ export function MainLobby() {
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
-  const heroAnimationMode = LOBBY_HERO_ANIMATION_MODE;
+  const heroAnimationMode = HERO_SHOWCASE_ANIMATION_MODE;
 
   // Authentication states
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -370,10 +371,10 @@ export function MainLobby() {
     setFeaturedHero(heroId);
   };
 
-  const handleCreateLobby = async (lobbyName: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => {
+  const handleCreateLobby = async (lobbyName: string, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => {
     setError(null);
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, isPrivate, { wager, mapSeed });
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, mapSeed });
       setShowCreateLobby(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -467,15 +468,16 @@ export function MainLobby() {
               }}
             />
 
- <button
- onClick={() => { playButtonClick(); setShowSettings(true); }}
- className="w-10 h-10 flex items-center justify-center text-white/60 hover:text-white"
- >
- <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
- </svg>
- </button>
+            <TopNavIconButton
+              label="Open settings"
+              title="Settings"
+              onClick={() => { playButtonClick(); setShowSettings(true); }}
+            >
+              <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </TopNavIconButton>
 
             {canInstall && <PwaInstallButton onInstall={handleInstallPwa} />}
 
@@ -549,7 +551,12 @@ export function MainLobby() {
             onSelectHero={handleSelectHero}
           />
         )}
-        {activeTab === 'heroes' && <HeroesPage />}
+        {activeTab === 'heroes' && (
+          <HeroesPage
+            selectedHero={featuredHero}
+            onSelectHero={setFeaturedHero}
+          />
+        )}
         {activeTab === 'stats' && <StatsPage />}
         {activeTab === 'loadout' && (
           <div className="h-full flex items-center justify-center menu-content">
@@ -679,14 +686,6 @@ function PlayTab({
   onSelectHero,
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
-  const featuredPreviewClassName =
-    heroAnimationMode === 'showcaseLoop'
-      ? 'relative -mt-[clamp(1.6rem,5vh,4rem)] h-[clamp(16rem,40vh,29rem)] w-[clamp(14.5rem,29vw,27rem)]'
-      : heroAnimationMode === 'jump'
-      ? 'relative -mt-[clamp(4rem,11vh,8rem)] h-[clamp(17.5rem,45vh,32rem)] w-[clamp(12rem,26vw,24rem)]'
-      : heroAnimationMode === 'slide'
-        ? 'relative h-[clamp(14.5rem,35vh,26rem)] w-[clamp(14.5rem,29vw,27rem)]'
-      : 'relative h-[clamp(13.5rem,34vh,24rem)] w-[clamp(12rem,26vw,24rem)]';
 
   return (
     <div className="play-tab-shell h-full menu-content">
@@ -706,24 +705,13 @@ function PlayTab({
  </button>
 
           {/* Hero Container */}
-          <div className="play-hero-preview-wrap relative">
-            {/* Background glow that matches hero color */}
-            <div
-              className="absolute inset-0 opacity-20 -z-10"
-              style={{
-                background: `radial-gradient(ellipse at center, ${heroColor} 0%, transparent 60%)`,
-                transform: 'scale(1.4)',
-              }}
-            />
-
-            <DeferredFeaturedHeroPreview
-              heroId={featuredHero}
-              accentColor={heroColor}
-              initialYaw={Math.PI - 0.18}
-              animationMode={heroAnimationMode}
-              className={featuredPreviewClassName}
-            />
-          </div>
+          <FeaturedHeroPreview
+            heroId={featuredHero}
+            accentColor={heroColor}
+            initialYaw={Math.PI - 0.18}
+            animationMode={heroAnimationMode}
+            scale="large"
+          />
 
           {/* Next Arrow */}
  <button
@@ -1105,82 +1093,17 @@ function PracticeSetupModal({ isLoading, error, onClose, onStart }: PracticeSetu
   );
 }
 
-function DeferredFeaturedHeroPreview({
-  heroId,
-  accentColor,
-  initialYaw,
-  animationMode,
-  className,
-}: {
-  heroId: HeroId;
-  accentColor: string;
-  initialYaw: number;
-  animationMode: HeroPreviewAnimationMode;
-  className: string;
-}) {
-  const [shouldMountPreview, setShouldMountPreview] = useState(false);
-
-  useEffect(() => {
-    setShouldMountPreview(false);
-
-    let secondFrame = 0;
-    let thirdFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        thirdFrame = window.requestAnimationFrame(() => {
-          setShouldMountPreview(true);
-        });
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
-      window.cancelAnimationFrame(thirdFrame);
-    };
-  }, [animationMode, heroId]);
-
-  if (!shouldMountPreview) {
-    return (
-      <div
-        className={`hero-preview-shell relative overflow-hidden select-none ${className}`}
-        data-ready="false"
-        data-size="featured"
-        style={{ '--hero-preview-accent': accentColor } as CSSProperties}
-        aria-label={`Loading ${HERO_DEFINITIONS[heroId].name} voxel preview`}
-        aria-busy
-      >
-        <div className="hero-preview-loading pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="hero-preview-loader-ring" />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <HeroPreviewCanvas
-      heroId={heroId}
-      accentColor={accentColor}
-      size="featured"
-      initialYaw={initialYaw}
-      animationMode={animationMode}
-      className={className}
-    />
-  );
-}
-
 // Create Lobby Modal
 interface CreateLobbyModalProps {
   playerName: string;
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
-  onCreate: (name: string, isPrivate: boolean, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => void;
+  onCreate: (name: string, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => void;
 }
 
 function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: CreateLobbyModalProps) {
   const [lobbyName, setLobbyName] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
   const [wagerEnabled, setWagerEnabled] = useState(false);
   const [coverChargeSol, setCoverChargeSol] = useState('0.01');
   const [mapSeedInput, setMapSeedInput] = useState('');
@@ -1191,7 +1114,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
     setLocalError(null);
     try {
       const mapSeed = config.isDev ? parseOptionalMapSeedInput(mapSeedInput) : undefined;
-      onCreate(lobbyName, isPrivate, wagerEnabled
+      onCreate(lobbyName, wagerEnabled
         ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
         : { enabled: false }, mapSeed);
     } catch (err) {
@@ -1247,25 +1170,6 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
             />
           </div>
         )}
-
-        {/* Private Toggle */}
-        <div
-          className="flex items-center justify-between gap-3 p-3 bg-white/[0.03] border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors"
-          onClick={() => setIsPrivate(!isPrivate)}
-        >
-          <div className="flex items-center gap-3">
-            <svg className={`w-4 h-4 ${isPrivate ? 'text-orange-400' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            <div>
-              <p className="font-body text-sm text-white">Private Game</p>
-              <p className="text-[11px] text-white/40">Invite only - won't appear in browser</p>
-            </div>
-          </div>
-          <div className={`w-10 h-5 shrink-0 rounded-full transition-all relative ${isPrivate ? 'bg-orange-500' : 'bg-white/20'}`}>
-            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${isPrivate ? 'left-[22px]' : 'left-0.5'}`} />
-          </div>
-        </div>
 
         <div
           className="flex items-center justify-between gap-3 p-3 bg-white/[0.03] border border-white/5 rounded-lg cursor-pointer hover:border-white/10 transition-colors"

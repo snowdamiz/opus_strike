@@ -5,6 +5,7 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
 import { useGameStore } from '../../store/gameStore';
 import { GameDialog } from './GameDialog';
+import { TopNavIconButton } from './TopNavIconButton';
 
 type SocialTab = 'friends' | 'requests' | 'invites';
 type RelationshipState = 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
@@ -223,6 +224,46 @@ function IconButton({
   );
 }
 
+function FriendCard({
+  friend,
+  canInviteFromLobby,
+  pendingAction,
+  onInvite,
+  onRemove,
+}: {
+  friend: SocialFriend;
+  canInviteFromLobby: boolean;
+  pendingAction: string | null;
+  onInvite: (friend: SocialFriend) => void;
+  onRemove: (friendUserId: string) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
+      <UserIdentity user={friend.user} />
+      <div className="flex shrink-0 items-center gap-2">
+        <IconButton
+          label={`Invite ${friend.user.name}`}
+          title={canInviteFromLobby ? `Invite ${friend.user.name}` : 'Create or join a lobby to invite'}
+          tone="primary"
+          disabled={!canInviteFromLobby || Boolean(pendingAction)}
+          onClick={() => onInvite(friend)}
+        >
+          <InviteIcon className="h-4 w-4" />
+        </IconButton>
+        <IconButton
+          label={`Remove ${friend.user.name}`}
+          title={`Remove ${friend.user.name}`}
+          tone="danger"
+          disabled={Boolean(pendingAction)}
+          onClick={() => onRemove(friend.user.userId)}
+        >
+          <XIcon className="h-4 w-4" />
+        </IconButton>
+      </div>
+    </div>
+  );
+}
+
 export function SocialButton({
   onClick,
   badgeCount = 0,
@@ -231,21 +272,14 @@ export function SocialButton({
   badgeCount?: number;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.035] text-white/60 transition hover:border-orange-300/35 hover:bg-orange-500/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/70"
-      aria-label="Open social"
+    <TopNavIconButton
+      label="Open social"
       title="Social"
+      badgeCount={badgeCount}
+      onClick={onClick}
     >
-      <span className="absolute inset-0 rounded-lg opacity-0 transition group-hover:opacity-100 bg-[radial-gradient(circle_at_50%_0%,rgb(var(--color-accent-primary)_/_0.22),transparent_64%)]" />
-      <UsersIcon className="relative h-5 w-5" />
-      {badgeCount > 0 && (
-        <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold leading-none text-white">
-          {Math.min(9, badgeCount)}
-        </span>
-      )}
-    </button>
+      <UsersIcon className="h-7 w-7" />
+    </TopNavIconButton>
   );
 }
 
@@ -461,31 +495,6 @@ export function SocialBox({
       onClose={onClose}
       panelClassName="h-[min(70vh,40rem)]"
       bodyClassName="flex-1 flex overflow-hidden min-h-0"
-      footer={(
-        <>
-          <div className="min-w-0">
-            <p className="font-display text-xs text-white/50">
-              {isAuthenticated
-                ? canInviteFromLobby
-                  ? 'INVITES ENABLED'
-                  : 'NO ACTIVE LOBBY'
-                : 'SIGN IN REQUIRED'}
-            </p>
-            {isAuthenticated && canInviteFromLobby && (
-              <p className="mt-0.5 max-w-[18rem] truncate text-xs font-body text-cyan-100/55">
-                {currentLobbyName ?? 'Game Lobby'}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-[1.125rem] py-2 rounded-lg bg-white/5 text-xs text-white/70 font-display hover:bg-white/10 hover:text-white"
-          >
-            CLOSE
-          </button>
-        </>
-      )}
     >
       {!isAuthenticated ? (
         <div className="flex flex-1 items-center justify-center p-[clamp(1.125rem,1.6vw,1.65rem)]">
@@ -622,41 +631,20 @@ export function SocialBox({
                         )}
                       </section>
 
-                      <section className="pt-4 border-t border-white/5">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <h3 className="font-display text-base text-white">FRIENDS</h3>
-                          <span className="rounded-lg border border-white/10 bg-white/[0.07] px-3 py-1.5 font-mono text-xs text-white/60">
-                            {social.friends.length}
-                          </span>
-                        </div>
-                      {social.friends.length === 0 ? (
-                        <EmptyState title="NO FRIENDS YET" />
-                      ) : social.friends.map((friend) => (
-                        <div key={friend.friendshipId} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 px-3.5 py-3">
-                          <UserIdentity user={friend.user} />
-                          <div className="flex shrink-0 items-center gap-2">
-                            <IconButton
-                              label={`Invite ${friend.user.name}`}
-                              title={canInviteFromLobby ? `Invite ${friend.user.name}` : 'Create or join a lobby to invite'}
-                              tone="primary"
-                              disabled={!canInviteFromLobby || Boolean(pendingAction)}
-                              onClick={() => inviteFriend(friend)}
-                            >
-                              <InviteIcon className="h-4 w-4" />
-                            </IconButton>
-                            <IconButton
-                              label={`Remove ${friend.user.name}`}
-                              title={`Remove ${friend.user.name}`}
-                              tone="danger"
-                              disabled={Boolean(pendingAction)}
-                              onClick={() => removeFriend(friend.user.userId)}
-                            >
-                              <XIcon className="h-4 w-4" />
-                            </IconButton>
-                          </div>
-                        </div>
-                      ))}
-                      </section>
+                      {social.friends.length > 0 && (
+                        <section className="space-y-2 border-t border-white/5 pt-4">
+                          {social.friends.map((friend) => (
+                            <FriendCard
+                              key={friend.friendshipId}
+                              friend={friend}
+                              canInviteFromLobby={canInviteFromLobby}
+                              pendingAction={pendingAction}
+                              onInvite={inviteFriend}
+                              onRemove={removeFriend}
+                            />
+                          ))}
+                        </section>
+                      )}
                     </div>
                   )}
 

@@ -16,26 +16,6 @@ import type {
 import type { VisualState } from './visualStore';
 export type { VisualState };
 
-// ============================================================================
-// LOBBY TYPES
-// ============================================================================
-
-export interface LobbyInfo {
-  roomId: string;
-  name: string;
-  matchMode?: MatchMode;
-  playerCount: number;
-  maxPlayers: number;
-  humanCount?: number;
-  botCount?: number;
-  participantCount?: number;
-  maxParticipants?: number;
-  status: string;
-  queuedHumanCount?: number;
-  requiredPlayers?: number;
-  wager?: LobbyWagerState;
-}
-
 export interface LobbyPlayer {
   id: string;
   name: string;
@@ -171,7 +151,7 @@ export interface MatchmakingStatus {
   rankedEntryQuoteId: string | null;
 }
 
-export type AppPhase = 'menu' | 'browsing_lobbies' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';
+export type AppPhase = 'menu' | 'matchmaking' | 'in_lobby' | 'map_vote' | 'in_game';
 
 // ============================================================================
 // PHANTOM PROJECTILE TYPES

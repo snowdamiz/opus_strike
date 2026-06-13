@@ -4,6 +4,10 @@ import * as THREE from 'three';
 import React from 'react';
 import { useGameStore } from '../../../store/gameStore';
 import { getFrameClock } from '../../../utils/frameClock';
+import {
+  PHANTOM_VOID_ZONE_DAMAGE,
+  PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
+} from '@voxel-strike/shared';
 
 interface VoidZoneProps {
   position: { x: number; y: number; z: number };
@@ -263,8 +267,8 @@ export function prewarmVoidZoneResources(): void {
 
 const PARTICLE_COUNT = 40;
 const DEBRIS_COUNT = 12;
-const VOID_ZONE_DAMAGE = 12;
-const VOID_ZONE_DAMAGE_INTERVAL = 500;
+const VOID_ZONE_DAMAGE = PHANTOM_VOID_ZONE_DAMAGE;
+const VOID_ZONE_DAMAGE_INTERVAL = PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS;
 
 export const VoidZone = React.memo(({ position, radius, duration, startTime, ownerId }: VoidZoneProps) => {
   const groupRef = useRef<THREE.Group>(null);

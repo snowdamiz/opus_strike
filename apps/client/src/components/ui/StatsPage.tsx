@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useGameStore, type UserStats } from '../../store/gameStore';
 import { config } from '../../config/environment';
 import { getLevelProgress } from '@voxel-strike/shared';
@@ -40,6 +40,13 @@ const EMPTY_RECORDS: PlayerRecords = {
   bestCaptures: 0,
   bestReturns: 0,
 };
+
+const STATS_GLASS_STYLE = {
+  backdropFilter: 'blur(12px) saturate(1.12)',
+  WebkitBackdropFilter: 'blur(12px) saturate(1.12)',
+} satisfies CSSProperties;
+
+const STATS_PANEL_CLASS = 'relative overflow-hidden rounded-lg border border-white/10 bg-[rgb(var(--color-strike-surface)/0.45)] shadow-[0_16px_38px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.08)]';
 
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
@@ -86,6 +93,35 @@ function getLocalPersonalStats(playerName: string, userStats: UserStats | null):
   };
 }
 
+function StatsPanel({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <section className={`${STATS_PANEL_CLASS} ${className}`} style={STATS_GLASS_STYLE}>
+      <div className="absolute inset-x-0 top-0 h-px bg-white/15" />
+      {children}
+    </section>
+  );
+}
+
+function SectionHeading({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">{eyebrow}</p>
+      <h2 className="font-display text-2xl leading-none text-white">{title}</h2>
+      {description ? (
+        <p className="mt-1 font-body text-xs leading-snug text-white/45">{description}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export function StatsPage() {
   const playerName = useGameStore((state) => state.playerName);
   const userStats = useGameStore((state) => state.userStats);
@@ -130,37 +166,40 @@ export function StatsPage() {
     [data?.currentUser, playerName, userStats]
   );
 
+  const leaderboardDescription = leaderboardMode === 'ranked'
+    ? 'Ordered by competitive rating'
+    : 'Ordered by total score';
+
   return (
-    <div className="h-full menu-content menu-scroll-y no-scrollbar py-5 lg:py-7">
-      <div className="mx-auto flex min-h-full max-w-7xl flex-col justify-start gap-5">
+    <div className="h-full menu-content-wide menu-scroll-y no-scrollbar py-4 lg:py-5">
+      <div className="mx-auto flex min-h-full max-w-[86rem] flex-col justify-center gap-4 xl:gap-5">
         <PersonalStatsBand player={personalStats} />
 
-        <div className="grid min-h-0 grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_18rem] xl:grid-cols-[minmax(0,1fr)_20rem]">
-          <section className="min-w-0">
-            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-              <div>
-                <p className="font-display text-2xl leading-none text-white">GLOBAL LEADERBOARD</p>
-                <p className="mt-1 font-body text-xs text-white/30">
-                  {leaderboardMode === 'ranked' ? 'Ordered by competitive rating' : 'Ordered by total score'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
+        <div className="grid min-h-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+          <StatsPanel className="min-w-0 p-4 lg:p-5">
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+              <SectionHeading
+                eyebrow="Global"
+                title="LEADERBOARD"
+                description={leaderboardDescription}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <ModeButton
+                  active={leaderboardMode === 'ranked'}
                   onClick={() => setLeaderboardMode('ranked')}
-                  className={`border px-3 py-1.5 font-display text-xs ${leaderboardMode === 'ranked' ? 'border-accent-primary/70 bg-accent-primary/20 text-white' : 'border-white/10 bg-white/5 text-white/45'}`}
                 >
                   Competitive
-                </button>
-                <button
-                  type="button"
+                </ModeButton>
+                <ModeButton
+                  active={leaderboardMode === 'score'}
                   onClick={() => setLeaderboardMode('score')}
-                  className={`border px-3 py-1.5 font-display text-xs ${leaderboardMode === 'score' ? 'border-accent-primary/70 bg-accent-primary/20 text-white' : 'border-white/10 bg-white/5 text-white/45'}`}
                 >
                   Score
-                </button>
+                </ModeButton>
                 {data?.leaderboard.length ? (
-                  <p className="font-mono text-xs text-white/30">{data.leaderboard.length} PLAYERS</p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/35">
+                    {data.leaderboard.length} players
+                  </p>
                 ) : null}
               </div>
             </div>
@@ -176,7 +215,7 @@ export function StatsPage() {
             ) : (
               <EmptyLeaderboard />
             )}
-          </section>
+          </StatsPanel>
 
           <RecordsRail player={personalStats} />
         </div>
@@ -185,36 +224,54 @@ export function StatsPage() {
   );
 }
 
+function ModeButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-md border px-3 py-1.5 font-display text-xs leading-none transition-colors ${
+        active
+          ? 'border-accent-primary/70 bg-accent-primary/20 text-white shadow-[0_0_18px_rgba(249,115,22,0.12)]'
+          : 'border-white/10 bg-white/[0.04] text-white/45 hover:border-white/20 hover:text-white/70'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | null }) {
   const personalRank = player ? getRankForStats(player.stats) : null;
 
   return (
-    <section className="border-y border-white/10 bg-black/25 px-4 py-4 backdrop-blur-sm">
+    <StatsPanel className="p-4 lg:p-5">
       {player ? (
         <>
-          <div className="grid gap-5 md:grid-cols-[minmax(11rem,16rem)_1fr] md:items-center">
-            <div className="min-w-0">
-              <p className="font-body text-[11px] uppercase tracking-widest text-accent-primary/80">Your Rank</p>
-              <div className="mt-2">
-                <RankInlineLabel rank={personalRank} iconSize={24} className="text-lg" />
+          <div className="grid gap-5 lg:grid-cols-[minmax(13rem,18rem)_1fr] lg:items-stretch">
+            <div className="min-w-0 border-b border-white/10 pb-4 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5">
+              <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-accent-primary/80">Your rank</p>
+              <div className="mt-3">
+                <RankInlineLabel rank={personalRank} iconSize={28} className="text-xl" />
               </div>
-              <p className="mt-2 font-mono text-sm text-white/45">
+              <p className="mt-3 font-mono text-sm text-white/45">
                 {player.rank ? `Leaderboard #${player.rank}` : 'No ranked matches yet'}
               </p>
-              <p className="mt-1 truncate font-display text-lg leading-none text-white/45">{player.name}</p>
+              <p className="mt-1 truncate font-display text-2xl leading-none text-white/70">{player.name}</p>
             </div>
 
-            <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
-              <InlineStat label="Level" value={formatNumber(getLevelProgress(player.stats.totalExperience).level)} />
-              <InlineStat label="Score" value={formatNumber(player.stats.totalScore)} />
-              <InlineStat label="Win Rate" value={formatPercent(player.stats.totalWins, player.stats.totalGames)} />
-              <InlineStat label="Games" value={formatNumber(player.stats.totalGames)} />
-              <InlineStat label="K/D" value={formatRatio(player.stats.totalKills, player.stats.totalDeaths)} />
-              <InlineStat label="Captures" value={formatNumber(player.stats.totalCaptures)} />
+            <div className="flex min-w-0 flex-col gap-3">
+              <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-3 xl:grid-cols-6">
+                <InlineStat label="Level" value={formatNumber(getLevelProgress(player.stats.totalExperience).level)} />
+                <InlineStat label="Score" value={formatNumber(player.stats.totalScore)} />
+                <InlineStat label="Win Rate" value={formatPercent(player.stats.totalWins, player.stats.totalGames)} />
+                <InlineStat label="Games" value={formatNumber(player.stats.totalGames)} />
+                <InlineStat label="K/D" value={formatRatio(player.stats.totalKills, player.stats.totalDeaths)} />
+                <InlineStat label="Captures" value={formatNumber(player.stats.totalCaptures)} />
+              </div>
+              <div className="border-t border-white/10 pt-3">
+                <RankProgress stats={player.stats} />
+              </div>
             </div>
-          </div>
-          <div className="mt-4 border-t border-white/10 pt-4">
-            <RankProgress stats={player.stats} />
           </div>
           <WagerStatsStrip stats={player.stats} />
         </>
@@ -229,7 +286,7 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
           </svg>
         </div>
       )}
-    </section>
+    </StatsPanel>
   );
 }
 
@@ -246,10 +303,10 @@ function WagerStatsStrip({ stats }: { stats: UserStats }) {
   return (
     <div className="mt-4 border-t border-white/10 pt-4">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="font-body text-[11px] uppercase tracking-widest text-white/35">Wager Games</p>
-        <p className={`font-mono text-xs ${netTone}`}>{formatSignedLamports(netLamports)} NET</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/35">Wager games</p>
+        <p className={`font-mono text-xs ${netTone}`}>{formatSignedLamports(netLamports)} net</p>
       </div>
-      <div className="grid grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-3 xl:grid-cols-6">
         <WagerStat label="Games" value={formatNumber(stats.totalWagerGames)} />
         <WagerStat label="W/L/D" value={`${stats.totalWagerWins}/${stats.totalWagerLosses}/${stats.totalWagerDraws}`} />
         <WagerStat label="Wagered" value={formatLamports(stats.totalWageredLamports)} />
@@ -263,8 +320,8 @@ function WagerStatsStrip({ stats }: { stats: UserStats }) {
 
 function WagerStat({ label, value, tone = 'text-white/80' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="min-w-0 border-l border-white/10 pl-3">
-      <p className="font-body text-[11px] uppercase tracking-widest text-white/30">{label}</p>
+    <div className="min-w-0 border-l border-white/10 px-3 first:border-l-0 sm:[&:nth-child(3n+1)]:border-l-0 xl:[&:nth-child(4)]:border-l">
+      <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-white/35">{label}</p>
       <p className={`mt-1 truncate font-mono text-sm leading-5 ${tone}`}>{value}</p>
     </div>
   );
@@ -272,9 +329,9 @@ function WagerStat({ label, value, tone = 'text-white/80' }: { label: string; va
 
 function InlineStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 border-l border-white/10 pl-3">
-      <p className="font-body text-[11px] uppercase tracking-widest text-white/30">{label}</p>
-      <p className="mt-1 truncate font-display text-3xl leading-none text-white">{value}</p>
+    <div className="min-w-0 border-l border-white/10 px-3 text-center first:border-l-0 sm:[&:nth-child(3n+1)]:border-l-0 xl:[&:nth-child(4)]:border-l">
+      <p className="font-display text-3xl leading-none text-white">{value}</p>
+      <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.2em] text-white/45">{label}</p>
     </div>
   );
 }
@@ -283,25 +340,28 @@ function RecordsRail({ player }: { player: PersonalLeaderboardPlayer | null }) {
   const records = player?.records ?? EMPTY_RECORDS;
 
   return (
-    <aside className="border-t border-white/10 pt-3 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-      <p className="font-display text-2xl leading-none text-white">RECORDS</p>
-      <p className="mt-1 font-body text-xs text-white/30">Best single-match marks</p>
-      <div className="mt-5 space-y-3">
+    <StatsPanel className="p-4 lg:p-5">
+      <SectionHeading
+        eyebrow="Personal"
+        title="RECORDS"
+        description="Best single-match marks"
+      />
+      <div className="mt-4 space-y-2.5">
         <RecordLine label="Best Score" value={records.bestScore} />
         <RecordLine label="Most Kills" value={records.bestKills} />
         <RecordLine label="Most Assists" value={records.bestAssists} />
         <RecordLine label="Most Captures" value={records.bestCaptures} />
         <RecordLine label="Most Returns" value={records.bestReturns} />
       </div>
-    </aside>
+    </StatsPanel>
   );
 }
 
 function RecordLine({ label, value }: { label: string; value: number }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-white/10 pb-2">
-      <span className="font-body text-sm text-white/40">{label}</span>
-      <span className="font-mono text-sm text-white/75">{formatNumber(value)}</span>
+    <div className="flex items-baseline justify-between gap-4 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2.5">
+      <span className="font-body text-sm text-white/50">{label}</span>
+      <span className="font-mono text-sm text-white/85">{formatNumber(value)}</span>
     </div>
   );
 }
@@ -317,8 +377,8 @@ function LeaderboardTable({
 }) {
   const primaryLabel = mode === 'ranked' ? 'Rating' : 'Score';
   return (
-    <div className="min-w-0">
-      <div className="grid grid-cols-[2.75rem_minmax(0,1fr)_4.75rem] gap-3 border-y border-white/10 px-1 py-2 font-body text-[11px] uppercase tracking-widest text-white/35 sm:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem] md:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem_5rem]">
+    <div className="min-w-0 border-t border-white/10">
+      <div className="grid grid-cols-[2.75rem_minmax(0,1fr)_4.75rem] gap-3 border-b border-white/10 px-1 py-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-white/35 sm:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem] md:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem_5rem]">
         <span>Rank</span>
         <span>Player</span>
         <span className="text-right">{primaryLabel}</span>
@@ -352,7 +412,7 @@ function LeaderboardRow({
 }) {
   const primaryValue = mode === 'ranked' ? player.stats.competitiveRating : player.stats.totalScore;
   return (
-    <div className={`grid grid-cols-[2.75rem_minmax(0,1fr)_4.75rem] gap-3 border-b border-white/10 px-1 py-3 last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem] md:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem_5rem] ${isCurrentUser ? 'bg-accent-primary/10' : ''}`}>
+    <div className={`grid grid-cols-[2.75rem_minmax(0,1fr)_4.75rem] gap-3 border-b border-white/10 px-1 py-3 last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem] md:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem_5rem] ${isCurrentUser ? 'bg-accent-primary/10' : 'bg-transparent hover:bg-white/[0.025]'}`}>
       <div className="flex items-center">
         <span className={`font-mono text-sm ${player.rank <= 3 ? 'text-accent-primary' : 'text-white/45'}`}>
           #{player.rank}
@@ -375,9 +435,9 @@ function LeaderboardRow({
 
 function LeaderboardSkeleton() {
   return (
-    <div className="space-y-0 border-y border-white/10">
+    <div className="border-t border-white/10">
       {Array.from({ length: 8 }).map((_, index) => (
-        <div key={index} className="h-14 border-b border-white/10 bg-white/[0.03] last:border-b-0 animate-pulse" />
+        <div key={index} className="h-14 border-b border-white/10 bg-white/[0.035] last:border-b-0 animate-pulse" />
       ))}
     </div>
   );
@@ -385,9 +445,9 @@ function LeaderboardSkeleton() {
 
 function EmptyLeaderboard() {
   return (
-    <div className="flex min-h-[22rem] flex-col items-center justify-center px-6 text-center">
-      <p className="font-display text-2xl text-white/50">NO SCORES YET</p>
-      <p className="mt-1 max-w-sm font-body text-sm text-white/30">Completed matches will appear here once players start logging results.</p>
+    <div className="flex min-h-[22rem] flex-col items-center justify-center border-t border-white/10 px-6 text-center">
+      <p className="font-display text-2xl text-white/55">NO SCORES YET</p>
+      <p className="mt-1 max-w-sm font-body text-sm text-white/35">Completed matches will appear here once players start logging results.</p>
     </div>
   );
 }
