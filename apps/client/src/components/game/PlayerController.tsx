@@ -1786,7 +1786,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const slideIntensity = isSliding
       ? Math.min(1, Math.max(0.25, predictedState.movement.slideTimeRemaining / 0.8))
       : 0;
-    setLocalSlideIntensity(slideIntensity);
+    setLocalSlideIntensity(slideIntensity, {
+      x: velocity.x,
+      y: velocity.y,
+      z: velocity.z,
+    });
 
     if (now - lastTraceRef.current >= 1000 / TICK_RATE) {
       lastTraceRef.current = now;

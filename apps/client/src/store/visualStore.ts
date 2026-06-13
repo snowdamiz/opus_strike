@@ -75,6 +75,9 @@ export interface VisualState {
   /** High-frequency slide intensity for UI and viewmodel effects. */
   slideIntensity: number;
 
+  /** Latest local slide velocity for first-person directional motion effects. */
+  localSlideVelocity: Vec3;
+
   /** Server-authoritative local velocity impulses to consume in PlayerController. */
   localPlayerImpulses: LocalPlayerImpulse[];
 
@@ -227,6 +230,7 @@ const initialVisualState: VisualState = {
   },
   localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
   slideIntensity: 0,
+  localSlideVelocity: { x: 0, y: 0, z: 0 },
   localPlayerImpulses: [],
   combatFrameCache: createCombatFrameCache(),
 };
@@ -343,10 +347,21 @@ export const setLocalVisualMovement = (movement: PlayerMovementState): void => {
   current.chronosAscendantStartY = movement.chronosAscendantStartY;
 };
 
-export const setLocalSlideIntensity = (intensity: number): void => {
+export const setLocalSlideIntensity = (intensity: number, velocity?: Vec3): void => {
   const state = visualStore.getState();
-  if (state.slideIntensity !== intensity) {
-    state.slideIntensity = intensity;
+  const nextIntensity = Math.max(0, Math.min(1, intensity));
+  if (state.slideIntensity !== nextIntensity) {
+    state.slideIntensity = nextIntensity;
+  }
+
+  if (velocity && nextIntensity > 0) {
+    state.localSlideVelocity.x = velocity.x;
+    state.localSlideVelocity.y = velocity.y;
+    state.localSlideVelocity.z = velocity.z;
+  } else {
+    state.localSlideVelocity.x = 0;
+    state.localSlideVelocity.y = 0;
+    state.localSlideVelocity.z = 0;
   }
 };
 
@@ -970,6 +985,7 @@ export const clearVisualState = (): void => {
     },
     localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
     slideIntensity: 0,
+    localSlideVelocity: { x: 0, y: 0, z: 0 },
     localPlayerImpulses: [],
     combatFrameCache: createCombatFrameCache(),
   }));

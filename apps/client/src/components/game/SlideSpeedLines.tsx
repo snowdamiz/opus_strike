@@ -10,7 +10,15 @@ const SPAWN_RADIUS_MIN = 0.95;
 const SPAWN_RADIUS_MAX = 1.85;
 const BASE_LINE_SPEED = 4.1;
 const DISTANCE_FROM_CAMERA = 2.15;
+const MIN_DIRECTIONAL_SLIDE_SPEED = 0.15;
+const MAX_DIRECTIONAL_FLOW_BLEND = 0.92;
+const LATERAL_SWEEP_STRENGTH = 1.25;
 const speedLineMatrixDummy = new THREE.Object3D();
+const speedLineCameraInverse = new THREE.Quaternion();
+const speedLineSlideDirection = new THREE.Vector3();
+const speedLineRadialFlow = new THREE.Vector2();
+const speedLineScreenFlow = new THREE.Vector2();
+const speedLineCombinedFlow = new THREE.Vector2();
 
 interface SpeedLine {
   startRadius: number;
@@ -106,7 +114,8 @@ export function SlideSpeedLines({ config }: { config: EffectQualityConfig }) {
   useFrame((_, delta) => {
     if (!groupRef.current) return;
 
-    const slideIntensity = Math.min(1, Math.max(0, visualStore.getState().slideIntensity));
+    const visualState = visualStore.getState();
+    const slideIntensity = Math.min(1, Math.max(0, visualState.slideIntensity));
     
     if (slideIntensity < 0.01) {
       groupRef.current.visible = false;
@@ -123,6 +132,32 @@ export function SlideSpeedLines({ config }: { config: EffectQualityConfig }) {
     const material = mesh.material as THREE.MeshBasicMaterial;
     material.opacity = Math.min(0.82, Math.pow(slideIntensity, 0.9));
     mesh.visible = material.opacity > 0.006;
+
+    const slideVelocity = visualState.localSlideVelocity;
+    const horizontalSlideSpeed = Math.sqrt(
+      slideVelocity.x * slideVelocity.x +
+      slideVelocity.z * slideVelocity.z
+    );
+    let directionalFlowBlend = 0;
+    let radialFlowSign = 1;
+    speedLineScreenFlow.set(0, 0);
+
+    if (horizontalSlideSpeed > MIN_DIRECTIONAL_SLIDE_SPEED) {
+      speedLineSlideDirection
+        .set(slideVelocity.x / horizontalSlideSpeed, 0, slideVelocity.z / horizontalSlideSpeed);
+      speedLineCameraInverse.copy(camera.quaternion).invert();
+      speedLineSlideDirection.applyQuaternion(speedLineCameraInverse);
+
+      const lateralSlide = THREE.MathUtils.clamp(speedLineSlideDirection.x, -1, 1);
+      const forwardSlide = THREE.MathUtils.clamp(-speedLineSlideDirection.z, -1, 1);
+      const lateralMagnitude = Math.abs(lateralSlide);
+
+      if (lateralMagnitude > 0.01) {
+        speedLineScreenFlow.set(-Math.sign(lateralSlide), 0);
+        directionalFlowBlend = Math.min(MAX_DIRECTIONAL_FLOW_BLEND, lateralMagnitude * 1.2);
+      }
+      radialFlowSign = forwardSlide < -0.2 ? -1 : 1;
+    }
     
     lineConfigs.forEach((config, i) => {
       if (!config) return;
@@ -132,21 +167,38 @@ export function SlideSpeedLines({ config }: { config: EffectQualityConfig }) {
       
       const progress = lineProgressRef.current[i];
       
-      const currentRadius = config.startRadius + progress * config.radiusTravel;
-      const x = Math.cos(config.angle) * currentRadius;
-      const y = Math.sin(config.angle) * currentRadius;
+      const radialProgress = radialFlowSign > 0 ? progress : 1 - progress;
+      const radialTravel = config.radiusTravel * (1 - directionalFlowBlend * 0.72);
+      const currentRadius = config.startRadius + radialProgress * radialTravel;
+      const radialX = Math.cos(config.angle);
+      const radialY = Math.sin(config.angle);
+      const directionalTravel = progress * config.radiusTravel * directionalFlowBlend * LATERAL_SWEEP_STRENGTH;
+      const x = radialX * currentRadius + speedLineScreenFlow.x * directionalTravel;
+      const y = radialY * currentRadius + speedLineScreenFlow.y * directionalTravel;
       
       speedLineMatrixDummy.position.set(x, y, -DISTANCE_FROM_CAMERA - config.zDrift * progress);
-      speedLineMatrixDummy.rotation.set(0, 0, config.angle - Math.PI / 2);
+      speedLineRadialFlow.set(radialX * radialFlowSign, radialY * radialFlowSign);
+      speedLineCombinedFlow
+        .copy(speedLineRadialFlow)
+        .multiplyScalar(1 - directionalFlowBlend)
+        .addScaledVector(speedLineScreenFlow, directionalFlowBlend);
+      if (speedLineCombinedFlow.lengthSq() < 0.0001) {
+        speedLineCombinedFlow.copy(speedLineRadialFlow);
+      } else {
+        speedLineCombinedFlow.normalize();
+      }
+      speedLineMatrixDummy.rotation.set(
+        0,
+        0,
+        Math.atan2(speedLineCombinedFlow.y, speedLineCombinedFlow.x) - Math.PI / 2
+      );
       
       const lengthScale = 0.42 + progress * 0.88;
       const width = config.thickness * (0.72 + progress * 0.46);
       const length = config.length * lengthScale;
-      mesh.scale.set(width, length, 1);
       
       const fadeIn = THREE.MathUtils.smoothstep(progress, 0, 0.2);
       const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, 0.68, 1);
-      const material = mesh.material as THREE.MeshBasicMaterial;
       const opacity = config.opacity * fadeIn * fadeOut;
       speedLineMatrixDummy.scale.set(opacity > 0.006 ? width : 0.0001, opacity > 0.006 ? length : 0.0001, 1);
       speedLineMatrixDummy.updateMatrix();

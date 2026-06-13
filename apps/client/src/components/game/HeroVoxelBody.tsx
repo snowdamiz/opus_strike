@@ -210,6 +210,9 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   );
   const movementProfileBlendRef = useRef(1);
   const movementCycleRef = useRef(0);
+  const smoothedWalkDirectionRef = useRef<HeroWalkDirection>(
+    getNormalizedWalkDirection(walkDirection)
+  );
   const wasJumpingRef = useRef(false);
   const jumpStartedAtRef = useRef<number | null>(null);
   const appliedBodyOpacityRef = useRef(-1);
@@ -305,6 +308,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const attacking = isAttackingRef?.current ?? isAttacking;
     const nextMovementPose = movementPoseRef?.current ?? movementPose;
     const nextMovementProfile = getHeroMovementProfile(resolvedHero, nextMovementPose);
+    const nextWalkDirection = getNormalizedWalkDirection(walkDirectionRef?.current ?? walkDirection);
     idleBlendRef.current = idleIntensity > 0 && !moving && !jumping && !crouching && !sliding && !attacking ? 1 : 0;
     movementBlendRef.current = moving && !jumping && !sliding ? 1 : 0;
     crouchBlendRef.current = crouching && !jumping && !sliding ? 1 : 0;
@@ -316,6 +320,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     currentMovementProfileRef.current = nextMovementProfile;
     movementProfileBlendRef.current = 1;
     movementCycleRef.current = 0;
+    smoothedWalkDirectionRef.current = { ...nextWalkDirection };
     jumpStartedAtRef.current = null;
     wasJumpingRef.current = false;
   }, [idleIntensity, resolvedHero]);
@@ -375,7 +380,31 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     );
     currentMovementProfileRef.current = movementProfile;
     const rawWalkDirection = walkDirectionRef?.current ?? walkDirection;
-    const normalizedWalkDirection = getNormalizedWalkDirection(rawWalkDirection);
+    const targetWalkDirection = getNormalizedWalkDirection(rawWalkDirection);
+    const smoothedWalkDirection = smoothedWalkDirectionRef.current;
+    const directionDampSpeed = moving && !jumping && !sliding
+      ? (targetMovementPoseRef.current === 'run' ? 11.5 : 9.5)
+      : 6;
+    smoothedWalkDirection.forward = THREE.MathUtils.damp(
+      smoothedWalkDirection.forward,
+      targetWalkDirection.forward,
+      directionDampSpeed,
+      frameDelta
+    );
+    smoothedWalkDirection.right = THREE.MathUtils.damp(
+      smoothedWalkDirection.right,
+      targetWalkDirection.right,
+      directionDampSpeed,
+      frameDelta
+    );
+    const smoothedWalkDirectionLength = Math.sqrt(
+      smoothedWalkDirection.forward * smoothedWalkDirection.forward +
+      smoothedWalkDirection.right * smoothedWalkDirection.right
+    );
+    if (smoothedWalkDirectionLength > 1) {
+      smoothedWalkDirection.forward /= smoothedWalkDirectionLength;
+      smoothedWalkDirection.right /= smoothedWalkDirectionLength;
+    }
     const bones = boneRefs.current;
     setBoneBasePose(bones);
 
@@ -496,7 +525,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     );
     groupRef.current.rotation.x =
       secondary * idleProfile.swayAmplitude * 0.08 * idleAmount -
-      normalizedWalkDirection.forward * movementProfile.rootPitch * movingAmount +
+      smoothedWalkDirection.forward * movementProfile.rootPitch * movingAmount +
       jumpPose.pitch * jumpAmount +
       -0.025 * poseCrouchAmount +
       0.6 * slideAmount -
@@ -506,7 +535,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       activeAttackSide * 0.025 * rootAttackPulse;
     groupRef.current.rotation.z =
       secondary * idleProfile.swayAmplitude * 0.12 * idleAmount -
-      normalizedWalkDirection.right * movementProfile.rootRoll * movingAmount +
+      smoothedWalkDirection.right * movementProfile.rootRoll * movingAmount +
       movementSway * movementProfile.rootSway * movingAmount +
       0.055 * slideAmount -
       activeAttackSide * 0.018 * rootAttackPulse;
@@ -541,7 +570,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       material.emissiveIntensity = baseEmissiveIntensity * (1 + glowPulse);
     });
 
-    applyWalkingBonePose(bones, movementCycleTime, movingAmount, normalizedWalkDirection, movementProfile);
+    applyWalkingBonePose(bones, movementCycleTime, movingAmount, smoothedWalkDirection, movementProfile);
     applySlideBonePose(bones, t, slideAmount);
     applyHeroAttackPose(resolvedHero, bones, attackProgress, attackAmount, activeAttackSide);
   });

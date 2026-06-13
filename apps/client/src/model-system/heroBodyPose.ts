@@ -189,35 +189,25 @@ export function applyIdleBonePose(
   }
 }
 
-function applyWalkLimbPose(
+function applyWalkArmPose(
   bone: THREE.Group | null | undefined,
   isLeft: boolean,
   cycleTime: number,
   amount: number,
   direction: HeroWalkDirection,
-  isLeg: boolean,
   profile: HeroMovementProfile
 ): void {
   if (!bone || amount <= 0.001) return;
 
   const phaseOffset = isLeft ? 0 : Math.PI;
   const phase = Math.sin(cycleTime + phaseOffset);
-
-  if (isLeg) {
-    const lift = Math.max(0, Math.cos(cycleTime + phaseOffset));
-    bone.rotation.x += direction.forward * phase * profile.legPitch * amount;
-    bone.rotation.y += direction.right * phase * 0.08 * amount;
-    bone.rotation.z += -direction.right * phase * profile.legStrafeRoll * amount;
-    bone.position.x += direction.right * phase * profile.legStrafe * amount;
-    bone.position.y += lift * profile.legLift * amount;
-    bone.position.z += -direction.forward * phase * profile.legStride * amount;
-    return;
-  }
+  const strafeBlend = THREE.MathUtils.smoothstep(Math.abs(direction.right), 0.08, 0.86);
 
   const armAmount = amount * profile.armArcScale;
   bone.rotation.x += direction.forward * phase * profile.armPitch * armAmount;
-  bone.rotation.z += direction.right * phase * profile.armStrafeRoll * armAmount;
-  bone.position.x += direction.right * phase * 0.035 * armAmount;
+  bone.rotation.y += direction.right * phase * profile.armPitch * 0.16 * strafeBlend * armAmount;
+  bone.rotation.z += direction.right * phase * profile.armStrafeRoll * (1 + strafeBlend * 0.28) * armAmount;
+  bone.position.x += direction.right * phase * 0.035 * (1 + strafeBlend * 0.55) * armAmount;
   bone.position.z += -direction.forward * phase * 0.045 * armAmount;
 }
 
@@ -241,30 +231,59 @@ function applyWalkLegPose(
   const strideScale = THREE.MathUtils.clamp(profile.legStride / WALK_LEG_STRIDE, 0.7, 2.2);
   const liftScale = THREE.MathUtils.clamp(profile.legLift / WALK_LEG_LIFT, 0.7, 2.4);
   const lowerLegScale = THREE.MathUtils.clamp((strideScale + liftScale) * 0.5, 0.7, 2.3);
+  const strafeBlend = THREE.MathUtils.smoothstep(Math.abs(direction.right), 0.08, 0.86);
+  const forwardBlend = THREE.MathUtils.smoothstep(Math.abs(direction.forward), 0.08, 0.78);
+  const leadingLeg = Math.max(0, direction.right * side);
+  const trailingLeg = Math.max(0, -direction.right * side);
+  const lateralStep =
+    direction.right * profile.legStrafe *
+    (footLift * (1.3 + liftScale * 0.35 + trailingLeg * 0.45) - supportBend * 0.42);
+  const lateralOpen = side * leadingLeg * footLift * profile.legStrafe * 1.15;
+  const lateralClose = direction.right * trailingLeg * footLift * profile.legStrafe * 0.8;
+  const lateralLegOffset =
+    direction.right * phase * profile.legStrafe * (1 - strafeBlend * 0.65) +
+    strafeBlend * (lateralStep + lateralOpen + lateralClose);
 
   if (upperLeg) {
-    upperLeg.rotation.x += direction.forward * phase * profile.legPitch * amount;
-    upperLeg.rotation.y += direction.right * phase * 0.025 * amount;
-    upperLeg.rotation.z += -direction.right * phase * profile.legStrafeRoll * amount;
-    upperLeg.position.x += direction.right * phase * profile.legStrafe * amount;
+    upperLeg.rotation.x += direction.forward * phase * profile.legPitch * (1 - strafeBlend * 0.22) * amount;
+    upperLeg.rotation.y +=
+      (direction.right * phase * 0.025 +
+      direction.right * footLift * 0.075 * strafeBlend) * amount;
+    upperLeg.rotation.z +=
+      (-direction.right * phase * profile.legStrafeRoll * (1 - strafeBlend * 0.45) +
+      direction.right * footLift * profile.legStrafeRoll * 0.62 * strafeBlend -
+      direction.right * supportBend * profile.legStrafeRoll * 0.2 * strafeBlend) * amount;
+    upperLeg.position.x += lateralLegOffset * amount;
     upperLeg.position.y += footLift * profile.legLift * amount;
-    upperLeg.position.z += -direction.forward * phase * profile.legStride * amount;
+    upperLeg.position.z += -direction.forward * phase * profile.legStride * (1 - strafeBlend * 0.18) * amount;
   }
 
   if (knee) {
-    knee.position.x += side * footLift * 0.018 * liftScale * amount;
+    knee.position.x += (
+      side * footLift * 0.018 * liftScale +
+      strafeBlend * direction.right * (footLift * 0.028 * liftScale - supportBend * 0.009 * lowerLegScale)
+    ) * amount;
     knee.position.y += (footLift * 0.01 * liftScale - supportBend * 0.006 * lowerLegScale) * amount;
-    knee.position.z += -direction.forward * footLift * 0.008 * strideScale * amount;
-    knee.rotation.z += side * footLift * 0.035 * liftScale * amount;
+    knee.position.z += -direction.forward * footLift * 0.008 * strideScale * (1 - strafeBlend * 0.24) * amount;
+    knee.rotation.z += (
+      side * footLift * 0.035 * liftScale +
+      direction.right * footLift * 0.05 * strafeBlend
+    ) * amount;
   }
 
   if (shin) {
-    const bend = profile.supportKneeBend * supportBend + profile.kneeBend * footLift;
+    const bend = profile.supportKneeBend * supportBend + profile.kneeBend * footLift * (1 + strafeBlend * 0.18);
     shin.rotation.x += bend * amount;
     shin.rotation.z +=
       side * footLift * 0.07 * liftScale * amount -
-      direction.right * phase * 0.012 * lowerLegScale * amount;
-    shin.position.z += -direction.forward * footLift * 0.006 * strideScale * amount;
+      direction.right * phase * 0.012 * lowerLegScale * (1 - strafeBlend * 0.35) * amount +
+      direction.right * footLift * 0.052 * strafeBlend * amount;
+    shin.position.x += direction.right * footLift * 0.012 * liftScale * strafeBlend * amount;
+    shin.position.z += -direction.forward * footLift * 0.006 * strideScale * (1 - strafeBlend * 0.24) * amount;
+  }
+
+  if (forwardBlend <= 0.001 && strafeBlend > 0.001 && shin) {
+    shin.rotation.y += direction.right * footLift * 0.045 * strafeBlend * amount;
   }
 }
 
@@ -277,8 +296,8 @@ export function applyWalkingBonePose(
 ): void {
   applyWalkLegPose(bones.leftLeg, bones.leftKnee, bones.leftShin, true, cycleTime, amount, direction, profile);
   applyWalkLegPose(bones.rightLeg, bones.rightKnee, bones.rightShin, false, cycleTime, amount, direction, profile);
-  applyWalkLimbPose(bones.leftArm, false, cycleTime, amount, direction, false, profile);
-  applyWalkLimbPose(bones.rightArm, true, cycleTime, amount, direction, false, profile);
+  applyWalkArmPose(bones.leftArm, false, cycleTime, amount, direction, profile);
+  applyWalkArmPose(bones.rightArm, true, cycleTime, amount, direction, profile);
 }
 
 export function applyCrouchBonePose(bones: HeroBoneRefs, time: number, amount: number): void {

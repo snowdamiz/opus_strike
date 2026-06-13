@@ -6,7 +6,13 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
-import { MOUSE_SENSITIVITY, PITCH_LIMIT, PLAYER_EYE_HEIGHT, PLAYER_HEIGHT } from '@voxel-strike/shared';
+import {
+  MOUSE_SENSITIVITY,
+  PITCH_LIMIT,
+  PLAYER_EYE_HEIGHT,
+  PLAYER_HEIGHT,
+  SLIDE_CAMERA_PITCH_OFFSET,
+} from '@voxel-strike/shared';
 import type { CameraRefs } from './types';
 import { consumeMobileLookDelta } from '../../store/mobileControlsStore';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -54,7 +60,6 @@ interface DeathCameraRuntime {
 }
 
 // Camera effect constants
-const SLIDE_CAMERA_PITCH_OFFSET = -0.08; // Slight look down during slide
 const SLIDE_FOV_BOOST = 8; // Increased FOV during slide
 const SLIDE_CAMERA_ROLL = 0.03; // Subtle roll during slide
 const CROUCH_HEIGHT_OFFSET = -0.3;

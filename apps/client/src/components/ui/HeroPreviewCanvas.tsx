@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { HERO_DEFINITIONS } from '@voxel-strike/shared';
 import type { HeroId, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from '../game/HeroVoxelBody';
-import type { HeroAnimationMode } from '../game/HeroVoxelBody';
+import type { HeroAnimationMode, HeroWalkDirection } from '../game/HeroVoxelBody';
 import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
 import { HERO_COLOR_SCHEMES } from '../../styles/colorTokens';
 import { useHeroPreviewRotation } from './useHeroPreviewRotation';
@@ -15,6 +15,11 @@ type HeroPreviewSize = 'featured' | 'detail' | 'compact' | 'card';
 type HeroPreviewActionMode = Exclude<HeroAnimationMode, 'crouchWalkLoop'>;
 export type HeroPreviewAnimationMode = HeroAnimationMode | 'showcaseLoop';
 type HeroPreviewLoopMode = Extract<HeroPreviewAnimationMode, 'crouchWalkLoop' | 'slide' | 'showcaseLoop'>;
+type HeroPreviewLoopStep = {
+  mode: HeroPreviewActionMode;
+  duration: number;
+  walkDirection?: HeroWalkDirection;
+};
 type Vector3Tuple = [number, number, number];
 type DprSetting = number | [number, number];
 
@@ -134,29 +139,43 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
   },
 };
 
-const CROUCH_WALK_LOOP_SEQUENCE: Array<{ mode: HeroPreviewActionMode; duration: number }> = [
+const PREVIEW_FORWARD_DIRECTION: HeroWalkDirection = { forward: 1, right: 0 };
+const PREVIEW_BACKPEDAL_DIRECTION: HeroWalkDirection = { forward: -1, right: 0 };
+const PREVIEW_STRAFE_RIGHT_DIRECTION: HeroWalkDirection = { forward: 0, right: 1 };
+const PREVIEW_STRAFE_LEFT_DIRECTION: HeroWalkDirection = { forward: 0, right: -1 };
+const PREVIEW_RUN_STRAFE_RIGHT_DIRECTION: HeroWalkDirection = { forward: 0.55, right: 0.83 };
+const PREVIEW_RUN_STRAFE_LEFT_DIRECTION: HeroWalkDirection = { forward: 0.55, right: -0.83 };
+
+const CROUCH_WALK_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
   { mode: 'idle', duration: 0.85 },
-  { mode: 'walk', duration: 1.1 },
+  { mode: 'walk', duration: 1.1, walkDirection: PREVIEW_FORWARD_DIRECTION },
   { mode: 'crouchWalk', duration: 1.35 },
-  { mode: 'walk', duration: 1.1 },
+  { mode: 'walk', duration: 1.1, walkDirection: PREVIEW_FORWARD_DIRECTION },
 ];
 
 const CROUCH_WALK_LOOP_DURATION = CROUCH_WALK_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
-const RUN_SLIDE_LOOP_SEQUENCE: Array<{ mode: HeroPreviewActionMode; duration: number }> = [
-  { mode: 'run', duration: 0.75 },
+const RUN_SLIDE_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
+  { mode: 'run', duration: 0.75, walkDirection: PREVIEW_FORWARD_DIRECTION },
   { mode: 'slide', duration: 1.25 },
-  { mode: 'run', duration: 0.7 },
+  { mode: 'run', duration: 0.7, walkDirection: PREVIEW_FORWARD_DIRECTION },
 ];
 const RUN_SLIDE_LOOP_DURATION = RUN_SLIDE_LOOP_SEQUENCE.reduce((total, step) => total + step.duration, 0);
-const SHOWCASE_LOOP_SEQUENCE: Array<{ mode: HeroPreviewActionMode; duration: number }> = [
-  { mode: 'idle', duration: 1.15 },
-  { mode: 'walk', duration: 1.05 },
+const SHOWCASE_LOOP_SEQUENCE: HeroPreviewLoopStep[] = [
+  { mode: 'idle', duration: 0.85 },
+  { mode: 'walk', duration: 0.65, walkDirection: PREVIEW_FORWARD_DIRECTION },
+  { mode: 'walk', duration: 1.18, walkDirection: PREVIEW_STRAFE_RIGHT_DIRECTION },
+  { mode: 'walk', duration: 0.86, walkDirection: PREVIEW_BACKPEDAL_DIRECTION },
+  { mode: 'walk', duration: 1.18, walkDirection: PREVIEW_STRAFE_LEFT_DIRECTION },
+  { mode: 'walk', duration: 0.44, walkDirection: PREVIEW_FORWARD_DIRECTION },
   { mode: 'crouchWalk', duration: 1.2 },
   { mode: 'crouch', duration: 0.55 },
-  { mode: 'walk', duration: 0.7 },
-  { mode: 'run', duration: 0.95 },
+  { mode: 'walk', duration: 0.7, walkDirection: PREVIEW_FORWARD_DIRECTION },
+  { mode: 'run', duration: 0.5, walkDirection: PREVIEW_FORWARD_DIRECTION },
+  { mode: 'run', duration: 0.92, walkDirection: PREVIEW_RUN_STRAFE_RIGHT_DIRECTION },
+  { mode: 'run', duration: 0.92, walkDirection: PREVIEW_RUN_STRAFE_LEFT_DIRECTION },
+  { mode: 'run', duration: 0.36, walkDirection: PREVIEW_FORWARD_DIRECTION },
   { mode: 'slide', duration: 1.2 },
-  { mode: 'run', duration: 0.65 },
+  { mode: 'run', duration: 0.65, walkDirection: PREVIEW_FORWARD_DIRECTION },
   { mode: 'jump', duration: 1.25 },
   { mode: 'idle', duration: 0.6 },
   { mode: 'attack', duration: 1.45 },
@@ -166,7 +185,7 @@ const SHOWCASE_LOOP_DURATION = SHOWCASE_LOOP_SEQUENCE.reduce((total, step) => to
 const PREVIEW_LOOP_CONFIG: Record<
   HeroPreviewLoopMode,
   {
-    sequence: Array<{ mode: HeroPreviewActionMode; duration: number }>;
+    sequence: HeroPreviewLoopStep[];
     duration: number;
     initialMode: HeroPreviewActionMode;
     fallbackMode: HeroPreviewActionMode;
@@ -268,20 +287,28 @@ function isCanvasSafeToReveal(canvas: HTMLCanvasElement): boolean {
   return whitePixels / totalPixels < 0.35;
 }
 
-function getLoopMode(
-  sequence: Array<{ mode: HeroPreviewActionMode; duration: number }>,
+function getLoopStep(
+  sequence: HeroPreviewLoopStep[],
   duration: number,
   elapsedTime: number,
   fallbackMode: HeroPreviewActionMode
-): HeroPreviewActionMode {
+): HeroPreviewLoopStep {
   let phase = elapsedTime % duration;
 
   for (const step of sequence) {
-    if (phase < step.duration) return step.mode;
+    if (phase < step.duration) return step;
     phase -= step.duration;
   }
 
-  return fallbackMode;
+  return { mode: fallbackMode, duration: 0 };
+}
+
+function isSameLoopStep(a: HeroPreviewLoopStep, b: HeroPreviewLoopStep): boolean {
+  return (
+    a.mode === b.mode &&
+    a.walkDirection?.forward === b.walkDirection?.forward &&
+    a.walkDirection?.right === b.walkDirection?.right
+  );
 }
 
 function isPreviewLoopMode(animationMode: HeroPreviewAnimationMode): animationMode is HeroPreviewLoopMode {
@@ -547,10 +574,13 @@ function HeroPreviewScene({
   const loopStartedAtRef = useRef<number | null>(null);
   const isLoopingPreview = isPreviewLoopMode(animationMode);
   const loopConfig = isLoopingPreview ? PREVIEW_LOOP_CONFIG[animationMode] : null;
-  const [loopAnimationMode, setLoopAnimationMode] = useState<HeroPreviewActionMode>(
-    () => loopConfig?.initialMode ?? 'idle'
+  const [loopStep, setLoopStep] = useState<HeroPreviewLoopStep>(
+    () => ({ mode: loopConfig?.initialMode ?? 'idle', duration: 0 })
   );
-  const bodyAnimationMode: HeroPreviewActionMode = isLoopingPreview ? loopAnimationMode : animationMode;
+  const bodyAnimationMode: HeroPreviewActionMode = isLoopingPreview ? loopStep.mode : animationMode;
+  const previewWalkDirection = isLoopingPreview
+    ? loopStep.walkDirection ?? PREVIEW_FORWARD_DIRECTION
+    : PREVIEW_FORWARD_DIRECTION;
   const actionFraming = bodyAnimationMode === 'jump'
     ? config.jumpFraming
     : bodyAnimationMode === 'slide'
@@ -576,7 +606,7 @@ function HeroPreviewScene({
   useEffect(() => {
     if (loopConfig) {
       loopStartedAtRef.current = null;
-      setLoopAnimationMode(loopConfig.initialMode);
+      setLoopStep({ mode: loopConfig.initialMode, duration: 0 });
     }
   }, [animationMode, heroId, loopConfig]);
 
@@ -588,13 +618,13 @@ function HeroPreviewScene({
         loopStartedAtRef.current = state.clock.elapsedTime;
       }
       const elapsedLoopTime = state.clock.elapsedTime - loopStartedAtRef.current;
-      const nextLoopMode = getLoopMode(
+      const nextLoopStep = getLoopStep(
         loopConfig.sequence,
         loopConfig.duration,
         elapsedLoopTime,
         loopConfig.fallbackMode
       );
-      setLoopAnimationMode((currentMode) => currentMode === nextLoopMode ? currentMode : nextLoopMode);
+      setLoopStep((currentStep) => isSameLoopStep(currentStep, nextLoopStep) ? currentStep : nextLoopStep);
     }
 
     if (bodyAnimationMode !== 'slide' && idleRotation && !isDragging && config.idleSpeed > 0) {
@@ -634,7 +664,7 @@ function HeroPreviewScene({
             isSliding={bodyAnimationMode === 'slide'}
             isAttacking={bodyAnimationMode === 'attack'}
             movementPose={previewMovementPose}
-            walkDirection={{ forward: 1, right: 0 }}
+            walkDirection={previewWalkDirection}
             idleIntensity={idleAnimation ? config.idleIntensity : 0}
             showTeamAccents
             castShadow={config.shadows}
