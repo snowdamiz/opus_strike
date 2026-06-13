@@ -15,9 +15,9 @@ Bots already have a server-side brain with roles, a blackboard, aiming, movement
 - Ability use is cadence-driven. A bot may spend a heal, wall, blink, rocket jump, or ultimate because a timer allows it, not because the tactical value is high.
 - Support play has no real triage. Chronos can heal any damaged ally in radius, even if the heal is mostly wasted or a better multi-target moment is imminent.
 - Difficulty mainly changes aim, reaction, and frequency. It does not change tactical patience, path quality, heal thresholds, focus fire, escort behavior, or objective priority.
-- There is no dedicated bot regression harness, so bot quality is hard to measure without playing a match manually.
+- There is no dedicated bot regression harness, so bot quality is hard to verify without playing a match manually.
 
-The durable fix is not a bigger pile of one-off conditions. Build a bot decision pipeline with explicit navigation feedback, utility scoring, team-level tactical state, and measurable scenarios.
+The durable fix is not a bigger pile of one-off conditions. Build a bot decision pipeline with explicit navigation feedback, utility scoring, team-level tactical state, and repeatable headless scenarios.
 
 ## Goals
 
@@ -29,7 +29,7 @@ The durable fix is not a bigger pile of one-off conditions. Build a bot decision
 - Blaze bots use rocket jump for repositioning and escape, use flamethrower only when close enough to sustain it, and ult clustered enemies or objectives.
 - Phantom bots flank, disengage, and pressure carriers instead of blinking into bad geometry.
 - Hard bots feel smarter, not merely more accurate.
-- The system stays inside the room tick budget and degrades gracefully when many bots are active.
+- The system stays inside the room tick budget with minimal overhead: low-frequency planning, cached route data, bounded replans, and no extra runtime streams.
 
 ## Non-Goals
 
@@ -37,6 +37,7 @@ The durable fix is not a bigger pile of one-off conditions. Build a bot decision
 - Do not make bots omniscient. Perception should still respect stealth, distance, line of sight, and intentionally public objective information.
 - Do not browser-test this work. Use headless/server verification and leave visual or feel checks to the user.
 - Do not keep the old monolithic bot heuristics as a permanent legacy path once the replacement is validated.
+- Do not add extra runtime surfaces or network messages for AI internals.
 
 ## Current Architecture Notes
 
@@ -101,7 +102,7 @@ Scores possible intents every think interval:
 - Retreat, heal, or reposition.
 - Regroup.
 
-The winning intent should include a reason string for debugging, such as `intercept_carrier:enemy_near_mid`, `save_lifeline:low_value`, or `repath:blocked_front`.
+The winning intent should be deterministic for the same input and expose enough typed data for headless tests to assert the selected action.
 
 ### PathPlan
 
@@ -132,13 +133,13 @@ Scores ability casts by opportunity value minus cooldown/resource cost:
 - Damage value is expected hits, target priority, cluster size, and whether the target can be killed.
 - Ultimate value requires match impact: carrier swing, multi-target fight, objective denial, or capture enable.
 
-## Phase 1: Extract And Measure The Bot Brain
+## Phase 1: Extract And Stabilize The Bot Brain
 
 Move bot decision logic into a dedicated server-side bot module with pure functions for blackboard building, intent scoring, target selection, route scoring, and ability scoring.
 
 Work items:
 
-- Define plain input/output types for bot context, team tactics, route plans, action plans, and debug reasons.
+- Define plain input/output types for bot context, team tactics, route plans, action plans, and score inputs.
 - Keep the room responsible for authoritative state mutation, movement command enqueueing, and ability execution.
 - Add a headless bot decision test harness that can construct synthetic match states without opening a browser.
 - Add scenario fixtures for wall-blocked routes, stolen flags, dropped flags, low-health ally clusters, enemy carrier interception, and temporary wall obstructions.
@@ -147,7 +148,7 @@ Work items:
 Acceptance criteria:
 
 - Bot intent and ability decisions can be tested without starting a client.
-- A test can assert not only the chosen action but the reason and score components.
+- A test can assert the chosen action under controlled score inputs.
 - Existing bot behavior still works while the extraction is incomplete.
 - Once the new path covers a decision, the old equivalent branch is removed.
 
@@ -245,8 +246,8 @@ Move each hero's abilities behind a small controller that returns scored ability
 
 Acceptance criteria:
 
-- Ability logs show a tactical reason for every bot ability cast.
-- Failed casts due to no target or invalid geometry become rare and measurable.
+- Ability casts are selected by tactical value instead of timer availability alone.
+- Failed casts due to no target or invalid geometry become rare in headless scenario tests.
 - Hard bots use abilities more decisively, while easy bots keep simpler and more delayed decisions.
 
 ## Phase 6: Perception, Memory, And Fairness
@@ -284,46 +285,29 @@ Acceptance criteria:
 - Difficulty does not grant impossible perception or illegal movement.
 - Bot profiles affect style without breaking team needs.
 
-## Phase 8: Debugging And Telemetry
+## Phase 8: Low-Overhead Execution
 
-Make bot intelligence visible to engineers through logs, counters, and optional debug snapshots.
+Keep the new AI cheap enough that it is hard to notice in room performance.
 
-Add metrics:
+Work items:
 
-- `bot.intent.selected`
-- `bot.intent.score`
-- `bot.route.replanned`
-- `bot.route.blocked_edge`
-- `bot.stuck.recovered`
-- `bot.ability.cast`
-- `bot.ability.rejected`
-- `bot.ability.saved_for_value`
-- `bot.heal.effective_amount`
-- `bot.heal.wasted_amount`
-- `bot.team.role_assignment`
-- `bot.tick.budget_deferred`
-
-Add per-bot debug snapshots:
-
-```ts
-{
-  intent,
-  role,
-  targetId,
-  routeNodeId,
-  movementTarget,
-  abilityPlan,
-  topScores,
-  reason,
-  stuckState
-}
-```
+- Precompute route graph adjacency, lane metadata, tactical-slot lookups, and static edge costs when the map manifest is loaded.
+- Reuse scratch arrays, vectors, and candidate buffers in hot paths instead of allocating per bot per tick.
+- Run team tactics at low frequency, then let bots consume the cached result until the next scheduled update.
+- Gate expensive path replans behind state changes: blocked progress, carrier changes, flag drops, temporary wall changes, death/respawn waves, or target movement beyond a threshold.
+- Cap path search work per update with a small node expansion limit and keep a fallback route if the cap is reached.
+- Keep line-of-sight and collision probes short, cached, and distance-gated.
+- Spread non-urgent bot updates across ticks when many bots are active.
+- Avoid extra network payloads, client messages, or always-on server output for bot internals.
+- Keep validation scenarios in scripts/tests rather than runtime systems.
 
 Acceptance criteria:
 
-- A bad bot decision can be explained from a debug snapshot.
-- Heal waste and blocked-route recovery can be measured across a match.
-- AI budget deferral never silently turns active bots into idle targets.
+- Normal bot ticks use cached team and route data in the common case.
+- Non-urgent bots defer planning rather than extending the room tick.
+- A room with 8 active bots remains within the existing tick budget after the new planner is enabled.
+- Temporary walls and blocked paths trigger bounded replans, not repeated full searches.
+- The production runtime does not send extra bot-internal payloads to clients.
 
 ## Phase 9: Verification Plan
 
@@ -357,7 +341,7 @@ Manual checks for the user:
 ## Implementation Order
 
 1. Add a bot AI test harness and extract pure decision helpers.
-2. Add decision debug reasons and metrics around the existing bot brain.
+2. Add deterministic headless scenario coverage around the existing bot brain.
 3. Implement team tactics and dynamic role assignment.
 4. Replace direct semantic target steering with route graph planning and local avoidance.
 5. Add blocked-path memory and temporary wall route costs.
@@ -373,17 +357,16 @@ Manual checks for the user:
 Use a server-side feature flag while replacing behavior:
 
 - `legacy`: current bot brain.
-- `shadow`: compute new decisions and log differences, but execute old decisions.
 - `hybrid`: execute new intent/path decisions while keeping old ability heuristics.
 - `new`: execute the full new pipeline.
 
-The flag is temporary. After the new pipeline passes scenarios and match-load checks, remove the legacy mode and shadow-only code.
+The flag is temporary. After the new pipeline passes scenarios and match-load checks, remove the legacy and hybrid code.
 
 ## Success Criteria
 
 - Bots no longer spend more than a short recovery window pushing into walls or temporary walls.
 - Bots choose different roles when the match state demands it.
-- Chronos effective healing rises and wasted healing drops.
+- Chronos saves low-value heals and spends Lifeline on high-value ally or self recovery cases.
 - Carrier escort and flag return behavior happen without manual scripting.
 - Ability rejection rates drop because bots cast only when geometry and targets are valid.
 - Hard bots are smarter in navigation, team play, and resource timing, not just aim.
@@ -396,4 +379,4 @@ The main risk is overbuilding pathfinding before the tactical layer can use it. 
 
 The second risk is making bots feel unfair. Keep perception rules explicit and testable. Better bots should make better decisions from legitimate information, not see through walls or ignore stealth.
 
-The third risk is preserving two AI systems for too long. Use shadow and hybrid modes only as migration tools, then delete legacy code after the new scenarios pass.
+The third risk is preserving two AI systems for too long. Use hybrid mode only as a migration tool, then delete legacy code after the new scenarios pass.

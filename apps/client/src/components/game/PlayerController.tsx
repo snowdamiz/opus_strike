@@ -547,22 +547,18 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       : actionLockUntilRef.current > timestampMs
   ), [isBlazeActionLocked]);
 
-  const flushMovementCommands = useCallback((nowMs: number, force = false) => {
+  const flushMovementCommands = useCallback((nowMs: number) => {
     const pending = pendingMovementCommandsRef.current;
     if (pending.length === 0) return;
-    if (!force && pending.length < MOVEMENT_COMMAND_TARGET_PACKET_SIZE && nowMs - lastSendRef.current < MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS) {
+    if (pending.length < MOVEMENT_COMMAND_TARGET_PACKET_SIZE && nowMs - lastSendRef.current < MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS) {
       return;
     }
 
-    while (pending.length > 0) {
-      const pendingBeforeFlush = pending.length;
-      const packetSize = pending.length > MOVEMENT_MAX_PACKET_COMMANDS
-        ? MOVEMENT_MAX_PACKET_COMMANDS
-        : Math.min(pending.length, MOVEMENT_COMMAND_TARGET_PACKET_SIZE);
-      const packetCommands = pending.splice(0, packetSize);
-      sendMovementCommands(createMovementCommandPacket(packetCommands));
-      recordMovementCommandsSent(packetCommands.length, pendingBeforeFlush);
-    }
+    const pendingBeforeFlush = pending.length;
+    const packetSize = Math.min(pending.length, MOVEMENT_MAX_PACKET_COMMANDS);
+    const packetCommands = pending.splice(0, packetSize);
+    sendMovementCommands(createMovementCommandPacket(packetCommands));
+    recordMovementCommandsSent(packetCommands.length, pendingBeforeFlush);
     lastSendRef.current = nowMs;
   }, [sendMovementCommands]);
 

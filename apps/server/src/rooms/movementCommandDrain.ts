@@ -11,9 +11,21 @@ export interface MovementCommandDrainDecision {
   targetPendingCommands: number;
 }
 
-export function getMovementCommandDrainDecision(queueLength: number): MovementCommandDrainDecision {
+export function getMovementCommandDrainDecision(
+  queueLength: number,
+  options: { hasAuthorityBarrier?: boolean } = {}
+): MovementCommandDrainDecision {
   const commandCount = Math.max(0, Math.trunc(queueLength));
   if (commandCount === 0) {
+    return {
+      budget: 0,
+      underflow: true,
+      catchup: false,
+      targetPendingCommands: SERVER_MOVEMENT_TARGET_PENDING_COMMANDS,
+    };
+  }
+
+  if (!options.hasAuthorityBarrier && commandCount < SERVER_MOVEMENT_TARGET_PENDING_COMMANDS) {
     return {
       budget: 0,
       underflow: true,

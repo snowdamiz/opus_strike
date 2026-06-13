@@ -55,6 +55,10 @@ voxel-strike/
 └── pnpm-workspace.yaml
 ```
 
+## Documentation
+
+- [Game Optimization Log](docs/game-optimization-log.md) - Optimization passes, evidence, verification, and follow-up candidates.
+
 ## Getting Started
 
 ### Prerequisites

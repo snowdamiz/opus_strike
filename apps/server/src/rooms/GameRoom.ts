@@ -7,6 +7,7 @@ import { Player } from './schema/Player';
 import { Vec3Schema, AbilityStateSchema } from './schema/Components';
 import { PlayerSpatialIndex } from './PlayerSpatialIndex';
 import { MovementCommandQueue } from './MovementCommandQueue';
+import { estimateCustomMessageBytes } from './customMessageMetrics';
 import {
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
   getMovementCommandDrainDecision,
@@ -2198,19 +2199,11 @@ export class GameRoom extends Room<GameState> {
     return samples[Math.min(samples.length - 1, Math.floor((samples.length - 1) * percentile))] ?? 0;
   }
 
-  private estimateMessageBytes(payload: unknown): number {
-    try {
-      return Buffer.byteLength(JSON.stringify(payload));
-    } catch {
-      return 0;
-    }
-  }
-
   private recordCustomMessage(type: string, payload: unknown, recipients: number): void {
     if (recipients <= 0) return;
 
     const metric = this.customMessageMetrics.get(type) ?? { messages: 0, recipients: 0, bytes: 0 };
-    const bytes = this.estimateMessageBytes(payload);
+    const bytes = estimateCustomMessageBytes(type, payload);
     metric.messages++;
     metric.recipients += recipients;
     metric.bytes += bytes * recipients;
@@ -8746,7 +8739,9 @@ export class GameRoom extends Room<GameState> {
       authority.metrics.queueLengthBeforeTick = queuedCommandCount;
       authority.metrics.commandsProcessedLastTick = 0;
 
-      const drainDecision = getMovementCommandDrainDecision(queuedCommandCount);
+      const drainDecision = getMovementCommandDrainDecision(queuedCommandCount, {
+        hasAuthorityBarrier: Boolean(authority.correctionReason),
+      });
 
       if (drainDecision.underflow) {
         authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;

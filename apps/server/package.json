@@ -15,6 +15,7 @@
     "test:movement-parity": "tsx src/scripts/anti-cheat-movement-parity-gate.ts --corpus=smoke",
     "test:movement-parity:full": "tsx src/scripts/anti-cheat-movement-parity-gate.ts --corpus=full",
     "test:movement-queue": "tsx src/scripts/movement-command-queue.test.ts",
+    "test:message-metrics": "tsx src/scripts/custom-message-metrics.test.ts",
     "test:anticheat": "tsx src/scripts/anti-cheat-service.test.ts && tsx src/scripts/anti-cheat-shadow-simulation.test.ts && tsx src/scripts/anti-cheat-trace-replay.test.ts && pnpm test:movement-parity",
     "test:voice": "tsx src/scripts/voice-service.test.ts",
     "test:wager": "tsx src/scripts/wager-service.test.ts",
