@@ -42,6 +42,7 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
     for (const player of players.values()) {
       if (player.id === playerId || player.id === localPlayerId) continue;
       if (hideDeadPlayers && player.state === 'dead') continue;
+      if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
       nextPlayers.push(player);
     }
 

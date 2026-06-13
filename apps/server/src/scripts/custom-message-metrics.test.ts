@@ -20,11 +20,29 @@ const multiTransform = {
   ],
 };
 
+const hiddenTransform = {
+  ...singleTransform,
+  players: [],
+  hiddenPlayerIds: ['enemy-a', 'enemy-b'],
+};
+
+const interestUpdate = {
+  tick: 120,
+  serverTime: 1_725_000_000_000,
+  players: [
+    { playerId: 'enemy-a', state: 'hidden', reason: 'distance_cutoff' },
+    { playerId: 'enemy-b', state: 'last_known', reason: 'last_known', lastKnownPosition: { x: 4, y: 1, z: -2 } },
+  ],
+};
+
 const singleBytes = estimateCustomMessageBytes('playerTransformsV2', singleTransform);
 const multiBytes = estimateCustomMessageBytes('playerTransformsV2', multiTransform);
+const hiddenBytes = estimateCustomMessageBytes('playerTransformsV2', hiddenTransform);
 
 assert.ok(singleBytes > 0);
 assert.ok(multiBytes > singleBytes);
+assert.ok(hiddenBytes > estimateCustomMessageBytes('playerTransformsV2', { ...singleTransform, players: [] }));
+assert.ok(estimateCustomMessageBytes('playerInterest', interestUpdate) > 0);
 
 const cyclic: Record<string, unknown> = { type: 'diagnostic' };
 cyclic.self = cyclic;

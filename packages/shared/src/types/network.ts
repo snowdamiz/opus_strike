@@ -1,4 +1,4 @@
-import type { BotDifficulty, PlayerSnapshot, PlayerStats, Team } from './player.js';
+import type { BotDifficulty, PlayerSnapshot, PlayerStats, PlayerVisibilityState, Team } from './player.js';
 import type { HeroId } from './hero.js';
 import type { GamePhase, MatchOutcome } from './game.js';
 import type { Vec3 } from './vector.js';
@@ -29,6 +29,7 @@ export type ClientMessage =
 // Server -> Client Messages
 export type ServerMessage = 
   | { type: 'playerTransformsV2'; payload: PlayerTransformsV2Message }
+  | { type: 'playerInterest'; payload: PlayerInterestMessage }
   | { type: 'selfMovementAuthority'; payload: SelfMovementAuthority }
   | { type: 'playerVitals'; payload: PlayerVitalsMessage }
   | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
@@ -38,7 +39,7 @@ export type ServerMessage =
   | { type: 'matchCancelled'; payload: MatchCancelledMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
   | { type: 'playerLeft'; payload: { playerId: string } }
-  | { type: 'playerDied'; payload: PlayerDeathEvent }
+  | { type: 'playerKilled'; payload: PlayerDeathEvent }
   | { type: 'flagPickup'; payload: FlagEvent }
   | { type: 'flagDrop'; payload: FlagEvent }
   | { type: 'flagCapture'; payload: FlagEvent }
@@ -86,6 +87,21 @@ export interface PlayerTransformsV2Message {
   streamEpoch?: number;
   full?: boolean;
   players: PackedPlayerTransform[];
+  hiddenPlayerIds?: string[];
+}
+
+export interface PlayerInterestSnapshot {
+  playerId: string;
+  state: PlayerVisibilityState;
+  reason?: string;
+  lastKnownPosition?: Vec3;
+  expiresAt?: number;
+}
+
+export interface PlayerInterestMessage {
+  tick: number;
+  serverTime: number;
+  players: PlayerInterestSnapshot[];
 }
 
 export interface PlayerVitalsAbilitySnapshot {
@@ -117,6 +133,7 @@ export interface PlayerVitalsSnapshot {
   stats: NonNullable<PlayerSnapshot['stats']>;
   respawnTime: number | null;
   spawnProtectionUntil: number | null;
+  visibility?: PlayerVisibilityState;
 }
 
 export interface PlayerVitalsMessage {

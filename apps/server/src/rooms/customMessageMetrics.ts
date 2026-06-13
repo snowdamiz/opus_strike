@@ -15,6 +15,9 @@ const PACKED_TRANSFORM_ESTIMATE_BYTES =
 const SELF_MOVEMENT_AUTHORITY_ESTIMATE_BYTES = 420;
 const PLAYER_VITALS_BASE_BYTES = 64;
 const PLAYER_VITALS_SNAPSHOT_ESTIMATE_BYTES = 520;
+const PLAYER_TRANSFORM_HIDDEN_ID_ESTIMATE_BYTES = 48;
+const PLAYER_INTEREST_BASE_BYTES = 56;
+const PLAYER_INTEREST_SNAPSHOT_ESTIMATE_BYTES = 96;
 const PLAYER_PING_BASE_BYTES = 48;
 const PLAYER_PING_SNAPSHOT_ESTIMATE_BYTES = 48;
 const MATCH_SNAPSHOT_ESTIMATE_BYTES = 760;
@@ -33,7 +36,9 @@ function arrayLength(value: unknown): number {
 
 function estimatePlayerTransformsV2Bytes(payload: unknown): number {
   if (!isRecord(payload)) return UNKNOWN_OBJECT_BYTES;
-  return 80 + arrayLength(payload.players) * PACKED_TRANSFORM_ESTIMATE_BYTES;
+  return 80 +
+    arrayLength(payload.players) * PACKED_TRANSFORM_ESTIMATE_BYTES +
+    arrayLength(payload.hiddenPlayerIds) * PLAYER_TRANSFORM_HIDDEN_ID_ESTIMATE_BYTES;
 }
 
 function estimatePlayerVitalsBytes(payload: unknown): number {
@@ -41,6 +46,11 @@ function estimatePlayerVitalsBytes(payload: unknown): number {
   return PLAYER_VITALS_BASE_BYTES +
     arrayLength(payload.players) * PLAYER_VITALS_SNAPSHOT_ESTIMATE_BYTES +
     arrayLength(payload.removedPlayerIds) * 48;
+}
+
+function estimatePlayerInterestBytes(payload: unknown): number {
+  if (!isRecord(payload)) return UNKNOWN_OBJECT_BYTES;
+  return PLAYER_INTEREST_BASE_BYTES + arrayLength(payload.players) * PLAYER_INTEREST_SNAPSHOT_ESTIMATE_BYTES;
 }
 
 function estimatePlayerPingsBytes(payload: unknown): number {
@@ -113,6 +123,8 @@ export function estimateCustomMessageBytes(type: string, payload: unknown): numb
       return SELF_MOVEMENT_AUTHORITY_ESTIMATE_BYTES;
     case 'playerVitals':
       return estimatePlayerVitalsBytes(payload);
+    case 'playerInterest':
+      return estimatePlayerInterestBytes(payload);
     case 'playerPings':
       return estimatePlayerPingsBytes(payload);
     case 'playerPingRequest':

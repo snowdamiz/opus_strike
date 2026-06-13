@@ -14,6 +14,8 @@ export type PlayerState =
   | 'alive'
   | 'dead';
 
+export type PlayerVisibilityState = 'visible' | 'audible' | 'last_known' | 'hidden';
+
 export interface PlayerMovementState {
   isGrounded: boolean;
   isSprinting: boolean;
@@ -102,6 +104,7 @@ export interface Player {
   // Match stats
   stats: PlayerStats;
   rank?: PublicRankSnapshot;
+  visibility?: PlayerVisibilityState;
 }
 
 export interface PlayerSnapshot {

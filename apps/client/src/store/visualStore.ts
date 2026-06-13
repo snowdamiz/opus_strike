@@ -607,6 +607,7 @@ export const rebuildCombatVisualFrameCache = (
   let entryIndex = 0;
   for (const player of players) {
     if (player.state !== 'alive') continue;
+    if (player.visibility === 'hidden' || player.visibility === 'last_known' || player.visibility === 'audible') continue;
     let visualPlayer = cache.entryPool[entryIndex];
     if (!visualPlayer) {
       visualPlayer = {
@@ -712,7 +713,7 @@ export const clearCombatVisualFrameCache = (): void => {
  *
  * @param playerId - The player's unique ID to remove
  */
-export const removePlayerVisualState = (playerId: string): void => {
+export const removePlayerLiveVisualState = (playerId: string): void => {
   const state = visualStore.getState();
   state.playerPositions.delete(playerId);
   state.playerRotations.delete(playerId);
@@ -720,6 +721,10 @@ export const removePlayerVisualState = (playerId: string): void => {
   state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
   state.remotePlayerAttackStates.delete(playerId);
+};
+
+export const removePlayerVisualState = (playerId: string): void => {
+  removePlayerLiveVisualState(playerId);
   clearDeathVisualsForPlayer(playerId);
 };
 

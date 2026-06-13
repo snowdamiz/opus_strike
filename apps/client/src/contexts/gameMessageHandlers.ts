@@ -21,6 +21,7 @@ import {
   pushLocalPlayerImpulse,
   addRemoteTransformSnapshot,
   pruneRemoteTransformHistories,
+  removePlayerLiveVisualState,
   setChronosAegisVisualState,
   setPlayerVisualRotation,
   setPlayerVisualTransform,
@@ -87,7 +88,9 @@ import type {
   MatchSnapshotMessage,
   PlayerDeathEvent,
   Player,
+  PlayerInterestMessage,
   PlayerVitalsAbilitySnapshot,
+  PlayerVisibilityState,
   PlayerMovementState,
   PlayerTransformsV2Message,
   PlayerVitalsMessage,
@@ -241,33 +244,20 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     botDifficulty: schemaPlayer.botDifficulty || undefined,
     botProfileId: schemaPlayer.botProfileId || undefined,
     rank: normalizeRankSnapshot(schemaPlayer),
-    position: {
-      x: schemaPlayer.position?.x ?? 0,
-      y: schemaPlayer.position?.y ?? 1,
-      z: schemaPlayer.position?.z ?? 0,
-    },
-    velocity: {
-      x: schemaPlayer.velocity?.x ?? 0,
-      y: schemaPlayer.velocity?.y ?? 0,
-      z: schemaPlayer.velocity?.z ?? 0,
-    },
-    lookYaw: schemaPlayer.lookYaw ?? 0,
-    lookPitch: schemaPlayer.lookPitch ?? 0,
-    health: schemaPlayer.health ?? 100,
-    maxHealth: schemaPlayer.maxHealth ?? 100,
-    ultimateCharge: schemaPlayer.ultimateCharge ?? 0,
-    movement: normalizeMovementState(schemaPlayer.movement),
+    position: { x: 0, y: 1, z: 0 },
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    health: 100,
+    maxHealth: 100,
+    ultimateCharge: 0,
+    movement: createDefaultMovement(),
     abilities: {},
-    hasFlag: schemaPlayer.hasFlag || false,
+    hasFlag: false,
     respawnTime: null,
     spawnProtectionUntil: null,
-    stats: schemaPlayer.stats || {
-      kills: schemaPlayer.kills ?? 0,
-      deaths: schemaPlayer.deaths ?? 0,
-      assists: schemaPlayer.assists ?? 0,
-      flagCaptures: schemaPlayer.flagCaptures ?? 0,
-      flagReturns: schemaPlayer.flagReturns ?? 0,
-    },
+    stats: createDefaultStats(),
+    visibility: 'hidden',
   };
 }
 
@@ -296,26 +286,7 @@ export function createDefaultLocalPlayer(sessionId: string, playerName: string):
     respawnTime: null,
     spawnProtectionUntil: null,
     stats: createDefaultStats(),
-  };
-}
-
-function getSchemaPosition(schemaPlayer: any): { x: number; y: number; z: number } | null {
-  if (!schemaPlayer.position) return null;
-
-  return {
-    x: schemaPlayer.position.x ?? 0,
-    y: schemaPlayer.position.y ?? 1,
-    z: schemaPlayer.position.z ?? 0,
-  };
-}
-
-function getSchemaVelocity(schemaPlayer: any, fallback: Player['velocity']): Player['velocity'] {
-  if (!schemaPlayer.velocity) return fallback;
-
-  return {
-    x: schemaPlayer.velocity.x ?? fallback.x,
-    y: schemaPlayer.velocity.y ?? fallback.y,
-    z: schemaPlayer.velocity.z ?? fallback.z,
+    visibility: 'visible',
   };
 }
 
@@ -340,6 +311,32 @@ function shouldSyncLocalPosition(localPlayer: Player, nextState: string, nextPos
 
 function syncLocalVisualPosition(player: Player): void {
   setPlayerVisualTransform(player.id, player.position, player.lookYaw);
+}
+
+function shouldHideLiveVisuals(visibility?: PlayerVisibilityState): boolean {
+  return visibility === 'hidden' || visibility === 'last_known' || visibility === 'audible';
+}
+
+function clearHiddenLiveVisuals(playerId: string): void {
+  stopRemotePhantomCharge(playerId);
+  stopObservedAbilityCastEffects(playerId);
+  removePlayerLiveVisualState(playerId);
+}
+
+function setStoredPlayerVisibility(playerId: string, visibility: PlayerVisibilityState): Player | null {
+  const store = useGameStore.getState();
+  const current = store.players.get(playerId);
+  if (!current) return null;
+  if (current.visibility === visibility) return current;
+
+  const nextPlayer = { ...current, visibility };
+  const nextPlayers = new Map(store.players);
+  nextPlayers.set(playerId, nextPlayer);
+  useGameStore.setState({
+    players: nextPlayers,
+    localPlayer: store.localPlayer?.id === playerId ? nextPlayer : store.localPlayer,
+  });
+  return nextPlayer;
 }
 
 function clonePlainVec3(source: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
@@ -567,6 +564,7 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     respawnTime: vitals.respawnTime,
     spawnProtectionUntil: vitals.spawnProtectionUntil,
     stats: vitals.stats || existing?.stats || createDefaultStats(),
+    visibility: vitals.visibility ?? existing?.visibility ?? 'visible',
   };
 }
 
@@ -627,6 +625,7 @@ function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapsh
   player.respawnTime = vitals.respawnTime;
   player.spawnProtectionUntil = vitals.spawnProtectionUntil;
   player.stats = vitals.stats || player.stats;
+  player.visibility = vitals.visibility ?? player.visibility ?? 'visible';
 }
 
 // ============================================================================
@@ -666,15 +665,6 @@ export function syncPlayerFromSchema(
     if (store.localPlayer) {
       const nextState = schemaPlayer.state || store.localPlayer.state;
       const nextHeroId = (schemaPlayer.heroId || store.localPlayer.heroId) as HeroId | null;
-      const preserveLocalSimulation = shouldPreservePredictionOwnedLocalSimulation(
-        store.localPlayer,
-        nextState,
-        nextHeroId
-      );
-      const nextPosition = getSchemaPosition(schemaPlayer);
-      const shouldSyncPosition = nextPosition
-        ? !preserveLocalSimulation && shouldSyncLocalPosition(store.localPlayer, nextState, nextPosition)
-        : false;
       const updated = {
         ...store.localPlayer,
         heroId: nextHeroId,
@@ -683,23 +673,9 @@ export function syncPlayerFromSchema(
         botDifficulty: schemaPlayer.botDifficulty || store.localPlayer.botDifficulty,
         botProfileId: schemaPlayer.botProfileId || store.localPlayer.botProfileId,
         rank: normalizeRankSnapshot(schemaPlayer, store.localPlayer.rank),
-        health: schemaPlayer.health ?? store.localPlayer.health,
-        maxHealth: schemaPlayer.maxHealth ?? store.localPlayer.maxHealth,
         state: nextState,
-        position: shouldSyncPosition ? nextPosition! : store.localPlayer.position,
-        velocity: shouldSyncPosition ? getSchemaVelocity(schemaPlayer, store.localPlayer.velocity) : store.localPlayer.velocity,
-        lookYaw: preserveLocalSimulation ? store.localPlayer.lookYaw : schemaPlayer.lookYaw ?? store.localPlayer.lookYaw,
-        lookPitch: preserveLocalSimulation ? store.localPlayer.lookPitch : schemaPlayer.lookPitch ?? store.localPlayer.lookPitch,
-        // Explicitly preserve ultimateCharge - it's managed by playerVitals.
-        ultimateCharge: store.localPlayer.ultimateCharge,
-        movement: preserveLocalSimulation
-          ? store.localPlayer.movement
-          : normalizeMovementState(schemaPlayer.movement, store.localPlayer.movement),
       };
       actions.setLocalPlayer(updated);
-      if (shouldSyncPosition) {
-        syncLocalVisualPosition(updated);
-      }
     }
   } else {
     // Skip ghost players: same name as us but different ID
@@ -711,104 +687,6 @@ export function syncPlayerFromSchema(
     // Other player - add/update in store
     const playerData = createPlayerFromSchema(schemaPlayer, id);
     actions.updatePlayer(id, playerData);
-  }
-}
-
-/**
- * Processes a player during polling sync
- */
-export function processPlayerDuringPoll(
-  schemaPlayer: any,
-  id: string,
-  sessionId: string,
-  localPlayerName: string,
-  actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer'>
-) {
-  if (id === sessionId) {
-    const freshStore = useGameStore.getState();
-    if (freshStore.localPlayer) {
-      const nextState = schemaPlayer.state || freshStore.localPlayer.state;
-      const nextHeroId = (schemaPlayer.heroId || freshStore.localPlayer.heroId) as HeroId | null;
-      const preserveLocalSimulation = shouldPreservePredictionOwnedLocalSimulation(
-        freshStore.localPlayer,
-        nextState,
-        nextHeroId
-      );
-      const nextPosition = getSchemaPosition(schemaPlayer);
-      const shouldSyncPosition = nextPosition
-        ? !preserveLocalSimulation && shouldSyncLocalPosition(freshStore.localPlayer, nextState, nextPosition)
-        : false;
-      const updated = {
-        ...freshStore.localPlayer,
-        heroId: nextHeroId,
-        team: schemaPlayer.team || freshStore.localPlayer.team,
-        isBot: Boolean(schemaPlayer.isBot ?? freshStore.localPlayer.isBot),
-        botDifficulty: schemaPlayer.botDifficulty || freshStore.localPlayer.botDifficulty,
-        botProfileId: schemaPlayer.botProfileId || freshStore.localPlayer.botProfileId,
-        rank: normalizeRankSnapshot(schemaPlayer, freshStore.localPlayer.rank),
-        health: schemaPlayer.health ?? freshStore.localPlayer.health,
-        maxHealth: schemaPlayer.maxHealth ?? freshStore.localPlayer.maxHealth,
-        state: nextState,
-        position: shouldSyncPosition ? nextPosition! : freshStore.localPlayer.position,
-        velocity: shouldSyncPosition ? getSchemaVelocity(schemaPlayer, freshStore.localPlayer.velocity) : freshStore.localPlayer.velocity,
-        lookYaw: preserveLocalSimulation ? freshStore.localPlayer.lookYaw : schemaPlayer.lookYaw ?? freshStore.localPlayer.lookYaw,
-        lookPitch: preserveLocalSimulation ? freshStore.localPlayer.lookPitch : schemaPlayer.lookPitch ?? freshStore.localPlayer.lookPitch,
-        ultimateCharge: freshStore.localPlayer.ultimateCharge,
-        movement: preserveLocalSimulation
-          ? freshStore.localPlayer.movement
-          : normalizeMovementState(schemaPlayer.movement, freshStore.localPlayer.movement),
-      };
-      actions.setLocalPlayer(updated);
-      if (shouldSyncPosition) {
-        syncLocalVisualPosition(updated);
-      }
-    }
-    return;
-  }
-
-  // Skip ghost players
-  if (schemaPlayer.name === localPlayerName) {
-    loggers.network.sample('poll-ghost', 5000, 'ignoring ghost polled player', schemaPlayer.name, id);
-    return;
-  }
-
-  const otherStore = useGameStore.getState();
-  const existingPlayer = otherStore.players.get(id);
-
-  if (!existingPlayer) {
-    const playerData = createPlayerFromSchema(schemaPlayer, id);
-    actions.updatePlayer(id, playerData);
-  } else {
-    const positionUpdated = {
-      ...existingPlayer,
-      position: {
-        x: schemaPlayer.position?.x ?? existingPlayer.position.x,
-        y: schemaPlayer.position?.y ?? existingPlayer.position.y,
-        z: schemaPlayer.position?.z ?? existingPlayer.position.z,
-      },
-      velocity: {
-        x: schemaPlayer.velocity?.x ?? existingPlayer.velocity.x,
-        y: schemaPlayer.velocity?.y ?? existingPlayer.velocity.y,
-        z: schemaPlayer.velocity?.z ?? existingPlayer.velocity.z,
-      },
-      lookYaw: schemaPlayer.lookYaw ?? existingPlayer.lookYaw,
-      lookPitch: schemaPlayer.lookPitch ?? existingPlayer.lookPitch,
-      state: schemaPlayer.state || existingPlayer.state,
-      heroId: schemaPlayer.heroId || existingPlayer.heroId,
-      team: schemaPlayer.team || existingPlayer.team,
-      isReady: schemaPlayer.isReady ?? existingPlayer.isReady,
-      isBot: Boolean(schemaPlayer.isBot ?? existingPlayer.isBot),
-      botDifficulty: schemaPlayer.botDifficulty || existingPlayer.botDifficulty,
-      botProfileId: schemaPlayer.botProfileId || existingPlayer.botProfileId,
-      rank: normalizeRankSnapshot(schemaPlayer, existingPlayer.rank),
-      health: schemaPlayer.health ?? existingPlayer.health,
-      maxHealth: schemaPlayer.maxHealth ?? existingPlayer.maxHealth,
-      ultimateCharge: schemaPlayer.ultimateCharge ?? existingPlayer.ultimateCharge,
-      hasFlag: schemaPlayer.hasFlag ?? existingPlayer.hasFlag,
-      stats: schemaPlayer.stats || existingPlayer.stats,
-      movement: normalizeMovementState(schemaPlayer.movement, existingPlayer.movement),
-    };
-    actions.updatePlayer(id, positionUpdated);
   }
 }
 
@@ -856,6 +734,7 @@ export function setupPlayerJoinedHandler(
           botProfileId: data.botProfileId || existingPlayer.botProfileId,
           rank: data.rank || existingPlayer.rank,
           position: data.position || existingPlayer.position,
+          visibility: data.position ? 'visible' : existingPlayer.visibility ?? 'hidden',
         });
       } else {
         const newPlayer: Player = {
@@ -882,6 +761,7 @@ export function setupPlayerJoinedHandler(
           respawnTime: null,
           spawnProtectionUntil: null,
           stats: createDefaultStats(),
+          visibility: data.position ? 'visible' : 'hidden',
         };
         updatePlayer(data.playerId, newPlayer);
       }
@@ -937,13 +817,14 @@ export function setupPlayerTransformsHandler(
       return 'ignored';
     }
 
-    const wasGrappling = existingPlayer.movement.isGrappling;
-    const nextMovement = movementFromBits(transform, existingPlayer.movement);
-    existingPlayer.position = decoded.position;
-    existingPlayer.velocity = decoded.velocity;
-    existingPlayer.lookYaw = decoded.lookYaw;
-    existingPlayer.lookPitch = decoded.lookPitch;
-    existingPlayer.movement = nextMovement;
+    const remotePlayer = setStoredPlayerVisibility(playerId, 'visible') ?? existingPlayer;
+    const wasGrappling = remotePlayer.movement.isGrappling;
+    const nextMovement = movementFromBits(transform, remotePlayer.movement);
+    remotePlayer.position = decoded.position;
+    remotePlayer.velocity = decoded.velocity;
+    remotePlayer.lookYaw = decoded.lookYaw;
+    remotePlayer.lookPitch = decoded.lookPitch;
+    remotePlayer.movement = nextMovement;
     if (wasGrappling && !nextMovement.isGrappling) {
       const freshStore = useGameStore.getState();
       for (const line of freshStore.grappleLines) {
@@ -964,7 +845,7 @@ export function setupPlayerTransformsHandler(
       movementEpoch: transform.movementEpoch,
     });
     setPlayerVisualRotation(playerId, decoded.lookYaw);
-    const chronosAegisActive = existingPlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
+    const chronosAegisActive = remotePlayer.heroId === 'chronos' && Boolean(transform.movementBits & MOVEMENT_BIT_CHRONOS_AEGIS);
     const previousChronosAegis = visualStore.getState().chronosAegisStates.get(playerId);
     if (chronosAegisActive && !previousChronosAegis?.active) {
       playChronosWorldSound('chronosAegis', decoded.position);
@@ -982,6 +863,11 @@ export function setupPlayerTransformsHandler(
     const fullSnapshotPlayerIds = data.full ? new Set<string>() : null;
     let selfTransformCount = 0;
     let remoteTransformCount = 0;
+    for (const hiddenPlayerId of data.hiddenPlayerIds || []) {
+      if (hiddenPlayerId === sessionId) continue;
+      setStoredPlayerVisibility(hiddenPlayerId, 'hidden');
+      clearHiddenLiveVisuals(hiddenPlayerId);
+    }
     for (const packedTransform of data.players) {
       const transform = unpackPackedTransform(packedTransform);
       const playerId = playerIdByNetId.get(transform.netId);
@@ -994,7 +880,7 @@ export function setupPlayerTransformsHandler(
         remoteTransformCount++;
       }
     }
-    if (remoteTransformCount > 0) {
+    if (remoteTransformCount > 0 || (data.hiddenPlayerIds?.length ?? 0) > 0) {
       useGameStore.setState({
         tick: data.tick,
         serverTime: data.serverTime,
@@ -1008,6 +894,42 @@ export function setupPlayerTransformsHandler(
       selfTransformCount,
       remoteTransformCount,
     });
+  });
+}
+
+export function setupPlayerInterestHandler(room: Room, sessionId: string) {
+  room.onMessage('playerInterest', (data: PlayerInterestMessage) => {
+    const store = useGameStore.getState();
+    let nextPlayers: Map<string, Player> | null = null;
+    let nextLocalPlayer = store.localPlayer;
+
+    for (const snapshot of data.players) {
+      const current = (nextPlayers ?? store.players).get(snapshot.playerId);
+      if (!current) continue;
+
+      if (current.visibility !== snapshot.state) {
+        const nextPlayer = { ...current, visibility: snapshot.state };
+        nextPlayers ??= new Map(store.players);
+        nextPlayers.set(snapshot.playerId, nextPlayer);
+        if (nextLocalPlayer?.id === snapshot.playerId) {
+          nextLocalPlayer = nextPlayer;
+        }
+      }
+
+      if (snapshot.playerId !== sessionId && shouldHideLiveVisuals(snapshot.state)) {
+        clearHiddenLiveVisuals(snapshot.playerId);
+      }
+    }
+
+    useGameStore.setState({
+      ...(nextPlayers ? { players: nextPlayers, localPlayer: nextLocalPlayer } : {}),
+      tick: data.tick,
+      serverTime: data.serverTime,
+    });
+
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      (window as unknown as { __voxelPlayerInterest?: PlayerInterestMessage }).__voxelPlayerInterest = data;
+    }
   });
 }
 
@@ -1112,6 +1034,9 @@ export function setupPlayerVitalsHandler(
         updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
       }
       actions.updatePlayer(vitals.id, next);
+      if (shouldHideLiveVisuals(next.visibility)) {
+        clearHiddenLiveVisuals(next.id);
+      }
       shouldPublishTiming = true;
     }
 
@@ -2532,22 +2457,16 @@ export function setupCombatHandlers(room: Room) {
 }
 
 /**
- * Sets up low-rate schema polling as a development fallback for explicit message streams.
+ * Sets up low-rate room metadata polling as a development fallback.
  */
 export function setupPollingSync(
   room: Room,
-  sessionId: string,
-  localPlayerName: string,
-  actions: Pick<GameStoreActions, 'setLocalPlayer' | 'updatePlayer' | 'setGamePhase'>
+  actions: Pick<GameStoreActions, 'setGamePhase'>
 ): ReturnType<typeof setInterval> {
   const FALLBACK_POLL_INTERVAL_MS = 250;
-  const GHOST_CLEANUP_EVERY_POLLS = 4;
-  let lastLoggedPlayerCount = -1;
-  let pollCount = 0;
 
   return setInterval(() => {
     if (!room.state) return;
-    pollCount++;
 
     // Sync phase
     if (room.state.phase) {
@@ -2570,39 +2489,6 @@ export function setupPollingSync(
 
       if (room.state.phase !== store.gamePhase) {
         actions.setGamePhase(room.state.phase as any);
-      }
-    }
-
-    // Sync all players
-    if (room.state.players) {
-      const playersMap = room.state.players as any;
-      let serverPlayerCount = 0;
-
-      const iterateMap = (forEach: (player: any, id: string) => void) => {
-        if (playersMap.$items instanceof Map) {
-          playersMap.$items.forEach(forEach);
-        } else if (typeof playersMap.forEach === 'function') {
-          try {
-            playersMap.forEach(forEach);
-          } catch {
-            // Silent fail
-          }
-        }
-      };
-
-      iterateMap((schemaPlayer: any, id: string) => {
-        serverPlayerCount++;
-        processPlayerDuringPoll(schemaPlayer, id, sessionId, localPlayerName, actions);
-      });
-
-      if (serverPlayerCount !== lastLoggedPlayerCount || pollCount % 100 === 1) {
-        loggers.network.sample('poll-count', 5000, `fallback poll #${pollCount}: server=${serverPlayerCount} players`);
-        lastLoggedPlayerCount = serverPlayerCount;
-      }
-
-      // Periodic ghost cleanup at roughly 1Hz while fallback polling is enabled.
-      if (pollCount % GHOST_CLEANUP_EVERY_POLLS === 0) {
-        useGameStore.getState().cleanupGhostPlayers();
       }
     }
   }, FALLBACK_POLL_INTERVAL_MS);

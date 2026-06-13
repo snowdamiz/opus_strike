@@ -28,6 +28,7 @@ import {
   syncPlayerFromSchema,
   setupPlayerJoinedHandler,
   setupPlayerTransformsHandler,
+  setupPlayerInterestHandler,
   setupSelfMovementAuthorityHandler,
   setupPlayerVitalsHandler,
   setupMatchSnapshotHandler,
@@ -1150,9 +1151,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     // Cleanup ghost players
     useGameStore.getState().cleanupGhostPlayers();
 
-    // Store actions for handlers
-    const actions = { setLocalPlayer, updatePlayer, removePlayer, setGamePhase };
-
     // Set up MapSchema callbacks
     const playersMap = room.state.players as any;
     if (playersMap && typeof playersMap.onAdd === 'function') {
@@ -1177,7 +1175,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     const enableFallbackPolling = import.meta.env.DEV && import.meta.env.VITE_ENABLE_SCHEMA_POLLING === '1';
     const syncInterval = enableFallbackPolling
-      ? setupPollingSync(room, sessionId, localPlayerName, actions)
+      ? setupPollingSync(room, { setGamePhase })
       : null;
 
     // Set up message handlers
@@ -1261,6 +1259,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
     setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
+    setupPlayerInterestHandler(room, sessionId);
     setupSelfMovementAuthorityHandler(room);
     setupPlayerVitalsHandler(room, sessionId, localPlayerName, { setLocalPlayer, updatePlayer, removePlayer });
     setupMatchSnapshotHandler(room);

@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type PlayerPingsMessage, type VoxelMapTheme } from '@voxel-strike/shared';
-import { clearAllDeathVisuals, clearVisualState, removePlayerVisualState, setPlayerVisualTransform } from './visualStore';
+import {
+  clearAllDeathVisuals,
+  clearVisualState,
+  removePlayerLiveVisualState,
+  removePlayerVisualState,
+  setPlayerVisualTransform,
+} from './visualStore';
 
 // Import types
 import type {
@@ -194,6 +200,11 @@ interface CoreActions {
 type GameStore = CoreState & CoreActions & ProjectileSlice;
 
 const MAX_PENDING_INPUTS = 128;
+const HIDDEN_VISIBILITY_STATES = new Set(['hidden', 'last_known', 'audible']);
+
+function shouldKeepPlayerLiveVisual(player: Player): boolean {
+  return !HIDDEN_VISIBILITY_STATES.has(player.visibility ?? 'visible');
+}
 
 // ============================================================================
 // INITIAL STATE
@@ -420,7 +431,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
     // Update visual store for bulk player updates (initial sync)
     players.forEach((player, id) => {
-      setPlayerVisualTransform(id, player.position, player.lookYaw);
+      if (shouldKeepPlayerLiveVisual(player)) {
+        setPlayerVisualTransform(id, player.position, player.lookYaw);
+      } else {
+        removePlayerLiveVisualState(id);
+      }
     });
   },
 
@@ -437,7 +452,11 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     });
 
     // Update visual store for individual player updates
-    setPlayerVisualTransform(playerId, player.position, player.lookYaw);
+    if (shouldKeepPlayerLiveVisual(player)) {
+      setPlayerVisualTransform(playerId, player.position, player.lookYaw);
+    } else {
+      removePlayerLiveVisualState(playerId);
+    }
   },
 
   removePlayer: (playerId) => {
