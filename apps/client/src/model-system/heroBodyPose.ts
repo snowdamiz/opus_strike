@@ -7,11 +7,11 @@ import {
   BLAZE_ATTACK_DURATION,
   CHRONOS_WALK_ARM_ARC_SCALE,
   DEFAULT_WALK_DIRECTION,
-  HERO_IDLE_PROFILES,
-  HERO_MOVEMENT_PROFILES,
   JUMP_CYCLE_DURATION,
   JUMP_HEIGHT,
   SLIDE_KNEE_HINGE_SPEED,
+  WALK_LEG_LIFT,
+  WALK_LEG_STRIDE,
 } from './heroBodyManifests';
 import { getChildBonePosition, HERO_BONE_PIVOTS } from './heroRig';
 import type {
@@ -238,6 +238,9 @@ function applyWalkLegPose(
   const phase = Math.sin(cycleTime + phaseOffset);
   const footLift = Math.max(0, Math.cos(cycleTime + phaseOffset));
   const supportBend = Math.max(0, -Math.cos(cycleTime + phaseOffset));
+  const strideScale = THREE.MathUtils.clamp(profile.legStride / WALK_LEG_STRIDE, 0.7, 2.2);
+  const liftScale = THREE.MathUtils.clamp(profile.legLift / WALK_LEG_LIFT, 0.7, 2.4);
+  const lowerLegScale = THREE.MathUtils.clamp((strideScale + liftScale) * 0.5, 0.7, 2.3);
 
   if (upperLeg) {
     upperLeg.rotation.x += direction.forward * phase * profile.legPitch * amount;
@@ -249,17 +252,19 @@ function applyWalkLegPose(
   }
 
   if (knee) {
-    knee.position.x += side * footLift * 0.018 * amount;
-    knee.position.y += (footLift * 0.01 - supportBend * 0.006) * amount;
-    knee.position.z += -direction.forward * footLift * 0.008 * amount;
-    knee.rotation.z += side * footLift * 0.035 * amount;
+    knee.position.x += side * footLift * 0.018 * liftScale * amount;
+    knee.position.y += (footLift * 0.01 * liftScale - supportBend * 0.006 * lowerLegScale) * amount;
+    knee.position.z += -direction.forward * footLift * 0.008 * strideScale * amount;
+    knee.rotation.z += side * footLift * 0.035 * liftScale * amount;
   }
 
   if (shin) {
     const bend = profile.supportKneeBend * supportBend + profile.kneeBend * footLift;
     shin.rotation.x += bend * amount;
-    shin.rotation.z += side * footLift * 0.07 * amount - direction.right * phase * 0.012 * amount;
-    shin.position.z += -direction.forward * footLift * 0.006 * amount;
+    shin.rotation.z +=
+      side * footLift * 0.07 * liftScale * amount -
+      direction.right * phase * 0.012 * lowerLegScale * amount;
+    shin.position.z += -direction.forward * footLift * 0.006 * strideScale * amount;
   }
 }
 

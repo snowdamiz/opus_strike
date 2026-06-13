@@ -336,17 +336,17 @@ export const HERO_PARTS: Record<HeroId, VoxelPart[]> = {
 };
 
 export const IDLE_SPEED_MULTIPLIER = 1.68;
-export const WALK_CYCLE_SPEED = 7.4;
-export const WALK_LEG_PITCH = 0.18;
-export const WALK_LEG_STRAFE_ROLL = 0.12;
-export const WALK_LEG_STRIDE = 0.045;
-export const WALK_LEG_STRAFE = 0.025;
-export const WALK_LEG_LIFT = 0.018;
-export const WALK_ARM_PITCH = 0.3;
-export const WALK_ARM_STRAFE_ROLL = 0.18;
+export const WALK_CYCLE_SPEED = 9.2;
+export const WALK_LEG_PITCH = 0.34;
+export const WALK_LEG_STRAFE_ROLL = 0.17;
+export const WALK_LEG_STRIDE = 0.086;
+export const WALK_LEG_STRAFE = 0.036;
+export const WALK_LEG_LIFT = 0.043;
+export const WALK_ARM_PITCH = 0.46;
+export const WALK_ARM_STRAFE_ROLL = 0.25;
 export const CHRONOS_WALK_ARM_ARC_SCALE = 0.58;
-export const WALK_KNEE_BEND = 0.14;
-export const WALK_SUPPORT_KNEE_BEND = 0.035;
+export const WALK_KNEE_BEND = 0.27;
+export const WALK_SUPPORT_KNEE_BEND = 0.07;
 export const SLIDE_KNEE_HINGE_SPEED = 8.2;
 export const JUMP_CYCLE_DURATION = 1.16;
 export const JUMP_HEIGHT = 0.5;
@@ -402,10 +402,10 @@ export const HERO_MOVEMENT_PROFILES: Record<HeroMovementPose, HeroMovementProfil
     armArcScale: 1,
     kneeBend: WALK_KNEE_BEND,
     supportKneeBend: WALK_SUPPORT_KNEE_BEND,
-    rootPitch: 0.035,
-    rootRoll: 0.04,
-    rootBob: 0.012,
-    rootSway: 0.006,
+    rootPitch: 0.064,
+    rootRoll: 0.058,
+    rootBob: 0.028,
+    rootSway: 0.016,
     glowPulse: 0.035,
   },
   crouchWalk: {
@@ -427,21 +427,21 @@ export const HERO_MOVEMENT_PROFILES: Record<HeroMovementPose, HeroMovementProfil
     glowPulse: 0.045,
   },
   run: {
-    cycleSpeed: 11.6,
-    legPitch: 0.38,
-    legStrafeRoll: 0.16,
-    legStride: 0.086,
-    legStrafe: 0.034,
-    legLift: 0.04,
-    armPitch: 0.58,
-    armStrafeRoll: 0.23,
+    cycleSpeed: 13.1,
+    legPitch: 0.58,
+    legStrafeRoll: 0.21,
+    legStride: 0.142,
+    legStrafe: 0.046,
+    legLift: 0.072,
+    armPitch: 0.78,
+    armStrafeRoll: 0.3,
     armArcScale: 1,
-    kneeBend: 0.27,
-    supportKneeBend: 0.055,
-    rootPitch: 0.09,
-    rootRoll: 0.052,
-    rootBob: 0.042,
-    rootSway: 0.022,
+    kneeBend: 0.46,
+    supportKneeBend: 0.105,
+    rootPitch: 0.125,
+    rootRoll: 0.068,
+    rootBob: 0.062,
+    rootSway: 0.034,
     glowPulse: 0.12,
   },
 };
