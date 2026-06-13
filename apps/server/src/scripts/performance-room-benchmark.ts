@@ -7,6 +7,10 @@ import {
   movementButtonsToInputState,
   type PlayerMovementState,
   type MovementCommand,
+  type BotDifficulty,
+  type HeroId,
+  type Team,
+  type VoxelMapManifest,
 } from '@voxel-strike/shared';
 import {
   createVoxelCollisionWorld,
@@ -16,6 +20,19 @@ import {
 } from '@voxel-strike/physics';
 import { MovementCommandQueue } from '../rooms/MovementCommandQueue';
 import { PlayerSpatialIndex } from '../rooms/PlayerSpatialIndex';
+import {
+  buildBotBlackboard,
+  buildTeamTactics,
+  chooseBotAbilityPlan,
+  chooseBotCombatPlan,
+  createBotRouteGraphAdapter,
+  getBotSkillProfile,
+  planBotRoute,
+  scoreBotIntents,
+  type BotFlagSnapshot,
+  type BotPlayerSnapshot,
+  type PlainVec3,
+} from '../rooms/bot-ai';
 import { AntiCheatSignalPriorityQueue } from '../anticheat';
 import { normalizeAntiCheatSignal } from '../anticheat/signal';
 import { Player } from '../rooms/schema/Player';
@@ -161,6 +178,214 @@ function runSpatialBenchmark(): Record<string, number | string> {
   return summarize('spatial_rebuild_and_queries', samples);
 }
 
+function botVec(x: number, z: number, y = 1): PlainVec3 {
+  return { x, y, z };
+}
+
+function botAbility(abilityId: string, charges = 1) {
+  return {
+    abilityId,
+    cooldownRemaining: 0,
+    charges,
+    isActive: false,
+    activatedAt: 0,
+  };
+}
+
+function botAbilities(heroId: HeroId): BotPlayerSnapshot['abilities'] {
+  if (heroId === 'chronos') {
+    return {
+      chronos_lifeline_conduit: botAbility('chronos_lifeline_conduit', 3),
+      chronos_timebreak: botAbility('chronos_timebreak'),
+      chronos_ascendant_paradox: botAbility('chronos_ascendant_paradox'),
+    };
+  }
+  if (heroId === 'hookshot') {
+    return {
+      hookshot_grapple: botAbility('hookshot_grapple'),
+      hookshot_anchor_wall: botAbility('hookshot_anchor_wall'),
+      hookshot_grapple_trap: botAbility('hookshot_grapple_trap'),
+    };
+  }
+  if (heroId === 'blaze') {
+    return {
+      blaze_flamethrower: botAbility('blaze_flamethrower'),
+      blaze_rocketjump: botAbility('blaze_rocketjump'),
+      blaze_airstrike: botAbility('blaze_airstrike'),
+    };
+  }
+  return {
+    phantom_blink: botAbility('phantom_blink', 2),
+    phantom_personal_shield: botAbility('phantom_personal_shield'),
+    phantom_veil: botAbility('phantom_veil'),
+  };
+}
+
+function botSnapshot(id: string, team: Team, heroId: HeroId, x: number, z: number, difficulty: BotDifficulty): BotPlayerSnapshot {
+  return {
+    id,
+    name: id,
+    team,
+    heroId,
+    state: 'alive',
+    isBot: true,
+    botDifficulty: difficulty,
+    botProfileId: id,
+    position: botVec(x, z),
+    velocity: { x: 0, y: 0, z: 0 },
+    lookYaw: 0,
+    lookPitch: 0,
+    health: heroId === 'chronos' ? 240 : 185,
+    maxHealth: heroId === 'chronos' ? 275 : 225,
+    ultimateCharge: id.endsWith('0') ? 100 : 40,
+    movement: {
+      isGrounded: true,
+      isSprinting: false,
+      isCrouching: false,
+      isSliding: false,
+      isGrappling: false,
+      isJetpacking: false,
+      isGliding: false,
+    },
+    abilities: botAbilities(heroId),
+    hasFlag: false,
+    spawnProtectionUntil: 0,
+  };
+}
+
+function botFlags(): Record<Team, BotFlagSnapshot> {
+  return {
+    red: {
+      team: 'red',
+      position: botVec(-42, 0),
+      basePosition: botVec(-42, 0),
+      carrierId: '',
+      isAtBase: true,
+      droppedAt: 0,
+    },
+    blue: {
+      team: 'blue',
+      position: botVec(42, 0),
+      basePosition: botVec(42, 0),
+      carrierId: '',
+      isAtBase: true,
+      droppedAt: 0,
+    },
+  };
+}
+
+function botBenchmarkRouteGraph() {
+  const manifest = {
+    gameplay: {
+      lanes: [
+        { id: 'primary', kind: 'primary', nodeIds: ['red_base', 'mid', 'blue_base'], width: 5, expectedDistance: 84, expectedTravelTimeSeconds: 10.5, label: 'Primary', coverDensityTarget: 0, verticalityBand: { minY: 0, maxY: 5 } },
+        { id: 'flank_left', kind: 'flank', nodeIds: ['red_base', 'left', 'blue_base'], width: 4.5, expectedDistance: 96, expectedTravelTimeSeconds: 12, label: 'Left', coverDensityTarget: 0, verticalityBand: { minY: 0, maxY: 5 } },
+        { id: 'flank_right', kind: 'flank', nodeIds: ['red_base', 'right', 'blue_base'], width: 4.5, expectedDistance: 96, expectedTravelTimeSeconds: 12, label: 'Right', coverDensityTarget: 0, verticalityBand: { minY: 0, maxY: 5 } },
+      ],
+      routeGraph: {
+        nodes: [
+          { id: 'red_base', kind: 'base', position: botVec(-42, 0), team: 'red', laneIds: ['primary', 'flank_left', 'flank_right'], tags: ['base'] },
+          { id: 'mid', kind: 'midfield', position: botVec(0, 0), laneIds: ['primary'], tags: [] },
+          { id: 'left', kind: 'flank', position: botVec(0, -25), laneIds: ['flank_left'], tags: [] },
+          { id: 'right', kind: 'flank', position: botVec(0, 25), laneIds: ['flank_right'], tags: [] },
+          { id: 'blue_base', kind: 'base', position: botVec(42, 0), team: 'blue', laneIds: ['primary', 'flank_left', 'flank_right'], tags: ['base'] },
+        ],
+        edges: [
+          { id: 'e-primary-a', from: 'red_base', to: 'mid', laneId: 'primary', distance: 42, expectedTravelTimeSeconds: 5.2, width: 5, traversal: 'ground', tags: [] },
+          { id: 'e-primary-b', from: 'mid', to: 'blue_base', laneId: 'primary', distance: 42, expectedTravelTimeSeconds: 5.2, width: 5, traversal: 'ground', tags: [] },
+          { id: 'e-left-a', from: 'red_base', to: 'left', laneId: 'flank_left', distance: 49, expectedTravelTimeSeconds: 6, width: 4.5, traversal: 'ground', tags: [] },
+          { id: 'e-left-b', from: 'left', to: 'blue_base', laneId: 'flank_left', distance: 49, expectedTravelTimeSeconds: 6, width: 4.5, traversal: 'ground', tags: [] },
+          { id: 'e-right-a', from: 'red_base', to: 'right', laneId: 'flank_right', distance: 49, expectedTravelTimeSeconds: 6, width: 4.5, traversal: 'ground', tags: [] },
+          { id: 'e-right-b', from: 'right', to: 'blue_base', laneId: 'flank_right', distance: 49, expectedTravelTimeSeconds: 6, width: 4.5, traversal: 'ground', tags: [] },
+        ],
+        primaryRouteNodeIds: { red: ['red_base', 'mid', 'blue_base'], blue: ['blue_base', 'mid', 'red_base'] },
+        fallbackAnchorNodeIds: { red: ['red_base'], blue: ['blue_base'] },
+      },
+    },
+    construction: { tacticalSlots: [] },
+  } as unknown as VoxelMapManifest;
+  return createBotRouteGraphAdapter(manifest);
+}
+
+function runBotAiBenchmark(): Record<string, number | string> {
+  const graph = botBenchmarkRouteGraph();
+  const flags = botFlags();
+  const heroes: HeroId[] = ['phantom', 'hookshot', 'blaze', 'chronos'];
+  const players = Array.from({ length: 16 }, (_, index) => {
+    const team: Team = index < 8 ? 'red' : 'blue';
+    const offset = index % 8;
+    return botSnapshot(
+      `${team}-bot-${offset}`,
+      team,
+      heroes[offset % heroes.length],
+      team === 'red' ? -36 + offset : 36 - offset,
+      -14 + offset * 4,
+      offset % 3 === 0 ? 'hard' : offset % 3 === 1 ? 'normal' : 'easy'
+    );
+  });
+  players[10].hasFlag = true;
+  flags.red.carrierId = players[10].id;
+  flags.red.isAtBase = false;
+  flags.red.position = players[10].position;
+
+  const samples: number[] = [];
+  for (let iteration = 0; iteration < 280; iteration++) {
+    const startedAt = performance.now();
+    const now = Date.now() + iteration * 33;
+    const tactics = buildTeamTactics({ now, revision: iteration, players, flags });
+    const blockedEdges = new Map<string, number>(iteration % 4 === 0 ? [['e-primary-a', now + 1200]] : []);
+
+    for (const bot of players.slice(0, 8)) {
+      const skill = getBotSkillProfile(bot.botDifficulty);
+      const visibleEnemyIds = new Set(players.filter((player) => player.team !== bot.team).map((player) => player.id));
+      const blackboard = buildBotBlackboard({
+        now,
+        bot,
+        players,
+        flags,
+        visibleEnemyIds,
+        enemyLineOfSightIds: visibleEnemyIds,
+        recentDamageSources: [],
+        teamTactics: tactics[bot.team],
+        enemyMemory: new Map(),
+        skill,
+      });
+      const intent = scoreBotIntents(bot, blackboard, skill);
+      const route = planBotRoute({ now, bot, intent, blackboard, routeGraph: graph, blockedEdges, skill });
+      const combat = chooseBotCombatPlan({
+        bot,
+        intent,
+        blackboard,
+        skill,
+        primaryRange: 30,
+        preferredRange: 16,
+        protectedEnemyIds: new Set(),
+      });
+      chooseBotAbilityPlan({
+        now,
+        bot,
+        intent,
+        blackboard,
+        combatPlan: combat,
+        skill,
+        geometry: {
+          directPathBlocked: route.activeEdgeId ? blockedEdges.has(route.activeEdgeId) : false,
+          movementProgressBlocked: false,
+          blinkSafe: true,
+          blinkDangerous: blackboard.nearbyEnemyCount >= 3,
+          grappleAnchorAvailable: true,
+          anchorWallProtectsAlly: blackboard.alliedCarrier !== null,
+          anchorWallBlocksFriendlyCarrier: false,
+          trapZoneValuable: blackboard.droppedFriendlyFlag !== null || blackboard.enemyCarrier !== null,
+        },
+      });
+    }
+
+    samples.push(performance.now() - startedAt);
+  }
+  return summarize('bot_ai_8_bots_tactics_path_abilities', samples);
+}
+
 function runAntiCheatQueueBenchmark(): Record<string, number | string> {
   const queue = new AntiCheatSignalPriorityQueue();
   const samples: number[] = [];
@@ -207,6 +432,7 @@ const results = [
   runMovementQueueBenchmark(),
   runMovementSimulationBenchmark(),
   runSpatialBenchmark(),
+  runBotAiBenchmark(),
   runAntiCheatQueueBenchmark(),
 ];
 
