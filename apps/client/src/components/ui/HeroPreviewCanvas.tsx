@@ -7,6 +7,7 @@ import { HERO_DEFINITIONS } from '@voxel-strike/shared';
 import type { HeroId, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from '../game/HeroVoxelBody';
 import type { HeroAnimationMode } from '../game/HeroVoxelBody';
+import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
 import { HERO_COLOR_SCHEMES } from '../../styles/colorTokens';
 import { useHeroPreviewRotation } from './useHeroPreviewRotation';
 
@@ -398,6 +399,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   }, [previewReadyKey]);
 
   const handleCanvasCreated = useCallback(({ gl }: { gl: THREE.WebGLRenderer }) => {
+    suppressExpectedContextLossLog(gl);
     gl.setClearColor(getCssRgbColor(PREVIEW_CLEAR_COLOR_VAR), 0);
     gl.setClearAlpha(0);
     hasCanvasCreatedRef.current = true;

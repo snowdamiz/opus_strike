@@ -1,5 +1,6 @@
 import { Canvas, useThree } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/shallow';
 import * as THREE from 'three';
 import { generateProceduralVoxelMap } from '@voxel-strike/shared';
 import type { VoxelMapManifest } from '@voxel-strike/shared';
@@ -8,6 +9,7 @@ import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
 import { FACTIONS } from '../../styles/colorTokens';
 import { VoxelMap } from '../game/procedural';
+import { suppressExpectedContextLossLog } from '../game/webglLifecycle';
 import { PhaseCountdownTimer } from './PhaseCountdownTimer';
 import { RankIcon, getRankForStats } from './RankBadge';
 
@@ -150,6 +152,7 @@ function MapPreviewCanvas({
         powerPreference: 'low-power',
       }}
       onCreated={({ gl }) => {
+        suppressExpectedContextLossLog(gl);
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = 1.05;
         gl.shadowMap.enabled = false;
@@ -188,37 +191,23 @@ function MapPreviewCanvas({
 }
 
 function MapPreviewImage({
+  active,
   option,
   onReady,
 }: {
+  active: boolean;
   option: MapVoteOption;
   onReady: (optionId: string) => void;
 }) {
   const [image, setImage] = useState<string | null>(null);
   const [imageVisible, setImageVisible] = useState(false);
-  const [shouldRenderPreview, setShouldRenderPreview] = useState(false);
   const didReportReadyRef = useRef(false);
 
   useEffect(() => {
     setImage(null);
     setImageVisible(false);
-    setShouldRenderPreview(false);
     didReportReadyRef.current = false;
-
-    let firstFrame = 0;
-    let secondFrame = 0;
-
-    firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        setShouldRenderPreview(true);
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
-    };
-  }, [option.mapThemeId, option.seed]);
+  }, [option.id, option.mapThemeId, option.seed]);
 
   useEffect(() => {
     if (!image) {
@@ -251,7 +240,7 @@ function MapPreviewImage({
           draggable={false}
         />
       )}
-      {!image && shouldRenderPreview && (
+      {!image && active && (
         <div className="pointer-events-none absolute inset-0 opacity-0">
           <MapPreviewCanvas option={option} onCapture={handleCapture} />
         </div>
@@ -313,7 +302,19 @@ export function MapVoteScreen() {
     mapVotePhaseEndTime,
     selectedMapOptionId,
     userStats,
-  } = useGameStore();
+  } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      playerId: state.playerId,
+      lobbyPlayers: state.lobbyPlayers,
+      isLobbyHost: state.isLobbyHost,
+      mapVoteOptions: state.mapVoteOptions,
+      mapVotes: state.mapVotes,
+      mapVotePhaseEndTime: state.mapVotePhaseEndTime,
+      selectedMapOptionId: state.selectedMapOptionId,
+      userStats: state.userStats,
+    }))
+  );
   const { leaveLobby, voteMap, reportMapVotePreviewsReady, finalizeMapVote } = useNetwork();
   const { playButtonClick } = useUISounds();
   const [readyPreviewIds, setReadyPreviewIds] = useState<Set<string>>(() => new Set());
@@ -338,6 +339,10 @@ export function MapVoteScreen() {
   const isPreparingMaps = mapVoteOptions.length === 0;
   const areMapPreviewsReady = mapVoteOptions.length > 0 && readyPreviewIds.size >= mapVoteOptions.length;
   const isVoteTimerStarted = Boolean(mapVotePhaseEndTime);
+  const activePreviewOptionId = useMemo(
+    () => mapVoteOptions.find((option) => !readyPreviewIds.has(option.id))?.id ?? null,
+    [mapVoteOptions, readyPreviewIds]
+  );
 
   const votersByOption = useMemo(() => {
     const groups = new Map<string, LobbyPlayer[]>();
@@ -504,7 +509,11 @@ export function MapVoteScreen() {
                   }}
                 >
                   <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
-                    <MapPreviewImage option={option} onReady={handlePreviewReady} />
+                    <MapPreviewImage
+                      active={activePreviewOptionId === option.id}
+                      option={option}
+                      onReady={handlePreviewReady}
+                    />
                     {(isSelected || isWinner) && (
                       <div
                         className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg border backdrop-blur-md"

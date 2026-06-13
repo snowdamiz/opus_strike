@@ -45,6 +45,7 @@ import {
 } from '../movement/localPrediction';
 import { measureFrameWork } from '../movement/networkDiagnostics';
 import { projectileInitialState } from '../store/slices/projectiles';
+import { resetGameTiming } from '../store/gameTimingStore';
 
 type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
 type CreateLobbyOptions = {
@@ -361,7 +362,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     clearMatchSummary,
     reset,
     resetLobby,
-  } = useGameStore();
+  } = useGameStore.getState();
 
   const setMatchStartGateKey = useCallback((key: number | null) => {
     matchStartGateKeyRef.current = key;
@@ -468,8 +469,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           gamePhase: 'hero_select',
           matchSummary: null,
           appliedExperienceMatchId: null,
-          tick: 0,
-          serverTime: Date.now(),
           mapSeed: seed,
           mapThemeId: null,
           redScore: 0,
@@ -492,6 +491,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           unstuckRequestId: 0,
           slideIntensity: 0,
         });
+        resetGameTiming(Date.now());
         resetLocalMovementPrediction(movementStateFromPlayer(player), 0, player.id);
         setRoomId(null);
         setConnected(false);

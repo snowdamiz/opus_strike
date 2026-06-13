@@ -10,6 +10,7 @@ import {
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
 import { useCombatFeedbackStore, type DamageNumberEvent, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
+import { useHudNow } from '../../store/hudSignals';
 import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
 import { Minimap } from './minimap/Minimap';
 import { VoiceHud } from './VoiceHud';
@@ -170,6 +171,35 @@ function KillFeed({ events }: { events: KillFeedEvent[] }) {
   );
 }
 
+function formatHudTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function RoundTimer({
+  gamePhase,
+  phaseEndTime,
+  roundTimeRemaining,
+}: {
+  gamePhase: string;
+  phaseEndTime: number | null;
+  roundTimeRemaining: number;
+}) {
+  const now = useHudNow();
+  const displayedRoundTimeRemaining = gamePhase === 'playing' && phaseEndTime
+    ? Math.max(0, Math.ceil((phaseEndTime - now) / 1000))
+    : roundTimeRemaining;
+
+  return (
+    <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${displayedRoundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
+        displayedRoundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
+      }`}>
+      {formatHudTime(displayedRoundTimeRemaining)}
+    </span>
+  );
+}
+
 interface ShotCounterTone {
   labelClass: string;
   readyClass: string;
@@ -242,6 +272,7 @@ function PrimaryShotCounter({
   reloading,
   reloadStart,
   reloadEnd,
+  now,
   infinite = false,
   tone,
 }: {
@@ -250,10 +281,10 @@ function PrimaryShotCounter({
   reloading: boolean;
   reloadStart: number;
   reloadEnd: number;
+  now: number;
   infinite?: boolean;
   tone: ShotCounterTone;
 }) {
-  const now = Date.now();
   const maxAmmo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
   const shownAmmo = Math.max(0, Math.min(maxAmmo, Math.round(ammo)));
   const reloadDuration = Math.max(1, reloadEnd - reloadStart || PHANTOM_PRIMARY_RELOAD_MS);
@@ -355,6 +386,8 @@ function PhantomAmmoCounter({
   reloadStart: number;
   reloadEnd: number;
 }) {
+  const now = useHudNow();
+
   return (
     <PrimaryShotCounter
       label="dire"
@@ -362,6 +395,7 @@ function PhantomAmmoCounter({
       reloading={reloading}
       reloadStart={reloadStart}
       reloadEnd={reloadEnd}
+      now={now}
       tone={PHANTOM_SHOT_COUNTER_TONE}
     />
   );
@@ -375,6 +409,7 @@ function HookshotShotCounter() {
       reloading={false}
       reloadStart={0}
       reloadEnd={0}
+      now={0}
       infinite
       tone={HOOKSHOT_SHOT_COUNTER_TONE}
     />
@@ -451,13 +486,6 @@ export function HUD() {
     }))
   );
 
-  // Force re-render every 100ms for smooth cooldown updates
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 100);
-    return () => clearInterval(interval);
-  }, []);
-
   if (!localPlayer) return null;
 
   const healthPercent = (localPlayer.health / localPlayer.maxHealth) * 100;
@@ -473,15 +501,6 @@ export function HUD() {
       : healthPercent <= 55
         ? '#fbbf24'
         : '#22c55e';
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-  const displayedRoundTimeRemaining = gamePhase === 'playing' && phaseEndTime
-    ? Math.max(0, Math.ceil((phaseEndTime - Date.now()) / 1000))
-    : roundTimeRemaining;
 
   return (
     <div className="absolute inset-0 pointer-events-none select-none z-hud">
@@ -638,11 +657,11 @@ export function HUD() {
 
                 {/* Timer */}
                 <div className="relative px-3 sm:px-4 lg:px-5 h-[clamp(2.25rem,3.4vw,3.25rem)] flex flex-col items-center justify-center z-20 min-w-[clamp(4.5rem,6vw,5.75rem)]">
-                  <span className={`font-mono text-base sm:text-lg lg:text-xl tracking-[0.12em] tabular-nums font-bold transition-colors ${displayedRoundTimeRemaining < 30 ? 'text-red-400 animate-pulse' :
-                      displayedRoundTimeRemaining < 60 ? 'text-amber-300' : 'text-white'
-                    }`}>
-                    {formatTime(displayedRoundTimeRemaining)}
-                  </span>
+                  <RoundTimer
+                    gamePhase={gamePhase}
+                    phaseEndTime={phaseEndTime}
+                    roundTimeRemaining={roundTimeRemaining}
+                  />
                   <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
                 </div>
               </div>
@@ -892,7 +911,7 @@ function HUDSkillSlot({
   const maxCooldown = abilityId === 'phantom_blink' ? 10 : (abilityDef?.cooldown || skill.cooldown || 0);
   const cooldownStartsAfterActive = false;
 
-  const now = Date.now();
+  const now = useHudNow();
   const isActive = canTrackAbility
     ? isUltimate ? (ultimateEffectActive ?? false) : (abilityState?.isActive ?? false)
     : false;

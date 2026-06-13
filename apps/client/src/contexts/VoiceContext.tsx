@@ -98,6 +98,10 @@ function voiceLogState(extra: Record<string, unknown> = {}) {
   };
 }
 
+function isExpectedVoiceDisabledReason(reason?: string): boolean {
+  return reason === 'VOICE_ENABLED is false' || reason === 'voice disabled';
+}
+
 function isEditablePushToTalkTarget(target: EventTarget | null): boolean {
   if (document.body.dataset.rebindingKeybind === 'true') return true;
   if (!(target instanceof HTMLElement)) return false;
@@ -353,10 +357,12 @@ export function VoiceProvider({ children }: { children: ReactNode }) {
     }
 
     if (!response.enabled || !response.url || !response.token) {
-      useVoiceStore.getState().setAvailability(false, response.reason || 'voice unavailable');
-      loggers.voice.warn('voice token rejected', voiceLogState({
-        reason: response.reason || 'voice unavailable',
-      }));
+      const reason = response.reason || 'voice unavailable';
+      useVoiceStore.getState().setAvailability(false, reason);
+      const logVoiceTokenUnavailable = isExpectedVoiceDisabledReason(response.reason)
+        ? loggers.voice.debug
+        : loggers.voice.warn;
+      logVoiceTokenUnavailable('voice token unavailable', voiceLogState({ reason }));
       connectingKeyRef.current = null;
       return;
     }

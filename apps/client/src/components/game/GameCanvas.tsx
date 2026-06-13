@@ -41,6 +41,7 @@ import {
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
+import { suppressExpectedContextLossLog } from './webglLifecycle';
 
 const BLAZE_BACKGROUND_COLOR = new THREE.Color('#4a150c');
 const BLAZE_FOG_COLOR = new THREE.Color('#651b0e');
@@ -865,6 +866,7 @@ export function GameCanvas({
         powerPreference: 'high-performance',
       }}
       onCreated={({ gl }) => {
+        suppressExpectedContextLossLog(gl);
         gl.setClearColor(new THREE.Color(mapTheme.skyColor), 1);
         gl.toneMapping = THREE.ACESFilmicToneMapping;
         gl.toneMappingExposure = qualityConfig.render.exposure;

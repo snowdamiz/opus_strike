@@ -12,6 +12,7 @@ import {
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
+import { setGameTiming } from '../store/gameTimingStore';
 import {
   addDeathVisual,
   clearAllDeathVisuals,
@@ -889,10 +890,7 @@ export function setupPlayerTransformsHandler(
       }
     }
     if (remoteTransformCount > 0 || (data.hiddenPlayerIds?.length ?? 0) > 0) {
-      useGameStore.setState({
-        tick: data.tick,
-        serverTime: data.serverTime,
-      });
+      setGameTiming(data.tick, data.serverTime);
     }
     if (fullSnapshotPlayerIds) {
       pruneRemoteTransformHistories(fullSnapshotPlayerIds);
@@ -929,11 +927,10 @@ export function setupPlayerInterestHandler(room: Room, sessionId: string) {
       }
     }
 
-    useGameStore.setState({
-      ...(nextPlayers ? { players: nextPlayers, localPlayer: nextLocalPlayer } : {}),
-      tick: data.tick,
-      serverTime: data.serverTime,
-    });
+    setGameTiming(data.tick, data.serverTime);
+    if (nextPlayers) {
+      useGameStore.setState({ players: nextPlayers, localPlayer: nextLocalPlayer });
+    }
 
     if (import.meta.env.DEV && typeof window !== 'undefined') {
       (window as unknown as { __voxelPlayerInterest?: PlayerInterestMessage }).__voxelPlayerInterest = data;
@@ -1084,11 +1081,14 @@ export function setupPlayerVitalsHandler(
       shouldPublishTiming = true;
     }
 
-    if (playersChanged || playerPingsChanged || shouldPublishTiming) {
+    if (shouldPublishTiming) {
+      setGameTiming(data.tick, data.serverTime);
+    }
+
+    if (playersChanged || playerPingsChanged) {
       useGameStore.setState({
         ...(playersChanged ? { players: nextPlayers, localPlayer: nextLocalPlayer } : {}),
         ...(playerPingsChanged ? { playerPings: nextPlayerPings } : {}),
-        ...(shouldPublishTiming ? { tick: data.tick, serverTime: data.serverTime } : {}),
       });
     }
 
@@ -1113,9 +1113,8 @@ export function setupMatchSnapshotHandler(room: Room) {
     if (data.phase !== 'playing' && data.phase !== 'countdown') {
       clearAllDeathVisuals();
     }
+    setGameTiming(data.tick, data.serverTime);
     useGameStore.setState({
-      tick: data.tick,
-      serverTime: data.serverTime,
       mapSeed: data.mapSeed,
       mapThemeId: data.mapThemeId ?? null,
       gamePhase: data.phase,

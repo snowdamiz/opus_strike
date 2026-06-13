@@ -1,4 +1,5 @@
 import { type CSSProperties, useState, useEffect, useRef, useId } from 'react';
+import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -125,7 +126,17 @@ function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
 }
 
 export function MainLobby() {
-  const { playerName, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore();
+  const { playerName, isLoading, userStats, setAppPhase, setPlayerName: storeSetPlayerName, setUser, setWalletAddress } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      isLoading: state.isLoading,
+      userStats: state.userStats,
+      setAppPhase: state.setAppPhase,
+      setPlayerName: state.setPlayerName,
+      setUser: state.setUser,
+      setWalletAddress: state.setWalletAddress,
+    }))
+  );
   const { createLobby, quickPlay, rankedPlay, getRankedTokenHoldStatus, startPracticeGame } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {

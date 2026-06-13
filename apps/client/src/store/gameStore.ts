@@ -7,6 +7,7 @@ import {
   removePlayerVisualState,
   setPlayerVisualTransform,
 } from './visualStore';
+import { resetGameTiming } from './gameTimingStore';
 
 // Import types
 import type {
@@ -100,8 +101,6 @@ interface CoreState {
   gamePhase: GamePhase;
   matchSummary: GameEndEvent | null;
   appliedExperienceMatchId: string | null;
-  tick: number;
-  serverTime: number;
   mapSeed: number;
   mapThemeId: VoxelMapTheme['id'] | null;
 
@@ -247,8 +246,6 @@ const coreInitialState: CoreState = {
   gamePhase: 'waiting',
   matchSummary: null,
   appliedExperienceMatchId: null,
-  tick: 0,
-  serverTime: 0,
   mapSeed: createRandomSeed(),
   mapThemeId: null,
   redScore: 0,
@@ -648,6 +645,7 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   reset: () => {
     clearVisualState();
+    resetGameTiming();
     set(initialState);
   },
 

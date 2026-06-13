@@ -873,3 +873,97 @@ Unconfirmed:
   - `localReactiveUpdates`
 - If `network.playerInterest` is gone but hitches persist, inspect unmeasured render
   work around the remaining hitch cadence.
+
+## Pass 008 - Player Interest Churn Fix Validation
+
+Date: June 13, 2026
+
+Status: Analysis logged. No code changes in this pass.
+
+### Problem
+
+After Pass 007 removed expiry-only `playerInterest` churn, new server and practice
+captures were needed to confirm whether the server-only 200 ms hitch cadence disappeared
+and whether the server-mode frame pacing gap remained significant.
+
+### Evidence
+
+Fresh user-provided captures:
+
+| Signal | Server After Pass 007 | Practice Baseline |
+| --- | ---: | ---: |
+| Frames observed | 1658 | 1719 |
+| Retained frame delta average | 16.668 ms | 16.661 ms |
+| Retained frame delta p95 | 17.6 ms | 17.6 ms |
+| Retained frame delta p99 | 17.7 ms | 18.6 ms |
+| Retained frame delta max | 17.8 ms | 19.9 ms |
+| Movement hitch frames | 3 (0.18%) | 2 (0.12%) |
+| Movement catchup frames | 26 (1.57%) | 8 (0.47%) |
+| Movement substeps per retained frame p99 | 1 | 1 |
+| Movement substeps per retained frame max | 1 | 1 |
+| Commands per packet p99 | 3 | 3 |
+| Commands per packet max | 8 | 3 |
+| Authority pending before drain p99 | 1 | n/a |
+| Authority drain duration p99 | 0.1 ms | n/a |
+| Authority ack interval p99 | 62.8 ms | n/a |
+| Position error p99 | 0 m | n/a |
+| Velocity error p99 | 0 m/s | n/a |
+| Replayed commands p99 | 0 | n/a |
+| Visual correction magnitude p99 | 0 | n/a |
+| Transform messages received | 4 | 0 |
+| Self-only transform messages | 3 | 0 |
+| Remote transform snapshots added | 0 | 0 |
+| Local reactive updates | 8 vitals, 1 transform, 2 self-authority | 0 |
+
+Hitch-frame attribution:
+
+- `network.playerInterest` no longer appeared in server `hitchFrameWork`.
+- Server hitch attribution contained only tiny measured work:
+  - `frame.r3fCallbacks`: 0.6 ms total across 2 hitch intervals
+  - `ui.minimapOverlay`: 0.3 ms total across 2 hitch intervals
+  - `frame.playerController`: 0.2 ms total across 1 hitch interval
+  - `frame.dynamicLights`: 0.1 ms total across 1 hitch interval
+- Server retained frame timing is now essentially clean: p99 is 17.7 ms and retained max
+  is 17.8 ms.
+- Both server and practice still captured a small number of isolated large hitch events
+  outside the retained 120-frame `frameDeltaMs` sample. These had almost no measured app
+  work, which points away from gameplay/network code.
+- Server had one long authority ack interval sample at 382 ms and one 8-command packet,
+  consistent with an isolated stall rather than steady authority backlog. Authority
+  queue depth, correction, replay, and visual correction remained clean.
+
+### Changes
+
+- Documentation only.
+- No source changes were made in this pass.
+
+### Verification
+
+Not run for this documentation-only update beyond the comparison script used to compute
+the table above.
+
+### Result
+
+Confirmed:
+
+- Pass 007 removed the recurring `network.playerInterest` hitch attribution.
+- Server retained frame pacing is now close to, and in the retained p99 sample slightly
+  cleaner than, the practice baseline.
+- Authority correction remains ruled out for the latest server capture: no backlog,
+  no replay, no position error, no velocity error, and no visual correction.
+
+Inferred:
+
+- The remaining isolated hitches are more likely browser, OS, devtools, GC, compositor,
+  or GPU/render stalls than app-level gameplay/network work.
+- The small remaining server/practice catchup difference may not be player-visible after
+  the Pass 007 fix, but that still needs user feel validation.
+
+### Follow-Ups
+
+- Do an in-game feel check before adding more instrumentation.
+- If server mode still feels worse during a specific window, capture another
+  `window.__voxelMovementDiagnostics.snapshot()` during that exact window.
+- If future captures still show isolated large stalls with tiny measured app work,
+  add browser long-task or render-stall diagnostics rather than continuing to chase
+  authority, prediction, or `playerInterest`.

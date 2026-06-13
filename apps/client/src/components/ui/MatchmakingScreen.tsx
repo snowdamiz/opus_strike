@@ -1,5 +1,6 @@
 import { DEFAULT_GAME_CONFIG } from '@voxel-strike/shared';
 import { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/shallow';
 import { config } from '../../config/environment';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useAudio, useUISounds } from '../../hooks/useAudio';
@@ -15,7 +16,15 @@ const MIN_RANK_SEARCH_DISTANCE = 2;
 const RANKED_TOKEN_HOLD_LABEL = '$20 SOL';
 
 export function MatchmakingScreen() {
-  const { playerName, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore();
+  const { playerName, currentLobbyWager, lobbyPlayers, userStats, matchmakingStatus } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      currentLobbyWager: state.currentLobbyWager,
+      lobbyPlayers: state.lobbyPlayers,
+      userStats: state.userStats,
+      matchmakingStatus: state.matchmakingStatus,
+    }))
+  );
   const { leaveLobby } = useNetwork();
   const { playButtonClick } = useUISounds();
   const { preloadSoundGroup } = useAudio();

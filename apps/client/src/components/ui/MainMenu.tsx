@@ -43,7 +43,7 @@ function DiscordIcon({ className }: { className?: string }) {
 }
 
 export function MainMenu() {
-  const { setPlayerName: storeSetPlayerName, setAppPhase, setUser, setWalletAddress } = useGameStore();
+  const { setPlayerName: storeSetPlayerName, setAppPhase, setUser, setWalletAddress } = useGameStore.getState();
   const {
     isPhantomInstalled,
     isConnected,

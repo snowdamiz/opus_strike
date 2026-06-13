@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
+import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 
 const PHANTOM_VEIL_DURATION_MS = (ABILITY_DEFINITIONS['phantom_veil']?.duration ?? 6) * 1000;
@@ -8,7 +9,13 @@ const PHANTOM_VEIL_DURATION_MS = (ABILITY_DEFINITIONS['phantom_veil']?.duration 
  * UltimateEffects - Full-screen visual effects for active local ultimates.
  */
 export function UltimateEffects() {
-  const { ultimateEffectActive, ultimateEffectType, ultimateEffectEndTime } = useGameStore();
+  const { ultimateEffectActive, ultimateEffectType, ultimateEffectEndTime } = useGameStore(
+    useShallow((state) => ({
+      ultimateEffectActive: state.ultimateEffectActive,
+      ultimateEffectType: state.ultimateEffectType,
+      ultimateEffectEndTime: state.ultimateEffectEndTime,
+    }))
+  );
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [fadeOut, setFadeOut] = useState(false);
 

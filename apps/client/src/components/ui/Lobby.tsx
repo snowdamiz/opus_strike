@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useWallet } from '../../contexts/WalletContext';
@@ -195,7 +196,22 @@ export function Lobby() {
     matchmakingStatus,
     setAppPhase,
     clearMapVote,
-  } = useGameStore();
+  } = useGameStore(
+    useShallow((state) => ({
+      playerName: state.playerName,
+      playerId: state.playerId,
+      currentLobbyId: state.currentLobbyId,
+      currentLobbyName: state.currentLobbyName,
+      currentLobbyWager: state.currentLobbyWager,
+      lobbyPlayers: state.lobbyPlayers,
+      isLobbyHost: state.isLobbyHost,
+      isLoading: state.isLoading,
+      userStats: state.userStats,
+      matchmakingStatus: state.matchmakingStatus,
+      setAppPhase: state.setAppPhase,
+      clearMapVote: state.clearMapVote,
+    }))
+  );
   const {
     leaveLobby,
     setLobbyReady,
