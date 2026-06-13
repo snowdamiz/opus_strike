@@ -73,6 +73,22 @@ const sharedLoops = new Map<string, {
 }>();
 const sharedPendingLoops = new Map<string, { cancelled: boolean }>();
 
+const DEFAULT_AUDIO_UP = { x: 0, y: 1, z: 0 };
+const AUDIO_LISTENER_POSITION_EPSILON_SQ = 0.000001;
+const AUDIO_LISTENER_DIRECTION_EPSILON_SQ = 0.00000001;
+let lastAudioListenerContext: AudioContext | null = null;
+let hasLastAudioListenerPosition = false;
+let hasLastAudioListenerOrientation = false;
+let lastAudioListenerPositionX = 0;
+let lastAudioListenerPositionY = 0;
+let lastAudioListenerPositionZ = 0;
+let lastAudioListenerForwardX = 0;
+let lastAudioListenerForwardY = 0;
+let lastAudioListenerForwardZ = -1;
+let lastAudioListenerUpX = 0;
+let lastAudioListenerUpY = 1;
+let lastAudioListenerUpZ = 0;
+
 let hasAudioUserActivation =
   typeof navigator !== 'undefined' && navigator.userActivation?.hasBeenActive === true;
 let audioUnlockListenersInstalled = false;
@@ -147,10 +163,12 @@ const SOUND_EFFECTS = {
   jetpack: { path: '/sounds/jetpack.mp3', volume: 0.4 },
   
   // Phantom Abilities (using shortened clips)
-  phantomBlink: { path: '/sounds/blink.mp3', volume: 0.39 },
+  phantomBlink: { path: '/sounds/blink_short.mp3', volume: 0.39 },
   phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
   phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1872 },
   phantomReload: { path: '/sounds/phantom_reload.mp3', volume: 0.27 },
+  phantomShield: { path: '/sounds/phantom_shield.mp3', volume: 0.42 },
+  phantomShieldCast: { path: '/sounds/phantom_shield_cast.mp3', volume: 0.58 },
   phantomVoidRay: { path: '/sounds/phantom_strong.mp3', volume: 0.6 },
   phantomVoidRayCharge: { path: '/sounds/phantom_right_click_charge.mp3', volume: 0.45 },
   
@@ -226,7 +244,7 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   menu: ['buttonHover', 'buttonClick'],
   lobby: ['buttonHover', 'buttonClick'],
   commonCombat: ['walk', 'slide', 'jetpack', 'countdownTick'],
-  phantom: ['phantomBlink', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomVoidRay', 'phantomVoidRayCharge'],
+  phantom: ['phantomBlink', 'phantomVeil', 'phantomBasic', 'phantomReload', 'phantomShield', 'phantomShieldCast', 'phantomVoidRay', 'phantomVoidRayCharge'],
   blaze: ['blazeRocket', 'blazeBombTarget', 'blazeBombRelease', 'blazeBombFall', 'blazeBombExplode', 'blazeFlamethrower', 'blazeRocketJump', 'blazeAirstrikeFire', 'blazeAirstrikeGears'],
   hookshot: ['hookshotShot', 'hookshotPrimary', 'hookshotSecondary', 'hookshotGrapple', 'hookshotAnchorWall', 'hookshotTrap', 'hookshotRetract'],
   chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
@@ -364,6 +382,20 @@ function setAudioParam(
   param.setValueAtTime(value, currentTime);
 }
 
+function vectorDistanceSq(
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number
+): number {
+  const dx = ax - bx;
+  const dy = ay - by;
+  const dz = az - bz;
+  return dx * dx + dy * dy + dz * dz;
+}
+
 function cancelStreamedLoopFade(loop: { fadeRaf?: number; stopTimeout?: number }): void {
   if (loop.fadeRaf !== undefined) {
     window.cancelAnimationFrame(loop.fadeRaf);
@@ -494,10 +526,16 @@ function stopStreamedLoop(id: string, fadeOutMs = 0): void {
 export function setAudioListenerTransform(
   position: { x: number; y: number; z: number },
   forward?: { x: number; y: number; z: number },
-  up: { x: number; y: number; z: number } = { x: 0, y: 1, z: 0 }
+  up: { x: number; y: number; z: number } = DEFAULT_AUDIO_UP
 ): void {
   const ctx = sharedAudioContext;
   if (!ctx) return;
+
+  if (lastAudioListenerContext !== ctx) {
+    lastAudioListenerContext = ctx;
+    hasLastAudioListenerPosition = false;
+    hasLastAudioListenerOrientation = false;
+  }
 
   const listener = ctx.listener as AudioListener & {
     positionX?: AudioParam;
@@ -513,15 +551,52 @@ export function setAudioListenerTransform(
     setOrientation?: (fx: number, fy: number, fz: number, ux: number, uy: number, uz: number) => void;
   };
 
-  if (listener.positionX && listener.positionY && listener.positionZ) {
-    setAudioParam(listener.positionX, position.x, ctx.currentTime);
-    setAudioParam(listener.positionY, position.y, ctx.currentTime);
-    setAudioParam(listener.positionZ, position.z, ctx.currentTime);
-  } else {
-    listener.setPosition?.(position.x, position.y, position.z);
+  const positionChanged = !hasLastAudioListenerPosition || vectorDistanceSq(
+    position.x,
+    position.y,
+    position.z,
+    lastAudioListenerPositionX,
+    lastAudioListenerPositionY,
+    lastAudioListenerPositionZ
+  ) > AUDIO_LISTENER_POSITION_EPSILON_SQ;
+
+  if (positionChanged) {
+    if (listener.positionX && listener.positionY && listener.positionZ) {
+      setAudioParam(listener.positionX, position.x, ctx.currentTime);
+      setAudioParam(listener.positionY, position.y, ctx.currentTime);
+      setAudioParam(listener.positionZ, position.z, ctx.currentTime);
+    } else {
+      listener.setPosition?.(position.x, position.y, position.z);
+    }
+
+    hasLastAudioListenerPosition = true;
+    lastAudioListenerPositionX = position.x;
+    lastAudioListenerPositionY = position.y;
+    lastAudioListenerPositionZ = position.z;
   }
 
   if (!forward) return;
+
+  const orientationChanged = !hasLastAudioListenerOrientation || (
+    vectorDistanceSq(
+      forward.x,
+      forward.y,
+      forward.z,
+      lastAudioListenerForwardX,
+      lastAudioListenerForwardY,
+      lastAudioListenerForwardZ
+    ) > AUDIO_LISTENER_DIRECTION_EPSILON_SQ ||
+    vectorDistanceSq(
+      up.x,
+      up.y,
+      up.z,
+      lastAudioListenerUpX,
+      lastAudioListenerUpY,
+      lastAudioListenerUpZ
+    ) > AUDIO_LISTENER_DIRECTION_EPSILON_SQ
+  );
+
+  if (!orientationChanged) return;
 
   if (
     listener.forwardX &&
@@ -540,6 +615,14 @@ export function setAudioListenerTransform(
   } else {
     listener.setOrientation?.(forward.x, forward.y, forward.z, up.x, up.y, up.z);
   }
+
+  hasLastAudioListenerOrientation = true;
+  lastAudioListenerForwardX = forward.x;
+  lastAudioListenerForwardY = forward.y;
+  lastAudioListenerForwardZ = forward.z;
+  lastAudioListenerUpX = up.x;
+  lastAudioListenerUpY = up.y;
+  lastAudioListenerUpZ = up.z;
 }
 
 async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {

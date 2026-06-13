@@ -20,6 +20,12 @@ const budgetedLights = new Set<BudgetedLightRecord>();
 const worldPosition = new THREE.Vector3();
 let nextLightId = 1;
 
+function setLightVisible(light: THREE.PointLight, visible: boolean): void {
+  if (light.visible !== visible) {
+    light.visible = visible;
+  }
+}
+
 function assignForwardedRef(ref: ForwardedRef<THREE.PointLight>, value: THREE.PointLight | null): void {
   if (typeof ref === 'function') {
     ref(value);
@@ -126,19 +132,40 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
     if (accumulatorRef.current < 0.08) return;
     accumulatorRef.current = 0;
 
+    if (budgetedLights.size === 0) {
+      rankedRef.current.length = 0;
+      return;
+    }
+
     const ranked = rankedRef.current;
     const rankedPool = rankedPoolRef.current;
     const lightLimit = Math.max(0, Math.floor(maxLights));
     ranked.length = 0;
 
+    if (lightLimit <= 0) {
+      for (const record of budgetedLights) {
+        const light = record.lightRef.current;
+        if (light) setLightVisible(light, false);
+      }
+      return;
+    }
+
+    if (lightLimit >= budgetedLights.size) {
+      for (const record of budgetedLights) {
+        const light = record.lightRef.current;
+        if (light) setLightVisible(light, Boolean(light.parent && light.intensity > 0));
+      }
+      return;
+    }
+
     for (const record of budgetedLights) {
       const light = record.lightRef.current;
       if (!light || !light.parent || light.intensity <= 0) {
-        if (light) light.visible = false;
+        if (light) setLightVisible(light, false);
         continue;
       }
 
-      light.visible = false;
+      setLightVisible(light, false);
       light.getWorldPosition(worldPosition);
       const radius = Math.max(1, record.radius || light.distance || 1);
       const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
@@ -154,7 +181,7 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
     for (let i = 0; i < ranked.length; i++) {
       const light = ranked[i].record.lightRef.current;
       if (light) {
-        light.visible = true;
+        setLightVisible(light, true);
       }
     }
   });

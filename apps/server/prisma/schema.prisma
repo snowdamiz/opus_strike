@@ -66,6 +66,25 @@ enum WagerSettlementTransferStatus {
   failed
 }
 
+enum GoldenBiomeRewardStatus {
+  pending
+  processing
+  complete
+  failed
+}
+
+enum GoldenBiomeRewardTransferStatus {
+  pending
+  submitted
+  confirmed
+  failed
+}
+
+enum GoldenBiomeRewardDistributionMode {
+  manual
+  auto
+}
+
 enum FriendshipStatus {
   pending
   accepted
@@ -198,6 +217,7 @@ model GameMatch {
   lobbyId     String?
   matchMode   MatchMode @default(custom)
   mapSeed     Int
+  mapThemeId  String   @default("standard")
   startedAt   DateTime
   endedAt     DateTime
   redScore    Int
@@ -216,6 +236,7 @@ model GameMatch {
   @@index([roomId])
   @@index([lobbyId])
   @@index([matchMode])
+  @@index([mapThemeId])
   @@index([startedAt])
   @@index([winningTeam])
   @@index([rankedEligible])
@@ -401,6 +422,72 @@ model WagerSettlementTransfer {
   @@unique([settlementId, kind, recipientWallet])
   @@index([settlementId])
   @@index([kind])
+  @@index([status])
+}
+
+model GoldenBiomeReward {
+  id                      String                   @id @default(cuid())
+  matchId                 String                   @unique
+  roomId                  String
+  lobbyId                 String?
+  mapSeed                 Int
+  mapThemeId              String                   @default("golden")
+  winningTeam             String
+  treasuryWallet          String
+  rewardUsdCents          Int
+  solUsdPriceMicroUsd     BigInt
+  rewardLamports          BigInt
+  totalRewardLamports     BigInt
+  paidPlayerCount         Int
+  treasuryBalanceLamports BigInt
+  status                  GoldenBiomeRewardStatus  @default(pending)
+  distributionMode        GoldenBiomeRewardDistributionMode @default(manual)
+  distributedByUserId     String?
+  distributedAt           DateTime?
+  attemptCount            Int                      @default(0)
+  lastError               String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  completedAt             DateTime?
+
+  transfers GoldenBiomeRewardTransfer[]
+
+  @@index([roomId])
+  @@index([lobbyId])
+  @@index([status])
+  @@index([distributionMode])
+  @@index([createdAt])
+}
+
+model GoldenBiomeRewardSettings {
+  id               String @id @default("default")
+  distributionMode GoldenBiomeRewardDistributionMode @default(manual)
+  updatedByUserId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model GoldenBiomeRewardTransfer {
+  id              String                          @id @default(cuid())
+  rewardId        String
+  idempotencyKey  String                          @unique
+  userId          String
+  playerSessionId String
+  recipientWallet String
+  amountLamports  BigInt
+  signature       String?                         @unique
+  status          GoldenBiomeRewardTransferStatus @default(pending)
+  lastError       String?
+  createdAt       DateTime                        @default(now())
+  updatedAt       DateTime                        @updatedAt
+  confirmedAt     DateTime?
+
+  reward GoldenBiomeReward @relation(fields: [rewardId], references: [id], onDelete: Cascade)
+
+  @@unique([rewardId, recipientWallet])
+  @@index([rewardId])
+  @@index([userId])
+  @@index([recipientWallet])
   @@index([status])
 }
 

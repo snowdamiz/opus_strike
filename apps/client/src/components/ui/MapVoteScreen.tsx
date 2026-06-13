@@ -38,11 +38,11 @@ function ClockGlyph({ className }: { className?: string }) {
 }
 
 function CaptureFrame({
-  seed,
+  captureKey,
   ready,
   onCapture,
 }: {
-  seed: number;
+  captureKey: string;
   ready: boolean;
   onCapture: (image: string) => void;
 }) {
@@ -51,7 +51,7 @@ function CaptureFrame({
 
   useEffect(() => {
     capturedRef.current = false;
-  }, [seed]);
+  }, [captureKey]);
 
   useEffect(() => {
     if (!ready || capturedRef.current) return;
@@ -76,7 +76,7 @@ function CaptureFrame({
       window.cancelAnimationFrame(secondFrame);
       window.cancelAnimationFrame(thirdFrame);
     };
-  }, [camera, gl, onCapture, ready, scene, seed]);
+  }, [camera, captureKey, gl, onCapture, ready, scene]);
 
   return null;
 }
@@ -126,14 +126,19 @@ function MapPreviewCanvas({
   option: MapVoteOption;
   onCapture: (image: string) => void;
 }) {
-  const manifest = useMemo(() => generateProceduralVoxelMap(option.seed), [option.seed]);
+  const mapThemeId = option.mapThemeId ?? null;
+  const manifest = useMemo(() => (
+    generateProceduralVoxelMap(option.seed, { themeId: mapThemeId })
+  ), [mapThemeId, option.seed]);
+  const previewThemeId = mapThemeId ?? manifest.themeId;
+  const optionKey = `${option.seed}:${previewThemeId}`;
   const theme = manifest.theme;
-  const [readySeed, setReadySeed] = useState<number | null>(null);
-  const mapReady = readySeed === option.seed;
+  const [readyKey, setReadyKey] = useState<string | null>(null);
+  const mapReady = readyKey === optionKey;
 
   const handleMapReady = useCallback(() => {
-    setReadySeed(option.seed);
-  }, [option.seed]);
+    setReadyKey(optionKey);
+  }, [optionKey]);
 
   return (
     <Canvas
@@ -164,6 +169,7 @@ function MapPreviewCanvas({
         <VoxelMap
           seed={option.seed}
           manifest={manifest}
+          themeId={previewThemeId}
           enablePhysics={false}
           shadowsEnabled={false}
           dressingShadows={false}
@@ -175,7 +181,7 @@ function MapPreviewCanvas({
         />
         <fogExp2 attach="fog" args={[theme.fogColor, 0.0048]} />
         <color attach="background" args={[theme.skyColor]} />
-        <CaptureFrame seed={option.seed} ready={mapReady} onCapture={onCapture} />
+        <CaptureFrame captureKey={optionKey} ready={mapReady} onCapture={onCapture} />
       </Suspense>
     </Canvas>
   );
@@ -212,7 +218,7 @@ function MapPreviewImage({
       window.cancelAnimationFrame(firstFrame);
       window.cancelAnimationFrame(secondFrame);
     };
-  }, [option.seed]);
+  }, [option.mapThemeId, option.seed]);
 
   useEffect(() => {
     if (!image) {
@@ -314,7 +320,7 @@ export function MapVoteScreen() {
   const reportedPreviewSignatureRef = useRef('');
 
   const mapOptionSignature = useMemo(
-    () => mapVoteOptions.map((option) => `${option.id}:${option.seed}`).join('|'),
+    () => mapVoteOptions.map((option) => `${option.id}:${option.seed}:${option.mapThemeId ?? ''}`).join('|'),
     [mapVoteOptions]
   );
 

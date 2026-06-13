@@ -10,6 +10,7 @@ import type {
   MapTopologyId,
   PublicRankSnapshot,
   MatchMode,
+  VoxelMapTheme,
 } from '@voxel-strike/shared';
 
 // Re-export VisualState from visualStore for central type access
@@ -95,6 +96,7 @@ export interface WagerPaymentTransaction {
 export interface MapVoteOption {
   id: string;
   seed: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
   name: string;
   themeId: string;
   themeName: string;

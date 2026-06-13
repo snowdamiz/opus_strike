@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { config } from '../../config/environment';
+import { lamportsToSolDisplay } from '../../utils/wagerPayments';
 
 interface MachineProcess {
   processId: string;
@@ -102,6 +103,73 @@ interface PlayerReportOverview {
   updatedAt: string;
 }
 
+type GoldenBiomeDistributionMode = 'manual' | 'auto';
+
+interface GoldenBiomeRewardTransferOverview {
+  id: string;
+  userId: string;
+  playerSessionId: string;
+  displayName: string | null;
+  recipientWallet: string;
+  amountLamports: string;
+  signature: string | null;
+  status: string;
+  lastError: string | null;
+  confirmedAt: string | null;
+  updatedAt: string;
+}
+
+interface GoldenBiomeRewardOverview {
+  id: string;
+  matchId: string;
+  roomId: string;
+  lobbyId: string | null;
+  mapSeed: number;
+  mapThemeId: string;
+  winningTeam: string;
+  treasuryWallet: string;
+  rewardUsdCents: number;
+  solUsdPriceMicroUsd: string;
+  rewardLamports: string;
+  totalRewardLamports: string;
+  paidPlayerCount: number;
+  treasuryBalanceLamports: string;
+  status: string;
+  distributionMode: GoldenBiomeDistributionMode;
+  distributedByUserId: string | null;
+  distributedAt: string | null;
+  attemptCount: number;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  transfers: GoldenBiomeRewardTransferOverview[];
+}
+
+interface GoldenBiomeRewardsOverview {
+  settings: {
+    distributionMode: GoldenBiomeDistributionMode;
+    enabled: boolean;
+    chanceBps: number;
+    winnerRewardUsdCents: number;
+    treasuryMinUsdCents: number;
+    treasuryWallet: string | null;
+    updatedByUserId: string | null;
+    updatedAt: string | null;
+  };
+  treasury: {
+    eligible: boolean;
+    enabled: boolean;
+    treasuryWallet: string | null;
+    treasuryBalanceLamports: string;
+    requiredLamports: string;
+    solUsdPriceMicroUsd: string;
+    checkedAt: string;
+    reason?: string;
+  };
+  rewards: GoldenBiomeRewardOverview[];
+}
+
 interface AdminOverview {
   generatedAt: string;
   status: 'ok' | 'degraded' | string;
@@ -131,6 +199,7 @@ interface AdminOverview {
     reports: PlayerReportOverview[];
     counts: Record<string, number>;
   };
+  goldenBiomeRewards?: GoldenBiomeRewardsOverview;
   diagnostics: {
     distributed: boolean;
     routingStrategy: string;
@@ -180,6 +249,16 @@ function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'unknown';
   return date.toLocaleString();
+}
+
+function formatUsdCents(usdCents: number): string {
+  const dollars = Math.floor(Math.max(0, usdCents) / 100);
+  const cents = Math.max(0, usdCents) % 100;
+  return cents === 0 ? `$${dollars}` : `$${dollars}.${cents.toString().padStart(2, '0')}`;
+}
+
+function formatBps(bps: number): string {
+  return `${(bps / 100).toFixed(2).replace(/\.00$/, '')}%`;
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -392,6 +471,194 @@ function ActionButton({
   );
 }
 
+function ModeButton({
+  mode,
+  active,
+  busy,
+  onClick,
+}: {
+  mode: GoldenBiomeDistributionMode;
+  active: boolean;
+  busy: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      disabled={active || busy}
+      onClick={onClick}
+      className={`h-9 rounded-md border px-3 font-body text-xs font-semibold uppercase tracking-[0.08em] transition disabled:cursor-default ${
+        active
+          ? 'border-amber-300/45 bg-amber-300/15 text-amber-100'
+          : 'border-white/10 bg-white/[0.04] text-white/65 hover:border-amber-300/35 hover:text-white'
+      }`}
+    >
+      {mode}
+    </button>
+  );
+}
+
+function GoldenBiomeRewardsPanel({
+  overview,
+  busyRewardId,
+  busyMode,
+  onSetMode,
+  onDistribute,
+}: {
+  overview: GoldenBiomeRewardsOverview | undefined;
+  busyRewardId: string | null;
+  busyMode: boolean;
+  onSetMode: (mode: GoldenBiomeDistributionMode) => void;
+  onDistribute: (reward: GoldenBiomeRewardOverview) => void;
+}) {
+  if (!overview) return <EmptyTable label="Golden reward telemetry unavailable." />;
+
+  const pendingRewards = overview.rewards.filter((reward) => reward.status !== 'complete').length;
+  const treasury = overview.treasury;
+
+  return (
+    <div>
+      <div className="grid gap-3 border-b border-white/10 bg-black/20 p-4 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-center">
+        <div className="min-w-0">
+          <div className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Distribution</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <ModeButton
+              mode="manual"
+              active={overview.settings.distributionMode === 'manual'}
+              busy={busyMode}
+              onClick={() => onSetMode('manual')}
+            />
+            <ModeButton
+              mode="auto"
+              active={overview.settings.distributionMode === 'auto'}
+              busy={busyMode}
+              onClick={() => onSetMode('auto')}
+            />
+          </div>
+          <div className="mt-2 font-body text-xs text-white/40">
+            Manual queues rewards for admin payout. Auto pays eligible golden wins after match end.
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <div className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Treasury</div>
+          <div className={`mt-2 inline-flex rounded-md border px-2.5 py-1 font-body text-xs uppercase tracking-[0.08em] ${
+            treasury.eligible ? 'border-ui-success/35 bg-ui-success/10 text-emerald-100' : 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100'
+          }`}>
+            {treasury.eligible ? 'Eligible' : treasury.reason || 'Not eligible'}
+          </div>
+          <div className="mt-2 break-all font-mono text-xs text-white/45">
+            {treasury.treasuryWallet || overview.settings.treasuryWallet || 'No treasury wallet'}
+          </div>
+          <div className="mt-1 font-body text-xs text-white/40">
+            {lamportsToSolDisplay(treasury.treasuryBalanceLamports)} SOL balance / {lamportsToSolDisplay(treasury.requiredLamports)} SOL minimum
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 md:min-w-[16rem]">
+          <MetricTile label="Reward" value={formatUsdCents(overview.settings.winnerRewardUsdCents)} sublabel="per winner" />
+          <MetricTile label="Chance" value={formatBps(overview.settings.chanceBps)} sublabel={`${formatNumber(pendingRewards)} pending`} />
+        </div>
+      </div>
+
+      <GoldenBiomeRewardsTable
+        rewards={overview.rewards}
+        busyRewardId={busyRewardId}
+        onDistribute={onDistribute}
+      />
+    </div>
+  );
+}
+
+function GoldenBiomeRewardsTable({
+  rewards,
+  busyRewardId,
+  onDistribute,
+}: {
+  rewards: GoldenBiomeRewardOverview[];
+  busyRewardId: string | null;
+  onDistribute: (reward: GoldenBiomeRewardOverview) => void;
+}) {
+  if (rewards.length === 0) return <EmptyTable label="No golden biome reward records yet." />;
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[1220px] table-fixed border-collapse">
+        <thead>
+          <tr>
+            <HeaderCell>Match</HeaderCell>
+            <HeaderCell>Status</HeaderCell>
+            <HeaderCell>Team</HeaderCell>
+            <HeaderCell align="right">Reward</HeaderCell>
+            <HeaderCell>Transfers</HeaderCell>
+            <HeaderCell>Actions</HeaderCell>
+          </tr>
+        </thead>
+        <tbody>
+          {rewards.map((reward) => {
+            const canDistribute = reward.status === 'pending' || reward.status === 'failed';
+            return (
+              <tr key={reward.id} className="hover:bg-white/[0.025]">
+                <Cell mono>
+                  <div className="break-all text-white">{reward.matchId}</div>
+                  <div className="mt-1 font-body text-xs text-white/40">
+                    seed {reward.mapSeed} / {formatAge(Date.parse(reward.createdAt))}
+                  </div>
+                  {reward.lastError && <div className="mt-2 font-body text-xs text-red-200/70">{reward.lastError}</div>}
+                </Cell>
+                <Cell>
+                  <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-xs uppercase tracking-[0.08em] text-white/70">
+                    {reward.status}
+                  </span>
+                  <div className="mt-2 text-xs text-white/40">{reward.distributionMode}</div>
+                  {reward.distributedAt && <div className="mt-1 text-xs text-white/35">sent {formatDate(reward.distributedAt)}</div>}
+                </Cell>
+                <Cell>
+                  <div className="text-white">{reward.winningTeam}</div>
+                  <div className="mt-1 text-xs text-white/40">{reward.paidPlayerCount} winner{reward.paidPlayerCount === 1 ? '' : 's'}</div>
+                </Cell>
+                <Cell align="right">
+                  {formatUsdCents(reward.rewardUsdCents)}
+                  <div className="text-xs text-white/40">{lamportsToSolDisplay(reward.rewardLamports)} SOL each</div>
+                  <div className="text-xs text-white/35">{lamportsToSolDisplay(reward.totalRewardLamports)} SOL total</div>
+                </Cell>
+                <Cell>
+                  <div className="space-y-2">
+                    {reward.transfers.map((transfer) => (
+                      <div key={transfer.id} className="min-w-0 border-l border-white/10 pl-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <span className="truncate text-white/80">{transfer.displayName || transfer.userId}</span>
+                          <span className="rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-white/55">
+                            {transfer.status}
+                          </span>
+                        </div>
+                        <div className="mt-1 break-all font-mono text-[11px] text-white/35">{transfer.recipientWallet}</div>
+                        {transfer.signature && <div className="mt-1 break-all font-mono text-[11px] text-emerald-100/55">{transfer.signature}</div>}
+                        {transfer.lastError && <div className="mt-1 text-xs text-red-200/70">{transfer.lastError}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </Cell>
+                <Cell>
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton
+                      disabled={!canDistribute || busyRewardId === reward.id}
+                      onClick={() => onDistribute(reward)}
+                    >
+                      Distribute
+                    </ActionButton>
+                  </div>
+                </Cell>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function PlayerReportsTable({
   reports,
   busyId,
@@ -471,6 +738,8 @@ export function AdminDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
+  const [busyGoldenRewardId, setBusyGoldenRewardId] = useState<string | null>(null);
+  const [busyGoldenMode, setBusyGoldenMode] = useState(false);
 
   const loadOverview = useCallback(async () => {
     setError(null);
@@ -539,6 +808,28 @@ export function AdminDashboard() {
       .finally(() => setBusyReportId(null));
   }, [postAdminJson]);
 
+  const setGoldenDistributionMode = useCallback((mode: GoldenBiomeDistributionMode) => {
+    const currentMode = overview?.goldenBiomeRewards?.settings.distributionMode;
+    if (currentMode === mode) return;
+    if (!window.confirm(`Switch golden reward distribution to ${mode}?`)) return;
+
+    setBusyGoldenMode(true);
+    postAdminJson('/admin/api/golden-biome/distribution-mode', { mode })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyGoldenMode(false));
+  }, [overview?.goldenBiomeRewards?.settings.distributionMode, postAdminJson]);
+
+  const distributeGoldenReward = useCallback((reward: GoldenBiomeRewardOverview) => {
+    if (!window.confirm(`Distribute ${formatUsdCents(reward.rewardUsdCents)} worth of SOL to ${reward.paidPlayerCount} ${reward.winningTeam} winner${reward.paidPlayerCount === 1 ? '' : 's'}?`)) {
+      return;
+    }
+
+    setBusyGoldenRewardId(reward.id);
+    postAdminJson(`/admin/api/golden-biome/rewards/${encodeURIComponent(reward.id)}/distribute`, {})
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyGoldenRewardId(null));
+  }, [postAdminJson]);
+
   useEffect(() => {
     void loadOverview();
     const interval = window.setInterval(() => void loadOverview(), 3000);
@@ -548,11 +839,13 @@ export function AdminDashboard() {
   const metrics = useMemo(() => {
     if (!overview) return [];
     const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
+    const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
     return [
       { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: `${formatNumber(overview.totals.serverProcesses)} processes` },
       { label: 'Game Players', value: formatNumber(overview.totals.playersInGame), sublabel: `${formatNumber(overview.totals.botsInGame)} bots` },
       { label: 'Game Rooms', value: formatNumber(overview.totals.gameRooms), sublabel: `${formatNumber(overview.totals.participantsInGame)} participants` },
       { label: 'Lobby Participants', value: formatNumber(overview.totals.lobbyParticipants), sublabel: `${formatNumber(overview.totals.lobbyRooms)} lobbies` },
+      { label: 'Golden Rewards', value: formatNumber(pendingGoldenRewards), sublabel: overview.goldenBiomeRewards?.settings.distributionMode ?? 'manual' },
       { label: 'Player Reports', value: formatNumber(activeReports), sublabel: `${formatNumber(overview.playerReports?.reports.length ?? 0)} listed` },
       { label: 'Connected Clients', value: formatNumber(overview.totals.totalConnectedClients), sublabel: overview.diagnostics.redis.ok ? 'redis ok' : `redis ${overview.diagnostics.redis.status}` },
     ];
@@ -597,7 +890,7 @@ export function AdminDashboard() {
 
         {overview ? (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-7">
               {metrics.map((metric) => (
                 <MetricTile key={metric.label} {...metric} />
               ))}
@@ -613,6 +906,19 @@ export function AdminDashboard() {
 
             <Section title="Lobbies" meta={`${formatNumber(overview.rooms.lobbies.length)} active`}>
               <LobbiesTable lobbies={overview.rooms.lobbies} />
+            </Section>
+
+            <Section
+              title="Golden Rewards"
+              meta={`${formatNumber(overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0)} pending`}
+            >
+              <GoldenBiomeRewardsPanel
+                overview={overview.goldenBiomeRewards}
+                busyRewardId={busyGoldenRewardId}
+                busyMode={busyGoldenMode}
+                onSetMode={setGoldenDistributionMode}
+                onDistribute={distributeGoldenReward}
+              />
             </Section>
 
             <Section

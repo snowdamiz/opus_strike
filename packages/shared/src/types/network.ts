@@ -7,6 +7,7 @@ import type { MovementCommandPacket, SelfMovementAuthority } from './movementPre
 import type { VoiceTokenRequest, VoiceTokenResponse, VoiceTeamChangedMessage } from './voice.js';
 import type { PublicRankSnapshot } from '../progression/ranking.js';
 import type { MatchMode } from './matchMode.js';
+import type { VoxelMapTheme } from '../maps/procedural/types.js';
 
 // Client -> Server Messages
 export type ClientMessage = 
@@ -21,6 +22,7 @@ export type ClientMessage =
   | { type: 'selectTeam'; payload: { team: Team } }
   | { type: 'chat'; payload: { message: string; teamOnly: boolean } }
   | { type: 'ready'; payload: { ready: boolean } }
+  | { type: 'matchSceneReady'; payload: MatchSceneReadyMessage }
   | { type: 'requestVoiceToken'; payload: VoiceTokenRequest }
   | { type: 'ability'; payload: AbilityCast };
 
@@ -32,6 +34,8 @@ export type ServerMessage =
   | { type: 'playerPingRequest'; payload: PlayerPingRequestMessage }
   | { type: 'playerPings'; payload: PlayerPingsMessage }
   | { type: 'matchSnapshot'; payload: MatchSnapshotMessage }
+  | { type: 'matchStartGate'; payload: MatchStartGateMessage }
+  | { type: 'matchCancelled'; payload: MatchCancelledMessage }
   | { type: 'playerJoined'; payload: { playerId: string; playerName: string } }
   | { type: 'playerLeft'; payload: { playerId: string } }
   | { type: 'playerDied'; payload: PlayerDeathEvent }
@@ -130,6 +134,29 @@ export interface PlayerPingResponseMessage {
   nonce: string;
 }
 
+export interface MatchSceneReadyMessage {
+  key: number;
+}
+
+export interface MatchStartGateMessage {
+  key: number;
+  serverTime: number;
+  mapSeed: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
+  position: Vec3;
+}
+
+export interface MatchCancelledMessage {
+  reason: string;
+  message: string;
+  roomId: string;
+  requiredHumanPlayers: number;
+  connectedHumanPlayers: number;
+  deadlineAt: number;
+  refundedWager: boolean;
+  serverTime: number;
+}
+
 export interface PlayerPingSnapshot {
   playerId: string;
   pingMs: number | null;
@@ -145,6 +172,7 @@ export interface MatchSnapshotMessage {
   serverTime: number;
   phase: GamePhase;
   mapSeed: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
   redScore: number;
   blueScore: number;
   redFlag: FlagSync;
@@ -195,7 +223,16 @@ export interface GameEndEvent {
   durationMs: number;
   forcedByPlayerId?: string;
   matchIntegrity?: MatchIntegritySummary;
+  goldenBiomeReward?: GoldenBiomeRewardSummary;
   players: MatchSummaryPlayer[];
+}
+
+export interface GoldenBiomeRewardSummary {
+  rewardUsdCents: number;
+  rewardToken: 'SOL';
+  winningTeam: Team | null;
+  eligiblePlayerIds: string[];
+  status: 'pending' | 'not_applicable';
 }
 
 export interface MatchIntegritySummary {

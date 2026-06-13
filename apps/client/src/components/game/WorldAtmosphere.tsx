@@ -177,6 +177,66 @@ function pickProfileStack(seed: number, salt: number, variants: AtmosphereProfil
 }
 
 function getAtmosphereProfiles(theme: VoxelMapTheme, seed: number): AtmosphereProfile[] {
+  if (theme.id === 'golden') {
+    return pickProfileStack(seed, 0x906d3a, [
+      [
+        {
+          kind: 'glimmer',
+          variant: 'treasury-motes',
+          color: '#fff3a8',
+          count: 360,
+          opacity: 0.82,
+          size: 0.115,
+          fallSpeed: 0.76,
+          spreadX: 82,
+          spreadZ: 72,
+          minY: 1.4,
+          maxY: 34,
+          turbulence: 0.2,
+          windScale: 0.72,
+          floatStrength: 0.34,
+          verticalDirection: 'float',
+        },
+        {
+          kind: 'mist',
+          variant: 'sunlit-vault-haze',
+          color: '#f7c85f',
+          count: 220,
+          opacity: 0.28,
+          size: 0.22,
+          fallSpeed: 0.42,
+          spreadX: 94,
+          spreadZ: 84,
+          minY: 0.4,
+          maxY: 24,
+          turbulence: 0.12,
+          windScale: 0.5,
+          floatStrength: 0.18,
+          verticalDirection: 'float',
+        },
+      ],
+      [
+        {
+          kind: 'glimmer',
+          variant: 'coinfall-radiance',
+          color: theme.structures.accent,
+          count: 420,
+          opacity: 0.72,
+          size: 0.095,
+          fallSpeed: 1.05,
+          spreadX: 88,
+          spreadZ: 78,
+          minY: 1,
+          maxY: 40,
+          turbulence: 0.18,
+          windScale: 0.84,
+          floatStrength: 0.24,
+          verticalDirection: 'fall',
+        },
+      ],
+    ]);
+  }
+
   if (theme.id === 'frost') {
     return pickProfileStack(seed, 0xf7057, [
       [
@@ -865,8 +925,8 @@ function createDustDevils(profile: AtmosphereProfile, seed: number): DustDevilCo
 }
 
 function getSkyUniforms(theme: VoxelMapTheme) {
-  const darken = theme.id === 'basalt' || theme.id === 'volcanic' ? 0.44 : theme.id === 'crystal' ? 0.2 : 0.08;
-  const warmHorizon = theme.id === 'desert' || theme.id === 'volcanic' || theme.id === 'sakura' ? 0.18 : 0.06;
+  const darken = theme.id === 'basalt' || theme.id === 'volcanic' ? 0.44 : theme.id === 'crystal' ? 0.2 : theme.id === 'golden' ? 0.02 : 0.08;
+  const warmHorizon = theme.id === 'golden' ? 0.28 : theme.id === 'desert' || theme.id === 'volcanic' || theme.id === 'sakura' ? 0.18 : 0.06;
 
   return {
     topColor: { value: createThemeColor(theme.skyColor, '#07111f', darken) },

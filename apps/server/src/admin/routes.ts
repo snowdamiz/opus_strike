@@ -414,12 +414,13 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
     antiCheatEvidenceStore.listReviewData(),
     listPlayerReportQueue(prisma),
+    wagerService.getGoldenBiomeAdminOverview(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -522,6 +523,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     },
     antiCheat,
     playerReports,
+    goldenBiomeRewards,
   };
 }
 
@@ -746,6 +748,14 @@ function renderAdminHtml(): string {
 
     <section>
       <div class="section-head">
+        <h2>Golden Rewards</h2>
+        <span class="muted" id="golden-reward-count"></span>
+      </div>
+      <div class="table-wrap" id="golden-rewards"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
         <h2>Player Reports</h2>
         <span class="muted" id="player-report-count"></span>
       </div>
@@ -815,6 +825,21 @@ function renderAdminHtml(): string {
         index++;
       }
       return state.bytes.format(current) + ' ' + units[index];
+    }
+
+    function sol(lamports) {
+      const raw = String(lamports || '0');
+      if (!/^[0-9]+$/.test(raw)) return '0';
+      const whole = raw.length > 9 ? raw.slice(0, -9) : '0';
+      const fraction = raw.padStart(10, '0').slice(-9).replace(/0+$/, '');
+      return fraction ? whole + '.' + fraction : whole;
+    }
+
+    function usd(cents) {
+      const value = Math.max(0, Number(cents) || 0);
+      const dollars = Math.floor(value / 100);
+      const remainder = value % 100;
+      return remainder === 0 ? '$' + dollars : '$' + dollars + '.' + String(remainder).padStart(2, '0');
     }
 
     function age(ms) {
@@ -999,6 +1024,49 @@ function renderAdminHtml(): string {
       }).catch((error) => alert(error.message));
     };
 
+    window.setGoldenMode = (mode) => {
+      if (!confirm('Switch golden reward distribution to ' + mode + '?')) return;
+      postJson('/admin/api/golden-biome/distribution-mode', { mode })
+        .catch((error) => alert(error.message));
+    };
+    window.distributeGoldenReward = (rewardId, winnerCount) => {
+      if (!confirm('Distribute golden reward to ' + winnerCount + ' winner(s)?')) return;
+      postJson('/admin/api/golden-biome/rewards/' + encodeURIComponent(rewardId) + '/distribute', {})
+        .catch((error) => alert(error.message));
+    };
+
+    function renderGoldenRewards(data) {
+      const golden = data.goldenBiomeRewards || { settings: { distributionMode: 'manual' }, treasury: {}, rewards: [] };
+      const rewards = golden.rewards || [];
+      const pending = rewards.filter((reward) => reward.status !== 'complete').length;
+      document.getElementById('golden-reward-count').textContent = num(pending) + ' pending / mode ' + escapeHtml(golden.settings?.distributionMode || 'manual');
+      const controls =
+        '<div style="padding:12px; border-bottom:1px solid var(--line)" class="actions">' +
+        '<span class="pill">mode ' + escapeHtml(golden.settings?.distributionMode || 'manual') + '</span>' +
+        '<button onclick="setGoldenMode(\\'manual\\')">Manual</button>' +
+        '<button onclick="setGoldenMode(\\'auto\\')">Auto</button>' +
+        '<span class="muted">Treasury ' + escapeHtml(golden.treasury?.eligible ? 'eligible' : (golden.treasury?.reason || 'not eligible')) + '</span>' +
+        '<span class="muted">' + escapeHtml(sol(golden.treasury?.treasuryBalanceLamports)) + ' SOL / ' + escapeHtml(sol(golden.treasury?.requiredLamports)) + ' SOL minimum</span>' +
+        '</div>';
+      document.getElementById('golden-rewards').innerHTML = controls + (rewards.length === 0
+        ? '<div class="empty">No golden biome reward records yet.</div>'
+        : '<table><thead><tr><th>Match</th><th>Status</th><th>Team</th><th class="num">Reward</th><th>Transfers</th><th>Actions</th></tr></thead><tbody>' +
+          rewards.map((reward) => (
+            '<tr>' +
+            '<td><span class="mono">' + escapeHtml(reward.matchId) + '</span><br><span class="muted">seed ' + escapeHtml(reward.mapSeed) + '</span></td>' +
+            '<td><span class="pill">' + escapeHtml(reward.status) + '</span><br><span class="muted">' + escapeHtml(reward.distributionMode) + '</span>' + (reward.lastError ? '<br><span style="color:var(--bad)">' + escapeHtml(reward.lastError) + '</span>' : '') + '</td>' +
+            '<td>' + escapeHtml(reward.winningTeam) + '<br><span class="muted">' + num(reward.paidPlayerCount) + ' winners</span></td>' +
+            '<td class="num">' + usd(reward.rewardUsdCents) + '<br><span class="muted">' + sol(reward.rewardLamports) + ' SOL each</span></td>' +
+            '<td>' + (reward.transfers || []).map((transfer) => (
+              '<div><span class="pill">' + escapeHtml(transfer.status) + '</span> ' + escapeHtml(transfer.displayName || transfer.userId) + '<br><span class="mono muted">' + escapeHtml(transfer.recipientWallet) + '</span>' + (transfer.signature ? '<br><span class="mono muted">' + escapeHtml(transfer.signature) + '</span>' : '') + '</div>'
+            )).join('<hr style="border:0;border-top:1px solid var(--line)">') + '</td>' +
+            '<td><div class="actions">' +
+            ((reward.status === 'pending' || reward.status === 'failed') ? '<button onclick="distributeGoldenReward(\\'' + escapeHtml(reward.id) + '\\',' + Number(reward.paidPlayerCount || 0) + ')">Distribute</button>' : '') +
+            '</div></td>' +
+            '</tr>'
+          )).join('') + '</tbody></table>');
+    }
+
     function renderPlayerReports(data) {
       const queue = data.playerReports || { reports: [], counts: {} };
       const reports = queue.reports || [];
@@ -1127,6 +1195,7 @@ function renderAdminHtml(): string {
         renderMachines(data);
         renderGameRooms(data);
         renderLobbies(data);
+        renderGoldenRewards(data);
         renderPlayerReports(data);
         renderAntiCheat(data);
       } catch (error) {
@@ -1175,6 +1244,35 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect anti-cheat overview' });
+    }
+  });
+
+  router.post('/api/golden-biome/distribution-mode', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const mode = readRequestString(req.body?.mode, 16);
+    if (mode !== 'manual' && mode !== 'auto') {
+      res.status(400).json({ error: 'Invalid golden biome reward distribution mode' });
+      return;
+    }
+
+    try {
+      const distributionMode = await wagerService.setGoldenBiomeRewardDistributionMode(mode, adminUser.id);
+      res.json({ ok: true, distributionMode });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/golden-biome/rewards/:rewardId/distribute', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const reward = await wagerService.distributeGoldenBiomeReward(req.params.rewardId, adminUser.id);
+      res.json({ ok: true, reward });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 

@@ -78,6 +78,14 @@ export const ABILITY_SOCKET_CATALOG = {
     socketNames: [PHANTOM_VOID_RAY_ORB_SOCKET_NAME],
     fallbackOffset: PHANTOM_VOID_RAY_SOCKET,
   },
+  phantom_personal_shield: {
+    abilityId: 'phantom_personal_shield',
+    heroId: 'phantom',
+    socketRole: 'primaryPalm',
+    sideMode: 'both',
+    socketNames: sideSocketNames(PHANTOM_PRIMARY_PALM_SOCKET_NAMES, 'both'),
+    fallbackOffset: PHANTOM_DIRE_BALL_SOCKET,
+  },
   hookshot_basic_attack: {
     abilityId: 'hookshot_basic_attack',
     heroId: 'hookshot',

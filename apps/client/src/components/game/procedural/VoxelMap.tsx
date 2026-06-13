@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { VoxelMapManifest } from '@voxel-strike/shared';
+import type { VoxelMapManifest, VoxelMapTheme } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { areProceduralMapCollidersLoaded, isPhysicsReady, loadProceduralMapColliders } from '../../../hooks/usePhysics';
 import { setMapBoundaryPolygon } from '../../../config/mapBoundaries';
@@ -15,6 +15,7 @@ import {
 
 interface VoxelMapProps {
   seed?: number;
+  themeId?: VoxelMapTheme['id'] | null;
   manifest?: VoxelMapManifest;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
@@ -42,6 +43,7 @@ export interface VoxelMapWarmupStatus {
 
 export function VoxelMap({
   seed,
+  themeId: providedThemeId,
   manifest: providedManifest,
   enablePhysics = true,
   shadowsEnabled,
@@ -56,14 +58,17 @@ export function VoxelMap({
   onReady,
 }: VoxelMapProps) {
   const storeMapSeed = useGameStore((state) => state.mapSeed);
+  const storeMapThemeId = useGameStore((state) => state.mapThemeId);
   const mapSeed = seed ?? storeMapSeed;
+  const mapThemeId = providedThemeId ?? storeMapThemeId;
   const preparedMap = useMemo(() => {
     return prepareVoxelMapCpu({
       seed: mapSeed,
+      themeId: mapThemeId,
       manifest: providedManifest,
       source: providedManifest ? 'mapVotePreview' : 'match',
     });
-  }, [mapSeed, providedManifest]);
+  }, [mapSeed, mapThemeId, providedManifest]);
   const manifest = preparedMap.manifest;
   const renderableRegions = preparedMap.renderableRegions;
   const material = useVoxelMaterial(manifest.theme);

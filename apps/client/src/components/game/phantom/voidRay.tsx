@@ -382,6 +382,110 @@ export function prewarmVoidRayResources(): void {
   getSharedSpiralGeometries();
 }
 
+export function appendVoidRayGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmVoidRayResources();
+
+  const group = new THREE.Group();
+  group.name = 'gpu-prewarm-void-ray';
+  group.position.set(0.2, 0, -5);
+  group.scale.setScalar(0.25);
+
+  group.add(new THREE.Mesh(RAY_GLOW_GEOMETRY, getGlowMaterial()));
+  group.add(new THREE.Mesh(RAY_BEAM_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(RAY_CORE_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_HALO_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xc084fc,
+    transparent: true,
+    opacity: 0.35,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_HALO_SECONDARY_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.22,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_CORE_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.95,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_GLOW_GEOMETRY, getGlowMaterial()));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_SHELL_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(LOCAL_ORIGIN_ENERGY_RING_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0x7c3aed,
+    transparent: true,
+    opacity: 0.32,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(REMOTE_ORIGIN_CORE_GEOMETRY, getCoreMaterial()));
+  group.add(new THREE.Mesh(REMOTE_ORIGIN_GLOW_GEOMETRY, getGlowMaterial()));
+  group.add(new THREE.Mesh(VOID_RAY_IMPACT_INNER_RING_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0x00ffff,
+    transparent: true,
+    opacity: 0.58,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(VOID_RAY_IMPACT_OUTER_RING_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xc084fc,
+    transparent: true,
+    opacity: 0.48,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  })));
+  group.add(new THREE.Mesh(VOID_RAY_IMPACT_SPARK_GEOMETRY, new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.9,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  })));
+
+  for (const geometry of getSharedSpiralGeometries()) {
+    group.add(new THREE.Mesh(geometry, getSpiralMaterial()));
+  }
+
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    0, 0, 0,
+    0.1, 0.25, -0.2,
+    -0.1, -0.25, -0.4,
+  ]), 3));
+  particleGeometry.setAttribute('random', new THREE.BufferAttribute(new Float32Array([0.15, 0.5, 0.85]), 1));
+  particleGeometry.setAttribute('speed', new THREE.BufferAttribute(new Float32Array([0.4, 0.8, 1]), 1));
+  particleGeometry.setAttribute('size', new THREE.BufferAttribute(new Float32Array([0.12, 0.16, 0.1]), 1));
+  group.add(new THREE.Points(particleGeometry, new THREE.PointsMaterial({
+    color: 0xc084fc,
+    size: 0.12,
+    transparent: true,
+    opacity: 0.82,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+    toneMapped: false,
+  })));
+
+  target.add(group);
+}
+
 export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId }: VoidRayProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const beamRef = useRef<THREE.Mesh>(null);

@@ -11,7 +11,7 @@ export { BLINK_EFFECT_DURATION } from './materials';
 export { VoidRay, VoidRays, VoidRaysManager } from './voidRay';
 export { VoidZone, VoidZones, VoidZonesManager } from './voidZone';
 export { DireBallsManager, prewarmDireBallResources } from './direBall';
-export { PhantomPersonalShieldsManager } from './personalShield';
+export { PhantomPersonalShieldsManager, triggerPhantomShieldCastEffect } from './personalShield';
 
 // ============================================================================
 // EFFECT DATA TYPES

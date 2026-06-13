@@ -17,7 +17,7 @@ import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { usePwaInstallPrompt } from '../../pwa';
-import { parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
+import { MAP_SEED_PLACEHOLDER, isAllowedMapSeedInput, parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
 import { solInputToLamports } from '../../utils/wagerPayments';
 import { RankIcon, getRankForStats } from './RankBadge';
 
@@ -371,10 +371,15 @@ export function MainLobby() {
     setFeaturedHero(heroId);
   };
 
-  const handleCreateLobby = async (lobbyName: string, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => {
+  const handleCreateLobby = async (
+    lobbyName: string,
+    wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
+    mapSeed?: number,
+    forceGoldenMapOption?: boolean
+  ) => {
     setError(null);
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, mapSeed });
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, mapSeed, forceGoldenMapOption });
       setShowCreateLobby(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -1055,12 +1060,14 @@ function PracticeSetupModal({ isLoading, error, onClose, onStart }: PracticeSetu
           </label>
           <input
             type="text"
+            inputMode="numeric"
+            pattern="[0-9]{1,10}"
+            maxLength={10}
             value={mapSeedInput}
             onChange={(event) => {
-              setMapSeedInput(event.target.value);
-              setLocalError(null);
+              updateAllowedMapSeedInput(event.target.value, setMapSeedInput, () => setLocalError(null));
             }}
-            placeholder="Random"
+            placeholder={MAP_SEED_PLACEHOLDER}
             className="input w-full px-3.5 py-2.5 text-base rounded-lg"
             autoFocus
           />
@@ -1093,13 +1100,24 @@ function PracticeSetupModal({ isLoading, error, onClose, onStart }: PracticeSetu
   );
 }
 
+function updateAllowedMapSeedInput(value: string, setValue: (value: string) => void, clearError: () => void) {
+  if (!isAllowedMapSeedInput(value)) return;
+  setValue(value);
+  clearError();
+}
+
 // Create Lobby Modal
 interface CreateLobbyModalProps {
   playerName: string;
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
-  onCreate: (name: string, wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' }, mapSeed?: number) => void;
+  onCreate: (
+    name: string,
+    wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
+    mapSeed?: number,
+    forceGoldenMapOption?: boolean
+  ) => void;
 }
 
 function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: CreateLobbyModalProps) {
@@ -1107,6 +1125,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
   const [wagerEnabled, setWagerEnabled] = useState(false);
   const [coverChargeSol, setCoverChargeSol] = useState('0.01');
   const [mapSeedInput, setMapSeedInput] = useState('');
+  const [forceGoldenMapOption, setForceGoldenMapOption] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1116,7 +1135,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
       const mapSeed = config.isDev ? parseOptionalMapSeedInput(mapSeedInput) : undefined;
       onCreate(lobbyName, wagerEnabled
         ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
-        : { enabled: false }, mapSeed);
+        : { enabled: false }, mapSeed, config.isDev && forceGoldenMapOption);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Invalid lobby settings');
     }
@@ -1154,21 +1173,45 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
         </div>
 
         {config.isDev && (
-          <div>
-            <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
-              Map Seed
-            </label>
-            <input
-              type="text"
-              value={mapSeedInput}
-              onChange={(e) => {
-                setMapSeedInput(e.target.value);
-                setLocalError(null);
-              }}
-              placeholder="Random"
-              className="input w-full px-3.5 py-2.5 text-base rounded-lg"
-            />
-          </div>
+          <>
+            <div>
+              <label className="block text-xs text-white/50 font-body uppercase tracking-wider mb-1.5">
+                Map Seed
+              </label>
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]{1,10}"
+                maxLength={10}
+                value={mapSeedInput}
+                onChange={(e) => {
+                  updateAllowedMapSeedInput(e.target.value, setMapSeedInput, () => setLocalError(null));
+                }}
+                placeholder={MAP_SEED_PLACEHOLDER}
+                className="input w-full px-3.5 py-2.5 text-base rounded-lg"
+              />
+            </div>
+
+            <button
+              type="button"
+              aria-pressed={forceGoldenMapOption}
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-amber-300/15 bg-amber-300/[0.055] p-3 text-left transition-colors hover:border-amber-200/25"
+              onClick={() => setForceGoldenMapOption((enabled) => !enabled)}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <svg className={`h-4 w-4 shrink-0 ${forceGoldenMapOption ? 'text-amber-200' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3l2.4 5.6L20 11l-5.6 2.4L12 19l-2.4-5.6L4 11l5.6-2.4L12 3z" />
+                </svg>
+                <div className="min-w-0">
+                  <p className="font-body text-sm text-white">Force Golden Map</p>
+                  <p className="text-[11px] text-white/40">Development only. Guarantees one vote option uses the golden biome.</p>
+                </div>
+              </div>
+              <span className={`relative h-5 w-10 shrink-0 rounded-full transition-all ${forceGoldenMapOption ? 'bg-amber-400' : 'bg-white/20'}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${forceGoldenMapOption ? 'left-[22px]' : 'left-0.5'}`} />
+              </span>
+            </button>
+          </>
         )}
 
         <div

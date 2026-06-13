@@ -5,6 +5,7 @@ import { createGameEntryTicket, verifyGameEntryTicket } from '../security/entryT
 import { MessageRateLimiter } from '../rooms/rateLimiter';
 import { validateMovementProposal, type MovementBounds } from '../rooms/movementValidation';
 import { validateTeamPayload } from '../rooms/protocolValidation';
+import { shouldResolveGenericSecondaryAttack } from '../rooms/combatInputRouting';
 import { Player } from '../rooms/schema/Player';
 import { AbilityStateSchema } from '../rooms/schema/Components';
 import { executeAbility } from '../rooms/abilityHandlers';
@@ -137,6 +138,29 @@ function runProtocolTests(): void {
   assert.deepEqual(validateTeamPayload({ team: 'blue' }), 'blue');
 }
 
+function runCombatInputRoutingTests(): void {
+  assert.equal(
+    shouldResolveGenericSecondaryAttack('hookshot', { secondaryFire: true }, false, false),
+    true,
+    'Hookshot RMB should still route through the generic secondary attack resolver'
+  );
+  assert.equal(
+    shouldResolveGenericSecondaryAttack('chronos', { secondaryFire: true }, false, false),
+    false,
+    'Chronos RMB is Aegis and must not be rejected as a missing secondary attack'
+  );
+  assert.equal(
+    shouldResolveGenericSecondaryAttack('hookshot', { secondaryFire: true }, true, false),
+    false,
+    'Held generic secondary attacks should resolve on press edge only'
+  );
+  assert.equal(
+    shouldResolveGenericSecondaryAttack('hookshot', { secondaryFire: true }, false, true),
+    false,
+    'Suppressed secondary input should not resolve as an attack'
+  );
+}
+
 function runMovementCommandPayloadTests(): void {
   const parsed = parseMovementCommandPayload({
     seq: '7',
@@ -230,6 +254,7 @@ function runAbilityBarrierTests(): void {
 runMovementTests();
 runTicketTests();
 runProtocolTests();
+runCombatInputRoutingTests();
 runMovementCommandPayloadTests();
 runRateLimitTests();
 runAbilityBarrierTests();

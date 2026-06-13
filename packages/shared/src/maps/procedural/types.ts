@@ -28,7 +28,12 @@ export type VoxelBlockId =
   | 'ice'
   | 'moss'
   | 'bamboo'
-  | 'blossom_leaves';
+  | 'blossom_leaves'
+  | 'gold'
+  | 'gold_ore'
+  | 'gold_panel'
+  | 'gold_glass'
+  | 'crystal_growth';
 
 export interface VoxelSize {
   x: number;
@@ -411,7 +416,7 @@ export interface VoxelHeightfield {
 }
 
 export interface VoxelMapTheme {
-  id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal' | 'volcanic' | 'sakura';
+  id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal' | 'volcanic' | 'sakura' | 'golden';
   name: string;
   skyColor: string;
   ambientColor: string;

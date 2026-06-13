@@ -21,6 +21,8 @@ import {
   createRandomSeed,
   generateProceduralVoxelMap,
   createProceduralTerrainLookup,
+  getVoxelMapTheme,
+  GOLDEN_VOXEL_MAP_THEME_ID,
   getRankDivisionIndex,
   getRankFromRating,
   toPublicRankSnapshot,
@@ -137,6 +139,7 @@ import type {
   PackedPlayerTransform,
   VoxelChunk,
   VoxelMapManifest,
+  VoxelMapTheme,
 } from '@voxel-strike/shared';
 import {
   HOOKSHOT_GRAPPLE_EXTENSION_SPEED,
@@ -173,7 +176,7 @@ import {
   type RankedUserState,
 } from '../ranking/ratingService';
 import { voiceService } from '../voice/VoiceService';
-import { wagerService, type LockedWagerContext } from '../wagers/service';
+import { wagerService, type GoldenBiomeRewardWinner, type LockedWagerContext } from '../wagers/service';
 import {
   calculateParticipantExperience,
   calculateParticipantScore,
@@ -198,6 +201,7 @@ import {
   GAME_MESSAGE_RATE_LIMITS,
   MessageRateLimiter,
 } from './rateLimiter';
+import { shouldResolveGenericSecondaryAttack } from './combatInputRouting';
 import {
   isHeroId,
   isRecord,
@@ -232,6 +236,7 @@ interface CreateOptions {
   lobbyName?: string;
   matchMode?: MatchMode;
   mapSeed?: number;
+  mapThemeId?: VoxelMapTheme['id'] | null;
   botAssignments?: BotAssignment[];
   wagerContext?: LockedWagerContext | null;
   rankedEligible?: boolean;
@@ -426,6 +431,7 @@ interface MatchPersistenceLedger {
   lobbyId: string | null;
   matchMode: MatchMode;
   mapSeed: number;
+  mapThemeId: VoxelMapTheme['id'];
   rankedEligible: boolean;
   startedAt: Date;
   endedAt: Date | null;
@@ -495,9 +501,6 @@ interface AttackConfig {
 
 const BLAZE_ROCKET_SPEED = 70;
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
-const BLAZE_ROCKET_IMPACT_MIN_INTERVAL_MS = 300;
-const BLAZE_ROCKET_IMPACT_MAX_DISTANCE = 240;
-const BLAZE_ROCKET_IMPACT_DEDUP_MS = 5000;
 const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
 const BLAZE_BOMB_MAX_RANGE = 60;
@@ -505,11 +508,6 @@ const BLAZE_BOMB_MIN_RANGE = 3;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER = 1.7;
 const ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER = 1.15;
-
-interface BlazeRocketImpactMessage {
-  rocketId: string;
-  position: PlainVec3;
-}
 
 interface BotSkillProfile {
   thinkIntervalMs: number;
@@ -677,11 +675,28 @@ const GRAPPLE_TRAP_THROW_SPEED = 30;
 const GRAPPLE_TRAP_GRAVITY = 25;
 const GRAPPLE_TRAP_RADIUS = 8;
 const GRAPPLE_TRAP_DURATION = 8;
+const DEFAULT_MATCH_START_CANCEL_TIMEOUT_MS = 60_000;
+const MATCH_CANCEL_DISCONNECT_DELAY_MS = 750;
+
+function readPositiveIntegerEnvMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+const MATCH_START_CANCEL_TIMEOUT_MS = readPositiveIntegerEnvMs(
+  'MATCH_START_CANCEL_TIMEOUT_MS',
+  readPositiveIntegerEnvMs('MATCH_CONNECT_TIMEOUT_MS', DEFAULT_MATCH_START_CANCEL_TIMEOUT_MS)
+);
 
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
 
   private tickInterval: ReturnType<typeof setInterval> | null = null;
+  private matchStartCancelTimeout: ReturnType<typeof setTimeout> | null = null;
+  private matchCancelDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private readonly config = DEFAULT_GAME_CONFIG;
   private lobbyId: string | null = null;
   private lobbyName: string | null = null;
@@ -713,8 +728,6 @@ export class GameRoom extends Room<GameState> {
   private flamethrowerLastDamageTick: Map<string, number> = new Map();
   private botBrains: Map<string, BotBrain> = new Map();
   private attackCooldownUntil: Map<string, number> = new Map();
-  private blazeRocketImpactCooldownUntil: Map<string, number> = new Map();
-  private processedBlazeRocketImpacts: Map<string, number> = new Map();
   private damageHistory: Map<string, Map<string, DamageHistoryEntry>> = new Map();
   private chronosAegisShieldHp: Map<string, number> = new Map();
   private unstuckCooldownUntil: Map<string, number> = new Map();
@@ -787,9 +800,15 @@ export class GameRoom extends Room<GameState> {
   private matchPersistenceLedger: MatchPersistenceLedger | null = null;
   private wagerContext: LockedWagerContext | null = null;
   private rankedEligibilityCandidate = false;
+  private requiredHumanPlayers = 1;
   private rankedRequiredHumanPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
   private matchMode: MatchMode = 'custom';
   private wagerSettlementRequested = false;
+  private countdownStartGateOpen = false;
+  private countdownStartGateKey = 0;
+  private readonly countdownSceneReadyPlayerIds = new Set<string>();
+  private matchStartDeadlineAt = 0;
+  private matchCancelled = false;
 
   async onAuth(
     client: Client,
@@ -867,7 +886,11 @@ export class GameRoom extends Room<GameState> {
     this.matchMode = options.matchMode ?? options.wagerContext?.matchMode ?? (options.wagerContext ? 'custom_wager' : 'custom');
     this.wagerContext = options.wagerContext || null;
     this.rankedEligibilityCandidate = options.rankedEligible === true;
-    this.rankedRequiredHumanPlayers = Math.max(1, Math.floor(options.requiredHumanPlayers ?? DEFAULT_GAME_CONFIG.maxPlayers));
+    this.requiredHumanPlayers = Math.max(
+      1,
+      Math.floor(options.requiredHumanPlayers ?? (this.lobbyId ? DEFAULT_GAME_CONFIG.maxPlayers : 1))
+    );
+    this.rankedRequiredHumanPlayers = this.requiredHumanPlayers;
     this.antiCheat = new AntiCheatRoomRuntime({
       roomId: this.roomId,
       lobbyId: this.lobbyId,
@@ -889,11 +912,13 @@ export class GameRoom extends Room<GameState> {
     this.state.mapSeed = typeof options.mapSeed === 'number'
       ? options.mapSeed >>> 0
       : createRandomSeed();
+    this.state.mapThemeId = options.mapThemeId ?? getVoxelMapTheme(this.state.mapSeed).id;
     this.refreshMapManifest();
     loggers.room.info('Map seed', this.state.mapSeed);
     this.resetFlags();
     this.createBotsFromAssignments(options.botAssignments || []);
     this.updateMetadata();
+    this.startMatchStartCancelTimer();
 
     // Set up tick loop
     this.tickInterval = setInterval(() => this.tick(), TICK_INTERVAL_MS);
@@ -905,14 +930,6 @@ export class GameRoom extends Room<GameState> {
         return;
       }
       this.handleMovementCommandPacket(client, packet);
-    });
-
-    this.onMessage('blazeRocketImpact', (client, data: unknown) => {
-      if (!this.rateLimiter.consume(client.sessionId, 'blazeRocketImpact', GAME_MESSAGE_RATE_LIMITS.blazeRocketImpact)) {
-        this.recordRateLimitDrop(client.sessionId, 'blazeRocketImpact');
-        return;
-      }
-      this.handleBlazeRocketImpact(client, data);
     });
 
     this.onMessage('blazeBombDrop', (client, data: unknown) => {
@@ -956,6 +973,14 @@ export class GameRoom extends Room<GameState> {
       const ready = validateReadyPayload(data);
       if (ready === null) return;
       this.handleReady(client, ready);
+    });
+
+    this.onMessage('matchSceneReady', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'matchSceneReady', GAME_MESSAGE_RATE_LIMITS.matchSceneReady)) {
+        this.recordRateLimitDrop(client.sessionId, 'matchSceneReady');
+        return;
+      }
+      this.handleMatchSceneReady(client, data);
     });
 
     this.onMessage('chat', (client, data: unknown) => {
@@ -1113,6 +1138,21 @@ export class GameRoom extends Room<GameState> {
   }
 
   onJoin(client: Client, options: JoinOptions) {
+    if (this.matchCancelled) {
+      client.send('matchCancelled', {
+        reason: 'start_timeout',
+        message: 'Match canceled because all players did not connect and load in time.',
+        roomId: this.roomId,
+        requiredHumanPlayers: this.requiredHumanPlayers,
+        connectedHumanPlayers: this.getConnectedHumanPlayerCount(),
+        deadlineAt: this.matchStartDeadlineAt,
+        refundedWager: Boolean(this.wagerContext),
+        serverTime: Date.now(),
+      });
+      client.leave();
+      return;
+    }
+
     const authBundle = (client as Client & { auth?: { auth?: RoomAuthContext; ticket?: GameEntryTicketClaims | null } }).auth;
     const authContext = authBundle?.auth ?? {
       kind: 'guest' as const,
@@ -1181,6 +1221,8 @@ export class GameRoom extends Room<GameState> {
         this.playerEntryTickets.delete(existingSessionId);
         this.rateLimiter.clearScope(existingSessionId);
         this.clearPlayerReplicationState(existingSessionId);
+        this.countdownSceneReadyPlayerIds.delete(existingSessionId);
+        this.resetCountdownStartGate();
         
         // Broadcast that old player left
         this.broadcastTracked('playerLeft', { playerId: existingSessionId });
@@ -1249,6 +1291,7 @@ export class GameRoom extends Room<GameState> {
     this.state.players.set(client.sessionId, player);
     this.clientsBySessionId.set(client.sessionId, client);
     this.knownPlayerIds.add(client.sessionId);
+    this.resetCountdownStartGate();
     this.playerPingsDirty = true;
     this.forceTransformFullSync();
     this.updateMetadata();
@@ -1319,14 +1362,14 @@ export class GameRoom extends Room<GameState> {
     this.chronosAegisShieldHp.delete(client.sessionId);
     this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
     this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
-    this.blazeRocketImpactCooldownUntil.delete(client.sessionId);
     this.unstuckCooldownUntil.delete(client.sessionId);
-    this.deleteProcessedBlazeRocketImpactsForPlayer(client.sessionId);
     this.devImmunePlayers.delete(client.sessionId);
     this.playerAuthContexts.delete(client.sessionId);
     this.playerEntryTickets.delete(client.sessionId);
     this.rateLimiter.clearScope(client.sessionId);
     this.updateMetadata();
+    this.countdownSceneReadyPlayerIds.delete(client.sessionId);
+    this.resetCountdownStartGate();
     
     // Clean up clientId mappings
     const clientId = this.sessionIdToClientId.get(client.sessionId);
@@ -1350,6 +1393,8 @@ export class GameRoom extends Room<GameState> {
 
   onDispose() {
     loggers.room.info('Room disposing', this.roomId);
+    this.clearMatchStartCancelTimer();
+    this.clearMatchCancelDisconnectTimer();
     this.eventLoopDelay?.disable();
     this.antiCheat?.flushAggregates();
     void this.antiCheatEvidenceStore.flush();
@@ -1361,23 +1406,65 @@ export class GameRoom extends Room<GameState> {
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
     }
-    if (this.wagerContext && !this.wagerSettlementRequested) {
-      this.wagerSettlementRequested = true;
-      const matchId = this.matchPersistenceLedger?.matchId ?? null;
-      wagerService.settleWageredLobby({
-        wageredLobbyId: this.wagerContext.wageredLobbyId,
-        matchId,
-        winningTeam: null,
-      }).catch((error) => {
-        loggers.room.error('Failed to request wager no-contest refund on room dispose', {
-          roomId: this.roomId,
-          lobbyId: this.lobbyId,
-          matchId,
-          wageredLobbyId: this.wagerContext?.wageredLobbyId,
-          error: this.serializePersistenceError(error),
-        });
-      });
-    }
+    this.settleWagerNoContest('room_dispose');
+  }
+
+  private startMatchStartCancelTimer(): void {
+    this.clearMatchStartCancelTimer();
+    this.matchStartDeadlineAt = Date.now() + MATCH_START_CANCEL_TIMEOUT_MS;
+    this.matchStartCancelTimeout = setTimeout(() => {
+      this.cancelPreMatch('start_timeout');
+    }, MATCH_START_CANCEL_TIMEOUT_MS);
+    this.matchStartCancelTimeout.unref?.();
+  }
+
+  private clearMatchStartCancelTimer(): void {
+    if (!this.matchStartCancelTimeout) return;
+    clearTimeout(this.matchStartCancelTimeout);
+    this.matchStartCancelTimeout = null;
+  }
+
+  private clearMatchCancelDisconnectTimer(): void {
+    if (!this.matchCancelDisconnectTimeout) return;
+    clearTimeout(this.matchCancelDisconnectTimeout);
+    this.matchCancelDisconnectTimeout = null;
+  }
+
+  private cancelPreMatch(reason: 'start_timeout'): void {
+    if (this.matchCancelled || (this.state.phase !== 'waiting' && this.state.phase !== 'hero_select')) return;
+
+    this.matchCancelled = true;
+    this.clearMatchStartCancelTimer();
+    this.resetCountdownStartGate();
+    const connectedHumanPlayers = this.getConnectedHumanPlayerCount();
+    const message = 'Match canceled because all players did not connect and load in time.';
+
+    loggers.room.warn('Pre-match canceled', {
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      reason,
+      requiredHumanPlayers: this.requiredHumanPlayers,
+      connectedHumanPlayers,
+      deadlineAt: this.matchStartDeadlineAt,
+      wageredLobbyId: this.wagerContext?.wageredLobbyId,
+    });
+
+    this.broadcastTracked('matchCancelled', {
+      reason,
+      message,
+      roomId: this.roomId,
+      requiredHumanPlayers: this.requiredHumanPlayers,
+      connectedHumanPlayers,
+      deadlineAt: this.matchStartDeadlineAt,
+      refundedWager: Boolean(this.wagerContext),
+      serverTime: Date.now(),
+    });
+
+    this.settleWagerNoContest(reason);
+    this.matchCancelDisconnectTimeout = setTimeout(() => {
+      this.disconnect();
+    }, MATCH_CANCEL_DISCONNECT_DELAY_MS);
+    this.matchCancelDisconnectTimeout.unref?.();
   }
 
   private tick() {
@@ -1486,7 +1573,6 @@ export class GameRoom extends Room<GameState> {
     this.updatePendingAreaDamage(now);
     this.updateBlazeGearstorms(now);
     this.cleanupDamageWindows(now);
-    this.cleanupProcessedBlazeRocketImpacts(now);
 
     // Update held Blaze flamethrowers
     this.updateBlazeFlamethrowers(now, dt);
@@ -1801,6 +1887,7 @@ export class GameRoom extends Room<GameState> {
       serverTime: this.state.serverTime,
       phase: this.state.phase as MatchSnapshotMessage['phase'],
       mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
       redScore: this.state.redTeam.score,
       blueScore: this.state.blueTeam.score,
       redFlag: this.getFlagSync('red'),
@@ -1911,6 +1998,19 @@ export class GameRoom extends Room<GameState> {
       };
     }
     this.attachRankedSummaryUpdates(event, winningTeam, new Date(endedAt), forcedByPlayerId);
+    if (this.state.mapThemeId === GOLDEN_VOXEL_MAP_THEME_ID && this.matchMode === 'ranked') {
+      event.goldenBiomeReward = {
+        rewardUsdCents: wagerService.getConfig().goldenBiomeWinnerRewardUsdCents,
+        rewardToken: 'SOL',
+        winningTeam,
+        eligiblePlayerIds: winningTeam
+          ? event.players
+            .filter((player) => !player.isBot && player.team === winningTeam)
+            .map((player) => player.playerId)
+          : [],
+        status: winningTeam ? 'pending' : 'not_applicable',
+      };
+    }
     return event;
   }
 
@@ -1941,24 +2041,7 @@ export class GameRoom extends Room<GameState> {
     const ledger = this.matchPersistenceLedger;
     if (!ledger || ledger.state !== 'active') return;
 
-    this.state.players.forEach((player) => {
-      this.syncMatchParticipant(player);
-    });
-
-    const participants: MatchParticipantSnapshot[] = Array.from(ledger.participants.values()).map((participant) => ({
-      userId: participant.userId,
-      playerSessionId: participant.playerSessionId,
-      displayName: participant.displayName,
-      team: participant.team,
-      heroId: participant.heroId,
-      kills: participant.kills,
-      deaths: participant.deaths,
-      assists: participant.assists,
-      flagCaptures: participant.flagCaptures,
-      flagReturns: participant.flagReturns,
-      joinedAt: participant.joinedAt,
-      leftAt: participant.leftAt,
-    }));
+    const participants = this.buildMatchParticipantSnapshots(ledger);
 
     if (!this.isFinalRankedEligible(ledger, participants, forcedByPlayerId)) return;
     const gate = this.antiCheat?.buildIntegrityGate({ rankedEligible: true, wagered: Boolean(this.wagerContext) });
@@ -2043,6 +2126,7 @@ export class GameRoom extends Room<GameState> {
       lobbyId: this.lobbyId || undefined,
       matchMode: this.matchMode,
       mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId,
       humanCount: counts.humanCount,
       botCount: counts.botCount,
       npcCount: counts.npcCount,
@@ -2694,6 +2778,7 @@ export class GameRoom extends Room<GameState> {
         lobbyId: this.lobbyId,
         matchMode: this.matchMode,
         mapSeed: this.state.mapSeed,
+        mapThemeId: this.state.mapThemeId as VoxelMapTheme['id'],
         rankedEligible: this.rankedEligibilityCandidate,
         startedAt: new Date(now),
         endedAt: null,
@@ -2709,6 +2794,7 @@ export class GameRoom extends Room<GameState> {
         matchId: this.matchPersistenceLedger.matchId,
         lobbyId: this.lobbyId,
         mapSeed: this.state.mapSeed,
+        mapThemeId: this.state.mapThemeId,
       });
     }
 
@@ -2772,6 +2858,27 @@ export class GameRoom extends Room<GameState> {
     participant.flagCaptures = Math.max(participant.flagCaptures, player.flagCaptures);
     participant.flagReturns = Math.max(participant.flagReturns, player.flagReturns);
     return participant;
+  }
+
+  private buildMatchParticipantSnapshots(ledger: MatchPersistenceLedger): MatchParticipantSnapshot[] {
+    this.state.players.forEach((player) => {
+      this.syncMatchParticipant(player);
+    });
+
+    return Array.from(ledger.participants.values()).map((participant) => ({
+      userId: participant.userId,
+      playerSessionId: participant.playerSessionId,
+      displayName: participant.displayName,
+      team: participant.team,
+      heroId: participant.heroId,
+      kills: participant.kills,
+      deaths: participant.deaths,
+      assists: participant.assists,
+      flagCaptures: participant.flagCaptures,
+      flagReturns: participant.flagReturns,
+      joinedAt: participant.joinedAt,
+      leftAt: participant.leftAt,
+    }));
   }
 
   private markMatchParticipantLeft(player: Player, now = Date.now()): void {
@@ -2877,10 +2984,6 @@ export class GameRoom extends Room<GameState> {
     const ledger = this.matchPersistenceLedger;
     if (!ledger || ledger.state !== 'active') return;
 
-    this.state.players.forEach((player) => {
-      this.syncMatchParticipant(player);
-    });
-
     const endedAt = new Date();
     ledger.endedAt = endedAt;
     ledger.redScore = finalScore.red;
@@ -2888,20 +2991,7 @@ export class GameRoom extends Room<GameState> {
     ledger.winningTeam = winningTeam;
     ledger.state = 'persisting';
 
-    const participants: MatchParticipantSnapshot[] = Array.from(ledger.participants.values()).map((participant) => ({
-      userId: participant.userId,
-      playerSessionId: participant.playerSessionId,
-      displayName: participant.displayName,
-      team: participant.team,
-      heroId: participant.heroId,
-      kills: participant.kills,
-      deaths: participant.deaths,
-      assists: participant.assists,
-      flagCaptures: participant.flagCaptures,
-      flagReturns: participant.flagReturns,
-      joinedAt: participant.joinedAt,
-      leftAt: participant.leftAt,
-    }));
+    const participants = this.buildMatchParticipantSnapshots(ledger);
     const rankedEligible = this.isFinalRankedEligible(ledger, participants, forcedByPlayerId);
     const integrityGate = this.antiCheat?.buildIntegrityGate({
       rankedEligible,
@@ -2969,6 +3059,7 @@ export class GameRoom extends Room<GameState> {
       roomId: ledger.roomId,
       lobbyId: ledger.lobbyId,
       mapSeed: ledger.mapSeed,
+      mapThemeId: ledger.mapThemeId,
       matchMode: ledger.matchMode,
       rankedEligible,
       startedAt: ledger.startedAt,
@@ -3096,6 +3187,96 @@ export class GameRoom extends Room<GameState> {
           lobbyId: this.lobbyId,
           matchId,
           wageredLobbyId: this.wagerContext?.wageredLobbyId,
+          error: this.serializePersistenceError(error),
+        });
+      });
+  }
+
+  private settleWagerNoContest(reason: string): void {
+    if (!this.wagerContext || this.wagerSettlementRequested) return;
+
+    this.wagerSettlementRequested = true;
+    const matchId = this.matchPersistenceLedger?.matchId ?? null;
+    wagerService.settleWageredLobby({
+      wageredLobbyId: this.wagerContext.wageredLobbyId,
+      matchId,
+      winningTeam: null,
+    })
+      .then((settlement) => {
+        loggers.room.info('Wager no-contest refund requested', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId,
+          reason,
+          wageredLobbyId: this.wagerContext?.wageredLobbyId,
+          settlement,
+        });
+      })
+      .catch((error) => {
+        loggers.room.error('Failed to request wager no-contest refund', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId,
+          reason,
+          wageredLobbyId: this.wagerContext?.wageredLobbyId,
+          error: this.serializePersistenceError(error),
+        });
+      });
+  }
+
+  private settleGoldenBiomeRewardAfterGame(winningTeam: Team | null, forcedByPlayerId?: string): void {
+    const ledger = this.matchPersistenceLedger;
+    if (this.state.mapThemeId !== GOLDEN_VOXEL_MAP_THEME_ID || !ledger || ledger.state !== 'active') return;
+    if (this.matchMode !== 'ranked' || !winningTeam || forcedByPlayerId) return;
+
+    const participants = this.buildMatchParticipantSnapshots(ledger);
+    if (!this.isFinalRankedEligible(ledger, participants, forcedByPlayerId)) return;
+
+    const gate = this.antiCheat?.buildIntegrityGate({
+      rankedEligible: true,
+      wagered: true,
+    }) ?? this.cleanAntiCheatGate();
+    if (gate.payoutHoldRequired || gate.rankedHoldRequired) {
+      loggers.room.warn('Golden biome reward held for match integrity review', {
+        roomId: this.roomId,
+        lobbyId: this.lobbyId,
+        matchId: ledger.matchId,
+        reason: gate.reason,
+        status: gate.status,
+      });
+      return;
+    }
+
+    const winners: GoldenBiomeRewardWinner[] = participants
+      .filter((participant) => participant.team === winningTeam && participant.userId && !participant.userId.startsWith('guest:'))
+      .map((participant) => ({
+        userId: participant.userId,
+        playerSessionId: participant.playerSessionId,
+      }));
+
+    if (winners.length === 0) return;
+
+    wagerService.settleGoldenBiomeReward({
+      matchId: ledger.matchId,
+      roomId: this.roomId,
+      lobbyId: this.lobbyId,
+      mapSeed: this.state.mapSeed,
+      winningTeam,
+      winners,
+    })
+      .then((reward) => {
+        loggers.room.info('Golden biome reward settlement requested', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId: ledger.matchId,
+          reward,
+        });
+      })
+      .catch((error) => {
+        loggers.room.error('Golden biome reward settlement failed', {
+          roomId: this.roomId,
+          lobbyId: this.lobbyId,
+          matchId: ledger.matchId,
           error: this.serializePersistenceError(error),
         });
       });
@@ -5377,7 +5558,7 @@ export class GameRoom extends Room<GameState> {
           this.tryResolveAttack(player, 'secondary');
         }
       }
-    } else if (input.secondaryFire && !previous.secondaryFire && !isChronosLifelineCommit) {
+    } else if (shouldResolveGenericSecondaryAttack(player.heroId, input, previous.secondaryFire, isChronosLifelineCommit)) {
       this.tryResolveAttack(player, 'secondary');
     }
 
@@ -5490,29 +5671,6 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private handleBlazeRocketImpact(client: Client, data: unknown): void {
-    const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-    if (!isRecord(data)) {
-      this.rejectAbilityOrCombat(player, 'malformed_rocket_impact');
-      return;
-    }
-    const rocketId = sanitizeShortText(data.rocketId, 128);
-    const position = validateVec3(data.position);
-    if (!rocketId || !position) {
-      this.rejectAbilityOrCombat(player, 'malformed_rocket_impact');
-      return;
-    }
-    this.recordSecurityEvent({
-      type: 'ignored_projectile_impact',
-      playerId: player.id,
-      userId: this.getPlayerUserId(player.id),
-      movementEpoch: this.getMovementAuthority(player.id).movementEpoch,
-      reason: rocketId,
-      position,
-    });
-  }
-
   private handleBlazeBombDrop(client: Client, data: unknown): void {
     const player = this.state.players.get(client.sessionId);
     if (!player || player.state !== 'alive' || player.heroId !== 'blaze') return;
@@ -5538,30 +5696,11 @@ export class GameRoom extends Room<GameState> {
     this.tryResolveAttack(player, 'secondary');
   }
 
-  private cleanupProcessedBlazeRocketImpacts(now: number): void {
-    if (this.processedBlazeRocketImpacts.size === 0) return;
-
-    for (const [impactKey, expiresAt] of this.processedBlazeRocketImpacts) {
-      if (expiresAt <= now) {
-        this.processedBlazeRocketImpacts.delete(impactKey);
-      }
-    }
-  }
-
   private cleanupDamageWindows(now: number): void {
     if (this.damageCapWindows.size === 0) return;
     for (const [key, window] of this.damageCapWindows) {
       if (now - window.startedAt >= DAMAGE_CAP_WINDOW_MS * 3) {
         this.damageCapWindows.delete(key);
-      }
-    }
-  }
-
-  private deleteProcessedBlazeRocketImpactsForPlayer(playerId: string): void {
-    const prefix = `${playerId}:`;
-    for (const impactKey of this.processedBlazeRocketImpacts.keys()) {
-      if (impactKey.startsWith(prefix)) {
-        this.processedBlazeRocketImpacts.delete(impactKey);
       }
     }
   }
@@ -6111,7 +6250,6 @@ export class GameRoom extends Room<GameState> {
 
     this.adjustCooldownUntil(`${player.id}:primary`, this.attackCooldownUntil, adjustmentMs, now);
     this.adjustCooldownUntil(`${player.id}:secondary`, this.attackCooldownUntil, adjustmentMs, now);
-    this.adjustCooldownUntil(player.id, this.blazeRocketImpactCooldownUntil, adjustmentMs, now);
 
     const magazine = this.phantomPrimaryMagazines.get(player.id);
     if (magazine?.reloadUntil && magazine.reloadUntil > now) {
@@ -7268,6 +7406,11 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    if (isSelectionPhase) {
+      this.resetCountdownStartGate();
+      this.checkPhaseTransition();
+    }
+
     if (isActiveDevRoom) {
       client.send('devHeroChanged', {
         heroId,
@@ -7554,7 +7697,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private refreshMapManifest(): void {
-    this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed);
+    const themeId = this.state.mapThemeId
+      ? this.state.mapThemeId as VoxelMapTheme['id']
+      : getVoxelMapTheme(this.state.mapSeed).id;
+    this.state.mapThemeId = themeId;
+    this.mapManifest = generateProceduralVoxelMap(this.state.mapSeed, { themeId });
     this.proceduralTerrainLookup = createProceduralTerrainLookup(this.mapManifest);
     this.mapChunkLookup.clear();
     for (const chunk of this.mapManifest.chunks) {
@@ -7623,7 +7770,11 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getMapManifest(): VoxelMapManifest {
-    if (!this.mapManifest || this.mapManifest.seed !== this.state.mapSeed) {
+    if (
+      !this.mapManifest
+      || this.mapManifest.seed !== this.state.mapSeed
+      || this.mapManifest.themeId !== this.state.mapThemeId
+    ) {
       this.refreshMapManifest();
     }
     return this.mapManifest!;
@@ -7799,6 +7950,9 @@ export class GameRoom extends Room<GameState> {
     }
     
     this.placePlayerAtSpawn(player, 'respawn');
+    this.resetCountdownStartGate();
+    this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
+    this.checkPhaseTransition();
   }
 
   private async handleVoiceTokenRequest(client: Client, data: unknown): Promise<void> {
@@ -7849,10 +8003,31 @@ export class GameRoom extends Room<GameState> {
   }
 
   private handleReady(client: Client, ready: boolean) {
+    if (this.matchCancelled) return;
+
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
 
     player.isReady = ready;
+    if (!ready) {
+      this.resetCountdownStartGate();
+    }
+    this.checkPhaseTransition();
+  }
+
+  private handleMatchSceneReady(client: Client, data: unknown): void {
+    if (this.matchCancelled) return;
+    if (this.state.phase !== 'hero_select' || !this.countdownStartGateOpen) return;
+
+    const gateKey = isRecord(data) && typeof data.key === 'number' && Number.isInteger(data.key)
+      ? data.key
+      : null;
+    if (gateKey !== this.countdownStartGateKey) return;
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot || !player.heroId || !player.isReady) return;
+
+    this.countdownSceneReadyPlayerIds.add(client.sessionId);
     this.checkPhaseTransition();
   }
 
@@ -7891,46 +8066,132 @@ export class GameRoom extends Room<GameState> {
   }
 
   private checkPhaseTransition() {
+    if (this.matchCancelled) return;
+
     const playerCount = this.state.players.size;
 
     switch (this.state.phase) {
       case 'waiting':
-        // Need at least 2 players to start (or 1 for testing)
-        if (playerCount >= 1) {
+        if (playerCount >= 1 && this.hasRequiredHumanPlayersConnected()) {
           this.startHeroSelect();
         }
         break;
 
       case 'hero_select':
-        // Check if all players are ready
-        let allReady = true;
-        this.state.players.forEach(p => {
-          if (!p.heroId || !p.isReady) {
-            allReady = false;
-          }
-        });
-
-        if (allReady && playerCount >= 1) {
-          loggers.room.info('all players ready, starting countdown');
-          this.startCountdown();
-        }
-
-        // Check timeout
         if (this.state.phaseEndTime && Date.now() >= this.state.phaseEndTime) {
           this.state.players.forEach(p => {
             if (!p.heroId) {
               this.setPlayerHero(p, p.isBot ? this.selectRandomBotHero() : 'phantom');
             }
+            p.isReady = true;
           });
+        }
+
+        if (!this.areAllPlayersReadyForCountdown()) return;
+
+        if (!this.countdownStartGateOpen) {
+          loggers.room.info('all players ready, waiting for clients to load into spawn');
+          this.openCountdownStartGate();
+        }
+
+        if (this.areAllHumansSceneReadyForCountdown()) {
+          loggers.room.info('all players loaded into spawn, starting countdown');
           this.startCountdown();
         }
         break;
     }
   }
 
+  private resetCountdownStartGate(): void {
+    this.countdownStartGateOpen = false;
+    this.countdownSceneReadyPlayerIds.clear();
+    this.countdownStartGateKey++;
+  }
+
+  private getConnectedHumanPlayerCount(): number {
+    let count = 0;
+    this.state.players.forEach((player) => {
+      if (!player.isBot) count++;
+    });
+    return count;
+  }
+
+  private hasRequiredHumanPlayersConnected(): boolean {
+    return this.getConnectedHumanPlayerCount() >= this.requiredHumanPlayers;
+  }
+
+  private areAllPlayersReadyForCountdown(): boolean {
+    if (this.state.players.size === 0 || !this.hasRequiredHumanPlayersConnected()) {
+      this.resetCountdownStartGate();
+      return false;
+    }
+
+    let allReady = true;
+    this.state.players.forEach((player) => {
+      if (!player.heroId || !player.isReady) {
+        allReady = false;
+      }
+    });
+
+    if (!allReady) {
+      this.resetCountdownStartGate();
+    }
+    return allReady;
+  }
+
+  private areAllHumansSceneReadyForCountdown(): boolean {
+    if (!this.countdownStartGateOpen || !this.hasRequiredHumanPlayersConnected()) return false;
+
+    let allReady = true;
+    this.state.players.forEach((player, playerId) => {
+      if (player.isBot) return;
+      if (!this.clientsBySessionId.has(playerId) || !this.countdownSceneReadyPlayerIds.has(playerId)) {
+        allReady = false;
+      }
+    });
+
+    return allReady;
+  }
+
+  private openCountdownStartGate(): void {
+    if (this.countdownStartGateOpen) return;
+
+    this.countdownStartGateOpen = true;
+    this.countdownSceneReadyPlayerIds.clear();
+    this.countdownStartGateKey++;
+
+    const now = Date.now();
+    this.state.players.forEach((player) => {
+      player.state = 'spawning';
+      this.placePlayerAtSpawn(player, 'spawn');
+    });
+
+    this.forceTransformFullSync();
+    this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
+
+    this.state.players.forEach((player, playerId) => {
+      if (player.isBot) return;
+
+      const client = this.clientsBySessionId.get(playerId);
+      if (!client) return;
+
+      this.sendSelfMovementAuthority(player, client, 'spawn');
+      this.sendTracked(client, 'matchStartGate', {
+        key: this.countdownStartGateKey,
+        serverTime: now,
+        mapSeed: this.state.mapSeed,
+        mapThemeId: this.state.mapThemeId,
+        position: this.vec3SchemaToPlain(player.position),
+      });
+    });
+  }
+
   private startHeroSelect() {
+    if (this.matchCancelled) return;
+
     this.state.phase = 'hero_select';
     this.state.phaseEndTime = Date.now() + this.config.heroSelectTimeSeconds * 1000;
+    this.resetCountdownStartGate();
     this.updateMetadata();
 
     this.state.players.forEach(player => {
@@ -7952,31 +8213,43 @@ export class GameRoom extends Room<GameState> {
       phase: 'hero_select',
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId,
     });
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
   }
 
   private startCountdown() {
+    if (this.matchCancelled) return;
+    if (!this.areAllPlayersReadyForCountdown()) return;
+    if (!this.areAllHumansSceneReadyForCountdown()) {
+      this.openCountdownStartGate();
+      return;
+    }
+
+    this.clearMatchStartCancelTimer();
     this.state.phase = 'countdown';
     this.state.phaseEndTime = Date.now() + this.config.countdownSeconds * 1000;
     this.updateMetadata();
 
-    // Set all players to spawning
     this.state.players.forEach(player => {
       player.state = 'spawning';
-      this.placePlayerAtSpawn(player);
+      player.velocity.x = 0;
+      player.velocity.y = 0;
+      player.velocity.z = 0;
     });
 
     this.broadcastTracked('phaseChange', {
       phase: 'countdown',
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId,
     });
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
   }
 
   private startPlaying() {
+    this.clearMatchStartCancelTimer();
     this.state.phase = 'playing';
     const now = Date.now();
     this.state.roundStartTime = now;
@@ -8024,6 +8297,7 @@ export class GameRoom extends Room<GameState> {
       phase: 'playing',
       endTime: this.state.phaseEndTime,
       mapSeed: this.state.mapSeed,
+      mapThemeId: this.state.mapThemeId,
     });
     this.forceTransformFullSync();
     this.broadcastStateStreams({ transforms: true, forceTransforms: true, forceVitals: true, forceMatch: true });
@@ -8066,6 +8340,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastTracked('gameEnd', this.buildGameEndEvent(finalScore, winningTeam, endedAt, forcedByPlayerId));
     this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
 
+    this.settleGoldenBiomeRewardAfterGame(winningTeam, forcedByPlayerId);
     this.persistMatchLedger(finalScore, winningTeam, forcedByPlayerId);
     this.settleWagerAfterGame(forcedByPlayerId ? null : winningTeam);
 
@@ -8073,6 +8348,7 @@ export class GameRoom extends Room<GameState> {
     setTimeout(() => {
       this.state.phase = 'waiting';
       this.state.mapSeed = createRandomSeed();
+      this.state.mapThemeId = getVoxelMapTheme(this.state.mapSeed).id;
       this.refreshMapManifest();
       this.state.redTeam.score = 0;
       this.state.blueTeam.score = 0;

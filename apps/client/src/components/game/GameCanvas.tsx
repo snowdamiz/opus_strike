@@ -152,6 +152,10 @@ function ThemedWorldLighting({
   const baseGroundColor = useMemo(() => new THREE.Color(theme.ground.side), [theme]);
   const baseSunColor = useMemo(() => new THREE.Color(theme.sunColor), [theme]);
   const baseRimColor = useMemo(() => new THREE.Color(theme.structures.glass), [theme]);
+  const baseLightLevels = useMemo(() => theme.id === 'golden'
+    ? { ambient: 0.5, hemisphere: 1.95, sun: 5.7, rim: 1.05 }
+    : { ambient: 0.42, hemisphere: 1.65, sun: 4.85, rim: 0.75 },
+  [theme.id]);
   const fireAmbientColor = useMemo(
     () => new THREE.Color(theme.ambientColor).lerp(BLAZE_AMBIENT_COLOR, 0.72),
     [theme]
@@ -178,35 +182,35 @@ function ThemedWorldLighting({
     const pulse = fireIntensity * (0.9 + Math.sin(clock.elapsedTime * 7.1) * 0.1);
 
     if (ambientRef.current) {
-      ambientRef.current.intensity = THREE.MathUtils.lerp(0.42, 0.62, pulse);
+      ambientRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.ambient, Math.max(baseLightLevels.ambient, 0.62), pulse);
       ambientRef.current.color.copy(baseAmbientColor).lerp(fireAmbientColor, fireIntensity);
     }
 
     if (hemisphereRef.current) {
-      hemisphereRef.current.intensity = THREE.MathUtils.lerp(1.65, 2.16, pulse);
+      hemisphereRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.hemisphere, Math.max(baseLightLevels.hemisphere, 2.16), pulse);
       hemisphereRef.current.color.copy(baseSkyColor).lerp(fireSkyColor, fireIntensity);
       hemisphereRef.current.groundColor.copy(baseGroundColor).lerp(fireGroundColor, fireIntensity);
     }
 
     if (sunRef.current) {
-      sunRef.current.intensity = THREE.MathUtils.lerp(4.85, 6.45, pulse);
+      sunRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.sun, Math.max(baseLightLevels.sun, 6.45), pulse);
       sunRef.current.color.copy(baseSunColor).lerp(fireSunColor, fireIntensity);
     }
 
     if (rimRef.current) {
-      rimRef.current.intensity = THREE.MathUtils.lerp(0.75, 1.25, pulse);
+      rimRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.rim, Math.max(baseLightLevels.rim, 1.25), pulse);
       rimRef.current.color.copy(baseRimColor).lerp(fireRimColor, fireIntensity);
     }
   });
 
   return (
     <>
-      <ambientLight ref={ambientRef} intensity={0.42} color={theme.ambientColor} />
-      <hemisphereLight ref={hemisphereRef} args={[theme.skyColor, theme.ground.side, 1.65]} />
+      <ambientLight ref={ambientRef} intensity={baseLightLevels.ambient} color={theme.ambientColor} />
+      <hemisphereLight ref={hemisphereRef} args={[theme.skyColor, theme.ground.side, baseLightLevels.hemisphere]} />
       <directionalLight
         ref={sunRef}
         position={[58, 105, 34]}
-        intensity={4.85}
+        intensity={baseLightLevels.sun}
         color={theme.sunColor}
         castShadow={shadows.enabled}
         shadow-mapSize={[shadows.mapSize, shadows.mapSize]}
@@ -221,7 +225,7 @@ function ThemedWorldLighting({
       <directionalLight
         ref={rimRef}
         position={[-60, 36, -70]}
-        intensity={0.75}
+        intensity={baseLightLevels.rim}
         color={theme.structures.glass}
       />
     </>
@@ -260,7 +264,9 @@ function SceneReadySignal({
 }
 
 const GPU_WARMUP_RENDER_FRAMES = 4;
-const GPU_WARMUP_TIMEOUT_MS = 2200;
+const GPU_WARMUP_TIMEOUT_MS = 3600;
+const WORLD_WARMUP_ROOT_NAME = 'procedural-voxel-map';
+const WORLD_WARMUP_MIN_RADIUS = 48;
 
 type AsyncCompileRenderer = THREE.WebGLRenderer & {
   compileAsync?: (
@@ -288,6 +294,125 @@ async function compileSceneShaders(
   }
 
   renderer.compile(scene, camera);
+}
+
+function uploadTextures(renderer: THREE.WebGLRenderer, textures: THREE.Texture[]): void {
+  const rendererWithTextureInit = renderer as THREE.WebGLRenderer & {
+    initTexture?: (texture: THREE.Texture) => void;
+  };
+
+  for (const texture of textures) {
+    try {
+      rendererWithTextureInit.initTexture?.(texture);
+    } catch {
+      texture.needsUpdate = true;
+    }
+  }
+}
+
+interface WarmupRenderPass {
+  scene: THREE.Scene;
+  camera: THREE.Camera;
+}
+
+function renderScenesToWarmupTarget(
+  renderer: THREE.WebGLRenderer,
+  passes: WarmupRenderPass[]
+): void {
+  const previousTarget = renderer.getRenderTarget();
+  const previousAutoClear = renderer.autoClear;
+  const warmupTarget = new THREE.WebGLRenderTarget(1, 1, {
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+
+  try {
+    renderer.setRenderTarget(warmupTarget);
+    renderer.autoClear = true;
+
+    for (const { scene, camera } of passes) {
+      renderer.clear();
+      renderer.render(scene, camera);
+    }
+  } finally {
+    renderer.setRenderTarget(previousTarget);
+    renderer.autoClear = previousAutoClear;
+    warmupTarget.dispose();
+  }
+}
+
+function renderSceneToWarmupTarget(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.Camera
+): void {
+  renderScenesToWarmupTarget(renderer, [{ scene, camera }]);
+}
+
+interface WorldWarmupBounds {
+  center: THREE.Vector3;
+  height: number;
+  radius: number;
+}
+
+function getWorldWarmupBounds(scene: THREE.Scene): WorldWarmupBounds | null {
+  const mapRoot = scene.getObjectByName(WORLD_WARMUP_ROOT_NAME);
+  if (!mapRoot) return null;
+
+  mapRoot.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(mapRoot);
+  if (box.isEmpty()) return null;
+
+  const center = new THREE.Vector3();
+  const size = new THREE.Vector3();
+  box.getCenter(center);
+  box.getSize(size);
+
+  return {
+    center,
+    height: Math.max(24, size.y + 16),
+    radius: Math.max(WORLD_WARMUP_MIN_RADIUS, Math.max(size.x, size.z) * 0.58 + 12),
+  };
+}
+
+function createWorldWarmupCameras(bounds: WorldWarmupBounds): THREE.Camera[] {
+  const { center, height, radius } = bounds;
+  const far = Math.max(180, radius * 4 + height);
+  const topCamera = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.1, far);
+  topCamera.position.set(center.x, center.y + radius * 1.8 + height, center.z);
+  topCamera.up.set(0, 0, -1);
+  topCamera.lookAt(center);
+  topCamera.updateProjectionMatrix();
+  topCamera.updateMatrixWorld();
+
+  const createDiagonalCamera = (xSign: number, zSign: number): THREE.PerspectiveCamera => {
+    const camera = new THREE.PerspectiveCamera(72, 1, 0.1, far);
+    camera.position.set(
+      center.x + radius * 0.95 * xSign,
+      center.y + Math.max(28, radius * 0.48),
+      center.z + radius * 0.95 * zSign
+    );
+    camera.lookAt(center.x, center.y + Math.min(10, height * 0.25), center.z);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    return camera;
+  };
+
+  return [
+    topCamera,
+    createDiagonalCamera(1, 1),
+    createDiagonalCamera(-1, -1),
+  ];
+}
+
+function renderWorldWarmupViews(renderer: THREE.WebGLRenderer, scene: THREE.Scene): void {
+  const bounds = getWorldWarmupBounds(scene);
+  if (!bounds) return;
+
+  renderScenesToWarmupTarget(
+    renderer,
+    createWorldWarmupCameras(bounds).map((camera) => ({ scene, camera }))
+  );
 }
 
 function addTextureValue(value: unknown, textures: Set<THREE.Texture>): void {
@@ -371,22 +496,36 @@ function SceneGpuWarmup({
       await waitForAnimationFrame();
       if (cancelled || timedOut) return;
 
+      let gameplayEffectGpuPrewarmBundle: { scene: THREE.Scene; camera: THREE.Camera } | null = null;
+      try {
+        const {
+          getGameplayEffectGpuPrewarmBundle,
+          prewarmGameplayEffectResources,
+        } = await import('./effectPrewarm');
+        await prewarmGameplayEffectResources();
+        gameplayEffectGpuPrewarmBundle = getGameplayEffectGpuPrewarmBundle();
+      } catch (error) {
+        console.warn('[MapWarmup] Gameplay effect prewarm setup failed', error);
+      }
+      if (cancelled || timedOut) return;
+
       const textureUploadStart = performance.now();
-      const rendererWithTextureInit = gl as THREE.WebGLRenderer & {
-        initTexture?: (texture: THREE.Texture) => void;
-      };
-      for (const texture of collectSceneTextures(scene)) {
-        try {
-          rendererWithTextureInit.initTexture?.(texture);
-        } catch {
-          texture.needsUpdate = true;
-        }
+      uploadTextures(gl, collectSceneTextures(scene));
+      if (gameplayEffectGpuPrewarmBundle) {
+        uploadTextures(gl, collectSceneTextures(gameplayEffectGpuPrewarmBundle.scene));
       }
       const textureUploadMs = performance.now() - textureUploadStart;
       onStageDone('textures', textureUploadMs);
 
       const compileStart = performance.now();
       await compileSceneShaders(gl, scene, camera);
+      if (gameplayEffectGpuPrewarmBundle) {
+        await compileSceneShaders(
+          gl,
+          gameplayEffectGpuPrewarmBundle.scene,
+          gameplayEffectGpuPrewarmBundle.camera
+        );
+      }
       if (cancelled || timedOut) return;
       const compileMs = performance.now() - compileStart;
       onStageDone('shaders', compileMs);
@@ -398,10 +537,18 @@ function SceneGpuWarmup({
       if (shadowsEnabled || reflectionsEnabled) {
         gl.render(scene, camera);
       }
+      renderWorldWarmupViews(gl, scene);
       const shadowReflectionMs = performance.now() - shadowReflectionStart;
       onStageDone('shadowsReflections', shadowReflectionMs);
 
       const gameplayObjectStart = performance.now();
+      if (gameplayEffectGpuPrewarmBundle) {
+        renderSceneToWarmupTarget(
+          gl,
+          gameplayEffectGpuPrewarmBundle.scene,
+          gameplayEffectGpuPrewarmBundle.camera
+        );
+      }
       await waitForAnimationFrame();
       const gameplayObjectMs = performance.now() - gameplayObjectStart;
       onStageDone('gameplayObjects', gameplayObjectMs);
@@ -593,17 +740,18 @@ export function GameCanvas({
   const gamePhase = useGameStore((state) => state.gamePhase);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
+  const mapThemeId = useGameStore((state) => state.mapThemeId);
   const settings = useSettingsStore(state => state.settings);
   const qualityConfig = useMemo(() => getVisualQualityConfig(settings), [settings]);
   const canvasAntialiasRef = useRef(qualityConfig.render.antialias);
-  const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed }), [mapSeed]);
+  const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId }), [mapSeed, mapThemeId]);
   const [warmupSnapshot, dispatchWarmup] = useReducer(
     reduceMapWarmup,
     createMapWarmupSnapshot(warmupKey, mapSeed)
   );
   const completedWarmupStagesRef = useRef<Set<MapWarmupStageId>>(new Set());
   const didStartGpuRef = useRef<string | null>(null);
-  const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed), [mapSeed]);
+  const mapTheme = useMemo(() => getVoxelMapTheme(mapSeed, mapThemeId), [mapSeed, mapThemeId]);
   const gridCellColor = useMemo(
     () => new THREE.Color(mapTheme.ground.stone).lerp(new THREE.Color(mapTheme.fogColor), 0.28).getStyle(),
     [mapTheme]
@@ -722,10 +870,9 @@ export function GameCanvas({
         gl.toneMappingExposure = qualityConfig.render.exposure;
         gl.shadowMap.enabled = qualityConfig.shadows.enabled;
         gl.shadowMap.type = qualityConfig.shadows.type;
-        import('./effectPrewarm').then(({ prewarmPhantomEffects, prewarmBlazeEffects }) => Promise.all([
-          prewarmPhantomEffects(),
-          prewarmBlazeEffects(),
-        ])).catch((error) => {
+        import('./effectPrewarm').then(({ prewarmGameplayEffectResources }) => (
+          prewarmGameplayEffectResources()
+        )).catch((error) => {
           console.warn('[Effects] Prewarm failed', error);
         });
       }}
@@ -763,6 +910,7 @@ export function GameCanvas({
           dressingDensity={effectiveEnvironmentConfig.dressingDensity}
           reflectionIntensity={qualityConfig.reflections.materialIntensity}
           performanceBudget={qualityConfig.budgets}
+          themeId={mapThemeId}
           prebuildRegions
           onWarmupStatus={handleVoxelWarmupStatus}
         />

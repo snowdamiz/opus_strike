@@ -25,6 +25,7 @@ const expectedAbilityIds = [
   'hookshot_grapple_trap',
   'hookshot_heavy_attack',
   'phantom_dire_ball',
+  'phantom_personal_shield',
   'phantom_void_ray',
   'phantom_void_ray_charge',
 ];
@@ -44,6 +45,17 @@ assert.ok(phantomDefault);
 assert.equal(phantomDefault.side, 1);
 assert.deepEqual(phantomDefault.socketNames, [PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1]]);
 assert.equal(phantomDefault.fallbackOffset.sideOffset, PHANTOM_DIRE_BALL_SOCKET.sideOffset);
+
+const phantomShieldBoth = resolveAbilitySocket({ abilityId: 'phantom_personal_shield' });
+assert.ok(phantomShieldBoth);
+assert.equal(phantomShieldBoth.heroId, 'phantom');
+assert.equal(phantomShieldBoth.socketRole, 'primaryPalm');
+assert.equal(phantomShieldBoth.side, null);
+assert.deepEqual(
+  phantomShieldBoth.socketNames,
+  [PHANTOM_PRIMARY_PALM_SOCKET_NAMES[1], PHANTOM_PRIMARY_PALM_SOCKET_NAMES[-1]]
+);
+assert.equal(phantomShieldBoth.fallbackOffset.sideOffset, 0);
 
 const hookshotLockedRight = resolveAbilitySocket({ abilityId: 'hookshot_heavy_attack', side: -1 });
 assert.ok(hookshotLockedRight);

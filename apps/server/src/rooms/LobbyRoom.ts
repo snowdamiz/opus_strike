@@ -1,9 +1,9 @@
 import type { IncomingMessage } from 'http';
 import { Room, Client, matchMaker } from 'colyseus';
 import { LobbyState, LobbyPlayer } from './schema/LobbyState';
-import { DEFAULT_GAME_CONFIG, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankDivisionIndex, getRankFromRating, getVoxelMapTheme, hashSeed, isMatchMode, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
+import { DEFAULT_GAME_CONFIG, GOLDEN_VOXEL_MAP_THEME_ID, HERO_DEFINITIONS, createRandomSeed, createProceduralMapPreview, getRankDivisionIndex, getRankFromRating, getVoxelMapTheme, hashSeed, isMatchMode, toPublicRankSnapshot, VOXEL_MAP_THEMES } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
-import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team } from '@voxel-strike/shared';
+import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
 import { createGameEntryTicket } from '../security/entryTickets';
@@ -52,6 +52,7 @@ interface JoinOptions {
   defaultBotDifficulty?: BotDifficulty;
   wager?: CreateWagerOptions;
   mapSeed?: number;
+  forceGoldenMapOption?: boolean;
 }
 
 interface ParticipantAssignment {
@@ -70,6 +71,7 @@ interface MapVoteOption {
   name: string;
   themeId: string;
   themeName: string;
+  mapThemeId?: VoxelMapTheme['id'] | null;
   topologyId: MapTopologyId;
   preview: BlueprintPreview;
   score: number;
@@ -144,6 +146,15 @@ function createSeedForTheme(themeIndex: number, source: number): number {
   return themeIndex >>> 0;
 }
 
+function hashText(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
 export class LobbyRoom extends Room<LobbyState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
   private botIdCounter = 0;
@@ -169,6 +180,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private rankedEntryQuoteId: string | null = null;
   private pendingWagerOptions: CreateWagerOptions | undefined;
   private customMapSeed: number | null = null;
+  private forceGoldenMapOption = false;
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -191,6 +203,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.rankedEntryQuoteId = this.isRankedQueue ? initialMatchmakingTicket?.rankedEntryQuoteId ?? null : null;
     this.pendingWagerOptions = this.isMatchmakingQueue() ? undefined : options.wager;
     this.customMapSeed = this.resolveCustomMapSeed(options);
+    this.forceGoldenMapOption = this.resolveForceGoldenMapOption(options);
 
     this.setState(new LobbyState());
     this.state.lobbyId = this.roomId;
@@ -855,6 +868,7 @@ export class LobbyRoom extends Room<LobbyState> {
     }
 
     const selectedOption = this.getWinningMapOption();
+    const selectedMapThemeId = selectedOption.mapThemeId ?? await this.resolveSelectedMapThemeId(selectedOption.seed);
     this.clearMapVoteTimer();
     this.state.status = 'starting';
     this.updateMetadata({ status: 'starting' });
@@ -862,11 +876,12 @@ export class LobbyRoom extends Room<LobbyState> {
     this.broadcast('mapVoteFinalized', {
       selectedOptionId: selectedOption.id,
       mapSeed: selectedOption.seed,
+      mapThemeId: selectedMapThemeId,
       votes: this.getMapVoteRecords(),
     });
 
     try {
-      await this.createGameFromLobby(selectedOption.seed);
+      await this.createGameFromLobby(selectedOption.seed, selectedMapThemeId);
     } catch (error) {
       console.error('Failed to create game room:', error);
       this.state.status = this.isMatchmakingQueue() ? 'matchmaking' : 'waiting';
@@ -879,7 +894,7 @@ export class LobbyRoom extends Room<LobbyState> {
     }
   }
 
-  private async createGameFromLobby(mapSeed: number): Promise<void> {
+  private async createGameFromLobby(mapSeed: number, mapThemeId: VoxelMapTheme['id']): Promise<void> {
     const playerAssignments = this.createPlayerAssignments();
     let lockedWagerContext: LockedWagerContext | null = null;
 
@@ -898,6 +913,7 @@ export class LobbyRoom extends Room<LobbyState> {
         lobbyName: this.state.name,
         matchMode: this.matchMode,
         mapSeed,
+        mapThemeId,
         botAssignments: playerAssignments.filter((assignment) => assignment.isBot),
         wagerContext: lockedWagerContext,
         rankedEligible,
@@ -935,6 +951,7 @@ export class LobbyRoom extends Room<LobbyState> {
           gameRoomId: gameRoom.roomId,
           players: playerAssignments,
           entryTicket: ticketsByPlayerId.get(client.sessionId),
+          mapThemeId,
           wager: lockedWagerContext,
         });
       }
@@ -1175,31 +1192,39 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private createMapVoteOptions(): MapVoteOption[] {
     if (this.customMapSeed !== null) {
-      return [this.createMapVoteOption(this.customMapSeed, 0)];
+      const mapThemeId = this.forceGoldenMapOption ? GOLDEN_VOXEL_MAP_THEME_ID : null;
+      return [this.createMapVoteOption(this.customMapSeed, 0, mapThemeId)];
     }
 
     const source = hashSeed(Date.now() ^ Math.imul(this.botIdCounter + 1, 0x632be59b));
     const themeIndices = getShuffledThemeIndices(source);
+    const forcedGoldenIndex = this.forceGoldenMapOption
+      ? hashSeed(source ^ 0x676f6c64) % MAP_VOTE_OPTION_COUNT
+      : -1;
 
     return Array.from({ length: MAP_VOTE_OPTION_COUNT }, (_, index) => {
       const themeIndex = themeIndices[index % themeIndices.length];
       const seed = createSeedForTheme(themeIndex, source ^ Math.imul(index + 1, 0x85ebca6b));
-      return this.createMapVoteOption(seed, index);
+      const mapThemeId = index === forcedGoldenIndex ? GOLDEN_VOXEL_MAP_THEME_ID : null;
+      return this.createMapVoteOption(seed, index, mapThemeId);
     });
   }
 
-  private createMapVoteOption(seed: number, index: number): MapVoteOption {
+  private createMapVoteOption(seed: number, index: number, mapThemeId: VoxelMapTheme['id'] | null = null): MapVoteOption {
     const normalizedSeed = seed >>> 0;
-    const theme = getVoxelMapTheme(normalizedSeed);
+    const theme = getVoxelMapTheme(normalizedSeed, mapThemeId);
     const preview = createProceduralMapPreview(normalizedSeed);
     const suffix = MAP_NAME_SUFFIXES[hashSeed(normalizedSeed ^ index) % MAP_NAME_SUFFIXES.length];
+    const themeName = mapThemeId ? theme.name : preview.themeName || theme.name;
+    const topologyLabel = preview.name.replace(`${preview.themeName || getVoxelMapTheme(normalizedSeed).name} `, '');
 
     return {
       id: `map_${index + 1}`,
       seed: normalizedSeed,
-      name: `${preview.name} ${suffix}`,
-      themeId: preview.themeId || theme.id,
-      themeName: preview.themeName || theme.name,
+      name: `${themeName} ${topologyLabel} ${suffix}`,
+      themeId: theme.id,
+      themeName,
+      mapThemeId,
       topologyId: preview.topologyId,
       preview: preview.preview,
       score: preview.diagnostics.score,
@@ -1237,6 +1262,21 @@ export class LobbyRoom extends Room<LobbyState> {
     }
 
     return bestOption;
+  }
+
+  private async resolveSelectedMapThemeId(seed: number): Promise<VoxelMapTheme['id']> {
+    const standardThemeId = getVoxelMapTheme(seed).id;
+    if (!this.isRankedQueue) return standardThemeId;
+
+    const rollSalt = hashText(this.state.lobbyId || this.roomId);
+    if (!wagerService.shouldRollGoldenBiome(seed, rollSalt)) return standardThemeId;
+
+    const eligibility = await wagerService.getGoldenBiomeTreasuryEligibility().catch((error) => {
+      console.error('[LobbyRoom] Golden biome treasury eligibility check failed:', error);
+      return { eligible: false };
+    });
+
+    return eligibility.eligible ? 'golden' : standardThemeId;
   }
 
   private sendMapVoteStarted(client: Client): void {
@@ -1682,6 +1722,12 @@ export class LobbyRoom extends Room<LobbyState> {
     if (process.env.NODE_ENV === 'production' || this.isMatchmakingQueue()) return null;
     if (typeof seed !== 'number' || !Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) return null;
     return seed >>> 0;
+  }
+
+  private resolveForceGoldenMapOption(options: JoinOptions): boolean {
+    return process.env.NODE_ENV !== 'production'
+      && !this.isMatchmakingQueue()
+      && options.forceGoldenMapOption === true;
   }
 
   private resolveRoomMatchMode(

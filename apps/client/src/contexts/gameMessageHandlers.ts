@@ -8,6 +8,7 @@ import {
   CHRONOS_VERDANT_PULSE_SPEED,
   VOID_RAY_CHARGE_TIME,
   type PublicRankSnapshot,
+  type VoxelMapTheme,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
 import { useCombatFeedbackStore } from '../store/combatFeedbackStore';
@@ -36,6 +37,7 @@ import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecor
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect } from '../components/game/PhantomEffects';
+import { triggerPhantomShieldCastEffect } from '../components/game/phantom';
 import {
   startObservedAbilityCastEffect,
   stopObservedAbilityCastEffects,
@@ -1132,6 +1134,7 @@ export function setupMatchSnapshotHandler(room: Room) {
       tick: data.tick,
       serverTime: data.serverTime,
       mapSeed: data.mapSeed,
+      mapThemeId: data.mapThemeId ?? null,
       gamePhase: data.phase,
       redScore: data.redScore,
       blueScore: data.blueScore,
@@ -1674,6 +1677,14 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
     case 'phantom_personal_shield':
       applyConfirmedPhantomActiveAbility(data);
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_personal_shield')) {
+        triggerPhantomShieldCastEffect({
+          playerId: data.playerId,
+          isLocalPlayer,
+          position,
+          yaw: data.direction?.yaw,
+        });
+      }
       return true;
 
     case 'phantom_veil':
@@ -2541,10 +2552,17 @@ export function setupPollingSync(
     // Sync phase
     if (room.state.phase) {
       const store = useGameStore.getState();
-      if (typeof room.state.mapSeed === 'number' && room.state.mapSeed !== store.mapSeed) {
+      const nextMapThemeId = typeof room.state.mapThemeId === 'string'
+        ? room.state.mapThemeId as VoxelMapTheme['id']
+        : null;
+      if (
+        typeof room.state.mapSeed === 'number'
+        && (room.state.mapSeed !== store.mapSeed || nextMapThemeId !== store.mapThemeId)
+      ) {
         useGameStore.getState().setMapSeed(room.state.mapSeed);
+        useGameStore.getState().setMapThemeId(nextMapThemeId);
         try {
-          prepareVoxelMapCpu({ seed: room.state.mapSeed, source: 'match' });
+          prepareVoxelMapCpu({ seed: room.state.mapSeed, themeId: nextMapThemeId, source: 'match' });
         } catch (error) {
           loggers.network.warn('fallback poll map CPU prep failed', error);
         }

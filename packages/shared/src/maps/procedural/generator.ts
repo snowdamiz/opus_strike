@@ -98,6 +98,10 @@ export interface ProceduralVoxelMapGenerationResult {
   diagnostics: ProceduralVoxelMapDiagnostics;
 }
 
+export interface ProceduralVoxelMapGenerationOptions {
+  themeId?: VoxelMapTheme['id'] | null;
+}
+
 interface PlacedStructure {
   id: string;
   slotId: string;
@@ -279,6 +283,8 @@ function hashString(value: string): number {
 
 function getTerrainProfile(theme: VoxelMapTheme): TerrainProfile {
   switch (theme.id) {
+    case 'golden':
+      return { top: 'gold', side: 'gold_ore', deep: 'stone', foliage: 'crystal_growth' };
     case 'basalt':
       return { top: 'moss', side: 'stone', deep: 'obsidian', foliage: 'bamboo' };
     case 'desert':
@@ -299,16 +305,17 @@ function getTerrainProfile(theme: VoxelMapTheme): TerrainProfile {
 
 function createBlockPalette(theme: VoxelMapTheme): BlockPalette {
   const terrain = getTerrainProfile(theme);
+  const isGolden = theme.id === 'golden';
   return {
     air: getBlockNumericId('air'),
     terrainTop: getBlockNumericId(terrain.top),
     terrainSide: getBlockNumericId(terrain.side),
     terrainDeep: getBlockNumericId(terrain.deep),
     stone: getBlockNumericId('stone'),
-    floor: getBlockNumericId('metal'),
-    wall: getBlockNumericId(theme.id === 'volcanic' || theme.id === 'basalt' ? 'obsidian' : 'stone'),
-    trim: getBlockNumericId(theme.id === 'frost' ? 'ice' : 'glass'),
-    glass: getBlockNumericId('glass'),
+    floor: getBlockNumericId(isGolden ? 'gold_panel' : 'metal'),
+    wall: getBlockNumericId(isGolden ? 'gold_ore' : theme.id === 'volcanic' || theme.id === 'basalt' ? 'obsidian' : 'stone'),
+    trim: getBlockNumericId(isGolden ? 'gold_panel' : theme.id === 'frost' ? 'ice' : 'glass'),
+    glass: getBlockNumericId(isGolden ? 'gold_glass' : 'glass'),
     wood: getBlockNumericId('wood'),
     foliage: getBlockNumericId(terrain.foliage),
     red: getBlockNumericId('neon_red'),
@@ -1312,12 +1319,13 @@ function markStageFactory(diagnostics: ProceduralVoxelMapDiagnostics | undefined
 
 function generateProceduralVoxelMapInternal(
   seed = DEFAULT_PROCEDURAL_MAP_SEED,
-  diagnostics?: ProceduralVoxelMapDiagnostics
+  diagnostics?: ProceduralVoxelMapDiagnostics,
+  options: ProceduralVoxelMapGenerationOptions = {}
 ): VoxelMapManifest {
   const normalizedSeed = seed >>> 0;
   const markStage = markStageFactory(diagnostics);
   const layout = createProceduralCTFLayout(normalizedSeed);
-  const theme = getVoxelMapTheme(normalizedSeed);
+  const theme = getVoxelMapTheme(normalizedSeed, options.themeId);
   const construction = createMapConstruction(normalizedSeed, layout, theme);
   const palette = createBlockPalette(theme);
   markStage('layout');
@@ -1458,14 +1466,20 @@ function generateProceduralVoxelMapInternal(
   };
 }
 
-export function generateProceduralVoxelMap(seed = DEFAULT_PROCEDURAL_MAP_SEED): VoxelMapManifest {
-  return generateProceduralVoxelMapInternal(seed);
+export function generateProceduralVoxelMap(
+  seed = DEFAULT_PROCEDURAL_MAP_SEED,
+  options: ProceduralVoxelMapGenerationOptions = {}
+): VoxelMapManifest {
+  return generateProceduralVoxelMapInternal(seed, undefined, options);
 }
 
-export function generateProceduralVoxelMapWithDiagnostics(seed = DEFAULT_PROCEDURAL_MAP_SEED): ProceduralVoxelMapGenerationResult {
+export function generateProceduralVoxelMapWithDiagnostics(
+  seed = DEFAULT_PROCEDURAL_MAP_SEED,
+  options: ProceduralVoxelMapGenerationOptions = {}
+): ProceduralVoxelMapGenerationResult {
   const normalizedSeed = seed >>> 0;
-  const diagnostics = createProceduralVoxelMapDiagnostics(normalizedSeed, getVoxelMapTheme(normalizedSeed).id);
-  const manifest = generateProceduralVoxelMapInternal(normalizedSeed, diagnostics);
+  const diagnostics = createProceduralVoxelMapDiagnostics(normalizedSeed, getVoxelMapTheme(normalizedSeed, options.themeId).id);
+  const manifest = generateProceduralVoxelMapInternal(normalizedSeed, diagnostics, options);
   return { manifest, diagnostics };
 }
 

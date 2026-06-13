@@ -27,17 +27,18 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayer, mapSeed, isPracticeMode } = useGameStore(
+  const { localPlayer, mapSeed, mapThemeId, isPracticeMode } = useGameStore(
     useShallow((state) => ({
       localPlayer: state.localPlayer,
       mapSeed: state.mapSeed,
+      mapThemeId: state.mapThemeId,
       isPracticeMode: state.isPracticeMode,
     }))
   );
 
   const preparedMap = useMemo(() => (
-    getPreparedVoxelMap({ seed: mapSeed }) ?? prepareVoxelMapCpu({ seed: mapSeed, source: 'match' })
-  ), [mapSeed]);
+    getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId }) ?? prepareVoxelMapCpu({ seed: mapSeed, themeId: mapThemeId, source: 'match' })
+  ), [mapSeed, mapThemeId]);
   const manifest = preparedMap.manifest;
   const localPlayerId = localPlayer?.id ?? null;
   const localPlayerTeam = localPlayer?.team ?? null;

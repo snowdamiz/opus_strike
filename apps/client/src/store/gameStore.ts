@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type PlayerPingsMessage } from '@voxel-strike/shared';
+import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type PlayerPingsMessage, type VoxelMapTheme } from '@voxel-strike/shared';
 import { clearAllDeathVisuals, clearVisualState, removePlayerVisualState, setPlayerVisualTransform } from './visualStore';
 
 // Import types
@@ -97,6 +97,7 @@ interface CoreState {
   tick: number;
   serverTime: number;
   mapSeed: number;
+  mapThemeId: VoxelMapTheme['id'] | null;
 
   // Teams
   redScore: number;
@@ -150,6 +151,7 @@ interface CoreActions {
   clearMatchSummary: () => void;
   setPhaseEndTime: (time: number | null) => void;
   setMapSeed: (seed: number) => void;
+  setMapThemeId: (themeId: VoxelMapTheme['id'] | null) => void;
   updateLocalPlayer: (updates: Partial<Player>) => void;
   setLocalPlayer: (player: Player) => void;
   setPlayers: (players: Map<string, Player>) => void;
@@ -237,6 +239,7 @@ const coreInitialState: CoreState = {
   tick: 0,
   serverTime: 0,
   mapSeed: createRandomSeed(),
+  mapThemeId: null,
   redScore: 0,
   blueScore: 0,
   redFlag: null,
@@ -372,6 +375,9 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     const mapSeed = seed >>> 0;
     return state.mapSeed === mapSeed ? state : { mapSeed };
   }),
+  setMapThemeId: (themeId) => set((state) => (
+    state.mapThemeId === themeId ? state : { mapThemeId: themeId }
+  )),
 
   updateLocalPlayer: (updates) => {
     const { localPlayer, players } = get();

@@ -460,6 +460,37 @@ export function prewarmDireBallResources(): void {
   getSharedParticleMaterial();
 }
 
+export function appendDireBallGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmDireBallResources();
+
+  const dummy = new THREE.Object3D();
+  dummy.position.set(-1.2, 0, -4);
+  dummy.scale.setScalar(0.35);
+  dummy.updateMatrix();
+
+  const addInstancedMesh = (geometry: THREE.BufferGeometry, material: THREE.Material, name: string) => {
+    const mesh = new THREE.InstancedMesh(geometry, material, 1);
+    mesh.name = name;
+    mesh.frustumCulled = false;
+    mesh.setMatrixAt(0, dummy.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    target.add(mesh);
+  };
+
+  addInstancedMesh(SHARED_GEOMETRIES.sphere16, getSharedCoreMaterial(), 'gpu-prewarm-dire-ball-core');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere12, getSharedGlowMaterial(), 'gpu-prewarm-dire-ball-glow');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getSharedInnerCoreMaterial(), 'gpu-prewarm-dire-ball-inner');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getSharedSecondaryShellMaterial(), 'gpu-prewarm-dire-ball-shell');
+
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -1.2, 0, -4,
+    -1.05, 0.08, -4.08,
+    -1.35, -0.08, -3.92,
+  ]), 3));
+  target.add(new THREE.Points(particleGeometry, getSharedParticleMaterial()));
+}
+
 export function DireBallsManager() {
   const storeBalls = useGameStore(state => state.direBalls);
   const removeDireBalls = useGameStore(state => state.removeDireBalls);

@@ -205,11 +205,23 @@ function isNaturalSurface(blockId: VoxelBlockId): boolean {
     blockId === 'ice' ||
     blockId === 'ash' ||
     blockId === 'obsidian' ||
-    blockId === 'moss'
+    blockId === 'moss' ||
+    blockId === 'gold' ||
+    blockId === 'gold_ore' ||
+    blockId === 'gold_panel'
   );
 }
 
 function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
+  if (theme.id === 'golden') {
+    return {
+      tuft: '#d9b956',
+      pebble: '#a67932',
+      crystal: '#fff0a6',
+      crystalEmissive: '#fff36b',
+    };
+  }
+
   if (theme.id === 'desert') {
     return {
       tuft: '#b7a75a',
@@ -273,6 +285,10 @@ function getDressingPalette(theme: VoxelMapTheme): DressingPalette {
 }
 
 function getBiomeDensities(theme: VoxelMapTheme): { tuft: number; pebble: number; crystal: number } {
+  if (theme.id === 'golden') {
+    return { tuft: 0.018, pebble: 0.028, crystal: 0.034 };
+  }
+
   if (theme.id === 'desert') {
     return { tuft: 0.024, pebble: 0.04, crystal: 0.008 };
   }

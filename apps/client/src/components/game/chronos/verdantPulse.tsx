@@ -97,6 +97,35 @@ function getPulseRingMaterial(): THREE.MeshBasicMaterial {
   return sharedPulseRingMaterial;
 }
 
+export function prewarmChronosPulseResources(): void {
+  getPulseCoreMaterial();
+  getPulseGlowMaterial();
+  getPulseRingMaterial();
+}
+
+export function appendChronosPulseGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmChronosPulseResources();
+
+  const dummy = new THREE.Object3D();
+  dummy.position.set(0, 0.85, -4.2);
+  dummy.scale.setScalar(0.45);
+  dummy.updateMatrix();
+
+  const addInstancedMesh = (geometry: THREE.BufferGeometry, material: THREE.Material, name: string) => {
+    const mesh = new THREE.InstancedMesh(geometry, material, 1);
+    mesh.name = name;
+    mesh.frustumCulled = false;
+    mesh.setMatrixAt(0, dummy.matrix);
+    mesh.instanceMatrix.needsUpdate = true;
+    target.add(mesh);
+  };
+
+  addInstancedMesh(SHARED_GEOMETRIES.sphere12, getPulseGlowMaterial(), 'gpu-prewarm-chronos-pulse-glow');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getPulseCoreMaterial(), 'gpu-prewarm-chronos-pulse-core');
+  addInstancedMesh(SHARED_GEOMETRIES.sphere8, getPulseGlowMaterial(), 'gpu-prewarm-chronos-pulse-trail');
+  addInstancedMesh(SHARED_GEOMETRIES.ring24, getPulseRingMaterial(), 'gpu-prewarm-chronos-pulse-ring');
+}
+
 function normalizeInto(input: MutableVec3, output: MutableVec3): number {
   const speed = Math.sqrt(input.x * input.x + input.y * input.y + input.z * input.z);
   if (speed <= 0.0001) {
@@ -502,8 +531,6 @@ export function ChronosPulsesManager() {
 
 if (typeof window !== 'undefined') {
   requestAnimationFrame(() => {
-    getPulseCoreMaterial();
-    getPulseGlowMaterial();
-    getPulseRingMaterial();
+    prewarmChronosPulseResources();
   });
 }

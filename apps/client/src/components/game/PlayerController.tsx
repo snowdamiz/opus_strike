@@ -71,7 +71,10 @@ import {
   EYE_HEIGHT,
 } from '../../hooks/player';
 import { getFrameClock } from '../../utils/frameClock';
-import { useLocalAbilityAudioPrediction } from '../../hooks/player/useLocalAbilityAudioPrediction';
+import {
+  markPredictedLocalAbilitySound,
+  useLocalAbilityAudioPrediction,
+} from '../../hooks/player/useLocalAbilityAudioPrediction';
 import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
 import {
   ABILITY_DEFINITIONS,
@@ -122,6 +125,7 @@ import {
 import { BombTargetingIndicator, triggerAirStrike, triggerRocketJumpExplosion } from './BlazeEffects';
 import { GrappleTrapTargetingIndicator } from './HookshotEffects';
 import { triggerBlinkEffect } from './PhantomEffects';
+import { triggerPhantomShieldCastEffect } from './phantom';
 import { addChronosLifelineEffects, addChronosSelfHealPulseEffect } from './chronos/lifeline';
 import { addChronosTimebreakEffect } from './chronos/timebreak';
 import { triggerTeleportEffect } from '../ui/TeleportEffects';
@@ -1347,8 +1351,18 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       if (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
         if (abilitySystem.canUseAbility(heroDef.ability2.abilityId, false)) {
           if (heroId === 'phantom') {
+            const abilityId = heroDef.ability2.abilityId;
+            const playLocalShieldCast = () => {
+              markPredictedLocalAbilitySound(abilityId, now, 1600);
+              triggerPhantomShieldCastEffect({
+                playerId: localPlayer.id,
+                isLocalPlayer: true,
+                position: { x: position.x, y: position.y, z: position.z },
+                yaw: abilityCtx.yaw,
+              });
+            };
+
             if (isPracticeMode) {
-              const abilityId = heroDef.ability2.abilityId;
               abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
               updateLocalPlayer({
                 abilities: {
@@ -1356,6 +1370,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
                 },
               });
+              playLocalShieldCast();
               lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
             } else if (phantomAbilities.executePersonalShield(
               abilityCtx,
@@ -1364,6 +1379,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               abilitySystem.startClientCooldown,
               updateLocalPlayer
             )) {
+              playLocalShieldCast();
               lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
             }
           } else if (heroId === 'blaze') {

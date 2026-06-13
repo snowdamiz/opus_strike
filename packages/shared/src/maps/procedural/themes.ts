@@ -1,7 +1,7 @@
 import type { VoxelMapTheme } from './types.js';
 import { hashSeed } from './rng.js';
 
-export const VOXEL_MAP_THEMES: VoxelMapTheme[] = [
+export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'verdant',
     name: 'Verdant Mesa',
@@ -144,6 +144,36 @@ export const VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   },
 ];
 
-export function getVoxelMapTheme(seed: number): VoxelMapTheme {
+export const GOLDEN_VOXEL_MAP_THEME: VoxelMapTheme = {
+  id: 'golden',
+  name: 'Golden Treasury',
+  skyColor: '#ffd978',
+  ambientColor: '#fff5cc',
+  sunColor: '#fff0a8',
+  fogColor: '#f7c85f',
+  ground: {
+    top: '#e7b93f',
+    side: '#b9822f',
+    dirt: '#6d5635',
+    stone: '#c8943b',
+  },
+  structures: {
+    metal: '#5d4630',
+    glass: '#ffeaa3',
+    barrier: '#2d2418',
+    accent: '#fff36b',
+  },
+};
+
+export const VOXEL_MAP_THEMES: VoxelMapTheme[] = STANDARD_VOXEL_MAP_THEMES;
+export const ALL_VOXEL_MAP_THEMES: VoxelMapTheme[] = [...STANDARD_VOXEL_MAP_THEMES, GOLDEN_VOXEL_MAP_THEME];
+export const GOLDEN_VOXEL_MAP_THEME_ID = GOLDEN_VOXEL_MAP_THEME.id;
+
+export function getVoxelMapThemeById(themeId: VoxelMapTheme['id']): VoxelMapTheme {
+  return ALL_VOXEL_MAP_THEMES.find((theme) => theme.id === themeId) ?? STANDARD_VOXEL_MAP_THEMES[0];
+}
+
+export function getVoxelMapTheme(seed: number, themeId?: VoxelMapTheme['id'] | null): VoxelMapTheme {
+  if (themeId) return getVoxelMapThemeById(themeId);
   return VOXEL_MAP_THEMES[hashSeed(seed) % VOXEL_MAP_THEMES.length];
 }

@@ -15,6 +15,7 @@ import { UltimateEffects } from './components/ui/UltimateEffects';
 import { SlideEffects } from './components/ui/SlideEffects';
 import { MobileControls } from './components/ui/MobileControls';
 import { useAudio, useGlobalButtonSounds, useMusic } from './hooks/useAudio';
+import { useNetwork } from './contexts/NetworkContext';
 import { mouseButtonToKeybindCode } from './utils/keybindings';
 import { installLocalCombatStressScenario } from './utils/combatStressScenario';
 import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCache';
@@ -66,6 +67,7 @@ export function App() {
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const isPracticePreparing = useGameStore((state) => state.isPracticePreparing);
   const mapSeed = useGameStore((state) => state.mapSeed);
+  const mapThemeId = useGameStore((state) => state.mapThemeId);
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
   const scoreboardKeybind = useSettingsStore((state) => state.settings.keybindings.scoreboard);
   const [showScoreboard, setShowScoreboard] = useState(false);
@@ -78,8 +80,10 @@ export function App() {
   const [isStartupRampActive, setIsStartupRampActive] = useState(false);
   const mountedWarmupKeyRef = useRef<string | null>(null);
   const revealedWarmupKeyRef = useRef<string | null>(null);
+  const reportedMatchStartGateRef = useRef<number | null>(null);
   const { playLobbyMusic, playGameMusic, pauseMusic, resumeMusic } = useMusic();
   const { preloadSoundGroup, preloadHeroSounds } = useAudio();
+  const { matchStartGateKey, reportMatchSceneReady } = useNetwork();
   useGlobalButtonSounds();
   const isPreGame = gamePhase === 'waiting' || gamePhase === 'hero_select' || !gamePhase;
   const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
@@ -88,7 +92,7 @@ export function App() {
     !matchSummary &&
     (gamePhase === 'waiting' || gamePhase === 'hero_select' || isActiveGame)
   );
-  const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed }), [mapSeed]);
+  const warmupKey = useMemo(() => getMapPrepCacheKey({ seed: mapSeed, themeId: mapThemeId }), [mapSeed, mapThemeId]);
 
   useEffect(() => {
     installLocalCombatStressScenario();
@@ -309,6 +313,33 @@ export function App() {
   const handleWarmupUpdate = useCallback((snapshot: MapWarmupSnapshot) => {
     setMatchWarmupSnapshot(snapshot);
   }, []);
+
+  useEffect(() => {
+    if (matchStartGateKey === null) {
+      reportedMatchStartGateRef.current = null;
+    }
+  }, [matchStartGateKey]);
+
+  useEffect(() => {
+    if (
+      isPracticeMode ||
+      gamePhase !== 'hero_select' ||
+      !isMatchSceneReady ||
+      matchStartGateKey === null ||
+      reportedMatchStartGateRef.current === matchStartGateKey
+    ) {
+      return;
+    }
+
+    reportedMatchStartGateRef.current = matchStartGateKey;
+    reportMatchSceneReady();
+  }, [
+    gamePhase,
+    isMatchSceneReady,
+    isPracticeMode,
+    matchStartGateKey,
+    reportMatchSceneReady,
+  ]);
 
   useEffect(() => {
     if (!isActiveGame || !isMatchSceneReady || isMatchLoadingVisible) return;

@@ -3,6 +3,7 @@ import {
   generateProceduralVoxelMap,
   type VoxelChunk,
   type VoxelMapManifest,
+  type VoxelMapTheme,
 } from '@voxel-strike/shared';
 
 const VOXEL_REGION_CHUNK_SPAN = 4;
@@ -16,6 +17,7 @@ export interface VoxelChunkRegion {
 
 export interface MapPrepCacheKeyInput {
   seed: number;
+  themeId?: VoxelMapTheme['id'] | null;
   generatorVersion?: number;
 }
 
@@ -45,9 +47,11 @@ function nowMs(): number {
 
 export function getMapPrepCacheKey({
   seed,
+  themeId,
   generatorVersion = CONSTRUCTED_MAP_MANIFEST_VERSION,
 }: MapPrepCacheKeyInput): string {
-  return `procedural-v${generatorVersion}:${seed >>> 0}`;
+  const themeSuffix = themeId ? `:${themeId}` : '';
+  return `procedural-v${generatorVersion}:${seed >>> 0}${themeSuffix}`;
 }
 
 export function createVoxelChunkRegions(chunks: VoxelChunk[]): VoxelChunkRegion[] {
@@ -91,7 +95,11 @@ function evictLeastRecentlyUsedPreparedMap(): void {
 
 export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVoxelMap {
   const generatorVersion = options.generatorVersion ?? CONSTRUCTED_MAP_MANIFEST_VERSION;
-  const key = getMapPrepCacheKey({ seed: options.seed, generatorVersion });
+  const key = getMapPrepCacheKey({
+    seed: options.seed,
+    themeId: options.themeId ?? options.manifest?.themeId ?? null,
+    generatorVersion,
+  });
   const cached = preparedMapCache.get(key);
 
   if (cached) {
@@ -101,7 +109,7 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
   }
 
   const source = options.source ?? 'match';
-  const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed);
+  const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed, { themeId: options.themeId });
 
   const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);
   const renderableRegions = createVoxelChunkRegions(renderableChunks);

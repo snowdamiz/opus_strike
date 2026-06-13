@@ -89,6 +89,8 @@ export interface LocalPlayerImpulse {
   mode?: 'add' | 'set';
 }
 
+const EMPTY_LOCAL_PLAYER_IMPULSES = Object.freeze([]) as unknown as LocalPlayerImpulse[];
+
 export interface RemotePlayerAttackState {
   abilityId: string;
   startedAtMs: number;
@@ -302,13 +304,16 @@ export const setPlayerVisualTransform = (
   const state = visualStore.getState();
   const current = state.playerPositions.get(playerId);
   if (current) {
-    current.x = position.x;
-    current.y = position.y;
-    current.z = position.z;
+    if (current.x !== position.x) current.x = position.x;
+    if (current.y !== position.y) current.y = position.y;
+    if (current.z !== position.z) current.z = position.z;
   } else {
     state.playerPositions.set(playerId, { x: position.x, y: position.y, z: position.z });
   }
-  state.playerRotations.set(playerId, rotation);
+
+  if (state.playerRotations.get(playerId) !== rotation) {
+    state.playerRotations.set(playerId, rotation);
+  }
 };
 
 export const setLocalViewmodelMovement = (
@@ -339,7 +344,10 @@ export const setLocalVisualMovement = (movement: PlayerMovementState): void => {
 };
 
 export const setLocalSlideIntensity = (intensity: number): void => {
-  visualStore.getState().slideIntensity = intensity;
+  const state = visualStore.getState();
+  if (state.slideIntensity !== intensity) {
+    state.slideIntensity = intensity;
+  }
 };
 
 export const pushLocalPlayerImpulse = (impulse: LocalPlayerImpulse): void => {
@@ -353,7 +361,7 @@ export const pushLocalPlayerImpulse = (impulse: LocalPlayerImpulse): void => {
 
 export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses'] => {
   const impulses = visualStore.getState().localPlayerImpulses;
-  if (impulses.length === 0) return [];
+  if (impulses.length === 0) return EMPTY_LOCAL_PLAYER_IMPULSES;
 
   visualStore.setState({ localPlayerImpulses: [] });
   return impulses;

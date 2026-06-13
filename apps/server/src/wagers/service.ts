@@ -64,10 +64,24 @@ type WageredLobbyStatus =
   | 'failed';
 
 type TransferKind = 'winner_payout' | 'developer_fee' | 'refund';
+type GoldenBiomeRewardStatus = 'pending' | 'processing' | 'complete' | 'failed';
+type GoldenBiomeRewardTransferStatus = 'pending' | 'submitted' | 'confirmed' | 'failed';
+export type GoldenBiomeRewardDistributionMode = 'manual' | 'auto';
 
 const WAGER_BACKGROUND_LOCK_TTL_MS = 45_000;
 const WAGER_BACKGROUND_LOCK_HEARTBEAT_MS = 15_000;
 const WAGER_TRANSFER_RETRY_GRACE_MS = 60_000;
+const MICRO_USD_PER_USD = 1_000_000n;
+const MICRO_USD_PER_CENT = 10_000n;
+const LAMPORTS_PER_SOL = 1_000_000_000n;
+
+interface CachedGoldenBiomeSolPrice {
+  source: WagerRuntimeConfig['goldenBiomeSolUsdPriceSource'];
+  solUsdPriceMicroUsd: bigint;
+  fetchedAt: number;
+}
+
+let cachedGoldenBiomeSolPrice: CachedGoldenBiomeSolPrice | null = null;
 
 export interface CreateWagerOptions {
   enabled?: boolean;
@@ -172,6 +186,90 @@ export interface WagerSettlementSnapshot {
   winningTeam: string | null;
 }
 
+export interface GoldenBiomeTreasuryEligibility {
+  eligible: boolean;
+  enabled: boolean;
+  treasuryWallet: string | null;
+  treasuryBalanceLamports: string;
+  requiredLamports: string;
+  solUsdPriceMicroUsd: string;
+  checkedAt: string;
+  reason?: string;
+}
+
+export interface GoldenBiomeRewardWinner {
+  userId: string;
+  playerSessionId: string;
+}
+
+export interface GoldenBiomeRewardSnapshot {
+  rewardId: string;
+  matchId: string;
+  status: GoldenBiomeRewardStatus;
+  distributionMode: GoldenBiomeRewardDistributionMode;
+  winningTeam: string;
+  rewardUsdCents: number;
+  rewardLamports: string;
+  totalRewardLamports: string;
+  paidPlayerCount: number;
+}
+
+export interface GoldenBiomeAdminRewardTransfer {
+  id: string;
+  userId: string;
+  playerSessionId: string;
+  displayName: string | null;
+  recipientWallet: string;
+  amountLamports: string;
+  signature: string | null;
+  status: GoldenBiomeRewardTransferStatus;
+  lastError: string | null;
+  confirmedAt: string | null;
+  updatedAt: string;
+}
+
+export interface GoldenBiomeAdminReward {
+  id: string;
+  matchId: string;
+  roomId: string;
+  lobbyId: string | null;
+  mapSeed: number;
+  mapThemeId: string;
+  winningTeam: string;
+  treasuryWallet: string;
+  rewardUsdCents: number;
+  solUsdPriceMicroUsd: string;
+  rewardLamports: string;
+  totalRewardLamports: string;
+  paidPlayerCount: number;
+  treasuryBalanceLamports: string;
+  status: GoldenBiomeRewardStatus;
+  distributionMode: GoldenBiomeRewardDistributionMode;
+  distributedByUserId: string | null;
+  distributedAt: string | null;
+  attemptCount: number;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  transfers: GoldenBiomeAdminRewardTransfer[];
+}
+
+export interface GoldenBiomeAdminOverview {
+  settings: {
+    distributionMode: GoldenBiomeRewardDistributionMode;
+    enabled: boolean;
+    chanceBps: number;
+    winnerRewardUsdCents: number;
+    treasuryMinUsdCents: number;
+    treasuryWallet: string | null;
+    updatedByUserId: string | null;
+    updatedAt: string | null;
+  };
+  treasury: GoldenBiomeTreasuryEligibility;
+  rewards: GoldenBiomeAdminReward[];
+}
+
 interface TreasuryTransferResult {
   signature: string | null;
   confirmedAt: Date;
@@ -231,6 +329,58 @@ function base64LooksValid(value: string): boolean {
   return value.length > 0 && value.length <= 100_000 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
+function parseDecimalToMicroUsd(value: string, fieldName: string): bigint {
+  const trimmed = value.trim();
+  const match = /^([0-9]+)(?:\.([0-9]+))?$/.exec(trimmed);
+  if (!match) {
+    throw new Error(`${fieldName} must be a positive decimal USD price`);
+  }
+
+  const whole = BigInt(match[1]);
+  const fractional = (match[2] ?? '').slice(0, 6).padEnd(6, '0');
+  const micro = whole * MICRO_USD_PER_USD + BigInt(fractional || '0');
+  if (micro <= 0n) {
+    throw new Error(`${fieldName} must be greater than zero`);
+  }
+  return micro;
+}
+
+function ceilDiv(numerator: bigint, denominator: bigint): bigint {
+  if (denominator <= 0n) {
+    throw new Error('Cannot divide by zero');
+  }
+  return (numerator + denominator - 1n) / denominator;
+}
+
+function usdCentsToLamports(usdCents: number, solUsdPriceMicroUsd: bigint): bigint {
+  const microUsd = BigInt(usdCents) * MICRO_USD_PER_CENT;
+  return ceilDiv(microUsd * LAMPORTS_PER_SOL, solUsdPriceMicroUsd);
+}
+
+function hashGoldenRoll(seed: number, salt: number): number {
+  let hash = (seed >>> 0) ^ Math.imul(salt >>> 0, 0x9e3779b1);
+  hash = Math.imul(hash ^ (hash >>> 16), 0x7feb352d);
+  hash = Math.imul(hash ^ (hash >>> 15), 0x846ca68b);
+  return (hash ^ (hash >>> 16)) >>> 0;
+}
+
+async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { accept: 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`SOL price source responded with HTTP ${response.status}`);
+    }
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function decodeUtf8InstructionData(instruction: TransactionInstruction): string {
   return Buffer.from(instruction.data).toString('utf8');
 }
@@ -288,6 +438,233 @@ export class WagerService extends EventEmitter {
       this.connection = new Connection(config.rpcUrl, 'confirmed');
     }
     return this.connection;
+  }
+
+  shouldRollGoldenBiome(seed: number, salt = 0): boolean {
+    const config = this.getConfig();
+    if (!config.goldenBiomeEnabled || config.goldenBiomeChanceBps <= 0) return false;
+    return hashGoldenRoll(seed, salt) % 10_000 < config.goldenBiomeChanceBps;
+  }
+
+  private async resolveGoldenBiomeSolUsdPriceMicroUsd(config = this.getConfig()): Promise<bigint> {
+    const now = Date.now();
+    if (
+      cachedGoldenBiomeSolPrice
+      && cachedGoldenBiomeSolPrice.source === config.goldenBiomeSolUsdPriceSource
+      && now - cachedGoldenBiomeSolPrice.fetchedAt <= config.goldenBiomeSolUsdPriceStaleMs
+    ) {
+      return cachedGoldenBiomeSolPrice.solUsdPriceMicroUsd;
+    }
+
+    let solUsdPriceMicroUsd: bigint;
+    if (config.goldenBiomeSolUsdPriceSource === 'env') {
+      const explicitMicro = process.env.GOLDEN_BIOME_SOL_USD_MICRO_USD;
+      if (explicitMicro) {
+        if (!/^[0-9]+$/.test(explicitMicro)) {
+          throw new Error('GOLDEN_BIOME_SOL_USD_MICRO_USD must be an unsigned integer');
+        }
+        solUsdPriceMicroUsd = BigInt(explicitMicro);
+        if (solUsdPriceMicroUsd <= 0n) {
+          throw new Error('GOLDEN_BIOME_SOL_USD_MICRO_USD must be greater than zero');
+        }
+      } else {
+        const decimal = process.env.GOLDEN_BIOME_SOL_USD_PRICE;
+        if (!decimal) {
+          throw new Error('GOLDEN_BIOME_SOL_USD_PRICE is required when GOLDEN_BIOME_SOL_USD_PRICE_SOURCE=env');
+        }
+        solUsdPriceMicroUsd = parseDecimalToMicroUsd(decimal, 'GOLDEN_BIOME_SOL_USD_PRICE');
+      }
+    } else {
+      const payload = await fetchJsonWithTimeout(
+        'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
+        config.goldenBiomeSolUsdPriceTimeoutMs
+      );
+      const price = (payload as { solana?: { usd?: unknown } })?.solana?.usd;
+      if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+        throw new Error('CoinGecko response did not include a usable SOL/USD price');
+      }
+      solUsdPriceMicroUsd = parseDecimalToMicroUsd(price.toFixed(6), 'CoinGecko SOL/USD price');
+    }
+
+    cachedGoldenBiomeSolPrice = {
+      source: config.goldenBiomeSolUsdPriceSource,
+      solUsdPriceMicroUsd,
+      fetchedAt: now,
+    };
+    return solUsdPriceMicroUsd;
+  }
+
+  async getGoldenBiomeTreasuryEligibility(): Promise<GoldenBiomeTreasuryEligibility> {
+    const config = this.getConfig();
+    const checkedAt = new Date();
+    if (!config.goldenBiomeEnabled) {
+      return {
+        eligible: false,
+        enabled: false,
+        treasuryWallet: config.treasuryWallet || null,
+        treasuryBalanceLamports: '0',
+        requiredLamports: '0',
+        solUsdPriceMicroUsd: '0',
+        checkedAt: checkedAt.toISOString(),
+        reason: 'golden_biome_disabled',
+      };
+    }
+    if (!config.enabled || !config.rpcUrl || !config.treasuryWallet) {
+      return {
+        eligible: false,
+        enabled: true,
+        treasuryWallet: config.treasuryWallet || null,
+        treasuryBalanceLamports: '0',
+        requiredLamports: '0',
+        solUsdPriceMicroUsd: '0',
+        checkedAt: checkedAt.toISOString(),
+        reason: 'treasury_not_configured',
+      };
+    }
+
+    const solUsdPriceMicroUsd = await this.resolveGoldenBiomeSolUsdPriceMicroUsd(config);
+    const requiredLamports = usdCentsToLamports(config.goldenBiomeTreasuryMinUsdCents, solUsdPriceMicroUsd);
+    const balance = BigInt(await this.getConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
+
+    return {
+      eligible: balance > requiredLamports,
+      enabled: true,
+      treasuryWallet: config.treasuryWallet,
+      treasuryBalanceLamports: balance.toString(),
+      requiredLamports: requiredLamports.toString(),
+      solUsdPriceMicroUsd: solUsdPriceMicroUsd.toString(),
+      checkedAt: checkedAt.toISOString(),
+      reason: balance > requiredLamports ? undefined : 'treasury_below_golden_biome_threshold',
+    };
+  }
+
+  async getGoldenBiomeRewardDistributionMode(): Promise<GoldenBiomeRewardDistributionMode> {
+    const settings = await prisma.goldenBiomeRewardSettings.upsert({
+      where: { id: 'default' },
+      create: { id: 'default', distributionMode: 'manual' },
+      update: {},
+    });
+    return settings.distributionMode as GoldenBiomeRewardDistributionMode;
+  }
+
+  async setGoldenBiomeRewardDistributionMode(
+    distributionMode: GoldenBiomeRewardDistributionMode,
+    updatedByUserId?: string | null
+  ): Promise<GoldenBiomeRewardDistributionMode> {
+    if (distributionMode !== 'manual' && distributionMode !== 'auto') {
+      throw new Error('Invalid golden biome reward distribution mode');
+    }
+
+    const settings = await prisma.goldenBiomeRewardSettings.upsert({
+      where: { id: 'default' },
+      create: {
+        id: 'default',
+        distributionMode,
+        updatedByUserId: updatedByUserId ?? null,
+      },
+      update: {
+        distributionMode,
+        updatedByUserId: updatedByUserId ?? null,
+      },
+    });
+
+    return settings.distributionMode as GoldenBiomeRewardDistributionMode;
+  }
+
+  async getGoldenBiomeAdminOverview(): Promise<GoldenBiomeAdminOverview> {
+    const config = this.getConfig();
+    const [settings, rewards] = await Promise.all([
+      prisma.goldenBiomeRewardSettings.upsert({
+        where: { id: 'default' },
+        create: { id: 'default', distributionMode: 'manual' },
+        update: {},
+      }),
+      prisma.goldenBiomeReward.findMany({
+        orderBy: [
+          { status: 'asc' },
+          { createdAt: 'desc' },
+        ],
+        take: 50,
+        include: {
+          transfers: {
+            orderBy: [{ createdAt: 'asc' }],
+          },
+        },
+      }),
+    ]);
+
+    const userIds = Array.from(new Set(
+      rewards.flatMap((reward) => reward.transfers.map((transfer) => transfer.userId))
+    ));
+    const users = userIds.length > 0
+      ? await prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, name: true },
+      })
+      : [];
+    const userNameById = new Map(users.map((user) => [user.id, user.name]));
+    const treasury = await this.getGoldenBiomeTreasuryEligibility().catch((error) => ({
+      eligible: false,
+      enabled: config.goldenBiomeEnabled,
+      treasuryWallet: config.treasuryWallet || null,
+      treasuryBalanceLamports: '0',
+      requiredLamports: '0',
+      solUsdPriceMicroUsd: '0',
+      checkedAt: new Date().toISOString(),
+      reason: error instanceof Error ? error.message : String(error),
+    }));
+
+    return {
+      settings: {
+        distributionMode: settings.distributionMode as GoldenBiomeRewardDistributionMode,
+        enabled: config.goldenBiomeEnabled,
+        chanceBps: config.goldenBiomeChanceBps,
+        winnerRewardUsdCents: config.goldenBiomeWinnerRewardUsdCents,
+        treasuryMinUsdCents: config.goldenBiomeTreasuryMinUsdCents,
+        treasuryWallet: config.treasuryWallet || null,
+        updatedByUserId: settings.updatedByUserId,
+        updatedAt: settings.updatedAt?.toISOString() ?? null,
+      },
+      treasury,
+      rewards: rewards.map((reward) => ({
+        id: reward.id,
+        matchId: reward.matchId,
+        roomId: reward.roomId,
+        lobbyId: reward.lobbyId,
+        mapSeed: reward.mapSeed,
+        mapThemeId: reward.mapThemeId,
+        winningTeam: reward.winningTeam,
+        treasuryWallet: reward.treasuryWallet,
+        rewardUsdCents: reward.rewardUsdCents,
+        solUsdPriceMicroUsd: reward.solUsdPriceMicroUsd.toString(),
+        rewardLamports: bigintToJson(reward.rewardLamports),
+        totalRewardLamports: bigintToJson(reward.totalRewardLamports),
+        paidPlayerCount: reward.paidPlayerCount,
+        treasuryBalanceLamports: bigintToJson(reward.treasuryBalanceLamports),
+        status: reward.status as GoldenBiomeRewardStatus,
+        distributionMode: reward.distributionMode as GoldenBiomeRewardDistributionMode,
+        distributedByUserId: reward.distributedByUserId,
+        distributedAt: reward.distributedAt?.toISOString() ?? null,
+        attemptCount: reward.attemptCount,
+        lastError: reward.lastError,
+        createdAt: reward.createdAt.toISOString(),
+        updatedAt: reward.updatedAt.toISOString(),
+        completedAt: reward.completedAt?.toISOString() ?? null,
+        transfers: reward.transfers.map((transfer) => ({
+          id: transfer.id,
+          userId: transfer.userId,
+          playerSessionId: transfer.playerSessionId,
+          displayName: userNameById.get(transfer.userId) ?? null,
+          recipientWallet: transfer.recipientWallet,
+          amountLamports: bigintToJson(transfer.amountLamports),
+          signature: transfer.signature,
+          status: transfer.status as GoldenBiomeRewardTransferStatus,
+          lastError: transfer.lastError,
+          confirmedAt: transfer.confirmedAt?.toISOString() ?? null,
+          updatedAt: transfer.updatedAt.toISOString(),
+        })),
+      })),
+    };
   }
 
   normalizeCreateOptions(options: CreateWagerOptions | undefined): { enabled: false } | {
@@ -1005,6 +1382,155 @@ export class WagerService extends EventEmitter {
     return this.serializeSettlement(settlement);
   }
 
+  async settleGoldenBiomeReward(input: {
+    matchId: string;
+    roomId: string;
+    lobbyId: string | null;
+    mapSeed: number;
+    winningTeam: 'red' | 'blue';
+    winners: GoldenBiomeRewardWinner[];
+  }): Promise<GoldenBiomeRewardSnapshot | null> {
+    const config = this.getConfig();
+    assertWagerPaymentsConfigured(config);
+    if (!config.goldenBiomeEnabled || input.winners.length === 0) return null;
+
+    const distributionMode = await this.getGoldenBiomeRewardDistributionMode();
+    const existing = await prisma.goldenBiomeReward.findUnique({ where: { matchId: input.matchId } });
+    if (existing?.status === 'complete') {
+      return this.serializeGoldenBiomeReward(existing);
+    }
+
+    const uniqueWinnerIds = Array.from(new Set(input.winners.map((winner) => winner.userId)));
+    const users = await prisma.user.findMany({
+      where: { id: { in: uniqueWinnerIds } },
+      select: { id: true, walletAddress: true },
+    });
+    const walletByUserId = new Map(
+      users
+        .filter((user): user is { id: string; walletAddress: string } => Boolean(user.walletAddress))
+        .map((user) => [user.id, user.walletAddress])
+    );
+    const winners = input.winners
+      .filter((winner, index, all) => all.findIndex((candidate) => candidate.userId === winner.userId) === index)
+      .map((winner) => ({
+        ...winner,
+        walletAddress: walletByUserId.get(winner.userId) ?? null,
+      }))
+      .filter((winner): winner is GoldenBiomeRewardWinner & { walletAddress: string } => Boolean(winner.walletAddress));
+
+    if (winners.length === 0) {
+      loggers.room.warn('Golden biome reward skipped because no winning players have linked wallets', {
+        matchId: input.matchId,
+        roomId: input.roomId,
+        winningTeam: input.winningTeam,
+      });
+      return null;
+    }
+
+    const solUsdPriceMicroUsd = existing?.solUsdPriceMicroUsd ?? await this.resolveGoldenBiomeSolUsdPriceMicroUsd(config);
+    const rewardLamports = existing?.rewardLamports ?? usdCentsToLamports(config.goldenBiomeWinnerRewardUsdCents, solUsdPriceMicroUsd);
+    const totalRewardLamports = rewardLamports * BigInt(winners.length);
+    const treasuryBalanceLamports = BigInt(await this.getConnection().getBalance(new PublicKey(config.treasuryWallet), 'confirmed'));
+    const treasuryMinimumLamports = usdCentsToLamports(config.goldenBiomeTreasuryMinUsdCents, solUsdPriceMicroUsd);
+
+    if (treasuryBalanceLamports <= treasuryMinimumLamports) {
+      throw new Error('Golden biome treasury balance is below the reward threshold');
+    }
+    if (treasuryBalanceLamports < totalRewardLamports) {
+      throw new Error('Golden biome treasury balance cannot cover winner rewards');
+    }
+
+    const reward = existing ?? await prisma.goldenBiomeReward.create({
+      data: {
+        matchId: input.matchId,
+        roomId: input.roomId,
+        lobbyId: input.lobbyId,
+        mapSeed: input.mapSeed,
+        mapThemeId: 'golden',
+        winningTeam: input.winningTeam,
+        treasuryWallet: config.treasuryWallet,
+        rewardUsdCents: config.goldenBiomeWinnerRewardUsdCents,
+        solUsdPriceMicroUsd,
+        rewardLamports,
+        totalRewardLamports,
+        paidPlayerCount: winners.length,
+        treasuryBalanceLamports,
+        status: 'pending',
+        distributionMode,
+      },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      await tx.goldenBiomeReward.update({
+        where: { id: reward.id },
+        data: {
+          totalRewardLamports,
+          paidPlayerCount: winners.length,
+          treasuryBalanceLamports,
+          lastError: null,
+          distributionMode: reward.distributionMode ?? distributionMode,
+        },
+      });
+
+      for (const winner of winners) {
+        await tx.goldenBiomeRewardTransfer.upsert({
+          where: {
+            rewardId_recipientWallet: {
+              rewardId: reward.id,
+              recipientWallet: winner.walletAddress,
+            },
+          },
+          create: {
+            rewardId: reward.id,
+            idempotencyKey: `${reward.id}:winner:${winner.userId}`,
+            userId: winner.userId,
+            playerSessionId: winner.playerSessionId,
+            recipientWallet: winner.walletAddress,
+            amountLamports: rewardLamports,
+            status: rewardLamports > 0n ? 'pending' : 'confirmed',
+            confirmedAt: rewardLamports > 0n ? null : new Date(),
+          },
+          update: {
+            userId: winner.userId,
+            playerSessionId: winner.playerSessionId,
+            amountLamports: rewardLamports,
+          },
+        });
+      }
+    });
+
+    if (distributionMode === 'auto') {
+      await this.processGoldenBiomeReward(reward.id);
+    }
+    const updated = await prisma.goldenBiomeReward.findUnique({ where: { id: reward.id } });
+    return updated ? this.serializeGoldenBiomeReward(updated) : null;
+  }
+
+  async distributeGoldenBiomeReward(rewardId: string, actorUserId?: string | null): Promise<GoldenBiomeRewardSnapshot> {
+    const reward = await prisma.goldenBiomeReward.findUniqueOrThrow({
+      where: { id: rewardId },
+      select: { id: true, status: true },
+    });
+
+    if (reward.status === 'complete') {
+      const completed = await prisma.goldenBiomeReward.findUniqueOrThrow({ where: { id: rewardId } });
+      return this.serializeGoldenBiomeReward(completed);
+    }
+
+    await prisma.goldenBiomeReward.update({
+      where: { id: rewardId },
+      data: {
+        distributionMode: 'manual',
+        distributedByUserId: actorUserId ?? null,
+        distributedAt: new Date(),
+      },
+    });
+
+    await this.processGoldenBiomeReward(rewardId);
+    const updated = await prisma.goldenBiomeReward.findUniqueOrThrow({ where: { id: rewardId } });
+    return this.serializeGoldenBiomeReward(updated);
+  }
+
   startBackgroundJobs(): void {
     if (this.backgroundStarted) return;
     this.backgroundStarted = true;
@@ -1099,6 +1625,7 @@ export class WagerService extends EventEmitter {
     await this.confirmSubmittedDeposits();
     await this.retryFailedRefunds();
     await this.retrySettlements();
+    await this.retryGoldenBiomeRewards();
     await this.reconcileRecentTreasuryDeposits();
   }
 
@@ -1231,6 +1758,30 @@ export class WagerService extends EventEmitter {
       developerFeeLamports: bigintToJson(settlement.developerFeeLamports),
       winnerPoolLamports: bigintToJson(settlement.winnerPoolLamports),
       winningTeam: settlement.winningTeam,
+    };
+  }
+
+  private serializeGoldenBiomeReward(reward: {
+    id: string;
+    matchId: string;
+    status: string;
+    distributionMode?: string;
+    winningTeam: string;
+    rewardUsdCents: number;
+    rewardLamports: bigint;
+    totalRewardLamports: bigint;
+    paidPlayerCount: number;
+  }): GoldenBiomeRewardSnapshot {
+    return {
+      rewardId: reward.id,
+      matchId: reward.matchId,
+      status: reward.status as GoldenBiomeRewardStatus,
+      distributionMode: (reward.distributionMode ?? 'manual') as GoldenBiomeRewardDistributionMode,
+      winningTeam: reward.winningTeam,
+      rewardUsdCents: reward.rewardUsdCents,
+      rewardLamports: bigintToJson(reward.rewardLamports),
+      totalRewardLamports: bigintToJson(reward.totalRewardLamports),
+      paidPlayerCount: reward.paidPlayerCount,
     };
   }
 
@@ -1711,6 +2262,123 @@ export class WagerService extends EventEmitter {
     }
   }
 
+  private async processGoldenBiomeReward(rewardId: string): Promise<void> {
+    try {
+      const reward = await prisma.goldenBiomeReward.findUniqueOrThrow({
+        where: { id: rewardId },
+        include: { transfers: true },
+      });
+
+      if (reward.status === 'complete') return;
+
+      await prisma.goldenBiomeReward.update({
+        where: { id: reward.id },
+        data: {
+          status: 'processing',
+          attemptCount: { increment: 1 },
+          lastError: null,
+        },
+      });
+
+      for (const transfer of reward.transfers) {
+        if (transfer.status === 'confirmed') continue;
+        if (transfer.amountLamports <= 0n) {
+          await prisma.goldenBiomeRewardTransfer.updateMany({
+            where: { id: transfer.id, status: transfer.status, updatedAt: transfer.updatedAt },
+            data: { status: 'confirmed', confirmedAt: new Date(), lastError: null },
+          });
+          continue;
+        }
+        if (
+          transfer.status === 'submitted'
+          && !transfer.signature
+          && transfer.updatedAt.getTime() > Date.now() - WAGER_TRANSFER_RETRY_GRACE_MS
+        ) {
+          loggers.room.debug('Skipping recently claimed golden biome reward transfer', {
+            rewardId,
+            transferId: transfer.id,
+          });
+          continue;
+        }
+
+        const claim = await prisma.goldenBiomeRewardTransfer.updateMany({
+          where: { id: transfer.id, status: transfer.status, updatedAt: transfer.updatedAt },
+          data: { status: 'submitted', lastError: null },
+        });
+        if (claim.count === 0) {
+          loggers.room.debug('Golden biome reward transfer claim lost to another worker', {
+            rewardId,
+            transferId: transfer.id,
+          });
+          continue;
+        }
+
+        try {
+          const result = await this.sendTreasuryTransfer({
+            recipientWallet: transfer.recipientWallet,
+            amountLamports: transfer.amountLamports,
+            existingSignature: transfer.signature,
+            onSubmitted: async (signature) => {
+              await prisma.goldenBiomeRewardTransfer.update({
+                where: { id: transfer.id },
+                data: { signature, status: 'submitted', lastError: null },
+              });
+            },
+          });
+
+          await prisma.goldenBiomeRewardTransfer.updateMany({
+            where: { id: transfer.id, status: 'submitted' },
+            data: {
+              signature: result.signature,
+              status: 'confirmed',
+              confirmedAt: result.confirmedAt,
+              lastError: null,
+            },
+          });
+        } catch (error) {
+          await prisma.goldenBiomeRewardTransfer.updateMany({
+            where: { id: transfer.id, status: 'submitted' },
+            data: {
+              status: 'failed',
+              lastError: error instanceof Error ? error.message : String(error),
+            },
+          }).catch(() => undefined);
+          throw error;
+        }
+      }
+
+      await this.completeGoldenBiomeReward(rewardId);
+    } catch (error) {
+      await prisma.goldenBiomeReward.update({
+        where: { id: rewardId },
+        data: {
+          status: 'failed',
+          lastError: error instanceof Error ? error.message : String(error),
+        },
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async completeGoldenBiomeReward(rewardId: string): Promise<void> {
+    const reward = await prisma.goldenBiomeReward.findUniqueOrThrow({
+      where: { id: rewardId },
+      include: { transfers: true },
+    });
+
+    if (reward.status === 'complete') return;
+    if (reward.transfers.some((transfer) => transfer.status !== 'confirmed')) return;
+
+    await prisma.goldenBiomeReward.update({
+      where: { id: reward.id },
+      data: {
+        status: 'complete',
+        completedAt: new Date(),
+        lastError: null,
+      },
+    });
+  }
+
   private async completeSettlement(settlementId: string): Promise<void> {
     const settlement = await prisma.wagerSettlement.findUniqueOrThrow({
       where: { id: settlementId },
@@ -1732,11 +2400,14 @@ export class WagerService extends EventEmitter {
         .filter((transfer) => transfer.kind === 'refund')
         .map((transfer) => [transfer.recipientWallet, transfer])
     );
-    const userStatIncrements = buildWagerUserStatIncrements({
-      payments: settlement.wageredLobby.payments,
-      transfers: settlement.transfers,
-      winningTeam: settlement.winningTeam,
-    });
+    const shouldRecordWagerStats = !isRefundSettlement || settlement.matchId !== null;
+    const userStatIncrements = shouldRecordWagerStats
+      ? buildWagerUserStatIncrements({
+        payments: settlement.wageredLobby.payments,
+        transfers: settlement.transfers,
+        winningTeam: settlement.winningTeam,
+      })
+      : [];
 
     await prisma.$transaction(async (tx) => {
       for (const payment of settlement.wageredLobby.payments) {
@@ -1919,6 +2590,28 @@ export class WagerService extends EventEmitter {
     for (const settlement of settlements) {
       await this.processSettlement(settlement.id).catch((error) => {
         loggers.room.warn('Failed to retry wager settlement', settlement.id, error);
+      });
+    }
+  }
+
+  private async retryGoldenBiomeRewards(): Promise<void> {
+    const config = this.getConfig();
+    if (await this.getGoldenBiomeRewardDistributionMode() !== 'auto') {
+      return;
+    }
+
+    const rewards = await prisma.goldenBiomeReward.findMany({
+      where: {
+        status: { in: ['pending', 'failed', 'processing'] },
+        attemptCount: { lt: config.settlementMaxAttempts },
+        updatedAt: { lt: new Date(Date.now() - config.settlementRetryMs) },
+      },
+      select: { id: true },
+      take: 10,
+    });
+    for (const reward of rewards) {
+      await this.processGoldenBiomeReward(reward.id).catch((error) => {
+        loggers.room.warn('Failed to retry golden biome reward', reward.id, error);
       });
     }
   }

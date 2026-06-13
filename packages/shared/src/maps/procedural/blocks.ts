@@ -36,6 +36,11 @@ export const VOXEL_BLOCK_IDS: VoxelBlockId[] = [
   'moss',
   'bamboo',
   'blossom_leaves',
+  'gold',
+  'gold_ore',
+  'gold_panel',
+  'gold_glass',
+  'crystal_growth',
 ];
 
 export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
@@ -64,6 +69,11 @@ export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
   moss: { id: 'moss', numericId: 22, solid: true, walkable: true, grappleable: true, slippery: false },
   bamboo: { id: 'bamboo', numericId: 23, solid: true, walkable: false, grappleable: true, slippery: false },
   blossom_leaves: { id: 'blossom_leaves', numericId: 24, solid: true, walkable: false, grappleable: true, slippery: false },
+  gold: { id: 'gold', numericId: 25, solid: true, walkable: true, grappleable: true, slippery: false },
+  gold_ore: { id: 'gold_ore', numericId: 26, solid: true, walkable: true, grappleable: true, slippery: false },
+  gold_panel: { id: 'gold_panel', numericId: 27, solid: true, walkable: true, grappleable: true, slippery: false },
+  gold_glass: { id: 'gold_glass', numericId: 28, solid: true, walkable: true, grappleable: true, slippery: false },
+  crystal_growth: { id: 'crystal_growth', numericId: 29, solid: true, walkable: false, grappleable: true, slippery: false },
 };
 
 export function getBlockDefinition(blockId: VoxelBlockId | number): VoxelBlockDefinition {

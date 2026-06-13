@@ -65,6 +65,11 @@ const TILE_MAP: Record<string, TerrainTextureTile> = {
   blossom_leaves: textureTile(4, 3),
   moss: textureTile(5, 3),
   lava: textureTile(0, 4),
+  gold: textureTile(1, 4),
+  gold_ore: textureTile(2, 4),
+  gold_panel: textureTile(3, 4),
+  gold_glass: textureTile(4, 4),
+  crystal_growth: textureTile(5, 4),
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -306,6 +311,11 @@ function paintTerrainTileSet(contexts: TerrainTexturePaintContexts, theme: Voxel
     [TILE_MAP.blossom_leaves, '#f5a7ca'],
     [TILE_MAP.moss, theme.id === 'sakura' ? '#6fae5f' : '#5f9a68'],
     [TILE_MAP.lava, '#c2410c'],
+    [TILE_MAP.gold, theme.id === 'golden' ? theme.ground.top : '#d8a928'],
+    [TILE_MAP.gold_ore, theme.id === 'golden' ? theme.ground.side : '#9f7632'],
+    [TILE_MAP.gold_panel, theme.id === 'golden' ? theme.structures.metal : '#6d5635'],
+    [TILE_MAP.gold_glass, theme.id === 'golden' ? theme.structures.glass : '#ffeaa3'],
+    [TILE_MAP.crystal_growth, theme.id === 'golden' ? theme.structures.accent : '#fff36b'],
   ]);
 
   for (const [tile, color] of colorByTile) {
@@ -329,6 +339,9 @@ function paintTerrainTileSet(contexts: TerrainTexturePaintContexts, theme: Voxel
     [TILE_MAP.spawn_pad_blue, '#47ddff'],
     [TILE_MAP.flag_pad, '#f7f7ff'],
     [TILE_MAP.lava, '#ff7b1f'],
+    [TILE_MAP.gold_panel, '#ffe15a'],
+    [TILE_MAP.gold_glass, '#fff4a8'],
+    [TILE_MAP.crystal_growth, '#fff36b'],
   ];
 
   for (const [tile, glow] of glowTiles) {

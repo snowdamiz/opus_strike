@@ -32,6 +32,7 @@ export interface CompletedMatchPersistenceInput {
   lobbyId: string | null;
   matchMode: MatchMode;
   mapSeed: number;
+  mapThemeId?: string | null;
   rankedEligible?: boolean;
   startedAt: Date;
   endedAt: Date;
@@ -229,6 +230,7 @@ export async function persistCompletedMatch(
           lobbyId: input.lobbyId,
           matchMode: input.matchMode,
           mapSeed: input.mapSeed,
+          mapThemeId: input.mapThemeId || 'standard',
           rankedEligible,
           startedAt: input.startedAt,
           endedAt: input.endedAt,

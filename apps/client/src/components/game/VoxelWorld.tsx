@@ -1,9 +1,11 @@
 import { VoxelMap } from './procedural';
+import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import type { WorldPerformanceBudget } from './visualQuality';
 
 interface VoxelWorldProps {
   seed?: number;
+  themeId?: VoxelMapTheme['id'] | null;
   enablePhysics?: boolean;
   shadowsEnabled: boolean;
   dressingShadows: boolean;
@@ -17,6 +19,7 @@ interface VoxelWorldProps {
 
 export function VoxelWorld({
   seed,
+  themeId,
   enablePhysics = true,
   shadowsEnabled,
   dressingShadows,
@@ -31,6 +34,7 @@ export function VoxelWorld({
     <group>
       <VoxelMap
         seed={seed}
+        themeId={themeId}
         enablePhysics={enablePhysics}
         shadowsEnabled={shadowsEnabled}
         dressingShadows={dressingShadows}

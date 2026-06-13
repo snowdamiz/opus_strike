@@ -344,9 +344,6 @@ function mapAuthorityEvent(event: AntiCheatRoomAuthorityEvent): Pick<AntiCheatSi
   if (event.type === 'ability_reject') {
     return { eventType: 'ability.reject', category: 'ability', severity: event.reason?.includes('disabled') ? 'high' : 'medium', confidence: 0.9 };
   }
-  if (event.type === 'ignored_projectile_impact') {
-    return { eventType: 'combat.ignored_projectile_impact', category: 'combat', severity: 'medium', confidence: 0.9 };
-  }
   if (event.type.startsWith('auth_') || event.type.includes('ticket')) {
     return { eventType: `auth.${event.type}`, category: 'auth', severity: 'high', confidence: 0.95 };
   }

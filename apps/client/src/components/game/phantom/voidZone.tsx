@@ -265,6 +265,68 @@ export function prewarmVoidZoneResources(): void {
   getAccretionMaterial();
 }
 
+export function appendVoidZoneGpuPrewarmObjects(target: THREE.Object3D): void {
+  prewarmVoidZoneResources();
+
+  const group = new THREE.Group();
+  group.name = 'gpu-prewarm-void-zone';
+  group.position.set(1.4, 0, -4.8);
+  group.scale.setScalar(0.28);
+
+  group.add(new THREE.Mesh(VOID_ZONE_VORTEX_GEOMETRY, getVortexMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_EVENT_HORIZON_GEOMETRY, getEventHorizonMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_RING_INNER_GEOMETRY, getAccretionMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_RING_MIDDLE_GEOMETRY, getAccretionMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_RING_OUTER_GEOMETRY, getAccretionMaterial()));
+  group.add(new THREE.Mesh(VOID_ZONE_BOUNDARY_RING_GEOMETRY, getAccretionMaterial()));
+
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    0, 0, 0,
+    0.18, 0.02, 0.16,
+    -0.14, 0.04, -0.2,
+  ]), 3));
+  particleGeometry.setAttribute('size', new THREE.BufferAttribute(new Float32Array([0.16, 0.11, 0.14]), 1));
+  particleGeometry.setAttribute('speed', new THREE.BufferAttribute(new Float32Array([0.45, 0.7, 0.9]), 1));
+  particleGeometry.setAttribute('angle', new THREE.BufferAttribute(new Float32Array([0, 2.1, 4.2]), 1));
+  particleGeometry.setAttribute('radius', new THREE.BufferAttribute(new Float32Array([0.2, 0.48, 0.72]), 1));
+  group.add(new THREE.Points(particleGeometry, new THREE.PointsMaterial({
+    color: 0xc084fc,
+    size: 0.12,
+    transparent: true,
+    opacity: 0.8,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+    toneMapped: false,
+  })));
+
+  const debrisGeometry = new THREE.BufferGeometry();
+  debrisGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    0.12, 0, 0.08,
+    -0.08, 0.02, -0.1,
+    0.02, 0.04, -0.18,
+  ]), 3));
+  debrisGeometry.setAttribute('velocity', new THREE.BufferAttribute(new Float32Array([
+    0.08, 0.12, 0.04,
+    -0.05, 0.1, -0.08,
+    0.03, 0.14, -0.04,
+  ]), 3));
+  debrisGeometry.setAttribute('size', new THREE.BufferAttribute(new Float32Array([0.1, 0.12, 0.09]), 1));
+  group.add(new THREE.Points(debrisGeometry, new THREE.PointsMaterial({
+    color: 0x7c3aed,
+    size: 0.11,
+    transparent: true,
+    opacity: 0.72,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+    toneMapped: false,
+  })));
+
+  target.add(group);
+}
+
 const PARTICLE_COUNT = 40;
 const DEBRIS_COUNT = 12;
 const VOID_ZONE_DAMAGE = PHANTOM_VOID_ZONE_DAMAGE;
