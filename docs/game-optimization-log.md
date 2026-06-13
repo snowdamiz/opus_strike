@@ -56,7 +56,7 @@ What should the next optimization pass investigate?
 - The authoritative server tick rate is 20 Hz.
 - Client movement simulation produces 60 Hz movement substeps.
 - The server movement drain processes 3 movement substeps per 20 Hz tick.
-- The server movement command rate limit is 35 movement packets per second.
+- The server movement command rate limit is 90 movement commands per second.
 - Tick rate was intentionally not raised during this pass.
 - Browser testing is left to the user per repo instructions.
 
@@ -126,10 +126,9 @@ movement simulation.
   `VITE_ANTICHEAT_MOVEMENT_TRACE_RECORDER`,
   `VITE_ANTICHEAT_MOVEMENT_TRACE_SAMPLE_RATE`, and
   `VITE_ANTICHEAT_MOVEMENT_TRACE_MAX_FRAMES`.
-- Raising server tick rate was rejected for this pass. At 60 Hz, the client flush age
-  would likely push movement packets toward 60 packets per second, above the existing
-  35 packets per second server movement packet limit, causing drops unless several
-  related limits and cadence rules changed together.
+- Raising server tick rate was rejected for this pass. A 60 Hz server tick change would
+  still require coordinated cadence updates so client flush age, max packet size, server
+  drain target, and movement command rate limits change together.
 
 ### Changes
 
@@ -216,8 +215,8 @@ Inferred:
   - authority acks applied per frame
   - position and velocity error samples
   - server event loop delay percentiles
-- Add a benchmark that includes custom message accounting and send tracking, because
-  the existing room-load benchmark does not cover that path.
+- Completed in Pass 002: add a benchmark that includes custom message accounting and
+  send tracking.
 - Investigate whole-store client subscriptions that may rerender UI on unrelated
   network state changes.
 - Confirm client development anti-cheat movement tracing settings for the stutter
@@ -226,4 +225,436 @@ Inferred:
 - Audit server movement shadow simulation wiring. Shadow mode was configured for the
   session, but this pass did not find a live call site for the recorder.
 - Revisit tick rate only as a coordinated network-cadence change. Raising tick rate
-  alone risks crossing movement packet rate limits.
+  alone risks crossing movement command rate limits.
+
+## Pass 002 - Authority Drain Diagnostics And Stream Benchmark
+
+Date: June 13, 2026
+
+Status: Implemented and verified by automated checks. In-game feel validation is still
+needed in a local server-backed custom match.
+
+### Problem
+
+Server-backed local gameplay can still feel stuttery compared with practice mode. After
+Pass 001, the remaining server/client-only path most likely to explain intermittent feel
+issues is self-authority traffic: the client receives, queues, drains, and applies
+server authority acknowledgements that practice mode bypasses.
+
+### Evidence
+
+- Server transform broadcasts intentionally skip the recipient's own transform during
+  normal transform streaming, so local-player stutter is less likely to be caused by
+  repeated self transform payloads.
+- `matchSnapshot` already has signature suppression and drift-sync throttling, so it is
+  not broadcasting unchanged snapshots every 20 Hz tick.
+- Normal `selfMovementAuthority` messages use the lightweight acknowledgement path in
+  the prediction controller. Full reconciliation remains reserved for barriers,
+  epoch changes, missing state, or correction paths.
+- The client self-authority queue still sorted every drained authority batch even
+  though normal websocket delivery should already be ordered.
+- The optimization log's old 35 movement-packet rate-limit baseline was stale. The live
+  code now uses `MOVEMENT_MAX_COMMANDS_PER_SECOND = 90`, and the client sends movement
+  commands in packets of up to 8 commands.
+
+New room-load benchmark result for the stream path that Pass 001 called out as missing:
+
+| Benchmark | Average | P99 |
+| --- | ---: | ---: |
+| Custom message tracking, 8-client stream mix | 0.011 ms | 0.061 ms |
+
+### Changes
+
+- Removed the unconditional per-frame sort from the client self-authority drain:
+  - Authority messages now stay in arrival order for the normal ordered case.
+  - The queue tracks whether an out-of-order authority was enqueued and sorts only then.
+  - The old unconditional sort behavior was removed rather than kept as a legacy path.
+- Expanded dev movement diagnostics exposed at `window.__voxelMovementDiagnostics`:
+  - pending self-authority messages before each drain
+  - authority drain duration samples
+  - number of authority drain frames
+  - stale/skipped authority messages drained without application
+- Added a room-load benchmark case that exercises tracked custom-message accounting for
+  a mixed server stream: self authority, player transforms, vitals, interest, pings, and
+  match snapshots.
+- Corrected the log baseline from the stale 35 movement-packet limit to the current
+  90 movement-command-per-second limit.
+
+### Verification
+
+Automated checks run:
+
+```bash
+pnpm --filter @voxel-strike/client typecheck
+pnpm --filter @voxel-strike/server typecheck
+pnpm --filter @voxel-strike/server bench:room-load
+pnpm --filter @voxel-strike/server test:message-metrics
+git diff --check
+```
+
+Results:
+
+- Client TypeScript check passed.
+- Server TypeScript check passed.
+- Room-load benchmark passed and now includes
+  `custom_message_tracking_8_clients_stream_mix`.
+- Message metrics test passed.
+- Whitespace diff check passed.
+
+Benchmark snapshot:
+
+| Benchmark | Average | P50 | P95 | P99 |
+| --- | ---: | ---: | ---: | ---: |
+| Movement queue, 8 players burst | 0.157 ms | 0.122 ms | 0.287 ms | 0.676 ms |
+| Shared movement, 8 players | 0.205 ms | 0.192 ms | 0.438 ms | 0.565 ms |
+| Spatial rebuild and queries | 0.014 ms | 0.011 ms | 0.020 ms | 0.105 ms |
+| Bot AI, 8 bots tactics/path/abilities | 0.242 ms | 0.114 ms | 0.494 ms | 1.492 ms |
+| Anti-cheat priority queue noise | 0.249 ms | 0.191 ms | 0.497 ms | 0.765 ms |
+| Custom message tracking, 8-client stream mix | 0.011 ms | 0.007 ms | 0.027 ms | 0.061 ms |
+
+### Result
+
+Confirmed:
+
+- Normal ordered self-authority drains no longer pay a sort.
+- The client can now report whether authority messages are piling up before a frame
+  drains them, how long the drain took, and how many were skipped as stale.
+- Custom-message accounting is now covered by the existing room-load benchmark command.
+- The isolated custom-message tracking benchmark is too cheap to explain visible
+  local stutter by itself after the Pass 001 accounting changes.
+
+Inferred:
+
+- If local server-mode stutter remains, it is more likely to correlate with authority
+  burst timing, correction/replay behavior, React-visible store updates, or event-loop
+  stalls outside custom-message byte accounting.
+
+### Follow-Ups
+
+- During a stuttery local custom match, capture
+  `window.__voxelMovementDiagnostics.snapshot()` and compare:
+  - `authorityPendingBeforeDrain`
+  - `authorityDrainDurationsMs`
+  - `authorityAcksAppliedPerFrame`
+  - `positionErrors`
+  - `velocityErrors`
+  - `visualCorrectionMagnitudes`
+- If authority queue depth spikes line up with stutter, inspect websocket receive
+  batching and server event-loop delay around those moments.
+- If authority depth stays flat but corrections spike, compare client/server movement
+  state for the same seed and hero ability path.
+- If movement diagnostics look clean, revisit React-visible store updates from vitals,
+  player interest, pings, or ability event messages.
+
+## Pass 003 - Movement Snapshot Triage And Frame Timing Diagnostics
+
+Date: June 13, 2026
+
+Status: Implemented and verified by automated checks. User feel validation is still
+needed in a local server-backed custom match.
+
+### Problem
+
+After Pass 002, the user captured a server-mode movement diagnostics snapshot while the
+same-seed custom match still felt stuttery. The snapshot needed to answer whether the
+remaining stutter correlated with authority backlog, correction/replay, transform churn,
+or another frame-level hitch that the current diagnostics could not see.
+
+### Evidence
+
+Captured diagnostic summary:
+
+| Signal | Value |
+| --- | ---: |
+| Commands generated | 2037 |
+| Commands sent | 2036 |
+| Movement packets sent | 655 |
+| Commands per packet average | 3.042 |
+| Commands per packet p99 | 4 |
+| Authority acks received | 668 |
+| Authority acks applied | 667 |
+| Authority pending before drain p99 | 1 |
+| Authority acks applied per frame p99 | 1 |
+| Authority drain duration p99 | 0.100 ms |
+| Authority ack interval average | 50.755 ms |
+| Authority ack interval p99 | 52.5 ms |
+| Position error p99 | ~0 m |
+| Velocity error p99 | 0 m/s |
+| Replayed commands p99 | 0 |
+| Visual correction magnitude p99 | 0 |
+| Transform messages received | 4 |
+| Self-only transform messages | 3 |
+| Remote transform snapshots added | 0 |
+| Local reactive updates | 8 vitals, 1 transform, 2 self-authority |
+
+Interpretation:
+
+- Authority traffic was steady at the expected 20 Hz cadence.
+- There was no authority backlog: each drain frame had exactly one pending authority
+  message in the retained samples.
+- There was no movement correction/replay pressure: position error was effectively
+  floating-point noise, velocity error was zero, and replayed commands were zero.
+- Transform churn was not present in the captured window: no remote transform snapshots
+  were added, and most transform messages were self-only bootstrap-style messages.
+- Existing movement diagnostics could not yet show whether the stutter corresponded to
+  raw render-frame delta spikes or movement-substep catchup frames.
+
+### Changes
+
+- Added frame-level movement diagnostics to `window.__voxelMovementDiagnostics`:
+  - `framesObserved`
+  - `frameDeltaMs`
+  - `movementFrameDeltaMs`
+  - `movementSubstepsPerFrame`
+  - `movementAccumulatorBeforeStepMs`
+  - `movementAccumulatorAfterStepMs`
+  - `movementHitchFrames`
+  - `movementCatchupFrames`
+- Recorded those samples from the local movement loop after movement substeps are
+  generated and before movement packets are flushed.
+
+### Verification
+
+Automated checks run:
+
+```bash
+pnpm --filter @voxel-strike/client typecheck
+git diff --check
+```
+
+Results:
+
+- Client TypeScript check passed.
+- Whitespace diff check passed.
+
+### Result
+
+Confirmed from the captured snapshot:
+
+- Self-authority backlog and correction/replay are unlikely to be the source of the
+  reported local server-mode stutter.
+- The previous custom-message accounting benchmark and this snapshot together point away
+  from message byte accounting and normal authority application as primary causes.
+
+Inferred:
+
+- If stutter remains, the next captured snapshot should focus on whether server mode
+  introduces raw frame hitches or movement catchup frames that practice mode does not.
+- If frame delta and catchup samples stay clean, the remaining likely areas are
+  non-movement render work, ability/effect frame loops that are active only in custom
+  matches, or server-mode UI/store subscribers outside the movement authority path.
+
+### Follow-Ups
+
+- Capture another `window.__voxelMovementDiagnostics.snapshot()` during a visible
+  stutter and compare:
+  - `frameDeltaMs`
+  - `movementSubstepsPerFrame`
+  - `movementAccumulatorBeforeStepMs`
+  - `movementCatchupFrames`
+  - `movementHitchFrames`
+- If frame hitches appear without movement catchup, inspect heavy render/effect loops
+  active in server mode.
+- If movement catchup appears without authority corrections, inspect main-thread stalls
+  before the local movement loop rather than prediction reconciliation.
+
+## Pass 004 - Local Visual Interpolation For Fixed-Step Jitter
+
+Date: June 13, 2026
+
+Status: Implemented and verified by automated checks. User feel validation is still
+needed in a local server-backed custom match.
+
+### Problem
+
+After Pass 003, a new movement diagnostics snapshot showed real frame pacing jitter
+during the stuttery server-backed custom match. Authority, transform, and correction
+paths still looked clean, but the local movement loop was sometimes doing uneven
+fixed-step presentation: long frames produced extra movement substeps and short frames
+produced zero movement substeps.
+
+### Evidence
+
+Captured diagnostic summary:
+
+| Signal | Value |
+| --- | ---: |
+| Frames observed | 1506 |
+| Frame delta average | 16.668 ms |
+| Frame delta p95 | 26.100 ms |
+| Frame delta p99 | 33.200 ms |
+| Frame delta max | 39.800 ms |
+| Movement hitch frames | 20 |
+| Movement substeps per frame average | 1.000 |
+| Movement substeps per frame p95 | 2 |
+| Movement substeps per frame max | 2 |
+| Movement accumulator before step p99 | 42.567 ms |
+| Movement accumulator after step p99 | 14.500 ms |
+| Commands per packet p99 | 4 |
+| Authority pending before drain p99 | 1 |
+| Authority drain duration p99 | 0.100 ms |
+| Position error p99 | 0 m |
+| Velocity error p99 | 0 m/s |
+| Replayed commands p99 | 0 |
+| Visual correction magnitude p99 | 0 |
+| Remote transform snapshots added | 0 |
+
+Interpretation:
+
+- The stutter sample contains actual render-frame jitter: several retained frame deltas
+  were in the 30-40 ms range.
+- Movement prediction was not correcting or replaying commands during the sample.
+- Authority still drained one ack at a time with near-zero drain cost.
+- The visible unevenness is consistent with fixed-step presentation jitter: a long
+  frame renders multiple simulation steps at once, then a short frame can render no new
+  movement step.
+
+### Changes
+
+- Added local visual interpolation between the previous and current fixed movement
+  step for the player camera/body visual path.
+- Kept authoritative prediction, command generation, ability checks, and server acks on
+  the existing fixed-step predicted state.
+- Preserved the existing visual correction offset from authority smoothing on top of
+  the interpolated base position.
+- Added snap guards so teleports, respawns, and large corrections do not smear across
+  frames.
+- Reset interpolation state whenever the movement command buffer is reset.
+- Changed `movementCatchupFrames` to count any frame that renders more than one local
+  movement substep, because the captured jitter pattern was 2-substep frames rather
+  than larger catchup bursts.
+
+### Verification
+
+Automated checks run:
+
+```bash
+pnpm --filter @voxel-strike/client typecheck
+git diff --check
+```
+
+Results:
+
+- Client TypeScript check passed.
+- Whitespace diff check passed.
+
+### Result
+
+Expected:
+
+- Local camera/body movement should look smoother when a server-backed match has
+  occasional 30-40 ms render frames followed by short frames.
+- The change should not affect movement authority, packet cadence, command sequence
+  generation, hit checks, or ability logic, because only the rendered local visual
+  position is interpolated.
+
+Unconfirmed:
+
+- In-game feel still needs user validation in the same local server-backed custom match.
+
+### Follow-Ups
+
+- Capture another `window.__voxelMovementDiagnostics.snapshot()` after this pass and
+  compare:
+  - `frameDeltaMs`
+  - `movementSubstepsPerFrame`
+  - `movementCatchupFrames`
+  - `movementHitchFrames`
+  - authority/correction fields to confirm they remain clean
+- If the frame hitches remain visible despite interpolation, inspect render/effect frame
+  loops active during custom matches, because the movement authority path has stayed
+  clean across multiple captures.
+
+## Pass 005 - Mitigation Check Against Practice Baseline
+
+Date: June 13, 2026
+
+Status: Analysis logged. No code changes in this pass.
+
+### Problem
+
+After Pass 004's local visual interpolation mitigation, user feel improved enough to
+continue comparison, but server-backed custom matches still did not feel as smooth as
+practice mode on the same map seed. The next agent needs the server-vs-practice
+baseline comparison so they do not re-investigate authority correction as the primary
+cause.
+
+### Evidence
+
+Two user-provided `window.__voxelMovementDiagnostics.snapshot()` captures were compared:
+
+- Server-backed custom match after Pass 004 mitigation.
+- Practice-mode baseline.
+
+| Signal | Server After Mitigation | Practice Baseline |
+| --- | ---: | ---: |
+| Frames observed | 2412 | 1503 |
+| Frame delta average | 16.666 ms | 16.667 ms |
+| Frame delta p95 | 26.700 ms | 17.600 ms |
+| Frame delta p99 | 33.000 ms | 17.600 ms |
+| Frame delta max | 38.500 ms | 17.600 ms |
+| Movement hitch frames | 39 (1.62%) | 7 (0.47%) |
+| Movement catchup frames | 385 (15.96%) | 16 (1.06%) |
+| Movement substeps per frame p99 | 2 | 1 |
+| Movement accumulator before step p99 | 35.533 ms | 25.667 ms |
+| Movement accumulator after step p99 | 13.400 ms | 9.000 ms |
+| Commands per packet p99 | 4 | 3 |
+| Commands per packet max | 7 | 3 |
+| Authority pending before drain p99 | 1 | n/a |
+| Authority drain duration p99 | 0.100 ms | n/a |
+| Position error p99 | ~0 m | n/a |
+| Velocity error p99 | 0 m/s | n/a |
+| Replayed commands p99 | 0 | n/a |
+| Visual correction magnitude p99 | 0 | n/a |
+| Remote transform snapshots added | 0 | 0 |
+| Local reactive updates | 8 vitals, 1 transform, 2 self-authority | 0 |
+
+Interpretation:
+
+- The Pass 004 mitigation is still the correct kind of fix for fixed-step presentation
+  jitter: it smooths local camera/body visuals when movement substeps bunch or skip.
+- The diagnostics do not prove subjective smoothness directly, but they explain why the
+  user can still feel a difference: server mode continues to have significantly worse
+  frame pacing than practice mode.
+- Authority correction remains clean after the mitigation. Server mode still has no
+  meaningful position error, velocity error, replayed commands, or visual correction
+  magnitude.
+- The remaining gap is frame pacing and movement catchup frequency, not prediction
+  reconciliation.
+- Practice mode's retained frame sample stayed tightly around one 60 Hz frame
+  (`p99 = 17.6 ms`, max `17.6 ms`). Server mode retained several 30-40 ms frames.
+
+### Changes
+
+- Documentation only.
+- No source changes were made in this pass.
+
+### Verification
+
+Not run for this documentation-only update beyond the comparison script used to compute
+the table above.
+
+### Result
+
+Confirmed:
+
+- Server mode after the mitigation still has more frame hitches and movement catchup
+  than practice mode.
+- The mitigation does not remove the underlying frame hitch root cause.
+- The next root-cause pass should focus on server-mode-only client work that can create
+  30-40 ms frames.
+
+### Follow-Ups
+
+- Add or use a frame-work profiler that can separate per-frame time spent in:
+  - movement/player controller
+  - remote/player render loops
+  - ability/effect managers
+  - UI/store subscribers
+  - network message handlers
+- Prioritize server-mode-only systems because practice mode has stable frame pacing on
+  the same map seed.
+- Keep treating authority correction as ruled out unless a future snapshot shows nonzero
+  position error, replayed commands, or visual correction magnitude.
+- If adding more diagnostics, capture per-frame long-task labels or per-system timing
+  around frames where `frameDeltaMs >= 30`.

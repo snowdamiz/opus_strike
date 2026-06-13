@@ -109,16 +109,19 @@ import {
   getCurrentPredictedState,
   getCurrentPredictedVisualPosition,
   getLocalMovementCollisionRevision,
+  getPendingSelfMovementAuthorityCount,
   movementStateFromPlayer,
   predictLocalBlazeRocketJump,
   predictLocalPhantomBlink,
   stepLocalMovementPrediction,
 } from '../../movement/localPrediction';
 import {
+  recordAuthorityDrainFrame,
   recordAuthorityFrameApplied,
   recordLocalReactiveUpdate,
   recordMovementCommandGenerated,
   recordMovementCommandsSent,
+  recordMovementFrameTiming,
 } from '../../movement/networkDiagnostics';
 
 // Component imports for targeting indicators
@@ -141,6 +144,7 @@ const TERRAIN_STEP_VISUAL_MAX_RISE_SPEED = 3.2;
 const TERRAIN_STEP_VISUAL_MAX_DROP_SPEED = 6.5;
 const MOVEMENT_COMMAND_TARGET_PACKET_SIZE = 3;
 const MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS = 1000 / TICK_RATE;
+const LOCAL_VISUAL_INTERPOLATION_RESET_DISTANCE_SQ = 1.8 * 1.8;
 const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
   isGrounded: true,
   isSprinting: false,
@@ -155,6 +159,85 @@ const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
   jetpackFuel: 0,
   isGliding: false,
 };
+
+interface MutableVec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface LocalVisualInterpolationState {
+  previous: MutableVec3;
+  current: MutableVec3;
+  initialized: boolean;
+}
+
+function createLocalVisualInterpolationState(): LocalVisualInterpolationState {
+  return {
+    previous: { x: 0, y: 0, z: 0 },
+    current: { x: 0, y: 0, z: 0 },
+    initialized: false,
+  };
+}
+
+function copyMutableVec3(target: MutableVec3, source: MutableVec3): void {
+  target.x = source.x;
+  target.y = source.y;
+  target.z = source.z;
+}
+
+function distanceSq(a: MutableVec3, b: MutableVec3): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  const dz = a.z - b.z;
+  return dx * dx + dy * dy + dz * dz;
+}
+
+function resetLocalVisualInterpolation(
+  interpolation: LocalVisualInterpolationState,
+  position: MutableVec3
+): void {
+  copyMutableVec3(interpolation.previous, position);
+  copyMutableVec3(interpolation.current, position);
+  interpolation.initialized = true;
+}
+
+function recordLocalVisualFixedStep(
+  interpolation: LocalVisualInterpolationState,
+  previousPosition: MutableVec3,
+  currentPosition: MutableVec3
+): void {
+  if (
+    !interpolation.initialized ||
+    distanceSq(interpolation.current, previousPosition) > LOCAL_VISUAL_INTERPOLATION_RESET_DISTANCE_SQ
+  ) {
+    resetLocalVisualInterpolation(interpolation, previousPosition);
+  }
+
+  copyMutableVec3(interpolation.previous, previousPosition);
+  copyMutableVec3(interpolation.current, currentPosition);
+  interpolation.initialized = true;
+}
+
+function sampleLocalVisualInterpolatedPosition(
+  interpolation: LocalVisualInterpolationState,
+  fallbackPosition: MutableVec3,
+  accumulatorSeconds: number,
+  target: MutableVec3
+): MutableVec3 {
+  if (
+    !interpolation.initialized ||
+    distanceSq(interpolation.current, fallbackPosition) > LOCAL_VISUAL_INTERPOLATION_RESET_DISTANCE_SQ
+  ) {
+    resetLocalVisualInterpolation(interpolation, fallbackPosition);
+  }
+
+  const alpha = Math.max(0, Math.min(1, accumulatorSeconds / MOVEMENT_SUBSTEP_SECONDS));
+  target.x = interpolation.previous.x + (interpolation.current.x - interpolation.previous.x) * alpha;
+  target.y = interpolation.previous.y + (interpolation.current.y - interpolation.previous.y) * alpha;
+  target.z = interpolation.previous.z + (interpolation.current.z - interpolation.previous.z) * alpha;
+  return target;
+}
 
 function frameRateBand(deltaSeconds: number): string {
   if (deltaSeconds <= 1 / 90) return '90fps+';
@@ -482,6 +565,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const traceAbilityIdsRef = useRef<string[]>([]);
   const movementCommandAccumulatorRef = useRef(0);
   const pendingMovementCommandsRef = useRef<MovementCommand[]>([]);
+  const localVisualInterpolationRef = useRef(createLocalVisualInterpolationState());
+  const localVisualInterpolatedPositionRef = useRef({ x: 0, y: 0, z: 0 });
   const latestAbilityCastHintsRef = useRef<AbilityCastOriginHint[]>([]);
   const lastCrouchHeldRef = useRef(false);
   const pendingCrouchPressedRef = useRef(false);
@@ -510,6 +595,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     lastCrouchHeldRef.current = false;
     pendingCrouchPressedRef.current = false;
     wasSlidingLastFrameRef.current = false;
+    localVisualInterpolationRef.current.initialized = false;
   }, []);
 
   const lockHeroActions = useCallback((heroId: HeroId, durationMs: number, timestampMs = Date.now()) => {
@@ -837,7 +923,16 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       return;
     }
 
+    const pendingAuthoritiesBeforeDrain = getPendingSelfMovementAuthorityCount();
+    const authorityDrainStartedAt = pendingAuthoritiesBeforeDrain > 0 ? performance.now() : 0;
     const appliedAuthorities = drainSelfMovementAuthorities(localPlayer, frameNowMs);
+    if (pendingAuthoritiesBeforeDrain > 0) {
+      recordAuthorityDrainFrame({
+        pendingBeforeDrain: pendingAuthoritiesBeforeDrain,
+        appliedCount: appliedAuthorities.length,
+        durationMs: Math.max(0, performance.now() - authorityDrainStartedAt),
+      });
+    }
     if (appliedAuthorities.length > 0) {
       recordAuthorityFrameApplied(appliedAuthorities.map((application) => application.result));
 
@@ -1559,12 +1654,14 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       movementCommandAccumulatorRef.current + dt,
       MOVEMENT_SUBSTEP_SECONDS * MOVEMENT_MAX_PACKET_COMMANDS
     );
+    const movementAccumulatorBeforeStep = movementCommandAccumulatorRef.current;
 
     let substepsThisFrame = 0;
     while (
       movementCommandAccumulatorRef.current >= MOVEMENT_SUBSTEP_SECONDS &&
       substepsThisFrame < MOVEMENT_MAX_PACKET_COMMANDS
     ) {
+      const previousStepPosition = predictedState.position;
       const command = createLocalMovementCommand(commandInput, {
         lookYaw: cameraControl.refs.yaw.current,
         lookPitch: cameraControl.refs.pitch.current,
@@ -1577,17 +1674,42 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       pendingUnstuckInputRef.current = false;
       pendingCrouchPressedRef.current = false;
       pendingMovementCommandsRef.current.push(command);
-      predictedState = stepLocalMovementPrediction(localPlayer, command);
+      const nextPredictedState = stepLocalMovementPrediction(localPlayer, command);
+      recordLocalVisualFixedStep(
+        localVisualInterpolationRef.current,
+        previousStepPosition,
+        nextPredictedState.position
+      );
+      predictedState = nextPredictedState;
       movementCommandAccumulatorRef.current -= MOVEMENT_SUBSTEP_SECONDS;
       tickRef.current = command.seq;
       substepsThisFrame++;
     }
+    recordMovementFrameTiming({
+      frameDeltaSeconds: delta,
+      movementDeltaSeconds: dt,
+      substepsThisFrame,
+      accumulatorBeforeStepSeconds: movementAccumulatorBeforeStep,
+      accumulatorAfterStepSeconds: movementCommandAccumulatorRef.current,
+      catchup: substepsThisFrame > 1,
+    });
     flushMovementCommands(now);
     pendingReloadInputRef.current = false;
 
     position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
     velocity.set(predictedState.velocity.x, predictedState.velocity.y, predictedState.velocity.z);
-    const visualPosition = getCurrentPredictedVisualPosition(predictedState.position, frameNowMs);
+    const predictedVisualPosition = getCurrentPredictedVisualPosition(predictedState.position, frameNowMs);
+    const interpolatedBasePosition = sampleLocalVisualInterpolatedPosition(
+      localVisualInterpolationRef.current,
+      predictedState.position,
+      movementCommandAccumulatorRef.current,
+      localVisualInterpolatedPositionRef.current
+    );
+    const visualPosition = {
+      x: interpolatedBasePosition.x + (predictedVisualPosition.x - predictedState.position.x),
+      y: interpolatedBasePosition.y + (predictedVisualPosition.y - predictedState.position.y),
+      z: interpolatedBasePosition.z + (predictedVisualPosition.z - predictedState.position.z),
+    };
     const smoothedVisualY = smoothTerrainVisualY(
       movement.refs.smoothedY.current,
       visualPosition.y,

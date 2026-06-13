@@ -9,6 +9,8 @@ import {
   type MovementCommand,
   type BotDifficulty,
   type HeroId,
+  type PackedPlayerTransform,
+  type SelfMovementAuthority,
   type Team,
   type VoxelMapManifest,
 } from '@voxel-strike/shared';
@@ -20,6 +22,7 @@ import {
 } from '@voxel-strike/physics';
 import { MovementCommandQueue } from '../rooms/MovementCommandQueue';
 import { PlayerSpatialIndex } from '../rooms/PlayerSpatialIndex';
+import { estimateCustomMessageBytes } from '../rooms/customMessageMetrics';
 import {
   buildBotBlackboard,
   buildTeamTactics,
@@ -428,12 +431,166 @@ function runAntiCheatQueueBenchmark(): Record<string, number | string> {
   return summarize('anti_cheat_priority_queue_noise', samples);
 }
 
+interface CustomMessageMetricAccumulator {
+  messages: number;
+  recipients: number;
+  bytes: number;
+}
+
+function trackCustomMessage(
+  metrics: Map<string, CustomMessageMetricAccumulator>,
+  type: string,
+  payload: unknown,
+  recipients: number
+): void {
+  const existing = metrics.get(type) ?? { messages: 0, recipients: 0, bytes: 0 };
+  existing.messages++;
+  existing.recipients += recipients;
+  existing.bytes += estimateCustomMessageBytes(type, payload) * Math.max(1, recipients);
+  metrics.set(type, existing);
+}
+
+function packedTransform(playerIndex: number, tick: number): PackedPlayerTransform {
+  return [
+    playerIndex + 1,
+    Math.round((Math.sin((tick + playerIndex) / 12) * 24 + playerIndex) * 100),
+    100,
+    Math.round((Math.cos((tick + playerIndex) / 13) * 24 - playerIndex) * 100),
+    Math.round(Math.sin(tick / 7) * 300),
+    0,
+    Math.round(Math.cos(tick / 9) * 300),
+    Math.round(Math.sin(tick / 20) * 10000),
+    0,
+    playerIndex % 3 === 0 ? 2 : 1,
+    0,
+    0,
+    playerIndex % 4 === 0 ? 100 : 0,
+  ];
+}
+
+function selfMovementAuthority(seq: number, tick: number): SelfMovementAuthority {
+  return {
+    serverTick: tick,
+    serverTime: tick * 50,
+    ackSeq: seq,
+    movementEpoch: 0,
+    position: {
+      x: Math.sin(tick / 12) * 18,
+      y: 1,
+      z: Math.cos(tick / 14) * 18,
+    },
+    velocity: {
+      x: Math.sin(tick / 6) * 4,
+      y: 0,
+      z: Math.cos(tick / 8) * 4,
+    },
+    lookYaw: Math.sin(tick / 20),
+    lookPitch: 0,
+    movement: createMovementState(),
+    collisionRevision: 1,
+    chronosAegisActive: tick % 11 === 0,
+    chronosAegisShieldRatio: tick % 11 === 0 ? 0.8 : 1,
+  };
+}
+
+function runCustomMessageTrackingBenchmark(): Record<string, number | string> {
+  const samples: number[] = [];
+  for (let iteration = 0; iteration < 700; iteration++) {
+    const metrics = new Map<string, CustomMessageMetricAccumulator>();
+    const startedAt = performance.now();
+    const tick = iteration;
+    const serverTime = tick * 50;
+
+    for (let recipient = 0; recipient < 8; recipient++) {
+      const visibleTransformCount = recipient < 4 ? 8 : 5;
+      trackCustomMessage(metrics, 'playerTransformsV2', {
+        version: 2,
+        tick,
+        serverTime,
+        streamEpoch: 1,
+        players: Array.from({ length: visibleTransformCount }, (_, playerIndex) => packedTransform(playerIndex, tick)),
+        hiddenPlayerIds: recipient < 4 ? [] : ['enemy-hidden-1', 'enemy-hidden-2'],
+      }, 1);
+
+      trackCustomMessage(metrics, 'selfMovementAuthority', selfMovementAuthority(tick * 3 + recipient, tick), 1);
+
+      if (iteration % 5 === 0) {
+        trackCustomMessage(metrics, 'playerVitals', {
+          tick,
+          serverTime,
+          players: Array.from({ length: 8 }, (_, playerIndex) => ({
+            id: `player-${playerIndex}`,
+            name: `Player ${playerIndex}`,
+            team: playerIndex < 4 ? 'red' : 'blue',
+            heroId: playerIndex % 2 === 0 ? 'phantom' : 'chronos',
+            state: 'alive',
+            health: 180 - playerIndex,
+            maxHealth: 225,
+            ultimateCharge: (iteration + playerIndex) % 100,
+            abilities: [
+              { abilityId: 'primary', cooldownUntil: 0, charges: 1, isActive: false },
+              { abilityId: 'utility', cooldownUntil: serverTime + 1200, charges: 2, isActive: playerIndex % 3 === 0 },
+            ],
+            hasFlag: playerIndex === 2,
+          })),
+          removedPlayerIds: [],
+        }, 1);
+      }
+
+      if (iteration % 10 === 0) {
+        trackCustomMessage(metrics, 'playerInterest', {
+          tick,
+          serverTime,
+          players: Array.from({ length: 8 }, (_, playerIndex) => ({
+            playerId: `player-${playerIndex}`,
+            state: playerIndex === recipient || playerIndex < 4 ? 'visible' : 'last_known',
+            reason: playerIndex < 4 ? 'team' : 'line_of_sight',
+            expiresAt: playerIndex < 4 ? undefined : serverTime + 600,
+            lastKnownPosition: playerIndex < 4
+              ? undefined
+              : { x: playerIndex * 4, y: 1, z: -playerIndex * 3 },
+          })),
+        }, 1);
+      }
+
+      if (iteration % 20 === 0) {
+        trackCustomMessage(metrics, 'playerPings', {
+          serverTime,
+          players: Array.from({ length: 8 }, (_, playerIndex) => ({
+            playerId: `player-${playerIndex}`,
+            pingMs: playerIndex === recipient || playerIndex < 4 ? 12 + playerIndex : null,
+          })),
+        }, 1);
+      }
+    }
+
+    if (iteration % 20 === 0) {
+      trackCustomMessage(metrics, 'matchSnapshot', {
+        tick,
+        serverTime,
+        phase: 'playing',
+        redScore: iteration % 3,
+        blueScore: (iteration + 1) % 3,
+        roundTimeRemaining: Math.max(0, 600 - iteration),
+        phaseEndTime: serverTime + 120000,
+        mapSeed: 123456,
+        mapThemeId: null,
+      }, 8);
+    }
+
+    samples.push(performance.now() - startedAt);
+  }
+
+  return summarize('custom_message_tracking_8_clients_stream_mix', samples);
+}
+
 const results = [
   runMovementQueueBenchmark(),
   runMovementSimulationBenchmark(),
   runSpatialBenchmark(),
   runBotAiBenchmark(),
   runAntiCheatQueueBenchmark(),
+  runCustomMessageTrackingBenchmark(),
 ];
 
 console.log(JSON.stringify({

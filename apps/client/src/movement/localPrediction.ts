@@ -47,6 +47,7 @@ let cachedTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null
 let cachedCollisionWorld: { mapId: string | null; revision: number; world: MovementCollisionWorld } | null = null;
 let latestServerCollisionRevision = 0;
 const pendingSelfMovementAuthorities: SelfMovementAuthority[] = [];
+let pendingSelfMovementAuthoritiesOutOfOrder = false;
 
 export interface AppliedSelfMovementAuthority {
   authority: SelfMovementAuthority;
@@ -71,6 +72,7 @@ export function resetLocalMovementPrediction(
   cachedCollisionWorld = null;
   latestServerCollisionRevision = 0;
   pendingSelfMovementAuthorities.length = 0;
+  pendingSelfMovementAuthoritiesOutOfOrder = false;
   if (state) {
     localMovementPrediction.initialize(state, movementEpoch, 0);
   } else {
@@ -399,6 +401,11 @@ function advanceNextCommandSeqPastAck(ackSeq: number): void {
 }
 
 export function enqueueSelfMovementAuthority(authority: SelfMovementAuthority): void {
+  const previousAuthority = pendingSelfMovementAuthorities[pendingSelfMovementAuthorities.length - 1];
+  if (previousAuthority && compareSelfAuthorityOrder(previousAuthority, authority) > 0) {
+    pendingSelfMovementAuthoritiesOutOfOrder = true;
+  }
+
   pendingSelfMovementAuthorities.push(authority);
   if (pendingSelfMovementAuthorities.length > MAX_PENDING_SELF_AUTHORITY_MESSAGES) {
     pendingSelfMovementAuthorities.splice(
@@ -406,6 +413,10 @@ export function enqueueSelfMovementAuthority(authority: SelfMovementAuthority): 
       pendingSelfMovementAuthorities.length - MAX_PENDING_SELF_AUTHORITY_MESSAGES
     );
   }
+}
+
+export function getPendingSelfMovementAuthorityCount(): number {
+  return pendingSelfMovementAuthorities.length;
 }
 
 function compareSelfAuthorityOrder(a: SelfMovementAuthority, b: SelfMovementAuthority): number {
@@ -423,7 +434,10 @@ export function drainSelfMovementAuthorities(player: Player, nowMs: number): App
   if (pendingSelfMovementAuthorities.length === 0) return [];
 
   const authorities = pendingSelfMovementAuthorities.splice(0);
-  authorities.sort(compareSelfAuthorityOrder);
+  if (pendingSelfMovementAuthoritiesOutOfOrder) {
+    authorities.sort(compareSelfAuthorityOrder);
+    pendingSelfMovementAuthoritiesOutOfOrder = false;
+  }
   const applied: AppliedSelfMovementAuthority[] = [];
 
   for (const authority of authorities) {

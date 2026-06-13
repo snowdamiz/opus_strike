@@ -9,9 +9,21 @@ export interface MovementNetworkDiagnosticsSnapshot {
   commandPacketsSent: number;
   commandsPerPacket: number[];
   pendingCommandsBeforeFlush: number[];
+  framesObserved: number;
+  frameDeltaMs: number[];
+  movementFrameDeltaMs: number[];
+  movementSubstepsPerFrame: number[];
+  movementAccumulatorBeforeStepMs: number[];
+  movementAccumulatorAfterStepMs: number[];
+  movementHitchFrames: number;
+  movementCatchupFrames: number;
   authorityAcksReceived: number;
   authorityAcksApplied: number;
+  authorityDrainFrames: number;
   authorityAcksAppliedPerFrame: number[];
+  authorityPendingBeforeDrain: number[];
+  authorityDrainDurationsMs: number[];
+  authorityAcksSkippedDuringDrain: number;
   authorityAckIntervalsMs: number[];
   latestAckSeq: number;
   positionErrors: number[];
@@ -33,9 +45,21 @@ const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   commandPacketsSent: 0,
   commandsPerPacket: [],
   pendingCommandsBeforeFlush: [],
+  framesObserved: 0,
+  frameDeltaMs: [],
+  movementFrameDeltaMs: [],
+  movementSubstepsPerFrame: [],
+  movementAccumulatorBeforeStepMs: [],
+  movementAccumulatorAfterStepMs: [],
+  movementHitchFrames: 0,
+  movementCatchupFrames: 0,
   authorityAcksReceived: 0,
   authorityAcksApplied: 0,
+  authorityDrainFrames: 0,
   authorityAcksAppliedPerFrame: [],
+  authorityPendingBeforeDrain: [],
+  authorityDrainDurationsMs: [],
+  authorityAcksSkippedDuringDrain: 0,
   authorityAckIntervalsMs: [],
   latestAckSeq: 0,
   positionErrors: [],
@@ -72,7 +96,14 @@ function cloneDiagnostics(): MovementNetworkDiagnosticsSnapshot {
     ...diagnostics,
     commandsPerPacket: [...diagnostics.commandsPerPacket],
     pendingCommandsBeforeFlush: [...diagnostics.pendingCommandsBeforeFlush],
+    frameDeltaMs: [...diagnostics.frameDeltaMs],
+    movementFrameDeltaMs: [...diagnostics.movementFrameDeltaMs],
+    movementSubstepsPerFrame: [...diagnostics.movementSubstepsPerFrame],
+    movementAccumulatorBeforeStepMs: [...diagnostics.movementAccumulatorBeforeStepMs],
+    movementAccumulatorAfterStepMs: [...diagnostics.movementAccumulatorAfterStepMs],
     authorityAcksAppliedPerFrame: [...diagnostics.authorityAcksAppliedPerFrame],
+    authorityPendingBeforeDrain: [...diagnostics.authorityPendingBeforeDrain],
+    authorityDrainDurationsMs: [...diagnostics.authorityDrainDurationsMs],
     authorityAckIntervalsMs: [...diagnostics.authorityAckIntervalsMs],
     positionErrors: [...diagnostics.positionErrors],
     velocityErrors: [...diagnostics.velocityErrors],
@@ -89,9 +120,21 @@ export function resetMovementNetworkDiagnostics(): void {
   diagnostics.commandPacketsSent = 0;
   diagnostics.commandsPerPacket.length = 0;
   diagnostics.pendingCommandsBeforeFlush.length = 0;
+  diagnostics.framesObserved = 0;
+  diagnostics.frameDeltaMs.length = 0;
+  diagnostics.movementFrameDeltaMs.length = 0;
+  diagnostics.movementSubstepsPerFrame.length = 0;
+  diagnostics.movementAccumulatorBeforeStepMs.length = 0;
+  diagnostics.movementAccumulatorAfterStepMs.length = 0;
+  diagnostics.movementHitchFrames = 0;
+  diagnostics.movementCatchupFrames = 0;
   diagnostics.authorityAcksReceived = 0;
   diagnostics.authorityAcksApplied = 0;
+  diagnostics.authorityDrainFrames = 0;
   diagnostics.authorityAcksAppliedPerFrame.length = 0;
+  diagnostics.authorityPendingBeforeDrain.length = 0;
+  diagnostics.authorityDrainDurationsMs.length = 0;
+  diagnostics.authorityAcksSkippedDuringDrain = 0;
   diagnostics.authorityAckIntervalsMs.length = 0;
   diagnostics.latestAckSeq = 0;
   diagnostics.positionErrors.length = 0;
@@ -124,6 +167,29 @@ export function recordMovementCommandsSent(commandCount: number, pendingBeforeFl
   pushSample(diagnostics.pendingCommandsBeforeFlush, pendingBeforeFlush);
 }
 
+export function recordMovementFrameTiming(input: {
+  frameDeltaSeconds: number;
+  movementDeltaSeconds: number;
+  substepsThisFrame: number;
+  accumulatorBeforeStepSeconds: number;
+  accumulatorAfterStepSeconds: number;
+  catchup: boolean;
+}): void {
+  const frameDeltaMs = Math.max(0, input.frameDeltaSeconds * 1000);
+  diagnostics.framesObserved++;
+  pushSample(diagnostics.frameDeltaMs, frameDeltaMs);
+  pushSample(diagnostics.movementFrameDeltaMs, Math.max(0, input.movementDeltaSeconds * 1000));
+  pushSample(diagnostics.movementSubstepsPerFrame, input.substepsThisFrame);
+  pushSample(diagnostics.movementAccumulatorBeforeStepMs, Math.max(0, input.accumulatorBeforeStepSeconds * 1000));
+  pushSample(diagnostics.movementAccumulatorAfterStepMs, Math.max(0, input.accumulatorAfterStepSeconds * 1000));
+  if (frameDeltaMs >= 1000 / 30) {
+    diagnostics.movementHitchFrames++;
+  }
+  if (input.catchup) {
+    diagnostics.movementCatchupFrames++;
+  }
+}
+
 export function recordAuthorityAckReceived(authority: SelfMovementAuthority): void {
   const receivedAtMs = nowMs();
   diagnostics.authorityAcksReceived++;
@@ -132,6 +198,17 @@ export function recordAuthorityAckReceived(authority: SelfMovementAuthority): vo
     pushSample(diagnostics.authorityAckIntervalsMs, receivedAtMs - lastAuthorityAckReceivedAtMs);
   }
   lastAuthorityAckReceivedAtMs = receivedAtMs;
+}
+
+export function recordAuthorityDrainFrame(input: {
+  pendingBeforeDrain: number;
+  appliedCount: number;
+  durationMs: number;
+}): void {
+  diagnostics.authorityDrainFrames++;
+  pushSample(diagnostics.authorityPendingBeforeDrain, input.pendingBeforeDrain);
+  pushSample(diagnostics.authorityDrainDurationsMs, input.durationMs);
+  diagnostics.authorityAcksSkippedDuringDrain += Math.max(0, input.pendingBeforeDrain - input.appliedCount);
 }
 
 export function recordAuthorityFrameApplied(metrics: PredictionCorrectionMetrics[]): void {
