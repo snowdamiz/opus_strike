@@ -37,6 +37,10 @@ export interface EnvironmentQualityConfig {
   maxParticles: number;
 }
 
+export interface MaterialQualityConfig {
+  terrainTextureQuality: GraphicsFeatureQuality;
+}
+
 export interface WorldPerformanceBudget {
   frameTargetFps: number;
   cpuFrameP95Ms: number;
@@ -84,6 +88,7 @@ export interface VisualQualityConfig {
   shadows: ShadowQualityConfig;
   reflections: ReflectionQualityConfig;
   environment: EnvironmentQualityConfig;
+  materials: MaterialQualityConfig;
   effects: EffectQualityConfig;
   remotePlayers: RemotePlayerQualityConfig;
   ragdolls: RagdollQualityConfig;
@@ -468,6 +473,7 @@ export function getVisualQualityConfig(settings: Pick<
   | 'shadowQuality'
   | 'reflectionQuality'
   | 'environmentQuality'
+  | 'materialQuality'
   | 'graphicsPreset'
 >): VisualQualityConfig {
   const renderConfig = RESOLUTION_SCALE_CONFIG[settings.resolutionScale];
@@ -494,6 +500,9 @@ export function getVisualQualityConfig(settings: Pick<
     shadows: SHADOW_QUALITY_CONFIG[settings.shadowQuality],
     reflections: REFLECTION_QUALITY_CONFIG[settings.reflectionQuality],
     environment: ENVIRONMENT_QUALITY_CONFIG[settings.environmentQuality],
+    materials: {
+      terrainTextureQuality: settings.materialQuality,
+    },
     effects: EFFECT_QUALITY_CONFIG[profile],
     remotePlayers: REMOTE_PLAYER_QUALITY_CONFIG[profile],
     ragdolls: {

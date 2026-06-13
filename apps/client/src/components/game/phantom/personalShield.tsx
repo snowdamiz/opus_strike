@@ -9,6 +9,7 @@ import { resolveAbilitySocketOrigin } from '../../../model-system/abilitySocketR
 import { PHANTOM_COLORS, SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
+import { triggerPhantomShieldCastPose } from '../../../viewmodel/phantomPrimaryPose';
 
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
 const PHANTOM_SHIELD_LOOP_ID_PREFIX = 'phantom-shield';
@@ -136,6 +137,10 @@ export function triggerPhantomShieldCastEffect(options: TriggerPhantomShieldCast
   const now = Date.now();
   const frameNow = getFrameClock().nowMs;
   const slot = claimShieldCastEffectSlot();
+
+  if (options.isLocalPlayer) {
+    triggerPhantomShieldCastPose(now);
+  }
 
   slot.active = true;
   slot.endFrameTime = frameNow + PHANTOM_SHIELD_CAST_DURATION_MS;

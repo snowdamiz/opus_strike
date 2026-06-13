@@ -81,6 +81,7 @@ interface GrappleTrapProps {
 }
 
 export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
+  const removeGrappleTrap = useGameStore(state => state.removeGrappleTrap);
   const groupRef = useRef<THREE.Group>(null);
   const deviceRef = useRef<THREE.Group>(null);
   const circleRef = useRef<THREE.Mesh>(null);
@@ -101,19 +102,36 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
   const landedPosRef = useRef({ x: trap.position.x, y: trap.position.y, z: trap.position.z });
   const landedTimeRef = useRef<number | null>(null);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - trap.startTime));
+  const hasRemovedRef = useRef(false);
   
   const lastDamageTimeRef = useRef<Map<string, number>>(new Map());
   
+  const removeSelf = () => {
+    if (hasRemovedRef.current) return;
+    hasRemovedRef.current = true;
+    removeGrappleTrap(trap.id);
+  };
+
   useFrame((state, delta) => {
+    const frameNow = getFrameClock().nowMs;
+    const totalElapsed = (frameNow - startFrameTimeRef.current) / 1000;
+
+    if (landedTimeRef.current === null && totalElapsed >= trap.duration + 5) {
+      removeSelf();
+      return;
+    }
+
     if (!groupRef.current || !deviceRef.current) return;
     
     const time = state.clock.elapsedTime;
-    const frameNow = getFrameClock().nowMs;
     
     // Check if trap has expired
     if (landedTimeRef.current !== null) {
       const landedElapsed = (frameNow - landedTimeRef.current) / 1000;
-      if (landedElapsed >= trap.duration) return;
+      if (landedElapsed >= trap.duration) {
+        removeSelf();
+        return;
+      }
     }
     
     // === FLYING PHASE (grenade arc) ===
@@ -275,10 +293,15 @@ interface GrappleTrapTargetingProps {
 
 const TRAP_MAX_RANGE = 30;
 const TRAP_MIN_RANGE = 3;
+const TRAP_TARGET_PHYSICS_SAMPLE_INTERVAL_MS = 34;
 
 export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpdate }: GrappleTrapTargetingProps) => {
   const indicatorRef = useRef<THREE.Group>(null);
   const isValidRef = useRef(false);
+  const cachedTargetRef = useRef(new THREE.Vector3());
+  const cachedTargetValidRef = useRef(false);
+  const hasCachedTargetRef = useRef(false);
+  const lastPhysicsSampleAtRef = useRef(Number.NEGATIVE_INFINITY);
   const reportedTargetRef = useRef(new THREE.Vector3());
   const lastReportedTargetRef = useRef(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
   const lastReportedValidRef = useRef(false);
@@ -295,6 +318,9 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
         wasActiveRef.current = false;
         lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
         lastReportedValidRef.current = false;
+        hasCachedTargetRef.current = false;
+        cachedTargetValidRef.current = false;
+        lastPhysicsSampleAtRef.current = Number.NEGATIVE_INFINITY;
         lastReportAtRef.current = now;
         onTargetUpdate(null, false);
       }
@@ -307,102 +333,113 @@ export const GrappleTrapTargetingIndicator = React.memo(({ isActive, onTargetUpd
       if (lastReportedValidRef.current || lastReportedTargetRef.current.x !== Number.POSITIVE_INFINITY) {
         lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
         lastReportedValidRef.current = false;
+        hasCachedTargetRef.current = false;
+        cachedTargetValidRef.current = false;
         lastReportAtRef.current = now;
         onTargetUpdate(null, false);
       }
       return;
     }
-    
-    TEMP_VECTORS.v1.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    
-    let targetX = camera.position.x;
-    let targetY = camera.position.y;
-    let targetZ = camera.position.z;
-    let isValid = false;
-    let foundTarget = false;
-    
-    if (isPhysicsReady()) {
-      const directHit = raycastDirection(
-        camera.position.x, camera.position.y, camera.position.z,
-        TEMP_VECTORS.v1.x, TEMP_VECTORS.v1.y, TEMP_VECTORS.v1.z,
-        TRAP_MAX_RANGE + 10,
-        {
-          priority: 'visual',
-          feature: 'targeting:hookshotTrap',
-        }
-      );
-      
-      if (directHit && directHit.hit) {
-        targetX = directHit.point.x;
-        targetY = directHit.point.y;
-        targetZ = directHit.point.z;
-        foundTarget = true;
-        
-        if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+
+    let isValid = cachedTargetValidRef.current;
+
+    if (!hasCachedTargetRef.current || now - lastPhysicsSampleAtRef.current >= TRAP_TARGET_PHYSICS_SAMPLE_INTERVAL_MS) {
+      lastPhysicsSampleAtRef.current = now;
+      TEMP_VECTORS.v1.set(0, 0, -1).applyQuaternion(camera.quaternion);
+
+      let targetX = camera.position.x;
+      let targetY = camera.position.y;
+      let targetZ = camera.position.z;
+      let foundTarget = false;
+      isValid = false;
+
+      if (isPhysicsReady()) {
+        const directHit = raycastDirection(
+          camera.position.x, camera.position.y, camera.position.z,
+          TEMP_VECTORS.v1.x, TEMP_VECTORS.v1.y, TEMP_VECTORS.v1.z,
+          TRAP_MAX_RANGE + 10,
+          {
             priority: 'visual',
             feature: 'targeting:hookshotTrap',
-          });
-          if (groundBelow?.isWalkable) {
-            targetY = groundBelow.groundY + 0.1;
           }
-        } else {
-          targetY += 0.1;
-        }
-      }
-      
-      if (!foundTarget) {
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -TEMP_VECTORS.v1.y)));
-        const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 20 : 25);
-        for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
-          const dist = sampleIndex === 3 ? TRAP_MAX_RANGE : baseDist * TRAP_TARGET_SAMPLE_FACTORS[sampleIndex];
-          const sampleX = camera.position.x + TEMP_VECTORS.v1.x * dist;
-          const sampleY = camera.position.y + TEMP_VECTORS.v1.y * dist;
-          const sampleZ = camera.position.z + TEMP_VECTORS.v1.z * dist;
-          
-          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
-            priority: 'visual',
-            feature: 'targeting:hookshotTrap',
-          });
-          
-          if (groundCheck?.isWalkable) {
-            targetX = sampleX;
-            targetY = groundCheck.groundY + 0.1;
-            targetZ = sampleZ;
-            foundTarget = true;
-            break;
-          }
-        }
-      }
-      
-      if (foundTarget) {
-        const dx = targetX - localPlayer.position.x;
-        const dz = targetZ - localPlayer.position.z;
-        const distH = Math.sqrt(dx * dx + dz * dz);
-        
-        if (distH > TRAP_MAX_RANGE) {
-          const scale = TRAP_MAX_RANGE / distH;
-          targetX = localPlayer.position.x + dx * scale;
-          targetZ = localPlayer.position.z + dz * scale;
-          
-          const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
-            priority: 'visual',
-            feature: 'targeting:hookshotTrap',
-          });
-          if (groundCheck?.isWalkable) {
-            targetY = groundCheck.groundY + 0.1;
+        );
+
+        if (directHit && directHit.hit) {
+          targetX = directHit.point.x;
+          targetY = directHit.point.y;
+          targetZ = directHit.point.z;
+          foundTarget = true;
+
+          if (!directHit.isWalkable) {
+            const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+              priority: 'visual',
+              feature: 'targeting:hookshotTrap',
+            });
+            if (groundBelow?.isWalkable) {
+              targetY = groundBelow.groundY + 0.1;
+            }
           } else {
-            foundTarget = false;
+            targetY += 0.1;
           }
         }
-        
-        if (foundTarget && distH >= TRAP_MIN_RANGE) {
-          isValid = true;
+
+        if (!foundTarget) {
+          const pitch = Math.asin(Math.max(-1, Math.min(1, -TEMP_VECTORS.v1.y)));
+          const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 20 : 25);
+          for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+            const dist = sampleIndex === 3 ? TRAP_MAX_RANGE : baseDist * TRAP_TARGET_SAMPLE_FACTORS[sampleIndex];
+            const sampleX = camera.position.x + TEMP_VECTORS.v1.x * dist;
+            const sampleY = camera.position.y + TEMP_VECTORS.v1.y * dist;
+            const sampleZ = camera.position.z + TEMP_VECTORS.v1.z * dist;
+
+            const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
+              priority: 'visual',
+              feature: 'targeting:hookshotTrap',
+            });
+
+            if (groundCheck?.isWalkable) {
+              targetX = sampleX;
+              targetY = groundCheck.groundY + 0.1;
+              targetZ = sampleZ;
+              foundTarget = true;
+              break;
+            }
+          }
+        }
+
+        if (foundTarget) {
+          const dx = targetX - localPlayer.position.x;
+          const dz = targetZ - localPlayer.position.z;
+          const distH = Math.sqrt(dx * dx + dz * dz);
+
+          if (distH > TRAP_MAX_RANGE) {
+            const scale = TRAP_MAX_RANGE / distH;
+            targetX = localPlayer.position.x + dx * scale;
+            targetZ = localPlayer.position.z + dz * scale;
+
+            const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
+              priority: 'visual',
+              feature: 'targeting:hookshotTrap',
+            });
+            if (groundCheck?.isWalkable) {
+              targetY = groundCheck.groundY + 0.1;
+            } else {
+              foundTarget = false;
+            }
+          }
+
+          if (foundTarget && distH >= TRAP_MIN_RANGE) {
+            isValid = true;
+          }
         }
       }
+
+      cachedTargetRef.current.set(targetX, targetY, targetZ);
+      cachedTargetValidRef.current = isValid;
+      hasCachedTargetRef.current = true;
     }
-    
-    TEMP_VECTORS.v4.set(targetX, targetY, targetZ);
+
+    TEMP_VECTORS.v4.copy(cachedTargetRef.current);
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {

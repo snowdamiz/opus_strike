@@ -18,6 +18,11 @@ interface ConsoleMessage {
 
 let messageId = 0;
 
+const PUBLIC_COMMAND_HELP = '/seed copy';
+const DEV_COMMAND_HELP = '/seed copy | /observe | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze';
+const PUBLIC_COMMAND_LIST = '/seed copy';
+const DEV_COMMAND_LIST = '/seed copy, /observe, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+
 async function copyTextToClipboard(text: string): Promise<boolean> {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
@@ -253,8 +258,8 @@ export function GameConsole() {
     {
       id: messageId++,
       text: config.isDev
-        ? 'Developer Console - /seed copy | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze'
-        : 'Game Chat - /seed copy',
+        ? `Developer Console - ${DEV_COMMAND_HELP}`
+        : `Game Chat - ${PUBLIC_COMMAND_HELP}`,
       type: 'info',
     },
   ]);
@@ -275,6 +280,8 @@ export function GameConsole() {
     setDevBotsRooted,
     setDevBotBrainEnabled,
     addGameBot,
+    devSetLobbyObserver,
+    devSetGameObserver,
   } = useNetwork();
 
   // Set the network functions for projectiles to use
@@ -367,6 +374,66 @@ export function GameConsole() {
         } else {
           addMessage(`Clipboard unavailable. Current seed: ${seed}`, 'error');
         }
+        break;
+      }
+
+      case '/observe': {
+        if (!config.isDev) {
+          addMessage('Developer commands are disabled outside development builds.', 'error');
+          break;
+        }
+
+        if (parts.length !== 1) {
+          addMessage('Usage: /observe', 'error');
+          break;
+        }
+
+        const store = useGameStore.getState();
+        if (store.isObserverMode) {
+          addMessage('Already observing.', 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        if (store.appPhase === 'in_lobby') {
+          const currentPlayer = store.playerId ? store.lobbyPlayers.get(store.playerId) : null;
+          if (!currentPlayer) {
+            addMessage('No lobby player to switch.', 'error');
+            break;
+          }
+
+          if (currentPlayer.isObserver) {
+            addMessage('Already observing.', 'info');
+            setTimeout(() => setIsOpen(false), 100);
+            break;
+          }
+
+          const observerCount = Array.from(store.lobbyPlayers.values()).filter((player) => player.isObserver).length;
+          const observerCapacity = store.lobbyObserversEnabled ? Math.max(0, store.maxLobbyObservers) : 1;
+          if (observerCount >= observerCapacity) {
+            addMessage('Observer slot is full.', 'error');
+            break;
+          }
+
+          devSetLobbyObserver(true);
+          addMessage('Switching to observer...', 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        if (store.appPhase === 'in_game' && !store.isPracticeMode) {
+          if (!store.localPlayer) {
+            addMessage('No active player to switch.', 'error');
+            break;
+          }
+
+          devSetGameObserver();
+          addMessage('Switching to observer...', 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
+        addMessage('Use /observe from a custom lobby or custom game.', 'error');
         break;
       }
 
@@ -512,9 +579,9 @@ export function GameConsole() {
       }
 
       default:
-        addMessage(`Unknown command: ${command}. Available commands: /seed copy, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze`, 'error');
+        addMessage(`Unknown command: ${command}. Available commands: ${config.isDev ? DEV_COMMAND_LIST : PUBLIC_COMMAND_LIST}`, 'error');
     }
-  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, devSetGameObserver, devSetLobbyObserver, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -584,7 +651,7 @@ export function GameConsole() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             className="flex-1 bg-transparent outline-none text-white caret-green-400"
-            placeholder={config.isDev ? 'Type /seed copy, /immune, /hero <hero>, /end, /bot add <hero> <side>, /bot nobrain, /bot brain, /bots root, /f, or /time freeze...' : 'Type /seed copy...'}
+            placeholder={config.isDev ? `Type ${DEV_COMMAND_LIST}...` : `Type ${PUBLIC_COMMAND_LIST}...`}
             autoComplete="off"
             spellCheck={false}
           />

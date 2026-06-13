@@ -1,9 +1,20 @@
 import { create } from 'zustand';
 
-export interface DamageNumberEvent {
+export type CombatTextKind = 'damage' | 'heal';
+
+export interface CombatTextPosition {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface CombatTextEvent {
   id: string;
-  damage: number;
-  damageType: string;
+  kind: CombatTextKind;
+  amount: number;
+  damageType?: string;
+  targetId?: string | null;
+  position: CombatTextPosition;
   createdAt: number;
 }
 
@@ -15,13 +26,14 @@ export interface KillFeedEvent {
 }
 
 interface CombatFeedbackStore {
-  damageNumbers: DamageNumberEvent[];
+  combatTextEvents: CombatTextEvent[];
   killFeed: KillFeedEvent[];
-  addDamageNumber: (event: Omit<DamageNumberEvent, 'id' | 'createdAt'>) => void;
+  addCombatTextEvent: (event: Omit<CombatTextEvent, 'id' | 'createdAt'>) => void;
   addKillFeedEvent: (event: Omit<KillFeedEvent, 'id' | 'createdAt'>) => void;
 }
 
-const DAMAGE_TTL = 1200;
+const COMBAT_TEXT_TTL = 1450;
+const MAX_COMBAT_TEXT_EVENTS = 28;
 const KILL_TTL = 5000;
 let eventId = 0;
 
@@ -31,22 +43,27 @@ function nextId(): string {
 }
 
 export const useCombatFeedbackStore = create<CombatFeedbackStore>((set) => ({
-  damageNumbers: [],
+  combatTextEvents: [],
   killFeed: [],
-  addDamageNumber: (event) => {
+  addCombatTextEvent: (event) => {
     const id = nextId();
     set((state) => ({
-      damageNumbers: [
-        ...state.damageNumbers.slice(-4),
-        { ...event, id, createdAt: Date.now() },
+      combatTextEvents: [
+        ...state.combatTextEvents.slice(-(MAX_COMBAT_TEXT_EVENTS - 1)),
+        {
+          ...event,
+          id,
+          position: { ...event.position },
+          createdAt: Date.now(),
+        },
       ],
     }));
 
     window.setTimeout(() => {
       set((state) => ({
-        damageNumbers: state.damageNumbers.filter((item) => item.id !== id),
+        combatTextEvents: state.combatTextEvents.filter((item) => item.id !== id),
       }));
-    }, DAMAGE_TTL);
+    }, COMBAT_TEXT_TTL);
   },
   addKillFeedEvent: (event) => {
     const id = nextId();

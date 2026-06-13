@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type EarthWallData } from '../../../store/gameStore';
@@ -103,6 +103,7 @@ interface AnchorWallSegmentData {
   x: number;
   y: number;
   z: number;
+  spawnDistance: number;
   height: number;
   width: number;
   depth: number;
@@ -138,6 +139,33 @@ function calculateAnchorWallRiseSoundTiming(maxDistance: number): { durationMs: 
   };
 }
 
+function buildAnchorWallSegments(wall: EarthWallData): AnchorWallSegmentData[] {
+  const segments: AnchorWallSegmentData[] = [];
+
+  for (
+    let distance = ANCHOR_WALL_FIRST_SEGMENT_DISTANCE;
+    distance < wall.maxDistance;
+    distance += ANCHOR_WALL_SEGMENT_SPACING
+  ) {
+    const segmentIndex = segments.length;
+    const segmentX = wall.startPosition.x + wall.direction.x * (distance - ANCHOR_WALL_SEGMENT_BACKSET);
+    const segmentZ = wall.startPosition.z + wall.direction.z * (distance - ANCHOR_WALL_SEGMENT_BACKSET);
+
+    segments.push({
+      id: `${ANCHOR_WALL_COLLIDER_PREFIX}${wall.id}_${segmentIndex}`,
+      x: segmentX,
+      y: wall.startPosition.y,
+      z: segmentZ,
+      spawnDistance: distance,
+      height: ANCHOR_WALL_MAX_HEIGHT * seededRange(segmentIndex, 91, 0.86, 1.08),
+      width: ANCHOR_WALL_WIDTH * seededRange(segmentIndex, 92, 0.9, 1.08),
+      depth: ANCHOR_WALL_DEPTH * seededRange(segmentIndex, 93, 0.92, 1.16),
+    });
+  }
+
+  return segments;
+}
+
 const WallSegment = React.memo(function WallSegment({
   segment,
   index,
@@ -163,6 +191,13 @@ const WallSegment = React.memo(function WallSegment({
     if (!meshRef.current) return;
 
     const wallAge = (getFrameClock().nowMs - wallStartFrameTimeRef.current) / 1000;
+    const spawnTime = segment.spawnDistance / ANCHOR_WALL_SPEED;
+    if (wallAge < spawnTime) {
+      meshRef.current.visible = false;
+      return;
+    }
+    meshRef.current.visible = true;
+
     const collapseProgress = Math.min(
       Math.max((wallAge - wallDuration) / ANCHOR_WALL_COLLAPSE_DURATION, 0),
       1
@@ -188,7 +223,7 @@ const WallSegment = React.memo(function WallSegment({
   });
 
   return (
-    <group ref={meshRef} position={[segment.x, segment.y, segment.z]} rotation={[0, rotationY, 0]}>
+    <group ref={meshRef} position={[segment.x, segment.y, segment.z]} rotation={[0, rotationY, 0]} visible={false}>
       <mesh
         geometry={SHARED_GEOMETRIES.box}
         material={index % 2 === 0 ? ANCHOR_WALL_MATERIALS.slab : ANCHOR_WALL_MATERIALS.slabAlt}
@@ -306,17 +341,15 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
   const hookRef = useRef<THREE.Group>(null);
 
   const hookProgressRef = useRef(0);
-  const lastSegmentDistRef = useRef(0);
   const hookGroundYRef = useRef(wall.startPosition.y);
   const hasStartImpactRef = useRef(false);
   const hasEndImpactRef = useRef(false);
   const wallRiseSoundStartedRef = useRef(false);
   const collidersReleasedRef = useRef(false);
   const registeredCollidersRef = useRef<Set<string>>(new Set());
-  const wallSegmentsRef = useRef<AnchorWallSegmentData[]>([]);
+  const nextSegmentIndexRef = useRef(0);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - wall.startTime));
-
-  const [, setSegmentsVersion] = useState(0);
+  const wallSegments = useMemo(() => buildAnchorWallSegments(wall), [wall]);
 
   const removeEarthWall = useGameStore(state => state.removeEarthWall);
   const rotationY = Math.atan2(wall.direction.x, wall.direction.z) + Math.PI / 2;
@@ -385,49 +418,38 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
       });
     }
 
-    if (currentDist < wall.maxDistance) {
-      if (
-        currentDist >= ANCHOR_WALL_FIRST_SEGMENT_DISTANCE &&
-        currentDist - lastSegmentDistRef.current >= ANCHOR_WALL_SEGMENT_SPACING
-      ) {
-        lastSegmentDistRef.current = currentDist;
-
-        const segmentIndex = wallSegmentsRef.current.length;
-        const segmentX = hookPos.x - wall.direction.x * ANCHOR_WALL_SEGMENT_BACKSET;
-        const segmentZ = hookPos.z - wall.direction.z * ANCHOR_WALL_SEGMENT_BACKSET;
-
-        const segment: AnchorWallSegmentData = {
-          id: `${ANCHOR_WALL_COLLIDER_PREFIX}${wall.id}_${segmentIndex}`,
-          x: segmentX,
-          y: wall.startPosition.y,
-          z: segmentZ,
-          height: ANCHOR_WALL_MAX_HEIGHT * seededRange(segmentIndex, 91, 0.86, 1.08),
-          width: ANCHOR_WALL_WIDTH * seededRange(segmentIndex, 92, 0.9, 1.08),
-          depth: ANCHOR_WALL_DEPTH * seededRange(segmentIndex, 93, 0.92, 1.16),
-        };
-
-        wallSegmentsRef.current.push(segment);
-        registerSegmentCollider(segment);
-        if (!wallRiseSoundStartedRef.current) {
-          wallRiseSoundStartedRef.current = true;
-          const timing = calculateAnchorWallRiseSoundTiming(wall.maxDistance);
-          void playSharedSound('hookshotAnchorWall', {
-            position: { x: segment.x, y: segment.y, z: segment.z },
-            startOffsetMs: ANCHOR_WALL_SOUND_START_OFFSET_MS,
-            durationMs: timing.durationMs,
-            fadeInMs: ANCHOR_WALL_SOUND_FADE_IN_MS,
-            fadeOutMs: timing.fadeOutMs,
-            volume: ANCHOR_WALL_SOUND_VOLUME,
-          });
-        }
-        setSegmentsVersion(v => v + 1);
+    while (
+      nextSegmentIndexRef.current < wallSegments.length &&
+      currentDist >= wallSegments[nextSegmentIndexRef.current].spawnDistance
+    ) {
+      const segment = wallSegments[nextSegmentIndexRef.current];
+      registerSegmentCollider(segment);
+      if (!wallRiseSoundStartedRef.current) {
+        wallRiseSoundStartedRef.current = true;
+        const timing = calculateAnchorWallRiseSoundTiming(wall.maxDistance);
+        void playSharedSound('hookshotAnchorWall', {
+          position: { x: segment.x, y: segment.y, z: segment.z },
+          startOffsetMs: ANCHOR_WALL_SOUND_START_OFFSET_MS,
+          durationMs: timing.durationMs,
+          fadeInMs: ANCHOR_WALL_SOUND_FADE_IN_MS,
+          fadeOutMs: timing.fadeOutMs,
+          volume: ANCHOR_WALL_SOUND_VOLUME,
+        });
       }
+      nextSegmentIndexRef.current++;
+    }
 
+    if (currentDist < wall.maxDistance) {
       hookRef.current.visible = true;
       hookRef.current.position.set(hookPos.x, hookPos.y + 0.58, hookPos.z);
       hookRef.current.rotation.y = Math.atan2(wall.direction.x, wall.direction.z);
       hookRef.current.position.y += Math.sin(time * 18) * 0.08;
     } else {
+      while (nextSegmentIndexRef.current < wallSegments.length) {
+        const segment = wallSegments[nextSegmentIndexRef.current];
+        registerSegmentCollider(segment);
+        nextSegmentIndexRef.current++;
+      }
       hookRef.current.visible = false;
       if (!hasEndImpactRef.current) {
         hasEndImpactRef.current = true;
@@ -436,10 +458,6 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
           scale: 1.2,
         });
       }
-    }
-
-    for (const segment of wallSegmentsRef.current) {
-      registerSegmentCollider(segment);
     }
   });
 
@@ -481,7 +499,7 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
         <BudgetedPointLight budgetPriority={4} color={HOOKSHOT_COLORS.energy} intensity={4.8} distance={5.8} decay={2} />
       </group>
 
-      {wallSegmentsRef.current.map((segment, i) => (
+      {wallSegments.map((segment, i) => (
         <WallSegment
           key={segment.id}
           segment={segment}

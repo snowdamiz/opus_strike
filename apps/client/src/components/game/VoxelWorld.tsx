@@ -1,7 +1,7 @@
 import { VoxelMap } from './procedural';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
-import type { WorldPerformanceBudget } from './visualQuality';
+import type { MaterialQualityConfig, WorldPerformanceBudget } from './visualQuality';
 
 interface VoxelWorldProps {
   seed?: number;
@@ -11,6 +11,7 @@ interface VoxelWorldProps {
   dressingShadows: boolean;
   dressingDensity: number;
   reflectionIntensity: number;
+  materialQuality: MaterialQualityConfig['terrainTextureQuality'];
   performanceBudget: WorldPerformanceBudget;
   prebuildRegions?: boolean;
   onWarmupStatus?: (status: VoxelMapWarmupStatus) => void;
@@ -25,6 +26,7 @@ export function VoxelWorld({
   dressingShadows,
   dressingDensity,
   reflectionIntensity,
+  materialQuality,
   performanceBudget,
   prebuildRegions = false,
   onWarmupStatus,
@@ -40,6 +42,7 @@ export function VoxelWorld({
         dressingShadows={dressingShadows}
         dressingDensity={dressingDensity}
         reflectionIntensity={reflectionIntensity}
+        materialQuality={materialQuality}
         performanceBudget={performanceBudget}
         prebuildRegions={prebuildRegions}
         onWarmupStatus={onWarmupStatus}

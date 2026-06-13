@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { Material } from 'three';
 import type { VoxelChunk, VoxelMapManifest } from '@voxel-strike/shared';
+import type { VoxelChunkRegion } from '../../../utils/mapWarmup/mapPrepCache';
 import {
   buildVoxelChunkGeometry,
   buildVoxelRegionGeometry,
@@ -14,12 +15,6 @@ interface VoxelChunkMeshProps {
   manifest: VoxelMapManifest;
   material: Material;
   shadowsEnabled: boolean;
-}
-
-export interface VoxelChunkRegion {
-  id: string;
-  chunks: VoxelChunk[];
-  castShadow: boolean;
 }
 
 interface VoxelRegionMeshProps {

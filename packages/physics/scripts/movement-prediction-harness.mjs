@@ -101,6 +101,28 @@ function speed2D(velocity) {
   return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
 }
 
+function simulateHeldInput(input, steps = 120) {
+  let state = createSimulationState();
+
+  for (let step = 0; step < steps; step++) {
+    state = simulateSharedMovement({
+      position: state.position,
+      velocity: state.velocity,
+      movement: state.movement,
+      heroStats: HERO_DEFINITIONS.phantom.stats,
+      input: {
+        ...createEmptyInputState(),
+        ...input,
+      },
+      lookYaw: 0,
+      deltaTime: 1 / 60,
+      terrain,
+    });
+  }
+
+  return state;
+}
+
 function runDeterministicReplay() {
   const buttons = MOVEMENT_BUTTON_MOVE_FORWARD | MOVEMENT_BUTTON_SPRINT;
   const commands = Array.from({ length: 36 }, (_, index) => command(index + 1, buttons));
@@ -140,6 +162,28 @@ function runYawConvention() {
 
   assert.ok(result.velocity.x < 0, `forward at +90deg yaw should move negative X, got ${result.velocity.x}`);
   assert.ok(Math.abs(result.velocity.z) < Math.abs(result.velocity.x), `forward at +90deg yaw should mostly move on X, got Z ${result.velocity.z}`);
+}
+
+function runDirectionalMovementSpeedRules() {
+  const forward = speed2D(simulateHeldInput({ moveForward: true }).velocity);
+  const strafe = speed2D(simulateHeldInput({ moveLeft: true }).velocity);
+  const backward = speed2D(simulateHeldInput({ moveBackward: true }).velocity);
+  const forwardStrafe = speed2D(simulateHeldInput({ moveForward: true, moveLeft: true }).velocity);
+
+  assert.ok(strafe < forward, `strafe should be slower than forward: strafe ${strafe}, forward ${forward}`);
+  assert.ok(backward < forward, `backpedal should be slower than forward: backward ${backward}, forward ${forward}`);
+  assert.ok(
+    forwardStrafe > strafe && forwardStrafe < forward,
+    `forward+strafe should land between strafe and forward: strafe ${strafe}, diagonal ${forwardStrafe}, forward ${forward}`
+  );
+
+  const backwardSprint = simulateHeldInput({ moveBackward: true, sprint: true });
+  const backwardSprintSpeed = speed2D(backwardSprint.velocity);
+  assert.equal(backwardSprint.movement.isSprinting, false, 'backward movement should not enter sprint state');
+  assert.ok(
+    Math.abs(backwardSprintSpeed - backward) <= 0.01,
+    `backward sprint input should stay at backpedal speed: sprint ${backwardSprintSpeed}, walk ${backward}`
+  );
 }
 
 function runDuplicateAckNoop() {
@@ -1138,6 +1182,7 @@ function runHookshotSwingStep() {
 
 runDeterministicReplay();
 runYawConvention();
+runDirectionalMovementSpeedRules();
 runDuplicateAckNoop();
 runNoCorrectionAckRefreshesAuthorityOwnedResources();
 runSprintModeMismatchDoesNotCorrect();

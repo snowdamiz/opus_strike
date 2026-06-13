@@ -55,7 +55,6 @@ export type {
   RocketData,
   BombData,
   ChronosPulseData,
-  ChronosTimebreakData,
   HookProjectileData,
   DragHookData,
   GrappleTrapData,
@@ -91,6 +90,8 @@ interface CoreState {
   currentLobbyWager: LobbyWagerState;
   lobbyPlayers: Map<string, LobbyPlayer>;
   isLobbyHost: boolean;
+  lobbyObserversEnabled: boolean;
+  maxLobbyObservers: number;
   mapVoteOptions: MapVoteOption[];
   mapVotes: Map<string, string>;
   mapVotePhaseEndTime: number | null;
@@ -114,6 +115,7 @@ interface CoreState {
   players: Map<string, Player>;
   localPlayer: Player | null;
   playerPings: Map<string, number | null>;
+  isObserverMode: boolean;
 
   // Timing
   roundTimeRemaining: number;
@@ -173,6 +175,8 @@ interface CoreActions {
   updateLobbyPlayer: (playerId: string, player: LobbyPlayer) => void;
   removeLobbyPlayer: (playerId: string) => void;
   setIsLobbyHost: (isHost: boolean) => void;
+  setLobbyObserverSettings: (enabled: boolean, maxObservers: number) => void;
+  setObserverMode: (enabled: boolean) => void;
   setMapVoteState: (options: MapVoteOption[], votes: MapVoteRecord[], phaseEndTime: number | null, selectedOptionId?: string | null) => void;
   setMapVotes: (votes: MapVoteRecord[], selectedOptionId?: string | null) => void;
   clearMapVote: () => void;
@@ -226,6 +230,8 @@ const coreInitialState: CoreState = {
   currentLobbyWager: { enabled: false },
   lobbyPlayers: new Map(),
   isLobbyHost: false,
+  lobbyObserversEnabled: false,
+  maxLobbyObservers: 0,
   mapVoteOptions: [],
   mapVotes: new Map(),
   mapVotePhaseEndTime: null,
@@ -255,6 +261,7 @@ const coreInitialState: CoreState = {
   players: new Map(),
   localPlayer: null,
   playerPings: new Map(),
+  isObserverMode: false,
   roundTimeRemaining: 0,
   phaseEndTime: null,
   pendingInputs: [],
@@ -576,6 +583,17 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   setIsLobbyHost: (isHost) => set((state) => state.isLobbyHost === isHost ? state : { isLobbyHost: isHost }),
 
+  setLobbyObserverSettings: (enabled, maxObservers) => set((state) => {
+    const normalizedMax = Math.max(0, Math.floor(maxObservers));
+    return state.lobbyObserversEnabled === enabled && state.maxLobbyObservers === normalizedMax
+      ? state
+      : { lobbyObserversEnabled: enabled, maxLobbyObservers: normalizedMax };
+  }),
+
+  setObserverMode: (enabled) => set((state) => (
+    state.isObserverMode === enabled ? state : { isObserverMode: enabled }
+  )),
+
   setMapVoteState: (options, votes, phaseEndTime, selectedOptionId = null) => set({
     mapVoteOptions: options,
     mapVotes: new Map(votes.map((vote) => [vote.playerId, vote.optionId])),
@@ -655,6 +673,8 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
     currentLobbyWager: { enabled: false },
     lobbyPlayers: new Map(),
     isLobbyHost: false,
+    lobbyObserversEnabled: false,
+    maxLobbyObservers: 0,
     mapVoteOptions: [],
     mapVotes: new Map(),
     mapVotePhaseEndTime: null,

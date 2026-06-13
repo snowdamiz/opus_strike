@@ -375,12 +375,12 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       sideOffset: HOOKSHOT_CHAIN_SOCKET.sideOffset * launchSide,
     });
 
-    // Find target
-    let targetX = startPos.x + direction.x * GRAPPLE_TRAP_MAX_RANGE;
-    let targetY = startPos.y + direction.y * GRAPPLE_TRAP_MAX_RANGE;
-    let targetZ = startPos.z + direction.z * GRAPPLE_TRAP_MAX_RANGE;
+    const cachedTarget = grappleTrapValidRef.current ? grappleTrapTargetRef.current : null;
+    let targetX = cachedTarget?.x ?? startPos.x + direction.x * GRAPPLE_TRAP_MAX_RANGE;
+    let targetY = cachedTarget?.y ?? startPos.y + direction.y * GRAPPLE_TRAP_MAX_RANGE;
+    let targetZ = cachedTarget?.z ?? startPos.z + direction.z * GRAPPLE_TRAP_MAX_RANGE;
 
-    if (isPhysicsReady()) {
+    if (!cachedTarget && isPhysicsReady()) {
       const directHit = raycastDirection(
         ctx.position.x + 0.6, ctx.position.y, ctx.position.z,
         direction.x, direction.y, direction.z,

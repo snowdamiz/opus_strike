@@ -7,6 +7,7 @@ import { VoxelWorld } from './VoxelWorld';
 import type { VoxelMapWarmupStatus } from './procedural/VoxelMap';
 import { WorldAtmosphere } from './WorldAtmosphere';
 import { PlayerController } from './PlayerController';
+import { ObserverCameraController } from './ObserverCameraController';
 import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
@@ -22,6 +23,7 @@ import { TerrainImpactEffectsManager } from './TerrainImpactEffects';
 import { ChronosAegisManager, ChronosAscendantManager, ChronosPulsesManager, ChronosTimebreakManager } from './chronos';
 import { GameplayFrameSystems, GameplayFrameWorkBoundary } from './systems/GameplayFrameSystems';
 import { BudgetedPointLight, DynamicLightBudgetSystem } from './systems/DynamicLightBudget';
+import { CombatTextLayer } from './CombatText';
 import { useGameStore } from '../../store/gameStore';
 import { graphicsPresetSettings, useSettingsStore } from '../../store/settingsStore';
 import {
@@ -652,6 +654,7 @@ function AdaptiveQualityController() {
       ...settings,
       reflectionQuality: stepDown(settings.reflectionQuality, FEATURE_QUALITY_STEPS),
       environmentQuality: stepDown(settings.environmentQuality, FEATURE_QUALITY_STEPS),
+      materialQuality: stepDown(settings.materialQuality, FEATURE_QUALITY_STEPS),
       shadowQuality: stepDown(settings.shadowQuality, FEATURE_QUALITY_STEPS),
       resolutionScale: stepDown(settings.resolutionScale, RESOLUTION_QUALITY_STEPS),
     };
@@ -659,6 +662,7 @@ function AdaptiveQualityController() {
     const shouldEnterPotato =
       nextSettings.reflectionQuality === 'off' &&
       nextSettings.environmentQuality === 'off' &&
+      nextSettings.materialQuality === 'off' &&
       nextSettings.shadowQuality === 'off' &&
       nextSettings.resolutionScale === 'minimum' &&
       settings.graphicsPreset !== 'potato';
@@ -675,6 +679,7 @@ function AdaptiveQualityController() {
     if (
       nextSettings.reflectionQuality !== settings.reflectionQuality ||
       nextSettings.environmentQuality !== settings.environmentQuality ||
+      nextSettings.materialQuality !== settings.materialQuality ||
       nextSettings.shadowQuality !== settings.shadowQuality ||
       nextSettings.resolutionScale !== settings.resolutionScale
     ) {
@@ -740,6 +745,7 @@ export function GameCanvas({
 }: GameCanvasProps) {
   const gamePhase = useGameStore((state) => state.gamePhase);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
+  const isObserverMode = useGameStore((state) => state.isObserverMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const settings = useSettingsStore(state => state.settings);
@@ -911,6 +917,7 @@ export function GameCanvas({
           dressingShadows={effectiveDressingShadows}
           dressingDensity={effectiveEnvironmentConfig.dressingDensity}
           reflectionIntensity={qualityConfig.reflections.materialIntensity}
+          materialQuality={qualityConfig.materials.terrainTextureQuality}
           performanceBudget={qualityConfig.budgets}
           themeId={mapThemeId}
           prebuildRegions
@@ -932,8 +939,12 @@ export function GameCanvas({
           followCamera={false}
         />
 
-        {/* Physics boots immediately; player input/simulation waits for terrain readiness. */}
-        <PlayerController enabled={isWorldReady} />
+        {/* Physics boots immediately; observer camera can fly while player simulation waits for terrain readiness. */}
+        {isObserverMode ? (
+          <ObserverCameraController enabled />
+        ) : (
+          <PlayerController enabled={isWorldReady} />
+        )}
         
         {/* Other players - always rendered so players can see each other in lobby */}
         <OtherPlayers config={qualityConfig.remotePlayers} />
@@ -944,8 +955,9 @@ export function GameCanvas({
           <>
             {!isPracticeMode && <Flags />}
             <Effects />
+            <CombatTextLayer enabled={settings.showDamageNumbers} />
             <SlideSpeedLines config={effectiveEffectsConfig} />
-            <HeroViewmodel config={qualityConfig.viewmodel} />
+            {!isObserverMode && <HeroViewmodel config={qualityConfig.viewmodel} />}
             <VoidZonesManager />
             <DireBallsManager />
             <PhantomPersonalShieldsManager />
@@ -977,7 +989,7 @@ export function GameCanvas({
         />
 
         {/* Orbit controls when not playing for looking around */}
-        {!isPlaying && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
+        {!isPlaying && !isObserverMode && <OrbitControls target={[0, 0, 0]} enablePan={false} />}
 
         <SceneAtmosphereColors theme={mapTheme} />
         <SceneReadySignal onReady={onReady} ready={isWorldReady} readyKey={warmupKey} />

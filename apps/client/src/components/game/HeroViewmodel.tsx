@@ -17,8 +17,10 @@ import {
   PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS,
   PHANTOM_VOID_RAY_ORB_SOCKET_NAME,
   getPhantomPrimaryHeldBlend,
+  getPhantomShieldCastPose,
   getPhantomPrimaryShotPulse,
   type PhantomPrimaryPoseSampleContext,
+  type PhantomShieldCastPose,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../viewmodel/phantomPrimaryPose';
 import {
@@ -672,6 +674,16 @@ function applyPhantomVoidRayReleaseForearmPose(
   target.rotation.z += side * 0.07 * releaseBlend;
 }
 
+function syncPhantomClosedHandToArm(targets: PhantomHandPoseTargets): void {
+  if (!targets.closedHand) return;
+
+  targets.closedHand.rotation.copy(targets.arm.rotation);
+  phantomClosedHandPivotWorldOffset
+    .copy(phantomClosedHandPivotOffset)
+    .applyEuler(targets.closedHand.rotation);
+  targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
+}
+
 function applyPhantomVoidRayChargeHandPose(
   targets: PhantomHandPoseTargets,
   side: -1 | 1,
@@ -723,13 +735,7 @@ function applyPhantomVoidRayChargeHandPose(
     finger.rotation.z += -fingerIndexOffset * (0.13 + energy * 0.04) * blend;
   }
 
-  if (targets.closedHand) {
-    targets.closedHand.rotation.copy(targets.arm.rotation);
-    phantomClosedHandPivotWorldOffset
-      .copy(phantomClosedHandPivotOffset)
-      .applyEuler(targets.closedHand.rotation);
-    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
-  }
+  syncPhantomClosedHandToArm(targets);
 }
 
 function applyPhantomVoidRayReleaseHandPose(
@@ -768,13 +774,83 @@ function applyPhantomVoidRayReleaseHandPose(
     finger.rotation.z += -fingerIndexOffset * 0.045 * releaseBlend;
   }
 
-  if (targets.closedHand) {
-    targets.closedHand.rotation.copy(targets.arm.rotation);
-    phantomClosedHandPivotWorldOffset
-      .copy(phantomClosedHandPivotOffset)
-      .applyEuler(targets.closedHand.rotation);
-    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
+  syncPhantomClosedHandToArm(targets);
+}
+
+function applyPhantomShieldCastForearmPose(
+  target: MutableTransformTarget,
+  side: -1 | 1,
+  shieldPose: PhantomShieldCastPose
+): void {
+  if (!shieldPose.active || shieldPose.blend <= 0) return;
+
+  const blend = shieldPose.blend;
+  const push = shieldPose.push;
+  const pulse = shieldPose.pulse;
+
+  target.position.x += side * (-0.048 * blend - 0.006 * push);
+  target.position.y += 0.034 * blend + 0.004 * pulse;
+  target.position.z += -0.082 * blend - 0.014 * push;
+  target.rotation.x += -0.1 * blend - 0.014 * push;
+  target.rotation.y += side * (-0.044 * blend - 0.01 * push);
+  target.rotation.z += side * (0.14 * blend + 0.026 * pulse);
+}
+
+function applyPhantomShieldCastHandPose(
+  targets: PhantomHandPoseTargets,
+  side: -1 | 1,
+  shieldPose: PhantomShieldCastPose,
+  elapsedSeconds: number
+): void {
+  if (!shieldPose.active || shieldPose.blend <= 0) return;
+
+  const blend = shieldPose.blend;
+  const push = shieldPose.push;
+  const pulse = shieldPose.pulse;
+  const sideSign = side;
+  const thumbSide = -sideSign;
+  const tremor = Math.sin(elapsedSeconds * 18.5 + sideSign * 0.45) * 0.0025 * pulse;
+
+  targets.arm.position.x += sideSign * (-0.058 * blend - 0.009 * push);
+  targets.arm.position.y += 0.044 * blend + 0.004 * pulse + tremor;
+  targets.arm.position.z += -0.098 * blend - 0.018 * push;
+  targets.arm.rotation.x += -0.088 * blend - 0.02 * push;
+  targets.arm.rotation.y += sideSign * (-0.066 * blend - 0.012 * push);
+  targets.arm.rotation.z += sideSign * (0.165 * blend + 0.028 * pulse);
+
+  targets.wrist.position.y += 0.004 * blend;
+  targets.wrist.position.z += -0.009 * blend;
+  targets.wrist.rotation.x += -0.038 * blend - 0.007 * push;
+  targets.wrist.rotation.y += sideSign * -0.026 * blend;
+  targets.wrist.rotation.z += sideSign * (0.056 * blend + 0.012 * pulse);
+
+  targets.palm.position.x += sideSign * -0.007 * blend;
+  targets.palm.position.y += 0.01 * blend;
+  targets.palm.position.z += -0.022 * blend - 0.006 * push;
+  targets.palm.rotation.x += -0.028 * blend - 0.007 * push;
+  targets.palm.rotation.y += sideSign * -0.058 * blend;
+  targets.palm.rotation.z += sideSign * 0.038 * blend;
+
+  targets.thumb.position.x += thumbSide * 0.018 * blend;
+  targets.thumb.position.y += 0.012 * blend;
+  targets.thumb.position.z += -0.018 * blend;
+  targets.thumb.rotation.x += -0.03 * blend;
+  targets.thumb.rotation.y += thumbSide * 0.065 * blend;
+  targets.thumb.rotation.z += thumbSide * -0.08 * blend;
+
+  for (let index = 0; index < targets.fingers.length; index++) {
+    const finger = targets.fingers[index];
+    const fingerIndexOffset = index - 1.5;
+    const spread = Math.abs(fingerIndexOffset);
+    finger.position.x += fingerIndexOffset * 0.012 * blend;
+    finger.position.y += (0.012 - spread * 0.001) * blend;
+    finger.position.z += -0.018 * blend - 0.004 * push;
+    finger.rotation.x += -0.075 * blend - 0.016 * push;
+    finger.rotation.y += -fingerIndexOffset * 0.018 * blend;
+    finger.rotation.z += -fingerIndexOffset * (0.12 * blend + 0.025 * pulse);
   }
+
+  syncPhantomClosedHandToArm(targets);
 }
 
 function composeTransformMatrix(
@@ -867,13 +943,7 @@ function writePhantomHandPose(
     )
   );
 
-  if (targets.closedHand) {
-    targets.closedHand.rotation.copy(targets.arm.rotation);
-    phantomClosedHandPivotWorldOffset
-      .copy(phantomClosedHandPivotOffset)
-      .applyEuler(targets.closedHand.rotation);
-    targets.closedHand.position.copy(targets.arm.position).add(phantomClosedHandPivotWorldOffset);
-  }
+  syncPhantomClosedHandToArm(targets);
 
   targets.wrist.position.set(0, 0, 0);
   targets.wrist.rotation.set(
@@ -1288,6 +1358,7 @@ function composePhantomPrimaryPalmMatrix({
   side,
   holdBlend,
   shotPulse,
+  shieldCastPose,
   locomotion,
 }: {
   camera: THREE.Camera;
@@ -1297,6 +1368,7 @@ function composePhantomPrimaryPalmMatrix({
   side: -1 | 1;
   holdBlend: number;
   shotPulse: number;
+  shieldCastPose?: PhantomShieldCastPose;
   locomotion?: PhantomLocomotionPose;
 }): THREE.Matrix4 {
   const rootTransform = {
@@ -1321,6 +1393,9 @@ function composePhantomPrimaryPalmMatrix({
     })),
   };
   writePhantomHandPose(poseTarget, side, holdBlend, shotPulse, elapsedSeconds, locomotion);
+  if (shieldCastPose) {
+    applyPhantomShieldCastHandPose(poseTarget, side, shieldCastPose, elapsedSeconds);
+  }
 
   composeTransformMatrix(phantomArmMatrix, poseTarget.arm.position, poseTarget.arm.rotation);
   composeTransformMatrix(phantomWristMatrix, poseTarget.wrist.position, poseTarget.wrist.rotation);
@@ -1351,7 +1426,11 @@ function samplePhantomPrimaryPalmSocket(
 ): ViewmodelSocketPoseDraft {
   const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
   const timestampMs = context.timestampMs ?? Date.now();
-  const holdBlend = context.holdBlend ?? getPhantomPrimaryHeldBlend(timestampMs);
+  const shieldCastPose = getPhantomShieldCastPose(timestampMs);
+  const holdBlend = Math.max(
+    context.holdBlend ?? getPhantomPrimaryHeldBlend(timestampMs),
+    shieldCastPose.blend
+  );
   const shotPulse = context.shotPulse ?? getPhantomPrimaryShotPulse(attackTimeSeconds);
   const worldMatrix = composePhantomPrimaryPalmMatrix({
     camera: context.camera,
@@ -1361,6 +1440,7 @@ function samplePhantomPrimaryPalmSocket(
     side: context.side,
     holdBlend,
     shotPulse,
+    shieldCastPose,
     locomotion,
   });
 
@@ -1455,6 +1535,9 @@ function PhantomAnimatedForearm({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const shieldCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomShieldCastPose(nowMs);
     const voidRayReleasePulse = reloadPose.active
       ? 0
       : getPhantomVoidRayReleasePulse(voidRayReleaseRef.current, nowMs);
@@ -1462,7 +1545,12 @@ function PhantomAnimatedForearm({
       ? 0
       : getPhantomVoidRayReleaseExtensionBlend(voidRayReleaseRef.current, nowMs);
     const baseHoldBlend = reloadPose.active || chargePose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
-    const holdBlend = Math.max(baseHoldBlend, voidRayReleasePulse, voidRayReleaseExtensionBlend * 0.78);
+    const holdBlend = Math.max(
+      baseHoldBlend,
+      shieldCastPose?.blend ?? 0,
+      voidRayReleasePulse,
+      voidRayReleaseExtensionBlend * 0.78
+    );
     const primaryShotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
     const shotPulse = reloadPose.active ? 0 : Math.max(primaryShotPulse, voidRayReleasePulse);
     writePhantomForearmPose(
@@ -1473,11 +1561,15 @@ function PhantomAnimatedForearm({
       state.clock.elapsedTime,
       locomotionRef.current
     );
+    if (shieldCastPose) {
+      applyPhantomShieldCastForearmPose(forearm, side, shieldCastPose);
+    }
     applyPhantomVoidRayChargeForearmPose(forearm, side, chargePose, 0.92);
     applyPhantomVoidRayReleaseForearmPose(forearm, side, voidRayReleaseExtensionBlend);
     applyPhantomReloadMotion(forearm, side, reloadPose, 0.82);
     reloadGlowMaterial.opacity = Math.max(
       reloadPose.glowOpacity * 0.42,
+      (shieldCastPose?.blend ?? 0) * 0.38,
       chargePose.glowOpacity * 0.58,
       voidRayReleasePulse * 0.36,
       voidRayReleaseExtensionBlend * 0.24
@@ -1546,6 +1638,9 @@ function PhantomPoseableHand({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const shieldCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomShieldCastPose(nowMs);
     const voidRayReleasePulse = reloadPose.active
       ? 0
       : getPhantomVoidRayReleasePulse(voidRayReleaseRef.current, nowMs);
@@ -1553,17 +1648,23 @@ function PhantomPoseableHand({
       ? 0
       : getPhantomVoidRayReleaseExtensionBlend(voidRayReleaseRef.current, nowMs);
     const baseHoldBlend = reloadPose.active || chargePose.active ? 0 : getPhantomPrimaryHeldBlend(nowMs);
-    const holdBlend = Math.max(baseHoldBlend, voidRayReleasePulse, voidRayReleaseExtensionBlend * 0.82);
+    const holdBlend = Math.max(
+      baseHoldBlend,
+      shieldCastPose?.blend ?? 0,
+      voidRayReleasePulse,
+      voidRayReleaseExtensionBlend * 0.82
+    );
     const primaryShotPulse = getPhantomPrimaryShotPulse(attackTimeSeconds);
     const shotPulse = reloadPose.active ? 0 : Math.max(primaryShotPulse, voidRayReleasePulse);
     const chargeOpenBlend = reloadPose.active ? 0 : chargePose.blend;
+    const shieldOpenBlend = shieldCastPose?.blend ?? 0;
     const openVisualBlend = THREE.MathUtils.smoothstep(
-      Math.max(holdBlend, chargeOpenBlend),
+      Math.max(holdBlend, chargeOpenBlend, shieldOpenBlend),
       0.02,
       0.72
     );
     const closedVisualBlend = 1 - THREE.MathUtils.smoothstep(
-      Math.max(holdBlend, chargeOpenBlend),
+      Math.max(holdBlend, chargeOpenBlend, shieldOpenBlend),
       0,
       0.5
     );
@@ -1593,6 +1694,21 @@ function PhantomPoseableHand({
       state.clock.elapsedTime,
       locomotionRef.current
     );
+    if (shieldCastPose) {
+      applyPhantomShieldCastHandPose(
+        {
+          ...(closedVisual ? { closedHand: closedVisual } : {}),
+          arm,
+          wrist,
+          palm,
+          thumb,
+          fingers,
+        },
+        side,
+        shieldCastPose,
+        state.clock.elapsedTime
+      );
+    }
     applyPhantomVoidRayChargeHandPose(
       {
         ...(closedVisual ? { closedHand: closedVisual } : {}),
@@ -1624,6 +1740,7 @@ function PhantomPoseableHand({
     }
     reloadGlowMaterial.opacity = Math.max(
       reloadPose.glowOpacity * 0.62,
+      (shieldCastPose?.blend ?? 0) * 0.54,
       chargePose.glowOpacity * 0.86,
       voidRayReleasePulse * 0.5,
       voidRayReleaseExtensionBlend * 0.34

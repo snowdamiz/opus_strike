@@ -62,7 +62,6 @@ interface DustDevilConfig {
   speed: number;
 }
 
-const ATMOSPHERE_UPDATE_INTERVAL = 1 / 30;
 const ATMOSPHERE_MAX_STEP = 1 / 12;
 const SUN_POSITION: [number, number, number] = [92, 118, -76];
 const SUN_DIRECTION = new THREE.Vector3(...SUN_POSITION).normalize();
@@ -153,6 +152,10 @@ function seededValue(seed: number, salt: number): number {
 
 function pickVariant<T>(seed: number, salt: number, variants: T[]): T {
   return variants[Math.floor(seededValue(seed, salt) * variants.length) % variants.length];
+}
+
+function getAtmosphereStep(delta: number): number {
+  return Math.min(Math.max(delta, 0), ATMOSPHERE_MAX_STEP);
 }
 
 function withSeededWind(seed: number, profile: AtmosphereProfileInput, salt: number): AtmosphereProfile {
@@ -944,7 +947,6 @@ function getSkyUniforms(theme: VoxelMapTheme) {
 
 function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: number }) {
   const particleSet = useMemo(() => createPointParticleSet(profile, seed), [profile, seed]);
-  const accumulatedDeltaRef = useRef(0);
   const motion = useMemo(() => {
     const verticalDirection = profile.verticalDirection ?? 'fall';
     const slowAir = profile.kind === 'mist' || profile.kind === 'sand';
@@ -983,11 +985,8 @@ function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: nu
   );
 
   useFrame(({ clock }, delta) => {
-    accumulatedDeltaRef.current += Math.min(delta, ATMOSPHERE_MAX_STEP);
-    if (accumulatedDeltaRef.current < ATMOSPHERE_UPDATE_INTERVAL) return;
-
-    const step = Math.min(accumulatedDeltaRef.current, ATMOSPHERE_MAX_STEP);
-    accumulatedDeltaRef.current = 0;
+    const step = getAtmosphereStep(delta);
+    if (step <= 0) return;
 
     const positionAttribute = particleSet.geometry.getAttribute('position') as THREE.BufferAttribute;
     const positions = positionAttribute.array as Float32Array;
@@ -1047,7 +1046,6 @@ function FallingPoints({ profile, seed }: { profile: AtmosphereProfile; seed: nu
 
 function RainStreaks({ profile, seed }: { profile: AtmosphereProfile; seed: number }) {
   const streakSet = useMemo(() => createRainStreakSet(profile, seed), [profile, seed]);
-  const accumulatedDeltaRef = useRef(0);
   const motion = useMemo(
     () => ({
       halfX: profile.spreadX * 0.5,
@@ -1071,11 +1069,8 @@ function RainStreaks({ profile, seed }: { profile: AtmosphereProfile; seed: numb
   );
 
   useFrame(({ clock }, delta) => {
-    accumulatedDeltaRef.current += Math.min(delta, ATMOSPHERE_MAX_STEP);
-    if (accumulatedDeltaRef.current < ATMOSPHERE_UPDATE_INTERVAL) return;
-
-    const step = Math.min(accumulatedDeltaRef.current, ATMOSPHERE_MAX_STEP);
-    accumulatedDeltaRef.current = 0;
+    const step = getAtmosphereStep(delta);
+    if (step <= 0) return;
 
     const positionAttribute = streakSet.geometry.getAttribute('position') as THREE.BufferAttribute;
     const positions = positionAttribute.array as Float32Array;

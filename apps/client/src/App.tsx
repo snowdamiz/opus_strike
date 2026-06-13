@@ -66,6 +66,7 @@ export function App() {
   const isLoading = useGameStore((state) => state.isLoading);
   const isPracticeMode = useGameStore((state) => state.isPracticeMode);
   const isPracticePreparing = useGameStore((state) => state.isPracticePreparing);
+  const isObserverMode = useGameStore((state) => state.isObserverMode);
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
   const localHeroId = useGameStore((state) => state.localPlayer?.heroId ?? null);
@@ -113,11 +114,13 @@ export function App() {
 
     (async () => {
       try {
-        const heroEffectWarmup = localHeroId === 'phantom'
-          ? import('./components/game/effectPrewarm').then(({ prewarmPhantomEffects }) => prewarmPhantomEffects())
-          : localHeroId === 'blaze'
-            ? import('./components/game/effectPrewarm').then(({ prewarmBlazeEffects }) => prewarmBlazeEffects())
-            : Promise.resolve();
+        const heroEffectWarmup = import('./components/game/effectPrewarm').then((prewarm) => {
+          if (localHeroId === 'phantom') return prewarm.prewarmPhantomEffects();
+          if (localHeroId === 'blaze') return prewarm.prewarmBlazeEffects();
+          if (localHeroId === 'hookshot') return prewarm.prewarmHookshotEffects();
+          if (localHeroId === 'chronos') return prewarm.prewarmChronosEffects();
+          return Promise.resolve();
+        });
 
         await Promise.all([
           preloadSoundGroup('commonCombat'),
@@ -264,7 +267,7 @@ export function App() {
       setIsStartupRampActive(false);
     }
 
-    if (isActiveGame && !isMatchSceneReady) {
+    if (isActiveGame && !isMatchSceneReady && !isObserverMode) {
       setIsMatchLoadingVisible(true);
     }
 
@@ -291,10 +294,17 @@ export function App() {
     areMatchResourcesReady,
     isActiveGame,
     isMatchSceneReady,
+    isObserverMode,
     shouldMountMatchWorld,
     shouldPrepareMatchWorld,
     warmupKey,
   ]);
+
+  useEffect(() => {
+    if (isObserverMode) {
+      setIsMatchLoadingVisible(false);
+    }
+  }, [isObserverMode]);
 
   useEffect(() => {
     if (!isMatchSceneReady) return;
@@ -323,6 +333,7 @@ export function App() {
   useEffect(() => {
     if (
       isPracticeMode ||
+      isObserverMode ||
       gamePhase !== 'hero_select' ||
       !isMatchSceneReady ||
       matchStartGateKey === null ||
@@ -336,6 +347,7 @@ export function App() {
   }, [
     gamePhase,
     isMatchSceneReady,
+    isObserverMode,
     isPracticeMode,
     matchStartGateKey,
     reportMatchSceneReady,
@@ -408,9 +420,9 @@ export function App() {
         </Suspense>
 
         {/* Show hero select during pre-game phases */}
-        {isPreGame && <HeroSelect />}
+        {isPreGame && !isObserverMode && <HeroSelect />}
 
-        {!isPreGame && isMatchLoadingVisible && (
+        {!isObserverMode && !isPreGame && isMatchLoadingVisible && (
           <MatchLoadingScreen
             key={warmupKey}
             isComplete={isMatchSceneReady}
@@ -420,7 +432,7 @@ export function App() {
         )}
 
         {/* Show HUD during active gameplay */}
-        {isActiveGame && isMatchSceneReady && (
+        {isActiveGame && isMatchSceneReady && !isObserverMode && (
           <>
             <HUD />
             <TeleportEffects />
@@ -438,7 +450,7 @@ export function App() {
         )}
 
         {/* Countdown overlay */}
-        {gamePhase === 'countdown' && isMatchSceneReady && <CountdownOverlay />}
+        {gamePhase === 'countdown' && isMatchSceneReady && !isObserverMode && <CountdownOverlay />}
 
         {/* Round/game end overlays */}
         {gamePhase === 'round_end' && (

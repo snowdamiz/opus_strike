@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
@@ -41,12 +41,16 @@ const CAST_EFFECT_FADE_IN_MS = 120;
 const CAST_EFFECT_FADE_OUT_MS = 260;
 const MIN_CAST_EFFECT_DURATION_MS = 80;
 const PLAYER_CAST_FALLBACK_HEIGHT = 1.12;
-const activeObservedCastEffects = new Map<string, ObservedAbilityCastEffectData>();
-let observedCastRevision = 0;
-
-function nextObservedCastRevision(): void {
-  observedCastRevision += 1;
-}
+const OBSERVED_CAST_EFFECT_CAPACITY = 18;
+const OBSERVED_CAST_EFFECT_SLOT_INDICES = Array.from({ length: OBSERVED_CAST_EFFECT_CAPACITY }, (_, index) => index);
+const observedCastSlots: Array<{
+  effect: ObservedAbilityCastEffectData | null;
+  token: number;
+}> = Array.from({ length: OBSERVED_CAST_EFFECT_CAPACITY }, () => ({
+  effect: null,
+  token: 0,
+}));
+let observedCastTokenCounter = 0;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -70,55 +74,58 @@ export function startObservedAbilityCastEffect(effect: ObservedAbilityCastEffect
   const startTime = effect.startTime ?? now;
   const endTime = Math.max(startTime + MIN_CAST_EFFECT_DURATION_MS, effect.endTime);
 
-  for (const [id, activeEffect] of activeObservedCastEffects) {
+  for (const slot of observedCastSlots) {
+    const activeEffect = slot.effect;
+    if (!activeEffect) continue;
     if (
-      id !== effect.id &&
+      activeEffect.id !== effect.id &&
       activeEffect.playerId === effect.playerId &&
       activeEffect.abilityId === effect.abilityId
     ) {
-      activeObservedCastEffects.delete(id);
+      slot.effect = null;
+      slot.token++;
     }
   }
 
-  activeObservedCastEffects.set(effect.id, {
+  const nextEffect: ObservedAbilityCastEffectData = {
     ...effect,
     startTime,
     endTime,
     scale: effect.scale ?? 1,
-  });
-  nextObservedCastRevision();
+  };
+  const existingSlot = observedCastSlots.find((slot) => slot.effect?.id === effect.id);
+  const emptySlot = observedCastSlots.find((slot) => !slot.effect);
+  const slot = existingSlot ?? emptySlot ?? observedCastSlots.reduce((oldest, candidate) => {
+    const oldestEnd = oldest.effect?.endTime ?? Number.POSITIVE_INFINITY;
+    const candidateEnd = candidate.effect?.endTime ?? Number.POSITIVE_INFINITY;
+    return candidateEnd < oldestEnd ? candidate : oldest;
+  }, observedCastSlots[0]);
+
+  slot.effect = nextEffect;
+  slot.token = ++observedCastTokenCounter;
 }
 
 export function stopObservedAbilityCastEffects(playerId: string, abilityId?: ObservedAbilityCastEffectKind): void {
   const now = Date.now();
-  let changed = false;
 
-  for (const effect of activeObservedCastEffects.values()) {
+  for (const slot of observedCastSlots) {
+    const effect = slot.effect;
+    if (!effect) continue;
     if (effect.playerId !== playerId) continue;
     if (abilityId && effect.abilityId !== abilityId) continue;
     effect.endTime = Math.min(effect.endTime, now);
-    changed = true;
-  }
-
-  if (changed) {
-    nextObservedCastRevision();
   }
 }
 
-function pruneObservedAbilityCastEffects(now: number): number {
-  let changed = false;
-  for (const [id, effect] of activeObservedCastEffects) {
+function pruneObservedAbilityCastEffects(now: number): void {
+  for (const slot of observedCastSlots) {
+    const effect = slot.effect;
+    if (!effect) continue;
     if (now > effect.endTime + CAST_EFFECT_FADE_OUT_MS) {
-      activeObservedCastEffects.delete(id);
-      changed = true;
+      slot.effect = null;
+      slot.token++;
     }
   }
-
-  if (changed) {
-    nextObservedCastRevision();
-  }
-
-  return observedCastRevision;
 }
 
 function writeObservedCastPosition(
@@ -168,7 +175,7 @@ function writeObservedCastPosition(
   return false;
 }
 
-function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffectData }) {
+function ObservedAbilityCastEffectSlot({ slotIndex }: { slotIndex: number }) {
   const groupRef = useRef<THREE.Group>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const outerRef = useRef<THREE.Mesh>(null);
@@ -178,6 +185,7 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
   const ringCRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const positionRef = useRef(new THREE.Vector3());
+  const lastSlotTokenRef = useRef(-1);
 
   const materials = useMemo(() => {
     const core = new THREE.MeshBasicMaterial({
@@ -189,7 +197,7 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
       toneMapped: false,
     });
     const outer = new THREE.MeshBasicMaterial({
-      color: effect.color,
+      color: 0xffffff,
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
@@ -197,7 +205,7 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
       toneMapped: false,
     });
     const shell = new THREE.MeshBasicMaterial({
-      color: effect.secondaryColor,
+      color: 0xffffff,
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
@@ -205,7 +213,7 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
       toneMapped: false,
     });
     const ring = new THREE.MeshBasicMaterial({
-      color: effect.secondaryColor,
+      color: 0xffffff,
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
@@ -214,7 +222,7 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
       toneMapped: false,
     });
     return { core, outer, shell, ring };
-  }, [effect.color, effect.secondaryColor]);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -228,6 +236,22 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
   useFrame((_, delta) => {
     const group = groupRef.current;
     if (!group) return;
+
+    const slot = observedCastSlots[slotIndex];
+    const effect = slot.effect;
+    if (!effect) {
+      group.visible = false;
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
+    }
+
+    if (lastSlotTokenRef.current !== slot.token) {
+      lastSlotTokenRef.current = slot.token;
+      materials.outer.color.setHex(effect.color);
+      materials.shell.color.setHex(effect.secondaryColor);
+      materials.ring.color.setHex(effect.secondaryColor);
+      if (lightRef.current) lightRef.current.color.setHex(effect.color);
+    }
 
     if (!writeObservedCastPosition(effect, positionRef.current)) {
       group.visible = false;
@@ -305,7 +329,7 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
       <BudgetedPointLight
         ref={lightRef}
         budgetPriority={1.9}
-        color={effect.color}
+        color={0xffffff}
         intensity={0}
         distance={5.6}
         decay={2}
@@ -314,22 +338,64 @@ function ObservedAbilityCastEffect({ effect }: { effect: ObservedAbilityCastEffe
   );
 }
 
+function createObservedCastPrewarmMaterial(
+  color: number,
+  side: THREE.Side = THREE.FrontSide
+): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.42,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side,
+    toneMapped: false,
+  });
+}
+
+function addObservedCastPrewarmMesh(
+  target: THREE.Object3D,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  position: [number, number, number],
+  scale: number | [number, number, number],
+  rotation: [number, number, number] = [0, 0, 0]
+): void {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(...position);
+  mesh.rotation.set(...rotation);
+  if (typeof scale === 'number') {
+    mesh.scale.setScalar(scale);
+  } else {
+    mesh.scale.set(...scale);
+  }
+  mesh.frustumCulled = false;
+  target.add(mesh);
+}
+
+export function appendObservedCastGpuPrewarmObjects(target: THREE.Object3D): void {
+  const core = createObservedCastPrewarmMaterial(0xffffff);
+  const primary = createObservedCastPrewarmMaterial(0x73ffa2);
+  const secondary = createObservedCastPrewarmMaterial(0xa78bfa);
+  const ring = createObservedCastPrewarmMaterial(0x38bdf8, THREE.DoubleSide);
+
+  addObservedCastPrewarmMesh(target, SHARED_GEOMETRIES.sphere8, core, [0.2, 1.48, -4.7], 0.14);
+  addObservedCastPrewarmMesh(target, SHARED_GEOMETRIES.sphere16, primary, [0.45, 1.48, -4.7], 0.22);
+  addObservedCastPrewarmMesh(target, SHARED_GEOMETRIES.sphere12, secondary, [0.75, 1.48, -4.7], 0.2);
+  addObservedCastPrewarmMesh(target, SHARED_GEOMETRIES.ring32, ring, [1.05, 1.48, -4.7], 0.24);
+  addObservedCastPrewarmMesh(target, SHARED_GEOMETRIES.ring24, ring, [1.35, 1.48, -4.7], 0.22, [Math.PI / 2, 0, 0]);
+  addObservedCastPrewarmMesh(target, SHARED_GEOMETRIES.ring16, ring, [1.62, 1.48, -4.7], 0.2, [0, Math.PI / 2, 0]);
+}
+
 export function ObservedAbilityCastEffectsManager() {
-  const [effects, setEffects] = useState<ObservedAbilityCastEffectData[]>([]);
-  const lastRevisionRef = useRef(-1);
-
   useFrame(() => {
-    const revision = pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
-    if (revision === lastRevisionRef.current) return;
-
-    lastRevisionRef.current = revision;
-    setEffects(Array.from(activeObservedCastEffects.values()));
+    pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
   });
 
   return (
     <group>
-      {effects.map((effect) => (
-        <ObservedAbilityCastEffect key={effect.id} effect={effect} />
+      {OBSERVED_CAST_EFFECT_SLOT_INDICES.map((slotIndex) => (
+        <ObservedAbilityCastEffectSlot key={slotIndex} slotIndex={slotIndex} />
       ))}
     </group>
   );

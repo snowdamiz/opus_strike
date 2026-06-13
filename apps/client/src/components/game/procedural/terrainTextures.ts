@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { VoxelBlockId, VoxelMapTheme } from '@voxel-strike/shared';
+import type { GraphicsFeatureQuality } from '../../../store/settingsStore';
 
 export const TERRAIN_TEXTURE_COLUMNS = 6;
 export const TERRAIN_TEXTURE_ROWS = 5;
@@ -29,7 +30,54 @@ interface TerrainTexturePaintContexts {
 }
 
 const TERRAIN_TEXTURE_ANISOTROPY = 1;
+const TERRAIN_DETAIL_GRID_SIZE = 8;
 const terrainTextureCache = new Map<string, VoxelTerrainTextures>();
+
+interface MaterialQualityPaintProfile {
+  baseSpeckleAlpha: number;
+  detailAlpha: number;
+  detailDensity: number;
+  emissiveDetailAlpha: number;
+}
+
+const MATERIAL_QUALITY_PAINT_PROFILES: Record<GraphicsFeatureQuality, MaterialQualityPaintProfile> = {
+  off: {
+    baseSpeckleAlpha: 0,
+    detailAlpha: 0,
+    detailDensity: 0,
+    emissiveDetailAlpha: 0,
+  },
+  minimum: {
+    baseSpeckleAlpha: 0.04,
+    detailAlpha: 0,
+    detailDensity: 0,
+    emissiveDetailAlpha: 0,
+  },
+  low: {
+    baseSpeckleAlpha: 0.06,
+    detailAlpha: 0.24,
+    detailDensity: 0.46,
+    emissiveDetailAlpha: 0.22,
+  },
+  medium: {
+    baseSpeckleAlpha: 0.08,
+    detailAlpha: 0.32,
+    detailDensity: 0.56,
+    emissiveDetailAlpha: 0.3,
+  },
+  high: {
+    baseSpeckleAlpha: 0.1,
+    detailAlpha: 0.42,
+    detailDensity: 0.68,
+    emissiveDetailAlpha: 0.4,
+  },
+  ultra: {
+    baseSpeckleAlpha: 0.12,
+    detailAlpha: 0.5,
+    detailDensity: 0.78,
+    emissiveDetailAlpha: 0.48,
+  },
+};
 
 function textureTile(x: number, y: number): TerrainTextureTile {
   return {
@@ -201,18 +249,22 @@ function paintSpeckles(
   count: number,
   seed: number,
   minSize = 1,
-  maxSize = 3
+  maxSize = 3,
+  alpha = 0.16
 ): void {
   const { x, y } = tileOrigin(tile);
   const safeCount = Math.max(4, Math.ceil(count * 0.28));
-  const safeMinSize = Math.max(4, minSize);
-  const safeMaxSize = Math.max(safeMinSize, maxSize + 3);
+  const safeMinSize = Math.max(TERRAIN_DETAIL_GRID_SIZE, minSize);
+  const safeMaxSize = Math.max(safeMinSize, maxSize + TERRAIN_DETAIL_GRID_SIZE);
 
-  withAlpha(context, 0.16, () => {
+  withAlpha(context, alpha, () => {
     for (let i = 0; i < safeCount; i++) {
-      const size = safeMinSize + Math.floor(hash2(i, 7, seed) * (safeMaxSize - safeMinSize + 1));
-      const px = x + Math.floor(hash2(i, 3, seed) * Math.max(1, TILE_SIZE - size));
-      const py = y + Math.floor(hash2(i, 5, seed) * Math.max(1, TILE_SIZE - size));
+      const size = Math.max(
+        TERRAIN_DETAIL_GRID_SIZE,
+        textureGrid(safeMinSize + Math.floor(hash2(i, 7, seed) * (safeMaxSize - safeMinSize + 1)))
+      );
+      const px = x + Math.min(TILE_SIZE - size, textureGrid(hash2(i, 3, seed) * Math.max(1, TILE_SIZE - size)));
+      const py = y + Math.min(TILE_SIZE - size, textureGrid(hash2(i, 5, seed) * Math.max(1, TILE_SIZE - size)));
       context.fillStyle = colors[i % colors.length];
       context.fillRect(px, py, size, size);
     }
@@ -235,6 +287,283 @@ function strokePanelLines(
   context.moveTo(x + 6, y + TILE_SIZE / 2);
   context.lineTo(x + TILE_SIZE - 6, y + TILE_SIZE / 2);
   context.stroke();
+}
+
+type TerrainDetailKind =
+  | 'grass'
+  | 'earth'
+  | 'stone'
+  | 'sand'
+  | 'frost'
+  | 'panel'
+  | 'glass'
+  | 'obsidian'
+  | 'wood'
+  | 'foliage'
+  | 'succulent'
+  | 'magma'
+  | 'ore'
+  | 'crystal';
+
+const DETAIL_KIND_BY_TILE = new Map<TerrainTextureTile, TerrainDetailKind>([
+  [TILE_MAP.grass_top, 'grass'],
+  [TILE_MAP.grass_side, 'earth'],
+  [TILE_MAP.dirt, 'earth'],
+  [TILE_MAP.stone, 'stone'],
+  [TILE_MAP.sand, 'sand'],
+  [TILE_MAP.snow, 'frost'],
+  [TILE_MAP.metal, 'panel'],
+  [TILE_MAP.glass, 'glass'],
+  [TILE_MAP.neon_red, 'panel'],
+  [TILE_MAP.neon_blue, 'panel'],
+  [TILE_MAP.ice, 'glass'],
+  [TILE_MAP.obsidian, 'obsidian'],
+  [TILE_MAP.spawn_pad, 'panel'],
+  [TILE_MAP.spawn_pad_red, 'panel'],
+  [TILE_MAP.spawn_pad_blue, 'panel'],
+  [TILE_MAP.flag_pad, 'panel'],
+  [TILE_MAP.barrier, 'panel'],
+  [TILE_MAP.wood, 'wood'],
+  [TILE_MAP.bamboo, 'wood'],
+  [TILE_MAP.ash, 'stone'],
+  [TILE_MAP.leaves, 'foliage'],
+  [TILE_MAP.cactus, 'succulent'],
+  [TILE_MAP.blossom_leaves, 'foliage'],
+  [TILE_MAP.moss, 'grass'],
+  [TILE_MAP.lava, 'magma'],
+  [TILE_MAP.gold, 'sand'],
+  [TILE_MAP.gold_ore, 'ore'],
+  [TILE_MAP.gold_panel, 'panel'],
+  [TILE_MAP.gold_glass, 'glass'],
+  [TILE_MAP.crystal_growth, 'crystal'],
+]);
+
+function paintChunkyMottle(
+  context: CanvasRenderingContext2D,
+  tile: TerrainTextureTile,
+  colors: string[],
+  count: number,
+  seed: number,
+  minSize = 8,
+  maxSize = 18,
+  alpha = 0.12
+): void {
+  const { x, y } = tileOrigin(tile);
+  const safeMinSize = Math.max(4, minSize);
+  const safeMaxSize = Math.max(safeMinSize, maxSize);
+
+  withAlpha(context, alpha, () => {
+    for (let i = 0; i < count; i++) {
+      const width = Math.max(TERRAIN_DETAIL_GRID_SIZE, textureGrid(safeMinSize + Math.floor(hash2(i, 11, seed) * (safeMaxSize - safeMinSize + 1))));
+      const height = Math.max(TERRAIN_DETAIL_GRID_SIZE, textureGrid(safeMinSize + Math.floor(hash2(i, 13, seed) * (safeMaxSize - safeMinSize + 1))));
+      const px = x + Math.min(TILE_SIZE - width, textureGrid(hash2(i, 17, seed) * Math.max(1, TILE_SIZE - width)));
+      const py = y + Math.min(TILE_SIZE - height, textureGrid(hash2(i, 19, seed) * Math.max(1, TILE_SIZE - height)));
+      context.fillStyle = colors[i % colors.length];
+      context.fillRect(px, py, width, height);
+    }
+  });
+}
+
+function scaleDetailCount(count: number, profile: MaterialQualityPaintProfile): number {
+  if (profile.detailDensity <= 0) return 0;
+  return Math.max(1, Math.round(count * profile.detailDensity));
+}
+
+function textureGrid(value: number): number {
+  return Math.max(0, Math.round(value / TERRAIN_DETAIL_GRID_SIZE) * TERRAIN_DETAIL_GRID_SIZE);
+}
+
+function paintSteppedBands(
+  context: CanvasRenderingContext2D,
+  tile: TerrainTextureTile,
+  colors: string[],
+  seed: number,
+  orientation: 'horizontal' | 'vertical',
+  count = 5,
+  alpha = 0.14
+): void {
+  const { x, y } = tileOrigin(tile);
+  const inset = 4;
+  const span = TILE_SIZE - inset * 2;
+
+  withAlpha(context, alpha, () => {
+    for (let i = 0; i < count; i++) {
+      const thickness = Math.max(TERRAIN_DETAIL_GRID_SIZE, textureGrid(8 + Math.floor(hash2(i, 23, seed) * 8)));
+      const offset = textureGrid(Math.floor(hash2(i, 29, seed) * Math.max(1, span - thickness)));
+      context.fillStyle = colors[i % colors.length];
+
+      if (orientation === 'horizontal') {
+        context.fillRect(x + inset, y + inset + offset, span, thickness);
+      } else {
+        context.fillRect(x + inset + offset, y + inset, thickness, span);
+      }
+    }
+  });
+}
+
+function paintSteppedSegments(
+  context: CanvasRenderingContext2D,
+  tile: TerrainTextureTile,
+  color: string,
+  seed: number,
+  count = 3,
+  alpha = 0.18,
+  thickness = 4
+): void {
+  const { x, y } = tileOrigin(tile);
+  const inset = 8;
+  const segmentThickness = Math.max(TERRAIN_DETAIL_GRID_SIZE, textureGrid(thickness));
+
+  withAlpha(context, alpha, () => {
+    context.fillStyle = color;
+
+    for (let i = 0; i < count; i++) {
+      const startX = x + inset + textureGrid(hash2(i, 31, seed) * (TILE_SIZE - inset * 2 - 16));
+      const startY = y + inset + textureGrid(hash2(i, 37, seed) * (TILE_SIZE - inset * 2 - 16));
+      const horizontalLength = 16 + textureGrid(hash2(i, 43, seed) * 16);
+      const verticalLength = 16 + textureGrid(hash2(i, 47, seed) * 16);
+      const direction = hash2(i, 41, seed) > 0.5 ? 1 : -1;
+      const endX = clamp(startX + direction * horizontalLength, x + inset, x + TILE_SIZE - inset - segmentThickness);
+      const verticalY = clamp(startY + verticalLength, y + inset, y + TILE_SIZE - inset - segmentThickness);
+      const horizontalX = Math.min(startX, endX);
+      const horizontalWidth = Math.abs(endX - startX) + segmentThickness;
+
+      context.fillRect(horizontalX, startY, horizontalWidth, segmentThickness);
+      context.fillRect(endX, Math.min(startY, verticalY), segmentThickness, Math.abs(verticalY - startY) + segmentThickness);
+    }
+  });
+}
+
+function paintPanelAccents(
+  context: CanvasRenderingContext2D,
+  tile: TerrainTextureTile,
+  groove: string,
+  rivet: string,
+  alpha = 0.24
+): void {
+  const { x, y } = tileOrigin(tile);
+  const middle = Math.floor(TILE_SIZE / 2);
+  const inset = 8;
+
+  withAlpha(context, alpha, () => {
+    context.fillStyle = groove;
+    context.fillRect(x + inset, y + middle - 3, TILE_SIZE - inset * 2, 6);
+    context.fillRect(x + middle - 3, y + inset, 6, TILE_SIZE - inset * 2);
+
+    context.fillStyle = rivet;
+    const rivetSize = 8;
+    const rivets = [
+      [8, 8],
+      [TILE_SIZE - 16, 8],
+      [8, TILE_SIZE - 16],
+      [TILE_SIZE - 16, TILE_SIZE - 16],
+    ];
+
+    for (const [rx, ry] of rivets) {
+      context.fillRect(x + rx, y + ry, rivetSize, rivetSize);
+    }
+  });
+}
+
+function paintRectFacets(
+  context: CanvasRenderingContext2D,
+  tile: TerrainTextureTile,
+  color: string,
+  seed: number,
+  count = 3,
+  alpha = 0.16
+): void {
+  const { x, y } = tileOrigin(tile);
+  const inset = 8;
+
+  withAlpha(context, alpha, () => {
+    context.fillStyle = color;
+
+    for (let i = 0; i < count; i++) {
+      const width = 16 + textureGrid(hash2(i, 61, seed) * 8);
+      const height = TILE_SIZE - inset * 2;
+      const px = x + inset + textureGrid(hash2(i, 67, seed) * Math.max(1, TILE_SIZE - inset * 2 - width));
+      context.fillRect(px, y + inset, width, height);
+    }
+  });
+}
+
+function paintTerrainTileDetail(
+  contexts: TerrainTexturePaintContexts,
+  tile: TerrainTextureTile,
+  color: string,
+  detailKind: TerrainDetailKind,
+  seed: number,
+  profile: MaterialQualityPaintProfile
+): void {
+  if (profile.detailAlpha <= 0 || profile.detailDensity <= 0) return;
+
+  const highlight = mixHex(color, '#ffffff', 0.24);
+  const lowlight = mixHex(color, '#000000', 0.34);
+  const alpha = profile.detailAlpha;
+  const emissiveAlpha = profile.emissiveDetailAlpha;
+
+  switch (detailKind) {
+    case 'grass':
+      paintChunkyMottle(contexts.color, tile, [shadeHex(color, 22), mixHex(color, '#112b18', 0.28)], scaleDetailCount(7, profile), seed, 8, 18, 0.12 * alpha);
+      paintSteppedBands(contexts.color, tile, [mixHex(color, '#efffbb', 0.18)], seed + 17, 'vertical', scaleDetailCount(3, profile), 0.06 * alpha);
+      break;
+    case 'earth':
+      paintSteppedBands(contexts.color, tile, [shadeHex(color, 18), shadeHex(color, -26)], seed, 'horizontal', scaleDetailCount(5, profile), 0.13 * alpha);
+      paintChunkyMottle(contexts.color, tile, [mixHex(color, '#000000', 0.22)], scaleDetailCount(4, profile), seed + 23, 9, 20, 0.08 * alpha);
+      break;
+    case 'stone':
+      paintChunkyMottle(contexts.color, tile, [highlight, lowlight], scaleDetailCount(6, profile), seed, 10, 22, 0.1 * alpha);
+      paintSteppedSegments(contexts.color, tile, mixHex(color, '#000000', 0.42), seed + 31, scaleDetailCount(2, profile), 0.12 * alpha, 4);
+      break;
+    case 'sand':
+      paintSteppedBands(contexts.color, tile, [shadeHex(color, 16), mixHex(color, '#8a6d35', 0.18)], seed, 'horizontal', scaleDetailCount(4, profile), 0.1 * alpha);
+      paintChunkyMottle(contexts.color, tile, [mixHex(color, '#ffffff', 0.16)], scaleDetailCount(5, profile), seed + 41, 9, 18, 0.07 * alpha);
+      break;
+    case 'frost':
+      paintChunkyMottle(contexts.color, tile, [mixHex(color, '#ffffff', 0.28), mixHex(color, '#6fc7df', 0.2)], scaleDetailCount(5, profile), seed, 10, 24, 0.08 * alpha);
+      paintRectFacets(contexts.color, tile, mixHex(color, '#ffffff', 0.36), seed + 47, scaleDetailCount(2, profile), 0.09 * alpha);
+      break;
+    case 'panel':
+      paintChunkyMottle(contexts.color, tile, [shadeHex(color, 18), shadeHex(color, -24)], scaleDetailCount(4, profile), seed, 10, 22, 0.07 * alpha);
+      paintPanelAccents(contexts.color, tile, mixHex(color, '#000000', 0.36), mixHex(color, '#ffffff', 0.24), 0.16 * alpha);
+      break;
+    case 'glass':
+      paintRectFacets(contexts.color, tile, mixHex(color, '#ffffff', 0.42), seed, scaleDetailCount(3, profile), 0.12 * alpha);
+      paintPanelAccents(contexts.color, tile, mixHex(color, '#ffffff', 0.18), mixHex(color, '#ffffff', 0.36), 0.1 * alpha);
+      break;
+    case 'obsidian':
+      paintChunkyMottle(contexts.color, tile, [mixHex(color, '#5d3a8a', 0.22), mixHex(color, '#000000', 0.42)], scaleDetailCount(5, profile), seed, 11, 24, 0.13 * alpha);
+      paintSteppedSegments(contexts.color, tile, mixHex(color, '#9d7cff', 0.22), seed + 53, scaleDetailCount(2, profile), 0.12 * alpha, 4);
+      break;
+    case 'wood':
+      paintSteppedBands(contexts.color, tile, [shadeHex(color, 24), shadeHex(color, -30)], seed, 'vertical', scaleDetailCount(5, profile), 0.14 * alpha);
+      paintSteppedSegments(contexts.color, tile, mixHex(color, '#2a1407', 0.3), seed + 59, scaleDetailCount(2, profile), 0.08 * alpha, 4);
+      break;
+    case 'foliage':
+      paintChunkyMottle(contexts.color, tile, [shadeHex(color, 24), mixHex(color, '#15351d', 0.28)], scaleDetailCount(8, profile), seed, 8, 18, 0.14 * alpha);
+      paintSteppedBands(contexts.color, tile, [mixHex(color, '#ffffff', 0.18)], seed + 61, 'vertical', scaleDetailCount(3, profile), 0.06 * alpha);
+      break;
+    case 'succulent':
+      paintSteppedBands(contexts.color, tile, [shadeHex(color, 24), mixHex(color, '#14351e', 0.22)], seed, 'vertical', scaleDetailCount(5, profile), 0.14 * alpha);
+      paintChunkyMottle(contexts.color, tile, [mixHex(color, '#ffffff', 0.18)], scaleDetailCount(4, profile), seed + 67, 8, 16, 0.08 * alpha);
+      break;
+    case 'magma':
+      paintChunkyMottle(contexts.color, tile, [mixHex(color, '#1a0700', 0.3), shadeHex(color, 34)], scaleDetailCount(6, profile), seed, 9, 22, 0.12 * alpha);
+      paintSteppedSegments(contexts.color, tile, '#ffb347', seed + 71, scaleDetailCount(3, profile), 0.18 * alpha, 4);
+      paintSteppedSegments(contexts.emissive, tile, '#ff7b1f', seed + 71, scaleDetailCount(3, profile), 0.42 * emissiveAlpha, 8);
+      break;
+    case 'ore':
+      paintChunkyMottle(contexts.color, tile, [lowlight, highlight], scaleDetailCount(5, profile), seed, 10, 20, 0.1 * alpha);
+      paintSteppedSegments(contexts.color, tile, '#f7d15b', seed + 73, scaleDetailCount(2, profile), 0.18 * alpha, 4);
+      paintSteppedSegments(contexts.emissive, tile, '#ffe15a', seed + 73, scaleDetailCount(2, profile), 0.12 * emissiveAlpha, 8);
+      break;
+    case 'crystal':
+      paintRectFacets(contexts.color, tile, mixHex(color, '#ffffff', 0.44), seed, scaleDetailCount(3, profile), 0.16 * alpha);
+      paintSteppedSegments(contexts.color, tile, '#fff9b8', seed + 79, scaleDetailCount(2, profile), 0.14 * alpha, 4);
+      paintSteppedSegments(contexts.emissive, tile, '#fff36b', seed + 79, scaleDetailCount(2, profile), 0.18 * emissiveAlpha, 8);
+      break;
+  }
 }
 
 function createLayerContext(): { context: CanvasRenderingContext2D } {
@@ -284,7 +613,12 @@ function createTerrainTexture(
   return texture;
 }
 
-function paintTerrainTileSet(contexts: TerrainTexturePaintContexts, theme: VoxelMapTheme): void {
+function paintTerrainTileSet(
+  contexts: TerrainTexturePaintContexts,
+  theme: VoxelMapTheme,
+  materialQuality: GraphicsFeatureQuality
+): void {
+  const qualityProfile = MATERIAL_QUALITY_PAINT_PROFILES[materialQuality];
   const colorByTile = new Map<TerrainTextureTile, string>([
     [TILE_MAP.grass_top, theme.ground.top],
     [TILE_MAP.grass_side, theme.ground.side],
@@ -321,7 +655,23 @@ function paintTerrainTileSet(contexts: TerrainTexturePaintContexts, theme: Voxel
   for (const [tile, color] of colorByTile) {
     fillTile(contexts.color, tile, color);
     fillTile(contexts.emissive, tile, '#000000');
-    paintSpeckles(contexts.color, tile, [shadeHex(color, 24), shadeHex(color, -28), mixHex(color, '#ffffff', 0.08)], 18, tile.x * 97 + tile.y * 193, 1, 2);
+    const seed = tile.x * 97 + tile.y * 193;
+    if (qualityProfile.baseSpeckleAlpha > 0) {
+      paintSpeckles(
+        contexts.color,
+        tile,
+        [shadeHex(color, 24), shadeHex(color, -28), mixHex(color, '#ffffff', 0.08)],
+        18,
+        seed,
+        1,
+        2,
+        qualityProfile.baseSpeckleAlpha
+      );
+    }
+    const detailKind = DETAIL_KIND_BY_TILE.get(tile);
+    if (detailKind) {
+      paintTerrainTileDetail(contexts, tile, color, detailKind, seed, qualityProfile);
+    }
     paintTileEdgePixelFrame(
       contexts,
       tile,
@@ -350,8 +700,12 @@ function paintTerrainTileSet(contexts: TerrainTexturePaintContexts, theme: Voxel
   }
 }
 
-export function createVoxelTerrainTextures(theme: VoxelMapTheme): VoxelTerrainTextures {
-  const cached = terrainTextureCache.get(theme.id);
+export function createVoxelTerrainTextures(
+  theme: VoxelMapTheme,
+  materialQuality: GraphicsFeatureQuality = 'high'
+): VoxelTerrainTextures {
+  const cacheKey = `${theme.id}:${materialQuality}`;
+  const cached = terrainTextureCache.get(cacheKey);
   if (cached) {
     return cached;
   }
@@ -369,7 +723,7 @@ export function createVoxelTerrainTextures(theme: VoxelMapTheme): VoxelTerrainTe
     context.clearRect(0, 0, TERRAIN_TEXTURE_COLUMNS * TILE_SIZE, TERRAIN_TEXTURE_ROWS * TILE_SIZE);
   }
 
-  paintTerrainTileSet(contexts, theme);
+  paintTerrainTileSet(contexts, theme, materialQuality);
 
   const textures: VoxelTerrainTextures = {
     color: createTerrainTexture(createTextureArrayData(color.context), THREE.SRGBColorSpace),
@@ -379,7 +733,7 @@ export function createVoxelTerrainTextures(theme: VoxelMapTheme): VoxelTerrainTe
     anisotropy: TERRAIN_TEXTURE_ANISOTROPY,
   };
 
-  terrainTextureCache.set(theme.id, textures);
+  terrainTextureCache.set(cacheKey, textures);
   return textures;
 }
 

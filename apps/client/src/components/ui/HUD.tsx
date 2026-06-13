@@ -8,7 +8,7 @@ import {
   VOID_RAY_CHARGE_TIME,
 } from '@voxel-strike/shared';
 import { getHeroSkillItems, HeroSkillIcon, type HeroSkillItem } from './HeroSkillKit';
-import { useCombatFeedbackStore, type DamageNumberEvent, type KillFeedEvent } from '../../store/combatFeedbackStore';
+import { useCombatFeedbackStore, type KillFeedEvent } from '../../store/combatFeedbackStore';
 import { useSettingsStore, type CrosshairStyle } from '../../store/settingsStore';
 import { useHudNow } from '../../store/hudSignals';
 import { FACTIONS, HUD_HERO_COLORS as HERO_COLORS } from '../../styles/colorTokens';
@@ -128,27 +128,6 @@ function NormalCrosshair({ crosshairStyle, color }: { crosshairStyle: CrosshairS
         </>
       )}
     </svg>
-  );
-}
-
-function DamageNumberStack({ events }: { events: DamageNumberEvent[] }) {
-  if (events.length === 0) return null;
-
-  return (
-    <div className="absolute left-1/2 top-[43%] -translate-x-1/2 flex flex-col-reverse items-center gap-1 z-[120]">
-      {events.map((event, index) => (
-        <div
-          key={event.id}
-          className="font-display text-xl text-orange-300 drop-shadow-[0_2px_10px_rgba(0,0,0,0.9)] animate-fade-in"
-          style={{
-            transform: `translateY(${-index * 6}px) scale(${1 - index * 0.08})`,
-            opacity: Math.max(0.35, 1 - index * 0.18),
-          }}
-        >
-          -{Math.round(event.damage)}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -469,22 +448,15 @@ export function HUD() {
   const {
     crosshairStyle,
     crosshairColor,
-    showDamageNumbers,
     showKillFeed,
   } = useSettingsStore(
     useShallow(state => ({
       crosshairStyle: state.settings.crosshairStyle,
       crosshairColor: state.settings.crosshairColor,
-      showDamageNumbers: state.settings.showDamageNumbers,
       showKillFeed: state.settings.showKillFeed,
     }))
   );
-  const { damageNumbers, killFeed } = useCombatFeedbackStore(
-    useShallow(state => ({
-      damageNumbers: state.damageNumbers,
-      killFeed: state.killFeed,
-    }))
-  );
+  const killFeed = useCombatFeedbackStore((state) => state.killFeed);
 
   if (!localPlayer) return null;
 
@@ -552,7 +524,6 @@ export function HUD() {
         )}
       </div>
 
-      {showDamageNumbers && <DamageNumberStack events={damageNumbers} />}
       {showKillFeed && <KillFeed events={killFeed} />}
       <Minimap />
       {!isPracticeMode && <VoiceHud />}

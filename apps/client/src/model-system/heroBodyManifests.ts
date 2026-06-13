@@ -36,6 +36,30 @@ export const TEAM_COLORS: Record<Team, string> = {
   blue: '#06b6d4',
 };
 
+export const TEAM_BODY_GLOW_OUTLINE_SCALE = 1.09;
+export const TEAM_BODY_GLOW_OUTLINE_OPACITY = 0.52;
+export const TEAM_BODY_GLOW_EMISSIVE_MULTIPLIER = 1.55;
+export const TEAM_BODY_GLOW_TRANSPARENT_OPACITY_MULTIPLIER = 1.45;
+
+export function getHeroBodyMaterialEmissiveIntensity(kind: MaterialKind, hasFlag: boolean) {
+  const flagBoost = hasFlag ? 0.35 : 0;
+  if (kind === 'glow') return 0.78 + flagBoost;
+  if (kind === 'eye') return 0.9 + flagBoost;
+  if (kind === 'accent') return 0.32 + flagBoost * 0.6;
+  if (kind === 'mist') return 0.42 + flagBoost * 0.4;
+  return flagBoost * 0.35;
+}
+
+export function getTeamBodyGlowEmissiveIntensity(part: Pick<TeamAccentPart, 'emissiveIntensity'>): number {
+  return part.emissiveIntensity * TEAM_BODY_GLOW_EMISSIVE_MULTIPLIER;
+}
+
+export function getTeamBodyGlowOpacity(part: Pick<TeamAccentPart, 'opacity' | 'transparent'>): number {
+  const opacity = part.opacity ?? 1;
+  if (!part.transparent && part.opacity === undefined) return opacity;
+  return Math.min(1, opacity * TEAM_BODY_GLOW_TRANSPARENT_OPACITY_MULTIPLIER);
+}
+
 export const HERO_COLORS: Record<HeroId, Record<MaterialKind, string>> = {
   phantom: {
     armor: '#302447',
@@ -549,7 +573,7 @@ function teamAccentPart(part: VoxelPart & Partial<TeamAccentPart>): TeamAccentPa
     roughness: part.roughness ?? (transparent ? 0.62 : 0.38),
     metalness: part.metalness ?? (transparent ? 0.12 : 0.18),
     depthWrite: part.depthWrite ?? !transparent,
-    toneMapped: part.toneMapped,
+    toneMapped: part.toneMapped ?? false,
     opacity: part.opacity,
     ...part,
   };

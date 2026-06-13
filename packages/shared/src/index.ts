@@ -20,6 +20,7 @@ export * from './constants/heroes.js';
 // Utils
 export * from './utils/math.js';
 export * from './utils/playerGeometry.js';
+export * from './utils/movementDirection.js';
 
 // Model system
 export * from './model/abilitySocketCatalog.js';

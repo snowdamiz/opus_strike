@@ -69,6 +69,7 @@ interface BombEffectProps {
 }
 
 export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
+  const removeBomb = useGameStore(state => state.removeBomb);
   const bombRef = useRef<THREE.Group>(null);
   const trailRef = useRef<THREE.Mesh>(null);
   const wakeRef = useRef<THREE.Mesh>(null);
@@ -83,6 +84,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const debrisRefs = useRef<(THREE.Mesh | null)[]>([]);
   const lightRef = useRef<THREE.PointLight>(null);
   const hasExplodedRef = useRef(bomb.hasExploded);
+  const hasRemovedRef = useRef(false);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - bomb.startTime));
   const impactFrameTimeRef = useRef(startFrameTimeRef.current + Math.max(0, bomb.impactTime - bomb.startTime));
 
@@ -327,10 +329,14 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
         if (lightRef.current) {
           lightRef.current.intensity = fadeOut * 60;
         }
-      } else if (explosionProgress >= 1 && explosionRef.current) {
-        explosionRef.current.visible = false;
+      } else if (explosionProgress >= 1) {
+        if (explosionRef.current) explosionRef.current.visible = false;
         if (shockwaveRef.current) shockwaveRef.current.visible = false;
         if (shockwave2Ref.current) shockwave2Ref.current.visible = false;
+        if (!hasRemovedRef.current) {
+          hasRemovedRef.current = true;
+          removeBomb(bomb.id);
+        }
       }
     }
   });
@@ -473,6 +479,7 @@ interface BombTargetingIndicatorProps {
 const BOMB_MAX_RANGE = 60;
 const BOMB_MIN_RANGE = 3;
 const BOMB_TARGET_SAMPLE_FACTORS = [0.5, 1, 1.5] as const;
+const BOMB_TARGET_PHYSICS_SAMPLE_INTERVAL_MS = 34;
 
 // Pre-allocated vectors for Meteor Strike targeting (local to avoid conflicts)
 const _bombLookDir = new THREE.Vector3();
@@ -489,6 +496,10 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
   const targetBeamRef = useRef<THREE.Mesh>(null);
   const targetBeamTopRef = useRef<THREE.Mesh>(null);
   const isValidRef = useRef(false);
+  const cachedTargetRef = useRef(new THREE.Vector3());
+  const cachedTargetValidRef = useRef(false);
+  const hasCachedTargetRef = useRef(false);
+  const lastPhysicsSampleAtRef = useRef(Number.NEGATIVE_INFINITY);
   const reportedTargetRef = useRef(new THREE.Vector3());
   const lastReportedTargetRef = useRef(new THREE.Vector3(Number.POSITIVE_INFINITY, 0, 0));
   const lastReportedValidRef = useRef(false);
@@ -517,6 +528,9 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
         wasActiveRef.current = false;
         lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
         lastReportedValidRef.current = false;
+        hasCachedTargetRef.current = false;
+        cachedTargetValidRef.current = false;
+        lastPhysicsSampleAtRef.current = Number.NEGATIVE_INFINITY;
         lastReportAtRef.current = now;
         onTargetUpdate(null, false);
       }
@@ -529,130 +543,141 @@ export function BombTargetingIndicator({ isActive, onTargetUpdate }: BombTargeti
       if (lastReportedValidRef.current || lastReportedTargetRef.current.x !== Number.POSITIVE_INFINITY) {
         lastReportedTargetRef.current.set(Number.POSITIVE_INFINITY, 0, 0);
         lastReportedValidRef.current = false;
+        hasCachedTargetRef.current = false;
+        cachedTargetValidRef.current = false;
         lastReportAtRef.current = now;
         onTargetUpdate(null, false);
       }
       return;
     }
-    
-    _bombLookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    
-    let targetX = camera.position.x;
-    let targetY = camera.position.y;
-    let targetZ = camera.position.z;
-    let isValid = false;
-    let foundTarget = false;
-    
-    if (isPhysicsReady()) {
-      const directHit = raycastDirection(
-        camera.position.x, camera.position.y, camera.position.z,
-        _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
-        BOMB_MAX_RANGE + 10,
-        {
-          priority: 'visual',
-          feature: 'targeting:blazeBomb',
-        }
-      );
-      
-      if (directHit && directHit.hit) {
-        targetX = directHit.point.x;
-        targetY = directHit.point.y;
-        targetZ = directHit.point.z;
-        foundTarget = true;
-        
-        if (!directHit.isWalkable) {
-          const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+
+    let isValid = cachedTargetValidRef.current;
+
+    if (!hasCachedTargetRef.current || now - lastPhysicsSampleAtRef.current >= BOMB_TARGET_PHYSICS_SAMPLE_INTERVAL_MS) {
+      lastPhysicsSampleAtRef.current = now;
+      _bombLookDir.set(0, 0, -1).applyQuaternion(camera.quaternion);
+
+      let targetX = camera.position.x;
+      let targetY = camera.position.y;
+      let targetZ = camera.position.z;
+      let foundTarget = false;
+      isValid = false;
+
+      if (isPhysicsReady()) {
+        const directHit = raycastDirection(
+          camera.position.x, camera.position.y, camera.position.z,
+          _bombLookDir.x, _bombLookDir.y, _bombLookDir.z,
+          BOMB_MAX_RANGE + 10,
+          {
             priority: 'visual',
             feature: 'targeting:blazeBomb',
-          });
-          if (groundBelow?.isWalkable) {
-            targetY = groundBelow.groundY + 0.1;
           }
-        } else {
-          targetY += 0.1;
-        }
-      }
-      
-      if (!foundTarget) {
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -_bombLookDir.y)));
-        const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
-        for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
-          const dist = sampleIndex === 3
-            ? BOMB_MAX_RANGE
-            : baseDist * BOMB_TARGET_SAMPLE_FACTORS[sampleIndex];
-          const sampleX = camera.position.x + _bombLookDir.x * dist;
-          const sampleY = camera.position.y + _bombLookDir.y * dist;
-          const sampleZ = camera.position.z + _bombLookDir.z * dist;
-          
-          const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
-            priority: 'visual',
-            feature: 'targeting:blazeBomb',
-          });
-          
-          if (groundCheck?.isWalkable) {
-            targetX = sampleX;
-            targetY = groundCheck.groundY + 0.1;
-            targetZ = sampleZ;
-            foundTarget = true;
-            break;
-          }
-        }
-      }
-      
-      if (foundTarget) {
-        const dx = targetX - localPlayer.position.x;
-        const dy = targetY - localPlayer.position.y;
-        const dz = targetZ - localPlayer.position.z;
-        const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        
-        if (dist3D > BOMB_MAX_RANGE) {
-          const scale = BOMB_MAX_RANGE / dist3D;
-          targetX = localPlayer.position.x + dx * scale;
-          targetY = localPlayer.position.y + dy * scale;
-          targetZ = localPlayer.position.z + dz * scale;
-          
-          const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
-            priority: 'visual',
-            feature: 'targeting:blazeBomb',
-          });
-          if (groundCheck?.isWalkable) {
-            targetY = groundCheck.groundY + 0.1;
-          } else {
-            foundTarget = false;
-          }
-        }
-        
-        const finalDistH = Math.sqrt(
-          (targetX - localPlayer.position.x) ** 2 + 
-          (targetZ - localPlayer.position.z) ** 2
         );
-        
-        if (foundTarget && finalDistH >= BOMB_MIN_RANGE) {
-          isValid = true;
+
+        if (directHit && directHit.hit) {
+          targetX = directHit.point.x;
+          targetY = directHit.point.y;
+          targetZ = directHit.point.z;
+          foundTarget = true;
+
+          if (!directHit.isWalkable) {
+            const groundBelow = checkGroundWithNormal(targetX, targetY + 5, targetZ, 50, {
+              priority: 'visual',
+              feature: 'targeting:blazeBomb',
+            });
+            if (groundBelow?.isWalkable) {
+              targetY = groundBelow.groundY + 0.1;
+            }
+          } else {
+            targetY += 0.1;
+          }
         }
-      }
-      
-      if (!foundTarget) {
-        const fallbackDist = 20;
-        _bombHorizDir.set(_bombLookDir.x, 0, _bombLookDir.z).normalize();
-        targetX = localPlayer.position.x + _bombHorizDir.x * fallbackDist;
-        targetZ = localPlayer.position.z + _bombHorizDir.z * fallbackDist;
-        
-        const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100, {
-          priority: 'visual',
-          feature: 'targeting:blazeBomb',
-        });
-        if (groundCheck?.isWalkable) {
-          targetY = groundCheck.groundY + 0.1;
-          isValid = Math.sqrt(
-            (targetX - localPlayer.position.x) ** 2 + 
+
+        if (!foundTarget) {
+          const pitch = Math.asin(Math.max(-1, Math.min(1, -_bombLookDir.y)));
+          const baseDist = pitch > 0.3 ? 15 : (pitch > 0 ? 25 : 40);
+          for (let sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
+            const dist = sampleIndex === 3
+              ? BOMB_MAX_RANGE
+              : baseDist * BOMB_TARGET_SAMPLE_FACTORS[sampleIndex];
+            const sampleX = camera.position.x + _bombLookDir.x * dist;
+            const sampleY = camera.position.y + _bombLookDir.y * dist;
+            const sampleZ = camera.position.z + _bombLookDir.z * dist;
+
+            const groundCheck = checkGroundWithNormal(sampleX, Math.max(sampleY + 50, camera.position.y + 50), sampleZ, 150, {
+              priority: 'visual',
+              feature: 'targeting:blazeBomb',
+            });
+
+            if (groundCheck?.isWalkable) {
+              targetX = sampleX;
+              targetY = groundCheck.groundY + 0.1;
+              targetZ = sampleZ;
+              foundTarget = true;
+              break;
+            }
+          }
+        }
+
+        if (foundTarget) {
+          const dx = targetX - localPlayer.position.x;
+          const dy = targetY - localPlayer.position.y;
+          const dz = targetZ - localPlayer.position.z;
+          const dist3D = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+          if (dist3D > BOMB_MAX_RANGE) {
+            const scale = BOMB_MAX_RANGE / dist3D;
+            targetX = localPlayer.position.x + dx * scale;
+            targetY = localPlayer.position.y + dy * scale;
+            targetZ = localPlayer.position.z + dz * scale;
+
+            const groundCheck = checkGroundWithNormal(targetX, targetY + 30, targetZ, 100, {
+              priority: 'visual',
+              feature: 'targeting:blazeBomb',
+            });
+            if (groundCheck?.isWalkable) {
+              targetY = groundCheck.groundY + 0.1;
+            } else {
+              foundTarget = false;
+            }
+          }
+
+          const finalDistH = Math.sqrt(
+            (targetX - localPlayer.position.x) ** 2 +
             (targetZ - localPlayer.position.z) ** 2
-          ) >= BOMB_MIN_RANGE;
+          );
+
+          if (foundTarget && finalDistH >= BOMB_MIN_RANGE) {
+            isValid = true;
+          }
+        }
+
+        if (!foundTarget) {
+          const fallbackDist = 20;
+          _bombHorizDir.set(_bombLookDir.x, 0, _bombLookDir.z).normalize();
+          targetX = localPlayer.position.x + _bombHorizDir.x * fallbackDist;
+          targetZ = localPlayer.position.z + _bombHorizDir.z * fallbackDist;
+
+          const groundCheck = checkGroundWithNormal(targetX, localPlayer.position.y + 30, targetZ, 100, {
+            priority: 'visual',
+            feature: 'targeting:blazeBomb',
+          });
+          if (groundCheck?.isWalkable) {
+            targetY = groundCheck.groundY + 0.1;
+            isValid = Math.sqrt(
+              (targetX - localPlayer.position.x) ** 2 +
+              (targetZ - localPlayer.position.z) ** 2
+            ) >= BOMB_MIN_RANGE;
+          }
         }
       }
+
+      cachedTargetRef.current.set(targetX, targetY, targetZ);
+      cachedTargetValidRef.current = isValid;
+      hasCachedTargetRef.current = true;
     }
-    
-    _bombTargetPos.set(targetX, targetY, targetZ);
+
+    _bombTargetPos.copy(cachedTargetRef.current);
     isValidRef.current = isValid;
     
     if (indicatorRef.current) {

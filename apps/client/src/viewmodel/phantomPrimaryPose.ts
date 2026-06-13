@@ -19,6 +19,10 @@ export const PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS = PHANTOM_PRIMARY_SHOT_PULSE
 export const PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS = 0.5;
 export const PHANTOM_VOID_RAY_RELEASE_LOCK_MS =
   (PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS + PHANTOM_VOID_RAY_RELEASE_EXTENSION_SECONDS) * 1000;
+const PHANTOM_SHIELD_CAST_POSE_ATTACK_SECONDS = 0.12;
+const PHANTOM_SHIELD_CAST_POSE_HOLD_SECONDS = 0.34;
+const PHANTOM_SHIELD_CAST_POSE_FADE_SECONDS = 0.74;
+export const PHANTOM_SHIELD_CAST_POSE_DURATION_MS = PHANTOM_SHIELD_CAST_POSE_FADE_SECONDS * 1000;
 
 export interface PhantomPrimaryPoseSampleContext {
   camera: THREE.Camera;
@@ -35,6 +39,20 @@ export interface PhantomVoidRayOrbPoseSampleContext {
   elapsedSeconds: number;
   timestampMs?: number;
 }
+
+export interface PhantomShieldCastPose {
+  active: boolean;
+  blend: number;
+  push: number;
+  pulse: number;
+}
+
+const PHANTOM_SHIELD_CAST_IDLE_POSE: PhantomShieldCastPose = {
+  active: false,
+  blend: 0,
+  push: 0,
+  pulse: 0,
+};
 
 export function setPhantomPrimaryHeld(
   held: boolean,
@@ -59,6 +77,44 @@ export function getPhantomPrimaryHeldBlend(
   const elapsedSeconds = Math.max(0, timestampMs - state.changedAtMs) / 1000;
   const progress = smoothstep(0, PHANTOM_PRIMARY_READY_TRANSITION_SECONDS, elapsedSeconds);
   return state.blendAtChange + (targetBlend - state.blendAtChange) * progress;
+}
+
+export function triggerPhantomShieldCastPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): void {
+  runtime.phantom.shieldCastStartedAtMs = timestampMs;
+  runtime.revision += 1;
+}
+
+export function getPhantomShieldCastPose(
+  timestampMs = Date.now(),
+  runtime: ViewmodelPoseRuntime = defaultViewmodelPoseRuntime
+): PhantomShieldCastPose {
+  const startedAtMs = runtime.phantom.shieldCastStartedAtMs;
+  if (!Number.isFinite(startedAtMs)) return PHANTOM_SHIELD_CAST_IDLE_POSE;
+
+  const elapsedSeconds = Math.max(0, timestampMs - startedAtMs) / 1000;
+  if (elapsedSeconds > PHANTOM_SHIELD_CAST_POSE_FADE_SECONDS) return PHANTOM_SHIELD_CAST_IDLE_POSE;
+
+  const attack = smoothstep(0, PHANTOM_SHIELD_CAST_POSE_ATTACK_SECONDS, elapsedSeconds);
+  const fade = 1 - smoothstep(
+    PHANTOM_SHIELD_CAST_POSE_HOLD_SECONDS,
+    PHANTOM_SHIELD_CAST_POSE_FADE_SECONDS,
+    elapsedSeconds
+  );
+  const blend = Math.max(0, Math.min(1, attack * fade));
+  if (blend <= 0.001) return PHANTOM_SHIELD_CAST_IDLE_POSE;
+
+  const pushWindow = Math.max(0, Math.min(1, elapsedSeconds / PHANTOM_SHIELD_CAST_POSE_HOLD_SECONDS));
+  const pulseWindow = Math.max(0, Math.min(1, elapsedSeconds / PHANTOM_SHIELD_CAST_POSE_FADE_SECONDS));
+
+  return {
+    active: true,
+    blend,
+    push: Math.sin(pushWindow * Math.PI) * blend,
+    pulse: Math.sin(pulseWindow * Math.PI) * blend,
+  };
 }
 
 export function getPhantomPrimaryShotPulse(timeSeconds: number): number {

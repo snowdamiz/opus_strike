@@ -963,16 +963,40 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
       .reduce((danger, enemy) => danger + Math.max(0, 28 - distance2D(carrier.position, enemy.position)) / 8, 0);
   }
 
+  const enemyNearBase = enemies.some((enemy) => distance2D(enemy.position, ownFlag.basePosition) <= 28);
+  const neutralOpening = ownFlag.isAtBase
+    && enemyFlag.isAtBase
+    && !enemyCarrier
+    && !alliedCarrier
+    && !droppedFriendlyFlag
+    && !droppedEnemyFlag;
+  const targetDefenders = !ownFlag.isAtBase
+    ? 0
+    : droppedFriendlyFlag
+      ? 1
+      : enemyNearBase
+        ? Math.min(2, Math.max(1, bots.length - 1))
+        : bots.length >= 3
+          ? 1
+          : 0;
+  const maxPressureBots = Math.max(0, bots.length - targetDefenders);
+  const targetRunners = enemyFlag.isAtBase || droppedEnemyFlag
+    ? Math.min(
+      maxPressureBots,
+      neutralOpening
+        ? Math.max(1, Math.ceil(bots.length * 0.6))
+        : Math.max(1, Math.min(2, maxPressureBots))
+    )
+    : 0;
+
   const roleDemand: BotRoleDemand = {
-    runners: enemyFlag.isAtBase ? 1 : 0,
-    defenders: ownFlag.isAtBase ? 1 : 0,
+    runners: targetRunners,
+    defenders: targetDefenders,
     escorts: alliedCarrier ? 1 : 0,
     interceptors: enemyCarrier ? 1 : 0,
     support: lowHealthAllies.length > 0 || alliedCarrier ? 1 : 0,
-    fighters: Math.max(0, Math.min(2, enemies.length - (enemyCarrier ? 1 : 0))),
+    fighters: Math.max(0, Math.min(2, maxPressureBots - targetRunners, enemies.length - (enemyCarrier ? 1 : 0))),
   };
-  if (droppedFriendlyFlag) roleDemand.defenders = Math.max(roleDemand.defenders, 1);
-  if (droppedFriendlyFlag) roleDemand.interceptors = Math.max(roleDemand.interceptors, 0);
   if (alliedCarrier && (carrierDanger[alliedCarrier.id] ?? 0) > 2) roleDemand.escorts = Math.min(2, roleDemand.escorts + 1);
   if (enemyCarrier && (carrierDanger[enemyCarrier.id] ?? 0) < 1) roleDemand.interceptors = Math.min(2, roleDemand.interceptors + 1);
 
@@ -1037,8 +1061,7 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
     assignBestBot(bots, assigned, 'support', 'support_cluster', cluster.position, cluster.playerId, 'low-health ally resource cluster', 640, assignments);
   }
 
-  const enemyNearBase = enemies.some((enemy) => distance2D(enemy.position, ownFlag.basePosition) <= 28);
-  if (ownFlag.isAtBase && (enemyNearBase || roleDemand.defenders > 0)) {
+  if (ownFlag.isAtBase && roleDemand.defenders > 0) {
     assignBestBot(bots, assigned, 'defender', 'defend_base', ownFlag.basePosition, undefined, enemyNearBase ? 'enemy pressure near base' : 'base defense demand', 560, assignments);
   }
 
@@ -1046,28 +1069,59 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
     assignBestBot(bots, assigned, 'runner', 'run_flag', droppedEnemyFlag, undefined, 'enemy flag is dropped and capturable', 520, assignments);
   }
 
+  let assignedDefenders = Object.values(assignments).filter((assignment) => assignment.job === 'defend_base').length;
+  let assignedRunners = Object.values(assignments).filter((assignment) => (
+    assignment.job === 'run_flag' || assignment.job === 'carry'
+  )).length;
+
   for (const bot of [...bots].sort((a, b) => a.id.localeCompare(b.id))) {
     if (assigned.has(bot.id)) continue;
-    const role = getDefaultRole(bot, roleDemand);
-    const job: BotTacticsJob = role === 'defender'
-      ? 'defend_base'
-      : role === 'support'
-        ? 'support_cluster'
-        : role === 'fighter'
-          ? 'fight'
-          : 'run_flag';
-    const targetPosition = job === 'defend_base'
-      ? ownFlag.basePosition
-      : job === 'support_cluster' && lowHealthAllies[0]
-        ? lowHealthAllies[0].position
-        : enemyFlag.position;
+    const defaultRole = getDefaultRole(bot, {
+      ...roleDemand,
+      defenders: Math.max(0, roleDemand.defenders - assignedDefenders),
+      runners: Math.max(0, roleDemand.runners - assignedRunners),
+    });
+    let role: BotStrategicRole = defaultRole;
+    let job: BotTacticsJob = 'run_flag';
+    let targetPosition = droppedEnemyFlag ?? enemyFlag.position;
+    let targetPlayerId: string | undefined;
+    let reason = neutralOpening ? 'neutral opener objective pressure' : 'remaining team demand';
+
+    if (
+      assignedDefenders < roleDemand.defenders &&
+      (enemyNearBase || droppedFriendlyFlag || getBotPersonality(bot) === 'defender' || bot.heroId === 'blaze')
+    ) {
+      role = 'defender';
+      job = 'defend_base';
+      targetPosition = ownFlag.basePosition;
+      reason = enemyNearBase ? 'enemy pressure near base' : 'base defense demand';
+      assignedDefenders++;
+    } else if ((enemyFlag.isAtBase || droppedEnemyFlag) && assignedRunners < roleDemand.runners) {
+      role = bot.heroId === 'chronos' ? 'support' : bot.heroId === 'blaze' ? 'fighter' : 'runner';
+      job = 'run_flag';
+      targetPosition = droppedEnemyFlag ?? enemyFlag.position;
+      reason = neutralOpening ? 'opening flag pressure' : droppedEnemyFlag ? 'enemy flag is dropped and capturable' : 'flag pressure demand';
+      assignedRunners++;
+    } else if (lowHealthAllies.length > 0 && (bot.heroId === 'chronos' || getBotPersonality(bot) === 'support-first')) {
+      role = 'support';
+      job = 'support_cluster';
+      targetPosition = lowHealthAllies[0].position;
+      targetPlayerId = lowHealthAllies[0].playerId;
+      reason = 'low-health ally resource cluster';
+    } else {
+      role = defaultRole === 'defender' ? 'fighter' : defaultRole;
+      job = enemyFlag.isAtBase || droppedEnemyFlag ? 'run_flag' : 'fight';
+      targetPosition = droppedEnemyFlag ?? enemyFlag.position;
+      if (job === 'run_flag') assignedRunners++;
+    }
+
     assignments[bot.id] = {
       botId: bot.id,
       role,
       job,
       targetPosition: { ...targetPosition },
-      targetPlayerId: job === 'support_cluster' ? lowHealthAllies[0]?.playerId : undefined,
-      reason: 'remaining team demand',
+      targetPlayerId,
+      reason,
       priority: 320,
     };
   }
@@ -1102,8 +1156,8 @@ function getDefaultRole(bot: BotPlayerSnapshot, demand: BotRoleDemand): BotStrat
   const personality = getBotPersonality(bot);
   if (bot.heroId === 'chronos' && demand.support > 0) return 'support';
   if ((bot.heroId === 'phantom' || bot.heroId === 'hookshot') && demand.interceptors > 0) return 'interceptor';
-  if (personality === 'defender' || (bot.heroId === 'blaze' && demand.defenders > 0)) return 'defender';
-  if (personality === 'bodyguard') return 'escort';
+  if (personality === 'defender' && demand.defenders > 0) return 'defender';
+  if (personality === 'bodyguard' && demand.escorts > 0) return 'escort';
   if (bot.heroId === 'blaze') return 'fighter';
   if (bot.heroId === 'chronos') return 'support';
   return 'runner';
@@ -1369,7 +1423,6 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
   const candidates: BotIntentCandidate[] = [];
   const healthRatio = bot.health / Math.max(1, bot.maxHealth);
   const nearestEnemyDistance = blackboard.nearestEnemy?.distance ?? Infinity;
-  const personality = getBotPersonality(bot);
   const assignmentBoost = (job: BotTacticsJob, amount: number): number => assignment?.job === job ? amount + assignment.priority * 0.22 : 0;
   const role = assignment?.role ?? getDefaultRole(bot, blackboard.teamTactics.roleDemand);
 
@@ -1445,8 +1498,13 @@ export function scoreBotIntents(bot: BotPlayerSnapshot, blackboard: BotBlackboar
     );
   }
 
-  if (blackboard.ownFlagAtBase && (assignment?.job === 'defend_base' || blackboard.teamTactics.ownFlagState !== 'safe' || personality === 'defender')) {
-    const score = 380 + assignmentBoost('defend_base', 260) + (blackboard.enemyFlagAtBase ? 40 : -30);
+  const assignedToDefend = assignment?.job === 'defend_base';
+  const ownBaseThreatened = blackboard.teamTactics.ownFlagState !== 'safe'
+    || Boolean(blackboard.droppedFriendlyFlag)
+    || blackboard.enemies.some((enemy) => distance2D(enemy.lastKnownPosition, blackboard.ownBasePosition) <= 30);
+  if (blackboard.ownFlagAtBase && (assignedToDefend || ownBaseThreatened)) {
+    const score = (assignedToDefend ? 380 + assignmentBoost('defend_base', 260) : 520)
+      + (blackboard.enemyFlagAtBase ? 40 : -30);
     addIntent(candidates, 'defend_base', score, assignment?.targetPosition ?? blackboard.ownBasePosition, 'base defense demand');
   }
 
@@ -1870,6 +1928,15 @@ function scorePhantomAbility(input: BotAbilityPlanInput, current: BotAbilityPlan
   return best;
 }
 
+function countVisibleEnemiesNear(input: BotAbilityPlanInput, position: PlainVec3, radius: number): number {
+  return input.blackboard.visibleEnemies.filter((enemy) => distance2D(enemy.lastKnownPosition, position) <= radius).length;
+}
+
+function hasVisibleObjectiveContest(input: BotAbilityPlanInput, position = input.intent.targetPosition, radius = 16): boolean {
+  return countVisibleEnemiesNear(input, position, radius) > 0
+    || Boolean(input.blackboard.enemyCarrier && distance2D(input.blackboard.enemyCarrier.lastKnownPosition, position) <= radius + 8);
+}
+
 function scoreHookshotAbility(input: BotAbilityPlanInput, current: BotAbilityPlan): BotAbilityPlan {
   if (input.bot.heroId !== 'hookshot') return current;
   let best = current;
@@ -1906,7 +1973,12 @@ function scoreHookshotAbility(input: BotAbilityPlanInput, current: BotAbilityPla
 
   if (
     canUseBotAbility(input.bot, 'hookshot_grapple_trap', 'ultimate') &&
-    (input.geometry.trapZoneValuable || input.intent.type === 'return_dropped_friendly_flag' || input.intent.type === 'defend_base' || input.blackboard.nearbyEnemyCount >= 2)
+    (
+      input.geometry.trapZoneValuable ||
+      input.intent.type === 'return_dropped_friendly_flag' ||
+      input.blackboard.nearbyEnemyCount >= 2 ||
+      hasVisibleObjectiveContest(input, input.intent.targetPosition, 14)
+    )
   ) {
     best = abilityCandidate(best, {
       mode: 'hookshot_trap',
@@ -1973,14 +2045,25 @@ function scoreBlazeAbility(input: BotAbilityPlanInput, current: BotAbilityPlan):
     });
   }
 
+  const nearbyVisibleEnemyCount = input.blackboard.visibleEnemies.filter((enemy) => enemy.distance <= BLAZE_GEARSTORM_RADIUS + 4).length;
+  const objectiveVisibleEnemyCount = countVisibleEnemiesNear(input, input.intent.targetPosition, BLAZE_GEARSTORM_RADIUS + 4);
+  const airstrikeControlsCarrier = Boolean(
+    target?.player.hasFlag ||
+    (input.blackboard.enemyCarrier && input.intent.type === 'intercept_enemy_carrier' && input.blackboard.enemyCarrier.distance <= BLAZE_GEARSTORM_RADIUS + 10)
+  );
   if (
     canUseBotAbility(input.bot, 'blaze_airstrike', 'ultimate') &&
-    (input.blackboard.visibleEnemies.filter((enemy) => enemy.distance <= BLAZE_GEARSTORM_RADIUS + 4).length >= 2 || input.intent.type === 'return_dropped_friendly_flag' || input.intent.type === 'defend_base')
+    (
+      nearbyVisibleEnemyCount >= 2 ||
+      objectiveVisibleEnemyCount >= 2 ||
+      airstrikeControlsCarrier ||
+      (input.intent.type === 'return_dropped_friendly_flag' && hasVisibleObjectiveContest(input, input.intent.targetPosition, BLAZE_GEARSTORM_RADIUS + 4))
+    )
   ) {
     best = abilityCandidate(best, {
       mode: 'blaze_airstrike',
       slot: 'ultimate',
-      score: 138 + input.blackboard.nearbyEnemyCount * 38,
+      score: 138 + Math.max(nearbyVisibleEnemyCount, objectiveVisibleEnemyCount) * 38 + (airstrikeControlsCarrier ? 52 : 0),
       reason: 'ultimate affects objective fight',
       targetPosition: input.intent.targetPosition,
     });

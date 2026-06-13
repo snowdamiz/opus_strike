@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { generateProceduralVoxelMap } from '@voxel-strike/shared';
 import type { VoxelMapManifest } from '@voxel-strike/shared';
 import { useGameStore, type LobbyPlayer, type MapVoteOption } from '../../store/gameStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { useUISounds } from '../../hooks/useAudio';
 import { FACTIONS } from '../../styles/colorTokens';
@@ -135,6 +136,7 @@ function MapPreviewCanvas({
   const previewThemeId = mapThemeId ?? manifest.themeId;
   const optionKey = `${option.seed}:${previewThemeId}`;
   const theme = manifest.theme;
+  const materialQuality = useSettingsStore((state) => state.settings.materialQuality);
   const [readyKey, setReadyKey] = useState<string | null>(null);
   const mapReady = readyKey === optionKey;
 
@@ -178,6 +180,7 @@ function MapPreviewCanvas({
           dressingShadows={false}
           dressingDensity={0.5}
           reflectionIntensity={0.35}
+          materialQuality={materialQuality}
           meshBuildMode="sync"
           progressiveReveal={false}
           onReady={handleMapReady}
@@ -267,22 +270,72 @@ function GeneratingMapPanel() {
   );
 }
 
+type MapVoteBadgeTone = 'idle' | 'selected' | 'winner';
+
+const mapVoteCardClass = 'map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl';
+const mapVoteCardMetaClass = 'map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4';
+const mapVoteCardMetaStyle = { backdropFilter: 'brightness(0.42) blur(2px)' };
+
+function getVoteBadgeStyle(tone: MapVoteBadgeTone) {
+  if (tone === 'winner') {
+    return {
+      background: 'rgb(var(--color-ui-success) / 0.22)',
+      color: 'rgb(var(--color-ui-success-light))',
+      borderColor: 'rgb(var(--color-ui-success) / 0.32)',
+    };
+  }
+
+  if (tone === 'selected') {
+    return {
+      background: 'rgb(var(--color-accent-primary) / 0.2)',
+      color: 'rgb(var(--color-accent-primary-hover))',
+      borderColor: 'rgb(var(--color-accent-primary) / 0.32)',
+    };
+  }
+
+  return {
+    background: 'rgba(255,255,255,0.035)',
+    color: 'rgba(255,255,255,0.58)',
+    borderColor: 'rgba(255,255,255,0.08)',
+  };
+}
+
+function MapVoteCardMeta({
+  voteCount,
+  badgeLabel,
+  badgeTone = 'idle',
+}: {
+  voteCount: number;
+  badgeLabel: string;
+  badgeTone?: MapVoteBadgeTone;
+}) {
+  return (
+    <div
+      className={mapVoteCardMetaClass}
+      style={mapVoteCardMetaStyle}
+    >
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
+      <div className="relative flex min-h-9 items-center justify-between gap-3">
+        <p className="shrink-0 font-display text-lg leading-none text-white">{getVoteLabel(voteCount)}</p>
+
+        <span
+          className="rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"
+          style={getVoteBadgeStyle(badgeTone)}
+        >
+          {badgeLabel}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function PreparingMapCard() {
   return (
-    <div className="map-vote-card map-vote-preparing-card relative overflow-hidden rounded-lg border border-white/[0.08] bg-black/[0.1] shadow-2xl shadow-black/[0.26] backdrop-blur-xl">
+    <div className={`${mapVoteCardClass} map-vote-preparing-card border-white/[0.16]`} aria-hidden="true">
       <div className="map-vote-preview relative aspect-[16/8.4] overflow-hidden border-b border-white/[0.06]">
         <GeneratingMapPanel />
       </div>
-      <div
-        className="map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
-        style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
-      >
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-        <div className="relative flex min-h-9 items-center justify-between gap-3">
-          <div className="h-5 w-20 rounded bg-white/[0.04]" />
-          <div className="h-7 w-14 rounded-full border border-white/[0.06] bg-white/[0.035]" />
-        </div>
-      </div>
+      <MapVoteCardMeta voteCount={0} badgeLabel="Vote" />
     </div>
   );
 }
@@ -501,7 +554,7 @@ export function MapVoteScreen() {
                   type="button"
                   onClick={() => handleVote(option.id)}
                   disabled={isFinalized}
-                  className={`map-vote-card relative overflow-hidden rounded-lg border bg-black/[0.1] text-left shadow-2xl shadow-black/[0.26] outline-none backdrop-blur-xl focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
+                  className={`${mapVoteCardClass} text-left outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/70 disabled:cursor-default ${cardBorderClass}`}
                   style={{
                     boxShadow: isSelected || isWinner
                       ? `0 20px 60px rgba(0,0,0,0.48), 0 0 28px ${isWinner ? 'rgb(var(--color-ui-success) / 0.28)' : 'rgb(var(--color-accent-primary) / 0.25)'}`
@@ -528,38 +581,11 @@ export function MapVoteScreen() {
                     )}
                   </div>
 
-                  <div
-                    className="map-vote-card-meta relative overflow-hidden border-t border-white/[0.045] bg-black/[0.025] px-3.5 py-2.5 xl:px-4"
-                    style={{ backdropFilter: 'brightness(0.42) blur(2px)' }}
-                  >
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/[0.02] via-transparent to-black/[0.07]" />
-                    <div className="relative flex min-h-9 items-center justify-between gap-3">
-                      <p className="shrink-0 font-display text-lg leading-none text-white">{getVoteLabel(voters.length)}</p>
-
-                      <span
-                        className="rounded-full border px-3 py-1.5 font-display text-[11px] uppercase tracking-wide transition-colors"
-                        style={{
-                          background: isSelected || isWinner
-                            ? isWinner
-                              ? 'rgb(var(--color-ui-success) / 0.22)'
-                              : 'rgb(var(--color-accent-primary) / 0.2)'
-                            : 'rgba(255,255,255,0.035)',
-                          color: isWinner
-                            ? 'rgb(var(--color-ui-success-light))'
-                            : isSelected
-                              ? 'rgb(var(--color-accent-primary-hover))'
-                              : 'rgba(255,255,255,0.58)',
-                          borderColor: isWinner
-                            ? 'rgb(var(--color-ui-success) / 0.32)'
-                            : isSelected
-                              ? 'rgb(var(--color-accent-primary) / 0.32)'
-                              : 'rgba(255,255,255,0.08)',
-                        }}
-                      >
-                        {isWinner ? 'Locked' : isSelected ? 'Picked' : 'Vote'}
-                      </span>
-                    </div>
-                  </div>
+                  <MapVoteCardMeta
+                    voteCount={voters.length}
+                    badgeLabel={isWinner ? 'Locked' : isSelected ? 'Picked' : 'Vote'}
+                    badgeTone={isWinner ? 'winner' : isSelected ? 'selected' : 'idle'}
+                  />
                 </button>
               );
             })}

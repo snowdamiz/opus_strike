@@ -9,6 +9,7 @@ import {
 import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { getFrameClock } from '../../utils/frameClock';
+import { BudgetedPointLight } from './systems/DynamicLightBudget';
 
 interface Effect {
   id: string;
@@ -655,7 +656,15 @@ function ChronosSelfHealPulseEffect({ effect }: EffectProps) {
           />
         </mesh>
       ))}
-      <pointLight ref={lightRef} color="#86efac" intensity={0} distance={5.5} decay={2} />
+      <BudgetedPointLight
+        ref={lightRef}
+        budgetPriority={3.2}
+        budgetRadius={5.5}
+        color="#86efac"
+        intensity={0}
+        distance={5.5}
+        decay={2}
+      />
     </group>
   );
 }
@@ -758,7 +767,15 @@ function ChronosAegisBreakEffect({ effect }: EffectProps) {
           frustumCulled={false}
         />
       ))}
-      <pointLight ref={lightRef} color="#fde68a" intensity={0} distance={5.8} decay={2} />
+      <BudgetedPointLight
+        ref={lightRef}
+        budgetPriority={3.5}
+        budgetRadius={5.8}
+        color="#fde68a"
+        intensity={0}
+        distance={5.8}
+        decay={2}
+      />
     </group>
   );
 }

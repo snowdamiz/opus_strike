@@ -9,10 +9,18 @@ import {
 const VOXEL_REGION_CHUNK_SPAN = 4;
 const MAX_PREPARED_MAPS = 4;
 
+export interface VoxelChunkRegionBounds {
+  min: { x: number; y: number; z: number };
+  max: { x: number; y: number; z: number };
+  center: { x: number; y: number; z: number };
+  radius: number;
+}
+
 export interface VoxelChunkRegion {
   id: string;
   chunks: VoxelChunk[];
   castShadow: boolean;
+  bounds: VoxelChunkRegionBounds;
 }
 
 export interface MapPrepCacheKeyInput {
@@ -54,7 +62,55 @@ export function getMapPrepCacheKey({
   return `procedural-v${generatorVersion}:${seed >>> 0}${themeSuffix}`;
 }
 
-export function createVoxelChunkRegions(chunks: VoxelChunk[]): VoxelChunkRegion[] {
+function createEmptyRegionBounds(): VoxelChunkRegionBounds {
+  return {
+    min: { x: Infinity, y: Infinity, z: Infinity },
+    max: { x: -Infinity, y: -Infinity, z: -Infinity },
+    center: { x: 0, y: 0, z: 0 },
+    radius: 0,
+  };
+}
+
+function includeChunkInRegionBounds(
+  bounds: VoxelChunkRegionBounds,
+  manifest: VoxelMapManifest,
+  chunk: VoxelChunk
+): void {
+  const minVoxelX = chunk.coord.x * manifest.chunkSize.x;
+  const minVoxelY = chunk.coord.y * manifest.chunkSize.y;
+  const minVoxelZ = chunk.coord.z * manifest.chunkSize.z;
+  const maxVoxelX = minVoxelX + chunk.size.x;
+  const maxVoxelY = minVoxelY + chunk.size.y;
+  const maxVoxelZ = minVoxelZ + chunk.size.z;
+
+  bounds.min.x = Math.min(bounds.min.x, manifest.origin.x + minVoxelX * manifest.voxelSize.x);
+  bounds.min.y = Math.min(bounds.min.y, manifest.origin.y + minVoxelY * manifest.voxelSize.y);
+  bounds.min.z = Math.min(bounds.min.z, manifest.origin.z + minVoxelZ * manifest.voxelSize.z);
+  bounds.max.x = Math.max(bounds.max.x, manifest.origin.x + maxVoxelX * manifest.voxelSize.x);
+  bounds.max.y = Math.max(bounds.max.y, manifest.origin.y + maxVoxelY * manifest.voxelSize.y);
+  bounds.max.z = Math.max(bounds.max.z, manifest.origin.z + maxVoxelZ * manifest.voxelSize.z);
+}
+
+function finalizeRegionBounds(bounds: VoxelChunkRegionBounds, manifest: VoxelMapManifest): void {
+  const padding = Math.max(manifest.voxelSize.x, manifest.voxelSize.y, manifest.voxelSize.z) * 0.75;
+  bounds.min.x -= padding;
+  bounds.min.y -= padding;
+  bounds.min.z -= padding;
+  bounds.max.x += padding;
+  bounds.max.y += padding;
+  bounds.max.z += padding;
+
+  bounds.center.x = (bounds.min.x + bounds.max.x) * 0.5;
+  bounds.center.y = (bounds.min.y + bounds.max.y) * 0.5;
+  bounds.center.z = (bounds.min.z + bounds.max.z) * 0.5;
+  bounds.radius = Math.hypot(
+    bounds.max.x - bounds.min.x,
+    bounds.max.y - bounds.min.y,
+    bounds.max.z - bounds.min.z
+  ) * 0.5;
+}
+
+export function createVoxelChunkRegions(chunks: VoxelChunk[], manifest: VoxelMapManifest): VoxelChunkRegion[] {
   const regions = new Map<string, VoxelChunkRegion>();
 
   for (const chunk of chunks) {
@@ -64,15 +120,20 @@ export function createVoxelChunkRegions(chunks: VoxelChunk[]): VoxelChunkRegion[
     let region = regions.get(id);
 
     if (!region) {
-      region = { id, chunks: [], castShadow: chunk.coord.y > 0 };
+      region = { id, chunks: [], castShadow: chunk.coord.y > 0, bounds: createEmptyRegionBounds() };
       regions.set(id, region);
     }
 
     region.chunks.push(chunk);
     region.castShadow ||= chunk.coord.y > 0;
+    includeChunkInRegionBounds(region.bounds, manifest, chunk);
   }
 
-  return Array.from(regions.values());
+  const preparedRegions = Array.from(regions.values());
+  for (const region of preparedRegions) {
+    finalizeRegionBounds(region.bounds, manifest);
+  }
+  return preparedRegions;
 }
 
 function evictLeastRecentlyUsedPreparedMap(): void {
@@ -112,7 +173,7 @@ export function prepareVoxelMapCpu(options: PrepareVoxelMapOptions): PreparedVox
   const manifest = options.manifest ?? generateProceduralVoxelMap(options.seed, { themeId: options.themeId });
 
   const renderableChunks = manifest.chunks.filter((chunk) => chunk.solidBlockCount > 0);
-  const renderableRegions = createVoxelChunkRegions(renderableChunks);
+  const renderableRegions = createVoxelChunkRegions(renderableChunks, manifest);
 
   const entry: PreparedVoxelMap = {
     key,

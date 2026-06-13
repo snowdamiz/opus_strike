@@ -437,6 +437,116 @@ body,
   pointer-events: none;
 }
 
+.pwa-install-toast {
+  position: absolute;
+  left: 50%;
+  bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
+  z-index: 125;
+  display: flex;
+  width: min(92vw, 28rem);
+  min-height: 3rem;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid rgb(var(--color-accent-primary) / 0.32);
+  border-radius: 0.5rem;
+  background:
+    linear-gradient(135deg, rgb(var(--color-accent-primary) / 0.16), transparent 46%),
+    linear-gradient(180deg, rgb(var(--color-strike-elevated) / 0.9), rgb(var(--color-strike-bg) / 0.86));
+  box-shadow:
+    0 16px 36px rgb(0 0 0 / 0.42),
+    0 0 28px rgb(var(--color-accent-primary) / 0.15),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
+  pointer-events: auto;
+  transform: translateX(-50%);
+  animation: pwa-install-toast-in 180ms ease-out both;
+  backdrop-filter: blur(12px) saturate(1.08);
+  -webkit-backdrop-filter: blur(12px) saturate(1.08);
+}
+
+.pwa-install-toast-icon {
+  display: flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(var(--color-accent-secondary) / 0.28);
+  border-radius: 0.5rem;
+  color: rgb(255 237 213);
+  background:
+    radial-gradient(circle at 50% 0%, rgb(255 255 255 / 0.18), transparent 64%),
+    rgb(var(--color-accent-primary) / 0.14);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12);
+}
+
+.pwa-install-toast-action {
+  flex: 0 0 auto;
+  min-width: 5.35rem;
+  min-height: 2.1rem;
+  border: 1px solid rgb(255 255 255 / 0.16);
+  border-radius: 0.5rem;
+  background: linear-gradient(135deg, rgb(var(--color-accent-primary)), rgb(var(--color-accent-primary-deep)));
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  text-shadow: 0 1px 8px rgb(0 0 0 / 0.35);
+  transition: border-color 140ms ease, filter 140ms ease, transform 140ms ease;
+}
+
+.pwa-install-toast-action:hover:not(:disabled),
+.pwa-install-toast-action:focus-visible:not(:disabled) {
+  border-color: rgb(255 255 255 / 0.34);
+  filter: brightness(1.12);
+}
+
+.pwa-install-toast-action:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.pwa-install-toast-action:disabled {
+  cursor: wait;
+  opacity: 0.76;
+}
+
+@keyframes pwa-install-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 0.6rem) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .pwa-install-toast {
+    bottom: max(20px, calc(env(safe-area-inset-bottom) + 20px));
+    gap: 0.55rem;
+    padding: 0.55rem 0.6rem;
+  }
+
+  .pwa-install-toast-icon {
+    width: 1.85rem;
+    height: 1.85rem;
+  }
+
+  .pwa-install-toast-action {
+    min-width: 4.9rem;
+    font-size: 0.86rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pwa-install-toast {
+    animation: none;
+  }
+}
+
 /* ===== MOBILE PLAY CONTROLS ===== */
 .mobile-controls {
   --mobile-hero-color: rgb(var(--color-accent-primary));
@@ -1714,17 +1824,111 @@ body,
 .lobby-layout {
   display: grid;
   grid-template-columns: repeat(2, minmax(18rem, 34rem));
+  grid-template-rows: auto auto;
   align-items: center;
+  align-content: center;
   justify-content: center;
-  gap: clamp(1rem, 2.4vw, 3.5rem);
+  column-gap: clamp(1rem, 2.4vw, 3.5rem);
+  row-gap: clamp(0.65rem, 1.6vh, 1rem);
   height: 100%;
   max-width: min(100%, 76rem);
+}
+
+.lobby-team-header-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: clamp(0.75rem, 1.7vw, 1.5rem);
+  min-width: 0;
+}
+
+.lobby-faction-header {
+  min-width: 0;
 }
 
 .lobby-team-panel {
   width: 100%;
   min-width: 0;
-  height: clamp(22rem, 54vh, 42rem);
+  height: clamp(19rem, 50vh, 38rem);
+}
+
+.lobby-observer-slot {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+}
+
+.lobby-observer-chip {
+  display: inline-flex;
+  height: 2.25rem;
+  max-width: clamp(7rem, 13vw, 9.25rem);
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  padding-inline: 0.7rem;
+  border: 1px dashed rgba(125, 211, 252, 0.22);
+  background: rgba(125, 211, 252, 0.035);
+  color: rgba(186, 230, 253, 0.72);
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.lobby-observer-chip-claimable {
+  cursor: pointer;
+}
+
+.lobby-observer-chip-claimable:hover {
+  border-color: rgba(125, 211, 252, 0.5);
+  background: rgba(125, 211, 252, 0.11);
+  color: rgb(224, 242, 254);
+}
+
+.lobby-observer-chip-claimable:active {
+  transform: scale(0.98);
+}
+
+.lobby-observer-chip-active {
+  border-style: solid;
+  border-color: rgba(125, 211, 252, 0.45);
+  background: rgba(125, 211, 252, 0.13);
+  color: rgb(224, 242, 254);
+  cursor: default;
+}
+
+.lobby-observer-chip-disabled {
+  color: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.025);
+  cursor: not-allowed;
+}
+
+.lobby-observer-count {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 0.1rem 0.35rem;
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.54);
+}
+
+.lobby-observer-caption {
+  max-width: clamp(6rem, 12vw, 8.5rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-body);
+  font-size: 0.52rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
 }
 
 .lobby-center-panel {
@@ -2235,6 +2439,7 @@ body,
   .lobby-layout {
     grid-template-columns: minmax(0, min(100%, 32rem));
     align-items: start;
+    align-content: start;
     justify-content: center;
     gap: 0.85rem;
   }
@@ -2247,6 +2452,7 @@ body,
   .team-select-layout.lobby-layout {
     grid-template-columns: repeat(2, minmax(14rem, 1fr));
     align-items: start;
+    align-content: start;
     justify-content: center;
     gap: clamp(0.75rem, 1.8vw, 1.15rem);
     max-width: min(100%, 74rem);
@@ -2299,6 +2505,7 @@ body,
   .team-select-layout.lobby-layout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
+    align-content: start;
     gap: clamp(0.8rem, 2vw, 1.35rem);
     max-width: min(100%, 66rem);
     margin-top: clamp(0.85rem, 3dvh, 1.75rem);
@@ -2310,11 +2517,7 @@ body,
     min-height: clamp(13rem, 43dvh, 21rem);
   }
 
-  .team-select-layout .lobby-team-panel > div > div:first-child {
-    margin-bottom: clamp(0.45rem, 1.4dvh, 0.75rem);
-  }
-
-  .team-select-layout .lobby-team-panel > div > div:first-child > div:first-child {
+  .team-select-layout .lobby-faction-header > div:first-child {
     width: clamp(2.35rem, 8dvh, 3rem);
     height: clamp(2.35rem, 8dvh, 3rem);
     border-radius: 0.75rem;
@@ -2325,7 +2528,7 @@ body,
     row-gap: 0.38rem;
   }
 
-  .team-select-layout .lobby-team-panel h2 {
+  .team-select-layout .lobby-faction-header h2 {
     font-size: clamp(1.05rem, 3.6dvh, 1.45rem);
   }
 
@@ -2352,6 +2555,16 @@ body,
   (max-width: 640px) and (orientation: portrait) {
   .team-select-layout.lobby-layout {
     grid-template-columns: minmax(0, min(100%, 32rem));
+  }
+
+  .team-select-layout .lobby-team-header-row {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    row-gap: 0.75rem;
+  }
+
+  .team-select-layout .lobby-faction-header {
+    width: min(100%, 32rem);
   }
 }
 

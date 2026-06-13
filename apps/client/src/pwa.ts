@@ -11,24 +11,35 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const INSTALLED_DISPLAY_MODES = ['standalone', 'fullscreen', 'minimal-ui'] as const;
+const PWA_DOWNLOADED_STORAGE_KEY = 'voxel:pwaDownloaded';
 
 let isInstallTrackingInitialized = false;
 let pendingInstallPrompt: BeforeInstallPromptEvent | null = null;
 let hasInstalledPwa = isRunningAsInstalledPwa();
+let hasDownloadedPwa = hasRecordedPwaDownload() || hasInstalledPwa;
 const installPromptSubscribers = new Set<() => void>();
 
 export function registerServiceWorker(): void {
-  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) {
+  if (!('serviceWorker' in navigator)) {
     return;
   }
 
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined);
-  });
+  const register = () => {
+    navigator.serviceWorker.register('/sw.js', {
+      scope: '/',
+      updateViaCache: import.meta.env.DEV ? 'none' : 'imports',
+    }).catch(() => undefined);
+  };
+
+  if (document.readyState === 'complete') {
+    register();
+  } else {
+    window.addEventListener('load', register, { once: true });
+  }
 }
 
 export function usePwaInstallPrompt() {
-  const [{ installPrompt, isInstalled }, setInstallState] = useState(getPwaInstallState);
+  const [{ hasDownloaded, installPrompt, isInstalled }, setInstallState] = useState(getPwaInstallState);
 
   useEffect(() => {
     initializeInstallPromptTracking();
@@ -54,13 +65,14 @@ export function usePwaInstallPrompt() {
     const choice = await installPrompt.userChoice;
 
     if (choice.outcome === 'accepted') {
-      hasInstalledPwa = true;
+      rememberPwaDownload();
       notifyInstallPromptSubscribers();
     }
   }, [installPrompt]);
 
   return {
-    canInstall: Boolean(installPrompt) && !isInstalled,
+    canInstall: Boolean(installPrompt) && !hasDownloaded,
+    hasDownloaded,
     install,
     isInstalled,
   };
@@ -79,6 +91,7 @@ function initializeInstallPromptTracking(): void {
     hasInstalledPwa = isRunningAsInstalledPwa();
 
     if (hasInstalledPwa) {
+      rememberPwaDownload();
       pendingInstallPrompt = null;
     }
 
@@ -86,7 +99,8 @@ function initializeInstallPromptTracking(): void {
   };
 
   const handleBeforeInstallPrompt = (event: Event) => {
-    if (!isRunningAsInstalledPwa()) {
+    if (!getPwaInstallState().hasDownloaded) {
+      event.preventDefault();
       pendingInstallPrompt = event as BeforeInstallPromptEvent;
       notifyInstallPromptSubscribers();
     }
@@ -94,6 +108,7 @@ function initializeInstallPromptTracking(): void {
 
   const handleAppInstalled = () => {
     hasInstalledPwa = true;
+    rememberPwaDownload();
     pendingInstallPrompt = null;
     notifyInstallPromptSubscribers();
   };
@@ -108,9 +123,11 @@ function initializeInstallPromptTracking(): void {
 
 function getPwaInstallState() {
   const isInstalled = hasInstalledPwa || isRunningAsInstalledPwa();
+  const hasDownloaded = hasDownloadedPwa || hasRecordedPwaDownload() || isInstalled;
 
   return {
-    installPrompt: isInstalled ? null : pendingInstallPrompt,
+    hasDownloaded,
+    installPrompt: hasDownloaded ? null : pendingInstallPrompt,
     isInstalled,
   };
 }
@@ -130,4 +147,24 @@ function isRunningAsInstalledPwa(): boolean {
     navigatorWithStandalone.standalone === true ||
     INSTALLED_DISPLAY_MODES.some((displayMode) => window.matchMedia(`(display-mode: ${displayMode})`).matches)
   );
+}
+
+function rememberPwaDownload(): void {
+  hasDownloadedPwa = true;
+
+  try {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(PWA_DOWNLOADED_STORAGE_KEY, '1');
+  } catch {
+    // Storage can be unavailable in private browsing or locked-down webviews.
+  }
+}
+
+function hasRecordedPwaDownload(): boolean {
+  try {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(PWA_DOWNLOADED_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
 }

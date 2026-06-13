@@ -17,7 +17,7 @@ import { config } from '../../config/environment';
 import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
-import { usePwaInstallPrompt } from '../../pwa';
+import { PwaInstallToast } from './PwaInstallToast';
 import { MAP_SEED_PLACEHOLDER, isAllowedMapSeedInput, parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
 import { solInputToLamports } from '../../utils/wagerPayments';
 import { RankIcon, getRankForStats } from './RankBadge';
@@ -83,26 +83,6 @@ function SlopHeroesMark({ className }: { className?: string }) {
   );
 }
 
-function PwaInstallButton({ onInstall }: { onInstall: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onInstall}
-      className="group relative w-10 h-10 shrink-0 rounded-lg border border-orange-400/20 bg-orange-500/10 text-orange-200 shadow-[0_0_24px_rgba(249,115,22,0.14)] transition hover:border-orange-300/50 hover:bg-orange-400/20 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300/70"
-      aria-label="Install Slop Heroes app"
-      title="Install Slop Heroes app"
-    >
-      <span className="absolute inset-0 rounded-lg opacity-0 transition group-hover:opacity-100 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.18),transparent_62%)]" />
-      <span className="relative flex h-full w-full items-center justify-center">
-        <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v10m0 0l4-4m-4 4L8 9" />
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 14v3.5A2.5 2.5 0 007.5 20h9a2.5 2.5 0 002.5-2.5V14" />
-        </svg>
-      </span>
-    </button>
-  );
-}
-
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
 const RANKED_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
@@ -163,7 +143,6 @@ export function MainLobby() {
     clearError,
     clearNotice,
   } = useWallet();
-  const { canInstall, install: installPwa } = usePwaInstallPrompt();
 
   const [activeTab, setActiveTab] = useState<MainTab>('play');
   const [error, setError] = useState<string | null>(null);
@@ -350,10 +329,15 @@ export function MainLobby() {
     }
   };
 
-  const handleInstallPwa = () => {
-    playButtonClick();
-    installPwa().catch(() => undefined);
-  };
+  const shouldShowPwaInstallToast = (
+    activeTab === 'play' &&
+    !showSettings &&
+    !showSocial &&
+    !showPlayDialog &&
+    !showCreateLobby &&
+    !showPracticeSetup &&
+    !showAuthModal
+  );
 
   // Format wallet address for display
   const formatAddress = (address: string) => {
@@ -386,11 +370,12 @@ export function MainLobby() {
     lobbyName: string,
     wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
     mapSeed?: number,
-    forceGoldenMapOption?: boolean
+    forceGoldenMapOption?: boolean,
+    observersEnabled?: boolean
   ) => {
     setError(null);
     try {
-      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, mapSeed, forceGoldenMapOption });
+      await createLobby(playerName, lobbyName || `${playerName}'s Lobby`, { wager, mapSeed, forceGoldenMapOption, observersEnabled });
       setShowCreateLobby(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create lobby');
@@ -495,8 +480,6 @@ export function MainLobby() {
               </svg>
             </TopNavIconButton>
 
-            {canInstall && <PwaInstallButton onInstall={handleInstallPwa} />}
-
             {/* Conditional: Show sign-in button or profile card */}
             {isAuthenticated && user ? (
               <div className="flex items-center gap-3 py-1 pl-1 pr-2 rounded-lg">
@@ -588,6 +571,8 @@ export function MainLobby() {
           </div>
         )}
       </div>
+
+      {shouldShowPwaInstallToast && <PwaInstallToast />}
 
       {/* Modals */}
       {showSocial && (
@@ -1127,7 +1112,8 @@ interface CreateLobbyModalProps {
     name: string,
     wager?: { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' },
     mapSeed?: number,
-    forceGoldenMapOption?: boolean
+    forceGoldenMapOption?: boolean,
+    observersEnabled?: boolean
   ) => void;
 }
 
@@ -1137,6 +1123,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
   const [coverChargeSol, setCoverChargeSol] = useState('0.01');
   const [mapSeedInput, setMapSeedInput] = useState('');
   const [forceGoldenMapOption, setForceGoldenMapOption] = useState(false);
+  const [observersEnabled, setObserversEnabled] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1146,7 +1133,7 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
       const mapSeed = config.isDev ? parseOptionalMapSeedInput(mapSeedInput) : undefined;
       onCreate(lobbyName, wagerEnabled
         ? { enabled: true, token: 'SOL', coverChargeLamports: solInputToLamports(coverChargeSol) }
-        : { enabled: false }, mapSeed, config.isDev && forceGoldenMapOption);
+        : { enabled: false }, mapSeed, config.isDev && forceGoldenMapOption, config.isDev && observersEnabled);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Invalid lobby settings');
     }
@@ -1220,6 +1207,27 @@ function CreateLobbyModal({ playerName, isLoading, error, onClose, onCreate }: C
               </div>
               <span className={`relative h-5 w-10 shrink-0 rounded-full transition-all ${forceGoldenMapOption ? 'bg-amber-400' : 'bg-white/20'}`}>
                 <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${forceGoldenMapOption ? 'left-[22px]' : 'left-0.5'}`} />
+              </span>
+            </button>
+
+            <button
+              type="button"
+              aria-pressed={observersEnabled}
+              className="flex w-full items-center justify-between gap-3 rounded-lg border border-sky-300/15 bg-sky-300/[0.055] p-3 text-left transition-colors hover:border-sky-200/25"
+              onClick={() => setObserversEnabled((enabled) => !enabled)}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <svg className={`h-4 w-4 shrink-0 ${observersEnabled ? 'text-sky-200' : 'text-white/30'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15.25A3.25 3.25 0 1012 8.75a3.25 3.25 0 000 6.5z" />
+                </svg>
+                <div className="min-w-0">
+                  <p className="font-body text-sm text-white">Observer Slot</p>
+                  <p className="text-[11px] text-white/40">Development only. Adds one non-combat camera slot to the lobby.</p>
+                </div>
+              </div>
+              <span className={`relative h-5 w-10 shrink-0 rounded-full transition-all ${observersEnabled ? 'bg-sky-400' : 'bg-white/20'}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${observersEnabled ? 'left-[22px]' : 'left-0.5'}`} />
               </span>
             </button>
           </>

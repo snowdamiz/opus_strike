@@ -23,6 +23,7 @@ export interface LobbyPlayer {
   isHost: boolean;
   isReady: boolean;
   team: string;
+  isObserver?: boolean;
   heroId?: HeroId | '';
   isBot?: boolean;
   botDifficulty?: BotDifficulty | '';
@@ -227,18 +228,6 @@ export interface ChronosPulseData {
   ownerTeam: 'red' | 'blue';
   supercharged?: boolean;
   radius?: number;
-}
-
-export interface ChronosTimebreakData {
-  id: string;
-  position: { x: number; y: number; z: number };
-  direction: { x: number; y: number; z: number };
-  startTime: number;
-  releaseTime: number;
-  duration: number;
-  radius: number;
-  ownerId: string;
-  ownerTeam: 'red' | 'blue';
 }
 
 // ============================================================================

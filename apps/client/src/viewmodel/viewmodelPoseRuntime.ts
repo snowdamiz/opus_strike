@@ -8,6 +8,7 @@ export interface HeldBlendRuntime {
 
 export interface PhantomViewmodelPoseRuntime {
   primary: HeldBlendRuntime;
+  shieldCastStartedAtMs: number;
 }
 
 export interface BlazeViewmodelPoseRuntime {
@@ -51,6 +52,7 @@ export function createViewmodelPoseRuntime(heroId: HeroId | null = null): Viewmo
     revision: 0,
     phantom: {
       primary: createHeldBlendRuntime(),
+      shieldCastStartedAtMs: -Infinity,
     },
     blaze: {
       rocket: createHeldBlendRuntime(),

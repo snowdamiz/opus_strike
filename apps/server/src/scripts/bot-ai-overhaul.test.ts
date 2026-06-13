@@ -414,6 +414,101 @@ function testDifficultyChangesDecisionQuality() {
   assert.notEqual(hardPlan.mode, 'chronos_lifeline_allies');
 }
 
+function testNeutralAllBotOpenerPressuresFlag() {
+  const redBots = [
+    player({ id: 'red-phantom', team: 'red', heroId: 'phantom', x: -42, z: 0, profile: 'defender-alpha' }),
+    player({ id: 'red-hook', team: 'red', heroId: 'hookshot', x: -40, z: 2, profile: 'defender-bravo' }),
+    player({ id: 'red-chronos', team: 'red', heroId: 'chronos', x: -40, z: -2, profile: 'defender-charlie' }),
+    player({ id: 'red-blaze', team: 'red', heroId: 'blaze', x: -43, z: 3, profile: 'defender-delta' }),
+  ];
+  const blueBots = [
+    player({ id: 'blue-phantom', team: 'blue', heroId: 'phantom', x: 42, z: 0 }),
+    player({ id: 'blue-hook', team: 'blue', heroId: 'hookshot', x: 40, z: -2 }),
+    player({ id: 'blue-chronos', team: 'blue', heroId: 'chronos', x: 40, z: 2 }),
+    player({ id: 'blue-blaze', team: 'blue', heroId: 'blaze', x: 43, z: -3 }),
+  ];
+  const players = [...redBots, ...blueBots];
+  const flagState = flags();
+  const tactics = buildTeamTactics({ now: NOW, revision: 1, players, flags: flagState }).red;
+  const intents = redBots.map((bot) => scoreBotIntents(
+    bot,
+    blackboardFor(bot, players, { flagState, visibleEnemyIds: [], losEnemyIds: [] }),
+    getBotSkillProfile('normal')
+  ));
+
+  assert.equal(Object.values(tactics.assignments).filter((assignment) => assignment.job === 'defend_base').length, 1);
+  assert.ok(Object.values(tactics.assignments).filter((assignment) => assignment.job === 'run_flag').length >= 3);
+  assert.equal(intents.filter((intent) => intent.type === 'defend_base').length, 1);
+  assert.ok(intents.filter((intent) => intent.type === 'capture_enemy_flag').length >= 3);
+}
+
+function testUncontestedDefendersHoldControlUltimates() {
+  const enemy = player({ id: 'far-enemy', team: 'blue', heroId: 'phantom', x: 40, z: 0 });
+  const blaze = player({ id: 'blaze-defender', team: 'red', heroId: 'blaze', x: -40, z: 0, ultimateCharge: 100 });
+  const hookshot = player({ id: 'hook-defender', team: 'red', heroId: 'hookshot', x: -40, z: 2, ultimateCharge: 100 });
+  const flagState = flags();
+  const defendIntent = {
+    ...scoreBotIntents(blaze, blackboardFor(blaze, [blaze, enemy], { flagState, visibleEnemyIds: [], losEnemyIds: [] }), getBotSkillProfile('normal')),
+    type: 'defend_base' as const,
+    role: 'defender' as const,
+    job: 'defend_base' as const,
+    targetPosition: flagState.red.basePosition,
+    reason: 'test empty base defense',
+  };
+
+  const blazePlan = chooseBotAbilityPlan({
+    now: NOW,
+    bot: blaze,
+    intent: defendIntent,
+    blackboard: blackboardFor(blaze, [blaze, enemy], { flagState, visibleEnemyIds: [], losEnemyIds: [] }),
+    combatPlan: { targetId: null, stance: 'hold_cover', score: 0, reason: 'test' },
+    skill: getBotSkillProfile('normal'),
+    geometry: defaultGeometry(),
+  });
+  assert.notEqual(blazePlan.mode, 'blaze_airstrike');
+
+  const hookPlan = chooseBotAbilityPlan({
+    now: NOW,
+    bot: hookshot,
+    intent: defendIntent,
+    blackboard: blackboardFor(hookshot, [hookshot, enemy], { flagState, visibleEnemyIds: [], losEnemyIds: [] }),
+    combatPlan: { targetId: null, stance: 'hold_cover', score: 0, reason: 'test' },
+    skill: getBotSkillProfile('normal'),
+    geometry: defaultGeometry(),
+  });
+  assert.notEqual(hookPlan.mode, 'hookshot_trap');
+}
+
+function testContestedObjectiveStillSpendsControlUltimate() {
+  const blaze = player({ id: 'blaze', team: 'red', heroId: 'blaze', x: -40, z: 0, ultimateCharge: 100 });
+  const enemyA = player({ id: 'enemy-a', team: 'blue', heroId: 'phantom', x: -36, z: 0 });
+  const enemyB = player({ id: 'enemy-b', team: 'blue', heroId: 'hookshot', x: -34, z: 2 });
+  const flagState = flags();
+  const board = blackboardFor(blaze, [blaze, enemyA, enemyB], {
+    flagState,
+    visibleEnemyIds: [enemyA.id, enemyB.id],
+    losEnemyIds: [enemyA.id, enemyB.id],
+  });
+  const plan = chooseBotAbilityPlan({
+    now: NOW,
+    bot: blaze,
+    intent: {
+      ...scoreBotIntents(blaze, board, getBotSkillProfile('normal')),
+      type: 'defend_base',
+      role: 'defender',
+      job: 'defend_base',
+      targetPosition: flagState.red.basePosition,
+      reason: 'test contested base',
+    },
+    blackboard: board,
+    combatPlan: { targetId: null, stance: 'hold_cover', score: 0, reason: 'test' },
+    skill: getBotSkillProfile('normal'),
+    geometry: defaultGeometry(),
+  });
+
+  assert.equal(plan.mode, 'blaze_airstrike');
+}
+
 testTeamTacticsAssignments();
 testIntentScoring();
 testRoutePlannerAvoidsBlockedEdge();
@@ -421,5 +516,8 @@ testLocalAvoidance();
 testChronosHealingThresholds();
 testHeroAbilityControllers();
 testDifficultyChangesDecisionQuality();
+testNeutralAllBotOpenerPressuresFlag();
+testUncontestedDefendersHoldControlUltimates();
+testContestedObjectiveStillSpendsControlUltimate();
 
 console.log('bot-ai-overhaul tests passed');

@@ -111,6 +111,7 @@ function markAudioUserActivation(): void {
   if (sharedAudioContext?.state === 'suspended') {
     void sharedAudioContext.resume().catch(() => undefined);
   }
+  void flushPendingAudioPreloads();
 }
 
 function installAudioUnlockListeners(): void {
@@ -250,6 +251,8 @@ const SOUND_GROUPS: Record<SoundGroup, SoundName[]> = {
   chronos: ['phantomBasic', 'chronosAegis', 'chronosLifeline', 'chronosTimebreakCharge', 'chronosPush', 'chronosSuperchargedImpact'],
 };
 
+const pendingAudioPreloadNames = new Set<SoundName>();
+let pendingAudioPreloadFlush: Promise<void> | null = null;
 const BLAZE_AIRSTRIKE_SOUND_LAYERS = ['blazeAirstrikeFire', 'blazeAirstrikeGears'] as const satisfies readonly SoundName[];
 const MUSIC_SOUND_NAMES = new Set<SoundName>(['lobbyMusic', 'gameMusic']);
 const MAX_CONCURRENT_AUDIO_DECODES = 2;
@@ -679,6 +682,25 @@ async function loadSharedSound(name: SoundName): Promise<SoundEffect | null> {
   return loadPromise;
 }
 
+async function flushPendingAudioPreloads(): Promise<void> {
+  if (!hasUserActivatedAudio()) return;
+  if (pendingAudioPreloadFlush) return pendingAudioPreloadFlush;
+
+  pendingAudioPreloadFlush = (async () => {
+    try {
+      while (pendingAudioPreloadNames.size > 0) {
+        const names = Array.from(pendingAudioPreloadNames);
+        pendingAudioPreloadNames.clear();
+        await Promise.all(names.map((name) => loadSharedSound(name)));
+      }
+    } finally {
+      pendingAudioPreloadFlush = null;
+    }
+  })();
+
+  return pendingAudioPreloadFlush;
+}
+
 function startSharedSoundBuffer(
   ctx: AudioContext,
   sound: LoadedSoundEffect,
@@ -1059,11 +1081,14 @@ export function useAudio() {
 
   // Preload multiple sounds (for abilities that need instant playback)
   const preloadSounds = useCallback(async (names: SoundName[]) => {
-    if (!hasUserActivatedAudio()) return;
-    
-    await Promise.all(names
-      .filter(name => !MUSIC_SOUND_NAMES.has(name))
-      .map(name => loadSound(name)));
+    const preloadNames = names.filter(name => !MUSIC_SOUND_NAMES.has(name));
+    if (!hasUserActivatedAudio()) {
+      preloadNames.forEach((name) => pendingAudioPreloadNames.add(name));
+      return;
+    }
+
+    await Promise.all(preloadNames.map(name => loadSound(name)));
+    await flushPendingAudioPreloads();
   }, [loadSound]);
 
   const preloadSoundGroup = useCallback(async (group: SoundGroup) => {

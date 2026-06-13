@@ -1016,6 +1016,16 @@ export function setupPlayerVitalsHandler(
       rememberPlayerNetId(vitals);
 
       if (vitals.id === sessionId) {
+        if (useGameStore.getState().isObserverMode) {
+          if (nextPlayers.has(vitals.id)) {
+            writablePlayers().delete(vitals.id);
+          }
+          nextLocalPlayer = null;
+          removedVisuals.push(vitals.id);
+          shouldPublishTiming = true;
+          continue;
+        }
+
         const existing = nextLocalPlayer || nextPlayers.get(vitals.id);
         const existingPlayer = existing || undefined;
         const previousState = existingPlayer?.state;
@@ -2362,17 +2372,20 @@ export function setupCombatHandlers(room: Room) {
 
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
-    if (data.sourceId === localPlayerId) {
-      useCombatFeedbackStore.getState().addDamageNumber({
-        damage: data.damage,
-        damageType: data.damageType,
-      });
-    }
-
     const sourcePlayer = data.sourceId ? store.players.get(data.sourceId) : null;
     const targetPlayer = store.players.get(data.targetId);
     const sourcePosition = data.sourcePosition ?? sourcePlayer?.position ?? null;
     const targetPosition = data.targetPosition ?? targetPlayer?.position ?? null;
+
+    if (data.sourceId === localPlayerId && targetPosition) {
+      useCombatFeedbackStore.getState().addCombatTextEvent({
+        kind: 'damage',
+        amount: data.damage,
+        damageType: data.damageType,
+        targetId: data.targetId,
+        position: targetPosition,
+      });
+    }
 
     if (data.sourceId && data.sourceId !== localPlayerId && sourcePosition && targetPosition) {
       const start = new THREE.Vector3(sourcePosition.x, sourcePosition.y + 1.1, sourcePosition.z);
@@ -2408,17 +2421,26 @@ export function setupCombatHandlers(room: Room) {
 
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
+    const combatFeedback = useCombatFeedbackStore.getState();
     for (const target of data.targets) {
       if (target.targetId === store.localPlayer?.id) {
         store.updateLocalPlayer({ health: target.newHealth });
-        continue;
+      } else {
+        const player = store.players.get(target.targetId);
+        if (player) {
+          store.updatePlayer(target.targetId, {
+            ...player,
+            health: target.newHealth,
+          });
+        }
       }
 
-      const player = store.players.get(target.targetId);
-      if (player) {
-        store.updatePlayer(target.targetId, {
-          ...player,
-          health: target.newHealth,
+      if (target.amount > 0) {
+        combatFeedback.addCombatTextEvent({
+          kind: 'heal',
+          amount: target.amount,
+          targetId: target.targetId,
+          position: target.position,
         });
       }
     }

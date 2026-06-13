@@ -58,6 +58,10 @@ export function validateReadyPayload(value: unknown): boolean | null {
   return isRecord(value) ? booleanValue(value.ready) : null;
 }
 
+export function validateObserverPayload(value: unknown): boolean | null {
+  return isRecord(value) ? booleanValue(value.observer) : null;
+}
+
 export function validateTeamPayload(value: unknown): Team | null {
   if (!isRecord(value)) return null;
   return isTeam(value.team) ? value.team : null;

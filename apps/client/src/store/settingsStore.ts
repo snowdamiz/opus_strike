@@ -42,6 +42,7 @@ export interface ClientSettings {
   shadowQuality: GraphicsFeatureQuality;
   reflectionQuality: GraphicsFeatureQuality;
   environmentQuality: GraphicsFeatureQuality;
+  materialQuality: GraphicsFeatureQuality;
   adaptiveQuality: boolean;
   fov: number;
   showFPS: FpsDisplayMode;
@@ -77,6 +78,7 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
   | 'shadowQuality'
   | 'reflectionQuality'
   | 'environmentQuality'
+  | 'materialQuality'
   | 'adaptiveQuality'
 >> = {
   potato: {
@@ -85,6 +87,7 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
     shadowQuality: 'off',
     reflectionQuality: 'off',
     environmentQuality: 'off',
+    materialQuality: 'off',
     adaptiveQuality: true,
   },
   competitive: {
@@ -93,6 +96,7 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
     shadowQuality: 'off',
     reflectionQuality: 'off',
     environmentQuality: 'low',
+    materialQuality: 'low',
     adaptiveQuality: true,
   },
   balanced: {
@@ -101,6 +105,7 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
     shadowQuality: 'medium',
     reflectionQuality: 'medium',
     environmentQuality: 'medium',
+    materialQuality: 'medium',
     adaptiveQuality: true,
   },
   cinematic: {
@@ -109,6 +114,7 @@ export const graphicsPresetSettings: Record<GraphicsPreset, Pick<
     shadowQuality: 'high',
     reflectionQuality: 'high',
     environmentQuality: 'high',
+    materialQuality: 'high',
     adaptiveQuality: false,
   },
 };
@@ -237,6 +243,7 @@ export function sanitizeSettings(value: unknown): ClientSettings {
     shadowQuality: pickOption(raw.shadowQuality, featureQualityOptions, preset.shadowQuality),
     reflectionQuality: pickOption(raw.reflectionQuality, featureQualityOptions, preset.reflectionQuality),
     environmentQuality: pickOption(raw.environmentQuality, featureQualityOptions, preset.environmentQuality),
+    materialQuality: pickOption(raw.materialQuality, featureQualityOptions, preset.materialQuality),
     adaptiveQuality: pickBoolean(raw.adaptiveQuality, preset.adaptiveQuality),
     fov: clamp(raw.fov, 60, 120, defaultSettings.fov),
     showFPS: pickFpsDisplayMode(raw.showFPS, defaultSettings.showFPS),

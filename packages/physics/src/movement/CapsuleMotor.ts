@@ -1,4 +1,4 @@
-import type { HeroStats, PlayerInput, PlayerMovementState, Vec3 } from '@voxel-strike/shared';
+import type { DirectionalMovementIntent, HeroStats, PlayerInput, PlayerMovementState, Vec3 } from '@voxel-strike/shared';
 import {
   CHRONOS_ASCENDANT_PARADOX_AIR_ACCEL_MULTIPLIER,
   CHRONOS_ASCENDANT_PARADOX_GRAVITY_SCALE,
@@ -23,6 +23,7 @@ import {
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   PROCEDURAL_VOXEL_SIZE,
+  resolveDirectionalMovementIntent,
   SLIDE_COOLDOWN,
   SLIDE_DURATION,
   SLIDE_ENTRY_SPEED_CAP_MULTIPLIER,
@@ -758,22 +759,14 @@ function accelerate(velocity: Vec3, wishDir: Vec3, wishSpeed: number, accelerati
   };
 }
 
-function getWishDirection(input: CapsuleMotorInput['command']['input'], lookYaw: number): Vec3 {
-  let dx = 0;
-  let dz = 0;
-  if (input.moveForward) dz -= 1;
-  if (input.moveBackward) dz += 1;
-  if (input.moveLeft) dx -= 1;
-  if (input.moveRight) dx += 1;
-
-  const local = normalizeHorizontal({ x: dx, y: 0, z: dz });
+function getWishDirection(intent: DirectionalMovementIntent, lookYaw: number): Vec3 {
   const cos = Math.cos(lookYaw);
   const sin = Math.sin(lookYaw);
 
   return normalizeHorizontal({
-    x: local.x * cos + local.z * sin,
+    x: intent.localX * cos + intent.localZ * sin,
     y: 0,
-    z: -local.x * sin + local.z * cos,
+    z: -intent.localX * sin + intent.localZ * cos,
   });
 }
 
@@ -993,14 +986,16 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     velocity.y = 0;
   }
 
-  const wishDir = getWishDirection(input.command.input, input.command.lookYaw);
-  const hasMovementInput = wishDir.x !== 0 || wishDir.z !== 0;
+  const movementIntent = resolveDirectionalMovementIntent(input.command.input);
+  const wishDir = getWishDirection(movementIntent, input.command.lookYaw);
+  const hasMovementInput = movementIntent.hasMovementInput;
 
   const wantsCrouch = Boolean(input.command.input.crouch && !movement.isSliding);
   const canStand = wantsCrouch || canOccupy(world, position, PLAYER_HEIGHT, PLAYER_RADIUS);
   movement.isCrouching = wantsCrouch || !canStand;
   movement.isSprinting = Boolean(
     input.command.input.sprint &&
+    movementIntent.allowsSprint &&
     hasMovementInput &&
     movement.isGrounded &&
     !movement.isCrouching &&
@@ -1016,6 +1011,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
     movement.isGrounded &&
     slideStartRequested &&
     input.command.input.sprint &&
+    movementIntent.allowsSprint &&
     hasMovementInput &&
     !movement.isSliding &&
     movement.slideTimeRemaining <= 0;
@@ -1065,7 +1061,7 @@ export function simulateCapsuleMotor(input: CapsuleMotorInput): CapsuleMotorResu
       movement.slideTimeRemaining = SLIDE_COOLDOWN;
     }
   } else {
-    let wishSpeed = input.heroStats.moveSpeed * (modifiers.activeSpeedMultiplier ?? 1);
+    let wishSpeed = input.heroStats.moveSpeed * movementIntent.speedMultiplier * (modifiers.activeSpeedMultiplier ?? 1);
     if (movement.isSprinting) wishSpeed *= SPRINT_MULTIPLIER;
     if (movement.isCrouching) wishSpeed *= CROUCH_MULTIPLIER;
     if (modifiers.flagCarrier) wishSpeed *= 0.85;

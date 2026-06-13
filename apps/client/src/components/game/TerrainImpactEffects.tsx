@@ -341,6 +341,7 @@ interface GenericImpactRenderSlot {
   particles: Array<THREE.Mesh | null>;
   smoke: Array<THREE.Mesh | null>;
   light: THREE.PointLight | null;
+  materials: Map<string, THREE.MeshBasicMaterial>;
 }
 
 const phantomDireImpactSlots: PooledPhantomDireImpactSlot[] = Array.from(
@@ -416,6 +417,7 @@ function ensureGenericImpactRenderSlot(
       particles: [],
       smoke: [],
       light: null,
+      materials: new Map(),
     };
     slots[index] = slot;
   }
@@ -774,33 +776,55 @@ function getDebrisGeometry(shape: ImpactStyle['debrisShape']): THREE.BufferGeome
   return SHARED_GEOMETRIES.sphere8;
 }
 
-function configureMeshMaterial(
+function getGenericImpactMaterial(
+  renderSlot: GenericImpactRenderSlot,
+  key: string,
+  color: number,
+  opacity: number,
+  additive: boolean,
+  side: THREE.Side = THREE.FrontSide
+): THREE.MeshBasicMaterial {
+  let material = renderSlot.materials.get(key);
+  if (!material) {
+    material = new THREE.MeshBasicMaterial({
+      color,
+      opacity,
+      transparent: true,
+      depthWrite: false,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+      side,
+      toneMapped: false,
+    });
+    renderSlot.materials.set(key, material);
+  } else {
+    material.opacity = opacity;
+  }
+  return material;
+}
+
+function assignGenericImpactMaterial(
+  renderSlot: GenericImpactRenderSlot,
   mesh: THREE.Mesh | null,
+  role: string,
   color: number,
   opacity: number,
   additive: boolean,
   side: THREE.Side = THREE.FrontSide
 ): void {
   if (!mesh) return;
-  const material = mesh.material as THREE.MeshBasicMaterial;
-  material.color.setHex(color);
-  material.opacity = opacity;
-  material.transparent = true;
-  material.depthWrite = false;
-  material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
-  material.side = side;
-  material.needsUpdate = true;
+  const key = `${role}:${color}:${additive ? 'add' : 'norm'}:${side}`;
+  mesh.material = getGenericImpactMaterial(renderSlot, key, color, opacity, additive, side);
 }
 
 function configureGenericRenderSlot(renderSlot: GenericImpactRenderSlot, data: PooledGenericImpactSlot): void {
   const style = data.style;
   const additive = style.additive;
 
-  configureMeshMaterial(renderSlot.flash, style.flashColor, 1, true);
-  configureMeshMaterial(renderSlot.core, style.coreColor, 0.9, additive);
-  configureMeshMaterial(renderSlot.outer, style.outerColor, 0.45, additive);
-  configureMeshMaterial(renderSlot.ring, style.ringColor, 0.7, additive, THREE.DoubleSide);
-  configureMeshMaterial(renderSlot.ring2, style.secondRingColor, 0.5, additive, THREE.DoubleSide);
+  assignGenericImpactMaterial(renderSlot, renderSlot.flash, 'flash', style.flashColor, 1, true);
+  assignGenericImpactMaterial(renderSlot, renderSlot.core, 'core', style.coreColor, 0.9, additive);
+  assignGenericImpactMaterial(renderSlot, renderSlot.outer, 'outer', style.outerColor, 0.45, additive);
+  assignGenericImpactMaterial(renderSlot, renderSlot.ring, 'ring', style.ringColor, 0.7, additive, THREE.DoubleSide);
+  assignGenericImpactMaterial(renderSlot, renderSlot.ring2, 'ring2', style.secondRingColor, 0.5, additive, THREE.DoubleSide);
 
   const particleGeometry = getDebrisGeometry(style.debrisShape);
   for (let i = 0; i < GENERIC_IMPACT_MAX_PARTICLES; i++) {
@@ -808,8 +832,10 @@ function configureGenericRenderSlot(renderSlot: GenericImpactRenderSlot, data: P
     if (!particle) continue;
     particle.visible = i < style.particleCount;
     particle.geometry = particleGeometry;
-    configureMeshMaterial(
+    assignGenericImpactMaterial(
+      renderSlot,
       particle,
+      `particle-${i}`,
       style.particleColors[i % style.particleColors.length],
       1,
       additive
@@ -820,7 +846,7 @@ function configureGenericRenderSlot(renderSlot: GenericImpactRenderSlot, data: P
     const smoke = renderSlot.smoke[i];
     if (!smoke) continue;
     smoke.visible = i < style.smokeCount;
-    configureMeshMaterial(smoke, style.smokeColor, 0.3, false);
+    assignGenericImpactMaterial(renderSlot, smoke, `smoke-${i}`, style.smokeColor, 0.3, false);
   }
 
   if (renderSlot.light) {
@@ -942,6 +968,15 @@ function updatePooledGenericImpacts(renderSlots: GenericImpactRenderSlot[], now:
   }
 }
 
+function disposeGenericImpactRenderSlotMaterials(renderSlots: GenericImpactRenderSlot[]): void {
+  for (const slot of renderSlots) {
+    for (const material of slot.materials.values()) {
+      material.dispose();
+    }
+    slot.materials.clear();
+  }
+}
+
 function PooledGenericImpactSlots({
   renderSlots,
   enableDecorativeLights,
@@ -949,6 +984,8 @@ function PooledGenericImpactSlots({
   renderSlots: GenericImpactRenderSlot[];
   enableDecorativeLights: boolean;
 }) {
+  useEffect(() => () => disposeGenericImpactRenderSlotMaterials(renderSlots), [renderSlots]);
+
   return (
     <>
       {GENERIC_IMPACT_INDICES.map((slotIndex) => {

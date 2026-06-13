@@ -3,6 +3,8 @@ import type { SelfMovementAuthority } from '@voxel-strike/shared';
 
 type LocalReactiveUpdateSource = 'vitals' | 'transforms' | 'selfAuthority' | 'localGameplay';
 
+const IS_DEV_BUILD = import.meta.env?.DEV === true;
+
 export interface FrameWorkSample {
   label: string;
   durationMs: number;
@@ -343,7 +345,7 @@ export function recordTransformMessage(input: {
 }
 
 export function recordFrameWorkDuration(label: string, startedAtMs: number, endedAtMs = nowMs()): void {
-  if (!import.meta.env.DEV) return;
+  if (!IS_DEV_BUILD) return;
 
   const durationMs = Math.max(0, endedAtMs - startedAtMs);
   if (!Number.isFinite(durationMs) || durationMs < MIN_FRAME_WORK_SAMPLE_MS) return;
@@ -356,7 +358,7 @@ export function recordFrameWorkDuration(label: string, startedAtMs: number, ende
 }
 
 export function measureFrameWork<T>(label: string, work: () => T): T {
-  if (!import.meta.env.DEV) return work();
+  if (!IS_DEV_BUILD) return work();
 
   const startedAtMs = nowMs();
   try {
@@ -367,18 +369,18 @@ export function measureFrameWork<T>(label: string, work: () => T): T {
 }
 
 export function beginFrameWorkTiming(): void {
-  if (!import.meta.env.DEV) return;
+  if (!IS_DEV_BUILD) return;
   activeFrameWorkStartedAtMs = nowMs();
 }
 
 export function finishFrameWorkTiming(label: string): void {
-  if (!import.meta.env.DEV || activeFrameWorkStartedAtMs <= 0) return;
+  if (!IS_DEV_BUILD || activeFrameWorkStartedAtMs <= 0) return;
 
   recordFrameWorkDuration(label, activeFrameWorkStartedAtMs);
   activeFrameWorkStartedAtMs = 0;
 }
 
-if (import.meta.env.DEV && typeof window !== 'undefined') {
+if (IS_DEV_BUILD && typeof window !== 'undefined') {
   (window as unknown as {
     __voxelMovementDiagnostics?: {
       snapshot: typeof getMovementNetworkDiagnosticsSnapshot;

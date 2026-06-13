@@ -10,7 +10,6 @@ import type {
   RocketData,
   BombData,
   ChronosPulseData,
-  ChronosTimebreakData,
   HookProjectileData,
   DragHookData,
   GrappleTrapData,
@@ -48,7 +47,6 @@ export interface ProjectileState {
 
   // Chronos projectiles
   chronosPulses: ChronosPulseData[];
-  chronosTimebreaks: ChronosTimebreakData[];
 
   // Hookshot projectiles
   hookProjectiles: HookProjectileData[];
@@ -93,7 +91,7 @@ export interface ProjectileActions {
   clearExpiredBombs: () => void;
   setBombTargeting: (targeting: boolean, valid?: boolean) => void;
 
-  // Legacy Blaze ultimate targeting actions
+  // Blaze ultimate targeting actions
   setAirStrikeTargeting: (targeting: boolean, valid?: boolean) => void;
 
   // Blaze flamethrower actions
@@ -109,9 +107,6 @@ export interface ProjectileActions {
   removeChronosPulse: (id: string) => void;
   removeChronosPulses: (ids: readonly string[]) => void;
   clearExpiredChronosPulses: () => void;
-  addChronosTimebreak: (timebreak: ChronosTimebreakData) => void;
-  removeChronosTimebreak: (id: string) => void;
-  clearExpiredChronosTimebreaks: () => void;
 
   // Hook projectile actions
   addHookProjectile: (hook: HookProjectileData) => void;
@@ -175,7 +170,6 @@ export const projectileInitialState: ProjectileState = {
   flamethrowerOrigin: null,
   flamethrowerDirection: { x: 0, y: 0, z: -1 },
   chronosPulses: [],
-  chronosTimebreaks: [],
   hookProjectiles: [],
   dragHooks: [],
   grappleTraps: [],
@@ -196,7 +190,6 @@ const PROJECTILE_LIMITS = {
   rockets: 96,
   bombs: 32,
   chronosPulses: 96,
-  chronosTimebreaks: 24,
   hookProjectiles: 64,
   dragHooks: 32,
   grappleTraps: 32,
@@ -205,7 +198,14 @@ const PROJECTILE_LIMITS = {
 } as const;
 
 const VOID_RAY_VISUAL_RETENTION_MS = 1200;
-const CHRONOS_TIMEBREAK_VISUAL_LIFETIME_MS = 1400;
+const DIRE_BALL_VISUAL_LIFETIME_MS = 3000;
+const ROCKET_VISUAL_LIFETIME_MS = 3000;
+const BOMB_VISUAL_FALLBACK_LIFETIME_MS = 5000;
+const CHRONOS_PULSE_VISUAL_LIFETIME_MS = 3000;
+const HOOK_PROJECTILE_VISUAL_LIFETIME_MS = 2000;
+const DRAG_HOOK_VISUAL_LIFETIME_MS = 5000;
+const GRAPPLE_LINE_VISUAL_LIFETIME_MS = 6000;
+const EARTH_WALL_COLLAPSE_RETENTION_MS = 1500;
 
 function appendUnique<T extends { id: string }>(items: T[], item: T, limit: number): T[] {
   for (const existing of items) {
@@ -258,8 +258,17 @@ function updateById<T extends { id: string }>(items: T[], id: string, updates: P
   return next;
 }
 
-function filterExpired<T>(items: T[], keep: (item: T, now: number) => boolean): T[] {
-  return filterExpiredAt(items, Date.now(), keep);
+function filterExpiredByExpiry<T>(items: T[], expiresAt: (item: T) => number): T[] {
+  return filterExpiredByExpiryAt(items, Date.now(), expiresAt);
+}
+
+function filterExpiredByExpiryAt<T>(items: T[], now: number, expiresAt: (item: T) => number): T[] {
+  if (items.length === 0) return items;
+
+  // Projectile arrays append in event order, so the oldest entry tells us when a category needs a real scan.
+  if (expiresAt(items[0]) > now) return items;
+
+  return filterExpiredAt(items, now, (item) => expiresAt(item) > now);
 }
 
 function filterExpiredAt<T>(items: T[], now: number, keep: (item: T, now: number) => boolean): T[] {
@@ -308,7 +317,7 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredVoidZones: () => set((state) => {
-    const voidZones = filterExpired(state.voidZones, (z, now) => (now - z.startTime) / 1000 < z.duration);
+    const voidZones = filterExpiredByExpiry(state.voidZones, (z) => z.startTime + z.duration * 1000);
     return voidZones === state.voidZones ? state : { voidZones };
   }),
 
@@ -329,8 +338,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredDireBalls: () => set((state) => {
-    const LIFETIME = 3000;
-    const direBalls = filterExpired(state.direBalls, (b, now) => now - b.startTime < LIFETIME);
+    const direBalls = filterExpiredByExpiry(
+      state.direBalls,
+      (b) => b.startTime + DIRE_BALL_VISUAL_LIFETIME_MS
+    );
     return direBalls === state.direBalls ? state : { direBalls };
   }),
 
@@ -385,7 +396,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredVoidRays: () => set((state) => {
-    const voidRays = filterExpired(state.voidRays, (r, now) => now - r.startTime < VOID_RAY_VISUAL_RETENTION_MS);
+    const voidRays = filterExpiredByExpiry(
+      state.voidRays,
+      (r) => r.startTime + VOID_RAY_VISUAL_RETENTION_MS
+    );
     return voidRays === state.voidRays ? state : { voidRays };
   }),
 
@@ -414,8 +428,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredRockets: () => set((state) => {
-    const LIFETIME = 3000;
-    const rockets = filterExpired(state.rockets, (r, now) => now - r.startTime < LIFETIME);
+    const rockets = filterExpiredByExpiry(
+      state.rockets,
+      (r) => r.startTime + ROCKET_VISUAL_LIFETIME_MS
+    );
     return rockets === state.rockets ? state : { rockets };
   }),
 
@@ -431,8 +447,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredBombs: () => set((state) => {
-    const TOTAL_LIFETIME = 5000;
-    const bombs = filterExpired(state.bombs, (b, now) => now - b.startTime < TOTAL_LIFETIME);
+    const bombs = filterExpiredByExpiry(
+      state.bombs,
+      (b) => b.startTime + BOMB_VISUAL_FALLBACK_LIFETIME_MS
+    );
     return bombs === state.bombs ? state : { bombs };
   }),
 
@@ -488,31 +506,11 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredChronosPulses: () => set((state) => {
-    const LIFETIME = 3000;
-    const chronosPulses = filterExpired(state.chronosPulses, (pulse, now) => now - pulse.startTime < LIFETIME);
+    const chronosPulses = filterExpiredByExpiry(
+      state.chronosPulses,
+      (pulse) => pulse.startTime + CHRONOS_PULSE_VISUAL_LIFETIME_MS
+    );
     return chronosPulses === state.chronosPulses ? state : { chronosPulses };
-  }),
-
-  addChronosTimebreak: (timebreak) => set((state) => {
-    const chronosTimebreaks = appendUnique(
-      state.chronosTimebreaks,
-      timebreak,
-      PROJECTILE_LIMITS.chronosTimebreaks
-    );
-    return chronosTimebreaks === state.chronosTimebreaks ? state : { chronosTimebreaks };
-  }),
-
-  removeChronosTimebreak: (id) => set((state) => {
-    const chronosTimebreaks = removeById(state.chronosTimebreaks, id);
-    return chronosTimebreaks === state.chronosTimebreaks ? state : { chronosTimebreaks };
-  }),
-
-  clearExpiredChronosTimebreaks: () => set((state) => {
-    const chronosTimebreaks = filterExpired(
-      state.chronosTimebreaks,
-      (timebreak, now) => now - timebreak.releaseTime < CHRONOS_TIMEBREAK_VISUAL_LIFETIME_MS
-    );
-    return chronosTimebreaks === state.chronosTimebreaks ? state : { chronosTimebreaks };
   }),
 
   // ==================== HOOK PROJECTILES ====================
@@ -532,8 +530,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredHookProjectiles: () => set((state) => {
-    const LIFETIME = 2000;
-    const hookProjectiles = filterExpired(state.hookProjectiles, (h, now) => now - h.startTime < LIFETIME);
+    const hookProjectiles = filterExpiredByExpiry(
+      state.hookProjectiles,
+      (h) => h.startTime + HOOK_PROJECTILE_VISUAL_LIFETIME_MS
+    );
     return hookProjectiles === state.hookProjectiles ? state : { hookProjectiles };
   }),
 
@@ -554,8 +554,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredDragHooks: () => set((state) => {
-    const LIFETIME = 5000;
-    const dragHooks = filterExpired(state.dragHooks, (h, now) => now - h.startTime < LIFETIME);
+    const dragHooks = filterExpiredByExpiry(
+      state.dragHooks,
+      (h) => h.startTime + DRAG_HOOK_VISUAL_LIFETIME_MS
+    );
     return dragHooks === state.dragHooks ? state : { dragHooks };
   }),
 
@@ -576,7 +578,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredGrappleTraps: () => set((state) => {
-    const grappleTraps = filterExpired(state.grappleTraps, (t, now) => (now - t.startTime) / 1000 < t.duration);
+    const grappleTraps = filterExpiredByExpiry(
+      state.grappleTraps,
+      (t) => t.startTime + t.duration * 1000
+    );
     return grappleTraps === state.grappleTraps ? state : { grappleTraps };
   }),
 
@@ -605,8 +610,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredGrappleLines: () => set((state) => {
-    const LIFETIME = 6000;
-    const grappleLines = filterExpired(state.grappleLines, (l, now) => now - l.startTime < LIFETIME);
+    const grappleLines = filterExpiredByExpiry(
+      state.grappleLines,
+      (l) => l.startTime + GRAPPLE_LINE_VISUAL_LIFETIME_MS
+    );
     return grappleLines === state.grappleLines ? state : { grappleLines };
   }),
 
@@ -627,10 +634,10 @@ export const createProjectileSlice: StateCreator<
   }),
 
   clearExpiredEarthWalls: () => set((state) => {
-    const earthWalls = filterExpired(state.earthWalls, (w, now) => {
-      const elapsed = (now - w.startTime) / 1000;
-      return elapsed < w.duration + 1.5;
-    });
+    const earthWalls = filterExpiredByExpiry(
+      state.earthWalls,
+      (w) => w.startTime + w.duration * 1000 + EARTH_WALL_COLLAPSE_RETENTION_MS
+    );
     return earthWalls === state.earthWalls ? state : { earthWalls };
   }),
 
@@ -639,80 +646,111 @@ export const createProjectileSlice: StateCreator<
     let changed = false;
     const next: Partial<ProjectileState> = {};
 
-    const voidZones = filterExpiredAt(state.voidZones, now, (z) => (now - z.startTime) / 1000 < z.duration);
+    const voidZones = filterExpiredByExpiryAt(
+      state.voidZones,
+      now,
+      (z) => z.startTime + z.duration * 1000
+    );
     if (voidZones !== state.voidZones) {
       next.voidZones = voidZones;
       changed = true;
     }
 
-    const direBalls = filterExpiredAt(state.direBalls, now, (b) => now - b.startTime < 3000);
+    const direBalls = filterExpiredByExpiryAt(
+      state.direBalls,
+      now,
+      (b) => b.startTime + DIRE_BALL_VISUAL_LIFETIME_MS
+    );
     if (direBalls !== state.direBalls) {
       next.direBalls = direBalls;
       changed = true;
     }
 
-    const voidRays = filterExpiredAt(state.voidRays, now, (r) => now - r.startTime < VOID_RAY_VISUAL_RETENTION_MS);
+    const voidRays = filterExpiredByExpiryAt(
+      state.voidRays,
+      now,
+      (r) => r.startTime + VOID_RAY_VISUAL_RETENTION_MS
+    );
     if (voidRays !== state.voidRays) {
       next.voidRays = voidRays;
       changed = true;
     }
 
-    const rockets = filterExpiredAt(state.rockets, now, (r) => now - r.startTime < 3000);
+    const rockets = filterExpiredByExpiryAt(
+      state.rockets,
+      now,
+      (r) => r.startTime + ROCKET_VISUAL_LIFETIME_MS
+    );
     if (rockets !== state.rockets) {
       next.rockets = rockets;
       changed = true;
     }
 
-    const bombs = filterExpiredAt(state.bombs, now, (b) => now - b.startTime < 5000);
+    const bombs = filterExpiredByExpiryAt(
+      state.bombs,
+      now,
+      (b) => b.startTime + BOMB_VISUAL_FALLBACK_LIFETIME_MS
+    );
     if (bombs !== state.bombs) {
       next.bombs = bombs;
       changed = true;
     }
 
-    const chronosPulses = filterExpiredAt(state.chronosPulses, now, (pulse) => now - pulse.startTime < 3000);
+    const chronosPulses = filterExpiredByExpiryAt(
+      state.chronosPulses,
+      now,
+      (pulse) => pulse.startTime + CHRONOS_PULSE_VISUAL_LIFETIME_MS
+    );
     if (chronosPulses !== state.chronosPulses) {
       next.chronosPulses = chronosPulses;
       changed = true;
     }
 
-    const chronosTimebreaks = filterExpiredAt(
-      state.chronosTimebreaks,
+    const hookProjectiles = filterExpiredByExpiryAt(
+      state.hookProjectiles,
       now,
-      (timebreak) => now - timebreak.releaseTime < CHRONOS_TIMEBREAK_VISUAL_LIFETIME_MS
+      (h) => h.startTime + HOOK_PROJECTILE_VISUAL_LIFETIME_MS
     );
-    if (chronosTimebreaks !== state.chronosTimebreaks) {
-      next.chronosTimebreaks = chronosTimebreaks;
-      changed = true;
-    }
-
-    const hookProjectiles = filterExpiredAt(state.hookProjectiles, now, (h) => now - h.startTime < 2000);
     if (hookProjectiles !== state.hookProjectiles) {
       next.hookProjectiles = hookProjectiles;
       changed = true;
     }
 
-    const dragHooks = filterExpiredAt(state.dragHooks, now, (h) => now - h.startTime < 5000);
+    const dragHooks = filterExpiredByExpiryAt(
+      state.dragHooks,
+      now,
+      (h) => h.startTime + DRAG_HOOK_VISUAL_LIFETIME_MS
+    );
     if (dragHooks !== state.dragHooks) {
       next.dragHooks = dragHooks;
       changed = true;
     }
 
-    const grappleTraps = filterExpiredAt(state.grappleTraps, now, (t) => (now - t.startTime) / 1000 < t.duration);
+    const grappleTraps = filterExpiredByExpiryAt(
+      state.grappleTraps,
+      now,
+      (t) => t.startTime + t.duration * 1000
+    );
     if (grappleTraps !== state.grappleTraps) {
       next.grappleTraps = grappleTraps;
       changed = true;
     }
 
-    const grappleLines = filterExpiredAt(state.grappleLines, now, (l) => now - l.startTime < 6000);
+    const grappleLines = filterExpiredByExpiryAt(
+      state.grappleLines,
+      now,
+      (l) => l.startTime + GRAPPLE_LINE_VISUAL_LIFETIME_MS
+    );
     if (grappleLines !== state.grappleLines) {
       next.grappleLines = grappleLines;
       changed = true;
     }
 
-    const earthWalls = filterExpiredAt(state.earthWalls, now, (w) => {
-      const elapsed = (now - w.startTime) / 1000;
-      return elapsed < w.duration + 1.5;
-    });
+    const earthWalls = filterExpiredByExpiryAt(
+      state.earthWalls,
+      now,
+      (w) => w.startTime + w.duration * 1000 + EARTH_WALL_COLLAPSE_RETENTION_MS
+    );
     if (earthWalls !== state.earthWalls) {
       next.earthWalls = earthWalls;
       changed = true;

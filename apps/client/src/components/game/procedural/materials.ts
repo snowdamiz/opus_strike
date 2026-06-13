@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import { createVoxelTerrainTextures } from './terrainTextures';
+import type { GraphicsFeatureQuality } from '../../../store/settingsStore';
 
 type ShaderParameters = Parameters<THREE.Material['onBeforeCompile']>[0];
 
@@ -97,9 +98,12 @@ function patchTerrainTextureShader(
   );
 }
 
-export function useVoxelMaterial(theme: VoxelMapTheme): THREE.Material {
+export function useVoxelMaterial(
+  theme: VoxelMapTheme,
+  materialQuality: GraphicsFeatureQuality
+): THREE.Material {
   const material = useMemo(() => {
-    const textures = createVoxelTerrainTextures(theme);
+    const textures = createVoxelTerrainTextures(theme, materialQuality);
     const material = new THREE.MeshLambertMaterial({
       color: '#ffffff',
       emissive: '#ffffff',
@@ -109,10 +113,10 @@ export function useVoxelMaterial(theme: VoxelMapTheme): THREE.Material {
     material.name = 'procedural-voxel-diffuse-terrain-material';
     material.onBeforeCompile = (shader) => patchTerrainTextureShader(shader, textures);
     material.customProgramCacheKey = () => (
-      `${TERRAIN_TEXTURE_SHADER_KEY}:${material.type}:${textures.tileSize}`
+      `${TERRAIN_TEXTURE_SHADER_KEY}:${material.type}:${textures.tileSize}:${materialQuality}`
     );
     return material;
-  }, [theme]);
+  }, [materialQuality, theme]);
 
   useEffect(
     () => () => {

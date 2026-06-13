@@ -55,4 +55,5 @@ export const LOBBY_MESSAGE_RATE_LIMITS = {
   mapVote: { limit: 8, intervalMs: 5000 },
   chat: { limit: 4, intervalMs: 5000 },
   payment: { limit: 6, intervalMs: 60000 },
+  devCommand: { limit: 6, intervalMs: 5000 },
 } satisfies Record<string, RateLimitRule>;

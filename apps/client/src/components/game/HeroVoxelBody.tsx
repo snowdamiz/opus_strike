@@ -7,8 +7,13 @@ import {
   EMPTY_TEAM_ACCENT_PARTS,
   HERO_BODY_MANIFESTS,
   IDLE_SPEED_MULTIPLIER,
+  TEAM_BODY_GLOW_OUTLINE_OPACITY,
+  TEAM_BODY_GLOW_OUTLINE_SCALE,
   TEAM_COLORS,
+  getHeroBodyMaterialEmissiveIntensity,
   getHeroMovementProfile,
+  getTeamBodyGlowEmissiveIntensity,
+  getTeamBodyGlowOpacity,
   lerpMovementProfile,
 } from '../../model-system/heroBodyManifests';
 import {
@@ -52,9 +57,6 @@ import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegi
 
 export type { HeroAnimationMode, HeroMovementPose, HeroWalkDirection } from '../../model-system/heroBodyTypes';
 
-const HERO_BODY_OUTLINE_SCALE = 1.055;
-const HERO_BODY_OUTLINE_OPACITY = 0.34;
-
 interface HeroVoxelBodyProps {
   heroId: HeroId | null;
   team: Team;
@@ -90,28 +92,19 @@ interface HeroVoxelBodyProps {
   socketOwnerId?: string;
 }
 
-function getMaterialEmissiveIntensity(kind: MaterialKind, hasFlag: boolean) {
-  const flagBoost = hasFlag ? 0.35 : 0;
-  if (kind === 'glow') return 0.78 + flagBoost;
-  if (kind === 'eye') return 0.9 + flagBoost;
-  if (kind === 'accent') return 0.32 + flagBoost * 0.6;
-  if (kind === 'mist') return 0.42 + flagBoost * 0.4;
-  return flagBoost * 0.35;
-}
-
 function TeamAccentMaterial({ part, teamColor }: { part: TeamAccentPart; teamColor: string }) {
   const transparent = part.transparent || part.opacity !== undefined;
   return (
     <meshStandardMaterial
       color={teamColor}
       emissive={teamColor}
-      emissiveIntensity={part.emissiveIntensity}
+      emissiveIntensity={getTeamBodyGlowEmissiveIntensity(part)}
       roughness={part.roughness}
       metalness={part.metalness}
       transparent={transparent}
-      opacity={part.opacity ?? 1}
+      opacity={getTeamBodyGlowOpacity(part)}
       depthWrite={part.depthWrite ?? !transparent}
-      toneMapped={part.toneMapped}
+      toneMapped={part.toneMapped ?? false}
     />
   );
 }
@@ -151,9 +144,9 @@ function applyHeroBodyOpacity(root: THREE.Object3D, opacity: number): void {
 
 function getOutlineScale(scale: VoxelPart['scale']): VoxelPart['scale'] {
   return [
-    scale[0] * HERO_BODY_OUTLINE_SCALE,
-    scale[1] * HERO_BODY_OUTLINE_SCALE,
-    scale[2] * HERO_BODY_OUTLINE_SCALE,
+    scale[0] * TEAM_BODY_GLOW_OUTLINE_SCALE,
+    scale[1] * TEAM_BODY_GLOW_OUTLINE_SCALE,
+    scale[2] * TEAM_BODY_GLOW_OUTLINE_SCALE,
   ];
 }
 
@@ -238,7 +231,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
     (Object.keys(colors) as MaterialKind[]).forEach((kind) => {
       const baseColor = kind === 'accent' && isBot ? teamColor : colors[kind];
-      const emissiveIntensity = getMaterialEmissiveIntensity(kind, hasFlag);
+      const emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
       const isTranslucent = kind === 'glass' || kind === 'mist';
       materialByKind.set(kind, new THREE.MeshStandardMaterial({
         color: baseColor,
@@ -257,7 +250,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const outlineMaterial = useMemo(() => new THREE.MeshBasicMaterial({
     color: teamColor,
     transparent: true,
-    opacity: HERO_BODY_OUTLINE_OPACITY,
+    opacity: TEAM_BODY_GLOW_OUTLINE_OPACITY,
     depthWrite: false,
     side: THREE.BackSide,
     blending: THREE.AdditiveBlending,
@@ -470,7 +463,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       groupRef.current.rotation.set(0, 0, 0);
       groupRef.current.scale.set(scale, baseScaleY, scale);
       materials.forEach((material, kind) => {
-        material.emissiveIntensity = getMaterialEmissiveIntensity(kind, hasFlag);
+        material.emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
       });
 
       return;
@@ -566,7 +559,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       0.09 * slideAmount +
       0.16 * attackPulse;
     materials.forEach((material, kind) => {
-      const baseEmissiveIntensity = getMaterialEmissiveIntensity(kind, hasFlag);
+      const baseEmissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
       material.emissiveIntensity = baseEmissiveIntensity * (1 + glowPulse);
     });
 

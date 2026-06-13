@@ -424,6 +424,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </SettingRow>
 
+                <SettingRow label="Materials" description="Terrain texture detail and material variation">
+                  <SelectInput
+                    value={settings.materialQuality}
+                    onChange={(v) => updateSetting('materialQuality', v as ClientSettings['materialQuality'])}
+                    options={featureQualityOptions}
+                  />
+                </SettingRow>
+
                 <SettingRow label="Environment Detail" description="Weather particles and procedural dressing density">
                   <SelectInput
                     value={settings.environmentQuality}

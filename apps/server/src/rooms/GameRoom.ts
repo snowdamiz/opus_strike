@@ -254,6 +254,7 @@ import {
   type BotAbilityPlan,
   type BotBlackboard,
   type BotBrain,
+  type BotFlagSnapshot,
   type BotPlayerSnapshot,
   type BotRecentDamageSource,
   type BotRouteGraphAdapter,
@@ -286,6 +287,7 @@ interface CreateOptions {
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   botAssignments?: BotAssignment[];
+  observerCount?: number;
   wagerContext?: LockedWagerContext | null;
   rankedEligible?: boolean;
   requiredHumanPlayers?: number;
@@ -477,6 +479,24 @@ interface PlayerVitalsReplicationState {
   signatures: Map<string, PlayerVitalsSnapshot>;
   reconcileAt: Map<string, number>;
   knownPlayerIds: Set<string>;
+}
+
+interface BotFrameContext {
+  snapshots: BotPlayerSnapshot[];
+  snapshotById: Map<string, BotPlayerSnapshot>;
+  flags: Record<Team, BotFlagSnapshot>;
+  teamTactics: BotTeamTacticsByTeam;
+  protectedEnemyIdsByTeam: Record<Team, Set<string>>;
+  visibleEnemyIdsByBot: Map<string, Set<string>>;
+  enemyLineOfSightIdsByBot: Map<string, Set<string>>;
+}
+
+interface ReplicationFrameContext {
+  now: number;
+  currentIds: Set<string>;
+  visibilityPlayers: Map<string, VisibilityInterestPlayer>;
+  packedTransforms: Map<string, PackedPlayerTransform>;
+  packedTransformSignatures: Map<string, string>;
 }
 
 interface RoomInterestMetricsSnapshot extends VisibilityInterestMetrics {
@@ -713,7 +733,6 @@ export class GameRoom extends Room<GameState> {
   private tickDurationSampleIndex = 0;
   private tickDurationSampleCount = 0;
   private eventLoopDelay: IntervalHistogram | null = null;
-  private readonly currentPlayerIdsScratch = new Set<string>();
   private readonly activeBlazePlayersScratch = new Set<string>();
   private readonly urgentBotIdsScratch: string[] = [];
   private readonly deferredBotIdsScratch: string[] = [];
@@ -726,6 +745,7 @@ export class GameRoom extends Room<GameState> {
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   private readonly playerEntryTickets = new Map<string, GameEntryTicketClaims>();
   private readonly clientsBySessionId = new Map<string, Client>();
+  private readonly observerClientIds = new Set<string>();
   private readonly securityEvents: SecurityEvent[] = [];
   private readonly antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
   private antiCheat: AntiCheatRoomRuntime | null = null;
@@ -821,10 +841,11 @@ export class GameRoom extends Room<GameState> {
     this.wagerContext = options.wagerContext || null;
     this.rankedEligibilityCandidate = options.rankedEligible === true;
     this.requiredHumanPlayers = Math.max(
-      1,
+      0,
       Math.floor(options.requiredHumanPlayers ?? (this.lobbyId ? DEFAULT_GAME_CONFIG.maxPlayers : 1))
     );
     this.rankedRequiredHumanPlayers = this.requiredHumanPlayers;
+    this.maxClients = this.config.maxPlayers + Math.max(0, Math.floor(options.observerCount ?? 0));
     this.antiCheat = new AntiCheatRoomRuntime({
       roomId: this.roomId,
       lobbyId: this.lobbyId,
@@ -1035,6 +1056,14 @@ export class GameRoom extends Room<GameState> {
         this.handleDevEndGame(client);
       });
 
+      this.onMessage('devSetObserver', (client) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'devSetObserver', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'devSetObserver');
+          return;
+        }
+        this.handleDevSetObserver(client);
+      });
+
       this.onMessage('setDevTimeFrozen', (client, data: unknown) => {
         if (!this.rateLimiter.consume(client.sessionId, 'setDevTimeFrozen', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
           this.recordRateLimitDrop(client.sessionId, 'setDevTimeFrozen');
@@ -1094,6 +1123,7 @@ export class GameRoom extends Room<GameState> {
       displayName: sanitizeDisplayName(options.playerName),
     };
     const entryTicket = authBundle?.ticket ?? null;
+    const joinsAsObserver = entryTicket?.observer === true;
 
     if (entryTicket) {
       this.usedEntryTicketNonces.add(entryTicket.nonce);
@@ -1135,27 +1165,14 @@ export class GameRoom extends Room<GameState> {
           this.dropFlag(oldPlayer);
         }
         this.state.players.delete(existingSessionId);
-        playerPressState.delete(existingSessionId);
-        this.phantomPrimaryMagazines.delete(existingSessionId);
-        this.phantomPrimaryHoldStartedAt.delete(existingSessionId);
-        this.chronosPrimaryHoldStartedAt.delete(existingSessionId);
-        this.phantomVoidRayChargeStartedAt.delete(existingSessionId);
-        this.phantomVoidRayResolvedForPress.delete(existingSessionId);
-        this.phantomPrimaryLaunchSide.delete(existingSessionId);
-        this.hookshotPrimaryLaunchSide.delete(existingSessionId);
-        this.removeHookshotTrapsForOwner(existingSessionId);
-        this.hookshotGrapples.delete(existingSessionId);
-        this.blazeBombDropConsumedForHold.delete(existingSessionId);
-        this.blazeFlamethrowerActivePlayers.delete(existingSessionId);
-        this.unstuckCooldownUntil.delete(existingSessionId);
-        this.movementAuthorities.delete(existingSessionId);
+        this.clearCombatPlayerRuntimeState(existingSessionId);
+        this.observerClientIds.delete(existingSessionId);
         this.sessionIdToClientId.delete(existingSessionId);
         this.clientsBySessionId.delete(existingSessionId);
         this.playerAuthContexts.delete(existingSessionId);
         this.playerEntryTickets.delete(existingSessionId);
         this.rateLimiter.clearScope(existingSessionId);
         this.clearPlayerReplicationState(existingSessionId);
-        this.countdownSceneReadyPlayerIds.delete(existingSessionId);
         this.resetCountdownStartGate();
         
         // Broadcast that old player left
@@ -1167,7 +1184,7 @@ export class GameRoom extends Room<GameState> {
       this.sessionIdToClientId.set(client.sessionId, identityKey);
     }
 
-    if (this.state.players.size >= this.config.maxPlayers) {
+    if (!joinsAsObserver && this.state.players.size >= this.config.maxPlayers) {
       client.send('error', { message: 'Game room is full' });
       this.playerAuthContexts.delete(client.sessionId);
       this.playerEntryTickets.delete(client.sessionId);
@@ -1179,6 +1196,24 @@ export class GameRoom extends Room<GameState> {
       }
       this.sessionIdToClientId.delete(client.sessionId);
       client.leave();
+      return;
+    }
+
+    if (joinsAsObserver) {
+      this.clientsBySessionId.set(client.sessionId, client);
+      this.observerClientIds.add(client.sessionId);
+      this.playerPingsDirty = true;
+      this.updateMetadata();
+      this.state.players.forEach((existingPlayer) => {
+        this.sendPlayerJoinedSnapshot(client, existingPlayer, null);
+      });
+      this.sendCurrentSnapshots(client);
+      this.requestPlayerPing(client, Date.now());
+      loggers.room.info('Observer join complete', {
+        sessionId: client.sessionId,
+        totalObservers: this.observerClientIds.size,
+      });
+      this.checkPhaseTransition();
       return;
     }
 
@@ -1242,6 +1277,28 @@ export class GameRoom extends Room<GameState> {
     loggers.room.info('Player left', client.sessionId, 'consented', consented);
 
     const player = this.state.players.get(client.sessionId);
+    if (!player && this.observerClientIds.has(client.sessionId)) {
+      this.observerClientIds.delete(client.sessionId);
+      this.clientsBySessionId.delete(client.sessionId);
+      this.clearPlayerReplicationState(client.sessionId);
+      this.playerAuthContexts.delete(client.sessionId);
+      this.playerEntryTickets.delete(client.sessionId);
+      this.rateLimiter.clearScope(client.sessionId);
+      this.countdownSceneReadyPlayerIds.delete(client.sessionId);
+      this.playerPingsDirty = true;
+
+      const clientId = this.sessionIdToClientId.get(client.sessionId);
+      if (clientId) {
+        if (this.clientIdToSessionId.get(clientId) === client.sessionId) {
+          this.clientIdToSessionId.delete(clientId);
+        }
+        this.sessionIdToClientId.delete(client.sessionId);
+      }
+
+      this.updateMetadata();
+      return;
+    }
+
     void this.removeVoiceParticipantForPlayer(client.sessionId, this.normalizeVoiceTeam(player?.team), consented ? 'leave' : 'disconnect');
     
     // Handle flag drop if carrying
@@ -1255,29 +1312,11 @@ export class GameRoom extends Room<GameState> {
     this.state.players.delete(client.sessionId);
     this.clientsBySessionId.delete(client.sessionId);
     this.clearPlayerReplicationState(client.sessionId);
-    playerPressState.delete(client.sessionId);
-    this.phantomPrimaryMagazines.delete(client.sessionId);
-    this.phantomPrimaryHoldStartedAt.delete(client.sessionId);
-    this.chronosPrimaryHoldStartedAt.delete(client.sessionId);
-    this.phantomVoidRayChargeStartedAt.delete(client.sessionId);
-    this.phantomVoidRayResolvedForPress.delete(client.sessionId);
-    this.phantomPrimaryLaunchSide.delete(client.sessionId);
-    this.hookshotPrimaryLaunchSide.delete(client.sessionId);
-    this.removeHookshotTrapsForOwner(client.sessionId);
-    this.hookshotGrapples.delete(client.sessionId);
-    this.blazeBombDropConsumedForHold.delete(client.sessionId);
-    this.blazeFlamethrowerActivePlayers.delete(client.sessionId);
-    this.movementAuthorities.delete(client.sessionId);
-    this.chronosAegisShieldHp.delete(client.sessionId);
-    this.attackCooldownUntil.delete(`${client.sessionId}:primary`);
-    this.attackCooldownUntil.delete(`${client.sessionId}:secondary`);
-    this.unstuckCooldownUntil.delete(client.sessionId);
-    this.devImmunePlayers.delete(client.sessionId);
+    this.clearCombatPlayerRuntimeState(client.sessionId);
     this.playerAuthContexts.delete(client.sessionId);
     this.playerEntryTickets.delete(client.sessionId);
     this.rateLimiter.clearScope(client.sessionId);
     this.updateMetadata();
-    this.countdownSceneReadyPlayerIds.delete(client.sessionId);
     this.resetCountdownStartGate();
     
     // Clean up clientId mappings
@@ -1298,6 +1337,28 @@ export class GameRoom extends Room<GameState> {
 
     // Check if game should end
     this.checkPhaseTransition();
+  }
+
+  private clearCombatPlayerRuntimeState(playerId: string): void {
+    playerPressState.delete(playerId);
+    this.phantomPrimaryMagazines.delete(playerId);
+    this.phantomPrimaryHoldStartedAt.delete(playerId);
+    this.chronosPrimaryHoldStartedAt.delete(playerId);
+    this.phantomVoidRayChargeStartedAt.delete(playerId);
+    this.phantomVoidRayResolvedForPress.delete(playerId);
+    this.phantomPrimaryLaunchSide.delete(playerId);
+    this.hookshotPrimaryLaunchSide.delete(playerId);
+    this.removeHookshotTrapsForOwner(playerId);
+    this.hookshotGrapples.delete(playerId);
+    this.blazeBombDropConsumedForHold.delete(playerId);
+    this.blazeFlamethrowerActivePlayers.delete(playerId);
+    this.movementAuthorities.delete(playerId);
+    this.chronosAegisShieldHp.delete(playerId);
+    this.attackCooldownUntil.delete(`${playerId}:primary`);
+    this.attackCooldownUntil.delete(`${playerId}:secondary`);
+    this.unstuckCooldownUntil.delete(playerId);
+    this.devImmunePlayers.delete(playerId);
+    this.countdownSceneReadyPlayerIds.delete(playerId);
   }
 
   onDispose() {
@@ -1611,14 +1672,45 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private buildReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
+    const currentIds = new Set<string>();
+    const visibilityPlayers = new Map<string, VisibilityInterestPlayer>();
+    const packedTransforms = new Map<string, PackedPlayerTransform>();
+    const packedTransformSignatures = new Map<string, string>();
+
+    this.state.players.forEach((player, id) => {
+      currentIds.add(id);
+      visibilityPlayers.set(id, this.getVisibilityInterestPlayer(player));
+      if (player.state !== 'alive' && player.state !== 'spawning') return;
+
+      const transform = this.buildPackedPlayerTransform(id, player);
+      packedTransforms.set(id, transform);
+      packedTransformSignatures.set(id, this.getPackedTransformSignature(transform));
+    });
+
+    return {
+      now,
+      currentIds,
+      visibilityPlayers,
+      packedTransforms,
+      packedTransformSignatures,
+    };
+  }
+
   private getRecipientInterest(
     recipient: Player | null,
     target: Player,
-    now = this.state.serverTime || Date.now()
+    now = this.state.serverTime || Date.now(),
+    frameContext?: ReplicationFrameContext
   ): RecipientInterestDecision {
+    const recipientInterestPlayer = recipient
+      ? frameContext?.visibilityPlayers.get(recipient.id) ?? this.getVisibilityInterestPlayer(recipient)
+      : null;
+    const targetInterestPlayer = frameContext?.visibilityPlayers.get(target.id) ?? this.getVisibilityInterestPlayer(target);
+
     return this.visibilityInterest.getRecipientInterest(
-      recipient ? this.getVisibilityInterestPlayer(recipient) : null,
-      this.getVisibilityInterestPlayer(target),
+      recipientInterestPlayer,
+      targetInterestPlayer,
       {
         now,
         collisionRevision: this.getMovementCollisionRevision(now),
@@ -1893,13 +1985,14 @@ export class GameRoom extends Room<GameState> {
     player: Player,
     recipient: Player | null,
     now = this.state.serverTime || Date.now(),
-    interest?: RecipientInterestDecision
+    interest?: RecipientInterestDecision,
+    frameContext?: ReplicationFrameContext
   ): PlayerVitalsSnapshot {
     if (!recipient || recipient.id === id || recipient.team === player.team) {
       return this.buildPlayerVitals(id, player, 'visible');
     }
 
-    const decision = interest ?? this.getRecipientInterest(recipient, player, now);
+    const decision = interest ?? this.getRecipientInterest(recipient, player, now, frameContext);
     if (decision.state === 'visible') {
       return this.buildVisibleEnemyVitals(id, player, decision.state);
     }
@@ -2199,6 +2292,7 @@ export class GameRoom extends Room<GameState> {
   private getPopulationCounts(): {
     humanCount: number;
     botCount: number;
+    observerCount: number;
     npcCount: number;
     participantCount: number;
     entityCount: number;
@@ -2220,6 +2314,7 @@ export class GameRoom extends Room<GameState> {
     return {
       humanCount,
       botCount,
+      observerCount: this.observerClientIds.size,
       npcCount,
       participantCount: humanCount + botCount,
       entityCount: humanCount + botCount + npcCount,
@@ -2239,6 +2334,7 @@ export class GameRoom extends Room<GameState> {
       mapThemeId: this.state.mapThemeId,
       humanCount: counts.humanCount,
       botCount: counts.botCount,
+      observerCount: counts.observerCount,
       npcCount: counts.npcCount,
       participantCount: counts.participantCount,
       entityCount: counts.entityCount,
@@ -2632,10 +2728,11 @@ export class GameRoom extends Room<GameState> {
     force?: boolean;
     recipient?: Player | null;
     recipientId?: string;
+    frameContext?: ReplicationFrameContext;
   } = {}): PlayerTransformsV2Message {
     const players: PackedPlayerTransform[] = [];
     const hiddenPlayerIds: string[] = [];
-    const now = this.state.serverTime || Date.now();
+    const now = options.frameContext?.now ?? (this.state.serverTime || Date.now());
     const force = options.force === true;
     const replicationState = options.recipientId
       ? this.getTransformReplicationState(options.recipientId)
@@ -2646,7 +2743,7 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach((player, id) => {
       if (player.state !== 'alive' && player.state !== 'spawning') return;
       const interest = options.recipient
-        ? this.getRecipientInterest(options.recipient, player, now)
+        ? this.getRecipientInterest(options.recipient, player, now, options.frameContext)
         : undefined;
       if (!this.shouldSendExactEnemyState(options.recipient ?? null, id, player, now, interest)) {
         const hadTransform = signatures.delete(id);
@@ -2657,8 +2754,8 @@ export class GameRoom extends Room<GameState> {
         return;
       }
       if (!force && options.recipientId && id === options.recipientId) return;
-      const transform = this.buildPackedPlayerTransform(id, player);
-      const signature = this.getPackedTransformSignature(transform);
+      const transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedPlayerTransform(id, player);
+      const signature = options.frameContext?.packedTransformSignatures.get(id) ?? this.getPackedTransformSignature(transform);
       const previousSignature = signatures.get(id);
       const lastHeartbeatAt = heartbeatAt.get(id) ?? 0;
       const highRelevance = this.isHighRelevanceTransform(options.recipient ?? null, id, player, now);
@@ -2686,13 +2783,14 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private broadcastPlayerTransforms(force = false): void {
+  private broadcastPlayerTransforms(force = false, frameContext = this.buildReplicationFrameContext()): void {
     for (const client of this.clients) {
       const recipient = this.state.players.get(client.sessionId) ?? null;
       const payload = this.buildPlayerTransformsV2Payload({
         force,
         recipient,
         recipientId: client.sessionId,
+        frameContext,
       });
       if (payload.players.length > 0 || payload.hiddenPlayerIds?.length || payload.full) {
         this.sendTracked(client, 'playerTransformsV2', payload);
@@ -2700,14 +2798,12 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private broadcastPlayerVitals(force = false): void {
-    const now = this.state.serverTime || Date.now();
+  private broadcastPlayerVitals(force = false, frameContext = this.buildReplicationFrameContext()): void {
+    const now = frameContext.now;
     if (!force && now - this.lastVitalsBroadcastAt < PLAYER_VITALS_INTERVAL_MS) return;
 
-    const currentIds = this.currentPlayerIdsScratch;
-    currentIds.clear();
-    this.state.players.forEach((_player, id) => {
-      currentIds.add(id);
+    const currentIds = frameContext.currentIds;
+    currentIds.forEach((id) => {
       this.knownPlayerIds.add(id);
     });
 
@@ -2730,8 +2826,8 @@ export class GameRoom extends Room<GameState> {
 
       this.state.players.forEach((player, id) => {
         replicationState.knownPlayerIds.add(id);
-        const interest = recipient ? this.getRecipientInterest(recipient, player, now) : undefined;
-        const vitals = this.buildPlayerVitalsForRecipient(id, player, recipient, now, interest);
+        const interest = recipient ? this.getRecipientInterest(recipient, player, now, frameContext) : undefined;
+        const vitals = this.buildPlayerVitalsForRecipient(id, player, recipient, now, interest, frameContext);
         const reconcileDue = now - (replicationState.reconcileAt.get(id) ?? 0) >= PLAYER_VITALS_RECONCILE_INTERVAL_MS;
         if (force || reconcileDue || this.haveVitalsChanged(replicationState.signatures.get(id), vitals)) {
           replicationState.signatures.set(id, vitals);
@@ -2764,8 +2860,8 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private broadcastPlayerInterest(force = false): void {
-    const now = this.state.serverTime || Date.now();
+  private broadcastPlayerInterest(force = false, frameContext = this.buildReplicationFrameContext()): void {
+    const now = frameContext.now;
     if (!force && now - this.lastInterestBroadcastAt < PLAYER_INTEREST_INTERVAL_MS) return;
 
     let sentAny = false;
@@ -2774,12 +2870,10 @@ export class GameRoom extends Room<GameState> {
       if (!recipient) continue;
 
       const signatures = this.getInterestSignatureState(client.sessionId);
-      const currentIds = new Set<string>();
       const snapshots: ReturnType<typeof buildPlayerInterestSnapshot>[] = [];
 
       this.state.players.forEach((target, targetId) => {
-        currentIds.add(targetId);
-        const decision = this.getRecipientInterest(recipient, target, now);
+        const decision = this.getRecipientInterest(recipient, target, now, frameContext);
         const snapshot = buildPlayerInterestSnapshot(targetId, decision);
         const signature = getPlayerInterestSignature(snapshot);
         if (force || signatures.get(targetId) !== signature) {
@@ -2789,7 +2883,7 @@ export class GameRoom extends Room<GameState> {
       });
 
       for (const targetId of Array.from(signatures.keys())) {
-        if (!currentIds.has(targetId)) {
+        if (!frameContext.currentIds.has(targetId)) {
           signatures.delete(targetId);
         }
       }
@@ -2824,15 +2918,16 @@ export class GameRoom extends Room<GameState> {
     this.visibilityInterest.resetMetricsWindow();
     this.probePlayerPings();
     this.broadcastPlayerPings();
+    const frameContext = this.buildReplicationFrameContext();
 
     if (options.vitals ?? true) {
-      this.broadcastPlayerVitals(options.forceVitals);
-      this.broadcastPlayerInterest(options.forceVitals);
+      this.broadcastPlayerVitals(options.forceVitals, frameContext);
+      this.broadcastPlayerInterest(options.forceVitals, frameContext);
     }
 
     const shouldBroadcastTransforms = options.transforms ?? (this.state.phase === 'playing' || this.state.phase === 'countdown');
     if (shouldBroadcastTransforms) {
-      this.broadcastPlayerTransforms(options.forceTransforms);
+      this.broadcastPlayerTransforms(options.forceTransforms, frameContext);
     }
 
     if (options.match ?? true) {
@@ -6797,7 +6892,7 @@ export class GameRoom extends Room<GameState> {
     const budgetStart = performance.now();
     this.urgentBotIdsScratch.length = 0;
     this.deferredBotIdsScratch.length = 0;
-    this.refreshBotTeamTactics(now);
+    const frameContext = this.buildBotFrameContext(now);
 
     this.botBrains.forEach((brain, botId) => {
       const bot = this.state.players.get(botId);
@@ -6867,10 +6962,10 @@ export class GameRoom extends Room<GameState> {
     });
 
     for (const botId of this.urgentBotIdsScratch) {
-      this.updateScheduledBot(botId, now, dt, budgetStart, true);
+      this.updateScheduledBot(botId, now, dt, budgetStart, true, frameContext);
     }
     for (const botId of this.deferredBotIdsScratch) {
-      this.updateScheduledBot(botId, now, dt, budgetStart, false);
+      this.updateScheduledBot(botId, now, dt, budgetStart, false, frameContext);
     }
   }
 
@@ -6895,7 +6990,8 @@ export class GameRoom extends Room<GameState> {
     now: number,
     dt: number,
     budgetStart: number,
-    priority: boolean
+    priority: boolean,
+    frameContext: BotFrameContext
   ): void {
     const bot = this.state.players.get(botId);
     const brain = this.botBrains.get(botId);
@@ -6907,7 +7003,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const botInput = this.createBotInput(bot, brain, now, dt);
+    const botInput = this.createBotInput(bot, brain, now, dt, frameContext);
     bot.lastInput = botInput;
     this.enqueueServerOwnedMovementCommands(bot, botInput, now);
   }
@@ -6967,6 +7063,36 @@ export class GameRoom extends Room<GameState> {
     return snapshots;
   }
 
+  private buildBotFrameContext(now: number): BotFrameContext {
+    const snapshots = this.getBotPlayerSnapshots();
+    const snapshotById = new Map<string, BotPlayerSnapshot>();
+    for (const snapshot of snapshots) {
+      snapshotById.set(snapshot.id, snapshot);
+    }
+
+    const flags = this.getBotFlagSnapshots();
+    const teamTactics = this.refreshBotTeamTactics(now, snapshots, flags);
+    const protectedEnemyIdsByTeam: Record<Team, Set<string>> = {
+      red: new Set<string>(),
+      blue: new Set<string>(),
+    };
+    this.state.players.forEach((player) => {
+      if (!isTeam(player.team) || !this.isProtectedSpawnTarget(player, now)) return;
+      const enemyTeam = player.team === 'red' ? 'blue' : 'red';
+      protectedEnemyIdsByTeam[enemyTeam].add(player.id);
+    });
+
+    return {
+      snapshots,
+      snapshotById,
+      flags,
+      teamTactics,
+      protectedEnemyIdsByTeam,
+      visibleEnemyIdsByBot: new Map(),
+      enemyLineOfSightIdsByBot: new Map(),
+    };
+  }
+
   private getBotFlagSnapshots(): Record<Team, { team: Team; position: PlainVec3; basePosition: PlainVec3; carrierId: string; isAtBase: boolean; droppedAt: number }> {
     const redFlag = this.getFlagByTeam('red');
     const blueFlag = this.getFlagByTeam('blue');
@@ -6990,16 +7116,21 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private refreshBotTeamTactics(now: number): void {
-    if (this.botTeamTactics && now < this.nextBotTacticsAt) return;
+  private refreshBotTeamTactics(
+    now: number,
+    snapshots = this.getBotPlayerSnapshots(),
+    flags = this.getBotFlagSnapshots()
+  ): BotTeamTacticsByTeam {
+    if (this.botTeamTactics && now < this.nextBotTacticsAt) return this.botTeamTactics;
     this.botTacticsRevision++;
     this.botTeamTactics = buildTeamTactics({
       now,
       revision: this.botTacticsRevision,
-      players: this.getBotPlayerSnapshots(),
-      flags: this.getBotFlagSnapshots(),
+      players: snapshots,
+      flags,
     });
     this.nextBotTacticsAt = now + BOT_TACTICS_INTERVAL_MS;
+    return this.botTeamTactics;
   }
 
   private getBotRecentDamageSources(botId: string, now: number): BotRecentDamageSource[] {
@@ -7021,9 +7152,11 @@ export class GameRoom extends Room<GameState> {
     return sources;
   }
 
-  private getVisibleEnemyIdsForBot(bot: Player, snapshots: readonly BotPlayerSnapshot[]): Set<string> {
+  private getVisibleEnemyIdsForBot(bot: Player, frameContext: BotFrameContext): Set<string> {
+    const cached = frameContext.visibleEnemyIdsByBot.get(bot.id);
+    if (cached) return cached;
     const visible = new Set<string>();
-    for (const snapshot of snapshots) {
+    for (const snapshot of frameContext.snapshots) {
       if (snapshot.team === bot.team || snapshot.state !== 'alive') continue;
       const enemy = this.state.players.get(snapshot.id);
       if (!enemy) continue;
@@ -7032,29 +7165,23 @@ export class GameRoom extends Room<GameState> {
         visible.add(snapshot.id);
       }
     }
+    frameContext.visibleEnemyIdsByBot.set(bot.id, visible);
     return visible;
   }
 
-  private getEnemyLineOfSightIdsForBot(bot: Player, snapshots: readonly BotPlayerSnapshot[]): Set<string> {
+  private getEnemyLineOfSightIdsForBot(bot: Player, frameContext: BotFrameContext): Set<string> {
+    const cached = frameContext.enemyLineOfSightIdsByBot.get(bot.id);
+    if (cached) return cached;
     const visible = new Set<string>();
-    for (const snapshot of snapshots) {
+    for (const snapshot of frameContext.snapshots) {
       if (snapshot.team === bot.team || snapshot.state !== 'alive') continue;
       const enemy = this.state.players.get(snapshot.id);
       if (enemy && this.hasClearShot(bot, enemy)) {
         visible.add(snapshot.id);
       }
     }
+    frameContext.enemyLineOfSightIdsByBot.set(bot.id, visible);
     return visible;
-  }
-
-  private getProtectedEnemyIds(bot: Player, now: number): Set<string> {
-    const protectedIds = new Set<string>();
-    this.state.players.forEach((player) => {
-      if (player.team !== bot.team && this.isProtectedSpawnTarget(player, now)) {
-        protectedIds.add(player.id);
-      }
-    });
-    return protectedIds;
   }
 
   private isBotPathClear(bot: Player, direction: PlainVec2 | null, distance: number): boolean {
@@ -7202,14 +7329,19 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private createBotInput(bot: Player, brain: BotBrain, now: number, dt: number): PlayerInput {
+  private createBotInput(
+    bot: Player,
+    brain: BotBrain,
+    now: number,
+    dt: number,
+    frameContext: BotFrameContext
+  ): PlayerInput {
     const skill = getBotSkillProfile(bot.botDifficulty);
-    const snapshots = this.getBotPlayerSnapshots();
-    const botSnapshot = snapshots.find((snapshot) => snapshot.id === bot.id) ?? this.getBotPlayerSnapshot(bot);
+    const snapshots = frameContext.snapshots;
+    const botSnapshot = frameContext.snapshotById.get(bot.id) ?? this.getBotPlayerSnapshot(bot);
     if (!botSnapshot) return this.createEmptyBotInput(bot, now);
 
-    this.refreshBotTeamTactics(now);
-    const tactics = this.botTeamTactics?.[botSnapshot.team];
+    const tactics = frameContext.teamTactics[botSnapshot.team];
     if (!tactics) return this.createEmptyBotInput(bot, now);
 
     clearExpiredBlockedEdges(brain.blockedEdges, now);
@@ -7219,9 +7351,9 @@ export class GameRoom extends Room<GameState> {
         now,
         bot: botSnapshot,
         players: snapshots,
-        flags: this.getBotFlagSnapshots(),
-        visibleEnemyIds: this.getVisibleEnemyIdsForBot(bot, snapshots),
-        enemyLineOfSightIds: this.getEnemyLineOfSightIdsForBot(bot, snapshots),
+        flags: frameContext.flags,
+        visibleEnemyIds: this.getVisibleEnemyIdsForBot(bot, frameContext),
+        enemyLineOfSightIds: this.getEnemyLineOfSightIdsForBot(bot, frameContext),
         recentDamageSources: this.getBotRecentDamageSources(bot.id, now),
         teamTactics: tactics,
         enemyMemory: brain.enemyMemory,
@@ -7273,11 +7405,11 @@ export class GameRoom extends Room<GameState> {
       skill,
       primaryRange: this.getBotAttackRange(bot),
       preferredRange: getBotPreferredCombatRange(botSnapshot.heroId),
-      protectedEnemyIds: this.getProtectedEnemyIds(bot, now),
+      protectedEnemyIds: frameContext.protectedEnemyIdsByTeam[botSnapshot.team],
     });
     const combatTarget = combatPlan.targetId ? this.state.players.get(combatPlan.targetId) ?? null : null;
     const combatTargetSnapshot = combatPlan.targetId
-      ? snapshots.find((snapshot) => snapshot.id === combatPlan.targetId) ?? null
+      ? frameContext.snapshotById.get(combatPlan.targetId) ?? null
       : null;
     brain.targetId = combatTarget?.id || '';
 
@@ -7923,6 +8055,53 @@ export class GameRoom extends Room<GameState> {
     }
 
     this.endGame(client.sessionId);
+  }
+
+  private handleDevSetObserver(client: Client): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    if (this.matchMode !== 'custom') {
+      client.send('devCommandError', { message: 'Observer command is only available in custom games' });
+      return;
+    }
+
+    if (this.observerClientIds.has(client.sessionId)) {
+      client.send('observerModeStarted', { playerId: client.sessionId });
+      return;
+    }
+
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.isBot) {
+      client.send('devCommandError', { message: 'No active player to observe from' });
+      return;
+    }
+
+    void this.removeVoiceParticipantForPlayer(client.sessionId, this.normalizeVoiceTeam(player.team), 'observe');
+
+    if (player.hasFlag) {
+      this.dropFlag(player);
+    }
+    this.markMatchParticipantLeft(player);
+
+    this.state.players.delete(client.sessionId);
+    this.clearCombatPlayerRuntimeState(client.sessionId);
+    this.clearPlayerReplicationState(client.sessionId);
+    this.observerClientIds.add(client.sessionId);
+    this.clientsBySessionId.set(client.sessionId, client);
+    this.playerPingsDirty = true;
+
+    if (this.state.phase === 'waiting' || this.state.phase === 'hero_select' || this.state.phase === 'countdown') {
+      this.resetCountdownStartGate();
+    }
+
+    this.updateMetadata();
+    client.send('observerModeStarted', { playerId: client.sessionId });
+    this.broadcastTracked('playerLeft', { playerId: client.sessionId });
+    this.broadcastStateStreams({ transforms: false, forceVitals: true, forceMatch: true });
+    this.checkPhaseTransition();
   }
 
   private handleSetDevTimeFrozen(client: Client, enabled: boolean): void {

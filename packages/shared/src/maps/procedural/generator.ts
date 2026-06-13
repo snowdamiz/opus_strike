@@ -1,4 +1,4 @@
-import { PLAYER_HEIGHT } from '../../constants/physics.js';
+import { PLAYER_HEIGHT, STEP_HEIGHT } from '../../constants/physics.js';
 import type { Vec3 } from '../../types/vector.js';
 import { getBlockNumericId, isCollisionBlock, isSolidBlock } from './blocks.js';
 import { isInsideBoundaryPolygon } from './boundaries.js';
@@ -63,8 +63,23 @@ type StructureKind =
   | 'landmark_tower'
   | 'supported_gate'
   | 'cover_cluster'
+  | 'watch_post'
+  | 'terrace_platform'
+  | 'broken_arch'
+  | 'monument_ring'
   | 'boulder_patch'
   | 'crystal_spire'
+  | 'tree_cluster'
+  | 'pine_cluster'
+  | 'blossom_tree_cluster'
+  | 'crystal_tree_cluster'
+  | 'cactus_stand'
+  | 'bamboo_thicket'
+  | 'basalt_columns'
+  | 'ice_outcrop'
+  | 'desert_outpost'
+  | 'shrine_gate'
+  | 'gold_cache'
   | 'crate_stack'
   | 'garden_marker';
 
@@ -120,6 +135,8 @@ interface PlacedStructure {
 }
 
 interface StructureStampContext {
+  seed: number;
+  themeId: VoxelMapTheme['id'];
   blocks: Uint8Array;
   size: VoxelSize;
   origin: Vec3;
@@ -136,18 +153,71 @@ interface TerrainProfile {
 }
 
 const AIR = getBlockNumericId('air');
-const MAX_TERRAIN_STEP_ROWS = 2;
-const BASE_TERRAIN_ROWS = Math.round(4.8 / PROCEDURAL_VOXEL_SIZE.y);
-const MIN_TERRAIN_ROWS = Math.round(3.2 / PROCEDURAL_VOXEL_SIZE.y);
-const MAX_TERRAIN_ROWS = Math.round(7.6 / PROCEDURAL_VOXEL_SIZE.y);
+const MAX_TERRAIN_STEP_ROWS = 3;
+const INITIAL_TERRAIN_SMOOTHING_PASSES = 3;
+const FINAL_TERRAIN_SMOOTHING_PASSES = 3;
+const BASE_TERRAIN_ROWS = Math.round(5.2 / PROCEDURAL_VOXEL_SIZE.y);
+const MIN_TERRAIN_ROWS = Math.round(2.8 / PROCEDURAL_VOXEL_SIZE.y);
+const MAX_TERRAIN_ROWS = Math.round(9.6 / PROCEDURAL_VOXEL_SIZE.y);
 const OBJECTIVE_PAD_RADIUS = 3.9;
 const OBJECTIVE_PAD_BLEND = 2.4;
 const SPAWN_PAD_RADIUS = 1.65;
 const FLAG_PAD_RADIUS = 2.6;
 const BOUNDARY_WALL_THICKNESS = 2.2;
+const BOUNDARY_WALL_MIN_THICKNESS = 1.65;
+const BOUNDARY_WALL_MAX_THICKNESS = 3.25;
+const BOUNDARY_WALL_THICKNESS_VARIANCE = 0.75;
+const BOUNDARY_WALL_RELIEF_DEPTH = 0.55;
 const BOUNDARY_WALL_ROWS = Math.round(15.5 / PROCEDURAL_VOXEL_SIZE.y);
+const BOUNDARY_WALL_MIN_ROWS = BOUNDARY_WALL_ROWS - Math.round(0.9 / PROCEDURAL_VOXEL_SIZE.y);
+const BOUNDARY_WALL_MAX_ROWS = BOUNDARY_WALL_ROWS + Math.round(1.1 / PROCEDURAL_VOXEL_SIZE.y);
+const BOUNDARY_WALL_HEIGHT_VARIANCE_ROWS = Math.round(0.75 / PROCEDURAL_VOXEL_SIZE.y);
+const BOUNDARY_INNER_GRADE_WIDTH = 2.8;
+const BOUNDARY_INNER_GRADE_WIDTH_VARIANCE = 1.25;
+const BOUNDARY_INNER_GRADE_MIN_WIDTH = 2.2;
+const BOUNDARY_INNER_GRADE_MAX_WIDTH = 4.8;
+const BOUNDARY_INNER_GRADE_MIN_RISE_ROWS = Math.ceil((STEP_HEIGHT + 0.3) / PROCEDURAL_VOXEL_SIZE.y);
+const BOUNDARY_INNER_GRADE_TREAD_DEPTH = 0.48;
+const BOUNDARY_INNER_GRADE_MIN_TREAD_DEPTH = 0.34;
+const BOUNDARY_INNER_GRADE_MAX_TREAD_DEPTH = 0.82;
+const BOUNDARY_INNER_GRADE_OFFSET_JITTER = 0.62;
+const BOUNDARY_FLOATING_DETAIL_MAX_BLOCKS = 32;
+const BOUNDARY_FLOATING_DETAIL_ANCHOR_DISTANCE =
+  BOUNDARY_WALL_MAX_THICKNESS + BOUNDARY_INNER_GRADE_MAX_WIDTH + 1.25;
 const HEADROOM_ROWS = Math.ceil((PLAYER_HEIGHT + 0.45) / PROCEDURAL_VOXEL_SIZE.y);
-const RANDOM_OBJECT_ATTEMPTS = 120;
+const RANDOM_OBJECT_ATTEMPTS = 180;
+const DECORATIVE_OBJECT_MIN_COUNT = 8;
+const DECORATIVE_OBJECT_VARIANCE = 4;
+const STRUCTURAL_PAD_MINIMUMS: Partial<Record<TacticalSlotRole, number>> = {
+  base_shell: 7.4,
+  spawn_shelter: 5.25,
+  flag_stand: 3.2,
+  midfield_occluder: 6.4,
+  side_lane_cover_chain: 4.4,
+  hard_cover_cluster: 4.4,
+  flank_landmark: 4.8,
+  defender_perch: 4.5,
+  elevated_bridge: 5.25,
+  traversal_ramp: 4.8,
+  underpass: 5,
+  tunnel_entrance: 4.8,
+  soft_cover_cluster: 3.7,
+};
+const STRUCTURAL_FOOTPRINT_SCALES: Partial<Record<TacticalSlotRole, number>> = {
+  base_shell: 1.22,
+  spawn_shelter: 1.2,
+  flag_stand: 1.08,
+  midfield_occluder: 1.18,
+  side_lane_cover_chain: 1.18,
+  hard_cover_cluster: 1.18,
+  flank_landmark: 1.16,
+  defender_perch: 1.2,
+  elevated_bridge: 1.16,
+  traversal_ramp: 1.14,
+  underpass: 1.14,
+  tunnel_entrance: 1.14,
+  soft_cover_cluster: 1.12,
+};
 
 function createProceduralVoxelMapDiagnostics(seed: number, themeId: VoxelMapTheme['id']): ProceduralVoxelMapDiagnostics {
   return {
@@ -260,6 +330,108 @@ function distanceToBoundary(worldX: number, worldZ: number, boundary: BoundaryPo
   return closest;
 }
 
+function gridRandom2D(seed: number, worldX: number, worldZ: number, cellSize: number, salt: number): number {
+  const gridX = Math.floor(worldX / cellSize);
+  const gridZ = Math.floor(worldZ / cellSize);
+  let hash = (seed ^ salt) >>> 0;
+  hash ^= Math.imul(gridX, 0x8da6b343);
+  hash ^= Math.imul(gridZ, 0xd8163841);
+  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+  hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+  return ((hash ^ (hash >>> 16)) >>> 0) / 0x100000000;
+}
+
+function boundaryWallRelief(seed: number, worldX: number, worldZ: number): number {
+  const broad = fractalNoise2(seed ^ 0x77616c6c, worldX * 0.105, worldZ * 0.105, 3, 2.05, 0.55) - 0.5;
+  const local = fractalNoise2(seed ^ 0x72656c69, worldX * 0.24, worldZ * 0.24, 2, 2.0, 0.45) - 0.5;
+  return broad * 0.82 + local * 0.32;
+}
+
+function hasBoundaryWallButtress(seed: number, worldX: number, worldZ: number): boolean {
+  return fractalNoise2(seed ^ 0x62757474, worldX * 0.18, worldZ * 0.18, 2, 2.1, 0.5) > 0.78;
+}
+
+function getBoundaryWallThickness(seed: number, worldX: number, worldZ: number): number {
+  const relief = boundaryWallRelief(seed, worldX, worldZ) * BOUNDARY_WALL_THICKNESS_VARIANCE;
+  const buttressDepth = hasBoundaryWallButtress(seed, worldX, worldZ) ? BOUNDARY_WALL_RELIEF_DEPTH : 0;
+  return clamp(
+    BOUNDARY_WALL_THICKNESS + relief + buttressDepth,
+    BOUNDARY_WALL_MIN_THICKNESS,
+    BOUNDARY_WALL_MAX_THICKNESS
+  );
+}
+
+function getBoundaryWallTopRow(seed: number, worldX: number, worldZ: number): number {
+  const noise = fractalNoise2(seed ^ 0x746f7073, worldX * 0.075, worldZ * 0.075, 3, 2.0, 0.5);
+  const reliefRows = hasBoundaryWallButtress(seed, worldX, worldZ) ? 1 : 0;
+  const row = BOUNDARY_WALL_ROWS + Math.round((noise - 0.5) * 2 * BOUNDARY_WALL_HEIGHT_VARIANCE_ROWS) + reliefRows;
+  return clamp(row, BOUNDARY_WALL_MIN_ROWS, BOUNDARY_WALL_MAX_ROWS);
+}
+
+function getBoundaryInnerGradeWidth(seed: number, worldX: number, worldZ: number): number {
+  const broad = fractalNoise2(seed ^ 0x67726164, worldX * 0.085, worldZ * 0.085, 3, 2.0, 0.5) - 0.5;
+  const local = fractalNoise2(seed ^ 0x73637265, worldX * 0.28, worldZ * 0.28, 2, 2.0, 0.5) - 0.5;
+  const cut = gridRandom2D(seed, worldX, worldZ, 1.45, 0x63757473);
+  const pocket = cut > 0.78 ? 1.2 : cut < 0.2 ? -0.35 : 0;
+  return clamp(
+    BOUNDARY_INNER_GRADE_WIDTH + broad * BOUNDARY_INNER_GRADE_WIDTH_VARIANCE + local * 0.8 + pocket,
+    BOUNDARY_INNER_GRADE_MIN_WIDTH,
+    BOUNDARY_INNER_GRADE_MAX_WIDTH
+  );
+}
+
+function getBoundaryInnerGradeTreadDepth(seed: number, worldX: number, worldZ: number): number {
+  const patch = gridRandom2D(seed, worldX, worldZ, 1.05, 0x74726564) - 0.5;
+  const noise = fractalNoise2(seed ^ 0x73746570, worldX * 0.44, worldZ * 0.44, 2, 2.0, 0.5) - 0.5;
+  return clamp(
+    BOUNDARY_INNER_GRADE_TREAD_DEPTH + patch * 0.28 + noise * 0.12,
+    BOUNDARY_INNER_GRADE_MIN_TREAD_DEPTH,
+    BOUNDARY_INNER_GRADE_MAX_TREAD_DEPTH
+  );
+}
+
+function getBoundaryInnerGradeOffsetJitter(seed: number, worldX: number, worldZ: number): number {
+  const clump = gridRandom2D(seed, worldX, worldZ, 1.15, 0x6a697474) - 0.5;
+  const chip = gridRandom2D(seed, worldX, worldZ, 0.72, 0x63686970) - 0.5;
+  const noise = fractalNoise2(seed ^ 0x73636172, worldX * 0.42, worldZ * 0.42, 2, 2.0, 0.5) - 0.5;
+  return clump * BOUNDARY_INNER_GRADE_OFFSET_JITTER + chip * 0.2 + noise * 0.24;
+}
+
+function getBoundaryInnerGradeTierDrop(seed: number, worldX: number, worldZ: number, gradeOffset: number, gradeWidth: number): number {
+  const gouge = gridRandom2D(seed, worldX, worldZ, 0.95, 0x676f7567);
+  const scar = fractalNoise2(seed ^ 0x74696572, worldX * 0.5, worldZ * 0.5, 2, 2.0, 0.5);
+  let drop = 0;
+  if (gouge > 0.88 && gradeOffset > gradeWidth * 0.42) drop++;
+  if (scar > 0.84 && gradeOffset > gradeWidth * 0.58) drop++;
+  return drop;
+}
+
+function getBoundaryInnerGradeTopRow(
+  seed: number,
+  worldX: number,
+  worldZ: number,
+  boundaryDistance: number,
+  wallThickness: number,
+  wallTopRow: number,
+  terrainHeight: number
+): number | null {
+  const gradeWidth = getBoundaryInnerGradeWidth(seed, worldX, worldZ);
+  const gradeOffset = boundaryDistance - wallThickness;
+  if (gradeOffset < 0 || gradeOffset > gradeWidth) return null;
+
+  const treadDepth = getBoundaryInnerGradeTreadDepth(seed, worldX, worldZ);
+  const warpedOffset = clamp(
+    gradeOffset + getBoundaryInnerGradeOffsetJitter(seed, worldX, worldZ),
+    0,
+    gradeWidth
+  );
+  const tread = Math.floor(warpedOffset / treadDepth);
+  const extraDrop = getBoundaryInnerGradeTierDrop(seed, worldX, worldZ, gradeOffset, gradeWidth);
+  const topRow = wallTopRow - (tread + 1 + extraDrop) * BOUNDARY_INNER_GRADE_MIN_RISE_ROWS;
+  const minTopRow = terrainHeight + BOUNDARY_INNER_GRADE_MIN_RISE_ROWS;
+  return topRow >= minTopRow ? topRow : null;
+}
+
 function boundaryBounds(boundary: BoundaryPoint[]): { minX: number; maxX: number; minZ: number; maxZ: number } {
   return boundary.reduce(
     (bounds, point) => ({
@@ -342,16 +514,23 @@ function createHeightMap(seed: number, layout: ProceduralCTFLayout): Uint16Array
       const inside = isInsideBoundaryPolygon(worldX, worldZ, boundary);
       const broad = fractalNoise2(seed ^ 0x4c6f7721, worldX * 0.045, worldZ * 0.045, 4, 2.05, 0.55) - 0.5;
       const local = fractalNoise2(seed ^ 0x18a7c23d, worldX * 0.12, worldZ * 0.12, 3, 2.1, 0.45) - 0.5;
+      const terrace = fractalNoise2(seed ^ 0x6d657361, worldX * 0.028, worldZ * 0.028, 3, 2.0, 0.5) - 0.5;
+      const ridgeNoise = fractalNoise2(seed ^ 0x72696467, worldX * 0.075, worldZ * 0.075, 3, 2.0, 0.5);
+      const ridge = Math.pow(1 - Math.abs(ridgeNoise * 2 - 1), 1.65);
       const along = worldX * axis.x + worldZ * axis.z;
       const across = worldX * normal.x + worldZ * normal.z;
-      const wave = Math.sin(along * 0.13 + (seed % 97)) * 1.5 + Math.cos(across * 0.16 + (seed % 131)) * 1.1;
+      const wave =
+        Math.sin(along * 0.12 + (seed % 97)) * 1.9 +
+        Math.cos(across * 0.15 + (seed % 131)) * 1.35 +
+        Math.sin((along + across * 0.35) * 0.055 + (seed % 53)) * 1.8;
       const boundaryFade = inside ? clamp(distanceToBoundary(worldX, worldZ, boundary) / 6.5, 0, 1) : 0;
-      const row = Math.round(BASE_TERRAIN_ROWS + broad * 10 + local * 3 + wave * boundaryFade);
+      const reliefFade = smoothstep(boundaryFade);
+      const row = Math.round(BASE_TERRAIN_ROWS + broad * 14 + local * 4.5 + terrace * 7 + ridge * 5 * reliefFade + wave * reliefFade);
       heightMap[columnIndex(x, z, size)] = clamp(row, MIN_TERRAIN_ROWS, MAX_TERRAIN_ROWS);
     }
   }
 
-  limitHeightSteps(heightMap, layout, MAX_TERRAIN_STEP_ROWS, 5);
+  limitHeightSteps(heightMap, layout, MAX_TERRAIN_STEP_ROWS, INITIAL_TERRAIN_SMOOTHING_PASSES);
   return heightMap;
 }
 
@@ -466,8 +645,34 @@ function limitHeightSteps(heightMap: Uint16Array, layout: ProceduralCTFLayout, m
   }
 }
 
+function getFootprintRadius(footprint: TacticalSlot['footprint']): number {
+  return footprint.radius ?? Math.max(footprint.halfExtents?.x ?? 2.6, footprint.halfExtents?.z ?? 2.6);
+}
+
+function scaleFootprint(footprint: TacticalSlot['footprint'], scale: number): TacticalSlot['footprint'] {
+  if (footprint.radius !== undefined) {
+    return { ...footprint, radius: footprint.radius * scale };
+  }
+
+  if (footprint.halfExtents) {
+    return {
+      ...footprint,
+      halfExtents: {
+        x: footprint.halfExtents.x * scale,
+        z: footprint.halfExtents.z * scale,
+      },
+    };
+  }
+
+  return footprint;
+}
+
 function getSlotRadius(slot: TacticalSlot): number {
-  return slot.footprint.radius ?? Math.max(slot.footprint.halfExtents?.x ?? 2.6, slot.footprint.halfExtents?.z ?? 2.6);
+  return getFootprintRadius(slot.footprint) * (STRUCTURAL_FOOTPRINT_SCALES[slot.role] ?? 1.12);
+}
+
+function getRolePadMinimum(role: TacticalSlotRole): number {
+  return STRUCTURAL_PAD_MINIMUMS[role] ?? 3.4;
 }
 
 function roleToStructure(slot: TacticalSlot, seed: number): Pick<PlacedStructure, 'kind' | 'moduleId' | 'roleTags'> {
@@ -489,14 +694,14 @@ function roleToStructure(slot: TacticalSlot, seed: number): Pick<PlacedStructure
     case 'side_lane_cover_chain':
     case 'hard_cover_cluster':
       return {
-        kind: variant % 2 === 0 ? 'ruin_cover' : 'cover_cluster',
+        kind: (['ruin_cover', 'cover_cluster', 'terrace_platform'] as const)[variant % 3],
         moduleId: 'side_lane_ruin',
         roleTags: ['side_lane_cover_chain', 'hard_cover_cluster', 'route_cover', 'structure'],
       };
     case 'flank_landmark':
     case 'defender_perch':
       return {
-        kind: variant % 2 === 0 ? 'landmark_tower' : 'supported_gate',
+        kind: (['landmark_tower', 'watch_post', 'supported_gate'] as const)[variant % 3],
         moduleId: 'tower_perch',
         roleTags: ['defender_perch', 'flank_landmark', 'landmark', 'structure'],
       };
@@ -505,14 +710,14 @@ function roleToStructure(slot: TacticalSlot, seed: number): Pick<PlacedStructure
     case 'underpass':
     case 'tunnel_entrance':
       return {
-        kind: 'supported_gate',
+        kind: variant % 3 === 0 ? 'broken_arch' : 'supported_gate',
         moduleId: slot.role === 'underpass' || slot.role === 'tunnel_entrance' ? 'tunnel_segment' : 'bridge_platform',
         roleTags: [slot.role, 'traversal', 'structure'],
       };
     case 'soft_cover_cluster':
     default:
       return {
-        kind: variant % 2 === 0 ? 'boulder_patch' : 'cover_cluster',
+        kind: (['boulder_patch', 'cover_cluster', 'broken_arch'] as const)[variant % 3],
         moduleId: 'soft_natural_cover_patch',
         roleTags: ['soft_cover_cluster', 'natural', 'route_cover'],
       };
@@ -522,8 +727,9 @@ function roleToStructure(slot: TacticalSlot, seed: number): Pick<PlacedStructure
 function createPlacedStructureFromSlot(seed: number, slot: TacticalSlot, layout: ProceduralCTFLayout, heightMap: Uint16Array): PlacedStructure {
   const structure = roleToStructure(slot, seed);
   const radius = getSlotRadius(slot);
-  const padRadius = Math.max(radius + 1.2, slot.role === 'base_shell' ? 6.2 : slot.role === 'spawn_shelter' ? 4.4 : 3.2);
+  const padRadius = Math.max(radius + 1.35, getRolePadMinimum(slot.role));
   const surfaceRow = sampleMedianHeight(heightMap, layout.origin, layout.size, layout.voxelSize, slot.position, padRadius);
+  const footprintScale = STRUCTURAL_FOOTPRINT_SCALES[slot.role] ?? 1.12;
 
   return {
     id: `${slot.id}_${structure.kind}`,
@@ -535,7 +741,7 @@ function createPlacedStructureFromSlot(seed: number, slot: TacticalSlot, layout:
     team: slot.team,
     position: { ...slot.position },
     facing: normalize2D(slot.facing),
-    footprint: slot.footprint,
+    footprint: scaleFootprint(slot.footprint, footprintScale),
     radius,
     padRadius,
     surfaceRow,
@@ -564,41 +770,161 @@ function isProtectedObjectivePoint(point: { x: number; z: number }, layout: Proc
   return false;
 }
 
-function createDecorativePlacements(seed: number, layout: ProceduralCTFLayout, heightMap: Uint16Array, placements: PlacedStructure[]): PlacedStructure[] {
+interface DecorativeStructurePalette {
+  signature: StructureKind[];
+  support: StructureKind[];
+}
+
+const SHARED_DECORATIVE_STRUCTURE_KINDS: StructureKind[] = [
+  'boulder_patch',
+  'crate_stack',
+  'ruin_cover',
+  'cover_cluster',
+  'watch_post',
+  'terrace_platform',
+  'broken_arch',
+  'monument_ring',
+];
+
+function getDecorativeStructurePalette(theme: VoxelMapTheme): DecorativeStructurePalette {
+  switch (theme.id) {
+    case 'basalt':
+      return {
+        signature: ['basalt_columns', 'bamboo_thicket'],
+        support: ['boulder_patch', 'basalt_columns', 'bamboo_thicket', 'cover_cluster'],
+      };
+    case 'desert':
+      return {
+        signature: ['cactus_stand', 'desert_outpost'],
+        support: ['cactus_stand', 'boulder_patch', 'crate_stack', 'cover_cluster'],
+      };
+    case 'frost':
+      return {
+        signature: ['pine_cluster', 'ice_outcrop'],
+        support: ['pine_cluster', 'ice_outcrop', 'boulder_patch', 'cover_cluster'],
+      };
+    case 'crystal':
+      return {
+        signature: ['crystal_tree_cluster', 'crystal_spire', 'monument_ring', 'basalt_columns'],
+        support: ['crystal_tree_cluster', 'crystal_spire', 'boulder_patch', 'basalt_columns'],
+      };
+    case 'volcanic':
+      return {
+        signature: ['basalt_columns', 'broken_arch', 'crystal_spire'],
+        support: ['basalt_columns', 'boulder_patch', 'crystal_spire', 'ruin_cover'],
+      };
+    case 'sakura':
+      return {
+        signature: ['blossom_tree_cluster', 'shrine_gate', 'bamboo_thicket'],
+        support: ['blossom_tree_cluster', 'garden_marker', 'bamboo_thicket', 'monument_ring'],
+      };
+    case 'golden':
+      return {
+        signature: ['gold_cache', 'monument_ring', 'crystal_spire', 'watch_post'],
+        support: ['gold_cache', 'crate_stack', 'monument_ring', 'ruin_cover'],
+      };
+    case 'verdant':
+    default:
+      return {
+        signature: ['tree_cluster', 'pine_cluster', 'garden_marker'],
+        support: ['tree_cluster', 'pine_cluster', 'garden_marker', 'boulder_patch', 'crate_stack'],
+      };
+  }
+}
+
+function chooseDecorativeStructureKind(theme: VoxelMapTheme, random: () => number, acceptedCount: number): StructureKind {
+  const palette = getDecorativeStructurePalette(theme);
+  const signaturePick = acceptedCount % 4 === 0;
+  if (signaturePick) {
+    const signatureIndex = Math.floor(acceptedCount / 4) % palette.signature.length;
+    return palette.signature[signatureIndex];
+  }
+
+  const candidates = random() < 0.16 ? SHARED_DECORATIVE_STRUCTURE_KINDS : palette.support;
+  return candidates[Math.floor(random() * candidates.length) % candidates.length];
+}
+
+function getDecorativeStructureMetadata(kind: StructureKind): Pick<PlacedStructure, 'role' | 'moduleId' | 'roleTags'> {
+  switch (kind) {
+    case 'ruin_cover':
+    case 'cover_cluster':
+    case 'terrace_platform':
+    case 'broken_arch':
+    case 'desert_outpost':
+      return {
+        role: 'soft_cover_cluster',
+        moduleId: 'side_lane_ruin',
+        roleTags: ['soft_cover_cluster', 'route_cover', 'structure'],
+      };
+    case 'watch_post':
+    case 'monument_ring':
+    case 'shrine_gate':
+    case 'gold_cache':
+      return {
+        role: 'flank_landmark',
+        moduleId: 'tower_perch',
+        roleTags: ['flank_landmark', 'landmark', 'structure'],
+      };
+    case 'boulder_patch':
+    case 'crystal_spire':
+    case 'tree_cluster':
+    case 'pine_cluster':
+    case 'blossom_tree_cluster':
+    case 'crystal_tree_cluster':
+    case 'cactus_stand':
+    case 'bamboo_thicket':
+    case 'basalt_columns':
+    case 'ice_outcrop':
+    case 'crate_stack':
+    case 'garden_marker':
+    default:
+      return {
+        role: 'flank_landmark',
+        moduleId: 'soft_natural_cover_patch',
+        roleTags: ['flank_landmark', 'natural', 'landmark'],
+      };
+  }
+}
+
+function createDecorativePlacements(
+  seed: number,
+  layout: ProceduralCTFLayout,
+  theme: VoxelMapTheme,
+  heightMap: Uint16Array,
+  placements: PlacedStructure[]
+): PlacedStructure[] {
   const random = mulberry32(seed ^ 0xa17c9e3b);
   const bounds = boundaryBounds(layout.boundary);
-  const kinds: StructureKind[] = ['boulder_patch', 'crystal_spire', 'crate_stack', 'garden_marker', 'ruin_cover', 'cover_cluster'];
-  const targetCount = 9 + Math.floor(random() * 5);
+  const targetCount = DECORATIVE_OBJECT_MIN_COUNT + Math.floor(random() * DECORATIVE_OBJECT_VARIANCE);
   const accepted: PlacedStructure[] = [];
 
   for (let attempt = 0; attempt < RANDOM_OBJECT_ATTEMPTS && accepted.length < targetCount; attempt++) {
+    const isFillerPass = attempt > RANDOM_OBJECT_ATTEMPTS * 0.62;
     const x = lerp(bounds.minX + 3, bounds.maxX - 3, random());
     const z = lerp(bounds.minZ + 3, bounds.maxZ - 3, random());
-    const radius = lerp(1.25, 2.9, random());
+    const radius = isFillerPass ? lerp(1.1, 2.4, random()) : lerp(1.35, 3.45, Math.pow(random(), 0.85));
     const point = { x, z };
 
     if (!isInsideBoundaryPolygon(x, z, layout.boundary)) continue;
     if (distanceToBoundary(x, z, layout.boundary) < radius + 1.8) continue;
     if (isProtectedObjectivePoint(point, layout, radius)) continue;
-    if (placementOverlaps(point, radius, [...placements, ...accepted], 1.4)) continue;
+    if (placementOverlaps(point, radius, [...placements, ...accepted], isFillerPass ? 0.7 : 1.15)) continue;
 
-    const kind = kinds[Math.floor(random() * kinds.length) % kinds.length];
+    const kind = chooseDecorativeStructureKind(theme, random, accepted.length);
+    const metadata = getDecorativeStructureMetadata(kind);
     const surfaceRow = sampleMedianHeight(heightMap, layout.origin, layout.size, layout.voxelSize, point, radius + 1);
     accepted.push({
       id: `dressing_${accepted.length + 1}_${kind}`,
       slotId: `dressing_${accepted.length + 1}`,
       kind,
-      role: kind === 'ruin_cover' || kind === 'cover_cluster' ? 'soft_cover_cluster' : 'flank_landmark',
-      moduleId: kind === 'ruin_cover' ? 'side_lane_ruin' : 'soft_natural_cover_patch',
-      roleTags:
-        kind === 'ruin_cover' || kind === 'cover_cluster'
-          ? ['soft_cover_cluster', 'natural', 'route_cover']
-          : ['flank_landmark', 'natural', 'landmark'],
+      role: metadata.role,
+      moduleId: metadata.moduleId,
+      roleTags: metadata.roleTags,
       position: { x, y: gridRowsToWorldY(surfaceRow, layout.origin.y, layout.voxelSize.y), z },
       facing: normalize2D({ x: random() - 0.5, z: random() - 0.5 }),
       footprint: { shape: 'circle', radius },
       radius,
-      padRadius: radius + 0.65,
+      padRadius: radius + 0.85,
       surfaceRow,
       variant: Math.floor(random() * 0xffffffff) >>> 0,
     });
@@ -607,16 +933,24 @@ function createDecorativePlacements(seed: number, layout: ProceduralCTFLayout, h
   return accepted;
 }
 
-function createPlacedStructures(seed: number, construction: MapConstructionResult, layout: ProceduralCTFLayout, heightMap: Uint16Array): PlacedStructure[] {
+function createPlacedStructures(
+  seed: number,
+  construction: MapConstructionResult,
+  layout: ProceduralCTFLayout,
+  theme: VoxelMapTheme,
+  heightMap: Uint16Array
+): PlacedStructure[] {
   const required = construction.blueprint.tacticalSlots.map((slot) =>
     createPlacedStructureFromSlot(seed, slot, layout, heightMap)
   );
-  const decorative = createDecorativePlacements(seed, layout, heightMap, required);
+  const decorative = createDecorativePlacements(seed, layout, theme, heightMap, required);
   return [...required, ...decorative];
 }
 
 function flattenStructurePads(heightMap: Uint16Array, layout: ProceduralCTFLayout, placements: PlacedStructure[]): void {
   for (const placement of placements) {
+    const isDecorative = placement.slotId.startsWith('dressing_');
+    const blendRadius = Math.max(isDecorative ? 1.1 : 1.8, placement.padRadius * (isDecorative ? 0.22 : 0.35));
     flattenDisc(
       heightMap,
       layout.origin,
@@ -625,7 +959,7 @@ function flattenStructurePads(heightMap: Uint16Array, layout: ProceduralCTFLayou
       placement.position,
       placement.padRadius,
       placement.surfaceRow,
-      Math.max(1.8, placement.padRadius * 0.35)
+      blendRadius
     );
   }
 }
@@ -640,6 +974,88 @@ function updatePlacementSurfaceRows(heightMap: Uint16Array, layout: ProceduralCT
 function setBlock(ctx: StructureStampContext, x: number, y: number, z: number, block: number): void {
   if (x < 0 || x >= ctx.size.x || y < 0 || y >= ctx.size.y || z < 0 || z >= ctx.size.z) return;
   ctx.blocks[blockIndex(x, y, z, ctx.size)] = block;
+}
+
+function isBoundaryAnchorCandidate(
+  ctx: StructureStampContext,
+  layout: ProceduralCTFLayout,
+  x: number,
+  z: number
+): boolean {
+  const worldX = gridToWorldCenter(x, ctx.origin.x, ctx.voxelSize.x);
+  const worldZ = gridToWorldCenter(z, ctx.origin.z, ctx.voxelSize.z);
+  return distanceToBoundary(worldX, worldZ, layout.boundary) <= BOUNDARY_FLOATING_DETAIL_ANCHOR_DISTANCE;
+}
+
+function anchorFloatingComponent(ctx: StructureStampContext, cell: { x: number; y: number; z: number }): void {
+  let groundY = -1;
+  for (let y = cell.y - 1; y >= 0; y--) {
+    if (!isCollisionBlock(ctx.blocks[blockIndex(cell.x, y, cell.z, ctx.size)])) continue;
+    groundY = y;
+    break;
+  }
+
+  for (let y = Math.max(0, groundY + 1); y < cell.y; y++) {
+    setBlock(ctx, cell.x, y, cell.z, ctx.palette.wall);
+  }
+}
+
+function anchorBoundaryFloatingDetails(ctx: StructureStampContext, layout: ProceduralCTFLayout): void {
+  const visited = new Uint8Array(ctx.blocks.length);
+  const queue: number[] = [];
+  const directions = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+  ] as const;
+
+  for (let y = 0; y < ctx.size.y; y++) {
+    for (let z = 0; z < ctx.size.z; z++) {
+      for (let x = 0; x < ctx.size.x; x++) {
+        const start = blockIndex(x, y, z, ctx.size);
+        if (visited[start] || !isCollisionBlock(ctx.blocks[start])) continue;
+
+        visited[start] = 1;
+        queue.length = 0;
+        queue.push(start);
+        let count = 0;
+        let touchesGround = y === 0;
+        let boundaryCandidate = false;
+        let anchorCell = { x, y, z };
+
+        for (let cursor = 0; cursor < queue.length; cursor++) {
+          const current = queue[cursor];
+          const cx = current % ctx.size.x;
+          const cy = Math.floor(current / (ctx.size.x * ctx.size.z));
+          const cz = Math.floor((current - cy * ctx.size.x * ctx.size.z) / ctx.size.x);
+          count++;
+
+          if (cy === 0) touchesGround = true;
+          if (cy < anchorCell.y) anchorCell = { x: cx, y: cy, z: cz };
+          if (!boundaryCandidate) boundaryCandidate = isBoundaryAnchorCandidate(ctx, layout, cx, cz);
+
+          for (const [dx, dy, dz] of directions) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            const nz = cz + dz;
+            if (nx < 0 || nx >= ctx.size.x || ny < 0 || ny >= ctx.size.y || nz < 0 || nz >= ctx.size.z) continue;
+
+            const next = blockIndex(nx, ny, nz, ctx.size);
+            if (visited[next] || !isCollisionBlock(ctx.blocks[next])) continue;
+            visited[next] = 1;
+            queue.push(next);
+          }
+        }
+
+        if (!touchesGround && boundaryCandidate && count <= BOUNDARY_FLOATING_DETAIL_MAX_BLOCKS) {
+          anchorFloatingComponent(ctx, anchorCell);
+        }
+      }
+    }
+  }
 }
 
 function fillBox(
@@ -736,6 +1152,32 @@ function stampDisc(ctx: StructureStampContext, center: { x: number; z: number },
   }
 }
 
+function stampDiscStack(
+  ctx: StructureStampContext,
+  center: { x: number; z: number },
+  radius: number,
+  minY: number,
+  maxY: number,
+  block: number
+): void {
+  const y0 = clamp(Math.floor(minY), 0, ctx.size.y - 1);
+  const y1 = clamp(Math.ceil(maxY), 0, ctx.size.y - 1);
+  for (let y = y0; y <= y1; y++) stampDisc(ctx, center, radius, y, block);
+}
+
+function stampDiscStackAtLocal(
+  ctx: StructureStampContext,
+  placement: PlacedStructure,
+  localSide: number,
+  localForward: number,
+  radius: number,
+  minY: number,
+  maxY: number,
+  block: number
+): void {
+  stampDiscStack(ctx, localToWorld(placement, localSide, localForward), radius, minY, maxY, block);
+}
+
 function stampPillar(
   ctx: StructureStampContext,
   placement: PlacedStructure,
@@ -749,150 +1191,529 @@ function stampPillar(
   stampOrientedBoxAtLocal(ctx, placement, localSide, localForward, width, width, minY, maxY, block);
 }
 
+function variantUnit(placement: PlacedStructure, shift = 0): number {
+  return ((placement.variant >>> shift) & 0xff) / 255;
+}
+
+function getStructureScale(placement: PlacedStructure, min = 1, max = 1.2): number {
+  const decorativeScale = placement.slotId.startsWith('dressing_') ? clamp(placement.radius / 2.8, 0.85, 1.45) : 1;
+  return lerp(min, max, variantUnit(placement, 8)) * decorativeScale;
+}
+
 function stampBaseBunker(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const width = 9.8;
-  const depth = 7.2;
-  const wallHeight = 5 + (placement.variant % 3);
+  const scale = getStructureScale(placement, 1.12, 1.28);
+  const width = 10.8 * scale;
+  const depth = 8.2 * scale;
+  const wallHeight = 10 + (placement.variant % 5);
   stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, depth, row, row, ctx.palette.floor);
-  stampOrientedBoxAtLocal(ctx, placement, 0, -depth / 2 + 0.35, width, 0.7, row + 1, row + wallHeight, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.35, -0.3, 0.7, depth - 0.8, row + 1, row + wallHeight, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.35, -0.3, 0.7, depth - 0.8, row + 1, row + wallHeight, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 1.3, depth / 2 - 0.45, 1.6, 0.9, row + 1, row + 3, ctx.palette.trim);
-  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 1.3, depth / 2 - 0.45, 1.6, 0.9, row + 1, row + 3, ctx.palette.trim);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0.8, 2.4, 0.8, row + 1, row + 2, placement.team === 'red' ? ctx.palette.red : ctx.palette.blue);
+  stampOrientedBoxAtLocal(ctx, placement, 0, -depth / 2 + 0.45 * scale, width, 0.9 * scale, row + 1, row + wallHeight, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.45 * scale, -0.3, 0.9 * scale, depth - 0.8 * scale, row + 1, row + wallHeight, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.45 * scale, -0.3, 0.9 * scale, depth - 0.8 * scale, row + 1, row + wallHeight, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 1.55 * scale, depth / 2 - 0.55 * scale, 1.9 * scale, 1.0 * scale, row + 1, row + 5, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 1.55 * scale, depth / 2 - 0.55 * scale, 1.9 * scale, 1.0 * scale, row + 1, row + 5, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0.9 * scale, 2.8 * scale, 0.9 * scale, row + 1, row + 4, placement.team === 'red' ? ctx.palette.red : ctx.palette.blue);
+  stampPillar(ctx, placement, -width * 0.18, -0.25 * scale, 0.8 * scale, row + 1, row + wallHeight + 1, ctx.palette.wall);
+  stampPillar(ctx, placement, width * 0.18, -0.25 * scale, 0.8 * scale, row + 1, row + wallHeight + 1, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, 0, -0.35 * scale, width * 0.46, depth * 0.42, row + wallHeight + 1, row + wallHeight + 1, ctx.palette.trim);
 }
 
 function stampSpawnShelter(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const width = 7.4;
-  const depth = 5.2;
-  const canopyRow = row + 11;
+  const scale = getStructureScale(placement, 1.1, 1.24);
+  const width = 8.5 * scale;
+  const depth = 6.2 * scale;
+  const canopyRow = row + 13 + (placement.variant % 4);
   stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, depth, row, row, placement.team === 'red' ? ctx.palette.spawnRed : ctx.palette.spawnBlue);
   for (const side of [-1, 1]) {
     for (const forward of [-1, 1]) {
-      stampPillar(ctx, placement, side * (width / 2 - 0.6), forward * (depth / 2 - 0.6), 0.65, row + 1, canopyRow, ctx.palette.wall);
+      stampPillar(ctx, placement, side * (width / 2 - 0.7 * scale), forward * (depth / 2 - 0.7 * scale), 0.8 * scale, row + 1, canopyRow, ctx.palette.wall);
     }
   }
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width + 0.7, depth + 0.7, canopyRow, canopyRow + 1, ctx.palette.trim);
-  stampOrientedBoxAtLocal(ctx, placement, 0, -depth / 2 + 0.45, width - 1.4, 0.6, row + 1, row + 3, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width + 0.9 * scale, depth + 0.9 * scale, canopyRow, canopyRow + 2, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, 0, -depth / 2 + 0.55 * scale, width - 1.6 * scale, 0.75 * scale, row + 1, row + 5, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, 0, depth / 2 - 0.55 * scale, width * 0.38, 0.65 * scale, row + 1, row + 4, ctx.palette.wall);
 }
 
 function stampFlagPlinth(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
   const teamBlock = placement.team === 'red' ? ctx.palette.red : ctx.palette.blue;
   stampDisc(ctx, placement.position, FLAG_PAD_RADIUS, row, ctx.palette.flag);
-  stampDisc(ctx, placement.position, 1.35, row + 1, teamBlock);
+  stampDisc(ctx, placement.position, 1.55, row + 1, teamBlock);
   for (const side of [-1, 1]) {
-    stampPillar(ctx, placement, side * 2.1, -2.1, 0.45, row, row + 3, ctx.palette.trim);
-    stampPillar(ctx, placement, side * 2.1, 2.1, 0.45, row, row + 3, ctx.palette.trim);
+    stampPillar(ctx, placement, side * 2.25, -2.25, 0.55, row, row + 5, ctx.palette.trim);
+    stampPillar(ctx, placement, side * 2.25, 2.25, 0.55, row, row + 5, ctx.palette.trim);
   }
 }
 
 function stampMidWall(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const width = 12.4;
-  const height = 7 + (placement.variant % 4);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, 1.15, row, row + height, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, -width * 0.28, 0.85, 2.2, 1.0, row, row + 3, ctx.palette.floor);
-  stampOrientedBoxAtLocal(ctx, placement, width * 0.28, -0.85, 2.2, 1.0, row, row + 3, ctx.palette.floor);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width + 0.5, 0.55, row + height + 1, row + height + 1, ctx.palette.trim);
+  const scale = getStructureScale(placement, 1.08, 1.28);
+  const width = 14.6 * scale;
+  const height = 11 + (placement.variant % 7);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, 1.35 * scale, row, row + height, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, -width * 0.28, 1.0 * scale, 2.8 * scale, 1.2 * scale, row, row + 5, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, width * 0.28, -1.0 * scale, 2.8 * scale, 1.2 * scale, row, row + 5, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width + 0.75 * scale, 0.7 * scale, row + height + 1, row + height + 2, ctx.palette.trim);
 }
 
 function stampRuinCover(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const width = 5.8 + (placement.variant % 3) * 0.6;
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, 0.85, row, row + 5, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.45, 1.6, 0.9, 3.2, row, row + 3, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.65, -1.4, 1.2, 2.4, row, row + 2, ctx.palette.floor);
-  stampOrientedBoxAtLocal(ctx, placement, 0.2, 2.7, width * 0.65, 0.7, row, row + 1, ctx.palette.trim);
+  const baseRow = Math.max(0, row - 4);
+  const scale = getStructureScale(placement, 1.05, 1.28);
+  const width = (7.2 + (placement.variant % 3) * 0.8) * scale;
+  const height = 7 + (placement.variant % 4);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, 1.0 * scale, row, row + height, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.65 * scale, 1.9 * scale, 1.15 * scale, 3.7 * scale, row, row + height - 2, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.8 * scale, -1.65 * scale, 1.45 * scale, 2.9 * scale, row, row + 4, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, 0.2 * scale, 3.05 * scale, width * 0.24, 0.9 * scale, baseRow, row, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, 0.2 * scale, 3.05 * scale, width * 0.68, 0.8 * scale, row + 1, row + 2, ctx.palette.trim);
 }
 
 function stampLandmarkTower(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const height = 9 + (placement.variant % 5);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, 3.2, 3.2, row, row + height, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, 4.2, 4.2, row, row + 1, ctx.palette.floor);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, 3.9, 3.9, row + height + 1, row + height + 1, ctx.palette.trim);
-  stampPillar(ctx, placement, 0, 0, 1.2, row + height + 2, row + height + 4, placement.team === 'blue' ? ctx.palette.blue : ctx.palette.red);
+  const scale = getStructureScale(placement, 1.08, 1.25);
+  const height = 16 + (placement.variant % 8);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, 3.9 * scale, 3.9 * scale, row, row + height, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, 5.2 * scale, 5.2 * scale, row, row + 2, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, 4.8 * scale, 4.8 * scale, row + height + 1, row + height + 2, ctx.palette.trim);
+  stampPillar(ctx, placement, 0, 0, 1.35 * scale, row + height + 3, row + height + 7, placement.team === 'blue' ? ctx.palette.blue : ctx.palette.red);
 }
 
 function stampSupportedGate(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const width = 6.6;
-  const height = 8 + (placement.variant % 3);
-  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.65, 0, 1.3, 2.8, row, row + height, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.65, 0, 1.3, 2.8, row, row + height, ctx.palette.wall);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, 1.4, row + height + 1, row + height + 2, ctx.palette.trim);
-  stampOrientedBoxAtLocal(ctx, placement, 0, -1.55, width - 1.8, 0.75, row, row + 1, ctx.palette.floor);
-  stampOrientedBoxAtLocal(ctx, placement, 0, 1.55, width - 1.8, 0.75, row, row + 1, ctx.palette.floor);
+  const scale = getStructureScale(placement, 1.08, 1.25);
+  const width = 7.8 * scale;
+  const height = 12 + (placement.variant % 6);
+  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.8 * scale, 0, 1.55 * scale, 3.3 * scale, row, row + height, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.8 * scale, 0, 1.55 * scale, 3.3 * scale, row, row + height, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, 1.7 * scale, row + height + 1, row + height + 3, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, 0, -1.85 * scale, width - 2.0 * scale, 0.9 * scale, row, row + 2, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 1.85 * scale, width - 2.0 * scale, 0.9 * scale, row, row + 2, ctx.palette.floor);
 }
 
 function stampCoverCluster(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
+  const scale = getStructureScale(placement, 1.05, 1.28);
   const offsets = [
-    { side: -1.6, forward: -0.6, width: 1.8, depth: 1.5, height: 3 },
-    { side: 0.4, forward: 0.4, width: 2.3, depth: 1.6, height: 4 },
-    { side: 1.9, forward: -1.1, width: 1.4, depth: 1.8, height: 2 },
+    { side: -1.9, forward: -0.7, width: 2.2, depth: 1.8, height: 5 },
+    { side: 0.45, forward: 0.55, width: 2.8, depth: 1.9, height: 6 },
+    { side: 2.25, forward: -1.25, width: 1.7, depth: 2.1, height: 4 },
   ];
   for (const offset of offsets) {
     stampOrientedBoxAtLocal(
       ctx,
       placement,
-      offset.side,
-      offset.forward,
-      offset.width,
-      offset.depth,
+      offset.side * scale,
+      offset.forward * scale,
+      offset.width * scale,
+      offset.depth * scale,
       row,
-      row + offset.height + (placement.variant % 2),
+      row + offset.height + (placement.variant % 3),
       offset.height >= 4 ? ctx.palette.wall : ctx.palette.floor
     );
   }
 }
 
+function stampWatchPost(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const scale = getStructureScale(placement, 1.05, 1.28);
+  const width = 4.7 * scale;
+  const depth = 4.2 * scale;
+  const deckRow = row + 11 + (placement.variant % 5);
+
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, depth, row, row + 1, ctx.palette.floor);
+  for (const side of [-1, 1]) {
+    for (const forward of [-1, 1]) {
+      stampPillar(ctx, placement, side * (width / 2 - 0.55 * scale), forward * (depth / 2 - 0.55 * scale), 0.8 * scale, row + 1, deckRow, ctx.palette.wall);
+    }
+  }
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width + 0.8 * scale, depth + 0.8 * scale, deckRow, deckRow + 1, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width * 0.72, depth * 0.72, deckRow + 2, deckRow + 4, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width + 1.1 * scale, depth + 1.1 * scale, deckRow + 5, deckRow + 6, ctx.palette.trim);
+}
+
+function stampTerracePlatform(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const scale = getStructureScale(placement, 1.05, 1.3);
+  const width = 7.8 * scale;
+  const depth = 5.4 * scale;
+  const raisedRow = row + 3 + (placement.variant % 3);
+
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, depth, row, row + 1, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, -width * 0.22, 0, width * 0.48, depth * 0.78, row + 2, raisedRow, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, width * 0.24, 0.2 * scale, width * 0.24, depth * 0.36, row + 2, raisedRow + 1, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, width * 0.24, 0.2 * scale, width * 0.42, depth * 0.58, raisedRow + 1, raisedRow + 2, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, 0, -depth / 2 + 0.45 * scale, width, 0.7 * scale, row + 2, row + 5, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.45 * scale, 0, 0.7 * scale, depth, row + 2, row + 4, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.45 * scale, depth * 0.18, 0.7 * scale, depth * 0.52, row + 2, row + 4, ctx.palette.wall);
+}
+
+function stampBrokenArch(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const scale = getStructureScale(placement, 1.05, 1.28);
+  const width = 6.7 * scale;
+  const height = 10 + (placement.variant % 6);
+
+  stampPillar(ctx, placement, -width / 2 + 0.75 * scale, 0, 1.3 * scale, row, row + height, ctx.palette.wall);
+  stampPillar(ctx, placement, width / 2 - 0.75 * scale, 0, 1.3 * scale, row, row + Math.max(5, height - 4), ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, -width * 0.14, 0, width * 0.72, 1.2 * scale, row + height + 1, row + height + 2, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, width * 0.3, -1.8 * scale, width * 0.34, 0.9 * scale, row, row + 3, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, -width * 0.34, 1.75 * scale, width * 0.28, 0.9 * scale, row, row + 4, ctx.palette.wall);
+}
+
+function stampMonumentRing(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const scale = getStructureScale(placement, 1.05, 1.3);
+  const radius = 2.6 * scale;
+  const pillarCount = 6;
+  const height = 7 + (placement.variant % 5);
+
+  stampDisc(ctx, placement.position, radius * 1.05, row, ctx.palette.floor);
+  stampDisc(ctx, placement.position, radius * 0.34, row + 1, ctx.palette.trim);
+  for (let index = 0; index < pillarCount; index++) {
+    const angle = (index / pillarCount) * Math.PI * 2 + variantUnit(placement, 16) * 0.45;
+    const side = Math.cos(angle) * radius;
+    const forward = Math.sin(angle) * radius;
+    stampPillar(ctx, placement, side, forward, 0.65 * scale, row + 1, row + height, index % 2 === 0 ? ctx.palette.wall : ctx.palette.trim);
+  }
+}
+
 function stampBoulderPatch(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const count = 4 + (placement.variant % 3);
+  const count = 5 + (placement.variant % 4);
+  const spread = Math.max(2.4, placement.radius * 0.85);
   const random = mulberry32(placement.variant ^ 0x6b6f756c);
   for (let index = 0; index < count; index++) {
-    const side = lerp(-2.0, 2.0, random());
-    const forward = lerp(-1.8, 1.8, random());
-    const width = lerp(0.9, 1.8, random());
-    const height = 1 + Math.floor(random() * 4);
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.82, spread * 0.82, random());
+    const width = lerp(1.05, 2.35, random());
+    const height = 2 + Math.floor(random() * 5);
     stampOrientedBoxAtLocal(ctx, placement, side, forward, width, width * lerp(0.85, 1.35, random()), row, row + height, ctx.palette.stone);
   }
 }
 
 function stampCrystalSpire(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const height = 5 + (placement.variant % 6);
-  stampPillar(ctx, placement, 0, 0, 1.2, row, row + height, ctx.palette.trim);
-  stampPillar(ctx, placement, -1.3, 0.9, 0.8, row, row + Math.max(2, height - 3), ctx.palette.glass);
-  stampPillar(ctx, placement, 1.1, -0.8, 0.7, row, row + Math.max(2, height - 2), ctx.palette.glass);
+  const baseRow = Math.max(0, row - 3);
+  const scale = getStructureScale(placement, 1.05, 1.35);
+  const height = 8 + (placement.variant % 8);
+  stampPillar(ctx, placement, 0, 0, 1.35 * scale, baseRow, row + height, ctx.palette.trim);
+  stampPillar(ctx, placement, -1.55 * scale, 1.05 * scale, 0.9 * scale, baseRow, row + Math.max(4, height - 4), ctx.palette.glass);
+  stampPillar(ctx, placement, 1.35 * scale, -1.0 * scale, 0.8 * scale, baseRow, row + Math.max(4, height - 2), ctx.palette.glass);
+}
+
+function stampBroadleafCrown(
+  ctx: StructureStampContext,
+  placement: PlacedStructure,
+  localSide: number,
+  localForward: number,
+  baseRow: number,
+  radius: number,
+  foliageBlock: number,
+  accentBlock: number,
+  random: () => number
+): void {
+  const sideDrift = lerp(-0.28, 0.28, random());
+  const forwardDrift = lerp(-0.24, 0.24, random());
+  const crownSide = localSide + sideDrift;
+  const crownForward = localForward + forwardDrift;
+
+  stampDiscStackAtLocal(ctx, placement, crownSide, crownForward, radius * 0.82, baseRow, baseRow + 1, accentBlock);
+  stampDiscStackAtLocal(ctx, placement, crownSide - radius * 0.14, crownForward + radius * 0.1, radius, baseRow + 2, baseRow + 3, foliageBlock);
+  stampDiscStackAtLocal(ctx, placement, crownSide + radius * 0.18, crownForward - radius * 0.08, radius * 0.72, baseRow + 4, baseRow + 5, foliageBlock);
+  stampDiscStackAtLocal(ctx, placement, crownSide, crownForward + radius * 0.16, radius * 0.48, baseRow + 6, baseRow + 6, accentBlock);
+}
+
+function stampTreeCluster(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 2);
+  const scale = getStructureScale(placement, 0.9, 1.12);
+  const count = 2 + (placement.variant % 3);
+  const spread = Math.max(1.9, placement.radius * 0.72);
+  const random = mulberry32(placement.variant ^ 0x74726565);
+
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.75, spread * 0.75, random());
+    const trunkWidth = lerp(0.42, 0.68, random()) * scale;
+    const trunkHeight = 8 + Math.floor(random() * 5);
+    const crownRadius = lerp(1.35, 2.1, random()) * scale;
+    stampPillar(ctx, placement, side, forward, trunkWidth, baseRow, row + trunkHeight, ctx.palette.wood);
+    if (random() > 0.42) {
+      const branchSide = side + lerp(-0.8, 0.8, random()) * scale;
+      stampOrientedBoxAtLocal(ctx, placement, (side + branchSide) / 2, forward, Math.abs(branchSide - side) + trunkWidth, trunkWidth * 0.72, row + trunkHeight - 2, row + trunkHeight - 1, ctx.palette.wood);
+    }
+    stampBroadleafCrown(ctx, placement, side, forward, row + trunkHeight - 2, crownRadius, ctx.palette.foliage, ctx.palette.foliage, random);
+  }
+}
+
+function stampPineCluster(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 2);
+  const scale = getStructureScale(placement, 0.9, 1.18);
+  const count = 2 + (placement.variant % 3);
+  const spread = Math.max(1.8, placement.radius * 0.68);
+  const snow = getBlockNumericId('snow');
+  const random = mulberry32(placement.variant ^ 0x70696e65);
+
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.75, spread * 0.75, random());
+    const trunkWidth = lerp(0.38, 0.58, random()) * scale;
+    const trunkHeight = 9 + Math.floor(random() * 5);
+    const crownRadius = lerp(1.35, 1.85, random()) * scale;
+    const layerCount = 4 + Math.floor(random() * 2);
+    stampPillar(ctx, placement, side, forward, trunkWidth, baseRow, row + trunkHeight + layerCount, ctx.palette.wood);
+
+    for (let layer = 0; layer < layerCount; layer++) {
+      const layerRow = row + trunkHeight - 4 + layer * 2;
+      const layerRadius = Math.max(0.45 * scale, crownRadius - layer * 0.28 * scale);
+      stampDiscStackAtLocal(ctx, placement, side, forward, layerRadius, layerRow, layerRow + 1, ctx.palette.foliage);
+    }
+
+    if (ctx.themeId === 'frost') {
+      const capRow = row + trunkHeight - 4 + layerCount * 2;
+      stampDiscStackAtLocal(ctx, placement, side, forward, crownRadius * 0.42, capRow, capRow, snow);
+    }
+  }
+}
+
+function stampBlossomTreeCluster(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 2);
+  const scale = getStructureScale(placement, 0.95, 1.18);
+  const count = 1 + (placement.variant % 3);
+  const spread = Math.max(1.7, placement.radius * 0.64);
+  const leafShadow = getBlockNumericId('leaves');
+  const random = mulberry32(placement.variant ^ 0xb10550);
+
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.7, spread * 0.7, random());
+    const trunkWidth = lerp(0.44, 0.68, random()) * scale;
+    const trunkHeight = 7 + Math.floor(random() * 5);
+    const crownRadius = lerp(1.55, 2.25, random()) * scale;
+    stampPillar(ctx, placement, side, forward, trunkWidth, baseRow, row + trunkHeight, ctx.palette.wood);
+    stampOrientedBoxAtLocal(ctx, placement, side - 0.42 * scale, forward + 0.18 * scale, 1.4 * scale, trunkWidth * 0.72, row + trunkHeight - 2, row + trunkHeight - 1, ctx.palette.wood);
+    stampDiscStackAtLocal(ctx, placement, side, forward, crownRadius * 0.72, row + trunkHeight - 2, row + trunkHeight - 1, leafShadow);
+    stampBroadleafCrown(ctx, placement, side, forward, row + trunkHeight - 1, crownRadius, ctx.palette.foliage, ctx.palette.foliage, random);
+  }
+}
+
+function stampCrystalTreeCluster(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 3);
+  const scale = getStructureScale(placement, 0.92, 1.16);
+  const count = 2 + (placement.variant % 2);
+  const spread = Math.max(1.6, placement.radius * 0.62);
+  const crystal = getBlockNumericId('crystal_growth');
+  const random = mulberry32(placement.variant ^ 0xc2757a1);
+
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.75, spread * 0.75, random());
+    const trunkHeight = 6 + Math.floor(random() * 4);
+    const trunkWidth = lerp(0.46, 0.7, random()) * scale;
+    const crownRadius = lerp(0.95, 1.35, random()) * scale;
+    stampPillar(ctx, placement, side, forward, trunkWidth, baseRow, row + trunkHeight, ctx.palette.stone);
+    stampPillar(ctx, placement, side, forward, trunkWidth * 0.78, row + trunkHeight - 1, row + trunkHeight + 5, crystal);
+    stampDiscStackAtLocal(ctx, placement, side, forward, crownRadius, row + trunkHeight + 1, row + trunkHeight + 2, ctx.palette.glass);
+    stampDiscStackAtLocal(ctx, placement, side + 0.35 * scale, forward - 0.22 * scale, crownRadius * 0.62, row + trunkHeight + 3, row + trunkHeight + 4, crystal);
+    stampPillar(ctx, placement, side - 0.85 * scale, forward + 0.48 * scale, trunkWidth * 0.62, row + trunkHeight - 1, row + trunkHeight + 2, ctx.palette.glass);
+  }
+}
+
+function stampCactusArm(
+  ctx: StructureStampContext,
+  placement: PlacedStructure,
+  localSide: number,
+  localForward: number,
+  width: number,
+  armOffset: number,
+  armY: number,
+  armHeight: number,
+  block: number
+): void {
+  stampOrientedBoxAtLocal(ctx, placement, localSide + armOffset / 2, localForward, Math.abs(armOffset) + width, width * 0.82, armY, armY, block);
+  stampPillar(ctx, placement, localSide + armOffset, localForward, width * 0.82, armY, armY + armHeight, block);
+}
+
+function stampCactusStand(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 2);
+  const cactus = getBlockNumericId('cactus');
+  const count = 3 + (placement.variant % 3);
+  const spread = Math.max(1.7, placement.radius * 0.68);
+  const random = mulberry32(placement.variant ^ 0xcaC715);
+
+  stampDisc(ctx, placement.position, Math.min(placement.radius * 0.75, 2.6), row, ctx.palette.terrainTop);
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.75, spread * 0.75, random());
+    const form = Math.floor(random() * 3);
+
+    if (form === 0) {
+      const height = 7 + Math.floor(random() * 7);
+      const width = lerp(0.58, 0.88, random());
+      stampPillar(ctx, placement, side, forward, width, baseRow, row + height, cactus);
+      stampCactusArm(ctx, placement, side, forward, width, random() > 0.5 ? 0.9 : -0.9, row + Math.floor(height * 0.52), 2 + Math.floor(random() * 3), cactus);
+      if (random() > 0.48) {
+        stampCactusArm(ctx, placement, side, forward, width * 0.9, random() > 0.5 ? 1.1 : -1.1, row + Math.floor(height * 0.68), 1 + Math.floor(random() * 2), cactus);
+      }
+      continue;
+    }
+
+    if (form === 1) {
+      const width = lerp(1.0, 1.4, random());
+      const height = 3 + Math.floor(random() * 3);
+      stampPillar(ctx, placement, side, forward, width, baseRow, row + height, cactus);
+      stampDiscStackAtLocal(ctx, placement, side, forward, width * 0.55, row + height + 1, row + height + 1, cactus);
+      continue;
+    }
+
+    const stems = 2 + Math.floor(random() * 3);
+    for (let stem = 0; stem < stems; stem++) {
+      const stemSide = side + lerp(-0.7, 0.7, random());
+      const stemForward = forward + lerp(-0.55, 0.55, random());
+      const height = 4 + Math.floor(random() * 5);
+      const width = lerp(0.42, 0.62, random());
+      stampPillar(ctx, placement, stemSide, stemForward, width, baseRow, row + height, cactus);
+    }
+  }
+}
+
+function stampBambooThicket(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 3);
+  const bamboo = getBlockNumericId('bamboo');
+  const count = 6 + (placement.variant % 5);
+  const spread = Math.max(1.8, placement.radius * 0.78);
+  const random = mulberry32(placement.variant ^ 0xbab00);
+
+  stampDisc(ctx, placement.position, Math.min(placement.radius + 0.45, 3.2), row, ctx.palette.floor);
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread, spread, random());
+    const width = lerp(0.42, 0.62, random());
+    const height = 7 + Math.floor(random() * 7);
+    stampPillar(ctx, placement, side, forward, width, baseRow, row + height, bamboo);
+  }
+}
+
+function stampBasaltColumns(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 3);
+  const obsidian = getBlockNumericId('obsidian');
+  const count = 4 + (placement.variant % 4);
+  const spread = Math.max(1.9, placement.radius * 0.78);
+  const random = mulberry32(placement.variant ^ 0xba5a17);
+
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.8, spread * 0.8, random());
+    const width = lerp(0.9, 1.65, random());
+    const height = 5 + Math.floor(random() * 9);
+    stampPillar(ctx, placement, side, forward, width, baseRow, row + height, index % 3 === 0 ? ctx.palette.stone : obsidian);
+  }
+}
+
+function stampIceOutcrop(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const baseRow = Math.max(0, row - 3);
+  const ice = getBlockNumericId('ice');
+  const snow = getBlockNumericId('snow');
+  const count = 4 + (placement.variant % 3);
+  const spread = Math.max(1.8, placement.radius * 0.72);
+  const random = mulberry32(placement.variant ^ 0x1ce1ce);
+
+  stampDisc(ctx, placement.position, Math.min(placement.radius * 0.85, 2.8), row, snow);
+  for (let index = 0; index < count; index++) {
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.8, spread * 0.8, random());
+    const width = lerp(0.75, 1.35, random());
+    const height = 4 + Math.floor(random() * 8);
+    stampPillar(ctx, placement, side, forward, width, baseRow, row + height, index % 2 === 0 ? ice : ctx.palette.glass);
+  }
+}
+
+function stampDesertOutpost(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const scale = getStructureScale(placement, 0.92, 1.08);
+  const width = 5.7 * scale;
+  const depth = 4.4 * scale;
+  const height = 7 + (placement.variant % 3);
+
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, depth, row, row + 1, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, 0, -depth / 2 + 0.4 * scale, width, 0.8 * scale, row + 2, row + height, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, -width / 2 + 0.4 * scale, 0, 0.8 * scale, depth, row + 2, row + height - 2, ctx.palette.wall);
+  stampOrientedBoxAtLocal(ctx, placement, width / 2 - 0.4 * scale, 0, 0.8 * scale, depth * 0.64, row + 2, row + height - 1, ctx.palette.wall);
+  stampPillar(ctx, placement, -width * 0.18, 0.1 * scale, 0.65 * scale, row + 2, row + height + 1, ctx.palette.wood);
+  stampPillar(ctx, placement, width * 0.18, 0.1 * scale, 0.65 * scale, row + 2, row + height + 1, ctx.palette.wood);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0.25 * scale, width * 0.62, depth * 0.5, row + height + 1, row + height + 1, ctx.palette.wood);
+}
+
+function stampShrineGate(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const scale = getStructureScale(placement, 0.95, 1.16);
+  const width = 5.6 * scale;
+  const height = 10 + (placement.variant % 4);
+
+  stampPillar(ctx, placement, -width / 2 + 0.65 * scale, 0, 0.95 * scale, row, row + height, ctx.palette.wood);
+  stampPillar(ctx, placement, width / 2 - 0.65 * scale, 0, 0.95 * scale, row, row + height, ctx.palette.wood);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, 0.9 * scale, row + height + 1, row + height + 2, ctx.palette.trim);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width + 1.1 * scale, 0.7 * scale, row + height + 3, row + height + 3, ctx.palette.wood);
+  stampPillar(ctx, placement, -width * 0.35, -1.35 * scale, 0.75 * scale, row, row + 4, ctx.palette.foliage);
+  stampPillar(ctx, placement, width * 0.35, 1.35 * scale, 0.75 * scale, row, row + 4, ctx.palette.foliage);
+}
+
+function stampGoldCache(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const row = placement.surfaceRow;
+  const goldOre = getBlockNumericId('gold_ore');
+  const goldPanel = getBlockNumericId('gold_panel');
+  const scale = getStructureScale(placement, 0.92, 1.12);
+  const width = 4.8 * scale;
+  const depth = 3.9 * scale;
+  const height = 5 + (placement.variant % 3);
+
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width, depth, row, row + 1, goldPanel);
+  stampOrientedBoxAtLocal(ctx, placement, -width * 0.24, 0, width * 0.34, depth * 0.72, row + 2, row + height, goldOre);
+  stampOrientedBoxAtLocal(ctx, placement, width * 0.24, 0, width * 0.34, depth * 0.72, row + 2, row + height - 1, ctx.palette.floor);
+  stampOrientedBoxAtLocal(ctx, placement, 0, 0, width * 0.78, depth * 0.42, row + height + 1, row + height + 1, ctx.palette.glass);
 }
 
 function stampCrateStack(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  const count = 3 + (placement.variant % 3);
+  const count = 5 + (placement.variant % 4);
+  const spread = Math.max(1.8, placement.radius * 0.7);
   const random = mulberry32(placement.variant ^ 0x43524154);
   for (let index = 0; index < count; index++) {
-    const side = lerp(-1.6, 1.6, random());
-    const forward = lerp(-1.3, 1.3, random());
-    const height = 1 + Math.floor(random() * 3);
-    stampOrientedBoxAtLocal(ctx, placement, side, forward, 1.15, 1.15, row, row + height, index % 2 === 0 ? ctx.palette.wood : ctx.palette.floor);
+    const side = lerp(-spread, spread, random());
+    const forward = lerp(-spread * 0.8, spread * 0.8, random());
+    const width = lerp(1.2, 1.65, random());
+    const height = 2 + Math.floor(random() * 4);
+    stampOrientedBoxAtLocal(ctx, placement, side, forward, width, width, row, row + height, index % 2 === 0 ? ctx.palette.wood : ctx.palette.floor);
   }
 }
 
 function stampGardenMarker(ctx: StructureStampContext, placement: PlacedStructure): void {
   const row = placement.surfaceRow;
-  stampDisc(ctx, placement.position, 1.6, row, ctx.palette.terrainTop);
-  stampPillar(ctx, placement, 0, 0, 0.7, row + 1, row + 5, ctx.palette.wood);
-  stampPillar(ctx, placement, 0, 0, 2.1, row + 5, row + 6, ctx.palette.foliage);
-  stampPillar(ctx, placement, -1.5, 0.7, 0.7, row, row + 3, ctx.palette.foliage);
-  stampPillar(ctx, placement, 1.3, -0.8, 0.7, row, row + 3, ctx.palette.foliage);
+  const scale = getStructureScale(placement, 1.05, 1.3);
+  stampDisc(ctx, placement.position, 1.95 * scale, row, ctx.palette.terrainTop);
+  stampPillar(ctx, placement, 0, 0, 0.85 * scale, row + 1, row + 7, ctx.palette.wood);
+  stampPillar(ctx, placement, 0, 0, 2.35 * scale, row + 7, row + 9, ctx.palette.foliage);
+  stampPillar(ctx, placement, -1.8 * scale, 0.85 * scale, 0.85 * scale, row, row + 4, ctx.palette.foliage);
+  stampPillar(ctx, placement, 1.55 * scale, -0.95 * scale, 0.85 * scale, row, row + 4, ctx.palette.foliage);
+}
+
+function stampStructureFoundation(ctx: StructureStampContext, placement: PlacedStructure): void {
+  const foundationRadius = Math.max(1.8, Math.min(placement.padRadius * 0.72, placement.radius + 0.8));
+  stampDisc(ctx, placement.position, foundationRadius, placement.surfaceRow, ctx.palette.floor);
 }
 
 function stampStructure(ctx: StructureStampContext, placement: PlacedStructure): void {
+  stampStructureFoundation(ctx, placement);
+
   switch (placement.kind) {
     case 'base_bunker':
       stampBaseBunker(ctx, placement);
@@ -918,11 +1739,56 @@ function stampStructure(ctx: StructureStampContext, placement: PlacedStructure):
     case 'cover_cluster':
       stampCoverCluster(ctx, placement);
       break;
+    case 'watch_post':
+      stampWatchPost(ctx, placement);
+      break;
+    case 'terrace_platform':
+      stampTerracePlatform(ctx, placement);
+      break;
+    case 'broken_arch':
+      stampBrokenArch(ctx, placement);
+      break;
+    case 'monument_ring':
+      stampMonumentRing(ctx, placement);
+      break;
     case 'boulder_patch':
       stampBoulderPatch(ctx, placement);
       break;
     case 'crystal_spire':
       stampCrystalSpire(ctx, placement);
+      break;
+    case 'tree_cluster':
+      stampTreeCluster(ctx, placement);
+      break;
+    case 'pine_cluster':
+      stampPineCluster(ctx, placement);
+      break;
+    case 'blossom_tree_cluster':
+      stampBlossomTreeCluster(ctx, placement);
+      break;
+    case 'crystal_tree_cluster':
+      stampCrystalTreeCluster(ctx, placement);
+      break;
+    case 'cactus_stand':
+      stampCactusStand(ctx, placement);
+      break;
+    case 'bamboo_thicket':
+      stampBambooThicket(ctx, placement);
+      break;
+    case 'basalt_columns':
+      stampBasaltColumns(ctx, placement);
+      break;
+    case 'ice_outcrop':
+      stampIceOutcrop(ctx, placement);
+      break;
+    case 'desert_outpost':
+      stampDesertOutpost(ctx, placement);
+      break;
+    case 'shrine_gate':
+      stampShrineGate(ctx, placement);
+      break;
+    case 'gold_cache':
+      stampGoldCache(ctx, placement);
       break;
     case 'crate_stack':
       stampCrateStack(ctx, placement);
@@ -948,17 +1814,33 @@ function fillTerrain(ctx: StructureStampContext, layout: ProceduralCTFLayout): v
       const worldX = gridToWorldCenter(x, origin.x, voxelSize.x);
       const height = ctx.heightMap[columnIndex(x, z, size)];
       const inside = isInsideBoundaryPolygon(worldX, worldZ, boundary);
-      const wallBand = distanceToBoundary(worldX, worldZ, boundary) <= BOUNDARY_WALL_THICKNESS;
+      const boundaryDistance = distanceToBoundary(worldX, worldZ, boundary);
+      const wallThickness = getBoundaryWallThickness(ctx.seed, worldX, worldZ);
+      const wallBand = boundaryDistance <= wallThickness;
+      const wallTopRow = getBoundaryWallTopRow(ctx.seed, worldX, worldZ);
 
       for (let y = 0; y < height; y++) {
         setBlock(ctx, x, y, z, getTerrainBlockForDepth(ctx.palette, height - 1 - y));
       }
 
       if (wallBand || !inside) {
-        const rib = (Math.floor(worldX * 1.3) + Math.floor(worldZ * 1.3)) % 7 === 0;
-        const wallBlock = rib ? ctx.palette.trim : ctx.palette.wall;
-        for (let y = height; y <= Math.min(size.y - 1, BOUNDARY_WALL_ROWS); y++) {
-          setBlock(ctx, x, y, z, wallBlock);
+        for (let y = height; y <= Math.min(size.y - 1, wallTopRow); y++) {
+          setBlock(ctx, x, y, z, ctx.palette.wall);
+        }
+      } else {
+        const gradeTopRow = getBoundaryInnerGradeTopRow(
+          ctx.seed,
+          worldX,
+          worldZ,
+          boundaryDistance,
+          wallThickness,
+          wallTopRow,
+          height
+        );
+        if (gradeTopRow !== null) {
+          for (let y = height; y <= Math.min(size.y - 1, gradeTopRow); y++) {
+            setBlock(ctx, x, y, z, ctx.palette.wall);
+          }
         }
       }
     }
@@ -1332,9 +2214,9 @@ function generateProceduralVoxelMapInternal(
 
   const heightMap = createHeightMap(normalizedSeed, layout);
   flattenGameplayPads(heightMap, layout);
-  const placements = createPlacedStructures(normalizedSeed, construction, layout, heightMap);
+  const placements = createPlacedStructures(normalizedSeed, construction, layout, theme, heightMap);
   flattenStructurePads(heightMap, layout, placements);
-  limitHeightSteps(heightMap, layout, MAX_TERRAIN_STEP_ROWS, 5);
+  limitHeightSteps(heightMap, layout, MAX_TERRAIN_STEP_ROWS, FINAL_TERRAIN_SMOOTHING_PASSES);
   flattenGameplayPads(heightMap, layout);
   flattenStructurePads(heightMap, layout, placements);
   updatePlacementSurfaceRows(heightMap, layout, placements);
@@ -1342,6 +2224,8 @@ function generateProceduralVoxelMapInternal(
 
   const blocks = new Uint8Array(layout.size.x * layout.size.y * layout.size.z);
   const stampContext: StructureStampContext = {
+    seed: normalizedSeed,
+    themeId: theme.id,
     blocks,
     size: layout.size,
     origin: layout.origin,
@@ -1354,6 +2238,7 @@ function generateProceduralVoxelMapInternal(
   for (const placement of placements) stampStructure(stampContext, placement);
   clearObjectiveHeadroom(stampContext, layout);
   paintObjectivePads(stampContext, layout);
+  anchorBoundaryFloatingDetails(stampContext, layout);
   markStage('objects');
 
   const collisionLookup = buildCollisionLookup();

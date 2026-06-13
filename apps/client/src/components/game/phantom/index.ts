@@ -3,7 +3,6 @@ import { BLINK_EFFECT_DURATION } from './materials';
 import { getFrameClock } from '../../../utils/frameClock';
 
 // Core phantom effects
-export { BlinkTeleportEffect } from './blinkTeleport';
 export { PhantomVeil3DEffect } from './phantomVeil';
 export { BLINK_EFFECT_DURATION } from './materials';
 

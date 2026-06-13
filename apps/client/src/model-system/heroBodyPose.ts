@@ -23,6 +23,10 @@ import type {
   HeroWalkDirection,
 } from './heroBodyTypes';
 
+const PHANTOM_SHIELD_BODY_POSE_ATTACK_MS = 120;
+const PHANTOM_SHIELD_BODY_POSE_HOLD_MS = 340;
+const PHANTOM_SHIELD_BODY_POSE_FADE_MS = 740;
+
 export function getNormalizedWalkDirection(direction: HeroWalkDirection): HeroWalkDirection {
   const length = Math.sqrt(direction.forward * direction.forward + direction.right * direction.right);
   if (length < 0.001) {
@@ -48,6 +52,19 @@ export function smoothPulse(phase: number, start: number, peak: number, end: num
   if (phase <= start || phase >= end) return 0;
   if (phase <= peak) return easeInOutSine((phase - start) / (peak - start));
   return 1 - easeInOutSine((phase - peak) / (end - peak));
+}
+
+export function getPhantomShieldBodyPoseAmount(startedAtMs: number | null | undefined, nowMs: number): number {
+  if (!startedAtMs || !Number.isFinite(startedAtMs)) return 0;
+
+  const elapsedMs = Math.max(0, nowMs - startedAtMs);
+  if (elapsedMs > PHANTOM_SHIELD_BODY_POSE_FADE_MS) return 0;
+
+  const attack = easeInOutSine(elapsedMs / PHANTOM_SHIELD_BODY_POSE_ATTACK_MS);
+  const fade = 1 - easeInOutSine((elapsedMs - PHANTOM_SHIELD_BODY_POSE_HOLD_MS) / (
+    PHANTOM_SHIELD_BODY_POSE_FADE_MS - PHANTOM_SHIELD_BODY_POSE_HOLD_MS
+  ));
+  return clamp01(attack * fade);
 }
 
 export function getJumpPose(time: number): HeroJumpPose {
@@ -623,6 +640,55 @@ function applyPhantomAttackPose(bones: HeroBoneRefs, progress: number, amount: n
     bones.rightForearm.position.z += -0.048 * aim;
     bones.rightForearm.rotation.x -= (0.48 + poseAmount * 0.13) * aim;
     bones.rightForearm.rotation.y += 0.035 * aim;
+  }
+}
+
+export function applyPhantomShieldBodyPose(bones: HeroBoneRefs, amount: number): void {
+  if (amount <= 0.001) return;
+
+  const open = easeInOutSine(amount);
+
+  if (bones.torso) {
+    bones.torso.position.z += -0.026 * open;
+    bones.torso.rotation.x += -0.04 * open;
+  }
+
+  if (bones.leftArm) {
+    bones.leftArm.position.x -= 0.026 * open;
+    bones.leftArm.position.y -= 0.014 * open;
+    bones.leftArm.position.z -= 0.072 * open;
+    bones.leftArm.rotation.x += 0.38 * open;
+    bones.leftArm.rotation.y -= 0.1 * open;
+    bones.leftArm.rotation.z += 0.24 * open;
+  }
+
+  if (bones.rightArm) {
+    bones.rightArm.position.x += 0.026 * open;
+    bones.rightArm.position.y -= 0.014 * open;
+    bones.rightArm.position.z -= 0.072 * open;
+    bones.rightArm.rotation.x += 0.38 * open;
+    bones.rightArm.rotation.y += 0.1 * open;
+    bones.rightArm.rotation.z -= 0.24 * open;
+  }
+
+  if (bones.leftForearm) {
+    bones.leftForearm.position.z -= 0.064 * open;
+    bones.leftForearm.rotation.x -= 0.58 * open;
+    bones.leftForearm.rotation.y -= 0.13 * open;
+    bones.leftForearm.rotation.z += 0.055 * open;
+  }
+
+  if (bones.rightForearm) {
+    bones.rightForearm.position.z -= 0.064 * open;
+    bones.rightForearm.rotation.x -= 0.58 * open;
+    bones.rightForearm.rotation.y += 0.13 * open;
+    bones.rightForearm.rotation.z -= 0.055 * open;
+  }
+
+  if (bones.aura) {
+    const pulse = 1 + 0.08 * open;
+    bones.aura.scale.x *= pulse;
+    bones.aura.scale.z *= pulse;
   }
 }
 

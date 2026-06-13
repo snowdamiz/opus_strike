@@ -10,12 +10,19 @@ import {
 } from '../../store/visualStore';
 import { getFrameClock } from '../../utils/frameClock';
 import { useShallow } from 'zustand/shallow';
-import { HERO_DEFINITIONS, PLAYER_CROUCH_HEIGHT, PLAYER_HEIGHT } from '@voxel-strike/shared';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 import type { RemotePlayerQualityConfig } from './visualQuality';
+import { RemoteHeroBatchRenderer } from './RemoteHeroBatchRenderer';
+import {
+  getPlayerHeight,
+  getVisiblePlayerHeight,
+  hasLoweredPlayerPosture,
+  NAMEPLATE_WORLD_OFFSET_Y,
+  setPlayerRenderOrigin,
+} from './playerWorldAnchors';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
@@ -51,6 +58,7 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
 
   return (
     <group>
+      <RemoteHeroBatchRenderer players={otherPlayers} />
       {otherPlayers.map((player) => (
         <OtherPlayer
           key={player.id}
@@ -67,8 +75,6 @@ interface OtherPlayerProps {
   config: RemotePlayerQualityConfig;
 }
 
-const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
-const CROUCH_HEIGHT_RATIO = PLAYER_CROUCH_HEIGHT / PLAYER_HEIGHT;
 const NETWORK_MOVING_SPEED = 0.45;
 const VISUAL_MOVING_SPEED = 0.18;
 const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
@@ -80,13 +86,6 @@ const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 const PHANTOM_VEIL_BODY_OPACITY = 0.12;
 const PHANTOM_VEIL_OPACITY_DAMP_RATE = 12;
-
-function setPlayerRenderOrigin(
-  target: THREE.Vector3,
-  position: { x: number; y: number; z: number }
-): THREE.Vector3 {
-  return target.set(position.x, position.y - PLAYER_CENTER_TO_FEET, position.z);
-}
 
 function getHorizontalSpeed(velocity: { x: number; z: number }): number {
   return Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
@@ -164,12 +163,9 @@ function hasActivePhantomVeil(player: Player): boolean {
 const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
-  const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId].stats : null;
-  const playerHeight = heroStats?.size.height ?? 1.8;
-  const hasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
-  const visibleHeight = hasLoweredPosture
-    ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
-    : playerHeight;
+  const playerHeight = getPlayerHeight(player.heroId);
+  const hasLoweredPosture = hasLoweredPlayerPosture(player.movement);
+  const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
   const postureScaleY = visibleHeight / playerHeight;
   const initialIsMoving = isPlayerMovingForAnimation(player);
   const initialMovementPose = getPlayerMovementPose(player, hasLoweredPosture, initialIsMoving);
@@ -231,21 +227,6 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
 
     // Read from visualStore non-reactively (no re-renders)
     const visualState = visualStore.getState();
-    const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
-    if (remoteAttackState) {
-      const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
-      isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
-      attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
-      attackSideRef.current = remoteAttackState.side;
-
-      if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
-        visualState.remotePlayerAttackStates.delete(player.id);
-      }
-    } else {
-      isAttackingRef.current = false;
-      attackStartedAtMsRef.current = null;
-    }
-
     const sampledTransform = sampledTransformRef.current;
     const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform, frameNowMs);
     let snappedToSample = false;
@@ -305,6 +286,24 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       groupRef.current.rotation.y = player.lookYaw;
     }
 
+    previousFramePosition.current.copy(currentPosition.current);
+    if (!frameIsVeiled) return;
+
+    const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
+    if (remoteAttackState) {
+      const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
+      isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
+      attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
+      attackSideRef.current = remoteAttackState.side;
+
+      if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
+        visualState.remotePlayerAttackStates.delete(player.id);
+      }
+    } else {
+      isAttackingRef.current = false;
+      attackStartedAtMsRef.current = null;
+    }
+
     if (visualHorizontalSpeed > VISUAL_MOVING_SPEED && stepDelta > 0) {
       setWalkDirectionFromComponents(
         walkDirectionRef.current,
@@ -320,11 +319,8 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       );
     }
 
-    previousFramePosition.current.copy(currentPosition.current);
-    const frameHasLoweredPosture = player.movement.isCrouching || player.movement.isSliding;
-    const frameVisibleHeight = frameHasLoweredPosture
-      ? Math.max(PLAYER_CROUCH_HEIGHT, playerHeight * CROUCH_HEIGHT_RATIO)
-      : playerHeight;
+    const frameHasLoweredPosture = hasLoweredPlayerPosture(player.movement);
+    const frameVisibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
     const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
     postureScaleYRef.current = frameVisibleHeight / playerHeight;
     isCrouchingRef.current = player.movement.isCrouching;
@@ -335,33 +331,33 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
 
   return (
     <group ref={groupRef}>
-      {/* Player body */}
-      <HeroVoxelBody
-        socketOwnerId={player.id}
-        heroId={player.heroId}
-        team={player.team}
-        height={playerHeight}
-        postureScaleY={postureScaleY}
-        postureScaleYRef={postureScaleYRef}
-        isBot={player.isBot}
-        isMoving={initialIsMoving}
-        isMovingRef={isMovingRef}
-        isCrouching={player.movement.isCrouching}
-        isCrouchingRef={isCrouchingRef}
-        isSliding={player.movement.isSliding}
-        isSlidingRef={isSlidingRef}
-        isAttackingRef={isAttackingRef}
-        attackStartedAtMsRef={attackStartedAtMsRef}
-        attackSideRef={attackSideRef}
-        movementPose={initialMovementPose}
-        movementPoseRef={movementPoseRef}
-        walkDirectionRef={walkDirectionRef}
-        hasFlag={player.hasFlag}
-        castShadow={!isVeiled}
-        bodyOpacity={isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1}
-        bodyOpacityRef={bodyOpacityRef}
-        showOutline={!isVeiled}
-      />
+      {isVeiled && (
+        <HeroVoxelBody
+          heroId={player.heroId}
+          team={player.team}
+          height={playerHeight}
+          postureScaleY={postureScaleY}
+          postureScaleYRef={postureScaleYRef}
+          isBot={player.isBot}
+          isMoving={initialIsMoving}
+          isMovingRef={isMovingRef}
+          isCrouching={player.movement.isCrouching}
+          isCrouchingRef={isCrouchingRef}
+          isSliding={player.movement.isSliding}
+          isSlidingRef={isSlidingRef}
+          isAttackingRef={isAttackingRef}
+          attackStartedAtMsRef={attackStartedAtMsRef}
+          attackSideRef={attackSideRef}
+          movementPose={initialMovementPose}
+          movementPoseRef={movementPoseRef}
+          walkDirectionRef={walkDirectionRef}
+          hasFlag={player.hasFlag}
+          castShadow={false}
+          bodyOpacity={PHANTOM_VEIL_BODY_OPACITY}
+          bodyOpacityRef={bodyOpacityRef}
+          showOutline={false}
+        />
+      )}
 
       {/* Nameplate */}
       {!isVeiled && config.showNameplates && (
@@ -534,7 +530,7 @@ const Nameplate = memo(function Nameplate({ heroId, name, team, health, maxHealt
   const width = Math.max(1.75, Math.min(2.7, 1.55 + name.length * 0.045));
 
   return (
-    <sprite position={[0, height + 0.58, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
+    <sprite position={[0, height + NAMEPLATE_WORLD_OFFSET_Y, 0]} scale={[width, 0.68, 1]} renderOrder={30}>
       <spriteMaterial map={texture} transparent depthTest depthWrite={false} toneMapped={false} />
     </sprite>
   );

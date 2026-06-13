@@ -15,6 +15,7 @@ import { useRef, useEffect, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { useCombatFeedbackStore } from '../../store/combatFeedbackStore';
 import {
   consumeLocalPlayerImpulses,
   getDeathVisualForPlayer,
@@ -1362,18 +1363,36 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                     lockHeroActions(heroId, CHRONOS_LIFELINE_POSE_DURATION_MS, now);
                   }
                   const store = useGameStore.getState();
+                  const combatFeedback = useCombatFeedbackStore.getState();
                   for (const target of targets) {
                     if (target.isLocal) {
+                      const healedAmount = Math.max(0, target.newHealth - (store.localPlayer?.health ?? target.newHealth));
                       store.updateLocalPlayer({ health: target.newHealth });
-                      continue;
-                    }
-
-                    const player = store.players.get(target.id);
-                    if (player) {
-                      store.updatePlayer(target.id, {
-                        ...player,
-                        health: target.newHealth,
-                      });
+                      if (healedAmount > 0) {
+                        combatFeedback.addCombatTextEvent({
+                          kind: 'heal',
+                          amount: healedAmount,
+                          targetId: target.id,
+                          position: target.position,
+                        });
+                      }
+                    } else {
+                      const player = store.players.get(target.id);
+                      const healedAmount = Math.max(0, target.newHealth - (player?.health ?? target.newHealth));
+                      if (player) {
+                        store.updatePlayer(target.id, {
+                          ...player,
+                          health: target.newHealth,
+                        });
+                      }
+                      if (healedAmount > 0) {
+                        combatFeedback.addCombatTextEvent({
+                          kind: 'heal',
+                          amount: healedAmount,
+                          targetId: target.id,
+                          position: target.position,
+                        });
+                      }
                     }
                   }
                   if (chronosLifelineCommitMode === 'self') {

@@ -7,6 +7,10 @@ import {
   initializeEffectResources,
 } from './effectResources';
 import * as BlazeMaterials from './blaze/materials';
+import {
+  appendBlazeAirstrikeGpuPrewarmObjects,
+  prewarmBlazeAirstrikeResources,
+} from './blaze/airstrike';
 import { prewarmRocketResources } from './blaze/rockets';
 import {
   appendDireBallGpuPrewarmObjects,
@@ -25,6 +29,11 @@ import {
   appendChronosPulseGpuPrewarmObjects,
   prewarmChronosPulseResources,
 } from './chronos/verdantPulse';
+import {
+  appendChronosTimebreakGpuPrewarmObjects,
+  prewarmChronosTimebreakResources,
+} from './chronos/timebreak';
+import { appendObservedCastGpuPrewarmObjects } from './ObservedAbilityCastEffects';
 import {
   HEAVY_HOOK_MAIN_ROPE_MATERIAL,
   HOOK_MAIN_ROPE_MATERIAL,
@@ -50,6 +59,7 @@ export async function prewarmBlazeEffects(): Promise<void> {
   initializeEffectResources();
   BlazeMaterials.prewarmBlazeMaterials();
   prewarmRocketResources();
+  prewarmBlazeAirstrikeResources();
 }
 
 export async function prewarmHookshotEffects(): Promise<void> {
@@ -60,6 +70,7 @@ export async function prewarmHookshotEffects(): Promise<void> {
 export async function prewarmChronosEffects(): Promise<void> {
   initializeEffectResources();
   prewarmChronosPulseResources();
+  prewarmChronosTimebreakResources();
 }
 
 export async function prewarmGameplayEffectResources(): Promise<void> {
@@ -270,6 +281,7 @@ function addBlazeGpuPrewarmObjects(scene: THREE.Scene): void {
   ];
 
   addMaterialSwatches(scene, materials, -1.35, -5.4);
+  appendBlazeAirstrikeGpuPrewarmObjects(scene);
   addInstancedMesh(scene, SHARED_GEOMETRIES.sphere8, BlazeMaterials.getFireballCoreMaterial(), [-0.7, -0.65, -4.2], 0.22, 'gpu-prewarm-blaze-fireball-core');
   addInstancedMesh(scene, SHARED_GEOMETRIES.sphere12, BlazeMaterials.getFireballOuterMaterial(), [-0.35, -0.65, -4.2], 0.28, 'gpu-prewarm-blaze-fireball-outer');
   addInstancedMesh(scene, SHARED_GEOMETRIES.cylinder8, BlazeMaterials.getFireballTrailOuterMaterial(), [0, -0.65, -4.2], 0.26, 'gpu-prewarm-blaze-fireball-trail');
@@ -299,6 +311,7 @@ function addHookshotGpuPrewarmObjects(scene: THREE.Scene): void {
 
 function addChronosGpuPrewarmObjects(scene: THREE.Scene): void {
   appendChronosPulseGpuPrewarmObjects(scene);
+  appendChronosTimebreakGpuPrewarmObjects(scene);
   addMaterialSwatches(scene, createRepresentativeChronosMaterials(), 0.9, -5.6);
 }
 
@@ -324,6 +337,7 @@ function addGlobalEffectGpuPrewarmObjects(scene: THREE.Scene): void {
 
   addInstancedMesh(scene, SHARED_GEOMETRIES.box, explosionMaterial, [0.85, 0.25, -4.6], 0.16, 'gpu-prewarm-global-explosion');
   addMesh(scene, SHARED_GEOMETRIES.cylinder8, lifelineMaterial, [1.2, 0.25, -4.6], [0.12, 0.55, 0.12]);
+  appendObservedCastGpuPrewarmObjects(scene);
 
   const pointsGeometry = new THREE.BufferGeometry();
   pointsGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([

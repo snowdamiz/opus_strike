@@ -3,6 +3,8 @@ const CACHE_VERSION = `${CACHE_PREFIX}-v4`;
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CACHE_PREFIXES_TO_CLEAN = ['slop-heroes-', 'voxel-strike-'];
+const LOCAL_DEVELOPMENT_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const IS_LOCAL_DEVELOPMENT = LOCAL_DEVELOPMENT_HOSTS.has(self.location.hostname);
 const APP_SHELL_ASSETS = [
   '/',
   '/index.html',
@@ -27,6 +29,11 @@ const STATIC_DESTINATIONS = new Set([
 const STATIC_FILE_PATTERN = /\.(?:avif|css|gif|ico|jpeg|jpg|js|json|mjs|mp3|ogg|png|svg|wasm|wav|webmanifest|webp|woff2?)$/i;
 
 self.addEventListener('install', (event) => {
+  if (IS_LOCAL_DEVELOPMENT) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
+
   event.waitUntil(
     caches
       .open(APP_SHELL_CACHE)
@@ -62,6 +69,11 @@ self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(request.url);
 
   if (requestUrl.origin !== self.location.origin || requestUrl.pathname === '/sw.js') {
+    return;
+  }
+
+  if (IS_LOCAL_DEVELOPMENT) {
+    event.respondWith(fetch(request));
     return;
   }
 

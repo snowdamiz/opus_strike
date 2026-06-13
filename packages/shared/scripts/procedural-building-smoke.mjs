@@ -7,7 +7,20 @@ import { generateProceduralVoxelMapWithDiagnostics } from '../dist/maps/procedur
 const DEFAULT_SEQUENTIAL_SEEDS = 20;
 const DEFAULT_RANDOM_SEEDS = 8;
 const DEFAULT_MAX_COLLIDERS = 48_000;
+const MIN_AUTHORED_OBJECTS = 24;
+const MIN_OBJECT_VARIANTS = 7;
 const KNOWN_REGRESSION_SEEDS = [0, 1, 2, 42, 1337, 0x57564f58, 0xdecafbad, 0xc0ffee];
+const BIOME_SIGNATURE_OBJECTS = {
+  verdant: ['tree_cluster', 'pine_cluster', 'garden_marker'],
+  basalt: ['basalt_columns', 'bamboo_thicket'],
+  desert: ['cactus_stand', 'desert_outpost'],
+  frost: ['pine_cluster', 'ice_outcrop'],
+  crystal: ['crystal_tree_cluster', 'crystal_spire', 'basalt_columns'],
+  volcanic: ['basalt_columns', 'broken_arch', 'crystal_spire'],
+  sakura: ['blossom_tree_cluster', 'shrine_gate', 'bamboo_thicket'],
+  golden: ['gold_cache', 'monument_ring'],
+};
+const TREE_OBJECTS = ['tree_cluster', 'pine_cluster', 'blossom_tree_cluster', 'crystal_tree_cluster', 'garden_marker'];
 
 function parseArgs(argv) {
   const options = {
@@ -209,6 +222,13 @@ function auditSeed(seed, options) {
   const moduleInstances = manifest.construction?.moduleInstances ?? [];
   const acceptedModules = moduleInstances.filter((instance) => instance.validation?.status === 'accepted');
   const objectRoles = new Set(moduleInstances.flatMap((instance) => instance.roleTags ?? []));
+  const objectVariantCount = Object.keys(diagnostics.objectSummary ?? {}).length;
+  const biomeSignatureObjects = BIOME_SIGNATURE_OBJECTS[manifest.themeId] ?? [];
+  const hasBiomeSignatureObject = biomeSignatureObjects.some((objectKind) => (diagnostics.objectSummary?.[objectKind] ?? 0) > 0);
+  const desertTreeCount =
+    manifest.themeId === 'desert'
+      ? TREE_OBJECTS.reduce((sum, objectKind) => sum + (diagnostics.objectSummary?.[objectKind] ?? 0), 0)
+      : 0;
   const floating = countFloatingSolidComponents(manifest);
   const heightRows = summarizeHeightRows(manifest);
 
@@ -218,7 +238,10 @@ function auditSeed(seed, options) {
   assertCondition(manifest.stats.colliderCount <= options.maxColliders, failures, `seed ${seed}: collider count ${manifest.stats.colliderCount} > ${options.maxColliders}`);
   assertCondition(manifest.spawnPoints.red.length >= 4 && manifest.spawnPoints.blue.length >= 4, failures, `seed ${seed}: missing team spawn points`);
   assertCondition(Boolean(manifest.flagZones.red && manifest.flagZones.blue), failures, `seed ${seed}: missing flag zones`);
-  assertCondition(moduleInstances.length >= 18, failures, `seed ${seed}: expected authored objects, got ${moduleInstances.length}`);
+  assertCondition(moduleInstances.length >= MIN_AUTHORED_OBJECTS, failures, `seed ${seed}: expected denser authored objects, got ${moduleInstances.length}`);
+  assertCondition(objectVariantCount >= MIN_OBJECT_VARIANTS, failures, `seed ${seed}: expected more object variety, got ${objectVariantCount} variants`);
+  assertCondition(hasBiomeSignatureObject, failures, `seed ${seed}: missing biome-specific collision object for ${manifest.themeId}`);
+  assertCondition(desertTreeCount === 0, failures, `seed ${seed}: desert map generated ${desertTreeCount} tree objects instead of cactus/desert props`);
   assertCondition(acceptedModules.length === moduleInstances.length, failures, `seed ${seed}: rejected generated module instances`);
   assertCondition(objectRoles.has('base_shell'), failures, `seed ${seed}: missing base structure`);
   assertCondition(objectRoles.has('spawn_shelter'), failures, `seed ${seed}: missing spawn shelter`);
