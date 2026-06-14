@@ -225,20 +225,21 @@ function refillBlinkSlot(slot: BlinkRenderSlot, effect: BlinkEffectData): void {
   const trailPositions = slot.trailGeometry.attributes.position as THREE.BufferAttribute;
   const trailSizes = slot.trailGeometry.attributes.size as THREE.BufferAttribute;
   const trailRandoms = slot.trailGeometry.attributes.random as THREE.BufferAttribute;
+  const trailPositionArray = trailPositions.array as Float32Array;
+  const trailSizeArray = trailSizes.array as Float32Array;
+  const trailRandomArray = trailRandoms.array as Float32Array;
   const dx = effect.endPosition.x - effect.startPosition.x;
   const dy = effect.endPosition.y - effect.startPosition.y;
   const dz = effect.endPosition.z - effect.startPosition.z;
 
   for (let i = 0; i < BLINK_TRAIL_PARTICLE_COUNT; i++) {
     const t = i / BLINK_TRAIL_PARTICLE_COUNT;
-    trailPositions.setXYZ(
-      i,
-      effect.startPosition.x + dx * t + (Math.random() - 0.5) * 0.5,
-      effect.startPosition.y + dy * t + (Math.random() - 0.5) * 0.5,
-      effect.startPosition.z + dz * t + (Math.random() - 0.5) * 0.5
-    );
-    trailSizes.setX(i, Math.random() * 0.15 + 0.05);
-    trailRandoms.setX(i, Math.random());
+    const positionIndex = i * 3;
+    trailPositionArray[positionIndex] = effect.startPosition.x + dx * t + (Math.random() - 0.5) * 0.5;
+    trailPositionArray[positionIndex + 1] = effect.startPosition.y + dy * t + (Math.random() - 0.5) * 0.5;
+    trailPositionArray[positionIndex + 2] = effect.startPosition.z + dz * t + (Math.random() - 0.5) * 0.5;
+    trailSizeArray[i] = Math.random() * 0.15 + 0.05;
+    trailRandomArray[i] = Math.random();
   }
 
   trailPositions.needsUpdate = true;
@@ -248,19 +249,22 @@ function refillBlinkSlot(slot: BlinkRenderSlot, effect: BlinkEffectData): void {
   const burstPositions = slot.burstGeometry.attributes.position as THREE.BufferAttribute;
   const burstVelocities = slot.burstGeometry.attributes.velocity as THREE.BufferAttribute;
   const burstSizes = slot.burstGeometry.attributes.size as THREE.BufferAttribute;
+  const burstPositionArray = burstPositions.array as Float32Array;
+  const burstVelocityArray = burstVelocities.array as Float32Array;
+  const burstSizeArray = burstSizes.array as Float32Array;
 
   for (let i = 0; i < BLINK_BURST_PARTICLE_COUNT; i++) {
     const theta = Math.random() * Math.PI * 2;
     const phi = Math.random() * Math.PI;
     const speed = Math.random() * 3 + 2;
-    burstPositions.setXYZ(i, 0, 0, 0);
-    burstVelocities.setXYZ(
-      i,
-      Math.sin(phi) * Math.cos(theta) * speed,
-      Math.cos(phi) * speed,
-      Math.sin(phi) * Math.sin(theta) * speed
-    );
-    burstSizes.setX(i, Math.random() * 0.2 + 0.1);
+    const positionIndex = i * 3;
+    burstPositionArray[positionIndex] = 0;
+    burstPositionArray[positionIndex + 1] = 0;
+    burstPositionArray[positionIndex + 2] = 0;
+    burstVelocityArray[positionIndex] = Math.sin(phi) * Math.cos(theta) * speed;
+    burstVelocityArray[positionIndex + 1] = Math.cos(phi) * speed;
+    burstVelocityArray[positionIndex + 2] = Math.sin(phi) * Math.sin(theta) * speed;
+    burstSizeArray[i] = Math.random() * 0.2 + 0.1;
   }
 
   burstPositions.needsUpdate = true;
@@ -331,13 +335,12 @@ function updatePooledBlinkEffects(
     if (slot.trail) {
       const positions = slot.trail.geometry.attributes.position as THREE.BufferAttribute;
       const randoms = slot.trail.geometry.attributes.random as THREE.BufferAttribute;
+      const positionArray = positions.array as Float32Array;
+      const randomArray = randoms.array as Float32Array;
 
       for (let particleIndex = 0; particleIndex < positions.count; particleIndex++) {
-        const random = randoms.getX(particleIndex);
-        positions.setY(
-          particleIndex,
-          positions.getY(particleIndex) + Math.sin(elapsedSeconds * 5 + random * 10) * 0.01
-        );
+        const positionIndex = particleIndex * 3 + 1;
+        positionArray[positionIndex] += Math.sin(elapsedSeconds * 5 + randomArray[particleIndex] * 10) * 0.01;
       }
 
       positions.needsUpdate = true;

@@ -508,12 +508,11 @@ export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<strin
   }
 };
 
-export const sampleRemoteTransformInto = (
-  playerId: string,
+export const sampleRemoteTransformHistoryInto = (
+  history: RemoteTransformHistory | null | undefined,
   target: SampledRemoteTransform,
   nowMs = Date.now()
 ): boolean => {
-  const history = visualStore.getState().remoteTransformHistories.get(playerId);
   if (!history || history.snapshots.length === 0) return false;
 
   const snapshots = history.snapshots;
@@ -571,6 +570,18 @@ export const sampleRemoteTransformInto = (
   target.extrapolatedMs = extrapolatedMs;
   target.stale = extrapolatedMs > MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS;
   return true;
+};
+
+export const sampleRemoteTransformInto = (
+  playerId: string,
+  target: SampledRemoteTransform,
+  nowMs = Date.now()
+): boolean => {
+  return sampleRemoteTransformHistoryInto(
+    visualStore.getState().remoteTransformHistories.get(playerId),
+    target,
+    nowMs
+  );
 };
 
 export const sampleRemoteTransform = (

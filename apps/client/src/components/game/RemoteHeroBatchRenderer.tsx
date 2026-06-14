@@ -70,11 +70,11 @@ import type {
   VoxelPart,
 } from '../../model-system/heroBodyTypes';
 import {
-  sampleRemoteTransformInto,
+  sampleRemoteTransformHistoryInto,
   type SampledRemoteTransform,
+  type VisualState,
   visualStore,
 } from '../../store/visualStore';
-import { getFrameClock } from '../../utils/frameClock';
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
@@ -91,6 +91,7 @@ interface RemotePartDescriptor {
   meshOffset: [number, number, number];
   scale: [number, number, number];
   rotation?: [number, number, number];
+  localMatrix: THREE.Matrix4;
   geometry: THREE.BufferGeometry;
   geometryKey: string;
   materialKey: string;
@@ -170,12 +171,7 @@ interface RemoteHeroRuntime {
   playerMatrix: THREE.Matrix4;
   bodyLocalMatrix: THREE.Matrix4;
   bodyWorldMatrix: THREE.Matrix4;
-  partMatrix: THREE.Matrix4;
   finalMatrix: THREE.Matrix4;
-  partPosition: THREE.Vector3;
-  partQuaternion: THREE.Quaternion;
-  partEuler: THREE.Euler;
-  partScale: THREE.Vector3;
   glowPulse: number;
   visible: boolean;
 }
@@ -314,6 +310,15 @@ function getOutlineScale(scale: VoxelPart['scale']): VoxelPart['scale'] {
     scale[1] * TEAM_BODY_GLOW_OUTLINE_SCALE,
     scale[2] * TEAM_BODY_GLOW_OUTLINE_SCALE,
   ];
+}
+
+function createOutlineDescriptor(descriptor: RemotePartDescriptor): RemotePartDescriptor {
+  const scale = getOutlineScale(descriptor.scale);
+  return {
+    ...descriptor,
+    scale,
+    localMatrix: createPartLocalMatrix(descriptor.meshOffset, scale, descriptor.rotation),
+  };
 }
 
 function createBoneRefs(): { bodyRoot: THREE.Group; bones: CompleteBoneRefs } {
@@ -457,12 +462,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     playerMatrix: new THREE.Matrix4(),
     bodyLocalMatrix: new THREE.Matrix4(),
     bodyWorldMatrix: new THREE.Matrix4(),
-    partMatrix: new THREE.Matrix4(),
     finalMatrix: new THREE.Matrix4(),
-    partPosition: new THREE.Vector3(),
-    partQuaternion: new THREE.Quaternion(),
-    partEuler: new THREE.Euler(),
-    partScale: new THREE.Vector3(1, 1, 1),
     glowPulse: 0,
     visible: true,
   };
@@ -485,20 +485,26 @@ function disposeRemoteRuntime(runtime: RemoteHeroRuntime): void {
   runtime.bodyRoot.clear();
 }
 
-function updateRemoteTransform(runtime: RemoteHeroRuntime, player: Player, delta: number): number {
-  const frameNowMs = getFrameClock().epochNowMs;
-
+function updateRemoteTransform(
+  runtime: RemoteHeroRuntime,
+  player: Player,
+  delta: number,
+  visualState: VisualState,
+  frameNowMs: number
+): number {
   if (!runtime.initialized) {
-    const visualState = visualStore.getState();
     const initialPos = visualState.playerPositions.get(player.id);
     setPlayerRenderOrigin(runtime.currentPosition, initialPos ?? player.position);
     runtime.previousFramePosition.copy(runtime.currentPosition);
     runtime.initialized = true;
   }
 
-  const visualState = visualStore.getState();
   const sampledTransform = runtime.sampledTransform;
-  const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform, frameNowMs);
+  const hasSampledTransform = sampleRemoteTransformHistoryInto(
+    visualState.remoteTransformHistories.get(player.id),
+    sampledTransform,
+    frameNowMs
+  );
   let snappedToSample = false;
 
   if (hasSampledTransform) {
@@ -581,10 +587,11 @@ function updateRemotePose(
   player: Player,
   delta: number,
   elapsedSeconds: number,
-  visualHorizontalSpeed: number
+  visualHorizontalSpeed: number,
+  visualState: VisualState,
+  frameNowMs: number
 ): void {
   const frameDelta = Math.min(delta, 0.05);
-  const frameNowMs = getFrameClock().epochNowMs;
   const heroId = runtime.heroId;
   const manifest = HERO_BODY_MANIFESTS[heroId];
   const playerHeight = getPlayerHeight(player);
@@ -605,7 +612,6 @@ function updateRemotePose(
   let attackStartedAtMs: number | null = null;
   let attackSide: -1 | 1 = 1;
 
-  const visualState = visualStore.getState();
   const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
   const shieldStartedAt = getActivePhantomShieldStartedAt(player);
   if (remoteAttackState) {
@@ -864,20 +870,10 @@ function updateBodyWorldMatrix(runtime: RemoteHeroRuntime): void {
 }
 
 function setPartMatrix(runtime: RemoteHeroRuntime, descriptor: RemotePartDescriptor): THREE.Matrix4 {
-  runtime.partPosition.set(...descriptor.meshOffset);
-  if (descriptor.rotation) {
-    runtime.partEuler.set(...descriptor.rotation);
-    runtime.partQuaternion.setFromEuler(runtime.partEuler);
-  } else {
-    runtime.partQuaternion.identity();
-  }
-  runtime.partScale.set(...descriptor.scale);
-  runtime.partMatrix.compose(runtime.partPosition, runtime.partQuaternion, runtime.partScale);
-
   const parentMatrix = descriptor.bone === 'root'
     ? runtime.bodyRoot.matrixWorld
     : runtime.bones[descriptor.bone].matrixWorld;
-  runtime.finalMatrix.multiplyMatrices(parentMatrix, runtime.partMatrix);
+  runtime.finalMatrix.multiplyMatrices(parentMatrix, descriptor.localMatrix);
   return runtime.finalMatrix;
 }
 
@@ -962,6 +958,19 @@ function geometryKeyForPart(part: Pick<VoxelPart, 'kind'>): string {
   return part.kind ?? 'box';
 }
 
+function createPartLocalMatrix(
+  position: [number, number, number],
+  scale: [number, number, number],
+  rotation?: [number, number, number]
+): THREE.Matrix4 {
+  const partPosition = new THREE.Vector3(position[0], position[1], position[2]);
+  const partQuaternion = rotation
+    ? new THREE.Quaternion().setFromEuler(new THREE.Euler(rotation[0], rotation[1], rotation[2]))
+    : new THREE.Quaternion();
+  const partScale = new THREE.Vector3(scale[0], scale[1], scale[2]);
+  return new THREE.Matrix4().compose(partPosition, partQuaternion, partScale);
+}
+
 function descriptorBase(
   id: string,
   bone: BoneOrRoot,
@@ -979,6 +988,7 @@ function descriptorBase(
     meshOffset: position,
     scale,
     rotation,
+    localMatrix: createPartLocalMatrix(position, scale, rotation),
     geometry,
     geometryKey,
     materialKey: materialKeyValue,
@@ -1154,10 +1164,9 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
     const normalKey = `${descriptor.geometryKey}:${descriptor.materialKey}:${descriptor.playerFilter}`;
     const outlineKey = `${descriptor.geometryKey}:${descriptor.playerFilter}`;
     (normalGroups.get(normalKey) ?? normalGroups.set(normalKey, []).get(normalKey)!).push(descriptor);
-    (outlineGroups.get(outlineKey) ?? outlineGroups.set(outlineKey, []).get(outlineKey)!).push({
-      ...descriptor,
-      scale: getOutlineScale(descriptor.scale),
-    });
+    (outlineGroups.get(outlineKey) ?? outlineGroups.set(outlineKey, []).get(outlineKey)!).push(
+      createOutlineDescriptor(descriptor)
+    );
   }
 
   const materials: THREE.Material[] = [];
@@ -1289,6 +1298,7 @@ function RemoteHeroBatchGroup({
 }) {
   const runtimeByPlayerIdRef = useRef<Map<string, RemoteHeroRuntime>>(new Map());
   const meshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
+  const emissiveAttributesRef = useRef<Array<THREE.InstancedBufferAttribute | null>>([]);
   const outlineMeshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
   const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(resources.outlineBatches.length));
@@ -1327,10 +1337,11 @@ function RemoteHeroBatchGroup({
   useEffect(() => gameplayFrameScheduler.register({
     system: 'remoteHeroBatch',
     label: 'frame.remoteHeroBatch',
-    callback: ({ deltaSeconds, elapsedSeconds }) => {
+    callback: ({ deltaSeconds, elapsedSeconds, nowMs }) => {
       const runtimes = runtimeByPlayerIdRef.current;
       const counts = countsRef.current;
       const outlineCounts = outlineCountsRef.current;
+      const visualState = visualStore.getState();
       counts.fill(0);
       outlineCounts.fill(0);
 
@@ -1343,8 +1354,16 @@ function RemoteHeroBatchGroup({
         updateRuntimeHero(runtime, player);
         if (runtime.heroId !== resources.heroId) continue;
 
-        const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds);
-        updateRemotePose(runtime, player, deltaSeconds, elapsedSeconds, visualHorizontalSpeed);
+        const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);
+        updateRemotePose(
+          runtime,
+          player,
+          deltaSeconds,
+          elapsedSeconds,
+          visualHorizontalSpeed,
+          visualState,
+          nowMs
+        );
         updateBodyWorldMatrix(runtime);
 
         if (hasActivePhantomVeil(player)) continue;
@@ -1353,7 +1372,7 @@ function RemoteHeroBatchGroup({
           const batch = resources.batches[batchIndex];
           const mesh = meshesRef.current[batchIndex];
           if (!mesh) continue;
-          const emissiveAttribute = mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute | undefined;
+          const emissiveAttribute = emissiveAttributesRef.current[batchIndex];
           let writeIndex = counts[batchIndex];
           for (const descriptor of batch.descriptors) {
             if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
@@ -1385,7 +1404,7 @@ function RemoteHeroBatchGroup({
         mesh.count = count;
         if (count > 0) {
           mesh.instanceMatrix.needsUpdate = true;
-          const emissiveAttribute = mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute | undefined;
+          const emissiveAttribute = emissiveAttributesRef.current[batchIndex];
           if (emissiveAttribute) emissiveAttribute.needsUpdate = true;
         }
       }
@@ -1411,6 +1430,9 @@ function RemoteHeroBatchGroup({
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
           onMesh={(mesh) => {
             meshesRef.current[batchIndex] = mesh;
+            emissiveAttributesRef.current[batchIndex] = mesh
+              ? (mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute)
+              : null;
           }}
         />
       ))}

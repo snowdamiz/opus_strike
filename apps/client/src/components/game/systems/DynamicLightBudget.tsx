@@ -14,6 +14,7 @@ type BudgetedLightRecord = {
   lightRef: { current: THREE.PointLight | null };
   priority: number;
   radius: number;
+  selectedPass: number;
 };
 
 export type BudgetedPointLightProps = PointLightProps & {
@@ -24,6 +25,7 @@ export type BudgetedPointLightProps = PointLightProps & {
 const budgetedLights = new Set<BudgetedLightRecord>();
 const worldPosition = new THREE.Vector3();
 let nextLightId = 1;
+let lightBudgetPassId = 1;
 
 function setLightVisible(light: THREE.PointLight, visible: boolean): void {
   if (light.visible !== visible) {
@@ -57,6 +59,7 @@ export const BudgetedPointLight = forwardRef<THREE.PointLight, BudgetedPointLigh
       lightRef,
       priority: budgetPriority,
       radius: budgetRadius ?? 1,
+      selectedPass: 0,
     });
 
     recordRef.current.priority = budgetPriority;
@@ -192,16 +195,15 @@ function updateDynamicLightBudget(
     return;
   }
 
+  const passId = lightBudgetPassId++;
   let activeCandidates = 0;
   for (const record of budgetedLights) {
     const light = record.lightRef.current;
     if (!light || !light.parent || light.intensity <= 0) {
-      if (light) setLightVisible(light, false);
       continue;
     }
 
     activeCandidates++;
-    setLightVisible(light, false);
     light.getWorldPosition(worldPosition);
     const radius = Math.max(1, record.radius || light.distance || 1);
     const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
@@ -215,9 +217,13 @@ function updateDynamicLightBudget(
   }
 
   for (let i = 0; i < ranked.length; i++) {
-    const light = ranked[i].record.lightRef.current;
+    ranked[i].record.selectedPass = passId;
+  }
+
+  for (const record of budgetedLights) {
+    const light = record.lightRef.current;
     if (light) {
-      setLightVisible(light, true);
+      setLightVisible(light, record.selectedPass === passId);
     }
   }
   recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, ranked.length, lightLimit);
