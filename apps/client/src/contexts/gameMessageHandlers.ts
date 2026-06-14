@@ -1883,7 +1883,6 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
           ownerTeam,
           maxDistance: data.maxDistance ?? 24.35,
           hookProgress: 0,
-          wallSegments: [],
         });
       }
       return true;

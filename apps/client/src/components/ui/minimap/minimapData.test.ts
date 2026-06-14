@@ -75,3 +75,15 @@ assert.deepEqual(
   ['teammate-a', 'teammate-b'],
   'minimap should show only living/spawning teammates and never the local player or enemies'
 );
+
+const teammateScratch = [player('stale-entry', 'red')];
+const reusedVisible = selectVisibleTeammates(local, [
+  player('teammate-c', 'red'),
+  player('hidden-enemy', 'blue'),
+], teammateScratch);
+assert.equal(reusedVisible, teammateScratch, 'minimap teammate selection should reuse the provided scratch array');
+assert.deepEqual(
+  reusedVisible.map((entry) => entry.id),
+  ['teammate-c'],
+  'minimap teammate selection should clear stale scratch entries before reuse'
+);

@@ -11,6 +11,7 @@ import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
 import { getPlayerFeetY, getVisiblePlayerHeight } from './playerWorldAnchors';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
@@ -28,7 +29,6 @@ export {
   triggerRocketJumpExplosion,
   triggerAirStrike,
   BombTargetingIndicator,
-  AirStrikeTargetingIndicator,
 } from './blaze';
 
 // ============================================================================
@@ -412,49 +412,51 @@ export function BlazeEffectsManager() {
   const scratchBurningIdsRef = useRef<string[]>([]);
   const scanAccumulatorRef = useRef(BLAZE_EFFECT_SCAN_INTERVAL_MS);
 
-  useFrame((state, delta) => {
-    measureFrameWork('frame.effects.blaze', () => {
-      runBlazeFrameUpdaters(state, delta);
-      scanAccumulatorRef.current += delta * 1000;
-      if (scanAccumulatorRef.current < BLAZE_EFFECT_SCAN_INTERVAL_MS) {
-        recordEffectSlotDiagnostics('blazeFlamethrower', {
-          active: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
-          capacity: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
-          hiddenMounted: 0,
-        });
-        recordEffectSlotDiagnostics('blazeBurning', {
-          active: activeBurningIdsRef.current.length,
-          capacity: activeBurningIdsRef.current.length,
-          hiddenMounted: 0,
-        });
-        return;
-      }
-      scanAccumulatorRef.current = 0;
-
-      const nextIds = collectRemoteFlamethrowerPlayerIds(scratchRemoteIdsRef.current);
-      if (!sameIds(nextIds, activeRemoteIdsRef.current)) {
-        const committedIds = nextIds.slice();
-        activeRemoteIdsRef.current = committedIds;
-        setRemoteFlamethrowerPlayerIds(committedIds);
-      }
-
-      const nextBurningIds = collectBurningPlayerIds(scratchBurningIdsRef.current);
-      if (!sameIds(nextBurningIds, activeBurningIdsRef.current)) {
-        const committedBurningIds = nextBurningIds.slice();
-        activeBurningIdsRef.current = committedBurningIds;
-        setBurningPlayerIds(committedBurningIds);
-      }
-      recordEffectSlotDiagnostics('blazeFlamethrower', {
-        active: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
-        capacity: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
-        hiddenMounted: 0,
-      });
-      recordEffectSlotDiagnostics('blazeBurning', {
-        active: activeBurningIdsRef.current.length,
-        capacity: activeBurningIdsRef.current.length,
-        hiddenMounted: 0,
-      });
+  const recordBlazeEffectDiagnostics = (): void => {
+    recordEffectSlotDiagnostics('blazeFlamethrower', {
+      active: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
+      capacity: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
+      hiddenMounted: 0,
     });
+    recordEffectSlotDiagnostics('blazeBurning', {
+      active: activeBurningIdsRef.current.length,
+      capacity: activeBurningIdsRef.current.length,
+      hiddenMounted: 0,
+    });
+  };
+
+  const runBlazeEffectsFrame = (state: RootState, delta: number): void => {
+    runBlazeFrameUpdaters(state, delta);
+    scanAccumulatorRef.current += delta * 1000;
+    if (scanAccumulatorRef.current < BLAZE_EFFECT_SCAN_INTERVAL_MS) {
+      recordBlazeEffectDiagnostics();
+      return;
+    }
+    scanAccumulatorRef.current = 0;
+
+    const nextIds = collectRemoteFlamethrowerPlayerIds(scratchRemoteIdsRef.current);
+    if (!sameIds(nextIds, activeRemoteIdsRef.current)) {
+      const committedIds = nextIds.slice();
+      activeRemoteIdsRef.current = committedIds;
+      setRemoteFlamethrowerPlayerIds(committedIds);
+    }
+
+    const nextBurningIds = collectBurningPlayerIds(scratchBurningIdsRef.current);
+    if (!sameIds(nextBurningIds, activeBurningIdsRef.current)) {
+      const committedBurningIds = nextBurningIds.slice();
+      activeBurningIdsRef.current = committedBurningIds;
+      setBurningPlayerIds(committedBurningIds);
+    }
+    recordBlazeEffectDiagnostics();
+  };
+
+  useFrame((state, delta) => {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.effects.blaze', () => runBlazeEffectsFrame(state, delta));
+      return;
+    }
+
+    runBlazeEffectsFrame(state, delta);
   });
   
   return (

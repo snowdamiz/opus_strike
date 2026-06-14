@@ -7,6 +7,7 @@ import {
   resetMovementNetworkDiagnostics,
 } from '../../movement/networkDiagnostics';
 import { GameplayFrameScheduler } from './systems/gameplayFrameScheduler';
+import { createFrameUpdaterRegistry } from './systems/frameUpdaterRegistry';
 
 const histogram = new FrameTimeHistogram();
 for (let i = 0; i < 95; i++) histogram.record(16);
@@ -47,5 +48,24 @@ assert.equal(getMovementNetworkDiagnosticsSnapshot().frameScheduler.activeCallba
 assert.equal(getMovementNetworkDiagnosticsSnapshot().frameScheduler.callbacksBySystem.testSystem, 1);
 unregister();
 assert.equal(getMovementNetworkDiagnosticsSnapshot().frameScheduler.activeCallbacks, 0);
+
+const registry = createFrameUpdaterRegistry<number>();
+let registryTotal = 0;
+const unregisterOld = registry.register('effect-a', (value) => {
+  registryTotal += value;
+});
+const unregisterReplacement = registry.register('effect-a', (value) => {
+  registryTotal += value * 10;
+});
+registry.register('effect-b', (value) => {
+  registryTotal += value * 100;
+});
+assert.equal(registry.size, 2);
+unregisterOld();
+assert.equal(registry.size, 2);
+registry.run(2, 0);
+assert.equal(registryTotal, 220);
+unregisterReplacement();
+assert.equal(registry.size, 1);
 
 console.log('game performance utility tests passed');

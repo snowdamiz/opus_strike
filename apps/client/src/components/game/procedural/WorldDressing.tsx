@@ -37,7 +37,6 @@ interface DressingSet {
 
 interface CachedDressingSet {
   dressing: DressingSet;
-  manifestId: string;
   instanceCount: number;
   lastUsedAt: number;
 }
@@ -432,16 +431,15 @@ function getCachedDressingSet(
 
   dressingSetCache.set(cacheKey, {
     dressing,
-    manifestId: manifest.id,
     instanceCount,
     lastUsedAt: performance.now(),
   });
   dressingSetCacheInstances += instanceCount;
-  enforceDressingSetCacheBudget(manifest.id);
+  enforceDressingSetCacheBudget(cacheKey);
   return dressing;
 }
 
-function enforceDressingSetCacheBudget(activeManifestId: string): void {
+function enforceDressingSetCacheBudget(activeCacheKey: string): void {
   if (
     dressingSetCache.size <= DRESSING_SET_CACHE_MAX_ENTRIES &&
     dressingSetCacheInstances <= DRESSING_SET_CACHE_MAX_INSTANCES
@@ -450,7 +448,7 @@ function enforceDressingSetCacheBudget(activeManifestId: string): void {
   }
 
   const candidates = Array.from(dressingSetCache.entries())
-    .filter(([, entry]) => entry.manifestId !== activeManifestId)
+    .filter(([cacheKey]) => cacheKey !== activeCacheKey)
     .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
 
   for (const [cacheKey, entry] of candidates) {

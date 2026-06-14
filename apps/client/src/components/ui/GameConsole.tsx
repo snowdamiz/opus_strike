@@ -4,6 +4,7 @@ import {
   useGameStore,
   type ObserverFlySpeedPreset,
 } from '../../store/gameStore';
+import { setGameConsoleOpen } from '../../store/gameConsoleState';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { config } from '../../config/environment';
 import {
@@ -165,12 +166,6 @@ export function findNpcsInRadius(position: { x: number; y: number; z: number }, 
   return result;
 }
 
-// Global state for console open status - used by useInput to ignore game controls
-let isConsoleOpenGlobal = false;
-export function isGameConsoleOpen(): boolean {
-  return isConsoleOpenGlobal;
-}
-
 let devImmuneModeGlobal = false;
 
 function isDevImmuneMode(): boolean {
@@ -232,7 +227,6 @@ function parseCommandParts(input: string): string[] {
 function disableActiveSkillState() {
   const store = useGameStore.getState();
   store.setBombTargeting(false, false);
-  store.setAirStrikeTargeting(false, false);
   store.setGrappleTrapTargeting(false, false);
   store.setFlamethrowerActive(false);
 }
@@ -347,9 +341,9 @@ export function GameConsole() {
 
   // Update global state when console opens/closes
   useEffect(() => {
-    isConsoleOpenGlobal = isOpen;
+    setGameConsoleOpen(isOpen);
     return () => {
-      isConsoleOpenGlobal = false;
+      setGameConsoleOpen(false);
     };
   }, [isOpen]);
 

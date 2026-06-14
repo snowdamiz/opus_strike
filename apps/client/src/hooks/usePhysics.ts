@@ -56,14 +56,8 @@ export function usePhysics(): PhysicsContext {
         if (!mounted) return;
 
         physicsReady = false;
-        loadedProceduralMapId = null;
-        loadedProceduralMapColliderSignature = null;
-        mapColliderBodies = [];
-        pendingProceduralColliderLoad = null;
-        activeProceduralMap = null;
-        activeProceduralChunkLookup = new Map();
-        activeProceduralChunksX = 0;
-        activeProceduralChunksZ = 0;
+        cancelPendingProceduralColliderLoad();
+        resetProceduralColliderState();
 
         // Create physics world with gravity
         const gravity = { x: 0, y: GRAVITY, z: 0 };
@@ -117,19 +111,17 @@ export function usePhysics(): PhysicsContext {
 
     return () => {
       mounted = false;
+      const world = worldRef.current;
       if (worldInstance === worldRef.current) {
         physicsReady = false;
+        clearAllTemporaryWallColliders();
+        updateTemporaryWallWorld(null);
+        cancelPendingProceduralColliderLoad();
+        resetProceduralColliderState();
         worldInstance = null;
         playerColliderInstance = null;
-        loadedProceduralMapId = null;
-        loadedProceduralMapColliderSignature = null;
-        mapColliderBodies = [];
-        pendingProceduralColliderLoad = null;
-        activeProceduralMap = null;
-        activeProceduralChunkLookup = new Map();
-        activeProceduralChunksX = 0;
-        activeProceduralChunksZ = 0;
       }
+      world?.free();
       worldRef.current = null;
       playerBodyRef.current = null;
     };
@@ -182,6 +174,23 @@ interface ProceduralColliderLoadJob {
 }
 
 let pendingProceduralColliderLoad: ProceduralColliderLoadJob | null = null;
+
+function cancelPendingProceduralColliderLoad(): void {
+  if (pendingProceduralColliderLoad?.rafId !== null && pendingProceduralColliderLoad?.rafId !== undefined) {
+    window.cancelAnimationFrame(pendingProceduralColliderLoad.rafId);
+  }
+  pendingProceduralColliderLoad = null;
+}
+
+function resetProceduralColliderState(): void {
+  loadedProceduralMapId = null;
+  loadedProceduralMapColliderSignature = null;
+  mapColliderBodies = [];
+  activeProceduralMap = null;
+  activeProceduralChunkLookup = new Map();
+  activeProceduralChunksX = 0;
+  activeProceduralChunksZ = 0;
+}
 
 export function getActiveProceduralMap(): VoxelMapManifest | null {
   return activeProceduralMap;
@@ -301,10 +310,7 @@ export function loadProceduralMapColliders(manifest: VoxelMapManifest): boolean 
     return false;
   }
 
-  if (pendingProceduralColliderLoad && pendingProceduralColliderLoad.rafId !== null) {
-    window.cancelAnimationFrame(pendingProceduralColliderLoad.rafId);
-  }
-  pendingProceduralColliderLoad = null;
+  cancelPendingProceduralColliderLoad();
 
   for (const body of mapColliderBodies) {
     worldInstance.removeRigidBody(body);

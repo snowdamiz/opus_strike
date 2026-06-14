@@ -38,6 +38,7 @@ interface HeroPreviewCanvasProps {
   hasFlag?: boolean;
   postureScaleY?: number;
   animationMode?: HeroPreviewAnimationMode;
+  preserveDrawingBuffer?: boolean;
   'aria-label'?: string;
 }
 
@@ -128,7 +129,7 @@ const PREVIEW_CONFIG: Record<HeroPreviewSize, PreviewConfig> = {
     cameraPosition: [0, 0.09, 4.45],
     cameraTarget: [0, 0.08, 0],
     fov: 32,
-    dpr: [1.5, 2.35],
+    dpr: [1, 1.5],
     bodyScale: 1.02,
     floorScale: 2.35,
     bodyLift: 0.06,
@@ -330,6 +331,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
   hasFlag = false,
   postureScaleY = 1,
   animationMode = 'idle',
+  preserveDrawingBuffer = false,
   'aria-label': ariaLabel,
 }: HeroPreviewCanvasProps) {
   const config = PREVIEW_CONFIG[size];
@@ -472,7 +474,7 @@ export const HeroPreviewCanvas = memo(function HeroPreviewCanvas({
             alpha: true,
             antialias: true,
             premultipliedAlpha: false,
-            preserveDrawingBuffer: true,
+            preserveDrawingBuffer,
             powerPreference: size === 'compact' ? 'default' : 'high-performance',
           }}
           onCreated={handleCanvasCreated}

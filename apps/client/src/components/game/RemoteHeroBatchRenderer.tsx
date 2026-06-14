@@ -107,6 +107,7 @@ interface RemotePartBatch {
   descriptors: RemotePartDescriptor[];
   material: THREE.MeshStandardMaterial;
   capacityPerPlayer: number;
+  playerFilter: PlayerFilter;
 }
 
 interface RemoteOutlineBatch {
@@ -115,6 +116,7 @@ interface RemoteOutlineBatch {
   descriptors: RemotePartDescriptor[];
   material: THREE.MeshBasicMaterial;
   capacityPerPlayer: number;
+  playerFilter: PlayerFilter;
 }
 
 interface RemoteBatchResources {
@@ -1183,6 +1185,7 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
       descriptors: groupDescriptors,
       material,
       capacityPerPlayer: groupDescriptors.length,
+      playerFilter: groupDescriptors[0].playerFilter,
     };
   });
 
@@ -1203,6 +1206,7 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
       descriptors: groupDescriptors,
       material,
       capacityPerPlayer: groupDescriptors.length,
+      playerFilter: groupDescriptors[0].playerFilter,
     };
   });
 
@@ -1217,9 +1221,9 @@ function createRemoteBatchResources(heroId: HeroId, team: Team): RemoteBatchReso
   };
 }
 
-function shouldRenderDescriptorForPlayer(descriptor: RemotePartDescriptor, player: Player): boolean {
-  if (descriptor.playerFilter === 'bot') return player.isBot;
-  if (descriptor.playerFilter === 'nonBot') return !player.isBot;
+function shouldRenderBatchForPlayer(playerFilter: PlayerFilter, player: Player): boolean {
+  if (playerFilter === 'bot') return player.isBot;
+  if (playerFilter === 'nonBot') return !player.isBot;
   return true;
 }
 
@@ -1370,12 +1374,12 @@ function RemoteHeroBatchGroup({
 
         for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
           const batch = resources.batches[batchIndex];
+          if (!shouldRenderBatchForPlayer(batch.playerFilter, player)) continue;
           const mesh = meshesRef.current[batchIndex];
           if (!mesh) continue;
           const emissiveAttribute = emissiveAttributesRef.current[batchIndex];
           let writeIndex = counts[batchIndex];
           for (const descriptor of batch.descriptors) {
-            if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
             mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
             emissiveAttribute?.setX(writeIndex, getDescriptorEmissiveBoost(descriptor, player, runtime.glowPulse));
             writeIndex++;
@@ -1385,11 +1389,11 @@ function RemoteHeroBatchGroup({
 
         for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
           const batch = resources.outlineBatches[batchIndex];
+          if (!shouldRenderBatchForPlayer(batch.playerFilter, player)) continue;
           const mesh = outlineMeshesRef.current[batchIndex];
           if (!mesh) continue;
           let writeIndex = outlineCounts[batchIndex];
           for (const descriptor of batch.descriptors) {
-            if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
             mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
             writeIndex++;
           }

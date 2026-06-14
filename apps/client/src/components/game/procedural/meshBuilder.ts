@@ -49,11 +49,13 @@ const VOXEL_GEOMETRY_CACHE_MAX_ENTRIES = 192;
 const VOXEL_GEOMETRY_CACHE_MAX_BYTES = 96 * 1024 * 1024;
 const FALLBACK_REGION_FRAME_BUDGET_MS = 4;
 const FALLBACK_REGION_MAX_BUILDS_PER_FRAME = 1;
+const FALLBACK_REGION_QUEUE_COMPACT_THRESHOLD = 64;
 let meshWorker: Worker | null = null;
 let workerManifestId: string | null = null;
 let nextWorkerRequestId = 1;
 let geometryCacheBytes = 0;
 const fallbackRegionQueue: FallbackRegionRequest[] = [];
+let fallbackRegionQueueHead = 0;
 let fallbackRegionQueueScheduled = false;
 
 function waitForNextFrame(): Promise<void> {
@@ -75,16 +77,17 @@ function processFallbackRegionQueue(): void {
   const frameStart = performance.now();
   let buildsThisFrame = 0;
 
-  while (fallbackRegionQueue.length > 0) {
+  while (fallbackRegionQueueHead < fallbackRegionQueue.length) {
     if (
       buildsThisFrame >= FALLBACK_REGION_MAX_BUILDS_PER_FRAME ||
       performance.now() - frameStart >= FALLBACK_REGION_FRAME_BUDGET_MS
     ) {
+      compactFallbackRegionQueue();
       scheduleFallbackRegionQueue();
       return;
     }
 
-    const request = fallbackRegionQueue.shift();
+    const request = fallbackRegionQueue[fallbackRegionQueueHead++];
     if (!request || request.cancelled) continue;
     if (pendingRegionGeometryByCacheKey.get(request.cacheKey) !== request.trackedPromise) {
       request.cancelled = true;
@@ -99,6 +102,23 @@ function processFallbackRegionQueue(): void {
       request.reject(error instanceof Error ? error : new Error(String(error)));
     }
   }
+
+  fallbackRegionQueue.length = 0;
+  fallbackRegionQueueHead = 0;
+}
+
+function compactFallbackRegionQueue(force = false): void {
+  if (fallbackRegionQueueHead === 0) return;
+  if (
+    !force &&
+    fallbackRegionQueueHead < FALLBACK_REGION_QUEUE_COMPACT_THRESHOLD &&
+    fallbackRegionQueueHead * 2 < fallbackRegionQueue.length
+  ) {
+    return;
+  }
+
+  fallbackRegionQueue.splice(0, fallbackRegionQueueHead);
+  fallbackRegionQueueHead = 0;
 }
 
 function queueFallbackVoxelRegionGeometry(
@@ -137,7 +157,7 @@ function queueFallbackVoxelRegionGeometry(
 }
 
 function cancelQueuedFallbackRequests(manifestId?: string): void {
-  for (let index = fallbackRegionQueue.length - 1; index >= 0; index--) {
+  for (let index = fallbackRegionQueue.length - 1; index >= fallbackRegionQueueHead; index--) {
     const request = fallbackRegionQueue[index];
     if (manifestId && request.manifest.id !== manifestId && !request.cacheKey.startsWith(`${manifestId}:`)) {
       continue;
@@ -146,6 +166,13 @@ function cancelQueuedFallbackRequests(manifestId?: string): void {
     request.cancelled = true;
     request.reject(new Error(VOXEL_MESH_REQUEST_CANCELLED));
     fallbackRegionQueue.splice(index, 1);
+  }
+
+  if (fallbackRegionQueueHead >= fallbackRegionQueue.length) {
+    fallbackRegionQueue.length = 0;
+    fallbackRegionQueueHead = 0;
+  } else {
+    compactFallbackRegionQueue(true);
   }
 }
 

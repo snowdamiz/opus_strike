@@ -1,11 +1,15 @@
 import { ABILITY_DEFINITIONS } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
+import { getFrameClock } from '../../../utils/frameClock';
 
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 const PHANTOM_VEIL_DURATION_MS = (ABILITY_DEFINITIONS[PHANTOM_VEIL_ABILITY_ID]?.duration ?? 6) * 1000;
 
 export const PHANTOM_VEIL_EFFECT_FADE_IN_MS = 150;
 export const PHANTOM_VEIL_EFFECT_FADE_OUT_MS = 950;
+
+let cachedVeilSkyIntensityNowMs = -1;
+let cachedVeilSkyIntensity = 0;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -29,7 +33,11 @@ function getTimedVeilIntensity(startTimeMs: number, nowMs: number): number {
   return clamp01(fadeIn * fadeOut);
 }
 
-export function getPhantomVeilSkyIntensity(nowMs = Date.now()): number {
+export function getPhantomVeilSkyIntensity(nowMs = getFrameClock().epochNowMs): number {
+  if (nowMs === cachedVeilSkyIntensityNowMs) {
+    return cachedVeilSkyIntensity;
+  }
+
   const store = useGameStore.getState();
   let intensity = 0;
 
@@ -63,5 +71,7 @@ export function getPhantomVeilSkyIntensity(nowMs = Date.now()): number {
   visitPlayer(store.localPlayer);
   store.players.forEach(visitPlayer);
 
-  return clamp01(intensity);
+  cachedVeilSkyIntensityNowMs = nowMs;
+  cachedVeilSkyIntensity = clamp01(intensity);
+  return cachedVeilSkyIntensity;
 }

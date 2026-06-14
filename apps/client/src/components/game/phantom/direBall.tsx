@@ -14,6 +14,7 @@ import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
+import { playPrimaryImpactSound } from '../primaryImpactSound';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
 const BALL_RADIUS = 0.21;
@@ -639,6 +640,7 @@ export function DireBallsManager() {
             normal: hit.normal,
             direction: slot.direction,
           });
+          playPrimaryImpactSound('phantom', hit.point);
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;
@@ -657,6 +659,7 @@ export function DireBallsManager() {
         moveDistance + BALL_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
       if (hitPlayer) {
+        playPrimaryImpactSound('phantom', slot.position);
         removals.push(slot.id);
         pool.deactivate(slotIndex);
         return;

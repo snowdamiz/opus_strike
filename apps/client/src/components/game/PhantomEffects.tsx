@@ -7,6 +7,7 @@ import type { Player } from '@voxel-strike/shared';
 import { getFrameClock } from '../../utils/frameClock';
 import { SHARED_GEOMETRIES } from './effectResources';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
@@ -534,57 +535,64 @@ export function PhantomEffectsManager() {
   const scratchVeilIdsRef = useRef<string[]>([]);
   const veilScanAccumulatorRef = useRef(ACTIVE_VEIL_SCAN_INTERVAL_MS);
 
-  useFrame((_, delta) => {
-    measureFrameWork('frame.effects.phantom', () => {
-      const frameClock = getFrameClock();
-      collectActivePhantomEffects(
-        frameClock.nowMs,
-        activeBlinkEffectsRef.current
-      );
-      collectActivePhantomVeilClapEffects(
-        frameClock.nowMs,
-        activeVeilClapEffectsRef.current
-      );
-      updatePooledBlinkEffects(
-        blinkRenderSlotsRef.current,
-        activeBlinkEffectsRef.current,
-        frameClock.nowMs,
-        delta,
-        frameClock.elapsedSeconds
-      );
-      updatePooledVeilClapEffects(
-        veilClapRenderSlotsRef.current,
-        activeVeilClapEffectsRef.current,
-        frameClock.nowMs,
-        delta
-      );
-      recordEffectSlotDiagnostics('phantomBlink', {
-        active: activeBlinkEffectsRef.current.length,
-        capacity: POOLED_BLINK_EFFECTS,
-        hiddenMounted: Math.max(0, POOLED_BLINK_EFFECTS - activeBlinkEffectsRef.current.length),
-      });
-      recordEffectSlotDiagnostics('phantomVeilClap', {
-        active: activeVeilClapEffectsRef.current.length,
-        capacity: POOLED_VEIL_CLAP_EFFECTS,
-        hiddenMounted: Math.max(0, POOLED_VEIL_CLAP_EFFECTS - activeVeilClapEffectsRef.current.length),
-      });
-
-      veilScanAccumulatorRef.current += delta * 1000;
-      if (veilScanAccumulatorRef.current >= ACTIVE_VEIL_SCAN_INTERVAL_MS) {
-        veilScanAccumulatorRef.current = 0;
-        const nextVeilIds = collectActivePhantomVeilIds(scratchVeilIdsRef.current, frameClock.epochNowMs);
-        if (!sameIds(nextVeilIds, activeVeilIdsRef.current)) {
-          const committedIds = nextVeilIds.slice();
-          activeVeilIdsRef.current = committedIds;
-          setActiveVeilIds(committedIds);
-        }
-      }
-      recordEffectSlotDiagnostics('phantomVeil', {
-        active: activeVeilIdsRef.current.length,
-        capacity: activeVeilIdsRef.current.length,
-        hiddenMounted: 0,
-      });
+  const runPhantomEffectsFrame = (delta: number): void => {
+    const frameClock = getFrameClock();
+    collectActivePhantomEffects(
+      frameClock.nowMs,
+      activeBlinkEffectsRef.current
+    );
+    collectActivePhantomVeilClapEffects(
+      frameClock.nowMs,
+      activeVeilClapEffectsRef.current
+    );
+    updatePooledBlinkEffects(
+      blinkRenderSlotsRef.current,
+      activeBlinkEffectsRef.current,
+      frameClock.nowMs,
+      delta,
+      frameClock.elapsedSeconds
+    );
+    updatePooledVeilClapEffects(
+      veilClapRenderSlotsRef.current,
+      activeVeilClapEffectsRef.current,
+      frameClock.nowMs,
+      delta
+    );
+    recordEffectSlotDiagnostics('phantomBlink', {
+      active: activeBlinkEffectsRef.current.length,
+      capacity: POOLED_BLINK_EFFECTS,
+      hiddenMounted: Math.max(0, POOLED_BLINK_EFFECTS - activeBlinkEffectsRef.current.length),
     });
+    recordEffectSlotDiagnostics('phantomVeilClap', {
+      active: activeVeilClapEffectsRef.current.length,
+      capacity: POOLED_VEIL_CLAP_EFFECTS,
+      hiddenMounted: Math.max(0, POOLED_VEIL_CLAP_EFFECTS - activeVeilClapEffectsRef.current.length),
+    });
+
+    veilScanAccumulatorRef.current += delta * 1000;
+    if (veilScanAccumulatorRef.current >= ACTIVE_VEIL_SCAN_INTERVAL_MS) {
+      veilScanAccumulatorRef.current = 0;
+      const nextVeilIds = collectActivePhantomVeilIds(scratchVeilIdsRef.current, frameClock.epochNowMs);
+      if (!sameIds(nextVeilIds, activeVeilIdsRef.current)) {
+        const committedIds = nextVeilIds.slice();
+        activeVeilIdsRef.current = committedIds;
+        setActiveVeilIds(committedIds);
+      }
+    }
+    recordEffectSlotDiagnostics('phantomVeil', {
+      active: activeVeilIdsRef.current.length,
+      capacity: activeVeilIdsRef.current.length,
+      hiddenMounted: 0,
+    });
+  };
+
+  useFrame((_, delta) => {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.effects.phantom', () => runPhantomEffectsFrame(delta));
+      return;
+    }
+
+    runPhantomEffectsFrame(delta);
   });
   
   return (

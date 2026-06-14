@@ -355,7 +355,6 @@ export function useHookshotAbilities(): UseHookshotAbilitiesReturn {
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
       maxDistance: 24.35,
       hookProgress: 0,
-      wallSegments: [],
     });
     markPredictedLocalAbilityVisual('hookshot_anchor_wall', ctx.localPlayer.id, wallId);
     return true;

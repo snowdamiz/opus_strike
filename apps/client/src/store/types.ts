@@ -311,7 +311,6 @@ export interface EarthWallData {
   ownerTeam: 'red' | 'blue';
   maxDistance: number; // How far the hook travels
   hookProgress: number; // 0-1, how far the hook has traveled
-  wallSegments: { x: number; y: number; z: number; height: number }[]; // Legacy visual segment data
 }
 
 // ============================================================================

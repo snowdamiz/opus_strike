@@ -244,19 +244,20 @@ export function getHeightRange(topSolidRows: ArrayLike<number>): { min: number; 
 
 export function selectVisibleTeammates(
   localPlayer: MinimapPlayerLike | null,
-  players: Iterable<MinimapPlayerLike>
+  players: Iterable<MinimapPlayerLike>,
+  out: MinimapPlayerLike[] = []
 ): MinimapPlayerLike[] {
-  if (!localPlayer) return [];
+  out.length = 0;
+  if (!localPlayer) return out;
 
-  const teammates: MinimapPlayerLike[] = [];
   for (const player of players) {
     if (player.id === localPlayer.id) continue;
     if (player.team !== localPlayer.team) continue;
     if (player.state === 'dead' || player.state === 'spectating' || player.state === 'selecting') continue;
-    teammates.push(player);
+    out.push(player);
   }
 
-  return teammates;
+  return out;
 }
 
 interface ChunkLookup {

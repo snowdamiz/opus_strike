@@ -128,6 +128,8 @@ interface HookshotSecondaryFireState {
   startTimeMs: number;
 }
 
+type GameStoreSnapshot = ReturnType<typeof useGameStore.getState>;
+
 interface PhantomHandPoseTargets {
   closedHand?: MutableTransformTarget;
   arm: MutableTransformTarget;
@@ -135,6 +137,13 @@ interface PhantomHandPoseTargets {
   palm: MutableTransformTarget;
   thumb: MutableTransformTarget;
   fingers: MutableTransformTarget[];
+}
+
+function resolveFingerTargets(fingerRefs: (THREE.Group | null)[]): THREE.Group[] | null {
+  if (!fingerRefs[0] || !fingerRefs[1] || !fingerRefs[2] || !fingerRefs[3]) {
+    return null;
+  }
+  return fingerRefs as THREE.Group[];
 }
 
 interface PhantomLocomotionPose {
@@ -500,6 +509,69 @@ function getViewmodelMaterials(heroId: ViewmodelHeroId): ViewmodelMaterialSet {
   return materials;
 }
 
+function hasOwnedProjectile<T extends { ownerId: string }>(
+  items: readonly T[],
+  ownerId: string | null | undefined
+): boolean {
+  if (!ownerId) return false;
+  for (let index = 0; index < items.length; index++) {
+    if (items[index].ownerId === ownerId) return true;
+  }
+  return false;
+}
+
+function hasOwnedProjectileOnSide<T extends { ownerId: string; launchSide?: -1 | 1 }>(
+  items: readonly T[],
+  ownerId: string | null | undefined,
+  side: -1 | 1
+): boolean {
+  if (!ownerId) return false;
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (item.ownerId === ownerId && (item.launchSide ?? 1) === side) return true;
+  }
+  return false;
+}
+
+function hasOwnedActiveGrappleLineOnSide(
+  state: GameStoreSnapshot,
+  ownerId: string | null | undefined,
+  side: -1 | 1
+): boolean {
+  if (!ownerId) return false;
+  for (let index = 0; index < state.grappleLines.length; index++) {
+    const line = state.grappleLines[index];
+    if (line.ownerId === ownerId && line.state !== 'done' && (line.launchSide ?? 1) === side) return true;
+  }
+  return false;
+}
+
+function hasOwnedGrappleLine(
+  state: GameStoreSnapshot,
+  ownerId: string | null | undefined
+): boolean {
+  return hasOwnedProjectile(state.grappleLines, ownerId);
+}
+
+function isViewmodelActionActive(
+  heroId: ViewmodelHeroId | null,
+  state: GameStoreSnapshot,
+  localPlayerId: string | null | undefined
+): boolean {
+  switch (heroId) {
+    case 'phantom':
+      return hasOwnedProjectile(state.voidRays, localPlayerId);
+    case 'hookshot':
+      return hasOwnedProjectile(state.dragHooks, localPlayerId) ||
+        hasOwnedGrappleLine(state, localPlayerId);
+    case 'blaze':
+      return state.flamethrowerActive || hasOwnedProjectile(state.rockets, localPlayerId);
+    case 'chronos':
+    case null:
+      return false;
+  }
+}
+
 function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
   const store = useGameStore.getState();
   const localPlayerId = store.localPlayer?.id;
@@ -507,23 +579,21 @@ function getActionState(heroId: ViewmodelHeroId): ViewmodelActionState {
   switch (heroId) {
     case 'phantom':
       return {
-        active: store.voidRays.some(ray => ray.ownerId === localPlayerId),
+        active: isViewmodelActionActive(heroId, store, localPlayerId),
         charging: store.voidRayCharging,
         targeting: false,
       };
     case 'hookshot':
       return {
-        active:
-          store.dragHooks.some(hook => hook.ownerId === localPlayerId) ||
-          store.grappleLines.some(line => line.ownerId === localPlayerId),
+        active: isViewmodelActionActive(heroId, store, localPlayerId),
         charging: false,
         targeting: store.grappleTrapTargeting,
       };
     case 'blaze':
       return {
-        active: store.flamethrowerActive || store.rockets.some(rocket => rocket.ownerId === localPlayerId),
+        active: isViewmodelActionActive(heroId, store, localPlayerId),
         charging: false,
-        targeting: store.bombTargeting || store.airStrikeTargeting,
+        targeting: store.bombTargeting,
       };
     case 'chronos':
       return {
@@ -1411,19 +1481,9 @@ function isLocalHookshotHookDetached(side: -1 | 1): boolean {
   if (!localPlayerId) return false;
 
   return (
-    state.hookProjectiles.some(hook => (
-      hook.ownerId === localPlayerId &&
-      (hook.launchSide ?? 1) === side
-    )) ||
-    state.dragHooks.some(hook => (
-      hook.ownerId === localPlayerId &&
-      (hook.launchSide ?? 1) === side
-    )) ||
-    state.grappleLines.some(line => (
-      line.ownerId === localPlayerId &&
-      line.state !== 'done' &&
-      (line.launchSide ?? 1) === side
-    ))
+    hasOwnedProjectileOnSide(state.hookProjectiles, localPlayerId, side) ||
+    hasOwnedProjectileOnSide(state.dragHooks, localPlayerId, side) ||
+    hasOwnedActiveGrappleLineOnSide(state, localPlayerId, side)
   );
 }
 
@@ -1852,8 +1912,8 @@ function PhantomPoseableHand({
     const palm = palmRef.current;
     const openVisual = openVisualRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
     const nowMs = Date.now();
     const attack = primaryAttackRef.current;
@@ -2392,9 +2452,9 @@ function HookshotSimpleHookHand({
     useShallow(state => {
       const localPlayerId = state.localPlayer?.id;
       return Boolean(localPlayerId && (
-        state.hookProjectiles.some(hook => hook.ownerId === localPlayerId && (hook.launchSide ?? 1) === side) ||
-        state.dragHooks.some(hook => hook.ownerId === localPlayerId && (hook.launchSide ?? 1) === side) ||
-        state.grappleLines.some(line => line.ownerId === localPlayerId && line.state !== 'done' && (line.launchSide ?? 1) === side)
+        hasOwnedProjectileOnSide(state.hookProjectiles, localPlayerId, side) ||
+        hasOwnedProjectileOnSide(state.dragHooks, localPlayerId, side) ||
+        hasOwnedActiveGrappleLineOnSide(state, localPlayerId, side)
       ));
     })
   );
@@ -2404,8 +2464,8 @@ function HookshotSimpleHookHand({
     const wrist = wristRef.current;
     const palm = palmRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
     const secondaryPulse = getHookshotSecondaryPosePulse(secondaryFireRef.current, Date.now());
     if (hookVisualRef.current) {
@@ -3153,8 +3213,8 @@ function BlazePhantomHand({
     const wrist = wristRef.current;
     const palm = palmRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!closedHand || !arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!closedHand || !arm || !wrist || !palm || !thumb || !fingers) return;
 
     const nowMs = Date.now();
     const rocketJumpPose = getBlazeRocketJumpStaffSlamPose(nowMs);
@@ -3802,8 +3862,8 @@ function ChronosTriangleHand({
     const wrist = wristRef.current;
     const palm = palmRef.current;
     const thumb = thumbRef.current;
-    const fingers = fingerRefs.current.filter(Boolean) as THREE.Group[];
-    if (!arm || !wrist || !palm || !thumb || fingers.length !== 4) return;
+    const fingers = resolveFingerTargets(fingerRefs.current);
+    if (!arm || !wrist || !palm || !thumb || !fingers) return;
 
     writeChronosTriangleHandPose(
       {
@@ -4687,22 +4747,12 @@ export function HeroViewmodel({ config }: { config: ViewmodelQualityConfig }) {
         heroId: viewmodelHeroId,
         playerState: state.localPlayer?.state ?? 'dead',
         gamePhase: state.gamePhase,
-        actionActive: Boolean(
-          viewmodelHeroId &&
-          (
-            (viewmodelHeroId === 'blaze' && state.flamethrowerActive) ||
-            (viewmodelHeroId === 'phantom' && state.voidRays.some(ray => ray.ownerId === localPlayerId)) ||
-            (viewmodelHeroId === 'hookshot' && (
-              state.dragHooks.some(hook => hook.ownerId === localPlayerId) ||
-              state.grappleLines.some(line => line.ownerId === localPlayerId)
-            ))
-          )
-        ),
+        actionActive: isViewmodelActionActive(viewmodelHeroId, state, localPlayerId),
         actionCharging: viewmodelHeroId === 'phantom' && state.voidRayCharging,
         actionTargeting: Boolean(
           viewmodelHeroId &&
           (
-            (viewmodelHeroId === 'blaze' && (state.bombTargeting || state.airStrikeTargeting)) ||
+            (viewmodelHeroId === 'blaze' && state.bombTargeting) ||
             (viewmodelHeroId === 'hookshot' && state.grappleTrapTargeting)
           )
         ),

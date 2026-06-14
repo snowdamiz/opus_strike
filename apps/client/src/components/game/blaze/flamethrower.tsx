@@ -84,6 +84,23 @@ const FLAME_STREAM_POINT_INDICES = Array.from(
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 const easeOutCubic = (value: number): number => 1 - Math.pow(1 - clamp01(value), 3);
+const FLAME_STREAM_SEGMENT_SAMPLES = ROPE_SEGMENT_INDICES.map((index) => {
+  const t = (index + 0.5) / PLIABLE_ROPE_SEGMENT_COUNT;
+  return {
+    index,
+    t,
+    widthBase: 0.045 + Math.pow(t, 0.92) * 0.62,
+    endFade: 1 - THREE.MathUtils.smoothstep(t, 0.72, 1),
+  };
+});
+const FLAME_STREAM_POINT_SAMPLES = FLAME_STREAM_POINT_INDICES.map((index) => {
+  const t = index / PLIABLE_ROPE_SEGMENT_COUNT;
+  return {
+    index,
+    t,
+    sizeBase: 0.045 + Math.pow(t, 0.86) * 0.56,
+  };
+});
 
 function sampleStreamPoint(
   out: THREE.Vector3,
@@ -272,12 +289,11 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
       streamPoints[i].add(_swirlOffset);
     }
 
-    ROPE_SEGMENT_INDICES.forEach((i) => {
-      const t = (i + 0.5) / PLIABLE_ROPE_SEGMENT_COUNT;
+    for (let sampleIndex = 0; sampleIndex < FLAME_STREAM_SEGMENT_SAMPLES.length; sampleIndex++) {
+      const { index: i, t, widthBase, endFade } = FLAME_STREAM_SEGMENT_SAMPLES[sampleIndex];
       const segmentRamp = easeOutCubic(clamp01((rampRef.current - t * 0.08) / 0.7));
-      const endFade = 1 - THREE.MathUtils.smoothstep(t, 0.72, 1);
       const widthPulse = flicker + Math.sin(time * (13 + i * 1.7) + i) * 0.08;
-      const radius = Math.max(0.001, (0.045 + Math.pow(t, 0.92) * 0.62) * widthPulse * segmentRamp);
+      const radius = Math.max(0.001, widthBase * widthPulse * segmentRamp);
       const opacity = endFade * segmentRamp;
 
       updateRopeSegment(streamHeatRefs.current[i], streamPoints[i], streamPoints[i + 1], radius * 2.15);
@@ -299,24 +315,26 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
         core.visible = segmentRamp > 0.01;
         (core.material as THREE.MeshBasicMaterial).opacity = 0.54 * opacity;
       }
-    });
+    }
 
-    streamPuffRefs.current.forEach((puff, i) => {
-      if (!puff) return;
-      const t = i / PLIABLE_ROPE_SEGMENT_COUNT;
+    for (let sampleIndex = 0; sampleIndex < FLAME_STREAM_POINT_SAMPLES.length; sampleIndex++) {
+      const { index: i, t, sizeBase } = FLAME_STREAM_POINT_SAMPLES[sampleIndex];
+      const puff = streamPuffRefs.current[i];
+      if (!puff) continue;
       const source = streamPoints[Math.min(i, PLIABLE_ROPE_SEGMENT_COUNT)];
       const puffRamp = easeOutCubic(clamp01((rampRef.current - t * 0.06) / 0.7));
       const pulse = 0.85 + Math.sin(time * (16 + i) + i * 0.7) * 0.12;
 
       puff.visible = puffRamp > 0.01;
       puff.position.copy(source);
-      puff.scale.setScalar((0.045 + Math.pow(t, 0.86) * 0.56) * pulse * puffRamp);
+      puff.scale.setScalar(sizeBase * pulse * puffRamp);
       (puff.material as THREE.MeshBasicMaterial).opacity =
         (0.24 + (1 - t) * 0.28) * (1 - THREE.MathUtils.smoothstep(t, 0.78, 1)) * puffRamp;
-    });
+    }
 
-    flameRefs.current.forEach((flame, i) => {
-      if (!flame) return;
+    for (let i = 0; i < FLAME_SEGMENTS.length; i++) {
+      const flame = flameRefs.current[i];
+      if (!flame) continue;
       const segment = FLAME_SEGMENTS[i];
       const pulse = flicker + Math.sin(time * (18 + i * 3) + i) * 0.06;
       const segmentRamp = easeOutCubic(clamp01((rampRef.current - i * 0.06) / 0.7));
@@ -348,7 +366,7 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
       );
       (flame.material as THREE.MeshBasicMaterial).opacity =
         segment.opacity * Math.min(1, pulse + 0.05) * segmentRamp;
-    });
+    }
 
     if (glowRef.current) {
       const glowPulse = 1 + Math.sin(time * 28) * 0.12;
@@ -367,8 +385,9 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
         (0.055 + flicker * 0.02) * plumeIntensity;
     }
 
-    sparkRefs.current.forEach((spark, i) => {
-      if (!spark) return;
+    for (let i = 0; i < FLAME_SPARKS.length; i++) {
+      const spark = sparkRefs.current[i];
+      if (!spark) continue;
       const data = FLAME_SPARKS[i];
       const cycle = (elapsed * data.speed + data.phase) % 1;
       const distance = 0.5 + cycle * (BLAZE_FLAMETHROWER_RANGE * 0.85);
@@ -392,10 +411,11 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
       );
       spark.scale.setScalar(cycle < 0.85 ? data.size * (1 + cycle * 1.2) * sparkRamp : 0);
       (spark.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.9 - cycle) * sparkRamp;
-    });
+    }
 
-    smokeRefs.current.forEach((smoke, i) => {
-      if (!smoke) return;
+    for (let i = 0; i < SMOKE_PUFFS.length; i++) {
+      const smoke = smokeRefs.current[i];
+      if (!smoke) continue;
       const data = SMOKE_PUFFS[i];
       const cycle = (elapsed * 0.9 + data.phase) % 1;
       const distance = 2.4 + cycle * (BLAZE_FLAMETHROWER_RANGE * 0.45);
@@ -416,7 +436,7 @@ export const FlamethrowerEffect = React.memo(({ isActive, poseProvider, ownerId,
       smoke.scale.setScalar((data.size + cycle * 0.28) * smokeRamp);
       (smoke.material as THREE.MeshBasicMaterial).opacity =
         Math.max(0, 0.28 - cycle * 0.28) * smokeRamp;
-    });
+    }
 
     if (lightRef.current) {
       lightRef.current.position.y = BLAZE_FLAMETHROWER_RANGE * 0.35;

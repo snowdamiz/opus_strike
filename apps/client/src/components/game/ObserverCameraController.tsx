@@ -6,8 +6,8 @@ import { useInput } from '../../hooks/useInput';
 import { useCamera } from '../../hooks/player/useCamera';
 import { setAudioListenerTransform } from '../../hooks/useAudio';
 import { OBSERVER_FLY_SPEED_PRESETS, useGameStore } from '../../store/gameStore';
+import { isGameConsoleOpen } from '../../store/gameConsoleState';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../utils/mapWarmup/mapPrepCache';
-import { isGameConsoleOpen } from '../ui/GameConsole';
 
 interface ObserverCameraControllerProps {
   enabled: boolean;

@@ -98,14 +98,6 @@ export const GRAPPLE_SWING_FORCE = 20;
 export const GRAPPLE_DETACH_DISTANCE = 2;
 export const GRAPPLE_MOMENTUM_TRANSFER = 0.8;
 
-// Jetpack
-export const JETPACK_MAX_FUEL = 100;
-export const JETPACK_FUEL_CONSUMPTION = 30; // per second
-export const JETPACK_FUEL_REGEN = 20; // per second when grounded
-export const JETPACK_THRUST = 20;
-export const JETPACK_HOVER_THRUST = 12;
-export const JETPACK_MAX_VERTICAL_SPEED = 15;
-
 // Blaze Flamethrower
 export const BLAZE_FLAMETHROWER_MAX_FUEL = 100;
 export const BLAZE_FLAMETHROWER_FUEL_DRAIN = 40; // per second

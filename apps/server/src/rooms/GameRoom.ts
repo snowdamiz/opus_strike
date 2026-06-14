@@ -1500,6 +1500,7 @@ export class GameRoom extends Room<GameState> {
     });
     if (this.tickInterval) {
       clearInterval(this.tickInterval);
+      this.tickInterval = null;
     }
     this.settleWagerNoContest('room_dispose');
   }
@@ -6122,7 +6123,7 @@ export class GameRoom extends Room<GameState> {
     if (player.heroId !== 'phantom' || player.isBot) return;
 
     const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
-    const client = this.clients.find((candidate) => candidate.sessionId === player.id);
+    const client = this.clientsBySessionId.get(player.id);
     if (!client) return;
     this.sendTracked(client, 'phantomPrimaryState', {
       ammo: magazine.ammo,
@@ -6700,11 +6701,13 @@ export class GameRoom extends Room<GameState> {
   ): ChronosAegisSkillHit | null {
     const shieldTeam = options.shieldTeam ?? (source.team === 'red' ? 'blue' : 'red');
     let bestHit: ChronosAegisSkillHit | null = null;
+    const aegisCandidates = this.alivePlayersByTeam[shieldTeam];
+    const playersToCheck = aegisCandidates.length > 0 ? aegisCandidates : this.state.players.values();
 
-    this.state.players.forEach((aegisPlayer) => {
-      if (aegisPlayer.team !== shieldTeam) return;
-      if (aegisPlayer.id === source.id) return;
-      if (!this.isChronosAegisActive(aegisPlayer)) return;
+    for (const aegisPlayer of playersToCheck) {
+      if (aegisPlayer.team !== shieldTeam) continue;
+      if (aegisPlayer.id === source.id) continue;
+      if (!this.isChronosAegisActive(aegisPlayer)) continue;
 
       if (
         options.targetPoint &&
@@ -6718,7 +6721,7 @@ export class GameRoom extends Room<GameState> {
           }
         ) > CHRONOS_AEGIS_TARGET_BACK_MAX
       ) {
-        return;
+        continue;
       }
 
       const hit = getSegmentHitAgainstChronosAegis(
@@ -6733,8 +6736,8 @@ export class GameRoom extends Room<GameState> {
         },
         { projectileRadius: options.projectileRadius }
       );
-      if (!hit) return;
-      if (bestHit && hit.distance >= bestHit.distance) return;
+      if (!hit) continue;
+      if (bestHit && hit.distance >= bestHit.distance) continue;
 
       bestHit = {
         blocker: aegisPlayer,
@@ -6742,7 +6745,7 @@ export class GameRoom extends Room<GameState> {
         normal: hit.normal,
         distance: hit.distance,
       };
-    });
+    }
 
     return bestHit;
   }
@@ -7037,7 +7040,7 @@ export class GameRoom extends Room<GameState> {
       target.movement.slideTimeRemaining = 0;
       this.markMovementBarrier(target.id, 'knockback');
 
-      const targetClient = this.clients.find((client) => client.sessionId === target.id);
+      const targetClient = this.clientsBySessionId.get(target.id);
       targetClient?.send('chronosTimebreakImpulse', {
         sourceId: caster.id,
         sourcePosition: origin,
@@ -9227,7 +9230,7 @@ export class GameRoom extends Room<GameState> {
       // Send to team only
       this.state.players.forEach((p, sessionId) => {
         if (p.team === player.team) {
-          this.clients.find(c => c.sessionId === sessionId)?.send('chat', {
+          this.clientsBySessionId.get(sessionId)?.send('chat', {
             playerId: client.sessionId,
             playerName: player.name,
             message: sanitizedMessage,

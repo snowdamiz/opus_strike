@@ -30,7 +30,16 @@ interface TerrainTexturePaintContexts {
 }
 
 const TERRAIN_DETAIL_GRID_SIZE = 8;
-const terrainTextureCache = new Map<string, VoxelTerrainTextures>();
+const TERRAIN_TEXTURE_CACHE_MAX_ENTRIES = 10;
+
+interface CachedTerrainTextures {
+  textures: VoxelTerrainTextures;
+  lastUsedAt: number;
+  retainCount: number;
+}
+
+const terrainTextureCache = new Map<string, CachedTerrainTextures>();
+let terrainTextureCacheClock = 0;
 
 export const TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY: Record<GraphicsFeatureQuality, number> = {
   off: 4,
@@ -717,10 +726,11 @@ export function createVoxelTerrainTextures(
   theme: VoxelMapTheme,
   materialQuality: GraphicsFeatureQuality = 'high'
 ): VoxelTerrainTextures {
-  const cacheKey = `${theme.id}:${materialQuality}`;
+  const cacheKey = getTerrainTextureCacheKey(theme, materialQuality);
   const cached = terrainTextureCache.get(cacheKey);
   if (cached) {
-    return cached;
+    cached.lastUsedAt = ++terrainTextureCacheClock;
+    return cached.textures;
   }
 
   TILE_SIZE = TERRAIN_TEXTURE_TILE_SIZE;
@@ -747,8 +757,64 @@ export function createVoxelTerrainTextures(
     anisotropy,
   };
 
-  terrainTextureCache.set(cacheKey, textures);
+  terrainTextureCache.set(cacheKey, {
+    textures,
+    lastUsedAt: ++terrainTextureCacheClock,
+    retainCount: 0,
+  });
+  enforceTerrainTextureCacheBudget();
   return textures;
+}
+
+function getTerrainTextureCacheKey(theme: VoxelMapTheme, materialQuality: GraphicsFeatureQuality): string {
+  return `${theme.id}:${materialQuality}`;
+}
+
+function disposeVoxelTerrainTextures(textures: VoxelTerrainTextures): void {
+  textures.color.dispose();
+  textures.emissive.dispose();
+}
+
+function enforceTerrainTextureCacheBudget(): void {
+  if (terrainTextureCache.size <= TERRAIN_TEXTURE_CACHE_MAX_ENTRIES) return;
+
+  const candidates = Array.from(terrainTextureCache.entries())
+    .filter(([, entry]) => entry.retainCount === 0)
+    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+  for (const [cacheKey, entry] of candidates) {
+    if (terrainTextureCache.size <= TERRAIN_TEXTURE_CACHE_MAX_ENTRIES) return;
+    terrainTextureCache.delete(cacheKey);
+    disposeVoxelTerrainTextures(entry.textures);
+  }
+}
+
+export function retainVoxelTerrainTextures(
+  theme: VoxelMapTheme,
+  materialQuality: GraphicsFeatureQuality = 'high'
+): { textures: VoxelTerrainTextures; release: () => void } {
+  const cacheKey = getTerrainTextureCacheKey(theme, materialQuality);
+  const textures = createVoxelTerrainTextures(theme, materialQuality);
+  const entry = terrainTextureCache.get(cacheKey);
+  if (entry) {
+    entry.retainCount++;
+    entry.lastUsedAt = ++terrainTextureCacheClock;
+  }
+
+  let released = false;
+  return {
+    textures,
+    release: () => {
+      if (released) return;
+      released = true;
+
+      const retainedEntry = terrainTextureCache.get(cacheKey);
+      if (!retainedEntry || retainedEntry.textures !== textures) return;
+      retainedEntry.retainCount = Math.max(0, retainedEntry.retainCount - 1);
+      retainedEntry.lastUsedAt = ++terrainTextureCacheClock;
+      enforceTerrainTextureCacheBudget();
+    },
+  };
 }
 
 export function getTextureLayerForBlock(blockId: VoxelBlockId, face: VoxelFaceDirection): TerrainTextureTile {

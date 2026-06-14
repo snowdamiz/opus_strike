@@ -21,6 +21,7 @@ import {
   getFireballTrailInnerMaterial,
   getFireballTrailOuterMaterial,
 } from './materials';
+import { playPrimaryImpactSound } from '../primaryImpactSound';
 
 // ============================================================================
 // BLAZE PRIMARY PROJECTILE
@@ -393,6 +394,7 @@ export function RocketsManager() {
             direction: slot.direction,
             scale: ROCKET_IMPACT_SCALE,
           });
+          playPrimaryImpactSound('blaze', hit.point);
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;
@@ -415,6 +417,7 @@ export function RocketsManager() {
           direction: slot.direction,
           scale: ROCKET_IMPACT_SCALE,
         });
+        playPrimaryImpactSound('blaze', slot.position);
         removals.push(slot.id);
         pool.deactivate(slotIndex);
         return;

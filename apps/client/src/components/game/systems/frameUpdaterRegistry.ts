@@ -2,6 +2,7 @@ export type FrameUpdater<TState> = (state: TState, delta: number) => void;
 
 interface FrameUpdaterEntry<TState> {
   updater: FrameUpdater<TState>;
+  index: number;
 }
 
 export interface FrameUpdaterRegistry<TState> {
@@ -20,13 +21,17 @@ export function createFrameUpdaterRegistry<TState>(): FrameUpdaterRegistry<TStat
     },
 
     register(effectId, updater) {
-      const entry: FrameUpdaterEntry<TState> = { updater };
       const existing = entriesById.get(effectId);
+      const entry: FrameUpdaterEntry<TState> = {
+        updater,
+        index: existing?.index ?? entries.length,
+      };
+
       if (existing) {
-        const index = entries.indexOf(existing);
-        if (index >= 0) {
-          entries[index] = entry;
+        if (existing.index >= 0 && existing.index < entries.length && entries[existing.index] === existing) {
+          entries[existing.index] = entry;
         } else {
+          entry.index = entries.length;
           entries.push(entry);
         }
       } else {
@@ -37,12 +42,14 @@ export function createFrameUpdaterRegistry<TState>(): FrameUpdaterRegistry<TStat
       return () => {
         if (entriesById.get(effectId) !== entry) return;
         entriesById.delete(effectId);
-        const index = entries.indexOf(entry);
+        const index = entry.index;
         if (index < 0) return;
         const last = entries.pop();
         if (last && index < entries.length) {
           entries[index] = last;
+          last.index = index;
         }
+        entry.index = -1;
       };
     },
 

@@ -643,7 +643,6 @@ export interface LocalPlayerFrameContext {
   isPracticeMode: boolean;
   updateLocalPlayer: GameStoreSnapshot['updateLocalPlayer'];
   setBombTargeting: GameStoreSnapshot['setBombTargeting'];
-  setAirStrikeTargeting: GameStoreSnapshot['setAirStrikeTargeting'];
   setFlamethrowerActive: GameStoreSnapshot['setFlamethrowerActive'];
   setFlamethrowerFuel: GameStoreSnapshot['setFlamethrowerFuel'];
   setGrappleTrapTargeting: GameStoreSnapshot['setGrappleTrapTargeting'];
@@ -1371,7 +1370,6 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
     resetPredictedAbilitySounds,
     clearHeroActionLock,
     setBombTargeting,
-    setAirStrikeTargeting,
     setGrappleTrapTargeting,
     setFlamethrowerActive,
     resetViewmodelPoseState,
@@ -1395,7 +1393,6 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
   hookshotAbilities.secondaryFirePressedRef.current = false;
   setChronosAegisVisualState(localPlayer.id, false, now);
   setBombTargeting(false, false);
-  setAirStrikeTargeting(false, false);
   setGrappleTrapTargeting(false, false);
   setFlamethrowerActive(false);
   phantomAbilities.resetPhantomPrimaryMagazine();
@@ -1539,7 +1536,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const updateLocalPlayer = useGameStore(state => state.updateLocalPlayer);
   const setBombTargeting = useGameStore(state => state.setBombTargeting);
   const bombTargeting = useGameStore(state => state.bombTargeting);
-  const setAirStrikeTargeting = useGameStore(state => state.setAirStrikeTargeting);
   const setFlamethrowerActive = useGameStore(state => state.setFlamethrowerActive);
   const setFlamethrowerFuel = useGameStore(state => state.setFlamethrowerFuel);
   const gamePhase = useGameStore(state => state.gamePhase);
@@ -1896,10 +1892,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const handleCancel = (e: MouseEvent | KeyboardEvent) => {
       const store = useGameStore.getState();
       const isBombTargeting = store.bombTargeting;
-      const isAirStrikeTargeting = store.airStrikeTargeting;
       const isGrappleTrapTargeting = store.grappleTrapTargeting;
 
-      if (!isBombTargeting && !isAirStrikeTargeting && !isGrappleTrapTargeting) return;
+      if (!isBombTargeting && !isGrappleTrapTargeting) return;
 
       const isRightClick = e instanceof MouseEvent && e.button === 2;
       const isEscape = e instanceof KeyboardEvent && e.code === 'Escape';
@@ -1912,11 +1907,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           blazeAbilities.bombValidRef.current = false;
           setBlazeBombTargetHeld(false);
         }
-        if (isAirStrikeTargeting && (isRightClick || isEscape)) {
-          store.setAirStrikeTargeting(false, false);
-          blazeAbilities.airStrikeTargetRef.current = null;
-          blazeAbilities.airStrikeValidRef.current = false;
-        }
         if (isGrappleTrapTargeting && (isRightClick || isEscape)) {
           store.setGrappleTrapTargeting(false, false);
           hookshotAbilities.grappleTrapTargetRef.current = null;
@@ -1927,7 +1917,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     const handleContextMenu = (e: MouseEvent) => {
       const store = useGameStore.getState();
-      if (store.bombTargeting || store.airStrikeTargeting || store.grappleTrapTargeting) {
+      if (store.bombTargeting || store.grappleTrapTargeting) {
         e.preventDefault();
       }
     };
@@ -1961,7 +1951,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       isPracticeMode,
       updateLocalPlayer,
       setBombTargeting,
-      setAirStrikeTargeting,
       setFlamethrowerActive,
       setFlamethrowerFuel,
       setGrappleTrapTargeting,
@@ -2036,7 +2025,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       frameCtx.isPracticeMode = isPracticeMode;
       frameCtx.updateLocalPlayer = updateLocalPlayer;
       frameCtx.setBombTargeting = setBombTargeting;
-      frameCtx.setAirStrikeTargeting = setAirStrikeTargeting;
       frameCtx.setFlamethrowerActive = setFlamethrowerActive;
       frameCtx.setFlamethrowerFuel = setFlamethrowerFuel;
       frameCtx.setGrappleTrapTargeting = setGrappleTrapTargeting;

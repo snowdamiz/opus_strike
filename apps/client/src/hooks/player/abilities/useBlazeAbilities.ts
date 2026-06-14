@@ -24,6 +24,7 @@ import {
   BLAZE_ROCKET_SPEED,
   BLAZE_BOMB_COOLDOWN,
   BLAZE_BOMB_FALL_DURATION,
+  FUEL_UPDATE_THRESHOLD,
   calculatePlayerSocketPosition,
   calculateLookDirection,
 } from '../constants';
@@ -100,8 +101,6 @@ export interface UseBlazeAbilitiesReturn {
   bombValidRef: React.MutableRefObject<boolean>;
   flamethrowerFuelRef: React.MutableRefObject<number>;
   flamethrowerActiveRef: React.MutableRefObject<boolean>;
-  airStrikeTargetRef: React.MutableRefObject<THREE.Vector3 | null>;
-  airStrikeValidRef: React.MutableRefObject<boolean>;
   secondaryFirePressedRef: React.MutableRefObject<boolean>;
   pendingRocketJumpRef: React.MutableRefObject<PendingRocketJump | null>;
   actionLockUntilRef: React.MutableRefObject<number>;
@@ -128,7 +127,6 @@ export interface UseBlazeAbilitiesReturn {
     updateLocalPlayer: (data: any) => void
   ) => void;
   handleBombTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
-  handleAirStrikeTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
 }
 
 interface PendingRocketJump {
@@ -150,10 +148,6 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
   const flamethrowerFuelRef = useRef(BLAZE_FLAMETHROWER_MAX_FUEL);
   const flamethrowerActiveRef = useRef(false);
   const pendingRocketJumpRef = useRef<PendingRocketJump | null>(null);
-
-  // Legacy targeting refs kept so stale target state can be cleared safely.
-  const airStrikeTargetRef = useRef<THREE.Vector3 | null>(null);
-  const airStrikeValidRef = useRef(false);
 
   const actionLockUntilRef = useRef(0);
 
@@ -330,7 +324,13 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     const shouldPlayLocalFlamethrowerSound = isHoldingFlamethrower;
 
     flamethrowerFuelRef.current = serverFuel;
-    setFlamethrowerFuel(serverFuel);
+    if (
+      Math.abs(store.flamethrowerFuel - serverFuel) >= FUEL_UPDATE_THRESHOLD ||
+      (serverFuel === 0 && store.flamethrowerFuel !== 0) ||
+      (serverFuel === BLAZE_FLAMETHROWER_MAX_FUEL && store.flamethrowerFuel !== BLAZE_FLAMETHROWER_MAX_FUEL)
+    ) {
+      setFlamethrowerFuel(serverFuel);
+    }
     setBlazeFlamethrowerHeld(isHoldingFlamethrower || serverActive, timestampMs);
 
     if (shouldPlayLocalFlamethrowerSound && !flamethrowerActiveRef.current) {
@@ -401,11 +401,6 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     if (!localPlayer || (localPlayer.ultimateCharge ?? 0) < 100) return;
 
     lockActions(BLAZE_STAFF_RETURN_TO_IDLE_MS, ctx.viewmodelNowMs ?? Date.now());
-
-    // Clear any stale target state from older targeting flows.
-    useGameStore.getState().setAirStrikeTargeting(false, false);
-    airStrikeTargetRef.current = null;
-    airStrikeValidRef.current = false;
   }, []);
 
   // Handle bomb target updates
@@ -419,17 +414,6 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     }
   }, []);
 
-  // Legacy target update hook for the removed targeted ultimate flow.
-  const handleAirStrikeTargetUpdate = useCallback((position: THREE.Vector3 | null, isValid: boolean) => {
-    airStrikeTargetRef.current = position;
-    airStrikeValidRef.current = isValid;
-
-    const store = useGameStore.getState();
-    if (store.airStrikeTargeting && store.airStrikeTargetValid !== isValid) {
-      store.setAirStrikeTargeting(true, isValid);
-    }
-  }, []);
-
   return {
     lastRocketTimeRef,
     rocketIdRef,
@@ -438,8 +422,6 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     bombValidRef,
     flamethrowerFuelRef,
     flamethrowerActiveRef,
-    airStrikeTargetRef,
-    airStrikeValidRef,
     secondaryFirePressedRef,
     pendingRocketJumpRef,
     actionLockUntilRef,
@@ -455,6 +437,5 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     resetRocketJump,
     executeAirStrike,
     handleBombTargetUpdate,
-    handleAirStrikeTargetUpdate,
   };
 }

@@ -57,8 +57,15 @@ export function Scoreboard() {
       .map(participant => [participant.playerId, participant])
   ), [participants]);
 
-  const solarPlayers = Array.from(players.values()).filter(p => p.team === 'red');
-  const voidPlayers = Array.from(players.values()).filter(p => p.team === 'blue');
+  const solarPlayers: Player[] = [];
+  const voidPlayers: Player[] = [];
+  for (const player of players.values()) {
+    if (player.team === 'red') {
+      solarPlayers.push(player);
+    } else if (player.team === 'blue') {
+      voidPlayers.push(player);
+    }
+  }
 
   const handleReportPlayer = async (player: Player) => {
     if (reportingPlayerId) return;

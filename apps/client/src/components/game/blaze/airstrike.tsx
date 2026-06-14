@@ -68,6 +68,10 @@ interface AirStrikeData {
 const airStrikes: AirStrikeData[] = [];
 let airStrikeIdCounter = 0;
 let airStrikeRevision = 0;
+let cachedGearstormSkyIntensityNowMs = -1;
+let cachedGearstormSkyIntensityRevision = -1;
+let cachedGearstormSkyIntensityCount = -1;
+let cachedGearstormSkyIntensity = 0;
 
 export const AIR_STRIKE_DURATION = 5200;
 const GEARSTORM_SKY_AFTERGLOW_MS = 900;
@@ -232,6 +236,14 @@ function smoothstep01(value: number): number {
 }
 
 export function getBlazeGearstormSkyIntensity(nowMs = getFrameClock().nowMs): number {
+  if (
+    nowMs === cachedGearstormSkyIntensityNowMs &&
+    airStrikeRevision === cachedGearstormSkyIntensityRevision &&
+    airStrikes.length === cachedGearstormSkyIntensityCount
+  ) {
+    return cachedGearstormSkyIntensity;
+  }
+
   let intensity = 0;
 
   for (const strike of airStrikes) {
@@ -243,7 +255,11 @@ export function getBlazeGearstormSkyIntensity(nowMs = getFrameClock().nowMs): nu
     intensity = Math.max(intensity, fadeIn * fadeOut);
   }
 
-  return clamp01(intensity);
+  cachedGearstormSkyIntensityNowMs = nowMs;
+  cachedGearstormSkyIntensityRevision = airStrikeRevision;
+  cachedGearstormSkyIntensityCount = airStrikes.length;
+  cachedGearstormSkyIntensity = clamp01(intensity);
+  return cachedGearstormSkyIntensity;
 }
 
 function createGearShape(teeth: number, rootRadius: number, outerRadius: number, innerRadius: number): THREE.Shape {
@@ -914,24 +930,6 @@ export function appendBlazeAirstrikeGpuPrewarmObjects(target: THREE.Object3D): v
   addGearstormPrewarmInstancedMesh(target, SHARED_GEOMETRIES.circle32, materials.groundFill, [3.68, -0.72, -4.45], [0.24, 0.24, 1], [-Math.PI / 2, 0, 0]);
   addGearstormPrewarmInstancedMesh(target, SHARED_GEOMETRIES.ring32, materials.groundRing, [3.98, -0.72, -4.45], [0.24, 0.24, 1], [-Math.PI / 2, 0, 0]);
   addGearstormPrewarmInstancedMesh(target, SHARED_GEOMETRIES.circle16, materials.groundCore, [4.28, -0.72, -4.45], [0.18, 0.18, 1], [-Math.PI / 2, 0, 0]);
-}
-
-interface AirStrikeTargetingIndicatorProps {
-  isActive: boolean;
-  onTargetUpdate: (position: THREE.Vector3 | null, isValid: boolean) => void;
-}
-
-export function AirStrikeTargetingIndicator({ isActive, onTargetUpdate }: AirStrikeTargetingIndicatorProps) {
-  const wasActiveRef = useRef(false);
-
-  useFrame(() => {
-    if (isActive && !wasActiveRef.current) {
-      onTargetUpdate(null, false);
-    }
-    wasActiveRef.current = isActive;
-  });
-
-  return null;
 }
 
 export function useAirStrikes() {

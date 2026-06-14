@@ -521,10 +521,12 @@ export class MovementPredictionController {
   }
 
   private getUnacknowledgedCommands(): MovementCommand[] {
-    return this.commandOrder
-      .map((seq) => this.commandRecords.get(seq)?.command)
-      .filter((command): command is MovementCommand => Boolean(command))
-      .sort((a, b) => compareMovementSeq(a.seq, b.seq));
+    const commands: MovementCommand[] = [];
+    for (const seq of this.commandOrder) {
+      const command = this.commandRecords.get(seq)?.command;
+      if (command) commands.push(command);
+    }
+    return commands;
   }
 
   private beginVisualCorrection(

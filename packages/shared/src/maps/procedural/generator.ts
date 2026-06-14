@@ -776,10 +776,16 @@ function createPlacedStructureFromSlot(seed: number, slot: TacticalSlot, layout:
 function placementOverlaps(
   point: { x: number; z: number },
   radius: number,
-  placements: PlacedStructure[],
+  placements: readonly PlacedStructure[],
   extraSpacing = 1.3
 ): boolean {
-  return placements.some((placement) => distance2D(point, placement.position) < radius + placement.radius + extraSpacing);
+  for (const placement of placements) {
+    if (distance2D(point, placement.position) < radius + placement.radius + extraSpacing) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function isProtectedObjectivePoint(point: { x: number; z: number }, layout: ProceduralCTFLayout, radius: number): boolean {
@@ -932,7 +938,9 @@ function createDecorativePlacements(
     if (!isInsideBoundaryPolygon(x, z, layout.boundary)) continue;
     if (distanceToBoundary(x, z, layout.boundary) < radius + 1.8) continue;
     if (isProtectedObjectivePoint(point, layout, radius)) continue;
-    if (placementOverlaps(point, radius, [...placements, ...accepted], isFillerPass ? 0.7 : 1.15)) continue;
+    const spacing = isFillerPass ? 0.7 : 1.15;
+    if (placementOverlaps(point, radius, placements, spacing)) continue;
+    if (placementOverlaps(point, radius, accepted, spacing)) continue;
 
     const kind = chooseDecorativeStructureKind(theme, random, accepted.length);
     const metadata = getDecorativeStructureMetadata(kind);

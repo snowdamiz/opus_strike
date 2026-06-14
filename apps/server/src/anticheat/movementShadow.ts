@@ -226,8 +226,14 @@ export function recordMovementShadowDriftSample(sample: MovementShadowDriftSampl
   let bucket = shadowBuckets.get(key);
   if (!bucket) {
     if (shadowBuckets.size >= MAX_SHADOW_BUCKETS) {
-      const oldest = Array.from(shadowBuckets.entries())
-        .sort((a, b) => a[1].lastSampleAt - b[1].lastSampleAt)[0]?.[0];
+      let oldest: string | null = null;
+      let oldestSampleAt = Infinity;
+      for (const [bucketKey, candidate] of shadowBuckets) {
+        if (candidate.lastSampleAt < oldestSampleAt) {
+          oldest = bucketKey;
+          oldestSampleAt = candidate.lastSampleAt;
+        }
+      }
       if (oldest) shadowBuckets.delete(oldest);
     }
     bucket = {

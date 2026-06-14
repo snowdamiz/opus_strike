@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { VoxelMapManifest, VoxelMapTheme } from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
@@ -14,7 +14,10 @@ import {
   prepareVoxelMapCpu,
   type PreparedVoxelMap,
 } from '../../../utils/mapWarmup/mapPrepCache';
-import { measureFrameWork } from '../../../movement/networkDiagnostics';
+import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
+  measureFrameWork,
+} from '../../../movement/networkDiagnostics';
 
 const TERRAIN_CULL_UPDATE_INTERVAL_MS = 180;
 const TERRAIN_CULL_HYSTERESIS = 18;
@@ -286,54 +289,61 @@ export function VoxelMap({
     [renderableRegions, visibleRegionCount]
   );
 
-  useFrame((state, delta) => {
+  const runTerrainCullingFrame = (state: RootState, delta: number): void => {
     if (!terrainReady || !Number.isFinite(terrainCullDistance)) return;
 
-    measureFrameWork('frame.terrainCulling', () => {
-      terrainCullAccumulatorRef.current += delta * 1000;
-      if (terrainCullAccumulatorRef.current < TERRAIN_CULL_UPDATE_INTERVAL_MS) return;
-      terrainCullAccumulatorRef.current = 0;
+    terrainCullAccumulatorRef.current += delta * 1000;
+    if (terrainCullAccumulatorRef.current < TERRAIN_CULL_UPDATE_INTERVAL_MS) return;
+    terrainCullAccumulatorRef.current = 0;
 
-      const camera = state.camera;
-      const frustum = terrainCullFrustumRef.current;
-      const matrix = terrainCullMatrixRef.current;
-      const sphere = terrainCullSphereRef.current;
-      matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-      frustum.setFromProjectionMatrix(matrix);
+    const camera = state.camera;
+    const frustum = terrainCullFrustumRef.current;
+    const matrix = terrainCullMatrixRef.current;
+    const sphere = terrainCullSphereRef.current;
+    matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(matrix);
 
-      let closestRegionId: string | null = null;
-      let closestDistanceSq = Infinity;
-      let visibleAfterCull = 0;
+    let closestRegionId: string | null = null;
+    let closestDistanceSq = Infinity;
+    let visibleAfterCull = 0;
 
-      for (const region of visibleRegions) {
-        const { bounds } = region;
-        const dx = bounds.center.x - camera.position.x;
-        const dy = bounds.center.y - camera.position.y;
-        const dz = bounds.center.z - camera.position.z;
-        const distanceSq = dx * dx + dy * dy + dz * dz;
-        if (distanceSq < closestDistanceSq) {
-          closestDistanceSq = distanceSq;
-          closestRegionId = region.id;
-        }
-
-        const wasVisible = regionVisibilityRef.current.get(region.id) ?? true;
-        const maxDistance = terrainCullDistance + bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
-        let nextVisible = distanceSq <= maxDistance * maxDistance;
-
-        if (nextVisible) {
-          sphere.center.set(bounds.center.x, bounds.center.y, bounds.center.z);
-          sphere.radius = bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
-          nextVisible = frustum.intersectsSphere(sphere);
-        }
-
-        if (nextVisible) visibleAfterCull++;
-        setRegionVisibility(region.id, nextVisible);
+    for (const region of visibleRegions) {
+      const { bounds } = region;
+      const dx = bounds.center.x - camera.position.x;
+      const dy = bounds.center.y - camera.position.y;
+      const dz = bounds.center.z - camera.position.z;
+      const distanceSq = dx * dx + dy * dy + dz * dz;
+      if (distanceSq < closestDistanceSq) {
+        closestDistanceSq = distanceSq;
+        closestRegionId = region.id;
       }
 
-      if (visibleAfterCull === 0 && closestRegionId) {
-        setRegionVisibility(closestRegionId, true);
+      const wasVisible = regionVisibilityRef.current.get(region.id) ?? true;
+      const maxDistance = terrainCullDistance + bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
+      let nextVisible = distanceSq <= maxDistance * maxDistance;
+
+      if (nextVisible) {
+        sphere.center.set(bounds.center.x, bounds.center.y, bounds.center.z);
+        sphere.radius = bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
+        nextVisible = frustum.intersectsSphere(sphere);
       }
-    });
+
+      if (nextVisible) visibleAfterCull++;
+      setRegionVisibility(region.id, nextVisible);
+    }
+
+    if (visibleAfterCull === 0 && closestRegionId) {
+      setRegionVisibility(closestRegionId, true);
+    }
+  };
+
+  useFrame((state, delta) => {
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.terrainCulling', () => runTerrainCullingFrame(state, delta));
+      return;
+    }
+
+    runTerrainCullingFrame(state, delta);
   });
 
   useEffect(() => {

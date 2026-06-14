@@ -13,7 +13,6 @@ export {
 
 export { 
   triggerAirStrike, 
-  AirStrikeTargetingIndicator,
   AirStrikeEffects,
   AIR_STRIKE_DURATION,
 } from './airstrike';

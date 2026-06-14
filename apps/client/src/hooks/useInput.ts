@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { createEmptyInputState } from '@voxel-strike/shared';
 import type { InputState } from '@voxel-strike/shared';
-import { isGameConsoleOpen } from '../components/ui/GameConsole';
+import { isGameConsoleOpen } from '../store/gameConsoleState';
 import { useMobileControlsStore } from '../store/mobileControlsStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { mouseButtonToKeybindCode } from '../utils/keybindings';

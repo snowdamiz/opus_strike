@@ -6,6 +6,7 @@ import {
   type Vec3,
 } from '@voxel-strike/shared';
 import { useGameStore } from '../store/gameStore';
+import { setFlamethrowerVisualPose, visualStore } from '../store/visualStore';
 
 export interface LocalCombatStressScenarioOptions {
   seed?: number;
@@ -126,6 +127,7 @@ export function runLocalCombatStressScenario(
   clearLocalCombatStressScenario();
 
   const state = useGameStore.getState();
+  const visualState = visualStore.getState();
   const previousPhase = {
     appPhase: state.appPhase,
     gamePhase: state.gamePhase,
@@ -140,8 +142,10 @@ export function runLocalCombatStressScenario(
     dragHooks: state.dragHooks,
     grappleTraps: state.grappleTraps,
     flamethrowerActive: state.flamethrowerActive,
-    flamethrowerOrigin: state.flamethrowerOrigin,
-    flamethrowerDirection: state.flamethrowerDirection,
+  };
+  const previousFlamethrowerVisualPose = {
+    origin: visualState.flamethrowerOrigin ? { ...visualState.flamethrowerOrigin } : null,
+    direction: { ...visualState.flamethrowerDirection },
   };
 
   const random = createSeededRandom(options.seed ?? DEFAULT_STRESS_SEED);
@@ -269,7 +273,7 @@ export function runLocalCombatStressScenario(
   }
 
   store.setFlamethrowerActive(true);
-  store.setFlamethrowerPose(
+  setFlamethrowerVisualPose(
     { x: -8, y: 5, z: 8 },
     vectorToward({ x: -8, y: 5, z: 8 }, { x: 4, y: 4, z: -4 }, 1)
   );
@@ -281,6 +285,10 @@ export function runLocalCombatStressScenario(
       players: previousPhase.players,
       localPlayer: previousPhase.localPlayer,
     });
+    setFlamethrowerVisualPose(
+      previousFlamethrowerVisualPose.origin,
+      previousFlamethrowerVisualPose.direction
+    );
   };
 
   activeScenario = { stop };

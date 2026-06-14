@@ -21,6 +21,7 @@ const DEFAULT_MINIMAP_SIZE = 172;
 const MINIMAP_PADDING = 8;
 const LIVE_OVERLAY_FPS = 30;
 const LIVE_OVERLAY_FRAME_MS = 1000 / LIVE_OVERLAY_FPS;
+const liveOverlayTeammatesScratch: Player[] = [];
 
 export function Minimap() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -137,7 +138,7 @@ function drawLiveOverlay(
   clipToBoundary(ctx, manifest, projection);
 
   const visualState = visualStore.getState();
-  const teammates = selectVisibleTeammates(localPlayer, store.players.values());
+  const teammates = selectVisibleTeammates(localPlayer, store.players.values(), liveOverlayTeammatesScratch);
   const teamColor = store.isPracticeMode ? MINIMAP_COLORS.live.practiceTeam : getTeamColor(localPlayer.team);
 
   for (const teammate of teammates) {

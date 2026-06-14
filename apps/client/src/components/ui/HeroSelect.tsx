@@ -228,6 +228,7 @@ const HeroCard = memo(function HeroCard({
             size="card"
             interactive={false}
             idleRotation={false}
+            idleAnimation={isSelected}
             showShadow={isSelected}
           className="h-full w-full"
         />

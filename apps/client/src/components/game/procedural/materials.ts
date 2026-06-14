@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
-import { createVoxelTerrainTextures } from './terrainTextures';
+import { retainVoxelTerrainTextures, type VoxelTerrainTextures } from './terrainTextures';
 import type { GraphicsFeatureQuality } from '../../../store/settingsStore';
 
 type ShaderParameters = Parameters<THREE.Material['onBeforeCompile']>[0];
@@ -50,7 +50,7 @@ function replaceShaderChunk(source: string, chunk: string, replacement: string):
 
 function patchTerrainTextureShader(
   shader: ShaderParameters,
-  textures: ReturnType<typeof createVoxelTerrainTextures>
+  textures: VoxelTerrainTextures
 ): void {
   shader.uniforms.voxelTerrainColorTexture = { value: textures.color };
   shader.uniforms.voxelTerrainEmissiveTexture = { value: textures.emissive };
@@ -103,8 +103,8 @@ export function useVoxelMaterial(
   theme: VoxelMapTheme,
   materialQuality: GraphicsFeatureQuality
 ): THREE.Material {
-  const material = useMemo(() => {
-    const textures = createVoxelTerrainTextures(theme, materialQuality);
+  const retainedMaterial = useMemo(() => {
+    const { textures, release } = retainVoxelTerrainTextures(theme, materialQuality);
     const material = new THREE.MeshLambertMaterial({
       color: '#ffffff',
       emissive: '#ffffff',
@@ -116,15 +116,16 @@ export function useVoxelMaterial(
     material.customProgramCacheKey = () => (
       `${TERRAIN_TEXTURE_SHADER_KEY}:${material.type}:${textures.tileSize}:${materialQuality}`
     );
-    return material;
+    return { material, release };
   }, [materialQuality, theme]);
 
   useEffect(
     () => () => {
-      material.dispose();
+      retainedMaterial.material.dispose();
+      retainedMaterial.release();
     },
-    [material]
+    [retainedMaterial]
   );
 
-  return material;
+  return retainedMaterial.material;
 }
