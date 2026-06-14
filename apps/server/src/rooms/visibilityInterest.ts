@@ -21,6 +21,7 @@ export interface VisibilityInterestPlayer {
   team: string;
   state: string;
   position: Vec3;
+  heroId?: string | null;
   abilities?: Iterable<{ abilityId?: string; isActive?: boolean }>;
 }
 

@@ -1,25 +1,40 @@
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import {
   createEmptyInputState,
+  MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_SUBSTEP_SECONDS,
+  movementButtonsToInputState,
   type HeroId,
   type InputState,
+  type MovementCommand,
+  type MovementCommandPacket,
   type Player,
   type PlayerMovementState,
 } from '@voxel-strike/shared';
+import type { MovementSimulationState } from '@voxel-strike/physics';
+import {
+  createMovementCommandPacket,
+  movementStateFromPlayer,
+  resetLocalMovementPrediction,
+} from '../../movement/localPrediction';
 import { useGameStore } from '../../store/gameStore';
 import {
   createLocalVisualInterpolationState,
+  deriveServerCombatInput,
   getContinuingHeroHoldInput,
   getExclusiveHeroInput,
   movementClassForTrace,
   recordLocalVisualFixedStep,
   runInputPhase,
+  runPredictionAndCommandPhase,
   sampleLocalVisualInterpolatedPosition,
   shouldForceImmediateCombatCommand,
   smoothTerrainVisualY,
   withCastActionFields,
+  type CommandScheduleReason,
   type LocalPlayerFrameContext,
+  type ServerCombatInput,
 } from './PlayerController';
 
 function ref<T>(current: T): { current: T } {
@@ -82,13 +97,48 @@ function input(overrides: Partial<InputState> = {}): InputState {
   };
 }
 
+function combatInput(overrides: Partial<ServerCombatInput> = {}): ServerCombatInput {
+  return {
+    primaryFire: false,
+    secondaryFire: false,
+    ability1: false,
+    ability2: false,
+    ultimate: false,
+    ...overrides,
+  };
+}
+
+function resetPredictionFor(player: Player): MovementSimulationState {
+  const predictedState = movementStateFromPlayer(player);
+  resetLocalMovementPrediction(predictedState, 0, player.id);
+  return predictedState;
+}
+
+function makeAbilityContext(player: Player, heroId: HeroId, inputState: InputState) {
+  return {
+    position: new THREE.Vector3(player.position.x, player.position.y, player.position.z),
+    velocity: new THREE.Vector3(player.velocity.x, player.velocity.y, player.velocity.z),
+    yaw: player.lookYaw,
+    pitch: player.lookPitch,
+    heroId,
+    localPlayer: {
+      id: player.id,
+      team: player.team,
+      position: player.position,
+      ultimateCharge: player.ultimateCharge,
+    },
+    inputState,
+    dt: MOVEMENT_SUBSTEP_SECONDS,
+    isGrounded: player.movement.isGrounded,
+  };
+}
+
 function makeInputPhaseContext(options: {
   actionLocked?: boolean;
   previousHold?: { primaryFire: boolean; secondaryFire: boolean; ability1: boolean };
   chronosQueued?: boolean;
   abilityPressed?: { ability1: boolean; ability2: boolean; ultimate: boolean };
 } = {}): LocalPlayerFrameContext {
-  const flushes: Array<{ nowMs: number; force?: boolean }> = [];
   return {
     isControlPressed: false,
     abilitySystem: {
@@ -113,23 +163,105 @@ function makeInputPhaseContext(options: {
       chronosLifelineCommitHeldRef: ref(false),
       reloadPressedRef: ref(false),
       pendingReloadInputRef: ref(false),
-      forceNextMovementFlushRef: ref(false),
       movementCommandAccumulatorRef: ref(0),
-      lastServerCombatInputRef: ref({
+      lastServerCombatInputRef: ref(combatInput({
         primaryFire: options.previousHold?.primaryFire ?? false,
         secondaryFire: options.previousHold?.secondaryFire ?? false,
         ability1: options.previousHold?.ability1 ?? false,
-        ability2: false,
-        ultimate: false,
-      }),
+      })),
     },
     lockHeroActions: () => undefined,
     isHeroActionLocked: () => Boolean(options.actionLocked),
-    flushMovementCommands: (nowMs: number, force?: boolean) => {
-      flushes.push({ nowMs, force });
-    },
-    __flushes: flushes,
+    flushMovementCommands: () => undefined,
   } as unknown as LocalPlayerFrameContext;
+}
+
+function makeCommandPhaseContext(options: {
+  accumulator?: number;
+  pendingCommands?: MovementCommand[];
+  previousServerCombatInput?: Partial<ServerCombatInput>;
+} = {}): LocalPlayerFrameContext & {
+  __sentPackets: MovementCommandPacket[];
+  __flushCalls: Array<{ nowMs: number; force: boolean; sentCommandCount: number }>;
+} {
+  const pendingMovementCommandsRef = ref<MovementCommand[]>([...(options.pendingCommands ?? [])]);
+  const sentPackets: MovementCommandPacket[] = [];
+  const flushCalls: Array<{ nowMs: number; force: boolean; sentCommandCount: number }> = [];
+
+  const ctx = {
+    isControlPressed: false,
+    cameraControl: {
+      refs: {
+        yaw: ref(0),
+        pitch: ref(0),
+      },
+    },
+    phantomAbilities: {
+      phantomPrimaryReloadingRef: ref(false),
+      phantomPrimaryAmmoRef: ref(3),
+    },
+    refs: {
+      tickRef: ref(0),
+      movementCommandAccumulatorRef: ref(options.accumulator ?? 0),
+      pendingMovementCommandsRef,
+      localVisualInterpolationRef: ref(createLocalVisualInterpolationState()),
+      latestAbilityCastHintsRef: ref([]),
+      lastCrouchHeldRef: ref(false),
+      pendingCrouchPressedRef: ref(false),
+      pendingReloadInputRef: ref(false),
+      lastServerCombatInputRef: ref(combatInput(options.previousServerCombatInput)),
+    },
+    flushMovementCommands: (nowMs: number, force = false) => {
+      const commands = pendingMovementCommandsRef.current.slice(0, MOVEMENT_MAX_PACKET_COMMANDS);
+      if ((!force && commands.length < MOVEMENT_MAX_PACKET_COMMANDS) || commands.length === 0) {
+        flushCalls.push({ nowMs, force, sentCommandCount: 0 });
+        return;
+      }
+
+      pendingMovementCommandsRef.current.splice(0, commands.length);
+      sentPackets.push(createMovementCommandPacket(commands));
+      flushCalls.push({ nowMs, force, sentCommandCount: commands.length });
+    },
+    __sentPackets: sentPackets,
+    __flushCalls: flushCalls,
+  };
+
+  return ctx as unknown as LocalPlayerFrameContext & {
+    __sentPackets: MovementCommandPacket[];
+    __flushCalls: Array<{ nowMs: number; force: boolean; sentCommandCount: number }>;
+  };
+}
+
+function runCommandPhase(inputOverrides: {
+  player: Player;
+  frameInput: InputState;
+  serverCombatInput: ServerCombatInput;
+  requestedCommandScheduleReasons?: CommandScheduleReason[];
+  ctx?: ReturnType<typeof makeCommandPhaseContext>;
+  dt?: number;
+  now?: number;
+}) {
+  const ctx = inputOverrides.ctx ?? makeCommandPhaseContext();
+  const predictedState = resetPredictionFor(inputOverrides.player);
+  const heroId = inputOverrides.player.heroId;
+  if (heroId === null) {
+    throw new Error('runCommandPhase test helper requires a hero');
+  }
+  const result = runPredictionAndCommandPhase({
+    ctx,
+    localPlayer: inputOverrides.player,
+    heroId,
+    frameInput: inputOverrides.frameInput,
+    serverCombatInput: inputOverrides.serverCombatInput,
+    requestedCommandScheduleReasons: inputOverrides.requestedCommandScheduleReasons ?? [],
+    abilityCtx: makeAbilityContext(inputOverrides.player, heroId, inputOverrides.frameInput),
+    predictedState,
+    now: inputOverrides.now ?? 1000,
+    dt: inputOverrides.dt ?? 0,
+    rawDelta: inputOverrides.dt ?? 0,
+  });
+
+  return { ctx, result };
 }
 
 useGameStore.setState({
@@ -190,11 +322,10 @@ const phantomPrimaryInput = runInputPhase(
   1000
 );
 assert.equal(phantomPrimaryInput.primaryFireForServer, true);
-assert.equal(phantomPrimaryCtx.refs.forceNextMovementFlushRef.current, true);
-assert.equal(phantomPrimaryCtx.refs.movementCommandAccumulatorRef.current, MOVEMENT_SUBSTEP_SECONDS);
-phantomPrimaryCtx.refs.forceNextMovementFlushRef.current = false;
-phantomPrimaryCtx.refs.movementCommandAccumulatorRef.current = 0;
-runInputPhase(
+assert.deepEqual(phantomPrimaryInput.serverCombatInput, combatInput({ primaryFire: true }));
+assert.deepEqual(phantomPrimaryInput.requestedCommandScheduleReasons, []);
+assert.equal(phantomPrimaryCtx.refs.movementCommandAccumulatorRef.current, 0);
+const phantomHeldInput = runInputPhase(
   phantomPrimaryCtx,
   makePlayer('phantom'),
   'phantom',
@@ -202,9 +333,10 @@ runInputPhase(
   input({ primaryFire: true }),
   1016
 );
-assert.equal(phantomPrimaryCtx.refs.forceNextMovementFlushRef.current, false);
+assert.equal(phantomHeldInput.primaryFireForServer, true);
+assert.deepEqual(phantomHeldInput.requestedCommandScheduleReasons, []);
 assert.equal(phantomPrimaryCtx.refs.movementCommandAccumulatorRef.current, 0);
-runInputPhase(
+const phantomPrimaryRelease = runInputPhase(
   phantomPrimaryCtx,
   makePlayer('phantom'),
   'phantom',
@@ -212,8 +344,9 @@ runInputPhase(
   input(),
   1032
 );
-assert.equal(phantomPrimaryCtx.refs.forceNextMovementFlushRef.current, true);
-assert.equal(phantomPrimaryCtx.refs.movementCommandAccumulatorRef.current, MOVEMENT_SUBSTEP_SECONDS);
+assert.equal(phantomPrimaryRelease.serverCombatInput.primaryFire, false);
+assert.deepEqual(phantomPrimaryRelease.requestedCommandScheduleReasons, []);
+assert.equal(phantomPrimaryCtx.refs.movementCommandAccumulatorRef.current, 0);
 
 const blazeSecondaryReleaseCtx = makeInputPhaseContext({
   previousHold: { primaryFire: false, secondaryFire: true, ability1: false },
@@ -227,8 +360,9 @@ const blazeSecondaryRelease = runInputPhase(
   1000
 );
 assert.equal(blazeSecondaryRelease.frameInput.secondaryFire, false);
-assert.equal(blazeSecondaryReleaseCtx.refs.forceNextMovementFlushRef.current, true);
-assert.equal(blazeSecondaryReleaseCtx.refs.movementCommandAccumulatorRef.current, MOVEMENT_SUBSTEP_SECONDS);
+assert.deepEqual(blazeSecondaryRelease.serverCombatInput, combatInput());
+assert.deepEqual(blazeSecondaryRelease.requestedCommandScheduleReasons, []);
+assert.equal(blazeSecondaryReleaseCtx.refs.movementCommandAccumulatorRef.current, 0);
 
 const hookshotAbility2Ctx = makeInputPhaseContext();
 const hookshotAbility2 = runInputPhase(
@@ -240,7 +374,28 @@ const hookshotAbility2 = runInputPhase(
   1000
 );
 assert.equal(hookshotAbility2.ability2ForServer, true);
-assert.equal(hookshotAbility2Ctx.refs.forceNextMovementFlushRef.current, true);
+assert.deepEqual(hookshotAbility2.serverCombatInput, combatInput({ ability2: true }));
+assert.deepEqual(hookshotAbility2.requestedCommandScheduleReasons, []);
+
+const phantomBlinkInput = runInputPhase(
+  makeInputPhaseContext(),
+  makePlayer('phantom'),
+  'phantom',
+  input({ ability1: true }),
+  input({ ability1: true }),
+  1000
+);
+assert.deepEqual(phantomBlinkInput.serverCombatInput, combatInput({ ability1: true }));
+assert.deepEqual(phantomBlinkInput.requestedCommandScheduleReasons, ['movement_barrier']);
+
+assert.deepEqual(
+  deriveServerCombatInput({
+    frameInput: input({ secondaryFire: true, ability2: true, ultimate: true }),
+    primaryFireForServer: true,
+    ability2ForServer: false,
+  }),
+  combatInput({ primaryFire: true, secondaryFire: true, ability2: false, ultimate: true })
+);
 
 assert.equal(
   shouldForceImmediateCombatCommand(
@@ -260,6 +415,80 @@ assert.equal(
     }
   ),
   false
+);
+
+const phantomPressCommand = runCommandPhase({
+  player: makePlayer('phantom'),
+  frameInput: input({ primaryFire: true }),
+  serverCombatInput: combatInput({ primaryFire: true }),
+});
+assert.deepEqual(phantomPressCommand.result.commandScheduleReasons, ['combat_edge']);
+assert.equal(phantomPressCommand.result.substepsThisFrame, 1);
+assert.equal(phantomPressCommand.ctx.__sentPackets.length, 1);
+assert.equal(
+  movementButtonsToInputState(phantomPressCommand.ctx.__sentPackets[0].commands[0].buttons).primaryFire,
+  true
+);
+
+const phantomHeldCommand = runCommandPhase({
+  player: makePlayer('phantom'),
+  frameInput: input({ primaryFire: true }),
+  serverCombatInput: combatInput({ primaryFire: true }),
+  ctx: makeCommandPhaseContext({
+    previousServerCombatInput: { primaryFire: true },
+  }),
+});
+assert.deepEqual(phantomHeldCommand.result.commandScheduleReasons, []);
+assert.equal(phantomHeldCommand.result.substepsThisFrame, 0);
+assert.equal(phantomHeldCommand.ctx.__sentPackets.length, 0);
+
+const blazeReleaseCommand = runCommandPhase({
+  player: makePlayer('blaze'),
+  frameInput: input(),
+  serverCombatInput: combatInput(),
+  ctx: makeCommandPhaseContext({
+    previousServerCombatInput: { secondaryFire: true },
+  }),
+});
+assert.deepEqual(blazeReleaseCommand.result.commandScheduleReasons, ['combat_edge']);
+assert.equal(blazeReleaseCommand.ctx.__sentPackets.length, 1);
+assert.equal(
+  movementButtonsToInputState(blazeReleaseCommand.ctx.__sentPackets[0].commands[0].buttons).secondaryFire,
+  false
+);
+
+const pendingBarrierCommand: MovementCommand = {
+  seq: 41,
+  buttons: 0,
+  lookYaw: 0,
+  lookPitch: 0,
+  clientTimeMs: 900,
+  movementEpoch: 0,
+  collisionRevision: 0,
+};
+const movementBarrierCommand = runCommandPhase({
+  player: makePlayer('phantom'),
+  frameInput: input({ ability1: true }),
+  serverCombatInput: combatInput({ ability1: true }),
+  requestedCommandScheduleReasons: ['movement_barrier'],
+  ctx: makeCommandPhaseContext({
+    pendingCommands: [pendingBarrierCommand],
+  }),
+});
+assert.deepEqual(movementBarrierCommand.result.commandScheduleReasons, ['movement_barrier', 'combat_edge']);
+assert.equal(movementBarrierCommand.result.substepsThisFrame, 1);
+assert.equal(movementBarrierCommand.ctx.__sentPackets.length, 2);
+assert.equal(movementBarrierCommand.ctx.__sentPackets[0].commands[0], pendingBarrierCommand);
+assert.equal(
+  movementButtonsToInputState(movementBarrierCommand.ctx.__sentPackets[1].commands[0].buttons).ability1,
+  true
+);
+assert.deepEqual(
+  movementBarrierCommand.ctx.__flushCalls.map(({ force, sentCommandCount }) => ({ force, sentCommandCount })),
+  [
+    { force: true, sentCommandCount: 1 },
+    { force: true, sentCommandCount: 1 },
+  ]
 );
 
 const chronosCommit = runInputPhase(

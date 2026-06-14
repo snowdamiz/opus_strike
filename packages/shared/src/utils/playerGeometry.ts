@@ -34,6 +34,19 @@ export interface PlayerCombatHitResult {
   radius: number;
 }
 
+const LINE_OF_SIGHT_VERTICAL_FACTORS = [0.72, 0.32, 0, -0.32, -0.72] as const;
+const LINE_OF_SIGHT_RING_VERTICAL_FACTORS = [0.32, 0, -0.32] as const;
+const LINE_OF_SIGHT_RING_DIRECTIONS = [
+  { x: 1, z: 0 },
+  { x: -1, z: 0 },
+  { x: 0, z: 1 },
+  { x: 0, z: -1 },
+  { x: 1, z: 1 },
+  { x: 1, z: -1 },
+  { x: -1, z: 1 },
+  { x: -1, z: -1 },
+] as const;
+
 const DEFAULT_PLAYER_SIZE = {
   width: PLAYER_RADIUS * 2,
   height: PLAYER_HEIGHT,
@@ -82,6 +95,48 @@ export function getPlayerBodyAimPosition(target: PlayerGeometryTarget): Vec3Like
     y: target.position.y,
     z: target.position.z,
   };
+}
+
+function pushUniquePoint(points: Vec3Like[], point: Vec3Like): void {
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
+  const exists = points.some((existing) => (
+    Math.abs(existing.x - point.x) < 0.0001 &&
+    Math.abs(existing.y - point.y) < 0.0001 &&
+    Math.abs(existing.z - point.z) < 0.0001
+  ));
+  if (!exists) {
+    points.push(point);
+  }
+}
+
+export function getPlayerLineOfSightSamplePoints(target: PlayerGeometryTarget): Vec3Like[] {
+  const size = getHeroSize(target.heroId);
+  const halfWidth = size.width / 2;
+  const halfDepth = size.depth / 2;
+  const halfHeight = size.height / 2;
+  const points: Vec3Like[] = [];
+
+  pushUniquePoint(points, getPlayerEyePosition(target.position));
+  for (const verticalFactor of LINE_OF_SIGHT_VERTICAL_FACTORS) {
+    pushUniquePoint(points, {
+      x: target.position.x,
+      y: target.position.y + halfHeight * verticalFactor,
+      z: target.position.z,
+    });
+  }
+
+  for (const verticalFactor of LINE_OF_SIGHT_RING_VERTICAL_FACTORS) {
+    const y = target.position.y + halfHeight * verticalFactor;
+    for (const direction of LINE_OF_SIGHT_RING_DIRECTIONS) {
+      pushUniquePoint(points, {
+        x: target.position.x + halfWidth * direction.x,
+        y,
+        z: target.position.z + halfDepth * direction.z,
+      });
+    }
+  }
+
+  return points;
 }
 
 export function calculateProjectileSpawn(

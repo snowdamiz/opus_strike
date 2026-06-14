@@ -8,7 +8,7 @@ import {
   buildPlayerInterestSnapshot,
   getPlayerInterestSignature,
 } from '../rooms/playerInterestSnapshot';
-import type { Team, Vec3 } from '@voxel-strike/shared';
+import { getPlayerLineOfSightSamplePoints, type Team, type Vec3 } from '@voxel-strike/shared';
 
 function makePlayer(
   id: string,
@@ -176,6 +176,26 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
   }));
   assert.equal(decision.state, 'visible');
   assert.equal(decision.reason, 'line_of_sight');
+}
+
+{
+  const manager = new VisibilityInterestManager({ proximityRevealMeters: 1 });
+  const cornerVisibleEnemy = makePlayer('blue-corner', 'blue', 12, 0, { heroId: 'blaze' });
+  const checkedTargets: Vec3[] = [];
+  const decision = manager.getRecipientInterest(self, cornerVisibleEnemy, makeContext({
+    getLineOfSightPoints: getPlayerLineOfSightSamplePoints,
+    hasLineOfSight: (_from, to) => {
+      checkedTargets.push(to);
+      return to.x > 12.4 && to.z > 0.4;
+    },
+  }));
+
+  assert.equal(decision.state, 'visible');
+  assert.equal(decision.reason, 'line_of_sight');
+  assert.ok(
+    checkedTargets.some((point) => point.x > 12.4 && point.z > 0.4),
+    'hero LOS samples should include exposed diagonal body corners'
+  );
 }
 
 {

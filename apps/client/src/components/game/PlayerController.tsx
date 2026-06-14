@@ -362,7 +362,13 @@ function buildPracticeAbilityState(
 
 type CastActionFields = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1' | 'ability2' | 'ultimate'>;
 type ExclusiveHoldInput = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>;
-type ServerCombatInput = CastActionFields;
+export type ServerCombatInput = CastActionFields;
+export type CommandScheduleReason = 'combat_edge' | 'movement_barrier';
+interface CommandSchedule {
+  forceSubstep: boolean;
+  flushExistingBeforeSample: boolean;
+  forcePacketFlush: boolean;
+}
 type ChronosLifelineMode = 'allies' | 'self';
 type ChronosPracticeLifelineTarget = {
   id: string;
@@ -495,6 +501,35 @@ export function shouldForceImmediateCombatCommand(
   );
 }
 
+function addCommandScheduleReason(reasons: CommandScheduleReason[], reason: CommandScheduleReason): void {
+  if (!reasons.includes(reason)) {
+    reasons.push(reason);
+  }
+}
+
+function resolveCommandSchedule(reasons: CommandScheduleReason[]): CommandSchedule {
+  const forceCommand = reasons.length > 0;
+  return {
+    forceSubstep: forceCommand,
+    flushExistingBeforeSample: reasons.includes('movement_barrier'),
+    forcePacketFlush: forceCommand,
+  };
+}
+
+export function deriveServerCombatInput(input: {
+  frameInput: InputState;
+  primaryFireForServer: boolean;
+  ability2ForServer: boolean;
+}): ServerCombatInput {
+  return {
+    primaryFire: input.primaryFireForServer,
+    secondaryFire: input.frameInput.secondaryFire,
+    ability1: input.frameInput.ability1,
+    ability2: input.ability2ForServer,
+    ultimate: input.frameInput.ultimate,
+  };
+}
+
 function getPrimaryReleaseLockMs(heroId: HeroId): number {
   switch (heroId) {
     case 'phantom':
@@ -574,7 +609,6 @@ interface LocalPlayerFrameRefs {
   latestAbilityCastHintsRef: MutableRefObject<AbilityCastOriginHint[]>;
   lastCrouchHeldRef: MutableRefObject<boolean>;
   pendingCrouchPressedRef: MutableRefObject<boolean>;
-  forceNextMovementFlushRef: MutableRefObject<boolean>;
   lastHeroIdRef: MutableRefObject<string | null>;
   reloadPressedRef: MutableRefObject<boolean>;
   pendingReloadInputRef: MutableRefObject<boolean>;
@@ -665,6 +699,8 @@ interface InputPhaseResult {
   localAbilityInput: InputState;
   primaryFireForServer: boolean;
   ability2ForServer: boolean;
+  serverCombatInput: ServerCombatInput;
+  requestedCommandScheduleReasons: CommandScheduleReason[];
   phantomPrimaryReloading: boolean;
   phantomPrimaryHeldForPose: boolean;
   chronosLifelineCommitMode: ChronosLifelineMode | null;
@@ -679,6 +715,7 @@ interface PredictionAndCommandPhaseResult {
   commandInput: InputState;
   abilityCastHints: AbilityCastOriginHint[] | undefined;
   substepsThisFrame: number;
+  commandScheduleReasons: CommandScheduleReason[];
 }
 
 interface PresentationPhaseResult {
@@ -925,13 +962,13 @@ function runTracePhase(input: {
   });
 }
 
-function runPredictionAndCommandPhase(input: {
+export function runPredictionAndCommandPhase(input: {
   ctx: LocalPlayerFrameContext;
   localPlayer: Player;
   heroId: HeroId;
   frameInput: InputState;
-  primaryFireForServer: boolean;
-  ability2ForServer: boolean;
+  serverCombatInput: ServerCombatInput;
+  requestedCommandScheduleReasons: CommandScheduleReason[];
   abilityCtx: AbilityContext;
   predictedState: MovementSimulationState;
   now: number;
@@ -943,8 +980,8 @@ function runPredictionAndCommandPhase(input: {
     localPlayer,
     heroId,
     frameInput,
-    primaryFireForServer,
-    ability2ForServer,
+    serverCombatInput,
+    requestedCommandScheduleReasons,
     abilityCtx,
     now,
     dt,
@@ -959,7 +996,7 @@ function runPredictionAndCommandPhase(input: {
     phantomAbilities.phantomPrimaryAmmoRef.current <= 0;
   const reloadForServer = frameInput.reload ||
     refs.pendingReloadInputRef.current ||
-    (phantomAutoReloadForServer && !primaryFireForServer);
+    (phantomAutoReloadForServer && !serverCombatInput.primaryFire);
   const crouchHeld = frameInput.crouch || ctx.isControlPressed;
   if (crouchHeld && !refs.lastCrouchHeldRef.current) {
     refs.pendingCrouchPressedRef.current = true;
@@ -969,19 +1006,38 @@ function runPredictionAndCommandPhase(input: {
   const commandInput: InputState = {
     ...frameInput,
     crouch: crouchHeld,
-    primaryFire: heroId === 'blaze' && currentBombTargeting ? false : primaryFireForServer,
+    primaryFire: heroId === 'blaze' && currentBombTargeting ? false : serverCombatInput.primaryFire,
+    secondaryFire: serverCombatInput.secondaryFire,
+    ability1: serverCombatInput.ability1,
     reload: reloadForServer,
-    ability2: ability2ForServer,
+    ability2: serverCombatInput.ability2,
+    ultimate: serverCombatInput.ultimate,
   };
   const abilityCastHints = buildAbilityCastOriginHints(abilityCtx, commandInput, {
     bombTargeting: currentBombTargeting,
   });
   refs.latestAbilityCastHintsRef.current = abilityCastHints ?? [];
 
+  const commandScheduleReasons = [...requestedCommandScheduleReasons];
+  if (shouldForceImmediateCombatCommand(serverCombatInput, refs.lastServerCombatInputRef.current)) {
+    addCommandScheduleReason(commandScheduleReasons, 'combat_edge');
+  }
+  refs.lastServerCombatInputRef.current = serverCombatInput;
+  const commandSchedule = resolveCommandSchedule(commandScheduleReasons);
+  if (commandSchedule.flushExistingBeforeSample) {
+    flushMovementCommands(now, true);
+  }
+
   refs.movementCommandAccumulatorRef.current = Math.min(
     refs.movementCommandAccumulatorRef.current + dt,
     MOVEMENT_SUBSTEP_SECONDS * MOVEMENT_MAX_PACKET_COMMANDS
   );
+  if (commandSchedule.forceSubstep) {
+    refs.movementCommandAccumulatorRef.current = Math.max(
+      refs.movementCommandAccumulatorRef.current,
+      MOVEMENT_SUBSTEP_SECONDS
+    );
+  }
   const movementAccumulatorBeforeStep = refs.movementCommandAccumulatorRef.current;
 
   let substepsThisFrame = 0;
@@ -1019,8 +1075,7 @@ function runPredictionAndCommandPhase(input: {
     accumulatorAfterStepSeconds: refs.movementCommandAccumulatorRef.current,
     catchup: substepsThisFrame > 1,
   });
-  flushMovementCommands(now, refs.forceNextMovementFlushRef.current);
-  refs.forceNextMovementFlushRef.current = false;
+  flushMovementCommands(now, commandSchedule.forcePacketFlush);
   refs.pendingReloadInputRef.current = false;
 
   return {
@@ -1030,6 +1085,7 @@ function runPredictionAndCommandPhase(input: {
     commandInput,
     abilityCastHints,
     substepsThisFrame,
+    commandScheduleReasons,
   };
 }
 
@@ -1046,7 +1102,6 @@ export function runInputPhase(
     phantomAbilities,
     lockHeroActions,
     isHeroActionLocked,
-    flushMovementCommands,
     refs,
   } = ctx;
 
@@ -1147,35 +1202,19 @@ export function runInputPhase(
         ? frameInput.primaryFire && !bombTargetingForFrame
         : frameInput.primaryFire;
   const ability2ForServer = frameInput.ability2;
-  const serverCombatInput: ServerCombatInput = {
-    primaryFire: primaryFireForServer,
-    secondaryFire: frameInput.secondaryFire,
-    ability1: frameInput.ability1,
-    ability2: ability2ForServer,
-    ultimate: frameInput.ultimate,
-  };
-  const forceImmediateCombatCommand = shouldForceImmediateCombatCommand(
-    serverCombatInput,
-    refs.lastServerCombatInputRef.current
-  );
-  refs.lastServerCombatInputRef.current = serverCombatInput;
+  const serverCombatInput = deriveServerCombatInput({
+    frameInput,
+    primaryFireForServer,
+    ability2ForServer,
+  });
+  const requestedCommandScheduleReasons: CommandScheduleReason[] = [];
   const movementBarrierInputPressed = (
     // Blaze Q stays on normal command cadence; forced flushes can bundle the rocket impulse with a movement burst.
     (heroId === 'phantom' && frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
     (heroId === 'chronos' && frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate)
   );
   if (movementBarrierInputPressed) {
-    flushMovementCommands(now, true);
-  }
-  if (
-    movementBarrierInputPressed ||
-    forceImmediateCombatCommand
-  ) {
-    refs.forceNextMovementFlushRef.current = true;
-    refs.movementCommandAccumulatorRef.current = Math.max(
-      refs.movementCommandAccumulatorRef.current,
-      MOVEMENT_SUBSTEP_SECONDS
-    );
+    requestedCommandScheduleReasons.push('movement_barrier');
   }
 
   return {
@@ -1185,6 +1224,8 @@ export function runInputPhase(
     localAbilityInput,
     primaryFireForServer,
     ability2ForServer,
+    serverCombatInput,
+    requestedCommandScheduleReasons,
     phantomPrimaryReloading,
     phantomPrimaryHeldForPose,
     chronosLifelineCommitMode,
@@ -1555,7 +1596,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const latestAbilityCastHintsRef = useRef<AbilityCastOriginHint[]>([]);
   const lastCrouchHeldRef = useRef(false);
   const pendingCrouchPressedRef = useRef(false);
-  const forceNextMovementFlushRef = useRef(false);
   const lastHeroIdRef = useRef<string | null>(null);
   const reloadPressedRef = useRef(false);
   const pendingReloadInputRef = useRef(false);
@@ -1580,7 +1620,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const resetMovementCommandBuffer = useCallback(() => {
     movementCommandAccumulatorRef.current = 0;
     pendingMovementCommandsRef.current = [];
-    forceNextMovementFlushRef.current = false;
     lastCrouchHeldRef.current = false;
     pendingCrouchPressedRef.current = false;
     lastServerCombatInputRef.current = { ...EMPTY_SERVER_COMBAT_INPUT };
@@ -1965,7 +2004,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         latestAbilityCastHintsRef,
         lastCrouchHeldRef,
         pendingCrouchPressedRef,
-        forceNextMovementFlushRef,
         lastHeroIdRef,
         reloadPressedRef,
         pendingReloadInputRef,
@@ -2152,6 +2190,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       localAbilityInput,
       primaryFireForServer,
       ability2ForServer,
+      serverCombatInput,
+      requestedCommandScheduleReasons,
       phantomPrimaryReloading,
       phantomPrimaryHeldForPose,
       chronosLifelineCommitMode,
@@ -2538,8 +2578,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       localPlayer,
       heroId,
       frameInput,
-      primaryFireForServer,
-      ability2ForServer,
+      serverCombatInput,
+      requestedCommandScheduleReasons,
       abilityCtx,
       predictedState,
       now,
