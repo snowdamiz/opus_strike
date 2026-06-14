@@ -1,13 +1,26 @@
 import { useEffect, useRef } from 'react';
 import type { RootState } from '@react-three/fiber';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../../movement/networkDiagnostics';
+import { createFrameUpdaterRegistry } from '../systems/frameUpdaterRegistry';
 
 type HookshotFrameUpdater = (state: RootState, delta: number) => void;
+const hookshotFrameUpdaters = createFrameUpdaterRegistry<RootState>();
 
-const hookshotFrameUpdaters = new Map<string, HookshotFrameUpdater>();
+function runHookshotFrameUpdaterEntries(state: RootState, delta: number): void {
+  hookshotFrameUpdaters.run(state, delta);
+
+  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+    recordEffectSlotDiagnostics('hookshot', {
+      active: hookshotFrameUpdaters.size,
+      capacity: hookshotFrameUpdaters.size,
+      hiddenMounted: 0,
+    });
+  }
+}
 
 export function useHookshotFrameUpdater(effectId: string, updater: HookshotFrameUpdater): void {
   const updaterRef = useRef(updater);
@@ -15,23 +28,14 @@ export function useHookshotFrameUpdater(effectId: string, updater: HookshotFrame
 
   useEffect(() => {
     const registeredUpdater: HookshotFrameUpdater = (state, delta) => updaterRef.current(state, delta);
-    hookshotFrameUpdaters.set(effectId, registeredUpdater);
-    return () => {
-      hookshotFrameUpdaters.delete(effectId);
-    };
+    return hookshotFrameUpdaters.register(effectId, registeredUpdater);
   }, [effectId]);
 }
 
 export function runHookshotFrameUpdaters(state: RootState, delta: number): void {
-  measureFrameWork('frame.effects.hookshot', () => {
-    for (const updater of hookshotFrameUpdaters.values()) {
-      updater(state, delta);
-    }
-
-    recordEffectSlotDiagnostics('hookshot', {
-      active: hookshotFrameUpdaters.size,
-      capacity: hookshotFrameUpdaters.size,
-      hiddenMounted: 0,
-    });
-  });
+  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+    measureFrameWork('frame.effects.hookshot', () => runHookshotFrameUpdaterEntries(state, delta));
+  } else {
+    runHookshotFrameUpdaterEntries(state, delta);
+  }
 }

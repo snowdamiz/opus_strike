@@ -8,7 +8,6 @@ import {
   type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
-import { getFrameClock } from '../../utils/frameClock';
 import { useShallow } from 'zustand/shallow';
 import type { HeroId, Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
@@ -82,6 +81,7 @@ const AIRBORNE_IDLE_VERTICAL_SPEED = 0.2;
 const REMOTE_SAMPLE_POSITION_SMOOTHING = 28;
 const REMOTE_SAMPLE_ROTATION_SMOOTHING = 32;
 const REMOTE_SAMPLE_SNAP_DISTANCE = 3.5;
+const REMOTE_SAMPLE_SNAP_DISTANCE_SQ = REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMPLE_SNAP_DISTANCE;
 const REMOTE_ATTACK_STATE_RETENTION_MS = 3200;
 const REMOTE_ATTACK_STATE_CLEANUP_MS = 5000;
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
@@ -208,10 +208,10 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
   useEffect(() => gameplayFrameScheduler.register({
     system: 'remotePlayers',
     label: 'frame.remotePlayers',
-    callback: ({ deltaSeconds }) => {
+    callback: ({ deltaSeconds, nowMs }) => {
       if (!groupRef.current) return;
       const stepDelta = deltaSeconds;
-      const frameNowMs = getFrameClock().epochNowMs;
+      const frameNowMs = nowMs;
 
       const frameIsVeiled = hasActivePhantomVeil(player);
       if (frameIsVeiled !== isVeiledRef.current) {
@@ -244,15 +244,13 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
         setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
         const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
         const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >
-          REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMPLE_SNAP_DISTANCE;
+          REMOTE_SAMPLE_SNAP_DISTANCE_SQ;
         if (epochChanged || tooFarForSmoothing) {
           currentPosition.current.copy(targetPosition.current);
           snappedToSample = true;
         } else {
-          currentPosition.current.lerp(
-            targetPosition.current,
-            smoothingFactor(REMOTE_SAMPLE_POSITION_SMOOTHING, stepDelta)
-          );
+          const samplePositionAlpha = smoothingFactor(REMOTE_SAMPLE_POSITION_SMOOTHING, stepDelta);
+          currentPosition.current.lerp(targetPosition.current, samplePositionAlpha);
         }
         remoteEpochRef.current = sampledTransform.movementEpoch;
       } else {
@@ -271,22 +269,17 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       }
       groupRef.current.position.copy(currentPosition.current);
 
-      const visualHorizontalSpeed = stepDelta > 0
-        ? Math.sqrt(
-          (currentPosition.current.x - previousFramePosition.current.x) ** 2 +
-          (currentPosition.current.z - previousFramePosition.current.z) ** 2
-        ) / stepDelta
-        : 0;
       const visualDeltaX = currentPosition.current.x - previousFramePosition.current.x;
       const visualDeltaZ = currentPosition.current.z - previousFramePosition.current.z;
       // Read rotation from visualStore non-reactively
       const targetRot = visualState.playerRotations.get(player.id);
       const renderYaw = hasSampledTransform ? sampledTransform.lookYaw : targetRot ?? player.lookYaw;
       if (hasSampledTransform && !snappedToSample) {
+        const sampleRotationAlpha = smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, stepDelta);
         groupRef.current.rotation.y = lerpAngle(
           groupRef.current.rotation.y,
           sampledTransform.lookYaw,
-          smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, stepDelta)
+          sampleRotationAlpha
         );
       } else if (hasSampledTransform) {
         groupRef.current.rotation.y = sampledTransform.lookYaw;
@@ -300,6 +293,10 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
 
       previousFramePosition.current.copy(currentPosition.current);
       if (!frameIsVeiled || player.heroId !== 'phantom') return;
+
+      const visualHorizontalSpeed = stepDelta > 0
+        ? Math.sqrt(visualDeltaX * visualDeltaX + visualDeltaZ * visualDeltaZ) / stepDelta
+        : 0;
 
       const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
       if (remoteAttackState) {

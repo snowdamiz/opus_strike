@@ -93,6 +93,8 @@ const HITCH_FRAME_WORK_LABEL_LIMIT = 12;
 const MIN_FRAME_WORK_SAMPLE_MS = 0.02;
 const FRAME_HITCH_THRESHOLD_MS = 1000 / 30;
 
+export const MOVEMENT_DIAGNOSTICS_ENABLED = IS_DEV_BUILD;
+
 const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   commandsGenerated: 0,
   commandsSent: 0,

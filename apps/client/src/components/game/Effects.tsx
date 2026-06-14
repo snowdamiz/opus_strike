@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo, useState } from 'react';
+import { useRef, useEffect, useMemo, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
@@ -10,7 +10,9 @@ import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { getFrameClock } from '../../utils/frameClock';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
+import { createFrameUpdaterRegistry } from './systems/frameUpdaterRegistry';
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordEffectSlotDiagnostics,
 } from '../../movement/networkDiagnostics';
@@ -42,7 +44,7 @@ const EFFECT_FORWARD = new THREE.Vector3(0, 0, 1);
 const EXPLOSION_INSTANCE_DUMMY = new THREE.Object3D();
 const CHRONOS_AEGIS_BREAK_SHARD_COUNT = 14;
 type GlobalEffectUpdater = (state: RootState, delta: number) => void;
-const globalEffectUpdaters = new Map<string, GlobalEffectUpdater>();
+const globalEffectUpdaters = createFrameUpdaterRegistry<RootState>();
 
 interface ChronosAegisBreakShard {
   x: number;
@@ -137,10 +139,7 @@ function useGlobalEffectUpdater(effectId: string, updater: GlobalEffectUpdater):
 
   useEffect(() => {
     const registeredUpdater: GlobalEffectUpdater = (state, delta) => updaterRef.current(state, delta);
-    globalEffectUpdaters.set(effectId, registeredUpdater);
-    return () => {
-      globalEffectUpdaters.delete(effectId);
-    };
+    return globalEffectUpdaters.register(effectId, registeredUpdater);
   }, [effectId]);
 }
 
@@ -208,6 +207,40 @@ export function getGlobalEffectStats(now = Date.now()): GlobalEffectStats {
   };
 }
 
+function runGlobalEffectsFrame(
+  state: RootState,
+  delta: number,
+  activeEffectsRef: MutableRefObject<Effect[]>,
+  lastEffectCountRef: MutableRefObject<number>,
+  lastCleanupRef: MutableRefObject<number>,
+  setEffectsVersion: Dispatch<SetStateAction<number>>
+): void {
+  const now = getFrameClock().epochNowMs;
+
+  // Only clean up every 100ms to avoid excessive processing
+  if (now - lastCleanupRef.current >= 100) {
+    lastCleanupRef.current = now;
+    compactExpiredEffects(now);
+    activeEffectsRef.current = effects;
+
+    // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
+    if (effects.length !== lastEffectCountRef.current) {
+      lastEffectCountRef.current = effects.length;
+      setEffectsVersion(v => v + 1);
+    }
+  }
+
+  globalEffectUpdaters.run(state, delta);
+
+  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+    recordEffectSlotDiagnostics('globalEffects', {
+      active: effects.length,
+      capacity: MAX_GLOBAL_EFFECTS,
+      hiddenMounted: Math.max(0, MAX_GLOBAL_EFFECTS - effects.length),
+    });
+  }
+}
+
 export function Effects() {
   // Use ref for active effects to avoid setState in useFrame (prevents 60fps re-renders)
   const activeEffectsRef = useRef<Effect[]>([]);
@@ -219,32 +252,13 @@ export function Effects() {
   const lastCleanupRef = useRef(0);
 
   useFrame((state, delta) => {
-    measureFrameWork('frame.effects.global', () => {
-      const now = getFrameClock().epochNowMs;
-
-      // Only clean up every 100ms to avoid excessive processing
-      if (now - lastCleanupRef.current >= 100) {
-        lastCleanupRef.current = now;
-        compactExpiredEffects(now);
-        activeEffectsRef.current = effects;
-
-        // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
-        if (effects.length !== lastEffectCountRef.current) {
-          lastEffectCountRef.current = effects.length;
-          setEffectsVersion(v => v + 1);
-        }
-      }
-
-      for (const updater of globalEffectUpdaters.values()) {
-        updater(state, delta);
-      }
-
-      recordEffectSlotDiagnostics('globalEffects', {
-        active: effects.length,
-        capacity: MAX_GLOBAL_EFFECTS,
-        hiddenMounted: Math.max(0, MAX_GLOBAL_EFFECTS - effects.length),
-      });
-    });
+    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
+      measureFrameWork('frame.effects.global', () => (
+        runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, setEffectsVersion)
+      ));
+    } else {
+      runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, setEffectsVersion);
+    }
   });
 
   return (

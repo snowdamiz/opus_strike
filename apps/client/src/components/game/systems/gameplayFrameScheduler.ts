@@ -1,4 +1,5 @@
 import {
+  MOVEMENT_DIAGNOSTICS_ENABLED,
   measureFrameWork,
   recordFrameSchedulerDiagnostics,
 } from '../../../movement/networkDiagnostics';
@@ -89,16 +90,17 @@ export class GameplayFrameScheduler {
   }
 
   run(context: GameplayFrameContext): void {
-    if (this.entries.length === 0) {
-      this.recordDiagnostics();
-      return;
-    }
+    if (this.entries.length === 0) return;
 
+    const measureWork = MOVEMENT_DIAGNOSTICS_ENABLED;
     for (const entry of this.entries) {
       if (!shouldRunSystem(entry, context.deltaMs)) continue;
-      measureFrameWork(entry.label, () => entry.callback(context));
+      if (measureWork) {
+        measureFrameWork(entry.label, () => entry.callback(context));
+      } else {
+        entry.callback(context);
+      }
     }
-    this.recordDiagnostics();
   }
 
   get activeCallbackCount(): number {
