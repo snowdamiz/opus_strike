@@ -16,7 +16,6 @@ import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 import type { RemotePlayerQualityConfig } from './visualQuality';
 import { RemoteHeroBatchRenderer } from './RemoteHeroBatchRenderer';
-import { measureFrameWork } from '../../movement/networkDiagnostics';
 import {
   getPlayerHeight,
   getVisiblePlayerHeight,
@@ -24,6 +23,7 @@ import {
   NAMEPLATE_WORLD_OFFSET_Y,
   setPlayerRenderOrigin,
 } from './playerWorldAnchors';
+import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
@@ -33,7 +33,7 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
   // NOTE: This component subscribes to gameStore.players but does NOT re-render on
   // v2 transform position updates because remote player entries are mutated in-place.
   // The Map reference only changes when players are added/removed. Position interpolation
-  // reads from visualStore in useFrame (non-reactive, 60fps).
+  // reads from visualStore in the frame scheduler (non-reactive, 60fps).
   const { players, playerId, localPlayerId, gamePhase } = useGameStore(
     useShallow(state => ({
       players: state.players,
@@ -60,13 +60,13 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
   return (
     <group>
       <RemoteHeroBatchRenderer players={otherPlayers} />
-      {otherPlayers.map((player) => (
+      {otherPlayers.map((player) => shouldRenderRemotePlayerFallback(player, config) ? (
         <OtherPlayer
           key={player.id}
           player={player}
           config={config}
         />
-      ))}
+      ) : null)}
     </group>
   );
 }
@@ -161,6 +161,10 @@ function hasActivePhantomVeil(player: Player): boolean {
   return Boolean(veil?.isActive);
 }
 
+function shouldRenderRemotePlayerFallback(player: Player, config: RemotePlayerQualityConfig): boolean {
+  return player.heroId === 'phantom' || player.hasFlag || config.showNameplates || config.showBeacons;
+}
+
 const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerProps) {
   const groupRef = useRef<THREE.Group>(null);
   const [isVeiled, setIsVeiled] = useState(() => hasActivePhantomVeil(player));
@@ -198,141 +202,145 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
     extrapolatedMs: 0,
     stale: false,
   });
-  // VISUAL_STORE_VERIFICATION: This component reads visualStore.getState() in useFrame.
+  // VISUAL_STORE_VERIFICATION: This component reads visualStore.getState() in the frame scheduler.
   // Verify with React DevTools profiler that OtherPlayers does NOT re-render when player positions update at 60fps.
   // Expected: OtherPlayers renders only when players Map changes (add/remove), not on position updates.
-  useFrame((_, delta) => {
-    measureFrameWork('frame.remotePlayers', () => {
-    if (!groupRef.current) return;
-    const stepDelta = delta;
-    const frameNowMs = getFrameClock().epochNowMs;
+  useEffect(() => gameplayFrameScheduler.register({
+    system: 'remotePlayers',
+    label: 'frame.remotePlayers',
+    callback: ({ deltaSeconds }) => {
+      if (!groupRef.current) return;
+      const stepDelta = deltaSeconds;
+      const frameNowMs = getFrameClock().epochNowMs;
 
-    const frameIsVeiled = hasActivePhantomVeil(player);
-    if (frameIsVeiled !== isVeiledRef.current) {
-      isVeiledRef.current = frameIsVeiled;
-      setIsVeiled(frameIsVeiled);
-    }
-    bodyOpacityRef.current = THREE.MathUtils.damp(
-      bodyOpacityRef.current,
-      frameIsVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1,
-      PHANTOM_VEIL_OPACITY_DAMP_RATE,
-      stepDelta
-    );
+      const frameIsVeiled = hasActivePhantomVeil(player);
+      if (frameIsVeiled !== isVeiledRef.current) {
+        isVeiledRef.current = frameIsVeiled;
+        setIsVeiled(frameIsVeiled);
+      }
+      bodyOpacityRef.current = THREE.MathUtils.damp(
+        bodyOpacityRef.current,
+        frameIsVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1,
+        PHANTOM_VEIL_OPACITY_DAMP_RATE,
+        stepDelta
+      );
 
-    // Initialize position on first frame
-    if (!initializedRef.current) {
+      // Initialize position on first frame
+      if (!initializedRef.current) {
+        const visualState = visualStore.getState();
+        const initialPos = visualState.playerPositions.get(player.id);
+        setPlayerRenderOrigin(currentPosition.current, initialPos ?? player.position);
+        groupRef.current.position.copy(currentPosition.current);
+        initializedRef.current = true;
+      }
+
+      // Read from visualStore non-reactively (no re-renders)
       const visualState = visualStore.getState();
-      const initialPos = visualState.playerPositions.get(player.id);
-      setPlayerRenderOrigin(currentPosition.current, initialPos ?? player.position);
-      groupRef.current.position.copy(currentPosition.current);
-      initializedRef.current = true;
-    }
-
-    // Read from visualStore non-reactively (no re-renders)
-    const visualState = visualStore.getState();
-    const sampledTransform = sampledTransformRef.current;
-    const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform, frameNowMs);
-    let snappedToSample = false;
-    if (hasSampledTransform) {
-      setPlayerVisualTransform(player.id, sampledTransform.position, sampledTransform.lookYaw);
-      setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
-      const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
-      const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >
-        REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMPLE_SNAP_DISTANCE;
-      if (epochChanged || tooFarForSmoothing) {
-        currentPosition.current.copy(targetPosition.current);
-        snappedToSample = true;
+      const sampledTransform = sampledTransformRef.current;
+      const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform, frameNowMs);
+      let snappedToSample = false;
+      if (hasSampledTransform) {
+        setPlayerVisualTransform(player.id, sampledTransform.position, sampledTransform.lookYaw);
+        setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
+        const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
+        const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >
+          REMOTE_SAMPLE_SNAP_DISTANCE * REMOTE_SAMPLE_SNAP_DISTANCE;
+        if (epochChanged || tooFarForSmoothing) {
+          currentPosition.current.copy(targetPosition.current);
+          snappedToSample = true;
+        } else {
+          currentPosition.current.lerp(
+            targetPosition.current,
+            smoothingFactor(REMOTE_SAMPLE_POSITION_SMOOTHING, stepDelta)
+          );
+        }
+        remoteEpochRef.current = sampledTransform.movementEpoch;
       } else {
-        currentPosition.current.lerp(
-          targetPosition.current,
-          smoothingFactor(REMOTE_SAMPLE_POSITION_SMOOTHING, stepDelta)
+        const targetPos = visualState.playerPositions.get(player.id);
+        if (targetPos) {
+          setPlayerRenderOrigin(targetPosition.current, targetPos);
+        } else {
+          // Fallback to prop position if visualStore doesn't have data yet
+          setPlayerRenderOrigin(targetPosition.current, player.position);
+        }
+      }
+
+      // Lerp current position toward target
+      if (!hasSampledTransform) {
+        currentPosition.current.lerp(targetPosition.current, Math.min(1, stepDelta * 15));
+      }
+      groupRef.current.position.copy(currentPosition.current);
+
+      const visualHorizontalSpeed = stepDelta > 0
+        ? Math.sqrt(
+          (currentPosition.current.x - previousFramePosition.current.x) ** 2 +
+          (currentPosition.current.z - previousFramePosition.current.z) ** 2
+        ) / stepDelta
+        : 0;
+      const visualDeltaX = currentPosition.current.x - previousFramePosition.current.x;
+      const visualDeltaZ = currentPosition.current.z - previousFramePosition.current.z;
+      // Read rotation from visualStore non-reactively
+      const targetRot = visualState.playerRotations.get(player.id);
+      const renderYaw = hasSampledTransform ? sampledTransform.lookYaw : targetRot ?? player.lookYaw;
+      if (hasSampledTransform && !snappedToSample) {
+        groupRef.current.rotation.y = lerpAngle(
+          groupRef.current.rotation.y,
+          sampledTransform.lookYaw,
+          smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, stepDelta)
+        );
+      } else if (hasSampledTransform) {
+        groupRef.current.rotation.y = sampledTransform.lookYaw;
+      } else if (targetRot !== undefined) {
+        groupRef.current.rotation.y = targetRot;
+      } else {
+        // Fallback to prop rotation if visualStore doesn't have data yet
+        groupRef.current.rotation.y = player.lookYaw;
+      }
+      lookPitchRef.current = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
+
+      previousFramePosition.current.copy(currentPosition.current);
+      if (!frameIsVeiled || player.heroId !== 'phantom') return;
+
+      const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
+      if (remoteAttackState) {
+        const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
+        isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
+        attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
+        attackSideRef.current = remoteAttackState.side;
+
+        if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
+          visualState.remotePlayerAttackStates.delete(player.id);
+        }
+      } else {
+        isAttackingRef.current = false;
+        attackStartedAtMsRef.current = null;
+      }
+
+      if (visualHorizontalSpeed > VISUAL_MOVING_SPEED && stepDelta > 0) {
+        setWalkDirectionFromComponents(
+          walkDirectionRef.current,
+          visualDeltaX,
+          visualDeltaZ,
+          renderYaw
+        );
+      } else {
+        setWalkDirectionFromVelocity(
+          walkDirectionRef.current,
+          hasSampledTransform ? sampledTransform.velocity : player.velocity,
+          renderYaw
         );
       }
-      remoteEpochRef.current = sampledTransform.movementEpoch;
-    } else {
-      const targetPos = visualState.playerPositions.get(player.id);
-      if (targetPos) {
-        setPlayerRenderOrigin(targetPosition.current, targetPos);
-      } else {
-        // Fallback to prop position if visualStore doesn't have data yet
-        setPlayerRenderOrigin(targetPosition.current, player.position);
-      }
-    }
 
-    // Lerp current position toward target
-    if (!hasSampledTransform) {
-      currentPosition.current.lerp(targetPosition.current, Math.min(1, stepDelta * 15));
-    }
-    groupRef.current.position.copy(currentPosition.current);
-
-    const visualHorizontalSpeed = stepDelta > 0
-      ? Math.sqrt(
-        (currentPosition.current.x - previousFramePosition.current.x) ** 2 +
-        (currentPosition.current.z - previousFramePosition.current.z) ** 2
-      ) / stepDelta
-      : 0;
-    // Read rotation from visualStore non-reactively
-    const targetRot = visualState.playerRotations.get(player.id);
-    const renderYaw = hasSampledTransform ? sampledTransform.lookYaw : targetRot ?? player.lookYaw;
-    if (hasSampledTransform && !snappedToSample) {
-      groupRef.current.rotation.y = lerpAngle(
-        groupRef.current.rotation.y,
-        sampledTransform.lookYaw,
-        smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, stepDelta)
-      );
-    } else if (hasSampledTransform) {
-      groupRef.current.rotation.y = sampledTransform.lookYaw;
-    } else if (targetRot !== undefined) {
-      groupRef.current.rotation.y = targetRot;
-    } else {
-      // Fallback to prop rotation if visualStore doesn't have data yet
-      groupRef.current.rotation.y = player.lookYaw;
-    }
-    lookPitchRef.current = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
-
-    previousFramePosition.current.copy(currentPosition.current);
-    if (!frameIsVeiled) return;
-
-    const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
-    if (remoteAttackState) {
-      const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
-      isAttackingRef.current = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
-      attackStartedAtMsRef.current = remoteAttackState.startedAtMs;
-      attackSideRef.current = remoteAttackState.side;
-
-      if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
-        visualState.remotePlayerAttackStates.delete(player.id);
-      }
-    } else {
-      isAttackingRef.current = false;
-      attackStartedAtMsRef.current = null;
-    }
-
-    if (visualHorizontalSpeed > VISUAL_MOVING_SPEED && stepDelta > 0) {
-      setWalkDirectionFromComponents(
-        walkDirectionRef.current,
-        currentPosition.current.x - previousFramePosition.current.x,
-        currentPosition.current.z - previousFramePosition.current.z,
-        renderYaw
-      );
-    } else {
-      setWalkDirectionFromVelocity(
-        walkDirectionRef.current,
-        hasSampledTransform ? sampledTransform.velocity : player.velocity,
-        renderYaw
-      );
-    }
-
-    const frameHasLoweredPosture = hasLoweredPlayerPosture(player.movement);
-    const frameVisibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
-    const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
-    postureScaleYRef.current = frameVisibleHeight / playerHeight;
-    isCrouchingRef.current = player.movement.isCrouching;
-    isSlidingRef.current = player.movement.isSliding;
-    movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
-    isMovingRef.current = frameIsMoving;
-    });
-  });
+      const frameHasLoweredPosture = hasLoweredPlayerPosture(player.movement);
+      const frameVisibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
+      const frameIsMoving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
+      postureScaleYRef.current = frameVisibleHeight / playerHeight;
+      isCrouchingRef.current = player.movement.isCrouching;
+      isSlidingRef.current = player.movement.isSliding;
+      movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
+      isMovingRef.current = frameIsMoving;
+    },
+  }), [player, playerHeight]);
 
   return (
     <group ref={groupRef}>

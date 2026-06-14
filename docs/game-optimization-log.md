@@ -1040,3 +1040,46 @@ The pass removes fixed frame-loop overhead from several effect-heavy systems, gi
 diagnostics enough granularity to attribute future hitches, lowers terrain/map churn, and
 keeps server bot/replication costs inside the expanded benchmark budgets. User in-browser
 feel validation is still the final subjective check.
+
+## Pass 010 - Remote Frame Callback Trim
+
+Date: June 14, 2026
+
+Status: Implemented and verified with non-browser checks.
+
+### Scope
+
+Trimmed client-side in-game frame overhead in the remote-player render path and projectile
+cleanup helpers without changing visual quality settings or gameplay behavior.
+
+### Changes
+
+- Moved remote overlay/Phantom fallback updates from per-component R3F `useFrame` callbacks
+  into the existing gameplay frame scheduler under `frame.remotePlayers`.
+- Avoided mounting the remote overlay/fallback component for players that only need the
+  batched body renderer in low-overlay quality profiles.
+- Moved remote hero batch group updates into the gameplay frame scheduler under
+  `frame.remoteHeroBatch`, removing the extra R3F callback layer while keeping existing
+  batching behavior.
+- Fixed veiled Phantom fallback walk-direction updates to use the visual movement delta
+  captured before `previousFramePosition` is advanced.
+- Reworked bulk projectile removal to scan once and allocate only after the first removed
+  item, while preserving unchanged array references when no IDs match.
+
+### Verification
+
+Passed:
+
+- `pnpm --filter @voxel-strike/client typecheck`
+- `pnpm --filter @voxel-strike/client test:visual-store`
+- `pnpm --filter @voxel-strike/client build`
+
+Not run:
+
+- Browser testing, by project instruction.
+
+### Result
+
+Expected runtime impact is lower fixed JavaScript/R3F callback overhead for remote players
+and remote hero batches, especially in low-overlay profiles and larger matches. No browser
+runtime capture was taken in this pass.

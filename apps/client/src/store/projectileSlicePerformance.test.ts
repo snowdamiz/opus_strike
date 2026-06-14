@@ -41,6 +41,20 @@ useGameStore.getState().removeRockets(['missing-a', 'missing-b']);
 assert.equal(useGameStore.getState().rockets, activeReference);
 assert.equal(rocketReferenceChanges, 0);
 
+useGameStore.setState({
+  rockets: [
+    rocket('keep-a', Date.now()),
+    rocket('remove-a', Date.now()),
+    rocket('keep-b', Date.now()),
+    rocket('remove-b', Date.now()),
+  ],
+});
+useGameStore.getState().removeRockets(['remove-a', 'remove-b']);
+assert.deepEqual(
+  useGameStore.getState().rockets.map((item) => item.id),
+  ['keep-a', 'keep-b']
+);
+
 useGameStore.setState({ rockets: [rocket('expired', Date.now() - 4000)] });
 rocketReferenceChanges = 0;
 const expiredReference = useGameStore.getState().rockets;

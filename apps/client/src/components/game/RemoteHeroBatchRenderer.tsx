@@ -1,5 +1,4 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   HERO_DEFINITIONS,
@@ -76,8 +75,8 @@ import {
   visualStore,
 } from '../../store/visualStore';
 import { getFrameClock } from '../../utils/frameClock';
-import { measureFrameWork } from '../../movement/networkDiagnostics';
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
+import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 type BoneOrRoot = HeroBoneName | 'root';
 type PlayerFilter = 'all' | 'bot' | 'nonBot';
@@ -1325,81 +1324,83 @@ function RemoteHeroBatchGroup({
     runtimeByPlayerIdRef.current.clear();
   }, []);
 
-  useFrame((state, delta) => {
-    measureFrameWork('frame.remoteHeroBatch', () => {
-    const runtimes = runtimeByPlayerIdRef.current;
-    const counts = countsRef.current;
-    const outlineCounts = outlineCountsRef.current;
-    counts.fill(0);
-    outlineCounts.fill(0);
+  useEffect(() => gameplayFrameScheduler.register({
+    system: 'remoteHeroBatch',
+    label: 'frame.remoteHeroBatch',
+    callback: ({ deltaSeconds, elapsedSeconds }) => {
+      const runtimes = runtimeByPlayerIdRef.current;
+      const counts = countsRef.current;
+      const outlineCounts = outlineCountsRef.current;
+      counts.fill(0);
+      outlineCounts.fill(0);
 
-    for (const player of players) {
-      let runtime = runtimes.get(player.id);
-      if (!runtime) {
-        runtime = createRemoteRuntime(player);
-        runtimes.set(player.id, runtime);
+      for (const player of players) {
+        let runtime = runtimes.get(player.id);
+        if (!runtime) {
+          runtime = createRemoteRuntime(player);
+          runtimes.set(player.id, runtime);
+        }
+        updateRuntimeHero(runtime, player);
+        if (runtime.heroId !== resources.heroId) continue;
+
+        const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds);
+        updateRemotePose(runtime, player, deltaSeconds, elapsedSeconds, visualHorizontalSpeed);
+        updateBodyWorldMatrix(runtime);
+
+        if (hasActivePhantomVeil(player)) continue;
+
+        for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
+          const batch = resources.batches[batchIndex];
+          const mesh = meshesRef.current[batchIndex];
+          if (!mesh) continue;
+          const emissiveAttribute = mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute | undefined;
+          let writeIndex = counts[batchIndex];
+          for (const descriptor of batch.descriptors) {
+            if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
+            mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
+            emissiveAttribute?.setX(writeIndex, getDescriptorEmissiveBoost(descriptor, player, runtime.glowPulse));
+            writeIndex++;
+          }
+          counts[batchIndex] = writeIndex;
+        }
+
+        for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
+          const batch = resources.outlineBatches[batchIndex];
+          const mesh = outlineMeshesRef.current[batchIndex];
+          if (!mesh) continue;
+          let writeIndex = outlineCounts[batchIndex];
+          for (const descriptor of batch.descriptors) {
+            if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
+            mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
+            writeIndex++;
+          }
+          outlineCounts[batchIndex] = writeIndex;
+        }
       }
-      updateRuntimeHero(runtime, player);
-      if (runtime.heroId !== resources.heroId) continue;
-
-      const visualHorizontalSpeed = updateRemoteTransform(runtime, player, delta);
-      updateRemotePose(runtime, player, delta, state.clock.elapsedTime, visualHorizontalSpeed);
-      updateBodyWorldMatrix(runtime);
-
-      if (hasActivePhantomVeil(player)) continue;
 
       for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
-        const batch = resources.batches[batchIndex];
         const mesh = meshesRef.current[batchIndex];
         if (!mesh) continue;
-        const emissiveAttribute = mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute | undefined;
-        let writeIndex = counts[batchIndex];
-        for (const descriptor of batch.descriptors) {
-          if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
-          mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
-          emissiveAttribute?.setX(writeIndex, getDescriptorEmissiveBoost(descriptor, player, runtime.glowPulse));
-          writeIndex++;
+        const count = counts[batchIndex];
+        mesh.count = count;
+        if (count > 0) {
+          mesh.instanceMatrix.needsUpdate = true;
+          const emissiveAttribute = mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute | undefined;
+          if (emissiveAttribute) emissiveAttribute.needsUpdate = true;
         }
-        counts[batchIndex] = writeIndex;
       }
 
       for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
-        const batch = resources.outlineBatches[batchIndex];
         const mesh = outlineMeshesRef.current[batchIndex];
         if (!mesh) continue;
-        let writeIndex = outlineCounts[batchIndex];
-        for (const descriptor of batch.descriptors) {
-          if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
-          mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
-          writeIndex++;
+        const count = outlineCounts[batchIndex];
+        mesh.count = count;
+        if (count > 0) {
+          mesh.instanceMatrix.needsUpdate = true;
         }
-        outlineCounts[batchIndex] = writeIndex;
       }
-    }
-
-    for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
-      const mesh = meshesRef.current[batchIndex];
-      if (!mesh) continue;
-      const count = counts[batchIndex];
-      mesh.count = count;
-      if (count > 0) {
-        mesh.instanceMatrix.needsUpdate = true;
-        const emissiveAttribute = mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute | undefined;
-        if (emissiveAttribute) emissiveAttribute.needsUpdate = true;
-      }
-    }
-
-    for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
-      const mesh = outlineMeshesRef.current[batchIndex];
-      if (!mesh) continue;
-      const count = outlineCounts[batchIndex];
-      mesh.count = count;
-      if (count > 0) {
-        mesh.instanceMatrix.needsUpdate = true;
-      }
-    }
-    });
-  });
+    },
+  }), [players, resources]);
 
   return (
     <>

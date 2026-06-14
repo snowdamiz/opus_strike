@@ -231,22 +231,21 @@ function removeById<T extends { id: string }>(items: T[], id: string): T[] {
 function removeByIds<T extends { id: string }>(items: T[], ids: readonly string[]): T[] {
   if (ids.length === 0) return items;
 
-  let changed = false;
-  for (const item of items) {
-    if (ids.includes(item.id)) {
-      changed = true;
-      break;
-    }
-  }
-  if (!changed) return items;
-
   const idSet = ids.length > 4 ? new Set(ids) : null;
-  const next: T[] = [];
-  for (const item of items) {
+  let next: T[] | null = null;
+
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
     const remove = idSet ? idSet.has(item.id) : ids.includes(item.id);
-    if (!remove) next.push(item);
+    if (remove) {
+      if (!next) next = items.slice(0, index);
+      continue;
+    }
+
+    if (next) next.push(item);
   }
-  return next;
+
+  return next ?? items;
 }
 
 function updateById<T extends { id: string }>(items: T[], id: string, updates: Partial<T>): T[] {
