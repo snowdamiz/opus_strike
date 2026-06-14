@@ -34,8 +34,10 @@ import { setAudioListenerTransform, useAbilitySounds, useMovementSounds } from '
 import {
   PHANTOM_PRIMARY_RETURN_TO_IDLE_MS,
   PHANTOM_PRIMARY_SHOT_PULSE_DURATION_MS,
+  PHANTOM_VEIL_CAST_POSE_DURATION_MS,
   PHANTOM_VOID_RAY_RELEASE_LOCK_MS,
   setPhantomPrimaryHeld,
+  triggerPhantomVeilCastPose,
 } from '../../viewmodel/phantomPrimaryPose';
 import {
   BLAZE_STAFF_RETURN_TO_IDLE_MS,
@@ -1570,6 +1572,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               const abilityId = heroDef.ultimate.abilityId;
               const abilityDef = ABILITY_DEFINITIONS[abilityId];
               const durationMs = (abilityDef?.duration ?? 0) * 1000;
+              triggerPhantomVeilCastPose(now);
               abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
               useGameStore.getState().setUltimateEffect(true, abilityId, now + durationMs);
               updateLocalPlayer({
@@ -1579,9 +1582,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                   [abilityId]: buildPracticeAbilityState(localPlayer.abilities, abilityId, now, true),
                 },
               });
-              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
+              lockHeroActions(heroId, PHANTOM_VEIL_CAST_POSE_DURATION_MS, now);
             } else if (phantomAbilities.executePhantomVeil(abilityCtx, playerSounds, updateLocalPlayer, abilitySystem.setAbilityActive)) {
-              lockHeroActions(heroId, PHANTOM_PRIMARY_RETURN_TO_IDLE_MS, now);
+              lockHeroActions(heroId, PHANTOM_VEIL_CAST_POSE_DURATION_MS, now);
             }
           } else if (heroId === 'blaze') {
             blazeAbilities.executeAirStrike(abilityCtx, playerSounds, updateLocalPlayer);

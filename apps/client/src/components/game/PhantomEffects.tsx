@@ -17,6 +17,11 @@ import {
   type BlinkEffectData,
 } from './phantom';
 import { getRiftMaterial } from './phantom/materials';
+import {
+  createPhantomVeilSplitMaterial,
+  updatePhantomVeilSplitMaterial,
+} from './phantom/veilClap';
+import { PHANTOM_VEIL_CAST_POSE_DURATION_MS } from '../../viewmodel/phantomPrimaryPose';
 
 // Re-export trigger functions for external use
 export { triggerBlinkEffect } from './phantom';
@@ -27,9 +32,11 @@ export { triggerBlinkEffect } from './phantom';
 // ============================================================================
 
 const POOLED_BLINK_EFFECTS = 16;
+const POOLED_VEIL_CLAP_EFFECTS = 12;
 const BLINK_TRAIL_PARTICLE_COUNT = 50;
 const BLINK_BURST_PARTICLE_COUNT = 30;
 const BLINK_SLOT_INDICES = Array.from({ length: POOLED_BLINK_EFFECTS }, (_, i) => i);
+const VEIL_CLAP_SLOT_INDICES = Array.from({ length: POOLED_VEIL_CLAP_EFFECTS }, (_, i) => i);
 const BLINK_PILLAR_MATERIAL = new THREE.MeshBasicMaterial({
   color: 0x7c3aed,
   transparent: true,
@@ -39,6 +46,10 @@ const BLINK_PILLAR_MATERIAL = new THREE.MeshBasicMaterial({
 });
 const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 const ACTIVE_VEIL_SCAN_INTERVAL_MS = 80;
+const VEIL_CLAP_FORWARD_OFFSET = 0.68;
+const VEIL_CLAP_HEIGHT_OFFSET = 1.18;
+const VEIL_CLAP_SCALE_X = 1.45;
+const VEIL_CLAP_SCALE_Y = 2.8;
 
 interface BlinkRenderSlot {
   effectId: string;
@@ -53,6 +64,40 @@ interface BlinkRenderSlot {
   endRiftMaterial: THREE.ShaderMaterial;
   particleMaterial: THREE.PointsMaterial;
 }
+
+interface PhantomVeilClapEffectData {
+  id: string;
+  playerId: string;
+  position: { x: number; y: number; z: number };
+  yaw?: number;
+  startFrameTime: number;
+  endFrameTime: number;
+}
+
+interface PhantomVeilClapRenderSlot {
+  effectId: string;
+  group: THREE.Group | null;
+  material: THREE.ShaderMaterial;
+}
+
+interface PhantomVeilClapEffectSlot {
+  active: boolean;
+  data: PhantomVeilClapEffectData;
+}
+
+const veilClapEffectSlots: PhantomVeilClapEffectSlot[] = Array.from({ length: POOLED_VEIL_CLAP_EFFECTS }, (_, index) => ({
+  active: false,
+  data: {
+    id: `veil_clap_slot_${index}`,
+    playerId: '',
+    position: { x: 0, y: 0, z: 0 },
+    startFrameTime: 0,
+    endFrameTime: 0,
+  },
+}));
+
+let nextVeilClapSlot = 0;
+let veilClapEffectIdCounter = 0;
 
 function createBlinkTrailGeometry(): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
@@ -101,6 +146,79 @@ function ensureBlinkRenderSlot(renderSlots: BlinkRenderSlot[], index: number): B
     renderSlots[index] = slot;
   }
   return slot;
+}
+
+function createVeilClapRenderSlot(): PhantomVeilClapRenderSlot {
+  return {
+    effectId: '',
+    group: null,
+    material: createPhantomVeilSplitMaterial(),
+  };
+}
+
+function ensureVeilClapRenderSlot(
+  renderSlots: PhantomVeilClapRenderSlot[],
+  index: number
+): PhantomVeilClapRenderSlot {
+  let slot = renderSlots[index];
+  if (!slot) {
+    slot = createVeilClapRenderSlot();
+    renderSlots[index] = slot;
+  }
+  return slot;
+}
+
+function claimVeilClapEffectSlot(): PhantomVeilClapEffectSlot {
+  for (let index = 0; index < veilClapEffectSlots.length; index++) {
+    const slotIndex = (nextVeilClapSlot + index) % veilClapEffectSlots.length;
+    const slot = veilClapEffectSlots[slotIndex];
+    if (!slot.active) {
+      nextVeilClapSlot = (slotIndex + 1) % veilClapEffectSlots.length;
+      return slot;
+    }
+  }
+
+  const slot = veilClapEffectSlots[nextVeilClapSlot];
+  nextVeilClapSlot = (nextVeilClapSlot + 1) % veilClapEffectSlots.length;
+  return slot;
+}
+
+export function triggerPhantomVeilClapEffect({
+  playerId,
+  position,
+  yaw,
+}: {
+  playerId: string;
+  position: { x: number; y: number; z: number };
+  yaw?: number;
+}): void {
+  const frameNow = getFrameClock().nowMs;
+  const slot = claimVeilClapEffectSlot();
+  slot.active = true;
+  slot.data.id = `phantom_veil_clap_${veilClapEffectIdCounter++}`;
+  slot.data.playerId = playerId;
+  slot.data.position.x = position.x;
+  slot.data.position.y = position.y;
+  slot.data.position.z = position.z;
+  slot.data.yaw = yaw;
+  slot.data.startFrameTime = frameNow;
+  slot.data.endFrameTime = frameNow + PHANTOM_VEIL_CAST_POSE_DURATION_MS;
+}
+
+function collectActivePhantomVeilClapEffects(
+  frameNow: number,
+  out: PhantomVeilClapEffectData[]
+): void {
+  out.length = 0;
+
+  for (const slot of veilClapEffectSlots) {
+    if (!slot.active) continue;
+    if (frameNow >= slot.data.endFrameTime) {
+      slot.active = false;
+      continue;
+    }
+    out.push(slot.data);
+  }
 }
 
 function refillBlinkSlot(slot: BlinkRenderSlot, effect: BlinkEffectData): void {
@@ -228,6 +346,72 @@ function updatePooledBlinkEffects(
   }
 }
 
+function writeVeilClapWorldTransform(
+  effect: PhantomVeilClapEffectData,
+  group: THREE.Group
+): void {
+  const store = useGameStore.getState();
+  const visualState = visualStore.getState();
+  const player = store.players.get(effect.playerId) ??
+    (store.localPlayer?.id === effect.playerId ? store.localPlayer : null);
+  const visualPosition = visualState.playerPositions.get(effect.playerId);
+  const position = visualPosition ?? player?.position ?? effect.position;
+  const yaw = visualState.playerRotations.get(effect.playerId) ?? player?.lookYaw ?? effect.yaw ?? 0;
+  const forwardX = -Math.sin(yaw);
+  const forwardZ = -Math.cos(yaw);
+
+  group.position.set(
+    position.x + forwardX * VEIL_CLAP_FORWARD_OFFSET,
+    position.y + VEIL_CLAP_HEIGHT_OFFSET,
+    position.z + forwardZ * VEIL_CLAP_FORWARD_OFFSET
+  );
+  group.rotation.set(0, yaw + Math.PI, 0);
+}
+
+function updatePooledVeilClapEffects(
+  renderSlots: PhantomVeilClapRenderSlot[],
+  effects: PhantomVeilClapEffectData[],
+  frameNow: number,
+  delta: number
+): void {
+  for (let index = 0; index < POOLED_VEIL_CLAP_EFFECTS; index++) {
+    const slot = renderSlots[index];
+    if (!slot) continue;
+
+    const effect = effects[index];
+    const group = slot.group;
+    if (!effect || !group) {
+      if (group) group.visible = false;
+      continue;
+    }
+
+    if (slot.effectId !== effect.id) {
+      slot.effectId = effect.id;
+    }
+
+    const duration = Math.max(1, effect.endFrameTime - effect.startFrameTime);
+    const progress = THREE.MathUtils.clamp((frameNow - effect.startFrameTime) / duration, 0, 1);
+    const fadeIn = THREE.MathUtils.smoothstep(progress, 0, 0.1);
+    const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, 0.66, 1);
+    const intensity = fadeIn * fadeOut;
+    const splitProgress = THREE.MathUtils.smoothstep(progress, 0, 0.74);
+
+    group.visible = intensity > 0.01;
+    if (!group.visible) {
+      updatePhantomVeilSplitMaterial(slot.material, 0, 0, 0, delta);
+      continue;
+    }
+
+    writeVeilClapWorldTransform(effect, group);
+    group.scale.set(
+      VEIL_CLAP_SCALE_X * (0.74 + splitProgress * 0.26),
+      VEIL_CLAP_SCALE_Y * (0.8 + splitProgress * 0.2),
+      1
+    );
+    updatePhantomVeilSplitMaterial(slot.material, splitProgress, intensity, fadeIn, delta);
+  }
+}
+
 function PooledBlinkTeleportSlots({ renderSlots }: { renderSlots: BlinkRenderSlot[] }) {
   useEffect(() => () => {
     for (const slot of renderSlots) {
@@ -271,32 +455,41 @@ function PooledBlinkTeleportSlots({ renderSlots }: { renderSlots: BlinkRenderSlo
   );
 }
 
+function PooledVeilClapSlots({ renderSlots }: { renderSlots: PhantomVeilClapRenderSlot[] }) {
+  useEffect(() => () => {
+    for (const slot of renderSlots) {
+      slot.material.dispose();
+    }
+  }, [renderSlots]);
+
+  return (
+    <>
+      {VEIL_CLAP_SLOT_INDICES.map((slotIndex) => {
+        const slot = ensureVeilClapRenderSlot(renderSlots, slotIndex);
+        return (
+          <group key={slotIndex} ref={el => { slot.group = el; }} visible={false} renderOrder={18}>
+            <mesh geometry={SHARED_GEOMETRIES.plane} material={slot.material} frustumCulled={false} />
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
 function hasActivePhantomVeil(
   player: Player | null | undefined,
-  now: number,
-  localUltimateActive = false
+  _now: number
 ): boolean {
   if (!player || player.state !== 'alive' || player.heroId !== 'phantom') return false;
   const veil = player.abilities?.[PHANTOM_VEIL_ABILITY_ID];
-  if (veil?.isActive) return true;
-
-  return localUltimateActive;
+  return veil?.isActive === true;
 }
 
 function collectActivePhantomVeilIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
   const activeIds = visualStore.getState().activePhantomVeilPlayerIds;
   const localPlayerId = store.localPlayer?.id ?? null;
-  const localUltimateActive = Boolean(
-    store.ultimateEffectActive &&
-    store.ultimateEffectType === PHANTOM_VEIL_ABILITY_ID &&
-    store.ultimateEffectEndTime > now
-  );
   target.length = 0;
-
-  if (hasActivePhantomVeil(store.localPlayer, now, localUltimateActive) && store.localPlayer) {
-    target.push(store.localPlayer.id);
-  }
 
   for (let index = 0; index < activeIds.length; index++) {
     const playerId = activeIds[index];
@@ -329,7 +522,9 @@ export function PhantomEffectsManager() {
 
   // Use refs for effect arrays to avoid setState in useFrame (prevents 60fps re-renders)
   const activeBlinkEffectsRef = useRef<BlinkEffectData[]>([]);
+  const activeVeilClapEffectsRef = useRef<PhantomVeilClapEffectData[]>([]);
   const blinkRenderSlotsRef = useRef<BlinkRenderSlot[]>([]);
+  const veilClapRenderSlotsRef = useRef<PhantomVeilClapRenderSlot[]>([]);
 
   const [activeVeilIds, setActiveVeilIds] = useState<string[]>([]);
   const activeVeilIdsRef = useRef<string[]>([]);
@@ -343,6 +538,10 @@ export function PhantomEffectsManager() {
         frameClock.nowMs,
         activeBlinkEffectsRef.current
       );
+      collectActivePhantomVeilClapEffects(
+        frameClock.nowMs,
+        activeVeilClapEffectsRef.current
+      );
       updatePooledBlinkEffects(
         blinkRenderSlotsRef.current,
         activeBlinkEffectsRef.current,
@@ -350,10 +549,21 @@ export function PhantomEffectsManager() {
         delta,
         frameClock.elapsedSeconds
       );
+      updatePooledVeilClapEffects(
+        veilClapRenderSlotsRef.current,
+        activeVeilClapEffectsRef.current,
+        frameClock.nowMs,
+        delta
+      );
       recordEffectSlotDiagnostics('phantomBlink', {
         active: activeBlinkEffectsRef.current.length,
         capacity: POOLED_BLINK_EFFECTS,
         hiddenMounted: Math.max(0, POOLED_BLINK_EFFECTS - activeBlinkEffectsRef.current.length),
+      });
+      recordEffectSlotDiagnostics('phantomVeilClap', {
+        active: activeVeilClapEffectsRef.current.length,
+        capacity: POOLED_VEIL_CLAP_EFFECTS,
+        hiddenMounted: Math.max(0, POOLED_VEIL_CLAP_EFFECTS - activeVeilClapEffectsRef.current.length),
       });
 
       veilScanAccumulatorRef.current += delta * 1000;
@@ -378,6 +588,9 @@ export function PhantomEffectsManager() {
     <group>
       {/* Blink teleport effects */}
       <PooledBlinkTeleportSlots renderSlots={blinkRenderSlotsRef.current} />
+
+      {/* World-space Phantom Veil clap split visible to other players */}
+      <PooledVeilClapSlots renderSlots={veilClapRenderSlotsRef.current} />
 
       {/* Phantom Veil 3D effects */}
       {activeVeilIds.map(playerId => (

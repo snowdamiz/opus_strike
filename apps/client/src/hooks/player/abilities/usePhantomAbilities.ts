@@ -11,6 +11,7 @@
 
 import { useRef, useCallback } from 'react';
 import {
+  ABILITY_DEFINITIONS,
   PHANTOM_PRIMARY_FIRE_READY_MS,
   PHANTOM_PRIMARY_MAGAZINE_SIZE,
   PHANTOM_PRIMARY_RELOAD_MS,
@@ -32,6 +33,7 @@ import { getLocalChronosTimebreakTempoMultiplier } from '../chronosTimebreakTemp
 import {
   PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS,
   PHANTOM_PRIMARY_VISUAL_FIRE_LEAD_SECONDS,
+  triggerPhantomVeilCastPose,
   type PhantomPrimaryPoseSampleContext,
   type PhantomVoidRayOrbPoseSampleContext,
 } from '../../../viewmodel/phantomPrimaryPose';
@@ -354,11 +356,15 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
 
   // Phantom Veil is requested through input and confirmed by the server.
   const executePhantomVeil = useCallback((
-    _ctx: AbilityContext,
+    ctx: AbilityContext,
     _sounds: PlayerSounds,
     _updateLocalPlayer: (data: any) => void,
     _setAbilityActive: (id: string, active: boolean) => void
   ) => {
+    const now = ctx.viewmodelNowMs ?? Date.now();
+    const durationMs = (ABILITY_DEFINITIONS.phantom_veil?.duration ?? 0) * 1000;
+    triggerPhantomVeilCastPose(now);
+    useGameStore.getState().setUltimateEffect(true, 'phantom_veil', now + durationMs);
     return true;
   }, []);
 

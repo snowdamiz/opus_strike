@@ -42,6 +42,7 @@ import {
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
 import { configureVisualPhysicsQueryBudget } from '../../hooks/usePhysics';
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
+import { getPhantomVeilSkyIntensity } from './phantom/veilAtmosphere';
 import { suppressExpectedContextLossLog } from './webglLifecycle';
 
 const BLAZE_BACKGROUND_COLOR = new THREE.Color('#4a150c');
@@ -51,6 +52,13 @@ const BLAZE_HEMISPHERE_SKY_COLOR = new THREE.Color('#ff6a1f');
 const BLAZE_HEMISPHERE_GROUND_COLOR = new THREE.Color('#541108');
 const BLAZE_SUN_LIGHT_COLOR = new THREE.Color('#ffb14a');
 const BLAZE_RIM_LIGHT_COLOR = new THREE.Color('#ff4020');
+const PHANTOM_NIGHT_BACKGROUND_COLOR = new THREE.Color('#03000d');
+const PHANTOM_NIGHT_FOG_COLOR = new THREE.Color('#170a2a');
+const PHANTOM_NIGHT_AMBIENT_COLOR = new THREE.Color('#3f3751');
+const PHANTOM_NIGHT_HEMISPHERE_SKY_COLOR = new THREE.Color('#3b1c64');
+const PHANTOM_NIGHT_HEMISPHERE_GROUND_COLOR = new THREE.Color('#171120');
+const PHANTOM_NIGHT_SUN_COLOR = new THREE.Color('#8f83c9');
+const PHANTOM_NIGHT_RIM_COLOR = new THREE.Color('#a78bfa');
 
 type GameMapTheme = ReturnType<typeof getVoxelMapTheme>;
 
@@ -123,15 +131,26 @@ function SceneAtmosphereColors({ theme }: { theme: GameMapTheme }) {
 
   useFrame(({ clock }) => {
     const fireIntensity = getBlazeGearstormSkyIntensity();
+    const phantomIntensity = getPhantomVeilSkyIntensity();
     const shimmer = fireIntensity * (0.95 + Math.sin(clock.elapsedTime * 5.2) * 0.05);
 
-    backgroundColorRef.current.copy(baseSkyColor).lerp(fireBackgroundColor, shimmer);
+    backgroundColorRef.current
+      .copy(baseSkyColor)
+      .lerp(fireBackgroundColor, shimmer)
+      .lerp(PHANTOM_NIGHT_BACKGROUND_COLOR, phantomIntensity);
     scene.background = backgroundColorRef.current;
     gl.setClearColor(backgroundColorRef.current, 1);
 
     if (fogRef.current) {
-      fogRef.current.color.copy(baseFogColor).lerp(fireFogColor, fireIntensity);
-      fogRef.current.density = THREE.MathUtils.lerp(0.0062, 0.009, fireIntensity);
+      fogRef.current.color
+        .copy(baseFogColor)
+        .lerp(fireFogColor, fireIntensity)
+        .lerp(PHANTOM_NIGHT_FOG_COLOR, phantomIntensity);
+      fogRef.current.density = THREE.MathUtils.lerp(
+        THREE.MathUtils.lerp(0.0062, 0.009, fireIntensity),
+        0.0074,
+        phantomIntensity
+      );
     }
   });
 
@@ -181,27 +200,47 @@ function ThemedWorldLighting({
 
   useFrame(({ clock }) => {
     const fireIntensity = getBlazeGearstormSkyIntensity();
+    const phantomIntensity = getPhantomVeilSkyIntensity();
     const pulse = fireIntensity * (0.9 + Math.sin(clock.elapsedTime * 7.1) * 0.1);
 
     if (ambientRef.current) {
-      ambientRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.ambient, Math.max(baseLightLevels.ambient, 0.62), pulse);
-      ambientRef.current.color.copy(baseAmbientColor).lerp(fireAmbientColor, fireIntensity);
+      const fireAmbient = THREE.MathUtils.lerp(baseLightLevels.ambient, Math.max(baseLightLevels.ambient, 0.62), pulse);
+      ambientRef.current.intensity = THREE.MathUtils.lerp(fireAmbient, 0.22, phantomIntensity);
+      ambientRef.current.color
+        .copy(baseAmbientColor)
+        .lerp(fireAmbientColor, fireIntensity)
+        .lerp(PHANTOM_NIGHT_AMBIENT_COLOR, phantomIntensity);
     }
 
     if (hemisphereRef.current) {
-      hemisphereRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.hemisphere, Math.max(baseLightLevels.hemisphere, 2.16), pulse);
-      hemisphereRef.current.color.copy(baseSkyColor).lerp(fireSkyColor, fireIntensity);
-      hemisphereRef.current.groundColor.copy(baseGroundColor).lerp(fireGroundColor, fireIntensity);
+      const fireHemisphere = THREE.MathUtils.lerp(baseLightLevels.hemisphere, Math.max(baseLightLevels.hemisphere, 2.16), pulse);
+      hemisphereRef.current.intensity = THREE.MathUtils.lerp(fireHemisphere, 0.56, phantomIntensity);
+      hemisphereRef.current.color
+        .copy(baseSkyColor)
+        .lerp(fireSkyColor, fireIntensity)
+        .lerp(PHANTOM_NIGHT_HEMISPHERE_SKY_COLOR, phantomIntensity);
+      hemisphereRef.current.groundColor
+        .copy(baseGroundColor)
+        .lerp(fireGroundColor, fireIntensity)
+        .lerp(PHANTOM_NIGHT_HEMISPHERE_GROUND_COLOR, phantomIntensity);
     }
 
     if (sunRef.current) {
-      sunRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.sun, Math.max(baseLightLevels.sun, 6.45), pulse);
-      sunRef.current.color.copy(baseSunColor).lerp(fireSunColor, fireIntensity);
+      const fireSun = THREE.MathUtils.lerp(baseLightLevels.sun, Math.max(baseLightLevels.sun, 6.45), pulse);
+      sunRef.current.intensity = THREE.MathUtils.lerp(fireSun, 0.72, phantomIntensity);
+      sunRef.current.color
+        .copy(baseSunColor)
+        .lerp(fireSunColor, fireIntensity)
+        .lerp(PHANTOM_NIGHT_SUN_COLOR, phantomIntensity);
     }
 
     if (rimRef.current) {
-      rimRef.current.intensity = THREE.MathUtils.lerp(baseLightLevels.rim, Math.max(baseLightLevels.rim, 1.25), pulse);
-      rimRef.current.color.copy(baseRimColor).lerp(fireRimColor, fireIntensity);
+      const fireRim = THREE.MathUtils.lerp(baseLightLevels.rim, Math.max(baseLightLevels.rim, 1.25), pulse);
+      rimRef.current.intensity = THREE.MathUtils.lerp(fireRim, 0.9, phantomIntensity);
+      rimRef.current.color
+        .copy(baseRimColor)
+        .lerp(fireRimColor, fireIntensity)
+        .lerp(PHANTOM_NIGHT_RIM_COLOR, phantomIntensity);
     }
   });
 

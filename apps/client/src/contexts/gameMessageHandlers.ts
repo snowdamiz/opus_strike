@@ -41,7 +41,7 @@ import {
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
-import { triggerBlinkEffect } from '../components/game/PhantomEffects';
+import { triggerBlinkEffect, triggerPhantomVeilClapEffect } from '../components/game/PhantomEffects';
 import { triggerPhantomShieldCastEffect } from '../components/game/phantom';
 import {
   startObservedAbilityCastEffect,
@@ -1697,6 +1697,13 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
 
     case 'phantom_veil':
       applyConfirmedPhantomActiveAbility(data);
+      if (!isLocalPlayer && position) {
+        triggerPhantomVeilClapEffect({
+          playerId: data.playerId,
+          position,
+          yaw: data.direction?.yaw,
+        });
+      }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('phantom_veil')) {
         playPhantomWorldSound('phantomVeil', position);
       }

@@ -19,6 +19,7 @@ import {
   getPhantomPrimaryHeldBlend,
   getPhantomShieldCastPose,
   getPhantomPrimaryShotPulse,
+  getPhantomVeilCastPose,
   type PhantomPrimaryPoseSampleContext,
   type PhantomShieldCastPose,
   type PhantomVoidRayOrbPoseSampleContext,
@@ -62,6 +63,10 @@ import {
   getHookshotMaterials,
 } from './effectResources';
 import { HookshotViewmodelArrow } from './hookshot/arrowHead';
+import {
+  createPhantomVeilSplitMaterial,
+  updatePhantomVeilSplitMaterial,
+} from './phantom/veilClap';
 import {
   CHRONOS_AEGIS_PANEL_HEIGHT,
   CHRONOS_AEGIS_PANEL_WIDTH,
@@ -233,6 +238,8 @@ const PHANTOM_RELOAD_INWARD_X = 0.034;
 const PHANTOM_RELOAD_LIFT_Y = 0.018;
 const PHANTOM_VOID_RAY_ORB_POSITION = new THREE.Vector3(0, -0.472, -0.72);
 const PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION = new THREE.Vector3(0, -0.38, -2.15);
+const PHANTOM_VEIL_SPLIT_POSITION = new THREE.Vector3(0, -0.22, -0.58);
+const PHANTOM_VEIL_SPLIT_BASE_SCALE = new THREE.Vector3(0.88, 2.1, 1);
 const HOOKSHOT_LAUNCHER_TUBE_LENGTH = 0.096;
 const HOOKSHOT_LAUNCHER_TUBE_CENTER_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH * 0.5;
 const HOOKSHOT_LAUNCHER_TUBE_FRONT_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH;
@@ -1709,6 +1716,28 @@ function PhantomAnimatedForearm({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const veilCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomVeilCastPose(nowMs);
+
+    if (veilCastPose?.active) {
+      forearm.visible = true;
+      writePhantomForearmPose(
+        forearm,
+        side,
+        0,
+        0,
+        state.clock.elapsedTime,
+        PHANTOM_STILL_LOCOMOTION_POSE,
+        0,
+        0
+      );
+      reloadGlowMaterial.opacity = 0;
+      return;
+    }
+
+    forearm.visible = true;
+
     const shieldCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomShieldCastPose(nowMs);
@@ -1814,6 +1843,40 @@ function PhantomPoseableHand({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const veilCastPose = reloadPose.active || chargePose.active
+      ? null
+      : getPhantomVeilCastPose(nowMs);
+
+    if (veilCastPose?.active) {
+      if (closedVisual) {
+        closedVisual.visible = true;
+        closedVisual.scale.setScalar(1);
+      }
+      if (openVisual) {
+        openVisual.visible = false;
+        openVisual.scale.setScalar(0.001);
+      }
+      writePhantomHandPose(
+        {
+          ...(closedVisual ? { closedHand: closedVisual } : {}),
+          arm,
+          wrist,
+          palm,
+          thumb,
+          fingers,
+        },
+        side,
+        0,
+        0,
+        state.clock.elapsedTime,
+        PHANTOM_STILL_LOCOMOTION_POSE,
+        0,
+        0
+      );
+      reloadGlowMaterial.opacity = 0;
+      return;
+    }
+
     const shieldCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomShieldCastPose(nowMs);
@@ -2154,6 +2217,44 @@ function PhantomVoidRayChargeOrb() {
   );
 }
 
+function PhantomVeilViewmodelSplit() {
+  const groupRef = useRef<THREE.Group>(null);
+  const material = useMemo(createPhantomVeilSplitMaterial, []);
+
+  useEffect(() => () => {
+    material.dispose();
+  }, [material]);
+
+  useFrame((_, delta) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const veilPose = getPhantomVeilCastPose(Date.now());
+    const intensity = veilPose.contact * veilPose.blend;
+    group.visible = intensity > 0.01;
+
+    if (!group.visible) {
+      updatePhantomVeilSplitMaterial(material, 0, 0, 0, delta);
+      return;
+    }
+
+    const progress = THREE.MathUtils.clamp(veilPose.contact + veilPose.pulse * 0.28, 0, 1);
+    group.position.copy(PHANTOM_VEIL_SPLIT_POSITION);
+    group.scale.set(
+      PHANTOM_VEIL_SPLIT_BASE_SCALE.x * (0.7 + progress * 0.3),
+      PHANTOM_VEIL_SPLIT_BASE_SCALE.y * (0.82 + progress * 0.18),
+      PHANTOM_VEIL_SPLIT_BASE_SCALE.z
+    );
+    updatePhantomVeilSplitMaterial(material, progress, intensity, veilPose.contact, delta);
+  });
+
+  return (
+    <group ref={groupRef} visible={false} renderOrder={26}>
+      <mesh geometry={SHARED_GEOMETRIES.plane} material={material} frustumCulled={false} />
+    </group>
+  );
+}
+
 function PhantomViewmodel({
   materials,
   primaryAttackRef,
@@ -2176,6 +2277,7 @@ function PhantomViewmodel({
       <PhantomPoseableHand side={-1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
       <PhantomPoseableHand side={1} materials={materials} primaryAttackRef={primaryAttackRef} voidRayReleaseRef={voidRayReleaseRef} locomotionRef={locomotionRef} />
       <PhantomVoidRayChargeOrb />
+      <PhantomVeilViewmodelSplit />
     </group>
   );
 }

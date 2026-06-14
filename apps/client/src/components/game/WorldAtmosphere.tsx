@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { VoxelMapTheme } from '@voxel-strike/shared';
 import type { EnvironmentQualityConfig } from './visualQuality';
 import { getBlazeGearstormSkyIntensity } from './blaze/airstrike';
+import { getPhantomVeilSkyIntensity } from './phantom/veilAtmosphere';
 
 interface WorldAtmosphereProps {
   theme: VoxelMapTheme;
@@ -103,10 +104,21 @@ uniform vec3 fireTopColor;
 uniform vec3 fireHorizonColor;
 uniform vec3 emberColor;
 uniform vec3 smokeColor;
+uniform vec3 phantomTopColor;
+uniform vec3 phantomHorizonColor;
+uniform vec3 phantomPurpleColor;
+uniform vec3 phantomStarColor;
 uniform vec3 sunDirection;
 uniform float fireIntensity;
+uniform float phantomIntensity;
 uniform float time;
 varying vec3 vWorldPosition;
+
+float hash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
 
 void main() {
   vec3 direction = normalize(vWorldPosition);
@@ -134,6 +146,29 @@ void main() {
   float sunCore = pow(sunFacing, 220.0);
   color += fireIntensity * (fireHorizonColor * corona * 0.42 + emberColor * sunCore * 1.15);
   color = mix(color, smokeColor, fireIntensity * smoke * 0.2);
+
+  vec3 phantomSky = mix(phantomHorizonColor, phantomTopColor, smoothstep(0.02, 1.0, height));
+  float nebulaWave =
+    sin(azimuth * 2.4 + direction.y * 7.5 + time * 0.08) * 0.5 +
+    sin((direction.x + direction.z) * 5.2 - time * 0.06) * 0.35 +
+    sin(azimuth * 5.8 - direction.y * 3.0) * 0.15;
+  float nebula = smoothstep(0.28, 0.95, nebulaWave * 0.5 + 0.5) * smoothstep(0.12, 0.9, height);
+  phantomSky += phantomPurpleColor * (horizon * 0.38 + nebula * 0.32);
+
+  float polar = acos(clamp(direction.y, -1.0, 1.0)) / 3.14159265;
+  vec2 starCoord = vec2(azimuth / 6.2831853 + 0.5, polar);
+  vec2 starGrid = vec2(260.0, 124.0);
+  vec2 starCellPosition = starCoord * starGrid;
+  vec2 starCell = floor(starCellPosition);
+  vec2 starLocal = fract(starCellPosition) - 0.5;
+  float starSeed = hash12(starCell);
+  float starRadius = mix(0.08, 0.22, hash12(starCell + 19.17));
+  float starShape = 1.0 - smoothstep(starRadius * 0.28, starRadius, length(starLocal));
+  float starMask = step(0.962, starSeed) * starShape * smoothstep(0.18, 0.72, height);
+  float twinkle = 0.68 + sin(time * (1.8 + starSeed * 3.2) + starSeed * 43.0) * 0.32;
+  phantomSky += phantomStarColor * starMask * twinkle * mix(0.65, 1.75, hash12(starCell + 4.7));
+
+  color = mix(color, phantomSky, phantomIntensity);
 
   gl_FragColor = vec4(color, 1.0);
 }
@@ -939,8 +974,13 @@ function getSkyUniforms(theme: VoxelMapTheme) {
     fireHorizonColor: { value: new THREE.Color('#ff5c1c') },
     emberColor: { value: new THREE.Color('#ffd36a') },
     smokeColor: { value: new THREE.Color('#17090b') },
+    phantomTopColor: { value: new THREE.Color('#02000a') },
+    phantomHorizonColor: { value: new THREE.Color('#120024') },
+    phantomPurpleColor: { value: new THREE.Color('#5b21b6') },
+    phantomStarColor: { value: new THREE.Color('#f8f7ff') },
     sunDirection: { value: SUN_DIRECTION.clone() },
     fireIntensity: { value: 0 },
+    phantomIntensity: { value: 0 },
     time: { value: 0 },
   };
 }
@@ -1259,21 +1299,26 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
 
   useFrame(({ clock }) => {
     const fireIntensity = getBlazeGearstormSkyIntensity();
+    const phantomIntensity = getPhantomVeilSkyIntensity();
     skyMaterial.uniforms.fireIntensity.value = fireIntensity;
+    skyMaterial.uniforms.phantomIntensity.value = phantomIntensity;
     skyMaterial.uniforms.time.value = clock.elapsedTime;
 
     const pulse = 0.92 + Math.sin(clock.elapsedTime * 7.4) * 0.08;
+    const sunVisibility = 1 - phantomIntensity;
 
     if (sunMaterialRef.current) {
       sunMaterialRef.current.color.copy(sunColor).lerp(BLAZE_SUN_CORE_COLOR, fireIntensity);
+      sunMaterialRef.current.opacity = sunVisibility;
+      sunMaterialRef.current.transparent = sunVisibility < 0.999;
     }
 
     if (sunInnerCoronaMaterialRef.current) {
-      sunInnerCoronaMaterialRef.current.opacity = fireIntensity * (0.2 + pulse * 0.12);
+      sunInnerCoronaMaterialRef.current.opacity = fireIntensity * (0.2 + pulse * 0.12) * sunVisibility;
     }
 
     if (sunOuterCoronaMaterialRef.current) {
-      sunOuterCoronaMaterialRef.current.opacity = fireIntensity * (0.09 + pulse * 0.08);
+      sunOuterCoronaMaterialRef.current.opacity = fireIntensity * (0.09 + pulse * 0.08) * sunVisibility;
     }
 
     if (sunGroupRef.current) {
@@ -1318,7 +1363,7 @@ export function WorldAtmosphere({ theme, seed, config }: WorldAtmosphereProps) {
         </mesh>
         <mesh frustumCulled={false} renderOrder={-90}>
           <sphereGeometry args={[7.5, ...config.sunSegments]} />
-          <meshBasicMaterial ref={sunMaterialRef} color={sunColor} toneMapped={false} fog={false} />
+          <meshBasicMaterial ref={sunMaterialRef} color={sunColor} transparent opacity={1} toneMapped={false} fog={false} />
         </mesh>
       </group>
       {atmosphereProfiles.map((profile, index) => {
