@@ -191,6 +191,21 @@ interface MatchCancelledMessage {
   connectedHumanPlayers?: number;
   refundedWager?: boolean;
   serverTime?: number;
+  blockedPlayerId?: string;
+  blockedPlayerName?: string;
+  networkQuality?: {
+    reason?: string | null;
+    sampleCount?: number;
+    successfulSamples?: number;
+    timeoutCount?: number;
+    consecutiveTimeouts?: number;
+    timeoutRatio?: number;
+    averagePingMs?: number | null;
+    peakPingMs?: number | null;
+    jitterMs?: number | null;
+    observationMs?: number;
+    windowMs?: number;
+  };
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
@@ -1334,6 +1349,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         requiredHumanPlayers: data.requiredHumanPlayers,
         connectedHumanPlayers: data.connectedHumanPlayers,
         refundedWager: data.refundedWager,
+        blockedPlayerId: data.blockedPlayerId,
+        blockedPlayerName: data.blockedPlayerName,
+        networkQuality: data.networkQuality,
       });
       disconnectVoice('match_cancelled');
       rejectPendingVoiceTokenRequests(data.message || 'match cancelled before start');

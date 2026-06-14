@@ -226,6 +226,14 @@ import {
   GAME_MESSAGE_RATE_LIMITS,
   MessageRateLimiter,
 } from './rateLimiter';
+import {
+  DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE,
+  createNetworkQualityState,
+  evaluatePlayerNetworkQuality,
+  recordNetworkQualitySample,
+  type NetworkQualityState,
+  type PlayerNetworkQualityEvaluation,
+} from './networkQualityGate';
 import { shouldResolveGenericSecondaryAttack } from './combatInputRouting';
 import { getSecurityEventLogLevel } from './securityEventLogging';
 import {
@@ -340,6 +348,20 @@ interface BotAssignment {
 }
 
 type PendingPlayerPing = { nonce: string; sentAt: number };
+type PreMatchCancelReason = 'start_timeout' | 'network_quality';
+
+interface PreMatchCancelNotice {
+  reason: PreMatchCancelReason;
+  message: string;
+  blockedPlayerId?: string;
+  blockedPlayerName?: string;
+  networkQuality?: Record<string, unknown>;
+}
+
+interface CompetitiveNetworkQualityGateResult {
+  status: 'ready' | 'pending' | 'blocked';
+  evaluation?: PlayerNetworkQualityEvaluation;
+}
 
 interface DamageHistoryEntry {
   damage: number;
@@ -821,6 +843,7 @@ export class GameRoom extends Room<GameState> {
   private matchSnapshotSignature = '';
   private pendingPlayerPings = new Map<string, PendingPlayerPing>();
   private playerPingMs = new Map<string, number>();
+  private playerNetworkQuality = new Map<string, NetworkQualityState>();
   private playerPingsDirty = true;
   private knownPlayerIds = new Set<string>();
   private playerNetIds = new Map<string, number>();
@@ -863,6 +886,7 @@ export class GameRoom extends Room<GameState> {
   private readonly countdownSceneReadyPlayerIds = new Set<string>();
   private matchStartDeadlineAt = 0;
   private matchCancelled = false;
+  private matchCancelNotice: PreMatchCancelNotice | null = null;
 
   async onAuth(
     client: Client,
@@ -1229,16 +1253,9 @@ export class GameRoom extends Room<GameState> {
 
   onJoin(client: Client, options: JoinOptions) {
     if (this.matchCancelled) {
-      client.send('matchCancelled', {
-        reason: 'start_timeout',
-        message: 'Match canceled because all players did not connect and load in time.',
-        roomId: this.roomId,
-        requiredHumanPlayers: this.requiredHumanPlayers,
-        connectedHumanPlayers: this.getConnectedHumanPlayerCount(),
-        deadlineAt: this.matchStartDeadlineAt,
-        refundedWager: Boolean(this.wagerContext),
-        serverTime: Date.now(),
-      });
+      client.send('matchCancelled', this.buildMatchCancelledPayload(
+        this.matchCancelNotice ?? this.createStartTimeoutCancelNotice()
+      ));
       client.leave();
       return;
     }
@@ -1531,35 +1548,61 @@ export class GameRoom extends Room<GameState> {
     this.matchCancelDisconnectTimeout = null;
   }
 
-  private cancelPreMatch(reason: 'start_timeout'): void {
-    if (this.matchCancelled || (this.state.phase !== 'waiting' && this.state.phase !== 'hero_select')) return;
+  private createStartTimeoutCancelNotice(): PreMatchCancelNotice {
+    return {
+      reason: 'start_timeout',
+      message: 'Match canceled because all players did not connect and load in time.',
+    };
+  }
+
+  private buildMatchCancelledPayload(notice: PreMatchCancelNotice): Record<string, unknown> {
+    return {
+      reason: notice.reason,
+      message: notice.message,
+      roomId: this.roomId,
+      requiredHumanPlayers: this.requiredHumanPlayers,
+      connectedHumanPlayers: this.getConnectedHumanPlayerCount(),
+      deadlineAt: this.matchStartDeadlineAt,
+      refundedWager: Boolean(this.wagerContext),
+      serverTime: Date.now(),
+      blockedPlayerId: notice.blockedPlayerId,
+      blockedPlayerName: notice.blockedPlayerName,
+      networkQuality: notice.networkQuality,
+    };
+  }
+
+  private cancelPreMatch(reason: PreMatchCancelReason, details: Omit<PreMatchCancelNotice, 'reason'> | null = null): void {
+    if (
+      this.matchCancelled
+      || (this.state.phase !== 'waiting' && this.state.phase !== 'hero_select' && this.state.phase !== 'countdown')
+    ) {
+      return;
+    }
 
     this.matchCancelled = true;
+    const fallbackDetails = details ?? { message: this.createStartTimeoutCancelNotice().message };
+    this.matchCancelNotice = {
+      reason,
+      ...fallbackDetails,
+    };
     this.clearMatchStartCancelTimer();
     this.resetCountdownStartGate();
     const connectedHumanPlayers = this.getConnectedHumanPlayerCount();
-    const message = 'Match canceled because all players did not connect and load in time.';
 
     loggers.room.warn('Pre-match canceled', {
       roomId: this.roomId,
       lobbyId: this.lobbyId,
       reason,
+      message: this.matchCancelNotice.message,
       requiredHumanPlayers: this.requiredHumanPlayers,
       connectedHumanPlayers,
       deadlineAt: this.matchStartDeadlineAt,
       wageredLobbyId: this.wagerContext?.wageredLobbyId,
+      blockedPlayerId: this.matchCancelNotice.blockedPlayerId,
+      networkQuality: this.matchCancelNotice.networkQuality,
     });
 
-    this.broadcastTracked('matchCancelled', {
-      reason,
-      message,
-      roomId: this.roomId,
-      requiredHumanPlayers: this.requiredHumanPlayers,
-      connectedHumanPlayers,
-      deadlineAt: this.matchStartDeadlineAt,
-      refundedWager: Boolean(this.wagerContext),
-      serverTime: Date.now(),
-    });
+    this.broadcastTracked('matchCancelled', this.buildMatchCancelledPayload(this.matchCancelNotice));
 
     this.settleWagerNoContest(reason);
     this.matchCancelDisconnectTimeout = setTimeout(() => {
@@ -1754,6 +1797,7 @@ export class GameRoom extends Room<GameState> {
     this.playerNetIds.delete(playerId);
     this.playerPingMs.delete(playerId);
     this.pendingPlayerPings.delete(playerId);
+    this.playerNetworkQuality.delete(playerId);
     this.playerPingsDirty = true;
     this.forceTransformFullSync();
   }
@@ -2844,6 +2888,7 @@ export class GameRoom extends Room<GameState> {
   private requestPlayerPing(client: Client, now: number): void {
     const nonce = `${this.state.tick}:${++this.pingProbeSequence}:${client.sessionId}`;
     this.pendingPlayerPings.set(client.sessionId, { nonce, sentAt: now });
+    this.getPlayerNetworkQualityState(client.sessionId, now);
     this.sendTracked(client, 'playerPingRequest', { nonce } satisfies PlayerPingRequestMessage);
   }
 
@@ -2863,6 +2908,11 @@ export class GameRoom extends Room<GameState> {
       this.playerPingMs.set(client.sessionId, pingMs);
       this.playerPingsDirty = true;
     }
+    this.recordPlayerNetworkQualitySample(client.sessionId, {
+      at: Date.now(),
+      pingMs,
+    });
+    this.checkCompetitiveNetworkQualityAfterProbe();
   }
 
   private probePlayerPings(): void {
@@ -2874,14 +2924,117 @@ export class GameRoom extends Room<GameState> {
     for (const [playerId, pending] of this.pendingPlayerPings) {
       if (now - pending.sentAt > PLAYER_PING_TIMEOUT_MS) {
         this.pendingPlayerPings.delete(playerId);
+        this.recordPlayerNetworkQualitySample(playerId, {
+          at: now,
+          pingMs: null,
+          timedOut: true,
+        });
+        this.checkCompetitiveNetworkQualityAfterProbe();
       }
     }
 
     for (const client of this.clients) {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.isBot) continue;
+      if (this.pendingPlayerPings.has(client.sessionId)) continue;
       this.requestPlayerPing(client, now);
     }
+  }
+
+  private getPlayerNetworkQualityState(playerId: string, now = Date.now()): NetworkQualityState {
+    let state = this.playerNetworkQuality.get(playerId);
+    if (!state) {
+      state = createNetworkQualityState(now);
+      this.playerNetworkQuality.set(playerId, state);
+    }
+    return state;
+  }
+
+  private recordPlayerNetworkQualitySample(playerId: string, sample: {
+    at: number;
+    pingMs: number | null;
+    timedOut?: boolean;
+  }): void {
+    const state = this.getPlayerNetworkQualityState(playerId, sample.at);
+    recordNetworkQualitySample(state, sample, DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE);
+  }
+
+  private checkCompetitiveNetworkQualityAfterProbe(): void {
+    if (
+      this.matchCancelled
+      || this.state.phase !== 'hero_select'
+      || !this.countdownStartGateOpen
+      || !this.areAllHumansSceneReadyForCountdown()
+    ) {
+      return;
+    }
+
+    this.checkPhaseTransition();
+  }
+
+  private isCompetitiveNetworkQualityGateRequired(): boolean {
+    return this.matchMode === 'ranked'
+      || this.matchMode === 'custom_wager'
+      || Boolean(this.wagerContext);
+  }
+
+  private evaluateCompetitiveNetworkQualityGate(now = Date.now()): CompetitiveNetworkQualityGateResult {
+    if (!this.isCompetitiveNetworkQualityGateRequired()) return { status: 'ready' };
+
+    let pendingEvaluation: PlayerNetworkQualityEvaluation | undefined;
+    for (const [playerId, player] of this.state.players) {
+      if (player.isBot) continue;
+
+      const evaluation = evaluatePlayerNetworkQuality({
+        playerId,
+        playerName: player.name,
+        state: this.getPlayerNetworkQualityState(playerId, now),
+        now,
+        config: DEFAULT_COMPETITIVE_NETWORK_QUALITY_GATE,
+      });
+
+      if (evaluation.status === 'blocked') {
+        return { status: 'blocked', evaluation };
+      }
+      if (!pendingEvaluation && evaluation.status === 'pending') {
+        pendingEvaluation = evaluation;
+      }
+    }
+
+    return pendingEvaluation
+      ? { status: 'pending', evaluation: pendingEvaluation }
+      : { status: 'ready' };
+  }
+
+  private ensureCompetitiveNetworkQualityForStart(options: { cancelPending?: boolean } = {}): boolean {
+    const gate = this.evaluateCompetitiveNetworkQualityGate();
+    if (gate.status === 'ready') return true;
+
+    if (gate.status === 'blocked' || options.cancelPending) {
+      const evaluation = gate.evaluation;
+      this.cancelPreMatch('network_quality', this.buildNetworkQualityCancelNotice(
+        evaluation,
+        gate.status === 'pending' ? 'network_not_verified' : evaluation?.reason ?? 'network_quality'
+      ));
+    }
+
+    return false;
+  }
+
+  private buildNetworkQualityCancelNotice(
+    evaluation: PlayerNetworkQualityEvaluation | undefined,
+    fallbackReason: string
+  ): Omit<PreMatchCancelNotice, 'reason'> {
+    const playerName = evaluation?.playerName || 'A player';
+    return {
+      message: `Match canceled because ${playerName}'s connection is not stable enough for ranked or wager play.`,
+      blockedPlayerId: evaluation?.playerId,
+      blockedPlayerName: evaluation?.playerName,
+      networkQuality: {
+        reason: evaluation?.reason ?? fallbackReason,
+        ...(evaluation?.metrics ?? {}),
+      },
+    };
   }
 
   private buildPlayerPingsMessage(recipient: Player | null = null): PlayerPingsMessage {
@@ -9276,6 +9429,7 @@ export class GameRoom extends Room<GameState> {
         }
 
         if (this.areAllHumansSceneReadyForCountdown()) {
+          if (!this.ensureCompetitiveNetworkQualityForStart()) return;
           loggers.room.info('all players loaded into spawn, starting countdown');
           this.startCountdown();
         }
@@ -9406,6 +9560,7 @@ export class GameRoom extends Room<GameState> {
   private startCountdown() {
     if (this.matchCancelled) return;
     if (!this.areAllPlayersReadyForCountdown()) return;
+    if (!this.ensureCompetitiveNetworkQualityForStart()) return;
     if (!this.areAllHumansSceneReadyForCountdown()) {
       this.openCountdownStartGate();
       return;
@@ -9434,6 +9589,9 @@ export class GameRoom extends Room<GameState> {
   }
 
   private startPlaying() {
+    if (this.matchCancelled) return;
+    if (!this.ensureCompetitiveNetworkQualityForStart({ cancelPending: true })) return;
+
     this.clearMatchStartCancelTimer();
     this.state.phase = 'playing';
     const now = Date.now();

@@ -189,6 +189,21 @@ export interface MatchCancelledMessage {
   deadlineAt: number;
   refundedWager: boolean;
   serverTime: number;
+  blockedPlayerId?: string;
+  blockedPlayerName?: string;
+  networkQuality?: {
+    reason?: string | null;
+    sampleCount?: number;
+    successfulSamples?: number;
+    timeoutCount?: number;
+    consecutiveTimeouts?: number;
+    timeoutRatio?: number;
+    averagePingMs?: number | null;
+    peakPingMs?: number | null;
+    jitterMs?: number | null;
+    observationMs?: number;
+    windowMs?: number;
+  };
 }
 
 export interface PlayerPingSnapshot {
