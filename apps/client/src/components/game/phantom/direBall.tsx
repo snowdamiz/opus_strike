@@ -4,8 +4,6 @@ import * as THREE from 'three';
 import {
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
-  doesSegmentHitPlayerCombatHitbox,
-  type Player,
   type Team,
 } from '@voxel-strike/shared';
 import { useGameStore, type DireBallData } from '../../../store/gameStore';
@@ -13,7 +11,7 @@ import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhys
 import { getFrameClock } from '../../../utils/frameClock';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
-import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 
@@ -504,7 +502,6 @@ export function DireBallsManager() {
   const removeDireBalls = useGameStore(state => state.removeDireBalls);
   const poolRef = useRef<DireBallRuntimePool>();
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
-  const enemyPlayersRef = useRef<Player[]>([]);
   const removalsRef = useRef<string[]>([]);
   const rayDirectionRef = useRef<MutableVec3>({ x: 1, y: 0, z: 0 });
   const dummy = useMemo(() => new THREE.Object3D(), []);
@@ -591,7 +588,6 @@ export function DireBallsManager() {
     }
 
     const store = useGameStore.getState();
-    const enemies = enemyPlayersRef.current;
     const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
     const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
     const positions = particleGeometry.attributes.position.array as Float32Array;
@@ -649,21 +645,21 @@ export function DireBallsManager() {
         }
       }
 
-      fillCombatVisualEnemyPlayers(
+      const hitPlayer = findCombatVisualEnemyPlayerHit(
         combatCache,
         slot.ownerTeam,
         slot.ownerId,
-        enemies,
+        slot.position,
+        slot.direction,
+        moveDistance,
+        BALL_RADIUS,
         slot.position,
         moveDistance + BALL_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
-      for (let i = 0; i < enemies.length; i++) {
-        const player = enemies[i];
-        if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, BALL_RADIUS)) {
-          removals.push(slot.id);
-          pool.deactivate(slotIndex);
-          return;
-        }
+      if (hitPlayer) {
+        removals.push(slot.id);
+        pool.deactivate(slotIndex);
+        return;
       }
 
       const coreMesh = coreMeshRef.current;

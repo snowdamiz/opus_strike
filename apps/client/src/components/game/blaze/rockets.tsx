@@ -4,8 +4,6 @@ import * as THREE from 'three';
 import {
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
-  doesSegmentHitPlayerCombatHitbox,
-  type Player,
 } from '@voxel-strike/shared';
 import { useGameStore, type RocketData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
@@ -13,7 +11,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
-import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import {
   getFireballCoreMaterial,
@@ -293,7 +291,6 @@ export function RocketsManager() {
   const poolRef = useRef<RocketRuntimePool>();
   const removalsRef = useRef<string[]>([]);
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
-  const enemyPlayersRef = useRef<Player[]>([]);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const rocketQuaternion = useMemo(() => new THREE.Quaternion(), []);
   const rocketDirection = useMemo(() => new THREE.Vector3(0, 0, -1), []);
@@ -355,7 +352,6 @@ export function RocketsManager() {
     }
 
     const store = useGameStore.getState();
-    const enemies = enemyPlayersRef.current;
     const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
     const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
 
@@ -403,25 +399,25 @@ export function RocketsManager() {
         }
       }
 
-      fillCombatVisualEnemyPlayers(
+      const hitPlayer = findCombatVisualEnemyPlayerHit(
         combatCache,
         slot.ownerTeam,
         slot.ownerId,
-        enemies,
+        slot.position,
+        slot.direction,
+        moveDistance,
+        PROJECTILE_RADIUS,
         slot.position,
         moveDistance + PROJECTILE_RADIUS + PROJECTILE_COMBAT_QUERY_PADDING
       );
-      for (let i = 0; i < enemies.length; i++) {
-        const player = enemies[i];
-        if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, PROJECTILE_RADIUS)) {
-          triggerTerrainImpact('blaze_rocket', slot.position, {
-            direction: slot.direction,
-            scale: ROCKET_IMPACT_SCALE,
-          });
-          removals.push(slot.id);
-          pool.deactivate(slotIndex);
-          return;
-        }
+      if (hitPlayer) {
+        triggerTerrainImpact('blaze_rocket', slot.position, {
+          direction: slot.direction,
+          scale: ROCKET_IMPACT_SCALE,
+        });
+        removals.push(slot.id);
+        pool.deactivate(slotIndex);
+        return;
       }
 
       slot.position.x += slot.velocity.x * delta;

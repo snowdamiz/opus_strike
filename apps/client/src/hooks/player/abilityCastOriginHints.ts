@@ -165,11 +165,38 @@ function resolveLiveLocalOrigin(
   });
 }
 
+function shouldBuildAbilityCastOriginHints(
+  ctx: AbilityContext,
+  input: InputState,
+  options: BuildAbilityCastOriginHintOptions
+): boolean {
+  switch (ctx.heroId) {
+    case 'phantom':
+      return input.primaryFire || input.secondaryFire;
+    case 'hookshot':
+      return input.primaryFire || input.secondaryFire || input.ability1 || input.ultimate;
+    case 'blaze':
+      return (
+        input.primaryFire ||
+        input.ability1 ||
+        input.secondaryFire ||
+        input.ability2 ||
+        options.bombTargeting === true
+      );
+    case 'chronos':
+      return input.primaryFire || input.ability1 || input.ability2;
+    default:
+      return false;
+  }
+}
+
 export function buildAbilityCastOriginHints(
   ctx: AbilityContext,
   input: InputState,
   options: BuildAbilityCastOriginHintOptions = {}
 ): AbilityCastOriginHint[] | undefined {
+  if (!shouldBuildAbilityCastOriginHints(ctx, input, options)) return undefined;
+
   const hints: AbilityCastOriginHint[] = [];
   const seen = new Set<string>();
   const now = ctx.viewmodelNowMs ?? Date.now();

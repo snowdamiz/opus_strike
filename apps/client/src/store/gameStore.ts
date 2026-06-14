@@ -14,7 +14,6 @@ import type {
   GamePhase,
   Player,
   Vec3,
-  PlayerInput,
   LobbyPlayer,
   LobbyWagerState,
   MapVoteOption,
@@ -137,10 +136,6 @@ interface CoreState {
   roundTimeRemaining: number;
   phaseEndTime: number | null;
 
-  // Input
-  pendingInputs: PlayerInput[];
-  lastProcessedTick: number;
-
   // Ultimate effect state
   ultimateEffectActive: boolean;
   ultimateEffectType: string | null;
@@ -180,9 +175,6 @@ interface CoreActions {
   removePlayer: (playerId: string) => void;
   setPlayerPings: (message: PlayerPingsMessage) => void;
   setObserverFlySpeedPreset: (preset: ObserverFlySpeedPreset) => void;
-  addPendingInput: (input: PlayerInput) => void;
-  clearProcessedInputs: (tick: number) => void;
-
   // Lobby actions
   setCurrentLobby: (lobbyId: string | null, lobbyName: string | null) => void;
   setCurrentLobbyWager: (wager: LobbyWagerState) => void;
@@ -216,7 +208,6 @@ interface CoreActions {
 
 type GameStore = CoreState & CoreActions & ProjectileSlice;
 
-const MAX_PENDING_INPUTS = 128;
 const HIDDEN_VISIBILITY_STATES = new Set(['hidden', 'last_known', 'audible']);
 
 function shouldKeepPlayerLiveVisual(player: Player): boolean {
@@ -279,8 +270,6 @@ const coreInitialState: CoreState = {
   observerFlySpeedPreset: DEFAULT_OBSERVER_FLY_SPEED_PRESET,
   roundTimeRemaining: 0,
   phaseEndTime: null,
-  pendingInputs: [],
-  lastProcessedTick: 0,
   ultimateEffectActive: false,
   ultimateEffectType: null,
   ultimateEffectEndTime: 0,
@@ -540,35 +529,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
       set({ players: cleanedPlayers });
     }
   },
-
-  addPendingInput: (input) => {
-    set((state) => ({
-      pendingInputs: state.pendingInputs.length >= MAX_PENDING_INPUTS
-        ? [...state.pendingInputs.slice(state.pendingInputs.length - MAX_PENDING_INPUTS + 1), input]
-        : [...state.pendingInputs, input],
-    }));
-  },
-
-  clearProcessedInputs: (tick) => {
-    set((state) => {
-      let firstUnprocessed = 0;
-      while (firstUnprocessed < state.pendingInputs.length && state.pendingInputs[firstUnprocessed].tick <= tick) {
-        firstUnprocessed++;
-      }
-
-      if (firstUnprocessed === 0 && state.lastProcessedTick === tick) {
-        return state;
-      }
-
-      return {
-        pendingInputs: firstUnprocessed === 0
-          ? state.pendingInputs
-          : state.pendingInputs.slice(firstUnprocessed),
-        lastProcessedTick: tick,
-      };
-    });
-  },
-
   // ==================== LOBBY ACTIONS ====================
 
   setCurrentLobby: (lobbyId, lobbyName) => set({

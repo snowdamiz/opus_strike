@@ -4,6 +4,7 @@ import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
+  doesSegmentHitPlayerCombatHitbox,
   type HeroId,
   type Player,
   type PlayerMovementState,
@@ -179,6 +180,17 @@ export interface CombatVisualFrameCache {
   activeBucketSet: Set<CombatVisualPlayer[]>;
   entryPool: CombatVisualPlayer[];
   cellSize: number;
+}
+
+interface Vec3Like {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface Vec2Like {
+  x: number;
+  z: number;
 }
 
 // ============================================================================
@@ -676,6 +688,24 @@ export const rebuildCombatVisualFrameCache = (
   return cache;
 };
 
+function isEnemyCombatVisualPlayer(
+  visualPlayer: CombatVisualPlayer,
+  ownerTeam: Team | null | undefined,
+  ownerId: string
+): boolean {
+  return visualPlayer.id !== ownerId && (!ownerTeam || visualPlayer.team !== ownerTeam);
+}
+
+function doesCombatVisualPlayerPassRadius(
+  visualPlayer: CombatVisualPlayer,
+  center: Vec2Like,
+  radiusSq: number
+): boolean {
+  const dx = visualPlayer.x - center.x;
+  const dz = visualPlayer.z - center.z;
+  return dx * dx + dz * dz <= radiusSq;
+}
+
 export const fillCombatVisualEnemyPlayers = (
   cache: CombatVisualFrameCache,
   ownerTeam: Team | null | undefined,
@@ -701,11 +731,8 @@ export const fillCombatVisualEnemyPlayers = (
         if (!bucket) continue;
         for (let i = 0; i < bucket.length; i++) {
           const visualPlayer = bucket[i];
-          if (visualPlayer.id === ownerId) continue;
-          if (ownerTeam && visualPlayer.team === ownerTeam) continue;
-          const dx = visualPlayer.x - center.x;
-          const dz = visualPlayer.z - center.z;
-          if (dx * dx + dz * dz <= radiusSq) {
+          if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+          if (doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) {
             target.push(visualPlayer.player);
           }
         }
@@ -720,12 +747,65 @@ export const fillCombatVisualEnemyPlayers = (
 
   for (let i = 0; i < source.length; i++) {
     const visualPlayer = source[i];
-    if (visualPlayer.id !== ownerId) {
+    if (isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) {
       target.push(visualPlayer.player);
     }
   }
 
   return target;
+};
+
+export const findCombatVisualEnemyPlayerHit = (
+  cache: CombatVisualFrameCache,
+  ownerTeam: Team | null | undefined,
+  ownerId: string,
+  start: Vec3Like,
+  direction: Vec3Like,
+  distance: number,
+  extraRadius = 0,
+  center?: Vec2Like,
+  radius?: number
+): Player | null => {
+  if (center && typeof radius === 'number') {
+    const minCellX = Math.floor((center.x - radius) / cache.cellSize);
+    const maxCellX = Math.floor((center.x + radius) / cache.cellSize);
+    const minCellZ = Math.floor((center.z - radius) / cache.cellSize);
+    const maxCellZ = Math.floor((center.z + radius) / cache.cellSize);
+    const radiusSq = radius * radius;
+
+    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+      const zBuckets = cache.buckets.get(cellX);
+      if (!zBuckets) continue;
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        const bucket = zBuckets.get(cellZ);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          const visualPlayer = bucket[i];
+          if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+          if (!doesCombatVisualPlayerPassRadius(visualPlayer, center, radiusSq)) continue;
+          if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+            return visualPlayer.player;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  const source = ownerTeam
+    ? (ownerTeam === 'red' ? cache.byTeam.blue : cache.byTeam.red)
+    : cache.alivePlayers;
+
+  for (let i = 0; i < source.length; i++) {
+    const visualPlayer = source[i];
+    if (!isEnemyCombatVisualPlayer(visualPlayer, ownerTeam, ownerId)) continue;
+    if (doesSegmentHitPlayerCombatHitbox(start, direction, distance, visualPlayer.player, extraRadius)) {
+      return visualPlayer.player;
+    }
+  }
+
+  return null;
 };
 
 export const clearCombatVisualFrameCache = (): void => {

@@ -12,6 +12,7 @@ import {
   clearExpiredDeathVisuals,
   clearVisualState,
   fillCombatVisualEnemyPlayers,
+  findCombatVisualEnemyPlayerHit,
   getDeathVisualForPlayer,
   pruneRemoteTransformHistories,
   rebuildCombatVisualFrameCache,
@@ -225,6 +226,33 @@ assert.deepEqual(nearbyEnemies.map((player) => player.id), ['near-blue']);
 const allEnemies: Player[] = [];
 fillCombatVisualEnemyPlayers(combatCache, 'red', 'owner', allEnemies);
 assert.deepEqual(allEnemies.map((player) => player.id), ['near-blue', 'far-blue']);
+
+const hitEnemy = findCombatVisualEnemyPlayerHit(
+  combatCache,
+  'red',
+  'owner',
+  { x: 0, y: 1, z: 0 },
+  { x: Math.SQRT1_2, y: 0, z: Math.SQRT1_2 },
+  3,
+  0.21,
+  { x: 0, z: 0 },
+  4
+);
+assert.equal(hitEnemy?.id, 'near-blue');
+assert.equal(
+  findCombatVisualEnemyPlayerHit(
+    combatCache,
+    'red',
+    'owner',
+    { x: 0, y: 1, z: 0 },
+    { x: 1, y: 0, z: 0 },
+    3,
+    0.21,
+    { x: 0, z: 0 },
+    0.4
+  ),
+  null
+);
 
 const rebuiltCombatCache = rebuildCombatVisualFrameCache(combatPlayers, 2001, 2001, combatPlayers.length);
 assert.equal(rebuiltCombatCache.buckets.get(0)?.get(0), firstCombatBucket);

@@ -5,8 +5,6 @@ import {
   CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS,
   PLAYER_COMBAT_HITBOX_PADDING,
   PLAYER_RADIUS,
-  doesSegmentHitPlayerCombatHitbox,
-  type Player,
 } from '@voxel-strike/shared';
 import { useGameStore, type ChronosPulseData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
@@ -15,7 +13,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { playSharedSound } from '../../../hooks/useAudio';
-import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { findCombatVisualEnemyPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from './aegisCollision';
 import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 
@@ -317,7 +315,6 @@ export function ChronosPulsesManager() {
   const poolRef = useRef<ChronosPulseRuntimePool>();
   const removalsRef = useRef<string[]>([]);
   const activeStoreIdsRef = useRef<Set<string>>(new Set());
-  const enemyPlayersRef = useRef<Player[]>([]);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const pulseDirection = useMemo(() => new THREE.Vector3(0, 0, -1), []);
   const pulseQuaternion = useMemo(() => new THREE.Quaternion(), []);
@@ -375,7 +372,6 @@ export function ChronosPulsesManager() {
     }
 
     const store = useGameStore.getState();
-    const enemies = enemyPlayersRef.current;
     const combatCache = rebuildCombatVisualFrameCache(store.players.values(), clock.nowMs, clock.nowMs, store.players.size);
     const physicsWorld = isPhysicsReady() ? getPhysicsWorld() : null;
 
@@ -436,22 +432,22 @@ export function ChronosPulsesManager() {
         }
       }
 
-      fillCombatVisualEnemyPlayers(
+      const hitPlayer = findCombatVisualEnemyPlayerHit(
         combatCache,
         slot.ownerTeam,
         slot.ownerId,
-        enemies,
+        slot.position,
+        slot.direction,
+        moveDistance,
+        collisionRadius,
         slot.position,
         moveDistance + collisionRadius + PROJECTILE_COMBAT_QUERY_PADDING
       );
-      for (let i = 0; i < enemies.length; i++) {
-        const player = enemies[i];
-        if (doesSegmentHitPlayerCombatHitbox(slot.position, slot.direction, moveDistance, player, collisionRadius)) {
-          playChronosImpact(slot.position, slot.supercharged);
-          removals.push(slot.id);
-          pool.deactivate(slotIndex);
-          return;
-        }
+      if (hitPlayer) {
+        playChronosImpact(slot.position, slot.supercharged);
+        removals.push(slot.id);
+        pool.deactivate(slotIndex);
+        return;
       }
 
       const pulse = 1 + Math.sin(clock.nowMs * 0.02 + slotIndex * 0.8) * 0.055;

@@ -11,7 +11,7 @@
  * @see hooks/player/abilities/ - Hero-specific ability handlers
  */
 
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
@@ -779,12 +779,27 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   }, [localPlayerForInit, camera]);
 
   // Create sound objects for passing to ability hooks
-  const playerSounds = {
+  const playerSounds = useMemo(() => ({
     playPhantomBlink, playPhantomVeil, playPhantomBasic, playPhantomVoidRay,
     startPhantomVoidRayCharge, stopPhantomVoidRayCharge,
     playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump,
     startFlamethrowerSound, stopFlamethrowerSound,
-  };
+  }), [
+    playPhantomBlink,
+    playPhantomVeil,
+    playPhantomBasic,
+    playPhantomVoidRay,
+    startPhantomVoidRayCharge,
+    stopPhantomVoidRayCharge,
+    playBlazeRocket,
+    playBlazeBombTarget,
+    playBlazeBombRelease,
+    playBlazeBombFall,
+    playBlazeBombExplode,
+    playBlazeRocketJump,
+    startFlamethrowerSound,
+    stopFlamethrowerSound,
+  ]);
 
   const resetViewmodelPoseState = useCallback((reason: string, heroId: HeroId | null, timestampMs = Date.now()) => {
     const resetKey = `${reason}:${heroId ?? 'none'}`;
