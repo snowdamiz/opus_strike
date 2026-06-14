@@ -6,7 +6,8 @@ import type { GraphicsFeatureQuality } from '../../../store/settingsStore';
 
 type ShaderParameters = Parameters<THREE.Material['onBeforeCompile']>[0];
 
-const TERRAIN_TEXTURE_SHADER_KEY = 'voxel-terrain-array-diffuse-texture-v4';
+const TERRAIN_TEXTURE_SHADER_KEY = 'voxel-terrain-array-diffuse-texture-v5';
+const TERRAIN_TEXTURE_MIP_FOOTPRINT_SCALE = 2.05;
 
 const TERRAIN_VERTEX_PARS = `
 attribute float voxelTextureLayer;
@@ -36,8 +37,8 @@ float voxelTerrainLayer() {
 
 vec4 voxelTerrainTextureSample(sampler2DArray textureMap, vec2 tileUv) {
   vec2 textureUv = voxelTerrainLocalUv(tileUv);
-  vec2 stableDx = dFdx(tileUv) * 1.45;
-  vec2 stableDy = dFdy(tileUv) * 1.45;
+  vec2 stableDx = dFdx(tileUv) * ${TERRAIN_TEXTURE_MIP_FOOTPRINT_SCALE};
+  vec2 stableDy = dFdy(tileUv) * ${TERRAIN_TEXTURE_MIP_FOOTPRINT_SCALE};
 
   return textureGrad(textureMap, vec3(textureUv, voxelTerrainLayer()), stableDx, stableDy);
 }

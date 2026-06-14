@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import type { MovementCommand } from '@voxel-strike/shared';
+import {
+  MOVEMENT_COMMAND_STALE_GRACE_STEPS,
+  MOVEMENT_MAX_PACKET_COMMANDS,
+  movementSeqDistance,
+  type MovementCommand,
+} from '@voxel-strike/shared';
 import { MovementCommandQueue } from '../rooms/MovementCommandQueue';
 import {
   SERVER_MOVEMENT_SUBSTEPS_PER_TICK,
@@ -68,6 +73,15 @@ assert.equal(steadyDrain.catchup, false);
 const barrierDrain = getMovementCommandDrainDecision(1, { hasAuthorityBarrier: true });
 assert.equal(barrierDrain.budget, 1);
 assert.equal(barrierDrain.underflow, false);
+
+assert.ok(
+  MOVEMENT_COMMAND_STALE_GRACE_STEPS >= MOVEMENT_MAX_PACKET_COMMANDS,
+  'previous-epoch grace should cover one full in-flight movement packet'
+);
+assert.ok(
+  movementSeqDistance(1956, 1963) <= MOVEMENT_COMMAND_STALE_GRACE_STEPS,
+  'teleport barrier grace should cover the observed localhost in-flight sequence gap'
+);
 
 const catchupDrain = getMovementCommandDrainDecision(
   SERVER_MOVEMENT_TARGET_PENDING_COMMANDS + SERVER_MOVEMENT_SUBSTEPS_PER_TICK * 3

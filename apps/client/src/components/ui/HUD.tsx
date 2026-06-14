@@ -852,9 +852,41 @@ export function HUD() {
 interface AbilityState {
   abilityId: string;
   cooldownRemaining: number;
+  cooldownUntil?: number;
   charges: number;
   isActive: boolean;
   activatedAt?: number;
+}
+
+export function getHudAbilityCooldownSeconds({
+  now,
+  isUltimate,
+  canTrackAbility,
+  showActiveTimer,
+  clientCooldownEnd,
+  serverCooldownUntil,
+  serverCooldownRemaining,
+}: {
+  now: number;
+  isUltimate: boolean;
+  canTrackAbility: boolean;
+  showActiveTimer: boolean;
+  clientCooldownEnd?: number;
+  serverCooldownUntil?: number;
+  serverCooldownRemaining?: number;
+}): number {
+  if (isUltimate || !canTrackAbility || showActiveTimer) return 0;
+
+  if (clientCooldownEnd && clientCooldownEnd > now) {
+    return Math.max(0, (clientCooldownEnd - now) / 1000);
+  }
+
+  if (serverCooldownUntil && serverCooldownUntil > now) {
+    return Math.max(0, (serverCooldownUntil - now) / 1000);
+  }
+  if (serverCooldownUntil !== undefined) return 0;
+
+  return Math.max(0, serverCooldownRemaining ?? 0);
 }
 
 function HUDSkillSlot({
@@ -897,15 +929,16 @@ function HUDSkillSlot({
   const activeProgress = activeDuration > 0
     ? Math.max(0, Math.min(1, activeRemaining / activeDuration))
     : 0;
-  const clientCooldownRemaining = clientCooldownEnd && clientCooldownEnd > now
-    ? Math.ceil((clientCooldownEnd - now) / 1000)
-    : 0;
-
-  const serverCooldown = abilityState?.cooldownRemaining ?? 0;
   // Ultimates use the charge system, not cooldowns - ignore any cooldown values
-  const cooldown = isUltimate || !canTrackAbility || showActiveTimer
-    ? 0
-    : (clientCooldownRemaining > 0 ? clientCooldownRemaining : serverCooldown);
+  const cooldown = getHudAbilityCooldownSeconds({
+    now,
+    isUltimate,
+    canTrackAbility,
+    showActiveTimer,
+    clientCooldownEnd,
+    serverCooldownUntil: abilityState?.cooldownUntil,
+    serverCooldownRemaining: abilityState?.cooldownRemaining,
+  });
 
   const serverCharges = abilityState?.charges ?? maxCharges;
   let charges = clientCharges !== undefined ? clientCharges : serverCharges;

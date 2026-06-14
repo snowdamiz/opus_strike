@@ -310,13 +310,15 @@ function botBenchmarkRouteGraph() {
   return createBotRouteGraphAdapter(manifest);
 }
 
-function runBotAiBenchmark(): Record<string, number | string> {
+function runBotAiBenchmark(botCount = 8): Record<string, number | string> {
   const graph = botBenchmarkRouteGraph();
   const flags = botFlags();
   const heroes: HeroId[] = ['phantom', 'hookshot', 'blaze', 'chronos'];
-  const players = Array.from({ length: 16 }, (_, index) => {
-    const team: Team = index < 8 ? 'red' : 'blue';
-    const offset = index % 8;
+  const teamSize = botCount;
+  const playerCount = botCount * 2;
+  const players = Array.from({ length: playerCount }, (_, index) => {
+    const team: Team = index < teamSize ? 'red' : 'blue';
+    const offset = index % teamSize;
     return botSnapshot(
       `${team}-bot-${offset}`,
       team,
@@ -326,21 +328,27 @@ function runBotAiBenchmark(): Record<string, number | string> {
       offset % 3 === 0 ? 'hard' : offset % 3 === 1 ? 'normal' : 'easy'
     );
   });
-  players[10].hasFlag = true;
-  flags.red.carrierId = players[10].id;
+  const carrier = players[Math.min(players.length - 1, teamSize + 2)];
+  carrier.hasFlag = true;
+  flags.red.carrierId = carrier.id;
   flags.red.isAtBase = false;
-  flags.red.position = players[10].position;
+  flags.red.position = carrier.position;
 
   const samples: number[] = [];
-  for (let iteration = 0; iteration < 280; iteration++) {
+  const iterations = botCount <= 8 ? 280 : botCount <= 16 ? 180 : 120;
+  for (let iteration = 0; iteration < iterations; iteration++) {
     const startedAt = performance.now();
     const now = Date.now() + iteration * 33;
     const tactics = buildTeamTactics({ now, revision: iteration, players, flags });
     const blockedEdges = new Map<string, number>(iteration % 4 === 0 ? [['e-primary-a', now + 1200]] : []);
 
-    for (const bot of players.slice(0, 8)) {
+    for (let botIndex = 0; botIndex < botCount; botIndex++) {
+      const bot = players[botIndex];
       const skill = getBotSkillProfile(bot.botDifficulty);
-      const visibleEnemyIds = new Set(players.filter((player) => player.team !== bot.team).map((player) => player.id));
+      const visibleEnemyIds = new Set<string>();
+      for (const player of players) {
+        if (player.team !== bot.team) visibleEnemyIds.add(player.id);
+      }
       const blackboard = buildBotBlackboard({
         now,
         bot,
@@ -386,7 +394,7 @@ function runBotAiBenchmark(): Record<string, number | string> {
 
     samples.push(performance.now() - startedAt);
   }
-  return summarize('bot_ai_8_bots_tactics_path_abilities', samples);
+  return summarize(`bot_ai_${botCount}_bots_tactics_path_abilities`, samples);
 }
 
 function runAntiCheatQueueBenchmark(): Record<string, number | string> {
@@ -493,23 +501,27 @@ function selfMovementAuthority(seq: number, tick: number): SelfMovementAuthority
   };
 }
 
-function runCustomMessageTrackingBenchmark(): Record<string, number | string> {
+function runCustomMessageTrackingBenchmark(playerCount = 8): Record<string, number | string> {
   const samples: number[] = [];
-  for (let iteration = 0; iteration < 700; iteration++) {
+  const recipientCount = Math.min(12, Math.max(4, Math.ceil(playerCount / 2)));
+  const iterations = playerCount <= 12 ? 700 : playerCount <= 24 ? 460 : 280;
+  for (let iteration = 0; iteration < iterations; iteration++) {
     const metrics = new Map<string, CustomMessageMetricAccumulator>();
     const startedAt = performance.now();
     const tick = iteration;
     const serverTime = tick * 50;
 
-    for (let recipient = 0; recipient < 8; recipient++) {
-      const visibleTransformCount = recipient < 4 ? 8 : 5;
+    for (let recipient = 0; recipient < recipientCount; recipient++) {
+      const visibleTransformCount = recipient < Math.ceil(recipientCount / 2)
+        ? playerCount
+        : Math.max(4, Math.floor(playerCount * 0.62));
       trackCustomMessage(metrics, 'playerTransformsV2', {
         version: 2,
         tick,
         serverTime,
         streamEpoch: 1,
         players: Array.from({ length: visibleTransformCount }, (_, playerIndex) => packedTransform(playerIndex, tick)),
-        hiddenPlayerIds: recipient < 4 ? [] : ['enemy-hidden-1', 'enemy-hidden-2'],
+        hiddenPlayerIds: recipient < Math.ceil(recipientCount / 2) ? [] : ['enemy-hidden-1', 'enemy-hidden-2'],
       }, 1);
 
       trackCustomMessage(metrics, 'selfMovementAuthority', selfMovementAuthority(tick * 3 + recipient, tick), 1);
@@ -518,10 +530,10 @@ function runCustomMessageTrackingBenchmark(): Record<string, number | string> {
         trackCustomMessage(metrics, 'playerVitals', {
           tick,
           serverTime,
-          players: Array.from({ length: 8 }, (_, playerIndex) => ({
+          players: Array.from({ length: playerCount }, (_, playerIndex) => ({
             id: `player-${playerIndex}`,
             name: `Player ${playerIndex}`,
-            team: playerIndex < 4 ? 'red' : 'blue',
+            team: playerIndex < Math.ceil(playerCount / 2) ? 'red' : 'blue',
             heroId: playerIndex % 2 === 0 ? 'phantom' : 'chronos',
             state: 'alive',
             health: 180 - playerIndex,
@@ -541,12 +553,12 @@ function runCustomMessageTrackingBenchmark(): Record<string, number | string> {
         trackCustomMessage(metrics, 'playerInterest', {
           tick,
           serverTime,
-          players: Array.from({ length: 8 }, (_, playerIndex) => ({
+          players: Array.from({ length: playerCount }, (_, playerIndex) => ({
             playerId: `player-${playerIndex}`,
-            state: playerIndex === recipient || playerIndex < 4 ? 'visible' : 'last_known',
-            reason: playerIndex < 4 ? 'team' : 'line_of_sight',
-            expiresAt: playerIndex < 4 ? undefined : serverTime + 600,
-            lastKnownPosition: playerIndex < 4
+            state: playerIndex === recipient || playerIndex < Math.ceil(playerCount / 2) ? 'visible' : 'last_known',
+            reason: playerIndex < Math.ceil(playerCount / 2) ? 'team' : 'line_of_sight',
+            expiresAt: playerIndex < Math.ceil(playerCount / 2) ? undefined : serverTime + 600,
+            lastKnownPosition: playerIndex < Math.ceil(playerCount / 2)
               ? undefined
               : { x: playerIndex * 4, y: 1, z: -playerIndex * 3 },
           })),
@@ -556,9 +568,9 @@ function runCustomMessageTrackingBenchmark(): Record<string, number | string> {
       if (iteration % 20 === 0) {
         trackCustomMessage(metrics, 'playerPings', {
           serverTime,
-          players: Array.from({ length: 8 }, (_, playerIndex) => ({
+          players: Array.from({ length: playerCount }, (_, playerIndex) => ({
             playerId: `player-${playerIndex}`,
-            pingMs: playerIndex === recipient || playerIndex < 4 ? 12 + playerIndex : null,
+            pingMs: playerIndex === recipient || playerIndex < Math.ceil(playerCount / 2) ? 12 + playerIndex : null,
           })),
         }, 1);
       }
@@ -575,22 +587,26 @@ function runCustomMessageTrackingBenchmark(): Record<string, number | string> {
         phaseEndTime: serverTime + 120000,
         mapSeed: 123456,
         mapThemeId: null,
-      }, 8);
+      }, recipientCount);
     }
 
     samples.push(performance.now() - startedAt);
   }
 
-  return summarize('custom_message_tracking_8_clients_stream_mix', samples);
+  return summarize(`replication_payload_${playerCount}_players_stream_mix`, samples);
 }
 
 const results = [
   runMovementQueueBenchmark(),
   runMovementSimulationBenchmark(),
   runSpatialBenchmark(),
-  runBotAiBenchmark(),
+  runBotAiBenchmark(8),
+  runBotAiBenchmark(16),
+  runBotAiBenchmark(24),
   runAntiCheatQueueBenchmark(),
-  runCustomMessageTrackingBenchmark(),
+  runCustomMessageTrackingBenchmark(12),
+  runCustomMessageTrackingBenchmark(24),
+  runCustomMessageTrackingBenchmark(48),
 ];
 
 console.log(JSON.stringify({

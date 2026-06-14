@@ -333,6 +333,7 @@ export interface BotRoutePlan {
   capped: boolean;
   reason: string;
   plannedAt: number;
+  cacheKey?: string;
 }
 
 export interface BotCombatPlan {
@@ -460,6 +461,7 @@ export interface BotRoutePlanInput {
   routeGraph: BotRouteGraphAdapter | null;
   blockedEdges: Map<string, number>;
   skill: BotSkillProfile;
+  previousPlan?: BotRoutePlan | null;
 }
 
 export interface BotCombatPlanInput {
@@ -801,10 +803,6 @@ export function createBotRouteGraphAdapter(manifest: VoxelMapManifest | null | u
   };
 }
 
-function alivePlayers(players: readonly BotPlayerSnapshot[]): BotPlayerSnapshot[] {
-  return players.filter((player) => player.state === 'alive');
-}
-
 function nearestPlayer(
   players: readonly BotPlayerSnapshot[],
   position: PlainVec3,
@@ -828,49 +826,74 @@ function createThreatClusters(team: Team, enemies: readonly BotPlayerSnapshot[])
   const consumed = new Set<string>();
   for (const enemy of enemies) {
     if (consumed.has(enemy.id)) continue;
-    const members = enemies.filter((candidate) => distance2D(enemy.position, candidate.position) <= 14);
-    for (const member of members) consumed.add(member.id);
-    const center = members.reduce<PlainVec3>((sum, member) => ({
-      x: sum.x + member.position.x,
-      y: sum.y + member.position.y,
-      z: sum.z + member.position.z,
-    }), { x: 0, y: 0, z: 0 });
-    center.x /= members.length;
-    center.y /= members.length;
-    center.z /= members.length;
-    const carrier = members.find((member) => member.hasFlag) ?? null;
+    const playerIds: string[] = [];
+    let centerX = 0;
+    let centerY = 0;
+    let centerZ = 0;
+    let memberCount = 0;
+    let carrierId: string | null = null;
+    let missingHealthThreat = 0;
+
+    for (const candidate of enemies) {
+      if (distance2D(enemy.position, candidate.position) > 14) continue;
+      consumed.add(candidate.id);
+      playerIds.push(candidate.id);
+      centerX += candidate.position.x;
+      centerY += candidate.position.y;
+      centerZ += candidate.position.z;
+      memberCount++;
+      if (candidate.hasFlag) carrierId = candidate.id;
+      missingHealthThreat += 1 - candidate.health / Math.max(1, candidate.maxHealth);
+    }
+
+    const invMemberCount = 1 / Math.max(1, memberCount);
+    const center = {
+      x: centerX * invMemberCount,
+      y: centerY * invMemberCount,
+      z: centerZ * invMemberCount,
+    };
+    let radius = 8;
+    for (const candidate of enemies) {
+      if (distance2D(enemy.position, candidate.position) > 14) continue;
+      radius = Math.max(radius, distance2D(center, candidate.position) + 5);
+    }
+    playerIds.sort();
     clusters.push({
       id: `${team}-threat-${clusters.length}`,
       team,
       center,
-      radius: Math.max(8, ...members.map((member) => distance2D(center, member.position) + 5)),
-      count: members.length,
-      carrierId: carrier?.id ?? null,
-      threat: members.length + (carrier ? 3 : 0) + members.reduce((sum, member) => sum + (1 - member.health / Math.max(1, member.maxHealth)), 0),
-      playerIds: members.map((member) => member.id).sort(),
+      radius,
+      count: memberCount,
+      carrierId,
+      threat: memberCount + (carrierId ? 3 : 0) + missingHealthThreat,
+      playerIds,
     });
   }
   return clusters;
 }
 
 function healthResources(allies: readonly BotPlayerSnapshot[], enemies: readonly BotPlayerSnapshot[]): BotResourceFact[] {
-  return allies
-    .filter((ally) => ally.state === 'alive' && ally.health < ally.maxHealth)
-    .map((ally) => {
-      const nearestEnemyDistance = nearestPlayer(enemies, ally.position)?.position
-        ? Math.min(...enemies.map((enemy) => distance2D(ally.position, enemy.position)))
-        : Infinity;
-      return {
-        playerId: ally.id,
-        position: { ...ally.position },
-        missingHealth: Math.max(0, ally.maxHealth - ally.health),
-        healthRatio: ally.health / Math.max(1, ally.maxHealth),
-        isCarrier: ally.hasFlag,
-        threatened: nearestEnemyDistance <= 18,
-        distanceToNearestEnemy: nearestEnemyDistance,
-      };
-    })
-    .sort((a, b) => b.missingHealth - a.missingHealth);
+  const resources: BotResourceFact[] = [];
+  for (const ally of allies) {
+    if (ally.state !== 'alive' || ally.health >= ally.maxHealth) continue;
+
+    let nearestEnemyDistance = Infinity;
+    for (const enemy of enemies) {
+      nearestEnemyDistance = Math.min(nearestEnemyDistance, distance2D(ally.position, enemy.position));
+    }
+
+    resources.push({
+      playerId: ally.id,
+      position: { ...ally.position },
+      missingHealth: Math.max(0, ally.maxHealth - ally.health),
+      healthRatio: ally.health / Math.max(1, ally.maxHealth),
+      isCarrier: ally.hasFlag,
+      threatened: nearestEnemyDistance <= 18,
+      distanceToNearestEnemy: nearestEnemyDistance,
+    });
+  }
+  resources.sort((a, b) => b.missingHealth - a.missingHealth);
+  return resources;
 }
 
 function assignmentSuitability(bot: BotPlayerSnapshot, role: BotStrategicRole, targetPosition?: PlainVec3): number {
@@ -943,10 +966,20 @@ function assignBestBot(
 
 function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTeamTactics {
   const enemyTeam = otherTeam(team);
-  const alive = alivePlayers(input.players);
-  const allies = alive.filter((player) => player.team === team);
-  const enemies = alive.filter((player) => player.team === enemyTeam);
-  const bots = allies.filter((player) => player.isBot);
+  const alive: BotPlayerSnapshot[] = [];
+  const allies: BotPlayerSnapshot[] = [];
+  const enemies: BotPlayerSnapshot[] = [];
+  const bots: BotPlayerSnapshot[] = [];
+  for (const player of input.players) {
+    if (player.state !== 'alive') continue;
+    alive.push(player);
+    if (player.team === team) {
+      allies.push(player);
+      if (player.isBot) bots.push(player);
+    } else if (player.team === enemyTeam) {
+      enemies.push(player);
+    }
+  }
   const ownFlag = input.flags[team];
   const enemyFlag = input.flags[enemyTeam];
   const enemyCarrier = ownFlag.carrierId ? alive.find((player) => player.id === ownFlag.carrierId) ?? null : null;
@@ -954,13 +987,20 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
   const droppedFriendlyFlag = !ownFlag.isAtBase && !ownFlag.carrierId ? ownFlag.position : null;
   const droppedEnemyFlag = !enemyFlag.isAtBase && !enemyFlag.carrierId ? enemyFlag.position : null;
   const threatClusters = createThreatClusters(enemyTeam, enemies);
-  const lowHealthAllies = healthResources(allies, enemies).filter((fact) => fact.healthRatio < 0.72 || fact.isCarrier);
+  const healthFacts = healthResources(allies, enemies);
+  const lowHealthAllies: BotResourceFact[] = [];
+  for (const fact of healthFacts) {
+    if (fact.healthRatio < 0.72 || fact.isCarrier) lowHealthAllies.push(fact);
+  }
   const carrierDanger: Record<string, number> = {};
   for (const carrier of [enemyCarrier, alliedCarrier]) {
     if (!carrier) continue;
-    carrierDanger[carrier.id] = enemies
-      .filter((enemy) => enemy.team !== carrier.team)
-      .reduce((danger, enemy) => danger + Math.max(0, 28 - distance2D(carrier.position, enemy.position)) / 8, 0);
+    let danger = 0;
+    for (const enemy of enemies) {
+      if (enemy.team === carrier.team) continue;
+      danger += Math.max(0, 28 - distance2D(carrier.position, enemy.position)) / 8;
+    }
+    carrierDanger[carrier.id] = danger;
   }
 
   const enemyNearBase = enemies.some((enemy) => distance2D(enemy.position, ownFlag.basePosition) <= 28);
@@ -1003,7 +1043,9 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
   const assignments: Record<string, BotRoleAssignment> = {};
   const assigned = new Set<string>();
 
-  for (const bot of bots.filter((candidate) => candidate.hasFlag).sort((a, b) => a.id.localeCompare(b.id))) {
+  const sortedBots = [...bots].sort((a, b) => a.id.localeCompare(b.id));
+  for (const bot of sortedBots) {
+    if (!bot.hasFlag) continue;
     assigned.add(bot.id);
     assignments[bot.id] = {
       botId: bot.id,
@@ -1016,10 +1058,16 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
   }
 
   if (droppedFriendlyFlag) {
-    const sorted = [...bots]
-      .filter((bot) => !assigned.has(bot.id))
-      .sort((a, b) => distance2D(a.position, droppedFriendlyFlag) - distance2D(b.position, droppedFriendlyFlag) || a.id.localeCompare(b.id));
-    const returner = sorted[0];
+    let returner: BotPlayerSnapshot | null = null;
+    let returnerDistance = Infinity;
+    for (const bot of bots) {
+      if (assigned.has(bot.id)) continue;
+      const distance = distance2D(bot.position, droppedFriendlyFlag);
+      if (distance < returnerDistance || (distance === returnerDistance && bot.id < (returner?.id ?? '~'))) {
+        returner = bot;
+        returnerDistance = distance;
+      }
+    }
     if (returner) {
       assigned.add(returner.id);
       assignments[returner.id] = {
@@ -1038,9 +1086,16 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
   }
 
   if (alliedCarrier) {
-    const nearbyEscort = [...bots]
-      .filter((bot) => !assigned.has(bot.id) && bot.id !== alliedCarrier.id)
-      .sort((a, b) => distance2D(a.position, alliedCarrier.position) - distance2D(b.position, alliedCarrier.position) || a.id.localeCompare(b.id))[0];
+    let nearbyEscort: BotPlayerSnapshot | null = null;
+    let nearbyEscortDistance = Infinity;
+    for (const bot of bots) {
+      if (assigned.has(bot.id) || bot.id === alliedCarrier.id) continue;
+      const distance = distance2D(bot.position, alliedCarrier.position);
+      if (distance < nearbyEscortDistance || (distance === nearbyEscortDistance && bot.id < (nearbyEscort?.id ?? '~'))) {
+        nearbyEscort = bot;
+        nearbyEscortDistance = distance;
+      }
+    }
     if (nearbyEscort && distance2D(nearbyEscort.position, alliedCarrier.position) <= 42) {
       assigned.add(nearbyEscort.id);
       assignments[nearbyEscort.id] = {
@@ -1069,12 +1124,14 @@ function buildTeamTacticsForTeam(input: BotTeamTacticsInput, team: Team): BotTea
     assignBestBot(bots, assigned, 'runner', 'run_flag', droppedEnemyFlag, undefined, 'enemy flag is dropped and capturable', 520, assignments);
   }
 
-  let assignedDefenders = Object.values(assignments).filter((assignment) => assignment.job === 'defend_base').length;
-  let assignedRunners = Object.values(assignments).filter((assignment) => (
-    assignment.job === 'run_flag' || assignment.job === 'carry'
-  )).length;
+  let assignedDefenders = 0;
+  let assignedRunners = 0;
+  for (const assignment of Object.values(assignments)) {
+    if (assignment.job === 'defend_base') assignedDefenders++;
+    if (assignment.job === 'run_flag' || assignment.job === 'carry') assignedRunners++;
+  }
 
-  for (const bot of [...bots].sort((a, b) => a.id.localeCompare(b.id))) {
+  for (const bot of sortedBots) {
     if (assigned.has(bot.id)) continue;
     const defaultRole = getDefaultRole(bot, {
       ...roleDemand,
@@ -1205,60 +1262,81 @@ function buildAllyHealthDebts(
   allies: readonly BotPlayerSnapshot[],
   visibleEnemies: readonly BotKnownEnemy[]
 ): BotAllyHealthDebt[] {
-  return allies
-    .filter((ally) => ally.id !== bot.id && ally.state === 'alive' && ally.health < ally.maxHealth)
-    .map((ally) => {
-      const missingHealth = Math.max(0, ally.maxHealth - ally.health);
-      const nearestEnemyDistance = visibleEnemies.length
-        ? Math.min(...visibleEnemies.map((enemy) => distance2D(ally.position, enemy.lastKnownPosition)))
-        : Infinity;
-      const speed = Math.sqrt(ally.velocity.x * ally.velocity.x + ally.velocity.z * ally.velocity.z);
-      const retreating = nearestEnemyDistance < 18 && speed > 0.8 && distance2D(ally.position, bot.position) < distance2D({
-        x: ally.position.x + ally.velocity.x,
-        z: ally.position.z + ally.velocity.z,
-      }, bot.position);
-      const threatened = nearestEnemyDistance <= 18 || ally.hasFlag;
-      const fighting = nearestEnemyDistance <= 24 && !retreating;
-      const importance = (ally.hasFlag ? 1.65 : 1) * (threatened ? 1.32 : 1) * (fighting ? 1.12 : 1);
-      return {
-        playerId: ally.id,
-        position: { ...ally.position },
-        missingHealth,
-        effectiveMissingHealth: missingHealth * importance,
-        healthRatio: ally.health / Math.max(1, ally.maxHealth),
-        distance: distance2D(bot.position, ally.position),
-        isCarrier: ally.hasFlag,
-        threatened,
-        fighting,
-        retreating,
-      };
-    })
-    .sort((a, b) => b.effectiveMissingHealth - a.effectiveMissingHealth || a.distance - b.distance);
+  const debts: BotAllyHealthDebt[] = [];
+  for (const ally of allies) {
+    if (ally.id === bot.id || ally.state !== 'alive' || ally.health >= ally.maxHealth) continue;
+
+    let nearestEnemyDistance = Infinity;
+    for (const enemy of visibleEnemies) {
+      nearestEnemyDistance = Math.min(nearestEnemyDistance, distance2D(ally.position, enemy.lastKnownPosition));
+    }
+
+    const missingHealth = Math.max(0, ally.maxHealth - ally.health);
+    const speed = Math.sqrt(ally.velocity.x * ally.velocity.x + ally.velocity.z * ally.velocity.z);
+    const currentDistanceToBot = distance2D(ally.position, bot.position);
+    const projectedDistanceToBot = distance2D({
+      x: ally.position.x + ally.velocity.x,
+      z: ally.position.z + ally.velocity.z,
+    }, bot.position);
+    const retreating = nearestEnemyDistance < 18 && speed > 0.8 && currentDistanceToBot < projectedDistanceToBot;
+    const threatened = nearestEnemyDistance <= 18 || ally.hasFlag;
+    const fighting = nearestEnemyDistance <= 24 && !retreating;
+    const importance = (ally.hasFlag ? 1.65 : 1) * (threatened ? 1.32 : 1) * (fighting ? 1.12 : 1);
+    debts.push({
+      playerId: ally.id,
+      position: { ...ally.position },
+      missingHealth,
+      effectiveMissingHealth: missingHealth * importance,
+      healthRatio: ally.health / Math.max(1, ally.maxHealth),
+      distance: currentDistanceToBot,
+      isCarrier: ally.hasFlag,
+      threatened,
+      fighting,
+      retreating,
+    });
+  }
+
+  debts.sort((a, b) => b.effectiveMissingHealth - a.effectiveMissingHealth || a.distance - b.distance);
+  return debts;
 }
 
 function buildHealCluster(bot: BotPlayerSnapshot, debts: readonly BotAllyHealthDebt[]): BotBlackboard['healCluster'] {
   if (debts.length === 0) return null;
   let best: BotBlackboard['healCluster'] = null;
+  const targetIdsScratch: string[] = [];
   for (const anchor of debts) {
-    const nearby = debts
-      .filter((debt) => distance2D(anchor.position, debt.position) <= CHRONOS_LIFELINE_RADIUS * 1.25)
-      .slice(0, CHRONOS_LIFELINE_MAX_TARGETS);
-    const expectedHeal = nearby.reduce((sum, debt) => (
-      sum + Math.min(CHRONOS_LIFELINE_ALLY_HEAL, debt.missingHealth) * (debt.effectiveMissingHealth / Math.max(1, debt.missingHealth))
-    ), 0);
-    const center = nearby.reduce<PlainVec3>((sum, debt) => ({
-      x: sum.x + debt.position.x,
-      y: sum.y + debt.position.y,
-      z: sum.z + debt.position.z,
-    }), { x: 0, y: 0, z: 0 });
-    center.x /= nearby.length;
-    center.y /= nearby.length;
-    center.z /= nearby.length;
+    let nearbyCount = 0;
+    let expectedHeal = 0;
+    let centerX = 0;
+    let centerY = 0;
+    let centerZ = 0;
+    let inRange = false;
+    targetIdsScratch.length = 0;
+
+    for (const debt of debts) {
+      if (nearbyCount >= CHRONOS_LIFELINE_MAX_TARGETS) break;
+      if (distance2D(anchor.position, debt.position) > CHRONOS_LIFELINE_RADIUS * 1.25) continue;
+      nearbyCount++;
+      targetIdsScratch.push(debt.playerId);
+      expectedHeal += Math.min(CHRONOS_LIFELINE_ALLY_HEAL, debt.missingHealth) *
+        (debt.effectiveMissingHealth / Math.max(1, debt.missingHealth));
+      centerX += debt.position.x;
+      centerY += debt.position.y;
+      centerZ += debt.position.z;
+      if (debt.distance <= CHRONOS_LIFELINE_RADIUS) inRange = true;
+    }
+    if (nearbyCount === 0) continue;
+    const invNearbyCount = 1 / nearbyCount;
+    const center = {
+      x: centerX * invNearbyCount,
+      y: centerY * invNearbyCount,
+      z: centerZ * invNearbyCount,
+    };
     const candidate = {
       center,
       expectedHeal,
-      targetIds: nearby.map((debt) => debt.playerId),
-      inRange: nearby.some((debt) => debt.distance <= CHRONOS_LIFELINE_RADIUS),
+      targetIds: [...targetIdsScratch],
+      inRange,
     };
     if (!best || candidate.expectedHeal > best.expectedHeal) {
       best = candidate;
@@ -1271,10 +1349,32 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
   const bot = input.bot;
   const team = bot.team;
   const enemyTeam = otherTeam(team);
-  const allies = input.players.filter((player) => player.state === 'alive' && player.team === team && player.id !== bot.id);
-  const enemyPlayers = input.players.filter((player) => player.state === 'alive' && player.team === enemyTeam);
   const ownFlag = input.flags[team];
   const enemyFlag = input.flags[enemyTeam];
+  const allies: BotPlayerSnapshot[] = [];
+  const enemyPlayers: BotPlayerSnapshot[] = [];
+  let alliedCarrier: BotPlayerSnapshot | null = null;
+  let enemyCarrierPlayer: BotPlayerSnapshot | null = null;
+  let enemyFlagCarrierPosition: PlainVec3 | null = null;
+
+  for (const player of input.players) {
+    if (player.state !== 'alive') continue;
+    if (player.team === team) {
+      if (player.id !== bot.id) {
+        allies.push(player);
+        if (player.hasFlag) alliedCarrier = player;
+      }
+    } else if (player.team === enemyTeam) {
+      enemyPlayers.push(player);
+      if (player.hasFlag || ownFlag.carrierId === player.id) {
+        enemyCarrierPlayer = player;
+      }
+    }
+    if (enemyFlag.carrierId && player.id === enemyFlag.carrierId) {
+      enemyFlagCarrierPosition = player.position;
+    }
+  }
+
   const visibleEnemies: BotKnownEnemy[] = [];
   const knownEnemies: BotKnownEnemy[] = [];
 
@@ -1326,15 +1426,25 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
 
   knownEnemies.sort((a, b) => a.distance - b.distance || a.player.id.localeCompare(b.player.id));
   const nearestEnemy = knownEnemies[0] ?? null;
-  const weakestEnemy = [...knownEnemies]
-    .filter((enemy) => enemy.distance <= BOT_AWARENESS_RANGE)
-    .sort((a, b) => (
-      a.player.health / Math.max(1, a.player.maxHealth) - b.player.health / Math.max(1, b.player.maxHealth)
-      || a.distance - b.distance
-      || a.player.id.localeCompare(b.player.id)
-    ))[0] ?? null;
-  const alliedCarrier = allies.find((ally) => ally.hasFlag) ?? null;
-  const enemyCarrierPlayer = enemyPlayers.find((enemy) => enemy.hasFlag || ownFlag.carrierId === enemy.id) ?? null;
+  let weakestEnemy: BotKnownEnemy | null = null;
+  let weakestEnemyHealthRatio = Infinity;
+  for (const enemy of knownEnemies) {
+    if (enemy.distance > BOT_AWARENESS_RANGE) continue;
+    const healthRatio = enemy.player.health / Math.max(1, enemy.player.maxHealth);
+    if (
+      healthRatio < weakestEnemyHealthRatio ||
+      (
+        healthRatio === weakestEnemyHealthRatio &&
+        (
+          enemy.distance < (weakestEnemy?.distance ?? Infinity) ||
+          (enemy.distance === (weakestEnemy?.distance ?? Infinity) && enemy.player.id < (weakestEnemy?.player.id ?? '~'))
+        )
+      )
+    ) {
+      weakestEnemy = enemy;
+      weakestEnemyHealthRatio = healthRatio;
+    }
+  }
   const enemyCarrier = enemyCarrierPlayer
     ? knownEnemies.find((enemy) => enemy.player.id === enemyCarrierPlayer.id) ?? {
       player: enemyCarrierPlayer,
@@ -1346,18 +1456,30 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
       uncertaintyRadius: enemyCarrierPlayer.hasFlag ? 4 : 12,
     }
     : null;
-  const nearestAlly = nearestPlayer(allies, bot.position);
+  let nearestAlly: BotPlayerSnapshot | null = null;
+  let nearestAllyDistance = Infinity;
+  for (const ally of allies) {
+    const distance = distance2D(bot.position, ally.position);
+    if (distance < nearestAllyDistance) {
+      nearestAlly = ally;
+      nearestAllyDistance = distance;
+    }
+  }
   const nearbyRangeSq = 16 * 16;
-  const nearbyEnemyCount = knownEnemies.filter((enemy) => {
+  let nearbyEnemyCount = 0;
+  const lastKnownEnemies: BotKnownEnemy[] = [];
+  for (const enemy of knownEnemies) {
     const dx = enemy.lastKnownPosition.x - bot.position.x;
     const dz = enemy.lastKnownPosition.z - bot.position.z;
-    return dx * dx + dz * dz <= nearbyRangeSq;
-  }).length;
-  const nearbyAllyCount = allies.filter((ally) => {
+    if (dx * dx + dz * dz <= nearbyRangeSq) nearbyEnemyCount++;
+    if (!enemy.visible) lastKnownEnemies.push(enemy);
+  }
+  let nearbyAllyCount = 0;
+  for (const ally of allies) {
     const dx = ally.position.x - bot.position.x;
     const dz = ally.position.z - bot.position.z;
-    return dx * dx + dz * dz <= nearbyRangeSq;
-  }).length;
+    if (dx * dx + dz * dz <= nearbyRangeSq) nearbyAllyCount++;
+  }
   const allyHealthDebts = buildAllyHealthDebts(bot, allies, visibleEnemies);
 
   return {
@@ -1367,7 +1489,7 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     allies,
     enemies: knownEnemies,
     visibleEnemies,
-    lastKnownEnemies: knownEnemies.filter((enemy) => !enemy.visible),
+    lastKnownEnemies,
     nearestEnemy,
     weakestEnemy,
     enemyCarrier,
@@ -1376,7 +1498,7 @@ export function buildBotBlackboard(input: BotBlackboardInput): BotBlackboard {
     droppedFriendlyFlag: !ownFlag.isAtBase && !ownFlag.carrierId ? { ...ownFlag.position } : null,
     droppedEnemyFlag: !enemyFlag.isAtBase && !enemyFlag.carrierId ? { ...enemyFlag.position } : null,
     enemyFlagPosition: enemyFlag.carrierId
-      ? { ...(input.players.find((player) => player.id === enemyFlag.carrierId)?.position ?? enemyFlag.position) }
+      ? { ...(enemyFlagCarrierPosition ?? enemyFlag.position) }
       : { ...enemyFlag.position },
     ownBasePosition: { ...ownFlag.basePosition },
     ownFlagAtBase: ownFlag.isAtBase,
@@ -1605,6 +1727,170 @@ function edgeCost(
   return cost;
 }
 
+interface RouteOpenEntry {
+  nodeId: string;
+  priority: number;
+}
+
+class RouteOpenHeap {
+  private readonly entries: RouteOpenEntry[] = [];
+
+  get size(): number {
+    return this.entries.length;
+  }
+
+  push(nodeId: string, priority: number): void {
+    const entry = { nodeId, priority };
+    this.entries.push(entry);
+    this.bubbleUp(this.entries.length - 1);
+  }
+
+  pop(): RouteOpenEntry | null {
+    if (this.entries.length === 0) return null;
+    const root = this.entries[0];
+    const last = this.entries.pop();
+    if (last && this.entries.length > 0) {
+      this.entries[0] = last;
+      this.sinkDown(0);
+    }
+    return root;
+  }
+
+  private bubbleUp(index: number): void {
+    const entry = this.entries[index];
+    while (index > 0) {
+      const parentIndex = Math.floor((index - 1) / 2);
+      const parent = this.entries[parentIndex];
+      if (compareRouteOpenEntry(parent, entry) <= 0) break;
+      this.entries[index] = parent;
+      index = parentIndex;
+    }
+    this.entries[index] = entry;
+  }
+
+  private sinkDown(index: number): void {
+    const length = this.entries.length;
+    const entry = this.entries[index];
+
+    while (true) {
+      const leftIndex = index * 2 + 1;
+      const rightIndex = leftIndex + 1;
+      if (leftIndex >= length) break;
+
+      let childIndex = leftIndex;
+      if (rightIndex < length && compareRouteOpenEntry(this.entries[rightIndex], this.entries[leftIndex]) < 0) {
+        childIndex = rightIndex;
+      }
+      if (compareRouteOpenEntry(entry, this.entries[childIndex]) <= 0) break;
+
+      this.entries[index] = this.entries[childIndex];
+      index = childIndex;
+    }
+
+    this.entries[index] = entry;
+  }
+}
+
+function compareRouteOpenEntry(a: RouteOpenEntry, b: RouteOpenEntry): number {
+  return a.priority - b.priority || a.nodeId.localeCompare(b.nodeId);
+}
+
+function routePriority(
+  routeGraph: BotRouteGraphAdapter,
+  nodeId: string,
+  goalNode: BotRouteNodeInfo,
+  targetPosition: PlainVec3,
+  distance: number
+): number {
+  return distance + distance2D(routeGraph.nodeById.get(nodeId)?.position ?? targetPosition, goalNode.position) * 0.18;
+}
+
+function blockedEdgeSignature(blockedEdges: Map<string, number>, now: number): string {
+  if (blockedEdges.size === 0) return '';
+
+  const activeEdgeIds: string[] = [];
+  for (const [edgeId, blockedUntil] of blockedEdges) {
+    if (blockedUntil > now) activeEdgeIds.push(edgeId);
+  }
+  if (activeEdgeIds.length === 0) return '';
+  activeEdgeIds.sort();
+  return activeEdgeIds.join(',');
+}
+
+function routePlanCacheKey(
+  input: BotRoutePlanInput,
+  routeGraph: BotRouteGraphAdapter,
+  startNode: BotRouteNodeInfo,
+  goalNode: BotRouteNodeInfo
+): string {
+  return [
+    routeGraph.nodes.length,
+    routeGraph.edges.length,
+    startNode.id,
+    goalNode.id,
+    input.intent.type,
+    input.bot.hasFlag ? 'carrier' : 'free',
+    input.blackboard.teamTactics.revision,
+    blockedEdgeSignature(input.blockedEdges, input.now),
+  ].join('|');
+}
+
+function resolvePathEdges(routeGraph: BotRouteGraphAdapter, pathNodeIds: readonly string[]): BotRouteEdgeInfo[] {
+  const pathEdges: BotRouteEdgeInfo[] = [];
+  for (let index = 1; index < pathNodeIds.length; index++) {
+    const from = pathNodeIds[index - 1];
+    const to = pathNodeIds[index];
+    const edge = routeGraph.adjacency.get(from)?.find((candidate) => candidate.to === to);
+    if (edge) pathEdges.push(edge);
+  }
+  return pathEdges;
+}
+
+function composeRoutePlanFromPath(
+  input: BotRoutePlanInput,
+  routeGraph: BotRouteGraphAdapter,
+  goalNode: BotRouteNodeInfo,
+  pathNodeIds: string[],
+  pathEdges: BotRouteEdgeInfo[],
+  cost: number,
+  expandedNodes: number,
+  capped: boolean,
+  reason: string,
+  cacheKey: string
+): BotRoutePlan {
+  const targetPosition = input.intent.targetPosition;
+  let nextNodeId: string | null = null;
+  let steeringTarget = { ...targetPosition };
+  for (const nodeId of pathNodeIds) {
+    const node = routeGraph.nodeById.get(nodeId);
+    if (!node) continue;
+    if (distance2D(input.bot.position, node.position) > 4.2) {
+      nextNodeId = nodeId;
+      steeringTarget = { ...node.position };
+      break;
+    }
+  }
+  if (!nextNodeId && distance2D(input.bot.position, targetPosition) > 6) {
+    steeringTarget = { ...targetPosition };
+  }
+
+  const activeEdge = pathEdges[0] ?? null;
+  return {
+    targetPosition: { ...targetPosition },
+    steeringTarget,
+    pathNodeIds,
+    nextNodeId,
+    activeEdgeId: activeEdge?.id ?? null,
+    laneId: activeEdge?.laneId ?? null,
+    cost,
+    expandedNodes,
+    capped,
+    reason,
+    plannedAt: input.now,
+    cacheKey,
+  };
+}
+
 export function planBotRoute(input: BotRoutePlanInput): BotRoutePlan {
   const targetPosition = input.intent.targetPosition;
   const routeGraph = input.routeGraph;
@@ -1642,37 +1928,50 @@ export function planBotRoute(input: BotRoutePlanInput): BotRoutePlan {
     };
   }
 
+  const cacheKey = routePlanCacheKey(input, routeGraph, startNode, goalNode);
+  const previousPlan = input.previousPlan;
+  if (previousPlan?.cacheKey === cacheKey && previousPlan.pathNodeIds.length > 0) {
+    return composeRoutePlanFromPath(
+      input,
+      routeGraph,
+      goalNode,
+      [...previousPlan.pathNodeIds],
+      resolvePathEdges(routeGraph, previousPlan.pathNodeIds),
+      previousPlan.cost,
+      0,
+      previousPlan.capped,
+      'cached route graph path',
+      cacheKey
+    );
+  }
+
   const distances = new Map<string, number>([[startNode.id, 0]]);
   const previous = new Map<string, { nodeId: string; edge: BotRouteEdgeInfo }>();
-  const open = new Set<string>([startNode.id]);
+  const open = new RouteOpenHeap();
+  open.push(startNode.id, routePriority(routeGraph, startNode.id, goalNode, targetPosition, 0));
   let expandedNodes = 0;
   let capped = false;
 
   while (open.size > 0) {
-    let currentId = '';
-    let currentScore = Infinity;
-    for (const nodeId of open) {
-      const score = (distances.get(nodeId) ?? Infinity) + distance2D(routeGraph.nodeById.get(nodeId)?.position ?? targetPosition, goalNode.position) * 0.18;
-      if (score < currentScore || (score === currentScore && nodeId < currentId)) {
-        currentId = nodeId;
-        currentScore = score;
-      }
+    const current = open.pop();
+    if (!current) break;
+    const currentId = current.nodeId;
+    const baseDistance = distances.get(currentId) ?? Infinity;
+    if (current.priority > routePriority(routeGraph, currentId, goalNode, targetPosition, baseDistance) + 0.0001) {
+      continue;
     }
-    if (!currentId) break;
-    open.delete(currentId);
     expandedNodes++;
     if (currentId === goalNode.id) break;
     if (expandedNodes >= input.skill.pathExpansionLimit) {
       capped = true;
       break;
     }
-    const baseDistance = distances.get(currentId) ?? Infinity;
     for (const edge of routeGraph.adjacency.get(currentId) ?? []) {
       const nextDistance = baseDistance + edgeCost(edge, input, routeGraph);
       if (nextDistance >= (distances.get(edge.to) ?? Infinity)) continue;
       distances.set(edge.to, nextDistance);
       previous.set(edge.to, { nodeId: currentId, edge });
-      open.add(edge.to);
+      open.push(edge.to, routePriority(routeGraph, edge.to, goalNode, targetPosition, nextDistance));
     }
   }
 
@@ -1703,35 +2002,18 @@ export function planBotRoute(input: BotRoutePlanInput): BotRoutePlan {
   pathNodeIds.reverse();
   pathEdges.reverse();
 
-  let nextNodeId: string | null = null;
-  let steeringTarget = { ...targetPosition };
-  for (const nodeId of pathNodeIds) {
-    const node = routeGraph.nodeById.get(nodeId);
-    if (!node) continue;
-    if (distance2D(input.bot.position, node.position) > 4.2) {
-      nextNodeId = nodeId;
-      steeringTarget = { ...node.position };
-      break;
-    }
-  }
-  if (!nextNodeId && distance2D(input.bot.position, targetPosition) > 6) {
-    steeringTarget = { ...targetPosition };
-  }
-
-  const activeEdge = pathEdges[0] ?? null;
-  return {
-    targetPosition: { ...targetPosition },
-    steeringTarget,
+  return composeRoutePlanFromPath(
+    input,
+    routeGraph,
+    goalNode,
     pathNodeIds,
-    nextNodeId,
-    activeEdgeId: activeEdge?.id ?? null,
-    laneId: activeEdge?.laneId ?? null,
-    cost: distances.get(goalNode.id) ?? distance2D(input.bot.position, targetPosition),
+    pathEdges,
+    distances.get(goalNode.id) ?? distance2D(input.bot.position, targetPosition),
     expandedNodes,
     capped,
-    reason: capped ? 'route expansion cap reached' : 'planned route graph path',
-    plannedAt: input.now,
-  };
+    capped ? 'route expansion cap reached' : 'planned route graph path',
+    cacheKey
+  );
 }
 
 export function chooseBotCombatPlan(input: BotCombatPlanInput): BotCombatPlan {
@@ -1800,14 +2082,19 @@ function scoreChronosAbility(input: BotAbilityPlanInput, current: BotAbilityPlan
   if (input.bot.heroId !== 'chronos') return current;
   let best = current;
   const canLifeline = canUseBotAbility(input.bot, 'chronos_lifeline_conduit', 'ability1');
-  const inRangeDebts = input.blackboard.allyHealthDebts
-    .filter((debt) => debt.distance <= CHRONOS_LIFELINE_RADIUS)
-    .slice(0, CHRONOS_LIFELINE_MAX_TARGETS);
-  const allyHealValue = inRangeDebts.reduce((sum, debt) => {
+  const inRangeDebts: BotAllyHealthDebt[] = [];
+  let allyHealValue = 0;
+  let criticalAlly: BotAllyHealthDebt | null = null;
+  for (const debt of input.blackboard.allyHealthDebts) {
+    if (debt.distance > CHRONOS_LIFELINE_RADIUS) continue;
+    inRangeDebts.push(debt);
     const actualHeal = Math.min(CHRONOS_LIFELINE_ALLY_HEAL, debt.missingHealth);
-    return sum + actualHeal * (debt.effectiveMissingHealth / Math.max(1, debt.missingHealth));
-  }, 0);
-  const criticalAlly = inRangeDebts.find((debt) => debt.healthRatio < 0.35 || (debt.isCarrier && debt.healthRatio < 0.7 && debt.threatened));
+    allyHealValue += actualHeal * (debt.effectiveMissingHealth / Math.max(1, debt.missingHealth));
+    if (!criticalAlly && (debt.healthRatio < 0.35 || (debt.isCarrier && debt.healthRatio < 0.7 && debt.threatened))) {
+      criticalAlly = debt;
+    }
+    if (inRangeDebts.length >= CHRONOS_LIFELINE_MAX_TARGETS) break;
+  }
   if (canLifeline && (allyHealValue >= input.skill.minHealValue || criticalAlly)) {
     best = abilityCandidate(best, {
       mode: 'chronos_lifeline_allies',
@@ -1929,7 +2216,11 @@ function scorePhantomAbility(input: BotAbilityPlanInput, current: BotAbilityPlan
 }
 
 function countVisibleEnemiesNear(input: BotAbilityPlanInput, position: PlainVec3, radius: number): number {
-  return input.blackboard.visibleEnemies.filter((enemy) => distance2D(enemy.lastKnownPosition, position) <= radius).length;
+  let count = 0;
+  for (const enemy of input.blackboard.visibleEnemies) {
+    if (distance2D(enemy.lastKnownPosition, position) <= radius) count++;
+  }
+  return count;
 }
 
 function hasVisibleObjectiveContest(input: BotAbilityPlanInput, position = input.intent.targetPosition, radius = 16): boolean {
@@ -2045,7 +2336,10 @@ function scoreBlazeAbility(input: BotAbilityPlanInput, current: BotAbilityPlan):
     });
   }
 
-  const nearbyVisibleEnemyCount = input.blackboard.visibleEnemies.filter((enemy) => enemy.distance <= BLAZE_GEARSTORM_RADIUS + 4).length;
+  let nearbyVisibleEnemyCount = 0;
+  for (const enemy of input.blackboard.visibleEnemies) {
+    if (enemy.distance <= BLAZE_GEARSTORM_RADIUS + 4) nearbyVisibleEnemyCount++;
+  }
   const objectiveVisibleEnemyCount = countVisibleEnemiesNear(input, input.intent.targetPosition, BLAZE_GEARSTORM_RADIUS + 4);
   const airstrikeControlsCarrier = Boolean(
     target?.player.hasFlag ||

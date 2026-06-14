@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
+import { visualStore } from '../../store/visualStore';
 import type { Player } from '@voxel-strike/shared';
 import { getFrameClock } from '../../utils/frameClock';
 import { SHARED_GEOMETRIES } from './effectResources';
+import {
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+} from '../../movement/networkDiagnostics';
 import {
   PhantomVeil3DEffect,
   BLINK_EFFECT_DURATION,
@@ -280,6 +285,7 @@ function hasActivePhantomVeil(
 
 function collectActivePhantomVeilIds(target: string[], now: number): string[] {
   const store = useGameStore.getState();
+  const activeIds = visualStore.getState().activePhantomVeilPlayerIds;
   const localPlayerId = store.localPlayer?.id ?? null;
   const localUltimateActive = Boolean(
     store.ultimateEffectActive &&
@@ -288,15 +294,17 @@ function collectActivePhantomVeilIds(target: string[], now: number): string[] {
   );
   target.length = 0;
 
-  const addPlayer = (player: Player | null | undefined, isLocalPlayer = false) => {
-    if (!hasActivePhantomVeil(player, now, isLocalPlayer && localUltimateActive) || !player) return;
-    target.push(player.id);
-  };
+  if (hasActivePhantomVeil(store.localPlayer, now, localUltimateActive) && store.localPlayer) {
+    target.push(store.localPlayer.id);
+  }
 
-  addPlayer(store.localPlayer, true);
-  for (const player of store.players.values()) {
-    if (player.id === localPlayerId) continue;
-    addPlayer(player);
+  for (let index = 0; index < activeIds.length; index++) {
+    const playerId = activeIds[index];
+    if (playerId === localPlayerId) continue;
+    const player = store.players.get(playerId);
+    if (hasActivePhantomVeil(player, now)) {
+      target.push(playerId);
+    }
   }
 
   return target;
@@ -329,29 +337,41 @@ export function PhantomEffectsManager() {
   const veilScanAccumulatorRef = useRef(ACTIVE_VEIL_SCAN_INTERVAL_MS);
 
   useFrame((_, delta) => {
-    const frameClock = getFrameClock();
-    collectActivePhantomEffects(
-      frameClock.nowMs,
-      activeBlinkEffectsRef.current
-    );
-    updatePooledBlinkEffects(
-      blinkRenderSlotsRef.current,
-      activeBlinkEffectsRef.current,
-      frameClock.nowMs,
-      delta,
-      frameClock.elapsedSeconds
-    );
+    measureFrameWork('frame.effects.phantom', () => {
+      const frameClock = getFrameClock();
+      collectActivePhantomEffects(
+        frameClock.nowMs,
+        activeBlinkEffectsRef.current
+      );
+      updatePooledBlinkEffects(
+        blinkRenderSlotsRef.current,
+        activeBlinkEffectsRef.current,
+        frameClock.nowMs,
+        delta,
+        frameClock.elapsedSeconds
+      );
+      recordEffectSlotDiagnostics('phantomBlink', {
+        active: activeBlinkEffectsRef.current.length,
+        capacity: POOLED_BLINK_EFFECTS,
+        hiddenMounted: Math.max(0, POOLED_BLINK_EFFECTS - activeBlinkEffectsRef.current.length),
+      });
 
-    veilScanAccumulatorRef.current += delta * 1000;
-    if (veilScanAccumulatorRef.current >= ACTIVE_VEIL_SCAN_INTERVAL_MS) {
-      veilScanAccumulatorRef.current = 0;
-      const nextVeilIds = collectActivePhantomVeilIds(scratchVeilIdsRef.current, frameClock.epochNowMs);
-      if (!sameIds(nextVeilIds, activeVeilIdsRef.current)) {
-        const committedIds = nextVeilIds.slice();
-        activeVeilIdsRef.current = committedIds;
-        setActiveVeilIds(committedIds);
+      veilScanAccumulatorRef.current += delta * 1000;
+      if (veilScanAccumulatorRef.current >= ACTIVE_VEIL_SCAN_INTERVAL_MS) {
+        veilScanAccumulatorRef.current = 0;
+        const nextVeilIds = collectActivePhantomVeilIds(scratchVeilIdsRef.current, frameClock.epochNowMs);
+        if (!sameIds(nextVeilIds, activeVeilIdsRef.current)) {
+          const committedIds = nextVeilIds.slice();
+          activeVeilIdsRef.current = committedIds;
+          setActiveVeilIds(committedIds);
+        }
       }
-    }
+      recordEffectSlotDiagnostics('phantomVeil', {
+        active: activeVeilIdsRef.current.length,
+        capacity: activeVeilIdsRef.current.length,
+        hiddenMounted: 0,
+      });
+    });
   });
   
   return (

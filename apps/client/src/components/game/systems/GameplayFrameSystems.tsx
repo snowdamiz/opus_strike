@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { cleanupExpiredTemporaryWallColliders } from '../../../hooks/usePhysics';
 import { useGameStore } from '../../../store/gameStore';
@@ -6,28 +6,33 @@ import { updateFrameClock } from '../../../utils/frameClock';
 import {
   beginFrameWorkTiming,
   finishFrameWorkTiming,
-  measureFrameWork,
 } from '../../../movement/networkDiagnostics';
+import { gameplayFrameScheduler } from './gameplayFrameScheduler';
 
 const CLEANUP_INTERVAL_MS = 100;
 const FRAME_CLOCK_PRIORITY = -1000;
 const FRAME_WORK_END_PRIORITY = 0;
 
 export function GameplayFrameSystems() {
-  const cleanupAccumulatorRef = useRef(0);
+  useEffect(() => gameplayFrameScheduler.register({
+    system: 'gameplayCleanup',
+    label: 'frame.gameplayCleanup',
+    cadence: { kind: 'intervalMs', intervalMs: CLEANUP_INTERVAL_MS },
+    callback: () => {
+      const store = useGameStore.getState();
+      store.clearExpiredProjectiles();
+      cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
+    },
+  }), []);
 
   useFrame((state, delta) => {
     const clock = updateFrameClock(state.clock.elapsedTime, delta);
     beginFrameWorkTiming();
-
-    measureFrameWork('frame.gameplayCleanup', () => {
-      cleanupAccumulatorRef.current += clock.clampedDeltaSeconds * 1000;
-      if (cleanupAccumulatorRef.current < CLEANUP_INTERVAL_MS) return;
-      cleanupAccumulatorRef.current = 0;
-
-      const store = useGameStore.getState();
-      store.clearExpiredProjectiles();
-      cleanupExpiredTemporaryWallColliders(6500, 'anchorwall_');
+    gameplayFrameScheduler.run({
+      deltaSeconds: clock.clampedDeltaSeconds,
+      deltaMs: clock.clampedDeltaSeconds * 1000,
+      nowMs: clock.epochNowMs,
+      elapsedSeconds: clock.elapsedSeconds,
     });
   }, FRAME_CLOCK_PRIORITY);
 

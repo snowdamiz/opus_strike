@@ -967,3 +967,76 @@ Inferred:
 - If future captures still show isolated large stalls with tiny measured app work,
   add browser long-task or render-stall diagnostics rather than continuing to chase
   authority, prediction, or `playerInterest`.
+
+## Pass 009 - In-Game Code Performance Plan Implementation
+
+Date: June 14, 2026
+
+Status: Implemented and verified with non-browser checks.
+
+### Scope
+
+Implemented the in-game performance plan without reducing texture quality, shader quality,
+particle counts, draw distance, resolution, or effect fidelity.
+
+### Changes
+
+- Added gameplay frame scheduler diagnostics, frame-work labels, hot visual-store commit
+  counters, effect-slot counters, frame allocation counters, and dynamic-light budget
+  counters.
+- Consolidated global effect, observed ability cast, and hookshot world-effect updates
+  behind manager-owned frame loops instead of per-effect R3F subscriptions.
+- Replaced Phantom/Blaze/Chronos active-effect whole-player scans with visual-store active ID
+  indexes maintained by transform/vitals handlers.
+- Reduced remote hero batch churn with indexed counters and render grouping cleanup while
+  preserving the Phantom veil body fallback path.
+- Changed voxel region culling to keep revealed regions mounted and toggle visibility
+  imperatively.
+- Added voxel geometry cache byte/entry budgets, a cancelable frame-budgeted no-worker
+  fallback build queue, and instance-aware world dressing cache eviction.
+- Added dynamic-light active/enabled/registered diagnostics.
+- Reused server replication frame scratch collections and expanded room-load benchmarks.
+- Reworked bot blackboard/route hot paths with single-pass helpers, a route open heap, and
+  cached route reuse when start/goal/blocked-edge context is unchanged.
+- Removed confirmed-dead bot helper code touched by this pass.
+
+### Server Benchmarks
+
+Final `pnpm --filter @voxel-strike/server bench:room-load` results:
+
+| Benchmark | Avg | P95 | P99 |
+| --- | ---: | ---: | ---: |
+| movement_queue_8_players_burst | 0.1289 ms | 0.1592 ms | 0.2411 ms |
+| shared_movement_8_players | 0.1928 ms | 0.3707 ms | 0.4652 ms |
+| spatial_rebuild_and_queries | 0.0130 ms | 0.0182 ms | 0.0523 ms |
+| bot_ai_8_bots_tactics_path_abilities | 0.1371 ms | 0.1940 ms | 0.3443 ms |
+| bot_ai_16_bots_tactics_path_abilities | 0.3881 ms | 0.6955 ms | 1.3455 ms |
+| bot_ai_24_bots_tactics_path_abilities | 0.7743 ms | 0.9033 ms | 0.9450 ms |
+| anti_cheat_priority_queue_noise | 0.2019 ms | 0.2785 ms | 0.3641 ms |
+| replication_payload_12_players_stream_mix | 0.0107 ms | 0.0254 ms | 0.0425 ms |
+| replication_payload_24_players_stream_mix | 0.0255 ms | 0.0564 ms | 0.0625 ms |
+| replication_payload_48_players_stream_mix | 0.0489 ms | 0.1045 ms | 0.1272 ms |
+
+### Verification
+
+Passed:
+
+- `pnpm --filter @voxel-strike/client typecheck`
+- `pnpm --filter @voxel-strike/client test:visual-store`
+- `pnpm --filter @voxel-strike/client test:movement`
+- `pnpm --filter @voxel-strike/server typecheck`
+- `pnpm --filter @voxel-strike/server test:bot-ai`
+- `pnpm --filter @voxel-strike/server test:visibility-interest`
+- `pnpm --filter @voxel-strike/server bench:room-load`
+- `git diff --check`
+
+Not run:
+
+- Browser testing, by project instruction.
+
+### Result
+
+The pass removes fixed frame-loop overhead from several effect-heavy systems, gives the
+diagnostics enough granularity to attribute future hitches, lowers terrain/map churn, and
+keeps server bot/replication costs inside the expanded benchmark budgets. User in-browser
+feel validation is still the final subjective check.

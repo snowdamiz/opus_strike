@@ -1,5 +1,4 @@
 import React, { useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { doesSegmentHitPlayerCombatHitbox } from '@voxel-strike/shared';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
@@ -24,6 +23,7 @@ import {
   updateRopeSegment,
 } from './rope';
 import { HookshotProjectileArrowHead } from './arrowHead';
+import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 
 // ============================================================================
 // DRAG HOOK - Long range hook that pulls enemies (heavy attack / right click)
@@ -112,7 +112,7 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
   const localPlayerId = useGameStore(state => state.localPlayer?.id);
   const isLocalOwnerForRender = localPlayerId === hook.ownerId;
   
-  useFrame((state, delta) => {
+  useHookshotFrameUpdater(`drag-hook:${hook.id}`, (state, delta) => {
     if (!hookRef.current || shouldRemoveRef.current) return;
     
     const time = state.clock.elapsedTime;

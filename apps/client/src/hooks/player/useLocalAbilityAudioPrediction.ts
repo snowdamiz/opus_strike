@@ -285,6 +285,11 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
+    const phantomReloadBlocksNonBlinkCasts = heroId === 'phantom' && phantomPrimaryReloading;
+    if (phantomReloadBlocksNonBlinkCasts) {
+      stopPredictedPhantomVoidRayCharge();
+    }
+
     if (ultimateCharge < 100) {
       predictedUltimateSpentRef.current = {};
     }
@@ -355,7 +360,11 @@ export function useLocalAbilityAudioPrediction() {
     }
 
     if (inputState.secondaryFire && !previousInput.secondaryFire) {
-      if (heroId === 'phantom' && now - lastPhantomVoidRayAtRef.current >= PHANTOM_VOID_RAY_COOLDOWN_MS / tempoMultiplier) {
+      if (
+        heroId === 'phantom' &&
+        !phantomReloadBlocksNonBlinkCasts &&
+        now - lastPhantomVoidRayAtRef.current >= PHANTOM_VOID_RAY_COOLDOWN_MS / tempoMultiplier
+      ) {
         startPredictedPhantomVoidRayCharge(now, VOID_RAY_CHARGE_TIME / tempoMultiplier);
       } else if (
         heroId === 'hookshot' &&
@@ -368,7 +377,12 @@ export function useLocalAbilityAudioPrediction() {
       }
     }
 
-    if (heroId === 'phantom' && inputState.secondaryFire && phantomVoidRayChargeStartedAtRef.current > 0) {
+    if (
+      heroId === 'phantom' &&
+      !phantomReloadBlocksNonBlinkCasts &&
+      inputState.secondaryFire &&
+      phantomVoidRayChargeStartedAtRef.current > 0
+    ) {
       const chargeElapsed = now - phantomVoidRayChargeStartedAtRef.current;
       if (!phantomVoidRayReleasePlayedRef.current && chargeElapsed >= VOID_RAY_CHARGE_TIME / tempoMultiplier) {
         phantomVoidRayReleasePlayedRef.current = true;

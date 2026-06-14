@@ -12,7 +12,6 @@ import { OtherPlayers } from './OtherPlayers';
 import { RagdollManager } from './RagdollManager';
 import { Flags } from './Flags';
 import { Effects } from './Effects';
-import { SlideSpeedLines } from './SlideSpeedLines';
 import { HeroViewmodel } from './HeroViewmodel';
 import { VoidZonesManager, DireBallsManager, VoidRaysManager, PhantomPersonalShieldsManager } from './phantom';
 import { PhantomEffectsManager } from './PhantomEffects';
@@ -956,7 +955,6 @@ export function GameCanvas({
             {!isPracticeMode && <Flags />}
             <Effects />
             <CombatTextLayer enabled={settings.showDamageNumbers} />
-            <SlideSpeedLines config={effectiveEffectsConfig} />
             {!isObserverMode && <HeroViewmodel config={qualityConfig.viewmodel} />}
             <VoidZonesManager />
             <DireBallsManager />

@@ -73,6 +73,7 @@ import {
   visualStore,
 } from '../../store/visualStore';
 import { getFrameClock } from '../../utils/frameClock';
+import { measureFrameWork } from '../../movement/networkDiagnostics';
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 
 type BoneOrRoot = HeroBoneName | 'root';
@@ -1268,12 +1269,25 @@ function RemoteHeroBatchGroup({
   resources: RemoteBatchResources;
 }) {
   const runtimeByPlayerIdRef = useRef<Map<string, RemoteHeroRuntime>>(new Map());
-  const meshByBatchKeyRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
-  const outlineMeshByBatchKeyRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
-  const countsRef = useRef<Map<string, number>>(new Map());
-  const outlineCountsRef = useRef<Map<string, number>>(new Map());
-  const playerIds = useMemo(() => new Set(players.map((player) => player.id)), [players]);
+  const meshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
+  const outlineMeshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
+  const countsRef = useRef<Uint32Array>(new Uint32Array(resources.batches.length));
+  const outlineCountsRef = useRef<Uint32Array>(new Uint32Array(resources.outlineBatches.length));
+  const playerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const player of players) {
+      ids.add(player.id);
+    }
+    return ids;
+  }, [players]);
   const capacity = Math.max(1, players.length);
+
+  if (countsRef.current.length !== resources.batches.length) {
+    countsRef.current = new Uint32Array(resources.batches.length);
+  }
+  if (outlineCountsRef.current.length !== resources.outlineBatches.length) {
+    outlineCountsRef.current = new Uint32Array(resources.outlineBatches.length);
+  }
 
   useEffect(() => {
     const runtimes = runtimeByPlayerIdRef.current;
@@ -1292,14 +1306,12 @@ function RemoteHeroBatchGroup({
   }, []);
 
   useFrame((state, delta) => {
+    measureFrameWork('frame.remoteHeroBatch', () => {
     const runtimes = runtimeByPlayerIdRef.current;
     const counts = countsRef.current;
     const outlineCounts = outlineCountsRef.current;
-    counts.clear();
-    outlineCounts.clear();
-
-    for (const batch of resources.batches) counts.set(batch.key, 0);
-    for (const batch of resources.outlineBatches) outlineCounts.set(batch.key, 0);
+    counts.fill(0);
+    outlineCounts.fill(0);
 
     for (const player of players) {
       let runtime = runtimes.get(player.id);
@@ -1316,37 +1328,39 @@ function RemoteHeroBatchGroup({
 
       if (hasActivePhantomVeil(player)) continue;
 
-      for (const batch of resources.batches) {
-        const mesh = meshByBatchKeyRef.current.get(batch.key);
+      for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
+        const batch = resources.batches[batchIndex];
+        const mesh = meshesRef.current[batchIndex];
         if (!mesh) continue;
         const emissiveAttribute = mesh.geometry.getAttribute(INSTANCE_EMISSIVE_ATTRIBUTE) as THREE.InstancedBufferAttribute | undefined;
-        let writeIndex = counts.get(batch.key) ?? 0;
+        let writeIndex = counts[batchIndex];
         for (const descriptor of batch.descriptors) {
           if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
           mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
           emissiveAttribute?.setX(writeIndex, getDescriptorEmissiveBoost(descriptor, player, runtime.glowPulse));
           writeIndex++;
         }
-        counts.set(batch.key, writeIndex);
+        counts[batchIndex] = writeIndex;
       }
 
-      for (const batch of resources.outlineBatches) {
-        const mesh = outlineMeshByBatchKeyRef.current.get(batch.key);
+      for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
+        const batch = resources.outlineBatches[batchIndex];
+        const mesh = outlineMeshesRef.current[batchIndex];
         if (!mesh) continue;
-        let writeIndex = outlineCounts.get(batch.key) ?? 0;
+        let writeIndex = outlineCounts[batchIndex];
         for (const descriptor of batch.descriptors) {
           if (!shouldRenderDescriptorForPlayer(descriptor, player)) continue;
           mesh.setMatrixAt(writeIndex, setPartMatrix(runtime, descriptor));
           writeIndex++;
         }
-        outlineCounts.set(batch.key, writeIndex);
+        outlineCounts[batchIndex] = writeIndex;
       }
     }
 
-    for (const batch of resources.batches) {
-      const mesh = meshByBatchKeyRef.current.get(batch.key);
+    for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
+      const mesh = meshesRef.current[batchIndex];
       if (!mesh) continue;
-      const count = counts.get(batch.key) ?? 0;
+      const count = counts[batchIndex];
       mesh.count = count;
       if (count > 0) {
         mesh.instanceMatrix.needsUpdate = true;
@@ -1355,38 +1369,37 @@ function RemoteHeroBatchGroup({
       }
     }
 
-    for (const batch of resources.outlineBatches) {
-      const mesh = outlineMeshByBatchKeyRef.current.get(batch.key);
+    for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
+      const mesh = outlineMeshesRef.current[batchIndex];
       if (!mesh) continue;
-      const count = outlineCounts.get(batch.key) ?? 0;
+      const count = outlineCounts[batchIndex];
       mesh.count = count;
       if (count > 0) {
         mesh.instanceMatrix.needsUpdate = true;
       }
     }
+    });
   });
 
   return (
     <>
-      {resources.batches.map((batch) => (
+      {resources.batches.map((batch, batchIndex) => (
         <RemoteHeroInstancedBatch
           key={batch.key}
           batch={batch}
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
           onMesh={(mesh) => {
-            if (mesh) meshByBatchKeyRef.current.set(batch.key, mesh);
-            else meshByBatchKeyRef.current.delete(batch.key);
+            meshesRef.current[batchIndex] = mesh;
           }}
         />
       ))}
-      {resources.outlineBatches.map((batch) => (
+      {resources.outlineBatches.map((batch, batchIndex) => (
         <RemoteHeroOutlineBatch
           key={batch.key}
           batch={batch}
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
           onMesh={(mesh) => {
-            if (mesh) outlineMeshByBatchKeyRef.current.set(batch.key, mesh);
-            else outlineMeshByBatchKeyRef.current.delete(batch.key);
+            outlineMeshesRef.current[batchIndex] = mesh;
           }}
         />
       ))}
@@ -1413,21 +1426,26 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
     }
   }, [resources]);
 
-  const groupedPlayers = useMemo(() => {
+  const groupedPlayers = useMemo<Array<{ key: string; players: Player[] }>>(() => {
     const groups = new Map<string, Player[]>();
+    const entries: Array<{ key: string; players: Player[] }> = [];
     for (const player of players) {
       const heroId = resolveHeroId(player);
       const key = `${heroId}:${player.team as Team}`;
       const group = groups.get(key);
       if (group) group.push(player);
-      else groups.set(key, [player]);
+      else {
+        const groupPlayers = [player];
+        groups.set(key, groupPlayers);
+        entries.push({ key, players: groupPlayers });
+      }
     }
-    return groups;
+    return entries;
   }, [players]);
 
   return (
     <>
-      {Array.from(groupedPlayers, ([key, groupPlayers]) => {
+      {groupedPlayers.map(({ key, players: groupPlayers }) => {
         const resource = resources.get(key);
         if (!resource || groupPlayers.length === 0) return null;
         return (

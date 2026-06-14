@@ -62,7 +62,6 @@ export interface EffectQualityConfig {
   maxActiveParticles: number;
   maxVisibleRemoteAbilityEffects: number;
   enableDecorativeLights: boolean;
-  slideSpeedLineCount: number;
 }
 
 export interface RemotePlayerQualityConfig {
@@ -373,7 +372,6 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 96,
     maxVisibleRemoteAbilityEffects: 8,
     enableDecorativeLights: false,
-    slideSpeedLineCount: 0,
   },
   competitive: {
     maxActiveImpacts: 34,
@@ -381,7 +379,6 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 180,
     maxVisibleRemoteAbilityEffects: 16,
     enableDecorativeLights: true,
-    slideSpeedLineCount: 16,
   },
   balanced: {
     maxActiveImpacts: 44,
@@ -389,7 +386,6 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 240,
     maxVisibleRemoteAbilityEffects: 22,
     enableDecorativeLights: true,
-    slideSpeedLineCount: 22,
   },
   cinematic: {
     maxActiveImpacts: 72,
@@ -397,7 +393,6 @@ const EFFECT_QUALITY_CONFIG: Record<GraphicsPreset, EffectQualityConfig> = {
     maxActiveParticles: 520,
     maxVisibleRemoteAbilityEffects: 42,
     enableDecorativeLights: true,
-    slideSpeedLineCount: 36,
   },
 };
 

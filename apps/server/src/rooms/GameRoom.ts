@@ -725,6 +725,13 @@ export class GameRoom extends Room<GameState> {
   private playerTransformSignatures = new Map<string, string>();
   private playerTransformHeartbeatAt = new Map<string, number>();
   private transformRecipientStates = new Map<string, TransformReplicationState>();
+  private readonly replicationFrameContext: ReplicationFrameContext = {
+    now: 0,
+    currentIds: new Set(),
+    visibilityPlayers: new Map(),
+    packedTransforms: new Map(),
+    packedTransformSignatures: new Map(),
+  };
   private recentCombatTransformUntil = new Map<string, number>();
   private recentCombatInterestUntil = new Map<string, number>();
   private transformStreamEpoch = 0;
@@ -1240,8 +1247,8 @@ export class GameRoom extends Room<GameState> {
     player.botProfileId = '';
     this.applyPlayerRank(player, toPublicRankSnapshot(authContext.rank));
 
-    // Set spawn position
-    this.placePlayerAtSpawn(player, 'spawn');
+    // Set lobby spawn position without consuming a movement authority epoch.
+    this.assignPlayerSpawnPosition(player);
     if (entryTicket?.selectedHero && isHeroId(entryTicket.selectedHero)) {
       this.setPlayerHero(player, entryTicket.selectedHero);
     }
@@ -1688,28 +1695,24 @@ export class GameRoom extends Room<GameState> {
   }
 
   private buildReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
-    const currentIds = new Set<string>();
-    const visibilityPlayers = new Map<string, VisibilityInterestPlayer>();
-    const packedTransforms = new Map<string, PackedPlayerTransform>();
-    const packedTransformSignatures = new Map<string, string>();
+    const frameContext = this.replicationFrameContext;
+    frameContext.now = now;
+    frameContext.currentIds.clear();
+    frameContext.visibilityPlayers.clear();
+    frameContext.packedTransforms.clear();
+    frameContext.packedTransformSignatures.clear();
 
     this.state.players.forEach((player, id) => {
-      currentIds.add(id);
-      visibilityPlayers.set(id, this.getVisibilityInterestPlayer(player));
+      frameContext.currentIds.add(id);
+      frameContext.visibilityPlayers.set(id, this.getVisibilityInterestPlayer(player));
       if (player.state !== 'alive' && player.state !== 'spawning') return;
 
       const transform = this.buildPackedPlayerTransform(id, player);
-      packedTransforms.set(id, transform);
-      packedTransformSignatures.set(id, this.getPackedTransformSignature(transform));
+      frameContext.packedTransforms.set(id, transform);
+      frameContext.packedTransformSignatures.set(id, this.getPackedTransformSignature(transform));
     });
 
-    return {
-      now,
-      currentIds,
-      visibilityPlayers,
-      packedTransforms,
-      packedTransformSignatures,
-    };
+    return frameContext;
   }
 
   private getRecipientInterest(
@@ -2860,7 +2863,7 @@ export class GameRoom extends Room<GameState> {
         }
       });
 
-      for (const id of Array.from(replicationState.knownPlayerIds)) {
+      for (const id of replicationState.knownPlayerIds) {
         if (!currentIds.has(id)) {
           removedPlayerIds.push(id);
           replicationState.knownPlayerIds.delete(id);
@@ -2906,7 +2909,7 @@ export class GameRoom extends Room<GameState> {
         }
       });
 
-      for (const targetId of Array.from(signatures.keys())) {
+      for (const targetId of signatures.keys()) {
         if (!frameContext.currentIds.has(targetId)) {
           signatures.delete(targetId);
         }
@@ -5507,6 +5510,18 @@ export class GameRoom extends Room<GameState> {
   private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {
     const wasCharging = this.phantomVoidRayChargeStartedAt.has(player.id);
 
+    if (this.isPhantomPrimaryReloading(player, now)) {
+      if (wasCharging && !this.phantomVoidRayResolvedForPress.has(player.id)) {
+        this.broadcastPhantomVoidRayChargeCancel(player, now);
+      }
+      this.phantomVoidRayChargeStartedAt.delete(player.id);
+      this.phantomVoidRayResolvedForPress.delete(player.id);
+      if (input.secondaryFire && !previousSecondaryFire) {
+        this.rejectAbilityOrCombat(player, 'phantom_reload_blocks:phantom_void_ray', false);
+      }
+      return;
+    }
+
     if (input.secondaryFire && !previousSecondaryFire) {
       const secondaryAttack = SECONDARY_ATTACKS[player.heroId as HeroId];
       const cooldownKey = `${player.id}:secondary`;
@@ -5574,6 +5589,17 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
+    const abilityId = HERO_DEFINITIONS[player.heroId as HeroId]?.[slot]?.abilityId;
+    const usedAt = Date.now();
+    if (
+      abilityId &&
+      abilityId !== 'phantom_blink' &&
+      this.isPhantomPrimaryReloading(player, usedAt)
+    ) {
+      this.rejectAbilityOrCombat(player, `phantom_reload_blocks:${abilityId}`, false);
+      return;
+    }
+
     const result = tryUseAbility(player, slot);
     if (!result.success || !result.abilityId || !result.abilityState || !result.abilityDef) {
       this.rejectAbilityOrCombat(player, `ability_unavailable:${slot}`, false);
@@ -5581,7 +5607,6 @@ export class GameRoom extends Room<GameState> {
     }
 
     const startedAt = this.vec3SchemaToPlain(player.position);
-    const usedAt = Date.now();
 
     if (result.abilityId === 'chronos_lifeline_conduit' && chronosLifelineTargets && chronosLifelineMode) {
       const releaseAt = usedAt + CHRONOS_LIFELINE_RELEASE_DELAY_MS;
@@ -5883,6 +5908,11 @@ export class GameRoom extends Room<GameState> {
     }
 
     return magazine;
+  }
+
+  private isPhantomPrimaryReloading(player: Player, now: number): boolean {
+    if (player.heroId !== 'phantom') return false;
+    return this.completePhantomPrimaryReloadIfReady(player, now).reloadUntil > now;
   }
 
   private sendPhantomPrimaryState(player: Player, now: number): void {
@@ -7423,6 +7453,7 @@ export class GameRoom extends Room<GameState> {
         routeGraph: this.botRouteGraph,
         blockedEdges: brain.blockedEdges,
         skill,
+        previousPlan: brain.routePlan,
       });
       brain.nextThinkAt = now + this.randomBetween(skill.thinkIntervalMs * 0.75, skill.thinkIntervalMs * 1.25);
 
@@ -7441,6 +7472,7 @@ export class GameRoom extends Room<GameState> {
         routeGraph: this.botRouteGraph,
         blockedEdges: brain.blockedEdges,
         skill,
+        previousPlan: brain.routePlan,
       });
     }
 
@@ -7509,6 +7541,7 @@ export class GameRoom extends Room<GameState> {
         routeGraph: this.botRouteGraph,
         blockedEdges: brain.blockedEdges,
         skill,
+        previousPlan: brain.routePlan,
       });
     }
     if (progress.stalled && steering.blocked) {
@@ -8765,6 +8798,7 @@ export class GameRoom extends Room<GameState> {
       const client = this.clientsBySessionId.get(playerId);
       if (!client) return;
 
+      const authority = this.getMovementAuthority(player.id);
       this.sendSelfMovementAuthority(player, client, 'spawn');
       this.sendTracked(client, 'matchStartGate', {
         key: this.countdownStartGateKey,
@@ -8772,6 +8806,9 @@ export class GameRoom extends Room<GameState> {
         mapSeed: this.state.mapSeed,
         mapThemeId: this.state.mapThemeId,
         position: this.vec3SchemaToPlain(player.position),
+        movementEpoch: authority.movementEpoch,
+        ackSeq: authority.lastProcessedSeq,
+        collisionRevision: this.getMovementCollisionRevision(now),
       });
     });
   }
@@ -9509,7 +9546,7 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {
+  private assignPlayerSpawnPosition(player: Player): void {
     const spawn = this.getSpawnPosition(player.team as Team);
     player.position.x = spawn.x;
     player.position.y = spawn.y;
@@ -9517,6 +9554,10 @@ export class GameRoom extends Room<GameState> {
     player.velocity.x = 0;
     player.velocity.y = 0;
     player.velocity.z = 0;
+  }
+
+  private placePlayerAtSpawn(player: Player, reason: MovementCorrectionReason = 'spawn'): void {
+    this.assignPlayerSpawnPosition(player);
     this.markMovementBarrier(player.id, reason);
   }
 

@@ -1,7 +1,10 @@
 import { forwardRef, useCallback, useEffect, useRef, type ForwardedRef } from 'react';
 import { useFrame, type ThreeElements } from '@react-three/fiber';
 import * as THREE from 'three';
-import { measureFrameWork } from '../../../movement/networkDiagnostics';
+import {
+  measureFrameWork,
+  recordDynamicLightDiagnostics,
+} from '../../../movement/networkDiagnostics';
 
 type PointLightProps = ThreeElements['pointLight'];
 
@@ -130,62 +133,97 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
 
   useFrame(({ camera }, delta) => {
     measureFrameWork('frame.dynamicLights', () => {
-    accumulatorRef.current += delta;
-    if (accumulatorRef.current < 0.08) return;
-    accumulatorRef.current = 0;
+      accumulatorRef.current += delta;
+      if (accumulatorRef.current < 0.08) return;
+      accumulatorRef.current = 0;
 
-    if (budgetedLights.size === 0) {
-      rankedRef.current.length = 0;
-      return;
-    }
+      const lightLimit = Math.max(0, Math.floor(maxLights));
+      if (budgetedLights.size === 0) {
+        rankedRef.current.length = 0;
+        recordDynamicLightDiagnostics({
+          registered: 0,
+          activeCandidates: 0,
+          enabled: 0,
+          budget: lightLimit,
+        });
+        return;
+      }
 
-    const ranked = rankedRef.current;
-    const rankedPool = rankedPoolRef.current;
-    const lightLimit = Math.max(0, Math.floor(maxLights));
-    ranked.length = 0;
+      const ranked = rankedRef.current;
+      const rankedPool = rankedPoolRef.current;
+      ranked.length = 0;
 
-    if (lightLimit <= 0) {
+      if (lightLimit <= 0) {
+        let activeCandidates = 0;
+        for (const record of budgetedLights) {
+          const light = record.lightRef.current;
+          if (light?.parent && light.intensity > 0) activeCandidates++;
+          if (light) setLightVisible(light, false);
+        }
+        recordDynamicLightDiagnostics({
+          registered: budgetedLights.size,
+          activeCandidates,
+          enabled: 0,
+          budget: lightLimit,
+        });
+        return;
+      }
+
+      if (lightLimit >= budgetedLights.size) {
+        let activeCandidates = 0;
+        let enabled = 0;
+        for (const record of budgetedLights) {
+          const light = record.lightRef.current;
+          const active = Boolean(light?.parent && light.intensity > 0);
+          if (active) activeCandidates++;
+          if (light) {
+            setLightVisible(light, active);
+            if (active) enabled++;
+          }
+        }
+        recordDynamicLightDiagnostics({
+          registered: budgetedLights.size,
+          activeCandidates,
+          enabled,
+          budget: lightLimit,
+        });
+        return;
+      }
+
+      let activeCandidates = 0;
       for (const record of budgetedLights) {
         const light = record.lightRef.current;
-        if (light) setLightVisible(light, false);
-      }
-      return;
-    }
+        if (!light || !light.parent || light.intensity <= 0) {
+          if (light) setLightVisible(light, false);
+          continue;
+        }
 
-    if (lightLimit >= budgetedLights.size) {
-      for (const record of budgetedLights) {
-        const light = record.lightRef.current;
-        if (light) setLightVisible(light, Boolean(light.parent && light.intensity > 0));
+        activeCandidates++;
+        setLightVisible(light, false);
+        light.getWorldPosition(worldPosition);
+        const radius = Math.max(1, record.radius || light.distance || 1);
+        const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
+        insertRankedLight(
+          ranked,
+          rankedPool,
+          record,
+          record.priority * 1000 + light.intensity * 10 - distancePenalty * 140,
+          lightLimit
+        );
       }
-      return;
-    }
 
-    for (const record of budgetedLights) {
-      const light = record.lightRef.current;
-      if (!light || !light.parent || light.intensity <= 0) {
-        if (light) setLightVisible(light, false);
-        continue;
+      for (let i = 0; i < ranked.length; i++) {
+        const light = ranked[i].record.lightRef.current;
+        if (light) {
+          setLightVisible(light, true);
+        }
       }
-
-      setLightVisible(light, false);
-      light.getWorldPosition(worldPosition);
-      const radius = Math.max(1, record.radius || light.distance || 1);
-      const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
-      insertRankedLight(
-        ranked,
-        rankedPool,
-        record,
-        record.priority * 1000 + light.intensity * 10 - distancePenalty * 140,
-        lightLimit
-      );
-    }
-
-    for (let i = 0; i < ranked.length; i++) {
-      const light = ranked[i].record.lightRef.current;
-      if (light) {
-        setLightVisible(light, true);
-      }
-    }
+      recordDynamicLightDiagnostics({
+        registered: budgetedLights.size,
+        activeCandidates,
+        enabled: ranked.length,
+        budget: lightLimit,
+      });
     });
   });
 

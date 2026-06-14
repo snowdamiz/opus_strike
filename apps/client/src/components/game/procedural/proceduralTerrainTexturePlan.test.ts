@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { getBlockNumericId, type VoxelChunk, type VoxelMapManifest } from '@voxel-strike/shared';
 import { buildVoxelRegionGeometryData } from './meshGeometryData';
 import {
+  getTerrainTextureAnisotropy,
+  TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY,
   getTextureLayerForBlock,
   TERRAIN_TEXTURE_LAYER_COUNT,
 } from './terrainTextures';
@@ -39,6 +41,17 @@ assert.ok(uniqueLayers.has(getTextureLayerForBlock('stone', 'side').layer));
 assert.equal(getTextureLayerForBlock('grass', 'bottom').layer, getTextureLayerForBlock('dirt', 'side').layer);
 
 assert.equal(TERRAIN_TEXTURE_LAYER_COUNT, 30);
+assert.deepEqual(TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY, {
+  off: 4,
+  minimum: 4,
+  low: 8,
+  medium: 8,
+  high: 8,
+  ultra: 16,
+});
+assert.equal(getTerrainTextureAnisotropy('off'), 4);
+assert.equal(getTerrainTextureAnisotropy('low'), 8);
+assert.equal(getTerrainTextureAnisotropy('ultra'), 16);
 
 const terrainTexturesSource = readFileSync(new URL('./terrainTextures.ts', import.meta.url), 'utf8');
 const materialSource = readFileSync(new URL('./materials.ts', import.meta.url), 'utf8');
@@ -47,12 +60,15 @@ assert.match(terrainTexturesSource, /new THREE\.DataArrayTexture/);
 assert.match(terrainTexturesSource, /createLinearGradient/);
 assert.match(terrainTexturesSource, /MATERIAL_QUALITY_PAINT_PROFILES/);
 assert.match(terrainTexturesSource, /TERRAIN_DETAIL_GRID_SIZE = 8/);
+assert.match(terrainTexturesSource, /TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY/);
 assert.match(terrainTexturesSource, /\$\{theme\.id\}:\$\{materialQuality\}/);
 assert.match(materialSource, /sampler2DArray/);
 assert.match(materialSource, /voxelTerrainColorTexture/);
 assert.match(materialSource, /voxelTerrainEmissiveTexture/);
+assert.match(materialSource, /TERRAIN_TEXTURE_MIP_FOOTPRINT_SCALE/);
 assert.match(materialSource, /materialQuality/);
 assert.match(materialSource, /new THREE\.MeshLambertMaterial/);
+assert.doesNotMatch(terrainTexturesSource, /TERRAIN_TEXTURE_ANISOTROPY\s*=\s*1/);
 assert.doesNotMatch(materialSource, /MeshStandardMaterial/);
 assert.doesNotMatch(materialSource, /envMapIntensity|roughnessMap|metalnessMap|bumpMap|aoMap/);
 assert.doesNotMatch(materialSource, /voxelAtlas|voxelTileOrigin|createVoxelAtlasTextures/);

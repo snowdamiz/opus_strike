@@ -29,9 +29,17 @@ interface TerrainTexturePaintContexts {
   emissive: CanvasRenderingContext2D;
 }
 
-const TERRAIN_TEXTURE_ANISOTROPY = 1;
 const TERRAIN_DETAIL_GRID_SIZE = 8;
 const terrainTextureCache = new Map<string, VoxelTerrainTextures>();
+
+export const TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY: Record<GraphicsFeatureQuality, number> = {
+  off: 4,
+  minimum: 4,
+  low: 8,
+  medium: 8,
+  high: 8,
+  ultra: 16,
+};
 
 interface MaterialQualityPaintProfile {
   baseSpeckleAlpha: number;
@@ -78,6 +86,10 @@ const MATERIAL_QUALITY_PAINT_PROFILES: Record<GraphicsFeatureQuality, MaterialQu
     emissiveDetailAlpha: 0.48,
   },
 };
+
+export function getTerrainTextureAnisotropy(materialQuality: GraphicsFeatureQuality): number {
+  return TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY[materialQuality] ?? TERRAIN_TEXTURE_ANISOTROPY_BY_QUALITY.high;
+}
 
 function textureTile(x: number, y: number): TerrainTextureTile {
   return {
@@ -596,7 +608,8 @@ function createTextureArrayData(context: CanvasRenderingContext2D): Uint8Array<A
 
 function createTerrainTexture(
   data: Uint8Array<ArrayBuffer>,
-  colorSpace: THREE.ColorSpace
+  colorSpace: THREE.ColorSpace,
+  anisotropy: number
 ): THREE.DataArrayTexture {
   const texture = new THREE.DataArrayTexture(data, TILE_SIZE, TILE_SIZE, TERRAIN_TEXTURE_LAYER_COUNT);
   texture.format = THREE.RGBAFormat;
@@ -607,7 +620,7 @@ function createTerrainTexture(
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.generateMipmaps = true;
-  texture.anisotropy = TERRAIN_TEXTURE_ANISOTROPY;
+  texture.anisotropy = Math.max(1, Math.round(anisotropy));
   texture.needsUpdate = true;
 
   return texture;
@@ -724,13 +737,14 @@ export function createVoxelTerrainTextures(
   }
 
   paintTerrainTileSet(contexts, theme, materialQuality);
+  const anisotropy = getTerrainTextureAnisotropy(materialQuality);
 
   const textures: VoxelTerrainTextures = {
-    color: createTerrainTexture(createTextureArrayData(color.context), THREE.SRGBColorSpace),
-    emissive: createTerrainTexture(createTextureArrayData(emissive.context), THREE.SRGBColorSpace),
+    color: createTerrainTexture(createTextureArrayData(color.context), THREE.SRGBColorSpace, anisotropy),
+    emissive: createTerrainTexture(createTextureArrayData(emissive.context), THREE.SRGBColorSpace, anisotropy),
     tileSize: TERRAIN_TEXTURE_TILE_SIZE,
     layerCount: TERRAIN_TEXTURE_LAYER_COUNT,
-    anisotropy: TERRAIN_TEXTURE_ANISOTROPY,
+    anisotropy,
   };
 
   terrainTextureCache.set(cacheKey, textures);

@@ -1,5 +1,4 @@
 import React, { useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { HOOKSHOT_GRAPPLE_EXTENSION_SPEED } from '@voxel-strike/physics';
 import { useGameStore, type GrappleLineData } from '../../../store/gameStore';
@@ -24,6 +23,7 @@ import {
   updateRopeSegment,
 } from './rope';
 import { HookshotProjectileArrowHead } from './arrowHead';
+import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 
 // ============================================================================
 // GRAPPLE LINE - Quick grapple to geometry (E ability)
@@ -89,7 +89,7 @@ export const GrappleLineEffect = React.memo(({ line }: GrappleLineProps) => {
   const localPlayerId = useGameStore(state => state.localPlayer?.id);
   const isLocalOwnerForRender = localPlayerId === line.ownerId;
   
-  useFrame((frameState, delta) => {
+  useHookshotFrameUpdater(`grapple-line:${line.id}`, (frameState, delta) => {
     if (!hookRef.current || shouldRemoveRef.current) return;
     const frameNow = getFrameClock().nowMs;
     

@@ -16,6 +16,7 @@ import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
 import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 import type { RemotePlayerQualityConfig } from './visualQuality';
 import { RemoteHeroBatchRenderer } from './RemoteHeroBatchRenderer';
+import { measureFrameWork } from '../../movement/networkDiagnostics';
 import {
   getPlayerHeight,
   getVisiblePlayerHeight,
@@ -200,6 +201,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
   // Verify with React DevTools profiler that OtherPlayers does NOT re-render when player positions update at 60fps.
   // Expected: OtherPlayers renders only when players Map changes (add/remove), not on position updates.
   useFrame((_, delta) => {
+    measureFrameWork('frame.remotePlayers', () => {
     if (!groupRef.current) return;
     const stepDelta = delta;
     const frameNowMs = getFrameClock().epochNowMs;
@@ -327,6 +329,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
     isSlidingRef.current = player.movement.isSliding;
     movementPoseRef.current = getPlayerMovementPose(player, frameHasLoweredPosture, frameIsMoving);
     isMovingRef.current = frameIsMoving;
+    });
   });
 
   return (

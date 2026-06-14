@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, type EarthWallData } from '../../../store/gameStore';
 import {
@@ -15,6 +14,7 @@ import {
 } from '../effectResources';
 import { getFrameClock } from '../../../utils/frameClock';
 import { playSharedSound } from '../../../hooks/useAudio';
+import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 
 // ============================================================================
 // ANCHOR WALL - Hookshot Q ability
@@ -187,7 +187,7 @@ const WallSegment = React.memo(function WallSegment({
   const capTilt = seededRange(index, 2, -0.07, 0.07);
   const ribShift = seededRange(index, 3, -0.18, 0.18);
 
-  useFrame((_, delta) => {
+  useHookshotFrameUpdater(`earth-wall-segment:${segment.id}`, (_, delta) => {
     if (!meshRef.current) return;
 
     const wallAge = (getFrameClock().nowMs - wallStartFrameTimeRef.current) / 1000;
@@ -377,7 +377,7 @@ export const EarthWallEffect = React.memo(({ wall }: EarthWallProps) => {
     }
   };
 
-  useFrame((state, delta) => {
+  useHookshotFrameUpdater(`earth-wall:${wall.id}`, (state, delta) => {
     if (!groupRef.current || !hookRef.current) return;
 
     const time = state.clock.elapsedTime;

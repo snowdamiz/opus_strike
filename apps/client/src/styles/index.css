@@ -243,6 +243,8 @@ body,
   --slide-edge-opacity: 0;
   --slide-haze-opacity: 0;
   --slide-haze-side-opacity: 0;
+  --slide-line-opacity: 0;
+  --slide-line-duration: 820ms;
   contain: layout paint style;
   opacity: 0;
   visibility: hidden;
@@ -304,6 +306,47 @@ body,
       rgba(255, 255, 255, var(--slide-haze-side-opacity)) 89%,
       transparent 100%);
   mix-blend-mode: screen;
+}
+
+.slide-speed-line-layer {
+  position: absolute;
+  inset: -18vh 0;
+  overflow: hidden;
+  mix-blend-mode: screen;
+  opacity: var(--slide-line-opacity);
+}
+
+.slide-speed-line {
+  position: absolute;
+  left: var(--line-left);
+  top: -28vh;
+  width: var(--line-width);
+  height: clamp(8rem, 22vh, 17rem);
+  border-radius: 999px;
+  background: linear-gradient(to bottom,
+      transparent 0%,
+      rgba(185, 251, 255, 0.18) 18%,
+      rgba(255, 255, 255, 0.92) 48%,
+      rgba(185, 251, 255, 0.34) 76%,
+      transparent 100%);
+  box-shadow:
+    0 0 10px rgba(185, 251, 255, 0.36),
+    0 0 18px rgba(255, 255, 255, 0.16);
+  opacity: var(--line-alpha);
+  transform-origin: 50% 50%;
+  animation: slide-speed-line-flow var(--slide-line-duration) linear infinite;
+  animation-delay: var(--line-delay);
+  will-change: transform, opacity;
+}
+
+@keyframes slide-speed-line-flow {
+  0% {
+    transform: translate3d(0, -18vh, 0) rotate(var(--line-rotate)) scaleY(var(--line-scale));
+  }
+
+  100% {
+    transform: translate3d(var(--line-drift), 136vh, 0) rotate(var(--line-rotate)) scaleY(var(--line-scale));
+  }
 }
 
 /* ===== GAME STATES ===== */

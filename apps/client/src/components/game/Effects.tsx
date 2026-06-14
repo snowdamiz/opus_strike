@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo, useState } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame, useThree, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
 import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
 import {
@@ -10,6 +10,10 @@ import { useGameStore } from '../../store/gameStore';
 import { visualStore } from '../../store/visualStore';
 import { getFrameClock } from '../../utils/frameClock';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
+import {
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+} from '../../movement/networkDiagnostics';
 
 interface Effect {
   id: string;
@@ -37,6 +41,8 @@ const LIFELINE_AXIS = new THREE.Vector3(0, 1, 0);
 const EFFECT_FORWARD = new THREE.Vector3(0, 0, 1);
 const EXPLOSION_INSTANCE_DUMMY = new THREE.Object3D();
 const CHRONOS_AEGIS_BREAK_SHARD_COUNT = 14;
+type GlobalEffectUpdater = (state: RootState, delta: number) => void;
+const globalEffectUpdaters = new Map<string, GlobalEffectUpdater>();
 
 interface ChronosAegisBreakShard {
   x: number;
@@ -125,6 +131,19 @@ function writeGrappleLinePositions(target: Float32Array, effect: Effect): void {
   target[5] = end.z;
 }
 
+function useGlobalEffectUpdater(effectId: string, updater: GlobalEffectUpdater): void {
+  const updaterRef = useRef(updater);
+  updaterRef.current = updater;
+
+  useEffect(() => {
+    const registeredUpdater: GlobalEffectUpdater = (state, delta) => updaterRef.current(state, delta);
+    globalEffectUpdaters.set(effectId, registeredUpdater);
+    return () => {
+      globalEffectUpdaters.delete(effectId);
+    };
+  }, [effectId]);
+}
+
 export interface GlobalEffectStats {
   active: number;
   capacity: number;
@@ -199,21 +218,33 @@ export function Effects() {
   const lastEffectCountRef = useRef(0);
   const lastCleanupRef = useRef(0);
 
-  useFrame(() => {
-    const now = getFrameClock().epochNowMs;
+  useFrame((state, delta) => {
+    measureFrameWork('frame.effects.global', () => {
+      const now = getFrameClock().epochNowMs;
 
-    // Only clean up every 100ms to avoid excessive processing
-    if (now - lastCleanupRef.current < 100) return;
-    lastCleanupRef.current = now;
+      // Only clean up every 100ms to avoid excessive processing
+      if (now - lastCleanupRef.current >= 100) {
+        lastCleanupRef.current = now;
+        compactExpiredEffects(now);
+        activeEffectsRef.current = effects;
 
-    compactExpiredEffects(now);
-    activeEffectsRef.current = effects;
+        // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
+        if (effects.length !== lastEffectCountRef.current) {
+          lastEffectCountRef.current = effects.length;
+          setEffectsVersion(v => v + 1);
+        }
+      }
 
-    // PERFORMANCE: Only trigger re-render if effect count changed (not every frame)
-    if (effects.length !== lastEffectCountRef.current) {
-      lastEffectCountRef.current = effects.length;
-      setEffectsVersion(v => v + 1);
-    }
+      for (const updater of globalEffectUpdaters.values()) {
+        updater(state, delta);
+      }
+
+      recordEffectSlotDiagnostics('globalEffects', {
+        active: effects.length,
+        capacity: MAX_GLOBAL_EFFECTS,
+        hiddenMounted: Math.max(0, MAX_GLOBAL_EFFECTS - effects.length),
+      });
+    });
   });
 
   return (
@@ -265,7 +296,7 @@ function GrappleLine({ effect }: EffectProps) {
     return line;
   }, [geometry]);
 
-  useFrame(() => {
+  useGlobalEffectUpdater(effect.id, () => {
     writeGrappleLinePositions(positions, effect);
     const positionAttribute = geometry.getAttribute('position') as THREE.BufferAttribute;
     positionAttribute.needsUpdate = true;
@@ -285,7 +316,7 @@ function BlinkEffect({ effect }: EffectProps) {
   const endRef = useRef<THREE.Mesh>(null);
   const progress = useRef(0);
 
-  useFrame((_, delta) => {
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
     progress.current += delta / (effect.duration / 1000);
     const t = Math.min(1, progress.current);
 
@@ -334,7 +365,7 @@ function ExplosionEffect({ effect }: EffectProps) {
   const progress = useRef(0);
   const directions = useMemo(() => createExplosionDirections(effect.id), [effect.id]);
 
-  useFrame((_, delta) => {
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
     const mesh = meshRef.current;
     if (!mesh) return;
 
@@ -378,7 +409,7 @@ function HitEffect({ effect }: EffectProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const progress = useRef(0);
 
-  useFrame((_, delta) => {
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
     if (!meshRef.current) return;
 
     progress.current += delta / (effect.duration / 1000);
@@ -436,7 +467,7 @@ function LifelineBeamEffect({ effect }: EffectProps) {
   const sourceForward = useMemo(() => new THREE.Vector3(), []);
   const quaternion = useMemo(() => new THREE.Quaternion(), []);
 
-  useFrame((_, delta) => {
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
     const group = groupRef.current;
     if (!group) return;
 
@@ -519,7 +550,7 @@ function HealPulseEffect({ effect }: EffectProps) {
   const ringRef = useRef<THREE.Mesh>(null);
   const progress = useRef(0);
 
-  useFrame((_, delta) => {
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
     progress.current += delta / (effect.duration / 1000);
     const t = Math.min(1, progress.current);
     const fade = 1 - t;
@@ -574,7 +605,7 @@ function ChronosSelfHealPulseEffect({ effect }: EffectProps) {
   const source = useMemo(() => new THREE.Vector3(), []);
   const sourceForward = useMemo(() => new THREE.Vector3(), []);
 
-  useFrame((_, delta) => {
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
     const group = groupRef.current;
     if (!group) return;
 
@@ -719,7 +750,7 @@ function ChronosAegisBreakEffect({ effect }: EffectProps) {
     materials.shard.dispose();
   }, [materials]);
 
-  useFrame((_, delta) => {
+  useGlobalEffectUpdater(effect.id, (_, delta) => {
     progress.current += delta / (effect.duration / 1000);
     const t = Math.min(1, progress.current);
     const fade = Math.max(0, 1 - t);

@@ -11,6 +11,7 @@ import {
   HOOKSHOT_COLORS, 
   TEMP_VECTORS,
 } from '../effectResources';
+import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 
 // ============================================================================
 // GRAPPLE TRAP - AOE trap that hooks enemies (Ultimate / F ability)
@@ -112,7 +113,7 @@ export const GrappleTrapEffect = React.memo(({ trap }: GrappleTrapProps) => {
     removeGrappleTrap(trap.id);
   };
 
-  useFrame((state, delta) => {
+  useHookshotFrameUpdater(`grapple-trap:${trap.id}`, (state, delta) => {
     const frameNow = getFrameClock().nowMs;
     const totalElapsed = (frameNow - startFrameTimeRef.current) / 1000;
 

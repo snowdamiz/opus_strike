@@ -14,6 +14,7 @@ import {
   prepareVoxelMapCpu,
   type PreparedVoxelMap,
 } from '../../../utils/mapWarmup/mapPrepCache';
+import { measureFrameWork } from '../../../movement/networkDiagnostics';
 
 const TERRAIN_CULL_UPDATE_INTERVAL_MS = 180;
 const TERRAIN_CULL_HYSTERESIS = 18;
@@ -93,8 +94,8 @@ export function VoxelMap({
   const readyRegionManifestIdRef = useRef(manifest.id);
   const readyRegionIdsRef = useRef<Set<string>>(new Set());
   const terrainCullAccumulatorRef = useRef(0);
-  const activeRegionIdsRef = useRef<Set<string> | null>(null);
-  const activeRegionSignatureRef = useRef('all');
+  const regionVisibilityRef = useRef<Map<string, boolean>>(new Map());
+  const regionGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
   const terrainCullFrustumRef = useRef(new THREE.Frustum());
   const terrainCullMatrixRef = useRef(new THREE.Matrix4());
   const terrainCullSphereRef = useRef(new THREE.Sphere());
@@ -104,11 +105,29 @@ export function VoxelMap({
   ));
   const [readyRegionCount, setReadyRegionCount] = useState(0);
   const [collidersReady, setCollidersReady] = useState(!enablePhysics);
-  const [activeRegionIds, setActiveRegionIds] = useState<Set<string> | null>(null);
   const terrainCullDistance = useMemo(
     () => getRuntimeTerrainCullDistance(performanceBudget),
     [performanceBudget?.drawCalls]
   );
+
+  const setRegionVisibility = useCallback((regionId: string, visible: boolean) => {
+    const visibility = regionVisibilityRef.current;
+    if (visibility.get(regionId) === visible) return;
+    visibility.set(regionId, visible);
+    const group = regionGroupsRef.current.get(regionId);
+    if (group) group.visible = visible;
+  }, []);
+
+  const setRegionGroupNode = useCallback((regionId: string, group: THREE.Group | null) => {
+    if (!group) {
+      regionGroupsRef.current.delete(regionId);
+      return;
+    }
+
+    regionGroupsRef.current.set(regionId, group);
+    const visible = regionVisibilityRef.current.get(regionId);
+    group.visible = visible ?? true;
+  }, []);
 
   useEffect(() => {
     regionRevealBudgetRef.current = Math.max(1, performanceBudget?.maxGeneratedRegionMeshesPerFrame ?? 3);
@@ -116,9 +135,10 @@ export function VoxelMap({
 
   useEffect(() => {
     terrainCullAccumulatorRef.current = 0;
-    activeRegionIdsRef.current = null;
-    activeRegionSignatureRef.current = 'all';
-    setActiveRegionIds(null);
+    regionVisibilityRef.current.clear();
+    for (const group of regionGroupsRef.current.values()) {
+      group.visible = true;
+    }
   }, [manifest.id, terrainCullDistance]);
 
   useEffect(() => {
@@ -265,61 +285,55 @@ export function VoxelMap({
     () => renderableRegions.slice(0, visibleRegionCount),
     [renderableRegions, visibleRegionCount]
   );
-  const renderedRegions = useMemo(() => {
-    if (!terrainReady || activeRegionIds === null) return visibleRegions;
-    return visibleRegions.filter((region) => activeRegionIds.has(region.id));
-  }, [activeRegionIds, terrainReady, visibleRegions]);
 
   useFrame((state, delta) => {
     if (!terrainReady || !Number.isFinite(terrainCullDistance)) return;
 
-    terrainCullAccumulatorRef.current += delta * 1000;
-    if (terrainCullAccumulatorRef.current < TERRAIN_CULL_UPDATE_INTERVAL_MS) return;
-    terrainCullAccumulatorRef.current = 0;
+    measureFrameWork('frame.terrainCulling', () => {
+      terrainCullAccumulatorRef.current += delta * 1000;
+      if (terrainCullAccumulatorRef.current < TERRAIN_CULL_UPDATE_INTERVAL_MS) return;
+      terrainCullAccumulatorRef.current = 0;
 
-    const camera = state.camera;
-    const frustum = terrainCullFrustumRef.current;
-    const matrix = terrainCullMatrixRef.current;
-    const sphere = terrainCullSphereRef.current;
-    matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-    frustum.setFromProjectionMatrix(matrix);
+      const camera = state.camera;
+      const frustum = terrainCullFrustumRef.current;
+      const matrix = terrainCullMatrixRef.current;
+      const sphere = terrainCullSphereRef.current;
+      matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      frustum.setFromProjectionMatrix(matrix);
 
-    const previousIds = activeRegionIdsRef.current;
-    const nextIds = new Set<string>();
-    let closestRegionId: string | null = null;
-    let closestDistanceSq = Infinity;
+      let closestRegionId: string | null = null;
+      let closestDistanceSq = Infinity;
+      let visibleAfterCull = 0;
 
-    for (const region of visibleRegions) {
-      const { bounds } = region;
-      const dx = bounds.center.x - camera.position.x;
-      const dy = bounds.center.y - camera.position.y;
-      const dz = bounds.center.z - camera.position.z;
-      const distanceSq = dx * dx + dy * dy + dz * dz;
-      if (distanceSq < closestDistanceSq) {
-        closestDistanceSq = distanceSq;
-        closestRegionId = region.id;
+      for (const region of visibleRegions) {
+        const { bounds } = region;
+        const dx = bounds.center.x - camera.position.x;
+        const dy = bounds.center.y - camera.position.y;
+        const dz = bounds.center.z - camera.position.z;
+        const distanceSq = dx * dx + dy * dy + dz * dz;
+        if (distanceSq < closestDistanceSq) {
+          closestDistanceSq = distanceSq;
+          closestRegionId = region.id;
+        }
+
+        const wasVisible = regionVisibilityRef.current.get(region.id) ?? true;
+        const maxDistance = terrainCullDistance + bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
+        let nextVisible = distanceSq <= maxDistance * maxDistance;
+
+        if (nextVisible) {
+          sphere.center.set(bounds.center.x, bounds.center.y, bounds.center.z);
+          sphere.radius = bounds.radius + (wasVisible ? TERRAIN_CULL_HYSTERESIS : 0);
+          nextVisible = frustum.intersectsSphere(sphere);
+        }
+
+        if (nextVisible) visibleAfterCull++;
+        setRegionVisibility(region.id, nextVisible);
       }
 
-      const wasActive = previousIds?.has(region.id) ?? false;
-      const maxDistance = terrainCullDistance + bounds.radius + (wasActive ? TERRAIN_CULL_HYSTERESIS : 0);
-      if (distanceSq > maxDistance * maxDistance) continue;
-
-      sphere.center.set(bounds.center.x, bounds.center.y, bounds.center.z);
-      sphere.radius = bounds.radius + (wasActive ? TERRAIN_CULL_HYSTERESIS : 0);
-      if (frustum.intersectsSphere(sphere)) {
-        nextIds.add(region.id);
+      if (visibleAfterCull === 0 && closestRegionId) {
+        setRegionVisibility(closestRegionId, true);
       }
-    }
-
-    if (nextIds.size === 0 && closestRegionId) {
-      nextIds.add(closestRegionId);
-    }
-
-    const signature = Array.from(nextIds).sort().join('|');
-    if (signature === activeRegionSignatureRef.current) return;
-    activeRegionSignatureRef.current = signature;
-    activeRegionIdsRef.current = nextIds;
-    setActiveRegionIds(nextIds);
+    });
   });
 
   useEffect(() => {
@@ -357,16 +371,20 @@ export function VoxelMap({
 
   return (
     <group name="procedural-voxel-map">
-      {renderedRegions.map((region) => (
-        <VoxelRegionMesh
+      {visibleRegions.map((region) => (
+        <group
           key={`${manifest.id}:${region.id}`}
-          region={region}
-          manifest={manifest}
-          material={material}
-          shadowsEnabled={shadowsEnabled}
-          buildMode={meshBuildMode}
-          onGeometryReady={handleRegionGeometryReady}
-        />
+          ref={(group) => setRegionGroupNode(region.id, group)}
+        >
+          <VoxelRegionMesh
+            region={region}
+            manifest={manifest}
+            material={material}
+            shadowsEnabled={shadowsEnabled}
+            buildMode={meshBuildMode}
+            onGeometryReady={handleRegionGeometryReady}
+          />
+        </group>
       ))}
       <WorldDressing
         manifest={manifest}

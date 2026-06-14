@@ -63,18 +63,24 @@ const fallbackTerrain: MovementTerrainAdapter = {
 export function resetLocalMovementPrediction(
   state?: MovementSimulationState,
   movementEpoch = 0,
-  playerId: string | null = null
+  playerId: string | null = null,
+  options: {
+    lastAckSeq?: number;
+    collisionRevision?: number;
+  } = {}
 ): void {
+  const lastAckSeq = Math.max(0, Math.trunc(options.lastAckSeq ?? 0));
   nextCommandSeq = 1;
   predictedPlayerId = playerId;
   cachedMapId = null;
   cachedTerrainLookup = null;
   cachedCollisionWorld = null;
-  latestServerCollisionRevision = 0;
+  latestServerCollisionRevision = Math.max(0, Math.trunc(options.collisionRevision ?? 0));
   pendingSelfMovementAuthorities.length = 0;
   pendingSelfMovementAuthoritiesOutOfOrder = false;
   if (state) {
-    localMovementPrediction.initialize(state, movementEpoch, 0);
+    localMovementPrediction.initialize(state, movementEpoch, lastAckSeq);
+    advanceNextCommandSeqPastAck(lastAckSeq);
   } else {
     localMovementPrediction.reset();
   }

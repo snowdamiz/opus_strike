@@ -30,6 +30,7 @@ export interface AbilityDefinition {
 export interface AbilityState {
   abilityId: string;
   cooldownRemaining: number;
+  cooldownUntil?: number;
   charges: number;
   isActive: boolean;
   activatedAt?: number;

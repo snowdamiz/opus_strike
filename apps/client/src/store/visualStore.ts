@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import {
+  CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   MOVEMENT_REMOTE_EXTRAPOLATION_CAP_MS,
   MOVEMENT_REMOTE_INTERPOLATION_DELAY_MS,
   type HeroId,
@@ -9,6 +10,7 @@ import {
   type Team,
   type Vec3,
 } from '@voxel-strike/shared';
+import { recordHotStoreCommit } from '../movement/networkDiagnostics';
 
 // ============================================================================
 // VISUAL STATE INTERFACE
@@ -83,6 +85,13 @@ export interface VisualState {
 
   /** Shared per-frame player candidates for visual-only combat effects. */
   combatFrameCache: CombatVisualFrameCache;
+
+  /** Active player indexes for visual-only gameplay effects. Mutated outside React. */
+  activeBlazeFlamethrowerPlayerIds: string[];
+  activeBlazeBurningPlayerIds: string[];
+  activePhantomVeilPlayerIds: string[];
+  activeChronosAegisPlayerIds: string[];
+  activeChronosAscendantPlayerIds: string[];
 }
 
 export interface LocalPlayerImpulse {
@@ -192,6 +201,8 @@ const DEFAULT_LOCAL_MOVEMENT: PlayerMovementState = {
 };
 
 const COMBAT_VISUAL_CELL_SIZE = 8;
+const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
+const PHANTOM_VEIL_ABILITY_ID = 'phantom_veil';
 
 const createCombatFrameCache = (): CombatVisualFrameCache => ({
   frameKey: -1,
@@ -233,6 +244,11 @@ const initialVisualState: VisualState = {
   localSlideVelocity: { x: 0, y: 0, z: 0 },
   localPlayerImpulses: [],
   combatFrameCache: createCombatFrameCache(),
+  activeBlazeFlamethrowerPlayerIds: [],
+  activeBlazeBurningPlayerIds: [],
+  activePhantomVeilPlayerIds: [],
+  activeChronosAegisPlayerIds: [],
+  activeChronosAscendantPlayerIds: [],
 };
 
 const REMOTE_HISTORY_LIMIT = 32;
@@ -378,6 +394,7 @@ export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses']
   const impulses = visualStore.getState().localPlayerImpulses;
   if (impulses.length === 0) return EMPTY_LOCAL_PLAYER_IMPULSES;
 
+  recordHotStoreCommit('visual.localPlayerImpulses');
   visualStore.setState({ localPlayerImpulses: [] });
   return impulses;
 };
@@ -389,6 +406,7 @@ export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses']
  * @param time - Duration of shake in milliseconds
  */
 export const setCameraShake = (intensity: number, time: number): void => {
+  recordHotStoreCommit('visual.cameraShake');
   visualStore.setState({ cameraShake: { intensity, time } });
 };
 
@@ -398,6 +416,7 @@ export const setCameraShake = (intensity: number, time: number): void => {
  * @param fov - FOV offset from default (0 = no adjustment)
  */
 export const setSlideFov = (fov: number): void => {
+  recordHotStoreCommit('visual.slideFov');
   visualStore.setState({ slideFov: fov });
 };
 
@@ -722,6 +741,77 @@ export const clearCombatVisualFrameCache = (): void => {
   cache.buckets.clear();
 };
 
+function removeIndexedPlayerId(ids: string[], playerId: string): boolean {
+  const index = ids.indexOf(playerId);
+  if (index < 0) return false;
+  ids.splice(index, 1);
+  return true;
+}
+
+function setIndexedPlayerId(ids: string[], playerId: string, active: boolean): boolean {
+  const index = ids.indexOf(playerId);
+  if (active) {
+    if (index >= 0) return false;
+    ids.push(playerId);
+    return true;
+  }
+
+  if (index < 0) return false;
+  ids.splice(index, 1);
+  return true;
+}
+
+function isVisibleLiveEffectPlayer(player: Player): boolean {
+  return (
+    player.state === 'alive' &&
+    player.visibility !== 'hidden' &&
+    player.visibility !== 'last_known' &&
+    player.visibility !== 'audible'
+  );
+}
+
+function hasActiveChronosAscendant(player: Player, nowMs: number): boolean {
+  if (player.heroId !== 'chronos' || !isVisibleLiveEffectPlayer(player)) return false;
+
+  const ability = player.abilities?.[CHRONOS_ASCENDANT_ABILITY_ID];
+  if (!ability?.isActive) return false;
+
+  const activatedAt = ability.activatedAt ?? nowMs;
+  return nowMs - activatedAt < CHRONOS_ASCENDANT_PARADOX_DURATION_MS;
+}
+
+export const syncPlayerVisualEffectIndexes = (
+  player: Player,
+  options: { localPlayerId?: string | null; nowMs?: number } = {}
+): void => {
+  const state = visualStore.getState();
+  const localPlayerId = options.localPlayerId ?? null;
+  const nowMs = options.nowMs ?? Date.now();
+  const isLocalPlayer = player.id === localPlayerId;
+  const visibleAlive = isVisibleLiveEffectPlayer(player);
+
+  setIndexedPlayerId(
+    state.activeBlazeFlamethrowerPlayerIds,
+    player.id,
+    !isLocalPlayer && visibleAlive && player.heroId === 'blaze' && player.movement.isJetpacking
+  );
+  setIndexedPlayerId(
+    state.activeBlazeBurningPlayerIds,
+    player.id,
+    visibleAlive && (player.onFireUntil ?? 0) > nowMs
+  );
+  setIndexedPlayerId(
+    state.activePhantomVeilPlayerIds,
+    player.id,
+    visibleAlive && player.heroId === 'phantom' && player.abilities?.[PHANTOM_VEIL_ABILITY_ID]?.isActive === true
+  );
+  setIndexedPlayerId(
+    state.activeChronosAscendantPlayerIds,
+    player.id,
+    hasActiveChronosAscendant(player, nowMs)
+  );
+};
+
 /**
  * Remove a player from all visual state maps.
  * Call this when a player disconnects or is removed from the game.
@@ -736,6 +826,11 @@ export const removePlayerLiveVisualState = (playerId: string): void => {
   state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
   state.remotePlayerAttackStates.delete(playerId);
+  removeIndexedPlayerId(state.activeBlazeFlamethrowerPlayerIds, playerId);
+  removeIndexedPlayerId(state.activeBlazeBurningPlayerIds, playerId);
+  removeIndexedPlayerId(state.activePhantomVeilPlayerIds, playerId);
+  removeIndexedPlayerId(state.activeChronosAegisPlayerIds, playerId);
+  removeIndexedPlayerId(state.activeChronosAscendantPlayerIds, playerId);
 };
 
 export const removePlayerVisualState = (playerId: string): void => {
@@ -747,13 +842,16 @@ export const setChronosAegisVisualState = (
   playerId: string,
   active: boolean,
   timestampMs = Date.now(),
-  durabilityRatio?: number
+  durabilityRatio?: number,
+  options: { renderWorldEffect?: boolean } = {}
 ): void => {
-  const states = visualStore.getState().chronosAegisStates;
+  const state = visualStore.getState();
+  const states = state.chronosAegisStates;
   const current = states.get(playerId);
   const nextDurabilityRatio = durabilityRatio === undefined
     ? current?.durabilityRatio ?? 1
     : Math.max(0, Math.min(1, durabilityRatio));
+  setIndexedPlayerId(state.activeChronosAegisPlayerIds, playerId, active && options.renderWorldEffect === true);
 
   if (current) {
     if (active && !current.active) {
@@ -803,6 +901,7 @@ function cloneDeathVisualSnapshot(snapshot: DeathVisualSnapshot): DeathVisualSna
 }
 
 function bumpDeathVisualRevision(state = visualStore.getState()): void {
+  recordHotStoreCommit('visual.deathVisuals');
   visualStore.setState({ deathVisualRevision: state.deathVisualRevision + 1 });
 }
 
@@ -964,6 +1063,7 @@ export const setFlamethrowerVisualPose = (
  * Clear all visual state (e.g., on game reset or disconnect).
  */
 export const clearVisualState = (): void => {
+  recordHotStoreCommit('visual.clear');
   visualStore.setState((state) => ({
     playerPositions: new Map(),
     playerRotations: new Map(),
@@ -988,6 +1088,11 @@ export const clearVisualState = (): void => {
     localSlideVelocity: { x: 0, y: 0, z: 0 },
     localPlayerImpulses: [],
     combatFrameCache: createCombatFrameCache(),
+    activeBlazeFlamethrowerPlayerIds: [],
+    activeBlazeBurningPlayerIds: [],
+    activePhantomVeilPlayerIds: [],
+    activeChronosAegisPlayerIds: [],
+    activeChronosAscendantPlayerIds: [],
   }));
 };
 

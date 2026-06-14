@@ -176,6 +176,9 @@ interface MatchStartGateMessage {
   mapSeed?: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   position?: { x: number; y: number; z: number };
+  movementEpoch?: number;
+  ackSeq?: number;
+  collisionRevision?: number;
 }
 
 interface MatchCancelledMessage {
@@ -1283,6 +1286,15 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       const localPlayer = useGameStore.getState().localPlayer;
       if (localPlayer && hasSpawnPosition && position) {
+        const movementEpoch = Number.isFinite(data.movementEpoch)
+          ? Math.max(0, Math.trunc(data.movementEpoch as number))
+          : 0;
+        const ackSeq = Number.isFinite(data.ackSeq)
+          ? Math.max(0, Math.trunc(data.ackSeq as number))
+          : 0;
+        const collisionRevision = Number.isFinite(data.collisionRevision)
+          ? Math.max(0, Math.trunc(data.collisionRevision as number))
+          : 0;
         const nextPlayer = {
           ...localPlayer,
           state: 'spawning' as const,
@@ -1290,7 +1302,10 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           velocity: { x: 0, y: 0, z: 0 },
         };
         setLocalPlayer(nextPlayer);
-        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), 0, nextPlayer.id);
+        resetLocalMovementPrediction(movementStateFromPlayer(nextPlayer), movementEpoch, nextPlayer.id, {
+          lastAckSeq: ackSeq,
+          collisionRevision,
+        });
       }
 
       setMatchStartGateKey(data.key);

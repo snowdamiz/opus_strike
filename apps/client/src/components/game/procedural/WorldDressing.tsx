@@ -35,6 +35,13 @@ interface DressingSet {
   crystals: DressingInstance[];
 }
 
+interface CachedDressingSet {
+  dressing: DressingSet;
+  manifestId: string;
+  instanceCount: number;
+  lastUsedAt: number;
+}
+
 interface ProtectedSurfaceZone {
   x: number;
   z: number;
@@ -52,7 +59,10 @@ const DRESSING_GEOMETRIES = {
 };
 
 const dressingMatrixDummy = new THREE.Object3D();
-const dressingSetCache = new Map<string, DressingSet>();
+const dressingSetCache = new Map<string, CachedDressingSet>();
+const DRESSING_SET_CACHE_MAX_ENTRIES = 8;
+const DRESSING_SET_CACHE_MAX_INSTANCES = 5200;
+let dressingSetCacheInstances = 0;
 
 function chunkIndex(x: number, y: number, z: number, chunk: VoxelChunk): number {
   return x + chunk.size.x * (z + chunk.size.z * y);
@@ -413,17 +423,46 @@ function getCachedDressingSet(
   const cacheKey = `${manifest.id}:${densityScale.toFixed(3)}:${Number.isFinite(maxInstances) ? Math.floor(maxInstances) : 'inf'}`;
   const cached = dressingSetCache.get(cacheKey);
   if (cached) {
-    return cached;
+    cached.lastUsedAt = performance.now();
+    return cached.dressing;
   }
 
   const dressing = createDressingSet(manifest, densityScale, maxInstances);
+  const instanceCount = dressing.tufts.length + dressing.pebbles.length + dressing.crystals.length;
 
-  dressingSetCache.set(cacheKey, dressing);
-  if (dressingSetCache.size > 8) {
-    const oldestKey = dressingSetCache.keys().next().value;
-    if (oldestKey) dressingSetCache.delete(oldestKey);
-  }
+  dressingSetCache.set(cacheKey, {
+    dressing,
+    manifestId: manifest.id,
+    instanceCount,
+    lastUsedAt: performance.now(),
+  });
+  dressingSetCacheInstances += instanceCount;
+  enforceDressingSetCacheBudget(manifest.id);
   return dressing;
+}
+
+function enforceDressingSetCacheBudget(activeManifestId: string): void {
+  if (
+    dressingSetCache.size <= DRESSING_SET_CACHE_MAX_ENTRIES &&
+    dressingSetCacheInstances <= DRESSING_SET_CACHE_MAX_INSTANCES
+  ) {
+    return;
+  }
+
+  const candidates = Array.from(dressingSetCache.entries())
+    .filter(([, entry]) => entry.manifestId !== activeManifestId)
+    .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+  for (const [cacheKey, entry] of candidates) {
+    if (
+      dressingSetCache.size <= DRESSING_SET_CACHE_MAX_ENTRIES &&
+      dressingSetCacheInstances <= DRESSING_SET_CACHE_MAX_INSTANCES
+    ) {
+      break;
+    }
+    dressingSetCache.delete(cacheKey);
+    dressingSetCacheInstances = Math.max(0, dressingSetCacheInstances - entry.instanceCount);
+  }
 }
 
 function useInstancedMatrices(ref: RefObject<THREE.InstancedMesh>, instances: DressingInstance[]): void {

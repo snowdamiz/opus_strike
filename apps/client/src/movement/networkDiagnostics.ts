@@ -26,6 +26,25 @@ export interface HitchFrameWorkSample {
   work: FrameWorkAggregate[];
 }
 
+export interface FrameSchedulerDiagnostics {
+  activeCallbacks: number;
+  callbacksBySystem: Record<string, number>;
+}
+
+export interface EffectSlotDiagnostics {
+  active: number;
+  hiddenMounted: number;
+  capacity: number;
+  pressure: number;
+}
+
+export interface DynamicLightDiagnostics {
+  registered: number;
+  activeCandidates: number;
+  enabled: number;
+  budget: number;
+}
+
 export interface MovementNetworkDiagnosticsSnapshot {
   commandsGenerated: number;
   commandsSent: number;
@@ -60,6 +79,11 @@ export interface MovementNetworkDiagnosticsSnapshot {
   remoteTransformSnapshotsAdded: number;
   frameWorkSamples: FrameWorkSample[];
   hitchFrameWork: HitchFrameWorkSample[];
+  frameScheduler: FrameSchedulerDiagnostics;
+  effectSlots: Record<string, EffectSlotDiagnostics>;
+  frameAllocations: Record<string, number>;
+  hotStoreCommits: Record<string, number>;
+  dynamicLights: DynamicLightDiagnostics;
 }
 
 const SAMPLE_LIMIT = 120;
@@ -108,6 +132,19 @@ const diagnostics: MovementNetworkDiagnosticsSnapshot = {
   remoteTransformSnapshotsAdded: 0,
   frameWorkSamples: [],
   hitchFrameWork: [],
+  frameScheduler: {
+    activeCallbacks: 0,
+    callbacksBySystem: {},
+  },
+  effectSlots: {},
+  frameAllocations: {},
+  hotStoreCommits: {},
+  dynamicLights: {
+    registered: 0,
+    activeCandidates: 0,
+    enabled: 0,
+    budget: 0,
+  },
 };
 
 let lastAuthorityAckReceivedAtMs = 0;
@@ -148,6 +185,14 @@ function cloneHitchFrameWorkSample(sample: HitchFrameWorkSample): HitchFrameWork
     ...sample,
     work: sample.work.map((entry) => ({ ...entry })),
   };
+}
+
+function cloneEffectSlotDiagnosticsByType(): Record<string, EffectSlotDiagnostics> {
+  const result: Record<string, EffectSlotDiagnostics> = {};
+  for (const [type, stats] of Object.entries(diagnostics.effectSlots)) {
+    result[type] = { ...stats };
+  }
+  return result;
 }
 
 function aggregateFrameWork(startedAfterMs: number, endedAtMs: number): FrameWorkAggregate[] {
@@ -200,6 +245,14 @@ function cloneDiagnostics(): MovementNetworkDiagnosticsSnapshot {
     localReactiveUpdates: { ...diagnostics.localReactiveUpdates },
     frameWorkSamples: diagnostics.frameWorkSamples.map(cloneFrameWorkSample),
     hitchFrameWork: diagnostics.hitchFrameWork.map(cloneHitchFrameWorkSample),
+    frameScheduler: {
+      activeCallbacks: diagnostics.frameScheduler.activeCallbacks,
+      callbacksBySystem: { ...diagnostics.frameScheduler.callbacksBySystem },
+    },
+    effectSlots: cloneEffectSlotDiagnosticsByType(),
+    frameAllocations: { ...diagnostics.frameAllocations },
+    hotStoreCommits: { ...diagnostics.hotStoreCommits },
+    dynamicLights: { ...diagnostics.dynamicLights },
   };
 }
 
@@ -240,6 +293,15 @@ export function resetMovementNetworkDiagnostics(): void {
   diagnostics.remoteTransformSnapshotsAdded = 0;
   diagnostics.frameWorkSamples.length = 0;
   diagnostics.hitchFrameWork.length = 0;
+  diagnostics.frameScheduler.activeCallbacks = 0;
+  diagnostics.frameScheduler.callbacksBySystem = {};
+  diagnostics.effectSlots = {};
+  diagnostics.frameAllocations = {};
+  diagnostics.hotStoreCommits = {};
+  diagnostics.dynamicLights.registered = 0;
+  diagnostics.dynamicLights.activeCandidates = 0;
+  diagnostics.dynamicLights.enabled = 0;
+  diagnostics.dynamicLights.budget = 0;
   lastAuthorityAckReceivedAtMs = 0;
   lastFrameWorkMarkAtMs = 0;
   activeFrameWorkStartedAtMs = 0;
@@ -332,6 +394,10 @@ export function recordLocalReactiveUpdate(source: LocalReactiveUpdateSource): vo
   diagnostics.localReactiveUpdates[source]++;
 }
 
+export function recordHotStoreCommit(slice: string, count = 1): void {
+  diagnostics.hotStoreCommits[slice] = (diagnostics.hotStoreCommits[slice] ?? 0) + Math.max(0, count);
+}
+
 export function recordTransformMessage(input: {
   transformCount: number;
   selfTransformCount: number;
@@ -342,6 +408,40 @@ export function recordTransformMessage(input: {
     diagnostics.selfOnlyTransformMessages++;
   }
   diagnostics.remoteTransformSnapshotsAdded += input.remoteTransformCount;
+}
+
+export function recordFrameSchedulerDiagnostics(
+  callbacksBySystem: Record<string, number>
+): void {
+  diagnostics.frameScheduler.callbacksBySystem = { ...callbacksBySystem };
+  diagnostics.frameScheduler.activeCallbacks = Object.values(callbacksBySystem).reduce(
+    (total, count) => total + count,
+    0
+  );
+}
+
+export function recordEffectSlotDiagnostics(
+  type: string,
+  stats: Pick<EffectSlotDiagnostics, 'active' | 'hiddenMounted' | 'capacity'>
+): void {
+  const capacity = Math.max(0, stats.capacity);
+  diagnostics.effectSlots[type] = {
+    active: Math.max(0, stats.active),
+    hiddenMounted: Math.max(0, stats.hiddenMounted),
+    capacity,
+    pressure: capacity > 0 ? Math.max(0, stats.active) / capacity : 0,
+  };
+}
+
+export function recordFrameAllocation(label: string, count = 1): void {
+  diagnostics.frameAllocations[label] = (diagnostics.frameAllocations[label] ?? 0) + Math.max(0, count);
+}
+
+export function recordDynamicLightDiagnostics(stats: DynamicLightDiagnostics): void {
+  diagnostics.dynamicLights.registered = Math.max(0, stats.registered);
+  diagnostics.dynamicLights.activeCandidates = Math.max(0, stats.activeCandidates);
+  diagnostics.dynamicLights.enabled = Math.max(0, stats.enabled);
+  diagnostics.dynamicLights.budget = Math.max(0, stats.budget);
 }
 
 export function recordFrameWorkDuration(label: string, startedAtMs: number, endedAtMs = nowMs()): void {

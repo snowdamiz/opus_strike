@@ -162,6 +162,9 @@ export interface MatchStartGateMessage {
   mapSeed: number;
   mapThemeId?: VoxelMapTheme['id'] | null;
   position: Vec3;
+  movementEpoch: number;
+  ackSeq: number;
+  collisionRevision?: number;
 }
 
 export interface MatchCancelledMessage {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
@@ -11,6 +11,10 @@ import {
 import { SHARED_GEOMETRIES } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
+import {
+  measureFrameWork,
+  recordEffectSlotDiagnostics,
+} from '../../movement/networkDiagnostics';
 
 export type ObservedAbilityCastEffectKind =
   | 'phantom_void_ray_charge'
@@ -50,10 +54,61 @@ const observedCastSlots: Array<{
   effect: null,
   token: 0,
 }));
+const observedCastActiveSlotIndices: number[] = [];
+const observedCastActiveSlotFlags = new Uint8Array(OBSERVED_CAST_EFFECT_CAPACITY);
 let observedCastTokenCounter = 0;
+
+interface ObservedAbilityCastSlotRuntime {
+  groupRef: RefObject<THREE.Group>;
+  coreRef: RefObject<THREE.Mesh>;
+  outerRef: RefObject<THREE.Mesh>;
+  shellRef: RefObject<THREE.Mesh>;
+  ringARef: RefObject<THREE.Mesh>;
+  ringBRef: RefObject<THREE.Mesh>;
+  ringCRef: RefObject<THREE.Mesh>;
+  lightRef: RefObject<THREE.PointLight>;
+  position: THREE.Vector3;
+  materials: {
+    core: THREE.MeshBasicMaterial;
+    outer: THREE.MeshBasicMaterial;
+    shell: THREE.MeshBasicMaterial;
+    ring: THREE.MeshBasicMaterial;
+  };
+  lastSlotToken: number;
+}
+
+type RegisterObservedCastSlot = (slotIndex: number, runtime: ObservedAbilityCastSlotRuntime | null) => void;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function markObservedCastSlotActive(slotIndex: number): void {
+  if (observedCastActiveSlotFlags[slotIndex]) return;
+  observedCastActiveSlotFlags[slotIndex] = 1;
+  observedCastActiveSlotIndices.push(slotIndex);
+}
+
+function markObservedCastSlotInactive(slotIndex: number): void {
+  observedCastActiveSlotFlags[slotIndex] = 0;
+}
+
+function compactObservedCastActiveSlotIndices(): void {
+  let writeIndex = 0;
+  for (let readIndex = 0; readIndex < observedCastActiveSlotIndices.length; readIndex++) {
+    const slotIndex = observedCastActiveSlotIndices[readIndex];
+    if (!observedCastActiveSlotFlags[slotIndex]) continue;
+    observedCastActiveSlotIndices[writeIndex++] = slotIndex;
+  }
+  observedCastActiveSlotIndices.length = writeIndex;
+}
+
+function clearObservedCastSlot(slotIndex: number): void {
+  const slot = observedCastSlots[slotIndex];
+  if (!slot.effect) return;
+  slot.effect = null;
+  slot.token++;
+  markObservedCastSlotInactive(slotIndex);
 }
 
 function offsetObservedChronosCastPosition(
@@ -74,7 +129,8 @@ export function startObservedAbilityCastEffect(effect: ObservedAbilityCastEffect
   const startTime = effect.startTime ?? now;
   const endTime = Math.max(startTime + MIN_CAST_EFFECT_DURATION_MS, effect.endTime);
 
-  for (const slot of observedCastSlots) {
+  for (let slotIndex = 0; slotIndex < observedCastSlots.length; slotIndex++) {
+    const slot = observedCastSlots[slotIndex];
     const activeEffect = slot.effect;
     if (!activeEffect) continue;
     if (
@@ -82,8 +138,7 @@ export function startObservedAbilityCastEffect(effect: ObservedAbilityCastEffect
       activeEffect.playerId === effect.playerId &&
       activeEffect.abilityId === effect.abilityId
     ) {
-      slot.effect = null;
-      slot.token++;
+      clearObservedCastSlot(slotIndex);
     }
   }
 
@@ -93,16 +148,35 @@ export function startObservedAbilityCastEffect(effect: ObservedAbilityCastEffect
     endTime,
     scale: effect.scale ?? 1,
   };
-  const existingSlot = observedCastSlots.find((slot) => slot.effect?.id === effect.id);
-  const emptySlot = observedCastSlots.find((slot) => !slot.effect);
-  const slot = existingSlot ?? emptySlot ?? observedCastSlots.reduce((oldest, candidate) => {
-    const oldestEnd = oldest.effect?.endTime ?? Number.POSITIVE_INFINITY;
-    const candidateEnd = candidate.effect?.endTime ?? Number.POSITIVE_INFINITY;
-    return candidateEnd < oldestEnd ? candidate : oldest;
-  }, observedCastSlots[0]);
+  let targetSlotIndex = -1;
+  let emptySlotIndex = -1;
+  let oldestSlotIndex = 0;
+  let oldestEnd = observedCastSlots[0].effect?.endTime ?? Number.POSITIVE_INFINITY;
 
+  for (let slotIndex = 0; slotIndex < observedCastSlots.length; slotIndex++) {
+    const slot = observedCastSlots[slotIndex];
+    if (slot.effect?.id === effect.id) {
+      targetSlotIndex = slotIndex;
+      break;
+    }
+    if (!slot.effect && emptySlotIndex < 0) {
+      emptySlotIndex = slotIndex;
+    }
+    const candidateEnd = slot.effect?.endTime ?? Number.POSITIVE_INFINITY;
+    if (candidateEnd < oldestEnd) {
+      oldestEnd = candidateEnd;
+      oldestSlotIndex = slotIndex;
+    }
+  }
+
+  if (targetSlotIndex < 0) {
+    targetSlotIndex = emptySlotIndex >= 0 ? emptySlotIndex : oldestSlotIndex;
+  }
+
+  const slot = observedCastSlots[targetSlotIndex];
   slot.effect = nextEffect;
   slot.token = ++observedCastTokenCounter;
+  markObservedCastSlotActive(targetSlotIndex);
 }
 
 export function stopObservedAbilityCastEffects(playerId: string, abilityId?: ObservedAbilityCastEffectKind): void {
@@ -118,14 +192,15 @@ export function stopObservedAbilityCastEffects(playerId: string, abilityId?: Obs
 }
 
 function pruneObservedAbilityCastEffects(now: number): void {
-  for (const slot of observedCastSlots) {
+  for (const slotIndex of observedCastActiveSlotIndices) {
+    const slot = observedCastSlots[slotIndex];
     const effect = slot.effect;
     if (!effect) continue;
     if (now > effect.endTime + CAST_EFFECT_FADE_OUT_MS) {
-      slot.effect = null;
-      slot.token++;
+      clearObservedCastSlot(slotIndex);
     }
   }
+  compactObservedCastActiveSlotIndices();
 }
 
 function writeObservedCastPosition(
@@ -175,7 +250,93 @@ function writeObservedCastPosition(
   return false;
 }
 
-function ObservedAbilityCastEffectSlot({ slotIndex }: { slotIndex: number }) {
+function updateObservedAbilityCastEffectSlot(
+  runtime: ObservedAbilityCastSlotRuntime,
+  slotIndex: number,
+  delta: number
+): void {
+  const group = runtime.groupRef.current;
+  if (!group) return;
+
+  const slot = observedCastSlots[slotIndex];
+  const effect = slot.effect;
+  if (!effect) {
+    group.visible = false;
+    if (runtime.lightRef.current) runtime.lightRef.current.intensity = 0;
+    return;
+  }
+
+  const { materials } = runtime;
+  if (runtime.lastSlotToken !== slot.token) {
+    runtime.lastSlotToken = slot.token;
+    materials.outer.color.setHex(effect.color);
+    materials.shell.color.setHex(effect.secondaryColor);
+    materials.ring.color.setHex(effect.secondaryColor);
+    if (runtime.lightRef.current) runtime.lightRef.current.color.setHex(effect.color);
+  }
+
+  if (!writeObservedCastPosition(effect, runtime.position)) {
+    group.visible = false;
+    return;
+  }
+
+  const now = getFrameClock().epochNowMs;
+  const elapsedMs = Math.max(0, now - effect.startTime);
+  const durationMs = Math.max(MIN_CAST_EFFECT_DURATION_MS, effect.endTime - effect.startTime);
+  const charge = clamp01(elapsedMs / durationMs);
+  const fadeIn = clamp01(elapsedMs / CAST_EFFECT_FADE_IN_MS);
+  const fadeOut = now <= effect.endTime
+    ? 1
+    : 1 - clamp01((now - effect.endTime) / CAST_EFFECT_FADE_OUT_MS);
+  const intensity = fadeIn * fadeOut;
+  const pulse = 0.5 + 0.5 * Math.sin(elapsedMs * 0.021);
+  const baseScale = effect.scale * (0.82 + charge * 0.32 + pulse * 0.08);
+
+  group.visible = intensity > 0.01;
+  group.position.copy(runtime.position);
+  group.scale.setScalar(baseScale);
+  group.rotation.y += delta * (0.9 + charge * 1.8);
+  group.rotation.z += delta * (0.35 + pulse * 0.45);
+
+  if (runtime.coreRef.current) {
+    runtime.coreRef.current.scale.setScalar(0.12 + charge * 0.16 + pulse * 0.035);
+  }
+  if (runtime.outerRef.current) {
+    runtime.outerRef.current.scale.setScalar(0.38 + charge * 0.24 + pulse * 0.08);
+  }
+  if (runtime.shellRef.current) {
+    runtime.shellRef.current.scale.setScalar(0.58 + charge * 0.32 + pulse * 0.08);
+  }
+  if (runtime.ringARef.current) {
+    runtime.ringARef.current.rotation.z += delta * 1.8;
+    runtime.ringARef.current.scale.setScalar(0.78 + charge * 0.48 + pulse * 0.08);
+  }
+  if (runtime.ringBRef.current) {
+    runtime.ringBRef.current.rotation.z -= delta * 1.35;
+    runtime.ringBRef.current.scale.setScalar(0.62 + charge * 0.42 + pulse * 0.06);
+  }
+  if (runtime.ringCRef.current) {
+    runtime.ringCRef.current.rotation.z += delta * 1.1;
+    runtime.ringCRef.current.scale.setScalar(0.46 + charge * 0.34 + pulse * 0.05);
+  }
+
+  materials.core.opacity = intensity * (0.52 + pulse * 0.22);
+  materials.outer.opacity = intensity * (0.22 + charge * 0.18);
+  materials.shell.opacity = intensity * (0.13 + charge * 0.11);
+  materials.ring.opacity = intensity * (0.34 + pulse * 0.18);
+
+  if (runtime.lightRef.current) {
+    runtime.lightRef.current.intensity = intensity * (1.7 + charge * 2.6 + pulse * 0.9);
+  }
+}
+
+function ObservedAbilityCastEffectSlot({
+  slotIndex,
+  registerSlot,
+}: {
+  slotIndex: number;
+  registerSlot: RegisterObservedCastSlot;
+}) {
   const groupRef = useRef<THREE.Group>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const outerRef = useRef<THREE.Mesh>(null);
@@ -185,7 +346,6 @@ function ObservedAbilityCastEffectSlot({ slotIndex }: { slotIndex: number }) {
   const ringCRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const positionRef = useRef(new THREE.Vector3());
-  const lastSlotTokenRef = useRef(-1);
 
   const materials = useMemo(() => {
     const core = new THREE.MeshBasicMaterial({
@@ -224,6 +384,27 @@ function ObservedAbilityCastEffectSlot({ slotIndex }: { slotIndex: number }) {
     return { core, outer, shell, ring };
   }, []);
 
+  const runtime = useMemo<ObservedAbilityCastSlotRuntime>(() => ({
+    groupRef,
+    coreRef,
+    outerRef,
+    shellRef,
+    ringARef,
+    ringBRef,
+    ringCRef,
+    lightRef,
+    position: positionRef.current,
+    materials,
+    lastSlotToken: -1,
+  }), [materials]);
+
+  useEffect(() => {
+    registerSlot(slotIndex, runtime);
+    return () => {
+      registerSlot(slotIndex, null);
+    };
+  }, [registerSlot, runtime, slotIndex]);
+
   useEffect(() => {
     return () => {
       materials.core.dispose();
@@ -232,81 +413,6 @@ function ObservedAbilityCastEffectSlot({ slotIndex }: { slotIndex: number }) {
       materials.ring.dispose();
     };
   }, [materials]);
-
-  useFrame((_, delta) => {
-    const group = groupRef.current;
-    if (!group) return;
-
-    const slot = observedCastSlots[slotIndex];
-    const effect = slot.effect;
-    if (!effect) {
-      group.visible = false;
-      if (lightRef.current) lightRef.current.intensity = 0;
-      return;
-    }
-
-    if (lastSlotTokenRef.current !== slot.token) {
-      lastSlotTokenRef.current = slot.token;
-      materials.outer.color.setHex(effect.color);
-      materials.shell.color.setHex(effect.secondaryColor);
-      materials.ring.color.setHex(effect.secondaryColor);
-      if (lightRef.current) lightRef.current.color.setHex(effect.color);
-    }
-
-    if (!writeObservedCastPosition(effect, positionRef.current)) {
-      group.visible = false;
-      return;
-    }
-
-    const now = getFrameClock().epochNowMs;
-    const elapsedMs = Math.max(0, now - effect.startTime);
-    const durationMs = Math.max(MIN_CAST_EFFECT_DURATION_MS, effect.endTime - effect.startTime);
-    const charge = clamp01(elapsedMs / durationMs);
-    const fadeIn = clamp01(elapsedMs / CAST_EFFECT_FADE_IN_MS);
-    const fadeOut = now <= effect.endTime
-      ? 1
-      : 1 - clamp01((now - effect.endTime) / CAST_EFFECT_FADE_OUT_MS);
-    const intensity = fadeIn * fadeOut;
-    const pulse = 0.5 + 0.5 * Math.sin(elapsedMs * 0.021);
-    const baseScale = effect.scale * (0.82 + charge * 0.32 + pulse * 0.08);
-
-    group.visible = intensity > 0.01;
-    group.position.copy(positionRef.current);
-    group.scale.setScalar(baseScale);
-    group.rotation.y += delta * (0.9 + charge * 1.8);
-    group.rotation.z += delta * (0.35 + pulse * 0.45);
-
-    if (coreRef.current) {
-      coreRef.current.scale.setScalar(0.12 + charge * 0.16 + pulse * 0.035);
-    }
-    if (outerRef.current) {
-      outerRef.current.scale.setScalar(0.38 + charge * 0.24 + pulse * 0.08);
-    }
-    if (shellRef.current) {
-      shellRef.current.scale.setScalar(0.58 + charge * 0.32 + pulse * 0.08);
-    }
-    if (ringARef.current) {
-      ringARef.current.rotation.z += delta * 1.8;
-      ringARef.current.scale.setScalar(0.78 + charge * 0.48 + pulse * 0.08);
-    }
-    if (ringBRef.current) {
-      ringBRef.current.rotation.z -= delta * 1.35;
-      ringBRef.current.scale.setScalar(0.62 + charge * 0.42 + pulse * 0.06);
-    }
-    if (ringCRef.current) {
-      ringCRef.current.rotation.z += delta * 1.1;
-      ringCRef.current.scale.setScalar(0.46 + charge * 0.34 + pulse * 0.05);
-    }
-
-    materials.core.opacity = intensity * (0.52 + pulse * 0.22);
-    materials.outer.opacity = intensity * (0.22 + charge * 0.18);
-    materials.shell.opacity = intensity * (0.13 + charge * 0.11);
-    materials.ring.opacity = intensity * (0.34 + pulse * 0.18);
-
-    if (lightRef.current) {
-      lightRef.current.intensity = intensity * (1.7 + charge * 2.6 + pulse * 0.9);
-    }
-  });
 
   return (
     <group ref={groupRef}>
@@ -388,14 +494,40 @@ export function appendObservedCastGpuPrewarmObjects(target: THREE.Object3D): voi
 }
 
 export function ObservedAbilityCastEffectsManager() {
-  useFrame(() => {
-    pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
+  const slotRuntimesRef = useRef<Array<ObservedAbilityCastSlotRuntime | null>>(
+    Array.from({ length: OBSERVED_CAST_EFFECT_CAPACITY }, () => null)
+  );
+  const registerSlot = useCallback<RegisterObservedCastSlot>((slotIndex, runtime) => {
+    slotRuntimesRef.current[slotIndex] = runtime;
+  }, []);
+
+  useFrame((_, delta) => {
+    measureFrameWork('frame.effects.observedCasts', () => {
+      pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
+
+      const runtimes = slotRuntimesRef.current;
+      for (const slotIndex of observedCastActiveSlotIndices) {
+        const runtime = runtimes[slotIndex];
+        if (runtime) updateObservedAbilityCastEffectSlot(runtime, slotIndex, delta);
+      }
+
+      const active = observedCastActiveSlotIndices.length;
+      recordEffectSlotDiagnostics('observedAbilityCast', {
+        active,
+        capacity: OBSERVED_CAST_EFFECT_CAPACITY,
+        hiddenMounted: OBSERVED_CAST_EFFECT_CAPACITY - active,
+      });
+    });
   });
 
   return (
     <group>
       {OBSERVED_CAST_EFFECT_SLOT_INDICES.map((slotIndex) => (
-        <ObservedAbilityCastEffectSlot key={slotIndex} slotIndex={slotIndex} />
+        <ObservedAbilityCastEffectSlot
+          key={slotIndex}
+          slotIndex={slotIndex}
+          registerSlot={registerSlot}
+        />
       ))}
     </group>
   );

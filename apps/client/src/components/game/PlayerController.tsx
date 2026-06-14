@@ -325,6 +325,7 @@ function buildPracticeAbilityState(
   return {
     abilityId,
     cooldownRemaining: abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0,
+    cooldownUntil: now + (abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0) * 1000,
     charges: existingAbility?.charges ?? abilityDef?.charges ?? 1,
     isActive,
     activatedAt: now,
@@ -535,7 +536,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     playBlazeRocket, playBlazeBombTarget, playBlazeBombRelease, playBlazeBombFall, playBlazeBombExplode, playBlazeRocketJump,
     startFlamethrowerSound, stopFlamethrowerSound,
   } = useAbilitySounds();
-  const { updateWalkingSound, preloadWalkingSound } = useMovementSounds();
+  const { updateWalkingSound, preloadWalkingSound, startSlide, stopSlide } = useMovementSounds();
 
   // Player hooks
   const cameraControl = useCamera({ isPointerLocked });
@@ -569,6 +570,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const latestAbilityCastHintsRef = useRef<AbilityCastOriginHint[]>([]);
   const lastCrouchHeldRef = useRef(false);
   const pendingCrouchPressedRef = useRef(false);
+  const forceNextMovementFlushRef = useRef(false);
   const lastHeroIdRef = useRef<string | null>(null);
   const reloadPressedRef = useRef(false);
   const pendingReloadInputRef = useRef(false);
@@ -589,11 +591,15 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const resetMovementCommandBuffer = useCallback(() => {
     movementCommandAccumulatorRef.current = 0;
     pendingMovementCommandsRef.current = [];
+    forceNextMovementFlushRef.current = false;
     lastCrouchHeldRef.current = false;
     pendingCrouchPressedRef.current = false;
+    if (wasSlidingLastFrameRef.current) {
+      stopSlide();
+    }
     wasSlidingLastFrameRef.current = false;
     localVisualInterpolationRef.current.initialized = false;
-  }, []);
+  }, [stopSlide]);
 
   const lockHeroActions = useCallback((heroId: HeroId, durationMs: number, timestampMs = Date.now()) => {
     if (heroId === 'blaze') {
@@ -630,18 +636,24 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       : actionLockUntilRef.current > timestampMs
   ), [isBlazeActionLocked]);
 
-  const flushMovementCommands = useCallback((nowMs: number) => {
+  const flushMovementCommands = useCallback((nowMs: number, force = false) => {
     const pending = pendingMovementCommandsRef.current;
     if (pending.length === 0) return;
-    if (pending.length < MOVEMENT_COMMAND_TARGET_PACKET_SIZE && nowMs - lastSendRef.current < MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS) {
+    if (
+      !force &&
+      pending.length < MOVEMENT_COMMAND_TARGET_PACKET_SIZE &&
+      nowMs - lastSendRef.current < MOVEMENT_COMMAND_MAX_FLUSH_AGE_MS
+    ) {
       return;
     }
 
-    const pendingBeforeFlush = pending.length;
-    const packetSize = Math.min(pending.length, MOVEMENT_MAX_PACKET_COMMANDS);
-    const packetCommands = pending.splice(0, packetSize);
-    sendMovementCommands(createMovementCommandPacket(packetCommands));
-    recordMovementCommandsSent(packetCommands.length, pendingBeforeFlush);
+    do {
+      const pendingBeforeFlush = pending.length;
+      const packetSize = Math.min(pending.length, MOVEMENT_MAX_PACKET_COMMANDS);
+      const packetCommands = pending.splice(0, packetSize);
+      sendMovementCommands(createMovementCommandPacket(packetCommands));
+      recordMovementCommandsSent(packetCommands.length, pendingBeforeFlush);
+    } while (force && pending.length > 0);
     lastSendRef.current = nowMs;
   }, [sendMovementCommands]);
 
@@ -793,6 +805,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
   useEffect(() => {
     return () => {
+      resetMovementCommandBuffer();
       resetBlazeFlamethrower();
       resetViewmodelPoseState('unmount', lastHeroIdRef.current as HeroId | null);
       lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
@@ -800,7 +813,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       setChronosPrimaryHeld(false);
       setChronosLifelineQueuedState(false);
     };
-  }, [clearHeroActionLock, resetBlazeFlamethrower, resetViewmodelPoseState, setChronosLifelineQueuedState]);
+  }, [clearHeroActionLock, resetBlazeFlamethrower, resetMovementCommandBuffer, resetViewmodelPoseState, setChronosLifelineQueuedState]);
 
   // Handle targeting confirmations via click
   const handleClick = useCallback(() => {
@@ -910,7 +923,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       movement.refs.slideIntensity.current = 0;
       setLocalSlideIntensity(0);
       setLocalVisualMovement(INACTIVE_LOCAL_MOVEMENT);
-      wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
       lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
       clearHeroActionLock();
@@ -932,6 +944,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
     if (appliedAuthorities.length > 0) {
       recordAuthorityFrameApplied(appliedAuthorities.map((application) => application.result));
+      if (appliedAuthorities.some((application) => (
+        application.authority.correctionReason &&
+        application.authority.correctionReason !== 'normal'
+      ))) {
+        resetMovementCommandBuffer();
+      }
 
       let reactiveAuthority = appliedAuthorities[appliedAuthorities.length - 1] ?? null;
       for (let index = appliedAuthorities.length - 1; index >= 0; index--) {
@@ -1028,7 +1046,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       movement.refs.smoothedY.current = null;
       setLocalSlideIntensity(0);
       setLocalVisualMovement(INACTIVE_LOCAL_MOVEMENT);
-      wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
       lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
       clearHeroActionLock();
@@ -1079,7 +1096,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         isJetpacking: false,
         isGliding: false,
       });
-      wasSlidingLastFrameRef.current = false;
       resetPredictedAbilitySounds();
       lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
       clearHeroActionLock();
@@ -1244,6 +1260,15 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
 
     const phantomPrimaryReloading = heroId === 'phantom' && phantomAbilities.phantomPrimaryReloadingRef.current;
+    const phantomReloadBlocksNonBlinkCasts = heroId === 'phantom' && phantomPrimaryReloading;
+    const localAbilityInput = phantomReloadBlocksNonBlinkCasts
+      ? {
+        ...frameInput,
+        secondaryFire: false,
+        ability2: false,
+        ultimate: false,
+      }
+      : frameInput;
     const phantomPrimaryHeldForPose = (
       heroId === 'phantom' &&
       frameInput.primaryFire &&
@@ -1257,6 +1282,19 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           ? frameInput.primaryFire && !bombTargetingForFrame
           : frameInput.primaryFire;
     const ability2ForServer = frameInput.ability2;
+    const movementBarrierInputPressed = (
+      (heroId === 'phantom' && frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
+      (heroId === 'blaze' && ability2ForServer && !abilitySystem.abilityPressedRef.current.ability2) ||
+      (heroId === 'chronos' && frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate)
+    );
+    if (movementBarrierInputPressed) {
+      flushMovementCommands(now, true);
+      forceNextMovementFlushRef.current = true;
+      movementCommandAccumulatorRef.current = Math.max(
+        movementCommandAccumulatorRef.current,
+        MOVEMENT_SUBSTEP_SECONDS
+      );
+    }
 
     // Create ability context
     const abilityCtx = {
@@ -1271,7 +1309,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         position: localPlayer.position,
         ultimateCharge: localPlayer.ultimateCharge,
       },
-      inputState: frameInput,
+      inputState: localAbilityInput,
       dt,
       isGrounded: movement.refs.isGrounded.current,
       camera,
@@ -1445,7 +1483,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       }
 
       // Ability 2 (Q)
-      if (frameInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
+      if (localAbilityInput.ability2 && !abilitySystem.abilityPressedRef.current.ability2) {
         if (abilitySystem.canUseAbility(heroDef.ability2.abilityId, false)) {
           if (heroId === 'phantom') {
             const abilityId = heroDef.ability2.abilityId;
@@ -1525,7 +1563,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       abilitySystem.abilityPressedRef.current.ability2 = rawFrameInput.ability2;
 
       // Ultimate (F)
-      if (frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
+      if (localAbilityInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate) {
         if (abilitySystem.canUseAbility(heroDef.ultimate.abilityId, true)) {
           if (heroId === 'phantom') {
             if (isPracticeMode) {
@@ -1696,7 +1734,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       accumulatorAfterStepSeconds: movementCommandAccumulatorRef.current,
       catchup: substepsThisFrame > 1,
     });
-    flushMovementCommands(now);
+    flushMovementCommands(now, forceNextMovementFlushRef.current);
+    forceNextMovementFlushRef.current = false;
     pendingReloadInputRef.current = false;
 
     position.set(predictedState.position.x, predictedState.position.y, predictedState.position.z);
@@ -1735,6 +1774,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
     const isSliding = predictedState.movement.isSliding;
     const wasSlidingBeforeFrame = wasSlidingLastFrameRef.current;
+    if (isSliding && !wasSlidingBeforeFrame) {
+      startSlide();
+    } else if (!isSliding && wasSlidingBeforeFrame) {
+      stopSlide();
+    }
     wasSlidingLastFrameRef.current = isSliding;
     const justLanded = predictedState.movement.isGrounded && !wasGroundedBeforePrediction;
     if (heroId === 'hookshot' && predictedState.movement.isGrounded && !wasGroundedBeforePrediction) {

@@ -126,6 +126,7 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
     const predictedState = predictLocalChronosAscendantParadox(localPlayer, ctx.yaw);
     const existingAbility = localPlayer.abilities?.[abilityId];
     const abilityDef = ABILITY_DEFINITIONS[abilityId];
+    const cooldownSeconds = abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0;
 
     triggerChronosAscendantParadoxPose(now);
     markPredictedLocalAbilityVisual(abilityId, localPlayer.id, `predicted_chronos_ascendant_${localPlayer.id}_${now}`, {
@@ -142,7 +143,8 @@ export function useChronosAbilities(): UseChronosAbilitiesReturn {
         ...localPlayer.abilities,
         [abilityId]: {
           abilityId,
-          cooldownRemaining: abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0,
+          cooldownRemaining: cooldownSeconds,
+          cooldownUntil: cooldownSeconds > 0 ? now + cooldownSeconds * 1000 : 0,
           charges: existingAbility?.charges ?? abilityDef?.charges ?? 1,
           isActive: true,
           activatedAt: now,

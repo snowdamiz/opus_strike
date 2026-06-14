@@ -1,5 +1,4 @@
 import React, { useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { doesSegmentHitPlayerCombatHitbox } from '@voxel-strike/shared';
 import { useGameStore, type HookProjectileData } from '../../../store/gameStore';
@@ -24,6 +23,7 @@ import {
   updateRopeSegment,
 } from './rope';
 import { HookshotProjectileArrowHead } from './arrowHead';
+import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 
 // ============================================================================
 // HOOK PROJECTILE - Short range chain hooks (basic attack)
@@ -102,7 +102,7 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
   const localPlayerId = useGameStore(state => state.localPlayer?.id);
   const isLocalOwnerForRender = localPlayerId === hook.ownerId;
   
-  useFrame((frameState, delta) => {
+  useHookshotFrameUpdater(`hook-projectile:${hook.id}`, (frameState, delta) => {
     if (!hookRef.current || shouldRemoveRef.current) return;
     
     // Get player position without triggering re-renders

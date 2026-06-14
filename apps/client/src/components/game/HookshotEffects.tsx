@@ -1,5 +1,6 @@
 import { useGameStore } from '../../store/gameStore';
 import { useShallow } from 'zustand/shallow';
+import { useFrame } from '@react-three/fiber';
 import { 
   HookProjectile,
   DragHookEffect,
@@ -7,6 +8,7 @@ import {
   EarthWallEffect,
   GrappleLineEffect,
 } from './hookshot';
+import { runHookshotFrameUpdaters } from './hookshot/hookshotFrameRegistry';
 
 // Re-export targeting indicator for external use
 export { GrappleTrapTargetingIndicator } from './hookshot';
@@ -29,6 +31,8 @@ export function HookshotEffectsManager() {
     grappleLines: state.grappleLines,
     earthWalls: state.earthWalls,
   })));
+
+  useFrame(runHookshotFrameUpdaters);
   
   return (
     <group>

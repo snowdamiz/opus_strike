@@ -62,7 +62,6 @@ let activeImpactConfig: EffectQualityConfig = {
   maxActiveParticles: 620,
   maxVisibleRemoteAbilityEffects: 48,
   enableDecorativeLights: true,
-  slideSpeedLineCount: 36,
 };
 const PHANTOM_DIRE_IMPACT_CAPACITY = 48;
 const PHANTOM_DIRE_IMPACT_PARTICLES = 10;

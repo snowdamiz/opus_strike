@@ -27,6 +27,7 @@ import {
   setChronosAegisVisualState,
   setPlayerVisualRotation,
   setPlayerVisualTransform,
+  syncPlayerVisualEffectIndexes,
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
@@ -538,9 +539,11 @@ function normalizeAbilityVitals(
       : Number.isFinite(ability.cooldownRemaining)
         ? serverTime + Math.max(0, ability.cooldownRemaining || 0) * 1000
         : 0;
+    const cooldownRemainingMs = Math.max(0, cooldownUntil - serverTime);
     normalized[abilityId] = {
       abilityId: ability.abilityId || abilityId,
-      cooldownRemaining: Math.max(0, (cooldownUntil - serverTime) / 1000),
+      cooldownRemaining: cooldownRemainingMs / 1000,
+      cooldownUntil: cooldownRemainingMs > 0 ? Date.now() + cooldownRemainingMs : 0,
       charges: ability.charges,
       isActive: ability.isActive,
       activatedAt: ability.activatedAt,
@@ -868,8 +871,10 @@ export function setupPlayerTransformsHandler(
       playerId,
       chronosAegisActive,
       Date.now(),
-      transform.chronosAegisShieldRatio
+      transform.chronosAegisShieldRatio,
+      { renderWorldEffect: true }
     );
+    syncPlayerVisualEffectIndexes(remotePlayer, { localPlayerId: sessionId });
     return 'remote';
   };
 
@@ -969,6 +974,7 @@ export function setupPlayerVitalsHandler(
   localPlayerName: string
 ) {
   room.onMessage('playerVitals', measureNetworkMessage('playerVitals', (data: PlayerVitalsMessage) => {
+    const nowMs = Date.now();
     const initialStore = useGameStore.getState();
     let nextPlayers = initialStore.players;
     let nextLocalPlayer = initialStore.localPlayer;
@@ -1053,6 +1059,7 @@ export function setupPlayerVitalsHandler(
           if (nextLocalPlayer?.id === vitals.id) {
             nextLocalPlayer = existingPlayer;
           }
+          syncPlayerVisualEffectIndexes(existingPlayer, { localPlayerId: sessionId, nowMs });
           continue;
         }
 
@@ -1070,6 +1077,7 @@ export function setupPlayerVitalsHandler(
         nextLocalPlayer = next;
         recordLocalReactiveUpdate('vitals');
         shouldPublishTiming = true;
+        syncPlayerVisualEffectIndexes(next, { localPlayerId: sessionId, nowMs });
         if (!existing) {
           localVisualSyncs.push(next);
         }
@@ -1093,6 +1101,7 @@ export function setupPlayerVitalsHandler(
       } else {
         liveVisualUpdates.push(next);
       }
+      syncPlayerVisualEffectIndexes(next, { localPlayerId: sessionId, nowMs });
       shouldPublishTiming = true;
     }
 
@@ -1460,11 +1469,13 @@ function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
 
   const existingAbility = player.abilities?.[data.abilityId];
   const activatedAt = data.serverTime ?? Date.now();
+  const cooldownSeconds = abilityDef.cooldown ?? existingAbility?.cooldownRemaining ?? 0;
   const abilities = {
     ...player.abilities,
     [data.abilityId]: {
       abilityId: data.abilityId,
-      cooldownRemaining: abilityDef.cooldown ?? existingAbility?.cooldownRemaining ?? 0,
+      cooldownRemaining: cooldownSeconds,
+      cooldownUntil: Date.now() + cooldownSeconds * 1000,
       charges: existingAbility?.charges ?? abilityDef.charges ?? 1,
       isActive: true,
       activatedAt,

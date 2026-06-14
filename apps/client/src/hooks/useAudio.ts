@@ -155,7 +155,7 @@ const SOUND_EFFECTS = {
   walk: { path: '/sounds/walk.mp3', volume: 1.04 },
   jump: { path: '/sounds/jump.mp3', volume: 0.5 },
   land: { path: '/sounds/land.mp3', volume: 0.4 },
-  slide: { path: '/sounds/slide.mp3', volume: 0.18 },
+  slide: { path: '/sounds/slide.mp3', volume: 0.32 },
   wallRun: { path: '/sounds/wall_run.mp3', volume: 0.4 },
   
   // Abilities - Generic
@@ -168,8 +168,8 @@ const SOUND_EFFECTS = {
   phantomVeil: { path: '/sounds/phantom_veil.mp3', volume: 0.2 },
   phantomBasic: { path: '/sounds/phantom_basic.mp3', volume: 0.1872 },
   phantomReload: { path: '/sounds/phantom_reload.mp3', volume: 0.27 },
-  phantomShield: { path: '/sounds/phantom_shield.mp3', volume: 0.42 },
-  phantomShieldCast: { path: '/sounds/phantom_shield_cast.mp3', volume: 0.58 },
+  phantomShield: { path: '/sounds/phantom_shield.mp3', volume: 0.336 },
+  phantomShieldCast: { path: '/sounds/phantom_shield_cast.mp3', volume: 0.464 },
   phantomVoidRay: { path: '/sounds/phantom_strong.mp3', volume: 0.6 },
   phantomVoidRayCharge: { path: '/sounds/phantom_right_click_charge.mp3', volume: 0.45 },
   
@@ -1137,6 +1137,11 @@ let walkingSoundState = {
   movementStartTime: 0, // When continuous movement started
 };
 
+const WALKING_STEP_BASE_GAIN = 0.52;
+const WALKING_STEP_VOLUME_MULTIPLIER = 1.3;
+const RUNNING_STEP_VOLUME_MULTIPLIER = 1.4;
+const RUNNING_STEP_SPEED_RATIO = 1.1;
+
 // Sound effect helper hooks
 export function useMovementSounds() {
   const { playSound, playLoop, stopLoop, loadSound, initAudio } = useAudio();
@@ -1181,7 +1186,7 @@ export function useMovementSounds() {
   }, [loadSound]);
 
   // Helper to play a single footstep sound
-  const playFootstep = useCallback(() => {
+  const playFootstep = useCallback((volumeMultiplier = WALKING_STEP_VOLUME_MULTIPLIER) => {
     const ctx = initAudio();
     if (!ctx) return;
 
@@ -1204,7 +1209,7 @@ export function useMovementSounds() {
     source.playbackRate.value = 0.85 + Math.random() * 0.3;
 
     const gainNode = ctx.createGain();
-    gainNode.gain.value = 0.52 * getSfxVolume();
+    gainNode.gain.value = WALKING_STEP_BASE_GAIN * volumeMultiplier * getSfxVolume();
 
     source.connect(gainNode);
     gainNode.connect(ctx.destination);
@@ -1243,11 +1248,16 @@ export function useMovementSounds() {
       ? now - walkingSoundState.movementStartTime 
       : 0;
     const hasMovedEnough = movementDuration >= MIN_MOVEMENT_TIME;
+    const safeBaseSpeed = Math.max(baseSpeed, MIN_WALKING_SPEED);
+    const speedRatio = horizontalSpeed / safeBaseSpeed;
+    const footstepVolumeMultiplier = speedRatio >= RUNNING_STEP_SPEED_RATIO
+      ? RUNNING_STEP_VOLUME_MULTIPLIER
+      : WALKING_STEP_VOLUME_MULTIPLIER;
 
     // Play footstep immediately on landing (bunny hop support)
     // Only if already moving for a while (not a fresh tap)
     if (justLanded && isMoving && !isSliding && hasMovedEnough) {
-      playFootstep();
+      playFootstep(footstepVolumeMultiplier);
       walkingSoundState.isWalking = true;
       return; // Already played a step this frame
     }
@@ -1258,7 +1268,6 @@ export function useMovementSounds() {
     }
 
     // Calculate interval between footsteps based on speed
-    const speedRatio = horizontalSpeed / baseSpeed;
     const baseInterval = 300; // ms at normal speed
     const minInterval = 150; // ms at max speed
     const maxInterval = 500; // ms at slow walk
@@ -1268,7 +1277,7 @@ export function useMovementSounds() {
 
     // Play footstep if enough time has passed
     if (timeSinceLastStep >= stepInterval) {
-      playFootstep();
+      playFootstep(footstepVolumeMultiplier);
       walkingSoundState.isWalking = true;
     }
   }, [playFootstep]);
