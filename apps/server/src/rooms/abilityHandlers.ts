@@ -14,6 +14,7 @@ import {
   PHANTOM_VOID_ZONE_DAMAGE_INTERVAL_MS,
   PHANTOM_VOID_ZONE_DURATION_SECONDS,
   PHANTOM_VOID_ZONE_RADIUS,
+  calculateLookDirection,
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
@@ -234,18 +235,19 @@ export function executeAbility(
     case 'phantom_blink': {
       const distance = PHANTOM_BLINK_DISTANCE;
       const yaw = player.lookYaw;
+      const blinkDirection = calculateLookDirection(yaw, player.lookPitch);
       const fallbackDestination = {
-        x: player.position.x + -Math.sin(yaw) * distance,
-        y: player.position.y + (player.lookPitch < -0.3 ? 2 : 0),
-        z: player.position.z + -Math.cos(yaw) * distance,
+        x: player.position.x + blinkDirection.x * distance,
+        y: player.position.y + blinkDirection.y * distance,
+        z: player.position.z + blinkDirection.z * distance,
       };
       const destination = context.resolvePhantomBlinkDestination?.(player, distance) ?? fallbackDestination;
 
       player.position.x = destination.x;
       player.position.z = destination.z;
       player.position.y = destination.y;
-      player.velocity.x = -Math.sin(yaw) * 2;
-      player.velocity.z = -Math.cos(yaw) * 2;
+      player.velocity.x = blinkDirection.x * 2;
+      player.velocity.z = blinkDirection.z * 2;
       player.movement.isGrounded = false;
       player.movement.isSliding = false;
       player.movement.slideTimeRemaining = 0;

@@ -1,11 +1,15 @@
 app-name: "opus-strike-server"
 regions: ["iad"]
 
-# First production rollout is capped at three created Machines. Raise the
-# demand-driven cap to six after one real traffic window looks stable. The
-# running-machine guard is outside that cap so an already-running Machine is
-# never selected for deletion just because demand has dropped.
-created-machine-count: "max(running_machines, min(max(ceil(demand_players / 48) + 1, 2), 3))"
+# Capacity is fed by live server pressure metrics. Each process publishes a
+# dynamic player-capacity estimate from tick cost, CPU, event-loop delay, and
+# memory pressure; overloaded Machines can request one more Machine even before
+# raw player demand crosses the projected per-Machine capacity.
+# Keep one running Machine through fly.toml and one stopped spare ready here.
+# Demand can create up to five Machines total. The running-machine guard is
+# outside the demand calculation so an already-running Machine is never selected
+# for deletion just because demand has dropped.
+created-machine-count: "max(running_machines, min(max(max(ceil(demand_players / dynamic_players_per_machine) + 1, running_machines + overloaded_machines), 2), 5))"
 initial-machine-state: "stopped"
 interval: "15s"
 api-token: "${FAS_API_TOKEN}"
@@ -24,4 +28,16 @@ metric-collectors:
     metric-name: "running_machines"
     address: "${FAS_PROMETHEUS_ADDRESS}"
     query: "count(fly_instance_up{app='opus-strike-server'}) or vector(0)"
+    token: "${FAS_PROMETHEUS_TOKEN}"
+
+  - type: "prometheus"
+    metric-name: "dynamic_players_per_machine"
+    address: "${FAS_PROMETHEUS_ADDRESS}"
+    query: "avg(opus_strike_dynamic_capacity_players_per_machine{app='opus-strike-server'}) or vector(48)"
+    token: "${FAS_PROMETHEUS_TOKEN}"
+
+  - type: "prometheus"
+    metric-name: "overloaded_machines"
+    address: "${FAS_PROMETHEUS_ADDRESS}"
+    query: "count(opus_strike_dynamic_capacity_pressure{app='opus-strike-server'} > 1) or vector(0)"
     token: "${FAS_PROMETHEUS_TOKEN}"

@@ -17,6 +17,14 @@ import {
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
 } from '../matchmaking/skill';
+import {
+  IN_GAME_CAPACITY_RETRY_MS,
+  MAX_IN_GAME_PLAYERS,
+  collectInGameCapacitySnapshot,
+  isInGameCapacityAdmissionError,
+  runWithInGameCapacity,
+  InGameCapacityAdmissionError,
+} from '../matchmaking/playerCapacity';
 import { serializeRankPayload } from '../ranking/serialization';
 import { LOBBY_MESSAGE_RATE_LIMITS, MessageRateLimiter } from './rateLimiter';
 import { wagerService, type CreateWagerOptions, type LobbyWagerSnapshot, type LockedWagerContext, type WagerPaymentStatusChanged } from '../wagers/service';
@@ -195,6 +203,9 @@ export class LobbyRoom extends Room<LobbyState> {
   private pendingWagerOptions: CreateWagerOptions | undefined;
   private customMapSeed: number | null = null;
   private forceGoldenMapOption = false;
+  private capacityRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+  private matchmakingCapacityBlocked = false;
+  private matchmakingCapacityCheckInFlight = false;
   
   // Track clientId -> sessionId mapping for reconnection detection
   private clientIdToSessionId: Map<string, string> = new Map();
@@ -665,6 +676,7 @@ export class LobbyRoom extends Room<LobbyState> {
   async onDispose() {
     this.disposed = true;
     this.clearMapVoteTimer();
+    this.clearCapacityRetry();
     this.stopWagerSafetyRefresh();
     if (this.unsubscribeWagerPaymentStatusChanged) {
       const unsubscribe = this.unsubscribeWagerPaymentStatusChanged;
@@ -896,11 +908,16 @@ export class LobbyRoom extends Room<LobbyState> {
     const wagerEligibility = await this.ensureWagerStartEligible(client);
     if (!wagerEligibility) return;
 
+    const capacityAvailable = await this.ensureInGameCapacityAvailableForRoster(client);
+    if (!capacityAvailable) return;
+
     this.beginMapVote();
   }
 
   private beginMapVote(): void {
     this.clearMapVoteTimer();
+    this.clearCapacityRetry();
+    this.setMatchmakingCapacityBlocked(false);
     this.state.status = 'map_vote';
     this.setMatchmakingLocked(true);
     this.mapVoteSession = {
@@ -1048,13 +1065,21 @@ export class LobbyRoom extends Room<LobbyState> {
       await this.createGameFromLobby(selectedOption.seed, selectedMapThemeId);
     } catch (error) {
       console.error('Failed to create game room:', error);
+      const capacityError = isInGameCapacityAdmissionError(error) ? error : null;
+      const reason = capacityError
+        ? this.getCapacityBlockedMessage(capacityError)
+        : 'Failed to start game';
       this.state.status = this.isMatchmakingQueue() ? 'matchmaking' : 'waiting';
       this.mapVoteSession = null;
       this.setMatchmakingLocked(false);
+      if (capacityError && this.isMatchmakingQueue()) {
+        this.setMatchmakingCapacityBlocked(capacityError.reason === 'full');
+        this.scheduleCapacityRetry();
+      }
       this.updateMetadata({ status: this.state.status });
-      this.broadcast('mapVoteCancelled', { reason: 'Failed to start game', status: this.state.status });
+      this.broadcast('mapVoteCancelled', { reason, status: this.state.status });
       this.broadcastLobbyState();
-      errorClient?.send('error', { message: 'Failed to start game' });
+      errorClient?.send('error', { message: reason });
     }
   }
 
@@ -1062,9 +1087,10 @@ export class LobbyRoom extends Room<LobbyState> {
     const playerAssignments = this.createPlayerAssignments();
     const observerAssignments = this.createObserverAssignments();
     const gameStartingAssignments: GameStartingAssignment[] = [...playerAssignments, ...observerAssignments];
+    const reservedHumanPlayers = playerAssignments.filter((assignment) => !assignment.isBot).length;
     const requiredHumanPlayers = this.isMatchmakingQueue()
       ? QUICK_PLAY_REQUIRED_PLAYERS
-      : playerAssignments.filter((assignment) => !assignment.isBot).length;
+      : reservedHumanPlayers;
     let lockedWagerContext: LockedWagerContext | null = null;
 
     try {
@@ -1076,8 +1102,11 @@ export class LobbyRoom extends Room<LobbyState> {
       }
       const rankedEligible = this.isRankedMatchCandidate(playerAssignments, lockedWagerContext);
 
-      // Create the game room
-      const gameRoom = await matchMaker.createRoom('game_room', {
+      const admission = await runWithInGameCapacity({
+        matchMaker,
+        requestedPlayers: reservedHumanPlayers,
+        localProcessId: matchMaker.processId,
+      }, () => matchMaker.createRoom('game_room', {
         lobbyId: this.state.lobbyId,
         lobbyName: this.state.name,
         matchMode: this.matchMode,
@@ -1088,7 +1117,16 @@ export class LobbyRoom extends Room<LobbyState> {
         wagerContext: lockedWagerContext,
         rankedEligible,
         requiredHumanPlayers,
-      });
+        reservedHumanPlayers,
+      }));
+
+      if (!admission.admitted) {
+        throw new InGameCapacityAdmissionError(admission.reason, admission.snapshot, reservedHumanPlayers);
+      }
+
+      const gameRoom = admission.result;
+      this.clearCapacityRetry();
+      this.setMatchmakingCapacityBlocked(false);
 
       if (lockedWagerContext) {
         await wagerService.markLobbyInGame(this.state.lobbyId, gameRoom.roomId);
@@ -1882,8 +1920,23 @@ export class LobbyRoom extends Room<LobbyState> {
   }
 
   private tryStartMatchmakingMapVote(): void {
+    if (this.matchmakingCapacityCheckInFlight) return;
+    this.matchmakingCapacityCheckInFlight = true;
+    this.tryStartMatchmakingMapVoteAsync()
+      .catch((error) => {
+        console.error('[LobbyRoom] Matchmaking auto-start check failed:', error);
+      })
+      .finally(() => {
+        this.matchmakingCapacityCheckInFlight = false;
+      });
+  }
+
+  private async tryStartMatchmakingMapVoteAsync(): Promise<void> {
     if (!this.isMatchmakingQueue() || this.state.status !== 'matchmaking') return;
     if (this.getHumanCount() < QUICK_PLAY_REQUIRED_PLAYERS) return;
+
+    const capacityAvailable = await this.ensureInGameCapacityAvailableForRoster();
+    if (!capacityAvailable || this.state.status !== 'matchmaking') return;
 
     if (!this.isRankedQueue) {
       this.beginMapVote();
@@ -1892,14 +1945,66 @@ export class LobbyRoom extends Room<LobbyState> {
 
     if (this.getBotCount() !== 0) return;
 
-    this.ensureWagerStartEligible()
-      .then((canStart) => {
-        if (!canStart || this.state.status !== 'matchmaking') return;
-        this.beginMapVote();
-      })
-      .catch((error) => {
-        console.error('[LobbyRoom] Ranked auto-start payment gate failed:', error);
-      });
+    const canStart = await this.ensureWagerStartEligible();
+    if (!canStart || this.state.status !== 'matchmaking') return;
+    this.beginMapVote();
+  }
+
+  private clearCapacityRetry(): void {
+    if (!this.capacityRetryTimeout) return;
+    clearTimeout(this.capacityRetryTimeout);
+    this.capacityRetryTimeout = null;
+  }
+
+  private scheduleCapacityRetry(): void {
+    if (!this.isMatchmakingQueue() || this.disposed || this.capacityRetryTimeout) return;
+    this.capacityRetryTimeout = setTimeout(() => {
+      this.capacityRetryTimeout = null;
+      this.tryStartMatchmakingMapVote();
+    }, IN_GAME_CAPACITY_RETRY_MS);
+    this.capacityRetryTimeout.unref?.();
+  }
+
+  private setMatchmakingCapacityBlocked(blocked: boolean): void {
+    if (this.matchmakingCapacityBlocked === blocked) return;
+    this.matchmakingCapacityBlocked = blocked;
+    if (!this.isMatchmakingQueue()) return;
+    this.updateMetadata();
+    this.broadcastMatchmakingStatus();
+  }
+
+  private getCapacityBlockedMessage(error: InGameCapacityAdmissionError): string {
+    if (error.reason === 'busy') {
+      return this.isMatchmakingQueue()
+        ? 'Match capacity check is busy. Staying in queue.'
+        : 'Match capacity check is busy. Try again shortly.';
+    }
+
+    const base = `Servers are full (${error.snapshot.reservedPlayers}/${error.snapshot.maxPlayers} players in game).`;
+    return this.isMatchmakingQueue() ? `${base} Staying in queue.` : `${base} Try again when a match ends.`;
+  }
+
+  private async ensureInGameCapacityAvailableForRoster(client?: Client): Promise<boolean> {
+    const requestedPlayers = this.getHumanCount();
+    if (requestedPlayers <= 0) return true;
+
+    const snapshot = await collectInGameCapacitySnapshot(matchMaker);
+    const localMachine = snapshot.machines.find((machine) => machine.processId === matchMaker.processId);
+    const localAvailablePlayers = localMachine?.availablePlayers ?? snapshot.availablePlayers;
+    if (requestedPlayers <= snapshot.availablePlayers && requestedPlayers <= localAvailablePlayers) {
+      this.setMatchmakingCapacityBlocked(false);
+      return true;
+    }
+
+    const error = new InGameCapacityAdmissionError('full', snapshot, requestedPlayers);
+    const message = this.getCapacityBlockedMessage(error);
+    if (this.isMatchmakingQueue()) {
+      this.setMatchmakingCapacityBlocked(true);
+      this.scheduleCapacityRetry();
+    }
+
+    client?.send('error', { message });
+    return false;
   }
 
   private subscribeToWagerEvents(): void {
@@ -2085,6 +2190,8 @@ export class LobbyRoom extends Room<LobbyState> {
       requiredPlayers: QUICK_PLAY_REQUIRED_PLAYERS,
       queuedHumanCount,
       provisionalHumanCount: Math.max(0, humanCount - queuedHumanCount),
+      capacityBlocked: this.matchmakingCapacityBlocked,
+      capacityMaxPlayers: MAX_IN_GAME_PLAYERS,
       rankedEligible: this.isRankedQueue
         && queuedHumanCount === QUICK_PLAY_REQUIRED_PLAYERS
         && humanCount === QUICK_PLAY_REQUIRED_PLAYERS
@@ -2118,6 +2225,8 @@ export class LobbyRoom extends Room<LobbyState> {
       rankBandId: this.isMatchmakingQueue() ? this.rankBandId : undefined,
       requiredPlayers: this.isMatchmakingQueue() ? QUICK_PLAY_REQUIRED_PLAYERS : undefined,
       queuedHumanCount: humanCount,
+      capacityBlocked: this.isMatchmakingQueue() ? this.matchmakingCapacityBlocked : undefined,
+      capacityMaxPlayers: this.isMatchmakingQueue() ? MAX_IN_GAME_PLAYERS : undefined,
       wagerEnabled: this.state.wagerEnabled,
       wagerStatus: this.state.wagerStatus || undefined,
       wagerToken: this.state.wagerToken || undefined,

@@ -121,6 +121,7 @@ import {
   sanitizeAbilityCastOriginHints,
   normalizeLookYaw,
   clampLookPitch,
+  calculateLookDirection,
   calculatePlayerSocketPosition,
   resolveAbilitySocket,
   getChronosAegisCenter as getSharedChronosAegisCenter,
@@ -169,6 +170,7 @@ import {
   computeAnchorWallAabbs,
   createVoxelCollisionWorld,
   createHookshotSwingState,
+  resolveCapsuleTeleportDestination,
   simulateSharedMovement,
   stepHookshotSwing,
   sweepCapsulePathClear,
@@ -303,6 +305,7 @@ interface CreateOptions {
   wagerContext?: LockedWagerContext | null;
   rankedEligible?: boolean;
   requiredHumanPlayers?: number;
+  reservedHumanPlayers?: number;
 }
 
 interface JoinOptions {
@@ -852,6 +855,7 @@ export class GameRoom extends Room<GameState> {
   private rankedEligibilityCandidate = false;
   private requiredHumanPlayers = 1;
   private rankedRequiredHumanPlayers = DEFAULT_GAME_CONFIG.maxPlayers;
+  private reservedHumanPlayers = 0;
   private matchMode: MatchMode = 'custom';
   private wagerSettlementRequested = false;
   private countdownStartGateOpen = false;
@@ -941,6 +945,7 @@ export class GameRoom extends Room<GameState> {
       Math.floor(options.requiredHumanPlayers ?? (this.lobbyId ? DEFAULT_GAME_CONFIG.maxPlayers : 1))
     );
     this.rankedRequiredHumanPlayers = this.requiredHumanPlayers;
+    this.reservedHumanPlayers = Math.max(0, Math.floor(options.reservedHumanPlayers ?? this.requiredHumanPlayers));
     this.maxClients = this.config.maxPlayers + Math.max(0, Math.floor(options.observerCount ?? 0));
     this.antiCheat = new AntiCheatRoomRuntime({
       roomId: this.roomId,
@@ -2473,6 +2478,7 @@ export class GameRoom extends Room<GameState> {
       participantCount: counts.participantCount,
       entityCount: counts.entityCount,
       maxPlayers: this.config.maxPlayers,
+      reservedHumanPlayers: this.reservedHumanPlayers,
       rankedEligibleCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
       wagerEnabled: Boolean(this.wagerContext),
@@ -5691,24 +5697,14 @@ export class GameRoom extends Room<GameState> {
   }
 
   private resolvePhantomBlinkDestination(player: Player, distance: number): PlainVec3 {
-    const forward = this.forward2D(player.lookYaw);
     const start = this.vec3SchemaToPlain(player.position);
-    const verticalOffset = player.lookPitch < -0.3 ? 2 : 0;
-    const world = this.getMovementCollisionWorld();
-
-    for (let testDistance = distance; testDistance >= 2; testDistance -= 0.5) {
-      const candidate = this.clampToPlayableMap({
-        x: start.x + forward.x * testDistance,
-        y: start.y + verticalOffset,
-        z: start.z + forward.z * testDistance,
-      });
-
-      if (!sweepCapsulePathClear(world, start, candidate)) continue;
-      if (!canCapsuleOccupy(world, candidate)) continue;
-      return candidate;
-    }
-
-    return start;
+    return resolveCapsuleTeleportDestination(
+      this.getMovementCollisionWorld(),
+      start,
+      calculateLookDirection(player.lookYaw, player.lookPitch),
+      distance,
+      { clampPosition: (candidate) => this.clampToPlayableMap(candidate) }
+    );
   }
 
   private handlePhantomSecondaryInput(player: Player, input: PlayerInput, previousSecondaryFire: boolean, now: number): void {

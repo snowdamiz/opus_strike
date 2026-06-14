@@ -150,6 +150,8 @@ export interface MatchmakingStatus {
   queuedHumanCount: number | null;
   provisionalHumanCount: number | null;
   requiredPlayers: number | null;
+  capacityBlocked: boolean;
+  capacityMaxPlayers: number | null;
   rankedCoverChargeLamports: string | null;
   rankedEntryQuoteId: string | null;
 }

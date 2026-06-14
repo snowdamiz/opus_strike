@@ -130,10 +130,6 @@ export const GLIDE_FALL_SPEED = -4;
 export const GLIDE_FORWARD_BOOST = 1.3;
 export const GLIDE_TURN_SPEED = 2;
 
-// Blink
-export const BLINK_MAX_DISTANCE = 12;
-export const BLINK_COOLDOWN = 6;
-
 // Player collision
 export const PLAYER_HEIGHT = 1.8;
 export const PLAYER_RADIUS = 0.48;

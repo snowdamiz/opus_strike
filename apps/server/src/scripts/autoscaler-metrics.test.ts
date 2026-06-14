@@ -6,6 +6,18 @@ import {
   calculateDesiredCreatedMachines,
 } from '../autoscaling/policy';
 import {
+  SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE,
+  SERVER_LOAD_ESTIMATED_ROOM_P99_MS,
+  SERVER_LOAD_FULL_MATCH_PLAYERS,
+  SERVER_LOAD_TARGET_TICK_BUDGET_MS,
+} from '../capacity/serverLoadCapacity';
+import {
+  IN_GAME_MAX_MACHINES,
+  IN_GAME_PLAYERS_PER_MACHINE,
+  MAX_IN_GAME_PLAYERS,
+  createInGameCapacitySnapshot,
+} from '../matchmaking/playerCapacity';
+import {
   collectAutoscalerMetricSnapshot,
   renderPrometheusMetrics,
   type AutoscalerMatchMaker,
@@ -13,6 +25,8 @@ import {
 } from '../metrics/autoscalerMetrics';
 
 class FakeMatchMaker implements AutoscalerMatchMaker {
+  processId = 'process-1';
+
   stats = {
     local: {
       roomCount: 3,
@@ -22,13 +36,15 @@ class FakeMatchMaker implements AutoscalerMatchMaker {
 
   constructor(
     private readonly lobbyRooms: AutoscalerRoomListing[],
-    private readonly queryError: Error | null = null
+    private readonly queryError: Error | null = null,
+    private readonly gameRooms: AutoscalerRoomListing[] = []
   ) {}
 
   async query(criteria: { name: string }): Promise<AutoscalerRoomListing[]> {
-    assert.equal(criteria.name, 'lobby_room');
     if (this.queryError) throw this.queryError;
-    return this.lobbyRooms;
+    if (criteria.name === 'lobby_room') return this.lobbyRooms;
+    if (criteria.name === 'game_room') return this.gameRooms;
+    throw new Error(`Unexpected room query: ${criteria.name}`);
   }
 }
 
@@ -56,6 +72,19 @@ function calculateDestroyPlan(snapshot: MachineFleetSnapshot): {
     wouldDestroyStartedMachine: destroyCount > snapshot.stoppedMachines,
   };
 }
+
+const STABLE_PROCESS_LOAD = {
+  sampledAtMs: 1_000,
+  cpuCount: 1,
+  processCpuUtilization: 0.2,
+  loadAvg1: 0.2,
+  loadPct1: 0.2,
+  eventLoopDelayP95Ms: 4,
+  eventLoopDelayP99Ms: 8,
+  heapUsedRatio: 0.2,
+  systemMemoryUsedRatio: 0.35,
+  capacityPressure: 0.35,
+};
 
 async function runMetricFormattingTests(): Promise<void> {
   const snapshot = await collectAutoscalerMetricSnapshot({
@@ -93,6 +122,7 @@ async function runMetricFormattingTests(): Promise<void> {
     },
     uptime: () => 123.5,
     memoryUsage: () => ({ heapUsed: 456_789 } as NodeJS.MemoryUsage),
+    processLoad: () => STABLE_PROCESS_LOAD,
   });
 
   assert.equal(snapshot.localCcu, 7);
@@ -102,6 +132,10 @@ async function runMetricFormattingTests(): Promise<void> {
   assert.equal(snapshot.flyReplayRegistered, 1);
   assert.equal(snapshot.redisUp, 1);
   assert.equal(snapshot.matchmakerQueryUp, 1);
+  assert.equal(snapshot.processCpuUtilization, 0.2);
+  assert.equal(snapshot.processEventLoopDelayP95Ms, 4);
+  assert.equal(snapshot.dynamicCapacityPressure, 0.35);
+  assert.equal(snapshot.dynamicCapacityPlayersPerMachine, SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE);
 
   const output = renderPrometheusMetrics(snapshot);
   assert.match(output, /# TYPE opus_strike_colyseus_local_ccu gauge/);
@@ -117,6 +151,10 @@ async function runMetricFormattingTests(): Promise<void> {
   assert.match(output, /opus_strike_matchmaker_query_up\{[^}]+\} 1/);
   assert.match(output, /opus_strike_process_uptime_seconds\{[^}]+\} 123.5/);
   assert.match(output, /opus_strike_process_heap_used_bytes\{[^}]+\} 456789/);
+  assert.match(output, /opus_strike_process_cpu_utilization\{[^}]+\} 0.2/);
+  assert.match(output, /opus_strike_process_event_loop_delay_p95_ms\{[^}]+\} 4/);
+  assert.match(output, /opus_strike_dynamic_capacity_pressure\{[^}]+\} 0.35/);
+  assert.match(output, new RegExp(`opus_strike_dynamic_capacity_players_per_machine\\{[^}]+\\} ${SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE}`));
   assert.doesNotMatch(output, /Alice|wallet_should_not_render|room_visible|Private Lobby/);
 }
 
@@ -127,6 +165,7 @@ async function runMetricFailureTests(): Promise<void> {
     flyReplayRegistered: false,
     uptime: () => 1,
     memoryUsage: () => ({ heapUsed: 2 } as NodeJS.MemoryUsage),
+    processLoad: () => STABLE_PROCESS_LOAD,
   });
 
   assert.equal(snapshot.lobbyParticipants, 0);
@@ -146,7 +185,7 @@ async function runAutoscalerPolicyTests(): Promise<void> {
   assert.equal(calculateDesiredCreatedMachines({ demandPlayers: 0, runningMachines: 0 }), 2);
   assert.equal(calculateDesiredCreatedMachines({ demandPlayers: 48, runningMachines: 2 }), 2);
   assert.equal(calculateDesiredCreatedMachines({ demandPlayers: 49, runningMachines: 2 }), 3);
-  assert.equal(calculateDesiredCreatedMachines({ demandPlayers: 500, runningMachines: 2 }), 3);
+  assert.equal(calculateDesiredCreatedMachines({ demandPlayers: 500, runningMachines: 2 }), 5);
   assert.equal(calculateDesiredCreatedMachines({ demandPlayers: 0, runningMachines: 4 }), 4);
   assert.equal(calculateDesiredCreatedMachines({ demandPlayers: 0, runningMachines: 8 }), 8);
 
@@ -178,9 +217,61 @@ async function runAutoscalerPolicyTests(): Promise<void> {
   assert.equal(idleMachinesStoppedByFlyProxy.wouldDestroyStartedMachine, false);
 }
 
+async function runInGameCapacityPolicyTests(): Promise<void> {
+  assert.equal(SERVER_LOAD_FULL_MATCH_PLAYERS, 8);
+  assert.equal(SERVER_LOAD_TARGET_TICK_BUDGET_MS, 35);
+  assert.equal(SERVER_LOAD_ESTIMATED_ROOM_P99_MS, 5.5);
+  assert.equal(SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE, 48);
+  assert.equal(IN_GAME_PLAYERS_PER_MACHINE, SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE);
+  assert.equal(IN_GAME_MAX_MACHINES, 5);
+  assert.equal(MAX_IN_GAME_PLAYERS, 240);
+
+  const snapshot = createInGameCapacitySnapshot([
+    { processId: 'process-1', clients: 4, metadata: { humanCount: 4, reservedHumanPlayers: 8 } },
+    { processId: 'process-1', clients: 7, metadata: { humanCount: 7 } },
+  ], [
+    {
+      processId: 'process-1',
+      updatedAtMs: Date.now(),
+      localGamePlayers: 11,
+      localGameRoomCount: 2,
+      capacityPressure: 0.2,
+    },
+  ]);
+
+  assert.equal(snapshot.activePlayers, 11);
+  assert.equal(snapshot.reservedPlayers, 15);
+  assert.equal(snapshot.availablePlayers, 225);
+  assert.equal(snapshot.full, false);
+  assert.equal(snapshot.source, 'live');
+  assert.equal(snapshot.machines[0]?.playersPerMachine, 48);
+
+  const pressuredSnapshot = createInGameCapacitySnapshot([
+    { processId: 'process-1', clients: 8, metadata: { humanCount: 8, reservedHumanPlayers: 8, tickDurationP99Ms: 5.5 } },
+  ], [
+    {
+      processId: 'process-1',
+      updatedAtMs: Date.now(),
+      localGamePlayers: 8,
+      localGameRoomCount: 1,
+      capacityPressure: 1.25,
+    },
+  ]);
+
+  assert.equal(pressuredSnapshot.machines[0]?.playersPerMachine, 8);
+  assert.equal(pressuredSnapshot.machines[0]?.availablePlayers, 0);
+
+  const fullSnapshot = createInGameCapacitySnapshot(
+    Array.from({ length: 30 }, () => ({ clients: 8, metadata: { humanCount: 8, reservedHumanPlayers: 8 } }))
+  );
+
+  assert.equal(fullSnapshot.reservedPlayers, 240);
+  assert.equal(fullSnapshot.availablePlayers, 0);
+  assert.equal(fullSnapshot.full, true);
+}
+
 async function runAutoscalerConfigTests(): Promise<void> {
-  const configPath = path.resolve(process.cwd(), 'fly-autoscaler.yml');
-  const config = await readFile(configPath, 'utf8');
+  const config = await readFile(path.resolve(process.cwd(), 'fly-autoscaler.yml'), 'utf8');
 
   assert.match(config, new RegExp(`created-machine-count: "${AUTOSCALER_CREATED_MACHINE_COUNT_EXPRESSION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
   assert.match(config, /initial-machine-state: "stopped"/);
@@ -188,6 +279,10 @@ async function runAutoscalerConfigTests(): Promise<void> {
   assert.match(config, /query: "sum\(opus_strike_colyseus_local_ccu\{app='opus-strike-server'\}\) or vector\(0\)"/);
   assert.doesNotMatch(config, /sum\(opus_strike_lobby_participants/);
   assert.match(config, /metric-name: "running_machines"/);
+  assert.match(config, /metric-name: "dynamic_players_per_machine"/);
+  assert.match(config, /opus_strike_dynamic_capacity_players_per_machine/);
+  assert.match(config, /metric-name: "overloaded_machines"/);
+  assert.match(config, /opus_strike_dynamic_capacity_pressure/);
   assert.doesNotMatch(config, /started-machine-count:/);
 }
 
@@ -195,6 +290,7 @@ async function main(): Promise<void> {
   await runMetricFormattingTests();
   await runMetricFailureTests();
   await runAutoscalerPolicyTests();
+  await runInGameCapacityPolicyTests();
   await runAutoscalerConfigTests();
   console.log('autoscaler metrics tests passed');
 }

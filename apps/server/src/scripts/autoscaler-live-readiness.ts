@@ -15,6 +15,10 @@ const REQUIRED_METRICS = [
   'opus_strike_visible_lobby_count',
   'opus_strike_fly_replay_registered',
   'opus_strike_redis_up',
+  'opus_strike_process_cpu_utilization',
+  'opus_strike_process_event_loop_delay_p95_ms',
+  'opus_strike_dynamic_capacity_pressure',
+  'opus_strike_dynamic_capacity_players_per_machine',
 ];
 
 const SAFE_INFRA_LABELS = [

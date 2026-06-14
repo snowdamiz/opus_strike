@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import * as os from 'node:os';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
+import { processLoadSampler, type ProcessLoadSnapshot } from '../runtime/processLoad';
 
 const ADMIN_MACHINE_KEY_PREFIX = 'voxel-strike:admin:machine:';
 const DEFAULT_HEARTBEAT_TTL_MS = 45_000;
@@ -68,6 +69,12 @@ export interface AdminMachineSnapshot {
   memoryRssBytes: number;
   heapUsedBytes: number;
   heapTotalBytes: number;
+  processCpuUtilization: number;
+  eventLoopDelayP95Ms: number;
+  eventLoopDelayP99Ms: number;
+  heapUsedRatio: number;
+  systemMemoryUsedRatio: number;
+  capacityPressure: number;
   systemFreeMemoryBytes: number;
   systemTotalMemoryBytes: number;
   processUptimeSeconds: number;
@@ -96,6 +103,7 @@ interface LocalSnapshotOptions {
   now?: () => number;
   memoryUsage?: () => NodeJS.MemoryUsage;
   uptime?: () => number;
+  processLoad?: () => ProcessLoadSnapshot;
 }
 
 interface StartHeartbeatOptions extends Omit<LocalSnapshotOptions, 'flyReplayRegistered'> {
@@ -192,6 +200,12 @@ function serializeSnapshot(snapshot: AdminMachineSnapshot, ownerToken: string): 
     memoryRssBytes: String(snapshot.memoryRssBytes),
     heapUsedBytes: String(snapshot.heapUsedBytes),
     heapTotalBytes: String(snapshot.heapTotalBytes),
+    processCpuUtilization: String(snapshot.processCpuUtilization),
+    eventLoopDelayP95Ms: String(snapshot.eventLoopDelayP95Ms),
+    eventLoopDelayP99Ms: String(snapshot.eventLoopDelayP99Ms),
+    heapUsedRatio: String(snapshot.heapUsedRatio),
+    systemMemoryUsedRatio: String(snapshot.systemMemoryUsedRatio),
+    capacityPressure: String(snapshot.capacityPressure),
     systemFreeMemoryBytes: String(snapshot.systemFreeMemoryBytes),
     systemTotalMemoryBytes: String(snapshot.systemTotalMemoryBytes),
     processUptimeSeconds: String(snapshot.processUptimeSeconds),
@@ -234,6 +248,12 @@ function parseSnapshot(fields: Record<string, string>): AdminMachineSnapshot | n
     memoryRssBytes: readFiniteNumber(fields.memoryRssBytes) ?? 0,
     heapUsedBytes: readFiniteNumber(fields.heapUsedBytes) ?? 0,
     heapTotalBytes: readFiniteNumber(fields.heapTotalBytes) ?? 0,
+    processCpuUtilization: readFiniteNumber(fields.processCpuUtilization) ?? 0,
+    eventLoopDelayP95Ms: readFiniteNumber(fields.eventLoopDelayP95Ms) ?? 0,
+    eventLoopDelayP99Ms: readFiniteNumber(fields.eventLoopDelayP99Ms) ?? 0,
+    heapUsedRatio: readFiniteNumber(fields.heapUsedRatio) ?? 0,
+    systemMemoryUsedRatio: readFiniteNumber(fields.systemMemoryUsedRatio) ?? 0,
+    capacityPressure: readFiniteNumber(fields.capacityPressure) ?? 0,
     systemFreeMemoryBytes: readFiniteNumber(fields.systemFreeMemoryBytes) ?? 0,
     systemTotalMemoryBytes: readFiniteNumber(fields.systemTotalMemoryBytes) ?? 0,
     processUptimeSeconds: readFiniteNumber(fields.processUptimeSeconds) ?? 0,
@@ -276,6 +296,7 @@ export async function collectLocalAdminMachineSnapshot(
   const now = options.now ?? (() => Date.now());
   const memoryUsage = options.memoryUsage ?? (() => process.memoryUsage());
   const uptime = options.uptime ?? (() => process.uptime());
+  const processLoad = (options.processLoad ?? (() => processLoadSampler.getSnapshot()))();
   const processId = options.matchMaker.processId || `pid:${process.pid}`;
   const machineId = options.config.flyReplay.machineId || process.env.FLY_MACHINE_ID || os.hostname() || processId;
   const cpuCount = Math.max(1, os.cpus().length);
@@ -319,6 +340,12 @@ export async function collectLocalAdminMachineSnapshot(
     memoryRssBytes: memory.rss,
     heapUsedBytes: memory.heapUsed,
     heapTotalBytes: memory.heapTotal,
+    processCpuUtilization: processLoad.processCpuUtilization,
+    eventLoopDelayP95Ms: processLoad.eventLoopDelayP95Ms,
+    eventLoopDelayP99Ms: processLoad.eventLoopDelayP99Ms,
+    heapUsedRatio: processLoad.heapUsedRatio,
+    systemMemoryUsedRatio: processLoad.systemMemoryUsedRatio,
+    capacityPressure: processLoad.capacityPressure,
     systemFreeMemoryBytes: os.freemem(),
     systemTotalMemoryBytes: os.totalmem(),
     processUptimeSeconds: uptime(),
@@ -368,6 +395,7 @@ export function startAdminMachineHeartbeat(options: StartHeartbeatOptions): Admi
       now: options.now,
       memoryUsage: options.memoryUsage,
       uptime: options.uptime,
+      processLoad: options.processLoad,
     });
     const fields = serializeSnapshot(snapshot, ownerToken);
     const args = Object.entries(fields).flatMap(([key, value]) => [key, value]);

@@ -38,6 +38,7 @@ export function MatchmakingScreen() {
   const [totalPlayersInQueue, setTotalPlayersInQueue] = useState(filledSlots);
   const displayedQueueCount = Math.max(totalPlayersInQueue, filledSlots);
   const queuePlayerLabel = displayedQueueCount === 1 ? 'player' : 'players';
+  const capacityBlocked = matchmakingStatus.capacityBlocked;
   const currentRank = getRankForStats(userStats);
   const searchLabel = matchmakingStatus.averageVisibleRank
     ?? matchmakingStatus.rankBandLabel
@@ -105,7 +106,9 @@ export function MatchmakingScreen() {
             MATCHMAKING
           </h1>
           <p className="mx-auto mt-4 max-w-md font-body text-sm leading-relaxed text-white/50 sm:text-base">
-            {isRanked
+            {capacityBlocked
+              ? 'Servers are full. Your squad will launch when a match frees space.'
+              : isRanked
               ? `${playerName ? `${playerName}, ` : ''}SOL holding verified. Finding a ranked squad.`
               : `${playerName ? `${playerName}, hold tight.` : 'Hold tight.'} Building a full match squad.`}
           </p>

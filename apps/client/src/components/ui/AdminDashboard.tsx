@@ -10,6 +10,9 @@ interface MachineProcess {
   loadPct1: number;
   memoryRssBytes: number;
   heapUsedBytes: number;
+  processCpuUtilization: number;
+  eventLoopDelayP95Ms: number;
+  capacityPressure: number;
   localCcu: number;
   localGamePlayers: number;
   localGameBots: number;
@@ -31,6 +34,10 @@ interface MachineOverview {
   memoryRssBytes: number;
   systemFreeMemoryBytes: number;
   systemTotalMemoryBytes: number;
+  capacityPressure: number;
+  dynamicCapacityPlayers: number;
+  eventLoopDelayP95Ms: number;
+  processCpuUtilization: number;
   localCcu: number;
   gameRoomCount: number;
   lobbyRoomCount: number;
@@ -190,6 +197,19 @@ interface AdminOverview {
     lobbyRooms: number;
     lobbyParticipants: number;
   };
+  capacity: {
+    playersPerMachine: number;
+    maxMachines: number;
+    maxPlayers: number;
+    activePlayers: number;
+    reservedPlayers: number;
+    availablePlayers: number;
+    full: boolean;
+    capacityPressure: number;
+    machineCount: number;
+    projectedMachineCount: number;
+    source: 'live' | 'room_metrics' | 'bootstrap' | string;
+  };
   machines: MachineOverview[];
   rooms: {
     game: GameRoomOverview[];
@@ -323,15 +343,16 @@ function MachinesTable({ machines }: { machines: MachineOverview[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[960px] table-fixed border-collapse">
+      <table className="w-full min-w-[1040px] table-fixed border-collapse">
         <thead>
           <tr>
             <HeaderCell>Machine</HeaderCell>
             <HeaderCell>Region</HeaderCell>
             <HeaderCell align="right">Players</HeaderCell>
+            <HeaderCell align="right">Capacity</HeaderCell>
             <HeaderCell align="right">Bots</HeaderCell>
             <HeaderCell align="right">Rooms</HeaderCell>
-            <HeaderCell align="right">Load</HeaderCell>
+            <HeaderCell align="right">Pressure</HeaderCell>
             <HeaderCell align="right">Memory</HeaderCell>
             <HeaderCell align="right">CCU</HeaderCell>
             <HeaderCell>Updated</HeaderCell>
@@ -346,14 +367,18 @@ function MachinesTable({ machines }: { machines: MachineOverview[] }) {
               </Cell>
               <Cell>{machine.region || 'unknown'}</Cell>
               <Cell align="right">{formatNumber(machine.playersInGame)}</Cell>
+              <Cell align="right">
+                {formatNumber(machine.dynamicCapacityPlayers)}
+                <div className="text-xs text-white/40">{formatNumber(Math.max(0, machine.dynamicCapacityPlayers - machine.playersInGame))} open</div>
+              </Cell>
               <Cell align="right">{formatNumber(machine.botsInGame)}</Cell>
               <Cell align="right">
                 {formatNumber(machine.gameRoomCount)} game
                 <div className="text-xs text-white/40">{formatNumber(machine.lobbyRoomCount)} lobby</div>
               </Cell>
               <Cell align="right">
-                {machine.loadAvg1.toFixed(2)} / {formatNumber(machine.cpuCount)}
-                <div className="text-xs text-white/40">{machine.loadPct1.toFixed(0)}%</div>
+                {(machine.capacityPressure * 100).toFixed(0)}%
+                <div className="text-xs text-white/40">CPU {(machine.processCpuUtilization * 100).toFixed(0)}% / loop {machine.eventLoopDelayP95Ms.toFixed(1)}ms</div>
               </Cell>
               <Cell align="right">
                 {formatBytes(machine.memoryRssBytes)}
@@ -842,6 +867,7 @@ export function AdminDashboard() {
     const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
     return [
       { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: `${formatNumber(overview.totals.serverProcesses)} processes` },
+      { label: 'Capacity', value: `${formatNumber(overview.capacity.reservedPlayers)} / ${formatNumber(overview.capacity.maxPlayers)}`, sublabel: `${formatNumber(overview.capacity.availablePlayers)} open / ${overview.capacity.source}` },
       { label: 'Game Players', value: formatNumber(overview.totals.playersInGame), sublabel: `${formatNumber(overview.totals.botsInGame)} bots` },
       { label: 'Game Rooms', value: formatNumber(overview.totals.gameRooms), sublabel: `${formatNumber(overview.totals.participantsInGame)} participants` },
       { label: 'Lobby Participants', value: formatNumber(overview.totals.lobbyParticipants), sublabel: `${formatNumber(overview.totals.lobbyRooms)} lobbies` },
@@ -890,7 +916,13 @@ export function AdminDashboard() {
 
         {overview ? (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-7">
+            {overview.capacity.full && (
+              <div className="rounded-lg border border-ui-warning/45 bg-ui-warning/10 px-4 py-3 font-body text-sm text-yellow-100">
+                Max in-game players hit: {formatNumber(overview.capacity.reservedPlayers)} / {formatNumber(overview.capacity.maxPlayers)} reserved across {formatNumber(overview.capacity.maxMachines)} machines. Queued players will wait until a match frees space.
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-8">
               {metrics.map((metric) => (
                 <MetricTile key={metric.label} {...metric} />
               ))}

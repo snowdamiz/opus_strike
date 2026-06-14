@@ -548,6 +548,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       queuedHumanCount?: number;
       provisionalHumanCount?: number;
       requiredPlayers?: number;
+      capacityBlocked?: boolean;
+      capacityMaxPlayers?: number;
       rankedCoverChargeLamports?: string;
       rankedEntryQuoteId?: string;
       wager?: LobbyWagerState;
@@ -572,6 +574,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
         provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
         requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
+        capacityBlocked: data.capacityBlocked === true,
+        capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
         rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
         rankedEntryQuoteId: data.rankedEntryQuoteId ?? data.wager?.rankedEntryQuoteId ?? null,
       });
@@ -614,6 +618,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       queuedHumanCount?: number;
       provisionalHumanCount?: number;
       requiredPlayers?: number;
+      capacityBlocked?: boolean;
+      capacityMaxPlayers?: number;
       rankedCoverChargeLamports?: string;
       rankedEntryQuoteId?: string;
     }) => {
@@ -627,6 +633,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: typeof data.queuedHumanCount === 'number' ? data.queuedHumanCount : null,
         provisionalHumanCount: typeof data.provisionalHumanCount === 'number' ? data.provisionalHumanCount : null,
         requiredPlayers: typeof data.requiredPlayers === 'number' ? data.requiredPlayers : null,
+        capacityBlocked: data.capacityBlocked === true,
+        capacityMaxPlayers: typeof data.capacityMaxPlayers === 'number' ? data.capacityMaxPlayers : null,
         rankedCoverChargeLamports: data.rankedCoverChargeLamports ?? null,
         rankedEntryQuoteId: data.rankedEntryQuoteId ?? null,
       });
@@ -1014,6 +1022,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         queuedHumanCount: 0,
         provisionalHumanCount: 1,
         requiredPlayers: null,
+        capacityBlocked: false,
+        capacityMaxPlayers: null,
         rankedCoverChargeLamports: null,
         rankedEntryQuoteId: null,
       });

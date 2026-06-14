@@ -3,6 +3,7 @@ import {
   createVoxelCollisionWorld,
   createHookshotSwingState,
   MovementPredictionController,
+  resolveCapsuleTeleportDestination,
   simulateCapsuleMotor,
   simulateSharedMovement,
   sweepCapsulePathClear,
@@ -1090,6 +1091,47 @@ function runBlinkCapsuleClearance() {
     sweepCapsulePathClear(world, { x: 0, y: 0.9, z: 0 }, { x: 0, y: 0.9, z: 1.5 }),
     true,
     'blink clearance should allow a clear path'
+  );
+
+  const verticalOpenDestination = resolveCapsuleTeleportDestination(
+    createVoxelCollisionWorld({
+      ...fineVoxelGrid,
+      getGroundY: () => 0,
+      clampPosition: (position) => ({ ...position }),
+      getBlockAtWorld: () => 0,
+    }),
+    { x: 0, y: 0.9, z: 0 },
+    { x: 0, y: 1, z: 0 },
+    4
+  );
+  assert.ok(
+    verticalOpenDestination.y > 4.8,
+    `directional blink should allow upward teleport through open air, got y ${verticalOpenDestination.y}`
+  );
+
+  const ceilingWorld = createVoxelCollisionWorld({
+    ...fineVoxelGrid,
+    getGroundY: () => 0,
+    clampPosition: (position) => ({ ...position }),
+    getBlockAtWorld: (position) => (
+      position.y >= 2.2 &&
+      position.y <= 3.4 &&
+      Math.abs(position.x) <= 2 &&
+      Math.abs(position.z) <= 2
+        ? 1
+        : 0
+    ),
+  });
+  const ceilingBlockedDestination = resolveCapsuleTeleportDestination(
+    ceilingWorld,
+    { x: 0, y: 0.9, z: 0 },
+    { x: 0, y: 1, z: 0 },
+    4
+  );
+  assertVecNear(
+    ceilingBlockedDestination,
+    { x: 0, y: 0.9, z: 0 },
+    'directional blink should stay put when an upward path is blocked'
   );
 }
 

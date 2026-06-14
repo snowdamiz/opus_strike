@@ -32,6 +32,15 @@ const HERO_LOOK_PITCH_DEADZONE = 0.035;
 const HERO_LOOK_PITCH_WAIST_SCALE = 0.55;
 const HERO_LOOK_PITCH_MAX_WAIST_BEND = THREE.MathUtils.degToRad(38);
 const HERO_LOOK_PITCH_HEAD_BLEND = 0.28;
+const JUMP_ROOT_LIFT_MULTIPLIER = 1.28;
+const JUMP_ANTICIPATION_DIP = 0.055;
+const JUMP_LANDING_DIP = 0.058;
+const JUMP_CROUCH_MULTIPLIER = 1.36;
+const JUMP_KNEE_CROUCH_BEND_MULTIPLIER = 1.12;
+const JUMP_LAUNCH_EXTENSION_MULTIPLIER = 1.18;
+const JUMP_TUCK_MULTIPLIER = 1.14;
+const JUMP_LAND_MULTIPLIER = 1.16;
+const JUMP_ARM_REACH_MULTIPLIER = 0.86;
 const HERO_TORSO_WAIST_ANCHOR = new THREE.Vector3(
   HERO_BONE_PIVOTS.hips[0] - HERO_BONE_PIVOTS.torso[0],
   HERO_BONE_PIVOTS.hips[1] - HERO_BONE_PIVOTS.torso[1],
@@ -293,13 +302,16 @@ export function getJumpPose(time: number): HeroJumpPose {
   const armSwing = smoothPulse(phase, 0.24, 0.38, 0.84);
 
   return {
-    rootLift: rootLift - anticipation * 0.035 - land * 0.045,
-    crouch: anticipation + land * 0.65,
-    extension: launch,
-    tuck,
-    land,
-    armReach: armSwing * 0.72,
-    pitch: launch * 0.065 - anticipation * 0.05 - land * 0.035,
+    rootLift:
+      rootLift * JUMP_ROOT_LIFT_MULTIPLIER -
+      anticipation * JUMP_ANTICIPATION_DIP -
+      land * JUMP_LANDING_DIP,
+    crouch: anticipation * JUMP_CROUCH_MULTIPLIER + land * 0.78,
+    extension: launch * JUMP_LAUNCH_EXTENSION_MULTIPLIER,
+    tuck: tuck * JUMP_TUCK_MULTIPLIER,
+    land: land * JUMP_LAND_MULTIPLIER,
+    armReach: armSwing * JUMP_ARM_REACH_MULTIPLIER,
+    pitch: launch * 0.092 - anticipation * 0.067 - land * 0.05,
   };
 }
 
@@ -728,6 +740,7 @@ export function applyJumpBonePose(bones: HeroBoneRefs, pose: HeroJumpPose, amoun
   const tuck = pose.tuck * amount;
   const land = pose.land * amount;
   const armReach = pose.armReach * amount;
+  const kneeCrouch = crouch * JUMP_KNEE_CROUCH_BEND_MULTIPLIER;
 
   if (bones.hips) {
     bones.hips.position.y += (-0.055 * crouch + 0.025 * extension - 0.025 * land);
@@ -746,37 +759,37 @@ export function applyJumpBonePose(bones: HeroBoneRefs, pose: HeroJumpPose, amoun
   }
 
   if (bones.leftLeg) {
-    bones.leftLeg.rotation.x += 0.56 * crouch - 0.18 * extension + 0.1 * tuck + 0.18 * land;
-    bones.leftLeg.position.y += -0.018 * crouch + 0.008 * extension;
-    bones.leftLeg.position.z += -0.012 * crouch + 0.008 * extension;
+    bones.leftLeg.rotation.x += 0.56 * kneeCrouch - 0.18 * extension + 0.1 * tuck + 0.18 * land;
+    bones.leftLeg.position.y += -0.018 * kneeCrouch + 0.008 * extension;
+    bones.leftLeg.position.z += -0.012 * kneeCrouch + 0.008 * extension;
   }
 
   if (bones.leftKnee) {
-    bones.leftKnee.position.y += -0.025 * crouch + 0.012 * tuck - 0.014 * land;
-    bones.leftKnee.position.z += -0.012 * crouch - 0.01 * tuck + 0.012 * extension;
+    bones.leftKnee.position.y += -0.025 * kneeCrouch + 0.012 * tuck - 0.014 * land;
+    bones.leftKnee.position.z += -0.012 * kneeCrouch - 0.01 * tuck + 0.012 * extension;
   }
 
   if (bones.leftShin) {
-    bones.leftShin.rotation.x += -0.74 * crouch + 0.2 * extension - 0.28 * tuck - 0.24 * land;
+    bones.leftShin.rotation.x += -0.74 * kneeCrouch + 0.2 * extension - 0.28 * tuck - 0.24 * land;
     bones.leftShin.position.y += 0.006 * extension + 0.008 * tuck;
-    bones.leftShin.position.z += 0.008 * crouch + 0.008 * tuck;
+    bones.leftShin.position.z += 0.008 * kneeCrouch + 0.008 * tuck;
   }
 
   if (bones.rightLeg) {
-    bones.rightLeg.rotation.x += 0.56 * crouch - 0.18 * extension + 0.1 * tuck + 0.18 * land;
-    bones.rightLeg.position.y += -0.018 * crouch + 0.008 * extension;
-    bones.rightLeg.position.z += -0.012 * crouch + 0.008 * extension;
+    bones.rightLeg.rotation.x += 0.56 * kneeCrouch - 0.18 * extension + 0.1 * tuck + 0.18 * land;
+    bones.rightLeg.position.y += -0.018 * kneeCrouch + 0.008 * extension;
+    bones.rightLeg.position.z += -0.012 * kneeCrouch + 0.008 * extension;
   }
 
   if (bones.rightKnee) {
-    bones.rightKnee.position.y += -0.025 * crouch + 0.012 * tuck - 0.014 * land;
-    bones.rightKnee.position.z += -0.012 * crouch - 0.01 * tuck + 0.012 * extension;
+    bones.rightKnee.position.y += -0.025 * kneeCrouch + 0.012 * tuck - 0.014 * land;
+    bones.rightKnee.position.z += -0.012 * kneeCrouch - 0.01 * tuck + 0.012 * extension;
   }
 
   if (bones.rightShin) {
-    bones.rightShin.rotation.x += -0.74 * crouch + 0.2 * extension - 0.28 * tuck - 0.24 * land;
+    bones.rightShin.rotation.x += -0.74 * kneeCrouch + 0.2 * extension - 0.28 * tuck - 0.24 * land;
     bones.rightShin.position.y += 0.006 * extension + 0.008 * tuck;
-    bones.rightShin.position.z += 0.008 * crouch + 0.008 * tuck;
+    bones.rightShin.position.z += 0.008 * kneeCrouch + 0.008 * tuck;
   }
 
   if (bones.leftArm) {

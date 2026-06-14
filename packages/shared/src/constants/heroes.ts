@@ -263,7 +263,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     cooldown: 10,
     charges: 2,
     chargeRegenTime: 10, // Both charges reset after 10 seconds
-    description: 'Instantly teleport in your movement direction, leaving a void zone at the destination. 2 charges.',
+    description: 'Instantly teleport in your aim direction, leaving a void zone at the destination. 2 charges.',
   },
   phantom_void_ray: {
     id: 'phantom_void_ray',

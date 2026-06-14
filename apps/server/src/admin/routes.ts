@@ -30,6 +30,7 @@ import {
   type AdminMatchMaker,
   type AdminRoomListing,
 } from './machineRegistry';
+import { createInGameCapacitySnapshot } from '../matchmaking/playerCapacity';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
@@ -62,6 +63,10 @@ interface MachineOverview {
   memoryRssBytes: number;
   systemFreeMemoryBytes: number;
   systemTotalMemoryBytes: number;
+  capacityPressure: number;
+  dynamicCapacityPlayers: number;
+  eventLoopDelayP95Ms: number;
+  processCpuUtilization: number;
   localCcu: number;
   gameRoomCount: number;
   lobbyRoomCount: number;
@@ -351,6 +356,10 @@ function createMachineMap(snapshots: AdminMachineSnapshot[]): Map<string, Machin
         memoryRssBytes: snapshot.memoryRssBytes,
         systemFreeMemoryBytes: snapshot.systemFreeMemoryBytes,
         systemTotalMemoryBytes: snapshot.systemTotalMemoryBytes,
+        capacityPressure: snapshot.capacityPressure,
+        dynamicCapacityPlayers: 0,
+        eventLoopDelayP95Ms: snapshot.eventLoopDelayP95Ms,
+        processCpuUtilization: snapshot.processCpuUtilization,
         localCcu: snapshot.localCcu,
         gameRoomCount: 0,
         lobbyRoomCount: 0,
@@ -369,6 +378,9 @@ function createMachineMap(snapshots: AdminMachineSnapshot[]): Map<string, Machin
     existing.loadPct1 = Math.max(existing.loadPct1, snapshot.loadPct1);
     existing.cpuCount = Math.max(existing.cpuCount, snapshot.cpuCount);
     existing.memoryRssBytes += snapshot.memoryRssBytes;
+    existing.capacityPressure = Math.max(existing.capacityPressure, snapshot.capacityPressure);
+    existing.eventLoopDelayP95Ms = Math.max(existing.eventLoopDelayP95Ms, snapshot.eventLoopDelayP95Ms);
+    existing.processCpuUtilization = Math.max(existing.processCpuUtilization, snapshot.processCpuUtilization);
     existing.localCcu += snapshot.localCcu;
 
     if (snapshot.updatedAtMs > existing.latestUpdatedAtMs) {
@@ -414,6 +426,10 @@ function addGlobalRoomCounts(
       memoryRssBytes: 0,
       systemFreeMemoryBytes: 0,
       systemTotalMemoryBytes: 0,
+      capacityPressure: 0,
+      dynamicCapacityPlayers: 0,
+      eventLoopDelayP95Ms: 0,
+      processCpuUtilization: 0,
       localCcu: 0,
       gameRoomCount: 0,
       lobbyRoomCount: 0,
@@ -444,6 +460,10 @@ function addGlobalRoomCounts(
       memoryRssBytes: 0,
       systemFreeMemoryBytes: 0,
       systemTotalMemoryBytes: 0,
+      capacityPressure: 0,
+      dynamicCapacityPlayers: 0,
+      eventLoopDelayP95Ms: 0,
+      processCpuUtilization: 0,
       localCcu: 0,
       gameRoomCount: 0,
       lobbyRoomCount: 0,
@@ -537,6 +557,15 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     addGlobalRoomCounts(machines, processSnapshots, gameRoomResult.rooms, lobbyRoomResult.rooms);
   }
 
+  const capacity = createInGameCapacitySnapshot(gameRoomResult.rooms, freshSnapshots);
+  for (const estimate of capacity.machines) {
+    const snapshot = processSnapshots.get(estimate.processId);
+    if (!snapshot) continue;
+    const machine = machines.get(snapshot.machineId);
+    if (!machine) continue;
+    machine.dynamicCapacityPlayers += estimate.playersPerMachine;
+  }
+
   const machineList = Array.from(machines.values())
     .map((machine) => ({
       ...machine,
@@ -583,6 +612,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       elevatedAntiCheatRole: adminUser.elevatedAntiCheatRole,
     },
     totals,
+    capacity,
     machines: machineList,
     rooms: {
       game: gameRooms,
@@ -676,7 +706,7 @@ function renderAdminHtml(csrfToken: string): string {
     .error .dot { background: var(--bad); }
     .grid {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 16px;
     }
@@ -940,8 +970,10 @@ function renderAdminHtml(csrfToken: string): string {
     }
 
     function renderMetrics(data) {
+      const capacity = data.capacity || {};
       const metrics = [
         ['Machines', data.totals.runningMachines],
+        ['Capacity', num(capacity.reservedPlayers) + ' / ' + num(capacity.maxPlayers)],
         ['Game Players', data.totals.playersInGame],
         ['Game Rooms', data.totals.gameRooms],
         ['Lobby Participants', data.totals.lobbyParticipants],
@@ -949,13 +981,19 @@ function renderAdminHtml(csrfToken: string): string {
       ];
 
       document.getElementById('metrics').innerHTML = metrics.map(([label, value]) =>
-        '<div class="metric"><div class="label">' + escapeHtml(label) + '</div><div class="value">' + num(value) + '</div></div>'
+        '<div class="metric"><div class="label">' + escapeHtml(label) + '</div><div class="value">' + (typeof value === 'string' ? escapeHtml(value) : num(value)) + '</div></div>'
       ).join('');
     }
 
     function renderWarnings(data) {
       const el = document.getElementById('warnings');
-      const warnings = data.diagnostics.warnings || [];
+      const capacity = data.capacity || {};
+      const warnings = [
+        capacity.full
+          ? 'Max in-game players hit: ' + num(capacity.reservedPlayers) + ' / ' + num(capacity.maxPlayers) + ' reserved across ' + num(capacity.maxMachines) + ' machines. Queued players will wait until a match frees space.'
+          : null,
+        ...(data.diagnostics.warnings || []),
+      ].filter(Boolean);
       if (warnings.length === 0) {
         el.style.display = 'none';
         el.innerHTML = '';

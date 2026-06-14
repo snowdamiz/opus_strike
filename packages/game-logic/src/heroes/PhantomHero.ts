@@ -1,5 +1,5 @@
 import { HeroBase, AbilityContext, AbilityResult } from './HeroBase.js';
-import { BLINK_MAX_DISTANCE } from '@voxel-strike/shared';
+import { PHANTOM_BLINK_DISTANCE } from '@voxel-strike/shared';
 import { vec3Scale, vec3Add, vec3Normalize } from '@voxel-strike/shared';
 
 export class PhantomHero extends HeroBase {
@@ -26,7 +26,7 @@ export class PhantomHero extends HeroBase {
   private executeBlink(context: AbilityContext): AbilityResult {
     // Calculate blink destination
     const direction = vec3Normalize(context.direction);
-    const blinkDistance = BLINK_MAX_DISTANCE;
+    const blinkDistance = PHANTOM_BLINK_DISTANCE;
     const destination = vec3Add(context.position, vec3Scale(direction, blinkDistance));
 
     return {

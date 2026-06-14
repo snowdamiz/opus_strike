@@ -11,6 +11,7 @@ import {
   BLAZE_ROCKET_JUMP_VERTICAL_FORCE,
   PHANTOM_BLINK_DISTANCE,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
+  calculateLookDirection,
   inputStateToMovementButtons,
   compareMovementSeq,
   isMovementSeqAfter,
@@ -22,10 +23,9 @@ import {
 import type { InputState } from '@voxel-strike/shared';
 import {
   MovementPredictionController,
-  canCapsuleOccupy,
   computeAnchorWallAabbs,
   createVoxelCollisionWorld,
-  sweepCapsulePathClear,
+  resolveCapsuleTeleportDestination,
   type MovementCollisionWorld,
   type MovementPredictionContext,
   type PredictionCorrectionMetrics,
@@ -232,24 +232,14 @@ function resolveLocalPhantomBlinkDestination(
 ): Vec3 {
   const lookup = getClientProceduralTerrainLookup();
   const world = getClientCollisionWorld();
-  const forward = horizontalForwardFromYaw(yaw);
   const start = state.position;
-  const verticalOffset = pitch < -0.3 ? 2 : 0;
-
-  for (let testDistance = distance; testDistance >= 2; testDistance -= 0.5) {
-    const rawCandidate = {
-      x: start.x + forward.x * testDistance,
-      y: start.y + verticalOffset,
-      z: start.z + forward.z * testDistance,
-    };
-    const candidate = lookup ? lookup.clampToPlayableMap(rawCandidate) : rawCandidate;
-
-    if (!sweepCapsulePathClear(world, start, candidate)) continue;
-    if (!canCapsuleOccupy(world, candidate)) continue;
-    return candidate;
-  }
-
-  return { ...start };
+  return resolveCapsuleTeleportDestination(
+    world,
+    start,
+    calculateLookDirection(yaw, pitch),
+    distance,
+    { clampPosition: lookup ? (candidate) => lookup.clampToPlayableMap(candidate) : undefined }
+  );
 }
 
 function applyLocalPredictedState(playerId: string, state: MovementSimulationState, lookYaw: number): MovementSimulationState {
@@ -261,7 +251,7 @@ function applyLocalPredictedState(playerId: string, state: MovementSimulationSta
 export function predictLocalPhantomBlink(player: Player, lookYaw: number, lookPitch: number): MovementSimulationState {
   ensureLocalPredictionInitialized(player);
   const current = localMovementPrediction.getState() ?? movementStateFromPlayer(player);
-  const forward = horizontalForwardFromYaw(lookYaw);
+  const blinkDirection = calculateLookDirection(lookYaw, lookPitch);
   const position = resolveLocalPhantomBlinkDestination(
     current,
     lookYaw,
@@ -273,8 +263,8 @@ export function predictLocalPhantomBlink(player: Player, lookYaw: number, lookPi
     position,
     velocity: {
       ...current.velocity,
-      x: forward.x * 2,
-      z: forward.z * 2,
+      x: blinkDirection.x * 2,
+      z: blinkDirection.z * 2,
     },
     movement: {
       ...current.movement,

@@ -18,6 +18,7 @@ import {
   getRankDivisionLabel,
   normalizeRankDivisionIndex,
 } from './skill';
+import { collectInGameCapacitySnapshot, type InGameCapacitySnapshot } from './playerCapacity';
 import { getRankDivisionIndex } from '@voxel-strike/shared';
 import type { MatchMode } from '@voxel-strike/shared';
 import { serializeRankPayload, type PublicRankPayload } from '../ranking/serialization';
@@ -55,6 +56,7 @@ interface MatchmakingQueueStatus {
   queueCount: number;
   provisionalPlayerCount?: number;
   requiredPlayers?: number;
+  capacity: InGameCapacitySnapshot;
 }
 
 function getRequestToken(req: Request): string | null {
@@ -242,7 +244,10 @@ async function chooseMatchmakingRankBand(input: {
 }
 
 async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> {
-  const rooms = await matchMaker.query({ name: 'lobby_room' });
+  const [rooms, capacity] = await Promise.all([
+    matchMaker.query({ name: 'lobby_room' }),
+    collectInGameCapacitySnapshot(matchMaker),
+  ]);
   let totalPlayersInQueue = 0;
   let provisionalPlayerCount = 0;
   let queueCount = 0;
@@ -260,7 +265,7 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
       : humanCount);
     const roomRequiredPlayers = typeof metadata.requiredPlayers === 'number' ? metadata.requiredPlayers : room.maxClients ?? 0;
     requiredPlayers = roomRequiredPlayers || requiredPlayers;
-    if (roomRequiredPlayers > 0 && queuedHumanCount >= roomRequiredPlayers) continue;
+    if (roomRequiredPlayers > 0 && queuedHumanCount >= roomRequiredPlayers && metadata.capacityBlocked !== true) continue;
 
     totalPlayersInQueue += queuedHumanCount;
     provisionalPlayerCount += Math.max(0, humanCount - queuedHumanCount);
@@ -273,6 +278,7 @@ async function getQueueStatus(mode: MatchMode): Promise<MatchmakingQueueStatus> 
     queueCount,
     provisionalPlayerCount,
     requiredPlayers,
+    capacity,
   };
 }
 

@@ -30,3 +30,4 @@ export * from './movement/sharedSimulator.js';
 export * from './movement/predictionController.js';
 export * from './movement/hookshotSwing.js';
 export * from './movement/temporaryWalls.js';
+export * from './movement/teleport.js';
