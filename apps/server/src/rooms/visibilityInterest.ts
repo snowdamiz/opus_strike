@@ -39,6 +39,7 @@ export interface VisibilityInterestContext {
   now: number;
   collisionRevision: number;
   getEyePosition: (player: VisibilityInterestPlayer) => Vec3;
+  getLineOfSightPoints?: (player: VisibilityInterestPlayer) => readonly Vec3[];
   hasLineOfSight: (from: Vec3, to: Vec3) => boolean;
   isExplicitlyRevealed?: (recipient: VisibilityInterestPlayer, target: VisibilityInterestPlayer, now: number) => boolean;
   getRecentCombatRevealUntil?: (recipient: VisibilityInterestPlayer, target: VisibilityInterestPlayer) => number;
@@ -71,6 +72,7 @@ export interface VisibilityInterestOptions {
   proximityRevealMeters?: number;
   maxPerceptionMeters?: number;
   lastKnownTtlMs?: number;
+  visibilityLossGraceMs?: number;
   losQuantizationMeters?: number;
   maxLineOfSightCacheEntries?: number;
 }
@@ -81,6 +83,7 @@ const DEFAULT_LINE_OF_SIGHT_TTL_MS = 180;
 const DEFAULT_PROXIMITY_REVEAL_METERS = 7.5;
 const DEFAULT_MAX_PERCEPTION_METERS = 62;
 const DEFAULT_LAST_KNOWN_TTL_MS = 1800;
+const DEFAULT_VISIBILITY_LOSS_GRACE_MS = 320;
 const DEFAULT_LOS_QUANTIZATION_METERS = 0.75;
 const DEFAULT_MAX_LOS_CACHE_ENTRIES = 4096;
 
@@ -129,6 +132,7 @@ export class VisibilityInterestManager {
   private readonly proximityRevealSq: number;
   private readonly maxPerceptionSq: number;
   private readonly lastKnownTtlMs: number;
+  private readonly visibilityLossGraceMs: number;
   private readonly losQuantizationMeters: number;
   private readonly maxLineOfSightCacheEntries: number;
   private readonly interestCache = new Map<string, Map<string, CachedInterestDecision>>();
@@ -144,6 +148,7 @@ export class VisibilityInterestManager {
     this.proximityRevealSq = proximityRevealMeters * proximityRevealMeters;
     this.maxPerceptionSq = maxPerceptionMeters * maxPerceptionMeters;
     this.lastKnownTtlMs = options.lastKnownTtlMs ?? DEFAULT_LAST_KNOWN_TTL_MS;
+    this.visibilityLossGraceMs = options.visibilityLossGraceMs ?? DEFAULT_VISIBILITY_LOSS_GRACE_MS;
     this.losQuantizationMeters = options.losQuantizationMeters ?? DEFAULT_LOS_QUANTIZATION_METERS;
     this.maxLineOfSightCacheEntries = options.maxLineOfSightCacheEntries ?? DEFAULT_MAX_LOS_CACHE_ENTRIES;
   }
@@ -247,13 +252,17 @@ export class VisibilityInterestManager {
       return this.hiddenOrLastKnownDecision(recipient.id, target.id, context.now, 'distance_cutoff', previous);
     }
 
-    const hasLos = this.hasCachedLineOfSight(
+    const hasLos = this.hasAnyCachedLineOfSight(
       context.getEyePosition(recipient),
-      context.getEyePosition(target),
+      context.getLineOfSightPoints?.(target) ?? [context.getEyePosition(target)],
       context
     );
     if (hasLos) {
       return this.visibleDecision(recipient.id, target.id, context.now, 'line_of_sight', target.position, previous);
+    }
+
+    if (previous && this.shouldHoldRecentVisibility(previous, context.now)) {
+      return this.visibilityGraceDecision(recipient.id, target.id, context.now, previous);
     }
 
     return this.hiddenOrLastKnownDecision(recipient.id, target.id, context.now, 'hidden', previous);
@@ -311,6 +320,44 @@ export class VisibilityInterestManager {
       lastKnownPosition,
       reason,
     };
+  }
+
+  private shouldHoldRecentVisibility(previous: RecipientInterestDecision | undefined, now: number): boolean {
+    return Boolean(
+      previous &&
+      previous.state === 'visible' &&
+      previous.lastVisibleAt > 0 &&
+      now - previous.lastVisibleAt <= this.visibilityLossGraceMs
+    );
+  }
+
+  private visibilityGraceDecision(
+    recipientId: string,
+    targetId: string,
+    now: number,
+    previous: RecipientInterestDecision
+  ): RecipientInterestDecision {
+    return {
+      recipientId,
+      targetId,
+      state: 'visible',
+      precision: 'full',
+      expiresAt: Math.min(now + this.visibleTtlMs, previous.lastVisibleAt + this.visibilityLossGraceMs),
+      lastVisibleAt: previous.lastVisibleAt,
+      lastKnownPosition: previous.lastKnownPosition ? cloneVec3(previous.lastKnownPosition) : null,
+      reason: 'line_of_sight',
+    };
+  }
+
+  private hasAnyCachedLineOfSight(
+    from: Vec3,
+    targets: readonly Vec3[],
+    context: VisibilityInterestContext
+  ): boolean {
+    for (const target of targets) {
+      if (this.hasCachedLineOfSight(from, target, context)) return true;
+    }
+    return false;
   }
 
   private hasCachedLineOfSight(from: Vec3, to: Vec3, context: VisibilityInterestContext): boolean {

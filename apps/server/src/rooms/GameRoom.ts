@@ -1796,6 +1796,24 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private getVisibilityLineOfSightPoints(player: VisibilityInterestPlayer): PlainVec3[] {
+    const position = player.position;
+    const shoulderOffset = PLAYER_RADIUS * 0.65;
+    const upperBodyOffset = PLAYER_HEIGHT * 0.18;
+    const lowerBodyOffset = -PLAYER_HEIGHT * 0.22;
+
+    return [
+      getSharedPlayerEyePosition(position),
+      { x: position.x, y: position.y + upperBodyOffset, z: position.z },
+      { x: position.x, y: position.y, z: position.z },
+      { x: position.x, y: position.y + lowerBodyOffset, z: position.z },
+      { x: position.x + shoulderOffset, y: position.y + upperBodyOffset, z: position.z },
+      { x: position.x - shoulderOffset, y: position.y + upperBodyOffset, z: position.z },
+      { x: position.x, y: position.y + upperBodyOffset, z: position.z + shoulderOffset },
+      { x: position.x, y: position.y + upperBodyOffset, z: position.z - shoulderOffset },
+    ];
+  }
+
   private buildReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
     const frameContext = this.replicationFrameContext;
     frameContext.now = now;
@@ -1835,6 +1853,7 @@ export class GameRoom extends Room<GameState> {
         now,
         collisionRevision: this.getMovementCollisionRevision(now),
         getEyePosition: (player) => getSharedPlayerEyePosition(player.position),
+        getLineOfSightPoints: (player) => this.getVisibilityLineOfSightPoints(player),
         hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
         getRecentCombatRevealUntil: (interestRecipient, interestTarget) => (
           recipient && interestRecipient.id === recipient.id && interestTarget.id === target.id

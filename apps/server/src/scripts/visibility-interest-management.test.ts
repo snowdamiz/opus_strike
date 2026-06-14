@@ -29,6 +29,7 @@ function makePlayer(
 function makeContext(options: {
   now?: number;
   collisionRevision?: number;
+  getLineOfSightPoints?: (player: VisibilityInterestPlayer) => readonly Vec3[];
   hasLineOfSight?: (from: Vec3, to: Vec3) => boolean;
   isExplicitlyRevealed?: (recipient: VisibilityInterestPlayer, target: VisibilityInterestPlayer, now: number) => boolean;
   getRecentCombatRevealUntil?: (recipient: VisibilityInterestPlayer, target: VisibilityInterestPlayer) => number;
@@ -37,6 +38,7 @@ function makeContext(options: {
     now: options.now ?? 1_000,
     collisionRevision: options.collisionRevision ?? 1,
     getEyePosition: (player: VisibilityInterestPlayer) => player.position,
+    getLineOfSightPoints: options.getLineOfSightPoints,
     hasLineOfSight: options.hasLineOfSight ?? (() => false),
     isExplicitlyRevealed: options.isExplicitlyRevealed,
     getRecentCombatRevealUntil: options.getRecentCombatRevealUntil,
@@ -133,22 +135,47 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
     hiddenTtlMs: 1,
     lineOfSightTtlMs: 1,
     lastKnownTtlMs: 100,
+    visibilityLossGraceMs: 20,
   });
   assert.equal(manager.getRecipientInterest(self, enemy, makeContext({
     now: 1_000,
     hasLineOfSight: () => true,
   })).state, 'visible');
-  const lastKnown = manager.getRecipientInterest(self, enemy, makeContext({
+  const graceVisible = manager.getRecipientInterest(self, enemy, makeContext({
     now: 1_010,
+    hasLineOfSight: () => false,
+  }));
+  assert.equal(graceVisible.state, 'visible');
+  const stillGraceVisible = manager.getRecipientInterest(self, enemy, makeContext({
+    now: 1_019,
+    hasLineOfSight: () => false,
+  }));
+  assert.equal(stillGraceVisible.state, 'visible');
+  const lastKnown = manager.getRecipientInterest(self, enemy, makeContext({
+    now: 1_021,
     hasLineOfSight: () => false,
   }));
   assert.equal(lastKnown.state, 'last_known');
   assert.deepEqual(lastKnown.lastKnownPosition, enemy.position);
   const hidden = manager.getRecipientInterest(self, enemy, makeContext({
-    now: 1_120,
+    now: 1_140,
     hasLineOfSight: () => false,
   }));
   assert.equal(hidden.state, 'hidden');
+}
+
+{
+  const manager = new VisibilityInterestManager({ proximityRevealMeters: 1 });
+  const targetPoints = [
+    { x: 12, y: 0.2, z: 0 },
+    { x: 12, y: 1.7, z: 0 },
+  ];
+  const decision = manager.getRecipientInterest(self, enemy, makeContext({
+    getLineOfSightPoints: () => targetPoints,
+    hasLineOfSight: (_from, to) => to.y > 1,
+  }));
+  assert.equal(decision.state, 'visible');
+  assert.equal(decision.reason, 'line_of_sight');
 }
 
 {
@@ -214,6 +241,7 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
     proximityRevealMeters: 1,
     visibleTtlMs: 100,
     lineOfSightTtlMs: 1_000,
+    visibilityLossGraceMs: 0,
   });
   assert.equal(manager.getRecipientInterest(self, enemy, makeContext({
     now: 1_000,

@@ -1311,8 +1311,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           : frameInput.primaryFire;
     const ability2ForServer = frameInput.ability2;
     const movementBarrierInputPressed = (
+      // Blaze Q stays on normal command cadence; forced flushes can bundle the rocket impulse with a movement burst.
       (heroId === 'phantom' && frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) ||
-      (heroId === 'blaze' && ability2ForServer && !abilitySystem.abilityPressedRef.current.ability2) ||
       (heroId === 'chronos' && frameInput.ultimate && !abilitySystem.abilityPressedRef.current.ultimate)
     );
     if (movementBarrierInputPressed) {
