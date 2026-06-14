@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useGameStore, type UserStats } from '../../store/gameStore';
 import { config } from '../../config/environment';
 import { getLevelProgress } from '@voxel-strike/shared';
 import { lamportsToSolDisplay } from '../../utils/wagerPayments';
 import { RankBadge, RankInlineLabel, RankProgress, getRankForStats } from './RankBadge';
-
-type LeaderboardMode = 'ranked' | 'score';
 
 interface LeaderboardPlayer {
   rank: number;
@@ -19,17 +17,9 @@ interface PersonalLeaderboardPlayer extends Omit<LeaderboardPlayer, 'rank'> {
 }
 
 interface LeaderboardResponse {
-  mode: LeaderboardMode;
   leaderboard: LeaderboardPlayer[];
   currentUser: PersonalLeaderboardPlayer | null;
 }
-
-const STATS_GLASS_STYLE = {
-  backdropFilter: 'blur(12px) saturate(1.12)',
-  WebkitBackdropFilter: 'blur(12px) saturate(1.12)',
-} satisfies CSSProperties;
-
-const STATS_PANEL_CLASS = 'relative overflow-hidden rounded-lg border border-white/10 bg-[rgb(var(--color-strike-surface)/0.45)] shadow-[0_16px_38px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.08)]';
 
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
@@ -77,30 +67,9 @@ function getLocalPersonalStats(playerName: string, userStats: UserStats | null):
 
 function StatsPanel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <section className={`${STATS_PANEL_CLASS} ${className}`} style={STATS_GLASS_STYLE}>
-      <div className="absolute inset-x-0 top-0 h-px bg-white/15" />
+    <section className={`stats-panel ${className}`}>
       {children}
     </section>
-  );
-}
-
-function SectionHeading({
-  eyebrow,
-  title,
-  description,
-}: {
-  eyebrow: string;
-  title: string;
-  description?: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-white/35">{eyebrow}</p>
-      <h2 className="font-display text-2xl leading-none text-white">{title}</h2>
-      {description ? (
-        <p className="mt-1 font-body text-xs leading-snug text-white/45">{description}</p>
-      ) : null}
-    </div>
   );
 }
 
@@ -110,13 +79,12 @@ export function StatsPage() {
 
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [leaderboardMode, setLeaderboardMode] = useState<LeaderboardMode>('ranked');
 
   const loadLeaderboard = useCallback(async (signal?: AbortSignal) => {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${getHttpUrl()}/auth/leaderboard?limit=25&mode=${leaderboardMode}`, {
+      const response = await fetch(`${getHttpUrl()}/auth/leaderboard?limit=25&mode=ranked`, {
         credentials: 'include',
         signal,
       });
@@ -135,7 +103,7 @@ export function StatsPage() {
         setIsLoading(false);
       }
     }
-  }, [leaderboardMode]);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -148,118 +116,85 @@ export function StatsPage() {
     [data?.currentUser, playerName, userStats]
   );
 
-  const leaderboardDescription = leaderboardMode === 'ranked'
-    ? 'Ordered by competitive rating'
-    : 'Ordered by total score';
-
   return (
-    <div className="h-full menu-content-wide menu-scroll-y no-scrollbar py-4 lg:py-5">
-      <div className="mx-auto flex min-h-full max-w-[86rem] flex-col justify-center gap-4 xl:gap-5">
+    <div className="stats-page menu-content-wide menu-scroll-y no-scrollbar">
+      <div className="stats-page-inner">
         <PersonalStatsBand player={personalStats} />
 
-        <StatsPanel className="min-w-0 p-4 lg:p-5">
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-            <SectionHeading
-              eyebrow="Global"
-              title="LEADERBOARD"
-              description={leaderboardDescription}
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <ModeButton
-                active={leaderboardMode === 'ranked'}
-                onClick={() => setLeaderboardMode('ranked')}
-              >
-                Competitive
-              </ModeButton>
-              <ModeButton
-                active={leaderboardMode === 'score'}
-                onClick={() => setLeaderboardMode('score')}
-              >
-                Score
-              </ModeButton>
+        <section className="stats-leaderboard-section" aria-labelledby="stats-leaderboard-title">
+          <div className="stats-floating-heading">
+            <h2 id="stats-leaderboard-title">LEADERBOARD</h2>
+            <div className="stats-toolbar">
               {data?.leaderboard.length ? (
-                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/35">
+                <p className="stats-player-count">
                   {data.leaderboard.length} players
                 </p>
               ) : null}
             </div>
           </div>
 
-          {isLoading && !data ? (
-            <LeaderboardSkeleton />
-          ) : data?.leaderboard.length ? (
-            <LeaderboardTable
-              players={data.leaderboard}
-              currentUserId={data.currentUser?.userId ?? null}
-              mode={leaderboardMode}
-            />
-          ) : (
-            <EmptyLeaderboard />
-          )}
-        </StatsPanel>
+          <StatsPanel className="stats-leaderboard-panel">
+            <div className="stats-panel-body">
+              {isLoading && !data ? (
+                <LeaderboardSkeleton />
+              ) : data?.leaderboard.length ? (
+                <LeaderboardTable
+                  players={data.leaderboard}
+                  currentUserId={data.currentUser?.userId ?? null}
+                />
+              ) : (
+                <EmptyLeaderboard />
+              )}
+            </div>
+          </StatsPanel>
+        </section>
       </div>
     </div>
   );
 }
 
-function ModeButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-md border px-3 py-1.5 font-display text-xs leading-none transition-colors ${
-        active
-          ? 'border-accent-primary/70 bg-accent-primary/20 text-white shadow-[0_0_18px_rgba(249,115,22,0.12)]'
-          : 'border-white/10 bg-white/[0.04] text-white/45 hover:border-white/20 hover:text-white/70'
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | null }) {
   const personalRank = player ? getRankForStats(player.stats) : null;
+  const overviewStats = player ? [
+    { label: 'Level', value: formatNumber(getLevelProgress(player.stats.totalExperience).level) },
+    { label: 'Score', value: formatNumber(player.stats.totalScore) },
+    { label: 'Win Rate', value: formatPercent(player.stats.totalWins, player.stats.totalGames) },
+    { label: 'Games', value: formatNumber(player.stats.totalGames) },
+    { label: 'K/D', value: formatRatio(player.stats.totalKills, player.stats.totalDeaths) },
+    { label: 'Captures', value: formatNumber(player.stats.totalCaptures) },
+  ] : [];
 
   return (
-    <StatsPanel className="p-4 lg:p-5">
+    <StatsPanel className="stats-personal-panel">
       {player ? (
         <>
-          <div className="grid gap-5 lg:grid-cols-[minmax(13rem,18rem)_1fr] lg:items-stretch">
-            <div className="min-w-0 border-b border-white/10 pb-4 lg:border-b-0 lg:pb-0 lg:pr-5">
-              <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-accent-primary/80">Your rank</p>
-              <div className="mt-3">
-                <RankInlineLabel rank={personalRank} iconSize={28} className="text-xl" />
+          <div className="stats-personal-main">
+            <div className="stats-rank-block">
+              <div className="stats-rank-label">
+                <RankInlineLabel rank={personalRank} iconSize={30} className="stats-rank-inline" />
               </div>
-              <p className="mt-3 font-mono text-sm text-white/45">
-                {player.rank ? `Leaderboard #${player.rank}` : 'No ranked matches yet'}
-              </p>
-              <p className="mt-1 truncate font-display text-2xl leading-none text-white/70">{player.name}</p>
+              <p className="stats-player-name">{player.name}</p>
+              <p className="stats-rank-position">{player.rank ? `Leaderboard #${player.rank}` : 'No ranked matches yet'}</p>
             </div>
 
-            <div className="flex min-w-0 flex-col gap-3">
-              <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-3 xl:grid-cols-6">
-                <InlineStat label="Level" value={formatNumber(getLevelProgress(player.stats.totalExperience).level)} />
-                <InlineStat label="Score" value={formatNumber(player.stats.totalScore)} />
-                <InlineStat label="Win Rate" value={formatPercent(player.stats.totalWins, player.stats.totalGames)} />
-                <InlineStat label="Games" value={formatNumber(player.stats.totalGames)} />
-                <InlineStat label="K/D" value={formatRatio(player.stats.totalKills, player.stats.totalDeaths)} />
-                <InlineStat label="Captures" value={formatNumber(player.stats.totalCaptures)} />
-              </div>
-              <div className="border-t border-white/10 pt-3">
-                <RankProgress stats={player.stats} />
-              </div>
+            <div className="stats-metric-grid">
+              {overviewStats.map((stat) => (
+                <InlineStat key={stat.label} label={stat.label} value={stat.value} />
+              ))}
             </div>
+          </div>
+          <div className="stats-rank-progress-row">
+            <RankProgress stats={player.stats} />
           </div>
           <WagerStatsStrip stats={player.stats} />
         </>
       ) : (
-        <div className="flex items-center justify-between gap-4">
+        <div className="stats-empty-profile">
           <div>
-            <p className="font-display text-2xl text-white/50">NO PROFILE</p>
-            <p className="mt-1 font-body text-sm text-white/30">Sign in to track scores, wins, and ranked progress.</p>
+            <p className="stats-empty-title">NO PROFILE</p>
+            <p className="stats-empty-copy">Sign in to track scores, wins, and ranked progress.</p>
           </div>
-          <svg className="hidden h-8 w-8 text-white/20 sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="stats-empty-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v8m-4-4h8M5 20h14a2 2 0 002-2V8.8a2 2 0 00-.6-1.43l-3.77-3.77A2 2 0 0015.2 3H5a2 2 0 00-2 2v13a2 2 0 002 2z" />
           </svg>
         </div>
@@ -277,19 +212,21 @@ function WagerStatsStrip({ stats }: { stats: UserStats }) {
     : netLamports < 0n
       ? 'text-red-300'
       : 'text-white/75';
+  const wagerStats = [
+    { label: 'Games', value: formatNumber(stats.totalWagerGames) },
+    { label: 'W/L/D', value: `${stats.totalWagerWins}/${stats.totalWagerLosses}/${stats.totalWagerDraws}` },
+    { label: 'Wagered', value: formatLamports(stats.totalWageredLamports) },
+    { label: 'Won', value: formatLamports(stats.totalWagerWonLamports), tone: 'text-emerald-300' },
+    { label: 'Lost', value: formatLamports(stats.totalWagerLostLamports), tone: 'text-red-300' },
+    { label: 'Net', value: formatSignedLamports(netLamports), tone: netTone },
+  ];
 
   return (
-    <div className="mt-4 border-t border-white/10 pt-4">
-      <div className="mb-3 flex items-center justify-end gap-3">
-        <p className={`font-mono text-xs ${netTone}`}>{formatSignedLamports(netLamports)} net</p>
-      </div>
-      <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-3 xl:grid-cols-6">
-        <WagerStat label="Games" value={formatNumber(stats.totalWagerGames)} />
-        <WagerStat label="W/L/D" value={`${stats.totalWagerWins}/${stats.totalWagerLosses}/${stats.totalWagerDraws}`} />
-        <WagerStat label="Wagered" value={formatLamports(stats.totalWageredLamports)} />
-        <WagerStat label="Won" value={formatLamports(stats.totalWagerWonLamports)} tone="text-emerald-300" />
-        <WagerStat label="Lost" value={formatLamports(stats.totalWagerLostLamports)} tone="text-red-300" />
-        <WagerStat label="Net" value={formatSignedLamports(netLamports)} tone={netTone} />
+    <div className="stats-wager-strip">
+      <div className="stats-wager-grid">
+        {wagerStats.map((stat) => (
+          <WagerStat key={stat.label} label={stat.label} value={stat.value} tone={stat.tone} />
+        ))}
       </div>
     </div>
   );
@@ -297,18 +234,18 @@ function WagerStatsStrip({ stats }: { stats: UserStats }) {
 
 function WagerStat({ label, value, tone = 'text-white/80' }: { label: string; value: string; tone?: string }) {
   return (
-    <div className="min-w-0 border-l border-white/10 px-3 first:border-l-0 sm:[&:nth-child(3n+1)]:border-l-0 xl:[&:nth-child(4)]:border-l">
-      <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-white/35">{label}</p>
-      <p className={`mt-1 truncate font-mono text-sm leading-5 ${tone}`}>{value}</p>
+    <div className="stats-wager-item">
+      <p className="stats-tile-label">{label}</p>
+      <p className={`stats-wager-value ${tone}`}>{value}</p>
     </div>
   );
 }
 
 function InlineStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 border-l border-white/10 px-3 text-center first:border-l-0 sm:[&:nth-child(3n+1)]:border-l-0 xl:[&:nth-child(4)]:border-l">
-      <p className="font-display text-3xl leading-none text-white">{value}</p>
-      <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.2em] text-white/45">{label}</p>
+    <div className="stats-metric-item">
+      <p className="stats-metric-value">{value}</p>
+      <p className="stats-tile-label">{label}</p>
     </div>
   );
 }
@@ -316,31 +253,27 @@ function InlineStat({ label, value }: { label: string; value: string }) {
 function LeaderboardTable({
   players,
   currentUserId,
-  mode,
 }: {
   players: LeaderboardPlayer[];
   currentUserId: string | null;
-  mode: LeaderboardMode;
 }) {
-  const primaryLabel = mode === 'ranked' ? 'Rating' : 'Score';
   return (
-    <div className="min-w-0 border-t border-white/10">
-      <div className="grid grid-cols-[2.75rem_minmax(0,1fr)_4.75rem] gap-3 border-b border-white/10 px-1 py-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-white/35 sm:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem] md:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem_5rem]">
+    <div className="stats-table">
+      <div className="stats-table-head">
         <span>Rank</span>
         <span>Player</span>
-        <span className="text-right">{primaryLabel}</span>
+        <span className="text-right">Rating</span>
         <span className="hidden text-right sm:block">Wins</span>
         <span className="hidden text-right sm:block">K/D</span>
         <span className="hidden text-right md:block">Caps</span>
       </div>
 
-      <div className="max-h-[min(56vh,34rem)] overflow-y-auto no-scrollbar">
+      <div className="stats-table-scroll no-scrollbar">
         {players.map((player) => (
           <LeaderboardRow
             key={player.userId}
             player={player}
             isCurrentUser={player.userId === currentUserId}
-            mode={mode}
           />
         ))}
       </div>
@@ -351,40 +284,37 @@ function LeaderboardTable({
 function LeaderboardRow({
   player,
   isCurrentUser,
-  mode,
 }: {
   player: LeaderboardPlayer;
   isCurrentUser: boolean;
-  mode: LeaderboardMode;
 }) {
-  const primaryValue = mode === 'ranked' ? player.stats.competitiveRating : player.stats.totalScore;
   return (
-    <div className={`grid grid-cols-[2.75rem_minmax(0,1fr)_4.75rem] gap-3 border-b border-white/10 px-1 py-3 last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem] md:grid-cols-[3rem_minmax(0,1fr)_5rem_4rem_4rem_5rem] ${isCurrentUser ? 'bg-accent-primary/10' : 'bg-transparent hover:bg-white/[0.025]'}`}>
-      <div className="flex items-center">
-        <span className={`font-mono text-sm ${player.rank <= 3 ? 'text-accent-primary' : 'text-white/45'}`}>
+    <div className={`stats-table-row${isCurrentUser ? ' is-current-user' : ''}`}>
+      <div className="stats-table-cell">
+        <span className={`stats-row-rank ${player.rank <= 3 ? 'is-podium' : ''}`}>
           #{player.rank}
         </span>
       </div>
-      <div className="min-w-0">
-        <p className="truncate font-display text-base leading-none text-white">{player.name}</p>
-        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-          {mode === 'ranked' ? <RankBadge rank={getRankForStats(player.stats)} compact className="max-w-[8rem] py-0.5 text-[10px]" /> : null}
-          <p className="font-body text-xs text-white/30">{formatNumber(mode === 'ranked' ? player.stats.rankedGames : player.stats.totalGames)} games</p>
+      <div className="stats-player-cell">
+        <p className="stats-row-player">{player.name}</p>
+        <div className="stats-row-meta">
+          <RankBadge rank={getRankForStats(player.stats)} compact className="max-w-[8rem] py-0.5 text-[10px]" />
+          <p>{formatNumber(player.stats.rankedGames)} games</p>
         </div>
       </div>
-      <span className="self-center text-right font-mono text-sm text-white/85">{formatNumber(primaryValue)}</span>
-      <span className="hidden self-center text-right font-mono text-sm text-white/55 sm:block">{formatNumber(player.stats.totalWins)}</span>
-      <span className="hidden self-center text-right font-mono text-sm text-white/55 sm:block">{formatRatio(player.stats.totalKills, player.stats.totalDeaths)}</span>
-      <span className="hidden self-center text-right font-mono text-sm text-white/55 md:block">{formatNumber(player.stats.totalCaptures)}</span>
+      <span className="stats-row-number stats-row-primary">{formatNumber(player.stats.competitiveRating)}</span>
+      <span className="stats-row-number hidden sm:block">{formatNumber(player.stats.totalWins)}</span>
+      <span className="stats-row-number hidden sm:block">{formatRatio(player.stats.totalKills, player.stats.totalDeaths)}</span>
+      <span className="stats-row-number hidden md:block">{formatNumber(player.stats.totalCaptures)}</span>
     </div>
   );
 }
 
 function LeaderboardSkeleton() {
   return (
-    <div className="border-t border-white/10">
+    <div className="stats-skeleton">
       {Array.from({ length: 8 }).map((_, index) => (
-        <div key={index} className="h-14 border-b border-white/10 bg-white/[0.035] last:border-b-0 animate-pulse" />
+        <div key={index} className="stats-skeleton-row animate-pulse" />
       ))}
     </div>
   );
@@ -392,9 +322,9 @@ function LeaderboardSkeleton() {
 
 function EmptyLeaderboard() {
   return (
-    <div className="flex min-h-[22rem] flex-col items-center justify-center border-t border-white/10 px-6 text-center">
-      <p className="font-display text-2xl text-white/55">NO SCORES YET</p>
-      <p className="mt-1 max-w-sm font-body text-sm text-white/35">Completed matches will appear here once players start logging results.</p>
+    <div className="stats-empty-leaderboard">
+      <p className="stats-empty-title">NO SCORES YET</p>
+      <p className="stats-empty-copy">Completed matches will appear here once players start logging results.</p>
     </div>
   );
 }

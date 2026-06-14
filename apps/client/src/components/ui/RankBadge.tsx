@@ -58,21 +58,44 @@ function readableRankTextColor(theme: RankTheme): string {
   return luminance < 0.45 ? theme.accent : theme.foreground;
 }
 
+function rankDivisionIntensity(division: number): number {
+  if (division <= 0) return 0;
+  return (division - 1) / 3;
+}
+
 function RankDivisionMarks({ division, theme }: { division: number; theme: RankTheme }) {
   if (division <= 0) return null;
 
-  const startX = 32 - ((division - 1) * 6) / 2;
+  const topY = 54 - (division - 1) * 4.7;
+  const halfWidth = 8.5 + division * 2.3;
+  const markStrokeWidth = 2.2 + division * 0.18;
 
   return (
     <g>
       {Array.from({ length: division }, (_, index) => {
-        const cx = startX + index * 6;
-        const path = `M${cx - 2} 55h4`;
+        const y = topY + index * 4.7;
+        const taper = index * 0.65;
+        const path = `M${32 - halfWidth + taper} ${y}L32 ${y + 3.7}L${32 + halfWidth - taper} ${y}`;
+        const isLeadMark = index === division - 1;
 
         return (
           <g key={index}>
-            <path d={path} stroke={RANK_BADGE_COLORS.divisionMarkShadow} strokeOpacity="0.42" strokeWidth="4.8" strokeLinecap="round" />
-            <path d={path} stroke={theme.foreground} strokeWidth="2.6" strokeLinecap="round" />
+            <path
+              d={path}
+              stroke={RANK_BADGE_COLORS.divisionMarkShadow}
+              strokeOpacity="0.62"
+              strokeWidth={markStrokeWidth + 3.2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d={path}
+              stroke={isLeadMark ? theme.accent : theme.foreground}
+              strokeOpacity={isLeadMark ? 0.96 : 0.76}
+              strokeWidth={markStrokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </g>
         );
       })}
@@ -99,11 +122,18 @@ export function RankIcon({
   const theme = getRankTheme(tier);
   const label = rankLabel(rank);
   const division = rankDivision(rank);
+  const divisionIntensity = rankDivisionIntensity(division);
   const aria = labelled ? { role: 'img', 'aria-label': label } : { 'aria-hidden': true };
   const id = useId().replace(/:/g, '');
   const gradientId = `rank-gradient-${id}`;
   const edgeGradientId = `rank-edge-${id}`;
   const shineGradientId = `rank-shine-${id}`;
+  const outerStrokeWidth = 2.2 + divisionIntensity * 0.7;
+  const glowRadius = 7 + division * 1.75;
+  const accentStopOpacity = 0.72 + divisionIntensity * 0.28;
+  const primaryStopOpacity = 0.82 + divisionIntensity * 0.18;
+  const edgeAccentOpacity = 0.7 + divisionIntensity * 0.22;
+  const shineOpacity = 0.38 + divisionIntensity * 0.2;
 
   return (
     <svg
@@ -114,17 +144,17 @@ export function RankIcon({
       viewBox="0 0 64 64"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      style={{ color: theme.primary, filter: `drop-shadow(0 0 8px ${theme.glow})` }}
+      style={{ color: theme.primary, filter: `drop-shadow(0 0 ${glowRadius}px ${theme.glow})` }}
     >
       <defs>
         <linearGradient id={gradientId} x1="12" y1="8" x2="52" y2="58" gradientUnits="userSpaceOnUse">
-          <stop stopColor={theme.accent} />
-          <stop offset="0.42" stopColor={theme.primary} />
+          <stop stopColor={theme.accent} stopOpacity={accentStopOpacity} />
+          <stop offset="0.42" stopColor={theme.primary} stopOpacity={primaryStopOpacity} />
           <stop offset="1" stopColor={theme.secondary} />
         </linearGradient>
         <linearGradient id={edgeGradientId} x1="13" y1="7" x2="51" y2="58" gradientUnits="userSpaceOnUse">
           <stop stopColor={theme.foreground} stopOpacity="0.95" />
-          <stop offset="0.62" stopColor={theme.accent} stopOpacity="0.82" />
+          <stop offset="0.62" stopColor={theme.accent} stopOpacity={edgeAccentOpacity} />
           <stop offset="1" stopColor={theme.secondary} stopOpacity="0.95" />
         </linearGradient>
         <radialGradient
@@ -135,7 +165,7 @@ export function RankIcon({
           gradientUnits="userSpaceOnUse"
           gradientTransform="translate(23 16) rotate(45) scale(30 24)"
         >
-          <stop stopColor="#ffffff" stopOpacity="0.55" />
+          <stop stopColor="#ffffff" stopOpacity={shineOpacity} />
           <stop offset="0.45" stopColor="#ffffff" stopOpacity="0.16" />
           <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
         </radialGradient>
@@ -146,7 +176,7 @@ export function RankIcon({
             d="M17 14.5L39 9l14 12-5 26-17 9.5-18-11-3-22.5 7-8.5Z"
             fill={`url(#${gradientId})`}
             stroke={`url(#${edgeGradientId})`}
-            strokeWidth="2.2"
+            strokeWidth={outerStrokeWidth}
             strokeLinejoin="round"
           />
           <path d="M17 14.5L39 9l14 12-5 26-17 9.5-18-11-3-22.5 7-8.5Z" fill={`url(#${shineGradientId})`} />
@@ -160,7 +190,7 @@ export function RankIcon({
             d="M15 12.5h34l4.5 7.5-4.5 21.5C46.8 49.5 40.8 55 32 58.5c-8.8-3.5-14.8-9-17-17L10.5 20 15 12.5Z"
             fill={`url(#${gradientId})`}
             stroke={`url(#${edgeGradientId})`}
-            strokeWidth="2.2"
+            strokeWidth={outerStrokeWidth}
             strokeLinejoin="round"
           />
           <path d="M15 12.5h34l4.5 7.5-4.5 21.5C46.8 49.5 40.8 55 32 58.5c-8.8-3.5-14.8-9-17-17L10.5 20 15 12.5Z" fill={`url(#${shineGradientId})`} />
@@ -174,7 +204,7 @@ export function RankIcon({
             d="M32 6.5l8.5 11 14 3.5-8.5 11 2 15.5L32 42l-16 5.5 2-15.5-8.5-11 14-3.5L32 6.5Z"
             fill={`url(#${gradientId})`}
             stroke={`url(#${edgeGradientId})`}
-            strokeWidth="2.2"
+            strokeWidth={outerStrokeWidth}
             strokeLinejoin="round"
           />
           <path d="M32 6.5l8.5 11 14 3.5-8.5 11 2 15.5L32 42l-16 5.5 2-15.5-8.5-11 14-3.5L32 6.5Z" fill={`url(#${shineGradientId})`} />
@@ -187,7 +217,7 @@ export function RankIcon({
             d="M9 49h46l3-31-14.5 10L32 8.5 20.5 28 6 18l3 31Z"
             fill={`url(#${gradientId})`}
             stroke={`url(#${edgeGradientId})`}
-            strokeWidth="2.2"
+            strokeWidth={outerStrokeWidth}
             strokeLinejoin="round"
           />
           <path d="M9 49h46l3-31-14.5 10L32 8.5 20.5 28 6 18l3 31Z" fill={`url(#${shineGradientId})`} />
@@ -201,7 +231,7 @@ export function RankIcon({
             d="M32 5.5l22 17.5-22 36-22-36L32 5.5Z"
             fill={`url(#${gradientId})`}
             stroke={`url(#${edgeGradientId})`}
-            strokeWidth="2.2"
+            strokeWidth={outerStrokeWidth}
             strokeLinejoin="round"
           />
           <path d="M32 5.5l22 17.5-22 36-22-36L32 5.5Z" fill={`url(#${shineGradientId})`} />
@@ -214,7 +244,7 @@ export function RankIcon({
             d="M18 22h28l7 7v21l-7 7H18l-7-7V29l7-7Z"
             fill={`url(#${gradientId})`}
             stroke={`url(#${edgeGradientId})`}
-            strokeWidth="2.2"
+            strokeWidth={outerStrokeWidth}
             strokeLinejoin="round"
           />
           <path d="M18 22h28l7 7v21l-7 7H18l-7-7V29l7-7Z" fill={`url(#${shineGradientId})`} />
@@ -224,7 +254,7 @@ export function RankIcon({
       )}
       {tier === 'unranked' && (
         <>
-          <circle cx="32" cy="32" r="22" fill={`url(#${gradientId})`} stroke={`url(#${edgeGradientId})`} strokeWidth="2.2" />
+          <circle cx="32" cy="32" r="22" fill={`url(#${gradientId})`} stroke={`url(#${edgeGradientId})`} strokeWidth={outerStrokeWidth} />
           <circle cx="32" cy="32" r="22" fill={`url(#${shineGradientId})`} />
           <path d="M21 32h22M32 21v22" stroke={theme.foreground} strokeWidth="4" strokeLinecap="round" strokeOpacity="0.72" />
         </>
@@ -246,15 +276,20 @@ export function RankBadge({
   const theme = getRankTheme(rankTier(rank));
   const label = rankLabel(rank);
   const textColor = readableRankTextColor(theme);
+  const division = rankDivision(rank);
+  const borderAlpha = ['66', '78', '8c', 'a3', 'ba'][division] ?? '66';
+  const secondaryAlpha = ['33', '3d', '49', '56', '64'][division] ?? '33';
+  const primaryAlpha = ['00', '12', '1d', '2b', '3a'][division] ?? '00';
+  const badgeGlow = 14 + division * 3;
 
   return (
     <span
       className={`inline-flex min-w-0 items-center gap-1.5 border px-2 py-1 font-display text-xs uppercase leading-none ${className}`}
       style={{
-        borderColor: `${theme.primary}66`,
-        backgroundColor: `${theme.secondary}33`,
+        borderColor: `${theme.primary}${borderAlpha}`,
+        background: `linear-gradient(135deg, ${theme.secondary}${secondaryAlpha}, ${theme.primary}${primaryAlpha})`,
         color: textColor,
-        boxShadow: `0 0 16px ${theme.glow}`,
+        boxShadow: `0 0 ${badgeGlow}px ${theme.glow}`,
       }}
       title={label}
     >

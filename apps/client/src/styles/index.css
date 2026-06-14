@@ -1385,10 +1385,17 @@ body,
 }
 
 .play-season-plate-rewards {
-  width: min(100%, 42rem);
+  width: min(100%, 40rem);
   margin-top: 1.05rem;
-  padding-top: 0.56rem;
-  border-top: 1px solid rgb(255 171 90 / 0.18);
+  padding: 1rem;
+  border: 1px solid rgb(255 255 255 / 0.055);
+  border-radius: 0.45rem;
+  background:
+    linear-gradient(90deg, rgb(0 0 0 / 0.28), rgb(0 0 0 / 0.16) 72%, rgb(0 0 0 / 0.06)),
+    linear-gradient(180deg, rgb(255 255 255 / 0.045), rgb(255 255 255 / 0.012));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.045),
+    0 0.7rem 1.4rem rgb(0 0 0 / 0.18);
   font-family: 'Exo 2', 'Rajdhani', sans-serif;
   text-shadow: 0 0.18rem 0.5rem rgb(0 0 0 / 0.72);
 }
@@ -1404,8 +1411,8 @@ body,
 
 .play-season-plate-rewards-list {
   display: grid;
-  gap: 0.34rem;
-  margin: 0.5rem 0 0;
+  gap: 0.48rem;
+  margin: 1rem 0 0;
   padding: 0;
   list-style: none;
 }
@@ -1415,7 +1422,7 @@ body,
   align-items: baseline;
   gap: 0.36rem;
   color: rgb(255 255 255 / 0.62);
-  font-size: clamp(0.72rem, 0.62rem + 0.28vw, 0.98rem);
+  font-size: clamp(0.66rem, 0.58rem + 0.24vw, 0.88rem);
   font-weight: 800;
   letter-spacing: 0.1em;
   line-height: 1.08;
@@ -1442,6 +1449,7 @@ body,
 .play-season-plate-rewards-text {
   min-width: 0;
   color: rgb(255 255 255 / 0.48);
+  font-weight: 400;
 }
 
 .play-tab-stage {
@@ -1818,6 +1826,508 @@ body,
   font-size: 0.72rem;
   font-weight: 800;
   white-space: nowrap;
+}
+
+/* ===== STATS PAGE ===== */
+.stats-page {
+  height: 100%;
+  padding: 1rem 0 1.15rem;
+}
+
+.stats-page-inner {
+  display: flex;
+  width: min(100%, 86rem);
+  min-height: 100%;
+  margin-inline: auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.95rem;
+}
+
+.stats-panel {
+  --stats-panel-pad: 1rem;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.56rem;
+  background: rgb(var(--color-strike-surface) / 0.68);
+  box-shadow:
+    0 1.1rem 2.7rem rgb(0 0 0 / 0.26),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
+  backdrop-filter: blur(14px) saturate(1.08);
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+}
+
+.stats-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: rgb(255 255 255 / 0.14);
+  pointer-events: none;
+}
+
+.stats-panel-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: var(--stats-panel-pad);
+}
+
+.stats-tile-label,
+.stats-player-count,
+.stats-row-rank,
+.stats-row-number {
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0;
+}
+
+.stats-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.stats-player-count {
+  border: 1px solid rgb(255 255 255 / 0.09);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.045);
+  padding: 0.38rem 0.64rem;
+  color: rgb(255 255 255 / 0.38);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.stats-personal-panel {
+  padding: clamp(1rem, 1.3vw, 1.35rem);
+}
+
+.stats-personal-main {
+  display: grid;
+  min-width: 0;
+  gap: clamp(1.05rem, 1.8vw, 2rem);
+  align-items: center;
+}
+
+.stats-rank-block {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0.2rem 0.5rem 0.2rem 0;
+}
+
+.stats-rank-label {
+  min-width: 0;
+}
+
+.stats-rank-inline {
+  max-width: 100%;
+  font-size: clamp(1.45rem, 1.15rem + 0.55vw, 1.9rem);
+  letter-spacing: 0;
+}
+
+.stats-rank-position {
+  margin-top: 0.54rem;
+  color: rgb(255 255 255 / 0.46);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0;
+}
+
+.stats-player-name {
+  overflow: hidden;
+  margin-top: 0.58rem;
+  color: rgb(255 255 255 / 0.82);
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: clamp(1.85rem, 1.4rem + 0.8vw, 2.55rem);
+  letter-spacing: 0;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-metric-grid,
+.stats-wager-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.72rem clamp(0.85rem, 1.8vw, 1.35rem);
+}
+
+.stats-metric-item,
+.stats-wager-item,
+.stats-rank-progress-row {
+  min-width: 0;
+}
+
+.stats-metric-item {
+  display: flex;
+  min-height: 3.65rem;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 0.24rem 0;
+  text-align: left;
+}
+
+.stats-metric-value {
+  overflow: hidden;
+  max-width: 100%;
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: clamp(1.8rem, 1.35rem + 1vw, 2.7rem);
+  letter-spacing: 0;
+  line-height: 0.95;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-tile-label {
+  margin-top: 0.38rem;
+  color: rgb(255 255 255 / 0.43);
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.stats-rank-progress-row {
+  padding: clamp(0.9rem, 1.1vw, 1.1rem) 0 0.1rem;
+}
+
+.stats-rank-progress-row .tracking-widest {
+  letter-spacing: 0;
+}
+
+.stats-wager-strip {
+  margin: clamp(1rem, 1.5vw, 1.35rem) calc(clamp(1rem, 1.3vw, 1.35rem) * -1) calc(clamp(1rem, 1.3vw, 1.35rem) * -1);
+  border-top: 1px solid rgb(255 255 255 / 0.09);
+  background: rgb(0 0 0 / 0.16);
+  padding: 0.9rem clamp(1rem, 1.3vw, 1.35rem) clamp(1rem, 1.3vw, 1.35rem);
+}
+
+.stats-wager-item {
+  padding: 0.2rem 0;
+}
+
+.stats-wager-value {
+  overflow: hidden;
+  max-width: 100%;
+  margin-top: 0.38rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.86rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-leaderboard-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 24rem;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.stats-leaderboard-section {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: clamp(0.85rem, 1.3vw, 1.4rem);
+}
+
+.stats-floating-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 0.1rem;
+}
+
+.stats-floating-heading h2 {
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: clamp(1.7rem, 1.25rem + 1vw, 2.35rem);
+  letter-spacing: 0;
+  line-height: 0.92;
+  text-transform: uppercase;
+  text-shadow: 0 0.8rem 1.8rem rgb(0 0 0 / 0.48);
+}
+
+.stats-table {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  flex-direction: column;
+}
+
+.stats-table-head,
+.stats-table-row {
+  display: grid;
+  grid-template-columns: 2.75rem minmax(0, 1fr) 4.75rem;
+  gap: 0.75rem;
+}
+
+.stats-table-head {
+  align-items: center;
+  margin: calc(var(--stats-panel-pad) * -1) calc(var(--stats-panel-pad) * -1) 0.76rem;
+  border-bottom: 1px solid rgb(255 255 255 / 0.085);
+  background: rgb(255 255 255 / 0.03);
+  padding: 0.76rem var(--stats-panel-pad);
+  color: rgb(255 255 255 / 0.34);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.stats-table-scroll {
+  display: grid;
+  max-height: min(56vh, 34rem);
+  min-height: 0;
+  gap: 0.46rem;
+  overflow-y: auto;
+  padding-bottom: 0.12rem;
+}
+
+.stats-table-row {
+  min-height: 4rem;
+  align-items: center;
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 0.46rem;
+  background: rgb(255 255 255 / 0.035);
+  padding: 0.72rem 0.82rem;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.stats-table-row:hover {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.055);
+  transform: translateY(-1px);
+}
+
+.stats-table-row.is-current-user {
+  border-color: rgb(var(--color-accent-primary) / 0.34);
+  background: rgb(var(--color-accent-primary) / 0.11);
+  box-shadow: inset 0.18rem 0 0 rgb(var(--color-accent-primary) / 0.84);
+}
+
+.stats-table-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.stats-row-rank {
+  color: rgb(255 255 255 / 0.45);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.stats-row-rank.is-podium {
+  color: rgb(var(--color-accent-primary));
+}
+
+.stats-player-cell {
+  min-width: 0;
+}
+
+.stats-row-player {
+  overflow: hidden;
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 1.08rem;
+  letter-spacing: 0;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-row-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.42rem;
+  margin-top: 0.32rem;
+  color: rgb(255 255 255 / 0.32);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.74rem;
+  line-height: 1.2;
+}
+
+.stats-row-meta .font-display {
+  letter-spacing: 0;
+}
+
+.stats-row-number {
+  align-self: center;
+  justify-self: end;
+  color: rgb(255 255 255 / 0.56);
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.stats-row-primary {
+  color: rgb(255 255 255 / 0.86);
+  font-weight: 700;
+}
+
+.stats-skeleton {
+  display: grid;
+  gap: 0.46rem;
+}
+
+.stats-skeleton-row {
+  height: 4rem;
+  border: 1px solid rgb(255 255 255 / 0.05);
+  border-radius: 0.46rem;
+  background: rgb(255 255 255 / 0.04);
+}
+
+.stats-empty-profile,
+.stats-empty-leaderboard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.stats-empty-profile {
+  padding: 1.1rem;
+}
+
+.stats-empty-leaderboard {
+  min-height: 22rem;
+  flex-direction: column;
+  justify-content: center;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.stats-empty-title {
+  color: rgb(255 255 255 / 0.55);
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 1.7rem;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.stats-empty-copy {
+  max-width: 24rem;
+  margin-top: 0.38rem;
+  color: rgb(255 255 255 / 0.36);
+  font-family: 'Exo 2', 'Rajdhani', sans-serif;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.stats-empty-icon {
+  display: none;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  color: rgb(255 255 255 / 0.22);
+}
+
+@media (min-width: 640px) {
+  .stats-metric-grid,
+  .stats-wager-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .stats-table-head,
+  .stats-table-row {
+    grid-template-columns: 3rem minmax(0, 1fr) 5rem 4rem 4rem;
+  }
+
+  .stats-empty-icon {
+    display: block;
+  }
+}
+
+@media (min-width: 768px) {
+  .stats-table-head,
+  .stats-table-row {
+    grid-template-columns: 3rem minmax(0, 1fr) 5rem 4rem 4rem 5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .stats-panel {
+    --stats-panel-pad: 1.18rem;
+  }
+
+  .stats-personal-main {
+    grid-template-columns: minmax(15rem, 20rem) minmax(0, 1fr);
+    align-items: center;
+    gap: clamp(2rem, 4vw, 4.4rem);
+  }
+
+  .stats-metric-grid {
+    grid-template-columns: repeat(6, minmax(4.25rem, 1fr));
+  }
+
+  .stats-metric-item {
+    min-height: 4.7rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .stats-page-inner {
+    gap: 1.15rem;
+  }
+
+  .stats-wager-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .stats-metric-value {
+    font-size: 2.2rem;
+  }
+}
+
+@media (max-width: 700px) {
+  .stats-page {
+    padding: 0.75rem 0 1rem;
+  }
+
+  .stats-page-inner {
+    justify-content: flex-start;
+  }
+
+  .stats-toolbar {
+    justify-content: space-between;
+  }
+
+  .stats-rank-block {
+    padding-right: 0;
+  }
+
+  .stats-table-head,
+  .stats-table-row {
+    grid-template-columns: 2.45rem minmax(0, 1fr) 4.35rem;
+    gap: 0.55rem;
+  }
+
+  .stats-table-row {
+    padding: 0.68rem 0.7rem;
+  }
 }
 
 @media (max-width: 560px) {
@@ -2629,17 +3139,17 @@ body,
   .play-season-plate-rewards {
     width: min(100%, 24rem);
     margin-top: 0.7rem;
-    padding-top: 0.42rem;
+    padding: 0.54rem 0.66rem 0.6rem 0.58rem;
   }
 
   .play-season-plate-rewards-list {
-    gap: 0.26rem;
+    gap: 0.34rem;
     margin-top: 0.36rem;
   }
 
   .play-season-plate-rewards-item {
     gap: 0.28rem;
-    font-size: 0.62rem;
+    font-size: 0.58rem;
     letter-spacing: 0.07em;
   }
 
@@ -2723,7 +3233,7 @@ body,
 
   .play-season-plate-rewards {
     margin-top: 0.48rem;
-    padding-top: 0.32rem;
+    padding: 0.42rem 0.52rem 0.46rem 0.48rem;
   }
 
   .play-season-plate-rewards-heading {
@@ -2731,12 +3241,12 @@ body,
   }
 
   .play-season-plate-rewards-list {
-    gap: 0.22rem;
+    gap: 0.3rem;
     margin-top: 0;
   }
 
   .play-season-plate-rewards-item {
-    font-size: 0.54rem;
+    font-size: 0.5rem;
     line-height: 1.15;
     letter-spacing: 0.05em;
   }
@@ -2745,7 +3255,7 @@ body,
 @media (max-height: 700px) {
   .play-season-plate-rewards {
     margin-top: 0.48rem;
-    padding-top: 0.32rem;
+    padding: 0.42rem 0.52rem 0.46rem 0.48rem;
   }
 
   .play-season-plate-rewards-heading {
@@ -2753,12 +3263,12 @@ body,
   }
 
   .play-season-plate-rewards-list {
-    gap: 0.22rem;
+    gap: 0.3rem;
     margin-top: 0;
   }
 
   .play-season-plate-rewards-item {
-    font-size: 0.54rem;
+    font-size: 0.5rem;
     line-height: 1.15;
     letter-spacing: 0.05em;
   }

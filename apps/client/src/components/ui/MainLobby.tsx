@@ -101,15 +101,15 @@ const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treas
 const SEASON_REWARD_RULES = [
   {
     label: 'Rank in Top 10',
-    text: 'split 10% treasury season end',
+    text: 'split 10% of treasury wallet',
   },
   {
     label: 'Golden Biome',
-    text: '$10 SOL each 2% spawn',
+    text: '$10 SOL each, 2% spawn rate',
   },
   {
     label: 'Ranks Resets',
-    text: 'reset at season end',
+    text: 'reset each season end',
   },
 ] as const;
 
@@ -129,6 +129,17 @@ function formatRankedTokenLabel(status: RankedTokenHoldStatus): string {
 
 function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
   return `${formatRankedUsdCents(status.usdCents)} hold`;
+}
+
+function formatRankedPreseasonSubtitle(season: RankedSeasonSnapshot): string {
+  const fallback = 'Ranked queue opens next season';
+  if (!season.endsAt) return fallback;
+
+  const date = new Date(season.endsAt);
+  if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) return fallback;
+
+  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `Ranked queue opens ${formattedDate}`;
 }
 
 function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
@@ -218,6 +229,7 @@ export function MainLobby() {
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
   const shouldAuthenticateConnectedWalletRef = useRef(false);
   const currentRank = getRankForStats(userStats);
+  const isRankedPreseason = rankedSeason.mode === 'preseason';
 
   useEffect(() => {
     const controller = new AbortController();
@@ -276,7 +288,7 @@ export function MainLobby() {
   }, [isAuthenticated, isNewUser, suggestedPlayerName]);
 
   useEffect(() => {
-    if (!showPlayDialog || !isAuthenticated || !hasFullFunctionality) {
+    if (!showPlayDialog || !isAuthenticated || !hasFullFunctionality || isRankedPreseason) {
       setRankedTokenHoldStatus(null);
       setRankedTokenHoldError(null);
       setIsRankedTokenHoldLoading(false);
@@ -305,7 +317,7 @@ export function MainLobby() {
     return () => {
       isCurrent = false;
     };
-  }, [getRankedTokenHoldStatus, hasFullFunctionality, isAuthenticated, showPlayDialog, user?.walletAddress, walletAddress]);
+  }, [getRankedTokenHoldStatus, hasFullFunctionality, isAuthenticated, isRankedPreseason, showPlayDialog, user?.walletAddress, walletAddress]);
 
   const handleDiscordSignIn = () => {
     clearError();
@@ -478,6 +490,10 @@ export function MainLobby() {
 
   const handleRankedPlay = async () => {
     setError(null);
+    if (isRankedPreseason) {
+      setError('Ranked is disabled during Pre-season.');
+      return;
+    }
     if (!isAuthenticated) {
       handleSignInClick();
       return;
@@ -672,6 +688,7 @@ export function MainLobby() {
           rankedTokenHoldStatus={rankedTokenHoldStatus}
           isRankedTokenHoldLoading={isRankedTokenHoldLoading}
           rankedTokenHoldError={rankedTokenHoldError}
+          rankedSeason={rankedSeason}
           onQuickPlay={handleQuickPlay}
           onRankedPlay={handleRankedPlay}
           onLinkPhantom={handleLinkPhantom}
@@ -926,6 +943,7 @@ interface PlayDialogProps {
   rankedTokenHoldStatus: RankedTokenHoldStatus | null;
   isRankedTokenHoldLoading: boolean;
   rankedTokenHoldError: string | null;
+  rankedSeason: RankedSeasonSnapshot;
   onQuickPlay: () => void;
   onRankedPlay: () => void;
   onLinkPhantom: () => void;
@@ -944,6 +962,7 @@ function PlayDialog({
   rankedTokenHoldStatus,
   isRankedTokenHoldLoading,
   rankedTokenHoldError,
+  rankedSeason,
   onQuickPlay,
   onRankedPlay,
   onLinkPhantom,
@@ -955,21 +974,32 @@ function PlayDialog({
   const titleId = useId();
   const dialogStyle = { '--play-dialog-accent': heroColor } as CSSProperties;
   const shouldCheckRankedHold = isAuthenticated && hasFullFunctionality;
+  const isRankedPreseason = rankedSeason.mode === 'preseason';
   const isRankedHoldMissing = shouldCheckRankedHold && rankedTokenHoldStatus?.eligible === false;
   const isRankedHoldPending = shouldCheckRankedHold && isRankedTokenHoldLoading;
   const rankedRequirement = rankedTokenHoldStatus ? rankedTokenHoldRequirement(rankedTokenHoldStatus) : null;
   const rankedTokenLabel = rankedTokenHoldStatus ? formatRankedTokenLabel(rankedTokenHoldStatus) : null;
-  const isRankedDisabled = isLoading || isLinkingPhantom || isRankedHoldPending || isRankedHoldMissing;
-  const rankedSubtitle = isRankedHoldMissing && rankedTokenHoldStatus && rankedTokenLabel
-    ? `Hold ${formatRankedUsdCents(rankedTokenHoldStatus.usdCents)} worth of ${rankedTokenLabel} to play`
-    : isRankedHoldPending
-      ? 'Checking token hold...'
-      : rankedTokenHoldError
-        ? 'Token check unavailable'
-        : 'Competitive queue';
-  const rankedTitle = isRankedHoldMissing && rankedRequirement
-    ? `Ranked requires ${rankedRequirement}`
-    : rankedTokenHoldError ?? 'Competitive queue';
+  const isRankedLocked = isRankedPreseason || isRankedHoldMissing;
+  const isRankedDisabled = isLoading || isLinkingPhantom || isRankedPreseason || isRankedHoldPending || isRankedHoldMissing;
+  const rankedSubtitle = isRankedPreseason
+    ? formatRankedPreseasonSubtitle(rankedSeason)
+    : isRankedHoldMissing && rankedTokenHoldStatus && rankedTokenLabel
+      ? `Hold ${formatRankedUsdCents(rankedTokenHoldStatus.usdCents)} worth of ${rankedTokenLabel} to play`
+      : isRankedHoldPending
+        ? 'Checking token hold...'
+        : rankedTokenHoldError
+          ? 'Token check unavailable'
+          : 'Competitive queue';
+  const rankedTitle = isRankedPreseason
+    ? 'Ranked is disabled during Pre-season'
+    : isRankedHoldMissing && rankedRequirement
+      ? `Ranked requires ${rankedRequirement}`
+      : rankedTokenHoldError ?? 'Competitive queue';
+  const rankedBadge = isRankedPreseason ? null : rankedTokenLabel;
+  const rankedBadgeTitle = rankedTokenHoldStatus
+    ? `Hold token: ${rankedTokenHoldStatus.tokenAddress}`
+    : undefined;
+  const rankedButtonClassName = `play-pay-option play-pay-option-ranked${isRankedLocked ? ' play-pay-option-ranked-locked' : ''}`;
 
   const runAction = (action: () => void) => {
     playButtonClick();
@@ -1034,7 +1064,7 @@ function PlayDialog({
               type="button"
               onClick={() => runAction(onRankedPlay)}
               disabled={isRankedDisabled}
-              className={`play-pay-option play-pay-option-ranked${isRankedHoldMissing ? ' play-pay-option-ranked-locked' : ''}`}
+              className={rankedButtonClassName}
               title={rankedTitle}
               style={{
                 background: `linear-gradient(135deg, ${heroColor}, ${heroColor}dd)`,
@@ -1054,9 +1084,9 @@ function PlayDialog({
                 <span className="play-pay-option-title">{isLoading ? 'PREPARING...' : 'RANKED'}</span>
                 <span className="play-pay-option-subtitle">{rankedSubtitle}</span>
               </span>
-              {rankedTokenHoldStatus && rankedTokenLabel && (
-                <span className="play-pay-option-badge" title={`Hold token: ${rankedTokenHoldStatus.tokenAddress}`}>
-                  {rankedTokenLabel}
+              {rankedBadge && (
+                <span className="play-pay-option-badge" title={rankedBadgeTitle}>
+                  {rankedBadge}
                 </span>
               )}
             </button>
