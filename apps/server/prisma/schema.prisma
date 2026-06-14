@@ -467,6 +467,14 @@ model GoldenBiomeRewardSettings {
   updatedAt        DateTime @updatedAt
 }
 
+model GlobalNotification {
+  id              String   @id @default("active")
+  message         String   @db.Text
+  updatedByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
 model GoldenBiomeRewardTransfer {
   id              String                          @id @default(cuid())
   rewardId        String

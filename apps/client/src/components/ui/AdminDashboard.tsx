@@ -177,6 +177,13 @@ interface GoldenBiomeRewardsOverview {
   rewards: GoldenBiomeRewardOverview[];
 }
 
+interface GlobalNotificationOverview {
+  id: string;
+  message: string;
+  updatedByUserId: string | null;
+  updatedAt: string;
+}
+
 interface AdminOverview {
   generatedAt: string;
   status: 'ok' | 'degraded' | string;
@@ -185,6 +192,7 @@ interface AdminOverview {
     name: string;
     walletAddress: string;
     elevatedAntiCheatRole?: boolean;
+    csrfToken?: string;
   };
   totals: {
     runningMachines: number;
@@ -220,6 +228,7 @@ interface AdminOverview {
     counts: Record<string, number>;
   };
   goldenBiomeRewards?: GoldenBiomeRewardsOverview;
+  globalNotification: GlobalNotificationOverview | null;
   diagnostics: {
     distributed: boolean;
     routingStrategy: string;
@@ -496,6 +505,81 @@ function ActionButton({
   );
 }
 
+function GlobalNotificationPanel({
+  notification,
+  draft,
+  busy,
+  onDraftChange,
+  onSave,
+  onRemove,
+}: {
+  notification: GlobalNotificationOverview | null;
+  draft: string;
+  busy: boolean;
+  onDraftChange: (message: string) => void;
+  onSave: () => void;
+  onRemove: () => void;
+}) {
+  const trimmedDraft = draft.trim();
+  const hasActiveNotification = Boolean(notification);
+
+  return (
+    <div className="grid gap-4 border-b border-white/10 bg-black/20 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)]">
+      <div className="min-w-0">
+        <label htmlFor="global-notification-message" className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">
+          Message
+        </label>
+        <textarea
+          id="global-notification-message"
+          value={draft}
+          maxLength={240}
+          onChange={(event) => onDraftChange(event.target.value)}
+          placeholder="Maintenance starts in 10 minutes."
+          className="mt-2 min-h-[76px] w-full resize-y rounded-md border border-white/10 bg-black/30 px-3 py-2 font-body text-sm leading-relaxed text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55 focus:bg-black/40"
+        />
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="font-body text-xs text-white/40">{trimmedDraft.length} / 240</div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={!trimmedDraft || busy}
+              onClick={onSave}
+              className="h-9 rounded-md border border-accent-primary/45 bg-accent-primary/20 px-3 font-body text-xs font-semibold uppercase tracking-[0.08em] text-orange-50 transition hover:border-accent-primary/70 hover:bg-accent-primary/30 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
+            >
+              Set Message
+            </button>
+            <ActionButton disabled={!hasActiveNotification || busy} onClick={onRemove}>
+              Remove
+            </ActionButton>
+          </div>
+        </div>
+      </div>
+
+      <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.025] p-3">
+        <div className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Current</div>
+        {notification ? (
+          <>
+            <div className="mt-2 inline-flex rounded-md border border-ui-warning/35 bg-ui-warning/10 px-2.5 py-1 font-body text-xs uppercase tracking-[0.08em] text-yellow-100">
+              Active
+            </div>
+            <p className="mt-3 break-words font-body text-sm leading-relaxed text-white/80">{notification.message}</p>
+            <div className="mt-3 font-body text-xs text-white/40">
+              Updated {formatDate(notification.updatedAt)}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mt-2 inline-flex rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1 font-body text-xs uppercase tracking-[0.08em] text-white/50">
+              Off
+            </div>
+            <p className="mt-3 font-body text-sm text-white/45">No active message.</p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ModeButton({
   mode,
   active,
@@ -765,6 +849,8 @@ export function AdminDashboard() {
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
   const [busyGoldenRewardId, setBusyGoldenRewardId] = useState<string | null>(null);
   const [busyGoldenMode, setBusyGoldenMode] = useState(false);
+  const [busyGlobalNotification, setBusyGlobalNotification] = useState(false);
+  const [globalNotificationDraft, setGlobalNotificationDraft] = useState('');
 
   const loadOverview = useCallback(async () => {
     setError(null);
@@ -788,11 +874,15 @@ export function AdminDashboard() {
 
   const postAdminJson = useCallback(async (endpoint: string, payload: unknown) => {
     setError(null);
+    const csrfToken = overview?.admin.csrfToken ?? '';
     const response = await fetch(`${config.serverHttpUrl}${endpoint}`, {
       method: 'POST',
       credentials: 'include',
       cache: 'no-store',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': csrfToken,
+      },
       body: JSON.stringify(payload ?? {}),
     });
 
@@ -802,7 +892,7 @@ export function AdminDashboard() {
     }
 
     await loadOverview();
-  }, [loadOverview]);
+  }, [loadOverview, overview?.admin.csrfToken]);
 
   const updateReportStatus = useCallback((report: PlayerReportOverview, status: string) => {
     const note = window.prompt(status === 'cleared' ? 'Clear note' : 'Review note', '') ?? '';
@@ -855,11 +945,38 @@ export function AdminDashboard() {
       .finally(() => setBusyGoldenRewardId(null));
   }, [postAdminJson]);
 
+  const saveGlobalNotification = useCallback(() => {
+    const message = globalNotificationDraft.trim();
+    if (!message) {
+      setError('Notification message is required');
+      return;
+    }
+
+    setBusyGlobalNotification(true);
+    postAdminJson('/admin/api/global-notification', { message })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyGlobalNotification(false));
+  }, [globalNotificationDraft, postAdminJson]);
+
+  const removeGlobalNotification = useCallback(() => {
+    if (!overview?.globalNotification) return;
+    if (!window.confirm('Remove the global notification?')) return;
+
+    setBusyGlobalNotification(true);
+    postAdminJson('/admin/api/global-notification/remove', {})
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyGlobalNotification(false));
+  }, [overview?.globalNotification, postAdminJson]);
+
   useEffect(() => {
     void loadOverview();
     const interval = window.setInterval(() => void loadOverview(), 3000);
     return () => window.clearInterval(interval);
   }, [loadOverview]);
+
+  useEffect(() => {
+    setGlobalNotificationDraft(overview?.globalNotification?.message ?? '');
+  }, [overview?.globalNotification?.message]);
 
   const metrics = useMemo(() => {
     if (!overview) return [];
@@ -927,6 +1044,20 @@ export function AdminDashboard() {
                 <MetricTile key={metric.label} {...metric} />
               ))}
             </div>
+
+            <Section
+              title="Global Notification"
+              meta={overview.globalNotification ? 'active' : 'off'}
+            >
+              <GlobalNotificationPanel
+                notification={overview.globalNotification}
+                draft={globalNotificationDraft}
+                busy={busyGlobalNotification}
+                onDraftChange={setGlobalNotificationDraft}
+                onSave={saveGlobalNotification}
+                onRemove={removeGlobalNotification}
+              />
+            </Section>
 
             <Section title="Machines" meta={`${formatNumber(overview.machines.length)} running`}>
               <MachinesTable machines={overview.machines} />

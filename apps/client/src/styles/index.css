@@ -1191,6 +1191,11 @@ body,
   --menu-bottom-pad: clamp(1rem, 4vh, 3.5rem);
   --menu-bottom-pad-lg: clamp(4rem, 7vh, 6rem);
   --menu-scale: 1;
+  --global-notification-offset: 0rem;
+}
+
+.global-notification-visible {
+  --global-notification-offset: 2rem;
 }
 
 .menu-screen {
@@ -1198,6 +1203,10 @@ body,
   height: 100%;
   position: relative;
   overflow: hidden;
+}
+
+.menu-screen > nav {
+  top: var(--global-notification-offset);
 }
 
 .menu-nav {
@@ -1251,7 +1260,7 @@ body,
   inset: 0;
   z-index: 10;
   min-height: 0;
-  padding: var(--menu-nav-h) var(--menu-safe-x) var(--menu-bottom-pad);
+  padding: calc(var(--menu-nav-h) + var(--global-notification-offset)) var(--menu-safe-x) var(--menu-bottom-pad);
 }
 
 .menu-main-play {
@@ -2443,7 +2452,7 @@ body,
 
   .menu-main {
     padding:
-      var(--menu-nav-h)
+      calc(var(--menu-nav-h) + var(--global-notification-offset))
       var(--menu-safe-x)
       var(--menu-bottom-pad);
   }
@@ -2666,7 +2675,7 @@ body,
   }
 
   .menu-main {
-    padding-top: var(--menu-nav-h);
+    padding-top: calc(var(--menu-nav-h) + var(--global-notification-offset));
   }
 
   .hero-select-stage {

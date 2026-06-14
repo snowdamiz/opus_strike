@@ -35,6 +35,7 @@ import {
   startAdminMachineHeartbeat,
   type AdminMachineHeartbeatHandle,
 } from './admin/machineRegistry';
+import { getGlobalNotification } from './notifications/globalNotificationService';
 import { loggers } from './utils/logger';
 
 const app = express();
@@ -158,6 +159,24 @@ app.use('/admin', createAdminRouter({
   redis: sharedRedisClient,
   flyReplayRegistered: () => Boolean(flyReplayRouteHandle),
 }));
+
+function noStorePublic(res: Response): void {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+}
+
+app.get('/notifications/global', async (_req, res) => {
+  noStorePublic(res);
+
+  try {
+    res.json({ notification: await getGlobalNotification() });
+  } catch (error) {
+    loggers.room.error('Failed to load global notification', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    res.status(500).json({ error: 'Failed to load global notification' });
+  }
+});
 
 function configuredStatusToken(): string {
   return process.env.INTERNAL_STATUS_TOKEN

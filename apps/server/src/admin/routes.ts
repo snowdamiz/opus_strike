@@ -31,6 +31,12 @@ import {
   type AdminRoomListing,
 } from './machineRegistry';
 import { createInGameCapacitySnapshot } from '../matchmaking/playerCapacity';
+import {
+  getGlobalNotification,
+  setGlobalNotification,
+  removeGlobalNotification,
+  GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH,
+} from '../notifications/globalNotificationService';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
@@ -137,9 +143,50 @@ function readHeaderString(req: Request, name: string): string {
   return typeof value === 'string' ? value : '';
 }
 
+function readOriginList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function adminAllowedOrigins(): string[] {
+  const configuredOrigins = [
+    ...readOriginList(process.env.CLIENT_ORIGIN),
+    ...readOriginList(process.env.CLIENT_URL),
+    ...readOriginList(process.env.PUBLIC_CLIENT_ORIGIN),
+    ...readOriginList(process.env.ALLOWED_ORIGINS),
+  ];
+
+  if (process.env.NODE_ENV === 'production') return configuredOrigins;
+
+  return [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    ...configuredOrigins,
+  ];
+}
+
+function isAllowedConfiguredAdminOrigin(source: string): boolean {
+  try {
+    const sourceOrigin = new URL(source).origin;
+    return adminAllowedOrigins().some((origin) => {
+      try {
+        return new URL(origin).origin === sourceOrigin;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
+}
+
 function hasAllowedAdminOrigin(req: Request): boolean {
   const fetchSite = readHeaderString(req, 'sec-fetch-site').toLowerCase();
-  if (fetchSite === 'cross-site') return false;
 
   const host = req.headers.host;
   if (!host) return false;
@@ -150,7 +197,8 @@ function hasAllowedAdminOrigin(req: Request): boolean {
   if (!source) return fetchSite === 'same-origin' || fetchSite === 'same-site' || fetchSite === 'none';
 
   try {
-    return new URL(source).host === host;
+    if (fetchSite === 'cross-site') return isAllowedConfiguredAdminOrigin(source);
+    return new URL(source).host === host || isAllowedConfiguredAdminOrigin(source);
   } catch {
     return false;
   }
@@ -516,13 +564,14 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards, globalNotification] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
     antiCheatEvidenceStore.listReviewData(),
     listPlayerReportQueue(prisma),
     wagerService.getGoldenBiomeAdminOverview(),
+    getGlobalNotification(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -610,6 +659,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
       name: adminUser.name,
       walletAddress: adminUser.walletAddress,
       elevatedAntiCheatRole: adminUser.elevatedAntiCheatRole,
+      csrfToken: createAdminCsrfToken(adminUser, generatedAtMs),
     },
     totals,
     capacity,
@@ -636,6 +686,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     antiCheat,
     playerReports,
     goldenBiomeRewards,
+    globalNotification,
   };
 }
 
@@ -778,7 +829,7 @@ function renderAdminHtml(csrfToken: string): string {
       flex-wrap: wrap;
       gap: 6px;
     }
-    button, input, select {
+    button, input, select, textarea {
       min-height: 30px;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -791,9 +842,14 @@ function renderAdminHtml(csrfToken: string): string {
       padding: 4px 8px;
     }
     button:hover { background: rgba(255,255,255,.12); }
-    input, select {
+    input, select, textarea {
       padding: 4px 8px;
       min-width: 160px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
     }
     .warnings {
       display: none;
@@ -831,6 +887,14 @@ function renderAdminHtml(csrfToken: string): string {
     </header>
 
     <div class="warnings" id="warnings"></div>
+
+    <section>
+      <div class="section-head">
+        <h2>Global Notification</h2>
+        <span class="muted" id="global-notification-status"></span>
+      </div>
+      <div id="global-notification"></div>
+    </section>
 
     <div class="grid" id="metrics"></div>
 
@@ -1003,6 +1067,23 @@ function renderAdminHtml(csrfToken: string): string {
       el.innerHTML = warnings.map((warning) => '<div>' + escapeHtml(warning) + '</div>').join('');
     }
 
+    function renderGlobalNotification(data) {
+      const notification = data.globalNotification || null;
+      document.getElementById('global-notification-status').textContent = notification ? 'active' : 'off';
+      document.getElementById('global-notification').innerHTML =
+        '<div style="padding:12px; border-bottom:1px solid var(--line)">' +
+          '<textarea id="global-notification-message" maxlength="${GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH}" placeholder="Maintenance starts in 10 minutes.">' + escapeHtml(notification ? notification.message : '') + '</textarea>' +
+          '<div class="actions" style="margin-top:8px">' +
+            '<button onclick="setGlobalNotification()">Set Message</button>' +
+            '<button onclick="removeGlobalNotification()" ' + (notification ? '' : 'disabled') + '>Remove</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="empty">' + (notification
+          ? '<span class="pill">Active</span><br><br>' + escapeHtml(notification.message) + '<br><span class="muted">Updated ' + escapeHtml(new Date(notification.updatedAt).toLocaleString()) + '</span>'
+          : 'No active message.'
+        ) + '</div>';
+    }
+
     function renderMachines(data) {
       document.getElementById('machine-count').textContent = num(data.machines.length) + ' running';
       if (data.machines.length === 0) {
@@ -1087,6 +1168,18 @@ function renderAdminHtml(csrfToken: string): string {
       }
       await load();
     }
+
+    window.setGlobalNotification = () => {
+      const message = document.getElementById('global-notification-message').value;
+      postJson('/admin/api/global-notification', { message })
+        .catch((error) => alert(error.message));
+    };
+
+    window.removeGlobalNotification = () => {
+      if (!confirm('Remove the global notification?')) return;
+      postJson('/admin/api/global-notification/remove', {})
+        .catch((error) => alert(error.message));
+    };
 
     window.acResolveCase = (caseId, status) => {
       const resolution = prompt('Resolution / note');
@@ -1312,6 +1405,7 @@ function renderAdminHtml(csrfToken: string): string {
         const data = await response.json();
         setStatus(data);
         renderWarnings(data);
+        renderGlobalNotification(data);
         renderMetrics(data);
         renderMachines(data);
         renderGameRooms(data);
@@ -1393,6 +1487,35 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     try {
       const reward = await wagerService.distributeGoldenBiomeReward(req.params.rewardId, adminUser.id);
       res.json({ ok: true, reward });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/global-notification', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const message = readRequestString(req.body?.message, GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH);
+
+    if (!message) {
+      res.status(400).json({ error: 'Notification message is required' });
+      return;
+    }
+
+    try {
+      const notification = await setGlobalNotification(message, adminUser.id);
+      res.json({ ok: true, notification });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/global-notification/remove', ensureAdmin, ensureAdminMutation, async (_req, res) => {
+    noStore(res);
+
+    try {
+      await removeGlobalNotification();
+      res.json({ ok: true, notification: null });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
