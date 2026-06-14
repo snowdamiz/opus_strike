@@ -97,7 +97,7 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   label: getRankedSeasonLabel({ mode: 'season', seasonNumber: DEFAULT_RANKED_SEASON_NUMBER }),
   endsAt: null,
 };
-const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treasury wallet at season end; golden biome wins pay $10 in SOL per player with a 2% spawn rate; ranks reset at the end of every season.';
+const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treasury wallet at season end; golden biome wins pay $10 in SOL per player with a 2% spawn rate; ranked history is saved by season.';
 const SEASON_REWARD_RULES = [
   {
     label: 'Rank in Top 10',
@@ -108,8 +108,8 @@ const SEASON_REWARD_RULES = [
     text: '$10 SOL each, 2% spawn rate',
   },
   {
-    label: 'Ranks Resets',
-    text: 'reset each season end',
+    label: 'Season Archive',
+    text: 'saved each season end',
   },
 ] as const;
 

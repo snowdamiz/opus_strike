@@ -7,6 +7,7 @@ import {
   type RankedRatingUpdate,
   type RankedUserState,
 } from '../ranking/ratingService';
+import { ensureRankedSeasonSettingsTx } from '../ranking/seasonService';
 
 export interface MatchParticipantStats {
   kills: number;
@@ -163,6 +164,72 @@ function getRankedAggregateIncrement(
   };
 }
 
+function getSeasonAggregateCreateData(
+  participant: PersistableParticipant,
+  user: RankedUserState & { name: string },
+  ratingUpdate: RankedRatingUpdate,
+  endedAt: Date
+) {
+  const rankedWinIncrement = participant.outcome === 'win' ? 1 : 0;
+  const rankedLossIncrement = participant.outcome === 'loss' ? 1 : 0;
+  const rankedDrawIncrement = participant.outcome === 'draw' ? 1 : 0;
+
+  return {
+    userName: user.name,
+    totalGames: user.rankedGames + 1,
+    totalWins: user.rankedWins + rankedWinIncrement,
+    totalLosses: user.rankedLosses + rankedLossIncrement,
+    totalDraws: user.rankedDraws + rankedDrawIncrement,
+    totalKills: participant.kills,
+    totalDeaths: participant.deaths,
+    totalAssists: participant.assists,
+    totalCaptures: participant.flagCaptures,
+    totalFlagReturns: participant.flagReturns,
+    totalScore: participant.score,
+    totalExperience: participant.experienceGained,
+    competitiveRating: ratingUpdate.ratingAfter,
+    rankedGames: user.rankedGames + 1,
+    rankedWins: user.rankedWins + rankedWinIncrement,
+    rankedLosses: user.rankedLosses + rankedLossIncrement,
+    rankedDraws: user.rankedDraws + rankedDrawIncrement,
+    rankedPlacementsRemaining: ratingUpdate.rankedPlacementsRemainingAfter,
+    rankedPeakRating: ratingUpdate.rankedPeakRatingAfter,
+    rankedLastMatchAt: endedAt,
+  };
+}
+
+function getSeasonAggregateUpdateData(
+  participant: PersistableParticipant,
+  user: RankedUserState & { name: string },
+  ratingUpdate: RankedRatingUpdate,
+  endedAt: Date
+): Prisma.RankedSeasonUserStatsUpdateInput {
+  const createData = getSeasonAggregateCreateData(participant, user, ratingUpdate, endedAt);
+
+  return {
+    userName: createData.userName,
+    totalGames: { increment: 1 },
+    totalWins: { increment: participant.outcome === 'win' ? 1 : 0 },
+    totalLosses: { increment: participant.outcome === 'loss' ? 1 : 0 },
+    totalDraws: { increment: participant.outcome === 'draw' ? 1 : 0 },
+    totalKills: { increment: participant.kills },
+    totalDeaths: { increment: participant.deaths },
+    totalAssists: { increment: participant.assists },
+    totalCaptures: { increment: participant.flagCaptures },
+    totalFlagReturns: { increment: participant.flagReturns },
+    totalScore: { increment: participant.score },
+    totalExperience: { increment: participant.experienceGained },
+    competitiveRating: ratingUpdate.ratingAfter,
+    rankedGames: { increment: 1 },
+    rankedWins: { increment: participant.outcome === 'win' ? 1 : 0 },
+    rankedLosses: { increment: participant.outcome === 'loss' ? 1 : 0 },
+    rankedDraws: { increment: participant.outcome === 'draw' ? 1 : 0 },
+    rankedPlacementsRemaining: ratingUpdate.rankedPlacementsRemainingAfter,
+    rankedPeakRating: ratingUpdate.rankedPeakRatingAfter,
+    rankedLastMatchAt: endedAt,
+  };
+}
+
 function isPrismaUniqueConstraintError(error: unknown): boolean {
   return typeof error === 'object'
     && error !== null
@@ -196,6 +263,7 @@ export async function persistCompletedMatch(
         where: { id: { in: userIds } },
         select: {
           id: true,
+          name: true,
           competitiveRating: true,
           rankedGames: true,
           rankedWins: true,
@@ -222,6 +290,8 @@ export async function persistCompletedMatch(
         })
         : [];
       const ratingUpdatesByUserId = new Map(ratingUpdates.map((update) => [update.userId, update]));
+      const usersById = new Map(existingUsers.map((user) => [user.id, user]));
+      const rankedSeason = rankedEligible ? await ensureRankedSeasonSettingsTx(tx) : null;
 
       await tx.gameMatch.create({
         data: {
@@ -276,17 +346,41 @@ export async function persistCompletedMatch(
       }
 
       for (const participant of participants) {
+        const ratingUpdate = ratingUpdatesByUserId.get(participant.userId);
         await tx.user.update({
           where: { id: participant.userId },
           data: {
             ...getUserAggregateIncrement(participant),
             ...getRankedAggregateIncrement(
               participant,
-              ratingUpdatesByUserId.get(participant.userId),
+              ratingUpdate,
               input.endedAt
             ),
           },
         });
+
+        const user = usersById.get(participant.userId);
+        if (rankedSeason && ratingUpdate && user) {
+          const mode = rankedSeason.mode === 'preseason' ? 'preseason' : 'season';
+          const createData = getSeasonAggregateCreateData(participant, user, ratingUpdate, input.endedAt);
+
+          await tx.rankedSeasonUserStats.upsert({
+            where: {
+              mode_seasonNumber_userId: {
+                mode,
+                seasonNumber: rankedSeason.seasonNumber,
+                userId: participant.userId,
+              },
+            },
+            create: {
+              mode,
+              seasonNumber: rankedSeason.seasonNumber,
+              userId: participant.userId,
+              ...createData,
+            },
+            update: getSeasonAggregateUpdateData(participant, user, ratingUpdate, input.endedAt),
+          });
+        }
       }
 
       return {
