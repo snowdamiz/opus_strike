@@ -1489,7 +1489,8 @@ function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
     });
     if (data.abilityId === 'phantom_veil') {
       const durationMs = (abilityDef.duration ?? 0) * 1000;
-      store.setUltimateEffect(true, 'phantom_veil', Date.now() + durationMs);
+      const effectEndTime = Date.now() + durationMs;
+      store.setUltimateEffect(true, 'phantom_veil', effectEndTime);
     }
     return;
   }

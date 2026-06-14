@@ -240,6 +240,7 @@ const PHANTOM_VOID_RAY_ORB_POSITION = new THREE.Vector3(0, -0.472, -0.72);
 const PHANTOM_VOID_RAY_RELEASE_ORIGIN_POSITION = new THREE.Vector3(0, -0.38, -2.15);
 const PHANTOM_VEIL_SPLIT_POSITION = new THREE.Vector3(0, -0.22, -0.58);
 const PHANTOM_VEIL_SPLIT_BASE_SCALE = new THREE.Vector3(0.88, 2.1, 1);
+const PHANTOM_VEIL_ARM_GLOW_FADE_MS = 420;
 const HOOKSHOT_LAUNCHER_TUBE_LENGTH = 0.096;
 const HOOKSHOT_LAUNCHER_TUBE_CENTER_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH * 0.5;
 const HOOKSHOT_LAUNCHER_TUBE_FRONT_Z = -HOOKSHOT_LAUNCHER_TUBE_LENGTH;
@@ -732,6 +733,22 @@ function getPhantomVoidRayChargePose(nowMs: number, elapsedSeconds: number): Pha
     shakeY: Math.sin(elapsedSeconds * 51 + 0.7) * 0.0017 * shakeStrength,
     shakeZ: Math.sin(elapsedSeconds * 47 + 1.2) * 0.0021 * shakeStrength,
   };
+}
+
+function getPhantomVeilArmGlowOpacity(nowMs: number, elapsedSeconds: number): number {
+  const store = useGameStore.getState();
+  const veilEffectActive = store.ultimateEffectActive && store.ultimateEffectType === 'phantom_veil';
+  const castPose = getPhantomVeilCastPose(nowMs);
+  if (!veilEffectActive && !castPose.active) return 0;
+
+  const remainingMs = Math.max(0, store.ultimateEffectEndTime - nowMs);
+  const effectGlow = veilEffectActive
+    ? THREE.MathUtils.smoothstep(remainingMs, 0, PHANTOM_VEIL_ARM_GLOW_FADE_MS)
+    : 0;
+  const glowBase = Math.max(effectGlow, castPose.blend);
+  const shimmer = 0.82 + Math.sin(elapsedSeconds * 7.4) * 0.12 + Math.sin(elapsedSeconds * 16.8) * 0.06;
+
+  return THREE.MathUtils.clamp(glowBase * shimmer * 0.72, 0, 0.82);
 }
 
 function applyPhantomReloadMotion(
@@ -1716,6 +1733,7 @@ function PhantomAnimatedForearm({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
     const veilCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomVeilCastPose(nowMs);
@@ -1732,7 +1750,7 @@ function PhantomAnimatedForearm({
         0,
         0
       );
-      reloadGlowMaterial.opacity = 0;
+      reloadGlowMaterial.opacity = Math.max(veilGlowOpacity, veilCastPose.blend * 0.46);
       return;
     }
 
@@ -1777,7 +1795,8 @@ function PhantomAnimatedForearm({
       (shieldCastPose?.blend ?? 0) * 0.38,
       chargePose.glowOpacity * 0.58,
       voidRayReleasePulse * 0.36,
-      voidRayReleaseExtensionBlend * 0.24
+      voidRayReleaseExtensionBlend * 0.24,
+      veilGlowOpacity * 0.72
     );
   });
 
@@ -1843,6 +1862,7 @@ function PhantomPoseableHand({
       : Number.POSITIVE_INFINITY;
     const reloadPose = getPhantomReloadPose(nowMs, state.clock.elapsedTime, side);
     const chargePose = getPhantomVoidRayChargePose(nowMs, state.clock.elapsedTime);
+    const veilGlowOpacity = getPhantomVeilArmGlowOpacity(nowMs, state.clock.elapsedTime);
     const veilCastPose = reloadPose.active || chargePose.active
       ? null
       : getPhantomVeilCastPose(nowMs);
@@ -1856,15 +1876,16 @@ function PhantomPoseableHand({
         openVisual.visible = false;
         openVisual.scale.setScalar(0.001);
       }
+      const poseTargets = {
+        ...(closedVisual ? { closedHand: closedVisual } : {}),
+        arm,
+        wrist,
+        palm,
+        thumb,
+        fingers,
+      };
       writePhantomHandPose(
-        {
-          ...(closedVisual ? { closedHand: closedVisual } : {}),
-          arm,
-          wrist,
-          palm,
-          thumb,
-          fingers,
-        },
+        poseTargets,
         side,
         0,
         0,
@@ -1873,7 +1894,7 @@ function PhantomPoseableHand({
         0,
         0
       );
-      reloadGlowMaterial.opacity = 0;
+      reloadGlowMaterial.opacity = Math.max(veilGlowOpacity, veilCastPose.blend * 0.62);
       return;
     }
 
@@ -1984,7 +2005,8 @@ function PhantomPoseableHand({
       (shieldCastPose?.blend ?? 0) * 0.54,
       chargePose.glowOpacity * 0.86,
       voidRayReleasePulse * 0.5,
-      voidRayReleaseExtensionBlend * 0.34
+      voidRayReleaseExtensionBlend * 0.34,
+      veilGlowOpacity
     );
   });
 

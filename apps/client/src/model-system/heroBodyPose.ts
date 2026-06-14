@@ -770,26 +770,26 @@ function applyPhantomAttackArmPose(
   shotExtension: number
 ): void {
   const isActiveArm = armSide === activeSide;
-  const ready = aim * (isActiveArm ? 0.78 : 0.62);
+  const ready = aim * (isActiveArm ? 0.74 : 0.58);
   const extension = isActiveArm ? shotExtension : 0;
   const brace = isActiveArm ? 0 : shotExtension * 0.22;
 
   if (upperArm) {
-    upperArm.position.x += armSide * (0.014 * ready - 0.006 * extension + 0.004 * brace);
+    upperArm.position.x += armSide * (0.007 * ready - 0.009 * extension + 0.004 * brace);
     upperArm.position.y += -0.03 * ready - 0.004 * extension;
-    upperArm.position.z += -0.05 * ready - 0.048 * extension + 0.018 * brace;
-    upperArm.rotation.x += 0.4 * ready + 0.15 * extension - 0.035 * brace;
-    upperArm.rotation.y += armSide * (0.065 * ready - 0.024 * extension + 0.012 * brace);
-    upperArm.rotation.z += -armSide * (0.085 * ready + 0.038 * extension - 0.014 * brace);
+    upperArm.position.z += -0.04 * ready - 0.066 * extension + 0.018 * brace;
+    upperArm.rotation.x += 0.44 * ready + 0.2 * extension - 0.035 * brace;
+    upperArm.rotation.y += armSide * (0.052 * ready - 0.032 * extension + 0.012 * brace);
+    upperArm.rotation.z += -armSide * (0.074 * ready + 0.048 * extension - 0.014 * brace);
     upperArm.scale.y *= 1 + 0.045 * ready + 0.024 * extension;
   }
 
   if (forearm) {
-    forearm.position.z += -0.032 * ready - 0.088 * extension + 0.012 * brace;
-    forearm.rotation.x -= 0.42 * ready + 0.22 * extension - 0.045 * brace;
-    forearm.rotation.y += armSide * (0.035 * ready + 0.03 * extension - 0.012 * brace);
-    forearm.rotation.z += -armSide * 0.018 * extension;
-    forearm.scale.z *= 1 + 0.026 * extension;
+    forearm.position.z += -0.022 * ready - 0.124 * extension + 0.012 * brace;
+    forearm.rotation.x -= 0.46 * ready + 0.32 * extension - 0.045 * brace;
+    forearm.rotation.y += armSide * (0.024 * ready + 0.044 * extension - 0.012 * brace);
+    forearm.rotation.z += -armSide * 0.026 * extension;
+    forearm.scale.z *= 1 + 0.036 * extension;
   }
 }
 

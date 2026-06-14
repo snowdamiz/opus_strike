@@ -566,7 +566,40 @@ type PlayerPressState = {
   ultimate: boolean;
 };
 type ChronosLifelineMode = 'allies' | 'self';
+type DevBotSkillSlot = 'primary' | 'secondary' | 'ability1' | 'ability2' | 'ultimate';
+interface DevBotSkillOverride {
+  slot: DevBotSkillSlot;
+  skillKey: string;
+  expiresAt: number;
+}
+
 const playerPressState = new Map<string, PlayerPressState>();
+const DEV_BOT_SKILL_HOLD_MS = 10_000;
+const DEV_BOT_SKILL_ALIASES: Record<string, { slot: DevBotSkillSlot; skillKey: string }> = {
+  lmb: { slot: 'primary', skillKey: 'lmb' },
+  m1: { slot: 'primary', skillKey: 'lmb' },
+  mouse1: { slot: 'primary', skillKey: 'lmb' },
+  leftmouse: { slot: 'primary', skillKey: 'lmb' },
+  mouseleft: { slot: 'primary', skillKey: 'lmb' },
+  primary: { slot: 'primary', skillKey: 'lmb' },
+  fire: { slot: 'primary', skillKey: 'lmb' },
+  attack: { slot: 'primary', skillKey: 'lmb' },
+  rmb: { slot: 'secondary', skillKey: 'rmb' },
+  m2: { slot: 'secondary', skillKey: 'rmb' },
+  mouse2: { slot: 'secondary', skillKey: 'rmb' },
+  rightmouse: { slot: 'secondary', skillKey: 'rmb' },
+  mouseright: { slot: 'secondary', skillKey: 'rmb' },
+  secondary: { slot: 'secondary', skillKey: 'rmb' },
+  altfire: { slot: 'secondary', skillKey: 'rmb' },
+  shield: { slot: 'secondary', skillKey: 'rmb' },
+  e: { slot: 'ability1', skillKey: 'e' },
+  ability1: { slot: 'ability1', skillKey: 'e' },
+  q: { slot: 'ability2', skillKey: 'q' },
+  ability2: { slot: 'ability2', skillKey: 'q' },
+  f: { slot: 'ultimate', skillKey: 'f' },
+  ult: { slot: 'ultimate', skillKey: 'f' },
+  ultimate: { slot: 'ultimate', skillKey: 'f' },
+};
 const BLAZE_FLAMETHROWER_CONE_DOT = Math.cos(BLAZE_FLAMETHROWER_CONE_HALF_ANGLE);
 const DAMAGE_HISTORY_WINDOW_MS = 10000;
 const PLAYER_PING_INTERVAL_MS = 3000;
@@ -649,6 +682,12 @@ const MATCH_START_CANCEL_TIMEOUT_MS = readPositiveIntegerEnvMs(
   readPositiveIntegerEnvMs('MATCH_CONNECT_TIMEOUT_MS', DEFAULT_MATCH_START_CANCEL_TIMEOUT_MS)
 );
 
+function resolveDevBotSkillOverride(skillKey: string): Omit<DevBotSkillOverride, 'expiresAt'> | null {
+  const normalized = skillKey.trim().toLowerCase().replace(/[\s_-]+/g, '');
+  const keyWithoutDomPrefix = normalized.startsWith('key') ? normalized.slice(3) : normalized;
+  return DEV_BOT_SKILL_ALIASES[keyWithoutDomPrefix] ?? null;
+}
+
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
 
@@ -693,6 +732,7 @@ export class GameRoom extends Room<GameState> {
   private devGameClockFrozen = false;
   private devBotsRooted = false;
   private devBotBrainEnabled = true;
+  private devBotSkillOverrides: Map<string, DevBotSkillOverride> = new Map();
   private mapManifest: VoxelMapManifest | null = null;
   private botRouteGraph: BotRouteGraphAdapter | null = null;
   private botTeamTactics: BotTeamTacticsByTeam | null = null;
@@ -1117,6 +1157,17 @@ export class GameRoom extends Room<GameState> {
         this.handleDevAddBot(client, { heroId: data.heroId, team: data.team });
       });
 
+      this.onMessage('devBotSkill', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'devBotSkill', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'devBotSkill');
+          return;
+        }
+        if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
+        const skillKey = sanitizeShortText(data.skillKey, 24);
+        if (!skillKey) return;
+        this.handleDevBotSkill(client, { heroId: data.heroId, team: data.team, skillKey });
+      });
+
     }
   }
 
@@ -1364,6 +1415,7 @@ export class GameRoom extends Room<GameState> {
     this.phantomVoidRayResolvedForPress.delete(playerId);
     this.phantomPrimaryLaunchSide.delete(playerId);
     this.hookshotPrimaryLaunchSide.delete(playerId);
+    this.devBotSkillOverrides.delete(playerId);
     this.removeHookshotTrapsForOwner(playerId);
     this.hookshotGrapples.delete(playerId);
     this.blazeBombDropConsumedForHold.delete(playerId);
@@ -7006,6 +7058,7 @@ export class GameRoom extends Room<GameState> {
       }
 
       if (bot.state !== 'alive') {
+        this.devBotSkillOverrides.delete(bot.id);
         bot.lastInput = this.createEmptyBotInput(bot, now);
         if (bot.state === 'dead') {
           brain.intent = {
@@ -7021,12 +7074,25 @@ export class GameRoom extends Room<GameState> {
       }
 
       if (this.devBotsRooted) {
-        this.rootBotMovementAndSkills(bot, now);
+        const override = this.getActiveDevBotSkillOverride(bot, now);
+        if (override) {
+          bot.lastInput = this.createDevBotSkillInput(bot, now, override);
+          this.stopBotMovement(bot, { vertical: true });
+          this.enqueueServerOwnedMovementCommands(bot, bot.lastInput, now);
+        } else {
+          this.rootBotMovementAndSkills(bot, now);
+        }
         return;
       }
 
       if (!this.devBotBrainEnabled) {
-        this.disableBotBrainInput(bot, now);
+        const override = this.getActiveDevBotSkillOverride(bot, now);
+        if (override) {
+          bot.lastInput = this.createDevBotSkillInput(bot, now, override);
+          this.stopBotMovement(bot, { vertical: false });
+        } else {
+          this.disableBotBrainInput(bot, now);
+        }
         this.enqueueServerOwnedMovementCommands(bot, bot.lastInput ?? this.createEmptyBotInput(bot, now), now);
         return;
       }
@@ -7080,7 +7146,12 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const botInput = this.createBotInput(bot, brain, now, dt, frameContext);
+    const override = this.getActiveDevBotSkillOverride(bot, now);
+    const botInput = this.applyDevBotSkillOverride(
+      bot,
+      this.createBotInput(bot, brain, now, dt, frameContext),
+      override
+    );
     bot.lastInput = botInput;
     this.enqueueServerOwnedMovementCommands(bot, botInput, now);
   }
@@ -7916,27 +7987,95 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private rootBotMovementAndSkills(bot: Player, now: number): void {
-    bot.lastInput = this.createEmptyBotInput(bot, now);
+  private stopBotMovement(bot: Player, options: { vertical: boolean }): void {
     bot.velocity.x = 0;
-    bot.velocity.y = 0;
+    if (options.vertical) {
+      bot.velocity.y = 0;
+    }
     bot.velocity.z = 0;
     bot.movement.isSprinting = false;
     bot.movement.isCrouching = false;
     bot.movement.isWallRunning = false;
     bot.movement.wallRunSide = '';
+  }
+
+  private getActiveDevBotSkillOverride(bot: Player, now: number): DevBotSkillOverride | null {
+    const override = this.devBotSkillOverrides.get(bot.id);
+    if (!override) return null;
+    if (now < override.expiresAt) return override;
+
+    this.finishDevBotSkillOverride(bot, override);
+    return null;
+  }
+
+  private finishDevBotSkillOverride(bot: Player, override: DevBotSkillOverride): void {
+    this.devBotSkillOverrides.delete(bot.id);
+
+    if (
+      bot.heroId === 'blaze' &&
+      override.slot === 'secondary' &&
+      playerPressState.get(bot.id)?.secondaryFire &&
+      !this.blazeBombDropConsumedForHold.has(bot.id)
+    ) {
+      this.tryResolveAttack(bot, 'secondary');
+    }
+
+    this.blazeBombDropConsumedForHold.delete(bot.id);
+    this.resetPlayerPressState(bot.id);
+  }
+
+  private createDevBotSkillInput(bot: Player, now: number, override: DevBotSkillOverride): PlayerInput {
+    return this.applyDevBotSkillOverride(bot, this.createEmptyBotInput(bot, now), override);
+  }
+
+  private applyDevBotSkillOverride(
+    bot: Player,
+    input: PlayerInput,
+    override: DevBotSkillOverride | null
+  ): PlayerInput {
+    if (!override) return input;
+
+    input.primaryFire = false;
+    input.secondaryFire = false;
+    input.reload = false;
+    input.ability1 = false;
+    input.ability2 = false;
+    input.ultimate = false;
+
+    switch (override.slot) {
+      case 'primary':
+        input.primaryFire = true;
+        break;
+      case 'secondary':
+        input.secondaryFire = true;
+        break;
+      case 'ability1':
+        input.ability1 = true;
+        if (bot.heroId === 'chronos') {
+          input.primaryFire = true;
+        }
+        break;
+      case 'ability2':
+        input.ability2 = true;
+        break;
+      case 'ultimate':
+        input.ultimate = true;
+        break;
+    }
+
+    return input;
+  }
+
+  private rootBotMovementAndSkills(bot: Player, now: number): void {
+    bot.lastInput = this.createEmptyBotInput(bot, now);
+    this.stopBotMovement(bot, { vertical: true });
     this.disablePlayerSkills(bot);
     this.resetPlayerPressState(bot.id);
   }
 
   private disableBotBrainInput(bot: Player, now: number): void {
     bot.lastInput = this.createEmptyBotInput(bot, now);
-    bot.velocity.x = 0;
-    bot.velocity.z = 0;
-    bot.movement.isSprinting = false;
-    bot.movement.isCrouching = false;
-    bot.movement.isWallRunning = false;
-    bot.movement.wallRunSide = '';
+    this.stopBotMovement(bot, { vertical: false });
     this.disablePlayerSkills(bot);
     this.resetPlayerPressState(bot.id);
   }
@@ -8060,6 +8199,7 @@ export class GameRoom extends Room<GameState> {
     this.phantomPrimaryHoldStartedAt.delete(player.id);
     this.chronosPrimaryHoldStartedAt.delete(player.id);
     this.chronosAegisShieldHp.delete(player.id);
+    this.devBotSkillOverrides.delete(player.id);
     if (heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     } else {
@@ -8330,6 +8470,93 @@ export class GameRoom extends Room<GameState> {
 
     this.broadcastStateStreams({ transforms: true, forceVitals: true, forceMatch: true });
     this.checkPhaseTransition();
+  }
+
+  private handleDevBotSkill(client: Client, data: { heroId: HeroId; team: Team; skillKey: string }): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    const skill = resolveDevBotSkillOverride(data.skillKey);
+    if (!skill) {
+      client.send('devCommandError', { message: `Invalid bot skill key: ${data.skillKey}` });
+      return;
+    }
+
+    const bot = this.findDevBotSkillTarget(data.heroId, data.team);
+    if (!bot) {
+      client.send('devCommandError', {
+        message: `No alive ${data.team} ${HERO_DEFINITIONS[data.heroId].name} bot found`,
+      });
+      return;
+    }
+
+    const now = Date.now();
+    this.primeDevBotSkill(bot, skill.slot);
+    this.resetPlayerPressState(bot.id);
+    this.devBotSkillOverrides.set(bot.id, {
+      ...skill,
+      expiresAt: now + DEV_BOT_SKILL_HOLD_MS,
+    });
+
+    client.send('devBotSkillTriggered', {
+      playerId: bot.id,
+      playerName: bot.name,
+      heroId: data.heroId,
+      team: data.team,
+      skillKey: skill.skillKey,
+      durationMs: DEV_BOT_SKILL_HOLD_MS,
+    });
+  }
+
+  private findDevBotSkillTarget(heroId: HeroId, team: Team): Player | null {
+    let fallback: Player | null = null;
+    this.state.players.forEach((player) => {
+      if (fallback || !player.isBot || player.heroId !== heroId || player.team !== team) return;
+      if (this.spawnedNpcs.has(player.id)) return;
+      if (player.state === 'alive') {
+        fallback = player;
+      }
+    });
+    return fallback;
+  }
+
+  private primeDevBotSkill(player: Player, slot: DevBotSkillSlot): void {
+    this.attackCooldownUntil.delete(`${player.id}:primary`);
+    this.attackCooldownUntil.delete(`${player.id}:secondary`);
+    this.blazeBombDropConsumedForHold.delete(player.id);
+    this.phantomPrimaryHoldStartedAt.delete(player.id);
+    this.chronosPrimaryHoldStartedAt.delete(player.id);
+    this.phantomVoidRayChargeStartedAt.delete(player.id);
+    this.phantomVoidRayResolvedForPress.delete(player.id);
+
+    if (player.heroId === 'phantom' && slot === 'primary') {
+      const magazine = this.getOrCreatePhantomPrimaryMagazine(player);
+      magazine.ammo = PHANTOM_PRIMARY_MAGAZINE_SIZE;
+      magazine.reloadStartedAt = 0;
+      magazine.reloadUntil = 0;
+    }
+    if (player.heroId === 'blaze') {
+      player.movement.jetpackFuel = BLAZE_FLAMETHROWER_MAX_FUEL;
+    }
+    if (player.heroId === 'chronos' && slot === 'secondary') {
+      this.chronosAegisShieldHp.delete(player.id);
+    }
+
+    if (slot === 'primary' || slot === 'secondary') return;
+
+    const abilityId = HERO_DEFINITIONS[player.heroId as HeroId]?.[slot]?.abilityId;
+    const ability = abilityId ? player.abilities.get(abilityId) : null;
+    const abilityDef = abilityId ? ABILITY_DEFINITIONS[abilityId] : undefined;
+    if (ability) {
+      ability.cooldownRemaining = 0;
+      ability.isActive = false;
+      ability.charges = abilityDef?.charges || 1;
+    }
+    if (slot === 'ultimate') {
+      player.ultimateCharge = 100;
+    }
   }
 
   private getRoundTimeRemaining(now: number): number {
@@ -9426,7 +9653,7 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach(player => {
       if (player.state !== 'alive') return;
 
-      if (this.devBotsRooted && player.isBot) {
+      if (this.devBotsRooted && player.isBot && !this.getActiveDevBotSkillOverride(player, tickTime)) {
         this.rootBotMovementAndSkills(player, Date.now());
         return;
       }

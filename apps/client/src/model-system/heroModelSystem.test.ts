@@ -28,7 +28,9 @@ import {
 import { createViewmodelPoseRuntime, resetViewmodelPoseRuntime } from '../viewmodel/viewmodelPoseRuntime';
 import {
   getPhantomPrimaryHeldBlend,
+  getPhantomVeilCastPose,
   setPhantomPrimaryHeld,
+  triggerPhantomVeilCastPose,
 } from '../viewmodel/phantomPrimaryPose';
 import {
   getBlazeRocketHeldBlend,
@@ -153,12 +155,15 @@ assert.ok(Math.abs(leftArm.rotation.x) > 0 && Math.abs(leftArm.rotation.x) < Mat
 
 const runtime = createViewmodelPoseRuntime('phantom');
 setPhantomPrimaryHeld(true, 1000, runtime);
+triggerPhantomVeilCastPose(1000, runtime);
 setBlazeRocketHeld(true, 1000, runtime);
 setChronosPrimaryHeld(true, 1000, runtime);
 triggerBlazeRocketJumpStaffSlam(1000, runtime);
 triggerChronosTimebreakPose(1000, runtime);
 
 assert.equal(getPhantomPrimaryHeldBlend(1300, runtime), 1);
+assert.equal(getPhantomVeilCastPose(1180, runtime).active, true);
+assert.ok(getPhantomVeilCastPose(1360, runtime).contact > 0.95);
 assert.equal(getBlazeRocketHeldBlend(1300, runtime), 1);
 assert.equal(getChronosPrimaryHeldBlend(1300, runtime), 1);
 assert.equal(getBlazeRocketJumpStaffSlamPose(1020, runtime).active, true);
@@ -169,6 +174,7 @@ resetViewmodelPoseRuntime(runtime, 'blaze');
 assert.equal(runtime.heroId, 'blaze');
 assert.equal(runtime.revision, revisionBeforeReset + 1);
 assert.equal(getPhantomPrimaryHeldBlend(1400, runtime), 0);
+assert.equal(getPhantomVeilCastPose(1400, runtime).active, false);
 assert.equal(getBlazeRocketHeldBlend(1400, runtime), 0);
 assert.equal(getChronosPrimaryHeldBlend(1400, runtime), 0);
 assert.equal(getBlazeRocketJumpStaffSlamPose(1400, runtime).active, false);

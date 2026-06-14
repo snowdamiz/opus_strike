@@ -19,9 +19,26 @@ interface ConsoleMessage {
 let messageId = 0;
 
 const PUBLIC_COMMAND_HELP = '/seed copy';
-const DEV_COMMAND_HELP = '/seed copy | /observe | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze';
+const DEV_COMMAND_HELP = '/seed copy | /observe | /immune | /hero <hero> | /end | /bot add <hero> <red|blue> | /bot skill <hero> <red|blue> <e|q|f|lmb|rmb> | /bot nobrain | /bot brain | /bots root | /bots release | /f | /time freeze';
 const PUBLIC_COMMAND_LIST = '/seed copy';
-const DEV_COMMAND_LIST = '/seed copy, /observe, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+const DEV_COMMAND_LIST = '/seed copy, /observe, /immune, /hero <hero>, /end, /bot add <hero> <red|blue>, /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>, /bot nobrain, /bot brain, /bots root, /bots release, /f, /time freeze';
+const BOT_SKILL_KEYS: Record<string, string> = {
+  e: 'e',
+  q: 'q',
+  f: 'f',
+  ult: 'f',
+  ultimate: 'f',
+  lmb: 'lmb',
+  m1: 'lmb',
+  mouse1: 'lmb',
+  primary: 'lmb',
+  fire: 'lmb',
+  rmb: 'rmb',
+  m2: 'rmb',
+  mouse2: 'rmb',
+  secondary: 'rmb',
+  shield: 'rmb',
+};
 
 async function copyTextToClipboard(text: string): Promise<boolean> {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
@@ -180,6 +197,13 @@ function resolveTeam(value: string | undefined): Team | null {
   return normalized === 'red' || normalized === 'blue' ? normalized : null;
 }
 
+function resolveBotSkillKey(value: string | undefined): string | null {
+  const normalized = value?.toLowerCase().replace(/[\s_-]+/g, '');
+  if (!normalized) return null;
+  const keyWithoutDomPrefix = normalized.startsWith('key') ? normalized.slice(3) : normalized;
+  return BOT_SKILL_KEYS[keyWithoutDomPrefix] ?? null;
+}
+
 function parseCommandParts(input: string): string[] {
   const parts = input.split(/\s+/);
   if (parts[0] === '/' && parts[1]) {
@@ -280,6 +304,7 @@ export function GameConsole() {
     setDevBotsRooted,
     setDevBotBrainEnabled,
     addGameBot,
+    devBotSkill,
     devSetLobbyObserver,
     devSetGameObserver,
   } = useNetwork();
@@ -543,12 +568,29 @@ export function GameConsole() {
           break;
         }
 
+        if (action === 'skill') {
+          const heroId = parts[2] ? resolveHeroId(parts[2]) : null;
+          const team = resolveTeam(parts[3]);
+          const skillKey = resolveBotSkillKey(parts[4]);
+
+          if (parts.length !== 5 || !heroId || !team || !skillKey) {
+            addMessage('Usage: /bot skill <hero> <red|blue> <e|q|f|lmb|rmb>', 'error');
+            addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
+            break;
+          }
+
+          devBotSkill(heroId, team, skillKey);
+          addMessage(`Holding ${skillKey.toUpperCase()} on a ${team} ${HERO_DEFINITIONS[heroId].name} bot for 10s...`, 'info');
+          setTimeout(() => setIsOpen(false), 100);
+          break;
+        }
+
         const heroName = parts[2];
         const heroId = heroName ? resolveHeroId(heroName) : null;
         const team = resolveTeam(parts[3]);
 
         if (parts.length !== 4 || action !== 'add' || !heroId || !team) {
-          addMessage('Usage: /bot add <hero> <red|blue> | /bot nobrain | /bot brain', 'error');
+          addMessage('Usage: /bot add <hero> <red|blue> | /bot skill <hero> <red|blue> <e|q|f|lmb|rmb> | /bot nobrain | /bot brain', 'error');
           addMessage(`Valid heroes: ${validHeroNames()}`, 'info');
           break;
         }
@@ -581,7 +623,7 @@ export function GameConsole() {
       default:
         addMessage(`Unknown command: ${command}. Available commands: ${config.isDev ? DEV_COMMAND_LIST : PUBLIC_COMMAND_LIST}`, 'error');
     }
-  }, [addGameBot, addMessage, devEndGame, devFillUltimate, devSetHero, devSetGameObserver, devSetLobbyObserver, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
+  }, [addGameBot, addMessage, devBotSkill, devEndGame, devFillUltimate, devSetHero, devSetGameObserver, devSetLobbyObserver, setDevBotBrainEnabled, setDevBotsRooted, setDevImmune, setDevTimeFrozen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

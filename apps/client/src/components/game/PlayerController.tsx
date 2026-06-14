@@ -1572,9 +1572,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               const abilityId = heroDef.ultimate.abilityId;
               const abilityDef = ABILITY_DEFINITIONS[abilityId];
               const durationMs = (abilityDef?.duration ?? 0) * 1000;
+              const effectEndTime = now + durationMs;
               triggerPhantomVeilCastPose(now);
               abilitySystem.setAbilityActive(abilityId, true, { startTime: now, startCooldownOnEnd: true });
-              useGameStore.getState().setUltimateEffect(true, abilityId, now + durationMs);
+              useGameStore.getState().setUltimateEffect(true, abilityId, effectEndTime);
               updateLocalPlayer({
                 ultimateCharge: 0,
                 abilities: {

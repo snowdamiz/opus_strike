@@ -1,4 +1,4 @@
-import { PLAYER_HEIGHT, STEP_HEIGHT } from '../../constants/physics.js';
+import { PLAYER_HEIGHT, PLAYER_RADIUS, STEP_HEIGHT } from '../../constants/physics.js';
 import type { Vec3 } from '../../types/vector.js';
 import { getBlockNumericId, isCollisionBlock, isSolidBlock } from './blocks.js';
 import { isInsideBoundaryPolygon } from './boundaries.js';
@@ -163,6 +163,11 @@ const OBJECTIVE_PAD_RADIUS = 3.9;
 const OBJECTIVE_PAD_BLEND = 2.4;
 const SPAWN_PAD_RADIUS = 1.65;
 const FLAG_PAD_RADIUS = 2.6;
+const SPAWN_HEADROOM_RADIUS = PLAYER_RADIUS + 1.25;
+const SPAWN_EGRESS_RADIUS = PLAYER_RADIUS + 1.05;
+const SPAWN_EGRESS_MAX_DISTANCE = 3.4;
+const SPAWN_EGRESS_FLAG_BUFFER = 1.55;
+const SPAWN_EGRESS_FLOATING_CLEANUP_MAX_BLOCKS = 96;
 const BOUNDARY_WALL_THICKNESS = 2.2;
 const BOUNDARY_WALL_MIN_THICKNESS = 1.65;
 const BOUNDARY_WALL_MAX_THICKNESS = 3.25;
@@ -249,6 +254,25 @@ function distanceSq2D(a: { x: number; z: number }, b: { x: number; z: number }):
 
 function distance2D(a: { x: number; z: number }, b: { x: number; z: number }): number {
   return Math.sqrt(distanceSq2D(a, b));
+}
+
+function distanceToSegmentSq2D(
+  point: { x: number; z: number },
+  start: { x: number; z: number },
+  end: { x: number; z: number }
+): number {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const lengthSq = dx * dx + dz * dz;
+
+  if (lengthSq <= 0.0001) return distanceSq2D(point, start);
+
+  const t = clamp(((point.x - start.x) * dx + (point.z - start.z) * dz) / lengthSq, 0, 1);
+  const closest = {
+    x: start.x + dx * t,
+    z: start.z + dz * t,
+  };
+  return distanceSq2D(point, closest);
 }
 
 function normalize2D(vector: { x: number; z: number }, fallback: { x: number; z: number } = { x: 0, z: 1 }): {
@@ -1000,7 +1024,19 @@ function anchorFloatingComponent(ctx: StructureStampContext, cell: { x: number; 
   }
 }
 
-function anchorBoundaryFloatingDetails(ctx: StructureStampContext, layout: ProceduralCTFLayout): void {
+interface SolidComponentInfo {
+  indices: number[];
+  count: number;
+  touchesGround: boolean;
+  boundaryCandidate: boolean;
+  anchorCell: { x: number; y: number; z: number };
+}
+
+function visitSolidComponents(
+  ctx: StructureStampContext,
+  layout: ProceduralCTFLayout,
+  visit: (component: SolidComponentInfo) => void
+): void {
   const visited = new Uint8Array(ctx.blocks.length);
   const queue: number[] = [];
   const directions = [
@@ -1050,12 +1086,37 @@ function anchorBoundaryFloatingDetails(ctx: StructureStampContext, layout: Proce
           }
         }
 
-        if (!touchesGround && boundaryCandidate && count <= BOUNDARY_FLOATING_DETAIL_MAX_BLOCKS) {
-          anchorFloatingComponent(ctx, anchorCell);
-        }
+        visit({
+          indices: [...queue],
+          count,
+          touchesGround,
+          boundaryCandidate,
+          anchorCell,
+        });
       }
     }
   }
+}
+
+function anchorBoundaryFloatingDetails(ctx: StructureStampContext, layout: ProceduralCTFLayout): void {
+  visitSolidComponents(ctx, layout, ({ touchesGround, boundaryCandidate, count, anchorCell }) => {
+    if (!touchesGround && boundaryCandidate && count <= BOUNDARY_FLOATING_DETAIL_MAX_BLOCKS) {
+      anchorFloatingComponent(ctx, anchorCell);
+    }
+  });
+}
+
+function removeSmallFloatingFragments(ctx: StructureStampContext, layout: ProceduralCTFLayout, maxBlocks: number): void {
+  visitSolidComponents(ctx, layout, ({ touchesGround, count, indices }) => {
+    if (touchesGround || count > maxBlocks) return;
+
+    for (const current of indices) {
+      const x = current % ctx.size.x;
+      const y = Math.floor(current / (ctx.size.x * ctx.size.z));
+      const z = Math.floor((current - y * ctx.size.x * ctx.size.z) / ctx.size.x);
+      setBlock(ctx, x, y, z, AIR);
+    }
+  });
 }
 
 function fillBox(
@@ -1863,20 +1924,26 @@ function paintObjectivePads(ctx: StructureStampContext, layout: ProceduralCTFLay
 }
 
 function clearObjectiveHeadroom(ctx: StructureStampContext, layout: ProceduralCTFLayout): void {
-  const clearPoint = (point: Vec3, radius: number): void => {
-    const center = getGridPointForWorld(point, ctx.origin, ctx.size, ctx.voxelSize);
-    const surfaceRow = ctx.heightMap[columnIndex(center.x, center.z, ctx.size)];
-    const minX = worldToGrid(point.x - radius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
-    const maxX = worldToGrid(point.x + radius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
-    const minZ = worldToGrid(point.z - radius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
-    const maxZ = worldToGrid(point.z + radius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+  const surfaceRowAtPoint = (point: Vec3): number => {
+    const grid = getGridPointForWorld(point, ctx.origin, ctx.size, ctx.voxelSize);
+    return ctx.heightMap[columnIndex(grid.x, grid.z, ctx.size)];
+  };
+
+  const clearCapsule = (start: Vec3, end: Vec3, radius: number): void => {
+    const minX = worldToGrid(Math.min(start.x, end.x) - radius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+    const maxX = worldToGrid(Math.max(start.x, end.x) + radius, ctx.origin.x, ctx.voxelSize.x, ctx.size.x);
+    const minZ = worldToGrid(Math.min(start.z, end.z) - radius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+    const maxZ = worldToGrid(Math.max(start.z, end.z) + radius, ctx.origin.z, ctx.voxelSize.z, ctx.size.z);
+    const pathSurfaceRow = Math.min(surfaceRowAtPoint(start), surfaceRowAtPoint(end));
+    const radiusSq = radius * radius;
 
     for (let z = minZ; z <= maxZ; z++) {
       const worldZ = gridToWorldCenter(z, ctx.origin.z, ctx.voxelSize.z);
       for (let x = minX; x <= maxX; x++) {
         const worldX = gridToWorldCenter(x, ctx.origin.x, ctx.voxelSize.x);
-        if ((worldX - point.x) ** 2 + (worldZ - point.z) ** 2 > radius * radius) continue;
+        if (distanceToSegmentSq2D({ x: worldX, z: worldZ }, start, end) > radiusSq) continue;
 
+        const surfaceRow = Math.min(ctx.heightMap[columnIndex(x, z, ctx.size)], pathSurfaceRow);
         for (let y = surfaceRow + 1; y <= Math.min(ctx.size.y - 1, surfaceRow + HEADROOM_ROWS); y++) {
           setBlock(ctx, x, y, z, AIR);
         }
@@ -1884,7 +1951,39 @@ function clearObjectiveHeadroom(ctx: StructureStampContext, layout: ProceduralCT
     }
   };
 
-  for (const point of [...layout.spawnPoints.red, ...layout.spawnPoints.blue]) clearPoint(point, 1.25);
+  const clearPoint = (point: Vec3, radius: number): void => clearCapsule(point, point, radius);
+  const clearSpawnExits = (team: MapTeam): void => {
+    const flag = layout.flagZones[team];
+    const center = averageVec3(layout.spawnPoints[team]);
+    clearPoint(center, SPAWN_HEADROOM_RADIUS);
+
+    for (const spawn of layout.spawnPoints[team]) {
+      clearPoint(spawn, SPAWN_HEADROOM_RADIUS);
+      clearCapsule(spawn, center, SPAWN_EGRESS_RADIUS);
+
+      const toFlag = normalize2D({ x: flag.x - spawn.x, z: flag.z - spawn.z });
+      const distanceToFlag = distance2D(spawn, flag);
+      const corridorDistance = Math.min(
+        SPAWN_EGRESS_MAX_DISTANCE,
+        Math.max(0, distanceToFlag - SPAWN_EGRESS_FLAG_BUFFER)
+      );
+
+      if (corridorDistance <= 0.25) continue;
+
+      clearCapsule(
+        spawn,
+        {
+          x: spawn.x + toFlag.x * corridorDistance,
+          y: spawn.y,
+          z: spawn.z + toFlag.z * corridorDistance,
+        },
+        SPAWN_EGRESS_RADIUS
+      );
+    }
+  };
+
+  clearSpawnExits('red');
+  clearSpawnExits('blue');
   clearPoint(layout.flagZones.red, 1.75);
   clearPoint(layout.flagZones.blue, 1.75);
 }
@@ -2236,9 +2335,10 @@ function generateProceduralVoxelMapInternal(
   fillTerrain(stampContext, layout);
   paintObjectivePads(stampContext, layout);
   for (const placement of placements) stampStructure(stampContext, placement);
+  anchorBoundaryFloatingDetails(stampContext, layout);
   clearObjectiveHeadroom(stampContext, layout);
   paintObjectivePads(stampContext, layout);
-  anchorBoundaryFloatingDetails(stampContext, layout);
+  removeSmallFloatingFragments(stampContext, layout, SPAWN_EGRESS_FLOATING_CLEANUP_MAX_BLOCKS);
   markStage('objects');
 
   const collisionLookup = buildCollisionLookup();

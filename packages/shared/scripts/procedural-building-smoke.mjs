@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { isCollisionBlock } from '../dist/maps/procedural/blocks.js';
-import { PLAYER_HEIGHT } from '../dist/constants/physics.js';
+import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../dist/constants/physics.js';
 import { generateProceduralVoxelMapWithDiagnostics } from '../dist/maps/procedural/generator.js';
 
 const DEFAULT_SEQUENTIAL_SEEDS = 20;
@@ -9,6 +9,8 @@ const DEFAULT_RANDOM_SEEDS = 8;
 const DEFAULT_MAX_COLLIDERS = 48_000;
 const MIN_AUTHORED_OBJECTS = 24;
 const MIN_OBJECT_VARIANTS = 7;
+const SPAWN_EGRESS_MAX_DISTANCE = 3.4;
+const SPAWN_EGRESS_FLAG_BUFFER = 1.55;
 const KNOWN_REGRESSION_SEEDS = [0, 1, 2, 42, 1337, 0x57564f58, 0xdecafbad, 0xc0ffee];
 const BIOME_SIGNATURE_OBJECTS = {
   verdant: ['tree_cluster', 'pine_cluster', 'garden_marker'],
@@ -119,8 +121,7 @@ function getSolidOccupancy(manifest) {
   return solid;
 }
 
-function countFloatingSolidComponents(manifest) {
-  const solid = getSolidOccupancy(manifest);
+function countFloatingSolidComponents(manifest, solid = getSolidOccupancy(manifest)) {
   const visited = new Uint8Array(solid.length);
   const queue = [];
   const directions = [
@@ -179,7 +180,7 @@ function countFloatingSolidComponents(manifest) {
   return { floating, largestFloating };
 }
 
-function getGroundYBelow(manifest, point) {
+function getGroundYBelow(manifest, point, solid = getSolidOccupancy(manifest)) {
   const gx = Math.floor((point.x - manifest.origin.x) / manifest.voxelSize.x);
   const gz = Math.floor((point.z - manifest.origin.z) / manifest.voxelSize.z);
   const startY = Math.min(
@@ -189,7 +190,6 @@ function getGroundYBelow(manifest, point) {
 
   if (gx < 0 || gx >= manifest.size.x || gz < 0 || gz >= manifest.size.z) return null;
 
-  const solid = getSolidOccupancy(manifest);
   for (let y = startY; y >= 0; y--) {
     if (solid[chunkIndex(gx, y, gz, manifest.size)]) {
       return manifest.origin.y + (y + 1) * manifest.voxelSize.y;
@@ -197,6 +197,106 @@ function getGroundYBelow(manifest, point) {
   }
 
   return null;
+}
+
+function averagePoint(points) {
+  return points.reduce(
+    (sum, point) => ({
+      x: sum.x + point.x / points.length,
+      y: sum.y + point.y / points.length,
+      z: sum.z + point.z / points.length,
+    }),
+    { x: 0, y: 0, z: 0 }
+  );
+}
+
+function distance2D(a, b) {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+function normalize2D(vector) {
+  const length = Math.hypot(vector.x, vector.z);
+  if (length < 0.0001) return { x: 0, z: 1 };
+  return { x: vector.x / length, z: vector.z / length };
+}
+
+function capsuleColumnClear(manifest, solid, point) {
+  const radius = PLAYER_RADIUS + Math.max(manifest.voxelSize.x, manifest.voxelSize.z) * 0.6;
+  const radiusSq = radius * radius;
+  const feetY = point.y - PLAYER_HEIGHT / 2;
+  const minX = Math.floor((point.x - radius - manifest.origin.x) / manifest.voxelSize.x);
+  const maxX = Math.floor((point.x + radius - manifest.origin.x) / manifest.voxelSize.x);
+  const minZ = Math.floor((point.z - radius - manifest.origin.z) / manifest.voxelSize.z);
+  const maxZ = Math.floor((point.z + radius - manifest.origin.z) / manifest.voxelSize.z);
+  const minY = Math.floor((feetY - manifest.origin.y) / manifest.voxelSize.y);
+  const maxY = Math.ceil((feetY + PLAYER_HEIGHT - manifest.origin.y) / manifest.voxelSize.y) - 1;
+
+  for (let y = Math.max(0, minY); y <= Math.min(manifest.size.y - 1, maxY); y++) {
+    for (let z = Math.max(0, minZ); z <= Math.min(manifest.size.z - 1, maxZ); z++) {
+      const worldZ = manifest.origin.z + (z + 0.5) * manifest.voxelSize.z;
+      for (let x = Math.max(0, minX); x <= Math.min(manifest.size.x - 1, maxX); x++) {
+        const worldX = manifest.origin.x + (x + 0.5) * manifest.voxelSize.x;
+        if ((worldX - point.x) ** 2 + (worldZ - point.z) ** 2 > radiusSq) continue;
+        if (solid[chunkIndex(x, y, z, manifest.size)]) return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function capsulePathClear(manifest, solid, start, end) {
+  const distance = distance2D(start, end);
+  const steps = Math.max(1, Math.ceil(distance / Math.max(0.2, manifest.voxelSize.x)));
+
+  for (let step = 0; step <= steps; step++) {
+    const amount = step / steps;
+    const point = {
+      x: start.x + (end.x - start.x) * amount,
+      y: start.y + (end.y - start.y) * amount,
+      z: start.z + (end.z - start.z) * amount,
+    };
+
+    if (!capsuleColumnClear(manifest, solid, point)) return false;
+  }
+
+  return true;
+}
+
+function assertSpawnEgress(manifest, solid, failures, seed) {
+  for (const team of ['red', 'blue']) {
+    const flag = manifest.flagZones[team];
+    const spawnCenter = averagePoint(manifest.spawnPoints[team]);
+
+    for (const [index, spawn] of manifest.spawnPoints[team].entries()) {
+      const toFlag = normalize2D({ x: flag.x - spawn.x, z: flag.z - spawn.z });
+      const corridorDistance = Math.min(
+        SPAWN_EGRESS_MAX_DISTANCE,
+        Math.max(0, distance2D(spawn, flag) - SPAWN_EGRESS_FLAG_BUFFER)
+      );
+      const exit = {
+        x: spawn.x + toFlag.x * corridorDistance,
+        y: spawn.y,
+        z: spawn.z + toFlag.z * corridorDistance,
+      };
+
+      assertCondition(
+        capsuleColumnClear(manifest, solid, spawn),
+        failures,
+        `seed ${seed}: ${team} spawn ${index} is obstructed at the spawn point`
+      );
+      assertCondition(
+        capsulePathClear(manifest, solid, spawn, exit),
+        failures,
+        `seed ${seed}: ${team} spawn ${index} has no clear forward egress corridor`
+      );
+      assertCondition(
+        capsulePathClear(manifest, solid, spawn, spawnCenter),
+        failures,
+        `seed ${seed}: ${team} spawn ${index} cannot reach its spawn cluster center`
+      );
+    }
+  }
 }
 
 function summarizeHeightRows(manifest) {
@@ -229,7 +329,8 @@ function auditSeed(seed, options) {
     manifest.themeId === 'desert'
       ? TREE_OBJECTS.reduce((sum, objectKind) => sum + (diagnostics.objectSummary?.[objectKind] ?? 0), 0)
       : 0;
-  const floating = countFloatingSolidComponents(manifest);
+  const solid = getSolidOccupancy(manifest);
+  const floating = countFloatingSolidComponents(manifest, solid);
   const heightRows = summarizeHeightRows(manifest);
 
   assertCondition(manifest.size.x > 0 && manifest.size.y > 0 && manifest.size.z > 0, failures, `seed ${seed}: invalid map size`);
@@ -251,7 +352,7 @@ function auditSeed(seed, options) {
   assertCondition(floating.floating === 0, failures, `seed ${seed}: ${floating.floating} floating solid components, largest=${floating.largestFloating}`);
 
   for (const spawn of [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue]) {
-    const groundY = getGroundYBelow(manifest, spawn);
+    const groundY = getGroundYBelow(manifest, spawn, solid);
     assertCondition(groundY !== null, failures, `seed ${seed}: spawn has no solid ground below`);
     if (groundY !== null) {
       const expectedCenterY = groundY + PLAYER_HEIGHT / 2;
@@ -262,6 +363,7 @@ function auditSeed(seed, options) {
       );
     }
   }
+  assertSpawnEgress(manifest, solid, failures, seed);
 
   return {
     seed,

@@ -363,8 +363,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
   ) => {
     const now = ctx.viewmodelNowMs ?? Date.now();
     const durationMs = (ABILITY_DEFINITIONS.phantom_veil?.duration ?? 0) * 1000;
+    const effectEndTime = now + durationMs;
     triggerPhantomVeilCastPose(now);
-    useGameStore.getState().setUltimateEffect(true, 'phantom_veil', now + durationMs);
+    useGameStore.getState().setUltimateEffect(true, 'phantom_veil', effectEndTime);
     return true;
   }, []);
 
