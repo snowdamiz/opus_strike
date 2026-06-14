@@ -516,21 +516,28 @@ function PreviewRenderReadySignal({
   readyKey: string;
   onReady: () => void;
 }) {
-  const { gl } = useThree();
+  const { gl, invalidate } = useThree();
   const renderedFramesRef = useRef(0);
   const didSignalRef = useRef(false);
 
   useEffect(() => {
     renderedFramesRef.current = 0;
     didSignalRef.current = false;
-  }, [readyKey]);
+    invalidate();
+  }, [invalidate, readyKey]);
 
   useFrame(() => {
     if (didSignalRef.current) return;
 
     renderedFramesRef.current += 1;
-    if (renderedFramesRef.current < 4) return;
-    if (renderedFramesRef.current < 180 && !isCanvasSafeToReveal(gl.domElement)) return;
+    if (renderedFramesRef.current < 4) {
+      invalidate();
+      return;
+    }
+    if (renderedFramesRef.current < 180 && !isCanvasSafeToReveal(gl.domElement)) {
+      invalidate();
+      return;
+    }
 
     didSignalRef.current = true;
     onReady();
