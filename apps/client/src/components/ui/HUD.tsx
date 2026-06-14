@@ -38,6 +38,92 @@ function VoidIconSmall({ className, style }: { className?: string; style?: React
   );
 }
 
+function JetpackChargeIcon({ active }: { active: boolean }) {
+  return (
+    <div
+      className="relative grid h-9 w-9 place-items-center rounded-full overflow-hidden"
+      style={{
+        background: active
+          ? 'linear-gradient(145deg, rgba(255, 237, 213, 0.26), rgba(249, 115, 22, 0.22) 48%, rgba(15, 23, 42, 0.28))'
+          : 'linear-gradient(145deg, rgba(255,255,255,0.14), rgba(249, 115, 22, 0.11) 52%, rgba(15, 23, 42, 0.2))',
+        border: active
+          ? '1px solid rgba(253, 186, 116, 0.58)'
+          : '1px solid rgba(255, 237, 213, 0.22)',
+        boxShadow: active
+          ? '0 0 20px rgba(249, 115, 22, 0.42), inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -10px 18px rgba(124,45,18,0.24)'
+          : '0 0 14px rgba(249, 115, 22, 0.18), inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -10px 18px rgba(15,23,42,0.18)',
+        backdropFilter: 'blur(10px)',
+      }}
+    >
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'radial-gradient(circle at 32% 22%, rgba(255,255,255,0.42), transparent 34%)',
+          opacity: active ? 0.92 : 0.58,
+        }}
+      />
+      <svg
+        className="relative h-5 w-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        aria-hidden="true"
+      >
+        <path
+          d="M8.2 7.2C8.2 4.9 9.7 3 12 3s3.8 1.9 3.8 4.2v7.4c0 .8-.6 1.4-1.4 1.4H9.6c-.8 0-1.4-.6-1.4-1.4V7.2Z"
+          fill={active ? 'rgba(255, 247, 237, 0.9)' : 'rgba(255, 237, 213, 0.72)'}
+        />
+        <path
+          d="M10.1 8.1h3.8M9.6 16l-1.7 2.8M14.4 16l1.7 2.8M7.9 10.1l-2.1 1.6v4.1M16.1 10.1l2.1 1.6v4.1"
+          stroke={active ? '#fed7aa' : 'rgba(253, 186, 116, 0.82)'}
+          strokeWidth="1.45"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M10.3 20.6 12 17.2l1.7 3.4"
+          stroke={active ? '#fb923c' : 'rgba(251, 146, 60, 0.68)'}
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function BlazeFuelIndicator({ fuel, active }: { fuel: number; active: boolean }) {
+  const fuelPercent = Math.max(0, Math.min(100, fuel));
+
+  return (
+    <div className="mt-1 flex items-center gap-2.5">
+      <JetpackChargeIcon active={active} />
+      <div className="relative h-2 w-24 overflow-hidden rounded-full">
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{
+            background: 'linear-gradient(180deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04)), rgba(15,23,42,0.34)',
+            border: '1px solid rgba(255, 237, 213, 0.16)',
+            boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.46)',
+            backdropFilter: 'blur(8px)',
+          }}
+        />
+        <div
+          className="relative h-full rounded-full transition-all duration-100"
+          style={{
+            width: `${fuelPercent}%`,
+            background: active
+              ? 'linear-gradient(90deg, #f97316 0%, #fb923c 42%, #fde68a 100%)'
+              : 'linear-gradient(90deg, #ea580c 0%, #f97316 50%, #fbbf24 100%)',
+            boxShadow: active
+              ? '0 0 12px rgba(251, 146, 60, 0.74), inset 0 1px 0 rgba(255,255,255,0.42)'
+              : '0 0 8px rgba(249, 115, 22, 0.42), inset 0 1px 0 rgba(255,255,255,0.28)',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // Simple Void Ray charge indicator
 
 function VoidRayChargeIndicator({ chargeStart }: { chargeStart: number }) {
@@ -779,30 +865,7 @@ export function HUD() {
 
         {/* Flamethrower Fuel */}
         {localPlayer.heroId === 'blaze' && (
-          <div
-            className="flex items-center gap-3 px-3 py-2 rounded-lg backdrop-blur-sm mt-1"
-            style={{
-              background: flamethrowerActive ? 'rgba(249, 115, 22, 0.25)' : 'rgba(249, 115, 22, 0.1)',
-              border: flamethrowerActive ? '1px solid rgba(249, 115, 22, 0.6)' : '1px solid rgba(249, 115, 22, 0.3)',
-            }}
-          >
-            <span className="text-[9px] font-display text-orange-400 tracking-wider">FLAME</span>
-            <div className="w-20 h-2 bg-black/60 rounded-full overflow-hidden">
-              <div
-                className="h-full transition-all duration-100"
-                style={{
-                  width: `${flamethrowerFuel}%`,
-                  background: flamethrowerActive
-                    ? 'linear-gradient(90deg, #ff6b00, #ffaa00)'
-                    : 'linear-gradient(90deg, #f97316, #fbbf24)',
-                  boxShadow: flamethrowerActive ? '0 0 15px rgba(255, 170, 0, 0.7)' : '0 0 10px rgba(249, 115, 22, 0.5)',
-                }}
-              />
-            </div>
-            <span className="text-[10px] font-mono text-orange-300/70">
-              {Math.round(flamethrowerFuel)}%
-            </span>
-          </div>
+          <BlazeFuelIndicator fuel={flamethrowerFuel} active={flamethrowerActive} />
         )}
 
       </div>

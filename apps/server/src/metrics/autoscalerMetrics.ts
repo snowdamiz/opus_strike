@@ -41,6 +41,7 @@ export interface AutoscalerMetricSnapshot {
   processEventLoopDelayP95Ms: number;
   processEventLoopDelayP99Ms: number;
   processHeapUsedRatio: number;
+  processRssUsedRatio: number;
   processSystemMemoryUsedRatio: number;
   dynamicCapacityPressure: number;
   dynamicCapacityPlayersPerMachine: number;
@@ -212,8 +213,13 @@ function getGaugeDefinitions(snapshot: AutoscalerMetricSnapshot): GaugeDefinitio
       value: snapshot.processHeapUsedRatio,
     },
     {
+      name: 'opus_strike_process_rss_used_ratio',
+      help: 'Server process resident memory ratio against visible system memory.',
+      value: snapshot.processRssUsedRatio,
+    },
+    {
       name: 'opus_strike_process_system_memory_used_ratio',
-      help: 'System memory used ratio visible to the server process.',
+      help: 'System memory used ratio visible to the server process. Informational only; macOS and Linux file cache can keep this high.',
       value: snapshot.processSystemMemoryUsedRatio,
     },
     {
@@ -262,6 +268,7 @@ export async function collectAutoscalerMetricSnapshot(
       eventLoopDelayP95Ms: processLoad.eventLoopDelayP95Ms,
       eventLoopDelayP99Ms: processLoad.eventLoopDelayP99Ms,
       heapUsedRatio: processLoad.heapUsedRatio,
+      processRssUsedRatio: processLoad.processRssUsedRatio,
       systemMemoryUsedRatio: processLoad.systemMemoryUsedRatio,
       capacityPressure: processLoad.capacityPressure,
     }],
@@ -282,6 +289,7 @@ export async function collectAutoscalerMetricSnapshot(
     processEventLoopDelayP95Ms: processLoad.eventLoopDelayP95Ms,
     processEventLoopDelayP99Ms: processLoad.eventLoopDelayP99Ms,
     processHeapUsedRatio: processLoad.heapUsedRatio,
+    processRssUsedRatio: processLoad.processRssUsedRatio,
     processSystemMemoryUsedRatio: processLoad.systemMemoryUsedRatio,
     dynamicCapacityPressure: processLoad.capacityPressure,
     dynamicCapacityPlayersPerMachine: localCapacity.playersPerMachine,

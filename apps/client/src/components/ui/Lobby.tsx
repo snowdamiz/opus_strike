@@ -318,7 +318,9 @@ export function Lobby() {
 
   const currentFaction = currentPlayer?.team === 'red' ? FACTIONS.red : currentPlayer?.team === 'blue' ? FACTIONS.blue : null;
   const currentRoleLabel = isLocalObserver ? 'Observer' : currentFaction?.fullName || 'Unassigned';
-  const currentRoleColor = isLocalObserver ? 'rgb(125 211 252)' : currentFaction?.primaryColor || 'rgba(255,255,255,0.4)';
+  const currentRoleColor = isLocalObserver
+    ? 'rgb(var(--color-accent-secondary))'
+    : currentFaction?.primaryColor || 'rgb(var(--color-strike-border) / 0.4)';
 
   const handleBack = () => {
     leaveLobby();
@@ -433,10 +435,12 @@ export function Lobby() {
           {/* Back button and lobby info */}
           <div className="flex min-w-0 items-center gap-3 xl:gap-4">
             <button
+              type="button"
               onClick={() => { playButtonClick(); handleBack(); }}
-              className="w-10 h-10 shrink-0 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 hover:border-white/20 group"
+              className="menu-back-button"
+              aria-label="Back to play"
             >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
@@ -468,15 +472,7 @@ export function Lobby() {
               </div>
             )}
             <div 
-              className="flex items-center gap-3 py-2 pl-2 pr-4 rounded-xl border"
-              style={{
-                background: isLocalObserver
-                  ? 'linear-gradient(135deg, rgba(14,165,233,0.18), rgb(var(--color-strike-panel-raised) / 0.9))'
-                  : currentFaction
-                    ? `linear-gradient(135deg, ${currentFaction.bgGradient}, rgb(var(--color-strike-panel-raised) / 0.9))`
-                    : 'rgba(255,255,255,0.03)',
-                borderColor: isLocalObserver ? 'rgba(125,211,252,0.25)' : currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
-              }}
+              className="flex items-center gap-3"
             >
               <RankIcon rank={currentRank} size={34} labelled className="shrink-0" />
               <div>

@@ -50,6 +50,47 @@ import type { AbilityContext, PlayerSounds } from '../types';
 import { markPredictedLocalAbilitySound } from '../useLocalAbilityAudioPrediction';
 import { markPredictedLocalAbilityVisual } from '../useLocalAbilityVisualPrediction';
 
+const FUEL_AUTHORITY_EPSILON = 0.05;
+
+function clampFlamethrowerFuel(fuel: number): number {
+  return Math.max(0, Math.min(BLAZE_FLAMETHROWER_MAX_FUEL, fuel));
+}
+
+export function projectBlazeFlamethrowerFuel({
+  currentFuel,
+  authoritativeFuel,
+  lastAuthoritativeFuel,
+  isTryingToFire,
+  deltaSeconds,
+  tempoMultiplier,
+}: {
+  currentFuel: number;
+  authoritativeFuel: number;
+  lastAuthoritativeFuel: number;
+  isTryingToFire: boolean;
+  deltaSeconds: number;
+  tempoMultiplier: number;
+}): { fuel: number; lastAuthoritativeFuel: number } {
+  const nextAuthoritativeFuel = clampFlamethrowerFuel(authoritativeFuel);
+  if (Math.abs(nextAuthoritativeFuel - lastAuthoritativeFuel) > FUEL_AUTHORITY_EPSILON) {
+    return {
+      fuel: nextAuthoritativeFuel,
+      lastAuthoritativeFuel: nextAuthoritativeFuel,
+    };
+  }
+
+  const fuelRate = isTryingToFire && currentFuel > 0
+    ? -BLAZE_FLAMETHROWER_FUEL_DRAIN
+    : BLAZE_FLAMETHROWER_FUEL_REGEN;
+
+  return {
+    fuel: clampFlamethrowerFuel(
+      currentFuel + fuelRate * Math.max(0, deltaSeconds) * Math.max(0, tempoMultiplier)
+    ),
+    lastAuthoritativeFuel,
+  };
+}
+
 function vectorToPlainPosition(vector: THREE.Vector3): { x: number; y: number; z: number } {
   return {
     x: vector.x,
@@ -146,6 +187,8 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
 
   // Flamethrower state
   const flamethrowerFuelRef = useRef(BLAZE_FLAMETHROWER_MAX_FUEL);
+  const flamethrowerAuthorityOwnerRef = useRef<string | null>(null);
+  const lastAuthoritativeFlamethrowerFuelRef = useRef(BLAZE_FLAMETHROWER_MAX_FUEL);
   const flamethrowerActiveRef = useRef(false);
   const pendingRocketJumpRef = useRef<PendingRocketJump | null>(null);
 
@@ -301,35 +344,56 @@ export function useBlazeAbilities(): UseBlazeAbilitiesReturn {
     const store = useGameStore.getState();
     const localPlayer = store.localPlayer;
     const canUsePracticeFuel = store.isPracticeMode && localPlayer?.heroId === 'blaze' && localPlayer.state === 'alive';
+    const authorityOwner = localPlayer?.heroId === 'blaze' ? localPlayer.id : null;
     const tempoMultiplier = getLocalChronosTimebreakTempoMultiplier(now);
     const fuelStepSeconds = Math.min(Math.max(ctx.dt, 0), 0.1);
-    let serverFuel = localPlayer?.heroId === 'blaze'
-      ? localPlayer.movement?.jetpackFuel ?? BLAZE_FLAMETHROWER_MAX_FUEL
+    const authoritativeFuel = localPlayer?.heroId === 'blaze'
+      ? clampFlamethrowerFuel(localPlayer.movement?.jetpackFuel ?? BLAZE_FLAMETHROWER_MAX_FUEL)
       : BLAZE_FLAMETHROWER_MAX_FUEL;
+    let fuel = authoritativeFuel;
+
+    if (flamethrowerAuthorityOwnerRef.current !== authorityOwner) {
+      flamethrowerAuthorityOwnerRef.current = authorityOwner;
+      flamethrowerFuelRef.current = authoritativeFuel;
+      lastAuthoritativeFlamethrowerFuelRef.current = authoritativeFuel;
+    }
+
+    const isTryingToFire = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
 
     if (canUsePracticeFuel) {
-      const isTryingToFire = ctx.inputState.ability1 && flamethrowerFuelRef.current > 0;
       const fuelDelta = (isTryingToFire ? -BLAZE_FLAMETHROWER_FUEL_DRAIN : BLAZE_FLAMETHROWER_FUEL_REGEN) *
         fuelStepSeconds *
         tempoMultiplier;
-      serverFuel = Math.max(0, Math.min(BLAZE_FLAMETHROWER_MAX_FUEL, flamethrowerFuelRef.current + fuelDelta));
+      fuel = clampFlamethrowerFuel(flamethrowerFuelRef.current + fuelDelta);
+      lastAuthoritativeFlamethrowerFuelRef.current = fuel;
+    } else if (authorityOwner) {
+      const projectedFuel = projectBlazeFlamethrowerFuel({
+        currentFuel: flamethrowerFuelRef.current,
+        authoritativeFuel,
+        lastAuthoritativeFuel: lastAuthoritativeFlamethrowerFuelRef.current,
+        isTryingToFire,
+        deltaSeconds: fuelStepSeconds,
+        tempoMultiplier,
+      });
+      fuel = projectedFuel.fuel;
+      lastAuthoritativeFlamethrowerFuelRef.current = projectedFuel.lastAuthoritativeFuel;
     }
-    const isHoldingFlamethrower = ctx.inputState.ability1 && serverFuel > 0;
+    const isHoldingFlamethrower = ctx.inputState.ability1 && fuel > 0;
     const serverActive = Boolean(
       localPlayer?.heroId === 'blaze' &&
       localPlayer.state === 'alive' &&
       (localPlayer.movement?.isJetpacking || (canUsePracticeFuel && isHoldingFlamethrower)) &&
-      serverFuel > 0
+      fuel > 0
     );
     const shouldPlayLocalFlamethrowerSound = isHoldingFlamethrower;
 
-    flamethrowerFuelRef.current = serverFuel;
+    flamethrowerFuelRef.current = fuel;
     if (
-      Math.abs(store.flamethrowerFuel - serverFuel) >= FUEL_UPDATE_THRESHOLD ||
-      (serverFuel === 0 && store.flamethrowerFuel !== 0) ||
-      (serverFuel === BLAZE_FLAMETHROWER_MAX_FUEL && store.flamethrowerFuel !== BLAZE_FLAMETHROWER_MAX_FUEL)
+      Math.abs(store.flamethrowerFuel - fuel) >= FUEL_UPDATE_THRESHOLD ||
+      (fuel === 0 && store.flamethrowerFuel !== 0) ||
+      (fuel === BLAZE_FLAMETHROWER_MAX_FUEL && store.flamethrowerFuel !== BLAZE_FLAMETHROWER_MAX_FUEL)
     ) {
-      setFlamethrowerFuel(serverFuel);
+      setFlamethrowerFuel(fuel);
     }
     setBlazeFlamethrowerHeld(isHoldingFlamethrower || serverActive, timestampMs);
 

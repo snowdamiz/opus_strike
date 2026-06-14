@@ -1,9 +1,15 @@
 import crypto from 'node:crypto';
+import type { Prisma } from '@prisma/client';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import prisma from '../db';
 import { verifyAuthToken } from '../auth/session';
 import { getAuthTokenSecret } from '../config/security';
-import type { Team } from '@voxel-strike/shared';
+import {
+  DEFAULT_COMPETITIVE_RATING,
+  RANK_DEFINITIONS,
+  getRankFromRating,
+  type Team,
+} from '@voxel-strike/shared';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
 import {
@@ -37,6 +43,11 @@ import {
   removeGlobalNotification,
   GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH,
 } from '../notifications/globalNotificationService';
+import {
+  getRankedSeason,
+  setRankedSeason,
+  type RankedSeasonAdminView,
+} from '../ranking/seasonService';
 
 interface AdminRouterOptions {
   config: ColyseusRuntimeConfig;
@@ -51,6 +62,32 @@ interface AdminUser {
   walletAddress: string;
   elevatedAntiCheatRole: boolean;
 }
+
+const ADMIN_RANK_USER_LIMIT_MAX = 100;
+const ADMIN_MANUAL_RATING_MAX = 5000;
+
+const adminRankUserSelect = {
+  id: true,
+  name: true,
+  walletAddress: true,
+  lastLoginAt: true,
+  createdAt: true,
+  updatedAt: true,
+  totalGames: true,
+  totalWins: true,
+  totalLosses: true,
+  totalDraws: true,
+  competitiveRating: true,
+  rankedGames: true,
+  rankedWins: true,
+  rankedLosses: true,
+  rankedDraws: true,
+  rankedPlacementsRemaining: true,
+  rankedPeakRating: true,
+  rankedLastMatchAt: true,
+} satisfies Prisma.UserSelect;
+
+type AdminRankUserRecord = Prisma.UserGetPayload<{ select: typeof adminRankUserSelect }>;
 
 interface RoomQueryResult {
   rooms: AdminRoomListing[];
@@ -71,6 +108,7 @@ interface MachineOverview {
   systemTotalMemoryBytes: number;
   capacityPressure: number;
   dynamicCapacityPlayers: number;
+  dynamicCapacitySource: 'live' | 'room_metrics' | 'bootstrap' | null;
   eventLoopDelayP95Ms: number;
   processCpuUtilization: number;
   localCcu: number;
@@ -82,6 +120,8 @@ interface MachineOverview {
   lobbyParticipants: number;
   processes: AdminMachineSnapshot[];
 }
+
+type AdminRankedSeason = RankedSeasonAdminView;
 
 function adminWallet(): string | null {
   const wallet = process.env.ADMIN_WALLET?.trim();
@@ -206,6 +246,156 @@ function hasAllowedAdminOrigin(req: Request): boolean {
 
 function readRequestString(value: unknown, maxLength = 500): string {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function readQueryString(value: unknown, maxLength = 500): string {
+  if (Array.isArray(value)) return readQueryString(value[0], maxLength);
+  return readRequestString(value, maxLength);
+}
+
+function readRequestInteger(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.round(parsed) : null;
+  }
+  return null;
+}
+
+function readAdminRankUserLimit(value: unknown): number {
+  const limit = readRequestInteger(value) ?? 25;
+  return Math.max(1, Math.min(ADMIN_RANK_USER_LIMIT_MAX, limit));
+}
+
+function readAdminRankUserPage(value: unknown): number {
+  const page = readRequestInteger(value) ?? 1;
+  return Math.max(1, page);
+}
+
+function readManualRating(value: unknown): number | null {
+  const rating = readRequestInteger(value);
+  if (rating === null || rating < 0 || rating > ADMIN_MANUAL_RATING_MAX) return null;
+  return rating;
+}
+
+function prismaJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+const RANK_GATE_OPTIONS = RANK_DEFINITIONS.flatMap((tier) => (
+  tier.divisionThresholds.map((rating, index) => ({
+    label: `${tier.label} ${index + 1}`,
+    tier: tier.id,
+    division: index + 1,
+    rating,
+  }))
+)).map((option, index, options) => {
+  const nextRating = options[index + 1]?.rating ?? null;
+  const maxRating = nextRating === null ? null : nextRating - 1;
+  return {
+    ...option,
+    minRating: option.rating,
+    maxRating,
+    rangeLabel: maxRating === null ? `${option.rating}+` : `${option.rating}-${maxRating}`,
+  };
+});
+
+function rankDivisionOptions() {
+  return RANK_GATE_OPTIONS;
+}
+
+function rankGateForRating(rating: number) {
+  let current = RANK_GATE_OPTIONS[0];
+  for (const option of RANK_GATE_OPTIONS) {
+    if (rating >= option.minRating) current = option;
+    else break;
+  }
+  return current;
+}
+
+function serializeAdminRankUser(user: AdminRankUserRecord) {
+  const currentRank = getRankFromRating(user.competitiveRating, user.rankedGames);
+  const peakRank = getRankFromRating(user.rankedPeakRating, Math.max(user.rankedGames, 1));
+  const currentGate = rankGateForRating(user.competitiveRating);
+  const peakGate = rankGateForRating(user.rankedPeakRating);
+
+  return {
+    id: user.id,
+    name: user.name,
+    walletAddress: user.walletAddress,
+    lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
+    createdAt: user.createdAt.toISOString(),
+    updatedAt: user.updatedAt.toISOString(),
+    totalGames: user.totalGames,
+    totalWins: user.totalWins,
+    totalLosses: user.totalLosses,
+    totalDraws: user.totalDraws,
+    competitiveRating: user.competitiveRating,
+    rankedGames: user.rankedGames,
+    rankedWins: user.rankedWins,
+    rankedLosses: user.rankedLosses,
+    rankedDraws: user.rankedDraws,
+    rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+    rankedPeakRating: user.rankedPeakRating,
+    rankedLastMatchAt: user.rankedLastMatchAt?.toISOString() ?? null,
+    rank: {
+      label: currentRank.label,
+      tier: currentRank.tier,
+      division: currentRank.division,
+      rating: currentRank.rating,
+      minRating: currentGate.minRating,
+      maxRating: currentGate.maxRating,
+      rangeLabel: currentGate.rangeLabel,
+    },
+    peakRank: {
+      label: peakRank.label,
+      tier: peakRank.tier,
+      division: peakRank.division,
+      rating: peakRank.rating,
+      minRating: peakGate.minRating,
+      maxRating: peakGate.maxRating,
+      rangeLabel: peakGate.rangeLabel,
+    },
+  };
+}
+
+async function listAdminRankUsers(query: string, page: number, limit: number) {
+  const search = query.trim();
+  const where = search
+    ? {
+      OR: [
+        { id: { contains: search, mode: 'insensitive' as const } },
+        { name: { contains: search, mode: 'insensitive' as const } },
+        { walletAddress: { contains: search, mode: 'insensitive' as const } },
+      ],
+    } satisfies Prisma.UserWhereInput
+    : undefined;
+
+  const [total, users] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.findMany({
+      where,
+      orderBy: search
+        ? [{ competitiveRating: 'desc' }, { rankedWins: 'desc' }, { updatedAt: 'desc' }]
+        : [{ updatedAt: 'desc' }],
+      skip: (page - 1) * limit,
+      take: limit,
+      select: adminRankUserSelect,
+    }),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  return {
+    users: users.map(serializeAdminRankUser),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasPrevious: page > 1,
+      hasNext: page < totalPages,
+    },
+  };
 }
 
 function readEvidenceEventIds(value: unknown): string[] {
@@ -406,6 +596,7 @@ function createMachineMap(snapshots: AdminMachineSnapshot[]): Map<string, Machin
         systemTotalMemoryBytes: snapshot.systemTotalMemoryBytes,
         capacityPressure: snapshot.capacityPressure,
         dynamicCapacityPlayers: 0,
+        dynamicCapacitySource: null,
         eventLoopDelayP95Ms: snapshot.eventLoopDelayP95Ms,
         processCpuUtilization: snapshot.processCpuUtilization,
         localCcu: snapshot.localCcu,
@@ -443,6 +634,14 @@ function createMachineMap(snapshots: AdminMachineSnapshot[]): Map<string, Machin
   return machines;
 }
 
+function pickCapacitySource(
+  current: MachineOverview['dynamicCapacitySource'],
+  next: NonNullable<MachineOverview['dynamicCapacitySource']>
+): NonNullable<MachineOverview['dynamicCapacitySource']> {
+  const rank = { bootstrap: 0, room_metrics: 1, live: 2 };
+  return !current || rank[next] > rank[current] ? next : current;
+}
+
 function addFallbackMachineRoomCounts(machines: Map<string, MachineOverview>): void {
   for (const machine of machines.values()) {
     machine.gameRoomCount = machine.processes.reduce((sum, process) => sum + process.localGameRoomCount, 0);
@@ -476,6 +675,7 @@ function addGlobalRoomCounts(
       systemTotalMemoryBytes: 0,
       capacityPressure: 0,
       dynamicCapacityPlayers: 0,
+      dynamicCapacitySource: null,
       eventLoopDelayP95Ms: 0,
       processCpuUtilization: 0,
       localCcu: 0,
@@ -510,6 +710,7 @@ function addGlobalRoomCounts(
       systemTotalMemoryBytes: 0,
       capacityPressure: 0,
       dynamicCapacityPlayers: 0,
+      dynamicCapacitySource: null,
       eventLoopDelayP95Ms: 0,
       processCpuUtilization: 0,
       localCcu: 0,
@@ -564,7 +765,7 @@ function summarizeLobbyRoom(room: AdminRoomListing, processSnapshots: Map<string
 
 async function collectAdminOverview(options: AdminRouterOptions, adminUser: AdminUser) {
   const generatedAtMs = Date.now();
-  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards, globalNotification] = await Promise.all([
+  const [redis, gameRoomResult, lobbyRoomResult, antiCheat, playerReports, goldenBiomeRewards, globalNotification, rankedSeason] = await Promise.all([
     pingRedis(options.redis),
     queryRooms(options.matchMaker, 'game_room'),
     queryRooms(options.matchMaker, 'lobby_room'),
@@ -572,6 +773,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     listPlayerReportQueue(prisma),
     wagerService.getGoldenBiomeAdminOverview(),
     getGlobalNotification(),
+    getRankedSeason(),
   ]);
 
   let machineSnapshots: AdminMachineSnapshot[] = [];
@@ -613,6 +815,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     const machine = machines.get(snapshot.machineId);
     if (!machine) continue;
     machine.dynamicCapacityPlayers += estimate.playersPerMachine;
+    machine.dynamicCapacitySource = pickCapacitySource(machine.dynamicCapacitySource, estimate.source);
   }
 
   const machineList = Array.from(machines.values())
@@ -687,756 +890,12 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
     playerReports,
     goldenBiomeRewards,
     globalNotification,
+    rankedSeason: rankedSeason satisfies AdminRankedSeason,
   };
-}
-
-function renderAdminHtml(csrfToken: string): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Slop Heroes Admin</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #101114;
-      --panel: #17191f;
-      --panel-2: #1f232b;
-      --line: #303642;
-      --text: #eef2f6;
-      --muted: #98a2b3;
-      --good: #39d98a;
-      --warn: #f4bf50;
-      --bad: #ff6b6b;
-      --accent: #66d9ef;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: var(--bg);
-      color: var(--text);
-      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    main {
-      width: min(1360px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 24px 0 40px;
-    }
-    header {
-      display: flex;
-      align-items: end;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 20px;
-    }
-    h1, h2 { margin: 0; font-weight: 700; letter-spacing: 0; }
-    h1 { font-size: 28px; }
-    h2 { font-size: 16px; }
-    .muted { color: var(--muted); }
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 32px;
-      padding: 6px 10px;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      border-radius: 6px;
-      white-space: nowrap;
-    }
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: var(--muted);
-    }
-    .ok .dot { background: var(--good); }
-    .degraded .dot { background: var(--warn); }
-    .error .dot { background: var(--bad); }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-    .metric, section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }
-    .metric { padding: 14px; min-width: 0; }
-    .metric .label {
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-    }
-    .metric .value {
-      margin-top: 4px;
-      font-size: 28px;
-      font-weight: 750;
-      line-height: 1.1;
-      overflow-wrap: anywhere;
-    }
-    section { margin-top: 16px; overflow: hidden; }
-    section .section-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 13px 14px;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel-2);
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-    }
-    th, td {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--line);
-      text-align: left;
-      vertical-align: middle;
-      overflow-wrap: anywhere;
-    }
-    th {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-      text-transform: uppercase;
-      letter-spacing: .06em;
-      background: rgba(255,255,255,.02);
-    }
-    tr:last-child td { border-bottom: 0; }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      max-width: 100%;
-      padding: 2px 8px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--text);
-      background: rgba(255,255,255,.03);
-    }
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-    button, input, select, textarea {
-      min-height: 30px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: rgba(255,255,255,.06);
-      color: var(--text);
-      font: inherit;
-    }
-    button {
-      cursor: pointer;
-      padding: 4px 8px;
-    }
-    button:hover { background: rgba(255,255,255,.12); }
-    input, select, textarea {
-      padding: 4px 8px;
-      min-width: 160px;
-    }
-    textarea {
-      width: 100%;
-      min-height: 72px;
-      resize: vertical;
-    }
-    .warnings {
-      display: none;
-      margin: 0 0 16px;
-      padding: 12px 14px;
-      border: 1px solid rgba(244,191,80,.45);
-      background: rgba(244,191,80,.11);
-      border-radius: 8px;
-      color: #ffe4a3;
-    }
-    .empty {
-      padding: 18px 14px;
-      color: var(--muted);
-    }
-    @media (max-width: 1050px) {
-      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      header { align-items: start; flex-direction: column; }
-    }
-    @media (max-width: 720px) {
-      main { width: min(100vw - 20px, 1360px); padding-top: 16px; }
-      .grid { grid-template-columns: 1fr; }
-      table { min-width: 760px; }
-      .table-wrap { overflow-x: auto; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <div>
-        <h1>Slop Heroes Admin</h1>
-        <div class="muted" id="subtitle">Loading production telemetry</div>
-      </div>
-      <div class="status" id="status"><span class="dot"></span><span>Loading</span></div>
-    </header>
-
-    <div class="warnings" id="warnings"></div>
-
-    <section>
-      <div class="section-head">
-        <h2>Global Notification</h2>
-        <span class="muted" id="global-notification-status"></span>
-      </div>
-      <div id="global-notification"></div>
-    </section>
-
-    <div class="grid" id="metrics"></div>
-
-    <section>
-      <div class="section-head">
-        <h2>Machines</h2>
-        <span class="muted" id="machine-count"></span>
-      </div>
-      <div class="table-wrap" id="machines"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Game Rooms</h2>
-        <span class="muted" id="game-room-count"></span>
-      </div>
-      <div class="table-wrap" id="game-rooms"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Lobbies</h2>
-        <span class="muted" id="lobby-count"></span>
-      </div>
-      <div class="table-wrap" id="lobbies"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Golden Rewards</h2>
-        <span class="muted" id="golden-reward-count"></span>
-      </div>
-      <div class="table-wrap" id="golden-rewards"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Player Reports</h2>
-        <span class="muted" id="player-report-count"></span>
-      </div>
-      <div class="table-wrap" id="player-reports"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Anti-Cheat Cases</h2>
-        <span class="muted" id="anticheat-case-count"></span>
-      </div>
-      <div class="table-wrap" id="anticheat-cases"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Movement Shadow Drift</h2>
-        <span class="muted" id="movement-shadow-count"></span>
-      </div>
-      <div class="table-wrap" id="movement-shadow"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Paused Payouts</h2>
-        <span class="muted" id="anticheat-payout-count"></span>
-      </div>
-      <div class="table-wrap" id="anticheat-payouts"></div>
-    </section>
-
-    <section>
-      <div class="section-head">
-        <h2>Manual Account Actions</h2>
-        <span class="muted" id="anticheat-action-count"></span>
-      </div>
-      <div class="table-wrap" id="anticheat-actions"></div>
-    </section>
-  </main>
-
-  <script>
-    const ADMIN_CSRF_TOKEN = ${JSON.stringify(csrfToken)};
-    const state = {
-      formatter: new Intl.NumberFormat(),
-      bytes: new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }),
-    };
-
-    function escapeHtml(value) {
-      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;',
-      }[char]));
-    }
-
-    function num(value) {
-      return state.formatter.format(Number(value) || 0);
-    }
-
-    function bytes(value) {
-      const raw = Number(value) || 0;
-      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-      let current = raw;
-      let index = 0;
-      while (current >= 1024 && index < units.length - 1) {
-        current /= 1024;
-        index++;
-      }
-      return state.bytes.format(current) + ' ' + units[index];
-    }
-
-    function sol(lamports) {
-      const raw = String(lamports || '0');
-      if (!/^[0-9]+$/.test(raw)) return '0';
-      const whole = raw.length > 9 ? raw.slice(0, -9) : '0';
-      const fraction = raw.padStart(10, '0').slice(-9).replace(/0+$/, '');
-      return fraction ? whole + '.' + fraction : whole;
-    }
-
-    function usd(cents) {
-      const value = Math.max(0, Number(cents) || 0);
-      const dollars = Math.floor(value / 100);
-      const remainder = value % 100;
-      return remainder === 0 ? '$' + dollars : '$' + dollars + '.' + String(remainder).padStart(2, '0');
-    }
-
-    function age(ms) {
-      if (!ms) return 'unknown';
-      const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
-      if (seconds < 60) return seconds + 's ago';
-      return Math.round(seconds / 60) + 'm ago';
-    }
-
-    function setStatus(data) {
-      const el = document.getElementById('status');
-      el.className = 'status ' + (data.status === 'ok' ? 'ok' : 'degraded');
-      el.innerHTML = '<span class="dot"></span><span>' + escapeHtml(data.status) + '</span>';
-      document.getElementById('subtitle').textContent = 'Updated ' + new Date(data.generatedAt).toLocaleString();
-    }
-
-    function renderMetrics(data) {
-      const capacity = data.capacity || {};
-      const metrics = [
-        ['Machines', data.totals.runningMachines],
-        ['Capacity', num(capacity.reservedPlayers) + ' / ' + num(capacity.maxPlayers)],
-        ['Game Players', data.totals.playersInGame],
-        ['Game Rooms', data.totals.gameRooms],
-        ['Lobby Participants', data.totals.lobbyParticipants],
-        ['Connected Clients', data.totals.totalConnectedClients],
-      ];
-
-      document.getElementById('metrics').innerHTML = metrics.map(([label, value]) =>
-        '<div class="metric"><div class="label">' + escapeHtml(label) + '</div><div class="value">' + (typeof value === 'string' ? escapeHtml(value) : num(value)) + '</div></div>'
-      ).join('');
-    }
-
-    function renderWarnings(data) {
-      const el = document.getElementById('warnings');
-      const capacity = data.capacity || {};
-      const warnings = [
-        capacity.full
-          ? 'Max in-game players hit: ' + num(capacity.reservedPlayers) + ' / ' + num(capacity.maxPlayers) + ' reserved across ' + num(capacity.maxMachines) + ' machines. Queued players will wait until a match frees space.'
-          : null,
-        ...(data.diagnostics.warnings || []),
-      ].filter(Boolean);
-      if (warnings.length === 0) {
-        el.style.display = 'none';
-        el.innerHTML = '';
-        return;
-      }
-      el.style.display = 'block';
-      el.innerHTML = warnings.map((warning) => '<div>' + escapeHtml(warning) + '</div>').join('');
-    }
-
-    function renderGlobalNotification(data) {
-      const notification = data.globalNotification || null;
-      document.getElementById('global-notification-status').textContent = notification ? 'active' : 'off';
-      document.getElementById('global-notification').innerHTML =
-        '<div style="padding:12px; border-bottom:1px solid var(--line)">' +
-          '<textarea id="global-notification-message" maxlength="${GLOBAL_NOTIFICATION_MAX_MESSAGE_LENGTH}" placeholder="Maintenance starts in 10 minutes.">' + escapeHtml(notification ? notification.message : '') + '</textarea>' +
-          '<div class="actions" style="margin-top:8px">' +
-            '<button onclick="setGlobalNotification()">Set Message</button>' +
-            '<button onclick="removeGlobalNotification()" ' + (notification ? '' : 'disabled') + '>Remove</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="empty">' + (notification
-          ? '<span class="pill">Active</span><br><br>' + escapeHtml(notification.message) + '<br><span class="muted">Updated ' + escapeHtml(new Date(notification.updatedAt).toLocaleString()) + '</span>'
-          : 'No active message.'
-        ) + '</div>';
-    }
-
-    function renderMachines(data) {
-      document.getElementById('machine-count').textContent = num(data.machines.length) + ' running';
-      if (data.machines.length === 0) {
-        document.getElementById('machines').innerHTML = '<div class="empty">No running machines reported.</div>';
-        return;
-      }
-
-      document.getElementById('machines').innerHTML = '<table><thead><tr>' +
-        '<th>Machine</th><th>Region</th><th class="num">Players</th><th class="num">Bots</th><th class="num">Rooms</th><th class="num">Load</th><th class="num">Memory</th><th class="num">CCU</th><th>Updated</th>' +
-        '</tr></thead><tbody>' + data.machines.map((machine) => (
-          '<tr>' +
-          '<td><span class="mono">' + escapeHtml(machine.machineId) + '</span><br><span class="muted">' + num(machine.processCount) + ' process</span></td>' +
-          '<td>' + escapeHtml(machine.region || 'unknown') + '</td>' +
-          '<td class="num">' + num(machine.playersInGame) + '</td>' +
-          '<td class="num">' + num(machine.botsInGame) + '</td>' +
-          '<td class="num">' + num(machine.gameRoomCount) + ' game / ' + num(machine.lobbyRoomCount) + ' lobby</td>' +
-          '<td class="num">' + (Number(machine.loadAvg1) || 0).toFixed(2) + ' / ' + num(machine.cpuCount) + '<br><span class="muted">' + (Number(machine.loadPct1) || 0).toFixed(0) + '%</span></td>' +
-          '<td class="num">' + bytes(machine.memoryRssBytes) + '<br><span class="muted">' + bytes(machine.systemFreeMemoryBytes) + ' free</span></td>' +
-          '<td class="num">' + num(machine.localCcu) + '</td>' +
-          '<td>' + escapeHtml(age(machine.latestUpdatedAtMs)) + '</td>' +
-          '</tr>'
-        )).join('') + '</tbody></table>';
-    }
-
-    function renderGameRooms(data) {
-      const rooms = data.rooms.game;
-      document.getElementById('game-room-count').textContent = num(rooms.length) + ' active';
-      if (rooms.length === 0) {
-        document.getElementById('game-rooms').innerHTML = '<div class="empty">No active game rooms.</div>';
-        return;
-      }
-
-      document.getElementById('game-rooms').innerHTML = '<table><thead><tr>' +
-        '<th>Room</th><th>Machine</th><th>Phase</th><th>Mode</th><th class="num">Players</th><th class="num">Bots</th><th class="num">Clients</th>' +
-        '</tr></thead><tbody>' + rooms.map((room) => (
-          '<tr>' +
-          '<td><span class="mono">' + escapeHtml(room.roomId) + '</span></td>' +
-          '<td><span class="mono">' + escapeHtml(room.machineId) + '</span></td>' +
-          '<td><span class="pill">' + escapeHtml(room.phase) + '</span></td>' +
-          '<td>' + escapeHtml(room.matchMode) + '</td>' +
-          '<td class="num">' + num(room.players) + '</td>' +
-          '<td class="num">' + num(room.bots) + '</td>' +
-          '<td class="num">' + num(room.clients) + ' / ' + num(room.maxClients) + '</td>' +
-          '</tr>'
-        )).join('') + '</tbody></table>';
-    }
-
-    function renderLobbies(data) {
-      const rooms = data.rooms.lobbies;
-      document.getElementById('lobby-count').textContent = num(rooms.length) + ' active';
-      if (rooms.length === 0) {
-        document.getElementById('lobbies').innerHTML = '<div class="empty">No active lobbies.</div>';
-        return;
-      }
-
-      document.getElementById('lobbies').innerHTML = '<table><thead><tr>' +
-        '<th>Lobby</th><th>Machine</th><th>Status</th><th>Mode</th><th class="num">Humans</th><th class="num">Bots</th><th class="num">Participants</th>' +
-        '</tr></thead><tbody>' + rooms.map((room) => (
-          '<tr>' +
-          '<td>' + escapeHtml(room.name) + '<br><span class="mono muted">' + escapeHtml(room.roomId) + '</span></td>' +
-          '<td><span class="mono">' + escapeHtml(room.machineId) + '</span></td>' +
-          '<td><span class="pill">' + escapeHtml(room.status) + '</span></td>' +
-          '<td>' + escapeHtml(room.matchMode) + '</td>' +
-          '<td class="num">' + num(room.humans) + '</td>' +
-          '<td class="num">' + num(room.bots) + '</td>' +
-          '<td class="num">' + num(room.participants) + '</td>' +
-          '</tr>'
-        )).join('') + '</tbody></table>';
-    }
-
-    async function postJson(url, payload) {
-      const response = await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        cache: 'no-store',
-        headers: { 'content-type': 'application/json', 'x-csrf-token': ADMIN_CSRF_TOKEN },
-        body: JSON.stringify(payload || {}),
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || ('HTTP ' + response.status));
-      }
-      await load();
-    }
-
-    window.setGlobalNotification = () => {
-      const message = document.getElementById('global-notification-message').value;
-      postJson('/admin/api/global-notification', { message })
-        .catch((error) => alert(error.message));
-    };
-
-    window.removeGlobalNotification = () => {
-      if (!confirm('Remove the global notification?')) return;
-      postJson('/admin/api/global-notification/remove', {})
-        .catch((error) => alert(error.message));
-    };
-
-    window.acResolveCase = (caseId, status) => {
-      const resolution = prompt('Resolution / note');
-      if (!resolution) return;
-      postJson('/admin/api/anti-cheat/cases/' + encodeURIComponent(caseId), { status, resolution, note: resolution })
-        .catch((error) => alert(error.message));
-    };
-    window.acApplyRanked = (matchId, action) => {
-      const reason = prompt('Reason');
-      if (!reason) return;
-      if (!confirm(action + ' ranked outcome for ' + matchId + '?')) return;
-      postJson('/admin/api/anti-cheat/ranked/' + encodeURIComponent(matchId) + '/' + action, { reason })
-        .catch((error) => alert(error.message));
-    };
-    window.acResolvePayout = (holdId, action) => {
-      const reason = prompt('Reason');
-      if (!reason) return;
-      if (!confirm(action + ' payout hold ' + holdId + '?')) return;
-      postJson('/admin/api/anti-cheat/payout-holds/' + encodeURIComponent(holdId) + '/' + action, { reason })
-        .catch((error) => alert(error.message));
-    };
-    window.acAccountAction = () => {
-      const targetUserId = document.getElementById('ac-target-user').value;
-      const actionType = document.getElementById('ac-action-type').value;
-      const evidenceCaseId = document.getElementById('ac-evidence-case').value;
-      const reason = document.getElementById('ac-action-reason').value;
-      const expiresAt = document.getElementById('ac-action-expires').value;
-      if (!confirm(actionType + ' for user ' + targetUserId + '?')) return;
-      postJson('/admin/api/anti-cheat/account-actions', {
-        targetUserId,
-        actionType,
-        evidenceCaseId,
-        reason,
-        expiresAt: expiresAt || null,
-      }).catch((error) => alert(error.message));
-    };
-
-    window.reportSetStatus = (reportId, status) => {
-      const note = prompt(status === 'cleared' ? 'Clear note' : 'Review note') || '';
-      if ((status === 'cleared' || status === 'dismissed') && !confirm(status + ' report ' + reportId + '?')) return;
-      postJson('/admin/api/player-reports/' + encodeURIComponent(reportId) + '/status', { status, note })
-        .catch((error) => alert(error.message));
-    };
-    window.reportAccountAction = (reportId, actionType) => {
-      const reason = prompt(actionType + ' reason');
-      if (!reason) return;
-      const expiresAt = actionType === 'suspension'
-        ? prompt('Suspension expiration, ISO or local datetime')
-        : '';
-      if (actionType === 'suspension' && !expiresAt) return;
-      if (!confirm(actionType + ' from report ' + reportId + '?')) return;
-      postJson('/admin/api/player-reports/' + encodeURIComponent(reportId) + '/account-actions', {
-        actionType,
-        reason,
-        expiresAt: expiresAt || null,
-      }).catch((error) => alert(error.message));
-    };
-
-    window.setGoldenMode = (mode) => {
-      if (!confirm('Switch golden reward distribution to ' + mode + '?')) return;
-      postJson('/admin/api/golden-biome/distribution-mode', { mode })
-        .catch((error) => alert(error.message));
-    };
-    window.distributeGoldenReward = (rewardId, winnerCount) => {
-      if (!confirm('Distribute golden reward to ' + winnerCount + ' winner(s)?')) return;
-      postJson('/admin/api/golden-biome/rewards/' + encodeURIComponent(rewardId) + '/distribute', {})
-        .catch((error) => alert(error.message));
-    };
-
-    function renderGoldenRewards(data) {
-      const golden = data.goldenBiomeRewards || { settings: { distributionMode: 'manual' }, treasury: {}, rewards: [] };
-      const rewards = golden.rewards || [];
-      const pending = rewards.filter((reward) => reward.status !== 'complete').length;
-      document.getElementById('golden-reward-count').textContent = num(pending) + ' pending / mode ' + escapeHtml(golden.settings?.distributionMode || 'manual');
-      const controls =
-        '<div style="padding:12px; border-bottom:1px solid var(--line)" class="actions">' +
-        '<span class="pill">mode ' + escapeHtml(golden.settings?.distributionMode || 'manual') + '</span>' +
-        '<button onclick="setGoldenMode(\\'manual\\')">Manual</button>' +
-        '<button onclick="setGoldenMode(\\'auto\\')">Auto</button>' +
-        '<span class="muted">Treasury ' + escapeHtml(golden.treasury?.eligible ? 'eligible' : (golden.treasury?.reason || 'not eligible')) + '</span>' +
-        '<span class="muted">' + escapeHtml(sol(golden.treasury?.treasuryBalanceLamports)) + ' SOL / ' + escapeHtml(sol(golden.treasury?.requiredLamports)) + ' SOL minimum</span>' +
-        '</div>';
-      document.getElementById('golden-rewards').innerHTML = controls + (rewards.length === 0
-        ? '<div class="empty">No golden biome reward records yet.</div>'
-        : '<table><thead><tr><th>Match</th><th>Status</th><th>Team</th><th class="num">Reward</th><th>Transfers</th><th>Actions</th></tr></thead><tbody>' +
-          rewards.map((reward) => (
-            '<tr>' +
-            '<td><span class="mono">' + escapeHtml(reward.matchId) + '</span><br><span class="muted">seed ' + escapeHtml(reward.mapSeed) + '</span></td>' +
-            '<td><span class="pill">' + escapeHtml(reward.status) + '</span><br><span class="muted">' + escapeHtml(reward.distributionMode) + '</span>' + (reward.lastError ? '<br><span style="color:var(--bad)">' + escapeHtml(reward.lastError) + '</span>' : '') + '</td>' +
-            '<td>' + escapeHtml(reward.winningTeam) + '<br><span class="muted">' + num(reward.paidPlayerCount) + ' winners</span></td>' +
-            '<td class="num">' + usd(reward.rewardUsdCents) + '<br><span class="muted">' + sol(reward.rewardLamports) + ' SOL each</span></td>' +
-            '<td>' + (reward.transfers || []).map((transfer) => (
-              '<div><span class="pill">' + escapeHtml(transfer.status) + '</span> ' + escapeHtml(transfer.displayName || transfer.userId) + '<br><span class="mono muted">' + escapeHtml(transfer.recipientWallet) + '</span>' + (transfer.signature ? '<br><span class="mono muted">' + escapeHtml(transfer.signature) + '</span>' : '') + '</div>'
-            )).join('<hr style="border:0;border-top:1px solid var(--line)">') + '</td>' +
-            '<td><div class="actions">' +
-            ((reward.status === 'pending' || reward.status === 'failed') ? '<button onclick="distributeGoldenReward(\\'' + escapeHtml(reward.id) + '\\',' + Number(reward.paidPlayerCount || 0) + ')">Distribute</button>' : '') +
-            '</div></td>' +
-            '</tr>'
-          )).join('') + '</tbody></table>');
-    }
-
-    function renderPlayerReports(data) {
-      const queue = data.playerReports || { reports: [], counts: {} };
-      const reports = queue.reports || [];
-      const openCount = Number(queue.counts?.open || 0) + Number(queue.counts?.reviewing || 0);
-      document.getElementById('player-report-count').textContent = num(openCount) + ' active / ' + num(reports.length) + ' listed';
-      document.getElementById('player-reports').innerHTML = reports.length === 0
-        ? '<div class="empty">No player reports.</div>'
-        : '<table><thead><tr><th>Report</th><th>Status</th><th>Target</th><th>Reporter</th><th>Match</th><th>Reason</th><th>Actions</th></tr></thead><tbody>' +
-          reports.map((report) => (
-            '<tr>' +
-            '<td><span class="mono">' + escapeHtml(report.id) + '</span><br><span class="muted">' + escapeHtml(age(Date.parse(report.createdAt))) + '</span></td>' +
-            '<td><span class="pill">' + escapeHtml(report.status) + '</span></td>' +
-            '<td>' + escapeHtml(report.targetUser?.name || report.targetName) + '<br><span class="muted mono">' + escapeHtml(report.targetUserId) + '</span></td>' +
-            '<td>' + escapeHtml(report.reporterUser?.name || report.reporterName) + '<br><span class="muted mono">' + escapeHtml(report.reporterUserId) + '</span></td>' +
-            '<td><span class="mono">' + escapeHtml(report.matchId || report.roomId) + '</span><br><span class="muted">' + escapeHtml(report.matchMode || 'unknown') + ' seed ' + escapeHtml(report.mapSeed ?? '') + '</span></td>' +
-            '<td>' + escapeHtml(report.reason) + (report.details ? '<br><span class="muted">' + escapeHtml(report.details) + '</span>' : '') + '</td>' +
-            '<td><div class="actions">' +
-            '<button onclick="reportSetStatus(\\'' + escapeHtml(report.id) + '\\',\\'reviewing\\')">Review</button>' +
-            '<button onclick="reportSetStatus(\\'' + escapeHtml(report.id) + '\\',\\'cleared\\')">Clear</button>' +
-            '<button onclick="reportSetStatus(\\'' + escapeHtml(report.id) + '\\',\\'dismissed\\')">Dismiss</button>' +
-            '<button onclick="reportAccountAction(\\'' + escapeHtml(report.id) + '\\',\\'suspension\\')">Suspend</button>' +
-            '<button onclick="reportAccountAction(\\'' + escapeHtml(report.id) + '\\',\\'ban\\')">Ban</button>' +
-            '</div></td>' +
-            '</tr>'
-          )).join('') + '</tbody></table>';
-    }
-
-    function renderAntiCheat(data) {
-      const antiCheat = data.antiCheat || { cases: [], payoutHolds: [], accountActions: [], config: {} };
-      const cases = antiCheat.cases || [];
-      const holds = antiCheat.payoutHolds || [];
-      const accountActions = antiCheat.accountActions || [];
-      const shadow = antiCheat.movementShadow || { sampleCount: 0, buckets: [] };
-      const shadowBuckets = shadow.buckets || [];
-      document.getElementById('anticheat-case-count').textContent = num(cases.length) + ' listed / mode ' + escapeHtml(antiCheat.config?.mode || 'unknown');
-      document.getElementById('movement-shadow-count').textContent = num(shadow.sampleCount || 0) + ' samples / ' + num(shadow.bucketCount || 0) + ' buckets';
-      document.getElementById('anticheat-payout-count').textContent = num(holds.filter((hold) => hold.status === 'open').length) + ' open';
-      document.getElementById('anticheat-action-count').textContent = num(accountActions.length) + ' recent';
-
-      document.getElementById('anticheat-cases').innerHTML = cases.length === 0
-        ? '<div class="empty">No anti-cheat cases.</div>'
-        : '<table><thead><tr><th>Case</th><th>Status</th><th>Priority</th><th>Player / Match</th><th class="num">Score</th><th>Reason</th><th>Actions</th></tr></thead><tbody>' +
-          cases.map((item) => (
-            '<tr>' +
-            '<td><span class="mono">' + escapeHtml(item.id) + '</span><br><span class="muted">' + escapeHtml(age(Date.parse(item.updatedAt))) + '</span></td>' +
-            '<td><span class="pill">' + escapeHtml(item.status) + '</span></td>' +
-            '<td>' + escapeHtml(item.priority) + '</td>' +
-            '<td><span class="mono">' + escapeHtml(item.userId || item.playerSessionId || 'unknown') + '</span><br><span class="muted mono">' + escapeHtml(item.matchId || item.roomId || '') + '</span></td>' +
-            '<td class="num">' + num(item.scoreAtOpen) + '</td>' +
-            '<td>' + escapeHtml(item.reason) + '</td>' +
-            '<td><div class="actions">' +
-            '<button onclick="acResolveCase(\\'' + escapeHtml(item.id) + '\\',\\'resolved\\')">Resolve</button>' +
-            '<button onclick="acResolveCase(\\'' + escapeHtml(item.id) + '\\',\\'false_positive\\')">False Positive</button>' +
-            (item.matchId ? '<button onclick="acApplyRanked(\\'' + escapeHtml(item.matchId) + '\\',\\'apply\\')">Apply Ranked</button><button onclick="acApplyRanked(\\'' + escapeHtml(item.matchId) + '\\',\\'cancel\\')">Cancel Ranked</button>' : '') +
-            '</div></td>' +
-            '</tr>'
-          )).join('') + '</tbody></table>';
-
-      document.getElementById('movement-shadow').innerHTML = shadowBuckets.length === 0
-        ? '<div class="empty">No shadow drift samples yet.</div>'
-        : '<table><thead><tr><th>Hero / Movement</th><th>Mode</th><th>Map</th><th>Ping / FPS</th><th class="num">Samples</th><th class="num">Pos p95</th><th class="num">Vel p95</th><th class="num">Mismatch</th><th>Last</th></tr></thead><tbody>' +
-          shadowBuckets.map((bucket) => (
-            '<tr>' +
-            '<td>' + escapeHtml(bucket.heroId || 'unknown') + '<br><span class="muted">' + escapeHtml(bucket.movementClass || 'unknown') + '</span></td>' +
-            '<td>' + escapeHtml(bucket.matchMode || '') + '</td>' +
-            '<td class="mono">' + escapeHtml(String(bucket.mapSeed ?? '')) + '</td>' +
-            '<td>' + escapeHtml(bucket.pingBandMs || 'unknown') + '<br><span class="muted">' + escapeHtml(bucket.frameRateBand || 'unknown') + '</span></td>' +
-            '<td class="num">' + num(bucket.sampleCount || 0) + '</td>' +
-            '<td class="num">' + Number(bucket.positionDriftP95 || 0).toFixed(3) + 'm</td>' +
-            '<td class="num">' + Number(bucket.velocityDriftP95 || 0).toFixed(3) + 'm/s</td>' +
-            '<td class="num">' + (Number(bucket.movementMismatchRate || 0) * 100).toFixed(1) + '%</td>' +
-            '<td>' + escapeHtml(bucket.lastSampleAt ? age(Date.parse(bucket.lastSampleAt)) : '') + '</td>' +
-            '</tr>'
-          )).join('') + '</tbody></table>';
-
-      document.getElementById('anticheat-payouts').innerHTML = holds.length === 0
-        ? '<div class="empty">No paused payouts.</div>'
-        : '<table><thead><tr><th>Hold</th><th>Status</th><th>Match</th><th class="num">Amount</th><th>Reason</th><th>Actions</th></tr></thead><tbody>' +
-          holds.map((hold) => (
-            '<tr>' +
-            '<td><span class="mono">' + escapeHtml(hold.id) + '</span><br><span class="muted mono">' + escapeHtml(hold.wageredLobbyId) + '</span></td>' +
-            '<td><span class="pill">' + escapeHtml(hold.status) + '</span></td>' +
-            '<td><span class="mono">' + escapeHtml(hold.matchId || '') + '</span><br><span class="muted">winner ' + escapeHtml(hold.winningTeam || 'refund') + '</span></td>' +
-            '<td class="num">' + escapeHtml(hold.amountLamports || '0') + '</td>' +
-            '<td>' + escapeHtml(hold.reason) + '</td>' +
-            '<td><div class="actions">' +
-            '<button onclick="acResolvePayout(\\'' + escapeHtml(hold.id) + '\\',\\'release\\')">Release</button>' +
-            '<button onclick="acResolvePayout(\\'' + escapeHtml(hold.id) + '\\',\\'refund\\')">Refund</button>' +
-            '<button onclick="acResolvePayout(\\'' + escapeHtml(hold.id) + '\\',\\'cancel\\')">Cancel</button>' +
-            '</div></td>' +
-            '</tr>'
-          )).join('') + '</tbody></table>';
-
-      document.getElementById('anticheat-actions').innerHTML =
-        '<div style="padding:12px; border-bottom:1px solid var(--line)" class="actions">' +
-        '<input id="ac-target-user" placeholder="target user id">' +
-        '<select id="ac-action-type"><option value="suspension">Suspend</option><option value="ban">Ban</option><option value="lift_suspension">Lift suspension</option><option value="lift_ban">Lift ban</option></select>' +
-        '<input id="ac-evidence-case" placeholder="evidence case id">' +
-        '<input id="ac-action-reason" placeholder="reason">' +
-        '<input id="ac-action-expires" type="datetime-local" title="required for suspension">' +
-        '<button onclick="acAccountAction()">Apply</button>' +
-        '</div>' +
-        (accountActions.length === 0
-          ? '<div class="empty">No manual account actions.</div>'
-          : '<table><thead><tr><th>Action</th><th>Target</th><th>Actor</th><th>Reason</th><th>Expires</th><th>Created</th></tr></thead><tbody>' +
-            accountActions.map((action) => (
-              '<tr>' +
-              '<td><span class="pill">' + escapeHtml(action.actionType) + '</span></td>' +
-              '<td><span class="mono">' + escapeHtml(action.targetUserId) + '</span></td>' +
-              '<td><span class="mono">' + escapeHtml(action.actorUserId) + '</span></td>' +
-              '<td>' + escapeHtml(action.reason) + '</td>' +
-              '<td>' + escapeHtml(action.expiresAt || '') + '</td>' +
-              '<td>' + escapeHtml(new Date(action.createdAt).toLocaleString()) + '</td>' +
-              '</tr>'
-            )).join('') + '</tbody></table>');
-    }
-
-    async function load() {
-      try {
-        const response = await fetch('/admin/api/overview', { credentials: 'include', cache: 'no-store' });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const data = await response.json();
-        setStatus(data);
-        renderWarnings(data);
-        renderGlobalNotification(data);
-        renderMetrics(data);
-        renderMachines(data);
-        renderGameRooms(data);
-        renderLobbies(data);
-        renderGoldenRewards(data);
-        renderPlayerReports(data);
-        renderAntiCheat(data);
-      } catch (error) {
-        const el = document.getElementById('status');
-        el.className = 'status error';
-        el.innerHTML = '<span class="dot"></span><span>Refresh failed</span>';
-        document.getElementById('warnings').style.display = 'block';
-        document.getElementById('warnings').textContent = error instanceof Error ? error.message : String(error);
-      }
-    }
-
-    load();
-    window.setInterval(load, 3000);
-  </script>
-</body>
-</html>`;
 }
 
 export function createAdminRouter(options: AdminRouterOptions): Router {
   const router: Router = Router();
-
-  router.get('/', ensureAdmin, (_req, res) => {
-    noStore(res);
-    const adminUser = res.locals.adminUser as AdminUser;
-    res.type('html').send(renderAdminHtml(createAdminCsrfToken(adminUser)));
-  });
 
   router.get('/api/overview', ensureAdmin, async (_req, res) => {
     noStore(res);
@@ -1460,6 +919,101 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
         error: error instanceof Error ? error.message : String(error),
       });
       res.status(500).json({ error: 'Failed to collect anti-cheat overview' });
+    }
+  });
+
+  router.get('/api/users', ensureAdmin, async (req, res) => {
+    noStore(res);
+    const query = readQueryString(req.query.query, 128);
+    const limit = readAdminRankUserLimit(req.query.limit);
+    const page = readAdminRankUserPage(req.query.page);
+
+    try {
+      const result = await listAdminRankUsers(query, page, limit);
+      res.json({
+        query,
+        ratingBounds: {
+          min: 0,
+          max: ADMIN_MANUAL_RATING_MAX,
+          default: DEFAULT_COMPETITIVE_RATING,
+        },
+        rankOptions: rankDivisionOptions(),
+        ...result,
+      });
+    } catch (error) {
+      loggers.room.error('Failed to list admin users', {
+        query,
+        page,
+        limit,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      res.status(500).json({ error: 'Failed to list users' });
+    }
+  });
+
+  router.post('/api/users/:userId/rank', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+    const competitiveRating = readManualRating(req.body?.competitiveRating);
+    if (competitiveRating === null) {
+      res.status(400).json({ error: `Rating must be between 0 and ${ADMIN_MANUAL_RATING_MAX}` });
+      return;
+    }
+
+    const reason = readRequestString(req.body?.reason, 500) || 'Manual rank adjustment';
+
+    try {
+      const existing = await prisma.user.findUnique({
+        where: { id: req.params.userId },
+        select: adminRankUserSelect,
+      });
+      if (!existing) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+
+      const previousRank = getRankFromRating(existing.competitiveRating, existing.rankedGames);
+      const nextRank = getRankFromRating(competitiveRating, existing.rankedGames);
+      const rankedPeakRating = Math.max(existing.rankedPeakRating, competitiveRating);
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const user = await tx.user.update({
+          where: { id: existing.id },
+          data: {
+            competitiveRating,
+            rankedPeakRating,
+          },
+          select: adminRankUserSelect,
+        });
+
+        await tx.antiCheatAction.create({
+          data: {
+            actionType: 'manual_rank_adjustment',
+            userId: existing.id,
+            actorUserId: adminUser.id,
+            reason,
+            details: prismaJson({
+              targetUserName: existing.name,
+              targetWalletAddress: existing.walletAddress,
+              ratingBefore: existing.competitiveRating,
+              ratingAfter: competitiveRating,
+              rankBefore: previousRank.label,
+              rankAfter: nextRank.label,
+              rankedGames: existing.rankedGames,
+              rankedPeakRatingBefore: existing.rankedPeakRating,
+              rankedPeakRatingAfter: rankedPeakRating,
+            }),
+            observedOnly: false,
+            evidenceEventIds: [],
+          },
+        });
+
+        return user;
+      });
+
+      res.json({ ok: true, user: serializeAdminRankUser(updated) });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }
   });
 
@@ -1516,6 +1070,23 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     try {
       await removeGlobalNotification();
       res.json({ ok: true, notification: null });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post('/api/ranked-season', ensureAdmin, ensureAdminMutation, async (req, res) => {
+    noStore(res);
+    const adminUser = res.locals.adminUser as AdminUser;
+
+    try {
+      const result = await setRankedSeason({
+        mode: req.body?.mode,
+        seasonNumber: req.body?.seasonNumber,
+        endsAt: req.body?.endsAt ?? null,
+      }, adminUser.id);
+
+      res.json({ ok: true, ...result });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
     }

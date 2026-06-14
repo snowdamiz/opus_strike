@@ -24,6 +24,7 @@ import { consumeOAuthState, createOAuthState, type OAuthStateRecord } from './oa
 import { consumeRateLimit } from './rateLimit';
 import { serializeUser } from './userResponse';
 import type { AuthAccountIdentity, AuthProviderName, PendingRegistrationIdentity } from './types';
+import { getRankedSeason } from '../ranking/seasonService';
 
 const router: RouterType = Router();
 
@@ -1088,25 +1089,9 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
 
     const payload = await getAuthenticatedPayload(req);
     const user = payload ? await findUserForPayload(payload) : null;
-    const personalRecordsPromise = user
-      ? prisma.gameMatchParticipant.aggregate({
-        where: { userId: user.id },
-        _max: {
-          score: true,
-          kills: true,
-          assists: true,
-          flagCaptures: true,
-          flagReturns: true,
-        },
-      })
+    const personalRank = user
+      ? await (mode === 'ranked' ? getRankedLeaderboardRank(user) : getScoreLeaderboardRank(user))
       : null;
-
-    const [personalRank, personalRecords] = user
-      ? await Promise.all([
-        mode === 'ranked' ? getRankedLeaderboardRank(user) : getScoreLeaderboardRank(user),
-        personalRecordsPromise,
-      ])
-      : [null, null];
 
     res.json({
       mode,
@@ -1118,17 +1103,20 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
         userId: user.id,
         name: user.name,
         stats: serializeLeaderboardStats(user),
-        records: {
-          bestScore: personalRecords?._max.score ?? 0,
-          bestKills: personalRecords?._max.kills ?? 0,
-          bestAssists: personalRecords?._max.assists ?? 0,
-          bestCaptures: personalRecords?._max.flagCaptures ?? 0,
-          bestReturns: personalRecords?._max.flagReturns ?? 0,
-        },
       } : null,
     });
   } catch (error) {
     console.error('[auth] Leaderboard lookup error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/ranked-season', async (_req: Request, res: Response) => {
+  try {
+    const { mode, seasonNumber, label, endsAt } = await getRankedSeason();
+    res.json({ mode, seasonNumber, label, endsAt });
+  } catch (error) {
+    console.error('[auth] Ranked season lookup error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

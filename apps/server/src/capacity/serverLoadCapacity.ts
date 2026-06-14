@@ -24,6 +24,7 @@ export interface LoadCapacityMachine {
   eventLoopDelayP95Ms?: number;
   eventLoopDelayP99Ms?: number;
   heapUsedRatio?: number;
+  processRssUsedRatio?: number;
   systemMemoryUsedRatio?: number;
   capacityPressure?: number;
 }
@@ -142,10 +143,12 @@ function estimateMachineCapacity(input: {
     gameRoomCount: input.rooms.length || input.machine?.localGameRoomCount || 0,
     averageRoomTickP99Ms,
     capacityPressure,
-    source: input.machine
+    source: tickSamples.length > 0
+      ? input.machine
+        ? 'live'
+        : 'room_metrics'
+      : capacityPressure > 0.05 && Math.max(activePlayers, reservedPlayers) > 0
       ? 'live'
-      : tickSamples.length > 0
-      ? 'room_metrics'
       : 'bootstrap',
   };
 }

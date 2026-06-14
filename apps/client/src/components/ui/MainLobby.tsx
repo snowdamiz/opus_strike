@@ -14,8 +14,13 @@ import { SocialBox, SocialButton } from './SocialBox';
 import { TopNavIconButton } from './TopNavIconButton';
 import { useUISounds } from '../../hooks/useAudio';
 import { config } from '../../config/environment';
-import { HERO_DEFINITIONS, ALL_HERO_IDS } from '@voxel-strike/shared';
-import type { HeroId } from '@voxel-strike/shared';
+import {
+  ALL_HERO_IDS,
+  DEFAULT_RANKED_SEASON_NUMBER,
+  HERO_DEFINITIONS,
+  getRankedSeasonLabel,
+} from '@voxel-strike/shared';
+import type { HeroId, RankedSeasonSnapshot } from '@voxel-strike/shared';
 import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { PwaInstallToast } from './PwaInstallToast';
 import { MAP_SEED_PLACEHOLDER, isAllowedMapSeedInput, parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
@@ -86,6 +91,27 @@ function SlopHeroesMark({ className }: { className?: string }) {
 // Navigation tabs
 type MainTab = 'play' | 'heroes' | 'stats' | 'loadout';
 const RANKED_NATIVE_SOL_ADDRESS = 'So11111111111111111111111111111111111111112';
+const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
+  mode: 'season',
+  seasonNumber: DEFAULT_RANKED_SEASON_NUMBER,
+  label: getRankedSeasonLabel({ mode: 'season', seasonNumber: DEFAULT_RANKED_SEASON_NUMBER }),
+  endsAt: null,
+};
+const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treasury wallet at season end; golden biome wins pay $10 in SOL per player with a 2% spawn rate; ranks reset at the end of every season.';
+const SEASON_REWARD_RULES = [
+  {
+    label: 'Rank in Top 10',
+    text: 'split 10% treasury season end',
+  },
+  {
+    label: 'Golden Biome',
+    text: '$10 SOL each 2% spawn',
+  },
+  {
+    label: 'Ranks Resets',
+    text: 'reset at season end',
+  },
+] as const;
 
 function formatRankedUsdCents(usdCents: number): string {
   const normalizedCents = Number.isInteger(usdCents) && usdCents > 0 ? usdCents : 0;
@@ -103,6 +129,30 @@ function formatRankedTokenLabel(status: RankedTokenHoldStatus): string {
 
 function rankedTokenHoldRequirement(status: RankedTokenHoldStatus): string {
   return `${formatRankedUsdCents(status.usdCents)} hold`;
+}
+
+function formatSeasonBoundaryDate(season: RankedSeasonSnapshot): string {
+  const fallback = season.mode === 'preseason' ? 'NEXT SEASON TBA' : 'ENDS TBA';
+  if (!season.endsAt) return fallback;
+  const date = new Date(season.endsAt);
+  if (Number.isNaN(date.getTime())) return fallback;
+  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase();
+  return season.mode === 'preseason' ? `NEXT SEASON BEGINS ${formattedDate}` : `ENDS ${formattedDate}`;
+}
+
+function formatSeasonBoundaryDetail(season: RankedSeasonSnapshot): string {
+  const pendingLabel = season.mode === 'preseason' ? 'Next season schedule pending' : 'Schedule pending';
+  if (!season.endsAt) return pendingLabel;
+  const date = new Date(season.endsAt);
+  if (Number.isNaN(date.getTime())) return pendingLabel;
+
+  const remainingMs = date.getTime() - Date.now();
+  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  if (remainingMs <= 0) return season.mode === 'preseason' ? `Next season began ${formattedDate}` : `Ended ${formattedDate}`;
+  const daysRemaining = Math.ceil(remainingMs / 86_400_000);
+  if (daysRemaining > 1) return `${daysRemaining} days remaining`;
+  if (daysRemaining === 1) return season.mode === 'preseason' ? 'Begins within 24 hours' : 'Under 24 hours';
+  return season.mode === 'preseason' ? `Next season began ${formattedDate}` : `Ended ${formattedDate}`;
 }
 
 export function MainLobby() {
@@ -155,6 +205,7 @@ export function MainLobby() {
   const [rankedTokenHoldStatus, setRankedTokenHoldStatus] = useState<RankedTokenHoldStatus | null>(null);
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
+  const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
   const heroAnimationMode = HERO_SHOWCASE_ANIMATION_MODE;
 
   // Authentication states
@@ -167,6 +218,34 @@ export function MainLobby() {
   const [isLinkingPhantom, setIsLinkingPhantom] = useState(false);
   const shouldAuthenticateConnectedWalletRef = useRef(false);
   const currentRank = getRankForStats(userStats);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch(`${config.serverHttpUrl}/auth/ranked-season`, {
+      signal: controller.signal,
+      credentials: 'include',
+      cache: 'no-store',
+    })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error(`Season request failed (${response.status})`)))
+      .then((season: RankedSeasonSnapshot) => {
+        setRankedSeason({
+          mode: season.mode === 'preseason' ? 'preseason' : 'season',
+          seasonNumber: Number.isFinite(season.seasonNumber) ? season.seasonNumber : DEFAULT_RANKED_SEASON.seasonNumber,
+          label: season.label || getRankedSeasonLabel({
+            mode: season.mode === 'preseason' ? 'preseason' : 'season',
+            seasonNumber: season.seasonNumber,
+          }),
+          endsAt: season.endsAt ?? null,
+        });
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        console.warn('[MainLobby] Ranked season unavailable:', err);
+      });
+
+    return () => controller.abort();
+  }, []);
 
   // Handle authentication after wallet connection
   useEffect(() => {
@@ -438,9 +517,8 @@ export function MainLobby() {
             <div className="w-10 h-10 xl:w-12 xl:h-12 relative flex items-center justify-center">
               <SlopHeroesMark className="w-full h-full" />
             </div>
-            <div className="min-w-0">
-              <h1 className="font-display text-lg xl:text-xl text-white tracking-wider whitespace-nowrap">SLOP HEROES</h1>
-              <p className="text-[10px] text-white/40 font-body uppercase tracking-widest">Season 1</p>
+            <div className="flex h-10 min-w-0 items-center xl:h-12">
+              <h1 className="font-display text-2xl leading-none text-white tracking-wide whitespace-nowrap xl:text-3xl">SLOP HEROES</h1>
             </div>
           </div>
 
@@ -480,9 +558,9 @@ export function MainLobby() {
               </svg>
             </TopNavIconButton>
 
-            {/* Conditional: Show sign-in button or profile card */}
+            {/* Conditional: Show sign-in button or profile summary */}
             {isAuthenticated && user ? (
-              <div className="flex items-center gap-3 py-1 pl-1 pr-2 rounded-lg">
+              <div className="flex items-center gap-3">
                 <div
                   className="flex h-11 w-11 shrink-0 items-center justify-center"
                   title={currentRank.label}
@@ -542,6 +620,7 @@ export function MainLobby() {
             heroInfo={heroInfo}
             heroColor={heroColor}
             heroAnimationMode={heroAnimationMode}
+            rankedSeason={rankedSeason}
             isAuthenticated={isAuthenticated}
             onOpenPlayDialog={() => setShowPlayDialog(true)}
             onSignIn={handleSignInClick}
@@ -665,6 +744,7 @@ interface PlayTabProps {
   heroInfo: (typeof HERO_DEFINITIONS)[HeroId];
   heroColor: string;
   heroAnimationMode: HeroPreviewAnimationMode;
+  rankedSeason: RankedSeasonSnapshot;
   isAuthenticated: boolean;
   onOpenPlayDialog: () => void;
   onSignIn: () => void;
@@ -679,6 +759,7 @@ function PlayTab({
   heroInfo,
   heroColor,
   heroAnimationMode,
+  rankedSeason,
   isAuthenticated,
   onOpenPlayDialog,
   onSignIn,
@@ -690,6 +771,7 @@ function PlayTab({
 
   return (
     <div className="play-tab-shell h-full menu-content">
+      <RankedSeasonPlate season={rankedSeason} />
       <div className="play-tab-stage menu-compact-scale relative">
         <div className="play-hero-column flex flex-col items-center justify-center">
           {/* Hero Visual with Carousel Controls */}
@@ -809,6 +891,28 @@ function PlayTab({
       </div>
       </div>
     </div>
+  );
+}
+
+function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
+  return (
+    <aside className="play-season-plate" aria-label={`${season.label}. ${formatSeasonBoundaryDate(season)}. ${SEASON_RULES_ARIA}`}>
+      <div className="play-season-plate-kicker">Ranked</div>
+      <div className="play-season-plate-title">{season.label}</div>
+      <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
+      <div className="play-season-plate-detail">{formatSeasonBoundaryDetail(season)}</div>
+      <div className="play-season-plate-rewards" aria-hidden="true">
+        <div className="play-season-plate-rewards-heading">Season rewards</div>
+        <ul className="play-season-plate-rewards-list">
+          {SEASON_REWARD_RULES.map((rule) => (
+            <li className="play-season-plate-rewards-item" key={rule.label}>
+              <span className="play-season-plate-rewards-label">{rule.label}</span>
+              <span className="play-season-plate-rewards-text">{rule.text}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </aside>
   );
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { isCollisionBlock } from '../dist/maps/procedural/blocks.js';
+import { getBlockId, isCollisionBlock, isGoldenOnlyBlock } from '../dist/maps/procedural/blocks.js';
 import { PLAYER_HEIGHT, PLAYER_RADIUS } from '../dist/constants/physics.js';
 import { generateProceduralVoxelMapWithDiagnostics } from '../dist/maps/procedural/generator.js';
 
@@ -23,6 +23,7 @@ const BIOME_SIGNATURE_OBJECTS = {
   golden: ['gold_cache', 'monument_ring'],
 };
 const TREE_OBJECTS = ['tree_cluster', 'pine_cluster', 'blossom_tree_cluster', 'crystal_tree_cluster', 'garden_marker'];
+const GOLDEN_ONLY_OBJECTS = ['gold_cache'];
 
 function parseArgs(argv) {
   const options = {
@@ -119,6 +120,24 @@ function getSolidOccupancy(manifest) {
   }
 
   return solid;
+}
+
+function summarizeGoldenOnlyBlocks(manifest) {
+  const summary = {};
+
+  for (const chunk of manifest.chunks) {
+    for (const block of chunk.blocks) {
+      if (!isGoldenOnlyBlock(block)) continue;
+      const blockId = getBlockId(block);
+      summary[blockId] = (summary[blockId] ?? 0) + 1;
+    }
+  }
+
+  return summary;
+}
+
+function sumSummary(summary) {
+  return Object.values(summary).reduce((sum, count) => sum + count, 0);
 }
 
 function countFloatingSolidComponents(manifest, solid = getSolidOccupancy(manifest)) {
@@ -323,6 +342,12 @@ function auditSeed(seed, options) {
   const acceptedModules = moduleInstances.filter((instance) => instance.validation?.status === 'accepted');
   const objectRoles = new Set(moduleInstances.flatMap((instance) => instance.roleTags ?? []));
   const objectVariantCount = Object.keys(diagnostics.objectSummary ?? {}).length;
+  const goldenOnlyObjects = Object.fromEntries(
+    GOLDEN_ONLY_OBJECTS
+      .map((objectKind) => [objectKind, diagnostics.objectSummary?.[objectKind] ?? 0])
+      .filter(([, count]) => count > 0)
+  );
+  const goldenOnlyObjectCount = sumSummary(goldenOnlyObjects);
   const biomeSignatureObjects = BIOME_SIGNATURE_OBJECTS[manifest.themeId] ?? [];
   const hasBiomeSignatureObject = biomeSignatureObjects.some((objectKind) => (diagnostics.objectSummary?.[objectKind] ?? 0) > 0);
   const desertTreeCount =
@@ -330,6 +355,8 @@ function auditSeed(seed, options) {
       ? TREE_OBJECTS.reduce((sum, objectKind) => sum + (diagnostics.objectSummary?.[objectKind] ?? 0), 0)
       : 0;
   const solid = getSolidOccupancy(manifest);
+  const goldenOnlyBlocks = summarizeGoldenOnlyBlocks(manifest);
+  const goldenOnlyBlockCount = sumSummary(goldenOnlyBlocks);
   const floating = countFloatingSolidComponents(manifest, solid);
   const heightRows = summarizeHeightRows(manifest);
 
@@ -342,6 +369,16 @@ function auditSeed(seed, options) {
   assertCondition(moduleInstances.length >= MIN_AUTHORED_OBJECTS, failures, `seed ${seed}: expected denser authored objects, got ${moduleInstances.length}`);
   assertCondition(objectVariantCount >= MIN_OBJECT_VARIANTS, failures, `seed ${seed}: expected more object variety, got ${objectVariantCount} variants`);
   assertCondition(hasBiomeSignatureObject, failures, `seed ${seed}: missing biome-specific collision object for ${manifest.themeId}`);
+  assertCondition(
+    manifest.themeId === 'golden' || goldenOnlyBlockCount === 0,
+    failures,
+    `seed ${seed}: non-golden theme ${manifest.themeId} generated golden-only blocks [${formatObjectSummary(goldenOnlyBlocks)}]`
+  );
+  assertCondition(
+    manifest.themeId === 'golden' || goldenOnlyObjectCount === 0,
+    failures,
+    `seed ${seed}: non-golden theme ${manifest.themeId} generated golden-only objects [${formatObjectSummary(goldenOnlyObjects)}]`
+  );
   assertCondition(desertTreeCount === 0, failures, `seed ${seed}: desert map generated ${desertTreeCount} tree objects instead of cactus/desert props`);
   assertCondition(acceptedModules.length === moduleInstances.length, failures, `seed ${seed}: rejected generated module instances`);
   assertCondition(objectRoles.has('base_shell'), failures, `seed ${seed}: missing base structure`);

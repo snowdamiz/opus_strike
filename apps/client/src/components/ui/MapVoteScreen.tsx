@@ -486,10 +486,10 @@ export function MapVoteScreen() {
             <button
               type="button"
               onClick={handleLeave}
-              className="map-vote-back-button flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/60 transition-colors hover:border-white/20 hover:bg-white/10 hover:text-white"
+              className="menu-back-button map-vote-back-button"
               aria-label="Leave lobby"
             >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
@@ -503,15 +503,7 @@ export function MapVoteScreen() {
 
           <PhaseCountdownTimer phaseEndTime={mapVotePhaseEndTime} className="map-vote-timer" />
 
-          <div
-            className="map-vote-profile flex shrink-0 items-center gap-3 rounded-xl border py-2 pl-2 pr-4"
-            style={{
-              background: currentFaction
-                ? `linear-gradient(135deg, ${currentFaction.bgGradient}, rgb(var(--color-strike-panel-raised) / 0.9))`
-                : 'rgba(255,255,255,0.03)',
-              borderColor: currentFaction?.borderColor || 'rgba(255,255,255,0.05)',
-            }}
-          >
+          <div className="map-vote-profile flex shrink-0 items-center gap-3">
             <div className="map-vote-profile-avatar flex h-9 w-9 items-center justify-center" title={currentRank.label}>
               <RankIcon rank={currentRank} size={34} labelled />
             </div>

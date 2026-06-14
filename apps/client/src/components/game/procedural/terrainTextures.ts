@@ -359,6 +359,14 @@ const DETAIL_KIND_BY_TILE = new Map<TerrainTextureTile, TerrainDetailKind>([
   [TILE_MAP.crystal_growth, 'crystal'],
 ]);
 
+function getTerrainDetailKindForTile(tile: TerrainTextureTile, theme: VoxelMapTheme): TerrainDetailKind | undefined {
+  if (theme.id === 'golden') return DETAIL_KIND_BY_TILE.get(tile);
+  if (tile === TILE_MAP.gold || tile === TILE_MAP.gold_ore) return 'stone';
+  if (tile === TILE_MAP.gold_panel) return 'panel';
+  if (tile === TILE_MAP.gold_glass || tile === TILE_MAP.crystal_growth) return 'glass';
+  return DETAIL_KIND_BY_TILE.get(tile);
+}
+
 function paintChunkyMottle(
   context: CanvasRenderingContext2D,
   tile: TerrainTextureTile,
@@ -641,6 +649,7 @@ function paintTerrainTileSet(
   materialQuality: GraphicsFeatureQuality
 ): void {
   const qualityProfile = MATERIAL_QUALITY_PAINT_PROFILES[materialQuality];
+  const isGoldenTheme = theme.id === 'golden';
   const colorByTile = new Map<TerrainTextureTile, string>([
     [TILE_MAP.grass_top, theme.ground.top],
     [TILE_MAP.grass_side, theme.ground.side],
@@ -667,11 +676,11 @@ function paintTerrainTileSet(
     [TILE_MAP.blossom_leaves, '#f5a7ca'],
     [TILE_MAP.moss, theme.id === 'sakura' ? '#6fae5f' : '#5f9a68'],
     [TILE_MAP.lava, '#c2410c'],
-    [TILE_MAP.gold, theme.id === 'golden' ? theme.ground.top : '#d8a928'],
-    [TILE_MAP.gold_ore, theme.id === 'golden' ? theme.ground.side : '#9f7632'],
-    [TILE_MAP.gold_panel, theme.id === 'golden' ? theme.structures.metal : '#6d5635'],
-    [TILE_MAP.gold_glass, theme.id === 'golden' ? theme.structures.glass : '#ffeaa3'],
-    [TILE_MAP.crystal_growth, theme.id === 'golden' ? theme.structures.accent : '#fff36b'],
+    [TILE_MAP.gold, isGoldenTheme ? theme.ground.top : theme.ground.stone],
+    [TILE_MAP.gold_ore, isGoldenTheme ? theme.ground.side : theme.ground.stone],
+    [TILE_MAP.gold_panel, theme.structures.metal],
+    [TILE_MAP.gold_glass, theme.structures.glass],
+    [TILE_MAP.crystal_growth, isGoldenTheme ? theme.structures.accent : theme.structures.glass],
   ]);
 
   for (const [tile, color] of colorByTile) {
@@ -690,7 +699,7 @@ function paintTerrainTileSet(
         qualityProfile.baseSpeckleAlpha
       );
     }
-    const detailKind = DETAIL_KIND_BY_TILE.get(tile);
+    const detailKind = getTerrainDetailKindForTile(tile, theme);
     if (detailKind) {
       paintTerrainTileDetail(contexts, tile, color, detailKind, seed, qualityProfile);
     }
@@ -703,7 +712,7 @@ function paintTerrainTileSet(
     );
   }
 
-  const glowTiles: readonly (readonly [TerrainTextureTile, string])[] = [
+  const glowTiles: (readonly [TerrainTextureTile, string])[] = [
     [TILE_MAP.neon_red, '#ff4b24'],
     [TILE_MAP.neon_blue, '#3cf7ff'],
     [TILE_MAP.spawn_pad, '#ffd84d'],
@@ -711,10 +720,15 @@ function paintTerrainTileSet(
     [TILE_MAP.spawn_pad_blue, '#47ddff'],
     [TILE_MAP.flag_pad, '#f7f7ff'],
     [TILE_MAP.lava, '#ff7b1f'],
-    [TILE_MAP.gold_panel, '#ffe15a'],
-    [TILE_MAP.gold_glass, '#fff4a8'],
-    [TILE_MAP.crystal_growth, '#fff36b'],
   ];
+
+  if (isGoldenTheme) {
+    glowTiles.push(
+      [TILE_MAP.gold_panel, '#ffe15a'],
+      [TILE_MAP.gold_glass, '#fff4a8'],
+      [TILE_MAP.crystal_growth, '#fff36b']
+    );
+  }
 
   for (const [tile, glow] of glowTiles) {
     paintTileGlow(contexts.emissive, tile, glow, 0.86, 6);

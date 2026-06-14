@@ -23,6 +23,7 @@ import {
   type AutoscalerMatchMaker,
   type AutoscalerRoomListing,
 } from '../metrics/autoscalerMetrics';
+import { ProcessLoadSampler } from '../runtime/processLoad';
 
 class FakeMatchMaker implements AutoscalerMatchMaker {
   processId = 'process-1';
@@ -82,6 +83,7 @@ const STABLE_PROCESS_LOAD = {
   eventLoopDelayP95Ms: 4,
   eventLoopDelayP99Ms: 8,
   heapUsedRatio: 0.2,
+  processRssUsedRatio: 0.1,
   systemMemoryUsedRatio: 0.35,
   capacityPressure: 0.35,
 };
@@ -134,6 +136,7 @@ async function runMetricFormattingTests(): Promise<void> {
   assert.equal(snapshot.matchmakerQueryUp, 1);
   assert.equal(snapshot.processCpuUtilization, 0.2);
   assert.equal(snapshot.processEventLoopDelayP95Ms, 4);
+  assert.equal(snapshot.processRssUsedRatio, 0.1);
   assert.equal(snapshot.dynamicCapacityPressure, 0.35);
   assert.equal(snapshot.dynamicCapacityPlayersPerMachine, SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE);
 
@@ -153,9 +156,48 @@ async function runMetricFormattingTests(): Promise<void> {
   assert.match(output, /opus_strike_process_heap_used_bytes\{[^}]+\} 456789/);
   assert.match(output, /opus_strike_process_cpu_utilization\{[^}]+\} 0.2/);
   assert.match(output, /opus_strike_process_event_loop_delay_p95_ms\{[^}]+\} 4/);
+  assert.match(output, /opus_strike_process_rss_used_ratio\{[^}]+\} 0.1/);
   assert.match(output, /opus_strike_dynamic_capacity_pressure\{[^}]+\} 0.35/);
   assert.match(output, new RegExp(`opus_strike_dynamic_capacity_players_per_machine\\{[^}]+\\} ${SERVER_LOAD_BOOTSTRAP_PLAYERS_PER_MACHINE}`));
   assert.doesNotMatch(output, /Alice|wallet_should_not_render|room_visible|Private Lobby/);
+}
+
+function runProcessLoadSamplerTests(): void {
+  let nowMs = 1_000;
+  let performanceNowMs = 0;
+  let cpuUsage: NodeJS.CpuUsage = { user: 0, system: 0 };
+  const gib = 1024 ** 3;
+  const sampler = new ProcessLoadSampler({
+    autoStart: false,
+    now: () => nowMs,
+    performanceNow: () => performanceNowMs,
+    cpuUsage: () => cpuUsage,
+    memoryUsage: () => ({
+      rss: 160 * 1024 * 1024,
+      heapTotal: 64 * 1024 * 1024,
+      heapUsed: 32 * 1024 * 1024,
+      external: 0,
+      arrayBuffers: 0,
+    }),
+    loadavg: () => [0, 0, 0],
+    totalmem: () => 16 * gib,
+    freemem: () => 128 * 1024 * 1024,
+    cpuCount: () => 10,
+    heapSizeLimit: () => 4 * gib,
+    eventLoopDelay: {
+      percentile: (percentile: number) => (percentile === 95 ? 21 : 22) * 1_000_000,
+      reset: () => undefined,
+    } as never,
+  });
+
+  nowMs += 1_000;
+  performanceNowMs += 1_000;
+  const snapshot = sampler.sample();
+
+  assert.ok(snapshot.systemMemoryUsedRatio > 0.99);
+  assert.equal(snapshot.eventLoopDelayP95Ms, 1);
+  assert.ok(snapshot.processRssUsedRatio < 0.01);
+  assert.ok(snapshot.capacityPressure < 0.1);
 }
 
 async function runMetricFailureTests(): Promise<void> {
@@ -287,6 +329,7 @@ async function runAutoscalerConfigTests(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  runProcessLoadSamplerTests();
   await runMetricFormattingTests();
   await runMetricFailureTests();
   await runAutoscalerPolicyTests();

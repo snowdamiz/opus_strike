@@ -76,6 +76,16 @@ export const VOXEL_BLOCKS: Record<VoxelBlockId, VoxelBlockDefinition> = {
   crystal_growth: { id: 'crystal_growth', numericId: 29, solid: true, walkable: false, grappleable: true, slippery: false },
 };
 
+export const GOLDEN_ONLY_VOXEL_BLOCK_IDS = [
+  'gold',
+  'gold_ore',
+  'gold_panel',
+  'gold_glass',
+  'crystal_growth',
+] as const satisfies readonly VoxelBlockId[];
+
+const GOLDEN_ONLY_VOXEL_BLOCK_ID_SET = new Set<VoxelBlockId>(GOLDEN_ONLY_VOXEL_BLOCK_IDS);
+
 export function getBlockDefinition(blockId: VoxelBlockId | number): VoxelBlockDefinition {
   if (typeof blockId === 'number') {
     return VOXEL_BLOCKS[VOXEL_BLOCK_IDS[blockId] ?? 'air'];
@@ -94,6 +104,10 @@ export function getBlockId(numericId: number): VoxelBlockId {
 
 export function isSolidBlock(blockId: VoxelBlockId | number): boolean {
   return getBlockDefinition(blockId).solid;
+}
+
+export function isGoldenOnlyBlock(blockId: VoxelBlockId | number): boolean {
+  return GOLDEN_ONLY_VOXEL_BLOCK_ID_SET.has(getBlockDefinition(blockId).id);
 }
 
 const NON_COLLIDING_DECORATIVE_BLOCKS = new Set<VoxelBlockId>();

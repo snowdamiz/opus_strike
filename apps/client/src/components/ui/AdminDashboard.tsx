@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  RANK_DEFINITIONS,
+  getRankFromRating,
+} from '@voxel-strike/shared';
 import { config } from '../../config/environment';
 import { lamportsToSolDisplay } from '../../utils/wagerPayments';
+import { RankBadge } from './RankBadge';
 
 interface MachineProcess {
   processId: string;
@@ -36,6 +42,7 @@ interface MachineOverview {
   systemTotalMemoryBytes: number;
   capacityPressure: number;
   dynamicCapacityPlayers: number;
+  dynamicCapacitySource: 'live' | 'room_metrics' | 'bootstrap' | null;
   eventLoopDelayP95Ms: number;
   processCpuUtilization: number;
   localCcu: number;
@@ -184,6 +191,93 @@ interface GlobalNotificationOverview {
   updatedAt: string;
 }
 
+type RankedSeasonMode = 'preseason' | 'season';
+const ADMIN_RANK_PAGE_SIZE = 25;
+
+interface RankedSeasonOverview {
+  mode: RankedSeasonMode;
+  seasonNumber: number;
+  label: string;
+  endsAt: string | null;
+  updatedAt: string;
+  updatedByUserId: string | null;
+  lastResetAt: string | null;
+}
+
+interface RankedSeasonDraft {
+  mode: RankedSeasonMode;
+  seasonNumber: string;
+  endsAtLocal: string;
+}
+
+interface AdminRankSummary {
+  label: string;
+  tier: string;
+  division: number | null;
+  rating: number;
+  minRating: number;
+  maxRating: number | null;
+  rangeLabel: string;
+}
+
+interface AdminRankUser {
+  id: string;
+  name: string;
+  walletAddress: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  totalGames: number;
+  totalWins: number;
+  totalLosses: number;
+  totalDraws: number;
+  competitiveRating: number;
+  rankedGames: number;
+  rankedWins: number;
+  rankedLosses: number;
+  rankedDraws: number;
+  rankedPlacementsRemaining: number;
+  rankedPeakRating: number;
+  rankedLastMatchAt: string | null;
+  rank: AdminRankSummary;
+  peakRank: AdminRankSummary;
+}
+
+interface AdminRankGate {
+  label: string;
+  tier: string;
+  division: number;
+  rating: number;
+  minRating: number;
+  maxRating: number | null;
+  rangeLabel: string;
+}
+
+interface AdminUsersPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+}
+
+interface AdminUsersResponse {
+  query: string;
+  rankOptions: AdminRankGate[];
+  users: AdminRankUser[];
+  pagination: AdminUsersPagination;
+}
+
+const EMPTY_ADMIN_USERS_PAGINATION: AdminUsersPagination = {
+  page: 1,
+  limit: ADMIN_RANK_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasPrevious: false,
+  hasNext: false,
+};
+
 interface AdminOverview {
   generatedAt: string;
   status: 'ok' | 'degraded' | string;
@@ -229,6 +323,7 @@ interface AdminOverview {
   };
   goldenBiomeRewards?: GoldenBiomeRewardsOverview;
   globalNotification: GlobalNotificationOverview | null;
+  rankedSeason: RankedSeasonOverview;
   diagnostics: {
     distributed: boolean;
     routingStrategy: string;
@@ -280,6 +375,95 @@ function formatDate(value: string): string {
   return date.toLocaleString();
 }
 
+function formatCompactIdentifier(value: string, head = 4, tail = 4): string {
+  if (value.length <= head + tail + 3) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function formatSeasonBoundary(mode: RankedSeasonMode, value: string | null): string {
+  const fallback = mode === 'preseason' ? 'Next season TBA' : 'End date TBA';
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+
+  const formattedDate = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  return mode === 'preseason' ? `Next season begins ${formattedDate}` : `Ends ${formattedDate}`;
+}
+
+function toDateTimeLocalValue(value: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocalValue(value: string): string | null {
+  if (!value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function getRankedSeasonIdentity(mode: RankedSeasonMode, seasonNumber: number): string {
+  return mode === 'preseason' ? 'preseason' : `season:${Math.max(1, Math.floor(seasonNumber || 1))}`;
+}
+
+const ADMIN_MANUAL_RATING_MAX = 5000;
+
+const RANK_OPTIONS = RANK_DEFINITIONS.flatMap((tier) => (
+  tier.divisionThresholds.map((rating, index) => ({
+    label: `${tier.label} ${index + 1}`,
+    tier: tier.id,
+    division: index + 1,
+    rating,
+  }))
+)).map((option, index, options) => {
+  const nextRating = options[index + 1]?.rating ?? null;
+  const maxRating = nextRating === null ? null : nextRating - 1;
+  return {
+    ...option,
+    minRating: option.rating,
+    maxRating,
+    rangeLabel: maxRating === null ? `${formatNumber(option.rating)}+` : `${formatNumber(option.rating)}-${formatNumber(maxRating)}`,
+  };
+});
+
+function parseDraftRating(value: string): number | null {
+  if (!value.trim()) return null;
+  const rating = Math.round(Number(value));
+  return Number.isFinite(rating) && rating >= 0 && rating <= ADMIN_MANUAL_RATING_MAX ? rating : null;
+}
+
+function getRankGateForRating(rating: number) {
+  let current = RANK_OPTIONS[0];
+  for (const option of RANK_OPTIONS) {
+    if (rating >= option.minRating) current = option;
+    else break;
+  }
+  return current;
+}
+
+function getRankPreview(value: string, rankedGames: number) {
+  const rating = parseDraftRating(value);
+  if (rating === null) {
+    return {
+      rating: null,
+      label: 'Invalid rating',
+      rangeLabel: '',
+      gateLabel: '',
+    };
+  }
+
+  const rank = getRankFromRating(rating, rankedGames);
+  const gate = getRankGateForRating(rating);
+  return {
+    rating,
+    label: rank.label,
+    rangeLabel: gate.rangeLabel,
+    gateLabel: gate.label,
+  };
+}
+
 function formatUsdCents(usdCents: number): string {
   const dollars = Math.floor(Math.max(0, usdCents) / 100);
   const cents = Math.max(0, usdCents) % 100;
@@ -290,41 +474,139 @@ function formatBps(bps: number): string {
   return `${(bps / 100).toFixed(2).replace(/\.00$/, '')}%`;
 }
 
-function StatusPill({ status }: { status: string }) {
-  const color = status === 'ok'
-    ? 'bg-ui-success'
-    : status === 'degraded'
-      ? 'bg-ui-warning'
-      : 'bg-ui-danger';
+type Tone = 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'amber';
+type AdminTabId = 'overview' | 'operations' | 'players' | 'servers' | 'rooms' | 'rewards' | 'reports';
 
+interface MetricTileProps {
+  label: string;
+  value: string | number;
+  sublabel?: string;
+  tone?: Tone;
+  meter?: number;
+}
+
+interface AdminTab {
+  id: AdminTabId;
+  label: string;
+  meta: string;
+  tone: Tone;
+}
+
+interface AdminSelectOption {
+  value: string;
+  label: string;
+  detail?: string;
+}
+
+function cx(...classes: Array<string | false | null | undefined>): string {
+  return classes.filter(Boolean).join(' ');
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value * 100));
+}
+
+function formatCount(value: number, singular: string, plural = `${singular}s`): string {
+  return `${formatNumber(value)} ${value === 1 ? singular : plural}`;
+}
+
+function toneForSystemStatus(status: string): Tone {
+  if (status === 'ok' || status === 'complete' || status === 'cleared') return 'success';
+  if (status === 'degraded' || status === 'pending' || status === 'reviewing') return 'warning';
+  if (status === 'failed' || status === 'ban') return 'danger';
+  return 'neutral';
+}
+
+function toneForPressure(value: number): Tone {
+  if (value >= 0.9) return 'danger';
+  if (value >= 0.7) return 'warning';
+  return 'info';
+}
+
+const pillToneClasses: Record<Tone, string> = {
+  neutral: 'border-white/10 bg-white/[0.035] text-white/60',
+  success: 'border-ui-success/30 bg-ui-success/10 text-emerald-100',
+  warning: 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100',
+  danger: 'border-ui-danger/35 bg-ui-danger/10 text-red-100',
+  info: 'border-accent-secondary/30 bg-accent-secondary/10 text-cyan-100',
+  amber: 'border-amber-300/35 bg-amber-300/10 text-amber-100',
+};
+
+const dotToneClasses: Record<Tone, string> = {
+  neutral: 'bg-white/45',
+  success: 'bg-ui-success',
+  warning: 'bg-ui-warning',
+  danger: 'bg-ui-danger',
+  info: 'bg-accent-secondary',
+  amber: 'bg-amber-300',
+};
+
+const meterToneClasses: Record<Tone, string> = {
+  neutral: 'bg-white/55',
+  success: 'bg-ui-success',
+  warning: 'bg-ui-warning',
+  danger: 'bg-ui-danger',
+  info: 'bg-accent-secondary',
+  amber: 'bg-amber-300',
+};
+
+function Pill({
+  children,
+  tone = 'neutral',
+  withDot = false,
+  className,
+}: {
+  children: ReactNode;
+  tone?: Tone;
+  withDot?: boolean;
+  className?: string;
+}) {
   return (
-    <div className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 font-body text-sm uppercase tracking-[0.08em] text-white">
-      <span className={`h-2 w-2 rounded-full ${color}`} />
-      {status}
+    <span className={cx(
+      'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 font-body text-[11px] font-semibold uppercase leading-5',
+      pillToneClasses[tone],
+      className,
+    )}>
+      {withDot && <span className={cx('h-1.5 w-1.5 rounded-full', dotToneClasses[tone])} />}
+      {children}
+    </span>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  return <Pill tone={toneForSystemStatus(status)} withDot>{status}</Pill>;
+}
+
+function MiniMeter({ value, tone = 'info' }: { value: number; tone?: Tone }) {
+  const width = `${clampPercent(value)}%`;
+  return (
+    <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.08]">
+      <div className={cx('h-full rounded-full', meterToneClasses[tone])} style={{ width }} />
     </div>
   );
 }
 
-function MetricTile({ label, value, sublabel }: { label: string; value: string | number; sublabel?: string }) {
+function MetricTile({ label, value, sublabel, tone = 'neutral', meter }: MetricTileProps) {
   return (
-    <div className="min-h-[104px] rounded-lg border border-white/10 bg-strike-panel-raised/95 p-4">
-      <div className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">{label}</div>
-      <div className="mt-3 break-words font-display text-4xl leading-none text-white">{value}</div>
-      {sublabel && <div className="mt-2 font-body text-xs text-white/45">{sublabel}</div>}
+    <div className="min-h-[78px] rounded-md border border-white/10 bg-strike-panel-raised/90 p-3 shadow-[inset_0_1px_0_rgb(var(--color-strike-border)_/_0.04)]">
+      <div className="font-body text-[10px] font-semibold uppercase leading-none text-white/45">{label}</div>
+      <div className="mt-2 break-words font-body text-[1.45rem] font-semibold leading-none text-white">{value}</div>
+      {sublabel && <div className="mt-1.5 truncate font-body text-[11px] leading-4 text-white/42">{sublabel}</div>}
+      {typeof meter === 'number' && <MiniMeter value={meter} tone={tone} />}
     </div>
   );
 }
 
 function EmptyTable({ label }: { label: string }) {
-  return <div className="px-4 py-6 font-body text-sm text-white/45">{label}</div>;
+  return <div className="px-3 py-5 font-body text-xs text-white/45">{label}</div>;
 }
 
 function Section({ title, meta, children }: { title: string; meta?: string; children: ReactNode }) {
   return (
-    <section className="overflow-hidden rounded-lg border border-white/10 bg-strike-panel/95">
-      <div className="flex min-h-[52px] items-center justify-between gap-4 border-b border-white/10 bg-white/[0.035] px-4">
-        <h2 className="font-display text-2xl tracking-[0.04em] text-white">{title}</h2>
-        {meta && <span className="font-body text-xs uppercase tracking-[0.1em] text-white/45">{meta}</span>}
+    <section className="overflow-hidden rounded-md border border-white/10 bg-strike-panel/95 shadow-[0_12px_30px_rgb(var(--color-strike-canvas)_/_0.35)]">
+      <div className="flex min-h-[42px] items-center justify-between gap-3 border-b border-white/10 bg-white/[0.03] px-3">
+        <h2 className="font-body text-sm font-semibold uppercase text-white/90">{title}</h2>
+        {meta && <Pill>{meta}</Pill>}
       </div>
       {children}
     </section>
@@ -333,7 +615,7 @@ function Section({ title, meta, children }: { title: string; meta?: string; chil
 
 function HeaderCell({ children, align = 'left' }: { children: ReactNode; align?: 'left' | 'right' }) {
   return (
-    <th className={`border-b border-white/10 px-3 py-3 font-body text-[11px] font-bold uppercase tracking-[0.1em] text-white/45 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+    <th className={`border-b border-white/10 bg-white/[0.018] px-3 py-2 font-body text-[10px] font-bold uppercase text-white/45 ${align === 'right' ? 'text-right' : 'text-left'}`}>
       {children}
     </th>
   );
@@ -341,7 +623,7 @@ function HeaderCell({ children, align = 'left' }: { children: ReactNode; align?:
 
 function Cell({ children, align = 'left', mono = false }: { children: ReactNode; align?: 'left' | 'right'; mono?: boolean }) {
   return (
-    <td className={`border-b border-white/10 px-3 py-3 align-middle text-sm text-white/80 ${align === 'right' ? 'text-right tabular-nums' : 'text-left'} ${mono ? 'font-mono text-xs' : 'font-body'}`}>
+    <td className={`border-b border-white/[0.07] px-3 py-2 align-middle text-xs text-white/78 ${align === 'right' ? 'text-right tabular-nums' : 'text-left'} ${mono ? 'font-mono text-[11px]' : 'font-body'}`}>
       {children}
     </td>
   );
@@ -361,42 +643,56 @@ function MachinesTable({ machines }: { machines: MachineOverview[] }) {
             <HeaderCell align="right">Capacity</HeaderCell>
             <HeaderCell align="right">Bots</HeaderCell>
             <HeaderCell align="right">Rooms</HeaderCell>
-            <HeaderCell align="right">Pressure</HeaderCell>
+            <HeaderCell align="right">Load</HeaderCell>
             <HeaderCell align="right">Memory</HeaderCell>
             <HeaderCell align="right">CCU</HeaderCell>
             <HeaderCell>Updated</HeaderCell>
           </tr>
         </thead>
         <tbody>
-          {machines.map((machine) => (
-            <tr key={machine.machineId} className="hover:bg-white/[0.025]">
-              <Cell mono>
-                <div className="break-all text-white">{machine.machineId}</div>
-                <div className="mt-1 font-body text-xs text-white/40">{formatNumber(machine.processCount)} process</div>
-              </Cell>
-              <Cell>{machine.region || 'unknown'}</Cell>
-              <Cell align="right">{formatNumber(machine.playersInGame)}</Cell>
-              <Cell align="right">
-                {formatNumber(machine.dynamicCapacityPlayers)}
-                <div className="text-xs text-white/40">{formatNumber(Math.max(0, machine.dynamicCapacityPlayers - machine.playersInGame))} open</div>
-              </Cell>
-              <Cell align="right">{formatNumber(machine.botsInGame)}</Cell>
-              <Cell align="right">
-                {formatNumber(machine.gameRoomCount)} game
-                <div className="text-xs text-white/40">{formatNumber(machine.lobbyRoomCount)} lobby</div>
-              </Cell>
-              <Cell align="right">
-                {(machine.capacityPressure * 100).toFixed(0)}%
-                <div className="text-xs text-white/40">CPU {(machine.processCpuUtilization * 100).toFixed(0)}% / loop {machine.eventLoopDelayP95Ms.toFixed(1)}ms</div>
-              </Cell>
-              <Cell align="right">
-                {formatBytes(machine.memoryRssBytes)}
-                <div className="text-xs text-white/40">{formatBytes(machine.systemFreeMemoryBytes)} free</div>
-              </Cell>
-              <Cell align="right">{formatNumber(machine.localCcu)}</Cell>
-              <Cell>{formatAge(machine.latestUpdatedAtMs)}</Cell>
-            </tr>
-          ))}
+          {machines.map((machine) => {
+            const loadRatio = machine.loadPct1 / 100;
+            const loadTone = toneForPressure(loadRatio);
+            const hasMeasuredCapacity = machine.dynamicCapacitySource === 'live' && machine.gameRoomCount > 0;
+            const projectedCapacity = machine.dynamicCapacityPlayers > 0
+              ? `projected ${formatNumber(machine.dynamicCapacityPlayers)}`
+              : 'no samples';
+            return (
+              <tr key={machine.machineId} className="hover:bg-white/[0.025]">
+                <Cell mono>
+                  <div className="break-all text-white">{machine.machineId}</div>
+                  <div className="mt-1 font-body text-[11px] text-white/40">{formatCount(machine.processCount, 'process', 'processes')}</div>
+                </Cell>
+                <Cell>{machine.region || 'unknown'}</Cell>
+                <Cell align="right">{formatNumber(machine.playersInGame)}</Cell>
+                <Cell align="right">
+                  {hasMeasuredCapacity ? formatNumber(machine.dynamicCapacityPlayers) : 'Learning'}
+                  <div className="text-[11px] text-white/40">
+                    {hasMeasuredCapacity
+                      ? `${formatNumber(Math.max(0, machine.dynamicCapacityPlayers - machine.playersInGame))} open`
+                      : projectedCapacity}
+                  </div>
+                </Cell>
+                <Cell align="right">{formatNumber(machine.botsInGame)}</Cell>
+                <Cell align="right">
+                  {formatCount(machine.gameRoomCount, 'game')}
+                  <div className="text-[11px] text-white/40">{formatCount(machine.lobbyRoomCount, 'lobby', 'lobbies')}</div>
+                </Cell>
+                <Cell align="right">
+                  <Pill tone={loadTone}>{machine.loadPct1.toFixed(0)}%</Pill>
+                  <div className="text-[11px] text-white/40">1m {machine.loadAvg1.toFixed(2)} / {formatNumber(machine.cpuCount)} CPUs</div>
+                  <div className="text-[11px] text-white/40">CPU {(machine.processCpuUtilization * 100).toFixed(0)}% / loop {machine.eventLoopDelayP95Ms.toFixed(1)}ms</div>
+                  <MiniMeter value={loadRatio} tone={loadTone} />
+                </Cell>
+                <Cell align="right">
+                  {formatBytes(machine.memoryRssBytes)}
+                  <div className="text-[11px] text-white/40">{formatBytes(machine.systemFreeMemoryBytes)} free</div>
+                </Cell>
+                <Cell align="right">{formatNumber(machine.localCcu)}</Cell>
+                <Cell>{formatAge(machine.latestUpdatedAtMs)}</Cell>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -426,9 +722,7 @@ function GameRoomsTable({ rooms }: { rooms: GameRoomOverview[] }) {
               <Cell mono>{room.roomId}</Cell>
               <Cell mono>{room.machineId}</Cell>
               <Cell>
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-xs uppercase tracking-[0.08em] text-white/70">
-                  {room.phase}
-                </span>
+                <Pill tone={room.phase === 'playing' ? 'success' : 'neutral'}>{room.phase}</Pill>
               </Cell>
               <Cell>{room.matchMode}</Cell>
               <Cell align="right">{formatNumber(room.players)}</Cell>
@@ -468,9 +762,7 @@ function LobbiesTable({ lobbies }: { lobbies: LobbyRoomOverview[] }) {
               </Cell>
               <Cell mono>{lobby.machineId}</Cell>
               <Cell>
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-xs uppercase tracking-[0.08em] text-white/70">
-                  {lobby.status}
-                </span>
+                <Pill tone={lobby.status === 'open' ? 'success' : 'neutral'}>{lobby.status}</Pill>
               </Cell>
               <Cell>{lobby.matchMode}</Cell>
               <Cell align="right">{formatNumber(lobby.humans)}</Cell>
@@ -498,10 +790,193 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="h-8 rounded-md border border-white/10 bg-white/[0.04] px-2.5 font-body text-xs font-semibold uppercase tracking-[0.06em] text-white/70 transition hover:border-accent-primary/45 hover:bg-white/[0.08] hover:text-white disabled:cursor-wait disabled:opacity-45"
+      className="h-7 rounded-md border border-white/10 bg-white/[0.04] px-2.5 font-body text-[11px] font-semibold uppercase text-white/70 transition hover:border-accent-primary/45 hover:bg-white/[0.08] hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
     >
       {children}
     </button>
+  );
+}
+
+function AdminSelect({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+  className,
+}: {
+  label: string;
+  value: string;
+  options: AdminSelectOption[];
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuId = useId();
+  const selected = options.find((option) => option.value === value) ?? options[0];
+
+  const updateMenuPosition = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const viewportPadding = 12;
+    const menuWidth = Math.min(Math.max(rect.width, 280), window.innerWidth - viewportPadding * 2);
+    const left = Math.min(Math.max(rect.left, viewportPadding), window.innerWidth - menuWidth - viewportPadding);
+    const availableBelow = Math.max(160, window.innerHeight - rect.bottom - 12);
+    setMenuStyle({
+      position: 'fixed',
+      left: Math.round(left),
+      top: Math.round(rect.bottom + 4),
+      width: Math.round(menuWidth),
+      maxHeight: Math.min(320, availableBelow),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    updateMenuPosition();
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', updateMenuPosition);
+    window.addEventListener('scroll', updateMenuPosition, true);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', updateMenuPosition);
+      window.removeEventListener('scroll', updateMenuPosition, true);
+    };
+  }, [open, updateMenuPosition]);
+
+  const menu = open && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        ref={menuRef}
+        id={menuId}
+        role="listbox"
+        aria-label={label}
+        style={menuStyle}
+        className="z-50 overflow-auto rounded-md border border-white/10 bg-strike-panel-raised py-1 shadow-[0_18px_44px_rgb(0_0_0_/_0.55)] backdrop-blur"
+      >
+        {options.map((option) => {
+          const isSelected = option.value === value;
+          return (
+            <button
+              key={option.value || 'exact'}
+              type="button"
+              role="option"
+              aria-selected={isSelected}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              className={cx(
+                'flex w-full items-start justify-between gap-3 px-3 py-2 text-left font-body text-xs transition',
+                isSelected
+                  ? 'bg-accent-primary/15 text-white'
+                  : 'text-white/74 hover:bg-white/[0.055] hover:text-white',
+              )}
+            >
+              <span className="min-w-0">
+                <span className="block whitespace-nowrap">{option.label}</span>
+                {option.detail && <span className="mt-0.5 block whitespace-nowrap font-mono text-[11px] text-white/38">{option.detail}</span>}
+              </span>
+              <span className={cx('mt-1 h-1.5 w-1.5 shrink-0 rounded-full', isSelected ? 'bg-accent-primary' : 'bg-transparent')} />
+            </button>
+          );
+        })}
+      </div>,
+      document.body,
+    )
+    : null;
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={menuId}
+        disabled={disabled}
+        onClick={() => {
+          if (open) {
+            setOpen(false);
+            return;
+          }
+          updateMenuPosition();
+          setOpen(true);
+        }}
+        className={cx(
+          'flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition hover:border-white/20 focus:border-accent-primary/55 disabled:cursor-not-allowed disabled:opacity-45',
+          open && 'border-accent-primary/55 bg-black/45',
+          className,
+        )}
+      >
+        <span className="truncate">{selected?.label ?? 'Select'}</span>
+        <span aria-hidden="true" className="shrink-0 font-mono text-[10px] text-white/40">v</span>
+      </button>
+      {menu}
+    </>
+  );
+}
+
+function AdminTabs({
+  tabs,
+  activeTab,
+  onChange,
+}: {
+  tabs: AdminTab[];
+  activeTab: AdminTabId;
+  onChange: (tab: AdminTabId) => void;
+}) {
+  return (
+    <div className="-mx-1 overflow-x-auto px-1">
+      <div role="tablist" aria-label="Admin sections" className="flex min-w-max gap-1.5">
+        {tabs.map((tab) => {
+          const isActive = tab.id === activeTab;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`admin-tab-${tab.id}`}
+              aria-selected={isActive}
+              aria-controls={`admin-panel-${tab.id}`}
+              onClick={() => onChange(tab.id)}
+              className={cx(
+                'group flex h-9 min-w-[8.5rem] items-center justify-between gap-3 rounded-md border px-3 font-body text-xs font-semibold uppercase transition',
+                isActive
+                  ? 'border-accent-primary/55 bg-accent-primary/15 text-white shadow-[inset_0_1px_0_rgb(var(--color-strike-border)_/_0.08)]'
+                  : 'border-white/10 bg-white/[0.035] text-white/55 hover:border-white/20 hover:bg-white/[0.06] hover:text-white/80',
+              )}
+            >
+              <span>{tab.label}</span>
+              <Pill tone={isActive ? tab.tone : 'neutral'} className="px-1.5 py-0 text-[10px] leading-4">
+                {tab.meta}
+              </Pill>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -524,9 +999,9 @@ function GlobalNotificationPanel({
   const hasActiveNotification = Boolean(notification);
 
   return (
-    <div className="grid gap-4 border-b border-white/10 bg-black/20 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)]">
+    <div className="grid gap-3 border-b border-white/10 bg-black/20 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.38fr)]">
       <div className="min-w-0">
-        <label htmlFor="global-notification-message" className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">
+        <label htmlFor="global-notification-message" className="font-body text-[10px] font-semibold uppercase text-white/45">
           Message
         </label>
         <textarea
@@ -535,16 +1010,16 @@ function GlobalNotificationPanel({
           maxLength={240}
           onChange={(event) => onDraftChange(event.target.value)}
           placeholder="Maintenance starts in 10 minutes."
-          className="mt-2 min-h-[76px] w-full resize-y rounded-md border border-white/10 bg-black/30 px-3 py-2 font-body text-sm leading-relaxed text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55 focus:bg-black/40"
+          className="mt-2 min-h-[64px] w-full resize-y rounded-md border border-white/10 bg-black/30 px-3 py-2 font-body text-xs leading-relaxed text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55 focus:bg-black/40"
         />
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-          <div className="font-body text-xs text-white/40">{trimmedDraft.length} / 240</div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="font-body text-[11px] text-white/40">{trimmedDraft.length} / 240</div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               disabled={!trimmedDraft || busy}
               onClick={onSave}
-              className="h-9 rounded-md border border-accent-primary/45 bg-accent-primary/20 px-3 font-body text-xs font-semibold uppercase tracking-[0.08em] text-orange-50 transition hover:border-accent-primary/70 hover:bg-accent-primary/30 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
+              className="h-7 rounded-md border border-accent-primary/45 bg-accent-primary/20 px-3 font-body text-[11px] font-semibold uppercase text-white transition hover:border-accent-primary/70 hover:bg-accent-primary/30 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
             >
               Set Message
             </button>
@@ -556,26 +1031,367 @@ function GlobalNotificationPanel({
       </div>
 
       <div className="min-w-0 rounded-md border border-white/10 bg-white/[0.025] p-3">
-        <div className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Current</div>
+        <div className="font-body text-[10px] font-semibold uppercase text-white/45">Current</div>
         {notification ? (
           <>
-            <div className="mt-2 inline-flex rounded-md border border-ui-warning/35 bg-ui-warning/10 px-2.5 py-1 font-body text-xs uppercase tracking-[0.08em] text-yellow-100">
-              Active
-            </div>
-            <p className="mt-3 break-words font-body text-sm leading-relaxed text-white/80">{notification.message}</p>
-            <div className="mt-3 font-body text-xs text-white/40">
+            <div className="mt-2"><Pill tone="warning">Active</Pill></div>
+            <p className="mt-2 break-words font-body text-xs leading-relaxed text-white/80">{notification.message}</p>
+            <div className="mt-2 font-body text-[11px] text-white/40">
               Updated {formatDate(notification.updatedAt)}
             </div>
           </>
         ) : (
           <>
-            <div className="mt-2 inline-flex rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1 font-body text-xs uppercase tracking-[0.08em] text-white/50">
-              Off
-            </div>
-            <p className="mt-3 font-body text-sm text-white/45">No active message.</p>
+            <div className="mt-2"><Pill>Off</Pill></div>
+            <p className="mt-2 font-body text-xs text-white/45">No active message.</p>
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+function RankedSeasonPanel({
+  season,
+  draft,
+  busy,
+  onDraftChange,
+  onSave,
+}: {
+  season: RankedSeasonOverview;
+  draft: RankedSeasonDraft;
+  busy: boolean;
+  onDraftChange: (draft: RankedSeasonDraft) => void;
+  onSave: () => void;
+}) {
+  const currentIdentity = getRankedSeasonIdentity(season.mode, season.seasonNumber);
+  const nextSeasonNumber = Number(draft.seasonNumber);
+  const invalidSeasonNumber = !Number.isFinite(nextSeasonNumber) || nextSeasonNumber < 1 || nextSeasonNumber > 999;
+  const nextIdentity = getRankedSeasonIdentity(draft.mode, nextSeasonNumber);
+  const willReset = currentIdentity !== nextIdentity;
+  const boundaryLabel = draft.mode === 'preseason' ? 'Next Season Begins At' : 'Ends At';
+
+  return (
+    <div className="grid gap-3 border-b border-white/10 bg-black/20 p-3 lg:grid-cols-[minmax(15rem,0.32fr)_minmax(0,1fr)]">
+      <div className="ranked-season-admin-card min-w-0 rounded-md border border-accent-primary/25 p-3">
+        <div className="font-body text-[10px] font-semibold uppercase text-accent-primary/75">Ranked Cycle</div>
+        <div className="mt-2 font-body text-2xl font-semibold leading-none text-white">{season.label}</div>
+        <div className="mt-2">
+          <Pill>{formatSeasonBoundary(season.mode, season.endsAt)}</Pill>
+        </div>
+        <div className="mt-2 font-body text-[11px] text-white/40">
+          Last reset {season.lastResetAt ? formatDate(season.lastResetAt) : 'not recorded'}
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(7rem,0.35fr)_minmax(12rem,0.55fr)_auto] md:items-end">
+          <div>
+            <div className="font-body text-[10px] font-semibold uppercase text-white/45">Mode</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(['season', 'preseason'] as RankedSeasonMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={draft.mode === mode}
+                  disabled={busy}
+                  onClick={() => onDraftChange({ ...draft, mode })}
+                  className={`h-7 rounded-md border px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-wait ${
+                    draft.mode === mode
+                      ? 'border-accent-primary/55 bg-accent-primary/20 text-white'
+                      : 'border-white/10 bg-white/[0.04] text-white/65 hover:border-accent-primary/35 hover:text-white'
+                  }`}
+                >
+                  {mode === 'season' ? 'Season' : 'Pre-Season'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="block">
+            <span className="font-body text-[10px] font-semibold uppercase text-white/45">Number</span>
+            <input
+              type="number"
+              min={1}
+              max={999}
+              value={draft.seasonNumber}
+              disabled={busy || draft.mode === 'preseason'}
+              onChange={(event) => onDraftChange({ ...draft, seasonNumber: event.target.value })}
+              className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition focus:border-accent-primary/55 disabled:opacity-45"
+            />
+          </label>
+
+          <label className="block">
+            <span className="font-body text-[10px] font-semibold uppercase text-white/45">{boundaryLabel}</span>
+            <input
+              type="datetime-local"
+              value={draft.endsAtLocal}
+              disabled={busy}
+              onChange={(event) => onDraftChange({ ...draft, endsAtLocal: event.target.value })}
+              title={boundaryLabel}
+              className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition focus:border-accent-primary/55"
+            />
+          </label>
+
+          <button
+            type="button"
+            disabled={busy || (draft.mode === 'season' && invalidSeasonNumber)}
+            onClick={onSave}
+            className="h-8 rounded-md border border-accent-primary/45 bg-accent-primary/20 px-3 font-body text-[11px] font-semibold uppercase text-white transition hover:border-accent-primary/70 hover:bg-accent-primary/30 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
+          >
+            Save Season
+          </button>
+        </div>
+
+        <div className={`mt-3 rounded-md border px-3 py-2 font-body text-[11px] ${
+          willReset
+            ? 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100'
+            : 'border-white/10 bg-white/[0.025] text-white/42'
+        }`}>
+          {willReset
+            ? 'Changing this season will reset every player rating and ranked win/loss record to ranked defaults.'
+            : 'Schedule edits keep ranked stats intact.'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlayerRankPanel({
+  users,
+  pagination,
+  search,
+  reason,
+  drafts,
+  loading,
+  busyUserId,
+  onSearchChange,
+  onReasonChange,
+  onSearch,
+  onClearSearch,
+  onPageChange,
+  onDraftChange,
+  onSave,
+}: {
+  users: AdminRankUser[];
+  pagination: AdminUsersPagination;
+  search: string;
+  reason: string;
+  drafts: Record<string, string>;
+  loading: boolean;
+  busyUserId: string | null;
+  onSearchChange: (search: string) => void;
+  onReasonChange: (reason: string) => void;
+  onSearch: () => void;
+  onClearSearch: () => void;
+  onPageChange: (page: number) => void;
+  onDraftChange: (userId: string, rating: string) => void;
+  onSave: (user: AdminRankUser) => void;
+}) {
+  const firstVisible = pagination.total === 0 ? 0 : (pagination.page - 1) * pagination.limit + 1;
+  const lastVisible = Math.min(pagination.total, pagination.page * pagination.limit);
+  const rankGateSelectOptions = useMemo<AdminSelectOption[]>(() => [
+    {
+      value: '',
+      label: 'Exact override',
+      detail: 'Use the rating field',
+    },
+    ...RANK_OPTIONS.map((option) => ({
+      value: option.rating.toString(),
+      label: option.label,
+      detail: `${option.rangeLabel} range / ${formatNumber(option.rating)} floor`,
+    })),
+  ], []);
+
+  return (
+    <div>
+      <form
+        className="grid gap-3 border-b border-white/10 bg-black/20 p-3 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSearch();
+        }}
+      >
+        <label className="block min-w-0">
+          <span className="font-body text-[10px] font-semibold uppercase text-white/45">Search</span>
+          <input
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Name, wallet, or user id"
+            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
+          />
+        </label>
+
+        <label className="block min-w-0">
+          <span className="font-body text-[10px] font-semibold uppercase text-white/45">Reason</span>
+          <input
+            value={reason}
+            onChange={(event) => onReasonChange(event.target.value)}
+            placeholder="Manual correction"
+            className="mt-2 h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-body text-xs text-white outline-none transition placeholder:text-white/25 focus:border-accent-primary/55"
+          />
+        </label>
+
+        <div className="flex items-end gap-2">
+          <button
+            type="submit"
+            disabled={loading}
+            className="h-8 rounded-md border border-accent-primary/45 bg-accent-primary/20 px-3 font-body text-[11px] font-semibold uppercase text-white transition hover:border-accent-primary/70 hover:bg-accent-primary/30 disabled:cursor-wait disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-white/35"
+          >
+            Search
+          </button>
+          <ActionButton disabled={loading} onClick={onClearSearch}>
+            Clear
+          </ActionButton>
+        </div>
+      </form>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/[0.018] px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Pill tone="amber">{formatNumber(pagination.total)} users</Pill>
+          <span className="font-body text-[11px] text-white/42">
+            Showing {formatNumber(firstVisible)}-{formatNumber(lastVisible)} / page {formatNumber(pagination.page)} of {formatNumber(pagination.totalPages)}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <ActionButton disabled={loading || !pagination.hasPrevious} onClick={() => onPageChange(pagination.page - 1)}>
+            Prev
+          </ActionButton>
+          <span className="min-w-[5.5rem] text-center font-mono text-[11px] text-white/45">
+            {formatNumber(pagination.page)} / {formatNumber(pagination.totalPages)}
+          </span>
+          <ActionButton disabled={loading || !pagination.hasNext} onClick={() => onPageChange(pagination.page + 1)}>
+            Next
+          </ActionButton>
+        </div>
+      </div>
+
+      {users.length === 0 ? (
+        <EmptyTable label={loading ? 'Loading players.' : 'No users found.'} />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1480px] table-fixed border-collapse">
+            <colgroup>
+              <col className="w-[15%]" />
+              <col className="w-[13%]" />
+              <col className="w-[21%]" />
+              <col className="w-[14%]" />
+              <col className="w-[14%]" />
+              <col className="w-[14%]" />
+              <col className="w-[9%]" />
+            </colgroup>
+            <thead>
+              <tr>
+                <HeaderCell>Player</HeaderCell>
+                <HeaderCell>Current</HeaderCell>
+                <HeaderCell>Target</HeaderCell>
+                <HeaderCell>Ranked Record</HeaderCell>
+                <HeaderCell>Total Record</HeaderCell>
+                <HeaderCell>Peak</HeaderCell>
+                <HeaderCell>Actions</HeaderCell>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((user) => {
+                const draft = drafts[user.id] ?? user.competitiveRating.toString();
+                const parsedRating = parseDraftRating(draft);
+                const canSave = parsedRating !== null && parsedRating !== user.competitiveRating && busyUserId !== user.id;
+                const optionValue = parsedRating === null
+                  ? ''
+                  : RANK_OPTIONS.some((option) => option.rating === parsedRating)
+                    ? parsedRating.toString()
+                    : '';
+                const preview = getRankPreview(draft, user.rankedGames);
+                const currentRank = getRankFromRating(user.competitiveRating, user.rankedGames);
+                const peakRank = getRankFromRating(user.rankedPeakRating, user.rankedGames);
+
+                return (
+                  <tr key={user.id} className="hover:bg-white/[0.025]">
+                    <Cell>
+                      <div className="truncate text-white">{user.name}</div>
+                      {user.walletAddress && (
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          <span
+                            title={user.walletAddress}
+                            className="inline-flex max-w-full items-center rounded border border-white/10 bg-white/[0.025] px-1.5 py-0.5 font-mono text-[10px] leading-none text-white/35"
+                          >
+                            Wallet {formatCompactIdentifier(user.walletAddress)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="mt-1.5 text-[11px] text-white/35">
+                        Last login {user.lastLoginAt ? formatAge(Date.parse(user.lastLoginAt)) : 'never'}
+                      </div>
+                    </Cell>
+                    <Cell>
+                      <RankBadge rank={currentRank} compact className="max-w-full rounded-md" />
+                      <div className="mt-2 text-[11px] text-white/45">{formatNumber(user.competitiveRating)} rating</div>
+                      <div className="mt-1 font-mono text-[11px] text-white/35">{user.rank.rangeLabel}</div>
+                    </Cell>
+                    <Cell>
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(6.5rem,0.42fr)]">
+                        <AdminSelect
+                          label={`Target rank gate for ${user.name}`}
+                          value={optionValue}
+                          disabled={busyUserId === user.id}
+                          options={rankGateSelectOptions}
+                          onChange={(nextValue) => {
+                            if (nextValue) onDraftChange(user.id, nextValue);
+                          }}
+                        />
+
+                        <input
+                          type="number"
+                          min={0}
+                          max={ADMIN_MANUAL_RATING_MAX}
+                          value={draft}
+                          disabled={busyUserId === user.id}
+                          onChange={(event) => onDraftChange(user.id, event.target.value)}
+                          className="h-8 w-full rounded-md border border-white/10 bg-black/30 px-2.5 font-mono text-xs text-white outline-none transition focus:border-accent-primary/55"
+                        />
+                      </div>
+                      <div className={`mt-2 font-body text-[11px] ${parsedRating === null ? 'text-red-200/70' : 'text-white/42'}`}>
+                        {preview.rating === null
+                          ? preview.label
+                          : (
+                            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                              <RankBadge rank={getRankFromRating(preview.rating, user.rankedGames)} compact className="max-w-full rounded-md py-1" />
+                              <span className="text-white/42">
+                                Gate {preview.gateLabel} / range <span className="font-mono text-white/45">{preview.rangeLabel}</span>
+                              </span>
+                            </div>
+                          )}
+                      </div>
+                    </Cell>
+                    <Cell>
+                      <div className="text-white/80">{formatNumber(user.rankedWins)}W / {formatNumber(user.rankedLosses)}L / {formatNumber(user.rankedDraws)}D</div>
+                      <div className="mt-1 text-[11px] text-white/40">{formatCount(user.rankedGames, 'ranked game')}</div>
+                      <div className="mt-1 text-[11px] text-white/35">Last ranked {user.rankedLastMatchAt ? formatAge(Date.parse(user.rankedLastMatchAt)) : 'never'}</div>
+                    </Cell>
+                    <Cell>
+                      <div className="text-white/80">{formatNumber(user.totalWins)}W / {formatNumber(user.totalLosses)}L / {formatNumber(user.totalDraws)}D</div>
+                      <div className="mt-1 text-[11px] text-white/40">{formatCount(user.totalGames, 'game')}</div>
+                      <div className="mt-1 text-[11px] text-white/35">Updated {formatAge(Date.parse(user.updatedAt))}</div>
+                    </Cell>
+                    <Cell>
+                      <RankBadge rank={peakRank} compact className="max-w-full rounded-md" />
+                      <div className="mt-2 text-[11px] text-white/45">{formatNumber(user.rankedPeakRating)} rating</div>
+                      <div className="mt-1 font-mono text-[11px] text-white/35">{user.peakRank.rangeLabel}</div>
+                    </Cell>
+                    <Cell>
+                      <div className="flex flex-wrap gap-2">
+                        <ActionButton disabled={!canSave} onClick={() => onSave(user)}>
+                          Save Rank
+                        </ActionButton>
+                      </div>
+                    </Cell>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -597,7 +1413,7 @@ function ModeButton({
       aria-pressed={active}
       disabled={active || busy}
       onClick={onClick}
-      className={`h-9 rounded-md border px-3 font-body text-xs font-semibold uppercase tracking-[0.08em] transition disabled:cursor-default ${
+      className={`h-7 rounded-md border px-3 font-body text-[11px] font-semibold uppercase transition disabled:cursor-default ${
         active
           ? 'border-amber-300/45 bg-amber-300/15 text-amber-100'
           : 'border-white/10 bg-white/[0.04] text-white/65 hover:border-amber-300/35 hover:text-white'
@@ -628,9 +1444,9 @@ function GoldenBiomeRewardsPanel({
 
   return (
     <div>
-      <div className="grid gap-3 border-b border-white/10 bg-black/20 p-4 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto] md:items-center">
+      <div className="grid gap-3 border-b border-white/10 bg-black/20 p-3 md:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)_auto] md:items-center">
         <div className="min-w-0">
-          <div className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Distribution</div>
+          <div className="font-body text-[10px] font-semibold uppercase text-white/45">Distribution</div>
           <div className="mt-2 flex flex-wrap gap-2">
             <ModeButton
               mode="manual"
@@ -645,29 +1461,27 @@ function GoldenBiomeRewardsPanel({
               onClick={() => onSetMode('auto')}
             />
           </div>
-          <div className="mt-2 font-body text-xs text-white/40">
-            Manual queues rewards for admin payout. Auto pays eligible golden wins after match end.
-          </div>
+          <div className="mt-2 font-body text-[11px] text-white/40">{overview.settings.distributionMode} payout mode</div>
         </div>
 
         <div className="min-w-0">
-          <div className="font-body text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">Treasury</div>
-          <div className={`mt-2 inline-flex rounded-md border px-2.5 py-1 font-body text-xs uppercase tracking-[0.08em] ${
-            treasury.eligible ? 'border-ui-success/35 bg-ui-success/10 text-emerald-100' : 'border-ui-warning/35 bg-ui-warning/10 text-yellow-100'
-          }`}>
-            {treasury.eligible ? 'Eligible' : treasury.reason || 'Not eligible'}
+          <div className="font-body text-[10px] font-semibold uppercase text-white/45">Treasury</div>
+          <div className="mt-2">
+            <Pill tone={treasury.eligible ? 'success' : 'warning'}>
+              {treasury.eligible ? 'Eligible' : treasury.reason || 'Not eligible'}
+            </Pill>
           </div>
           <div className="mt-2 break-all font-mono text-xs text-white/45">
             {treasury.treasuryWallet || overview.settings.treasuryWallet || 'No treasury wallet'}
           </div>
-          <div className="mt-1 font-body text-xs text-white/40">
+          <div className="mt-1 font-body text-[11px] text-white/40">
             {lamportsToSolDisplay(treasury.treasuryBalanceLamports)} SOL balance / {lamportsToSolDisplay(treasury.requiredLamports)} SOL minimum
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 md:min-w-[16rem]">
-          <MetricTile label="Reward" value={formatUsdCents(overview.settings.winnerRewardUsdCents)} sublabel="per winner" />
-          <MetricTile label="Chance" value={formatBps(overview.settings.chanceBps)} sublabel={`${formatNumber(pendingRewards)} pending`} />
+        <div className="grid grid-cols-2 gap-2 md:min-w-[14rem]">
+          <MetricTile label="Reward" value={formatUsdCents(overview.settings.winnerRewardUsdCents)} sublabel="per winner" tone="amber" />
+          <MetricTile label="Chance" value={formatBps(overview.settings.chanceBps)} sublabel={`${formatNumber(pendingRewards)} pending`} tone="warning" />
         </div>
       </div>
 
@@ -717,20 +1531,18 @@ function GoldenBiomeRewardsTable({
                   {reward.lastError && <div className="mt-2 font-body text-xs text-red-200/70">{reward.lastError}</div>}
                 </Cell>
                 <Cell>
-                  <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-xs uppercase tracking-[0.08em] text-white/70">
-                    {reward.status}
-                  </span>
-                  <div className="mt-2 text-xs text-white/40">{reward.distributionMode}</div>
-                  {reward.distributedAt && <div className="mt-1 text-xs text-white/35">sent {formatDate(reward.distributedAt)}</div>}
+                  <Pill tone={toneForSystemStatus(reward.status)}>{reward.status}</Pill>
+                  <div className="mt-2 text-[11px] text-white/40">{reward.distributionMode}</div>
+                  {reward.distributedAt && <div className="mt-1 text-[11px] text-white/35">sent {formatDate(reward.distributedAt)}</div>}
                 </Cell>
                 <Cell>
                   <div className="text-white">{reward.winningTeam}</div>
-                  <div className="mt-1 text-xs text-white/40">{reward.paidPlayerCount} winner{reward.paidPlayerCount === 1 ? '' : 's'}</div>
+                  <div className="mt-1 text-[11px] text-white/40">{formatCount(reward.paidPlayerCount, 'winner')}</div>
                 </Cell>
                 <Cell align="right">
                   {formatUsdCents(reward.rewardUsdCents)}
-                  <div className="text-xs text-white/40">{lamportsToSolDisplay(reward.rewardLamports)} SOL each</div>
-                  <div className="text-xs text-white/35">{lamportsToSolDisplay(reward.totalRewardLamports)} SOL total</div>
+                  <div className="text-[11px] text-white/40">{lamportsToSolDisplay(reward.rewardLamports)} SOL each</div>
+                  <div className="text-[11px] text-white/35">{lamportsToSolDisplay(reward.totalRewardLamports)} SOL total</div>
                 </Cell>
                 <Cell>
                   <div className="space-y-2">
@@ -738,9 +1550,7 @@ function GoldenBiomeRewardsTable({
                       <div key={transfer.id} className="min-w-0 border-l border-white/10 pl-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <span className="truncate text-white/80">{transfer.displayName || transfer.userId}</span>
-                          <span className="rounded border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.08em] text-white/55">
-                            {transfer.status}
-                          </span>
+                          <Pill tone={toneForSystemStatus(transfer.status)} className="px-1.5 py-0 text-[10px]">{transfer.status}</Pill>
                         </div>
                         <div className="mt-1 break-all font-mono text-[11px] text-white/35">{transfer.recipientWallet}</div>
                         {transfer.signature && <div className="mt-1 break-all font-mono text-[11px] text-emerald-100/55">{transfer.signature}</div>}
@@ -803,9 +1613,7 @@ function PlayerReportsTable({
                 <div className="mt-1 font-body text-xs text-white/40">{formatAge(Date.parse(report.createdAt))}</div>
               </Cell>
               <Cell>
-                <span className="rounded-full border border-white/10 bg-white/[0.03] px-2 py-1 text-xs uppercase tracking-[0.08em] text-white/70">
-                  {report.status}
-                </span>
+                <Pill tone={toneForSystemStatus(report.status)}>{report.status}</Pill>
               </Cell>
               <Cell>
                 <div className="truncate text-white">{report.targetUser?.name || report.targetName}</div>
@@ -822,8 +1630,8 @@ function PlayerReportsTable({
               </Cell>
               <Cell>
                 <div className="text-white/80">{report.reason}</div>
-                {report.details && <div className="mt-1 line-clamp-2 text-xs text-white/40">{report.details}</div>}
-                {report.resolution && <div className="mt-2 line-clamp-2 text-xs text-emerald-100/55">{report.resolution}</div>}
+                {report.details && <div className="mt-1 line-clamp-2 text-[11px] text-white/40">{report.details}</div>}
+                {report.resolution && <div className="mt-2 line-clamp-2 text-[11px] text-emerald-100/55">{report.resolution}</div>}
               </Cell>
               <Cell>
                 <div className="flex flex-wrap gap-2">
@@ -844,13 +1652,29 @@ function PlayerReportsTable({
 
 export function AdminDashboard() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [activeTab, setActiveTab] = useState<AdminTabId>('overview');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyReportId, setBusyReportId] = useState<string | null>(null);
   const [busyGoldenRewardId, setBusyGoldenRewardId] = useState<string | null>(null);
   const [busyGoldenMode, setBusyGoldenMode] = useState(false);
   const [busyGlobalNotification, setBusyGlobalNotification] = useState(false);
+  const [busyRankedSeason, setBusyRankedSeason] = useState(false);
+  const [busyRankUserId, setBusyRankUserId] = useState<string | null>(null);
+  const [rankUsersLoading, setRankUsersLoading] = useState(false);
+  const [rankUsersLoaded, setRankUsersLoaded] = useState(false);
   const [globalNotificationDraft, setGlobalNotificationDraft] = useState('');
+  const [rankedSeasonDraft, setRankedSeasonDraft] = useState<RankedSeasonDraft>({
+    mode: 'season',
+    seasonNumber: '1',
+    endsAtLocal: '',
+  });
+  const [rankedSeasonDraftDirty, setRankedSeasonDraftDirty] = useState(false);
+  const [rankSearch, setRankSearch] = useState('');
+  const [rankReason, setRankReason] = useState('');
+  const [rankUsers, setRankUsers] = useState<AdminRankUser[]>([]);
+  const [rankUsersPagination, setRankUsersPagination] = useState<AdminUsersPagination>(EMPTY_ADMIN_USERS_PAGINATION);
+  const [rankUserDrafts, setRankUserDrafts] = useState<Record<string, string>>({});
 
   const loadOverview = useCallback(async () => {
     setError(null);
@@ -893,6 +1717,78 @@ export function AdminDashboard() {
 
     await loadOverview();
   }, [loadOverview, overview?.admin.csrfToken]);
+
+  const loadRankUsers = useCallback(async (query: string, page = 1) => {
+    setRankUsersLoading(true);
+    setError(null);
+
+    try {
+      const params = new URLSearchParams({
+        limit: ADMIN_RANK_PAGE_SIZE.toString(),
+        page: Math.max(1, page).toString(),
+        query,
+      });
+      const response = await fetch(`${config.serverHttpUrl}/admin/api/users?${params.toString()}`, {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ error: `Admin request failed (${response.status})` }));
+        throw new Error(data.error || `Admin request failed (${response.status})`);
+      }
+
+      const data = await response.json() as AdminUsersResponse;
+      setRankUsers(data.users);
+      setRankUsersPagination(data.pagination);
+      setRankUserDrafts(Object.fromEntries(data.users.map((user) => [user.id, user.competitiveRating.toString()])));
+      setRankUsersLoaded(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setRankUsersLoaded(true);
+    } finally {
+      setRankUsersLoading(false);
+    }
+  }, []);
+
+  const updateRankUserDraft = useCallback((userId: string, rating: string) => {
+    setRankUserDrafts((drafts) => ({ ...drafts, [userId]: rating }));
+  }, []);
+
+  const searchRankUsers = useCallback(() => {
+    void loadRankUsers(rankSearch.trim(), 1);
+  }, [loadRankUsers, rankSearch]);
+
+  const clearRankUserSearch = useCallback(() => {
+    setRankSearch('');
+    void loadRankUsers('', 1);
+  }, [loadRankUsers]);
+
+  const changeRankUserPage = useCallback((page: number) => {
+    void loadRankUsers(rankSearch.trim(), page);
+  }, [loadRankUsers, rankSearch]);
+
+  const saveRankUser = useCallback((user: AdminRankUser) => {
+    const rating = parseDraftRating(rankUserDrafts[user.id] ?? user.competitiveRating.toString());
+    if (rating === null) {
+      setError(`Rating must be between 0 and ${ADMIN_MANUAL_RATING_MAX}`);
+      return;
+    }
+
+    const nextRank = getRankFromRating(rating, user.rankedGames).label;
+    if (!window.confirm(`Set ${user.name} from ${user.rank.label} / ${user.competitiveRating} to ${nextRank} / ${rating}?`)) {
+      return;
+    }
+
+    setBusyRankUserId(user.id);
+    postAdminJson(`/admin/api/users/${encodeURIComponent(user.id)}/rank`, {
+      competitiveRating: rating,
+      reason: rankReason.trim(),
+    })
+      .then(() => loadRankUsers(rankSearch.trim(), rankUsersPagination.page))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyRankUserId(null));
+  }, [loadRankUsers, postAdminJson, rankReason, rankSearch, rankUserDrafts, rankUsersPagination.page]);
 
   const updateReportStatus = useCallback((report: PlayerReportOverview, status: string) => {
     const note = window.prompt(status === 'cleared' ? 'Clear note' : 'Review note', '') ?? '';
@@ -968,6 +1864,40 @@ export function AdminDashboard() {
       .finally(() => setBusyGlobalNotification(false));
   }, [overview?.globalNotification, postAdminJson]);
 
+  const updateRankedSeasonDraft = useCallback((draft: RankedSeasonDraft) => {
+    setRankedSeasonDraft(draft);
+    setRankedSeasonDraftDirty(true);
+  }, []);
+
+  const saveRankedSeason = useCallback(() => {
+    if (!overview?.rankedSeason) return;
+
+    const seasonNumber = Math.floor(Number(rankedSeasonDraft.seasonNumber));
+    if (rankedSeasonDraft.mode === 'season' && (!Number.isFinite(seasonNumber) || seasonNumber < 1 || seasonNumber > 999)) {
+      setError('Season number must be between 1 and 999');
+      return;
+    }
+
+    const currentIdentity = getRankedSeasonIdentity(overview.rankedSeason.mode, overview.rankedSeason.seasonNumber);
+    const nextIdentity = getRankedSeasonIdentity(rankedSeasonDraft.mode, seasonNumber);
+    if (
+      currentIdentity !== nextIdentity &&
+      !window.confirm('Changing the ranked season resets every player rating and ranked record. Continue?')
+    ) {
+      return;
+    }
+
+    setBusyRankedSeason(true);
+    postAdminJson('/admin/api/ranked-season', {
+      mode: rankedSeasonDraft.mode,
+      seasonNumber,
+      endsAt: fromDateTimeLocalValue(rankedSeasonDraft.endsAtLocal),
+    })
+      .then(() => setRankedSeasonDraftDirty(false))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setBusyRankedSeason(false));
+  }, [overview?.rankedSeason, postAdminJson, rankedSeasonDraft]);
+
   useEffect(() => {
     void loadOverview();
     const interval = window.setInterval(() => void loadOverview(), 3000);
@@ -975,56 +1905,126 @@ export function AdminDashboard() {
   }, [loadOverview]);
 
   useEffect(() => {
+    if (activeTab !== 'players' || rankUsersLoaded || rankUsersLoading) return;
+    void loadRankUsers('', 1);
+  }, [activeTab, loadRankUsers, rankUsersLoaded, rankUsersLoading]);
+
+  useEffect(() => {
     setGlobalNotificationDraft(overview?.globalNotification?.message ?? '');
   }, [overview?.globalNotification?.message]);
 
-  const metrics = useMemo(() => {
+  useEffect(() => {
+    if (!overview?.rankedSeason || rankedSeasonDraftDirty) return;
+    setRankedSeasonDraft({
+      mode: overview.rankedSeason.mode,
+      seasonNumber: overview.rankedSeason.seasonNumber.toString(),
+      endsAtLocal: toDateTimeLocalValue(overview.rankedSeason.endsAt),
+    });
+  }, [
+    overview?.rankedSeason?.endsAt,
+    overview?.rankedSeason?.mode,
+    overview?.rankedSeason?.seasonNumber,
+    rankedSeasonDraftDirty,
+  ]);
+
+  const metrics = useMemo<MetricTileProps[]>(() => {
     if (!overview) return [];
     const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
     const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
+    const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
     return [
-      { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: `${formatNumber(overview.totals.serverProcesses)} processes` },
-      { label: 'Capacity', value: `${formatNumber(overview.capacity.reservedPlayers)} / ${formatNumber(overview.capacity.maxPlayers)}`, sublabel: `${formatNumber(overview.capacity.availablePlayers)} open / ${overview.capacity.source}` },
-      { label: 'Game Players', value: formatNumber(overview.totals.playersInGame), sublabel: `${formatNumber(overview.totals.botsInGame)} bots` },
-      { label: 'Game Rooms', value: formatNumber(overview.totals.gameRooms), sublabel: `${formatNumber(overview.totals.participantsInGame)} participants` },
-      { label: 'Lobby Participants', value: formatNumber(overview.totals.lobbyParticipants), sublabel: `${formatNumber(overview.totals.lobbyRooms)} lobbies` },
-      { label: 'Golden Rewards', value: formatNumber(pendingGoldenRewards), sublabel: overview.goldenBiomeRewards?.settings.distributionMode ?? 'manual' },
-      { label: 'Player Reports', value: formatNumber(activeReports), sublabel: `${formatNumber(overview.playerReports?.reports.length ?? 0)} listed` },
-      { label: 'Connected Clients', value: formatNumber(overview.totals.totalConnectedClients), sublabel: overview.diagnostics.redis.ok ? 'redis ok' : `redis ${overview.diagnostics.redis.status}` },
+      { label: 'Machines', value: formatNumber(overview.totals.runningMachines), sublabel: formatCount(overview.totals.serverProcesses, 'process', 'processes'), tone: 'info' },
+      { label: 'Capacity', value: `${formatNumber(overview.capacity.reservedPlayers)} / ${formatNumber(overview.capacity.maxPlayers)}`, sublabel: `${formatNumber(overview.capacity.availablePlayers)} open / ${overview.capacity.source}`, tone: capacityTone, meter: overview.capacity.capacityPressure },
+      { label: 'Game Players', value: formatNumber(overview.totals.playersInGame), sublabel: `${formatNumber(overview.totals.botsInGame)} bots`, tone: 'success' },
+      { label: 'Game Rooms', value: formatNumber(overview.totals.gameRooms), sublabel: `${formatNumber(overview.totals.participantsInGame)} participants`, tone: 'info' },
+      { label: 'Lobby', value: formatNumber(overview.totals.lobbyParticipants), sublabel: formatCount(overview.totals.lobbyRooms, 'lobby', 'lobbies'), tone: 'neutral' },
+      { label: 'Ranked', value: overview.rankedSeason.label, sublabel: formatSeasonBoundary(overview.rankedSeason.mode, overview.rankedSeason.endsAt), tone: 'amber' },
+      { label: 'Golden Rewards', value: formatNumber(pendingGoldenRewards), sublabel: overview.goldenBiomeRewards?.settings.distributionMode ?? 'manual', tone: pendingGoldenRewards > 0 ? 'warning' : 'success' },
+      { label: 'Reports', value: formatNumber(activeReports), sublabel: `${formatNumber(overview.playerReports?.reports.length ?? 0)} listed`, tone: activeReports > 0 ? 'warning' : 'success' },
+      { label: 'Clients', value: formatNumber(overview.totals.totalConnectedClients), sublabel: overview.diagnostics.redis.ok ? 'redis ok' : `redis ${overview.diagnostics.redis.status}`, tone: overview.diagnostics.redis.ok ? 'success' : 'danger' },
+    ];
+  }, [overview]);
+
+  const tabs = useMemo<AdminTab[]>(() => {
+    if (!overview) return [];
+    const activeReports = (overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0);
+    const pendingGoldenRewards = overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0;
+    const totalRooms = overview.rooms.game.length + overview.rooms.lobbies.length;
+    const capacityTone = overview.capacity.full ? 'danger' : toneForPressure(overview.capacity.capacityPressure);
+
+    return [
+      {
+        id: 'overview',
+        label: 'Overview',
+        meta: overview.status,
+        tone: toneForSystemStatus(overview.status),
+      },
+      {
+        id: 'operations',
+        label: 'Operations',
+        meta: overview.globalNotification ? 'message on' : overview.rankedSeason.label,
+        tone: overview.globalNotification ? 'warning' : 'amber',
+      },
+      {
+        id: 'players',
+        label: 'Players',
+        meta: 'rank edit',
+        tone: 'amber',
+      },
+      {
+        id: 'servers',
+        label: 'Servers',
+        meta: `${formatNumber(overview.machines.length)} machines`,
+        tone: capacityTone,
+      },
+      {
+        id: 'rooms',
+        label: 'Rooms',
+        meta: `${formatNumber(totalRooms)} active`,
+        tone: totalRooms > 0 ? 'info' : 'neutral',
+      },
+      {
+        id: 'rewards',
+        label: 'Rewards',
+        meta: `${formatNumber(pendingGoldenRewards)} pending`,
+        tone: pendingGoldenRewards > 0 ? 'warning' : 'success',
+      },
+      {
+        id: 'reports',
+        label: 'Reports',
+        meta: `${formatNumber(activeReports)} active`,
+        tone: activeReports > 0 ? 'warning' : 'success',
+      },
     ];
   }, [overview]);
 
   return (
-    <main className="h-dvh overflow-y-auto bg-strike-bg text-white">
-      <div className="mx-auto flex min-h-full w-full max-w-[1440px] flex-col gap-4 px-4 py-5 md:px-6 md:py-6">
-        <header className="flex flex-col justify-between gap-4 border-b border-white/10 pb-4 md:flex-row md:items-end">
-          <div>
-            <h1 className="font-display text-4xl tracking-[0.04em] text-white md:text-5xl">SLOP HEROES Admin</h1>
-            <div className="mt-1 font-body text-sm text-white/45">
-              {overview ? `Updated ${formatDate(overview.generatedAt)}` : loading ? 'Loading' : 'No telemetry'}
+    <main className="admin-dashboard h-dvh overflow-y-auto bg-strike-bg text-white">
+      <div className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col gap-3 px-3 py-3 md:px-4">
+        <header className="sticky top-0 z-20 -mx-3 flex flex-col gap-3 border-b border-white/10 bg-strike-bg/90 px-3 py-3 backdrop-blur-xl md:-mx-4 md:px-4">
+          <div className="flex flex-col justify-between gap-3 md:flex-row md:items-center">
+            <div className="min-w-0">
+              <h1 className="font-body text-2xl font-semibold leading-none text-white">SLOP HEROES Admin</h1>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {overview && <StatusPill status={overview.status} />}
+              {overview?.admin.elevatedAntiCheatRole && <Pill tone="info">Anti-cheat</Pill>}
+              <ActionButton onClick={() => void loadOverview()}>Refresh</ActionButton>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {overview && <StatusPill status={overview.status} />}
-            <button
-              type="button"
-              onClick={() => void loadOverview()}
-              className="h-10 rounded-md border border-white/10 bg-white/[0.04] px-4 font-body text-sm font-semibold uppercase tracking-[0.08em] text-white/80 transition hover:border-accent-primary/50 hover:text-white"
-            >
-              Refresh
-            </button>
-          </div>
+          {overview && <AdminTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />}
         </header>
 
         {error && (
-          <div className="rounded-lg border border-ui-danger/40 bg-ui-danger/10 px-4 py-3 font-body text-sm text-red-100">
+          <div className="rounded-md border border-ui-danger/40 bg-ui-danger/10 px-3 py-2 font-body text-xs text-red-100">
             {error}
           </div>
         )}
 
         {overview?.diagnostics.warnings && overview.diagnostics.warnings.length > 0 && (
-          <div className="rounded-lg border border-ui-warning/40 bg-ui-warning/10 px-4 py-3 font-body text-sm text-yellow-100">
+          <div className="rounded-md border border-ui-warning/40 bg-ui-warning/10 px-3 py-2 font-body text-xs text-yellow-100">
             {overview.diagnostics.warnings.map((warning) => (
               <div key={warning}>{warning}</div>
             ))}
@@ -1034,67 +2034,137 @@ export function AdminDashboard() {
         {overview ? (
           <>
             {overview.capacity.full && (
-              <div className="rounded-lg border border-ui-warning/45 bg-ui-warning/10 px-4 py-3 font-body text-sm text-yellow-100">
+              <div className="rounded-md border border-ui-warning/45 bg-ui-warning/10 px-3 py-2 font-body text-xs text-yellow-100">
                 Max in-game players hit: {formatNumber(overview.capacity.reservedPlayers)} / {formatNumber(overview.capacity.maxPlayers)} reserved across {formatNumber(overview.capacity.maxMachines)} machines. Queued players will wait until a match frees space.
               </div>
             )}
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-8">
-              {metrics.map((metric) => (
-                <MetricTile key={metric.label} {...metric} />
-              ))}
-            </div>
+            {activeTab === 'overview' && (
+              <div
+                role="tabpanel"
+                id="admin-panel-overview"
+                aria-labelledby="admin-tab-overview"
+                className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-9"
+              >
+                {metrics.map((metric) => (
+                  <MetricTile key={metric.label} {...metric} />
+                ))}
+              </div>
+            )}
 
-            <Section
-              title="Global Notification"
-              meta={overview.globalNotification ? 'active' : 'off'}
-            >
-              <GlobalNotificationPanel
-                notification={overview.globalNotification}
-                draft={globalNotificationDraft}
-                busy={busyGlobalNotification}
-                onDraftChange={setGlobalNotificationDraft}
-                onSave={saveGlobalNotification}
-                onRemove={removeGlobalNotification}
-              />
-            </Section>
+            {activeTab === 'operations' && (
+              <div
+                role="tabpanel"
+                id="admin-panel-operations"
+                aria-labelledby="admin-tab-operations"
+                className="flex flex-col gap-3"
+              >
+                <Section
+                  title="Global Notification"
+                  meta={overview.globalNotification ? 'active' : 'off'}
+                >
+                  <GlobalNotificationPanel
+                    notification={overview.globalNotification}
+                    draft={globalNotificationDraft}
+                    busy={busyGlobalNotification}
+                    onDraftChange={setGlobalNotificationDraft}
+                    onSave={saveGlobalNotification}
+                    onRemove={removeGlobalNotification}
+                  />
+                </Section>
 
-            <Section title="Machines" meta={`${formatNumber(overview.machines.length)} running`}>
-              <MachinesTable machines={overview.machines} />
-            </Section>
+                <Section title="Ranked Season" meta={overview.rankedSeason.label}>
+                  <RankedSeasonPanel
+                    season={overview.rankedSeason}
+                    draft={rankedSeasonDraft}
+                    busy={busyRankedSeason}
+                    onDraftChange={updateRankedSeasonDraft}
+                    onSave={saveRankedSeason}
+                  />
+                </Section>
+              </div>
+            )}
 
-            <Section title="Game Rooms" meta={`${formatNumber(overview.rooms.game.length)} active`}>
-              <GameRoomsTable rooms={overview.rooms.game} />
-            </Section>
+            {activeTab === 'players' && (
+              <div role="tabpanel" id="admin-panel-players" aria-labelledby="admin-tab-players">
+                <Section title="Player Ranks" meta={`${formatNumber(rankUsersPagination.total)} users`}>
+                  <PlayerRankPanel
+                    users={rankUsers}
+                    pagination={rankUsersPagination}
+                    search={rankSearch}
+                    reason={rankReason}
+                    drafts={rankUserDrafts}
+                    loading={rankUsersLoading}
+                    busyUserId={busyRankUserId}
+                    onSearchChange={setRankSearch}
+                    onReasonChange={setRankReason}
+                    onSearch={searchRankUsers}
+                    onClearSearch={clearRankUserSearch}
+                    onPageChange={changeRankUserPage}
+                    onDraftChange={updateRankUserDraft}
+                    onSave={saveRankUser}
+                  />
+                </Section>
+              </div>
+            )}
 
-            <Section title="Lobbies" meta={`${formatNumber(overview.rooms.lobbies.length)} active`}>
-              <LobbiesTable lobbies={overview.rooms.lobbies} />
-            </Section>
+            {activeTab === 'servers' && (
+              <div role="tabpanel" id="admin-panel-servers" aria-labelledby="admin-tab-servers">
+                <Section title="Machines" meta={`${formatNumber(overview.machines.length)} running`}>
+                  <MachinesTable machines={overview.machines} />
+                </Section>
+              </div>
+            )}
 
-            <Section
-              title="Golden Rewards"
-              meta={`${formatNumber(overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0)} pending`}
-            >
-              <GoldenBiomeRewardsPanel
-                overview={overview.goldenBiomeRewards}
-                busyRewardId={busyGoldenRewardId}
-                busyMode={busyGoldenMode}
-                onSetMode={setGoldenDistributionMode}
-                onDistribute={distributeGoldenReward}
-              />
-            </Section>
+            {activeTab === 'rooms' && (
+              <div
+                role="tabpanel"
+                id="admin-panel-rooms"
+                aria-labelledby="admin-tab-rooms"
+                className="flex flex-col gap-3"
+              >
+                <Section title="Game Rooms" meta={`${formatNumber(overview.rooms.game.length)} active`}>
+                  <GameRoomsTable rooms={overview.rooms.game} />
+                </Section>
 
-            <Section
-              title="Player Reports"
-              meta={`${formatNumber((overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0))} active`}
-            >
-              <PlayerReportsTable
-                reports={overview.playerReports?.reports ?? []}
-                busyId={busyReportId}
-                onSetStatus={updateReportStatus}
-                onAccountAction={applyReportAccountAction}
-              />
-            </Section>
+                <Section title="Lobbies" meta={`${formatNumber(overview.rooms.lobbies.length)} active`}>
+                  <LobbiesTable lobbies={overview.rooms.lobbies} />
+                </Section>
+              </div>
+            )}
+
+            {activeTab === 'rewards' && (
+              <div role="tabpanel" id="admin-panel-rewards" aria-labelledby="admin-tab-rewards">
+                <Section
+                  title="Golden Rewards"
+                  meta={`${formatNumber(overview.goldenBiomeRewards?.rewards.filter((reward) => reward.status !== 'complete').length ?? 0)} pending`}
+                >
+                  <GoldenBiomeRewardsPanel
+                    overview={overview.goldenBiomeRewards}
+                    busyRewardId={busyGoldenRewardId}
+                    busyMode={busyGoldenMode}
+                    onSetMode={setGoldenDistributionMode}
+                    onDistribute={distributeGoldenReward}
+                  />
+                </Section>
+              </div>
+            )}
+
+            {activeTab === 'reports' && (
+              <div role="tabpanel" id="admin-panel-reports" aria-labelledby="admin-tab-reports">
+                <Section
+                  title="Player Reports"
+                  meta={`${formatNumber((overview.playerReports?.counts.open ?? 0) + (overview.playerReports?.counts.reviewing ?? 0))} active`}
+                >
+                  <PlayerReportsTable
+                    reports={overview.playerReports?.reports ?? []}
+                    busyId={busyReportId}
+                    onSetStatus={updateReportStatus}
+                    onAccountAction={applyReportAccountAction}
+                  />
+                </Section>
+              </div>
+            )}
           </>
         ) : (
           !loading && <EmptyTable label="Telemetry unavailable." />

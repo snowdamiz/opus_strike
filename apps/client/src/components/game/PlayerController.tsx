@@ -91,6 +91,7 @@ import {
 import { buildAbilityCastOriginHints } from '../../hooks/player/abilityCastOriginHints';
 import {
   ABILITY_DEFINITIONS,
+  BLAZE_FLAMETHROWER_MAX_FUEL,
   CHRONOS_LIFELINE_ALLY_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
@@ -1302,6 +1303,55 @@ function shouldApplyReactiveAuthority(
   );
 }
 
+const AUTHORITY_RESOURCE_EPSILON = 0.01;
+
+function syncBlazeAuthorityMovementAnchor(
+  localPlayer: Player,
+  movement: MovementSimulationState['movement']
+): Player {
+  if (localPlayer.heroId !== 'blaze') return localPlayer;
+
+  const jetpackFuel = Math.max(0, Math.min(BLAZE_FLAMETHROWER_MAX_FUEL, movement.jetpackFuel));
+  const isJetpacking = movement.isJetpacking;
+  if (
+    localPlayer.movement.isJetpacking === isJetpacking &&
+    Math.abs(localPlayer.movement.jetpackFuel - jetpackFuel) < AUTHORITY_RESOURCE_EPSILON
+  ) {
+    return localPlayer;
+  }
+
+  let syncedPlayer: Player = {
+    ...localPlayer,
+    movement: {
+      ...localPlayer.movement,
+      isJetpacking,
+      jetpackFuel,
+    },
+  };
+
+  useGameStore.setState((state) => {
+    if (!state.localPlayer || state.localPlayer.id !== localPlayer.id) return state;
+
+    syncedPlayer = {
+      ...state.localPlayer,
+      movement: {
+        ...state.localPlayer.movement,
+        isJetpacking,
+        jetpackFuel,
+      },
+    };
+    const players = new Map(state.players);
+    players.set(syncedPlayer.id, syncedPlayer);
+
+    return {
+      localPlayer: syncedPlayer,
+      players,
+    };
+  });
+
+  return syncedPlayer;
+}
+
 function runAuthorityPhase(
   ctx: LocalPlayerFrameContext,
   localPlayer: Player,
@@ -1321,6 +1371,11 @@ function runAuthorityPhase(
   if (appliedAuthorities.length === 0) {
     return { localPlayer, authorityApplied: 0 };
   }
+
+  localPlayer = syncBlazeAuthorityMovementAnchor(
+    localPlayer,
+    appliedAuthorities[appliedAuthorities.length - 1].state.movement
+  );
 
   authorityMetricsScratch.length = 0;
   for (const application of appliedAuthorities) {

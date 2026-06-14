@@ -1576,7 +1576,7 @@ function stampCrystalTreeCluster(ctx: StructureStampContext, placement: PlacedSt
   const scale = getStructureScale(placement, 0.92, 1.16);
   const count = 2 + (placement.variant % 2);
   const spread = Math.max(1.6, placement.radius * 0.62);
-  const crystal = getBlockNumericId('crystal_growth');
+  const crystal = ctx.themeId === 'golden' ? getBlockNumericId('crystal_growth') : ctx.palette.glass;
   const random = mulberry32(placement.variant ^ 0xc2757a1);
 
   for (let index = 0; index < count; index++) {

@@ -7,14 +7,6 @@ import { RankBadge, RankInlineLabel, RankProgress, getRankForStats } from './Ran
 
 type LeaderboardMode = 'ranked' | 'score';
 
-interface PlayerRecords {
-  bestScore: number;
-  bestKills: number;
-  bestAssists: number;
-  bestCaptures: number;
-  bestReturns: number;
-}
-
 interface LeaderboardPlayer {
   rank: number;
   userId: string;
@@ -24,7 +16,6 @@ interface LeaderboardPlayer {
 
 interface PersonalLeaderboardPlayer extends Omit<LeaderboardPlayer, 'rank'> {
   rank: number | null;
-  records: PlayerRecords;
 }
 
 interface LeaderboardResponse {
@@ -32,14 +23,6 @@ interface LeaderboardResponse {
   leaderboard: LeaderboardPlayer[];
   currentUser: PersonalLeaderboardPlayer | null;
 }
-
-const EMPTY_RECORDS: PlayerRecords = {
-  bestScore: 0,
-  bestKills: 0,
-  bestAssists: 0,
-  bestCaptures: 0,
-  bestReturns: 0,
-};
 
 const STATS_GLASS_STYLE = {
   backdropFilter: 'blur(12px) saturate(1.12)',
@@ -89,7 +72,6 @@ function getLocalPersonalStats(playerName: string, userStats: UserStats | null):
     userId: 'local',
     name: playerName || 'You',
     stats: userStats,
-    records: EMPTY_RECORDS,
   };
 }
 
@@ -175,50 +157,46 @@ export function StatsPage() {
       <div className="mx-auto flex min-h-full max-w-[86rem] flex-col justify-center gap-4 xl:gap-5">
         <PersonalStatsBand player={personalStats} />
 
-        <div className="grid min-h-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
-          <StatsPanel className="min-w-0 p-4 lg:p-5">
-            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-              <SectionHeading
-                eyebrow="Global"
-                title="LEADERBOARD"
-                description={leaderboardDescription}
-              />
-              <div className="flex flex-wrap items-center gap-2">
-                <ModeButton
-                  active={leaderboardMode === 'ranked'}
-                  onClick={() => setLeaderboardMode('ranked')}
-                >
-                  Competitive
-                </ModeButton>
-                <ModeButton
-                  active={leaderboardMode === 'score'}
-                  onClick={() => setLeaderboardMode('score')}
-                >
-                  Score
-                </ModeButton>
-                {data?.leaderboard.length ? (
-                  <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/35">
-                    {data.leaderboard.length} players
-                  </p>
-                ) : null}
-              </div>
+        <StatsPanel className="min-w-0 p-4 lg:p-5">
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <SectionHeading
+              eyebrow="Global"
+              title="LEADERBOARD"
+              description={leaderboardDescription}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <ModeButton
+                active={leaderboardMode === 'ranked'}
+                onClick={() => setLeaderboardMode('ranked')}
+              >
+                Competitive
+              </ModeButton>
+              <ModeButton
+                active={leaderboardMode === 'score'}
+                onClick={() => setLeaderboardMode('score')}
+              >
+                Score
+              </ModeButton>
+              {data?.leaderboard.length ? (
+                <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/35">
+                  {data.leaderboard.length} players
+                </p>
+              ) : null}
             </div>
+          </div>
 
-            {isLoading && !data ? (
-              <LeaderboardSkeleton />
-            ) : data?.leaderboard.length ? (
-              <LeaderboardTable
-                players={data.leaderboard}
-                currentUserId={data.currentUser?.userId ?? null}
-                mode={leaderboardMode}
-              />
-            ) : (
-              <EmptyLeaderboard />
-            )}
-          </StatsPanel>
-
-          <RecordsRail player={personalStats} />
-        </div>
+          {isLoading && !data ? (
+            <LeaderboardSkeleton />
+          ) : data?.leaderboard.length ? (
+            <LeaderboardTable
+              players={data.leaderboard}
+              currentUserId={data.currentUser?.userId ?? null}
+              mode={leaderboardMode}
+            />
+          ) : (
+            <EmptyLeaderboard />
+          )}
+        </StatsPanel>
       </div>
     </div>
   );
@@ -248,7 +226,7 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
       {player ? (
         <>
           <div className="grid gap-5 lg:grid-cols-[minmax(13rem,18rem)_1fr] lg:items-stretch">
-            <div className="min-w-0 border-b border-white/10 pb-4 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5">
+            <div className="min-w-0 border-b border-white/10 pb-4 lg:border-b-0 lg:pb-0 lg:pr-5">
               <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-accent-primary/80">Your rank</p>
               <div className="mt-3">
                 <RankInlineLabel rank={personalRank} iconSize={28} className="text-xl" />
@@ -279,7 +257,7 @@ function PersonalStatsBand({ player }: { player: PersonalLeaderboardPlayer | nul
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="font-display text-2xl text-white/50">NO PROFILE</p>
-            <p className="mt-1 font-body text-sm text-white/30">Sign in to track scores, wins, and match records.</p>
+            <p className="mt-1 font-body text-sm text-white/30">Sign in to track scores, wins, and ranked progress.</p>
           </div>
           <svg className="hidden h-8 w-8 text-white/20 sm:block" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v8m-4-4h8M5 20h14a2 2 0 002-2V8.8a2 2 0 00-.6-1.43l-3.77-3.77A2 2 0 0015.2 3H5a2 2 0 00-2 2v13a2 2 0 002 2z" />
@@ -302,8 +280,7 @@ function WagerStatsStrip({ stats }: { stats: UserStats }) {
 
   return (
     <div className="mt-4 border-t border-white/10 pt-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-white/35">Wager games</p>
+      <div className="mb-3 flex items-center justify-end gap-3">
         <p className={`font-mono text-xs ${netTone}`}>{formatSignedLamports(netLamports)} net</p>
       </div>
       <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-3 xl:grid-cols-6">
@@ -332,36 +309,6 @@ function InlineStat({ label, value }: { label: string; value: string }) {
     <div className="min-w-0 border-l border-white/10 px-3 text-center first:border-l-0 sm:[&:nth-child(3n+1)]:border-l-0 xl:[&:nth-child(4)]:border-l">
       <p className="font-display text-3xl leading-none text-white">{value}</p>
       <p className="mt-1 font-mono text-[9px] uppercase tracking-[0.2em] text-white/45">{label}</p>
-    </div>
-  );
-}
-
-function RecordsRail({ player }: { player: PersonalLeaderboardPlayer | null }) {
-  const records = player?.records ?? EMPTY_RECORDS;
-
-  return (
-    <StatsPanel className="p-4 lg:p-5">
-      <SectionHeading
-        eyebrow="Personal"
-        title="RECORDS"
-        description="Best single-match marks"
-      />
-      <div className="mt-4 space-y-2.5">
-        <RecordLine label="Best Score" value={records.bestScore} />
-        <RecordLine label="Most Kills" value={records.bestKills} />
-        <RecordLine label="Most Assists" value={records.bestAssists} />
-        <RecordLine label="Most Captures" value={records.bestCaptures} />
-        <RecordLine label="Most Returns" value={records.bestReturns} />
-      </div>
-    </StatsPanel>
-  );
-}
-
-function RecordLine({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2.5">
-      <span className="font-body text-sm text-white/50">{label}</span>
-      <span className="font-mono text-sm text-white/85">{formatNumber(value)}</span>
     </div>
   );
 }

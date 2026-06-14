@@ -37,6 +37,27 @@ function rankDivision(rank: RankLike): number {
   return Math.max(0, Math.min(4, Math.floor(division)));
 }
 
+function parseHexColor(hex: string): { r: number; g: number; b: number } | null {
+  const value = hex.replace('#', '').trim();
+  if (!/^[0-9a-fA-F]{6}$/.test(value)) return null;
+  return {
+    r: Number.parseInt(value.slice(0, 2), 16) / 255,
+    g: Number.parseInt(value.slice(2, 4), 16) / 255,
+    b: Number.parseInt(value.slice(4, 6), 16) / 255,
+  };
+}
+
+function linearizeChannel(value: number): number {
+  return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+
+function readableRankTextColor(theme: RankTheme): string {
+  const color = parseHexColor(theme.foreground);
+  if (!color) return theme.foreground;
+  const luminance = 0.2126 * linearizeChannel(color.r) + 0.7152 * linearizeChannel(color.g) + 0.0722 * linearizeChannel(color.b);
+  return luminance < 0.45 ? theme.accent : theme.foreground;
+}
+
 function RankDivisionMarks({ division, theme }: { division: number; theme: RankTheme }) {
   if (division <= 0) return null;
 
@@ -224,6 +245,7 @@ export function RankBadge({
 }) {
   const theme = getRankTheme(rankTier(rank));
   const label = rankLabel(rank);
+  const textColor = readableRankTextColor(theme);
 
   return (
     <span
@@ -231,7 +253,7 @@ export function RankBadge({
       style={{
         borderColor: `${theme.primary}66`,
         backgroundColor: `${theme.secondary}33`,
-        color: theme.foreground,
+        color: textColor,
         boxShadow: `0 0 16px ${theme.glow}`,
       }}
       title={label}
@@ -255,11 +277,12 @@ export function RankInlineLabel({
 }) {
   const theme = getRankTheme(rankTier(rank));
   const label = rankLabel(rank);
+  const textColor = readableRankTextColor(theme);
 
   return (
     <span
       className={`inline-flex min-w-0 items-center gap-1.5 font-display text-xs uppercase leading-none ${className}`}
-      style={{ color: theme.foreground }}
+      style={{ color: textColor }}
       title={label}
     >
       <RankIcon rank={rank} size={iconSize ?? (compact ? 16 : 20)} />

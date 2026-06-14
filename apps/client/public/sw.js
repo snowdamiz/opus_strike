@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'slop-heroes';
-const CACHE_VERSION = `${CACHE_PREFIX}-v4`;
+const CACHE_VERSION = `${CACHE_PREFIX}-v5`;
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
 const CACHE_PREFIXES_TO_CLEAN = ['slop-heroes-', 'voxel-strike-'];

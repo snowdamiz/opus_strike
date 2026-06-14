@@ -7,7 +7,7 @@ const EVENT_LOOP_RESOLUTION_MS = 20;
 const TARGET_CPU_UTILIZATION = 0.75;
 const TARGET_EVENT_LOOP_DELAY_P95_MS = 20;
 const TARGET_HEAP_USED_RATIO = 0.75;
-const TARGET_SYSTEM_MEMORY_USED_RATIO = 0.9;
+const TARGET_PROCESS_RSS_USED_RATIO = 0.85;
 const TARGET_LOAD_RATIO = 0.85;
 
 export interface ProcessLoadSnapshot {
@@ -19,6 +19,7 @@ export interface ProcessLoadSnapshot {
   eventLoopDelayP95Ms: number;
   eventLoopDelayP99Ms: number;
   heapUsedRatio: number;
+  processRssUsedRatio: number;
   systemMemoryUsedRatio: number;
   capacityPressure: number;
 }
@@ -46,6 +47,11 @@ function readCpuCount(readCpuCount?: () => number): number {
 function ratio(value: number, target: number): number {
   if (!Number.isFinite(value) || !Number.isFinite(target) || target <= 0) return 0;
   return Math.max(0, value / target);
+}
+
+function normalizedEventLoopDelayMs(rawDelayMs: number): number {
+  if (!Number.isFinite(rawDelayMs)) return 0;
+  return Math.max(0, rawDelayMs - EVENT_LOOP_RESOLUTION_MS);
 }
 
 export class ProcessLoadSampler {
@@ -132,15 +138,16 @@ export class ProcessLoadSampler {
     const heapLimit = Math.max(1, this.heapSizeLimit());
     const totalMemory = Math.max(1, this.totalmem());
     const systemMemoryUsedRatio = Math.max(0, Math.min(1, (totalMemory - this.freemem()) / totalMemory));
-    const eventLoopDelayP95Ms = this.eventLoopDelay.percentile(95) / 1_000_000;
-    const eventLoopDelayP99Ms = this.eventLoopDelay.percentile(99) / 1_000_000;
+    const eventLoopDelayP95Ms = normalizedEventLoopDelayMs(this.eventLoopDelay.percentile(95) / 1_000_000);
+    const eventLoopDelayP99Ms = normalizedEventLoopDelayMs(this.eventLoopDelay.percentile(99) / 1_000_000);
     const heapUsedRatio = Math.max(0, Math.min(1, memory.heapUsed / heapLimit));
+    const processRssUsedRatio = Math.max(0, Math.min(1, (memory.rss ?? 0) / totalMemory));
     const loadPct1 = Math.max(0, loadAvg1 / cpuCount);
     const capacityPressure = Math.max(
       ratio(processCpuUtilization, TARGET_CPU_UTILIZATION),
       ratio(eventLoopDelayP95Ms, TARGET_EVENT_LOOP_DELAY_P95_MS),
       ratio(heapUsedRatio, TARGET_HEAP_USED_RATIO),
-      ratio(systemMemoryUsedRatio, TARGET_SYSTEM_MEMORY_USED_RATIO),
+      ratio(processRssUsedRatio, TARGET_PROCESS_RSS_USED_RATIO),
       ratio(loadPct1, TARGET_LOAD_RATIO)
     );
 
@@ -153,6 +160,7 @@ export class ProcessLoadSampler {
       eventLoopDelayP95Ms: Math.max(0, eventLoopDelayP95Ms),
       eventLoopDelayP99Ms: Math.max(0, eventLoopDelayP99Ms),
       heapUsedRatio,
+      processRssUsedRatio,
       systemMemoryUsedRatio,
       capacityPressure,
     };

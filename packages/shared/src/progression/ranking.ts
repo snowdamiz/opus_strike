@@ -1,5 +1,16 @@
 export const RANK_PLACEMENT_MATCHES = 0;
 export const DEFAULT_COMPETITIVE_RATING = 800;
+export const DEFAULT_RANKED_SEASON_NUMBER = 1;
+export const RANKED_SEASON_MAX_NUMBER = 999;
+
+export type RankedSeasonMode = 'preseason' | 'season';
+
+export interface RankedSeasonSnapshot {
+  mode: RankedSeasonMode;
+  seasonNumber: number;
+  label: string;
+  endsAt: string | null;
+}
 
 export const RANK_TIERS = [
   'plastic',
@@ -275,6 +286,23 @@ export function getRankFromRating(
 
 export function formatRank(rank: Pick<RankSummary, 'label'> | null | undefined): string {
   return rank?.label ?? 'Unranked';
+}
+
+export function normalizeRankedSeasonNumber(seasonNumber: number): number {
+  const normalized = Math.floor(Number.isFinite(seasonNumber) ? seasonNumber : DEFAULT_RANKED_SEASON_NUMBER);
+  return clamp(normalized, DEFAULT_RANKED_SEASON_NUMBER, RANKED_SEASON_MAX_NUMBER);
+}
+
+export function getRankedSeasonIdentity(input: Pick<RankedSeasonSnapshot, 'mode' | 'seasonNumber'>): string {
+  return input.mode === 'preseason'
+    ? 'preseason'
+    : `season:${normalizeRankedSeasonNumber(input.seasonNumber)}`;
+}
+
+export function getRankedSeasonLabel(input: Pick<RankedSeasonSnapshot, 'mode' | 'seasonNumber'>): string {
+  return input.mode === 'preseason'
+    ? 'Pre-Season'
+    : `Season ${normalizeRankedSeasonNumber(input.seasonNumber)}`;
 }
 
 export function toPublicRankSnapshot(rank: RankSummary): PublicRankSnapshot {
