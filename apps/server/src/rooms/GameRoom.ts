@@ -224,6 +224,7 @@ import {
   MessageRateLimiter,
 } from './rateLimiter';
 import { shouldResolveGenericSecondaryAttack } from './combatInputRouting';
+import { getSecurityEventLogLevel } from './securityEventLogging';
 import {
   isHeroId,
   isRecord,
@@ -4031,12 +4032,6 @@ export class GameRoom extends Room<GameState> {
     ].join(':');
   }
 
-  private shouldWarnSecurityEvent(event: SecurityEvent): boolean {
-    if (event.type === 'objective_carrier_mismatch') return true;
-    if (event.type === 'objective_suppression' || event.type.startsWith('objective_')) return false;
-    return true;
-  }
-
   private logSecurityEvent(event: SecurityEvent): void {
     const now = Date.now();
     const key = this.securityEventLogKey(event);
@@ -4055,13 +4050,17 @@ export class GameRoom extends Room<GameState> {
 
     const suppressedSinceLastLog = sample?.suppressed ?? 0;
     this.securityLogSamples.set(key, { lastLoggedAt: now, suppressed: 0 });
-    if (!this.shouldWarnSecurityEvent(event)) return;
+    const logLevel = getSecurityEventLogLevel(event);
+    if (logLevel === 'silent') return;
 
-    if (suppressedSinceLastLog > 0) {
-      loggers.room.warn('authority event', { ...event, suppressedSinceLastLog });
+    const logEvent = suppressedSinceLastLog > 0
+      ? { ...event, suppressedSinceLastLog }
+      : event;
+    if (logLevel === 'debug') {
+      loggers.room.debug('authority event', logEvent);
       return;
     }
-    loggers.room.warn('authority event', event);
+    loggers.room.warn('authority event', logEvent);
   }
 
   private updateLastSafeMovement(player: Player, sequence: number, acceptedAt = Date.now()): void {
