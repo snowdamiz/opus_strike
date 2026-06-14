@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type CombatTextKind = 'damage' | 'heal';
+export type CombatTextKind = 'damage' | 'heal' | 'shieldDamage';
 
 export interface CombatTextPosition {
   x: number;

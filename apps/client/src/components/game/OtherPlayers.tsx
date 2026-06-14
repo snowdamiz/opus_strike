@@ -183,6 +183,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
   const postureScaleYRef = useRef(postureScaleY);
   const bodyOpacityRef = useRef(isVeiled ? PHANTOM_VEIL_BODY_OPACITY : 1);
   const isVeiledRef = useRef(isVeiled);
+  const lookPitchRef = useRef(player.lookPitch);
   const walkDirectionRef = useRef<HeroWalkDirection>({ forward: 1, right: 0 });
   const initializedRef = useRef(false);
   const remoteEpochRef = useRef<number | null>(null);
@@ -287,6 +288,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       // Fallback to prop rotation if visualStore doesn't have data yet
       groupRef.current.rotation.y = player.lookYaw;
     }
+    lookPitchRef.current = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
 
     previousFramePosition.current.copy(currentPosition.current);
     if (!frameIsVeiled) return;
@@ -341,6 +343,8 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
           height={playerHeight}
           postureScaleY={postureScaleY}
           postureScaleYRef={postureScaleYRef}
+          lookPitch={player.lookPitch}
+          lookPitchRef={lookPitchRef}
           isBot={player.isBot}
           isMoving={initialIsMoving}
           isMovingRef={isMovingRef}

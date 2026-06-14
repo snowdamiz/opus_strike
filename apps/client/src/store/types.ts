@@ -174,6 +174,8 @@ export interface DireBallData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam?: Team | null;
@@ -186,6 +188,8 @@ export interface VoidRayData {
   id: string;
   startPosition: { x: number; y: number; z: number };
   direction: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -199,6 +203,8 @@ export interface RocketData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -208,6 +214,8 @@ export interface BombData {
   id: string;
   targetPosition: { x: number; y: number; z: number };
   interceptPosition?: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startPosition: { x: number; y: number; z: number };
   startTime: number;
   impactTime: number; // When the bomb lands
@@ -224,6 +232,8 @@ export interface ChronosPulseData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -239,6 +249,8 @@ export interface HookProjectileData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
@@ -253,6 +265,8 @@ export interface DragHookData {
   id: string;
   position: { x: number; y: number; z: number };
   velocity: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';

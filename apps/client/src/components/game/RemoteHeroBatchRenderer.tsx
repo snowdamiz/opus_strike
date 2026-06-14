@@ -31,6 +31,7 @@ import {
   applyPhantomShieldBodyPose,
   applyIdleBonePose,
   applyJumpBonePose,
+  applyLookPitchWaistBend,
   applySlideBonePose,
   applyWalkingBonePose,
   beginHeroBodyPoseTransition,
@@ -42,6 +43,7 @@ import {
   getJumpPose,
   getNormalizedWalkDirection,
   getPhantomShieldBodyPoseAmount,
+  HERO_LOOK_PITCH_WAIST_DAMPING,
   resetHeroBodyPoseTransitionRuntime,
   setBoneBasePose,
   type HeroBodyPoseRootTransform,
@@ -50,6 +52,7 @@ import {
 import {
   EMPTY_REMOTE_SOCKET_MARKERS,
   EMPTY_RIGGED_PARTS,
+  HERO_BONE_PARENTS,
   HERO_BONE_PIVOTS,
   HERO_PART_GEOMETRIES,
   getChildBonePosition,
@@ -158,6 +161,7 @@ interface RemoteHeroRuntime {
   remoteEpoch: number | null;
   initialized: boolean;
   renderYaw: number;
+  renderPitch: number;
   rootPosition: THREE.Vector3;
   rootPoseTransform: HeroBodyPoseRootTransform;
   yawQuaternion: THREE.Quaternion;
@@ -321,14 +325,14 @@ function createBoneRefs(): { bodyRoot: THREE.Group; bones: CompleteBoneRefs } {
     (Object.keys(HERO_BONE_PIVOTS) as HeroBoneName[]).map((bone) => [bone, new THREE.Group()])
   ) as CompleteBoneRefs;
 
-  bodyRoot.add(bones.aura, bones.hips, bones.leftLeg, bones.rightLeg, bones.torso);
-  bones.leftLeg.add(bones.leftKnee);
-  bones.leftKnee.add(bones.leftShin);
-  bones.rightLeg.add(bones.rightKnee);
-  bones.rightKnee.add(bones.rightShin);
-  bones.torso.add(bones.head, bones.leftArm, bones.rightArm);
-  bones.leftArm.add(bones.leftForearm);
-  bones.rightArm.add(bones.rightForearm);
+  for (const bone of Object.keys(HERO_BONE_PIVOTS) as HeroBoneName[]) {
+    const parent = HERO_BONE_PARENTS[bone];
+    if (parent) {
+      bones[parent].add(bones[bone]);
+    } else {
+      bodyRoot.add(bones[bone]);
+    }
+  }
 
   return { bodyRoot, bones };
 }
@@ -440,6 +444,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     remoteEpoch: null,
     initialized: false,
     renderYaw: player.lookYaw,
+    renderPitch: player.lookPitch,
     rootPosition,
     rootPoseTransform: {
       position: rootPosition,
@@ -520,16 +525,30 @@ function updateRemoteTransform(runtime: RemoteHeroRuntime, player: Player, delta
 
   const targetRot = visualState.playerRotations.get(player.id);
   const renderYaw = hasSampledTransform ? sampledTransform.lookYaw : targetRot ?? player.lookYaw;
+  const renderPitch = hasSampledTransform ? sampledTransform.lookPitch : player.lookPitch;
   if (hasSampledTransform && !snappedToSample) {
     runtime.renderYaw = lerpAngle(
       runtime.renderYaw,
       sampledTransform.lookYaw,
       smoothingFactor(REMOTE_SAMPLE_ROTATION_SMOOTHING, delta)
     );
+    runtime.renderPitch = THREE.MathUtils.damp(
+      runtime.renderPitch,
+      renderPitch,
+      HERO_LOOK_PITCH_WAIST_DAMPING,
+      delta
+    );
   } else if (hasSampledTransform) {
     runtime.renderYaw = sampledTransform.lookYaw;
+    runtime.renderPitch = renderPitch;
   } else {
     runtime.renderYaw = renderYaw;
+    runtime.renderPitch = THREE.MathUtils.damp(
+      runtime.renderPitch,
+      renderPitch,
+      HERO_LOOK_PITCH_WAIST_DAMPING,
+      delta
+    );
   }
 
   const visualHorizontalSpeed = delta > 0
@@ -821,6 +840,7 @@ function updateRemotePose(
     bones,
     frameDelta
   );
+  applyLookPitchWaistBend(bones, runtime.renderPitch);
 
   runtime.glowPulse =
     (0.5 + 0.5 * tertiary) * idleProfile.auraPulse * idleAmount +

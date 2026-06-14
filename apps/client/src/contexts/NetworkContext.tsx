@@ -112,6 +112,7 @@ interface NetworkContextType {
   setDevBotBrainEnabled: (enabled: boolean) => void;
   addGameBot: (heroId: HeroId, team: Team) => void;
   devBotSkill: (heroId: HeroId, team: Team, skillKey: string) => void;
+  devBotLook: (heroId: HeroId, team: Team, direction: 'up' | 'down') => void;
   selectTeam: (team: Team) => void;
   setReady: (ready: boolean) => void;
   matchStartGateKey: number | null;
@@ -1714,6 +1715,11 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     gameRoomRef.current?.send('devBotSkill', { heroId, team, skillKey });
   }, []);
 
+  const devBotLook = useCallback((heroId: HeroId, team: Team, direction: 'up' | 'down') => {
+    if (!config.isDev) return;
+    gameRoomRef.current?.send('devBotLook', { heroId, team, direction });
+  }, []);
+
   const selectTeam = useCallback((team: Team) => {
     loggers.network.debug('sending selectTeam', team);
     gameRoomRef.current?.send('selectTeam', { team });
@@ -1824,6 +1830,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setDevBotBrainEnabled,
       addGameBot,
       devBotSkill,
+      devBotLook,
       selectTeam,
       setReady,
       setLobbyObserver,

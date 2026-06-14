@@ -54,8 +54,21 @@ export type ServerMessage =
   | { type: 'devCommandError'; payload: { message: string } }
   | { type: 'abilityEffect'; payload: AbilityEffectEvent }
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
+  | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
   | { type: 'chronosAegisBroken'; payload: ChronosAegisBrokenEvent }
   | { type: 'damage'; payload: DamageEvent };
+
+export interface ChronosAegisDamagedEvent {
+  playerId: string;
+  sourceId: string | null;
+  damage: number;
+  damageType: string;
+  shieldHp: number;
+  shieldRatio: number;
+  position: Vec3;
+  direction: Vec3;
+  serverTime: number;
+}
 
 export interface ChronosAegisBrokenEvent {
   playerId: string;

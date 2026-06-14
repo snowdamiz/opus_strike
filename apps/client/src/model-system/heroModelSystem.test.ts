@@ -13,17 +13,22 @@ import {
   HERO_BODY_MANIFESTS,
 } from './heroBodyManifests';
 import {
+  HERO_BONE_PARENTS,
   HERO_BONE_PIVOTS,
   classifyHeroBone,
+  getBoneRestPosition,
   getChildBonePosition,
   groupRiggedParts,
 } from './heroRig';
 import {
   applyHeroBodyPoseTransition,
+  applyLookPitchWaistBend,
   beginHeroBodyPoseTransition,
   createHeroBodyPoseTransitionRuntime,
+  getHeroLookPitchWaistBend,
   getJumpPose,
   getNormalizedWalkDirection,
+  setBoneBasePose,
 } from './heroBodyPose';
 import { createViewmodelPoseRuntime, resetViewmodelPoseRuntime } from '../viewmodel/viewmodelPoseRuntime';
 import {
@@ -97,6 +102,7 @@ for (const heroId of heroIds) {
 
 const sampleParts: VoxelPart[] = [
   { material: 'armor', position: [0, 1.66, 0], scale: [0.2, 0.2, 0.2] },
+  { material: 'armor', position: [0, 0.76, 0.02], scale: [0.3, 0.2, 0.2] },
   { material: 'armor', position: [-0.2, 0.45, 0], scale: [0.1, 0.2, 0.1] },
   { material: 'armor', position: [0.62, 1.0, -0.1], scale: [0.1, 0.2, 0.1] },
   { material: 'mist', kind: 'cylinder', position: [0, 0.02, 0], scale: [0.5, 0.02, 0.5] },
@@ -104,22 +110,29 @@ const sampleParts: VoxelPart[] = [
 ];
 
 assert.equal(classifyHeroBone(sampleParts[0]), 'head');
-assert.equal(classifyHeroBone(sampleParts[1]), 'leftShin');
-assert.equal(classifyHeroBone(sampleParts[2]), 'rightArm');
-assert.equal(classifyHeroBone(sampleParts[3]), 'aura');
-assert.equal(classifyHeroBone(sampleParts[4]), 'rightForearm');
+assert.equal(classifyHeroBone(sampleParts[1]), 'hips');
+assert.equal(classifyHeroBone(sampleParts[2]), 'leftShin');
+assert.equal(classifyHeroBone(sampleParts[3]), 'rightArm');
+assert.equal(classifyHeroBone(sampleParts[4]), 'aura');
+assert.equal(classifyHeroBone(sampleParts[5]), 'rightForearm');
 
 const grouped = groupRiggedParts(sampleParts);
 assert.equal(grouped.head.length, 1);
+assert.equal(grouped.hips.length, 1);
 assert.equal(grouped.leftShin.length, 1);
 assert.equal(grouped.rightArm.length, 1);
 assert.equal(grouped.aura.length, 1);
-assert.equal(grouped.rightForearm[0].meshOffset[0], sampleParts[4].position[0] - HERO_BONE_PIVOTS.rightForearm[0]);
+assert.equal(grouped.rightForearm[0].meshOffset[0], sampleParts[5].position[0] - HERO_BONE_PIVOTS.rightForearm[0]);
 assert.deepEqual(getChildBonePosition('head', 'torso'), [
   HERO_BONE_PIVOTS.head[0] - HERO_BONE_PIVOTS.torso[0],
   HERO_BONE_PIVOTS.head[1] - HERO_BONE_PIVOTS.torso[1],
   HERO_BONE_PIVOTS.head[2] - HERO_BONE_PIVOTS.torso[2],
 ]);
+assert.equal(HERO_BONE_PARENTS.torso, 'hips');
+assert.equal(HERO_BONE_PARENTS.leftLeg, 'hips');
+assert.equal(HERO_BONE_PARENTS.rightLeg, 'hips');
+assert.deepEqual(getBoneRestPosition('torso'), getChildBonePosition('torso', 'hips'));
+assert.deepEqual(getBoneRestPosition('leftLeg'), getChildBonePosition('leftLeg', 'hips'));
 
 assert.deepEqual(getNormalizedWalkDirection({ forward: 0, right: 0 }), { forward: 1, right: 0 });
 assert.deepEqual(getNormalizedWalkDirection({ forward: 3, right: 4 }), { forward: 0.6, right: 0.8 });
@@ -152,6 +165,90 @@ assert.equal(root.scale.x, 2);
 assert.equal(torso.position.y, 3);
 assert.equal(torso.scale.y, 2);
 assert.ok(Math.abs(leftArm.rotation.x) > 0 && Math.abs(leftArm.rotation.x) < Math.PI);
+
+const jointRoot = new THREE.Group();
+const jointHips = new THREE.Group();
+const jointTorso = new THREE.Group();
+const jointLeftLeg = new THREE.Group();
+const jointRightLeg = new THREE.Group();
+const jointLeftKnee = new THREE.Group();
+const jointLeftShin = new THREE.Group();
+const jointRightKnee = new THREE.Group();
+const jointRightShin = new THREE.Group();
+const torsoWaistAnchorLocal = new THREE.Vector3(
+  HERO_BONE_PIVOTS.hips[0] - HERO_BONE_PIVOTS.torso[0],
+  HERO_BONE_PIVOTS.hips[1] - HERO_BONE_PIVOTS.torso[1],
+  HERO_BONE_PIVOTS.hips[2] - HERO_BONE_PIVOTS.torso[2]
+);
+const jointBones: HeroBoneRefs = {
+  hips: jointHips,
+  torso: jointTorso,
+  leftLeg: jointLeftLeg,
+  rightLeg: jointRightLeg,
+  leftKnee: jointLeftKnee,
+  leftShin: jointLeftShin,
+  rightKnee: jointRightKnee,
+  rightShin: jointRightShin,
+};
+jointRoot.add(jointHips);
+jointHips.add(jointTorso, jointLeftLeg, jointRightLeg);
+jointLeftLeg.add(jointLeftKnee);
+jointLeftKnee.add(jointLeftShin);
+jointRightLeg.add(jointRightKnee);
+jointRightKnee.add(jointRightShin);
+setBoneBasePose(jointBones);
+assert.deepEqual(jointTorso.position.toArray(), getBoneRestPosition('torso'));
+assert.deepEqual(jointLeftLeg.position.toArray(), getBoneRestPosition('leftLeg'));
+assert.deepEqual(jointLeftKnee.position.toArray(), getBoneRestPosition('leftKnee'));
+
+assert.equal(jointTorso.parent, jointHips);
+assert.equal(jointLeftLeg.parent, jointHips);
+assert.equal(jointRightLeg.parent, jointHips);
+assert.equal(jointLeftKnee.parent, jointLeftLeg);
+assert.equal(jointLeftShin.parent, jointLeftKnee);
+
+const kneeBeforeHipRotation = new THREE.Vector3();
+const kneeAfterHipRotation = new THREE.Vector3();
+jointRoot.updateMatrixWorld(true);
+jointLeftKnee.getWorldPosition(kneeBeforeHipRotation);
+jointHips.rotation.x = 0.24;
+jointRoot.updateMatrixWorld(true);
+jointLeftKnee.getWorldPosition(kneeAfterHipRotation);
+assert.ok(kneeAfterHipRotation.distanceToSquared(kneeBeforeHipRotation) > 0.000001);
+
+setBoneBasePose(jointBones);
+const waistAnchorBeforeLookPitch = new THREE.Vector3();
+const waistAnchorAfterLookPitch = new THREE.Vector3();
+jointRoot.updateMatrixWorld(true);
+jointTorso.localToWorld(waistAnchorBeforeLookPitch.copy(torsoWaistAnchorLocal));
+applyLookPitchWaistBend(jointBones, 0.82);
+jointRoot.updateMatrixWorld(true);
+jointTorso.localToWorld(waistAnchorAfterLookPitch.copy(torsoWaistAnchorLocal));
+assert.ok(waistAnchorAfterLookPitch.distanceTo(waistAnchorBeforeLookPitch) < 0.000001);
+
+const lookPitchTorso = new THREE.Group();
+const lookPitchHead = new THREE.Group();
+const lookPitchHips = new THREE.Group();
+const lookPitchBones: HeroBoneRefs = {
+  torso: lookPitchTorso,
+  head: lookPitchHead,
+  hips: lookPitchHips,
+};
+applyLookPitchWaistBend(lookPitchBones, 0.82);
+assert.ok(lookPitchTorso.rotation.x > 0);
+assert.ok(lookPitchHead.rotation.x > 0);
+assert.equal(lookPitchHips.rotation.x, 0);
+
+const upwardTorsoBend = lookPitchTorso.rotation.x;
+lookPitchTorso.rotation.set(0, 0, 0);
+lookPitchHead.rotation.set(0, 0, 0);
+lookPitchHips.rotation.set(0, 0, 0);
+applyLookPitchWaistBend(lookPitchBones, -0.82);
+assert.ok(lookPitchTorso.rotation.x < 0);
+assert.equal(Math.abs(lookPitchTorso.rotation.x), upwardTorsoBend);
+assert.equal(getHeroLookPitchWaistBend(Number.NaN), 0);
+assert.equal(getHeroLookPitchWaistBend(0.01), 0);
+assert.equal(Math.abs(getHeroLookPitchWaistBend(10)), THREE.MathUtils.degToRad(38));
 
 const runtime = createViewmodelPoseRuntime('phantom');
 setPhantomPrimaryHeld(true, 1000, runtime);

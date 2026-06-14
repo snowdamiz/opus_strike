@@ -34,6 +34,21 @@ import {
   type ProjectileSlice,
 } from './slices/projectiles';
 
+export type ObserverFlySpeedPreset = 'low' | 'med' | 'high';
+
+export interface ObserverFlySpeed {
+  base: number;
+  sprint: number;
+}
+
+export const OBSERVER_FLY_SPEED_PRESETS = {
+  low: { base: 6, sprint: 12 },
+  med: { base: 12, sprint: 23 },
+  high: { base: 18, sprint: 34 },
+} as const satisfies Record<ObserverFlySpeedPreset, ObserverFlySpeed>;
+
+const DEFAULT_OBSERVER_FLY_SPEED_PRESET: ObserverFlySpeedPreset = 'high';
+
 // Re-export all types for backwards compatibility
 export type {
   LobbyPlayer,
@@ -116,6 +131,7 @@ interface CoreState {
   localPlayer: Player | null;
   playerPings: Map<string, number | null>;
   isObserverMode: boolean;
+  observerFlySpeedPreset: ObserverFlySpeedPreset;
 
   // Timing
   roundTimeRemaining: number;
@@ -163,6 +179,7 @@ interface CoreActions {
   updatePlayer: (playerId: string, player: Player) => void;
   removePlayer: (playerId: string) => void;
   setPlayerPings: (message: PlayerPingsMessage) => void;
+  setObserverFlySpeedPreset: (preset: ObserverFlySpeedPreset) => void;
   addPendingInput: (input: PlayerInput) => void;
   clearProcessedInputs: (tick: number) => void;
 
@@ -259,6 +276,7 @@ const coreInitialState: CoreState = {
   localPlayer: null,
   playerPings: new Map(),
   isObserverMode: false,
+  observerFlySpeedPreset: DEFAULT_OBSERVER_FLY_SPEED_PRESET,
   roundTimeRemaining: 0,
   phaseEndTime: null,
   pendingInputs: [],
@@ -587,6 +605,10 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
 
   setObserverMode: (enabled) => set((state) => (
     state.isObserverMode === enabled ? state : { isObserverMode: enabled }
+  )),
+
+  setObserverFlySpeedPreset: (preset) => set((state) => (
+    state.observerFlySpeedPreset === preset ? state : { observerFlySpeedPreset: preset }
   )),
 
   setMapVoteState: (options, votes, phaseEndTime, selectedOptionId = null) => set({

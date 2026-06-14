@@ -17,6 +17,7 @@ import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { playSharedSound } from '../../../hooks/useAudio';
 import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from './aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
@@ -42,6 +43,7 @@ interface ChronosPulseRuntimeSlot {
   position: MutableVec3;
   velocity: MutableVec3;
   direction: MutableVec3;
+  impactPosition: MutableVec3 | null;
   speed: number;
   expiresAtMs: number;
   radiusScale: number;
@@ -158,6 +160,7 @@ class ChronosPulseRuntimePool {
       position: { ...ZERO_VEC3 },
       velocity: { ...ZERO_VEC3 },
       direction: { x: 0, y: 0, z: -1 },
+      impactPosition: null,
       speed: 0,
       expiresAtMs: 0,
       radiusScale: 1,
@@ -183,6 +186,9 @@ class ChronosPulseRuntimePool {
     slot.velocity.x = pulse.velocity.x;
     slot.velocity.y = pulse.velocity.y;
     slot.velocity.z = pulse.velocity.z;
+    slot.impactPosition = pulse.interceptedByChronosAegis && pulse.impactPosition
+      ? { ...pulse.impactPosition }
+      : null;
     slot.speed = normalizeInto(slot.velocity, slot.direction);
     slot.expiresAtMs = expiresAtMs;
     slot.supercharged = Boolean(pulse.supercharged);
@@ -217,6 +223,7 @@ class ChronosPulseRuntimePool {
     slot.active = false;
     slot.id = '';
     slot.ownerId = '';
+    slot.impactPosition = null;
     slot.supercharged = false;
     this.activeCount = Math.max(0, this.activeCount - 1);
     this.freeList.push(index);
@@ -383,6 +390,13 @@ export function ChronosPulsesManager() {
       const collisionRadius = CHRONOS_PULSE_COLLISION_RADIUS * slot.radiusScale;
       if (moveDistance > 0.001) {
         const collisionDistance = moveDistance + collisionRadius;
+        const authoritativeHit = getAuthoritativeProjectileImpactHit(
+          slot.position,
+          slot.direction,
+          slot.impactPosition,
+          collisionDistance,
+          collisionRadius
+        );
         const aegisHit = getFirstChronosAegisVisualHit(
           slot.position,
           slot.direction,
@@ -406,13 +420,16 @@ export function ChronosPulsesManager() {
         const hit = aegisHit && (!terrainHit || aegisHit.distance <= terrainHit.distance)
           ? aegisHit
           : terrainHit;
-        if (hit && hit.distance <= moveDistance + collisionRadius) {
-          triggerTerrainImpact('chronos_pulse', hit.point, {
-            normal: hit.normal,
+        const resolvedHit = authoritativeHit && (!hit || authoritativeHit.distance <= hit.distance)
+          ? authoritativeHit
+          : hit;
+        if (resolvedHit && resolvedHit.distance <= moveDistance + collisionRadius) {
+          triggerTerrainImpact('chronos_pulse', resolvedHit.point, {
+            normal: resolvedHit.normal,
             direction: slot.direction,
             scale: 0.72 * slot.radiusScale,
           });
-          playChronosImpact(hit.point, slot.supercharged);
+          playChronosImpact(resolvedHit.point, slot.supercharged);
           removals.push(slot.id);
           pool.deactivate(slotIndex);
           return;

@@ -13,7 +13,7 @@ import {
   WALK_LEG_LIFT,
   WALK_LEG_STRIDE,
 } from './heroBodyManifests';
-import { getChildBonePosition, HERO_BONE_PIVOTS } from './heroRig';
+import { getBoneRestPosition, HERO_BONE_PIVOTS } from './heroRig';
 import type {
   HeroBoneRefs,
   HeroBoneName,
@@ -28,6 +28,19 @@ const PHANTOM_SHIELD_BODY_POSE_ATTACK_MS = 120;
 const PHANTOM_SHIELD_BODY_POSE_HOLD_MS = 340;
 const PHANTOM_SHIELD_BODY_POSE_FADE_MS = 740;
 const HERO_BODY_POSE_BLEND_DURATION_SECONDS = 0.14;
+const HERO_LOOK_PITCH_DEADZONE = 0.035;
+const HERO_LOOK_PITCH_WAIST_SCALE = 0.55;
+const HERO_LOOK_PITCH_MAX_WAIST_BEND = THREE.MathUtils.degToRad(38);
+const HERO_LOOK_PITCH_HEAD_BLEND = 0.28;
+const HERO_TORSO_WAIST_ANCHOR = new THREE.Vector3(
+  HERO_BONE_PIVOTS.hips[0] - HERO_BONE_PIVOTS.torso[0],
+  HERO_BONE_PIVOTS.hips[1] - HERO_BONE_PIVOTS.torso[1],
+  HERO_BONE_PIVOTS.hips[2] - HERO_BONE_PIVOTS.torso[2]
+);
+const HERO_TORSO_WAIST_ANCHOR_BEFORE = new THREE.Vector3();
+const HERO_TORSO_WAIST_ANCHOR_AFTER = new THREE.Vector3();
+
+export const HERO_LOOK_PITCH_WAIST_DAMPING = 14;
 
 export interface HeroBodyPoseRootTransform {
   position: THREE.Vector3;
@@ -217,6 +230,44 @@ export function smoothPulse(phase: number, start: number, peak: number, end: num
   return 1 - easeInOutSine((phase - peak) / (end - peak));
 }
 
+export function getHeroLookPitchWaistBend(lookPitch: number): number {
+  if (!Number.isFinite(lookPitch)) return 0;
+
+  const absPitch = Math.abs(lookPitch);
+  if (absPitch <= HERO_LOOK_PITCH_DEADZONE) return 0;
+
+  const softenedPitch = Math.sign(lookPitch) * (absPitch - HERO_LOOK_PITCH_DEADZONE);
+  return THREE.MathUtils.clamp(
+    softenedPitch * HERO_LOOK_PITCH_WAIST_SCALE,
+    -HERO_LOOK_PITCH_MAX_WAIST_BEND,
+    HERO_LOOK_PITCH_MAX_WAIST_BEND
+  );
+}
+
+export function applyLookPitchWaistBend(bones: HeroBoneRefs, lookPitch: number): void {
+  const waistBend = getHeroLookPitchWaistBend(lookPitch);
+  if (Math.abs(waistBend) <= 0.001) return;
+
+  if (bones.torso) {
+    HERO_TORSO_WAIST_ANCHOR_BEFORE
+      .copy(HERO_TORSO_WAIST_ANCHOR)
+      .multiply(bones.torso.scale)
+      .applyEuler(bones.torso.rotation);
+    bones.torso.rotation.x += waistBend;
+    HERO_TORSO_WAIST_ANCHOR_AFTER
+      .copy(HERO_TORSO_WAIST_ANCHOR)
+      .multiply(bones.torso.scale)
+      .applyEuler(bones.torso.rotation);
+    bones.torso.position.add(
+      HERO_TORSO_WAIST_ANCHOR_BEFORE.sub(HERO_TORSO_WAIST_ANCHOR_AFTER)
+    );
+  }
+
+  if (bones.head) {
+    bones.head.rotation.x += waistBend * HERO_LOOK_PITCH_HEAD_BLEND;
+  }
+}
+
 export function getPhantomShieldBodyPoseAmount(startedAtMs: number | null | undefined, nowMs: number): number {
   if (!startedAtMs || !Number.isFinite(startedAtMs)) return 0;
 
@@ -254,24 +305,10 @@ export function getJumpPose(time: number): HeroJumpPose {
 
 
 export function setBoneBasePose(bones: HeroBoneRefs): void {
-  bones.aura?.position.set(...HERO_BONE_PIVOTS.aura);
-  bones.hips?.position.set(...HERO_BONE_PIVOTS.hips);
-  bones.torso?.position.set(...HERO_BONE_PIVOTS.torso);
-  bones.leftLeg?.position.set(...HERO_BONE_PIVOTS.leftLeg);
-  bones.rightLeg?.position.set(...HERO_BONE_PIVOTS.rightLeg);
-  bones.leftKnee?.position.set(...getChildBonePosition('leftKnee', 'leftLeg'));
-  bones.rightKnee?.position.set(...getChildBonePosition('rightKnee', 'rightLeg'));
-  bones.leftShin?.position.set(...getChildBonePosition('leftShin', 'leftKnee'));
-  bones.rightShin?.position.set(...getChildBonePosition('rightShin', 'rightKnee'));
-  bones.head?.position.set(...getChildBonePosition('head', 'torso'));
-  bones.leftArm?.position.set(...getChildBonePosition('leftArm', 'torso'));
-  bones.rightArm?.position.set(...getChildBonePosition('rightArm', 'torso'));
-  bones.leftForearm?.position.set(...getChildBonePosition('leftForearm', 'leftArm'));
-  bones.rightForearm?.position.set(...getChildBonePosition('rightForearm', 'rightArm'));
-
   (Object.keys(HERO_BONE_PIVOTS) as HeroBoneName[]).forEach((bone) => {
     const group = bones[bone];
     if (!group) return;
+    group.position.set(...getBoneRestPosition(bone));
     group.rotation.set(0, 0, 0);
     group.scale.set(1, 1, 1);
   });

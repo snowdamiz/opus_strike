@@ -40,9 +40,13 @@ const processPatterns = [
     label: 'dev:all runner',
     pattern: 'concurrently([^[:space:]]*)?[[:space:]]+-n[[:space:]]+db,redis,server,client',
   },
+  {
+    label: 'video studio',
+    pattern: 'remotion([^[:space:]]*)?[[:space:]]+studio',
+  },
 ];
 
-const devPorts = [3000, 2567, 2568];
+const devPorts = [3000, 2567, 2568, 3030, 3031];
 const servicePorts = [5432, 55433, 6379, 7880, 7881];
 const watchedPorts = [...new Set([...devPorts, ...servicePorts])];
 

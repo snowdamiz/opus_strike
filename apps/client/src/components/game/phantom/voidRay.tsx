@@ -7,6 +7,7 @@ import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 
 interface VoidRayProps {
   id: string;
@@ -15,6 +16,8 @@ interface VoidRayProps {
   startTime: number;
   ownerId: string;
   ownerTeam: 'red' | 'blue';
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
 }
 
 // ============================================================================
@@ -488,7 +491,16 @@ export function appendVoidRayGpuPrewarmObjects(target: THREE.Object3D): void {
   target.add(group);
 }
 
-export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId, ownerTeam }: VoidRayProps) => {
+export const VoidRay = React.memo(({
+  id,
+  startPosition,
+  direction,
+  startTime,
+  ownerId,
+  ownerTeam,
+  impactPosition,
+  interceptedByChronosAegis,
+}: VoidRayProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const beamRef = useRef<THREE.Mesh>(null);
   const coreRef = useRef<THREE.Mesh>(null);
@@ -630,6 +642,15 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     
     // Calculate beam length
     let targetLength = Math.min(RAY_LENGTH, elapsed * RAY_SPEED) * envelope.lengthScale;
+    const authoritativeHit = interceptedByChronosAegis
+      ? getAuthoritativeProjectileImpactHit(
+        startPosition,
+        direction,
+        impactPosition,
+        targetLength,
+        RAY_RADIUS
+      )
+      : null;
     
     // Skill/terrain collision
     const aegisHit = getFirstChronosAegisVisualHit(
@@ -654,6 +675,9 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     }
     if (aegisHit && aegisHit.distance < targetLength) {
       targetLength = aegisHit.distance;
+    }
+    if (authoritativeHit && authoritativeHit.distance < targetLength) {
+      targetLength = authoritativeHit.distance;
     }
 
     currentLengthRef.current = targetLength;
@@ -1017,7 +1041,11 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     prev.direction.z === next.direction.z &&
     prev.startTime === next.startTime &&
     prev.ownerId === next.ownerId &&
-    prev.ownerTeam === next.ownerTeam
+    prev.ownerTeam === next.ownerTeam &&
+    prev.impactPosition?.x === next.impactPosition?.x &&
+    prev.impactPosition?.y === next.impactPosition?.y &&
+    prev.impactPosition?.z === next.impactPosition?.z &&
+    prev.interceptedByChronosAegis === next.interceptedByChronosAegis
   );
 });
 
@@ -1038,6 +1066,8 @@ export function VoidRays({ rays }: VoidRaysProps) {
           startTime={ray.startTime}
           ownerId={ray.ownerId}
           ownerTeam={ray.ownerTeam}
+          impactPosition={ray.impactPosition}
+          interceptedByChronosAegis={ray.interceptedByChronosAegis}
         />
       ))}
     </>

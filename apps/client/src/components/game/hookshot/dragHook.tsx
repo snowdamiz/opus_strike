@@ -8,6 +8,7 @@ import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -171,6 +172,15 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
       }
       
       // Skill/terrain collision - if hit, start retracting
+      const authoritativeHit = hook.interceptedByChronosAegis
+        ? getAuthoritativeProjectileImpactHit(
+          previousPosition,
+          hookDirection,
+          hook.impactPosition,
+          moveDistance + DRAG_HOOK_COLLISION_RADIUS,
+          DRAG_HOOK_COLLISION_RADIUS
+        )
+        : null;
       const aegisHit = getFirstChronosAegisVisualHit(
         previousPosition,
         hookDirection,
@@ -188,12 +198,16 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
       const hit = aegisHit && (!terrainHit?.hit || aegisHit.distance <= terrainHit.distance)
         ? { hit: true, point: aegisHit.point, normal: aegisHit.normal }
         : terrainHit;
-      if (hit?.hit) {
-        curPos.x = hit.point.x;
-        curPos.y = hit.point.y;
-        curPos.z = hit.point.z;
-        triggerTerrainImpact('hookshot_drag_hook', hit.point, {
-          normal: hit.normal,
+      const hitDistance = hit?.hit && 'distance' in hit ? hit.distance : Number.POSITIVE_INFINITY;
+      const resolvedHit = authoritativeHit && (!hit?.hit || authoritativeHit.distance <= hitDistance)
+        ? { hit: true, point: authoritativeHit.point, normal: authoritativeHit.normal }
+        : hit;
+      if (resolvedHit?.hit) {
+        curPos.x = resolvedHit.point.x;
+        curPos.y = resolvedHit.point.y;
+        curPos.z = resolvedHit.point.z;
+        triggerTerrainImpact('hookshot_drag_hook', resolvedHit.point, {
+          normal: resolvedHit.normal,
           direction: { x: dirX, y: dirY, z: dirZ },
         });
         hookStateRef.current = 'retracting';

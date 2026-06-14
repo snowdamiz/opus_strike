@@ -50,6 +50,8 @@ interface RocketRuntimeSlot {
   position: MutableVec3;
   velocity: MutableVec3;
   direction: MutableVec3;
+  impactPosition: MutableVec3 | null;
+  interceptedByChronosAegis: boolean;
   speed: number;
   expiresAtMs: number;
 }
@@ -119,6 +121,8 @@ class RocketRuntimePool {
       position: { ...ZERO_VEC3 },
       velocity: { ...ZERO_VEC3 },
       direction: { x: 0, y: 0, z: -1 },
+      impactPosition: null,
+      interceptedByChronosAegis: false,
       speed: 0,
       expiresAtMs: 0,
     }));
@@ -142,6 +146,10 @@ class RocketRuntimePool {
     slot.velocity.x = rocket.velocity.x;
     slot.velocity.y = rocket.velocity.y;
     slot.velocity.z = rocket.velocity.z;
+    slot.impactPosition = rocket.impactPosition
+      ? { ...rocket.impactPosition }
+      : null;
+    slot.interceptedByChronosAegis = Boolean(rocket.interceptedByChronosAegis);
     slot.speed = normalizeInto(slot.velocity, slot.direction);
     slot.expiresAtMs = expiresAtMs;
 
@@ -172,6 +180,8 @@ class RocketRuntimePool {
     slot.active = false;
     slot.id = '';
     slot.ownerId = '';
+    slot.impactPosition = null;
+    slot.interceptedByChronosAegis = false;
     this.activeCount = Math.max(0, this.activeCount - 1);
     this.freeList.push(index);
   }
@@ -231,6 +241,37 @@ function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number):
   if (count > 0) {
     mesh.instanceMatrix.needsUpdate = true;
   }
+}
+
+function getAuthoritativeRocketImpactHit(
+  slot: RocketRuntimeSlot,
+  collisionDistance: number
+): { point: MutableVec3; normal: MutableVec3; distance: number } | null {
+  if (!slot.impactPosition) return null;
+
+  const toImpact = {
+    x: slot.impactPosition.x - slot.position.x,
+    y: slot.impactPosition.y - slot.position.y,
+    z: slot.impactPosition.z - slot.position.z,
+  };
+  const forwardDistance =
+    toImpact.x * slot.direction.x +
+    toImpact.y * slot.direction.y +
+    toImpact.z * slot.direction.z;
+
+  if (forwardDistance < -PROJECTILE_RADIUS || forwardDistance > collisionDistance) {
+    return null;
+  }
+
+  return {
+    point: slot.impactPosition,
+    normal: {
+      x: -slot.direction.x,
+      y: -slot.direction.y,
+      z: -slot.direction.z,
+    },
+    distance: Math.max(0, forwardDistance),
+  };
 }
 
 export function prewarmRocketResources(): void {
@@ -328,6 +369,7 @@ export function RocketsManager() {
       const moveDistance = slot.speed * delta;
       if (moveDistance > 0.001) {
         const collisionDistance = moveDistance + PROJECTILE_RADIUS;
+        const authoritativeHit = getAuthoritativeRocketImpactHit(slot, collisionDistance);
         const aegisHit = getFirstChronosAegisVisualHit(
           slot.position,
           slot.direction,
@@ -342,10 +384,14 @@ export function RocketsManager() {
             feature: 'projectile:blazeRocket',
           })
           : null;
-        const hit = aegisHit && (!terrainHit || aegisHit.distance <= terrainHit.distance)
-          ? aegisHit
-          : terrainHit;
-        if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
+        let hit = authoritativeHit;
+        if (aegisHit && (!hit || aegisHit.distance <= hit.distance)) {
+          hit = aegisHit;
+        }
+        if (terrainHit && (!hit || terrainHit.distance <= hit.distance)) {
+          hit = terrainHit;
+        }
+        if (hit && hit.distance <= collisionDistance) {
           triggerTerrainImpact('blaze_rocket', hit.point, {
             normal: hit.normal,
             direction: slot.direction,

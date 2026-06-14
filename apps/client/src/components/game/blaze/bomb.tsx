@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import React from 'react';
 import { getBlazeMeteorPath } from '@voxel-strike/shared';
 import { useGameStore, type BombData } from '../../../store/gameStore';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
@@ -51,6 +52,7 @@ import {
 const EXPLOSION_DURATION = 1500; // Longer for more dramatic effect
 const METEOR_TRAIL_BACK_OFFSET = 3.6;
 const METEOR_WAKE_BACK_OFFSET = 7.5;
+const METEOR_AEGIS_VISUAL_COLLISION_RADIUS = 0.65;
 const METEOR_BODY_FORWARD = new THREE.Vector3(0, -1, 0);
 const METEOR_TRAIL_FORWARD = new THREE.Vector3(0, 1, 0);
 
@@ -111,14 +113,40 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       sharedPath.impactPosition.y,
       sharedPath.impactPosition.z
     );
-    const intercepted = Boolean(bomb.interceptPosition);
-    const impactPosition = bomb.interceptPosition
+    const hasServerInterceptionFlag = bomb.interceptedByChronosAegis !== undefined;
+    const explicitShieldImpactPosition = bomb.interceptedByChronosAegis
+      ? bomb.impactPosition ?? bomb.interceptPosition
+      : undefined;
+    const visualAegisHit = explicitShieldImpactPosition || hasServerInterceptionFlag
+      ? null
+      : getFirstChronosAegisVisualHit(
+        sharedPath.entryPosition,
+        sharedPath.travelDirection,
+        sharedPath.distance,
+        bomb.ownerTeam,
+        bomb.ownerId,
+        METEOR_AEGIS_VISUAL_COLLISION_RADIUS
+      );
+    const shieldImpactPosition = explicitShieldImpactPosition ?? visualAegisHit?.point;
+    const intercepted = Boolean(shieldImpactPosition);
+    const impactPosition = shieldImpactPosition
       ? new THREE.Vector3(
-        bomb.interceptPosition.x,
-        bomb.interceptPosition.y,
-        bomb.interceptPosition.z
+        shieldImpactPosition.x,
+        shieldImpactPosition.y,
+        shieldImpactPosition.z
       )
       : groundImpactPosition;
+    const visualFallDurationMs = visualAegisHit
+      ? Math.max(
+        60,
+        Math.round(
+          Math.max(60, bomb.impactTime - bomb.startTime) *
+          Math.sqrt(visualAegisHit.distance / Math.max(0.0001, sharedPath.distance))
+        )
+      )
+      : Math.max(60, bomb.impactTime - bomb.startTime);
+    impactFrameTimeRef.current = startFrameTimeRef.current + visualFallDurationMs;
+    fallDurationRef.current = visualFallDurationMs;
 
     const travelDirection = impactPosition.clone().sub(entryPosition);
     if (travelDirection.lengthSq() < 0.0001) {
@@ -166,6 +194,11 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
     bomb.interceptPosition?.x,
     bomb.interceptPosition?.y,
     bomb.interceptPosition?.z,
+    bomb.impactPosition?.x,
+    bomb.impactPosition?.y,
+    bomb.impactPosition?.z,
+    bomb.interceptedByChronosAegis,
+    bomb.impactTime,
     bomb.startPosition.x,
     bomb.startPosition.y,
     bomb.startPosition.z,

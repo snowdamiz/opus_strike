@@ -363,6 +363,8 @@ interface PhantomCastPayload {
   position: PlainVec3;
   startPosition?: PlainVec3;
   targetPosition?: PlainVec3;
+  impactPosition?: PlainVec3;
+  interceptedByChronosAegis?: boolean;
   aimDirection?: PlainVec3;
   velocity?: PlainVec3;
   maxDistance?: number;
@@ -566,6 +568,11 @@ interface ChronosAegisSkillHit {
   distance: number;
 }
 
+interface SkillImpactHint {
+  impactPosition?: PlainVec3;
+  interceptedByChronosAegis?: boolean;
+}
+
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
@@ -587,14 +594,25 @@ type PlayerPressState = {
 };
 type ChronosLifelineMode = 'allies' | 'self';
 type DevBotSkillSlot = 'primary' | 'secondary' | 'ability1' | 'ability2' | 'ultimate';
+type DevBotLookDirection = 'up' | 'down';
 interface DevBotSkillOverride {
   slot: DevBotSkillSlot;
   skillKey: string;
   expiresAt: number;
 }
+interface DevBotLookOverride {
+  direction: DevBotLookDirection;
+  pitch: number;
+  expiresAt: number;
+}
 
 const playerPressState = new Map<string, PlayerPressState>();
 const DEV_BOT_SKILL_HOLD_MS = 10_000;
+const DEV_BOT_LOOK_HOLD_MS = 10_000;
+const DEV_BOT_LOOK_PITCH: Record<DevBotLookDirection, number> = {
+  up: Math.PI / 2,
+  down: -Math.PI / 2,
+};
 const DEV_BOT_SKILL_ALIASES: Record<string, { slot: DevBotSkillSlot; skillKey: string }> = {
   lmb: { slot: 'primary', skillKey: 'lmb' },
   m1: { slot: 'primary', skillKey: 'lmb' },
@@ -702,6 +720,11 @@ function resolveDevBotSkillOverride(skillKey: string): Omit<DevBotSkillOverride,
   return DEV_BOT_SKILL_ALIASES[keyWithoutDomPrefix] ?? null;
 }
 
+function resolveDevBotLookDirection(direction: string): DevBotLookDirection | null {
+  const normalized = direction.trim().toLowerCase();
+  return normalized === 'up' || normalized === 'down' ? normalized : null;
+}
+
 export class GameRoom extends Room<GameState> {
   maxClients = DEFAULT_GAME_CONFIG.maxPlayers;
 
@@ -747,6 +770,7 @@ export class GameRoom extends Room<GameState> {
   private devBotsRooted = false;
   private devBotBrainEnabled = true;
   private devBotSkillOverrides: Map<string, DevBotSkillOverride> = new Map();
+  private devBotLookOverrides: Map<string, DevBotLookOverride> = new Map();
   private mapManifest: VoxelMapManifest | null = null;
   private botRouteGraph: BotRouteGraphAdapter | null = null;
   private botTeamTactics: BotTeamTacticsByTeam | null = null;
@@ -1182,6 +1206,17 @@ export class GameRoom extends Room<GameState> {
         this.handleDevBotSkill(client, { heroId: data.heroId, team: data.team, skillKey });
       });
 
+      this.onMessage('devBotLook', (client, data: unknown) => {
+        if (!this.rateLimiter.consume(client.sessionId, 'devBotLook', GAME_MESSAGE_RATE_LIMITS.devCommand)) {
+          this.recordRateLimitDrop(client.sessionId, 'devBotLook');
+          return;
+        }
+        if (!isRecord(data) || !isHeroId(data.heroId) || !isTeam(data.team)) return;
+        const direction = sanitizeShortText(data.direction, 12);
+        if (!direction) return;
+        this.handleDevBotLook(client, { heroId: data.heroId, team: data.team, direction });
+      });
+
     }
   }
 
@@ -1430,6 +1465,7 @@ export class GameRoom extends Room<GameState> {
     this.phantomPrimaryLaunchSide.delete(playerId);
     this.hookshotPrimaryLaunchSide.delete(playerId);
     this.devBotSkillOverrides.delete(playerId);
+    this.devBotLookOverrides.delete(playerId);
     this.removeHookshotTrapsForOwner(playerId);
     this.hookshotGrapples.delete(playerId);
     this.blazeBombDropConsumedForHold.delete(playerId);
@@ -2606,6 +2642,48 @@ export class GameRoom extends Room<GameState> {
         targetPosition: canKnowTarget || isParticipant ? payload.targetPosition : undefined,
         sourceHeroId: canKnowSource || isParticipant ? payload.sourceHeroId : null,
         targetHeroId: canKnowTarget || isParticipant ? payload.targetHeroId : null,
+      });
+    }
+  }
+
+  private broadcastChronosAegisDamaged(
+    blocker: Player,
+    source: Player | null,
+    payload: {
+      playerId: string;
+      sourceId: string | null;
+      damage: number;
+      damageType: string;
+      shieldHp: number;
+      shieldRatio: number;
+      position: PlainVec3;
+      direction: PlainVec3;
+      serverTime: number;
+    }
+  ): void {
+    const now = this.state.serverTime || Date.now();
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      const blockerInterest = recipient ? this.getRecipientInterest(recipient, blocker, now) : undefined;
+      const sourceInterest = source && recipient ? this.getRecipientInterest(recipient, source, now) : undefined;
+      const canKnowBlocker = this.shouldSendExactEnemyState(recipient, blocker.id, blocker, now, blockerInterest);
+      const canKnowSource = source
+        ? this.shouldSendExactEnemyState(recipient, source.id, source, now, sourceInterest)
+        : true;
+      const isParticipant = recipient?.id === blocker.id || (source && recipient?.id === source.id);
+
+      if (!isParticipant && !canKnowBlocker) continue;
+
+      this.sendTracked(client, 'chronosAegisDamaged', {
+        playerId: payload.playerId,
+        sourceId: canKnowSource || isParticipant ? payload.sourceId : null,
+        damage: payload.damage,
+        damageType: payload.damageType,
+        shieldHp: payload.shieldHp,
+        shieldRatio: payload.shieldRatio,
+        position: payload.position,
+        direction: payload.direction,
+        serverTime: payload.serverTime,
       });
     }
   }
@@ -5259,7 +5337,7 @@ export class GameRoom extends Room<GameState> {
     impactPosition: PlainVec3;
     aimDirection: PlainVec3;
     impactTime: number;
-    aegisBlocker?: Player;
+    aegisHit?: ChronosAegisSkillHit;
   } {
     const castId = this.nextBlazeCastId(player.id, 'blaze_rocket', this.blazeRocketIdCounter++);
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
@@ -5298,14 +5376,19 @@ export class GameRoom extends Room<GameState> {
       impactPosition,
       aimDirection,
       impactTime: now + travelMs,
-      aegisBlocker: aegisHit?.blocker,
+      aegisHit: aegisHit ?? undefined,
     };
   }
 
   private fireBlazeRocket(player: Player, attack: AttackConfig, now: number): void {
     const rocket = this.resolveBlazeRocketCast(player, attack, now);
-    if (rocket.aegisBlocker) {
-      this.absorbDamageWithChronosAegis(rocket.aegisBlocker, attack.damage, now);
+    if (rocket.aegisHit) {
+      this.absorbDamageWithChronosAegis(rocket.aegisHit.blocker, attack.damage, now, {
+        source: player,
+        damageType: attack.damageType,
+        position: rocket.aegisHit.point,
+        direction: rocket.aegisHit.normal,
+      });
     } else {
       this.queuePendingAreaDamage({
         id: rocket.castId,
@@ -5325,6 +5408,8 @@ export class GameRoom extends Room<GameState> {
       position: this.vec3SchemaToPlain(player.position),
       startPosition: rocket.startPosition,
       targetPosition: rocket.impactPosition,
+      impactPosition: rocket.impactPosition,
+      interceptedByChronosAegis: Boolean(rocket.aegisHit),
       aimDirection: rocket.aimDirection,
       velocity: {
         x: rocket.aimDirection.x * BLAZE_ROCKET_SPEED,
@@ -5377,7 +5462,12 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
-  private broadcastChronosVerdantPulseCast(player: Player, attack: AttackConfig, now: number): void {
+  private broadcastChronosVerdantPulseCast(
+    player: Player,
+    attack: AttackConfig,
+    now: number,
+    impactHint: SkillImpactHint = {}
+  ): void {
     const pulse = this.resolveChronosVerdantPulseCast(player, attack);
     const supercharged = this.isChronosAscendantActive(player, now);
     const pulseSpeed = supercharged
@@ -5397,6 +5487,8 @@ export class GameRoom extends Room<GameState> {
         z: pulse.aimDirection.z * pulseSpeed,
       },
       ownerTeam: player.team as Team,
+      impactPosition: impactHint.impactPosition,
+      interceptedByChronosAegis: impactHint.interceptedByChronosAegis,
       launchYaw: player.lookYaw,
       serverTime: now,
       radius: supercharged ? CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS : undefined,
@@ -5452,7 +5544,12 @@ export class GameRoom extends Room<GameState> {
     const impactTime = now + Math.max(60, Math.round(BLAZE_BOMB_FALL_DURATION_MS * impactProgress));
 
     if (aegisHit) {
-      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now);
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
+        source: player,
+        damageType: attack.damageType,
+        position: aegisHit.point,
+        direction: aegisHit.normal,
+      });
     } else {
       this.queuePendingAreaDamage({
         id: castId,
@@ -5473,6 +5570,8 @@ export class GameRoom extends Room<GameState> {
       startPosition,
       targetPosition,
       interceptPosition: aegisHit?.point,
+      impactPosition: aegisHit?.point ?? targetPosition,
+      interceptedByChronosAegis: Boolean(aegisHit),
       aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
@@ -5491,7 +5590,8 @@ export class GameRoom extends Room<GameState> {
   private broadcastPhantomAttackCast(
     player: Player,
     abilityId: 'phantom_dire_ball' | 'phantom_void_ray',
-    now: number
+    now: number,
+    impactHint: SkillImpactHint = {}
   ): void {
     const aimDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
     const launchSide = abilityId === 'phantom_dire_ball'
@@ -5510,6 +5610,8 @@ export class GameRoom extends Room<GameState> {
       startPosition,
       aimDirection,
       ownerTeam: player.team as Team,
+      impactPosition: impactHint.impactPosition,
+      interceptedByChronosAegis: impactHint.interceptedByChronosAegis,
       launchSide,
       launchYaw: player.lookYaw,
       serverTime: now,
@@ -5549,7 +5651,8 @@ export class GameRoom extends Room<GameState> {
   private broadcastHookshotAttackCast(
     player: Player,
     abilityId: 'hookshot_basic_attack' | 'hookshot_heavy_attack',
-    now: number
+    now: number,
+    impactHint: SkillImpactHint = {}
   ): void {
     const launchSide = abilityId === 'hookshot_basic_attack'
       ? this.getNextHookshotPrimaryLaunchSide(player.id)
@@ -5576,6 +5679,8 @@ export class GameRoom extends Room<GameState> {
       },
       maxDistance,
       ownerTeam: player.team as Team,
+      impactPosition: impactHint.impactPosition,
+      interceptedByChronosAegis: impactHint.interceptedByChronosAegis,
       launchSide,
       launchYaw: player.lookYaw,
       serverTime: now,
@@ -6267,30 +6372,45 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    if (heroId === 'phantom') {
-      this.broadcastPhantomAttackCast(
-        player,
-        mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray',
-        now
-      );
-    } else if (heroId === 'hookshot') {
-      this.broadcastHookshotAttackCast(
-        player,
-        mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack',
-        now
-      );
-    } else if (heroId === 'chronos' && mode === 'primary') {
-      this.broadcastChronosVerdantPulseCast(player, attack, now);
-    }
-
     const origin = this.getPlayerEyePosition(player);
     const forward = this.getForwardVector(player.lookYaw, player.lookPitch);
     const primaryTargetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot);
     const aegisHit = this.getChronosAegisSkillHit(player, origin, forward, attack.range, {
       projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack),
     });
-    if (aegisHit && (!primaryTargetHit || aegisHit.distance <= primaryTargetHit.hit.distance)) {
-      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now);
+    const aegisBlocksAttack = Boolean(aegisHit && (!primaryTargetHit || aegisHit.distance <= primaryTargetHit.hit.distance));
+    const impactHint: SkillImpactHint = aegisBlocksAttack && aegisHit
+      ? {
+        impactPosition: aegisHit.point,
+        interceptedByChronosAegis: true,
+      }
+      : {};
+
+    if (heroId === 'phantom') {
+      this.broadcastPhantomAttackCast(
+        player,
+        mode === 'primary' ? 'phantom_dire_ball' : 'phantom_void_ray',
+        now,
+        impactHint
+      );
+    } else if (heroId === 'hookshot') {
+      this.broadcastHookshotAttackCast(
+        player,
+        mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack',
+        now,
+        impactHint
+      );
+    } else if (heroId === 'chronos' && mode === 'primary') {
+      this.broadcastChronosVerdantPulseCast(player, attack, now, impactHint);
+    }
+
+    if (aegisBlocksAttack && aegisHit) {
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now, {
+        source: player,
+        damageType: attack.damageType,
+        position: aegisHit.point,
+        direction: aegisHit.normal,
+      });
       return;
     }
 
@@ -6625,7 +6745,7 @@ export class GameRoom extends Room<GameState> {
     return bestHit;
   }
 
-  private getChronosAegisBlocker(target: Player, source: Player, sourcePoint = this.getPlayerEyePosition(source)): Player | null {
+  private getChronosAegisBlockerHit(target: Player, source: Player, sourcePoint = this.getPlayerEyePosition(source)): ChronosAegisSkillHit | null {
     if (source.team === target.team) return null;
 
     const targetPoint = this.getPlayerBodyAimPosition(target);
@@ -6640,10 +6760,20 @@ export class GameRoom extends Room<GameState> {
       shieldTeam: target.team as Team,
       targetPoint,
     });
-    return hit?.blocker ?? null;
+    return hit;
   }
 
-  private absorbDamageWithChronosAegis(blocker: Player, rawDamage: number, now: number): number {
+  private absorbDamageWithChronosAegis(
+    blocker: Player,
+    rawDamage: number,
+    now: number,
+    context: {
+      source?: Player | null;
+      damageType?: string;
+      position?: PlainVec3;
+      direction?: PlainVec3;
+    } = {}
+  ): number {
     const hp = this.getChronosAegisShieldHp(blocker.id);
     if (hp <= 0) return rawDamage;
 
@@ -6651,8 +6781,21 @@ export class GameRoom extends Room<GameState> {
     const nextHp = hp - absorbed;
     this.setChronosAegisShieldHp(blocker.id, nextHp);
     this.recentCombatTransformUntil.set(blocker.id, now + RECENT_COMBAT_TRANSFORM_MS);
+    const direction = context.direction ?? this.getChronosAegisForward(blocker);
+    if (absorbed > 0) {
+      this.broadcastChronosAegisDamaged(blocker, context.source ?? null, {
+        playerId: blocker.id,
+        sourceId: context.source?.id ?? null,
+        damage: Math.max(1, Math.round(absorbed)),
+        damageType: context.damageType ?? 'shield',
+        shieldHp: Math.max(0, nextHp),
+        shieldRatio: Math.max(0, Math.min(1, nextHp / CHRONOS_AEGIS_SHIELD_MAX_HP)),
+        position: context.position ?? this.getChronosAegisCenter(blocker),
+        direction,
+        serverTime: now,
+      });
+    }
     if (nextHp <= 0) {
-      const direction = this.getChronosAegisForward(blocker);
       this.broadcastExactPlayerEvent('chronosAegisBroken', blocker, {
         playerId: blocker.id,
         position: this.getChronosAegisCenter(blocker),
@@ -6703,11 +6846,16 @@ export class GameRoom extends Room<GameState> {
         : null;
 
     let damageToApply = rawDamage;
-    const aegisBlocker = source && !this.shouldDamageBypassChronosAegis(damageType, context)
-      ? this.getChronosAegisBlocker(target, source, sourcePosition ?? this.getPlayerEyePosition(source))
+    const aegisHit = source && !this.shouldDamageBypassChronosAegis(damageType, context)
+      ? this.getChronosAegisBlockerHit(target, source, sourcePosition ?? this.getPlayerEyePosition(source))
       : null;
-    if (aegisBlocker) {
-      damageToApply = this.absorbDamageWithChronosAegis(aegisBlocker, damageToApply, now);
+    if (aegisHit) {
+      damageToApply = this.absorbDamageWithChronosAegis(aegisHit.blocker, damageToApply, now, {
+        source,
+        damageType,
+        position: aegisHit.point,
+        direction: aegisHit.normal,
+      });
       if (damageToApply <= 0) {
         return false;
       }
@@ -7154,6 +7302,7 @@ export class GameRoom extends Room<GameState> {
 
       if (bot.state !== 'alive') {
         this.devBotSkillOverrides.delete(bot.id);
+        this.devBotLookOverrides.delete(bot.id);
         bot.lastInput = this.createEmptyBotInput(bot, now);
         if (bot.state === 'dead') {
           brain.intent = {
@@ -7169,9 +7318,13 @@ export class GameRoom extends Room<GameState> {
       }
 
       if (this.devBotsRooted) {
-        const override = this.getActiveDevBotSkillOverride(bot, now);
-        if (override) {
-          bot.lastInput = this.createDevBotSkillInput(bot, now, override);
+        const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
+        const lookOverride = this.getActiveDevBotLookOverride(bot, now);
+        if (skillOverride || lookOverride) {
+          bot.lastInput = this.applyDevBotLookOverride(
+            this.createDevBotSkillInput(bot, now, skillOverride),
+            lookOverride
+          );
           this.stopBotMovement(bot, { vertical: true });
           this.enqueueServerOwnedMovementCommands(bot, bot.lastInput, now);
         } else {
@@ -7181,9 +7334,13 @@ export class GameRoom extends Room<GameState> {
       }
 
       if (!this.devBotBrainEnabled) {
-        const override = this.getActiveDevBotSkillOverride(bot, now);
-        if (override) {
-          bot.lastInput = this.createDevBotSkillInput(bot, now, override);
+        const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
+        const lookOverride = this.getActiveDevBotLookOverride(bot, now);
+        if (skillOverride || lookOverride) {
+          bot.lastInput = this.applyDevBotLookOverride(
+            this.createDevBotSkillInput(bot, now, skillOverride),
+            lookOverride
+          );
           this.stopBotMovement(bot, { vertical: false });
         } else {
           this.disableBotBrainInput(bot, now);
@@ -7236,16 +7393,29 @@ export class GameRoom extends Room<GameState> {
     if (!bot?.isBot || !brain || bot.state !== 'alive') return;
 
     if (!priority && performance.now() - budgetStart > BOT_AI_BUDGET_MS) {
-      bot.lastInput = this.createEmptyBotInput(bot, now);
+      const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
+      const lookOverride = this.getActiveDevBotLookOverride(bot, now);
+      bot.lastInput = this.applyDevBotLookOverride(
+        this.applyDevBotSkillOverride(
+          bot,
+          this.createEmptyBotInput(bot, now),
+          skillOverride
+        ),
+        lookOverride
+      );
       this.enqueueServerOwnedMovementCommands(bot, bot.lastInput, now);
       return;
     }
 
-    const override = this.getActiveDevBotSkillOverride(bot, now);
-    const botInput = this.applyDevBotSkillOverride(
-      bot,
-      this.createBotInput(bot, brain, now, dt, frameContext),
-      override
+    const skillOverride = this.getActiveDevBotSkillOverride(bot, now);
+    const lookOverride = this.getActiveDevBotLookOverride(bot, now);
+    const botInput = this.applyDevBotLookOverride(
+      this.applyDevBotSkillOverride(
+        bot,
+        this.createBotInput(bot, brain, now, dt, frameContext),
+        skillOverride
+      ),
+      lookOverride
     );
     bot.lastInput = botInput;
     this.enqueueServerOwnedMovementCommands(bot, botInput, now);
@@ -8119,8 +8289,23 @@ export class GameRoom extends Room<GameState> {
     this.resetPlayerPressState(bot.id);
   }
 
-  private createDevBotSkillInput(bot: Player, now: number, override: DevBotSkillOverride): PlayerInput {
+  private getActiveDevBotLookOverride(bot: Player, now: number): DevBotLookOverride | null {
+    const override = this.devBotLookOverrides.get(bot.id);
+    if (!override) return null;
+    if (now < override.expiresAt) return override;
+
+    this.devBotLookOverrides.delete(bot.id);
+    return null;
+  }
+
+  private createDevBotSkillInput(bot: Player, now: number, override: DevBotSkillOverride | null): PlayerInput {
     return this.applyDevBotSkillOverride(bot, this.createEmptyBotInput(bot, now), override);
+  }
+
+  private applyDevBotLookOverride(input: PlayerInput, override: DevBotLookOverride | null): PlayerInput {
+    if (!override) return input;
+    input.lookPitch = override.pitch;
+    return input;
   }
 
   private applyDevBotSkillOverride(
@@ -8295,6 +8480,7 @@ export class GameRoom extends Room<GameState> {
     this.chronosPrimaryHoldStartedAt.delete(player.id);
     this.chronosAegisShieldHp.delete(player.id);
     this.devBotSkillOverrides.delete(player.id);
+    this.devBotLookOverrides.delete(player.id);
     if (heroId === 'phantom') {
       this.resetPhantomPrimaryMagazine(player.id);
     } else {
@@ -8579,7 +8765,7 @@ export class GameRoom extends Room<GameState> {
       return;
     }
 
-    const bot = this.findDevBotSkillTarget(data.heroId, data.team);
+    const bot = this.findDevBotTarget(data.heroId, data.team);
     if (!bot) {
       client.send('devCommandError', {
         message: `No alive ${data.team} ${HERO_DEFINITIONS[data.heroId].name} bot found`,
@@ -8605,7 +8791,56 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private findDevBotSkillTarget(heroId: HeroId, team: Team): Player | null {
+  private handleDevBotLook(client: Client, data: { heroId: HeroId; team: Team; direction: string }): void {
+    if (!this.isDevelopmentMode()) {
+      client.send('devCommandError', { message: 'Developer commands are disabled' });
+      return;
+    }
+
+    const direction = resolveDevBotLookDirection(data.direction);
+    if (!direction) {
+      client.send('devCommandError', { message: `Invalid bot look direction: ${data.direction}` });
+      return;
+    }
+
+    const bot = this.findDevBotTarget(data.heroId, data.team);
+    if (!bot) {
+      client.send('devCommandError', {
+        message: `No alive ${data.team} ${HERO_DEFINITIONS[data.heroId].name} bot found`,
+      });
+      return;
+    }
+
+    const now = Date.now();
+    const pitch = clampLookPitch(DEV_BOT_LOOK_PITCH[direction]);
+    bot.lookPitch = pitch;
+    bot.lastInput = {
+      ...(bot.lastInput ?? this.createEmptyBotInput(bot, now)),
+      lookPitch: pitch,
+      timestamp: now,
+    };
+    const brain = this.botBrains.get(bot.id);
+    if (brain) {
+      brain.aimPitch = pitch;
+    }
+    this.devBotLookOverrides.set(bot.id, {
+      direction,
+      pitch,
+      expiresAt: now + DEV_BOT_LOOK_HOLD_MS,
+    });
+
+    client.send('devBotLookForced', {
+      playerId: bot.id,
+      playerName: bot.name,
+      heroId: data.heroId,
+      team: data.team,
+      direction,
+      pitch,
+      durationMs: DEV_BOT_LOOK_HOLD_MS,
+    });
+  }
+
+  private findDevBotTarget(heroId: HeroId, team: Team): Player | null {
     let fallback: Player | null = null;
     this.state.players.forEach((player) => {
       if (fallback || !player.isBot || player.heroId !== heroId || player.team !== team) return;
@@ -9616,7 +9851,12 @@ export class GameRoom extends Room<GameState> {
         const falloff = 1 - (aegisHitForDamage.distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
         const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));
         this.flamethrowerLastDamageTick.set(tickKey, now);
-        this.absorbDamageWithChronosAegis(aegisHitForDamage.blocker, damage, now);
+        this.absorbDamageWithChronosAegis(aegisHitForDamage.blocker, damage, now, {
+          source,
+          damageType: 'flamethrower',
+          position: aegisHitForDamage.point,
+          direction: aegisHitForDamage.normal,
+        });
       }
     }
   }
@@ -9782,7 +10022,12 @@ export class GameRoom extends Room<GameState> {
     this.state.players.forEach(player => {
       if (player.state !== 'alive') return;
 
-      if (this.devBotsRooted && player.isBot && !this.getActiveDevBotSkillOverride(player, tickTime)) {
+      if (
+        this.devBotsRooted &&
+        player.isBot &&
+        !this.getActiveDevBotSkillOverride(player, tickTime) &&
+        !this.getActiveDevBotLookOverride(player, tickTime)
+      ) {
         this.rootBotMovementAndSkills(player, Date.now());
         return;
       }

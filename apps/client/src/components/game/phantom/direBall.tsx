@@ -15,6 +15,7 @@ import { SHARED_GEOMETRIES } from '../effectResources';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 
 const DIRE_BALL_LIFETIME_MS = 3000;
 const BALL_RADIUS = 0.21;
@@ -36,6 +37,7 @@ interface DireBallRuntimeSlot {
   position: MutableVec3;
   velocity: MutableVec3;
   direction: MutableVec3;
+  impactPosition: MutableVec3 | null;
   right: MutableVec3;
   up: MutableVec3;
   speed: number;
@@ -299,6 +301,7 @@ class DireBallRuntimePool {
       position: { ...ZERO_VEC3 },
       velocity: { ...ZERO_VEC3 },
       direction: { x: 1, y: 0, z: 0 },
+      impactPosition: null,
       right: { x: 0, y: 0, z: 1 },
       up: { x: 0, y: 1, z: 0 },
       speed: 0,
@@ -325,6 +328,9 @@ class DireBallRuntimePool {
     slot.velocity.x = ball.velocity.x;
     slot.velocity.y = ball.velocity.y;
     slot.velocity.z = ball.velocity.z;
+    slot.impactPosition = ball.interceptedByChronosAegis && ball.impactPosition
+      ? { ...ball.impactPosition }
+      : null;
     slot.speed = normalizeInto(slot.velocity, slot.direction);
     slot.expiresAtMs = expiresAtMs;
     slot.particlePhase = ((slotIndex * 37) % 97) / 97;
@@ -372,6 +378,7 @@ class DireBallRuntimePool {
     slot.id = '';
     slot.ownerId = '';
     slot.ownerTeam = null;
+    slot.impactPosition = null;
     this.activeCount = Math.max(0, this.activeCount - 1);
     this.freeList.push(index);
   }
@@ -602,6 +609,13 @@ export function DireBallsManager() {
         rayDirectionRef.current.y = slot.direction.y;
         rayDirectionRef.current.z = slot.direction.z;
         const collisionDistance = moveDistance + BALL_RADIUS;
+        const authoritativeHit = getAuthoritativeProjectileImpactHit(
+          slot.position,
+          rayDirectionRef.current,
+          slot.impactPosition,
+          collisionDistance,
+          BALL_RADIUS
+        );
         const aegisHit = getFirstChronosAegisVisualHit(
           slot.position,
           rayDirectionRef.current,
@@ -616,9 +630,13 @@ export function DireBallsManager() {
             feature: 'projectile:phantomDireBall',
           })
           : null;
-        const hit = aegisHit && (!terrainHit || aegisHit.distance <= terrainHit.distance)
-          ? aegisHit
-          : terrainHit;
+        let hit = authoritativeHit;
+        if (aegisHit && (!hit || aegisHit.distance <= hit.distance)) {
+          hit = aegisHit;
+        }
+        if (terrainHit && (!hit || terrainHit.distance <= hit.distance)) {
+          hit = terrainHit;
+        }
 
         if (hit && hit.distance <= collisionDistance) {
           triggerTerrainImpact('phantom_dire_ball', hit.point, {

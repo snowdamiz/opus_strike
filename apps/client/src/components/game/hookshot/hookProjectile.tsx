@@ -15,6 +15,7 @@ import {
 } from '../effectResources';
 import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
 import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
+import { getAuthoritativeProjectileImpactHit } from '../projectileImpact';
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -162,6 +163,15 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
       }
       
       // Skill/terrain collision
+      const authoritativeHit = hook.interceptedByChronosAegis
+        ? getAuthoritativeProjectileImpactHit(
+          previousPosition,
+          hookDirection,
+          hook.impactPosition,
+          moveDistance + HOOK_COLLISION_RADIUS,
+          HOOK_COLLISION_RADIUS
+        )
+        : null;
       const aegisHit = getFirstChronosAegisVisualHit(
         previousPosition,
         hookDirection,
@@ -179,12 +189,16 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
       const hit = aegisHit && (!terrainHit?.hit || aegisHit.distance <= terrainHit.distance)
         ? { hit: true, point: aegisHit.point, normal: aegisHit.normal }
         : terrainHit;
-      if (hit?.hit) {
-        curPos.x = hit.point.x;
-        curPos.y = hit.point.y;
-        curPos.z = hit.point.z;
-        triggerTerrainImpact('hookshot_hook', hit.point, {
-          normal: hit.normal,
+      const hitDistance = hit?.hit && 'distance' in hit ? hit.distance : Number.POSITIVE_INFINITY;
+      const resolvedHit = authoritativeHit && (!hit?.hit || authoritativeHit.distance <= hitDistance)
+        ? { hit: true, point: authoritativeHit.point, normal: authoritativeHit.normal }
+        : hit;
+      if (resolvedHit?.hit) {
+        curPos.x = resolvedHit.point.x;
+        curPos.y = resolvedHit.point.y;
+        curPos.z = resolvedHit.point.z;
+        triggerTerrainImpact('hookshot_hook', resolvedHit.point, {
+          normal: resolvedHit.normal,
           direction: { x: dirX, y: dirY, z: dirZ },
         });
         hookStateRef.current = 'retracting';

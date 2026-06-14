@@ -24,6 +24,21 @@ export const HERO_BONE_PIVOTS: Record<HeroBoneName, [number, number, number]> = 
   rightForearm: [0.5, 0.9, -0.06],
 };
 
+export const HERO_BONE_PARENTS: Partial<Record<HeroBoneName, HeroBoneName>> = {
+  torso: 'hips',
+  leftLeg: 'hips',
+  rightLeg: 'hips',
+  leftKnee: 'leftLeg',
+  rightKnee: 'rightLeg',
+  leftShin: 'leftKnee',
+  rightShin: 'rightKnee',
+  head: 'torso',
+  leftArm: 'torso',
+  rightArm: 'torso',
+  leftForearm: 'leftArm',
+  rightForearm: 'rightArm',
+};
+
 export const EMPTY_RIGGED_PARTS: RiggedVoxelPart[] = [];
 export const EMPTY_REMOTE_SOCKET_MARKERS: RemoteBodySocketMarker[] = [];
 
@@ -86,6 +101,10 @@ export function classifyHeroBone(part: VoxelPart): HeroBoneName {
     return x < 0 ? 'leftArm' : 'rightArm';
   }
 
+  if (absX <= 0.5 && y >= 0.58 && y <= 0.84 && Math.abs(z) <= 0.32) {
+    return 'hips';
+  }
+
   if (y >= 0.64 || z > 0.28) {
     return 'torso';
   }
@@ -141,4 +160,9 @@ export function getChildBonePosition(bone: HeroBoneName, parent: HeroBoneName): 
     bonePivot[1] - parentPivot[1],
     bonePivot[2] - parentPivot[2],
   ];
+}
+
+export function getBoneRestPosition(bone: HeroBoneName): [number, number, number] {
+  const parent = HERO_BONE_PARENTS[bone];
+  return parent ? getChildBonePosition(bone, parent) : HERO_BONE_PIVOTS[bone];
 }

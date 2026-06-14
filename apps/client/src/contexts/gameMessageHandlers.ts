@@ -87,6 +87,7 @@ import { loggers } from '../utils/logger';
 import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
 import type {
   BotDifficulty,
+  ChronosAegisDamagedEvent,
   ChronosAegisBrokenEvent,
   HeroId,
   MatchSnapshotMessage,
@@ -1185,6 +1186,8 @@ interface AbilityUsedMessage {
   startPosition?: { x: number; y: number; z: number };
   targetPosition?: { x: number; y: number; z: number };
   interceptPosition?: { x: number; y: number; z: number };
+  impactPosition?: { x: number; y: number; z: number };
+  interceptedByChronosAegis?: boolean;
   targetIds?: string[];
   mode?: 'allies' | 'self';
   aimDirection?: { x: number; y: number; z: number };
@@ -1574,6 +1577,8 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
             y: direction.y * PHANTOM_PROJECTILE_SPEED,
             z: direction.z * PHANTOM_PROJECTILE_SPEED,
           },
+          impactPosition: data.interceptedByChronosAegis ? data.impactPosition : undefined,
+          interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
           startTime: Date.now(),
           ownerId: data.playerId,
           ownerTeam,
@@ -1663,6 +1668,8 @@ function handlePhantomAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           id: castId,
           startPosition,
           direction: normalizeAimDirection(data),
+          impactPosition: data.interceptedByChronosAegis ? data.impactPosition : undefined,
+          interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
           startTime: Date.now(),
           ownerId: data.playerId,
           ownerTeam,
@@ -1750,6 +1757,8 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
           id: castId,
           position: startPosition,
           velocity,
+          impactPosition: data.interceptedByChronosAegis ? data.impactPosition : undefined,
+          interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
           startTime: now,
           ownerId: data.playerId,
           ownerTeam,
@@ -1785,6 +1794,8 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
           id: castId,
           position: startPosition,
           velocity,
+          impactPosition: data.interceptedByChronosAegis ? data.impactPosition : undefined,
+          interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
           startTime: now,
           ownerId: data.playerId,
           ownerTeam,
@@ -1946,6 +1957,8 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
           id: castId,
           position: startPosition,
           velocity,
+          impactPosition: data.impactPosition ?? targetPosition,
+          interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
           startTime: now,
           ownerId: data.playerId,
           ownerTeam,
@@ -1971,6 +1984,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         ? Math.max(0, data.impactTime - (data.serverTime ?? now))
         : BLAZE_BOMB_FALL_DURATION;
       const impactTime = now + impactDelay;
+      const visualImpactPosition = data.impactPosition ?? data.interceptPosition ?? targetPosition;
       if (isLocalPlayer) {
         const abilityDef = ABILITY_DEFINITIONS[data.abilityId];
         if (abilityDef?.cooldown) {
@@ -1981,6 +1995,8 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         id: castId,
         targetPosition,
         interceptPosition: data.interceptPosition,
+        impactPosition: visualImpactPosition,
+        interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis || data.interceptPosition),
         startPosition,
         startTime: now,
         impactTime,
@@ -2001,7 +2017,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         fadeOutMs: Math.min(200, impactDelay),
       });
       window.setTimeout(() => {
-        playBlazeWorldSound('blazeBombExplode', data.interceptPosition ?? targetPosition, { volume: 1.05 });
+        playBlazeWorldSound('blazeBombExplode', visualImpactPosition, { volume: 1.05 });
       }, impactDelay);
       return true;
     }
@@ -2130,6 +2146,8 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
           id: castId,
           position: startPosition,
           velocity,
+          impactPosition: data.interceptedByChronosAegis ? data.impactPosition : undefined,
+          interceptedByChronosAegis: Boolean(data.interceptedByChronosAegis),
           startTime: now,
           ownerId: data.playerId,
           ownerTeam,
@@ -2374,6 +2392,22 @@ export function setupCombatHandlers(room: Room) {
     serverTime: number;
   }) => {
     applyPhantomPrimaryState(data);
+  }));
+
+  room.onMessage('chronosAegisDamaged', measureNetworkMessage('chronosAegisDamaged', (data: ChronosAegisDamagedEvent) => {
+    const now = Date.now();
+    const store = useGameStore.getState();
+    const localPlayerId = store.localPlayer?.id ?? store.playerId;
+    setChronosAegisVisualState(data.playerId, true, now, data.shieldRatio, {
+      renderWorldEffect: data.playerId !== localPlayerId,
+    });
+    useCombatFeedbackStore.getState().addCombatTextEvent({
+      kind: 'shieldDamage',
+      amount: data.damage,
+      damageType: data.damageType,
+      targetId: null,
+      position: data.position,
+    });
   }));
 
   room.onMessage('chronosAegisBroken', measureNetworkMessage('chronosAegisBroken', (data: ChronosAegisBrokenEvent) => {

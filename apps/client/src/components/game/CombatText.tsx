@@ -71,6 +71,15 @@ function getCombatTextColors(kind: CombatTextKind): {
   bottom: string;
   glow: string;
 } {
+  if (kind === 'shieldDamage') {
+    return {
+      top: '#eff6ff',
+      middle: '#93c5fd',
+      bottom: '#2563eb',
+      glow: 'rgba(96, 165, 250, 0.94)',
+    };
+  }
+
   if (kind === 'heal') {
     return {
       top: '#ecfccb',
@@ -88,17 +97,66 @@ function getCombatTextColors(kind: CombatTextKind): {
   };
 }
 
+function drawShieldDamageIcon(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  colors: ReturnType<typeof getCombatTextColors>
+): void {
+  const half = size * 0.52;
+  const top = y - size * 0.62;
+  const bottom = y + size * 0.68;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x, top);
+  ctx.quadraticCurveTo(x + half, top + size * 0.08, x + half, y - size * 0.12);
+  ctx.quadraticCurveTo(x + half * 0.92, y + size * 0.38, x, bottom);
+  ctx.quadraticCurveTo(x - half * 0.92, y + size * 0.38, x - half, y - size * 0.12);
+  ctx.quadraticCurveTo(x - half, top + size * 0.08, x, top);
+  ctx.closePath();
+
+  ctx.shadowColor = colors.glow;
+  ctx.shadowBlur = 20;
+  ctx.lineWidth = 12;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.92)';
+  ctx.stroke();
+
+  const gradient = ctx.createLinearGradient(x, top, x, bottom);
+  gradient.addColorStop(0, colors.top);
+  gradient.addColorStop(0.52, colors.middle);
+  gradient.addColorStop(1, colors.bottom);
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = '#dbeafe';
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x, top + size * 0.22);
+  ctx.lineTo(x, bottom - size * 0.2);
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.78)';
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, amount: number): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   const colors = getCombatTextColors(kind);
   const text = `${kind === 'heal' ? '+' : '-'}${Math.max(1, Math.round(amount))}`;
+  const isShieldDamage = kind === 'shieldDamage';
+  const textX = isShieldDamage ? 34 : 0;
 
   ctx.clearRect(0, 0, COMBAT_TEXT_CANVAS_WIDTH, COMBAT_TEXT_CANVAS_HEIGHT);
   ctx.save();
   ctx.translate(COMBAT_TEXT_CANVAS_WIDTH / 2, COMBAT_TEXT_CANVAS_HEIGHT / 2 + 4);
-  ctx.rotate(kind === 'damage' ? -0.045 : 0.035);
+  ctx.rotate(kind === 'heal' ? 0.035 : -0.045);
 
   ctx.font = '900 92px Inter, ui-sans-serif, system-ui, sans-serif';
   ctx.textAlign = 'center';
@@ -110,12 +168,20 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   ctx.shadowBlur = 34;
   ctx.lineWidth = 18;
   ctx.strokeStyle = 'rgba(0, 0, 0, 0.92)';
-  ctx.strokeText(text, 0, 0);
+  ctx.strokeText(text, textX, 0);
 
   ctx.shadowBlur = 20;
   ctx.lineWidth = 7;
-  ctx.strokeStyle = kind === 'damage' ? 'rgba(127, 29, 29, 0.94)' : 'rgba(6, 78, 59, 0.94)';
-  ctx.strokeText(text, 0, 0);
+  ctx.strokeStyle = kind === 'heal'
+    ? 'rgba(6, 78, 59, 0.94)'
+    : kind === 'shieldDamage'
+      ? 'rgba(30, 64, 175, 0.94)'
+      : 'rgba(127, 29, 29, 0.94)';
+  ctx.strokeText(text, textX, 0);
+
+  if (isShieldDamage) {
+    drawShieldDamageIcon(ctx, -122, 2, 54, colors);
+  }
 
   const gradient = ctx.createLinearGradient(0, -52, 0, 54);
   gradient.addColorStop(0, colors.top);
@@ -123,11 +189,11 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   gradient.addColorStop(1, colors.bottom);
   ctx.shadowBlur = 12;
   ctx.fillStyle = gradient;
-  ctx.fillText(text, 0, 0);
+  ctx.fillText(text, textX, 0);
 
   ctx.globalAlpha = 0.72;
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(text, -2, -8);
+  ctx.fillText(text, textX - 2, -8);
   ctx.restore();
 }
 
@@ -139,13 +205,24 @@ function findPlayer(targetId: string | null | undefined): Player | null {
   return store.players.get(targetId) ?? null;
 }
 
+function getStandaloneCombatTextY(event: CombatTextEvent): number {
+  if (event.kind === 'shieldDamage') {
+    return event.position.y + 0.36;
+  }
+
+  return getCombatTextWorldY(event.position.y, null, DEFAULT_MOVEMENT);
+}
+
 function resolveCombatTextAnchor(event: CombatTextEvent, target: THREE.Vector3): void {
   const player = findPlayer(event.targetId);
-  const position = player
-    ? visualStore.getState().playerPositions.get(player.id) ?? player.position
-    : event.position;
-  const heroId = player?.heroId ?? null;
-  const movement = player?.movement ?? DEFAULT_MOVEMENT;
+  if (!player) {
+    target.set(event.position.x, getStandaloneCombatTextY(event), event.position.z);
+    return;
+  }
+
+  const position = visualStore.getState().playerPositions.get(player.id) ?? player.position;
+  const heroId = player.heroId;
+  const movement = player.movement;
 
   target.set(
     position.x,
@@ -179,7 +256,7 @@ function CombatTextSprite({ event, stackIndex }: { event: CombatTextEvent; stack
   const drift = useMemo(() => {
     const seed = hashString(event.id);
     const angle = (seed / 0xffffffff) * Math.PI * 2;
-    const radius = event.kind === 'damage' ? 0.46 : 0.32;
+    const radius = event.kind === 'heal' ? 0.32 : event.kind === 'shieldDamage' ? 0.38 : 0.46;
     return {
       x: Math.cos(angle) * radius,
       z: Math.sin(angle) * radius,
@@ -199,9 +276,11 @@ function CombatTextSprite({ event, stackIndex }: { event: CombatTextEvent; stack
     nextTexture.generateMipmaps = false;
     return nextTexture;
   }, [event.amount, event.kind]);
-  const baseHeight = (event.kind === 'damage' ? 0.82 : 0.74) + getAmountScale(event.amount);
+  const baseHeight = (event.kind === 'heal' ? 0.74 : event.kind === 'shieldDamage' ? 0.78 : 0.82) + getAmountScale(event.amount);
   const baseWidth = baseHeight * COMBAT_TEXT_ASPECT;
-  const initialY = getCombatTextWorldY(event.position.y, null, DEFAULT_MOVEMENT);
+  const initialY = event.targetId
+    ? getCombatTextWorldY(event.position.y, null, DEFAULT_MOVEMENT)
+    : getStandaloneCombatTextY(event);
 
   useEffect(() => () => texture.dispose(), [texture]);
 

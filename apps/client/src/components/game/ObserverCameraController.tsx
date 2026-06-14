@@ -5,7 +5,7 @@ import type { VoxelMapManifest } from '@voxel-strike/shared';
 import { useInput } from '../../hooks/useInput';
 import { useCamera } from '../../hooks/player/useCamera';
 import { setAudioListenerTransform } from '../../hooks/useAudio';
-import { useGameStore } from '../../store/gameStore';
+import { OBSERVER_FLY_SPEED_PRESETS, useGameStore } from '../../store/gameStore';
 import { getPreparedVoxelMap, prepareVoxelMapCpu } from '../../utils/mapWarmup/mapPrepCache';
 import { isGameConsoleOpen } from '../ui/GameConsole';
 
@@ -15,8 +15,6 @@ interface ObserverCameraControllerProps {
 
 const FALLBACK_START_POSITION = new THREE.Vector3(0, 42, 36);
 const FALLBACK_LOOK_TARGET = new THREE.Vector3(0, 8, 0);
-const BASE_SPEED = 18;
-const SPRINT_SPEED = 34;
 const MIN_ELEVATION = 1.5;
 const MAX_ELEVATION = 140;
 const START_HEIGHT_ABOVE_SURFACE = 18;
@@ -105,6 +103,7 @@ export function ObserverCameraController({ enabled }: ObserverCameraControllerPr
   const cameraControl = useCamera({ isPointerLocked });
   const mapSeed = useGameStore((state) => state.mapSeed);
   const mapThemeId = useGameStore((state) => state.mapThemeId);
+  const flySpeed = useGameStore((state) => OBSERVER_FLY_SPEED_PRESETS[state.observerFlySpeedPreset]);
   const cameraStart = useMemo(() => {
     try {
       const preparedMap = getPreparedVoxelMap({ seed: mapSeed, themeId: mapThemeId })
@@ -219,7 +218,7 @@ export function ObserverCameraController({ enabled }: ObserverCameraControllerPr
     if (verticalRef.current.down) movementScratch.y -= 1;
 
     if (movementScratch.lengthSq() > 0.0001) {
-      movementScratch.normalize().multiplyScalar((inputState.sprint ? SPRINT_SPEED : BASE_SPEED) * dt);
+      movementScratch.normalize().multiplyScalar((inputState.sprint ? flySpeed.sprint : flySpeed.base) * dt);
       positionRef.current.add(movementScratch);
       positionRef.current.y = THREE.MathUtils.clamp(positionRef.current.y, MIN_ELEVATION, MAX_ELEVATION);
       camera.position.copy(positionRef.current);

@@ -23,6 +23,7 @@ import {
   applyHeroAttackPose,
   applyIdleBonePose,
   applyJumpBonePose,
+  applyLookPitchWaistBend,
   applySlideBonePose,
   applyWalkingBonePose,
   beginHeroBodyPoseTransition,
@@ -33,15 +34,15 @@ import {
   getHeroBodyPoseBlendKey,
   getJumpPose,
   getNormalizedWalkDirection,
+  HERO_LOOK_PITCH_WAIST_DAMPING,
   resetHeroBodyPoseTransitionRuntime,
   setBoneBasePose,
 } from '../../model-system/heroBodyPose';
 import {
   EMPTY_REMOTE_SOCKET_MARKERS,
   EMPTY_RIGGED_PARTS,
-  HERO_BONE_PIVOTS,
   HERO_PART_GEOMETRIES,
-  getChildBonePosition,
+  getBoneRestPosition,
   getPartGeometry,
   groupRiggedParts,
 } from '../../model-system/heroRig';
@@ -88,6 +89,8 @@ interface HeroVoxelBodyProps {
   hasFlag?: boolean;
   postureScaleY?: number;
   postureScaleYRef?: MutableRefObject<number>;
+  lookPitch?: number;
+  lookPitchRef?: MutableRefObject<number>;
   idleIntensity?: number;
   showTeamAccents?: boolean;
   castShadow?: boolean;
@@ -181,6 +184,8 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   hasFlag = false,
   postureScaleY = 1,
   postureScaleYRef,
+  lookPitch = 0,
+  lookPitchRef,
   idleIntensity = 1,
   showTeamAccents = true,
   castShadow = true,
@@ -212,6 +217,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const smoothedWalkDirectionRef = useRef<HeroWalkDirection>(
     getNormalizedWalkDirection(walkDirection)
   );
+  const smoothedLookPitchRef = useRef(lookPitchRef?.current ?? lookPitch);
   const wasJumpingRef = useRef(false);
   const jumpStartedAtRef = useRef<number | null>(null);
   const appliedBodyOpacityRef = useRef(-1);
@@ -321,6 +327,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     movementProfileBlendRef.current = 1;
     movementCycleRef.current = 0;
     smoothedWalkDirectionRef.current = { ...nextWalkDirection };
+    smoothedLookPitchRef.current = lookPitchRef?.current ?? lookPitch;
     jumpStartedAtRef.current = null;
     wasJumpingRef.current = false;
     postureScaleYRefInternal.current = Math.max(0.45, Math.min(1, postureScaleYRef?.current ?? postureScaleY));
@@ -330,6 +337,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   useFrame((state, delta) => {
     if (!groupRef.current) return;
     const frameDelta = Math.min(delta, 0.05);
+    smoothedLookPitchRef.current = THREE.MathUtils.damp(
+      smoothedLookPitchRef.current,
+      lookPitchRef?.current ?? lookPitch,
+      HERO_LOOK_PITCH_WAIST_DAMPING,
+      frameDelta
+    );
     const nextBodyOpacity = bodyOpacityRef?.current ?? bodyOpacity;
     if (Math.abs(appliedBodyOpacityRef.current - nextBodyOpacity) > 0.001) {
       appliedBodyOpacityRef.current = nextBodyOpacity;
@@ -508,6 +521,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         bones,
         frameDelta
       );
+      applyLookPitchWaistBend(bones, smoothedLookPitchRef.current);
 
       return;
     }
@@ -615,6 +629,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       bones,
       frameDelta
     );
+    applyLookPitchWaistBend(bones, smoothedLookPitchRef.current);
   });
 
   const renderOutlineMesh = (
@@ -759,7 +774,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         ref={(node) => {
           boneRefs.current.aura = node;
         }}
-        position={HERO_BONE_PIVOTS.aura}
+        position={getBoneRestPosition('aura')}
       >
         {renderPartsForBone('aura')}
         {renderSocketMarkersForBone('aura')}
@@ -769,130 +784,130 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
         ref={(node) => {
           boneRefs.current.hips = node;
         }}
-        position={HERO_BONE_PIVOTS.hips}
+        position={getBoneRestPosition('hips')}
       >
         {renderPartsForBone('hips')}
         {renderSocketMarkersForBone('hips')}
-      </group>
-
-      <group
-        ref={(node) => {
-          boneRefs.current.leftLeg = node;
-        }}
-        position={HERO_BONE_PIVOTS.leftLeg}
-      >
-        {renderUpperLegLink('left')}
-        {renderPartsForBone('leftLeg')}
-        {renderSocketMarkersForBone('leftLeg')}
 
         <group
           ref={(node) => {
-            boneRefs.current.leftKnee = node;
+            boneRefs.current.leftLeg = node;
           }}
-          position={getChildBonePosition('leftKnee', 'leftLeg')}
+          position={getBoneRestPosition('leftLeg')}
         >
-          {renderKneeJoint('left')}
-          {renderSocketMarkersForBone('leftKnee')}
+          {renderUpperLegLink('left')}
+          {renderPartsForBone('leftLeg')}
+          {renderSocketMarkersForBone('leftLeg')}
 
           <group
             ref={(node) => {
-              boneRefs.current.leftShin = node;
+              boneRefs.current.leftKnee = node;
             }}
-            position={getChildBonePosition('leftShin', 'leftKnee')}
+            position={getBoneRestPosition('leftKnee')}
           >
-            {renderPartsForBone('leftShin')}
-            {renderSocketMarkersForBone('leftShin')}
-          </group>
-        </group>
-      </group>
+            {renderKneeJoint('left')}
+            {renderSocketMarkersForBone('leftKnee')}
 
-      <group
-        ref={(node) => {
-          boneRefs.current.rightLeg = node;
-        }}
-        position={HERO_BONE_PIVOTS.rightLeg}
-      >
-        {renderUpperLegLink('right')}
-        {renderPartsForBone('rightLeg')}
-        {renderSocketMarkersForBone('rightLeg')}
-
-        <group
-          ref={(node) => {
-            boneRefs.current.rightKnee = node;
-          }}
-          position={getChildBonePosition('rightKnee', 'rightLeg')}
-        >
-          {renderKneeJoint('right')}
-          {renderSocketMarkersForBone('rightKnee')}
-
-          <group
-            ref={(node) => {
-              boneRefs.current.rightShin = node;
-            }}
-            position={getChildBonePosition('rightShin', 'rightKnee')}
-          >
-            {renderPartsForBone('rightShin')}
-            {renderSocketMarkersForBone('rightShin')}
-          </group>
-        </group>
-      </group>
-
-      <group
-        ref={(node) => {
-          boneRefs.current.torso = node;
-        }}
-        position={HERO_BONE_PIVOTS.torso}
-      >
-        {renderPartsForBone('torso')}
-        {renderSocketMarkersForBone('torso')}
-
-        <group
-          ref={(node) => {
-            boneRefs.current.head = node;
-          }}
-          position={getChildBonePosition('head', 'torso')}
-        >
-          {renderPartsForBone('head')}
-          {renderSocketMarkersForBone('head')}
-        </group>
-
-        <group
-          ref={(node) => {
-            boneRefs.current.leftArm = node;
-          }}
-          position={getChildBonePosition('leftArm', 'torso')}
-        >
-          {renderPartsForBone('leftArm')}
-          {renderSocketMarkersForBone('leftArm')}
-
-          <group
-            ref={(node) => {
-              boneRefs.current.leftForearm = node;
-            }}
-            position={getChildBonePosition('leftForearm', 'leftArm')}
-          >
-            {renderPartsForBone('leftForearm')}
-            {renderSocketMarkersForBone('leftForearm')}
+            <group
+              ref={(node) => {
+                boneRefs.current.leftShin = node;
+              }}
+              position={getBoneRestPosition('leftShin')}
+            >
+              {renderPartsForBone('leftShin')}
+              {renderSocketMarkersForBone('leftShin')}
+            </group>
           </group>
         </group>
 
         <group
           ref={(node) => {
-            boneRefs.current.rightArm = node;
+            boneRefs.current.rightLeg = node;
           }}
-          position={getChildBonePosition('rightArm', 'torso')}
+          position={getBoneRestPosition('rightLeg')}
         >
-          {renderPartsForBone('rightArm')}
-          {renderSocketMarkersForBone('rightArm')}
+          {renderUpperLegLink('right')}
+          {renderPartsForBone('rightLeg')}
+          {renderSocketMarkersForBone('rightLeg')}
 
           <group
             ref={(node) => {
-              boneRefs.current.rightForearm = node;
+              boneRefs.current.rightKnee = node;
             }}
-            position={getChildBonePosition('rightForearm', 'rightArm')}
+            position={getBoneRestPosition('rightKnee')}
           >
-            {renderPartsForBone('rightForearm')}
-            {renderSocketMarkersForBone('rightForearm')}
+            {renderKneeJoint('right')}
+            {renderSocketMarkersForBone('rightKnee')}
+
+            <group
+              ref={(node) => {
+                boneRefs.current.rightShin = node;
+              }}
+              position={getBoneRestPosition('rightShin')}
+            >
+              {renderPartsForBone('rightShin')}
+              {renderSocketMarkersForBone('rightShin')}
+            </group>
+          </group>
+        </group>
+
+        <group
+          ref={(node) => {
+            boneRefs.current.torso = node;
+          }}
+          position={getBoneRestPosition('torso')}
+        >
+          {renderPartsForBone('torso')}
+          {renderSocketMarkersForBone('torso')}
+
+          <group
+            ref={(node) => {
+              boneRefs.current.head = node;
+            }}
+            position={getBoneRestPosition('head')}
+          >
+            {renderPartsForBone('head')}
+            {renderSocketMarkersForBone('head')}
+          </group>
+
+          <group
+            ref={(node) => {
+              boneRefs.current.leftArm = node;
+            }}
+            position={getBoneRestPosition('leftArm')}
+          >
+            {renderPartsForBone('leftArm')}
+            {renderSocketMarkersForBone('leftArm')}
+
+            <group
+              ref={(node) => {
+                boneRefs.current.leftForearm = node;
+              }}
+              position={getBoneRestPosition('leftForearm')}
+            >
+              {renderPartsForBone('leftForearm')}
+              {renderSocketMarkersForBone('leftForearm')}
+            </group>
+          </group>
+
+          <group
+            ref={(node) => {
+              boneRefs.current.rightArm = node;
+            }}
+            position={getBoneRestPosition('rightArm')}
+          >
+            {renderPartsForBone('rightArm')}
+            {renderSocketMarkersForBone('rightArm')}
+
+            <group
+              ref={(node) => {
+                boneRefs.current.rightForearm = node;
+              }}
+              position={getBoneRestPosition('rightForearm')}
+            >
+              {renderPartsForBone('rightForearm')}
+              {renderSocketMarkersForBone('rightForearm')}
+            </group>
           </group>
         </group>
       </group>
