@@ -315,6 +315,16 @@ function pushUniqueTraceAbilityId(target: string[], abilityId: string | undefine
   target.push(abilityId);
 }
 
+function getInitialPracticeCooldownSeconds(
+  abilityId: string,
+  abilityDef: typeof ABILITY_DEFINITIONS[string] | undefined,
+  existingAbility: { cooldownRemaining?: number } | undefined,
+  isActive: boolean
+): number {
+  if (isActive && abilityId === 'phantom_personal_shield') return 0;
+  return abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0;
+}
+
 function buildPracticeAbilityState(
   existingAbilities: Record<string, { charges?: number; cooldownRemaining?: number }> | undefined,
   abilityId: string,
@@ -323,11 +333,12 @@ function buildPracticeAbilityState(
 ) {
   const abilityDef = ABILITY_DEFINITIONS[abilityId];
   const existingAbility = existingAbilities?.[abilityId];
+  const cooldownSeconds = getInitialPracticeCooldownSeconds(abilityId, abilityDef, existingAbility, isActive);
 
   return {
     abilityId,
-    cooldownRemaining: abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0,
-    cooldownUntil: now + (abilityDef?.cooldown ?? existingAbility?.cooldownRemaining ?? 0) * 1000,
+    cooldownRemaining: cooldownSeconds,
+    cooldownUntil: cooldownSeconds > 0 ? now + cooldownSeconds * 1000 : 0,
     charges: existingAbility?.charges ?? abilityDef?.charges ?? 1,
     isActive,
     activatedAt: now,

@@ -8,7 +8,13 @@ import { validateTeamPayload } from '../rooms/protocolValidation';
 import { shouldResolveGenericSecondaryAttack } from '../rooms/combatInputRouting';
 import { Player } from '../rooms/schema/Player';
 import { AbilityStateSchema } from '../rooms/schema/Components';
-import { executeAbility } from '../rooms/abilityHandlers';
+import {
+  deactivateActiveAbility,
+  executeAbility,
+  initializePlayerAbilities,
+  tryUseAbility,
+  updateActiveAbilities,
+} from '../rooms/abilityHandlers';
 
 process.env.ENTRY_TICKET_SECRET = process.env.ENTRY_TICKET_SECRET || 'authority-harness-secret';
 
@@ -251,6 +257,32 @@ function runAbilityBarrierTests(): void {
   assert.equal(rocketPlayer.movement.isSliding, false);
 }
 
+function runPhantomShieldCooldownTests(): void {
+  const context = { createVoidZone: () => undefined };
+  const createActiveShield = () => {
+    const player = createAbilityHarnessPlayer('phantom');
+    initializePlayerAbilities(player, 'phantom');
+    const result = tryUseAbility(player, 'ability2');
+    assert.equal(result.success, true);
+    assert.equal(result.abilityId, 'phantom_personal_shield');
+    assert.equal(result.abilityState?.cooldownRemaining, 0, 'shield cooldown should not start on cast');
+    executeAbility(player, result.abilityId!, result.abilityState!, result.abilityDef, context);
+    assert.equal(result.abilityState?.isActive, true);
+    assert.equal(result.abilityState?.cooldownRemaining, 0, 'active shield should show active time, not cooldown');
+    return { player, shield: result.abilityState! };
+  };
+
+  const { shield: brokenShield } = createActiveShield();
+  deactivateActiveAbility(brokenShield);
+  assert.equal(brokenShield.isActive, false);
+  assert.equal(brokenShield.cooldownRemaining, 10, 'breaking shield should start cooldown');
+
+  const { player: expiringPlayer, shield: expiredShield } = createActiveShield();
+  updateActiveAbilities(expiringPlayer, expiredShield.activatedAt + 10_000);
+  assert.equal(expiredShield.isActive, false);
+  assert.equal(expiredShield.cooldownRemaining, 10, 'expired shield should start cooldown');
+}
+
 runMovementTests();
 runTicketTests();
 runProtocolTests();
@@ -258,5 +290,6 @@ runCombatInputRoutingTests();
 runMovementCommandPayloadTests();
 runRateLimitTests();
 runAbilityBarrierTests();
+runPhantomShieldCooldownTests();
 
 console.log('authority hardening harness passed');

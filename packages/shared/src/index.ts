@@ -20,6 +20,8 @@ export * from './constants/heroes.js';
 // Utils
 export * from './utils/math.js';
 export * from './utils/playerGeometry.js';
+export * from './utils/chronosAegis.js';
+export * from './utils/blazeMeteor.js';
 export * from './utils/movementDirection.js';
 
 // Model system

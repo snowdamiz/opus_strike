@@ -226,7 +226,7 @@ function RemoteBlazeFlamethrower({ playerId }: { playerId: string }) {
     }
   });
 
-  return <FlamethrowerEffect isActive poseProvider={poseProvider} />;
+  return <FlamethrowerEffect isActive ownerId={playerId} poseProvider={poseProvider} />;
 }
 
 function BurningHeroFire({ playerId }: { playerId: string }) {

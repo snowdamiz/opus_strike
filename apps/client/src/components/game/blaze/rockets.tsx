@@ -14,6 +14,7 @@ import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
 import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import {
   getFireballCoreMaterial,
   getFireballInnerMaterial,
@@ -325,11 +326,25 @@ export function RocketsManager() {
       }
 
       const moveDistance = slot.speed * delta;
-      if (moveDistance > 0.001 && physicsWorld) {
-        const hit = raycast(physicsWorld, slot.position, slot.direction, moveDistance + PROJECTILE_RADIUS, {
-          priority: 'visual',
-          feature: 'projectile:blazeRocket',
-        });
+      if (moveDistance > 0.001) {
+        const collisionDistance = moveDistance + PROJECTILE_RADIUS;
+        const aegisHit = getFirstChronosAegisVisualHit(
+          slot.position,
+          slot.direction,
+          collisionDistance,
+          slot.ownerTeam,
+          slot.ownerId,
+          PROJECTILE_RADIUS
+        );
+        const terrainHit = physicsWorld
+          ? raycast(physicsWorld, slot.position, slot.direction, collisionDistance, {
+            priority: 'visual',
+            feature: 'projectile:blazeRocket',
+          })
+          : null;
+        const hit = aegisHit && (!terrainHit || aegisHit.distance <= terrainHit.distance)
+          ? aegisHit
+          : terrainHit;
         if (hit && hit.distance <= moveDistance + PROJECTILE_RADIUS) {
           triggerTerrainImpact('blaze_rocket', hit.point, {
             normal: hit.normal,

@@ -16,6 +16,7 @@ import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { playSharedSound } from '../../../hooks/useAudio';
 import { fillCombatVisualEnemyPlayers, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { getFirstChronosAegisVisualHit } from './aegisCollision';
 
 const CHRONOS_PULSE_CAPACITY = 96;
 const CHRONOS_PULSE_LIFETIME_MS = 3000;
@@ -380,17 +381,31 @@ export function ChronosPulsesManager() {
 
       const moveDistance = slot.speed * delta;
       const collisionRadius = CHRONOS_PULSE_COLLISION_RADIUS * slot.radiusScale;
-      if (moveDistance > 0.001 && physicsWorld) {
-        const hit = raycast(
-          physicsWorld,
+      if (moveDistance > 0.001) {
+        const collisionDistance = moveDistance + collisionRadius;
+        const aegisHit = getFirstChronosAegisVisualHit(
           slot.position,
           slot.direction,
-          moveDistance + collisionRadius,
-          {
+          collisionDistance,
+          slot.ownerTeam,
+          slot.ownerId,
+          collisionRadius
+        );
+        const terrainHit = physicsWorld
+          ? raycast(
+            physicsWorld,
+            slot.position,
+            slot.direction,
+            collisionDistance,
+            {
             priority: 'visual',
             feature: 'projectile:chronosPulse',
-          }
-        );
+            }
+          )
+          : null;
+        const hit = aegisHit && (!terrainHit || aegisHit.distance <= terrainHit.distance)
+          ? aegisHit
+          : terrainHit;
         if (hit && hit.distance <= moveDistance + collisionRadius) {
           triggerTerrainImpact('chronos_pulse', hit.point, {
             normal: hit.normal,

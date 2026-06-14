@@ -70,7 +70,6 @@ function getCombatTextColors(kind: CombatTextKind): {
   middle: string;
   bottom: string;
   glow: string;
-  ring: string;
 } {
   if (kind === 'heal') {
     return {
@@ -78,7 +77,6 @@ function getCombatTextColors(kind: CombatTextKind): {
       middle: '#86efac',
       bottom: '#10b981',
       glow: 'rgba(74, 222, 128, 0.92)',
-      ring: 'rgba(187, 247, 208, 0.78)',
     };
   }
 
@@ -87,7 +85,6 @@ function getCombatTextColors(kind: CombatTextKind): {
     middle: '#fb923c',
     bottom: '#ef4444',
     glow: 'rgba(248, 113, 113, 0.96)',
-    ring: 'rgba(254, 202, 202, 0.82)',
   };
 }
 
@@ -103,14 +100,6 @@ function drawCombatTextTexture(canvas: HTMLCanvasElement, kind: CombatTextKind, 
   ctx.translate(COMBAT_TEXT_CANVAS_WIDTH / 2, COMBAT_TEXT_CANVAS_HEIGHT / 2 + 4);
   ctx.rotate(kind === 'damage' ? -0.045 : 0.035);
 
-  ctx.globalAlpha = kind === 'damage' ? 0.72 : 0.58;
-  ctx.strokeStyle = colors.ring;
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.ellipse(0, 8, 136, 50, 0, 0, Math.PI * 2);
-  ctx.stroke();
-
-  ctx.globalAlpha = 1;
   ctx.font = '900 92px Inter, ui-sans-serif, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';

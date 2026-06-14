@@ -72,6 +72,7 @@ import {
   CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER,
   CHRONOS_AEGIS_SHIELD_MAX_HP,
   CHRONOS_AEGIS_SHIELD_RECHARGE_PER_SECOND,
+  CHRONOS_AEGIS_TARGET_BACK_MAX,
   CHRONOS_LIFELINE_ALLY_HEAL,
   CHRONOS_LIFELINE_MAX_TARGETS,
   CHRONOS_LIFELINE_RADIUS,
@@ -122,9 +123,14 @@ import {
   clampLookPitch,
   calculatePlayerSocketPosition,
   resolveAbilitySocket,
+  getChronosAegisCenter as getSharedChronosAegisCenter,
+  getChronosAegisForward as getSharedChronosAegisForward,
+  getChronosAegisForwardDot as getSharedChronosAegisForwardDot,
+  getBlazeMeteorPath,
   getPlayerBodyAimPosition as getSharedPlayerBodyAimPosition,
   getPlayerEyePosition as getSharedPlayerEyePosition,
   getSegmentHitAgainstPlayerCombatHitbox,
+  getSegmentHitAgainstChronosAegis,
 } from '@voxel-strike/shared';
 import type { 
   AbilityCastOriginHint,
@@ -279,6 +285,7 @@ import {
   resetAbilityCooldowns,
   tryUseAbility,
   executeAbility,
+  deactivateActiveAbility,
   updateAbilityCooldowns,
   updateActiveAbilities,
 } from './abilityHandlers';
@@ -547,11 +554,24 @@ interface AttackConfig {
   damageType: string;
 }
 
+interface AimTargetHit {
+  target: Player;
+  hit: NonNullable<ReturnType<typeof getSegmentHitAgainstPlayerCombatHitbox>>;
+}
+
+interface ChronosAegisSkillHit {
+  blocker: Player;
+  point: PlainVec3;
+  normal: PlainVec3;
+  distance: number;
+}
+
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
 const BLAZE_BOMB_MAX_RANGE = 60;
 const BLAZE_BOMB_MIN_RANGE = 3;
+const BLAZE_BOMB_AEGIS_COLLISION_RADIUS = 0.65;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_FALLBACK = 1.15;
 const ABILITY_CAST_HINT_MAX_DISTANCE_FROM_PLAYER_CENTER = 1.7;
 const ABILITY_CAST_HINT_MAX_VERTICAL_FROM_PLAYER_CENTER = 1.15;
@@ -631,12 +651,6 @@ const MOVEMENT_BIT_JETPACKING = 1 << 6;
 const MOVEMENT_BIT_GLIDING = 1 << 7;
 const MOVEMENT_BIT_CHRONOS_AEGIS = 1 << 8;
 const CHRONOS_AEGIS_SHIELD_TRANSFORM_SCALE = 255;
-const CHRONOS_AEGIS_SHIELD_HALF_WIDTH = 3.36;
-const CHRONOS_AEGIS_SHIELD_HALF_HEIGHT = 1.78;
-const CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET = 1.85;
-const CHRONOS_AEGIS_SHIELD_CENTER_Y_OFFSET = 1.02;
-const CHRONOS_AEGIS_SOURCE_FRONT_MIN = 0.12;
-const CHRONOS_AEGIS_TARGET_BACK_MAX = 0.35;
 const OBJECTIVE_SUPPRESSION_MS = 650;
 const DAMAGE_CAP_WINDOW_MS = 1000;
 const DAMAGE_CAP_PER_SOURCE_TARGET_MULTIPLIER = 2.25;
@@ -5245,6 +5259,7 @@ export class GameRoom extends Room<GameState> {
     impactPosition: PlainVec3;
     aimDirection: PlainVec3;
     impactTime: number;
+    aegisBlocker?: Player;
   } {
     const castId = this.nextBlazeCastId(player.id, 'blaze_rocket', this.blazeRocketIdCounter++);
     const lookDirection = this.getForwardVector(player.lookYaw, player.lookPitch);
@@ -5256,9 +5271,17 @@ export class GameRoom extends Room<GameState> {
     const terrainDistance = terrainHit ? this.distance3D(aimOrigin, terrainHit) : Infinity;
     const targetDistance = targetPoint ? this.distance3D(aimOrigin, targetPoint) : Infinity;
     const fallbackImpact = this.addScaled3D(aimOrigin, lookDirection, BLAZE_ROCKET_AIM_DISTANCE);
-    const impactPosition = targetPoint && targetDistance <= terrainDistance
+    const intendedImpactPosition = targetPoint && targetDistance <= terrainDistance
       ? targetPoint
       : terrainHit ?? fallbackImpact;
+    const intendedImpactDistance = Math.min(
+      BLAZE_ROCKET_AIM_DISTANCE,
+      this.distance3D(aimOrigin, intendedImpactPosition)
+    );
+    const aegisHit = this.getChronosAegisSkillHit(player, aimOrigin, lookDirection, intendedImpactDistance, {
+      projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack),
+    });
+    const impactPosition = aegisHit?.point ?? intendedImpactPosition;
     const aimDirection = this.normalize3D({
       x: impactPosition.x - startPosition.x,
       y: impactPosition.y - startPosition.y,
@@ -5275,20 +5298,25 @@ export class GameRoom extends Room<GameState> {
       impactPosition,
       aimDirection,
       impactTime: now + travelMs,
+      aegisBlocker: aegisHit?.blocker,
     };
   }
 
   private fireBlazeRocket(player: Player, attack: AttackConfig, now: number): void {
     const rocket = this.resolveBlazeRocketCast(player, attack, now);
-    this.queuePendingAreaDamage({
-      id: rocket.castId,
-      ownerId: player.id,
-      center: rocket.impactPosition,
-      radius: attack.radius ?? BLAZE_ROCKET_SPLASH_RADIUS,
-      damage: attack.damage,
-      damageType: attack.damageType,
-      resolveAt: rocket.impactTime,
-    });
+    if (rocket.aegisBlocker) {
+      this.absorbDamageWithChronosAegis(rocket.aegisBlocker, attack.damage, now);
+    } else {
+      this.queuePendingAreaDamage({
+        id: rocket.castId,
+        ownerId: player.id,
+        center: rocket.impactPosition,
+        radius: attack.radius ?? BLAZE_ROCKET_SPLASH_RADIUS,
+        damage: attack.damage,
+        damageType: attack.damageType,
+        resolveAt: rocket.impactTime,
+      });
+    }
 
     this.broadcastAbilityUsed(player, {
       playerId: player.id,
@@ -5410,17 +5438,32 @@ export class GameRoom extends Room<GameState> {
     const castId = this.nextBlazeCastId(player.id, 'blaze_bomb', this.blazeBombIdCounter++);
     const targetPosition = this.resolveBlazeBombTarget(player);
     const startPosition = this.getAbilitySocketCastOrigin(player, 'blaze_bomb');
-    const impactTime = now + BLAZE_BOMB_FALL_DURATION_MS;
+    const meteorPath = getBlazeMeteorPath({ id: castId, startPosition, targetPosition });
+    const aegisHit = this.getChronosAegisSkillHit(
+      player,
+      meteorPath.entryPosition,
+      meteorPath.travelDirection,
+      meteorPath.distance,
+      { projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack) }
+    );
+    const impactProgress = aegisHit
+      ? Math.sqrt(this.clamp(aegisHit.distance / Math.max(0.0001, meteorPath.distance), 0, 1))
+      : 1;
+    const impactTime = now + Math.max(60, Math.round(BLAZE_BOMB_FALL_DURATION_MS * impactProgress));
 
-    this.queuePendingAreaDamage({
-      id: castId,
-      ownerId: player.id,
-      center: targetPosition,
-      radius: attack.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
-      damage: attack.damage,
-      damageType: attack.damageType,
-      resolveAt: impactTime,
-    });
+    if (aegisHit) {
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now);
+    } else {
+      this.queuePendingAreaDamage({
+        id: castId,
+        ownerId: player.id,
+        center: targetPosition,
+        radius: attack.radius ?? BLAZE_BOMB_SPLASH_RADIUS,
+        damage: attack.damage,
+        damageType: attack.damageType,
+        resolveAt: impactTime,
+      });
+    }
 
     this.broadcastAbilityUsed(player, {
       playerId: player.id,
@@ -5429,6 +5472,7 @@ export class GameRoom extends Room<GameState> {
       position: this.vec3SchemaToPlain(player.position),
       startPosition,
       targetPosition,
+      interceptPosition: aegisHit?.point,
       aimDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
       ownerTeam: player.team as Team,
       launchYaw: player.lookYaw,
@@ -6146,6 +6190,26 @@ export class GameRoom extends Room<GameState> {
     previous.ultimate = input.ultimate;
   }
 
+  private getChronosAegisCollisionRadiusForAttack(attack: AttackConfig): number {
+    switch (attack.damageType) {
+      case 'void_ray':
+        return 0.45;
+      case 'chain_hooks':
+      case 'drag_hook':
+        return 0.22;
+      case 'dire_ball':
+      case 'rocket':
+        return 0.21;
+      case 'bomb':
+        return BLAZE_BOMB_AEGIS_COLLISION_RADIUS;
+      case 'verdant_pulse':
+      case 'ascendant_verdant_pulse':
+        return 0.18;
+      default:
+        return 0;
+    }
+  }
+
   private tryResolveAttack(player: Player, mode: 'primary' | 'secondary'): void {
     const heroId = player.heroId as HeroId;
     if (!isHeroId(heroId) || player.state !== 'alive') {
@@ -6219,17 +6283,27 @@ export class GameRoom extends Room<GameState> {
       this.broadcastChronosVerdantPulseCast(player, attack, now);
     }
 
-    const primaryTarget = this.findTargetInAimCone(player, attack.range, attack.coneDot);
+    const origin = this.getPlayerEyePosition(player);
+    const forward = this.getForwardVector(player.lookYaw, player.lookPitch);
+    const primaryTargetHit = this.findTargetHitInAimCone(player, attack.range, attack.coneDot);
+    const aegisHit = this.getChronosAegisSkillHit(player, origin, forward, attack.range, {
+      projectileRadius: this.getChronosAegisCollisionRadiusForAttack(attack),
+    });
+    if (aegisHit && (!primaryTargetHit || aegisHit.distance <= primaryTargetHit.hit.distance)) {
+      this.absorbDamageWithChronosAegis(aegisHit.blocker, attack.damage, now);
+      return;
+    }
+
+    const primaryTarget = primaryTargetHit?.target;
     if (!primaryTarget) return;
     this.recordCombatVisibilityAtHit(player, primaryTarget, mode, attack.damageType, now);
 
     if (attack.radius && attack.radius > 0) {
       this.applyAreaDamage(player, primaryTarget.position, attack.radius, attack.damage, attack.damageType);
     } else {
-      const sourcePosition = this.getPlayerEyePosition(player);
       this.applyDamage(primaryTarget, attack.damage, player.id, attack.damageType, {
-        sourcePosition,
-        sourceDirection: this.getForwardVector(player.lookYaw, player.lookPitch),
+        sourcePosition: origin,
+        sourceDirection: forward,
       });
     }
 
@@ -6320,10 +6394,10 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
-  private findTargetInAimCone(source: Player, range: number, minDot: number): Player | null {
+  private findTargetHitInAimCone(source: Player, range: number, minDot: number): AimTargetHit | null {
     const origin = this.getPlayerEyePosition(source);
     const forward = this.getForwardVector(source.lookYaw, source.lookPitch);
-    let bestTarget: Player | null = null;
+    let bestTargetHit: AimTargetHit | null = null;
     let bestDistance = range;
     const candidates = this.playerSpatialIndex.queryConeCandidates(
       origin,
@@ -6360,11 +6434,15 @@ export class GameRoom extends Room<GameState> {
 
       if (hit.distance < bestDistance) {
         bestDistance = hit.distance;
-        bestTarget = target;
+        bestTargetHit = { target, hit };
       }
     }
 
-    return bestTarget;
+    return bestTargetHit;
+  }
+
+  private findTargetInAimCone(source: Player, range: number, minDot: number): Player | null {
+    return this.findTargetHitInAimCone(source, range, minDot)?.target ?? null;
   }
 
   private getAimHitAgainstPlayer(
@@ -6410,6 +6488,15 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private shouldDamageBypassChronosAegis(damageType: string, context: DamageContext): boolean {
+    return (
+      damageType === 'airstrike' ||
+      damageType === 'void_zone' ||
+      context.abilityId === 'blaze_airstrike' ||
+      context.abilityId === 'phantom_void_zone'
+    );
+  }
+
   private getChronosAegisShieldHp(playerId: string): number {
     return this.chronosAegisShieldHp.get(playerId) ?? CHRONOS_AEGIS_SHIELD_MAX_HP;
   }
@@ -6446,15 +6533,16 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getChronosAegisForward(player: Player): PlainVec3 {
-    return this.getForwardVector(player.lookYaw, 0);
+    return getSharedChronosAegisForward(player.lookYaw, player.lookPitch);
   }
 
-  private getChronosAegisCenter(player: Player, forward = this.getChronosAegisForward(player)): PlainVec3 {
-    return {
-      x: player.position.x + forward.x * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
-      y: player.position.y + CHRONOS_AEGIS_SHIELD_CENTER_Y_OFFSET,
-      z: player.position.z + forward.z * CHRONOS_AEGIS_SHIELD_FORWARD_OFFSET,
-    };
+  private getChronosAegisCenter(player: Player): PlainVec3 {
+    return getSharedChronosAegisCenter({
+      playerId: player.id,
+      position: this.vec3SchemaToPlain(player.position),
+      lookYaw: player.lookYaw,
+      lookPitch: player.lookPitch,
+    });
   }
 
   private updateChronosAegisShields(dt: number): void {
@@ -6477,77 +6565,82 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
-  private getChronosAegisBlocker(target: Player, source: Player): Player | null {
-    if (source.team === target.team) return null;
+  private getChronosAegisSkillHit(
+    source: Player,
+    start: PlainVec3,
+    direction: PlainVec3,
+    range: number,
+    options: {
+      shieldTeam?: Team;
+      projectileRadius?: number;
+      targetPoint?: PlainVec3;
+    } = {}
+  ): ChronosAegisSkillHit | null {
+    const shieldTeam = options.shieldTeam ?? (source.team === 'red' ? 'blue' : 'red');
+    let bestHit: ChronosAegisSkillHit | null = null;
 
-    const sourcePoint = this.getPlayerEyePosition(source);
-    const targetPoint = this.getPlayerBodyAimPosition(target);
-    const segment = {
-      x: targetPoint.x - sourcePoint.x,
-      y: targetPoint.y - sourcePoint.y,
-      z: targetPoint.z - sourcePoint.z,
-    };
-
-    let blocker: Player | null = null;
     this.state.players.forEach((aegisPlayer) => {
-      if (blocker) return;
-      if (aegisPlayer.team !== target.team) return;
+      if (aegisPlayer.team !== shieldTeam) return;
       if (aegisPlayer.id === source.id) return;
       if (!this.isChronosAegisActive(aegisPlayer)) return;
 
-      const forward = this.getChronosAegisForward(aegisPlayer);
-      const right = {
-        x: Math.cos(aegisPlayer.lookYaw),
-        y: 0,
-        z: -Math.sin(aegisPlayer.lookYaw),
-      };
-      const center = this.getChronosAegisCenter(aegisPlayer, forward);
-      const toSource = {
-        x: sourcePoint.x - center.x,
-        y: sourcePoint.y - center.y,
-        z: sourcePoint.z - center.z,
-      };
-      const toTarget = {
-        x: targetPoint.x - center.x,
-        y: targetPoint.y - center.y,
-        z: targetPoint.z - center.z,
-      };
-      const sourceForwardDot =
-        toSource.x * forward.x + toSource.y * forward.y + toSource.z * forward.z;
-      const targetForwardDot =
-        toTarget.x * forward.x + toTarget.y * forward.y + toTarget.z * forward.z;
-
-      if (sourceForwardDot < CHRONOS_AEGIS_SOURCE_FRONT_MIN) return;
-      if (targetForwardDot > CHRONOS_AEGIS_TARGET_BACK_MAX) return;
-
-      const denom =
-        segment.x * forward.x + segment.y * forward.y + segment.z * forward.z;
-      if (Math.abs(denom) < 0.0001) return;
-
-      const t = (
-        (center.x - sourcePoint.x) * forward.x +
-        (center.y - sourcePoint.y) * forward.y +
-        (center.z - sourcePoint.z) * forward.z
-      ) / denom;
-      if (t < 0 || t > 1) return;
-
-      const intersectionOffset = {
-        x: sourcePoint.x + segment.x * t - center.x,
-        y: sourcePoint.y + segment.y * t - center.y,
-        z: sourcePoint.z + segment.z * t - center.z,
-      };
-      const lateral =
-        intersectionOffset.x * right.x + intersectionOffset.z * right.z;
-      const vertical = intersectionOffset.y;
       if (
-        Math.abs(lateral) <= CHRONOS_AEGIS_SHIELD_HALF_WIDTH &&
-        Math.abs(vertical) <= CHRONOS_AEGIS_SHIELD_HALF_HEIGHT
+        options.targetPoint &&
+        getSharedChronosAegisForwardDot(
+          options.targetPoint,
+          {
+            playerId: aegisPlayer.id,
+            position: this.vec3SchemaToPlain(aegisPlayer.position),
+            lookYaw: aegisPlayer.lookYaw,
+            lookPitch: aegisPlayer.lookPitch,
+          }
+        ) > CHRONOS_AEGIS_TARGET_BACK_MAX
       ) {
-        blocker = aegisPlayer;
+        return;
       }
+
+      const hit = getSegmentHitAgainstChronosAegis(
+        start,
+        direction,
+        range,
+        {
+          playerId: aegisPlayer.id,
+          position: this.vec3SchemaToPlain(aegisPlayer.position),
+          lookYaw: aegisPlayer.lookYaw,
+          lookPitch: aegisPlayer.lookPitch,
+        },
+        { projectileRadius: options.projectileRadius }
+      );
+      if (!hit) return;
+      if (bestHit && hit.distance >= bestHit.distance) return;
+
+      bestHit = {
+        blocker: aegisPlayer,
+        point: hit.point,
+        normal: hit.normal,
+        distance: hit.distance,
+      };
     });
 
-    return blocker;
+    return bestHit;
+  }
+
+  private getChronosAegisBlocker(target: Player, source: Player, sourcePoint = this.getPlayerEyePosition(source)): Player | null {
+    if (source.team === target.team) return null;
+
+    const targetPoint = this.getPlayerBodyAimPosition(target);
+    const segment = this.normalize3D({
+      x: targetPoint.x - sourcePoint.x,
+      y: targetPoint.y - sourcePoint.y,
+      z: targetPoint.z - sourcePoint.z,
+    });
+    if (!segment) return null;
+
+    const hit = this.getChronosAegisSkillHit(source, sourcePoint, segment, this.distance3D(sourcePoint, targetPoint), {
+      shieldTeam: target.team as Team,
+      targetPoint,
+    });
+    return hit?.blocker ?? null;
   }
 
   private absorbDamageWithChronosAegis(blocker: Player, rawDamage: number, now: number): number {
@@ -6562,7 +6655,7 @@ export class GameRoom extends Room<GameState> {
       const direction = this.getChronosAegisForward(blocker);
       this.broadcastExactPlayerEvent('chronosAegisBroken', blocker, {
         playerId: blocker.id,
-        position: this.getChronosAegisCenter(blocker, direction),
+        position: this.getChronosAegisCenter(blocker),
         direction,
         serverTime: now,
       });
@@ -6594,25 +6687,6 @@ export class GameRoom extends Room<GameState> {
       return false;
     }
 
-    let damageToApply = rawDamage;
-    const aegisBlocker = source ? this.getChronosAegisBlocker(target, source) : null;
-    if (aegisBlocker) {
-      damageToApply = this.absorbDamageWithChronosAegis(aegisBlocker, damageToApply, now);
-      if (damageToApply <= 0) {
-        return false;
-      }
-    }
-
-    const phantomShield = target.abilities.get('phantom_personal_shield');
-    if (phantomShield?.isActive) {
-      phantomShield.isActive = false;
-      phantomShield.activatedAt = 0;
-      return false;
-    }
-
-    const damage = Math.max(1, Math.round(damageToApply * this.getDamageTakenMultiplier(target)));
-    target.health = Math.max(0, target.health - damage);
-    this.recentCombatTransformUntil.set(target.id, now + RECENT_COMBAT_TRANSFORM_MS);
     const sourcePosition = context.sourcePosition !== undefined
       ? context.sourcePosition
       : source
@@ -6627,6 +6701,27 @@ export class GameRoom extends Room<GameState> {
           z: target.position.z - sourcePosition.z,
         })
         : null;
+
+    let damageToApply = rawDamage;
+    const aegisBlocker = source && !this.shouldDamageBypassChronosAegis(damageType, context)
+      ? this.getChronosAegisBlocker(target, source, sourcePosition ?? this.getPlayerEyePosition(source))
+      : null;
+    if (aegisBlocker) {
+      damageToApply = this.absorbDamageWithChronosAegis(aegisBlocker, damageToApply, now);
+      if (damageToApply <= 0) {
+        return false;
+      }
+    }
+
+    const phantomShield = target.abilities.get('phantom_personal_shield');
+    if (phantomShield?.isActive) {
+      deactivateActiveAbility(phantomShield);
+      return false;
+    }
+
+    const damage = Math.max(1, Math.round(damageToApply * this.getDamageTakenMultiplier(target)));
+    target.health = Math.max(0, target.health - damage);
+    this.recentCombatTransformUntil.set(target.id, now + RECENT_COMBAT_TRANSFORM_MS);
 
     if (source && source.id !== target.id) {
       source.ultimateCharge = Math.min(100, source.ultimateCharge + damage / Math.max(1, target.maxHealth) * 12);
@@ -9442,6 +9537,13 @@ export class GameRoom extends Room<GameState> {
 
   private applyFlamethrowerDamage(source: Player, now: number, tempoMultiplier: number) {
     const { origin, direction: forward } = this.getBlazeFlamethrowerPose(source);
+    const terrainHit = this.raycastTerrain(origin, forward, BLAZE_FLAMETHROWER_RANGE);
+    const flameDistance = terrainHit
+      ? Math.min(BLAZE_FLAMETHROWER_RANGE, this.distance3D(origin, terrainHit))
+      : BLAZE_FLAMETHROWER_RANGE;
+    let aegisHitForDamage = this.getChronosAegisSkillHit(source, origin, forward, flameDistance, {
+      projectileRadius: 0.42,
+    });
 
     const rangeSq = BLAZE_FLAMETHROWER_RANGE * BLAZE_FLAMETHROWER_RANGE;
     const candidates = this.playerSpatialIndex.queryConeCandidates(
@@ -9463,15 +9565,31 @@ export class GameRoom extends Room<GameState> {
       };
       const distSq = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
       if (distSq > rangeSq || distSq <= 0.0001) continue;
+      const distance = Math.sqrt(distSq);
+      if (distance > flameDistance) continue;
       if (!this.hasLineOfSight(origin, targetPoint)) continue;
 
-      const distance = Math.sqrt(distSq);
       const dot = (
         toTarget.x * forward.x +
         toTarget.y * forward.y +
         toTarget.z * forward.z
       ) / distance;
       if (dot < BLAZE_FLAMETHROWER_CONE_DOT) continue;
+
+      const targetDirection = this.normalize3D(toTarget);
+      const targetAegisHit = targetDirection
+        ? this.getChronosAegisSkillHit(source, origin, targetDirection, distance, {
+          shieldTeam: target.team as Team,
+          projectileRadius: 0.42,
+          targetPoint,
+        })
+        : null;
+      if (targetAegisHit && targetAegisHit.distance <= distance) {
+        if (!aegisHitForDamage || targetAegisHit.distance < aegisHitForDamage.distance) {
+          aegisHitForDamage = targetAegisHit;
+        }
+        continue;
+      }
 
       const tickKey = `${source.id}:${target.id}`;
       const lastDamage = this.flamethrowerLastDamageTick.get(tickKey) || 0;
@@ -9488,6 +9606,17 @@ export class GameRoom extends Room<GameState> {
       });
       if (target.state === 'alive' && target.health < previousHealth) {
         this.igniteBlazeBurn(target, source, now, origin, forward);
+      }
+    }
+
+    if (aegisHitForDamage) {
+      const tickKey = `${source.id}:aegis:${aegisHitForDamage.blocker.id}`;
+      const lastDamage = this.flamethrowerLastDamageTick.get(tickKey) || 0;
+      if (now - lastDamage >= BLAZE_FLAMETHROWER_DAMAGE_INTERVAL / tempoMultiplier) {
+        const falloff = 1 - (aegisHitForDamage.distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
+        const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));
+        this.flamethrowerLastDamageTick.set(tickKey, now);
+        this.absorbDamageWithChronosAegis(aegisHitForDamage.blocker, damage, now);
       }
     }
   }

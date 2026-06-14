@@ -14,6 +14,7 @@ import {
   TEMP_VECTORS,
 } from '../effectResources';
 import { writeAbilitySocketOrigin } from '../../../model-system/abilitySocketResolver';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import {
   HOOK_MAIN_ROPE_MATERIAL,
   PLIABLE_ROPE_SEGMENT_COUNT,
@@ -160,19 +161,33 @@ export const HookProjectile = React.memo(({ hook }: HookProjectileProps) => {
         hookStateRef.current = 'retracting';
       }
       
-      // Terrain collision (throttled - not every frame)
-      if (isPhysicsReady()) {
-        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5, {
+      // Skill/terrain collision
+      const aegisHit = getFirstChronosAegisVisualHit(
+        previousPosition,
+        hookDirection,
+        moveDistance + HOOK_COLLISION_RADIUS,
+        hook.ownerTeam,
+        hook.ownerId,
+        HOOK_COLLISION_RADIUS
+      );
+      const terrainHit = isPhysicsReady()
+        ? raycastDirection(previousPosition.x, previousPosition.y, previousPosition.z, dirX, dirY, dirZ, moveDistance + 0.5, {
           priority: 'visual',
           feature: 'projectile:hookshotHook',
+        })
+        : null;
+      const hit = aegisHit && (!terrainHit?.hit || aegisHit.distance <= terrainHit.distance)
+        ? { hit: true, point: aegisHit.point, normal: aegisHit.normal }
+        : terrainHit;
+      if (hit?.hit) {
+        curPos.x = hit.point.x;
+        curPos.y = hit.point.y;
+        curPos.z = hit.point.z;
+        triggerTerrainImpact('hookshot_hook', hit.point, {
+          normal: hit.normal,
+          direction: { x: dirX, y: dirY, z: dirZ },
         });
-        if (hit?.hit) {
-          triggerTerrainImpact('hookshot_hook', hit.point, {
-            normal: hit.normal,
-            direction: { x: dirX, y: dirY, z: dirZ },
-          });
-          hookStateRef.current = 'retracting';
-        }
+        hookStateRef.current = 'retracting';
       }
       
       // Enemy collision

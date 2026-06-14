@@ -2,6 +2,7 @@ import { useRef, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import React from 'react';
+import { getBlazeMeteorPath } from '@voxel-strike/shared';
 import { useGameStore, type BombData } from '../../../store/gameStore';
 import { checkGroundWithNormal, isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -47,10 +48,7 @@ import {
 // BLAZE METEOR STRIKE EFFECT - Enhanced Visuals
 // ============================================================================
 
-const METEOR_FALL_DURATION = 1500;
 const EXPLOSION_DURATION = 1500; // Longer for more dramatic effect
-const METEOR_ENTRY_HEIGHT = 52;
-const METEOR_ENTRY_BACK_OFFSET = 30;
 const METEOR_TRAIL_BACK_OFFSET = 3.6;
 const METEOR_WAKE_BACK_OFFSET = 7.5;
 const METEOR_BODY_FORWARD = new THREE.Vector3(0, -1, 0);
@@ -66,6 +64,14 @@ const METEOR_DEBRIS = Array.from({ length: 16 }, (_, i) => ({
 
 interface BombEffectProps {
   bomb: BombData;
+}
+
+function sameOptionalVec3(
+  a: { x: number; y: number; z: number } | undefined,
+  b: { x: number; y: number; z: number } | undefined
+): boolean {
+  if (!a || !b) return a === b;
+  return a.x === b.x && a.y === b.y && a.z === b.z;
 }
 
 export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
@@ -87,38 +93,61 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   const hasRemovedRef = useRef(false);
   const startFrameTimeRef = useRef(getFrameClock().nowMs - Math.max(0, Date.now() - bomb.startTime));
   const impactFrameTimeRef = useRef(startFrameTimeRef.current + Math.max(0, bomb.impactTime - bomb.startTime));
+  const fallDurationRef = useRef(Math.max(60, impactFrameTimeRef.current - startFrameTimeRef.current));
 
   const meteorPath = useMemo(() => {
-    const impactPosition = new THREE.Vector3(
-      bomb.targetPosition.x,
-      bomb.targetPosition.y + 0.9,
-      bomb.targetPosition.z
+    const sharedPath = getBlazeMeteorPath({
+      id: bomb.id,
+      startPosition: bomb.startPosition,
+      targetPosition: bomb.targetPosition,
+    });
+    const entryPosition = new THREE.Vector3(
+      sharedPath.entryPosition.x,
+      sharedPath.entryPosition.y,
+      sharedPath.entryPosition.z
     );
-    const casterPosition = new THREE.Vector3(
-      bomb.startPosition.x,
-      bomb.startPosition.y,
-      bomb.startPosition.z
+    const groundImpactPosition = new THREE.Vector3(
+      sharedPath.impactPosition.x,
+      sharedPath.impactPosition.y,
+      sharedPath.impactPosition.z
     );
-    const approachDirection = impactPosition.clone().sub(casterPosition);
-    approachDirection.y = 0;
+    const intercepted = Boolean(bomb.interceptPosition);
+    const impactPosition = bomb.interceptPosition
+      ? new THREE.Vector3(
+        bomb.interceptPosition.x,
+        bomb.interceptPosition.y,
+        bomb.interceptPosition.z
+      )
+      : groundImpactPosition;
 
-    if (approachDirection.lengthSq() < 0.0001) {
-      const seed = Array.from(bomb.id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
-      const angle = (seed % 360) * (Math.PI / 180);
-      approachDirection.set(Math.cos(angle), 0, Math.sin(angle));
-    } else {
-      approachDirection.normalize();
+    const travelDirection = impactPosition.clone().sub(entryPosition);
+    if (travelDirection.lengthSq() < 0.0001) {
+      travelDirection.set(
+        sharedPath.travelDirection.x,
+        sharedPath.travelDirection.y,
+        sharedPath.travelDirection.z
+      );
     }
-
-    const entryPosition = impactPosition
-      .clone()
-      .addScaledVector(approachDirection, -METEOR_ENTRY_BACK_OFFSET);
-    entryPosition.y += METEOR_ENTRY_HEIGHT;
-
-    const travelDirection = impactPosition.clone().sub(entryPosition).normalize();
+    travelDirection.normalize();
     const trailDirection = travelDirection.clone().multiplyScalar(-1);
     const bodyQuaternion = new THREE.Quaternion().setFromUnitVectors(METEOR_BODY_FORWARD, travelDirection);
     const trailQuaternion = new THREE.Quaternion().setFromUnitVectors(METEOR_TRAIL_FORWARD, trailDirection);
+    const flashPosition = intercepted
+      ? impactPosition.clone()
+      : new THREE.Vector3(bomb.targetPosition.x, bomb.targetPosition.y + 1, bomb.targetPosition.z);
+    const explosionPosition = intercepted
+      ? impactPosition.clone()
+      : new THREE.Vector3(bomb.targetPosition.x, bomb.targetPosition.y + 1.5, bomb.targetPosition.z);
+    const shockwavePosition = new THREE.Vector3(
+      bomb.targetPosition.x,
+      bomb.targetPosition.y + 0.2,
+      bomb.targetPosition.z
+    );
+    const shockwave2Position = new THREE.Vector3(
+      bomb.targetPosition.x,
+      bomb.targetPosition.y + 0.25,
+      bomb.targetPosition.z
+    );
 
     return {
       impactPosition,
@@ -126,9 +155,17 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       travelDirection,
       bodyQuaternion,
       trailQuaternion,
+      flashPosition,
+      explosionPosition,
+      shockwavePosition,
+      shockwave2Position,
+      intercepted,
     };
   }, [
     bomb.id,
+    bomb.interceptPosition?.x,
+    bomb.interceptPosition?.y,
+    bomb.interceptPosition?.z,
     bomb.startPosition.x,
     bomb.startPosition.y,
     bomb.startPosition.z,
@@ -178,7 +215,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
   useFrame(() => {
     const now = getFrameClock().nowMs;
     const elapsed = now - startFrameTimeRef.current;
-    const fallProgress = Math.max(0, Math.min(1, elapsed / METEOR_FALL_DURATION));
+    const fallProgress = Math.max(0, Math.min(1, elapsed / fallDurationRef.current));
     
     if (!hasExplodedRef.current && fallProgress < 1) {
       if (bombRef.current) {
@@ -392,13 +429,13 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       <mesh 
         ref={flashRef}
         visible={false}
-        position={[bomb.targetPosition.x, bomb.targetPosition.y + 1, bomb.targetPosition.z]}
+        position={meteorPath.flashPosition}
         geometry={SHARED_GEOMETRIES.sphere8}
         material={animatedMaterials.explosionFlash}
       />
       
       {/* Explosion group */}
-      <group ref={explosionRef} visible={false} position={[bomb.targetPosition.x, bomb.targetPosition.y + 1.5, bomb.targetPosition.z]}>
+      <group ref={explosionRef} visible={false} position={meteorPath.explosionPosition}>
         {/* White hot core */}
         <mesh geometry={SHARED_GEOMETRIES.sphere12} material={animatedMaterials.explosionWhite} />
         {/* Bright yellow */}
@@ -434,24 +471,28 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
       </group>
       
       {/* Ground shockwave */}
-      <mesh 
-        ref={shockwaveRef}
-        visible={false}
-        position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.2, bomb.targetPosition.z]}
-        rotation-x={-Math.PI / 2} 
-        geometry={SHARED_GEOMETRIES.ring24}
-        material={animatedMaterials.shockwaveOuter}
-      />
+      {!meteorPath.intercepted && (
+        <mesh
+          ref={shockwaveRef}
+          visible={false}
+          position={meteorPath.shockwavePosition}
+          rotation-x={-Math.PI / 2}
+          geometry={SHARED_GEOMETRIES.ring24}
+          material={animatedMaterials.shockwaveOuter}
+        />
+      )}
       
       {/* Secondary inner shockwave */}
-      <mesh 
-        ref={shockwave2Ref}
-        visible={false}
-        position={[bomb.targetPosition.x, bomb.targetPosition.y + 0.25, bomb.targetPosition.z]}
-        rotation-x={-Math.PI / 2} 
-        geometry={SHARED_GEOMETRIES.ring16}
-        material={animatedMaterials.shockwaveInner}
-      />
+      {!meteorPath.intercepted && (
+        <mesh
+          ref={shockwave2Ref}
+          visible={false}
+          position={meteorPath.shockwave2Position}
+          rotation-x={-Math.PI / 2}
+          geometry={SHARED_GEOMETRIES.ring16}
+          material={animatedMaterials.shockwaveInner}
+        />
+      )}
     </group>
   );
 }, (prev, next) => {
@@ -461,6 +502,7 @@ export const BombEffect = React.memo(({ bomb }: BombEffectProps) => {
     prev.bomb.targetPosition.x === next.bomb.targetPosition.x &&
     prev.bomb.targetPosition.y === next.bomb.targetPosition.y &&
     prev.bomb.targetPosition.z === next.bomb.targetPosition.z &&
+    sameOptionalVec3(prev.bomb.interceptPosition, next.bomb.interceptPosition) &&
     prev.bomb.startTime === next.bomb.startTime &&
     prev.bomb.hasExploded === next.bomb.hasExploded &&
     prev.bomb.impactTime === next.bomb.impactTime

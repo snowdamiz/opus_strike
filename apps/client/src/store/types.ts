@@ -207,6 +207,7 @@ export interface RocketData {
 export interface BombData {
   id: string;
   targetPosition: { x: number; y: number; z: number };
+  interceptPosition?: { x: number; y: number; z: number };
   startPosition: { x: number; y: number; z: number };
   startTime: number;
   impactTime: number; // When the bomb lands

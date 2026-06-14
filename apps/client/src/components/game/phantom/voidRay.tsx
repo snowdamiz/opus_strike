@@ -6,6 +6,7 @@ import { doesSegmentHitPlayerCombatHitbox } from '@voxel-strike/shared';
 import { useGameStore, VoidRayData } from '../../../store/gameStore';
 import { getPhysicsWorld, isPhysicsReady, raycast } from '../../../hooks/usePhysics';
 import { getFrameClock } from '../../../utils/frameClock';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 
 interface VoidRayProps {
   id: string;
@@ -13,6 +14,7 @@ interface VoidRayProps {
   direction: { x: number; y: number; z: number };
   startTime: number;
   ownerId: string;
+  ownerTeam: 'red' | 'blue';
 }
 
 // ============================================================================
@@ -486,7 +488,7 @@ export function appendVoidRayGpuPrewarmObjects(target: THREE.Object3D): void {
   target.add(group);
 }
 
-export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId }: VoidRayProps) => {
+export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ownerId, ownerTeam }: VoidRayProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const beamRef = useRef<THREE.Mesh>(null);
   const coreRef = useRef<THREE.Mesh>(null);
@@ -629,7 +631,15 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     // Calculate beam length
     let targetLength = Math.min(RAY_LENGTH, elapsed * RAY_SPEED) * envelope.lengthScale;
     
-    // Terrain collision
+    // Skill/terrain collision
+    const aegisHit = getFirstChronosAegisVisualHit(
+      startPosition,
+      direction,
+      targetLength,
+      ownerTeam,
+      ownerId,
+      RAY_RADIUS
+    );
     if (isPhysicsReady()) {
       const world = getPhysicsWorld();
       if (world) {
@@ -641,6 +651,9 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
           targetLength = hit.distance;
         }
       }
+    }
+    if (aegisHit && aegisHit.distance < targetLength) {
+      targetLength = aegisHit.distance;
     }
 
     currentLengthRef.current = targetLength;
@@ -1003,7 +1016,8 @@ export const VoidRay = React.memo(({ id, startPosition, direction, startTime, ow
     prev.direction.y === next.direction.y &&
     prev.direction.z === next.direction.z &&
     prev.startTime === next.startTime &&
-    prev.ownerId === next.ownerId
+    prev.ownerId === next.ownerId &&
+    prev.ownerTeam === next.ownerTeam
   );
 });
 
@@ -1023,6 +1037,7 @@ export function VoidRays({ rays }: VoidRaysProps) {
           direction={ray.direction}
           startTime={ray.startTime}
           ownerId={ray.ownerId}
+          ownerTeam={ray.ownerTeam}
         />
       ))}
     </>

@@ -7,6 +7,7 @@ import { DRAG_HOOK_MAX_DISTANCE, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/pl
 import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
+import { getFirstChronosAegisVisualHit } from '../chronos/aegisCollision';
 import { 
   SHARED_GEOMETRIES, 
   HOOKSHOT_COLORS, 
@@ -169,19 +170,33 @@ export const DragHookEffect = React.memo(({ hook }: DragHookProps) => {
         hookStateRef.current = 'retracting';
       }
       
-      // Terrain collision - if hit, start retracting
-      if (isPhysicsReady()) {
-        const hit = raycastDirection(curPos.x, curPos.y, curPos.z, dirX, dirY, dirZ, delta * speed + 0.5, {
+      // Skill/terrain collision - if hit, start retracting
+      const aegisHit = getFirstChronosAegisVisualHit(
+        previousPosition,
+        hookDirection,
+        moveDistance + DRAG_HOOK_COLLISION_RADIUS,
+        hook.ownerTeam,
+        hook.ownerId,
+        DRAG_HOOK_COLLISION_RADIUS
+      );
+      const terrainHit = isPhysicsReady()
+        ? raycastDirection(previousPosition.x, previousPosition.y, previousPosition.z, dirX, dirY, dirZ, moveDistance + 0.5, {
           priority: 'visual',
           feature: 'projectile:hookshotDrag',
+        })
+        : null;
+      const hit = aegisHit && (!terrainHit?.hit || aegisHit.distance <= terrainHit.distance)
+        ? { hit: true, point: aegisHit.point, normal: aegisHit.normal }
+        : terrainHit;
+      if (hit?.hit) {
+        curPos.x = hit.point.x;
+        curPos.y = hit.point.y;
+        curPos.z = hit.point.z;
+        triggerTerrainImpact('hookshot_drag_hook', hit.point, {
+          normal: hit.normal,
+          direction: { x: dirX, y: dirY, z: dirZ },
         });
-        if (hit?.hit) {
-          triggerTerrainImpact('hookshot_drag_hook', hit.point, {
-            normal: hit.normal,
-            direction: { x: dirX, y: dirY, z: dirZ },
-          });
-          hookStateRef.current = 'retracting';
-        }
+        hookStateRef.current = 'retracting';
       }
       
       // Enemy collision - if hit, start retracting AND pull enemy

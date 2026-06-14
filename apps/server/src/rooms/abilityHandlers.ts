@@ -17,7 +17,23 @@ import {
 } from '@voxel-strike/shared';
 import type { HeroId } from '@voxel-strike/shared';
 
-const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>();
+const COOLDOWN_AFTER_ACTIVE_ABILITIES = new Set<string>([
+  'phantom_personal_shield',
+]);
+
+export function deactivateActiveAbility(ability: AbilityStateSchema): void {
+  ability.isActive = false;
+  ability.activatedAt = 0;
+
+  if (!COOLDOWN_AFTER_ACTIVE_ABILITIES.has(ability.abilityId) || ability.cooldownRemaining > 0) {
+    return;
+  }
+
+  const abilityDef = ABILITY_DEFINITIONS[ability.abilityId];
+  if (abilityDef) {
+    ability.cooldownRemaining = abilityDef.cooldown;
+  }
+}
 
 // ============================================================================
 // VOID ZONE CONFIGURATION
@@ -357,10 +373,7 @@ export function updateActiveAbilities(player: Player, now: number): void {
 
     const elapsedMs = now - ability.activatedAt;
     if (elapsedMs >= abilityDef.duration * 1000) {
-      ability.isActive = false;
-      if (COOLDOWN_AFTER_ACTIVE_ABILITIES.has(ability.abilityId) && ability.cooldownRemaining <= 0) {
-        ability.cooldownRemaining = abilityDef.cooldown;
-      }
+      deactivateActiveAbility(ability);
     }
   });
 }

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, type RootState } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  getChronosAegisCenter,
+  getChronosAegisForward,
+} from '@voxel-strike/shared';
 import { useGameStore } from '../../../store/gameStore';
 import { visualStore } from '../../../store/visualStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
@@ -22,8 +26,6 @@ const CHRONOS_AEGIS_STALE_MS = 320;
 const CHRONOS_AEGIS_WORLD_WIDTH = CHRONOS_AEGIS_PANEL_WIDTH * 1.05;
 const CHRONOS_AEGIS_WORLD_HEIGHT = CHRONOS_AEGIS_PANEL_HEIGHT * 1.05;
 const CHRONOS_AEGIS_EDGE_THICKNESS = 0.09;
-const CHRONOS_AEGIS_FORWARD_OFFSET = 1.85;
-const CHRONOS_AEGIS_CENTER_Y = 1.02;
 const CHRONOS_AEGIS_FADE_IN_SECONDS = 0.18;
 const CHRONOS_AEGIS_FILL_OPACITY = 0.2;
 const CHRONOS_AEGIS_EDGE_OPACITY = 0.72;
@@ -168,6 +170,8 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
   const fillDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGED_FILL_COLOR), []);
   const edgeFreshColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_EDGE_COLOR), []);
   const edgeDamagedColor = useMemo(() => new THREE.Color(CHRONOS_AEGIS_DAMAGED_EDGE_COLOR), []);
+  const localNormal = useMemo(() => new THREE.Vector3(0, 0, 1), []);
+  const forwardVector = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => () => {
     fillGeometry.dispose();
@@ -196,8 +200,14 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
 
       const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
       const visualYaw = visualStore.getState().playerRotations.get(playerId) ?? player.lookYaw;
-      const forwardX = -Math.sin(visualYaw);
-      const forwardZ = -Math.cos(visualYaw);
+      const visualPitch = player.lookPitch ?? 0;
+      const center = getChronosAegisCenter({
+        playerId,
+        position: visualPosition,
+        lookYaw: visualYaw,
+        lookPitch: visualPitch,
+      });
+      const forward = getChronosAegisForward(visualYaw, visualPitch);
       const elapsed = Math.max(0, (now - aegis.activatedAtMs) / 1000);
       const fade = THREE.MathUtils.smoothstep(elapsed, 0, CHRONOS_AEGIS_FADE_IN_SECONDS);
       const durability = THREE.MathUtils.clamp(aegis.durabilityRatio, 0, 1);
@@ -206,12 +216,9 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
       const shieldScale = THREE.MathUtils.lerp(0.74, 1.05, fade) * pulse;
 
       group.visible = fade > 0.01;
-      group.position.set(
-        visualPosition.x + forwardX * CHRONOS_AEGIS_FORWARD_OFFSET,
-        visualPosition.y + CHRONOS_AEGIS_CENTER_Y,
-        visualPosition.z + forwardZ * CHRONOS_AEGIS_FORWARD_OFFSET
-      );
-      group.rotation.set(0, Math.atan2(forwardX, forwardZ), 0);
+      group.position.set(center.x, center.y, center.z);
+      forwardVector.set(forward.x, forward.y, forward.z).normalize();
+      group.quaternion.setFromUnitVectors(localNormal, forwardVector);
       group.scale.set(shieldScale, shieldScale, 1);
 
       fillMaterialRef.current.color.copy(fillFreshColor).lerp(fillDamagedColor, damage * 0.74);

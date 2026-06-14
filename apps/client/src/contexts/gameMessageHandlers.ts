@@ -524,6 +524,9 @@ function rememberPlayerNetId(vitals: PlayerVitalsSnapshot): void {
 }
 
 type NetworkAbilityVitals = PlayerVitalsAbilitySnapshot & { cooldownRemaining?: number };
+const COOLDOWN_AFTER_ACTIVE_ABILITY_IDS = new Set<string>([
+  'phantom_personal_shield',
+]);
 
 function normalizeAbilityVitals(
   abilities: Record<string, NetworkAbilityVitals> | undefined,
@@ -1181,6 +1184,7 @@ interface AbilityUsedMessage {
   position?: { x: number; y: number; z: number };
   startPosition?: { x: number; y: number; z: number };
   targetPosition?: { x: number; y: number; z: number };
+  interceptPosition?: { x: number; y: number; z: number };
   targetIds?: string[];
   mode?: 'allies' | 'self';
   aimDirection?: { x: number; y: number; z: number };
@@ -1469,13 +1473,15 @@ function applyConfirmedPhantomActiveAbility(data: AbilityUsedMessage): void {
 
   const existingAbility = player.abilities?.[data.abilityId];
   const activatedAt = data.serverTime ?? Date.now();
-  const cooldownSeconds = abilityDef.cooldown ?? existingAbility?.cooldownRemaining ?? 0;
+  const cooldownSeconds = COOLDOWN_AFTER_ACTIVE_ABILITY_IDS.has(data.abilityId)
+    ? 0
+    : abilityDef.cooldown ?? existingAbility?.cooldownRemaining ?? 0;
   const abilities = {
     ...player.abilities,
     [data.abilityId]: {
       abilityId: data.abilityId,
       cooldownRemaining: cooldownSeconds,
-      cooldownUntil: Date.now() + cooldownSeconds * 1000,
+      cooldownUntil: cooldownSeconds > 0 ? Date.now() + cooldownSeconds * 1000 : 0,
       charges: existingAbility?.charges ?? abilityDef.charges ?? 1,
       isActive: true,
       activatedAt,
@@ -1974,6 +1980,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
       store.addBomb({
         id: castId,
         targetPosition,
+        interceptPosition: data.interceptPosition,
         startPosition,
         startTime: now,
         impactTime,
@@ -1994,7 +2001,7 @@ function handleBlazeAbilityUsed(data: AbilityUsedMessage, localPlayerId: string 
         fadeOutMs: Math.min(200, impactDelay),
       });
       window.setTimeout(() => {
-        playBlazeWorldSound('blazeBombExplode', targetPosition, { volume: 1.05 });
+        playBlazeWorldSound('blazeBombExplode', data.interceptPosition ?? targetPosition, { volume: 1.05 });
       }, impactDelay);
       return true;
     }
