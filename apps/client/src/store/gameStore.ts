@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { UNSTUCK_COOLDOWN_MS, createRandomSeed, type GameEndEvent, type PlayerPingsMessage, type VoxelMapTheme } from '@voxel-strike/shared';
+import { createRandomSeed, type GameEndEvent, type PlayerPingsMessage, type VoxelMapTheme } from '@voxel-strike/shared';
 import {
   clearAllDeathVisuals,
   clearVisualState,
@@ -133,8 +133,6 @@ interface CoreState {
   // Client-side cooldowns
   clientCooldowns: Record<string, number>;
   clientCharges: Record<string, number>;
-  unstuckCooldownUntil: number;
-  unstuckRequestId: number;
 
   // Slide visual effects
   slideIntensity: number;
@@ -186,7 +184,6 @@ interface CoreActions {
   setClientCooldown: (abilityId: string, endTime: number) => void;
   setClientCharges: (abilityId: string, charges: number) => void;
   clearClientCooldowns: () => void;
-  requestUnstuck: () => boolean;
   setSlideIntensity: (intensity: number) => void;
 
   // Ghost cleanup
@@ -271,8 +268,6 @@ const coreInitialState: CoreState = {
   ultimateEffectEndTime: 0,
   clientCooldowns: {},
   clientCharges: {},
-  unstuckCooldownUntil: 0,
-  unstuckRequestId: 0,
   slideIntensity: 0,
 };
 
@@ -640,22 +635,6 @@ export const useGameStore = create<GameStore>((set, get, store) => ({
   )),
 
   clearClientCooldowns: () => set({ clientCooldowns: {}, clientCharges: {} }),
-
-  requestUnstuck: () => {
-    const now = Date.now();
-    const { gamePhase, localPlayer, unstuckCooldownUntil } = get();
-    const isActiveGame = gamePhase === 'playing' || gamePhase === 'countdown';
-
-    if (!isActiveGame || localPlayer?.state !== 'alive' || now < unstuckCooldownUntil) {
-      return false;
-    }
-
-    set((state) => ({
-      unstuckCooldownUntil: now + UNSTUCK_COOLDOWN_MS,
-      unstuckRequestId: state.unstuckRequestId + 1,
-    }));
-    return true;
-  },
 
   setSlideIntensity: (intensity) => set((state) => state.slideIntensity === intensity ? state : { slideIntensity: intensity }),
 

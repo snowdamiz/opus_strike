@@ -38,6 +38,7 @@ const NOISY_EVENT_TYPES = new Set([
   'movement.movement_command_reject',
   'movement.movement_command_drop',
   'movement.authority_barrier',
+  'combat.non_visible_target_hit',
 ]);
 
 interface AggregateBucket {

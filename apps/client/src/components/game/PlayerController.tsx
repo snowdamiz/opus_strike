@@ -96,7 +96,6 @@ import {
   type AbilityCastOriginHint,
   type InputState,
   type MovementCommand,
-  type MovementCorrectionReason,
   type PlayerMovementState,
 } from '@voxel-strike/shared';
 import { recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
@@ -486,7 +485,6 @@ function movementClassForTrace(input: {
   heroId: HeroId;
   movement: PlayerMovementState;
   inputState: typeof INACTIVE_INPUT_STATE;
-  unstuck: boolean;
   flagCarrier: boolean;
 }): string {
   if (input.movement.isSliding) return 'slide';
@@ -497,7 +495,6 @@ function movementClassForTrace(input: {
   if (input.heroId === 'chronos' && input.inputState.ability1) {
     return input.inputState.secondaryFire ? 'chronos_lifeline_self' : 'chronos_lifeline_allies';
   }
-  if (input.unstuck) return 'unstuck';
   if (input.flagCarrier) return 'flag_route';
   return 'baseline';
 }
@@ -575,8 +572,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const lastHeroIdRef = useRef<string | null>(null);
   const reloadPressedRef = useRef(false);
   const pendingReloadInputRef = useRef(false);
-  const lastUnstuckRequestIdRef = useRef(0);
-  const pendingUnstuckInputRef = useRef(false);
   const wasSlidingLastFrameRef = useRef(false);
   const lastViewmodelPoseResetKeyRef = useRef<string | null>(null);
   const actionLockUntilRef = useRef(0);
@@ -911,7 +906,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
-      pendingUnstuckInputRef.current = false;
       resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
       setLocalSlideIntensity(0);
@@ -987,7 +981,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       abilitySystem.abilityActiveRef.current = {};
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
-      pendingUnstuckInputRef.current = false;
       resetMovementCommandBuffer();
       resetPredictedAbilitySounds();
       lastExclusiveHoldInputRef.current = { ...EMPTY_EXCLUSIVE_HOLD_INPUT };
@@ -1024,7 +1017,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = false;
       pendingReloadInputRef.current = false;
-      pendingUnstuckInputRef.current = false;
       resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
       movement.refs.velocity.current.set(0, 0, 0);
@@ -1074,7 +1066,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       resetBlazeFlamethrower(now);
       reloadPressedRef.current = frameInput.reload;
       pendingReloadInputRef.current = false;
-      pendingUnstuckInputRef.current = false;
       resetMovementCommandBuffer();
       movement.refs.slideIntensity.current = 0;
       setLocalSlideIntensity(0);
@@ -1172,12 +1163,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         movement: nextState.movement,
       });
     };
-
-    const unstuckRequestId = useGameStore.getState().unstuckRequestId;
-    if (unstuckRequestId !== lastUnstuckRequestIdRef.current) {
-      lastUnstuckRequestIdRef.current = unstuckRequestId;
-      pendingUnstuckInputRef.current = true;
-    }
 
     let { speedMultiplier } = abilitySystem.updateActiveAbilities(dt);
     if (localPlayer.heroId === 'phantom' && localPlayer.abilities?.['phantom_veil']?.isActive) {
@@ -1652,7 +1637,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const reloadForServer = frameInput.reload ||
       pendingReloadInputRef.current ||
       (phantomAutoReloadForServer && !primaryFireForServer);
-    const unstuckForServer = pendingUnstuckInputRef.current;
     const crouchHeld = frameInput.crouch || isControlPressed;
     if (crouchHeld && !lastCrouchHeldRef.current) {
       pendingCrouchPressedRef.current = true;
@@ -1687,12 +1671,10 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         lookYaw: cameraControl.refs.yaw.current,
         lookPitch: cameraControl.refs.pitch.current,
         clientTimeMs: now,
-        unstuck: pendingUnstuckInputRef.current,
         crouchPressed: pendingCrouchPressedRef.current,
         abilityCastHints,
       });
       recordMovementCommandGenerated();
-      pendingUnstuckInputRef.current = false;
       pendingCrouchPressedRef.current = false;
       pendingMovementCommandsRef.current.push(command);
       const nextPredictedState = stepLocalMovementPrediction(localPlayer, command);
@@ -1828,16 +1810,13 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         heroId,
         movement: localMovementForTrace,
         inputState: commandInput,
-        unstuck: unstuckForServer,
         flagCarrier: localPlayer.hasFlag,
       });
-      const traceMovementBarrier: MovementCorrectionReason | null = unstuckForServer
-        ? 'unstuck'
-        : heroId === 'phantom' && frameInput.ability1
-          ? 'teleport'
-          : heroId === 'blaze' && frameInput.ability2
-            ? 'knockback'
-            : null;
+      const traceMovementBarrier = heroId === 'phantom' && frameInput.ability1
+        ? 'teleport'
+        : heroId === 'blaze' && frameInput.ability2
+          ? 'knockback'
+          : null;
       recordMovementTraceFrame({
         heroId,
         matchMode: resolveTraceMatchMode(),
@@ -1859,8 +1838,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         activeAbilityState: {
           activeAbilityIds: traceAbilityIds,
           activeSpeedMultiplier: speedMultiplier,
-          movementBarrier: traceMovementBarrier === 'unstuck' ||
-            traceMovementBarrier === 'teleport' ||
+          movementBarrier: traceMovementBarrier === 'teleport' ||
             traceMovementBarrier === 'knockback'
             ? traceMovementBarrier
             : null,
@@ -1873,7 +1851,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           mapSeed: storeForTrace.mapSeed,
           collisionRevision: getLocalMovementCollisionRevision(),
         },
-        unstuck: unstuckForServer,
         crouchPressed: isSliding && !wasSlidingBeforeFrame,
         correctionReason: traceMovementBarrier ?? undefined,
       });

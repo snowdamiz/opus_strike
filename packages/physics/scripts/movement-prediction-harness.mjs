@@ -17,7 +17,6 @@ import {
   MOVEMENT_BUTTON_MOVE_FORWARD,
   MOVEMENT_BUTTON_RELOAD,
   MOVEMENT_BUTTON_SPRINT,
-  MOVEMENT_BUTTON_UNSTUCK,
   MOVEMENT_PROTOCOL_VERSION,
   createProceduralTerrainLookup,
   createEmptyInputState,
@@ -304,8 +303,7 @@ function runHeldCommandStripsEdgeButtons() {
     MOVEMENT_BUTTON_CROUCH |
     MOVEMENT_BUTTON_CROUCH_PRESSED |
     MOVEMENT_BUTTON_RELOAD |
-    MOVEMENT_BUTTON_ABILITY_1 |
-    MOVEMENT_BUTTON_UNSTUCK;
+    MOVEMENT_BUTTON_ABILITY_1;
 
   const heldButtons = movementButtonsForHeldCommand(buttons);
   const heldInput = movementButtonsToInputState(heldButtons);
@@ -316,7 +314,6 @@ function runHeldCommandStripsEdgeButtons() {
   assert.equal(heldInput.crouchPressed, false);
   assert.equal(heldInput.reload, false);
   assert.equal(heldInput.ability1, false);
-  assert.equal(heldInput.unstuck, false);
 }
 
 function runChronosAscendantReleaseDampsStrafe() {

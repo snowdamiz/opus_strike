@@ -1,7 +1,7 @@
 import type { Vec3 } from '../../types/vector.js';
 
 export const DEFAULT_PROCEDURAL_MAP_SEED = 0x57564f58;
-export const CONSTRUCTED_MAP_MANIFEST_VERSION = 3;
+export const CONSTRUCTED_MAP_MANIFEST_VERSION = 4;
 
 export type VoxelBlockId =
   | 'air'
@@ -415,9 +415,20 @@ export interface VoxelHeightfield {
   topSolidRows: Uint16Array;
 }
 
+export type VoxelSkyVariantId =
+  | 'clear_day'
+  | 'stormfront'
+  | 'desert_heat'
+  | 'frost_glow'
+  | 'crystal_dusk'
+  | 'ember_haze'
+  | 'sakura_dawn'
+  | 'treasury_glow';
+
 export interface VoxelMapTheme {
   id: 'verdant' | 'basalt' | 'desert' | 'frost' | 'crystal' | 'volcanic' | 'sakura' | 'golden';
   name: string;
+  skyVariantId: VoxelSkyVariantId;
   skyColor: string;
   ambientColor: string;
   sunColor: string;

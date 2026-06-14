@@ -101,6 +101,7 @@ assert.equal(getAllowedRankDivisionDistance(90_000), 6);
 const { ticket, claims } = createMatchmakingTicket({
   mode: 'quick_play',
   userId: 'user_1',
+  clientId: 'client-1',
   competitiveRating: strongPlayer,
   rankDivisionIndex: getRankDivisionIndex(strongPlayer),
   targetRankDivisionIndex: getRankDivisionIndex(1300),
@@ -113,6 +114,7 @@ assert.equal(verified.userId, 'user_1');
 assert.equal(verified.version, 2);
 assert.equal(verified.mode, 'quick_play');
 assert.equal(verified.competitiveRating, strongPlayer);
+assert.equal(verified.clientId, 'client-1');
 assert.equal(verified.targetRankDivisionIndex, getRankDivisionIndex(1300));
 
 assert.equal(verifyMatchmakingTicket(`${ticket.slice(0, -1)}x`, claims.issuedAt + 1), null);

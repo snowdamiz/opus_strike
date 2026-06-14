@@ -174,14 +174,12 @@ export function createLocalMovementCommand(input: InputState, options: {
   lookPitch: number;
   clientTimeMs: number;
   movementEpoch?: number;
-  unstuck?: boolean;
   crouchPressed?: boolean;
   abilityCastHints?: AbilityCastOriginHint[];
 }): MovementCommand {
   const command = sanitizeMovementCommand({
     seq: nextCommandSeq,
     buttons: inputStateToMovementButtons(input, {
-      unstuck: options.unstuck,
       crouchPressed: options.crouchPressed,
     }),
     lookYaw: options.lookYaw,

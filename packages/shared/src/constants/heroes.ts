@@ -1,6 +1,9 @@
 import type { HeroDefinition, HeroId, HeroStats } from '../types/hero.js';
 import type { AbilityDefinition } from '../types/ability.js';
 import {
+  BLAZE_FLAMETHROWER_BURN_DAMAGE,
+  BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
+  BLAZE_FLAMETHROWER_BURN_TICKS,
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_FUEL_DRAIN,
   BLAZE_FLAMETHROWER_FUEL_REGEN,
@@ -55,7 +58,7 @@ export const CHRONOS_LIFELINE_BEAM_DURATION_MS = 620;
 export const CHRONOS_LIFELINE_SOURCE_HEIGHT = 1.18;
 export const CHRONOS_LIFELINE_TARGET_HEIGHT = 1.02;
 export const CHRONOS_VERDANT_PULSE_DAMAGE = 16;
-export const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 250;
+export const CHRONOS_VERDANT_PULSE_COOLDOWN_MS = 300;
 export const CHRONOS_VERDANT_PULSE_FIRE_READY_MS = 140;
 export const CHRONOS_VERDANT_PULSE_SPEED = 68;
 export const CHRONOS_VERDANT_PULSE_AIM_DISTANCE = 120;
@@ -88,7 +91,8 @@ export const CHRONOS_ASCENDANT_PARADOX_PULSE_RADIUS = 3.8;
 export const CHRONOS_ASCENDANT_PARADOX_PULSE_COOLDOWN_MS = 360;
 export const CHRONOS_ASCENDANT_PARADOX_PULSE_SPEED = 54;
 
-export const BLAZE_ROCKET_FIRE_INTERVAL_MS = 435;
+export const BLAZE_ROCKET_FIRE_INTERVAL_MS = 400;
+export const BLAZE_ROCKET_SPEED = 98;
 export const BLAZE_ROCKET_DAMAGE = 24;
 export const BLAZE_ROCKET_SPLASH_RADIUS = 2.8;
 export const BLAZE_BOMB_DAMAGE = 34;
@@ -142,6 +146,8 @@ export const ABILITY_CARD_STATS = {
   ],
   blaze_flamethrower: [
     { value: BLAZE_FLAMETHROWER_DAMAGE, label: 'dmg/tick' },
+    { value: BLAZE_FLAMETHROWER_BURN_DAMAGE, label: `burn dmg x${BLAZE_FLAMETHROWER_BURN_TICKS}` },
+    { value: BLAZE_FLAMETHROWER_BURN_INTERVAL_MS / 1000, label: 'burn interval', suffix: 's' },
     { value: BLAZE_FLAMETHROWER_FUEL_DRAIN, label: 'drain', suffix: '/s' },
     { value: BLAZE_FLAMETHROWER_FUEL_REGEN, label: 'regen', suffix: '/s' },
   ],
@@ -346,7 +352,7 @@ export const ABILITY_DEFINITIONS: Record<string, AbilityDefinition> = {
     type: 'offensive',
     targeting: 'direction',
     cooldown: 0,
-    description: 'Hold to spray a short-range cone of flame. Consumes fuel that regenerates when not firing.',
+    description: 'Hold to spray a short-range cone of flame. Hits ignite enemies for lingering burn damage. Consumes fuel that regenerates when not firing.',
   },
   blaze_rocketjump: {
     id: 'blaze_rocketjump',

@@ -36,7 +36,6 @@ export const MOVEMENT_BUTTON_ABILITY_1 = 1 << 10;
 export const MOVEMENT_BUTTON_ABILITY_2 = 1 << 11;
 export const MOVEMENT_BUTTON_ULTIMATE = 1 << 12;
 export const MOVEMENT_BUTTON_INTERACT = 1 << 13;
-export const MOVEMENT_BUTTON_UNSTUCK = 1 << 14;
 export const MOVEMENT_BUTTON_CROUCH_PRESSED = 1 << 15;
 
 export const MOVEMENT_ALLOWED_BUTTON_MASK =
@@ -54,7 +53,6 @@ export const MOVEMENT_ALLOWED_BUTTON_MASK =
   MOVEMENT_BUTTON_ABILITY_2 |
   MOVEMENT_BUTTON_ULTIMATE |
   MOVEMENT_BUTTON_INTERACT |
-  MOVEMENT_BUTTON_UNSTUCK |
   MOVEMENT_BUTTON_CROUCH_PRESSED;
 
 export const MOVEMENT_HELD_COMMAND_CLEAR_MASK =
@@ -63,15 +61,13 @@ export const MOVEMENT_HELD_COMMAND_CLEAR_MASK =
   MOVEMENT_BUTTON_ABILITY_1 |
   MOVEMENT_BUTTON_ABILITY_2 |
   MOVEMENT_BUTTON_ULTIMATE |
-  MOVEMENT_BUTTON_INTERACT |
-  MOVEMENT_BUTTON_UNSTUCK;
+  MOVEMENT_BUTTON_INTERACT;
 
 export type MovementCorrectionReason =
   | 'normal'
   | 'spawn'
   | 'respawn'
   | 'teleport'
-  | 'unstuck'
   | 'knockback'
   | 'epoch_mismatch'
   | 'invalid_transform'
@@ -193,7 +189,7 @@ export function sanitizeMovementButtons(buttons: number): number {
 
 export function inputStateToMovementButtons(
   input: InputState,
-  extras: { unstuck?: boolean; crouchPressed?: boolean } = {}
+  extras: { crouchPressed?: boolean } = {}
 ): number {
   let buttons = 0;
   if (input.moveForward) buttons |= MOVEMENT_BUTTON_MOVE_FORWARD;
@@ -210,7 +206,6 @@ export function inputStateToMovementButtons(
   if (input.ability2) buttons |= MOVEMENT_BUTTON_ABILITY_2;
   if (input.ultimate) buttons |= MOVEMENT_BUTTON_ULTIMATE;
   if (input.interact) buttons |= MOVEMENT_BUTTON_INTERACT;
-  if (extras.unstuck) buttons |= MOVEMENT_BUTTON_UNSTUCK;
   if (extras.crouchPressed) buttons |= MOVEMENT_BUTTON_CROUCH_PRESSED;
   return buttons;
 }
@@ -219,7 +214,7 @@ export function movementButtonsForHeldCommand(buttons: number): number {
   return sanitizeMovementButtons(buttons) & ~MOVEMENT_HELD_COMMAND_CLEAR_MASK;
 }
 
-export function movementButtonsToInputState(buttons: number): InputState & { unstuck?: boolean; crouchPressed?: boolean } {
+export function movementButtonsToInputState(buttons: number): InputState & { crouchPressed?: boolean } {
   const sanitized = sanitizeMovementButtons(buttons);
   return {
     moveForward: Boolean(sanitized & MOVEMENT_BUTTON_MOVE_FORWARD),
@@ -236,7 +231,6 @@ export function movementButtonsToInputState(buttons: number): InputState & { uns
     ability2: Boolean(sanitized & MOVEMENT_BUTTON_ABILITY_2),
     ultimate: Boolean(sanitized & MOVEMENT_BUTTON_ULTIMATE),
     interact: Boolean(sanitized & MOVEMENT_BUTTON_INTERACT),
-    unstuck: Boolean(sanitized & MOVEMENT_BUTTON_UNSTUCK),
     crouchPressed: Boolean(sanitized & MOVEMENT_BUTTON_CROUCH_PRESSED),
   };
 }

@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
+import crypto from 'crypto';
 import nacl from 'tweetnacl';
 import bs58 from 'bs58';
 
@@ -39,9 +40,7 @@ export function verifySignature(
  * Generate a unique nonce for signing
  */
 export function generateNonce(): string {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 15);
-  return `${timestamp}-${random}`;
+  return crypto.randomBytes(32).toString('base64url');
 }
 
 /**

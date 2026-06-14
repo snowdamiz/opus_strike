@@ -42,7 +42,6 @@ interface MovementTraceFrameInput extends TraceMetadata {
   flagCarrier: boolean;
   activeAbilityState: AntiCheatTraceAbilityState;
   terrainContact: AntiCheatTraceTerrainContact;
-  unstuck?: boolean;
   crouchPressed?: boolean;
   objectiveSuppressed?: boolean;
   correctionReason?: MovementCorrectionReason;
@@ -68,7 +67,7 @@ const DEFAULT_EXPECTED = {
   maxVelocityDriftMetersPerSecond: 3,
   maxMovementStateMismatches: 12,
   maxUnexpectedCorrections: 0,
-  allowedCorrectionReasons: ['normal', 'spawn', 'respawn', 'teleport', 'unstuck', 'knockback', 'collision_revision'],
+  allowedCorrectionReasons: ['normal', 'spawn', 'respawn', 'teleport', 'knockback', 'collision_revision'],
 } as const;
 
 let activeTrace: AntiCheatMovementTrace | null = null;
@@ -137,7 +136,6 @@ function makeCommand(input: MovementTraceFrameInput): MovementCommand {
   return sanitizeMovementCommand({
     seq: normalizeMovementSeq(input.tick),
     buttons: inputStateToMovementButtons(input.inputState, {
-      unstuck: input.unstuck,
       crouchPressed: input.crouchPressed,
     }),
     lookYaw: input.lookYaw,

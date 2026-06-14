@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
 import prisma from '../db';
 import { verifyAuthToken } from '../auth/session';
+import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { isAdminRetryAllowed } from './config';
 import { wagerService } from './service';
 
@@ -20,6 +21,7 @@ async function requireAuthUser(req: Request): Promise<{ userId: string; walletAd
   if (!user) {
     throw Object.assign(new Error('Authentication required'), { statusCode: 401 });
   }
+  await assertGameplayAccountEligible(user.id);
 
   return { userId: user.id, walletAddress: user.walletAddress };
 }

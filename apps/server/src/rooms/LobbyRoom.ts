@@ -6,8 +6,10 @@ import type { MatchMode } from '@voxel-strike/shared';
 import type { BlueprintPreview, BotDifficulty, HeroId, MapTopologyId, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { assertUsableEntryTicketSecret, isDevelopmentToolsEnabled } from '../config/security';
 import { resolveRoomAuthContext, type RoomAuthContext } from '../auth/session';
+import { assertGameplayAccountEligible } from '../auth/accountEligibility';
 import { createGameEntryTicket } from '../security/entryTickets';
 import { verifyMatchmakingTicket, type MatchmakingTicketClaims } from '../security/matchmakingTickets';
+import { consumeReplayNonce } from '../security/replayNonceStore';
 import {
   DEFAULT_MATCHMAKING_RATING,
   DEFAULT_RANK_DIVISION_INDEX,
@@ -199,7 +201,9 @@ export class LobbyRoom extends Room<LobbyState> {
   private sessionIdToClientId: Map<string, string> = new Map();
 
   async onAuth(client: Client, options: JoinOptions, request?: IncomingMessage): Promise<RoomAuthContext> {
-    return resolveRoomAuthContext(client.sessionId, options as Record<string, unknown>, request);
+    const authContext = await resolveRoomAuthContext(client.sessionId, options as Record<string, unknown>, request);
+    await assertGameplayAccountEligible(authContext.userId);
+    return authContext;
   }
 
   onCreate(options: JoinOptions) {
@@ -390,12 +394,18 @@ export class LobbyRoom extends Room<LobbyState> {
     const matchmakingTicket = this.isMatchmakingQueue()
       ? verifyMatchmakingTicket(options.matchmakingTicket)
       : null;
-    if (this.isMatchmakingQueue() && !this.isValidMatchmakingTicket(matchmakingTicket, authContext)) {
+    if (this.isMatchmakingQueue() && !this.isValidMatchmakingTicket(matchmakingTicket, authContext, options.clientId)) {
       client.send('error', { message: 'Invalid matchmaking ticket' });
       client.leave();
       return;
     }
     if (matchmakingTicket) {
+      const consumed = await consumeReplayNonce('matchmaking', matchmakingTicket.nonce, matchmakingTicket.expiresAt);
+      if (!consumed) {
+        client.send('error', { message: 'Matchmaking ticket already used' });
+        client.leave();
+        return;
+      }
       this.playerMatchmakingTickets.set(client.sessionId, matchmakingTicket);
     }
 
@@ -1985,7 +1995,8 @@ export class LobbyRoom extends Room<LobbyState> {
 
   private isValidMatchmakingTicket(
     ticket: MatchmakingTicketClaims | null,
-    authContext: RoomAuthContext
+    authContext: RoomAuthContext,
+    clientId: string | undefined
   ): ticket is MatchmakingTicketClaims {
     if (!ticket) return false;
     if (ticket.mode !== this.matchMode) return false;
@@ -2001,7 +2012,12 @@ export class LobbyRoom extends Room<LobbyState> {
       return ticket.userId === authContext.userId;
     }
 
-    return ticket.userId.startsWith('guest:') || ticket.userId === authContext.userId;
+    return Boolean(
+      ticket.clientId
+        && clientId
+        && ticket.clientId === clientId
+        && ticket.userId === `guest:${clientId}`
+    );
   }
 
   private resolvePlayerCompetitiveRating(

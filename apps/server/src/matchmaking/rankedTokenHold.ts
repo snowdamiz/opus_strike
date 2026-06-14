@@ -7,6 +7,8 @@ export const RANKED_TOKEN_HOLD_NATIVE_SOL_ADDRESS = 'So1111111111111111111111111
 const DEFAULT_RANKED_TOKEN_HOLD_USD_CENTS = 2_000;
 const DEFAULT_RANKED_TOKEN_HOLD_PRICE_STALE_MS = 60 * 1000;
 const DEFAULT_RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS = 5 * 1000;
+const DEFAULT_RANKED_TOKEN_HOLD_STATUS_CACHE_MS = 30 * 1000;
+const MAX_STATUS_CACHE_ENTRIES = 2_000;
 
 type RankedTokenPriceSource = 'env' | 'coingecko';
 
@@ -18,6 +20,8 @@ interface CachedPrice {
 }
 
 let cachedPrice: CachedPrice | null = null;
+const cachedStatuses = new Map<string, { expiresAt: number; status: RankedTokenHoldingStatus }>();
+let lastStatusCleanupAt = 0;
 
 export interface RankedTokenHoldRuntimeConfig {
   enabled: boolean;
@@ -29,6 +33,7 @@ export interface RankedTokenHoldRuntimeConfig {
   priceSource: RankedTokenPriceSource;
   priceStaleMs: number;
   rpcTimeoutMs: number;
+  statusCacheMs: number;
 }
 
 export interface RankedTokenHoldingStatus {
@@ -166,6 +171,7 @@ export function getRankedTokenHoldRuntimeConfig(): RankedTokenHoldRuntimeConfig 
     priceSource: normalizePriceSource(process.env.RANKED_TOKEN_HOLD_PRICE_SOURCE),
     priceStaleMs: intEnv('RANKED_TOKEN_HOLD_PRICE_STALE_MS', DEFAULT_RANKED_TOKEN_HOLD_PRICE_STALE_MS, { min: 5_000, max: 60 * 60 * 1000 }),
     rpcTimeoutMs: intEnv('RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS', DEFAULT_RANKED_TOKEN_HOLD_RPC_TIMEOUT_MS, { min: 1_000, max: 60_000 }),
+    statusCacheMs: intEnv('RANKED_TOKEN_HOLD_STATUS_CACHE_MS', DEFAULT_RANKED_TOKEN_HOLD_STATUS_CACHE_MS, { min: 0, max: 5 * 60 * 1000 }),
   };
 }
 
@@ -261,6 +267,33 @@ async function resolveTokenUsdPriceMicroUsd(config: RankedTokenHoldRuntimeConfig
     fetchedAt: now,
   };
   return tokenUsdPriceMicroUsd;
+}
+
+function statusCacheKey(walletAddress: string, config: RankedTokenHoldRuntimeConfig): string {
+  return [
+    walletAddress,
+    config.enabled ? 'enabled' : 'disabled',
+    config.tokenAddress,
+    config.usdCents,
+    config.cluster,
+    config.priceSource,
+    config.rpcUrl,
+  ].join(':');
+}
+
+function cleanupStatusCache(now: number): void {
+  if (now - lastStatusCleanupAt < 30_000 && cachedStatuses.size <= MAX_STATUS_CACHE_ENTRIES) return;
+  lastStatusCleanupAt = now;
+
+  for (const [key, entry] of cachedStatuses.entries()) {
+    if (entry.expiresAt <= now) cachedStatuses.delete(key);
+  }
+
+  while (cachedStatuses.size > MAX_STATUS_CACHE_ENTRIES) {
+    const oldestKey = cachedStatuses.keys().next().value;
+    if (!oldestKey) break;
+    cachedStatuses.delete(oldestKey);
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs: number): Promise<T> {
@@ -369,9 +402,19 @@ async function getSplTokenBalance(
 export async function getRankedTokenHoldingStatus(walletAddress: string): Promise<RankedTokenHoldingStatus> {
   const config = getRankedTokenHoldRuntimeConfig();
   const checkedAt = new Date();
+  const now = checkedAt.getTime();
+  const cacheKey = statusCacheKey(walletAddress, config);
+  cleanupStatusCache(now);
+
+  if (config.statusCacheMs > 0) {
+    const cached = cachedStatuses.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.status;
+    }
+  }
 
   if (!config.enabled) {
-    return {
+    const status = {
       eligible: true,
       tokenAddress: config.tokenAddress,
       tokenSymbol: config.tokenSymbol,
@@ -385,6 +428,10 @@ export async function getRankedTokenHoldingStatus(walletAddress: string): Promis
       priceSource: config.priceSource,
       checkedAt: checkedAt.toISOString(),
     };
+    if (config.statusCacheMs > 0) {
+      cachedStatuses.set(cacheKey, { expiresAt: now + config.statusCacheMs, status });
+    }
+    return status;
   }
 
   if (!config.rpcUrl) {
@@ -404,7 +451,7 @@ export async function getRankedTokenHoldingStatus(walletAddress: string): Promis
     balance.decimals
   );
 
-  return {
+  const status = {
     eligible: balance.balanceBaseUnits >= requiredTokenBaseUnits,
     tokenAddress: config.tokenAddress,
     tokenSymbol: config.tokenSymbol,
@@ -418,6 +465,10 @@ export async function getRankedTokenHoldingStatus(walletAddress: string): Promis
     priceSource: config.priceSource,
     checkedAt: checkedAt.toISOString(),
   };
+  if (config.statusCacheMs > 0) {
+    cachedStatuses.set(cacheKey, { expiresAt: now + config.statusCacheMs, status });
+  }
+  return status;
 }
 
 export async function assertRankedTokenHoldingEligibility(walletAddress: string): Promise<RankedTokenHoldingStatus> {

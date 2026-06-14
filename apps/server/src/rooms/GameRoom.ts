@@ -52,11 +52,15 @@ import {
   BLAZE_FLAMETHROWER_CONE_HALF_ANGLE,
   BLAZE_FLAMETHROWER_DAMAGE,
   BLAZE_FLAMETHROWER_DAMAGE_INTERVAL,
+  BLAZE_FLAMETHROWER_BURN_DAMAGE,
+  BLAZE_FLAMETHROWER_BURN_INTERVAL_MS,
+  BLAZE_FLAMETHROWER_BURN_TICKS,
   BLAZE_GEARSTORM_RADIUS,
   BLAZE_GEARSTORM_DAMAGE,
   BLAZE_GEARSTORM_DAMAGE_INTERVAL_MS,
   BLAZE_ROCKET_DAMAGE,
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
+  BLAZE_ROCKET_SPEED,
   BLAZE_ROCKET_SPLASH_RADIUS,
   BLAZE_BOMB_DAMAGE,
   BLAZE_BOMB_SPLASH_RADIUS,
@@ -101,8 +105,6 @@ import {
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
   VOID_RAY_CHARGE_TIME,
-  UNSTUCK_COOLDOWN_MS,
-  findUnstuckTerrainTeleport,
   MOVEMENT_PROTOCOL_VERSION,
   MOVEMENT_SUBSTEP_SECONDS,
   MOVEMENT_MAX_PACKET_COMMANDS,
@@ -203,12 +205,13 @@ import {
   AntiCheatRoomRuntime,
   advanceMovementShadowSimulation,
   createMovementShadowSimulationState,
-  getActiveAccountRestriction,
   getAntiCheatConfig,
   recordMovementShadowDriftSample,
   type AntiCheatIntegrityGate,
   type MovementShadowSimulationState,
 } from '../anticheat';
+import { AccountRestrictedError, assertGameplayAccountEligible } from '../auth/accountEligibility';
+import { consumeReplayNonce } from '../security/replayNonceStore';
 import type { LastSafeMovementState } from './movementValidation';
 import {
   GAME_MESSAGE_RATE_LIMITS,
@@ -414,6 +417,14 @@ interface BlazeGearstormInstance {
   lastDamageTick: Map<string, number>;
 }
 
+interface BlazeBurnEffect {
+  sourceId: string;
+  ticksRemaining: number;
+  nextTickAt: number;
+  sourcePosition: PlainVec3 | null;
+  sourceDirection: PlainVec3 | null;
+}
+
 interface ServerMovementAuthorityState {
   pendingCommands: MovementCommandQueue;
   lastProcessedSeq: number;
@@ -536,7 +547,6 @@ interface AttackConfig {
   damageType: string;
 }
 
-const BLAZE_ROCKET_SPEED = 70;
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
 const BLAZE_BOMB_COOLDOWN_MS = 8000;
 const BLAZE_BOMB_FALL_DURATION_MS = 1500;
@@ -668,6 +678,7 @@ export class GameRoom extends Room<GameState> {
   private blazeGearstorms: BlazeGearstormInstance[] = [];
   private blazeBombDropConsumedForHold: Set<string> = new Set();
   private blazeFlamethrowerActivePlayers: Set<string> = new Set();
+  private blazeBurnEffects: Map<string, BlazeBurnEffect> = new Map();
   private voidZoneIdCounter: number = 0;
   private npcIdCounter: number = 0;
   private devBotIdCounter: number = 0;
@@ -678,7 +689,6 @@ export class GameRoom extends Room<GameState> {
   private attackCooldownUntil: Map<string, number> = new Map();
   private damageHistory: Map<string, Map<string, DamageHistoryEntry>> = new Map();
   private chronosAegisShieldHp: Map<string, number> = new Map();
-  private unstuckCooldownUntil: Map<string, number> = new Map();
   private devImmunePlayers: Set<string> = new Set();
   private devGameClockFrozen = false;
   private devBotsRooted = false;
@@ -741,7 +751,6 @@ export class GameRoom extends Room<GameState> {
   private losCache = new Map<string, { result: boolean; expiresAt: number }>();
   private preferredBotHeroes: Map<string, HeroId> = new Map();
   private readonly rateLimiter = new MessageRateLimiter();
-  private readonly usedEntryTicketNonces = new Set<string>();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   private readonly playerEntryTickets = new Map<string, GameEntryTicketClaims>();
   private readonly clientsBySessionId = new Map<string, Client>();
@@ -787,7 +796,8 @@ export class GameRoom extends Room<GameState> {
         this.recordAuthReject(client, 'invalid_entry_ticket', { lobbyId: this.lobbyId });
         throw new Error('Valid game entry ticket required');
       }
-      if (this.usedEntryTicketNonces.has(ticket.nonce)) {
+      const consumed = await consumeReplayNonce('game_entry', ticket.nonce, ticket.expiresAt);
+      if (!consumed) {
         this.recordAuthReject(client, 'entry_ticket_nonce_replay', { lobbyId: this.lobbyId });
         throw new Error('Game entry ticket already used');
       }
@@ -815,17 +825,16 @@ export class GameRoom extends Room<GameState> {
       }
     }
 
-    if (!this.isGuestUserId(auth.userId)) {
-      const restriction = await getActiveAccountRestriction(prisma, auth.userId);
-      if (restriction) {
-        this.recordAuthReject(client, `account_${restriction.actionType}`, {
+    try {
+      await assertGameplayAccountEligible(auth.userId);
+    } catch (error) {
+      if (error instanceof AccountRestrictedError) {
+        this.recordAuthReject(client, `account_${error.restriction.actionType}`, {
           userId: auth.userId,
-          expiresAt: restriction.expiresAt?.toISOString() ?? null,
+          expiresAt: error.restriction.expiresAt?.toISOString() ?? null,
         });
-        throw new Error(restriction.actionType === 'ban'
-          ? 'Account is not eligible to join matches'
-          : 'Account is temporarily restricted from matches');
       }
+      throw error;
     }
 
     this.recordClientJoinHints(client, auth, options);
@@ -970,6 +979,10 @@ export class GameRoom extends Room<GameState> {
     });
 
     this.onMessage('playerPingResponse', (client, data: unknown) => {
+      if (!this.rateLimiter.consume(client.sessionId, 'playerPingResponse', GAME_MESSAGE_RATE_LIMITS.playerPingResponse)) {
+        this.recordRateLimitDrop(client.sessionId, 'playerPingResponse');
+        return;
+      }
       this.handlePlayerPingResponse(client, data);
     });
 
@@ -1126,7 +1139,6 @@ export class GameRoom extends Room<GameState> {
     const joinsAsObserver = entryTicket?.observer === true;
 
     if (entryTicket) {
-      this.usedEntryTicketNonces.add(entryTicket.nonce);
       this.playerEntryTickets.set(client.sessionId, entryTicket);
     }
     this.playerAuthContexts.set(client.sessionId, authContext);
@@ -1188,9 +1200,6 @@ export class GameRoom extends Room<GameState> {
       client.send('error', { message: 'Game room is full' });
       this.playerAuthContexts.delete(client.sessionId);
       this.playerEntryTickets.delete(client.sessionId);
-      if (entryTicket) {
-        this.usedEntryTicketNonces.delete(entryTicket.nonce);
-      }
       if (this.clientIdToSessionId.get(identityKey) === client.sessionId) {
         this.clientIdToSessionId.delete(identityKey);
       }
@@ -1352,11 +1361,16 @@ export class GameRoom extends Room<GameState> {
     this.hookshotGrapples.delete(playerId);
     this.blazeBombDropConsumedForHold.delete(playerId);
     this.blazeFlamethrowerActivePlayers.delete(playerId);
+    this.blazeBurnEffects.delete(playerId);
+    for (const [targetId, burn] of this.blazeBurnEffects) {
+      if (burn.sourceId === playerId) {
+        this.blazeBurnEffects.delete(targetId);
+      }
+    }
     this.movementAuthorities.delete(playerId);
     this.chronosAegisShieldHp.delete(playerId);
     this.attackCooldownUntil.delete(`${playerId}:primary`);
     this.attackCooldownUntil.delete(`${playerId}:secondary`);
-    this.unstuckCooldownUntil.delete(playerId);
     this.devImmunePlayers.delete(playerId);
     this.countdownSceneReadyPlayerIds.delete(playerId);
   }
@@ -1546,6 +1560,7 @@ export class GameRoom extends Room<GameState> {
 
     // Update held Blaze flamethrowers
     this.updateBlazeFlamethrowers(now, dt);
+    this.updateBlazeBurns(now);
 
     // Update physics simulation (simplified)
     this.updatePhysics();
@@ -1852,6 +1867,12 @@ export class GameRoom extends Room<GameState> {
     };
   }
 
+  private getBlazeBurnUntil(playerId: string): number | null {
+    const burn = this.blazeBurnEffects.get(playerId);
+    if (!burn || burn.ticksRemaining <= 0) return null;
+    return burn.nextTickAt + Math.max(0, burn.ticksRemaining - 1) * BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
+  }
+
   private buildPlayerVitals(
     id: string,
     player: Player,
@@ -1884,6 +1905,7 @@ export class GameRoom extends Room<GameState> {
       health: player.health,
       maxHealth: player.maxHealth,
       ultimateCharge: player.ultimateCharge,
+      onFireUntil: this.getBlazeBurnUntil(id),
       hasFlag: player.hasFlag,
       movement: {
         isGrounded: player.movement.isGrounded,
@@ -1964,6 +1986,7 @@ export class GameRoom extends Room<GameState> {
       health: player.maxHealth,
       maxHealth: player.maxHealth,
       ultimateCharge: 0,
+      onFireUntil: null,
       hasFlag: false,
       movement: this.getDefaultPublicMovementVitals(),
       abilities: {},
@@ -2017,6 +2040,7 @@ export class GameRoom extends Room<GameState> {
       previous.health !== next.health ||
       previous.maxHealth !== next.maxHealth ||
       Math.round(previous.ultimateCharge) !== Math.round(next.ultimateCharge) ||
+      previous.onFireUntil !== next.onFireUntil ||
       previous.hasFlag !== next.hasFlag ||
       (next.state !== 'alive' && this.haveMovementVitalsChanged(previous.movement, next.movement)) ||
       this.haveAbilityVitalsChanged(previous.abilities, next.abilities) ||
@@ -4236,7 +4260,6 @@ export class GameRoom extends Room<GameState> {
       lookYaw: command.lookYaw,
       lookPitch: command.lookPitch,
       timestamp: this.state.serverTime || Date.now(),
-      unstuck: buttons.unstuck,
       abilityCastHints: command.abilityCastHints,
     };
   }
@@ -4256,7 +4279,6 @@ export class GameRoom extends Room<GameState> {
         seq,
         buttons: inputStateToMovementButtons(input, {
           crouchPressed: step === 0 && Boolean(input.crouchPressed),
-          unstuck: step === 0 && Boolean(input.unstuck),
         }),
         lookYaw: normalizeLookYaw(input.lookYaw),
         lookPitch: clampLookPitch(input.lookPitch),
@@ -4540,7 +4562,6 @@ export class GameRoom extends Room<GameState> {
   }
 
   private movementShadowClass(player: Player, input: PlayerInput): string {
-    if (input.unstuck) return 'unstuck';
     if (player.hasFlag) return 'flag_route';
     if (player.movement.isGrappling) return 'grapple';
     if (player.movement.isSliding) return input.jump ? 'slide_jump' : 'slide';
@@ -4563,7 +4584,6 @@ export class GameRoom extends Room<GameState> {
     const config = getAntiCheatConfig();
     if (config.movementAuthorityMode !== 'shadow' && config.movementAuthorityMode !== 'strict') return false;
     if (config.movementDriftSampleRate <= 0) return false;
-    if (input.unstuck) return false;
     if (Math.random() > config.movementDriftSampleRate) return false;
     if (authority.shadow.initialized && input.tick <= authority.shadow.lastSequence) {
       authority.shadow = createMovementShadowSimulationState();
@@ -4630,28 +4650,6 @@ export class GameRoom extends Room<GameState> {
       objectiveSuppressed: this.isObjectiveSuppressed(player.id, now),
       sampledAt: now,
     });
-  }
-
-  private tryApplyUnstuck(player: Player): void {
-    const now = Date.now();
-    if (now < (this.unstuckCooldownUntil.get(player.id) ?? 0)) {
-      return;
-    }
-
-    this.unstuckCooldownUntil.set(player.id, now + UNSTUCK_COOLDOWN_MS);
-    const terrainTeleport = findUnstuckTerrainTeleport(this.getMapManifest(), this.vec3SchemaToPlain(player.position));
-    if (!terrainTeleport) return;
-
-    player.position.x = terrainTeleport.position.x;
-    player.position.y = terrainTeleport.position.y;
-    player.position.z = terrainTeleport.position.z;
-    player.velocity.x = 0;
-    player.velocity.y = 0;
-    player.velocity.z = 0;
-    player.movement.isGrounded = true;
-    player.movement.isSliding = false;
-    player.movement.slideTimeRemaining = 0;
-    this.markMovementBarrier(player.id, 'unstuck', { preserveQueuedCommands: true });
   }
 
   private getChronosLifelineTargets(caster: Player): Player[] {
@@ -6141,6 +6139,7 @@ export class GameRoom extends Room<GameState> {
 
     const primaryTarget = this.findTargetInAimCone(player, attack.range, attack.coneDot);
     if (!primaryTarget) return;
+    this.recordCombatVisibilityAtHit(player, primaryTarget, mode, attack.damageType, now);
 
     if (attack.radius && attack.radius > 0) {
       this.applyAreaDamage(player, primaryTarget.position, attack.radius, attack.damage, attack.damageType);
@@ -6155,6 +6154,54 @@ export class GameRoom extends Room<GameState> {
     if (heroId === 'hookshot' && mode === 'secondary') {
       this.pullTargetTowardSource(primaryTarget, player, 2.5);
     }
+  }
+
+  private recordCombatVisibilityAtHit(
+    source: Player,
+    target: Player,
+    mode: 'primary' | 'secondary',
+    damageType: string,
+    now: number
+  ): void {
+    if (source.team === target.team) return;
+
+    const interest = this.getRecipientInterest(source, target, now);
+    if (interest.state === 'visible') return;
+
+    if (interest.state === 'hidden') {
+      this.visibilityInterest.markHiddenTargetLeak();
+    }
+
+    const authority = this.getMovementAuthority(source.id);
+    const distance = this.distance3D(source.position, target.position);
+    this.antiCheat?.record({
+      eventType: 'combat.non_visible_target_hit',
+      category: 'combat',
+      source: 'game_room',
+      userId: this.getPlayerUserId(source.id) ?? null,
+      playerSessionId: source.id,
+      team: source.team,
+      heroId: isHeroId(source.heroId) ? source.heroId : null,
+      movementEpoch: authority.movementEpoch,
+      severity: interest.state === 'hidden' ? 'medium' : 'low',
+      confidence: interest.state === 'hidden' ? 0.8 : 0.65,
+      reason: `visibility_${interest.state}:${interest.reason}`,
+      details: {
+        targetPlayerSessionId: target.id,
+        targetUserId: this.getPlayerUserId(target.id) ?? null,
+        targetTeam: target.team,
+        targetHeroId: isHeroId(target.heroId) ? target.heroId : null,
+        visibilityState: interest.state,
+        visibilityReason: interest.reason,
+        visibilityPrecision: interest.precision,
+        lastVisibleAt: interest.lastVisibleAt,
+        lastKnownPosition: interest.lastKnownPosition,
+        distanceMeters: Math.round(distance * 100) / 100,
+        attackMode: mode,
+        damageType,
+      },
+      retentionClass: interest.state === 'hidden' ? 'standard' : 'short',
+    });
   }
 
   private handleBlazeBombDrop(client: Client, data: unknown): void {
@@ -8810,6 +8857,8 @@ export class GameRoom extends Room<GameState> {
       });
     }
 
+    this.blazeBurnEffects.clear();
+
     // Set all players to alive
     this.state.players.forEach(player => {
       player.state = 'alive';
@@ -9025,6 +9074,62 @@ export class GameRoom extends Room<GameState> {
     });
   }
 
+  private igniteBlazeBurn(
+    target: Player,
+    source: Player,
+    now: number,
+    sourcePosition: PlainVec3 | null,
+    sourceDirection: PlainVec3 | null
+  ): void {
+    const existing = this.blazeBurnEffects.get(target.id);
+    const nextTickAt = existing && existing.ticksRemaining > 0
+      ? Math.min(existing.nextTickAt, now + BLAZE_FLAMETHROWER_BURN_INTERVAL_MS)
+      : now + BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
+
+    this.blazeBurnEffects.set(target.id, {
+      sourceId: source.id,
+      ticksRemaining: BLAZE_FLAMETHROWER_BURN_TICKS,
+      nextTickAt,
+      sourcePosition: sourcePosition ? { ...sourcePosition } : null,
+      sourceDirection: sourceDirection ? { ...sourceDirection } : null,
+    });
+  }
+
+  private updateBlazeBurns(now: number): void {
+    for (const [targetId, burn] of this.blazeBurnEffects) {
+      const target = this.state.players.get(targetId);
+      if (!target || target.state !== 'alive' || burn.ticksRemaining <= 0) {
+        this.blazeBurnEffects.delete(targetId);
+        continue;
+      }
+
+      while (burn.ticksRemaining > 0 && now >= burn.nextTickAt && target.state === 'alive') {
+        const sourceId = this.state.players.has(burn.sourceId) ? burn.sourceId : null;
+        const killed = this.applyDamage(
+          target,
+          BLAZE_FLAMETHROWER_BURN_DAMAGE,
+          sourceId,
+          'burn',
+          {
+            abilityId: 'blaze_flamethrower',
+            sourcePosition: burn.sourcePosition,
+            sourceDirection: burn.sourceDirection,
+          }
+        );
+        burn.ticksRemaining--;
+        burn.nextTickAt += BLAZE_FLAMETHROWER_BURN_INTERVAL_MS;
+
+        if (killed || target.state !== 'alive') {
+          break;
+        }
+      }
+
+      if (burn.ticksRemaining <= 0 || target.state !== 'alive') {
+        this.blazeBurnEffects.delete(targetId);
+      }
+    }
+  }
+
   private updateBlazeFlamethrowers(now: number, dt: number) {
     const activeBlazePlayersThisTick = this.activeBlazePlayersScratch;
     activeBlazePlayersThisTick.clear();
@@ -9111,11 +9216,15 @@ export class GameRoom extends Room<GameState> {
       const falloff = 1 - (distance / BLAZE_FLAMETHROWER_RANGE) * 0.35;
       const damage = Math.max(1, Math.round(BLAZE_FLAMETHROWER_DAMAGE * falloff));
       this.flamethrowerLastDamageTick.set(tickKey, now);
+      const previousHealth = target.health;
       this.applyDamage(target, damage, source.id, 'flamethrower', {
         abilityId: 'blaze_flamethrower',
         sourcePosition: origin,
         sourceDirection: forward,
       });
+      if (target.state === 'alive' && target.health < previousHealth) {
+        this.igniteBlazeBurn(target, source, now, origin, forward);
+      }
     }
   }
 
@@ -9132,6 +9241,7 @@ export class GameRoom extends Room<GameState> {
     this.recordMatchDeath(player, killer ?? null);
     player.respawnTime = deathAt + this.config.respawnTimeSeconds * 1000;
     player.movement.isJetpacking = false;
+    this.blazeBurnEffects.delete(player.id);
     this.broadcastBlazeFlamethrowerState(player, false, deathAt);
     this.blazeBombDropConsumedForHold.delete(player.id);
     this.clearHookshotGrapple(player.id);
@@ -9252,6 +9362,7 @@ export class GameRoom extends Room<GameState> {
     player.health = player.maxHealth;
     player.respawnTime = 0;
     player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
+    this.blazeBurnEffects.delete(player.id);
 
     this.placePlayerAtSpawn(player);
     player.velocity.x = 0;
@@ -9321,14 +9432,6 @@ export class GameRoom extends Room<GameState> {
         player.lookYaw = input.lookYaw;
         player.lookPitch = input.lookPitch;
         this.prepareHookshotGrappleForMovement(player, stepNow);
-
-        if (input.unstuck) {
-          this.tryApplyUnstuck(player);
-          authority.metrics.commandsProcessed++;
-          processedThisTick++;
-          if (authority.movementEpoch !== epochBeforeStep) break;
-          continue;
-        }
 
         this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
         this.stepHookshotGrappleAuthority(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);

@@ -9,12 +9,16 @@ import { resolveAbilitySocketOrigin } from '../../../model-system/abilitySocketR
 import { PHANTOM_COLORS, SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
-import { triggerPhantomShieldCastPose } from '../../../viewmodel/phantomPrimaryPose';
+import {
+  PHANTOM_SHIELD_CAST_POSE_DURATION_MS,
+  triggerPhantomShieldCastPose,
+} from '../../../viewmodel/phantomPrimaryPose';
 
 const PHANTOM_PERSONAL_SHIELD_ABILITY_ID = 'phantom_personal_shield';
 const PHANTOM_SHIELD_LOOP_ID_PREFIX = 'phantom-shield';
-const PHANTOM_SHIELD_CAST_DURATION_MS = 1250;
-const PHANTOM_SHIELD_CAST_FADE_OUT_MS = 260;
+const PHANTOM_SHIELD_CAST_DURATION_MS = PHANTOM_SHIELD_CAST_POSE_DURATION_MS;
+const PHANTOM_SHIELD_CAST_FADE_OUT_MS = 160;
+const PHANTOM_SHIELD_CAST_FADE_START_PROGRESS = 0.46;
 const PHANTOM_SHIELD_CAST_SIDES = [-1, 1] as const;
 const MAX_SHIELD_CAST_EFFECTS = 14;
 const SHIELD_CAST_RAY_COUNT = 18;
@@ -439,7 +443,7 @@ function PhantomShieldCastHandBurst({
     const progress = clamp01(elapsedMs / PHANTOM_SHIELD_CAST_DURATION_MS);
     const charge = THREE.MathUtils.smoothstep(progress, 0, 0.52);
     const release = THREE.MathUtils.smoothstep(progress, 0.42, 1);
-    const fade = 1 - THREE.MathUtils.smoothstep(progress, 0.72, 1);
+    const fade = 1 - THREE.MathUtils.smoothstep(progress, PHANTOM_SHIELD_CAST_FADE_START_PROGRESS, 1);
     const pulse = 0.5 + Math.sin(elapsedMs * 0.028) * 0.5;
     const intensity = Math.max(0, fade);
     const burst = Math.sin(release * Math.PI);

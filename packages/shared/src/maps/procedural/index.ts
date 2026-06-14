@@ -8,5 +8,4 @@ export * from './boundaries.js';
 export * from './colliders.js';
 export * from './construction.js';
 export * from './generator.js';
-export * from './unstuck.js';
 export * from './terrain.js';

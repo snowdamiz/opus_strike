@@ -1,14 +1,73 @@
-import type { VoxelMapTheme } from './types.js';
+import type { VoxelMapTheme, VoxelSkyVariantId } from './types.js';
 import { hashSeed } from './rng.js';
+
+type VoxelMapThemeId = VoxelMapTheme['id'];
+type VoxelSkyPalette = Pick<VoxelMapTheme, 'skyVariantId' | 'skyColor' | 'ambientColor' | 'sunColor' | 'fogColor'>;
+
+const SKY_PALETTES: Record<VoxelSkyVariantId, VoxelSkyPalette> = {
+  clear_day: {
+    skyVariantId: 'clear_day',
+    skyColor: '#8ec9ff',
+    ambientColor: '#f2f8ff',
+    sunColor: '#fff1c7',
+    fogColor: '#a6d7ff',
+  },
+  stormfront: {
+    skyVariantId: 'stormfront',
+    skyColor: '#5e7aa6',
+    ambientColor: '#dce8ff',
+    sunColor: '#b9dcff',
+    fogColor: '#6f83a8',
+  },
+  desert_heat: {
+    skyVariantId: 'desert_heat',
+    skyColor: '#9fd7ff',
+    ambientColor: '#fff4dc',
+    sunColor: '#fff0b8',
+    fogColor: '#efd39b',
+  },
+  frost_glow: {
+    skyVariantId: 'frost_glow',
+    skyColor: '#bfe8ff',
+    ambientColor: '#f6fbff',
+    sunColor: '#d8f3ff',
+    fogColor: '#d7efff',
+  },
+  crystal_dusk: {
+    skyVariantId: 'crystal_dusk',
+    skyColor: '#b7c8ff',
+    ambientColor: '#f0edff',
+    sunColor: '#ffe2fb',
+    fogColor: '#cbbcff',
+  },
+  ember_haze: {
+    skyVariantId: 'ember_haze',
+    skyColor: '#7d6a61',
+    ambientColor: '#ffd7b5',
+    sunColor: '#ffae5f',
+    fogColor: '#8f5d4c',
+  },
+  sakura_dawn: {
+    skyVariantId: 'sakura_dawn',
+    skyColor: '#f6cddd',
+    ambientColor: '#fff2f6',
+    sunColor: '#ffe3b4',
+    fogColor: '#ffd5e5',
+  },
+  treasury_glow: {
+    skyVariantId: 'treasury_glow',
+    skyColor: '#ffd978',
+    ambientColor: '#fff5cc',
+    sunColor: '#fff0a8',
+    fogColor: '#f7c85f',
+  },
+};
 
 export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'verdant',
     name: 'Verdant Mesa',
-    skyColor: '#8ec9ff',
-    ambientColor: '#f2f8ff',
-    sunColor: '#fff1c7',
-    fogColor: '#a6d7ff',
+    ...SKY_PALETTES.clear_day,
     ground: {
       top: '#52b85a',
       side: '#48883d',
@@ -25,10 +84,7 @@ export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'basalt',
     name: 'Basalt Circuit',
-    skyColor: '#5e7aa6',
-    ambientColor: '#dce8ff',
-    sunColor: '#b9dcff',
-    fogColor: '#6f83a8',
+    ...SKY_PALETTES.stormfront,
     ground: {
       top: '#4f555d',
       side: '#383e45',
@@ -45,10 +101,7 @@ export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'desert',
     name: 'Sunstone Canyon',
-    skyColor: '#9fd7ff',
-    ambientColor: '#fff4dc',
-    sunColor: '#fff0b8',
-    fogColor: '#efd39b',
+    ...SKY_PALETTES.desert_heat,
     ground: {
       top: '#d8b663',
       side: '#bd8b4d',
@@ -65,10 +118,7 @@ export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'frost',
     name: 'Frostline Vault',
-    skyColor: '#bfe8ff',
-    ambientColor: '#f6fbff',
-    sunColor: '#d8f3ff',
-    fogColor: '#d7efff',
+    ...SKY_PALETTES.frost_glow,
     ground: {
       top: '#b8e6ef',
       side: '#7fb8c9',
@@ -85,10 +135,7 @@ export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'crystal',
     name: 'Crystal Grove',
-    skyColor: '#b7c8ff',
-    ambientColor: '#f0edff',
-    sunColor: '#ffe2fb',
-    fogColor: '#cbbcff',
+    ...SKY_PALETTES.crystal_dusk,
     ground: {
       top: '#7cb57c',
       side: '#5c8d76',
@@ -105,10 +152,7 @@ export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'volcanic',
     name: 'Cinder Caldera',
-    skyColor: '#7d6a61',
-    ambientColor: '#ffd7b5',
-    sunColor: '#ffae5f',
-    fogColor: '#8f5d4c',
+    ...SKY_PALETTES.ember_haze,
     ground: {
       top: '#5f5c58',
       side: '#423c39',
@@ -125,10 +169,7 @@ export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
   {
     id: 'sakura',
     name: 'Sakura Shrine',
-    skyColor: '#f6cddd',
-    ambientColor: '#fff2f6',
-    sunColor: '#ffe3b4',
-    fogColor: '#ffd5e5',
+    ...SKY_PALETTES.sakura_dawn,
     ground: {
       top: '#79b86b',
       side: '#5f8a56',
@@ -147,10 +188,7 @@ export const STANDARD_VOXEL_MAP_THEMES: VoxelMapTheme[] = [
 export const GOLDEN_VOXEL_MAP_THEME: VoxelMapTheme = {
   id: 'golden',
   name: 'Golden Treasury',
-  skyColor: '#ffd978',
-  ambientColor: '#fff5cc',
-  sunColor: '#fff0a8',
-  fogColor: '#f7c85f',
+  ...SKY_PALETTES.treasury_glow,
   ground: {
     top: '#e7b93f',
     side: '#b9822f',
@@ -169,11 +207,49 @@ export const VOXEL_MAP_THEMES: VoxelMapTheme[] = STANDARD_VOXEL_MAP_THEMES;
 export const ALL_VOXEL_MAP_THEMES: VoxelMapTheme[] = [...STANDARD_VOXEL_MAP_THEMES, GOLDEN_VOXEL_MAP_THEME];
 export const GOLDEN_VOXEL_MAP_THEME_ID = GOLDEN_VOXEL_MAP_THEME.id;
 
-export function getVoxelMapThemeById(themeId: VoxelMapTheme['id']): VoxelMapTheme {
-  return ALL_VOXEL_MAP_THEMES.find((theme) => theme.id === themeId) ?? STANDARD_VOXEL_MAP_THEMES[0];
+const SKY_VARIANTS_BY_THEME = {
+  verdant: ['clear_day', 'stormfront', 'desert_heat', 'frost_glow', 'crystal_dusk', 'sakura_dawn'],
+  basalt: ['stormfront', 'frost_glow', 'crystal_dusk', 'ember_haze'],
+  desert: ['clear_day', 'desert_heat', 'stormfront', 'sakura_dawn', 'ember_haze'],
+  frost: ['clear_day', 'stormfront', 'frost_glow', 'crystal_dusk'],
+  crystal: ['clear_day', 'stormfront', 'frost_glow', 'crystal_dusk', 'sakura_dawn'],
+  volcanic: ['stormfront', 'crystal_dusk', 'ember_haze'],
+  sakura: ['clear_day', 'stormfront', 'frost_glow', 'crystal_dusk', 'sakura_dawn'],
+  golden: ['clear_day', 'desert_heat', 'sakura_dawn', 'treasury_glow'],
+} satisfies Record<VoxelMapThemeId, readonly VoxelSkyVariantId[]>;
+
+const SKY_VARIANT_SALTS = {
+  verdant: 0x1a71c9,
+  basalt: 0xba5a17,
+  desert: 0xde5e27,
+  frost: 0xf7057,
+  crystal: 0xc2757a1,
+  volcanic: 0x701ca11c,
+  sakura: 0x5a4a12a,
+  golden: 0x906d3a,
+} satisfies Record<VoxelMapThemeId, number>;
+
+const VOXEL_MAP_THEME_BY_ID = Object.fromEntries(
+  ALL_VOXEL_MAP_THEMES.map((theme) => [theme.id, theme])
+) as Record<VoxelMapThemeId, VoxelMapTheme>;
+
+function getSkyVariantId(themeId: VoxelMapThemeId, seed: number): VoxelSkyVariantId {
+  const variants = SKY_VARIANTS_BY_THEME[themeId];
+  return variants[hashSeed(seed ^ SKY_VARIANT_SALTS[themeId]) % variants.length];
 }
 
-export function getVoxelMapTheme(seed: number, themeId?: VoxelMapTheme['id'] | null): VoxelMapTheme {
-  if (themeId) return getVoxelMapThemeById(themeId);
-  return VOXEL_MAP_THEMES[hashSeed(seed) % VOXEL_MAP_THEMES.length];
+function withSeededSky(theme: VoxelMapTheme, seed: number): VoxelMapTheme {
+  return {
+    ...theme,
+    ...SKY_PALETTES[getSkyVariantId(theme.id, seed)],
+  };
+}
+
+export function getVoxelMapThemeById(themeId: VoxelMapThemeId, seed = 0): VoxelMapTheme {
+  return withSeededSky(VOXEL_MAP_THEME_BY_ID[themeId], seed);
+}
+
+export function getVoxelMapTheme(seed: number, themeId?: VoxelMapThemeId | null): VoxelMapTheme {
+  if (themeId) return getVoxelMapThemeById(themeId, seed);
+  return withSeededSky(VOXEL_MAP_THEMES[hashSeed(seed) % VOXEL_MAP_THEMES.length], seed);
 }

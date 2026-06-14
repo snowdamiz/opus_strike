@@ -94,8 +94,7 @@ function cloneMovement(movement: PlayerMovementState): PlayerMovementState {
 function movementBarrier(reason: MovementCorrectionReason | undefined): AntiCheatTraceAbilityState['movementBarrier'] {
   return reason === 'respawn' ||
     reason === 'teleport' ||
-    reason === 'knockback' ||
-    reason === 'unstuck'
+    reason === 'knockback'
     ? reason
     : null;
 }
@@ -478,39 +477,6 @@ const legalTraces: Array<{ group: 'smoke' | 'full'; file: string; trace: AntiChe
         { buttons: SPRINT_FORWARD, frames: 24, abilityIds: ['chronos_timebreak'], activeSpeedMultiplier: 1.25 },
         { buttons: FORWARD, frames: 18, abilityIds: ['chronos_aegis'], activeSpeedMultiplier: 1 },
         { buttons: FORWARD, frames: 18, abilityIds: ['chronos_lifeline_conduit'], activeSpeedMultiplier: 0.95 },
-      ],
-    }),
-  },
-  {
-    group: 'full',
-    file: 'legal_respawn_unstuck.json',
-    trace: buildLegalTrace({
-      id: 'legal-respawn-unstuck',
-      heroId: 'blaze',
-      movementClass: 'respawn_unstuck_authority_barriers',
-      expectedCorrections: ['respawn', 'unstuck'],
-      steps: [
-        { buttons: SPRINT_FORWARD, frames: 10 },
-        {
-          buttons: 0,
-          frames: 1,
-          barrier: {
-            reason: 'respawn',
-            position: vec(-6, PLAYER_HALF_HEIGHT, 6),
-            velocity: vec(0, 0, 0),
-          },
-        },
-        { buttons: FORWARD, frames: 10 },
-        {
-          buttons: 0,
-          frames: 1,
-          barrier: {
-            reason: 'unstuck',
-            position: vec(-5, PLAYER_HALF_HEIGHT, 5),
-            velocity: vec(0, 0, 0),
-          },
-        },
-        { buttons: SPRINT_FORWARD, frames: 10 },
       ],
     }),
   },

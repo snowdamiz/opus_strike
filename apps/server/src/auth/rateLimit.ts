@@ -11,25 +11,43 @@ interface RateLimitOptions {
   windowMs: number;
 }
 
+const MAX_RATE_LIMIT_BUCKETS = 25_000;
 const buckets = new Map<string, RateLimitBucket>();
+let lastCleanupAt = 0;
 
-function getRequestIp(req: Request): string {
-  const forwardedFor = req.headers['x-forwarded-for'];
-  if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
-    return forwardedFor.split(',')[0]?.trim() || req.ip || 'unknown';
+function cleanupBuckets(now: number): void {
+  if (now - lastCleanupAt < 30_000 && buckets.size <= MAX_RATE_LIMIT_BUCKETS) return;
+  lastCleanupAt = now;
+
+  for (const [key, bucket] of buckets.entries()) {
+    if (bucket.resetAt <= now) buckets.delete(key);
   }
 
+  while (buckets.size > MAX_RATE_LIMIT_BUCKETS) {
+    const oldestKey = buckets.keys().next().value;
+    if (!oldestKey) break;
+    buckets.delete(oldestKey);
+  }
+}
+
+function cleanKeyPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9:._@-]/g, '_').slice(0, 256) || 'unknown';
+}
+
+export function getRequestIp(req: Request): string {
   return req.ip || req.socket.remoteAddress || 'unknown';
 }
 
-export function consumeRateLimit(req: Request, options: RateLimitOptions): {
+export function consumeRateLimitForKey(identity: string, options: RateLimitOptions): {
   ok: true;
 } | {
   ok: false;
   retryAfterSeconds: number;
 } {
   const now = Date.now();
-  const key = `${options.keyPrefix}:${getRequestIp(req)}`;
+  cleanupBuckets(now);
+
+  const key = `${options.keyPrefix}:${cleanKeyPart(identity)}`;
   const bucket = buckets.get(key);
 
   if (!bucket || bucket.resetAt <= now) {
@@ -51,6 +69,16 @@ export function consumeRateLimit(req: Request, options: RateLimitOptions): {
   return { ok: true };
 }
 
+export function consumeRateLimit(req: Request, options: RateLimitOptions): {
+  ok: true;
+} | {
+  ok: false;
+  retryAfterSeconds: number;
+} {
+  return consumeRateLimitForKey(`ip:${getRequestIp(req)}`, options);
+}
+
 export function clearRateLimitBucketsForTests(): void {
   buckets.clear();
+  lastCleanupAt = 0;
 }

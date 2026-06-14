@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import express from 'express';
+import crypto from 'node:crypto';
+import express, { type Request, type Response } from 'express';
 import cookieParser from 'cookie-parser';
 import { createServer } from 'http';
 import { Server, matchMaker } from 'colyseus';
@@ -19,6 +20,7 @@ import {
   validateColyseusRuntimeConfig,
 } from './config/colyseus';
 import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
+import { envFlag } from './config/security';
 import {
   installFlyReplayUpgradeRouter,
   registerFlyReplayProcessRoute,
@@ -50,6 +52,25 @@ function getAutoscalerMetricLabels() {
     flyRegion: colyseusRuntime.flyReplay.region,
   };
 }
+
+function configureTrustProxy(): void {
+  const raw = process.env.TRUST_PROXY?.trim();
+  if (!raw) return;
+
+  if (raw === '1' || raw.toLowerCase() === 'true') {
+    app.set('trust proxy', 1);
+    return;
+  }
+  if (raw === '0' || raw.toLowerCase() === 'false') {
+    app.set('trust proxy', false);
+    return;
+  }
+
+  const hops = Number(raw);
+  app.set('trust proxy', Number.isInteger(hops) && hops >= 0 ? hops : raw);
+}
+
+configureTrustProxy();
 
 // Create Colyseus server
 const gameServer = new Server({
@@ -109,7 +130,7 @@ app.use((_req, res, next) => {
   }
   
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, X-Wager-Admin-Token');
+  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Client-Id, X-CSRF-Token, X-Internal-Status-Token, X-Wager-Admin-Token');
   res.header('Access-Control-Allow-Credentials', 'true');
   
   // Handle preflight requests
@@ -138,8 +159,43 @@ app.use('/admin', createAdminRouter({
   flyReplayRegistered: () => Boolean(flyReplayRouteHandle),
 }));
 
-// Health check endpoint
-app.get('/health', async (_req, res) => {
+function configuredStatusToken(): string {
+  return process.env.INTERNAL_STATUS_TOKEN
+    || process.env.METRICS_TOKEN
+    || process.env.STATUS_TOKEN
+    || '';
+}
+
+function timingSafeStringEqual(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function readStatusAuthToken(req: Request): string {
+  const header = req.headers['x-internal-status-token'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+
+  const authorization = req.headers.authorization;
+  if (typeof authorization === 'string' && authorization.startsWith('Bearer ')) {
+    return authorization.slice('Bearer '.length).trim();
+  }
+
+  return '';
+}
+
+function canReadDetailedStatus(req: Request): boolean {
+  if (envFlag('PUBLIC_STATUS_ENDPOINTS', process.env.NODE_ENV !== 'production')) return true;
+  const expected = configuredStatusToken();
+  const actual = readStatusAuthToken(req);
+  return Boolean(expected && actual && timingSafeStringEqual(actual, expected));
+}
+
+function hideStatusEndpoint(res: Response): void {
+  res.status(404).type('text').send('Not found');
+}
+
+async function collectDetailedHealth() {
   const redis = await pingRedis(sharedRedisClient);
   const autoscalerMetrics = await collectAutoscalerMetricSnapshot({
     matchMaker,
@@ -151,7 +207,9 @@ app.get('/health', async (_req, res) => {
 
   const healthy = (!colyseusRuntime.distributed || redis.ok) && matchmakerQueryHealthy;
 
-  res.status(healthy ? 200 : 503).json({
+  return {
+    healthy,
+    body: {
     status: healthy ? 'ok' : 'degraded',
     process: {
       pid: process.pid,
@@ -189,10 +247,27 @@ app.get('/health', async (_req, res) => {
       matchmakerQueryHealthy,
       matchmakerError: autoscalerMetrics.matchmakerError,
     },
-  });
+    },
+  };
+}
+
+// Public liveness endpoint. Detailed internals require an internal status token in production.
+app.get('/health', async (req, res) => {
+  if (!canReadDetailedStatus(req)) {
+    res.json({ status: 'ok' });
+    return;
+  }
+
+  const health = await collectDetailedHealth();
+  res.status(health.healthy ? 200 : 503).json(health.body);
 });
 
-app.get('/metrics', async (_req, res) => {
+app.get('/metrics', async (req, res) => {
+  if (!canReadDetailedStatus(req)) {
+    hideStatusEndpoint(res);
+    return;
+  }
+
   const redis = await pingRedis(sharedRedisClient);
   const autoscalerMetrics = await collectAutoscalerMetricSnapshot({
     matchMaker,
@@ -205,7 +280,12 @@ app.get('/metrics', async (_req, res) => {
   res.send(renderPrometheusMetrics(autoscalerMetrics));
 });
 
-app.get('/voice/status', (_req, res) => {
+app.get('/voice/status', (req, res) => {
+  if (!canReadDetailedStatus(req)) {
+    hideStatusEndpoint(res);
+    return;
+  }
+
   res.json(voiceService.getStatus());
 });
 

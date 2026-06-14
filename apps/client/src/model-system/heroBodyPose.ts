@@ -19,6 +19,7 @@ import type {
   HeroBoneName,
   HeroIdleProfile,
   HeroJumpPose,
+  HeroMovementPose,
   HeroMovementProfile,
   HeroWalkDirection,
 } from './heroBodyTypes';
@@ -26,6 +27,168 @@ import type {
 const PHANTOM_SHIELD_BODY_POSE_ATTACK_MS = 120;
 const PHANTOM_SHIELD_BODY_POSE_HOLD_MS = 340;
 const PHANTOM_SHIELD_BODY_POSE_FADE_MS = 740;
+const HERO_BODY_POSE_BLEND_DURATION_SECONDS = 0.14;
+
+export interface HeroBodyPoseRootTransform {
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  scale: THREE.Vector3;
+}
+
+interface HeroBodyPoseSnapshotTransform {
+  position: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  scale: THREE.Vector3;
+}
+
+type HeroBodyPoseBlendTarget = HeroBoneName | 'root';
+
+export interface HeroBodyPoseTransitionRuntime {
+  activeKey: string | null;
+  elapsedSeconds: number;
+  durationSeconds: number;
+  fromPose: Record<HeroBodyPoseBlendTarget, HeroBodyPoseSnapshotTransform>;
+  toPose: Record<HeroBodyPoseBlendTarget, HeroBodyPoseSnapshotTransform>;
+}
+
+const HERO_BODY_POSE_BLEND_TARGETS: readonly HeroBodyPoseBlendTarget[] = [
+  'root',
+  ...(Object.keys(HERO_BONE_PIVOTS) as HeroBoneName[]),
+];
+
+function createSnapshotTransform(): HeroBodyPoseSnapshotTransform {
+  return {
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+    scale: new THREE.Vector3(1, 1, 1),
+  };
+}
+
+function createPoseSnapshot(): Record<HeroBodyPoseBlendTarget, HeroBodyPoseSnapshotTransform> {
+  return Object.fromEntries(
+    HERO_BODY_POSE_BLEND_TARGETS.map((target) => [target, createSnapshotTransform()])
+  ) as Record<HeroBodyPoseBlendTarget, HeroBodyPoseSnapshotTransform>;
+}
+
+function getPoseBlendTarget(
+  root: HeroBodyPoseRootTransform,
+  bones: HeroBoneRefs,
+  target: HeroBodyPoseBlendTarget
+): HeroBodyPoseRootTransform | THREE.Group | null | undefined {
+  return target === 'root' ? root : bones[target];
+}
+
+function capturePoseBlendTarget(
+  root: HeroBodyPoseRootTransform,
+  bones: HeroBoneRefs,
+  target: HeroBodyPoseBlendTarget,
+  snapshot: HeroBodyPoseSnapshotTransform
+): void {
+  const object = getPoseBlendTarget(root, bones, target);
+  if (!object) return;
+
+  snapshot.position.copy(object.position);
+  snapshot.quaternion.copy(object.quaternion);
+  snapshot.scale.copy(object.scale);
+}
+
+export function createHeroBodyPoseTransitionRuntime(
+  durationSeconds = HERO_BODY_POSE_BLEND_DURATION_SECONDS
+): HeroBodyPoseTransitionRuntime {
+  return {
+    activeKey: null,
+    elapsedSeconds: durationSeconds,
+    durationSeconds,
+    fromPose: createPoseSnapshot(),
+    toPose: createPoseSnapshot(),
+  };
+}
+
+export function resetHeroBodyPoseTransitionRuntime(
+  runtime: HeroBodyPoseTransitionRuntime,
+  activeKey: string | null = null
+): void {
+  runtime.activeKey = activeKey;
+  runtime.elapsedSeconds = runtime.durationSeconds;
+}
+
+export function beginHeroBodyPoseTransition(
+  runtime: HeroBodyPoseTransitionRuntime,
+  poseKey: string,
+  root: HeroBodyPoseRootTransform,
+  bones: HeroBoneRefs
+): void {
+  if (runtime.activeKey === null) {
+    runtime.activeKey = poseKey;
+    runtime.elapsedSeconds = runtime.durationSeconds;
+    return;
+  }
+
+  if (runtime.activeKey === poseKey) return;
+
+  for (const target of HERO_BODY_POSE_BLEND_TARGETS) {
+    capturePoseBlendTarget(root, bones, target, runtime.fromPose[target]);
+  }
+  runtime.activeKey = poseKey;
+  runtime.elapsedSeconds = 0;
+}
+
+export function applyHeroBodyPoseTransition(
+  runtime: HeroBodyPoseTransitionRuntime,
+  root: HeroBodyPoseRootTransform,
+  bones: HeroBoneRefs,
+  deltaSeconds: number
+): void {
+  if (runtime.elapsedSeconds >= runtime.durationSeconds) return;
+
+  runtime.elapsedSeconds = Math.min(
+    runtime.durationSeconds,
+    runtime.elapsedSeconds + Math.max(0, deltaSeconds)
+  );
+  const blend = runtime.durationSeconds <= 0
+    ? 1
+    : easeInOutSine(runtime.elapsedSeconds / runtime.durationSeconds);
+
+  for (const target of HERO_BODY_POSE_BLEND_TARGETS) {
+    const object = getPoseBlendTarget(root, bones, target);
+    if (!object) continue;
+
+    const from = runtime.fromPose[target];
+    const to = runtime.toPose[target];
+    to.position.copy(object.position);
+    to.quaternion.copy(object.quaternion);
+    to.scale.copy(object.scale);
+
+    object.position.lerpVectors(from.position, to.position, blend);
+    object.quaternion.slerpQuaternions(from.quaternion, to.quaternion, blend);
+    object.scale.lerpVectors(from.scale, to.scale, blend);
+  }
+}
+
+export function getHeroBodyPoseBlendKey(options: {
+  heroId: HeroId;
+  moving: boolean;
+  jumping: boolean;
+  crouching: boolean;
+  sliding: boolean;
+  attacking: boolean;
+  attackSide: -1 | 1;
+  movementPose: HeroMovementPose;
+  idleEnabled: boolean;
+  shieldActive?: boolean;
+}): string {
+  return [
+    options.heroId,
+    options.idleEnabled ? 'idle-on' : 'idle-off',
+    options.moving ? 'moving' : 'still',
+    options.jumping ? 'jump' : 'ground',
+    options.crouching ? 'crouch' : 'stand',
+    options.sliding ? 'slide' : 'noslide',
+    options.attacking ? `attack-${options.attackSide}` : 'noattack',
+    options.shieldActive ? 'shield' : 'noshield',
+    options.movementPose,
+  ].join('|');
+}
 
 export function getNormalizedWalkDirection(direction: HeroWalkDirection): HeroWalkDirection {
   const length = Math.sqrt(direction.forward * direction.forward + direction.right * direction.right);
@@ -598,49 +761,58 @@ export function applyJumpBonePose(bones: HeroBoneRefs, pose: HeroJumpPose, amoun
   }
 }
 
-function applyPhantomAttackPose(bones: HeroBoneRefs, progress: number, amount: number): void {
+function applyPhantomAttackArmPose(
+  upperArm: THREE.Group | null | undefined,
+  forearm: THREE.Group | null | undefined,
+  armSide: -1 | 1,
+  activeSide: -1 | 1,
+  aim: number,
+  shotExtension: number
+): void {
+  const isActiveArm = armSide === activeSide;
+  const ready = aim * (isActiveArm ? 0.78 : 0.62);
+  const extension = isActiveArm ? shotExtension : 0;
+  const brace = isActiveArm ? 0 : shotExtension * 0.22;
+
+  if (upperArm) {
+    upperArm.position.x += armSide * (0.014 * ready - 0.006 * extension + 0.004 * brace);
+    upperArm.position.y += -0.03 * ready - 0.004 * extension;
+    upperArm.position.z += -0.05 * ready - 0.048 * extension + 0.018 * brace;
+    upperArm.rotation.x += 0.4 * ready + 0.15 * extension - 0.035 * brace;
+    upperArm.rotation.y += armSide * (0.065 * ready - 0.024 * extension + 0.012 * brace);
+    upperArm.rotation.z += -armSide * (0.085 * ready + 0.038 * extension - 0.014 * brace);
+    upperArm.scale.y *= 1 + 0.045 * ready + 0.024 * extension;
+  }
+
+  if (forearm) {
+    forearm.position.z += -0.032 * ready - 0.088 * extension + 0.012 * brace;
+    forearm.rotation.x -= 0.42 * ready + 0.22 * extension - 0.045 * brace;
+    forearm.rotation.y += armSide * (0.035 * ready + 0.03 * extension - 0.012 * brace);
+    forearm.rotation.z += -armSide * 0.018 * extension;
+    forearm.scale.z *= 1 + 0.026 * extension;
+  }
+}
+
+function applyPhantomAttackPose(
+  bones: HeroBoneRefs,
+  progress: number,
+  amount: number,
+  side: -1 | 1
+): void {
   if (amount <= 0.001) return;
 
   const poseAmount = getBlazeAttackPoseAmount(progress);
   const aim = poseAmount * amount;
-  const settle = poseAmount * amount;
+  const shotExtension = smoothPulse(progress, 0, 0.045, 0.16) * amount;
 
   if (bones.torso) {
-    bones.torso.rotation.x += -0.035 * aim;
-    bones.torso.rotation.y += -0.055 * aim;
+    bones.torso.rotation.x += -0.028 * aim - 0.012 * shotExtension;
+    bones.torso.rotation.y += -0.024 * aim - side * 0.018 * shotExtension;
+    bones.torso.rotation.z += -side * 0.01 * shotExtension;
   }
 
-  if (bones.leftArm) {
-    bones.leftArm.position.x -= 0.018 * aim;
-    bones.leftArm.position.y += -0.035 * aim;
-    bones.leftArm.position.z += -0.08 * aim;
-    bones.leftArm.rotation.x += (0.48 + settle * 0.08) * aim;
-    bones.leftArm.rotation.y -= 0.08 * aim;
-    bones.leftArm.rotation.z += 0.1 * aim;
-    bones.leftArm.scale.y *= 1 + 0.065 * aim;
-  }
-
-  if (bones.rightArm) {
-    bones.rightArm.position.x += 0.018 * aim;
-    bones.rightArm.position.y += -0.035 * aim;
-    bones.rightArm.position.z += -0.08 * aim;
-    bones.rightArm.rotation.x += (0.48 + settle * 0.08) * aim;
-    bones.rightArm.rotation.y += 0.08 * aim;
-    bones.rightArm.rotation.z -= 0.1 * aim;
-    bones.rightArm.scale.y *= 1 + 0.065 * aim;
-  }
-
-  if (bones.leftForearm) {
-    bones.leftForearm.position.z += -0.048 * aim;
-    bones.leftForearm.rotation.x -= (0.48 + poseAmount * 0.13) * aim;
-    bones.leftForearm.rotation.y -= 0.035 * aim;
-  }
-
-  if (bones.rightForearm) {
-    bones.rightForearm.position.z += -0.048 * aim;
-    bones.rightForearm.rotation.x -= (0.48 + poseAmount * 0.13) * aim;
-    bones.rightForearm.rotation.y += 0.035 * aim;
-  }
+  applyPhantomAttackArmPose(bones.leftArm, bones.leftForearm, -1, side, aim, shotExtension);
+  applyPhantomAttackArmPose(bones.rightArm, bones.rightForearm, 1, side, aim, shotExtension);
 }
 
 export function applyPhantomShieldBodyPose(bones: HeroBoneRefs, amount: number): void {
@@ -793,7 +965,7 @@ export function applyHeroAttackPose(
 ): void {
   switch (heroId) {
     case 'phantom':
-      applyPhantomAttackPose(bones, progress, amount);
+      applyPhantomAttackPose(bones, progress, amount, side);
       return;
     case 'blaze':
       applyBlazeAttackPose(bones, progress, amount);
@@ -802,7 +974,7 @@ export function applyHeroAttackPose(
       applyHookshotAttackPose(bones, progress, amount, side);
       return;
     case 'chronos':
-      applyPhantomAttackPose(bones, progress, amount);
+      applyPhantomAttackPose(bones, progress, amount, side);
       return;
   }
 }

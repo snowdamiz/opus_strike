@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import type { Request } from 'express';
 import jwt from 'jsonwebtoken';
 
 process.env.JWT_SECRET = 'auth-service-test-secret';
@@ -6,6 +7,7 @@ process.env.JWT_SECRET = 'auth-service-test-secret';
 type SessionModule = typeof import('../auth/session');
 type OAuthStateModule = typeof import('../auth/oauthState');
 type ReturnToModule = typeof import('../auth/returnTo');
+type RateLimitModule = typeof import('../auth/rateLimit');
 
 function testReturnToValidation(returnTo: ReturnToModule): void {
   const { appendAuthStatus, sanitizeReturnTo } = returnTo;
@@ -124,16 +126,44 @@ function testSessionTokens(session: SessionModule): void {
   });
 }
 
+function makeRateLimitRequest(ip: string, forwardedFor: string): Request {
+  return {
+    ip,
+    socket: { remoteAddress: ip },
+    headers: { 'x-forwarded-for': forwardedFor },
+  } as unknown as Request;
+}
+
+function testRateLimitIdentity(rateLimit: RateLimitModule): void {
+  rateLimit.clearRateLimitBucketsForTests();
+
+  const first = rateLimit.consumeRateLimit(makeRateLimitRequest('10.0.0.5', '198.51.100.10'), {
+    keyPrefix: 'auth-test',
+    limit: 1,
+    windowMs: 60_000,
+  });
+  assert.deepEqual(first, { ok: true });
+
+  const spoofedForwardedFor = rateLimit.consumeRateLimit(makeRateLimitRequest('10.0.0.5', '203.0.113.20'), {
+    keyPrefix: 'auth-test',
+    limit: 1,
+    windowMs: 60_000,
+  });
+  assert.equal(spoofedForwardedFor.ok, false, 'x-forwarded-for must not bypass IP rate limits');
+}
+
 async function main(): Promise<void> {
-  const [session, oauthState, returnTo] = await Promise.all([
+  const [session, oauthState, returnTo, rateLimit] = await Promise.all([
     import('../auth/session'),
     import('../auth/oauthState'),
     import('../auth/returnTo'),
+    import('../auth/rateLimit'),
   ]);
 
   testReturnToValidation(returnTo);
   testOAuthStateLifecycle(oauthState);
   testSessionTokens(session);
+  testRateLimitIdentity(rateLimit);
 
   console.log('auth-service tests passed');
 }

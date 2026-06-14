@@ -19,16 +19,21 @@ import {
 import {
   applyChronosArmPose,
   applyCrouchBonePose,
+  applyHeroBodyPoseTransition,
   applyHeroAttackPose,
   applyIdleBonePose,
   applyJumpBonePose,
   applySlideBonePose,
   applyWalkingBonePose,
+  beginHeroBodyPoseTransition,
   clamp01,
+  createHeroBodyPoseTransitionRuntime,
   easeInOutSine,
   getBlazeAttackPoseAmount,
+  getHeroBodyPoseBlendKey,
   getJumpPose,
   getNormalizedWalkDirection,
+  resetHeroBodyPoseTransitionRuntime,
   setBoneBasePose,
 } from '../../model-system/heroBodyPose';
 import {
@@ -188,6 +193,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const groupRef = useRef<THREE.Group>(null);
   const boneRefs = useRef<HeroBoneRefs>({});
   const socketRefs = useRef<Record<string, THREE.Group | null>>({});
+  const poseTransitionRuntimeRef = useRef(createHeroBodyPoseTransitionRuntime());
   const idleBlendRef = useRef(isMoving || isJumping || isCrouching || isSliding || isAttacking ? 0 : 1);
   const movementBlendRef = useRef(isMoving && !isJumping && !isSliding ? 1 : 0);
   const crouchBlendRef = useRef(isCrouching && !isJumping && !isSliding ? 1 : 0);
@@ -211,6 +217,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const appliedBodyOpacityRef = useRef(-1);
   const scale = height / 1.8;
   const initialVerticalScale = Math.max(0.45, Math.min(1, postureScaleY));
+  const postureScaleYRefInternal = useRef(initialVerticalScale);
   const teamColor = TEAM_COLORS[team];
   const manifest = HERO_BODY_MANIFESTS[resolvedHero];
   const parts = manifest.parts;
@@ -316,7 +323,9 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     smoothedWalkDirectionRef.current = { ...nextWalkDirection };
     jumpStartedAtRef.current = null;
     wasJumpingRef.current = false;
-  }, [idleIntensity, resolvedHero]);
+    postureScaleYRefInternal.current = Math.max(0.45, Math.min(1, postureScaleYRef?.current ?? postureScaleY));
+    resetHeroBodyPoseTransitionRuntime(poseTransitionRuntimeRef.current);
+  }, [resolvedHero]);
 
   useFrame((state, delta) => {
     if (!groupRef.current) return;
@@ -326,7 +335,14 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       appliedBodyOpacityRef.current = nextBodyOpacity;
       applyHeroBodyOpacity(groupRef.current, nextBodyOpacity);
     }
-    const verticalScale = Math.max(0.45, Math.min(1, postureScaleYRef?.current ?? postureScaleY));
+    const targetVerticalScale = Math.max(0.45, Math.min(1, postureScaleYRef?.current ?? postureScaleY));
+    postureScaleYRefInternal.current = THREE.MathUtils.damp(
+      postureScaleYRefInternal.current,
+      targetVerticalScale,
+      targetVerticalScale < postureScaleYRefInternal.current ? 13 : 10,
+      frameDelta
+    );
+    const verticalScale = postureScaleYRefInternal.current;
     const baseScaleY = scale * verticalScale;
     const t = state.clock.elapsedTime;
     const moving = isMovingRef?.current ?? isMoving;
@@ -348,7 +364,11 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       const attackCycleIndex = Math.floor(attackCycle);
       attackProgress = attackCycle - attackCycleIndex;
 
-      if (!attackSideRef && attackSide === undefined && resolvedHero === 'hookshot') {
+      if (
+        !attackSideRef &&
+        attackSide === undefined &&
+        (resolvedHero === 'hookshot' || resolvedHero === 'phantom')
+      ) {
         activeAttackSide = attackCycleIndex % 2 === 0 ? 1 : -1;
       }
     }
@@ -399,6 +419,23 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       smoothedWalkDirection.right /= smoothedWalkDirectionLength;
     }
     const bones = boneRefs.current;
+    const poseBlendKey = getHeroBodyPoseBlendKey({
+      heroId: resolvedHero,
+      moving,
+      jumping,
+      crouching,
+      sliding,
+      attacking,
+      attackSide: activeAttackSide,
+      movementPose: targetMovementPoseRef.current,
+      idleEnabled: idleIntensity > 0,
+    });
+    beginHeroBodyPoseTransition(
+      poseTransitionRuntimeRef.current,
+      poseBlendKey,
+      groupRef.current,
+      bones
+    );
     setBoneBasePose(bones);
 
     if (jumping) {
@@ -465,6 +502,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       materials.forEach((material, kind) => {
         material.emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
       });
+      applyHeroBodyPoseTransition(
+        poseTransitionRuntimeRef.current,
+        groupRef.current,
+        bones,
+        frameDelta
+      );
 
       return;
     }
@@ -566,6 +609,12 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
     applyWalkingBonePose(bones, movementCycleTime, movingAmount, smoothedWalkDirection, movementProfile);
     applySlideBonePose(bones, t, slideAmount);
     applyHeroAttackPose(resolvedHero, bones, attackProgress, attackAmount, activeAttackSide);
+    applyHeroBodyPoseTransition(
+      poseTransitionRuntimeRef.current,
+      groupRef.current,
+      bones,
+      frameDelta
+    );
   });
 
   const renderOutlineMesh = (

@@ -50,6 +50,9 @@ export function calculateSignalScoreDelta(signal: AntiCheatSignal): number {
   if (signal.category === 'objective' && signal.eventType.includes('carrier_mismatch')) delta += 26;
   if (signal.category === 'objective' && signal.eventType.includes('capture')) delta += signal.severity === 'high' ? 20 : 0;
   if (signal.category === 'combat' && signal.eventType.includes('ignored_projectile')) delta += 8;
+  if (signal.category === 'combat' && signal.eventType.includes('non_visible_target_hit')) {
+    delta += reason.includes('visibility_hidden') ? 12 : 6;
+  }
   if (signal.category === 'ability' && reason?.includes('disabled')) delta += 16;
   if (signal.category === 'network' && signal.eventType.includes('rate_limit')) delta += 3;
   if (signal.category === 'client_hint') delta = Math.min(delta, 5);

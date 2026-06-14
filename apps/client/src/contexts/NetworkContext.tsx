@@ -200,9 +200,10 @@ function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
 }
 
-async function requestQuickPlayTicket(): Promise<QuickPlayTicketResponse> {
+async function requestQuickPlayTicket(clientId: string): Promise<QuickPlayTicketResponse> {
   const response = await fetch(`${getHttpUrl()}/matchmaking/quick-play-ticket`, {
     credentials: 'include',
+    headers: { 'X-Client-Id': clientId },
   });
 
   if (!response.ok) {
@@ -494,8 +495,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           ultimateEffectEndTime: 0,
           clientCooldowns: {},
           clientCharges: {},
-          unstuckCooldownUntil: 0,
-          unstuckRequestId: 0,
           slideIntensity: 0,
           isObserverMode: false,
         });
@@ -934,7 +933,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
       const client = getClient();
       const clientId = getClientId();
-      const matchmakingTicket = await requestQuickPlayTicket();
+      const matchmakingTicket = await requestQuickPlayTicket(clientId);
 
       loggers.network.debug('quick play matchmaking with client id', clientId, matchmakingTicket.targetRankLabel);
 
@@ -1200,8 +1199,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       lastProcessedTick: 0,
       clientCooldowns: {},
       clientCharges: {},
-      unstuckCooldownUntil: 0,
-      unstuckRequestId: 0,
       slideIntensity: 0,
     });
   }, [removePlayer, setMatchStartGateKey, setObserverMode]);
@@ -1535,8 +1532,6 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       ultimateEffectEndTime: 0,
       clientCooldowns: {},
       clientCharges: {},
-      unstuckCooldownUntil: 0,
-      unstuckRequestId: 0,
       slideIntensity: 0,
       isObserverMode: false,
     });

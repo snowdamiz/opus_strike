@@ -114,6 +114,9 @@ export const BLAZE_FLAMETHROWER_RANGE = 9;
 export const BLAZE_FLAMETHROWER_CONE_HALF_ANGLE = Math.PI / 5;
 export const BLAZE_FLAMETHROWER_DAMAGE = 6;
 export const BLAZE_FLAMETHROWER_DAMAGE_INTERVAL = 250; // ms between damage ticks
+export const BLAZE_FLAMETHROWER_BURN_DAMAGE = 1;
+export const BLAZE_FLAMETHROWER_BURN_TICKS = 10;
+export const BLAZE_FLAMETHROWER_BURN_INTERVAL_MS = 500;
 export const BLAZE_FLAMETHROWER_SOCKET_HAND_HEIGHT = 0.42;
 export const BLAZE_FLAMETHROWER_SOCKET_FORWARD_OFFSET = 0.18;
 export const BLAZE_FLAMETHROWER_SOCKET_SIDE_OFFSET = 0.14;
@@ -138,9 +141,6 @@ export const GLIDE_TURN_SPEED = 2;
 // Blink
 export const BLINK_MAX_DISTANCE = 12;
 export const BLINK_COOLDOWN = 6;
-
-// ESC menu recovery
-export const UNSTUCK_COOLDOWN_MS = 30_000;
 
 // Player collision
 export const PLAYER_HEIGHT = 1.8;

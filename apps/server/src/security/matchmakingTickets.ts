@@ -16,6 +16,7 @@ export interface MatchmakingTicketClaims {
   rankDivisionIndex: number;
   targetRankDivisionIndex: number;
   placementRemaining: number;
+  clientId?: string;
   rankedEntryQuoteId?: string;
   coverChargeLamports?: string;
   rankedEntryQuoteExpiresAt?: number;
@@ -37,6 +38,7 @@ export interface CreateMatchmakingTicketInput {
   rankDivisionIndex: number;
   targetRankDivisionIndex: number;
   placementRemaining: number;
+  clientId?: string;
   rankedEntryQuoteId?: string;
   coverChargeLamports?: string;
   rankedEntryQuoteExpiresAt?: number;
@@ -99,6 +101,7 @@ export function createMatchmakingTicket(input: CreateMatchmakingTicketInput): {
     rankDivisionIndex: normalizeRankDivisionIndex(input.rankDivisionIndex),
     targetRankDivisionIndex: normalizeRankDivisionIndex(input.targetRankDivisionIndex),
     placementRemaining: Math.max(0, Math.floor(Number.isFinite(input.placementRemaining) ? input.placementRemaining : 0)),
+    clientId: input.clientId,
     rankedEntryQuoteId: input.mode === 'ranked' ? input.rankedEntryQuoteId : undefined,
     coverChargeLamports: input.mode === 'ranked' ? input.coverChargeLamports : undefined,
     rankedEntryQuoteExpiresAt: input.mode === 'ranked' ? input.rankedEntryQuoteExpiresAt : undefined,
@@ -137,6 +140,7 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
   if (claims.version !== 2) return null;
   const mode = isMatchMode(claims.mode) ? claims.mode : 'quick_play';
   if (!claims.userId || !claims.nonce) return null;
+  if (claims.clientId !== undefined && (typeof claims.clientId !== 'string' || claims.clientId.length > 128)) return null;
   if (claims.expiresAt < now || claims.issuedAt > now + 5_000) return null;
   if (!Number.isFinite(claims.competitiveRating)) return null;
   if (normalizeRankDivisionIndex(claims.rankDivisionIndex) !== claims.rankDivisionIndex) return null;
@@ -183,6 +187,7 @@ export function verifyMatchmakingTicket(ticket: unknown, now = Date.now()): Matc
     rankDivisionIndex: claims.rankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     targetRankDivisionIndex: claims.targetRankDivisionIndex ?? DEFAULT_RANK_DIVISION_INDEX,
     placementRemaining: Math.max(0, Math.floor(claims.placementRemaining ?? 0)),
+    clientId: claims.clientId,
     rankedEntryQuoteId: mode === 'ranked' ? claims.rankedEntryQuoteId : undefined,
     coverChargeLamports: mode === 'ranked' ? claims.coverChargeLamports : undefined,
     rankedEntryQuoteExpiresAt: mode === 'ranked' ? claims.rankedEntryQuoteExpiresAt : undefined,

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import * as THREE from 'three';
 import {
   BLAZE_ROCKET_STAFF_TIP_SOCKET_NAME,
   CHRONOS_PRIMARY_ORB_SOCKET_NAME,
@@ -18,6 +19,9 @@ import {
   groupRiggedParts,
 } from './heroRig';
 import {
+  applyHeroBodyPoseTransition,
+  beginHeroBodyPoseTransition,
+  createHeroBodyPoseTransitionRuntime,
   getJumpPose,
   getNormalizedWalkDirection,
 } from './heroBodyPose';
@@ -38,7 +42,7 @@ import {
   setChronosPrimaryHeld,
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
-import type { VoxelPart } from './heroBodyTypes';
+import type { HeroBoneRefs, VoxelPart } from './heroBodyTypes';
 
 const heroIds = Object.keys(HERO_DEFINITIONS).sort() as HeroId[];
 
@@ -119,6 +123,33 @@ assert.deepEqual(getNormalizedWalkDirection({ forward: 0, right: 0 }), { forward
 assert.deepEqual(getNormalizedWalkDirection({ forward: 3, right: 4 }), { forward: 0.6, right: 0.8 });
 assert.equal(getJumpPose(0).rootLift <= 0, true);
 assert.equal(getJumpPose(0.5).rootLift > 0, true);
+
+const root = new THREE.Group();
+const torso = new THREE.Group();
+const leftArm = new THREE.Group();
+const poseBlendBones: HeroBoneRefs = { torso, leftArm };
+const poseBlendRuntime = createHeroBodyPoseTransitionRuntime(1);
+beginHeroBodyPoseTransition(poseBlendRuntime, 'phantom|idle', root, poseBlendBones);
+
+root.position.set(1, 0, 0);
+root.scale.set(1, 1, 1);
+torso.position.set(0, 1, 0);
+torso.scale.set(1, 1, 1);
+leftArm.rotation.set(0, 0, 0);
+beginHeroBodyPoseTransition(poseBlendRuntime, 'phantom|slide', root, poseBlendBones);
+
+root.position.set(5, 0, 0);
+root.scale.set(3, 3, 3);
+torso.position.set(0, 5, 0);
+torso.scale.set(1, 3, 1);
+leftArm.rotation.set(Math.PI, 0, 0);
+applyHeroBodyPoseTransition(poseBlendRuntime, root, poseBlendBones, 0.5);
+
+assert.equal(root.position.x, 3);
+assert.equal(root.scale.x, 2);
+assert.equal(torso.position.y, 3);
+assert.equal(torso.scale.y, 2);
+assert.ok(Math.abs(leftArm.rotation.x) > 0 && Math.abs(leftArm.rotation.x) < Math.PI);
 
 const runtime = createViewmodelPoseRuntime('phantom');
 setPhantomPrimaryHeld(true, 1000, runtime);

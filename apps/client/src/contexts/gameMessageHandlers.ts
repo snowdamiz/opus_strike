@@ -260,6 +260,7 @@ export function createPlayerFromSchema(schemaPlayer: any, id: string): Player {
     health: 100,
     maxHealth: 100,
     ultimateCharge: 0,
+    onFireUntil: null,
     movement: createDefaultMovement(),
     abilities: {},
     hasFlag: false,
@@ -289,6 +290,7 @@ export function createDefaultLocalPlayer(sessionId: string, playerName: string):
     health: 100,
     maxHealth: 100,
     ultimateCharge: 0,
+    onFireUntil: null,
     movement: createDefaultMovement(),
     abilities: {},
     hasFlag: false,
@@ -567,6 +569,7 @@ function createPlayerFromVitals(vitals: PlayerVitalsSnapshot, serverTime: number
     health: vitals.health,
     maxHealth: vitals.maxHealth,
     ultimateCharge: vitals.ultimateCharge,
+    onFireUntil: vitals.onFireUntil ?? null,
     movement: normalizeMovementState(vitals.movement, existing?.movement),
     abilities: normalizeAbilityVitals(vitals.abilities, serverTime, existing?.abilities),
     hasFlag: vitals.hasFlag,
@@ -629,6 +632,7 @@ function applyLocalVitalsPatchInPlace(player: Player, vitals: PlayerVitalsSnapsh
   player.health = vitals.health;
   player.maxHealth = vitals.maxHealth;
   player.ultimateCharge = vitals.ultimateCharge;
+  player.onFireUntil = vitals.onFireUntil ?? null;
   player.abilities = normalizeAbilityVitals(vitals.abilities, serverTime, player.abilities);
   player.hasFlag = vitals.hasFlag;
   player.respawnTime = vitals.respawnTime;
@@ -764,6 +768,7 @@ export function setupPlayerJoinedHandler(
           health: 100,
           maxHealth: 100,
           ultimateCharge: 0,
+          onFireUntil: null,
           movement: createDefaultMovement(),
           abilities: {},
           hasFlag: false,

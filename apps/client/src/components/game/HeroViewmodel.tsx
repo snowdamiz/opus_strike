@@ -214,6 +214,10 @@ const PHANTOM_SLIDE_BLEND_MAX_DELTA_SECONDS = 1 / 30;
 const PHANTOM_SLIDE_HAND_PULLBACK_Z = 0.11;
 const PHANTOM_SLIDE_FOREARM_PULLBACK_Z = 0.09;
 const PHANTOM_CLOSED_HAND_WRIST_PIVOT_Z = 0.105;
+const PHANTOM_PRIMARY_READY_HAND_TUCK_Z = 0.014;
+const PHANTOM_PRIMARY_SHOT_HAND_EXTENSION_Z = 0.044;
+const PHANTOM_PRIMARY_READY_FOREARM_TUCK_Z = 0.024;
+const PHANTOM_PRIMARY_SHOT_FOREARM_EXTENSION_Z = 0.04;
 const PHANTOM_IDLE_HAND_POSITION = {
   x: 0.326,
   y: -0.52,
@@ -244,6 +248,22 @@ const BLAZE_STAFF_TIP_FLAME_ANGLES = [
   Math.PI * 0.75,
   Math.PI * 1.25,
   Math.PI * 1.75,
+] as const;
+const VIEWMODEL_BURN_FADE_OUT_MS = 500;
+const VIEWMODEL_BURN_ANCHORS = [
+  { x: -0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.08 },
+  { x: 0.34, y: -0.31, z: -0.5, radius: 0.054, phase: 0.31 },
+  { x: -0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.54 },
+  { x: 0.31, y: -0.24, z: -0.69, radius: 0.046, phase: 0.77 },
+  { x: 0.06, y: -0.22, z: -0.6, radius: 0.05, phase: 0.95 },
+] as const;
+const VIEWMODEL_BURN_EMBERS = [
+  { x: -0.37, y: -0.27, z: -0.62, phase: 0.12 },
+  { x: -0.25, y: -0.21, z: -0.76, phase: 0.3 },
+  { x: 0.27, y: -0.21, z: -0.76, phase: 0.48 },
+  { x: 0.38, y: -0.27, z: -0.62, phase: 0.66 },
+  { x: 0.03, y: -0.19, z: -0.62, phase: 0.84 },
+  { x: 0.11, y: -0.18, z: -0.53, phase: 0.98 },
 ] as const;
 const CHRONOS_FOREARM_READY_BLEND = 0.52;
 const CHRONOS_HAND_READY_BLEND = 0.62;
@@ -536,6 +556,123 @@ function createPhantomReloadGlowMaterial(): THREE.MeshBasicMaterial {
     depthWrite: false,
     toneMapped: false,
   });
+}
+
+function createViewmodelBurnMaterial(
+  color: number,
+  opacity: number
+): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+function ViewmodelBurnOverlay() {
+  const groupRef = useRef<THREE.Group>(null);
+  const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const emberRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const flameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireOrange, 0), []);
+  const innerFlameMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireYellow, 0), []);
+  const emberMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireWhite, 0), []);
+  const glowMaterial = useMemo(() => createViewmodelBurnMaterial(BLAZE_COLORS.fireRed, 0), []);
+
+  useEffect(() => () => {
+    flameMaterial.dispose();
+    innerFlameMaterial.dispose();
+    emberMaterial.dispose();
+    glowMaterial.dispose();
+  }, [emberMaterial, flameMaterial, glowMaterial, innerFlameMaterial]);
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const player = useGameStore.getState().localPlayer;
+    const now = Date.now();
+    const remainingMs = Math.max(0, (player?.onFireUntil ?? 0) - now);
+    const active = Boolean(player && player.state === 'alive' && remainingMs > 0);
+    if (!active) {
+      group.visible = false;
+      flameMaterial.opacity = 0;
+      innerFlameMaterial.opacity = 0;
+      emberMaterial.opacity = 0;
+      glowMaterial.opacity = 0;
+      return;
+    }
+
+    const fade = THREE.MathUtils.smoothstep(Math.min(remainingMs, VIEWMODEL_BURN_FADE_OUT_MS), 0, VIEWMODEL_BURN_FADE_OUT_MS);
+    const t = state.clock.elapsedTime;
+    const flicker = 0.82 + Math.sin(t * 17.2) * 0.08 + Math.sin(t * 37.5) * 0.04;
+    const intensity = fade * flicker;
+
+    group.visible = intensity > 0.01;
+    flameMaterial.opacity = intensity * 0.18;
+    innerFlameMaterial.opacity = intensity * 0.12;
+    emberMaterial.opacity = intensity * 0.34;
+    glowMaterial.opacity = intensity * 0.055;
+
+    for (let index = 0; index < VIEWMODEL_BURN_ANCHORS.length; index++) {
+      const anchor = VIEWMODEL_BURN_ANCHORS[index];
+      const mesh = flameRefs.current[index];
+      if (!mesh) continue;
+
+      const pulse = Math.sin(t * 8.6 + anchor.phase * Math.PI * 2);
+      const sway = Math.sin(t * 5.4 + anchor.phase * Math.PI * 2) * 0.018;
+      const scale = anchor.radius * intensity * (0.82 + Math.max(0, pulse) * 0.24);
+      mesh.visible = intensity > 0.02;
+      mesh.position.set(anchor.x + sway, anchor.y + Math.max(0, pulse) * 0.016, anchor.z);
+      mesh.rotation.set(-0.26 + pulse * 0.08, anchor.phase * Math.PI * 2 + t * 0.22, pulse * 0.16);
+      mesh.scale.set(scale * 0.68, scale * 1.62, scale * 0.68);
+    }
+
+    for (let index = 0; index < VIEWMODEL_BURN_EMBERS.length; index++) {
+      const ember = VIEWMODEL_BURN_EMBERS[index];
+      const mesh = emberRefs.current[index];
+      if (!mesh) continue;
+
+      const cycle = (t * 0.9 + ember.phase) % 1;
+      const drift = Math.sin(t * 3.2 + ember.phase * 8) * 0.016;
+      const scale = (0.012 + cycle * 0.008) * intensity;
+      mesh.visible = intensity > 0.02;
+      mesh.position.set(
+        ember.x + drift,
+        ember.y + cycle * 0.105,
+        ember.z + Math.cos(t * 2.6 + ember.phase * 6) * 0.012
+      );
+      mesh.scale.setScalar(scale);
+    }
+  });
+
+  return (
+    <group ref={groupRef} visible={false} renderOrder={24}>
+      <mesh geometry={SHARED_GEOMETRIES.sphere12} material={glowMaterial} position={[0, -0.27, -0.62]} scale={[0.56, 0.18, 0.34]} frustumCulled={false} />
+      {VIEWMODEL_BURN_ANCHORS.map((anchor, index) => (
+        <mesh
+          key={`viewmodel-burn-flame-${index}`}
+          ref={(node) => { flameRefs.current[index] = node; }}
+          geometry={SHARED_GEOMETRIES.cone6}
+          material={index % 2 === 0 ? flameMaterial : innerFlameMaterial}
+          position={[anchor.x, anchor.y, anchor.z]}
+          frustumCulled={false}
+        />
+      ))}
+      {VIEWMODEL_BURN_EMBERS.map((ember, index) => (
+        <mesh
+          key={`viewmodel-burn-ember-${index}`}
+          ref={(node) => { emberRefs.current[index] = node; }}
+          geometry={SHARED_GEOMETRIES.sphere6}
+          material={emberMaterial}
+          position={[ember.x, ember.y, ember.z]}
+          frustumCulled={false}
+        />
+      ))}
+    </group>
+  );
 }
 
 function getPhantomReloadPose(nowMs: number, elapsedSeconds: number, side: -1 | 1): PhantomReloadPose {
@@ -869,11 +1006,15 @@ function writePhantomHandPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE
+  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  primaryReadyBlend = 0,
+  primaryShotExtension = 0
 ): void {
   const sideSign = side;
   const thumbSide = -sideSign;
   const readyBlend = THREE.MathUtils.clamp(holdBlend, 0, 1);
+  const primaryReadyTuck = THREE.MathUtils.clamp(primaryReadyBlend, 0, 1);
+  const primaryShotReach = THREE.MathUtils.clamp(primaryShotExtension, 0, 1);
   const slideBlend = THREE.MathUtils.clamp(locomotion.slideBlend, 0, 1);
   const locomotionBlend = THREE.MathUtils.clamp(
     locomotion.movementBlend * (1 - readyBlend * 0.16 - shotPulse * 0.24) * (1 - slideBlend * 0.9),
@@ -898,6 +1039,7 @@ function writePhantomHandPose(
   const inwardTuck = (0.018 + runBlend * 0.034) * locomotionBlend;
   const handUpBias = (0.18 + locomotionBlend * 0.028) * (1 - readyBlend * 0.45 - shotPulse * 0.4);
   const slidePullback = PHANTOM_SLIDE_HAND_PULLBACK_Z * slideBlend * (1 - readyBlend * 0.25 - shotPulse * 0.2);
+  const readyHandExtensionZ = 0.032 - PHANTOM_PRIMARY_READY_HAND_TUCK_Z * primaryReadyTuck;
 
   targets.arm.position.set(
     sideSign * (
@@ -915,29 +1057,33 @@ function writePhantomHandPose(
       cadencePulse * runTuck * 0.006 +
       breath * (1 - locomotionBlend),
     PHANTOM_IDLE_HAND_POSITION.z -
-      readyBlend * 0.032 -
+      readyBlend * readyHandExtensionZ -
       shotPulse * 0.014 -
+      primaryShotReach * PHANTOM_PRIMARY_SHOT_HAND_EXTENSION_Z -
       runTuck * 0.003 +
       retractPulse * retractAmount +
       slidePullback
   );
   targets.arm.rotation.set(
     PHANTOM_IDLE_HAND_ROTATION.x -
-      readyBlend * 0.37 -
+      readyBlend * (0.37 - primaryReadyTuck * 0.045) -
       shotPulse * 0.055 -
+      primaryShotReach * 0.07 -
       runTuck * 0.045 +
       retractPulse * pumpPitch +
       handUpBias,
     sideSign * (
       PHANTOM_IDLE_HAND_ROTATION.y -
       readyBlend * 0.2 -
-      shotPulse * 0.02 +
+      shotPulse * 0.02 -
+      primaryShotReach * 0.018 +
       counterSwing * (0.026 + runBlend * 0.028) * locomotionBlend
     ),
     sideSign * (
       PHANTOM_IDLE_HAND_ROTATION.z +
-      readyBlend * 0.42 +
+      readyBlend * (0.42 - primaryReadyTuck * 0.035) +
       shotPulse * 0.055 +
+      primaryShotReach * 0.035 +
       retractPulse * pumpRoll +
       counterSwing * 0.022 * locomotionBlend
     )
@@ -965,10 +1111,14 @@ function writePhantomHandPose(
   targets.palm.position.set(
     sideSign * readyBlend * 0.006,
     readyBlend * 0.004,
-    -readyBlend * 0.01 - shotPulse * 0.006
+    -readyBlend * (0.01 - primaryReadyTuck * 0.003) -
+      shotPulse * 0.006 -
+      primaryShotReach * 0.018
   );
   targets.palm.rotation.set(
-    -readyBlend * 0.045 - shotPulse * 0.022,
+    -readyBlend * (0.045 - primaryReadyTuck * 0.008) -
+      shotPulse * 0.022 -
+      primaryShotReach * 0.024,
     sideSign * -readyBlend * 0.05,
     sideSign * readyBlend * 0.03
   );
@@ -992,10 +1142,12 @@ function writePhantomHandPose(
     finger.position.set(
       slot + readyBlend * fingerIndexOffset * 0.006,
       0.056 + lengthBias,
-      -0.038 + Math.abs(fingerIndexOffset) * 0.001 - shotPulse * 0.002
+      -0.038 + Math.abs(fingerIndexOffset) * 0.001 -
+        shotPulse * 0.002 -
+        primaryShotReach * 0.005
     );
     finger.rotation.set(
-      -0.04 - shotPulse * 0.028,
+      -0.04 - shotPulse * 0.028 - primaryShotReach * 0.026,
       -fingerIndexOffset * 0.018,
       -fingerIndexOffset * (0.16 + readyBlend * 0.08)
     );
@@ -1008,8 +1160,12 @@ function writePhantomForearmPose(
   holdBlend: number,
   shotPulse: number,
   elapsedSeconds: number,
-  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE
+  locomotion: PhantomLocomotionPose = PHANTOM_STILL_LOCOMOTION_POSE,
+  primaryReadyBlend = 0,
+  primaryShotExtension = 0
 ): void {
+  const primaryReadyTuck = THREE.MathUtils.clamp(primaryReadyBlend, 0, 1);
+  const primaryShotReach = THREE.MathUtils.clamp(primaryShotExtension, 0, 1);
   const locomotionBlend = THREE.MathUtils.clamp(
     locomotion.movementBlend * (1 - holdBlend * 0.08 - shotPulse * 0.18) * (1 - THREE.MathUtils.clamp(locomotion.slideBlend, 0, 1) * 0.9),
     0,
@@ -1031,6 +1187,7 @@ function writePhantomForearmPose(
   const runTuck = runBlend * locomotionBlend;
   const inwardTuck = (0.016 + runBlend * 0.035) * locomotionBlend;
   const slidePullback = PHANTOM_SLIDE_FOREARM_PULLBACK_Z * slideBlend * (1 - holdBlend * 0.18 - shotPulse * 0.16);
+  const readyForearmExtensionZ = 0.096 - PHANTOM_PRIMARY_READY_FOREARM_TUCK_Z * primaryReadyTuck;
 
   target.position.set(
     side * (
@@ -1047,28 +1204,32 @@ function writePhantomForearmPose(
       drop * liftAmount * 0.32 +
       breath * (1 - locomotionBlend),
     -0.41 -
-      holdBlend * 0.096 -
+      holdBlend * readyForearmExtensionZ -
       shotPulse * 0.01 -
+      primaryShotReach * PHANTOM_PRIMARY_SHOT_FOREARM_EXTENSION_Z -
       runTuck * 0.003 +
       retractPulse * retractAmount +
       slidePullback
   );
   target.rotation.set(
     0.22 -
-      holdBlend * 0.34 -
+      holdBlend * (0.34 - primaryReadyTuck * 0.035) -
       shotPulse * 0.055 -
+      primaryShotReach * 0.075 -
       runTuck * 0.035 -
       retractPulse * pumpPitch * 0.72,
     side * (
       -0.1 +
       holdBlend * 0.08 +
       shotPulse * 0.014 +
+      primaryShotReach * 0.018 +
       counterSwing * (0.026 + runBlend * 0.03) * locomotionBlend
     ),
     side * (
       -0.09 +
-      holdBlend * 0.235 +
+      holdBlend * (0.235 - primaryReadyTuck * 0.025) +
       shotPulse * 0.055 +
+      primaryShotReach * 0.04 +
       retractPulse * (0.055 + runBlend * 0.074) * locomotionBlend +
       counterSwing * 0.018 * locomotionBlend
     )
@@ -1358,6 +1519,8 @@ function composePhantomPrimaryPalmMatrix({
   side,
   holdBlend,
   shotPulse,
+  primaryReadyBlend = holdBlend,
+  primaryShotExtension = shotPulse,
   shieldCastPose,
   locomotion,
 }: {
@@ -1368,6 +1531,8 @@ function composePhantomPrimaryPalmMatrix({
   side: -1 | 1;
   holdBlend: number;
   shotPulse: number;
+  primaryReadyBlend?: number;
+  primaryShotExtension?: number;
   shieldCastPose?: PhantomShieldCastPose;
   locomotion?: PhantomLocomotionPose;
 }): THREE.Matrix4 {
@@ -1392,7 +1557,16 @@ function composePhantomPrimaryPalmMatrix({
       rotation: new THREE.Euler(0, 0, 0, VIEWMODEL_ROOT_EULER_ORDER),
     })),
   };
-  writePhantomHandPose(poseTarget, side, holdBlend, shotPulse, elapsedSeconds, locomotion);
+  writePhantomHandPose(
+    poseTarget,
+    side,
+    holdBlend,
+    shotPulse,
+    elapsedSeconds,
+    locomotion,
+    primaryReadyBlend,
+    primaryShotExtension
+  );
   if (shieldCastPose) {
     applyPhantomShieldCastHandPose(poseTarget, side, shieldCastPose, elapsedSeconds);
   }
@@ -1427,10 +1601,8 @@ function samplePhantomPrimaryPalmSocket(
   const attackTimeSeconds = context.actionTimeSeconds ?? PHANTOM_PRIMARY_FIRE_POSE_TIME_SECONDS;
   const timestampMs = context.timestampMs ?? Date.now();
   const shieldCastPose = getPhantomShieldCastPose(timestampMs);
-  const holdBlend = Math.max(
-    context.holdBlend ?? getPhantomPrimaryHeldBlend(timestampMs),
-    shieldCastPose.blend
-  );
+  const primaryHoldBlend = context.holdBlend ?? getPhantomPrimaryHeldBlend(timestampMs);
+  const holdBlend = Math.max(primaryHoldBlend, shieldCastPose.blend);
   const shotPulse = context.shotPulse ?? getPhantomPrimaryShotPulse(attackTimeSeconds);
   const worldMatrix = composePhantomPrimaryPalmMatrix({
     camera: context.camera,
@@ -1440,6 +1612,8 @@ function samplePhantomPrimaryPalmSocket(
     side: context.side,
     holdBlend,
     shotPulse,
+    primaryReadyBlend: primaryHoldBlend,
+    primaryShotExtension: shotPulse,
     shieldCastPose,
     locomotion,
   });
@@ -1559,7 +1733,9 @@ function PhantomAnimatedForearm({
       holdBlend,
       shotPulse,
       state.clock.elapsedTime,
-      locomotionRef.current
+      locomotionRef.current,
+      baseHoldBlend,
+      primaryShotPulse
     );
     if (shieldCastPose) {
       applyPhantomShieldCastForearmPose(forearm, side, shieldCastPose);
@@ -1692,7 +1868,9 @@ function PhantomPoseableHand({
       holdBlend,
       shotPulse,
       state.clock.elapsedTime,
-      locomotionRef.current
+      locomotionRef.current,
+      baseHoldBlend,
+      primaryShotPulse
     );
     if (shieldCastPose) {
       applyPhantomShieldCastHandPose(
@@ -2262,9 +2440,9 @@ function applyBlazeRocketPoseToForearm(
   if (side !== 1 || holdBlend <= 0) return;
 
   target.position.x += side * -0.014 * holdBlend;
-  target.position.y += 0.014 * holdBlend;
-  target.position.z -= 0.076 * holdBlend;
-  target.rotation.x -= 0.088 * holdBlend;
+  target.position.y += 0.018 * holdBlend;
+  target.position.z -= 0.096 * holdBlend;
+  target.rotation.x -= 0.116 * holdBlend;
   target.rotation.y += side * -0.024 * holdBlend;
   target.rotation.z += side * 0.046 * holdBlend;
 }
@@ -2277,29 +2455,29 @@ function applyBlazeRocketPoseToHand(
   if (side !== 1 || holdBlend <= 0) return;
 
   targets.arm.position.x += side * -0.018 * holdBlend;
-  targets.arm.position.y += 0.018 * holdBlend;
-  targets.arm.position.z -= 0.092 * holdBlend;
-  targets.arm.rotation.x -= 0.095 * holdBlend;
-  targets.arm.rotation.y += side * -0.024 * holdBlend;
-  targets.arm.rotation.z += side * 0.058 * holdBlend;
+  targets.arm.position.y += 0.022 * holdBlend;
+  targets.arm.position.z -= 0.112 * holdBlend;
+  targets.arm.rotation.x -= 0.122 * holdBlend;
+  targets.arm.rotation.y += side * -0.028 * holdBlend;
+  targets.arm.rotation.z += side * 0.062 * holdBlend;
 
-  targets.wrist.position.z -= 0.014 * holdBlend;
-  targets.wrist.rotation.x -= 0.128 * holdBlend;
+  targets.wrist.position.z -= 0.022 * holdBlend;
+  targets.wrist.rotation.x -= 0.156 * holdBlend;
   targets.wrist.rotation.y += side * -0.03 * holdBlend;
   targets.wrist.rotation.z += side * 0.034 * holdBlend;
 
   targets.palm.position.y += 0.004 * holdBlend;
-  targets.palm.position.z -= 0.018 * holdBlend;
-  targets.palm.rotation.x -= 0.088 * holdBlend;
+  targets.palm.position.z -= 0.026 * holdBlend;
+  targets.palm.rotation.x -= 0.112 * holdBlend;
   targets.palm.rotation.y += side * -0.018 * holdBlend;
   targets.palm.rotation.z += side * 0.02 * holdBlend;
 
   if (targets.closedHand) {
     targets.closedHand.position.x += side * -0.018 * holdBlend;
-    targets.closedHand.position.y += 0.018 * holdBlend;
-    targets.closedHand.position.z -= 0.1 * holdBlend;
-    targets.closedHand.rotation.x -= 0.145 * holdBlend;
-    targets.closedHand.rotation.y += side * -0.034 * holdBlend;
+    targets.closedHand.position.y += 0.022 * holdBlend;
+    targets.closedHand.position.z -= 0.124 * holdBlend;
+    targets.closedHand.rotation.x -= 0.178 * holdBlend;
+    targets.closedHand.rotation.y += side * -0.038 * holdBlend;
     targets.closedHand.rotation.z += side * 0.052 * holdBlend;
   }
 }
@@ -2397,12 +2575,12 @@ function writeBlazeStaffPose(
   const impact = rocketJumpPose.impactPulse;
 
   target.position.copy(BLAZE_STAFF_POSITION);
-  target.position.y += 0.006 * adjustedHoldBlend;
-  target.position.z -= 0.026 * adjustedHoldBlend;
+  target.position.y += 0.012 * adjustedHoldBlend;
+  target.position.z -= 0.052 * adjustedHoldBlend;
   target.rotation.copy(BLAZE_STAFF_ROTATION);
-  target.rotation.x -= 0.18 * adjustedHoldBlend;
-  target.rotation.y -= 0.032 * adjustedHoldBlend;
-  target.rotation.z += 0.018 * adjustedHoldBlend;
+  target.rotation.x -= 0.255 * adjustedHoldBlend;
+  target.rotation.y -= 0.038 * adjustedHoldBlend;
+  target.rotation.z += 0.024 * adjustedHoldBlend;
 
   target.position.x -= 0.03 * ready;
   target.position.y += 0.09 * ready - 0.255 * strike - 0.02 * impact;
@@ -4361,6 +4539,7 @@ const HeroViewmodelInner = memo(function HeroViewmodelInner({ heroId, action, co
             targetingBlendRef={targetingBlendRef}
           />
         )}
+        <ViewmodelBurnOverlay />
       </group>
     </group>
   );

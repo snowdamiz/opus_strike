@@ -1,6 +1,8 @@
+import crypto from 'node:crypto';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import prisma from '../db';
 import { verifyAuthToken } from '../auth/session';
+import { getAuthTokenSecret } from '../config/security';
 import type { Team } from '@voxel-strike/shared';
 import type { ColyseusRuntimeConfig } from '../config/colyseus';
 import { loggers } from '../utils/logger';
@@ -75,6 +77,9 @@ function adminWallet(): string | null {
   return wallet || null;
 }
 
+const ADMIN_CSRF_HEADER = 'x-csrf-token';
+const ADMIN_CSRF_WINDOW_MS = 60 * 60 * 1000;
+
 const antiCheatEvidenceStore = new AntiCheatEvidenceStore(prisma);
 
 function notFound(res: Response): void {
@@ -88,6 +93,62 @@ function noStore(res: Response): void {
 
 function isValidTeam(value: unknown): value is Team {
   return value === 'red' || value === 'blue';
+}
+
+function timingSafeStringEqual(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function adminCsrfSignature(adminUser: AdminUser, bucket: number): string {
+  return crypto
+    .createHmac('sha256', getAuthTokenSecret())
+    .update(`${adminUser.id}:${adminUser.walletAddress}:${bucket}`)
+    .digest('base64url');
+}
+
+function createAdminCsrfToken(adminUser: AdminUser, now = Date.now()): string {
+  const bucket = Math.floor(now / ADMIN_CSRF_WINDOW_MS);
+  return `${bucket}.${adminCsrfSignature(adminUser, bucket)}`;
+}
+
+function verifyAdminCsrfToken(adminUser: AdminUser, token: string, now = Date.now()): boolean {
+  const [bucketRaw, signature, ...extra] = token.split('.');
+  if (!bucketRaw || !signature || extra.length > 0 || !/^[0-9]+$/.test(bucketRaw)) return false;
+
+  const bucket = Number(bucketRaw);
+  if (!Number.isSafeInteger(bucket)) return false;
+
+  const currentBucket = Math.floor(now / ADMIN_CSRF_WINDOW_MS);
+  if (bucket < currentBucket - 1 || bucket > currentBucket) return false;
+
+  return timingSafeStringEqual(signature, adminCsrfSignature(adminUser, bucket));
+}
+
+function readHeaderString(req: Request, name: string): string {
+  const value = req.headers[name.toLowerCase()];
+  if (Array.isArray(value)) return value[0] ?? '';
+  return typeof value === 'string' ? value : '';
+}
+
+function hasAllowedAdminOrigin(req: Request): boolean {
+  const fetchSite = readHeaderString(req, 'sec-fetch-site').toLowerCase();
+  if (fetchSite === 'cross-site') return false;
+
+  const host = req.headers.host;
+  if (!host) return false;
+
+  const origin = readHeaderString(req, 'origin');
+  const referer = origin ? '' : readHeaderString(req, 'referer');
+  const source = origin || referer;
+  if (!source) return fetchSite === 'same-origin' || fetchSite === 'same-site' || fetchSite === 'none';
+
+  try {
+    return new URL(source).host === host;
+  } catch {
+    return false;
+  }
 }
 
 function readRequestString(value: unknown, maxLength = 500): string {
@@ -218,6 +279,27 @@ async function ensureAdmin(req: Request, res: Response, next: NextFunction): Pro
     });
     res.status(500).json({ error: 'Admin authorization failed' });
   }
+}
+
+function ensureAdminMutation(req: Request, res: Response, next: NextFunction): void {
+  noStore(res);
+
+  const adminUser = res.locals.adminUser as AdminUser | undefined;
+  const token = readHeaderString(req, ADMIN_CSRF_HEADER);
+
+  if (!adminUser || !hasAllowedAdminOrigin(req) || !verifyAdminCsrfToken(adminUser, token)) {
+    loggers.auth.warn('Admin mutation rejected by CSRF guard', {
+      path: req.path,
+      hasAdminUser: Boolean(adminUser),
+      hasToken: Boolean(token),
+      origin: readHeaderString(req, 'origin') || null,
+      fetchSite: readHeaderString(req, 'sec-fetch-site') || null,
+    });
+    notFound(res);
+    return;
+  }
+
+  next();
 }
 
 async function queryRooms(matchMaker: AdminMatchMaker, name: string): Promise<RoomQueryResult> {
@@ -527,7 +609,7 @@ async function collectAdminOverview(options: AdminRouterOptions, adminUser: Admi
   };
 }
 
-function renderAdminHtml(): string {
+function renderAdminHtml(csrfToken: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -796,6 +878,7 @@ function renderAdminHtml(): string {
   </main>
 
   <script>
+    const ADMIN_CSRF_TOKEN = ${JSON.stringify(csrfToken)};
     const state = {
       formatter: new Intl.NumberFormat(),
       bytes: new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }),
@@ -957,7 +1040,7 @@ function renderAdminHtml(): string {
         method: 'POST',
         credentials: 'include',
         cache: 'no-store',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-csrf-token': ADMIN_CSRF_TOKEN },
         body: JSON.stringify(payload || {}),
       });
       if (!response.ok) {
@@ -1219,7 +1302,8 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
 
   router.get('/', ensureAdmin, (_req, res) => {
     noStore(res);
-    res.type('html').send(renderAdminHtml());
+    const adminUser = res.locals.adminUser as AdminUser;
+    res.type('html').send(renderAdminHtml(createAdminCsrfToken(adminUser)));
   });
 
   router.get('/api/overview', ensureAdmin, async (_req, res) => {
@@ -1247,7 +1331,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/golden-biome/distribution-mode', ensureAdmin, async (req, res) => {
+  router.post('/api/golden-biome/distribution-mode', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const mode = readRequestString(req.body?.mode, 16);
@@ -1264,7 +1348,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/golden-biome/rewards/:rewardId/distribute', ensureAdmin, async (req, res) => {
+  router.post('/api/golden-biome/rewards/:rewardId/distribute', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
 
@@ -1276,7 +1360,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/player-reports/:reportId/status', ensureAdmin, async (req, res) => {
+  router.post('/api/player-reports/:reportId/status', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const status = req.body?.status;
@@ -1305,7 +1389,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/player-reports/:reportId/account-actions', ensureAdmin, async (req, res) => {
+  router.post('/api/player-reports/:reportId/account-actions', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const actionType = readRequestString(req.body?.actionType, 64) as AntiCheatAccountActionType;
@@ -1369,7 +1453,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/anti-cheat/cases/:caseId', ensureAdmin, async (req, res) => {
+  router.post('/api/anti-cheat/cases/:caseId', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const status = req.body?.status;
@@ -1394,7 +1478,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/anti-cheat/ranked/:matchId/apply', ensureAdmin, async (req, res) => {
+  router.post('/api/anti-cheat/ranked/:matchId/apply', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const reason = readRequestString(req.body?.reason);
@@ -1414,7 +1498,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/anti-cheat/ranked/:matchId/cancel', ensureAdmin, async (req, res) => {
+  router.post('/api/anti-cheat/ranked/:matchId/cancel', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const reason = readRequestString(req.body?.reason);
@@ -1434,7 +1518,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/anti-cheat/payout-holds/:holdId/:action', ensureAdmin, async (req, res) => {
+  router.post('/api/anti-cheat/payout-holds/:holdId/:action', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const action = req.params.action;
@@ -1498,7 +1582,7 @@ export function createAdminRouter(options: AdminRouterOptions): Router {
     }
   });
 
-  router.post('/api/anti-cheat/account-actions', ensureAdmin, async (req, res) => {
+  router.post('/api/anti-cheat/account-actions', ensureAdmin, ensureAdminMutation, async (req, res) => {
     noStore(res);
     const adminUser = res.locals.adminUser as AdminUser;
     const actionType = readRequestString(req.body?.actionType, 64) as AntiCheatAccountActionType;

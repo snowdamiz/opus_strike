@@ -127,6 +127,7 @@ export interface PlayerVitalsSnapshot {
   health: number;
   maxHealth: number;
   ultimateCharge: number;
+  onFireUntil?: number | null;
   hasFlag: boolean;
   movement: PlayerSnapshot['movement'];
   abilities: Record<string, PlayerVitalsAbilitySnapshot>;

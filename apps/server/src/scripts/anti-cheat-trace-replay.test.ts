@@ -28,7 +28,6 @@ for (const required of [
   'wallrun_glide_fall',
   'timebreak_tempo_shield',
   'flag_pickup_return_capture_route',
-  'respawn_unstuck_authority_barriers',
   'forged_teleport_transform',
   'forged_speed_spike',
   'blocked_wall_traversal',

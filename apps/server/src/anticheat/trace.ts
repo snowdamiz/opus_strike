@@ -128,7 +128,6 @@ function isAuthorityBarrier(reason: AntiCheatMovementTraceCorrection | null): bo
   return reason === 'spawn' ||
     reason === 'respawn' ||
     reason === 'teleport' ||
-    reason === 'unstuck' ||
     reason === 'knockback';
 }
 

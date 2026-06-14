@@ -52,7 +52,6 @@ export interface PlayerInput {
   lookYaw: number;
   lookPitch: number;
   timestamp: number;
-  unstuck?: boolean;
   clientFrameRateBand?: string;
   abilityCastHints?: AbilityCastOriginHint[];
 }
@@ -87,6 +86,7 @@ export interface Player {
   health: number;
   maxHealth: number;
   ultimateCharge: number;
+  onFireUntil?: number | null;
   
   // Movement state
   movement: PlayerMovementState;

@@ -26,19 +26,26 @@ import {
 import {
   applyChronosArmPose,
   applyCrouchBonePose,
+  applyHeroBodyPoseTransition,
   applyHeroAttackPose,
   applyPhantomShieldBodyPose,
   applyIdleBonePose,
   applyJumpBonePose,
   applySlideBonePose,
   applyWalkingBonePose,
+  beginHeroBodyPoseTransition,
   clamp01,
+  createHeroBodyPoseTransitionRuntime,
   easeInOutSine,
   getBlazeAttackPoseAmount,
+  getHeroBodyPoseBlendKey,
   getJumpPose,
   getNormalizedWalkDirection,
   getPhantomShieldBodyPoseAmount,
+  resetHeroBodyPoseTransitionRuntime,
   setBoneBasePose,
+  type HeroBodyPoseRootTransform,
+  type HeroBodyPoseTransitionRuntime,
 } from '../../model-system/heroBodyPose';
 import {
   EMPTY_REMOTE_SOCKET_MARKERS,
@@ -133,11 +140,13 @@ interface RemoteHeroRuntime {
   jumpBlend: number;
   slideBlend: number;
   attackBlend: number;
+  poseTransition: HeroBodyPoseTransitionRuntime;
   targetMovementPose: HeroMovementPose;
   previousMovementProfile: HeroMovementProfile;
   currentMovementProfile: HeroMovementProfile;
   movementProfileBlend: number;
   movementCycle: number;
+  postureScaleY: number;
   smoothedWalkDirection: HeroWalkDirection;
   wasJumping: boolean;
   jumpStartedAt: number | null;
@@ -149,6 +158,7 @@ interface RemoteHeroRuntime {
   initialized: boolean;
   renderYaw: number;
   rootPosition: THREE.Vector3;
+  rootPoseTransform: HeroBodyPoseRootTransform;
   yawQuaternion: THREE.Quaternion;
   rootQuaternion: THREE.Quaternion;
   rootRotation: THREE.Euler;
@@ -335,6 +345,7 @@ function resetRemoteAnimationState(runtime: RemoteHeroRuntime, player: Player): 
   runtime.jumpBlend = !player.movement.isGrounded ? 1 : 0;
   runtime.slideBlend = player.movement.isSliding ? 1 : 0;
   runtime.attackBlend = 0;
+  runtime.postureScaleY = getPostureScaleY(player, getPlayerHeight(player));
   runtime.targetMovementPose = movementPose;
   runtime.previousMovementProfile = movementProfile;
   runtime.currentMovementProfile = movementProfile;
@@ -344,6 +355,7 @@ function resetRemoteAnimationState(runtime: RemoteHeroRuntime, player: Player): 
   runtime.wasJumping = false;
   runtime.jumpStartedAt = null;
   runtime.glowPulse = 0;
+  resetHeroBodyPoseTransitionRuntime(runtime.poseTransition);
 }
 
 function clearSocketRegistrations(runtime: RemoteHeroRuntime): void {
@@ -379,6 +391,9 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
   const heroId = resolveHeroId(player);
   const { bodyRoot, bones } = createBoneRefs();
   const initialPosition = setPlayerRenderOrigin(new THREE.Vector3(), player.position);
+  const rootPosition = new THREE.Vector3();
+  const rootQuaternion = new THREE.Quaternion();
+  const rootScale = new THREE.Vector3(1, 1, 1);
   const initialMovementPose = getPlayerMovementPose(
     player,
     player.movement.isCrouching || player.movement.isSliding,
@@ -397,11 +412,13 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     jumpBlend: 0,
     slideBlend: 0,
     attackBlend: 0,
+    poseTransition: createHeroBodyPoseTransitionRuntime(),
     targetMovementPose: initialMovementPose,
     previousMovementProfile: initialMovementProfile,
     currentMovementProfile: initialMovementProfile,
     movementProfileBlend: 1,
     movementCycle: 0,
+    postureScaleY: getPostureScaleY(player, getPlayerHeight(player)),
     smoothedWalkDirection: { ...DEFAULT_WALK_DIRECTION },
     wasJumping: false,
     jumpStartedAt: null,
@@ -422,11 +439,16 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     remoteEpoch: null,
     initialized: false,
     renderYaw: player.lookYaw,
-    rootPosition: new THREE.Vector3(),
+    rootPosition,
+    rootPoseTransform: {
+      position: rootPosition,
+      quaternion: rootQuaternion,
+      scale: rootScale,
+    },
     yawQuaternion: new THREE.Quaternion(),
-    rootQuaternion: new THREE.Quaternion(),
+    rootQuaternion,
     rootRotation: new THREE.Euler(),
-    rootScale: new THREE.Vector3(1, 1, 1),
+    rootScale,
     playerMatrix: new THREE.Matrix4(),
     bodyLocalMatrix: new THREE.Matrix4(),
     bodyWorldMatrix: new THREE.Matrix4(),
@@ -547,9 +569,15 @@ function updateRemotePose(
   const heroId = runtime.heroId;
   const manifest = HERO_BODY_MANIFESTS[heroId];
   const playerHeight = getPlayerHeight(player);
-  const postureScaleY = Math.max(0.45, Math.min(1, getPostureScaleY(player, playerHeight)));
   const scale = playerHeight / 1.8;
-  const baseScaleY = scale * postureScaleY;
+  const targetPostureScaleY = Math.max(0.45, Math.min(1, getPostureScaleY(player, playerHeight)));
+  runtime.postureScaleY = THREE.MathUtils.damp(
+    runtime.postureScaleY,
+    targetPostureScaleY,
+    targetPostureScaleY < runtime.postureScaleY ? 13 : 10,
+    frameDelta
+  );
+  const baseScaleY = scale * runtime.postureScaleY;
   const moving = isPlayerMovingForAnimation(player, visualHorizontalSpeed);
   const jumping = !player.movement.isGrounded && !player.movement.isSliding;
   const crouching = player.movement.isCrouching;
@@ -560,6 +588,7 @@ function updateRemotePose(
 
   const visualState = visualStore.getState();
   const remoteAttackState = visualState.remotePlayerAttackStates.get(player.id);
+  const shieldStartedAt = getActivePhantomShieldStartedAt(player);
   if (remoteAttackState) {
     const attackAgeMs = frameNowMs - remoteAttackState.startedAtMs;
     attacking = attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
@@ -581,7 +610,7 @@ function updateRemotePose(
     const attackCycle = elapsedSeconds / attackDuration;
     const attackCycleIndex = Math.floor(attackCycle);
     attackProgress = attackCycle - attackCycleIndex;
-    if (heroId === 'hookshot') {
+    if (heroId === 'hookshot' || heroId === 'phantom') {
       activeAttackSide = attackCycleIndex % 2 === 0 ? 1 : -1;
     }
   }
@@ -633,6 +662,24 @@ function updateRemotePose(
   }
 
   const bones = runtime.bones as HeroBoneRefs;
+  const poseBlendKey = getHeroBodyPoseBlendKey({
+    heroId,
+    moving,
+    jumping,
+    crouching,
+    sliding,
+    attacking,
+    attackSide: activeAttackSide,
+    movementPose: runtime.targetMovementPose,
+    idleEnabled: true,
+    shieldActive: Boolean(shieldStartedAt),
+  });
+  beginHeroBodyPoseTransition(
+    runtime.poseTransition,
+    poseBlendKey,
+    runtime.rootPoseTransform,
+    bones
+  );
   setBoneBasePose(bones);
 
   if (jumping) {
@@ -696,10 +743,7 @@ function updateRemotePose(
     : Math.sin(attackProgress * Math.PI);
   const attackPulse = attackPosePulse * attackAmount;
   const rootAttackPulse = heroId === 'phantom' ? 0 : attackPulse;
-  const shieldPoseAmount = getPhantomShieldBodyPoseAmount(
-    getActivePhantomShieldStartedAt(player),
-    frameNowMs
-  );
+  const shieldPoseAmount = getPhantomShieldBodyPoseAmount(shieldStartedAt, frameNowMs);
   const idleAmount = runtime.idleBlend;
   const movingAmount = runtime.movementBlend * (1 - runSlideCrossfadeAmount);
   const jumpAmount = runtime.jumpBlend;
@@ -770,6 +814,12 @@ function updateRemotePose(
   applySlideBonePose(bones, elapsedSeconds, slideAmount);
   applyHeroAttackPose(heroId, bones, attackProgress, attackAmount, activeAttackSide);
   applyPhantomShieldBodyPose(bones, shieldPoseAmount);
+  applyHeroBodyPoseTransition(
+    runtime.poseTransition,
+    runtime.rootPoseTransform,
+    bones,
+    frameDelta
+  );
 
   runtime.glowPulse =
     (0.5 + 0.5 * tertiary) * idleProfile.auraPulse * idleAmount +
@@ -787,7 +837,7 @@ function updateBodyWorldMatrix(runtime: RemoteHeroRuntime): void {
     runtime.yawQuaternion.setFromAxisAngle(WORLD_UP_AXIS, runtime.renderYaw),
     WORLD_UNIT_SCALE
   );
-  runtime.bodyLocalMatrix.compose(runtime.rootPosition, runtime.rootQuaternion.setFromEuler(runtime.rootRotation), runtime.rootScale);
+  runtime.bodyLocalMatrix.compose(runtime.rootPosition, runtime.rootQuaternion, runtime.rootScale);
   runtime.bodyWorldMatrix.multiplyMatrices(runtime.playerMatrix, runtime.bodyLocalMatrix);
   runtime.bodyRoot.matrix.copy(runtime.bodyWorldMatrix);
   runtime.bodyRoot.updateMatrixWorld(true);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork } from '../../contexts/NetworkContext';
 import { SettingsModal } from './SettingsModal';
@@ -10,32 +10,8 @@ interface InGameMenuProps {
 
 export function InGameMenu({ onClose }: InGameMenuProps) {
   const playerName = useGameStore((state) => state.playerName);
-  const gamePhase = useGameStore((state) => state.gamePhase);
-  const localPlayerState = useGameStore((state) => state.localPlayer?.state ?? null);
-  const unstuckCooldownUntil = useGameStore((state) => state.unstuckCooldownUntil);
-  const requestUnstuck = useGameStore((state) => state.requestUnstuck);
   const [showSettings, setShowSettings] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const { leaveGame } = useNetwork();
-  const unstuckRemainingMs = Math.max(0, unstuckCooldownUntil - now);
-  const isUnstuckCoolingDown = unstuckRemainingMs > 0;
-  const canUseUnstuck =
-    !isUnstuckCoolingDown &&
-    localPlayerState === 'alive' &&
-    (gamePhase === 'playing' || gamePhase === 'countdown');
-  const unstuckLabel = isUnstuckCoolingDown
-    ? `UNSTUCK (${Math.ceil(unstuckRemainingMs / 1000)}s)`
-    : 'UNSTUCK';
-
-  useEffect(() => {
-    if (!isUnstuckCoolingDown) return;
-
-    const interval = window.setInterval(() => {
-      setNow(Date.now());
-    }, 250);
-
-    return () => window.clearInterval(interval);
-  }, [isUnstuckCoolingDown, unstuckCooldownUntil]);
 
   const handleResume = () => {
     const canvas = document.querySelector('canvas');
@@ -68,12 +44,6 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
     leaveGame();
   };
 
-  const handleUnstuck = () => {
-    if (requestUnstuck()) {
-      handleResume();
-    }
-  };
-
   return (
     <>
       <GameDialog
@@ -94,10 +64,6 @@ export function InGameMenu({ onClose }: InGameMenuProps) {
 
         <MenuButton onClick={() => setShowSettings(true)}>
           SETTINGS
-        </MenuButton>
-
-        <MenuButton onClick={handleUnstuck} disabled={!canUseUnstuck}>
-          {unstuckLabel}
         </MenuButton>
 
         <div className="pt-2 border-t border-strike-border">
@@ -126,17 +92,14 @@ interface MenuButtonProps {
   onClick: () => void;
   primary?: boolean;
   danger?: boolean;
-  disabled?: boolean;
 }
 
-function MenuButton({ children, onClick, primary, danger, disabled }: MenuButtonProps) {
+function MenuButton({ children, onClick, primary, danger }: MenuButtonProps) {
   let className = `
     w-full py-3 font-display text-lg rounded-lg transition-colors
   `;
 
-  if (disabled) {
-    className += ` bg-white/5 border border-white/10 text-white/40 cursor-not-allowed`;
-  } else if (primary) {
+  if (primary) {
     className += ` bg-orange-500 text-white hover:bg-orange-400`;
   } else if (danger) {
     className += ` bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20`;
@@ -145,7 +108,7 @@ function MenuButton({ children, onClick, primary, danger, disabled }: MenuButton
   }
 
   return (
-    <button type="button" onClick={onClick} className={className} disabled={disabled}>
+    <button type="button" onClick={onClick} className={className}>
       {children}
     </button>
   );
