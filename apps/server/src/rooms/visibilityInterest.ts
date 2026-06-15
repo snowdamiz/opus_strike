@@ -1,4 +1,3 @@
-import { performance } from 'node:perf_hooks';
 import type { PlayerVisibilityState, Vec3 } from '@voxel-strike/shared';
 
 export type InterestPrecision = 'full' | 'coarse' | 'none';
@@ -44,16 +43,6 @@ export interface VisibilityInterestContext {
   hasLineOfSight: (from: Vec3, to: Vec3) => boolean;
   isExplicitlyRevealed?: (recipient: VisibilityInterestPlayer, target: VisibilityInterestPlayer, now: number) => boolean;
   getRecentCombatRevealUntil?: (recipient: VisibilityInterestPlayer, target: VisibilityInterestPlayer) => number;
-}
-
-export interface VisibilityInterestMetrics {
-  recomputeMs: number;
-  losChecks: number;
-  visibleTargets: number;
-  hiddenTargets: number;
-  lastKnownTargets: number;
-  filteredTargets: number;
-  hiddenTargetLeakCount: number;
 }
 
 interface CachedInterestDecision extends RecipientInterestDecision {
@@ -114,18 +103,6 @@ function quantize(value: number, step: number): number {
   return Math.round(value / step);
 }
 
-function makeEmptyMetrics(): VisibilityInterestMetrics {
-  return {
-    recomputeMs: 0,
-    losChecks: 0,
-    visibleTargets: 0,
-    hiddenTargets: 0,
-    lastKnownTargets: 0,
-    filteredTargets: 0,
-    hiddenTargetLeakCount: 0,
-  };
-}
-
 export class VisibilityInterestManager {
   private readonly visibleTtlMs: number;
   private readonly hiddenTtlMs: number;
@@ -138,7 +115,6 @@ export class VisibilityInterestManager {
   private readonly maxLineOfSightCacheEntries: number;
   private readonly interestCache = new Map<string, Map<string, CachedInterestDecision>>();
   private readonly lineOfSightCache = new Map<string, CachedLineOfSight>();
-  private lastMetrics: VisibilityInterestMetrics = makeEmptyMetrics();
 
   constructor(options: VisibilityInterestOptions = {}) {
     this.visibleTtlMs = options.visibleTtlMs ?? DEFAULT_VISIBLE_TTL_MS;
@@ -154,18 +130,9 @@ export class VisibilityInterestManager {
     this.maxLineOfSightCacheEntries = options.maxLineOfSightCacheEntries ?? DEFAULT_MAX_LOS_CACHE_ENTRIES;
   }
 
-  getMetricsSnapshot(): VisibilityInterestMetrics {
-    return { ...this.lastMetrics };
-  }
-
-  resetMetricsWindow(): void {
-    this.lastMetrics = makeEmptyMetrics();
-  }
-
   clearAll(): void {
     this.interestCache.clear();
     this.lineOfSightCache.clear();
-    this.lastMetrics = makeEmptyMetrics();
   }
 
   clearPlayer(playerId: string): void {
@@ -179,23 +146,17 @@ export class VisibilityInterestManager {
     this.lineOfSightCache.clear();
   }
 
-  markHiddenTargetLeak(): void {
-    this.lastMetrics.hiddenTargetLeakCount++;
-  }
-
   getRecipientInterest(
     recipient: VisibilityInterestPlayer | null,
     target: VisibilityInterestPlayer,
     context: VisibilityInterestContext
   ): RecipientInterestDecision {
-    const start = performance.now();
     const previous = recipient ? this.getCachedInterest(recipient.id, target.id) : undefined;
     if (
       previous &&
       previous.expiresAt > context.now &&
       previous.collisionRevision === context.collisionRevision
     ) {
-      this.recordDecision(previous, performance.now() - start);
       return previous;
     }
 
@@ -206,7 +167,6 @@ export class VisibilityInterestManager {
         collisionRevision: context.collisionRevision,
       });
     }
-    this.recordDecision(decision, performance.now() - start);
     return decision;
   }
 
@@ -369,7 +329,6 @@ export class VisibilityInterestManager {
     }
 
     const result = context.hasLineOfSight(from, to);
-    this.lastMetrics.losChecks++;
     if (this.lineOfSightCache.size >= this.maxLineOfSightCacheEntries) {
       this.lineOfSightCache.clear();
     }
@@ -383,15 +342,7 @@ export class VisibilityInterestManager {
 
   private getLineOfSightCacheKey(from: Vec3, to: Vec3, collisionRevision: number): string {
     const step = this.losQuantizationMeters;
-    return [
-      collisionRevision,
-      quantize(from.x, step),
-      quantize(from.y, step),
-      quantize(from.z, step),
-      quantize(to.x, step),
-      quantize(to.y, step),
-      quantize(to.z, step),
-    ].join(':');
+    return `${collisionRevision}:${quantize(from.x, step)}:${quantize(from.y, step)}:${quantize(from.z, step)}:${quantize(to.x, step)}:${quantize(to.y, step)}:${quantize(to.z, step)}`;
   }
 
   private getCachedInterest(recipientId: string, targetId: string): CachedInterestDecision | undefined {
@@ -405,18 +356,5 @@ export class VisibilityInterestManager {
       this.interestCache.set(recipientId, targets);
     }
     targets.set(targetId, decision);
-  }
-
-  private recordDecision(decision: RecipientInterestDecision, recomputeMs: number): void {
-    this.lastMetrics.recomputeMs += recomputeMs;
-    if (decision.state === 'visible') {
-      this.lastMetrics.visibleTargets++;
-    } else if (decision.state === 'last_known') {
-      this.lastMetrics.lastKnownTargets++;
-      this.lastMetrics.filteredTargets++;
-    } else if (decision.state === 'hidden') {
-      this.lastMetrics.hiddenTargets++;
-      this.lastMetrics.filteredTargets++;
-    }
   }
 }

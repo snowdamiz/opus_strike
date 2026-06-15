@@ -11,11 +11,6 @@ import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
 import { getPlayerFeetY, getVisiblePlayerHeight } from './playerWorldAnchors';
 import {
-  MOVEMENT_DIAGNOSTICS_ENABLED,
-  measureFrameWork,
-  recordEffectSlotDiagnostics,
-} from '../../movement/networkDiagnostics';
-import {
   RocketsManager,
   RocketJumpExplosions,
   AirStrikeEffects,
@@ -237,102 +232,100 @@ function BurningHeroFire({ playerId }: { playerId: string }) {
   const lightRef = useRef<THREE.PointLight>(null);
 
   useBlazeFrameUpdater(`burning:${playerId}`, (state) => {
-    measureFrameWork('frame.effects.blazeBurning', () => {
-      const group = groupRef.current;
-      if (!group) return;
+    const group = groupRef.current;
+    if (!group) return;
 
-      const now = getFrameClock().epochNowMs;
-      const player = getBurningPlayer(playerId);
-      if (!shouldShowBurningPlayer(player, now)) {
-        group.visible = false;
-        if (lightRef.current) lightRef.current.intensity = 0;
-        return;
-      }
+    const now = getFrameClock().epochNowMs;
+    const player = getBurningPlayer(playerId);
+    if (!shouldShowBurningPlayer(player, now)) {
+      group.visible = false;
+      if (lightRef.current) lightRef.current.intensity = 0;
+      return;
+    }
 
-      const remainingMs = Math.max(0, (player.onFireUntil ?? 0) - now);
-      const fade = THREE.MathUtils.smoothstep(Math.min(remainingMs, BURN_FADE_OUT_MS), 0, BURN_FADE_OUT_MS);
-      const time = state.clock.elapsedTime;
-      const visualState = visualStore.getState();
-      const visualPosition = visualState.playerPositions.get(playerId) ?? player.position;
-      const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
-      const flicker = 0.88 + Math.sin(time * 19.0 + playerId.length) * 0.08 + Math.sin(time * 43.0) * 0.04;
+    const remainingMs = Math.max(0, (player.onFireUntil ?? 0) - now);
+    const fade = THREE.MathUtils.smoothstep(Math.min(remainingMs, BURN_FADE_OUT_MS), 0, BURN_FADE_OUT_MS);
+    const time = state.clock.elapsedTime;
+    const visualState = visualStore.getState();
+    const visualPosition = visualState.playerPositions.get(playerId) ?? player.position;
+    const visibleHeight = getVisiblePlayerHeight(player.heroId, player.movement);
+    const flicker = 0.88 + Math.sin(time * 19.0 + playerId.length) * 0.08 + Math.sin(time * 43.0) * 0.04;
 
-      group.visible = fade > 0.01;
-      group.position.set(
-        visualPosition.x,
-        getPlayerFeetY(visualPosition.y),
-        visualPosition.z
+    group.visible = fade > 0.01;
+    group.position.set(
+      visualPosition.x,
+      getPlayerFeetY(visualPosition.y),
+      visualPosition.z
+    );
+
+    for (let index = 0; index < BURN_FLAMES.length; index++) {
+      const flame = BURN_FLAMES[index];
+      const mesh = flameRefs.current[index];
+      if (!mesh) continue;
+
+      const sway = Math.sin(time * 7.4 + flame.phase * Math.PI * 2);
+      const angle = flame.angle + sway * 0.18;
+      const radius = BURN_FLAME_RADIUS * flame.radiusScale * (0.92 + Math.sin(time * 5.2 + flame.phase * 9.1) * 0.08);
+      const height = Math.max(0.22, flame.heightScale * visibleHeight);
+      const flameScale = flame.size * fade * flicker;
+
+      mesh.position.set(
+        Math.cos(angle) * radius,
+        height + Math.max(0, sway) * 0.08,
+        Math.sin(angle) * radius
       );
+      mesh.rotation.set(sway * 0.24, -angle, Math.cos(time * 6.1 + flame.phase) * 0.18);
+      mesh.scale.set(
+        flameScale * (0.75 + Math.abs(sway) * 0.2),
+        flameScale * (1.75 + Math.max(0, sway) * 0.45),
+        flameScale * (0.75 + Math.abs(sway) * 0.2)
+      );
+      applyMeshOpacity(mesh, fade * (0.34 + Math.max(0, sway) * 0.14));
+    }
 
-      for (let index = 0; index < BURN_FLAMES.length; index++) {
-        const flame = BURN_FLAMES[index];
-        const mesh = flameRefs.current[index];
-        if (!mesh) continue;
+    for (let index = 0; index < BURN_EMBERS.length; index++) {
+      const ember = BURN_EMBERS[index];
+      const mesh = emberRefs.current[index];
+      if (!mesh) continue;
 
-        const sway = Math.sin(time * 7.4 + flame.phase * Math.PI * 2);
-        const angle = flame.angle + sway * 0.18;
-        const radius = BURN_FLAME_RADIUS * flame.radiusScale * (0.92 + Math.sin(time * 5.2 + flame.phase * 9.1) * 0.08);
-        const height = Math.max(0.22, flame.heightScale * visibleHeight);
-        const flameScale = flame.size * fade * flicker;
+      const cycle = (time * ember.speed + ember.phase) % 1;
+      const angle = ember.angle + time * (0.9 + ember.phase);
+      const radius = BURN_EMBER_RADIUS * (0.42 + cycle * 0.55);
+      const emberScale = ember.size * fade * (1 - cycle * 0.35);
 
-        mesh.position.set(
-          Math.cos(angle) * radius,
-          height + Math.max(0, sway) * 0.08,
-          Math.sin(angle) * radius
-        );
-        mesh.rotation.set(sway * 0.24, -angle, Math.cos(time * 6.1 + flame.phase) * 0.18);
-        mesh.scale.set(
-          flameScale * (0.75 + Math.abs(sway) * 0.2),
-          flameScale * (1.75 + Math.max(0, sway) * 0.45),
-          flameScale * (0.75 + Math.abs(sway) * 0.2)
-        );
-        applyMeshOpacity(mesh, fade * (0.34 + Math.max(0, sway) * 0.14));
-      }
+      mesh.position.set(
+        Math.cos(angle) * radius,
+        0.18 + cycle * visibleHeight * 0.92,
+        Math.sin(angle) * radius
+      );
+      mesh.scale.setScalar(emberScale);
+      applyMeshOpacity(mesh, fade * (1 - cycle) * 0.74);
+    }
 
-      for (let index = 0; index < BURN_EMBERS.length; index++) {
-        const ember = BURN_EMBERS[index];
-        const mesh = emberRefs.current[index];
-        if (!mesh) continue;
+    for (let index = 0; index < BURN_SMOKE_PUFFS.length; index++) {
+      const puff = BURN_SMOKE_PUFFS[index];
+      const mesh = smokeRefs.current[index];
+      if (!mesh) continue;
 
-        const cycle = (time * ember.speed + ember.phase) % 1;
-        const angle = ember.angle + time * (0.9 + ember.phase);
-        const radius = BURN_EMBER_RADIUS * (0.42 + cycle * 0.55);
-        const emberScale = ember.size * fade * (1 - cycle * 0.35);
+      const cycle = (time * 0.34 + puff.phase) % 1;
+      const angle = puff.angle + Math.sin(time * 0.8 + puff.phase * 4) * 0.3;
+      const radius = BURN_SMOKE_RADIUS * (0.5 + cycle * 0.9);
+      const puffScale = puff.size * (0.72 + cycle * 0.9) * fade;
 
-        mesh.position.set(
-          Math.cos(angle) * radius,
-          0.18 + cycle * visibleHeight * 0.92,
-          Math.sin(angle) * radius
-        );
-        mesh.scale.setScalar(emberScale);
-        applyMeshOpacity(mesh, fade * (1 - cycle) * 0.74);
-      }
+      mesh.position.set(
+        Math.cos(angle) * radius,
+        visibleHeight * (0.54 + cycle * 0.34),
+        Math.sin(angle) * radius
+      );
+      mesh.scale.setScalar(puffScale);
+      applyMeshOpacity(mesh, fade * (1 - cycle) * 0.12);
+    }
 
-      for (let index = 0; index < BURN_SMOKE_PUFFS.length; index++) {
-        const puff = BURN_SMOKE_PUFFS[index];
-        const mesh = smokeRefs.current[index];
-        if (!mesh) continue;
-
-        const cycle = (time * 0.34 + puff.phase) % 1;
-        const angle = puff.angle + Math.sin(time * 0.8 + puff.phase * 4) * 0.3;
-        const radius = BURN_SMOKE_RADIUS * (0.5 + cycle * 0.9);
-        const puffScale = puff.size * (0.72 + cycle * 0.9) * fade;
-
-        mesh.position.set(
-          Math.cos(angle) * radius,
-          visibleHeight * (0.54 + cycle * 0.34),
-          Math.sin(angle) * radius
-        );
-        mesh.scale.setScalar(puffScale);
-        applyMeshOpacity(mesh, fade * (1 - cycle) * 0.12);
-      }
-
-      if (lightRef.current) {
-        lightRef.current.position.set(0, visibleHeight * 0.48, 0);
-        lightRef.current.intensity = fade * (0.95 + Math.sin(time * 22.0) * 0.16);
-        lightRef.current.distance = 4.2;
-      }
-    });
+    if (lightRef.current) {
+      lightRef.current.position.set(0, visibleHeight * 0.48, 0);
+      lightRef.current.intensity = fade * (0.95 + Math.sin(time * 22.0) * 0.16);
+      lightRef.current.distance = 4.2;
+    }
   });
 
   return (
@@ -412,24 +405,10 @@ export function BlazeEffectsManager() {
   const scratchBurningIdsRef = useRef<string[]>([]);
   const scanAccumulatorRef = useRef(BLAZE_EFFECT_SCAN_INTERVAL_MS);
 
-  const recordBlazeEffectDiagnostics = (): void => {
-    recordEffectSlotDiagnostics('blazeFlamethrower', {
-      active: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
-      capacity: activeRemoteIdsRef.current.length + (flamethrowerActive ? 1 : 0),
-      hiddenMounted: 0,
-    });
-    recordEffectSlotDiagnostics('blazeBurning', {
-      active: activeBurningIdsRef.current.length,
-      capacity: activeBurningIdsRef.current.length,
-      hiddenMounted: 0,
-    });
-  };
-
   const runBlazeEffectsFrame = (state: RootState, delta: number): void => {
     runBlazeFrameUpdaters(state, delta);
     scanAccumulatorRef.current += delta * 1000;
     if (scanAccumulatorRef.current < BLAZE_EFFECT_SCAN_INTERVAL_MS) {
-      recordBlazeEffectDiagnostics();
       return;
     }
     scanAccumulatorRef.current = 0;
@@ -447,15 +426,9 @@ export function BlazeEffectsManager() {
       activeBurningIdsRef.current = committedBurningIds;
       setBurningPlayerIds(committedBurningIds);
     }
-    recordBlazeEffectDiagnostics();
   };
 
   useFrame((state, delta) => {
-    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-      measureFrameWork('frame.effects.blaze', () => runBlazeEffectsFrame(state, delta));
-      return;
-    }
-
     runBlazeEffectsFrame(state, delta);
   });
   

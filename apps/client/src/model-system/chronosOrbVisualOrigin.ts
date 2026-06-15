@@ -12,6 +12,7 @@ export const CHRONOS_ORB_VISUAL_FORWARD_OFFSET = 0.38;
 const CHRONOS_ORB_VISUAL_OFFSET_ABILITIES = new Set([
   'chronos_verdant_pulse',
   'chronos_lifeline_conduit',
+  'chronos_timebreak',
 ]);
 
 export function shouldOffsetChronosOrbVisualOrigin(abilityId: string | null | undefined): abilityId is string {

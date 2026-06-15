@@ -1,9 +1,3 @@
-import {
-  MOVEMENT_DIAGNOSTICS_ENABLED,
-  measureFrameWork,
-  recordFrameSchedulerDiagnostics,
-} from '../../../movement/networkDiagnostics';
-
 export type GameplayFrameCadence =
   | { kind: 'everyFrame' }
   | { kind: 'everyFrames'; frames: number }
@@ -78,13 +72,11 @@ export class GameplayFrameScheduler {
 
     this.entries.push(entry);
     this.entries.sort((a, b) => a.priority - b.priority || a.order - b.order);
-    this.recordDiagnostics();
 
     return () => {
       const index = this.entries.indexOf(entry);
       if (index >= 0) {
         this.entries.splice(index, 1);
-        this.recordDiagnostics();
       }
     };
   }
@@ -92,14 +84,9 @@ export class GameplayFrameScheduler {
   run(context: GameplayFrameContext): void {
     if (this.entries.length === 0) return;
 
-    const measureWork = MOVEMENT_DIAGNOSTICS_ENABLED;
     for (const entry of this.entries) {
       if (!shouldRunSystem(entry, context.deltaMs)) continue;
-      if (measureWork) {
-        measureFrameWork(entry.label, () => entry.callback(context));
-      } else {
-        entry.callback(context);
-      }
+      entry.callback(context);
     }
   }
 
@@ -117,11 +104,6 @@ export class GameplayFrameScheduler {
 
   resetForTests(): void {
     this.entries.length = 0;
-    this.recordDiagnostics();
-  }
-
-  private recordDiagnostics(): void {
-    recordFrameSchedulerDiagnostics(this.getCallbacksBySystem());
   }
 }
 

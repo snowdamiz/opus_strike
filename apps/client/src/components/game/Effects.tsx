@@ -11,11 +11,6 @@ import { visualStore } from '../../store/visualStore';
 import { getFrameClock } from '../../utils/frameClock';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { createFrameUpdaterRegistry } from './systems/frameUpdaterRegistry';
-import {
-  MOVEMENT_DIAGNOSTICS_ENABLED,
-  measureFrameWork,
-  recordEffectSlotDiagnostics,
-} from '../../movement/networkDiagnostics';
 
 interface Effect {
   id: string;
@@ -143,12 +138,6 @@ function useGlobalEffectUpdater(effectId: string, updater: GlobalEffectUpdater):
   }, [effectId]);
 }
 
-export interface GlobalEffectStats {
-  active: number;
-  capacity: number;
-  pressure: number;
-}
-
 function isEffectAlive(effect: Effect, now: number): boolean {
   return now - effect.startTime < effect.duration;
 }
@@ -198,15 +187,6 @@ export function addEffect(effect: Omit<Effect, 'id' | 'startTime'>) {
   });
 }
 
-export function getGlobalEffectStats(now = Date.now()): GlobalEffectStats {
-  compactExpiredEffects(now);
-  return {
-    active: effects.length,
-    capacity: MAX_GLOBAL_EFFECTS,
-    pressure: effects.length / MAX_GLOBAL_EFFECTS,
-  };
-}
-
 function runGlobalEffectsFrame(
   state: RootState,
   delta: number,
@@ -231,14 +211,6 @@ function runGlobalEffectsFrame(
   }
 
   globalEffectUpdaters.run(state, delta);
-
-  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-    recordEffectSlotDiagnostics('globalEffects', {
-      active: effects.length,
-      capacity: MAX_GLOBAL_EFFECTS,
-      hiddenMounted: Math.max(0, MAX_GLOBAL_EFFECTS - effects.length),
-    });
-  }
 }
 
 export function Effects() {
@@ -252,13 +224,7 @@ export function Effects() {
   const lastCleanupRef = useRef(0);
 
   useFrame((state, delta) => {
-    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-      measureFrameWork('frame.effects.global', () => (
-        runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, setEffectsVersion)
-      ));
-    } else {
-      runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, setEffectsVersion);
-    }
+    runGlobalEffectsFrame(state, delta, activeEffectsRef, lastEffectCountRef, lastCleanupRef, setEffectsVersion);
   });
 
   return (

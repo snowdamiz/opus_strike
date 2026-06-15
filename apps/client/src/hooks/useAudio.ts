@@ -267,6 +267,7 @@ const GLOBAL_BUTTON_SOUND_SELECTOR = [
 
 let activeAudioDecodes = 0;
 const queuedAudioDecodeJobs: Array<() => void> = [];
+let queuedAudioDecodeJobHead = 0;
 
 const sharedStreamedLoops = new Map<string, {
   audio: HTMLAudioElement;
@@ -280,8 +281,19 @@ const sharedStreamedLoops = new Map<string, {
 
 function pumpAudioDecodeQueue(): void {
   while (activeAudioDecodes < MAX_CONCURRENT_AUDIO_DECODES) {
-    const next = queuedAudioDecodeJobs.shift();
-    if (!next) return;
+    const next = queuedAudioDecodeJobs[queuedAudioDecodeJobHead];
+    if (!next) {
+      if (queuedAudioDecodeJobHead > 0) {
+        queuedAudioDecodeJobs.splice(0, queuedAudioDecodeJobHead);
+        queuedAudioDecodeJobHead = 0;
+      }
+      return;
+    }
+    queuedAudioDecodeJobHead++;
+    if (queuedAudioDecodeJobHead > 32 && queuedAudioDecodeJobHead * 2 > queuedAudioDecodeJobs.length) {
+      queuedAudioDecodeJobs.splice(0, queuedAudioDecodeJobHead);
+      queuedAudioDecodeJobHead = 0;
+    }
     activeAudioDecodes++;
     next();
   }

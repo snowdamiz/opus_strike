@@ -49,6 +49,11 @@ import {
   setChronosPrimaryHeld,
   triggerChronosTimebreakPose,
 } from '../viewmodel/chronosPose';
+import {
+  CHRONOS_ORB_VISUAL_FORWARD_OFFSET,
+  offsetChronosOrbVisualPlainPosition,
+  shouldOffsetChronosOrbVisualOrigin,
+} from './chronosOrbVisualOrigin';
 import type { HeroBoneRefs, VoxelPart } from './heroBodyTypes';
 
 const heroIds = Object.keys(HERO_DEFINITIONS).sort() as HeroId[];
@@ -99,6 +104,16 @@ for (const heroId of heroIds) {
     assert.ok(HERO_BONE_PIVOTS[marker.bone], `${heroId} socket ${marker.socketName} references an unknown bone`);
   }
 }
+
+assert.equal(shouldOffsetChronosOrbVisualOrigin('chronos_timebreak'), true);
+assert.deepEqual(
+  offsetChronosOrbVisualPlainPosition(
+    { x: 0, y: 1, z: 0 },
+    { x: 0, y: 0, z: -1 },
+    'chronos_timebreak'
+  ),
+  { x: 0, y: 1, z: -CHRONOS_ORB_VISUAL_FORWARD_OFFSET }
+);
 
 const sampleParts: VoxelPart[] = [
   { material: 'armor', position: [0, 1.66, 0], scale: [0.2, 0.2, 0.2] },

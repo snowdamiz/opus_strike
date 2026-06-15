@@ -477,6 +477,19 @@ assert.equal(
   false
 );
 
+const slideStartCommand = runCommandPhase({
+  player: makePlayer('phantom'),
+  frameInput: input({ crouch: true, sprint: true, moveForward: true }),
+  serverCombatInput: combatInput(),
+});
+assert.deepEqual(slideStartCommand.result.commandScheduleReasons, ['crouch_edge']);
+assert.equal(slideStartCommand.result.substepsThisFrame, 1);
+assert.equal(slideStartCommand.ctx.__sentPackets.length, 1);
+assert.equal(
+  movementButtonsToInputState(slideStartCommand.ctx.__sentPackets[0].commands[0].buttons).crouchPressed,
+  true
+);
+
 const pendingBarrierCommand: MovementCommand = {
   seq: 41,
   buttons: 0,

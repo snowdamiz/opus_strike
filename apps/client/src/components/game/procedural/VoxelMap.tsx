@@ -14,10 +14,6 @@ import {
   prepareVoxelMapCpu,
   type PreparedVoxelMap,
 } from '../../../utils/mapWarmup/mapPrepCache';
-import {
-  MOVEMENT_DIAGNOSTICS_ENABLED,
-  measureFrameWork,
-} from '../../../movement/networkDiagnostics';
 
 const TERRAIN_CULL_UPDATE_INTERVAL_MS = 180;
 const TERRAIN_CULL_HYSTERESIS = 18;
@@ -338,11 +334,6 @@ export function VoxelMap({
   };
 
   useFrame((state, delta) => {
-    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-      measureFrameWork('frame.terrainCulling', () => runTerrainCullingFrame(state, delta));
-      return;
-    }
-
     runTerrainCullingFrame(state, delta);
   });
 

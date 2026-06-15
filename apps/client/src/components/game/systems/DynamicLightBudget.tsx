@@ -1,11 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, type ForwardedRef, type MutableRefObject } from 'react';
 import { useFrame, type ThreeElements } from '@react-three/fiber';
 import * as THREE from 'three';
-import {
-  MOVEMENT_DIAGNOSTICS_ENABLED,
-  measureFrameWork,
-  recordDynamicLightDiagnostics,
-} from '../../../movement/networkDiagnostics';
 
 type PointLightProps = ThreeElements['pointLight'];
 
@@ -130,21 +125,6 @@ function insertRankedLight(
   ranked[insertIndex] = entry;
 }
 
-function recordDynamicLightBudgetDiagnostics(
-  registered: number,
-  activeCandidates: number,
-  enabled: number,
-  budget: number
-): void {
-  if (!MOVEMENT_DIAGNOSTICS_ENABLED) return;
-  recordDynamicLightDiagnostics({
-    registered,
-    activeCandidates,
-    enabled,
-    budget,
-  });
-}
-
 function updateDynamicLightBudget(
   camera: THREE.Camera,
   delta: number,
@@ -160,7 +140,6 @@ function updateDynamicLightBudget(
   const lightLimit = Math.max(0, Math.floor(maxLights));
   if (budgetedLights.size === 0) {
     rankedRef.current.length = 0;
-    recordDynamicLightBudgetDiagnostics(0, 0, 0, lightLimit);
     return;
   }
 
@@ -169,41 +148,31 @@ function updateDynamicLightBudget(
   ranked.length = 0;
 
   if (lightLimit <= 0) {
-    let activeCandidates = 0;
     for (const record of budgetedLights) {
       const light = record.lightRef.current;
-      if (light?.parent && light.intensity > 0) activeCandidates++;
       if (light) setLightVisible(light, false);
     }
-    recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, 0, lightLimit);
     return;
   }
 
   if (lightLimit >= budgetedLights.size) {
-    let activeCandidates = 0;
-    let enabled = 0;
     for (const record of budgetedLights) {
       const light = record.lightRef.current;
       const active = Boolean(light?.parent && light.intensity > 0);
-      if (active) activeCandidates++;
       if (light) {
         setLightVisible(light, active);
-        if (active) enabled++;
       }
     }
-    recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, enabled, lightLimit);
     return;
   }
 
   const passId = lightBudgetPassId++;
-  let activeCandidates = 0;
   for (const record of budgetedLights) {
     const light = record.lightRef.current;
     if (!light || !light.parent || light.intensity <= 0) {
       continue;
     }
 
-    activeCandidates++;
     light.getWorldPosition(worldPosition);
     const radius = Math.max(1, record.radius || light.distance || 1);
     const distancePenalty = camera.position.distanceToSquared(worldPosition) / (radius * radius);
@@ -226,7 +195,6 @@ function updateDynamicLightBudget(
       setLightVisible(light, record.selectedPass === passId);
     }
   }
-  recordDynamicLightBudgetDiagnostics(budgetedLights.size, activeCandidates, ranked.length, lightLimit);
 }
 
 export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
@@ -235,13 +203,7 @@ export function DynamicLightBudgetSystem({ maxLights }: { maxLights: number }) {
   const rankedPoolRef = useRef<RankedLight[]>([]);
 
   useFrame(({ camera }, delta) => {
-    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-      measureFrameWork('frame.dynamicLights', () => (
-        updateDynamicLightBudget(camera, delta, maxLights, accumulatorRef, rankedRef, rankedPoolRef)
-      ));
-    } else {
-      updateDynamicLightBudget(camera, delta, maxLights, accumulatorRef, rankedRef, rankedPoolRef);
-    }
+    updateDynamicLightBudget(camera, delta, maxLights, accumulatorRef, rankedRef, rankedPoolRef);
   });
 
   return null;

@@ -70,8 +70,10 @@ import {
   useBlazeAbilities,
   useHookshotAbilities,
   useChronosAbilities,
+  CHRONOS_PRIMARY_ORB_SOCKET,
   PLAYER_HEIGHT,
   EYE_HEIGHT,
+  calculatePlayerSocketPosition,
   type AbilityContext,
   type MovementSounds,
   type PlayerSounds,
@@ -115,7 +117,7 @@ import {
   type Player,
   type PlayerMovementState,
 } from '@voxel-strike/shared';
-import type { MovementSimulationState, PredictionCorrectionMetrics } from '@voxel-strike/physics';
+import type { MovementSimulationState } from '@voxel-strike/physics';
 import { recordMovementTraceFrame } from '../../anticheat/movementTraceRecorder';
 import {
   addLocalMovementImpulse,
@@ -127,22 +129,11 @@ import {
   getCurrentPredictedState,
   getCurrentPredictedVisualPosition,
   getLocalMovementCollisionRevision,
-  getPendingSelfMovementAuthorityCount,
   movementStateFromPlayer,
   predictLocalBlazeRocketJump,
   predictLocalPhantomBlink,
   stepLocalMovementPrediction,
 } from '../../movement/localPrediction';
-import {
-  recordAuthorityDrainFrame,
-  recordAuthorityFrameApplied,
-  recordLocalReactiveUpdate,
-  measureFrameWork,
-  MOVEMENT_DIAGNOSTICS_ENABLED,
-  recordMovementCommandGenerated,
-  recordMovementCommandsSent,
-  recordMovementFrameTiming,
-} from '../../movement/networkDiagnostics';
 
 // Component imports for targeting indicators
 import { BombTargetingIndicator, triggerAirStrike, triggerRocketJumpExplosion } from './BlazeEffects';
@@ -152,6 +143,11 @@ import { triggerPhantomShieldCastEffect } from './phantom';
 import { addChronosLifelineEffects, addChronosSelfHealPulseEffect } from './chronos/lifeline';
 import { addChronosTimebreakEffect } from './chronos/timebreak';
 import { triggerTeleportEffect } from '../ui/TeleportEffects';
+import { resolveAbilitySocketOrigin } from '../../model-system/abilitySocketResolver';
+import {
+  chronosOrbForwardFromYaw,
+  offsetChronosOrbVisualPlainPosition,
+} from '../../model-system/chronosOrbVisualOrigin';
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
@@ -178,8 +174,6 @@ const INACTIVE_LOCAL_MOVEMENT: PlayerMovementState = {
   jetpackFuel: 0,
   isGliding: false,
 };
-
-const authorityMetricsScratch: PredictionCorrectionMetrics[] = [];
 
 interface MutableVec3 {
   x: number;
@@ -363,10 +357,43 @@ function buildPracticeAbilityState(
   };
 }
 
+function resolveChronosTimebreakPracticeOrigin(ctx: AbilityContext, now: number): MutableVec3 {
+  const resolvedOrigin = resolveAbilitySocketOrigin({
+    ownerScope: 'localViewmodel',
+    abilityId: 'chronos_timebreak',
+    sampledContext: ctx.camera
+      ? {
+        camera: ctx.camera,
+        elapsedSeconds: ctx.viewmodelElapsedSeconds ?? 0,
+        timestampMs: ctx.viewmodelNowMs ?? now,
+      }
+      : undefined,
+    preferSampled: true,
+    warnOnSampleDrift: true,
+    fallback: {
+      position: ctx.position,
+      yaw: ctx.yaw,
+    },
+  });
+  const socketPosition = resolvedOrigin
+    ? {
+      x: resolvedOrigin.position.x,
+      y: resolvedOrigin.position.y,
+      z: resolvedOrigin.position.z,
+    }
+    : calculatePlayerSocketPosition(ctx.position, ctx.yaw, CHRONOS_PRIMARY_ORB_SOCKET);
+
+  return offsetChronosOrbVisualPlainPosition(
+    socketPosition,
+    chronosOrbForwardFromYaw(ctx.yaw),
+    'chronos_timebreak'
+  );
+}
+
 type CastActionFields = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1' | 'ability2' | 'ultimate'>;
 type ExclusiveHoldInput = Pick<InputState, 'primaryFire' | 'secondaryFire' | 'ability1'>;
 export type ServerCombatInput = CastActionFields;
-export type CommandScheduleReason = 'combat_edge' | 'movement_barrier';
+export type CommandScheduleReason = 'combat_edge' | 'movement_barrier' | 'crouch_edge';
 interface CommandSchedule {
   forceSubstep: boolean;
   flushExistingBeforeSample: boolean;
@@ -1000,7 +1027,8 @@ export function runPredictionAndCommandPhase(input: {
     refs.pendingReloadInputRef.current ||
     (phantomAutoReloadForServer && !serverCombatInput.primaryFire);
   const crouchHeld = frameInput.crouch || ctx.isControlPressed;
-  if (crouchHeld && !refs.lastCrouchHeldRef.current) {
+  const crouchPressedThisFrame = crouchHeld && !refs.lastCrouchHeldRef.current;
+  if (crouchPressedThisFrame) {
     refs.pendingCrouchPressedRef.current = true;
   }
   refs.lastCrouchHeldRef.current = crouchHeld;
@@ -1021,6 +1049,9 @@ export function runPredictionAndCommandPhase(input: {
   refs.latestAbilityCastHintsRef.current = abilityCastHints ?? [];
 
   const commandScheduleReasons = [...requestedCommandScheduleReasons];
+  if (crouchPressedThisFrame) {
+    addCommandScheduleReason(commandScheduleReasons, 'crouch_edge');
+  }
   if (shouldForceImmediateCombatCommand(serverCombatInput, refs.lastServerCombatInputRef.current)) {
     addCommandScheduleReason(commandScheduleReasons, 'combat_edge');
   }
@@ -1040,8 +1071,6 @@ export function runPredictionAndCommandPhase(input: {
       MOVEMENT_SUBSTEP_SECONDS
     );
   }
-  const movementAccumulatorBeforeStep = refs.movementCommandAccumulatorRef.current;
-
   let substepsThisFrame = 0;
   while (
     refs.movementCommandAccumulatorRef.current >= MOVEMENT_SUBSTEP_SECONDS &&
@@ -1055,7 +1084,6 @@ export function runPredictionAndCommandPhase(input: {
       crouchPressed: refs.pendingCrouchPressedRef.current,
       abilityCastHints,
     });
-    recordMovementCommandGenerated();
     refs.pendingCrouchPressedRef.current = false;
     refs.pendingMovementCommandsRef.current.push(command);
     const nextPredictedState = stepLocalMovementPrediction(localPlayer, command);
@@ -1069,14 +1097,6 @@ export function runPredictionAndCommandPhase(input: {
     refs.tickRef.current = command.seq;
     substepsThisFrame++;
   }
-  recordMovementFrameTiming({
-    frameDeltaSeconds: rawDelta,
-    movementDeltaSeconds: dt,
-    substepsThisFrame,
-    accumulatorBeforeStepSeconds: movementAccumulatorBeforeStep,
-    accumulatorAfterStepSeconds: refs.movementCommandAccumulatorRef.current,
-    catchup: substepsThisFrame > 1,
-  });
   flushMovementCommands(now, commandSchedule.forcePacketFlush);
   refs.pendingReloadInputRef.current = false;
 
@@ -1360,16 +1380,7 @@ function runAuthorityPhase(
   frameNowMs: number
 ): { localPlayer: Player; authorityApplied: number } {
   const { updateLocalPlayer, resetMovementCommandBuffer } = ctx;
-  const pendingAuthoritiesBeforeDrain = getPendingSelfMovementAuthorityCount();
-  const authorityDrainStartedAt = pendingAuthoritiesBeforeDrain > 0 ? performance.now() : 0;
   const appliedAuthorities = drainSelfMovementAuthorities(localPlayer, frameNowMs);
-  if (pendingAuthoritiesBeforeDrain > 0) {
-    recordAuthorityDrainFrame({
-      pendingBeforeDrain: pendingAuthoritiesBeforeDrain,
-      appliedCount: appliedAuthorities.length,
-      durationMs: Math.max(0, performance.now() - authorityDrainStartedAt),
-    });
-  }
   if (appliedAuthorities.length === 0) {
     return { localPlayer, authorityApplied: 0 };
   }
@@ -1379,12 +1390,6 @@ function runAuthorityPhase(
     appliedAuthorities[appliedAuthorities.length - 1].state.movement
   );
 
-  authorityMetricsScratch.length = 0;
-  for (const application of appliedAuthorities) {
-    authorityMetricsScratch.push(application.result);
-  }
-  recordAuthorityFrameApplied(authorityMetricsScratch);
-  authorityMetricsScratch.length = 0;
   if (appliedAuthorities.some((application) => (
     application.authority.correctionReason &&
     application.authority.correctionReason !== 'normal'
@@ -1410,7 +1415,6 @@ function runAuthorityPhase(
     },
   };
   updateLocalPlayer(updates);
-  recordLocalReactiveUpdate('selfAuthority');
   return {
     localPlayer: { ...localPlayer, ...updates },
     authorityApplied: appliedAuthorities.length,
@@ -1730,11 +1734,9 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     }
 
     do {
-      const pendingBeforeFlush = pending.length;
       const packetSize = Math.min(pending.length, MOVEMENT_MAX_PACKET_COMMANDS);
       const packetCommands = pending.splice(0, packetSize);
       sendMovementCommands(createMovementCommandPacket(packetCommands));
-      recordMovementCommandsSent(packetCommands.length, pendingBeforeFlush);
     } while (force && pending.length > 0);
     lastSendRef.current = nowMs;
   }, [sendMovementCommands]);
@@ -2496,7 +2498,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                 y: 0,
                 z: -Math.cos(abilityCtx.yaw),
               };
-              const effectPosition = { x: position.x, y: position.y + 1.18, z: position.z };
+              const effectPosition = resolveChronosTimebreakPracticeOrigin(abilityCtx, now);
               if (!shouldSuppressPredictedLocalAbilitySound('chronos_timebreak', now)) {
                 void playSharedSound('chronosTimebreakCharge', {
                   position: effectPosition,
@@ -2685,11 +2687,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
 
   // Main game loop. Run early so viewmodel/effects sample the updated camera and predicted velocity.
   useFrame((frameState, delta) => {
-    if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-      measureFrameWork('frame.playerController', () => runLocalPlayerFrame(frameState, delta));
-      return;
-    }
-
     runLocalPlayerFrame(frameState, delta);
   }, -100);
 

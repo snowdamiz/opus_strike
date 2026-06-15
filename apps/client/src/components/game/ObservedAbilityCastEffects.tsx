@@ -11,10 +11,6 @@ import {
 import { SHARED_GEOMETRIES } from './effectResources';
 import { BudgetedPointLight } from './systems/DynamicLightBudget';
 import { getFrameClock } from '../../utils/frameClock';
-import {
-  measureFrameWork,
-  recordEffectSlotDiagnostics,
-} from '../../movement/networkDiagnostics';
 
 export type ObservedAbilityCastEffectKind =
   | 'phantom_void_ray_charge'
@@ -502,22 +498,13 @@ export function ObservedAbilityCastEffectsManager() {
   }, []);
 
   useFrame((_, delta) => {
-    measureFrameWork('frame.effects.observedCasts', () => {
-      pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
+    pruneObservedAbilityCastEffects(getFrameClock().epochNowMs);
 
-      const runtimes = slotRuntimesRef.current;
-      for (const slotIndex of observedCastActiveSlotIndices) {
-        const runtime = runtimes[slotIndex];
-        if (runtime) updateObservedAbilityCastEffectSlot(runtime, slotIndex, delta);
-      }
-
-      const active = observedCastActiveSlotIndices.length;
-      recordEffectSlotDiagnostics('observedAbilityCast', {
-        active,
-        capacity: OBSERVED_CAST_EFFECT_CAPACITY,
-        hiddenMounted: OBSERVED_CAST_EFFECT_CAPACITY - active,
-      });
-    });
+    const runtimes = slotRuntimesRef.current;
+    for (const slotIndex of observedCastActiveSlotIndices) {
+      const runtime = runtimes[slotIndex];
+      if (runtime) updateObservedAbilityCastEffectSlot(runtime, slotIndex, delta);
+    }
   });
 
   return (

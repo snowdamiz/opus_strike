@@ -64,6 +64,7 @@ const SLIDE_FOV_BOOST = 8; // Increased FOV during slide
 const SLIDE_CAMERA_ROLL = 0.03; // Subtle roll during slide
 const CROUCH_HEIGHT_OFFSET = -0.3;
 const CROUCH_TRANSITION_SPEED = 12;
+const FOV_UPDATE_EPSILON = 0.03;
 const EYE_HEIGHT = PLAYER_EYE_HEIGHT;
 const DEATH_PRESERVE_MS = 150;
 const DEATH_FALL_MS = 780;
@@ -280,8 +281,12 @@ export function useCamera(options: UseCameraOptions): UseCameraReturn {
     // Apply FOV change (only for perspective camera)
     if ('fov' in camera) {
       const baseFov = fov;
-      (camera as THREE.PerspectiveCamera).fov = baseFov + slideFovRef.current;
-      (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+      const perspectiveCamera = camera as THREE.PerspectiveCamera;
+      const nextFov = baseFov + slideFovRef.current;
+      if (Math.abs(perspectiveCamera.fov - nextFov) > FOV_UPDATE_EPSILON) {
+        perspectiveCamera.fov = nextFov;
+        perspectiveCamera.updateProjectionMatrix();
+      }
     }
 
     // Apply rotation

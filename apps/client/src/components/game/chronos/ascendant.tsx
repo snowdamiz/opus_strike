@@ -11,10 +11,6 @@ import { visualStore } from '../../../store/visualStore';
 import { SHARED_GEOMETRIES } from '../effectResources';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
 import { getFrameClock } from '../../../utils/frameClock';
-import {
-  measureFrameWork,
-  recordEffectSlotDiagnostics,
-} from '../../../movement/networkDiagnostics';
 
 const CHRONOS_ASCENDANT_ABILITY_ID = 'chronos_ascendant_paradox';
 const ASCENDANT_GREEN = 0x22c55e;
@@ -155,64 +151,62 @@ function ChronosAscendantBubble({ playerId }: { playerId: string }) {
   }, []);
 
   useChronosAscendantFrameUpdater(`chronos-ascendant:${playerId}`, () => {
-    measureFrameWork('frame.effects.chronosAscendantBubble', () => {
-      const group = groupRef.current;
-      const player = getAscendantPlayer(playerId);
-      const now = getFrameClock().epochNowMs;
-      if (!group || !player || !hasActiveAscendant(player, now)) {
-        if (group) group.visible = false;
-        return;
-      }
+    const group = groupRef.current;
+    const player = getAscendantPlayer(playerId);
+    const now = getFrameClock().epochNowMs;
+    if (!group || !player || !hasActiveAscendant(player, now)) {
+      if (group) group.visible = false;
+      return;
+    }
 
-      const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
-      const isLocalPlayer = useGameStore.getState().localPlayer?.id === playerId;
-      const duration = getAscendantDurationSeconds();
-      const elapsed = Math.max(0, (now - getAscendantStart(player, now)) / 1000);
-      const remaining = Math.max(0, duration - elapsed);
-      const fadeIn = Math.min(1, elapsed / FADE_IN_SECONDS);
-      const fadeOut = Math.min(1, remaining / FADE_OUT_SECONDS);
-      const intensity = Math.max(0, Math.min(fadeIn, fadeOut));
-      const pulse = 1 + Math.sin(elapsed * 5.8) * 0.026 + Math.sin(elapsed * 11.4) * 0.012;
-      const radius = BUBBLE_RADIUS * pulse;
+    const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
+    const isLocalPlayer = useGameStore.getState().localPlayer?.id === playerId;
+    const duration = getAscendantDurationSeconds();
+    const elapsed = Math.max(0, (now - getAscendantStart(player, now)) / 1000);
+    const remaining = Math.max(0, duration - elapsed);
+    const fadeIn = Math.min(1, elapsed / FADE_IN_SECONDS);
+    const fadeOut = Math.min(1, remaining / FADE_OUT_SECONDS);
+    const intensity = Math.max(0, Math.min(fadeIn, fadeOut));
+    const pulse = 1 + Math.sin(elapsed * 5.8) * 0.026 + Math.sin(elapsed * 11.4) * 0.012;
+    const radius = BUBBLE_RADIUS * pulse;
 
-      group.visible = intensity > 0.01;
-      group.position.set(
-        visualPosition.x,
-        visualPosition.y + BUBBLE_CENTER_Y_OFFSET,
-        visualPosition.z
-      );
-      group.scale.setScalar(radius);
+    group.visible = intensity > 0.01;
+    group.position.set(
+      visualPosition.x,
+      visualPosition.y + BUBBLE_CENTER_Y_OFFSET,
+      visualPosition.z
+    );
+    group.scale.setScalar(radius);
 
-      bubbleMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_BUBBLE_OPACITY : REMOTE_BUBBLE_OPACITY) * intensity;
-      wireMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_WIRE_OPACITY : REMOTE_WIRE_OPACITY) * intensity;
-      ringMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_RING_OPACITY : REMOTE_RING_OPACITY) * intensity;
-      rimMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_RIM_OPACITY : REMOTE_RIM_OPACITY) * intensity;
+    bubbleMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_BUBBLE_OPACITY : REMOTE_BUBBLE_OPACITY) * intensity;
+    wireMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_WIRE_OPACITY : REMOTE_WIRE_OPACITY) * intensity;
+    ringMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_RING_OPACITY : REMOTE_RING_OPACITY) * intensity;
+    rimMaterialRef.current.opacity = (isLocalPlayer ? LOCAL_RIM_OPACITY : REMOTE_RIM_OPACITY) * intensity;
 
-      const energyBlending = isLocalPlayer ? THREE.NormalBlending : THREE.AdditiveBlending;
-      if (wireMaterialRef.current.blending !== energyBlending) {
-        wireMaterialRef.current.blending = energyBlending;
-        ringMaterialRef.current.blending = energyBlending;
-        rimMaterialRef.current.blending = energyBlending;
-        wireMaterialRef.current.needsUpdate = true;
-        ringMaterialRef.current.needsUpdate = true;
-        rimMaterialRef.current.needsUpdate = true;
-      }
+    const energyBlending = isLocalPlayer ? THREE.NormalBlending : THREE.AdditiveBlending;
+    if (wireMaterialRef.current.blending !== energyBlending) {
+      wireMaterialRef.current.blending = energyBlending;
+      ringMaterialRef.current.blending = energyBlending;
+      rimMaterialRef.current.blending = energyBlending;
+      wireMaterialRef.current.needsUpdate = true;
+      ringMaterialRef.current.needsUpdate = true;
+      rimMaterialRef.current.needsUpdate = true;
+    }
 
-      const huePulse = (Math.sin(elapsed * 4.7) + 1) * 0.5;
-      bubbleMaterialRef.current.color.copy(ASCENDANT_DEEP_COLOR).lerp(ASCENDANT_GREEN_COLOR, 0.45 + huePulse * 0.24);
-      wireMaterialRef.current.color.copy(ASCENDANT_LIGHT_COLOR).lerp(ASCENDANT_GREEN_COLOR, huePulse * 0.2);
-      ringMaterialRef.current.color.copy(ASCENDANT_GREEN_COLOR).lerp(ASCENDANT_LIGHT_COLOR, huePulse * 0.26);
+    const huePulse = (Math.sin(elapsed * 4.7) + 1) * 0.5;
+    bubbleMaterialRef.current.color.copy(ASCENDANT_DEEP_COLOR).lerp(ASCENDANT_GREEN_COLOR, 0.45 + huePulse * 0.24);
+    wireMaterialRef.current.color.copy(ASCENDANT_LIGHT_COLOR).lerp(ASCENDANT_GREEN_COLOR, huePulse * 0.2);
+    ringMaterialRef.current.color.copy(ASCENDANT_GREEN_COLOR).lerp(ASCENDANT_LIGHT_COLOR, huePulse * 0.26);
 
-      if (bubbleRef.current) bubbleRef.current.scale.setScalar(1);
-      if (wireRef.current) wireRef.current.scale.setScalar(1.012 + Math.sin(elapsed * 7.2) * 0.006);
-      if (ringARef.current) ringARef.current.rotation.z = elapsed * 1.28;
-      if (ringBRef.current) ringBRef.current.rotation.z = -elapsed * 1.55;
-      if (ringCRef.current) ringCRef.current.rotation.z = elapsed * 1.82;
-      if (lightRef.current) {
-        lightRef.current.intensity = (isLocalPlayer ? 0.04 : 1.35) * intensity;
-        lightRef.current.distance = isLocalPlayer ? 3.2 : 5.8;
-      }
-    });
+    if (bubbleRef.current) bubbleRef.current.scale.setScalar(1);
+    if (wireRef.current) wireRef.current.scale.setScalar(1.012 + Math.sin(elapsed * 7.2) * 0.006);
+    if (ringARef.current) ringARef.current.rotation.z = elapsed * 1.28;
+    if (ringBRef.current) ringBRef.current.rotation.z = -elapsed * 1.55;
+    if (ringCRef.current) ringCRef.current.rotation.z = elapsed * 1.82;
+    if (lightRef.current) {
+      lightRef.current.intensity = (isLocalPlayer ? 0.04 : 1.35) * intensity;
+      lightRef.current.distance = isLocalPlayer ? 3.2 : 5.8;
+    }
   });
 
   return (
@@ -235,38 +229,21 @@ export function ChronosAscendantManager() {
   const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
 
   useFrame((state, delta) => {
-    measureFrameWork('frame.effects.chronos', () => {
-      runChronosAscendantFrameUpdaters(state, delta);
-      scanAccumulatorRef.current += delta * 1000;
-      if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) {
-        recordEffectSlotDiagnostics('chronosAscendant', {
-          active: activeIdsRef.current.length,
-          capacity: activeIdsRef.current.length,
-          hiddenMounted: 0,
-        });
-        return;
-      }
-      scanAccumulatorRef.current = 0;
+    runChronosAscendantFrameUpdaters(state, delta);
+    scanAccumulatorRef.current += delta * 1000;
+    if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) {
+      return;
+    }
+    scanAccumulatorRef.current = 0;
 
-      const nextIds = collectActiveAscendantIds(scratchIdsRef.current, getFrameClock().epochNowMs);
-      if (sameIds(nextIds, activeIdsRef.current)) {
-        recordEffectSlotDiagnostics('chronosAscendant', {
-          active: activeIdsRef.current.length,
-          capacity: activeIdsRef.current.length,
-          hiddenMounted: 0,
-        });
-        return;
-      }
+    const nextIds = collectActiveAscendantIds(scratchIdsRef.current, getFrameClock().epochNowMs);
+    if (sameIds(nextIds, activeIdsRef.current)) {
+      return;
+    }
 
-      const committedIds = nextIds.slice();
-      activeIdsRef.current = committedIds;
-      setActiveIds(committedIds);
-      recordEffectSlotDiagnostics('chronosAscendant', {
-        active: committedIds.length,
-        capacity: committedIds.length,
-        hiddenMounted: 0,
-      });
-    });
+    const committedIds = nextIds.slice();
+    activeIdsRef.current = committedIds;
+    setActiveIds(committedIds);
   });
 
   return (

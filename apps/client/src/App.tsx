@@ -26,7 +26,6 @@ const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module)
 const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
 const MatchSummaryScreen = lazy(() => import('./components/ui/MatchSummaryScreen').then((module) => ({ default: module.MatchSummaryScreen })));
-const PerfMonitorOverlay = lazy(() => import('./components/game/PerfMonitor').then((module) => ({ default: module.PerfMonitorOverlay })));
 const PREMATCH_COUNTDOWN_EFFECT_FADE_MS = 3000;
 const STARTUP_QUALITY_RAMP_MS = 1600;
 
@@ -475,10 +474,6 @@ export function App() {
           <GameConsole />
         </Suspense>
 
-        {/* Performance monitor overlay */}
-        <Suspense fallback={null}>
-          {isMatchSceneReady && <PerfMonitorOverlay />}
-        </Suspense>
       </div>
     );
   }

@@ -32,12 +32,6 @@ import {
   visualStore,
 } from '../store/visualStore';
 import { confirmLocalMovementTransform, enqueueSelfMovementAuthority } from '../movement/localPrediction';
-import {
-  measureFrameWork,
-  recordAuthorityAckReceived,
-  recordLocalReactiveUpdate,
-  recordTransformMessage,
-} from '../movement/networkDiagnostics';
 import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecorder';
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
@@ -125,12 +119,6 @@ const netIdByPlayerId = new Map<string, number>();
 let lastLocalPhantomReloadSoundKey = '';
 let hasReceivedSelfMovementAuthority = false;
 const HOOKSHOT_SHOT_CLIP_MS = 250;
-
-function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
-  return (data) => {
-    measureFrameWork(`network.${type}`, () => handler(data));
-  };
-}
 
 interface UnpackedPlayerTransform {
   netId: number;
@@ -739,7 +727,7 @@ export function setupPlayerJoinedHandler(
   localPlayerName: string,
   updatePlayer: GameStoreActions['updatePlayer']
 ) {
-  room.onMessage('playerJoined', measureNetworkMessage('playerJoined', (data: {
+  room.onMessage('playerJoined', (data: {
     playerId: string;
     playerName: string;
     team?: string;
@@ -803,7 +791,7 @@ export function setupPlayerJoinedHandler(
         updatePlayer(data.playerId, newPlayer);
       }
     }
-  }));
+  });
 }
 
 export function setupPlayerTransformsHandler(
@@ -839,7 +827,6 @@ export function setupPlayerTransformsHandler(
           };
           actions.setLocalPlayer(updated);
           syncLocalVisualPosition(updated);
-          recordLocalReactiveUpdate('transforms');
         }
       }
 
@@ -898,9 +885,8 @@ export function setupPlayerTransformsHandler(
     return 'remote';
   };
 
-  room.onMessage('playerTransformsV2', measureNetworkMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
+  room.onMessage('playerTransformsV2', (data: PlayerTransformsV2Message) => {
     const fullSnapshotPlayerIds = data.full ? new Set<string>() : null;
-    let selfTransformCount = 0;
     let remoteTransformCount = 0;
     for (const hiddenPlayerId of data.hiddenPlayerIds || []) {
       if (hiddenPlayerId === sessionId) continue;
@@ -913,9 +899,7 @@ export function setupPlayerTransformsHandler(
       if (!playerId) continue;
       fullSnapshotPlayerIds?.add(playerId);
       const result = handleTransform(playerId, transform, data.tick, data.serverTime, data.full === true);
-      if (result === 'self') {
-        selfTransformCount++;
-      } else if (result === 'remote') {
+      if (result === 'remote') {
         remoteTransformCount++;
       }
     }
@@ -925,16 +909,11 @@ export function setupPlayerTransformsHandler(
     if (fullSnapshotPlayerIds) {
       pruneRemoteTransformHistories(fullSnapshotPlayerIds);
     }
-    recordTransformMessage({
-      transformCount: data.players.length,
-      selfTransformCount,
-      remoteTransformCount,
-    });
-  }));
+  });
 }
 
 export function setupPlayerInterestHandler(room: Room, sessionId: string) {
-  room.onMessage('playerInterest', measureNetworkMessage('playerInterest', (data: PlayerInterestMessage) => {
+  room.onMessage('playerInterest', (data: PlayerInterestMessage) => {
     const store = useGameStore.getState();
     let nextPlayers: Map<string, Player> | null = null;
     let nextLocalPlayer = store.localPlayer;
@@ -965,16 +944,15 @@ export function setupPlayerInterestHandler(room: Room, sessionId: string) {
     if (import.meta.env.DEV && typeof window !== 'undefined') {
       (window as unknown as { __voxelPlayerInterest?: PlayerInterestMessage }).__voxelPlayerInterest = data;
     }
-  }));
+  });
 }
 
 export function setupSelfMovementAuthorityHandler(room: Room) {
   hasReceivedSelfMovementAuthority = false;
 
-  room.onMessage('selfMovementAuthority', measureNetworkMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
+  room.onMessage('selfMovementAuthority', (authority: SelfMovementAuthority) => {
     hasReceivedSelfMovementAuthority = true;
     recordMovementTraceAuthorityAck(authority);
-    recordAuthorityAckReceived(authority);
     enqueueSelfMovementAuthority(authority);
     const localPlayer = useGameStore.getState().localPlayer;
     if (localPlayer?.heroId === 'chronos') {
@@ -985,7 +963,7 @@ export function setupSelfMovementAuthorityHandler(room: Room) {
         authority.chronosAegisShieldRatio
       );
     }
-  }));
+  });
 }
 
 export function setupPlayerVitalsHandler(
@@ -993,7 +971,7 @@ export function setupPlayerVitalsHandler(
   sessionId: string,
   localPlayerName: string
 ) {
-  room.onMessage('playerVitals', measureNetworkMessage('playerVitals', (data: PlayerVitalsMessage) => {
+  room.onMessage('playerVitals', (data: PlayerVitalsMessage) => {
     const nowMs = Date.now();
     const initialStore = useGameStore.getState();
     let nextPlayers = initialStore.players;
@@ -1078,7 +1056,6 @@ export function setupPlayerVitalsHandler(
         syncDeathVisualForVitals(next.id, next.state, previousHeroId, next.heroId, next.respawnTime);
         writablePlayers().set(next.id, next);
         nextLocalPlayer = next;
-        recordLocalReactiveUpdate('vitals');
         shouldPublishTiming = true;
         syncPlayerVisualEffectIndexes(next, { localPlayerId: sessionId, nowMs });
         if (!existing) {
@@ -1123,11 +1100,11 @@ export function setupPlayerVitalsHandler(
     for (const player of localVisualSyncs) {
       syncLocalVisualPosition(player);
     }
-  }));
+  });
 }
 
 export function setupMatchSnapshotHandler(room: Room) {
-  room.onMessage('matchSnapshot', measureNetworkMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
+  room.onMessage('matchSnapshot', (data: MatchSnapshotMessage) => {
     const store = useGameStore.getState();
     if (data.phase !== 'playing' && data.phase !== 'countdown') {
       clearAllDeathVisuals();
@@ -1145,14 +1122,14 @@ export function setupMatchSnapshotHandler(room: Room) {
       phaseEndTime: data.phaseEndTime,
       gameClockFrozen: data.gameClockFrozen === true,
     });
-  }));
+  });
 }
 
 /**
  * Sets up void zone event handlers
  */
 export function setupVoidZoneHandlers(room: Room, sessionId: string) {
-  room.onMessage('voidZoneCreated', measureNetworkMessage('voidZoneCreated', (data: {
+  room.onMessage('voidZoneCreated', (data: {
     id: string;
     position: { x: number; y: number; z: number };
     radius: number;
@@ -1162,11 +1139,11 @@ export function setupVoidZoneHandlers(room: Room, sessionId: string) {
     ownerTeam: 'red' | 'blue';
   }) => {
     useGameStore.getState().addVoidZone(data);
-  }));
+  });
 
-  room.onMessage('voidZoneExpired', measureNetworkMessage('voidZoneExpired', (data: { id: string }) => {
+  room.onMessage('voidZoneExpired', (data: { id: string }) => {
     useGameStore.getState().removeVoidZone(data.id);
-  }));
+  });
 }
 
 interface AbilityUsedMessage {
@@ -2235,24 +2212,30 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
         const caster = isFreshLocalPlayer
           ? freshStore.localPlayer
           : freshStore.players.get(data.playerId);
-        const resolvedOrigin = !isFreshLocalPlayer
-          ? resolveAbilitySocketOrigin({
-            ownerScope: 'remoteBody',
-            playerId: data.playerId,
-            abilityId: 'chronos_timebreak',
-          })
-          : null;
         const casterPosition = caster?.position ?? data.position;
+        const casterYaw = caster?.lookYaw ?? data.direction?.yaw ?? data.launchYaw;
+        const resolvedOrigin = resolveAbilitySocketOrigin({
+          ownerScope: isFreshLocalPlayer ? 'localViewmodel' : 'remoteBody',
+          playerId: isFreshLocalPlayer ? undefined : data.playerId,
+          abilityId: 'chronos_timebreak',
+          fallback: casterPosition && typeof casterYaw === 'number'
+            ? {
+              position: casterPosition,
+              yaw: casterYaw,
+            }
+            : undefined,
+        });
         const fallbackEffectPosition = startPosition ?? data.startPosition;
         if (!casterPosition && !resolvedOrigin && !fallbackEffectPosition) return;
 
+        const effectDirection = data.shockwaveDirection ?? resolveChronosOrbVisualDirection(data);
         const effectPosition = resolvedOrigin
-          ? toPlainPosition(resolvedOrigin.position)
-          : fallbackEffectPosition ?? {
-            x: casterPosition!.x,
-            y: casterPosition!.y + 1.18,
-            z: casterPosition!.z,
-          };
+          ? offsetChronosOrbVisualPlainPosition(
+            toPlainPosition(resolvedOrigin.position),
+            effectDirection,
+            'chronos_timebreak'
+          )
+          : fallbackEffectPosition ?? casterPosition!;
 
         addChronosTimebreakEffect({
           id: castId,
@@ -2375,7 +2358,7 @@ function handleChronosAbilityUsed(data: AbilityUsedMessage, localPlayerId: strin
  * Sets up combat event handlers (damage, kills)
  */
 export function setupCombatHandlers(room: Room) {
-  room.onMessage('phantomPrimaryState', measureNetworkMessage('phantomPrimaryState', (data: {
+  room.onMessage('phantomPrimaryState', (data: {
     ammo: number;
     reloading: boolean;
     reloadStartedAt: number;
@@ -2383,9 +2366,9 @@ export function setupCombatHandlers(room: Room) {
     serverTime: number;
   }) => {
     applyPhantomPrimaryState(data);
-  }));
+  });
 
-  room.onMessage('chronosAegisDamaged', measureNetworkMessage('chronosAegisDamaged', (data: ChronosAegisDamagedEvent) => {
+  room.onMessage('chronosAegisDamaged', (data: ChronosAegisDamagedEvent) => {
     const now = Date.now();
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
@@ -2399,9 +2382,9 @@ export function setupCombatHandlers(room: Room) {
       targetId: null,
       position: data.position,
     });
-  }));
+  });
 
-  room.onMessage('chronosAegisBroken', measureNetworkMessage('chronosAegisBroken', (data: ChronosAegisBrokenEvent) => {
+  room.onMessage('chronosAegisBroken', (data: ChronosAegisBrokenEvent) => {
     const now = Date.now();
     setChronosAegisVisualState(data.playerId, false, now, 0);
     addEffect({
@@ -2414,9 +2397,9 @@ export function setupCombatHandlers(room: Room) {
       volume: 0.86,
       pitch: 1.12,
     });
-  }));
+  });
 
-  room.onMessage('phantomShieldBroken', measureNetworkMessage('phantomShieldBroken', (data: PhantomShieldBrokenEvent) => {
+  room.onMessage('phantomShieldBroken', (data: PhantomShieldBrokenEvent) => {
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     triggerPhantomShieldBreakEffect({
@@ -2425,9 +2408,9 @@ export function setupCombatHandlers(room: Room) {
       position: data.position,
       direction: data.direction,
     });
-  }));
+  });
 
-  room.onMessage('playerDamaged', measureNetworkMessage('playerDamaged', (data: {
+  room.onMessage('playerDamaged', (data: {
     targetId: string;
     damage: number;
     sourceId: string | null;
@@ -2470,9 +2453,9 @@ export function setupCombatHandlers(room: Room) {
         duration: 260,
       });
     }
-  }));
+  });
 
-  room.onMessage('playerHealed', measureNetworkMessage('playerHealed', (data: {
+  room.onMessage('playerHealed', (data: {
     sourceId: string;
     abilityId: string;
     sourcePosition: { x: number; y: number; z: number };
@@ -2571,9 +2554,9 @@ export function setupCombatHandlers(room: Room) {
     ) {
       playChronosWorldSound('chronosLifeline', sourcePosition);
     }
-  }));
+  });
 
-  room.onMessage('playerKilled', measureNetworkMessage('playerKilled', (data: PlayerDeathEvent) => {
+  room.onMessage('playerKilled', (data: PlayerDeathEvent) => {
     addDeathVisualFromKillEvent(data);
 
     const players = useGameStore.getState().players;
@@ -2581,9 +2564,9 @@ export function setupCombatHandlers(room: Room) {
       killerName: data.killerId ? players.get(data.killerId)?.name ?? 'Unknown' : 'Unknown',
       victimName: players.get(data.victimId)?.name ?? 'Unknown',
     });
-  }));
+  });
 
-  room.onMessage('abilityUsed', measureNetworkMessage('abilityUsed', (data: AbilityUsedMessage) => {
+  room.onMessage('abilityUsed', (data: AbilityUsedMessage) => {
     const store = useGameStore.getState();
     const localPlayerId = store.localPlayer?.id ?? store.playerId;
     if (handlePhantomAbilityUsed(data, localPlayerId)) return;
@@ -2591,15 +2574,15 @@ export function setupCombatHandlers(room: Room) {
     if (handleBlazeAbilityUsed(data, localPlayerId)) return;
     if (handleChronosAbilityUsed(data, localPlayerId)) return;
 
-  }));
+  });
 
-  room.onMessage('chronosTimebreakImpulse', measureNetworkMessage('chronosTimebreakImpulse', (data: {
+  room.onMessage('chronosTimebreakImpulse', (data: {
     sourceId: string;
     sourcePosition: { x: number; y: number; z: number };
     impulse: { x: number; y: number; z: number };
   }) => {
     pushLocalPlayerImpulse(data.impulse);
-  }));
+  });
 }
 
 /**

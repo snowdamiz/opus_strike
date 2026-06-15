@@ -239,17 +239,9 @@ body,
 }
 
 .slide-effects-overlay {
-  --slide-blur: 0px;
   --slide-edge-opacity: 0;
   --slide-haze-opacity: 0;
   --slide-haze-side-opacity: 0;
-  --slide-line-opacity: 0;
-  --slide-line-duration: 820ms;
-  --slide-flow-start-x: 0vmax;
-  --slide-flow-start-y: -28vmax;
-  --slide-flow-end-x: 0vmax;
-  --slide-flow-end-y: 128vmax;
-  --slide-flow-rotate: 0deg;
   contain: layout paint style;
   opacity: 0;
   visibility: hidden;
@@ -258,10 +250,9 @@ body,
 
 .slide-edge-blur {
   position: absolute;
-  background: rgba(255, 255, 255, 0.006);
-  backdrop-filter: blur(var(--slide-blur)) saturate(1.08);
-  -webkit-backdrop-filter: blur(var(--slide-blur)) saturate(1.08);
+  background: rgba(185, 251, 255, 0.035);
   opacity: var(--slide-edge-opacity);
+  will-change: opacity;
 }
 
 .slide-edge-blur-left {
@@ -310,48 +301,6 @@ body,
       transparent 71%,
       rgba(255, 255, 255, var(--slide-haze-side-opacity)) 89%,
       transparent 100%);
-  mix-blend-mode: screen;
-}
-
-.slide-speed-line-layer {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  mix-blend-mode: screen;
-  opacity: var(--slide-line-opacity);
-}
-
-.slide-speed-line {
-  position: absolute;
-  left: var(--line-left);
-  top: var(--line-top);
-  width: var(--line-width);
-  height: clamp(8rem, 22vh, 17rem);
-  border-radius: 999px;
-  background: linear-gradient(to bottom,
-      transparent 0%,
-      rgba(185, 251, 255, 0.18) 18%,
-      rgba(255, 255, 255, 0.92) 48%,
-      rgba(185, 251, 255, 0.34) 76%,
-      transparent 100%);
-  box-shadow:
-    0 0 10px rgba(185, 251, 255, 0.36),
-    0 0 18px rgba(255, 255, 255, 0.16);
-  opacity: var(--line-alpha);
-  transform-origin: 50% 50%;
-  animation: slide-speed-line-flow var(--slide-line-duration) linear infinite;
-  animation-delay: var(--line-delay);
-  will-change: transform, opacity;
-}
-
-@keyframes slide-speed-line-flow {
-  0% {
-    transform: translate3d(var(--slide-flow-start-x), var(--slide-flow-start-y), 0) rotate(calc(var(--slide-flow-rotate) + var(--line-rotate))) scaleY(var(--line-scale));
-  }
-
-  100% {
-    transform: translate3d(var(--slide-flow-end-x), var(--slide-flow-end-y), 0) rotate(calc(var(--slide-flow-rotate) + var(--line-rotate))) scaleY(var(--line-scale));
-  }
 }
 
 /* ===== GAME STATES ===== */
@@ -1334,9 +1283,10 @@ body,
 }
 
 .play-season-plate {
+  --play-season-plate-edge-nudge: 0.45rem;
   position: absolute;
-  left: -0.45rem;
-  bottom: -0.35rem;
+  left: calc(0rem - var(--play-season-plate-edge-nudge));
+  bottom: calc(var(--menu-safe-x) - var(--menu-bottom-pad-lg) - var(--play-season-plate-edge-nudge));
   z-index: 2;
   width: clamp(23rem, 30vw, 32rem);
   padding: 0.25rem 0.2rem;
@@ -1423,23 +1373,27 @@ body,
 }
 
 .play-season-plate-rewards-item {
+  position: relative;
   display: flex;
   align-items: baseline;
-  gap: 0.36rem;
+  gap: 0.32rem;
+  padding-left: 0.76rem;
   color: rgb(255 255 255 / 0.62);
-  font-size: clamp(0.66rem, 0.58rem + 0.24vw, 0.88rem);
+  font-size: clamp(0.62rem, 0.55rem + 0.2vw, 0.8rem);
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.09em;
   line-height: 1.08;
   text-transform: uppercase;
 }
 
 .play-season-plate-rewards-item::before {
   content: "";
-  flex: 0 0 auto;
-  width: 0.26rem;
-  height: 0.26rem;
-  margin-right: 0.24rem;
+  position: absolute;
+  left: 0.12rem;
+  top: 0.54em;
+  width: 0.24rem;
+  height: 0.24rem;
+  transform: translateY(-50%);
   border-radius: 999px;
   background: rgb(255 171 90 / 0.72);
   box-shadow: 0 0 0.52rem rgb(255 126 42 / 0.52);
@@ -3281,9 +3235,16 @@ body,
   }
 
   .play-season-plate-rewards-item {
-    gap: 0.28rem;
-    font-size: 0.58rem;
+    gap: 0.26rem;
+    padding-left: 0.66rem;
+    font-size: 0.54rem;
     letter-spacing: 0.07em;
+  }
+
+  .play-season-plate-rewards-item::before {
+    left: 0.08rem;
+    width: 0.22rem;
+    height: 0.22rem;
   }
 
   .hero-select-stage {
@@ -3379,9 +3340,16 @@ body,
   }
 
   .play-season-plate-rewards-item {
-    font-size: 0.5rem;
+    padding-left: 0.6rem;
+    font-size: 0.48rem;
     line-height: 1.15;
     letter-spacing: 0.05em;
+  }
+
+  .play-season-plate-rewards-item::before {
+    left: 0.07rem;
+    width: 0.2rem;
+    height: 0.2rem;
   }
 }
 
@@ -3401,9 +3369,16 @@ body,
   }
 
   .play-season-plate-rewards-item {
-    font-size: 0.5rem;
+    padding-left: 0.6rem;
+    font-size: 0.48rem;
     line-height: 1.15;
     letter-spacing: 0.05em;
+  }
+
+  .play-season-plate-rewards-item::before {
+    left: 0.07rem;
+    width: 0.2rem;
+    height: 0.2rem;
   }
 }
 

@@ -1,11 +1,5 @@
 import assert from 'node:assert/strict';
-import * as THREE from 'three';
 import { FrameTimeHistogram } from './adaptiveQualityHistogram';
-import { addEffect, getGlobalEffectStats } from './Effects';
-import {
-  getMovementNetworkDiagnosticsSnapshot,
-  resetMovementNetworkDiagnostics,
-} from '../../movement/networkDiagnostics';
 import { GameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 import { createFrameUpdaterRegistry } from './systems/frameUpdaterRegistry';
 
@@ -20,16 +14,6 @@ histogram.reset();
 assert.equal(histogram.sampleCount, 0);
 assert.equal(histogram.percentile(0.95), 0);
 
-const effectStartedAt = Date.now();
-addEffect({
-  type: 'hit',
-  position: new THREE.Vector3(1, 2, 3),
-  duration: 50,
-});
-assert.equal(getGlobalEffectStats(effectStartedAt).active, 1);
-assert.equal(getGlobalEffectStats(effectStartedAt + 100).active, 0);
-
-resetMovementNetworkDiagnostics();
 const scheduler = new GameplayFrameScheduler();
 let scheduledRuns = 0;
 const unregister = scheduler.register({
@@ -44,10 +28,10 @@ scheduler.run({ deltaSeconds: 0.01, deltaMs: 10, nowMs: 10, elapsedSeconds: 0.01
 assert.equal(scheduledRuns, 0);
 scheduler.run({ deltaSeconds: 0.01, deltaMs: 10, nowMs: 20, elapsedSeconds: 0.02 });
 assert.equal(scheduledRuns, 1);
-assert.equal(getMovementNetworkDiagnosticsSnapshot().frameScheduler.activeCallbacks, 1);
-assert.equal(getMovementNetworkDiagnosticsSnapshot().frameScheduler.callbacksBySystem.testSystem, 1);
+assert.equal(scheduler.activeCallbackCount, 1);
+assert.equal(scheduler.getCallbacksBySystem().testSystem, 1);
 unregister();
-assert.equal(getMovementNetworkDiagnosticsSnapshot().frameScheduler.activeCallbacks, 0);
+assert.equal(scheduler.activeCallbackCount, 0);
 
 const registry = createFrameUpdaterRegistry<number>();
 let registryTotal = 0;

@@ -15,10 +15,6 @@ import {
   createChronosAegisPanelGeometry,
 } from './aegisGeometry';
 import { getFrameClock } from '../../../utils/frameClock';
-import {
-  measureFrameWork,
-  recordEffectSlotDiagnostics,
-} from '../../../movement/networkDiagnostics';
 
 const CHRONOS_AEGIS_COLOR = 0x22c55e;
 const CHRONOS_AEGIS_EDGE_COLOR = 0x86efac;
@@ -183,72 +179,70 @@ function ChronosAegisShield({ playerId }: { playerId: string }) {
   }, [fillGeometry, wireGeometry]);
 
   useChronosAegisFrameUpdater(`chronos-aegis:${playerId}`, () => {
-    measureFrameWork('frame.effects.chronosAegisShield', () => {
-      const group = groupRef.current;
-      const player = useGameStore.getState().players.get(playerId);
-      const aegis = visualStore.getState().chronosAegisStates.get(playerId);
-      if (!group || !player || !aegis?.active) {
-        if (group) group.visible = false;
-        return;
-      }
+    const group = groupRef.current;
+    const player = useGameStore.getState().players.get(playerId);
+    const aegis = visualStore.getState().chronosAegisStates.get(playerId);
+    if (!group || !player || !aegis?.active) {
+      if (group) group.visible = false;
+      return;
+    }
 
-      const now = getFrameClock().epochNowMs;
-      if (now - aegis.updatedAtMs > CHRONOS_AEGIS_STALE_MS) {
-        group.visible = false;
-        return;
-      }
+    const now = getFrameClock().epochNowMs;
+    if (now - aegis.updatedAtMs > CHRONOS_AEGIS_STALE_MS) {
+      group.visible = false;
+      return;
+    }
 
-      const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
-      const visualYaw = visualStore.getState().playerRotations.get(playerId) ?? player.lookYaw;
-      const visualPitch = player.lookPitch ?? 0;
-      const center = getChronosAegisCenter({
-        playerId,
-        position: visualPosition,
-        lookYaw: visualYaw,
-        lookPitch: visualPitch,
-      });
-      const forward = getChronosAegisForward(visualYaw, visualPitch);
-      const elapsed = Math.max(0, (now - aegis.activatedAtMs) / 1000);
-      const fade = THREE.MathUtils.smoothstep(elapsed, 0, CHRONOS_AEGIS_FADE_IN_SECONDS);
-      const durability = THREE.MathUtils.clamp(aegis.durabilityRatio, 0, 1);
-      const damage = 1 - durability;
-      const pulse = 1 + Math.sin(elapsed * 5.4) * 0.018;
-      const shieldScale = THREE.MathUtils.lerp(0.74, 1.05, fade) * pulse;
-
-      group.visible = fade > 0.01;
-      group.position.set(center.x, center.y, center.z);
-      forwardVector.set(forward.x, forward.y, forward.z).normalize();
-      group.quaternion.setFromUnitVectors(localNormal, forwardVector);
-      group.scale.set(shieldScale, shieldScale, 1);
-
-      fillMaterialRef.current.color.copy(fillFreshColor).lerp(fillDamagedColor, damage * 0.74);
-      ringMaterialRef.current.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.86);
-      wireMaterialRef.current.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.68);
-
-      fillMaterialRef.current.opacity = CHRONOS_AEGIS_FILL_OPACITY * fade * (0.42 + durability * 0.58);
-      ringMaterialRef.current.opacity = CHRONOS_AEGIS_EDGE_OPACITY * fade * (0.42 + durability * 0.58);
-      wireMaterialRef.current.opacity = CHRONOS_AEGIS_WIRE_OPACITY * fade * (0.32 + durability * 0.68);
-
-      if (fillRef.current) {
-        fillRef.current.scale.set(1, 1 + Math.sin(elapsed * 4.2) * 0.006, 1);
-      }
-      if (wireRef.current) {
-        wireRef.current.scale.setScalar(0.97 + Math.sin(elapsed * 6.1) * (0.01 + damage * 0.018));
-      }
-      if (braceRef.current) {
-        braceRef.current.position.z = 0.02 + Math.sin(elapsed * 4.8) * (0.008 + damage * 0.02);
-      }
-      if (crackRef.current) {
-        const crackPulse = 0.72 + Math.sin(elapsed * 13.4) * 0.16;
-        crackMaterialRef.current.opacity = fade * THREE.MathUtils.smoothstep(damage, 0.08, 0.74) * crackPulse;
-        crackRef.current.position.x = Math.sin(elapsed * 18.7) * damage * 0.04;
-        crackRef.current.position.y = Math.cos(elapsed * 16.2) * damage * 0.025;
-      }
-      if (lightRef.current) {
-        lightRef.current.intensity = 1.35 * fade * (0.45 + durability * 0.55);
-        lightRef.current.distance = 4.4;
-      }
+    const visualPosition = visualStore.getState().playerPositions.get(playerId) ?? player.position;
+    const visualYaw = visualStore.getState().playerRotations.get(playerId) ?? player.lookYaw;
+    const visualPitch = player.lookPitch ?? 0;
+    const center = getChronosAegisCenter({
+      playerId,
+      position: visualPosition,
+      lookYaw: visualYaw,
+      lookPitch: visualPitch,
     });
+    const forward = getChronosAegisForward(visualYaw, visualPitch);
+    const elapsed = Math.max(0, (now - aegis.activatedAtMs) / 1000);
+    const fade = THREE.MathUtils.smoothstep(elapsed, 0, CHRONOS_AEGIS_FADE_IN_SECONDS);
+    const durability = THREE.MathUtils.clamp(aegis.durabilityRatio, 0, 1);
+    const damage = 1 - durability;
+    const pulse = 1 + Math.sin(elapsed * 5.4) * 0.018;
+    const shieldScale = THREE.MathUtils.lerp(0.74, 1.05, fade) * pulse;
+
+    group.visible = fade > 0.01;
+    group.position.set(center.x, center.y, center.z);
+    forwardVector.set(forward.x, forward.y, forward.z).normalize();
+    group.quaternion.setFromUnitVectors(localNormal, forwardVector);
+    group.scale.set(shieldScale, shieldScale, 1);
+
+    fillMaterialRef.current.color.copy(fillFreshColor).lerp(fillDamagedColor, damage * 0.74);
+    ringMaterialRef.current.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.86);
+    wireMaterialRef.current.color.copy(edgeFreshColor).lerp(edgeDamagedColor, damage * 0.68);
+
+    fillMaterialRef.current.opacity = CHRONOS_AEGIS_FILL_OPACITY * fade * (0.42 + durability * 0.58);
+    ringMaterialRef.current.opacity = CHRONOS_AEGIS_EDGE_OPACITY * fade * (0.42 + durability * 0.58);
+    wireMaterialRef.current.opacity = CHRONOS_AEGIS_WIRE_OPACITY * fade * (0.32 + durability * 0.68);
+
+    if (fillRef.current) {
+      fillRef.current.scale.set(1, 1 + Math.sin(elapsed * 4.2) * 0.006, 1);
+    }
+    if (wireRef.current) {
+      wireRef.current.scale.setScalar(0.97 + Math.sin(elapsed * 6.1) * (0.01 + damage * 0.018));
+    }
+    if (braceRef.current) {
+      braceRef.current.position.z = 0.02 + Math.sin(elapsed * 4.8) * (0.008 + damage * 0.02);
+    }
+    if (crackRef.current) {
+      const crackPulse = 0.72 + Math.sin(elapsed * 13.4) * 0.16;
+      crackMaterialRef.current.opacity = fade * THREE.MathUtils.smoothstep(damage, 0.08, 0.74) * crackPulse;
+      crackRef.current.position.x = Math.sin(elapsed * 18.7) * damage * 0.04;
+      crackRef.current.position.y = Math.cos(elapsed * 16.2) * damage * 0.025;
+    }
+    if (lightRef.current) {
+      lightRef.current.intensity = 1.35 * fade * (0.45 + durability * 0.55);
+      lightRef.current.distance = 4.4;
+    }
   });
 
   const halfWidth = CHRONOS_AEGIS_WORLD_WIDTH * 0.5;
@@ -286,38 +280,21 @@ export function ChronosAegisManager() {
   const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
 
   useFrame((state, delta) => {
-    measureFrameWork('frame.effects.chronos', () => {
-      runChronosAegisFrameUpdaters(state, delta);
-      scanAccumulatorRef.current += delta * 1000;
-      if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) {
-        recordEffectSlotDiagnostics('chronosAegis', {
-          active: activeIdsRef.current.length,
-          capacity: activeIdsRef.current.length,
-          hiddenMounted: 0,
-        });
-        return;
-      }
-      scanAccumulatorRef.current = 0;
+    runChronosAegisFrameUpdaters(state, delta);
+    scanAccumulatorRef.current += delta * 1000;
+    if (scanAccumulatorRef.current < ACTIVE_ID_SCAN_INTERVAL_MS) {
+      return;
+    }
+    scanAccumulatorRef.current = 0;
 
-      const nextIds = collectActiveChronosAegisIds(scratchIdsRef.current, getFrameClock().epochNowMs);
-      if (sameIds(nextIds, activeIdsRef.current)) {
-        recordEffectSlotDiagnostics('chronosAegis', {
-          active: activeIdsRef.current.length,
-          capacity: activeIdsRef.current.length,
-          hiddenMounted: 0,
-        });
-        return;
-      }
+    const nextIds = collectActiveChronosAegisIds(scratchIdsRef.current, getFrameClock().epochNowMs);
+    if (sameIds(nextIds, activeIdsRef.current)) {
+      return;
+    }
 
-      const committedIds = nextIds.slice();
-      activeIdsRef.current = committedIds;
-      setActiveIds(committedIds);
-      recordEffectSlotDiagnostics('chronosAegis', {
-        active: committedIds.length,
-        capacity: committedIds.length,
-        hiddenMounted: 0,
-      });
-    });
+    const committedIds = nextIds.slice();
+    activeIdsRef.current = committedIds;
+    setActiveIds(committedIds);
   });
 
   return (

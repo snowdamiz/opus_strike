@@ -11,7 +11,6 @@ import {
   type Team,
   type Vec3,
 } from '@voxel-strike/shared';
-import { recordHotStoreCommit } from '../movement/networkDiagnostics';
 
 // ============================================================================
 // VISUAL STATE INTERFACE
@@ -414,7 +413,6 @@ export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses']
   const impulses = visualStore.getState().localPlayerImpulses;
   if (impulses.length === 0) return EMPTY_LOCAL_PLAYER_IMPULSES;
 
-  recordHotStoreCommit('visual.localPlayerImpulses');
   visualStore.setState({ localPlayerImpulses: [] });
   return impulses;
 };
@@ -426,7 +424,6 @@ export const consumeLocalPlayerImpulses = (): VisualState['localPlayerImpulses']
  * @param time - Duration of shake in milliseconds
  */
 export const setCameraShake = (intensity: number, time: number): void => {
-  recordHotStoreCommit('visual.cameraShake');
   visualStore.setState({ cameraShake: { intensity, time } });
 };
 
@@ -436,7 +433,6 @@ export const setCameraShake = (intensity: number, time: number): void => {
  * @param fov - FOV offset from default (0 = no adjustment)
  */
 export const setSlideFov = (fov: number): void => {
-  recordHotStoreCommit('visual.slideFov');
   visualStore.setState({ slideFov: fov });
 };
 
@@ -1000,7 +996,6 @@ function cloneDeathVisualSnapshot(snapshot: DeathVisualSnapshot): DeathVisualSna
 }
 
 function bumpDeathVisualRevision(state = visualStore.getState()): void {
-  recordHotStoreCommit('visual.deathVisuals');
   visualStore.setState({ deathVisualRevision: state.deathVisualRevision + 1 });
 }
 
@@ -1162,7 +1157,6 @@ export const setFlamethrowerVisualPose = (
  * Clear all visual state (e.g., on game reset or disconnect).
  */
 export const clearVisualState = (): void => {
-  recordHotStoreCommit('visual.clear');
   visualStore.setState((state) => ({
     playerPositions: new Map(),
     playerRotations: new Map(),

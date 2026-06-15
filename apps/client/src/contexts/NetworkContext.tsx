@@ -49,7 +49,6 @@ import {
   movementStateFromPlayer,
   resetLocalMovementPrediction,
 } from '../movement/localPrediction';
-import { measureFrameWork } from '../movement/networkDiagnostics';
 import { projectileInitialState } from '../store/slices/projectiles';
 import { resetGameTiming } from '../store/gameTimingStore';
 import { createPracticeAbilityStates } from './practiceAbilities';
@@ -230,12 +229,6 @@ interface MatchCancelledMessage {
 }
 
 const NetworkContext = createContext<NetworkContextType | null>(null);
-
-function measureNetworkMessage<T>(type: string, handler: (data: T) => void): (data: T) => void {
-  return (data) => {
-    measureFrameWork(`network.${type}`, () => handler(data));
-  };
-}
 
 function getHttpUrl(): string {
   return config.serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
@@ -1316,7 +1309,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       : null;
 
     // Set up message handlers
-    room.onMessage('phaseChange', measureNetworkMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number; mapThemeId?: VoxelMapTheme['id'] | null }) => {
+    room.onMessage('phaseChange', (data: { phase: string; endTime: number; mapSeed?: number; mapThemeId?: VoxelMapTheme['id'] | null }) => {
       loggers.network.debug('phase change message', data.phase);
       if (typeof data.mapSeed === 'number') {
         setMapSeed(data.mapSeed);
@@ -1332,9 +1325,9 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       if (data.phase !== 'hero_select') {
         setMatchStartGateKey(null);
       }
-    }));
+    });
 
-    room.onMessage('matchStartGate', measureNetworkMessage('matchStartGate', (data: MatchStartGateMessage) => {
+    room.onMessage('matchStartGate', (data: MatchStartGateMessage) => {
       if (!data || typeof data.key !== 'number' || !Number.isInteger(data.key)) return;
 
       if (typeof data.mapSeed === 'number') {
@@ -1375,17 +1368,17 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       }
 
       setMatchStartGateKey(data.key);
-    }));
+    });
 
-    room.onMessage('gameEnd', measureNetworkMessage('gameEnd', (data: GameEndEvent) => {
+    room.onMessage('gameEnd', (data: GameEndEvent) => {
       loggers.network.info('game ended', data.finalScore);
       clearRunningGameSession(room.id);
       setMatchSummary(data);
       setGamePhase('game_end' as any);
       setPhaseEndTime(null);
-    }));
+    });
 
-    room.onMessage('matchCancelled', measureNetworkMessage('matchCancelled', (data: MatchCancelledMessage) => {
+    room.onMessage('matchCancelled', (data: MatchCancelledMessage) => {
       loggers.network.warn('match cancelled', {
         reason: data.reason,
         message: data.message,
@@ -1409,7 +1402,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setGamePhase('waiting');
       resetLobby();
       setAppPhase('menu');
-    }));
+    });
 
     setupPlayerJoinedHandler(room, sessionId, localPlayerName, updatePlayer);
     setupPlayerTransformsHandler(room, sessionId, localPlayerName, { setLocalPlayer });
@@ -1420,21 +1413,21 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setupVoidZoneHandlers(room, sessionId);
     setupCombatHandlers(room);
 
-    room.onMessage('playerPingRequest', measureNetworkMessage('playerPingRequest', (data: PlayerPingRequestMessage) => {
+    room.onMessage('playerPingRequest', (data: PlayerPingRequestMessage) => {
       if (!data || typeof data.nonce !== 'string') return;
       room.send('playerPingResponse', { nonce: data.nonce });
-    }));
+    });
 
-    room.onMessage('playerPings', measureNetworkMessage('playerPings', (data: PlayerPingsMessage) => {
+    room.onMessage('playerPings', (data: PlayerPingsMessage) => {
       setPlayerPings(data);
-    }));
+    });
 
-    room.onMessage('playerLeft', measureNetworkMessage('playerLeft', (data: { playerId: string }) => {
+    room.onMessage('playerLeft', (data: { playerId: string }) => {
       loggers.network.debug('player left', data.playerId);
       stopRemotePhantomCharge(data.playerId);
       forgetPlayerNetId(data.playerId);
       removePlayer(data.playerId);
-    }));
+    });
 
     room.onMessage('duplicateSession', (data: { reason: string }) => {
       loggers.network.warn('duplicate session detected', data.reason);
@@ -1474,7 +1467,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       disconnectVoice('voice_team_changed');
     });
 
-    room.onMessage('devHeroChanged', measureNetworkMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
+    room.onMessage('devHeroChanged', (data: { heroId: HeroId; health: number; maxHealth: number }) => {
       loggers.network.debug('developer hero switch confirmed', data.heroId);
       const store = useGameStore.getState();
       if (store.localPlayer) {
@@ -1485,14 +1478,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
           maxHealth: data.maxHealth,
         });
       }
-    }));
+    });
 
-    room.onMessage('observerModeStarted', measureNetworkMessage('observerModeStarted', (data: { playerId?: string }) => {
+    room.onMessage('observerModeStarted', (data: { playerId?: string }) => {
       const observerPlayerId = data.playerId || sessionId;
       loggers.network.debug('observer mode started', observerPlayerId);
       localPlayerName = '';
       enterObserverMode(observerPlayerId);
-    }));
+    });
 
     room.onMessage('devCommandError', (data: { message: string }) => {
       loggers.network.error('developer command error:', data.message);

@@ -1,10 +1,5 @@
 import { useEffect, useRef } from 'react';
 import type { RootState } from '@react-three/fiber';
-import {
-  MOVEMENT_DIAGNOSTICS_ENABLED,
-  measureFrameWork,
-  recordEffectSlotDiagnostics,
-} from '../../../movement/networkDiagnostics';
 import { createFrameUpdaterRegistry } from '../systems/frameUpdaterRegistry';
 
 type HookshotFrameUpdater = (state: RootState, delta: number) => void;
@@ -12,14 +7,6 @@ const hookshotFrameUpdaters = createFrameUpdaterRegistry<RootState>();
 
 function runHookshotFrameUpdaterEntries(state: RootState, delta: number): void {
   hookshotFrameUpdaters.run(state, delta);
-
-  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-    recordEffectSlotDiagnostics('hookshot', {
-      active: hookshotFrameUpdaters.size,
-      capacity: hookshotFrameUpdaters.size,
-      hiddenMounted: 0,
-    });
-  }
 }
 
 export function useHookshotFrameUpdater(effectId: string, updater: HookshotFrameUpdater): void {
@@ -33,9 +20,5 @@ export function useHookshotFrameUpdater(effectId: string, updater: HookshotFrame
 }
 
 export function runHookshotFrameUpdaters(state: RootState, delta: number): void {
-  if (MOVEMENT_DIAGNOSTICS_ENABLED) {
-    measureFrameWork('frame.effects.hookshot', () => runHookshotFrameUpdaterEntries(state, delta));
-  } else {
-    runHookshotFrameUpdaterEntries(state, delta);
-  }
+  runHookshotFrameUpdaterEntries(state, delta);
 }
