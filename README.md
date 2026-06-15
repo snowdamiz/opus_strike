@@ -48,8 +48,7 @@ voxel-strike/
 │   └── server/          # Game server (Colyseus)
 ├── packages/
 │   ├── shared/          # Types, constants, game config
-│   ├── physics/         # Rapier physics wrapper, movement logic
-│   └── game-logic/      # Hero definitions, abilities, CTF rules
+│   └── physics/         # Rapier physics wrapper, movement logic
 ├── turbo.json
 ├── package.json
 └── pnpm-workspace.yaml
