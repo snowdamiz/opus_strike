@@ -5,7 +5,7 @@ primary_region = "iad"
   dockerfile = "Dockerfile"
 
   [build.args]
-    VITE_SERVER_URL = "wss://opus-strike-server.fly.dev"
+    VITE_SERVER_URL = "wss://api.slopheroes.xyz"
 
 [http_service]
   internal_port = 8080

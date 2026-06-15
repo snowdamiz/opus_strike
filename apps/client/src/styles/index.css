@@ -3905,3 +3905,97 @@ input[type="color"]::-webkit-color-swatch {
       rgb(var(--color-strike-bg) / 0.22));
   box-shadow: inset 0 1px 0 rgb(var(--color-strike-border) / 0.08);
 }
+
+/* ===== LEGAL PAGES ===== */
+.legal-page {
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow-y: auto;
+  background:
+    radial-gradient(circle at 20% 0%, rgb(var(--color-accent-primary) / 0.12), transparent 32rem),
+    radial-gradient(circle at 85% 12%, rgb(var(--color-accent-secondary) / 0.08), transparent 28rem),
+    linear-gradient(180deg, rgb(var(--color-strike-bg)) 0%, rgb(var(--color-strike-canvas)) 100%);
+  color: rgb(255 255 255 / 0.9);
+}
+
+.legal-page__document {
+  width: min(860px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: clamp(48px, 8vh, 88px) 0;
+}
+
+.legal-page__header {
+  padding-bottom: 28px;
+  border-bottom: 1px solid rgb(var(--color-strike-border) / 0.12);
+}
+
+.legal-page__eyebrow,
+.legal-page__updated {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.legal-page__eyebrow {
+  margin-bottom: 12px;
+  color: rgb(var(--color-accent-primary));
+}
+
+.legal-page__header h1 {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(3.2rem, 8vw, 5.5rem);
+  font-weight: 400;
+  line-height: 0.9;
+  letter-spacing: 0;
+  color: white;
+}
+
+.legal-page__intro {
+  max-width: 680px;
+  margin-top: 18px;
+  font-size: clamp(1.05rem, 2vw, 1.28rem);
+  line-height: 1.6;
+  color: rgb(255 255 255 / 0.76);
+}
+
+.legal-page__updated {
+  margin-top: 22px;
+  color: rgb(255 255 255 / 0.48);
+}
+
+.legal-page__sections {
+  display: grid;
+  gap: 26px;
+  padding-top: 34px;
+}
+
+.legal-page__section {
+  padding: 22px 0 4px;
+}
+
+.legal-page__section + .legal-page__section {
+  border-top: 1px solid rgb(var(--color-strike-border) / 0.08);
+}
+
+.legal-page__section h2 {
+  margin-bottom: 12px;
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(1.8rem, 4vw, 2.3rem);
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
+  color: white;
+}
+
+.legal-page__section p {
+  max-width: 760px;
+  color: rgb(255 255 255 / 0.72);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+.legal-page__section p + p {
+  margin-top: 12px;
+}
