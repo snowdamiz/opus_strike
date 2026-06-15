@@ -7,7 +7,6 @@ const DISCORD_TOKEN_URL = 'https://discord.com/api/oauth2/token';
 const DISCORD_CURRENT_USER_URL = 'https://discord.com/api/users/@me';
 
 interface DiscordConfig {
-  enabled: boolean;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
@@ -68,7 +67,6 @@ function getConfiguredScopes(): string[] {
 
 export function getDiscordConfig(req: Request): DiscordConfig {
   return {
-    enabled: process.env.DISCORD_AUTH_ENABLED !== 'false',
     clientId: process.env.DISCORD_CLIENT_ID ?? '',
     clientSecret: process.env.DISCORD_CLIENT_SECRET ?? '',
     redirectUri: process.env.DISCORD_REDIRECT_URI ?? getDefaultRedirectUri(req),
@@ -77,10 +75,6 @@ export function getDiscordConfig(req: Request): DiscordConfig {
 }
 
 export function assertDiscordConfigured(config: DiscordConfig): void {
-  if (!config.enabled) {
-    throw new DiscordOAuthError('disabled', 'Discord authentication is disabled');
-  }
-
   if (!config.clientId || !config.clientSecret || !config.redirectUri) {
     throw new DiscordOAuthError('not_configured', 'Discord authentication is not configured');
   }

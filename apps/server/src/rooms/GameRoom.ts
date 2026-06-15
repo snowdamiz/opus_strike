@@ -107,6 +107,7 @@ import {
   HOOKSHOT_DRAG_HOOK_DAMAGE,
   HOOKSHOT_DRAG_HOOK_MAX_DISTANCE,
   HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE,
+  HOOKSHOT_DRAG_HOOK_RETRACT_SPEED,
   HOOKSHOT_GROUND_HOOKS_RADIUS,
   HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   PHANTOM_DIRE_BALL_COLLISION_RADIUS,
@@ -463,6 +464,7 @@ interface PhantomCastPayload {
   ownerTeam?: Team;
   launchSide?: -1 | 1;
   launchYaw?: number;
+  targetIds?: string[];
   serverTime: number;
   durationMs?: number;
   ammoRemaining?: number;
@@ -686,6 +688,7 @@ interface ChronosAegisSkillHit {
 interface SkillImpactHint {
   impactPosition?: PlainVec3;
   interceptedByChronosAegis?: boolean;
+  targetIds?: string[];
 }
 
 const BLAZE_ROCKET_AIM_DISTANCE = 120;
@@ -802,7 +805,6 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
 };
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
-const HOOKSHOT_DRAG_HOOK_PULL_SPEED = 22;
 const HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS = 1250;
 const HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE = 0.32;
 const HOOKSHOT_DRAG_HOOK_PULL_BUMP_ITERATIONS = 3;
@@ -6200,6 +6202,7 @@ export class GameRoom extends Room<GameState> {
       ownerTeam: player.team as Team,
       impactPosition: impactHint.impactPosition,
       interceptedByChronosAegis: impactHint.interceptedByChronosAegis,
+      targetIds: impactHint.targetIds,
       launchSide,
       launchYaw: player.lookYaw,
       serverTime: now,
@@ -6911,7 +6914,12 @@ export class GameRoom extends Room<GameState> {
         player,
         mode === 'primary' ? 'hookshot_basic_attack' : 'hookshot_heavy_attack',
         now,
-        impactHint
+        {
+          ...impactHint,
+          targetIds: mode === 'secondary' && !aegisBlocksAttack && primaryTargetHit?.target
+            ? [primaryTargetHit.target.id]
+            : undefined,
+        }
       );
     } else if (heroId === 'chronos' && mode === 'primary') {
       this.broadcastChronosVerdantPulseCast(player, attack, now, impactHint);
@@ -7521,8 +7529,8 @@ export class GameRoom extends Room<GameState> {
     if (distanceToDestination <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE) return;
 
     this.clearHookshotGrapple(target.id);
-    target.velocity.x = (dx / distanceToDestination) * HOOKSHOT_DRAG_HOOK_PULL_SPEED;
-    target.velocity.z = (dz / distanceToDestination) * HOOKSHOT_DRAG_HOOK_PULL_SPEED;
+    target.velocity.x = (dx / distanceToDestination) * HOOKSHOT_DRAG_HOOK_RETRACT_SPEED;
+    target.velocity.z = (dz / distanceToDestination) * HOOKSHOT_DRAG_HOOK_RETRACT_SPEED;
     target.movement.isSliding = false;
     target.movement.slideTimeRemaining = 0;
     target.movement.isWallRunning = false;
@@ -7694,7 +7702,7 @@ export class GameRoom extends Room<GameState> {
       return true;
     }
 
-    const stepDistance = Math.min(distanceToDestination, HOOKSHOT_DRAG_HOOK_PULL_SPEED * dt);
+    const stepDistance = Math.min(distanceToDestination, HOOKSHOT_DRAG_HOOK_RETRACT_SPEED * dt);
     const moveScale = stepDistance / distanceToDestination;
     const proposedPosition = this.clampToPlayableMap({
       x: currentPosition.x + dx * moveScale,

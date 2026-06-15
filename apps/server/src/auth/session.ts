@@ -87,7 +87,7 @@ export function verifyPendingAuthToken(token: string): PendingAuthTokenPayload |
     const payload = jwt.verify(token, JWT_SECRET) as Partial<PendingAuthTokenPayload>;
     if (!payload || !payload.pending) return null;
 
-    if (isAuthProvider(payload.provider) && typeof payload.providerAccountId === 'string' && payload.providerAccountId) {
+    if (payload.provider === 'discord' && typeof payload.providerAccountId === 'string' && payload.providerAccountId) {
       return {
         pending: true,
         provider: payload.provider,
@@ -96,18 +96,6 @@ export function verifyPendingAuthToken(token: string): PendingAuthTokenPayload |
         avatarUrl: typeof payload.avatarUrl === 'string' ? payload.avatarUrl : null,
         emailHash: typeof payload.emailHash === 'string' ? payload.emailHash : null,
         walletAddress: typeof payload.walletAddress === 'string' ? payload.walletAddress : null,
-      };
-    }
-
-    if (typeof payload.walletAddress === 'string' && payload.walletAddress) {
-      return {
-        pending: true,
-        provider: 'phantom',
-        providerAccountId: payload.walletAddress,
-        walletAddress: payload.walletAddress,
-        displayName: payload.walletAddress,
-        avatarUrl: null,
-        emailHash: null,
       };
     }
 
@@ -150,7 +138,7 @@ export async function resolveRoomAuthContext(
     : cookies.auth_token;
   const payload = token ? verifyAuthToken(token) : null;
 
-  if (payload) {
+  if (payload?.provider === 'discord') {
     const user = await prisma.user.findFirst({
       where: {
         OR: [
@@ -178,10 +166,16 @@ export async function resolveRoomAuthContext(
         rankedPlacementsRemaining: true,
         rankedPeakRating: true,
         rankedLastMatchAt: true,
+        authAccounts: {
+          select: {
+            provider: true,
+          },
+        },
       },
     });
 
-    if (user && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
+    const hasDiscordAccount = user?.authAccounts.some((account) => account.provider === 'discord') ?? false;
+    if (user && hasDiscordAccount && (!payload.walletAddress || user.walletAddress === payload.walletAddress)) {
       const rankPayload = serializeRankPayload(user);
       return {
         kind: 'authenticated',

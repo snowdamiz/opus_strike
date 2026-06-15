@@ -1792,6 +1792,7 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       const predictedVisualId = isLocalPlayer
         ? consumePredictedLocalAbilityVisual('hookshot_heavy_attack', data.playerId, { launchSide: data.launchSide })
         : null;
+      const targetId = data.targetIds?.[0];
       if (!predictedVisualId) {
         store.addDragHook({
           id: castId,
@@ -1803,9 +1804,15 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
           ownerId: data.playerId,
           ownerTeam,
           state: 'flying',
+          targetId,
           startPosition,
           launchSide: data.launchSide,
           launchYaw: data.launchYaw,
+        });
+      } else if (targetId) {
+        store.updateDragHook(predictedVisualId, {
+          targetId,
+          velocity,
         });
       }
       if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_heavy_attack')) {

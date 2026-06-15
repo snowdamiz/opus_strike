@@ -2,9 +2,9 @@ import React, { useRef } from 'react';
 import * as THREE from 'three';
 import { HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS } from '@voxel-strike/shared';
 import { useGameStore, type DragHookData } from '../../../store/gameStore';
-import { findCombatVisualPlayerHit, rebuildCombatVisualFrameCache } from '../../../store/visualStore';
+import { findCombatVisualPlayerHit, rebuildCombatVisualFrameCache, visualStore } from '../../../store/visualStore';
 import { isPhysicsReady, raycastDirection } from '../../../hooks/usePhysics';
-import { DRAG_HOOK_MAX_DISTANCE, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
+import { DRAG_HOOK_MAX_DISTANCE, DRAG_HOOK_RETRACT_SPEED, HOOKSHOT_CHAIN_SOCKET } from '../../../hooks/player/constants';
 import { writeOwnerVisualPosition } from './ownerPosition';
 import { triggerTerrainImpact } from '../TerrainImpactEffects';
 import { BudgetedPointLight } from '../systems/DynamicLightBudget';
@@ -36,7 +36,8 @@ import { useHookshotFrameUpdater } from './hookshotFrameRegistry';
 // OVER-THE-TOP STYLING: Bigger hook, thicker glowing chains
 // ============================================================================
 
-const DRAG_HOOK_RETRACT_SPEED = 55;
+const DRAG_HOOK_TARGET_LATCH_DISTANCE = HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS + 0.85;
+const DRAG_HOOK_TARGET_ATTACH_HEIGHT = HOOKSHOT_CHAIN_SOCKET.handHeight + 0.08;
 
 // Get shared materials from centralized resources
 const getHookMaterials = () => getHookshotMaterials();
@@ -52,6 +53,59 @@ function writeLocalDragHookSocketPosition(out: { x: number; y: number; z: number
     abilityId: 'hookshot_heavy_attack',
     side: launchSide,
   });
+}
+
+function writeDragHookTargetPosition(
+  out: { x: number; y: number; z: number },
+  targetId: string,
+  fallback: { x: number; y: number; z: number },
+  players: ReturnType<typeof useGameStore.getState>['players'],
+  localPlayer: ReturnType<typeof useGameStore.getState>['localPlayer']
+): boolean {
+  const visualPosition = visualStore.getState().playerPositions.get(targetId);
+  const target = localPlayer?.id === targetId ? localPlayer : players.get(targetId);
+  const position = visualPosition ?? target?.position;
+  if (!position || (target && target.state !== 'alive')) {
+    out.x = fallback.x;
+    out.y = fallback.y;
+    out.z = fallback.z;
+    return false;
+  }
+
+  out.x = position.x;
+  out.y = position.y + DRAG_HOOK_TARGET_ATTACH_HEIGHT;
+  out.z = position.z;
+  return true;
+}
+
+function getPointSegmentDistanceSq(
+  point: { x: number; y: number; z: number },
+  start: { x: number; y: number; z: number },
+  end: { x: number; y: number; z: number }
+): number {
+  const segmentX = end.x - start.x;
+  const segmentY = end.y - start.y;
+  const segmentZ = end.z - start.z;
+  const segmentLengthSq = segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
+  if (segmentLengthSq <= 0.0001) {
+    const dx = point.x - start.x;
+    const dy = point.y - start.y;
+    const dz = point.z - start.z;
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  const t = Math.max(0, Math.min(1, (
+    (point.x - start.x) * segmentX +
+    (point.y - start.y) * segmentY +
+    (point.z - start.z) * segmentZ
+  ) / segmentLengthSq));
+  const closestX = start.x + segmentX * t;
+  const closestY = start.y + segmentY * t;
+  const closestZ = start.z + segmentZ * t;
+  const dx = point.x - closestX;
+  const dy = point.y - closestY;
+  const dz = point.z - closestZ;
+  return dx * dx + dy * dy + dz * dz;
 }
 
 export interface DragHookSlotHandle {
@@ -93,6 +147,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
   const previousPosRef = useRef({ x: 0, y: 0, z: 0 });
   const playerPosRef = useRef({ x: 0, y: 0, z: 0 });
   const ownerVisualPositionRef = useRef({ x: 0, y: 0, z: 0 });
+  const targetVisualPositionRef = useRef({ x: 0, y: 0, z: 0 });
   const smoothedSocketRef = useRef(new THREE.Vector3());
   const ropeLagRef = useRef(new THREE.Vector3());
   const ropeControlARef = useRef(new THREE.Vector3());
@@ -129,6 +184,9 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       ownerVisualPositionRef.current.x = hook.startPosition.x;
       ownerVisualPositionRef.current.y = hook.startPosition.y;
       ownerVisualPositionRef.current.z = hook.startPosition.z;
+      targetVisualPositionRef.current.x = hook.position.x;
+      targetVisualPositionRef.current.y = hook.position.y;
+      targetVisualPositionRef.current.z = hook.position.z;
       smoothedSocketRef.current.set(hook.startPosition.x, hook.startPosition.y, hook.startPosition.z);
       ropeLagRef.current.set(0, 0, 0);
       ropeControlARef.current.set(0, 0, 0);
@@ -138,7 +196,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       socketInitializedRef.current = false;
       shouldRemoveRef.current = false;
       hasHitRef.current = false;
-      hookedTargetIdRef.current = null;
+      hookedTargetIdRef.current = hook.targetId ?? null;
       groupRef.current.visible = true;
       hookRef.current.position.set(hook.position.x, hook.position.y, hook.position.z);
     }
@@ -165,6 +223,9 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
     const time = state.clock.elapsedTime;
     const storeState = useGameStore.getState();
     const { players, localPlayer } = storeState;
+    if (hook.targetId) {
+      hookedTargetIdRef.current = hook.targetId;
+    }
     
     const isLocalOwner = localPlayer?.id === hook.ownerId;
     const targetPosition = isLocalOwner && writeLocalDragHookSocketPosition(ownerVisualPositionRef.current, launchSide)
@@ -193,6 +254,15 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
     const pZ = playerPosRef.current.z;
     
     const curPos = currentPosRef.current;
+    const serverTargetId = hook.targetId;
+    const attachedTargetId = hookedTargetIdRef.current;
+    const hasLiveAttachedTarget = Boolean(attachedTargetId && writeDragHookTargetPosition(
+      targetVisualPositionRef.current,
+      attachedTargetId,
+      curPos,
+      players,
+      localPlayer
+    ));
     
     if (hookStateRef.current === 'extending') {
       // Move forward - SAME AS LEFT CLICK
@@ -204,6 +274,18 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       curPos.x += velX * delta;
       curPos.y += velY * delta;
       curPos.z += velZ * delta;
+
+      if (serverTargetId && hasLiveAttachedTarget) {
+        const latchDistanceSq = DRAG_HOOK_TARGET_LATCH_DISTANCE * DRAG_HOOK_TARGET_LATCH_DISTANCE;
+        if (getPointSegmentDistanceSq(targetVisualPositionRef.current, previousPosition, curPos) <= latchDistanceSq) {
+          hasHitRef.current = true;
+          hookedTargetIdRef.current = serverTargetId;
+          hookStateRef.current = 'retracting';
+          curPos.x = targetVisualPositionRef.current.x;
+          curPos.y = targetVisualPositionRef.current.y;
+          curPos.z = targetVisualPositionRef.current.z;
+        }
+      }
       
       // Check max distance - if reached, start retracting
       const dx = curPos.x - hook.startPosition.x;
@@ -214,7 +296,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       }
       
       // Skill/terrain collision - if hit, start retracting
-      const authoritativeHit = hook.interceptedByChronosAegis
+      const authoritativeHit = !serverTargetId && hook.interceptedByChronosAegis
         ? getAuthoritativeProjectileImpactHit(
           previousPosition,
           hookDirection,
@@ -223,15 +305,17 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
           HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS
         )
         : null;
-      const aegisHit = getFirstChronosAegisVisualHit(
-        previousPosition,
-        hookDirection,
-        moveDistance + HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
-        hook.ownerTeam,
-        hook.ownerId,
-        HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS
-      );
-      const terrainHit = isPhysicsReady()
+      const aegisHit = !serverTargetId
+        ? getFirstChronosAegisVisualHit(
+          previousPosition,
+          hookDirection,
+          moveDistance + HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS,
+          hook.ownerTeam,
+          hook.ownerId,
+          HOOKSHOT_DRAG_HOOK_COLLISION_RADIUS
+        )
+        : null;
+      const terrainHit = !serverTargetId && isPhysicsReady()
         ? raycastDirection(previousPosition.x, previousPosition.y, previousPosition.z, dirX, dirY, dirZ, moveDistance + 0.5, {
           priority: 'visual',
           feature: 'projectile:hookshotDrag',
@@ -244,7 +328,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       const resolvedHit = authoritativeHit && (!hit?.hit || authoritativeHit.distance <= hitDistance)
         ? { hit: true, point: authoritativeHit.point, normal: authoritativeHit.normal }
         : hit;
-      if (resolvedHit?.hit) {
+      if (resolvedHit?.hit && !serverTargetId) {
         curPos.x = resolvedHit.point.x;
         curPos.y = resolvedHit.point.y;
         curPos.z = resolvedHit.point.z;
@@ -256,7 +340,7 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
       }
       
       // Player collision - if hit, start retracting while the server pulls the target in
-      if (!hasHitRef.current) {
+      if (!hasHitRef.current && !serverTargetId) {
         const clock = getFrameClock();
         const combatCache = rebuildCombatVisualFrameCache(players.values(), clock.nowMs, clock.nowMs, players.size);
         const hitPlayer = findCombatVisualPlayerHit(
@@ -277,12 +361,17 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
 
         if (hitPlayer) {
           hasHitRef.current = true;
-          hookedTargetIdRef.current = hitPlayer.id;
           hookStateRef.current = 'retracting';
         }
       }
     } else {
       // Retracting - move toward player - SAME AS LEFT CLICK
+      if (hasLiveAttachedTarget) {
+        curPos.x = targetVisualPositionRef.current.x;
+        curPos.y = targetVisualPositionRef.current.y;
+        curPos.z = targetVisualPositionRef.current.z;
+      }
+
       const toX = pX - curPos.x;
       const toY = pY - curPos.y;
       const toZ = pZ - curPos.z;
@@ -297,11 +386,13 @@ export const DragHookEffect = React.memo(({ slot }: DragHookProps) => {
         return;
       }
       
-      const dist = Math.sqrt(distSq);
-      const retractDelta = DRAG_HOOK_RETRACT_SPEED * delta;
-      curPos.x += (toX / dist) * retractDelta;
-      curPos.y += (toY / dist) * retractDelta;
-      curPos.z += (toZ / dist) * retractDelta;
+      if (!hasLiveAttachedTarget) {
+        const dist = Math.sqrt(distSq);
+        const retractDelta = DRAG_HOOK_RETRACT_SPEED * delta;
+        curPos.x += (toX / dist) * retractDelta;
+        curPos.y += (toY / dist) * retractDelta;
+        curPos.z += (toZ / dist) * retractDelta;
+      }
     }
     
     // Update hook position directly

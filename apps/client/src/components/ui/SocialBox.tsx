@@ -285,10 +285,8 @@ export function SocialButton({
 
 export function SocialBox({
   onClose,
-  onRequireAuth,
 }: {
   onClose: () => void;
-  onRequireAuth?: () => void;
 }) {
   const { isAuthenticated, user } = useWallet();
   const { joinLobby } = useNetwork();
@@ -486,6 +484,8 @@ export function SocialBox({
     });
   };
 
+  if (!isAuthenticated) return null;
+
   return (
     <GameDialog
       title="SOCIAL"
@@ -496,32 +496,7 @@ export function SocialBox({
       panelClassName="h-[min(70vh,40rem)]"
       bodyClassName="flex-1 flex overflow-hidden min-h-0"
     >
-      {!isAuthenticated ? (
-        <div className="flex flex-1 items-center justify-center p-[clamp(1.125rem,1.6vw,1.65rem)]">
-          <div className="max-w-sm text-center">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-white/5 text-white/20">
-              <UsersIcon className="h-7 w-7" />
-            </div>
-            <p className="font-display text-lg text-white">SIGN IN REQUIRED</p>
-            <p className="mt-2 text-sm font-body text-white/40">
-              Sign in to manage friends, requests, and lobby invites.
-            </p>
-            <div className="mt-5 flex justify-center">
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  onRequireAuth?.();
-                }}
-                className="px-[1.125rem] py-2 rounded-lg bg-orange-500 text-xs text-white font-display hover:bg-orange-400"
-              >
-                SIGN IN
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <>
+      <>
           <div className="w-32 lg:w-40 xl:w-48 shrink-0 border-r border-white/5 p-2.5 lg:p-3 space-y-1.5">
             {tabs.map((tab) => (
               <button
@@ -708,8 +683,7 @@ export function SocialBox({
               )}
             </div>
           </div>
-        </>
-      )}
+      </>
     </GameDialog>
   );
 }

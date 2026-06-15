@@ -37,7 +37,6 @@ function toHttpUrl(url: string): string {
 export const config = {
   serverUrl,
   serverHttpUrl: toHttpUrl(serverUrl),
-  discordAuthEnabled: env.VITE_DISCORD_AUTH_ENABLED !== 'false',
   clientDiagnosticsEnabled,
   antiCheatMovementTraceRecorderEnabled: clientDiagnosticsEnabled && envBool('VITE_ANTICHEAT_MOVEMENT_TRACE_RECORDER', true),
   antiCheatMovementTraceSampleRate: clientDiagnosticsEnabled

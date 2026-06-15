@@ -82,6 +82,17 @@ export const WALLET_AUTH_COLORS = {
   shimmer: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.15) 50%, transparent 70%)',
 } as const;
 
+export const DISCORD_AUTH_COLORS = {
+  base: '#5865F2',
+  hover: '#4752C4',
+  icon: '#B9C0FF',
+  border: 'rgba(255, 255, 255, 0.18)',
+  panelBg: 'rgba(88, 101, 242, 0.1)',
+  panelBorder: 'rgba(88, 101, 242, 0.25)',
+  glow: '0 0 34px rgba(88, 101, 242, 0.34), inset 0 1px 0 rgb(255 255 255 / 0.18)',
+  shimmer: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.18) 50%, transparent 70%)',
+} as const;
+
 export const ABILITY_COLORS = {
   ultimate: '#f59e0b',
   ultimateDeep: '#d97706',

@@ -551,6 +551,10 @@ function serializeRankedSeasonLeaderboardEntry(user: RankedSeasonStatsSummary, r
 }
 
 async function findUserForPayload(payload: AuthTokenPayload) {
+  if (payload.provider !== 'discord') {
+    return null;
+  }
+
   const filters: Prisma.UserWhereInput[] = [{ id: payload.userId }];
   if (payload.walletAddress) {
     filters.push({ walletAddress: payload.walletAddress });
@@ -562,6 +566,10 @@ async function findUserForPayload(payload: AuthTokenPayload) {
   });
 
   if (!user || (payload.walletAddress && user.walletAddress !== payload.walletAddress)) {
+    return null;
+  }
+
+  if (!user.authAccounts.some((account) => account.provider === 'discord')) {
     return null;
   }
 
@@ -676,36 +684,6 @@ async function getAuthenticatedPayload(req: Request): Promise<AuthTokenPayload |
   return verifyAuthToken(token);
 }
 
-async function ensureProviderAccount(userId: string, identity: AuthAccountIdentity): Promise<void> {
-  const existingAccount = await prisma.authAccount.findUnique({
-    where: {
-      provider_providerAccountId: {
-        provider: identity.provider,
-        providerAccountId: identity.providerAccountId,
-      },
-    },
-  });
-
-  if (existingAccount && existingAccount.userId !== userId) {
-    throw new ProviderConflictError();
-  }
-
-  if (existingAccount) {
-    await prisma.authAccount.update({
-      where: { id: existingAccount.id },
-      data: getAccountData(identity),
-    });
-    return;
-  }
-
-  await prisma.authAccount.create({
-    data: {
-      userId,
-      ...getAccountData(identity),
-    },
-  });
-}
-
 async function linkPhantomAccountToUser(userId: string, walletAddress: string) {
   return prisma.$transaction(async (tx) => {
     const [currentUser, existingAccount, walletUser] = await Promise.all([
@@ -799,22 +777,17 @@ async function issueUserSession(res: Response, userId: string, provider: AuthPro
 }
 
 async function createRegisteredUser(identity: PendingRegistrationIdentity, name: string) {
-  const walletAddress = identity.provider === 'phantom' ? identity.walletAddress ?? identity.providerAccountId : null;
-  if (identity.provider === 'phantom' && !walletAddress) {
-    throw new Error('Wallet address is required');
+  if (identity.provider !== 'discord') {
+    throw new ProviderConflictError('Discord sign-in is required');
   }
 
   return prisma.user.create({
     data: {
-      walletAddress,
+      walletAddress: null,
       name,
       lastLoginAt: new Date(),
       authAccounts: {
-        create: getAccountData({
-          ...identity,
-          providerAccountId: identity.provider === 'phantom' ? walletAddress! : identity.providerAccountId,
-          displayName: identity.displayName ?? (identity.provider === 'phantom' ? walletAddress : null),
-        }),
+        create: getAccountData(identity),
       },
     },
     include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
@@ -838,13 +811,11 @@ async function isPlayerNameTaken(name: string): Promise<boolean> {
 async function completePendingRegistration(pending: PendingAuthTokenPayload, name: string) {
   const identity: PendingRegistrationIdentity = {
     provider: pending.provider,
-    providerAccountId: pending.provider === 'phantom'
-      ? pending.walletAddress ?? pending.providerAccountId
-      : pending.providerAccountId,
+    providerAccountId: pending.providerAccountId,
     displayName: pending.displayName,
     avatarUrl: pending.avatarUrl,
     emailHash: pending.emailHash,
-    walletAddress: pending.walletAddress,
+    walletAddress: null,
   };
 
   const existingAccount = await prisma.authAccount.findUnique({
@@ -858,16 +829,6 @@ async function completePendingRegistration(pending: PendingAuthTokenPayload, nam
 
   if (existingAccount) {
     throw new ProviderConflictError('Provider account already exists');
-  }
-
-  if (identity.provider === 'phantom') {
-    const existingWalletUser = await prisma.user.findUnique({
-      where: { walletAddress: identity.providerAccountId },
-    });
-
-    if (existingWalletUser) {
-      throw new ProviderConflictError('User already exists');
-    }
   }
 
   return createRegisteredUser(identity, name);
@@ -932,12 +893,6 @@ router.post('/verify', async (req: Request, res: Response) => {
 
     nonceStore.delete(walletAddress);
 
-    const providerIdentity: AuthAccountIdentity = {
-      provider: 'phantom',
-      providerAccountId: walletAddress,
-      displayName: walletAddress,
-    };
-
     const linkedAccount = await prisma.authAccount.findUnique({
       where: {
         provider_providerAccountId: {
@@ -955,66 +910,30 @@ router.post('/verify', async (req: Request, res: Response) => {
     const authenticatedPayload = await getAuthenticatedPayload(req);
     const authenticatedUser = authenticatedPayload ? await findUserForPayload(authenticatedPayload) : null;
 
-    if (authenticatedUser && (!walletUser || walletUser.id === authenticatedUser.id)) {
-      const user = await linkPhantomAccountToUser(authenticatedUser.id, walletAddress);
-      setAuthCookie(res, createAuthToken({
-        userId: user.id,
-        provider: 'phantom',
-        walletAddress: user.walletAddress,
-        expiresIn: JWT_EXPIRY,
-      }));
-
-      res.json({
-        authenticated: true,
-        isNewUser: false,
-        provider: 'phantom',
-        linked: true,
-        user: serializeUser(user),
-      });
+    if (!authenticatedUser) {
+      res.status(401).json({ error: 'Sign in with Discord before connecting Phantom' });
       return;
     }
 
-    if (authenticatedUser && walletUser && walletUser.id !== authenticatedUser.id) {
+    if (walletUser && walletUser.id !== authenticatedUser.id) {
       res.status(409).json({ error: 'That Phantom wallet is already linked to another profile' });
       return;
     }
 
-    if (walletUser) {
-      await ensureProviderAccount(walletUser.id, providerIdentity);
-      await issueUserSession(res, walletUser.id, 'phantom');
-
-      const user = await prisma.user.findUniqueOrThrow({
-        where: { id: walletUser.id },
-        include: { authAccounts: { orderBy: { createdAt: 'asc' } } },
-      });
-
-      res.json({
-        authenticated: true,
-        isNewUser: false,
-        provider: 'phantom',
-        user: serializeUser(user),
-      });
-      return;
-    }
-
-    const tempToken = createPendingAuthToken({
-      provider: 'phantom',
-      providerAccountId: walletAddress,
-      walletAddress,
-      displayName: walletAddress,
-    });
-    setPendingAuthCookie(res, tempToken);
+    const user = await linkPhantomAccountToUser(authenticatedUser.id, walletAddress);
+    setAuthCookie(res, createAuthToken({
+      userId: user.id,
+      provider: 'discord',
+      walletAddress: user.walletAddress,
+      expiresIn: JWT_EXPIRY,
+    }));
 
     res.json({
       authenticated: true,
-      isNewUser: true,
-      provider: 'phantom',
-      walletAddress,
-      pendingRegistration: {
-        provider: 'phantom',
-        walletAddress,
-        displayName: walletAddress,
-      },
+      isNewUser: false,
+      provider: 'discord',
+      linked: true,
+      user: serializeUser(user),
     });
   } catch (error) {
     if (error instanceof ProviderConflictError) {
@@ -1050,13 +969,9 @@ router.post('/register', async (req: Request, res: Response) => {
       return;
     }
 
-    if (
-      pending.provider === 'phantom' &&
-      typeof req.body?.walletAddress === 'string' &&
-      pending.walletAddress &&
-      req.body.walletAddress !== pending.walletAddress
-    ) {
-      res.status(400).json({ error: 'Wallet address does not match pending registration' });
+    if (pending.provider !== 'discord') {
+      clearAuthCookie(res);
+      res.status(401).json({ error: 'Discord sign-in is required' });
       return;
     }
 
@@ -1124,6 +1039,11 @@ router.get('/session', async (req: Request, res: Response) => {
 
     const pending = verifyPendingAuthToken(token);
     if (pending) {
+      if (pending.provider !== 'discord') {
+        sendUnauthenticated('Discord sign-in is required', true);
+        return;
+      }
+
       res.json({
         authenticated: true,
         isNewUser: true,
@@ -1146,7 +1066,7 @@ router.get('/session', async (req: Request, res: Response) => {
 
     const user = await findUserForPayload(payload);
     if (!user) {
-      sendUnauthenticated('User not found', true);
+      sendUnauthenticated('Discord sign-in is required', true);
       return;
     }
 
