@@ -19,7 +19,6 @@ COPY apps/server/package.json apps/server/package.json
 COPY apps/client/package.json apps/client/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/physics/package.json packages/physics/package.json
-COPY packages/game-logic/package.json packages/game-logic/package.json
 
 RUN pnpm install --frozen-lockfile
 
@@ -41,7 +40,6 @@ COPY apps/server/package.json apps/server/package.json
 COPY apps/server/prisma apps/server/prisma
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/physics/package.json packages/physics/package.json
-COPY packages/game-logic/package.json packages/game-logic/package.json
 
 RUN pnpm install --prod --frozen-lockfile --filter @voxel-strike/server... \
   && pnpm --filter @voxel-strike/server db:generate
@@ -49,7 +47,6 @@ RUN pnpm install --prod --frozen-lockfile --filter @voxel-strike/server... \
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/packages/shared/dist packages/shared/dist
 COPY --from=build /app/packages/physics/dist packages/physics/dist
-COPY --from=build /app/packages/game-logic/dist packages/game-logic/dist
 
 WORKDIR /app/apps/server
 

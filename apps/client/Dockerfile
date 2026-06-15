@@ -14,7 +14,6 @@ COPY apps/client/package.json apps/client/package.json
 COPY apps/server/package.json apps/server/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/physics/package.json packages/physics/package.json
-COPY packages/game-logic/package.json packages/game-logic/package.json
 
 RUN pnpm install --frozen-lockfile
 
