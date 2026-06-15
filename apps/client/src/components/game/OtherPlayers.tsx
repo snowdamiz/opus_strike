@@ -9,10 +9,9 @@ import {
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import type { HeroId, Player, Team } from '@voxel-strike/shared';
+import type { Player, Team } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
-import { HERO_COLOR_SCHEMES as HERO_ICON_COLORS } from '../../styles/colorTokens';
 import type { RemotePlayerQualityConfig } from './visualQuality';
 import { RemoteHeroBatchRenderer } from './RemoteHeroBatchRenderer';
 import {
@@ -374,9 +373,7 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
       {/* Nameplate */}
       {!isVeiled && config.showNameplates && (
         <Nameplate
-          heroId={player.heroId}
           name={player.name}
-          team={player.team}
           health={player.health}
           maxHealth={player.maxHealth}
           height={visibleHeight}
@@ -400,14 +397,8 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
   );
 });
 
-function getTeamColor(team: Team): string {
-  return team === 'red' ? '#ef4444' : '#38bdf8';
-}
-
 interface NameplateProps {
-  heroId: HeroId | null;
   name: string;
-  team: Team;
   health: number;
   maxHealth: number;
   height: number;
@@ -452,43 +443,25 @@ function trimTextToWidth(ctx: CanvasRenderingContext2D, value: string, maxWidth:
 function drawNameplateTexture(
   canvas: HTMLCanvasElement,
   name: string,
-  teamColor: string,
-  heroColor: string,
   healthPercent: number
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   ctx.clearRect(0, 0, NAMEPLATE_CANVAS_WIDTH, NAMEPLATE_CANVAS_HEIGHT);
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-  ctx.shadowBlur = 10;
-  ctx.shadowOffsetY = 2;
-  roundedRectPath(ctx, 8, 8, 240, 40, 8);
-  ctx.fillStyle = 'rgba(5, 10, 18, 0.62)';
-  ctx.fill();
-  ctx.restore();
-
-  ctx.save();
-  ctx.fillStyle = heroColor;
-  ctx.shadowColor = heroColor;
-  ctx.shadowBlur = 8;
-  ctx.beginPath();
-  ctx.arc(28, 28, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
 
   ctx.font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff';
   ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetY = 1;
-  ctx.fillText(trimTextToWidth(ctx, name.toUpperCase(), 178), 44, 27);
+  ctx.shadowBlur = 5;
+  ctx.shadowOffsetY = 2;
+  ctx.fillText(trimTextToWidth(ctx, name.toUpperCase(), 224), NAMEPLATE_CANVAS_WIDTH / 2, 27);
 
-  const barX = 30;
+  const barX = 34;
   const barY = 52;
-  const barWidth = 196;
+  const barWidth = 188;
   const barHeight = 6;
   roundedRectPath(ctx, barX, barY, barWidth, barHeight, 3);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
@@ -508,18 +481,11 @@ function drawNameplateTexture(
     ctx.fillStyle = gradient;
     ctx.fill();
   }
-
-  ctx.fillStyle = teamColor;
-  ctx.globalAlpha = 0.9;
-  roundedRectPath(ctx, 232, 14, 6, 42, 3);
-  ctx.fill();
 }
 
-const Nameplate = memo(function Nameplate({ heroId, name, team, health, maxHealth, height }: NameplateProps) {
-  const teamColor = getTeamColor(team);
+const Nameplate = memo(function Nameplate({ name, health, maxHealth, height }: NameplateProps) {
   const healthPercent = Math.max(0, Math.min(1, health / Math.max(1, maxHealth)));
   const quantizedHealthPercent = Math.round(healthPercent * NAMEPLATE_HEALTH_BUCKETS) / NAMEPLATE_HEALTH_BUCKETS;
-  const heroColor = heroId ? HERO_ICON_COLORS[heroId].primary : teamColor;
   const texture = useMemo(() => {
     const canvas = document.createElement('canvas');
     canvas.width = NAMEPLATE_CANVAS_WIDTH;
@@ -533,9 +499,9 @@ const Nameplate = memo(function Nameplate({ heroId, name, team, health, maxHealt
   }, []);
 
   useEffect(() => {
-    drawNameplateTexture(texture.image as HTMLCanvasElement, name, teamColor, heroColor, quantizedHealthPercent);
+    drawNameplateTexture(texture.image as HTMLCanvasElement, name, quantizedHealthPercent);
     texture.needsUpdate = true;
-  }, [heroColor, name, quantizedHealthPercent, teamColor, texture]);
+  }, [name, quantizedHealthPercent, texture]);
 
   useEffect(() => () => texture.dispose(), [texture]);
 

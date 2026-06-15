@@ -56,6 +56,7 @@ export type ServerMessage =
   | { type: 'playerHealed'; payload: PlayerHealedEvent }
   | { type: 'chronosAegisDamaged'; payload: ChronosAegisDamagedEvent }
   | { type: 'chronosAegisBroken'; payload: ChronosAegisBrokenEvent }
+  | { type: 'phantomShieldBroken'; payload: PhantomShieldBrokenEvent }
   | { type: 'damage'; payload: DamageEvent };
 
 export interface ChronosAegisDamagedEvent {
@@ -71,6 +72,13 @@ export interface ChronosAegisDamagedEvent {
 }
 
 export interface ChronosAegisBrokenEvent {
+  playerId: string;
+  position: Vec3;
+  direction: Vec3;
+  serverTime: number;
+}
+
+export interface PhantomShieldBrokenEvent {
   playerId: string;
   position: Vec3;
   direction: Vec3;
@@ -228,6 +236,7 @@ export interface MatchSnapshotMessage {
   blueFlag: FlagSync;
   roundTimeRemaining: number;
   phaseEndTime: number | null;
+  gameClockFrozen?: boolean;
 }
 
 export interface FlagSync {

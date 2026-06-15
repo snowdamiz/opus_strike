@@ -246,13 +246,15 @@ function RoundTimer({
   gamePhase,
   phaseEndTime,
   roundTimeRemaining,
+  gameClockFrozen,
 }: {
   gamePhase: string;
   phaseEndTime: number | null;
   roundTimeRemaining: number;
+  gameClockFrozen: boolean;
 }) {
   const now = useHudNow();
-  const displayedRoundTimeRemaining = gamePhase === 'playing' && phaseEndTime
+  const displayedRoundTimeRemaining = gamePhase === 'playing' && !gameClockFrozen && phaseEndTime
     ? Math.max(0, Math.ceil((phaseEndTime - now) / 1000))
     : roundTimeRemaining;
 
@@ -490,6 +492,7 @@ export function HUD() {
     blueScore,
     roundTimeRemaining,
     phaseEndTime,
+    gameClockFrozen,
     redFlag,
     blueFlag,
     clientCooldowns,
@@ -514,6 +517,7 @@ export function HUD() {
       blueScore: state.blueScore,
       roundTimeRemaining: state.roundTimeRemaining,
       phaseEndTime: state.phaseEndTime,
+      gameClockFrozen: state.gameClockFrozen,
       redFlag: state.redFlag,
       blueFlag: state.blueFlag,
       clientCooldowns: state.clientCooldowns,
@@ -718,6 +722,7 @@ export function HUD() {
                     gamePhase={gamePhase}
                     phaseEndTime={phaseEndTime}
                     roundTimeRemaining={roundTimeRemaining}
+                    gameClockFrozen={gameClockFrozen}
                   />
                   <span className="text-[6px] sm:text-[7px] font-display text-white/30 tracking-[0.24em] -mt-0.5">BATTLE</span>
                 </div>

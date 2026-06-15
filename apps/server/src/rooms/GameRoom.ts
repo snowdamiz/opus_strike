@@ -151,6 +151,7 @@ import type {
   MatchSummaryPlayer,
   SelfMovementAuthority,
   MatchSnapshotMessage,
+  PhantomShieldBrokenEvent,
   PlayerPingRequestMessage,
   PlayerPingsMessage,
   PlayerInterestMessage,
@@ -321,6 +322,7 @@ interface JoinOptions {
   preferredTeam?: Team;
   clientId?: string;
   entryTicket?: string;
+  reconnectToRunningGame?: boolean;
   authToken?: string;
   clientBuildId?: string;
   movementProtocolVersion?: number;
@@ -487,6 +489,15 @@ interface SecurityEvent {
   position?: PlainVec3;
   serverTime: number;
   detail?: Record<string, unknown>;
+}
+
+interface ReconnectParticipant {
+  userId: string;
+  lobbyPlayerId: string;
+  displayName: string;
+  assignedTeam?: Team;
+  selectedHero?: HeroId;
+  observer: boolean;
 }
 
 interface CustomMessageMetric {
@@ -866,6 +877,7 @@ export class GameRoom extends Room<GameState> {
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
   private readonly playerEntryTickets = new Map<string, GameEntryTicketClaims>();
+  private readonly reconnectParticipants = new Map<string, ReconnectParticipant>();
   private readonly clientsBySessionId = new Map<string, Client>();
   private readonly observerClientIds = new Set<string>();
   private readonly securityEvents: SecurityEvent[] = [];
@@ -908,35 +920,40 @@ export class GameRoom extends Room<GameState> {
         gameRoomId: this.roomId,
       });
       if (!ticket) {
-        this.recordAuthReject(client, 'invalid_entry_ticket', { lobbyId: this.lobbyId });
-        throw new Error('Valid game entry ticket required');
-      }
-      const consumed = await consumeReplayNonce('game_entry', ticket.nonce, ticket.expiresAt);
-      if (!consumed) {
-        this.recordAuthReject(client, 'entry_ticket_nonce_replay', { lobbyId: this.lobbyId });
-        throw new Error('Game entry ticket already used');
-      }
-      if (auth.kind === 'authenticated' && auth.userId !== ticket.userId) {
-        this.recordAuthReject(client, 'entry_ticket_user_mismatch', {
-          lobbyId: this.lobbyId,
-          authUserId: auth.userId,
-          ticketUserId: ticket.userId,
-        });
-        throw new Error('Game entry ticket does not match authenticated user');
-      }
-      if (auth.kind === 'guest') {
-        const competitiveRating = DEFAULT_MATCHMAKING_RATING;
-        auth = {
-          kind: 'guest',
-          userId: ticket.userId,
-          displayName: ticket.displayName,
-          competitiveRating,
-          rankedGames: 0,
-          rankedPlacementsRemaining: 0,
-          rankDivisionIndex: getRankDivisionIndex(competitiveRating) ?? DEFAULT_RANK_DIVISION_INDEX,
-          rank: getRankFromRating(competitiveRating, 0),
-          rankPayload: serializeRankPayload(null),
-        };
+        ticket = this.createRunningGameReconnectTicket(auth, options);
+        if (!ticket) {
+          this.recordAuthReject(client, 'invalid_entry_ticket', { lobbyId: this.lobbyId });
+          throw new Error('Valid game entry ticket required');
+        }
+      } else {
+        const consumed = await consumeReplayNonce('game_entry', ticket.nonce, ticket.expiresAt);
+        if (!consumed) {
+          this.recordAuthReject(client, 'entry_ticket_nonce_replay', { lobbyId: this.lobbyId });
+          throw new Error('Game entry ticket already used');
+        }
+        if (auth.kind === 'authenticated' && auth.userId !== ticket.userId) {
+          this.recordAuthReject(client, 'entry_ticket_user_mismatch', {
+            lobbyId: this.lobbyId,
+            authUserId: auth.userId,
+            ticketUserId: ticket.userId,
+          });
+          throw new Error('Game entry ticket does not match authenticated user');
+        }
+        if (auth.kind === 'guest') {
+          const competitiveRating = DEFAULT_MATCHMAKING_RATING;
+          auth = {
+            kind: 'guest',
+            userId: ticket.userId,
+            displayName: ticket.displayName,
+            competitiveRating,
+            rankedGames: 0,
+            rankedPlacementsRemaining: 0,
+            rankDivisionIndex: getRankDivisionIndex(competitiveRating) ?? DEFAULT_RANK_DIVISION_INDEX,
+            rank: getRankFromRating(competitiveRating, 0),
+            rankPayload: serializeRankPayload(null),
+          };
+        }
+        this.rememberReconnectParticipant(ticket);
       }
     }
 
@@ -954,6 +971,70 @@ export class GameRoom extends Room<GameState> {
 
     this.recordClientJoinHints(client, auth, options);
     return { auth, ticket };
+  }
+
+  private rememberReconnectParticipant(ticket: GameEntryTicketClaims): void {
+    this.reconnectParticipants.set(ticket.userId, {
+      userId: ticket.userId,
+      lobbyPlayerId: ticket.lobbyPlayerId,
+      displayName: ticket.displayName,
+      assignedTeam: ticket.assignedTeam,
+      selectedHero: ticket.selectedHero,
+      observer: ticket.observer === true,
+    });
+  }
+
+  private getReconnectIdentity(auth: RoomAuthContext, options: JoinOptions): string | null {
+    if (auth.kind === 'authenticated') return auth.userId;
+
+    const clientId = typeof options.clientId === 'string' ? options.clientId.trim() : '';
+    if (!clientId || clientId.length > 128 || !/^[a-zA-Z0-9._:-]+$/.test(clientId)) return null;
+    return `guest:${clientId}`;
+  }
+
+  private canAcceptRunningGameReconnect(): boolean {
+    if (!this.lobbyId || this.matchCancelled) return false;
+    return this.state?.phase !== 'game_end';
+  }
+
+  private createRunningGameReconnectTicket(
+    auth: RoomAuthContext,
+    options: JoinOptions
+  ): GameEntryTicketClaims | null {
+    if (options.reconnectToRunningGame !== true || !this.canAcceptRunningGameReconnect()) return null;
+
+    const identity = this.getReconnectIdentity(auth, options);
+    const participant = identity ? this.reconnectParticipants.get(identity) : null;
+    if (!participant || !this.lobbyId) return null;
+
+    const now = Date.now();
+    return {
+      version: 1,
+      lobbyId: this.lobbyId,
+      gameRoomId: this.roomId,
+      lobbyPlayerId: participant.lobbyPlayerId,
+      userId: participant.userId,
+      displayName: participant.displayName,
+      assignedTeam: participant.assignedTeam,
+      selectedHero: participant.selectedHero,
+      observer: participant.observer ? true : undefined,
+      issuedAt: now,
+      expiresAt: now + 60_000,
+      nonce: `reconnect:${participant.userId}:${now}`,
+    };
+  }
+
+  private syncReconnectParticipantFromPlayer(player: Player): void {
+    const userId = this.playerAuthContexts.get(player.id)?.userId ?? this.playerEntryTickets.get(player.id)?.userId;
+    if (!userId) return;
+
+    const participant = this.reconnectParticipants.get(userId);
+    if (!participant) return;
+
+    participant.displayName = player.name || participant.displayName;
+    participant.assignedTeam = player.team as Team;
+    participant.selectedHero = isHeroId(player.heroId) ? player.heroId : participant.selectedHero;
+    participant.observer = false;
   }
 
   onCreate(options: CreateOptions) {
@@ -1322,7 +1403,7 @@ export class GameRoom extends Room<GameState> {
         this.broadcastTracked('playerLeft', { playerId: existingSessionId });
       }
       
-      // Register this identity mapping. The local clientId is not used as identity.
+      // Register this durable identity mapping for duplicate-tab handling.
       this.clientIdToSessionId.set(identityKey, client.sessionId);
       this.sessionIdToClientId.set(client.sessionId, identityKey);
     }
@@ -1376,6 +1457,11 @@ export class GameRoom extends Room<GameState> {
     if (entryTicket?.selectedHero && isHeroId(entryTicket.selectedHero)) {
       this.setPlayerHero(player, entryTicket.selectedHero);
     }
+    if ((this.state.phase === 'countdown' || this.state.phase === 'playing') && player.heroId) {
+      player.state = 'alive';
+      this.placePlayerAtSpawn(player, 'respawn');
+    }
+    this.syncReconnectParticipantFromPlayer(player);
 
     // Send existing players to the new client with recipient-scoped position data.
     this.state.players.forEach((existingPlayer) => {
@@ -2280,6 +2366,7 @@ export class GameRoom extends Room<GameState> {
       blueFlag: this.getFlagSync('blue'),
       roundTimeRemaining: this.state.roundTimeRemaining,
       phaseEndTime: this.state.phaseEndTime || null,
+      gameClockFrozen: this.devGameClockFrozen,
     };
   }
 
@@ -2290,6 +2377,7 @@ export class GameRoom extends Room<GameState> {
       snapshot.redScore,
       snapshot.blueScore,
       snapshot.phaseEndTime ?? 0,
+      snapshot.gameClockFrozen ? 1 : 0,
       snapshot.redFlag.carrierId ?? '',
       snapshot.redFlag.isAtBase ? 1 : 0,
       Math.round(snapshot.redFlag.position.x * TRANSFORM_POSITION_SCALE),
@@ -2525,6 +2613,7 @@ export class GameRoom extends Room<GameState> {
       reservedHumanPlayers: this.reservedHumanPlayers,
       rankedEligibleCandidate: this.rankedEligibilityCandidate,
       rankedRequiredHumanPlayers: this.rankedRequiredHumanPlayers,
+      reconnectIdentityKeys: Array.from(this.reconnectParticipants.keys()),
       wagerEnabled: Boolean(this.wagerContext),
       tickDurationP95Ms: load.tickDurationP95Ms,
       tickDurationP99Ms: load.tickDurationP99Ms,
@@ -2740,6 +2829,23 @@ export class GameRoom extends Room<GameState> {
         direction: payload.direction,
         serverTime: payload.serverTime,
       });
+    }
+  }
+
+  private broadcastPhantomShieldBroken(
+    target: Player,
+    source: Player | null,
+    payload: PhantomShieldBrokenEvent
+  ): void {
+    const now = this.state.serverTime || Date.now();
+    for (const client of this.clients) {
+      const recipient = this.state.players.get(client.sessionId) ?? null;
+      const targetInterest = recipient ? this.getRecipientInterest(recipient, target, now) : undefined;
+      const canKnowTarget = this.shouldSendExactEnemyState(recipient, target.id, target, now, targetInterest);
+      const isParticipant = recipient?.id === target.id || (source && recipient?.id === source.id);
+
+      if (!isParticipant && !canKnowTarget) continue;
+      this.sendTracked(client, 'phantomShieldBroken', payload);
     }
   }
 
@@ -7018,6 +7124,12 @@ export class GameRoom extends Room<GameState> {
     const phantomShield = target.abilities.get('phantom_personal_shield');
     if (phantomShield?.isActive) {
       deactivateActiveAbility(phantomShield);
+      this.broadcastPhantomShieldBroken(target, source ?? null, {
+        playerId: target.id,
+        position: this.vec3SchemaToPlain(target.position),
+        direction: sourceDirection ?? { x: 0, y: 1, z: 0 },
+        serverTime: now,
+      });
       return false;
     }
 
@@ -8660,6 +8772,7 @@ export class GameRoom extends Room<GameState> {
     // Initialize abilities for this hero
     initializePlayerAbilities(player, heroId);
     this.syncMatchParticipant(player);
+    this.syncReconnectParticipantFromPlayer(player);
 
     return true;
   }
@@ -8768,12 +8881,16 @@ export class GameRoom extends Room<GameState> {
     const now = Date.now();
     if (enabled) {
       this.state.roundTimeRemaining = this.getRoundTimeRemaining(now);
+      if (this.state.roundStartTime) {
+        this.state.phaseEndTime = now + this.state.roundTimeRemaining * 1000;
+      }
       this.devGameClockFrozen = true;
     } else {
       this.devGameClockFrozen = false;
       if (this.state.roundStartTime) {
         const elapsedSeconds = this.config.roundTimeSeconds - this.state.roundTimeRemaining;
         this.state.roundStartTime = now - elapsedSeconds * 1000;
+        this.state.phaseEndTime = now + this.state.roundTimeRemaining * 1000;
       }
     }
 
@@ -10156,7 +10273,7 @@ export class GameRoom extends Room<GameState> {
     player.spawnProtectionUntil = Date.now() + this.config.spawnProtectionSeconds * 1000;
     this.blazeBurnEffects.delete(player.id);
 
-    this.placePlayerAtSpawn(player);
+    this.placePlayerAtSpawn(player, 'respawn');
     player.velocity.x = 0;
     player.velocity.y = 0;
     player.velocity.z = 0;

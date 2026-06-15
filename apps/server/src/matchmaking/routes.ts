@@ -30,6 +30,7 @@ const MATCHMAKING_RATE_LIMITS = {
   ticket: { limit: 18, windowMs: 60 * 1000 },
   rankedStatus: { limit: 12, windowMs: 60 * 1000 },
   rankedTicket: { limit: 8, windowMs: 60 * 1000 },
+  runningGameStatus: { limit: 60, windowMs: 60 * 1000 },
 } as const;
 
 interface MatchmakingUserContext {
@@ -58,6 +59,8 @@ interface MatchmakingQueueStatus {
   requiredPlayers?: number;
   capacity: InGameCapacitySnapshot;
 }
+
+const RUNNING_GAME_PHASES = new Set(['waiting', 'hero_select', 'countdown', 'playing', 'round_end']);
 
 function getRequestToken(req: Request): string | null {
   const authorization = req.headers.authorization;
@@ -121,6 +124,12 @@ function readClientId(req: Request): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > 128) return null;
   return /^[a-zA-Z0-9._:-]+$/.test(trimmed) ? trimmed : null;
+}
+
+function readRoomIdParam(req: Request): string | null {
+  const value = typeof req.params.roomId === 'string' ? req.params.roomId.trim() : '';
+  if (!value || value.length > 128) return null;
+  return /^[a-zA-Z0-9_-]+$/.test(value) ? value : null;
 }
 
 async function getMatchmakingUserContext(
@@ -291,6 +300,48 @@ router.get('/queue-status', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[matchmaking] Failed to get queue status:', error);
     res.status(500).json({ error: 'Failed to get queue status' });
+  }
+});
+
+router.get('/running-game/:roomId', async (req: Request, res: Response) => {
+  if (!enforceMatchmakingRateLimit(req, res, 'matchmaking:running-game-status', MATCHMAKING_RATE_LIMITS.runningGameStatus)) return;
+
+  try {
+    const roomId = readRoomIdParam(req);
+    if (!roomId) {
+      res.status(400).json({ error: 'Invalid room id' });
+      return;
+    }
+
+    const clientId = readClientId(req);
+    const context = await getMatchmakingUserContext(req, { allowGuest: true, guestClientId: clientId });
+    if (!enforceMatchmakingIdentityRateLimit(res, 'matchmaking:running-game-status:user', MATCHMAKING_RATE_LIMITS.runningGameStatus, context.userId)) return;
+
+    const rooms = await matchMaker.query({ name: 'game_room' });
+    const room = (rooms as any[]).find((candidate) => candidate.roomId === roomId);
+    const metadata = room?.metadata ?? {};
+    const reconnectIdentityKeys = Array.isArray(metadata.reconnectIdentityKeys)
+      ? metadata.reconnectIdentityKeys
+      : [];
+    const status = typeof metadata.status === 'string' ? metadata.status : '';
+    const canReconnect = Boolean(
+      room
+      && RUNNING_GAME_PHASES.has(status)
+      && reconnectIdentityKeys.includes(context.userId)
+    );
+
+    res.json({
+      available: canReconnect,
+      reason: canReconnect ? undefined : 'unavailable',
+      roomId: canReconnect ? roomId : undefined,
+      status: canReconnect ? status : undefined,
+      matchMode: canReconnect ? metadata.matchMode : undefined,
+      mapSeed: canReconnect ? metadata.mapSeed : undefined,
+      mapThemeId: canReconnect ? metadata.mapThemeId : undefined,
+    });
+  } catch (error) {
+    console.error('[matchmaking] Failed to check running game:', error);
+    sendRouteError(res, error, 'Failed to check running game');
   }
 });
 

@@ -21,14 +21,18 @@ const PHANTOM_SHIELD_CAST_FADE_OUT_MS = 160;
 const PHANTOM_SHIELD_CAST_FADE_START_PROGRESS = 0.46;
 const PHANTOM_SHIELD_CAST_SIDES = [-1, 1] as const;
 const MAX_SHIELD_CAST_EFFECTS = 14;
+const MAX_SHIELD_BREAK_EFFECTS = 18;
 const SHIELD_CAST_RAY_COUNT = 18;
 const SHIELD_CAST_PALM_SPARK_COUNT = 8;
+const SHIELD_BREAK_SHARD_COUNT = 16;
 const SHIELD_RADIUS = 1.58;
 const SHIELD_CENTER_Y_OFFSET = 0;
 const SHIELD_FADE_IN_SECONDS = 0.18;
 const SHIELD_FADE_OUT_SECONDS = 0.45;
+const PHANTOM_SHIELD_BREAK_DURATION_MS = 520;
 const SHIELD_AUDIO_FADE_IN_MS = 90;
 const SHIELD_AUDIO_FADE_OUT_MS = 180;
+const SHIELD_AUDIO_BREAK_FADE_OUT_MS = 90;
 const REMOTE_BUBBLE_OPACITY = 0.16;
 const REMOTE_WIREFRAME_OPACITY = 0.34;
 const REMOTE_RIM_OPACITY = 0.34;
@@ -55,6 +59,15 @@ interface ShieldCastEffectData {
   fallbackYaw?: number;
 }
 
+interface ShieldBreakEffectData {
+  id: string;
+  playerId: string;
+  isLocalPlayer: boolean;
+  startFrameTime: number;
+  position: { x: number; y: number; z: number };
+  direction: { x: number; y: number; z: number };
+}
+
 interface EffectSlot<T> {
   active: boolean;
   endFrameTime: number;
@@ -69,7 +82,24 @@ interface TriggerPhantomShieldCastEffectOptions {
   playAudio?: boolean;
 }
 
+interface TriggerPhantomShieldBreakEffectOptions {
+  playerId: string;
+  isLocalPlayer?: boolean;
+  position: { x: number; y: number; z: number };
+  direction?: { x: number; y: number; z: number };
+  playAudio?: boolean;
+}
+
 interface ShieldCastRay {
+  direction: THREE.Vector3;
+  quaternion: THREE.Quaternion;
+  spin: number;
+  delay: number;
+  length: number;
+  width: number;
+}
+
+interface ShieldBreakShard {
   direction: THREE.Vector3;
   quaternion: THREE.Quaternion;
   spin: number;
@@ -100,9 +130,25 @@ const shieldCastEffectSlots: EffectSlot<ShieldCastEffectData>[] = Array.from({ l
   },
 }));
 
+const shieldBreakEffectSlots: EffectSlot<ShieldBreakEffectData>[] = Array.from({ length: MAX_SHIELD_BREAK_EFFECTS }, (_, index) => ({
+  active: false,
+  endFrameTime: 0,
+  data: {
+    id: `phantom_shield_break_slot_${index}`,
+    playerId: '',
+    isLocalPlayer: false,
+    startFrameTime: 0,
+    position: { x: 0, y: 0, z: 0 },
+    direction: { x: 0, y: 1, z: 0 },
+  },
+}));
+
 let shieldCastEffectCounter = 0;
 let nextShieldCastEffectSlot = 0;
 let shieldCastEffectRevision = 0;
+let shieldBreakEffectCounter = 0;
+let nextShieldBreakEffectSlot = 0;
+let shieldBreakEffectRevision = 0;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -120,6 +166,21 @@ function claimShieldCastEffectSlot(): EffectSlot<ShieldCastEffectData> {
 
   const slot = shieldCastEffectSlots[nextShieldCastEffectSlot];
   nextShieldCastEffectSlot = (nextShieldCastEffectSlot + 1) % shieldCastEffectSlots.length;
+  return slot;
+}
+
+function claimShieldBreakEffectSlot(): EffectSlot<ShieldBreakEffectData> {
+  for (let i = 0; i < shieldBreakEffectSlots.length; i++) {
+    const index = (nextShieldBreakEffectSlot + i) % shieldBreakEffectSlots.length;
+    const slot = shieldBreakEffectSlots[index];
+    if (!slot.active) {
+      nextShieldBreakEffectSlot = (index + 1) % shieldBreakEffectSlots.length;
+      return slot;
+    }
+  }
+
+  const slot = shieldBreakEffectSlots[nextShieldBreakEffectSlot];
+  nextShieldBreakEffectSlot = (nextShieldBreakEffectSlot + 1) % shieldBreakEffectSlots.length;
   return slot;
 }
 
@@ -166,6 +227,47 @@ export function triggerPhantomShieldCastEffect(options: TriggerPhantomShieldCast
   }
 }
 
+function getShieldBreakAudioPosition(options: TriggerPhantomShieldBreakEffectOptions): { x: number; y: number; z: number } | undefined {
+  if (options.isLocalPlayer) return undefined;
+  return {
+    x: options.position.x,
+    y: options.position.y + 1.1,
+    z: options.position.z,
+  };
+}
+
+export function triggerPhantomShieldBreakEffect(options: TriggerPhantomShieldBreakEffectOptions): void {
+  const frameNow = getFrameClock().nowMs;
+  const slot = claimShieldBreakEffectSlot();
+
+  slot.active = true;
+  slot.endFrameTime = frameNow + PHANTOM_SHIELD_BREAK_DURATION_MS;
+  slot.data.id = `phantom_shield_break_${shieldBreakEffectCounter++}`;
+  slot.data.playerId = options.playerId;
+  slot.data.isLocalPlayer = Boolean(options.isLocalPlayer);
+  slot.data.startFrameTime = frameNow;
+  slot.data.position = {
+    x: options.position.x,
+    y: options.position.y + SHIELD_CENTER_Y_OFFSET,
+    z: options.position.z,
+  };
+  slot.data.direction = options.direction
+    ? { ...options.direction }
+    : { x: 0, y: 1, z: 0 };
+  shieldBreakEffectRevision++;
+
+  stopShieldAudioLoop(options.playerId, SHIELD_AUDIO_BREAK_FADE_OUT_MS);
+  if (options.playAudio !== false) {
+    void playSharedSound('phantomShieldCast', {
+      position: getShieldBreakAudioPosition(options),
+      durationMs: 280,
+      fadeOutMs: 120,
+      pitch: 1.24,
+      volume: 0.78,
+    });
+  }
+}
+
 function collectActiveShieldCastEffects(frameNow: number, target: ShieldCastEffectData[]): number {
   target.length = 0;
 
@@ -180,6 +282,22 @@ function collectActiveShieldCastEffects(frameNow: number, target: ShieldCastEffe
   }
 
   return shieldCastEffectRevision;
+}
+
+function collectActiveShieldBreakEffects(frameNow: number, target: ShieldBreakEffectData[]): number {
+  target.length = 0;
+
+  for (const slot of shieldBreakEffectSlots) {
+    if (!slot.active) continue;
+    if (frameNow >= slot.endFrameTime) {
+      slot.active = false;
+      shieldBreakEffectRevision++;
+      continue;
+    }
+    target.push(slot.data);
+  }
+
+  return shieldBreakEffectRevision;
 }
 
 function getShieldDurationMs(): number {
@@ -595,6 +713,150 @@ function PhantomShieldCastEffect({ effect }: { effect: ShieldCastEffectData }) {
   );
 }
 
+function createShieldBreakShards(effectId: string): ShieldBreakShard[] {
+  const shards: ShieldBreakShard[] = [];
+  const idPhase = (effectId.length % 17) * 0.19;
+
+  for (let index = 0; index < SHIELD_BREAK_SHARD_COUNT; index++) {
+    const y = -0.24 + (index / Math.max(1, SHIELD_BREAK_SHARD_COUNT - 1)) * 1.4;
+    const radius = Math.sqrt(Math.max(0.08, 1 - Math.min(0.92, Math.abs(y)) * 0.72));
+    const theta = index * 2.399963229728653 + idPhase;
+    const direction = new THREE.Vector3(
+      Math.cos(theta) * radius,
+      y,
+      Math.sin(theta) * radius
+    ).normalize();
+    const quaternion = new THREE.Quaternion().setFromUnitVectors(SHIELD_CAST_RAY_AXIS, direction);
+
+    shards.push({
+      direction,
+      quaternion,
+      spin: (index % 2 === 0 ? 1 : -1) * (1.6 + (index % 5) * 0.2),
+      delay: (index % 4) * 0.035,
+      length: 0.22 + (index % 5) * 0.05,
+      width: 0.028 + (index % 3) * 0.006,
+    });
+  }
+
+  return shards;
+}
+
+function PhantomShieldBreakEffect({ effect }: { effect: ShieldBreakEffectData }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const bubbleRef = useRef<THREE.Mesh>(null);
+  const wireRef = useRef<THREE.Mesh>(null);
+  const ringARef = useRef<THREE.Mesh>(null);
+  const ringBRef = useRef<THREE.Mesh>(null);
+  const ringCRef = useRef<THREE.Mesh>(null);
+  const shardRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const lightRef = useRef<THREE.PointLight>(null);
+  const impactDirectionRef = useRef(new THREE.Vector3(0, 1, 0));
+  const shards = useMemo(() => createShieldBreakShards(effect.id), [effect.id]);
+  const materials = useMemo(() => ({
+    bubble: createShieldCastMaterial(PHANTOM_COLORS.lightPurple),
+    wire: createWireMaterial(),
+    ring: createShieldCastMaterial(PHANTOM_COLORS.violet),
+    shard: createShieldCastMaterial(PHANTOM_COLORS.white),
+  }), []);
+
+  useEffect(() => () => {
+    materials.bubble.dispose();
+    materials.wire.dispose();
+    materials.ring.dispose();
+    materials.shard.dispose();
+  }, [materials]);
+
+  useFrame((_, delta) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const elapsedMs = Math.max(0, getFrameClock().nowMs - effect.startFrameTime);
+    const progress = clamp01(elapsedMs / PHANTOM_SHIELD_BREAK_DURATION_MS);
+    const fade = 1 - THREE.MathUtils.smoothstep(progress, 0.54, 1);
+    const pop = Math.sin(progress * Math.PI);
+    const baseOpacity = effect.isLocalPlayer ? 0.62 : 1;
+    const expansion = SHIELD_RADIUS * (0.84 + progress * 0.58 + pop * 0.08);
+
+    group.visible = fade > 0.01;
+    group.position.set(effect.position.x, effect.position.y, effect.position.z);
+    impactDirectionRef.current.set(effect.direction.x, effect.direction.y, effect.direction.z);
+    if (impactDirectionRef.current.lengthSq() < 0.0001) {
+      impactDirectionRef.current.set(0, 1, 0);
+    } else {
+      impactDirectionRef.current.normalize();
+    }
+    group.quaternion.setFromUnitVectors(SHIELD_CAST_RAY_AXIS, impactDirectionRef.current);
+
+    if (bubbleRef.current) bubbleRef.current.scale.setScalar(expansion);
+    if (wireRef.current) {
+      wireRef.current.scale.setScalar(expansion * (1.01 + pop * 0.04));
+      wireRef.current.rotation.y += delta * 0.95;
+    }
+    if (ringARef.current) {
+      ringARef.current.scale.setScalar(expansion * (1.02 + progress * 0.34));
+      ringARef.current.rotation.z += delta * 3.2;
+    }
+    if (ringBRef.current) {
+      ringBRef.current.scale.setScalar(expansion * (0.92 + progress * 0.42));
+      ringBRef.current.rotation.z -= delta * 2.7;
+    }
+    if (ringCRef.current) {
+      ringCRef.current.scale.setScalar(expansion * (0.86 + progress * 0.5));
+      ringCRef.current.rotation.z += delta * 2.2;
+    }
+
+    materials.bubble.opacity = fade * baseOpacity * 0.18;
+    materials.wire.opacity = fade * baseOpacity * (0.28 + pop * 0.18);
+    materials.ring.opacity = fade * baseOpacity * (0.34 + pop * 0.2);
+    materials.shard.opacity = fade * baseOpacity * (0.5 + pop * 0.24);
+
+    for (let index = 0; index < shards.length; index++) {
+      const shard = shards[index];
+      const mesh = shardRefs.current[index];
+      if (!shard || !mesh) continue;
+
+      const shardProgress = clamp01((progress - shard.delay) / Math.max(0.001, 1 - shard.delay));
+      mesh.visible = shardProgress > 0.01;
+      mesh.position.copy(shard.direction).multiplyScalar(SHIELD_RADIUS * (0.72 + shardProgress * 0.88));
+      mesh.quaternion.copy(shard.quaternion);
+      mesh.rotateY(shard.spin * progress * 3.1);
+      mesh.scale.set(
+        shard.width * (1 - shardProgress * 0.22),
+        shard.length * (0.36 + shardProgress * 0.86),
+        shard.width * (1 - shardProgress * 0.22)
+      );
+    }
+
+    if (lightRef.current) {
+      lightRef.current.intensity = fade * baseOpacity * (1.1 + pop * 1.8);
+      lightRef.current.distance = 3.8 + progress * 1.2;
+    }
+  });
+
+  return (
+    <group ref={groupRef} visible={false} frustumCulled={false}>
+      <mesh ref={bubbleRef} geometry={SHARED_GEOMETRIES.sphere16} material={materials.bubble} frustumCulled={false} />
+      <mesh ref={wireRef} geometry={SHARED_GEOMETRIES.sphere16} material={materials.wire} frustumCulled={false} />
+      <mesh ref={ringARef} geometry={SHARED_GEOMETRIES.ring32} material={materials.ring} frustumCulled={false} />
+      <mesh ref={ringBRef} geometry={SHARED_GEOMETRIES.ring24} material={materials.ring} rotation={[Math.PI / 2, 0, 0]} frustumCulled={false} />
+      <mesh ref={ringCRef} geometry={SHARED_GEOMETRIES.ring24} material={materials.ring} rotation={[0, Math.PI / 2, 0]} frustumCulled={false} />
+      {shards.map((_, index) => (
+        <mesh
+          key={`break-shard-${index}`}
+          ref={(node) => {
+            shardRefs.current[index] = node;
+          }}
+          geometry={SHARED_GEOMETRIES.cone6}
+          material={materials.shard}
+          visible={false}
+          frustumCulled={false}
+        />
+      ))}
+      <BudgetedPointLight ref={lightRef} budgetPriority={0.68} color={PHANTOM_COLORS.lightPurple} intensity={0} distance={4.2} decay={2} />
+    </group>
+  );
+}
+
 function createBubbleMaterial(): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
     color: PHANTOM_COLORS.lightPurple,
@@ -724,10 +986,13 @@ function PhantomPersonalShieldBubble({ playerId }: { playerId: string }) {
 export function PhantomPersonalShieldsManager() {
   const [activeIds, setActiveIds] = useState<string[]>([]);
   const [activeCastEffects, setActiveCastEffects] = useState<ShieldCastEffectData[]>([]);
+  const [activeBreakEffects, setActiveBreakEffects] = useState<ShieldBreakEffectData[]>([]);
   const activeIdsRef = useRef<string[]>([]);
   const scratchIdsRef = useRef<string[]>([]);
   const scratchCastEffectsRef = useRef<ShieldCastEffectData[]>([]);
+  const scratchBreakEffectsRef = useRef<ShieldBreakEffectData[]>([]);
   const lastCastEffectRevisionRef = useRef(-1);
+  const lastBreakEffectRevisionRef = useRef(-1);
   const scanAccumulatorRef = useRef(ACTIVE_ID_SCAN_INTERVAL_MS);
   const activeAudioIdsRef = useRef<Set<string>>(new Set());
 
@@ -745,6 +1010,11 @@ export function PhantomPersonalShieldsManager() {
     if (castRevision !== lastCastEffectRevisionRef.current) {
       lastCastEffectRevisionRef.current = castRevision;
       setActiveCastEffects(scratchCastEffectsRef.current.slice());
+    }
+    const breakRevision = collectActiveShieldBreakEffects(frameClock.nowMs, scratchBreakEffectsRef.current);
+    if (breakRevision !== lastBreakEffectRevisionRef.current) {
+      lastBreakEffectRevisionRef.current = breakRevision;
+      setActiveBreakEffects(scratchBreakEffectsRef.current.slice());
     }
 
     syncShieldAudioLoopPositions(activeAudioIdsRef.current, now);
@@ -766,6 +1036,9 @@ export function PhantomPersonalShieldsManager() {
     <group>
       {activeCastEffects.map((effect) => (
         <PhantomShieldCastEffect key={effect.id} effect={effect} />
+      ))}
+      {activeBreakEffects.map((effect) => (
+        <PhantomShieldBreakEffect key={effect.id} effect={effect} />
       ))}
       {activeIds.map((playerId) => (
         <PhantomPersonalShieldBubble key={playerId} playerId={playerId} />

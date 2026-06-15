@@ -14,10 +14,11 @@ export interface ProceduralCTFLayout {
 }
 
 export const PROCEDURAL_MAP_SCALE = 0.9;
+export const PROCEDURAL_MAP_FOOTPRINT_SCALE = 1.1;
 export const PROCEDURAL_MAP_WORLD_SIZE: VoxelSize = {
-  x: 70,
+  x: 70 * PROCEDURAL_MAP_FOOTPRINT_SCALE,
   y: 20,
-  z: 64 * PROCEDURAL_MAP_SCALE,
+  z: 64 * PROCEDURAL_MAP_SCALE * PROCEDURAL_MAP_FOOTPRINT_SCALE,
 };
 export const PROCEDURAL_VOXEL_SIZE: VoxelSize = { x: 0.25, y: 0.25, z: 0.25 };
 export const PROCEDURAL_MAP_SIZE: VoxelSize = {

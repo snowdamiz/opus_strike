@@ -245,6 +245,11 @@ body,
   --slide-haze-side-opacity: 0;
   --slide-line-opacity: 0;
   --slide-line-duration: 820ms;
+  --slide-flow-start-x: 0vmax;
+  --slide-flow-start-y: -28vmax;
+  --slide-flow-end-x: 0vmax;
+  --slide-flow-end-y: 128vmax;
+  --slide-flow-rotate: 0deg;
   contain: layout paint style;
   opacity: 0;
   visibility: hidden;
@@ -310,7 +315,7 @@ body,
 
 .slide-speed-line-layer {
   position: absolute;
-  inset: -18vh 0;
+  inset: 0;
   overflow: hidden;
   mix-blend-mode: screen;
   opacity: var(--slide-line-opacity);
@@ -319,7 +324,7 @@ body,
 .slide-speed-line {
   position: absolute;
   left: var(--line-left);
-  top: -28vh;
+  top: var(--line-top);
   width: var(--line-width);
   height: clamp(8rem, 22vh, 17rem);
   border-radius: 999px;
@@ -341,11 +346,11 @@ body,
 
 @keyframes slide-speed-line-flow {
   0% {
-    transform: translate3d(0, -18vh, 0) rotate(var(--line-rotate)) scaleY(var(--line-scale));
+    transform: translate3d(var(--slide-flow-start-x), var(--slide-flow-start-y), 0) rotate(calc(var(--slide-flow-rotate) + var(--line-rotate))) scaleY(var(--line-scale));
   }
 
   100% {
-    transform: translate3d(var(--line-drift), 136vh, 0) rotate(var(--line-rotate)) scaleY(var(--line-scale));
+    transform: translate3d(var(--slide-flow-end-x), var(--slide-flow-end-y), 0) rotate(calc(var(--slide-flow-rotate) + var(--line-rotate))) scaleY(var(--line-scale));
   }
 }
 

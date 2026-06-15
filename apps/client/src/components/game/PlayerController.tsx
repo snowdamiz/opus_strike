@@ -857,7 +857,7 @@ function runPresentationPhase(input: {
     x: velocity.x,
     y: velocity.y,
     z: velocity.z,
-  });
+  }, cameraControl.refs.yaw.current);
 
   return {
     localMovementForTrace,

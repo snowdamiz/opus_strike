@@ -3,6 +3,7 @@ import type { Vec3 } from '../../types/vector.js';
 import { clamp, lerp } from '../../utils/math.js';
 import { clampToBoundaryPolygon } from './boundaries.js';
 import {
+  PROCEDURAL_MAP_FOOTPRINT_SCALE,
   PROCEDURAL_MAP_SCALE,
   PROCEDURAL_VOXEL_SIZE,
   createProceduralCTFLayout,
@@ -374,7 +375,7 @@ function createDesignBrief(seed: number, theme: VoxelMapTheme, topologyId?: MapT
   const performanceBudget: MapPerformanceBudget = {
     maxSolidBlocks: 1_750_000,
     maxColliders: 48_000,
-    maxRenderableChunks: 1_100,
+    maxRenderableChunks: Math.round(1_100 * PROCEDURAL_MAP_FOOTPRINT_SCALE ** 2),
     maxGenerationMs: 900,
   };
 

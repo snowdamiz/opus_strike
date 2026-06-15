@@ -42,7 +42,7 @@ import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecor
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect, triggerPhantomVeilClapEffect } from '../components/game/PhantomEffects';
-import { triggerPhantomShieldCastEffect } from '../components/game/phantom';
+import { triggerPhantomShieldBreakEffect, triggerPhantomShieldCastEffect } from '../components/game/phantom';
 import {
   startObservedAbilityCastEffect,
   stopObservedAbilityCastEffects,
@@ -89,6 +89,7 @@ import type {
   BotDifficulty,
   ChronosAegisDamagedEvent,
   ChronosAegisBrokenEvent,
+  PhantomShieldBrokenEvent,
   HeroId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
@@ -453,6 +454,21 @@ function addDeathVisualFromKillEvent(data: PlayerDeathEvent): void {
     expiresAtMs,
     local: victim.id === localPlayerId,
   });
+}
+
+function syncDeathVisualForVitals(
+  playerId: string,
+  nextState: Player['state'],
+  previousHeroId: HeroId | null,
+  nextHeroId: HeroId | null,
+  respawnTime: number | null
+): void {
+  if (nextState !== 'dead' || previousHeroId !== nextHeroId) {
+    clearDeathVisualsForPlayer(playerId);
+    return;
+  }
+
+  updateDeathVisualExpirationForPlayer(playerId, respawnTime);
 }
 
 type MovementBitsTransform = Pick<UnpackedPlayerTransform, 'movementBits' | 'wallRunSide'>;
@@ -1043,7 +1059,6 @@ export function setupPlayerVitalsHandler(
 
         const existing = nextLocalPlayer || nextPlayers.get(vitals.id);
         const existingPlayer = existing || undefined;
-        const previousState = existingPlayer?.state;
         const previousHeroId = existingPlayer?.heroId ?? null;
         if (shouldPreservePredictionOwnedLocalSimulation(existingPlayer, vitals.state, vitals.heroId)) {
           applyLocalVitalsPatchInPlace(existingPlayer, vitals, data.serverTime);
@@ -1051,15 +1066,7 @@ export function setupPlayerVitalsHandler(
           if (indexedPlayer && indexedPlayer !== existingPlayer) {
             applyLocalVitalsPatchInPlace(indexedPlayer, vitals, data.serverTime);
           }
-          if (
-            vitals.state !== 'dead' ||
-            (previousState === 'dead' && vitals.respawnTime === null) ||
-            previousHeroId !== vitals.heroId
-          ) {
-            clearDeathVisualsForPlayer(vitals.id);
-          } else {
-            updateDeathVisualExpirationForPlayer(vitals.id, vitals.respawnTime);
-          }
+          syncDeathVisualForVitals(vitals.id, vitals.state, previousHeroId, vitals.heroId, vitals.respawnTime);
           if (nextLocalPlayer?.id === vitals.id) {
             nextLocalPlayer = existingPlayer;
           }
@@ -1068,15 +1075,7 @@ export function setupPlayerVitalsHandler(
         }
 
         const next = createLocalPlayerFromVitals(vitals, data.serverTime, existing || undefined);
-        if (
-          next.state !== 'dead' ||
-          (previousState === 'dead' && next.respawnTime === null) ||
-          previousHeroId !== next.heroId
-        ) {
-          clearDeathVisualsForPlayer(next.id);
-        } else {
-          updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
-        }
+        syncDeathVisualForVitals(next.id, next.state, previousHeroId, next.heroId, next.respawnTime);
         writablePlayers().set(next.id, next);
         nextLocalPlayer = next;
         recordLocalReactiveUpdate('vitals');
@@ -1090,15 +1089,7 @@ export function setupPlayerVitalsHandler(
 
       const existing = nextPlayers.get(vitals.id);
       const next = createPlayerFromVitals(vitals, data.serverTime, existing);
-      if (
-        next.state !== 'dead' ||
-        (existing?.state === 'dead' && next.respawnTime === null) ||
-        (existing && existing.heroId !== next.heroId)
-      ) {
-        clearDeathVisualsForPlayer(next.id);
-      } else {
-        updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
-      }
+      syncDeathVisualForVitals(next.id, next.state, existing?.heroId ?? null, next.heroId, next.respawnTime);
       writablePlayers().set(vitals.id, next);
       if (shouldHideLiveVisuals(next.visibility)) {
         hiddenVisualUpdates.push(next.id);
@@ -1152,6 +1143,7 @@ export function setupMatchSnapshotHandler(room: Room) {
       blueFlag: data.blueFlag ?? store.blueFlag,
       roundTimeRemaining: data.roundTimeRemaining,
       phaseEndTime: data.phaseEndTime,
+      gameClockFrozen: data.gameClockFrozen === true,
     });
   }));
 }
@@ -2421,6 +2413,17 @@ export function setupCombatHandlers(room: Room) {
     playChronosWorldSound('chronosSuperchargedImpact', data.position, {
       volume: 0.86,
       pitch: 1.12,
+    });
+  }));
+
+  room.onMessage('phantomShieldBroken', measureNetworkMessage('phantomShieldBroken', (data: PhantomShieldBrokenEvent) => {
+    const store = useGameStore.getState();
+    const localPlayerId = store.localPlayer?.id ?? store.playerId;
+    triggerPhantomShieldBreakEffect({
+      playerId: data.playerId,
+      isLocalPlayer: data.playerId === localPlayerId,
+      position: data.position,
+      direction: data.direction,
     });
   }));
 

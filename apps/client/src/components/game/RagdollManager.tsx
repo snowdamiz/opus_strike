@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useStore } from 'zustand';
 import * as THREE from 'three';
-import { HERO_DEFINITIONS, type HeroId, type Team } from '@voxel-strike/shared';
+import { HERO_DEFINITIONS, type HeroId } from '@voxel-strike/shared';
 import {
   clearExpiredDeathVisuals,
   getActiveDeathVisuals,
@@ -19,7 +19,6 @@ import {
 import {
   EMPTY_TEAM_ACCENT_PARTS,
   HERO_BODY_MANIFESTS,
-  TEAM_COLORS,
 } from '../../model-system/heroBodyManifests';
 import type {
   HeroBoneName,
@@ -356,20 +355,12 @@ function getMaterialEmissiveIntensity(kind: MaterialKind): number {
   return 0;
 }
 
-function createRagdollMaterials(
-  heroId: HeroId,
-  team: Team,
-  isBot: boolean
-): {
-  materialByKind: Map<MaterialKind, THREE.MeshStandardMaterial>;
-  teamMaterial: THREE.MeshStandardMaterial;
-} {
+function createRagdollMaterials(heroId: HeroId): Map<MaterialKind, THREE.MeshStandardMaterial> {
   const manifest = HERO_BODY_MANIFESTS[heroId];
   const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
-  const teamColor = TEAM_COLORS[team];
 
   (Object.keys(manifest.materialPalette) as MaterialKind[]).forEach((kind) => {
-    const baseColor = kind === 'accent' && isBot ? teamColor : manifest.materialPalette[kind];
+    const baseColor = manifest.materialPalette[kind];
     const emissiveIntensity = getMaterialEmissiveIntensity(kind);
     const isTranslucent = kind === 'glass' || kind === 'mist';
     const material = new THREE.MeshStandardMaterial({
@@ -389,18 +380,7 @@ function createRagdollMaterials(
     materialByKind.set(kind, material);
   });
 
-  const teamMaterial = new THREE.MeshStandardMaterial({
-    color: teamColor,
-    emissive: teamColor,
-    emissiveIntensity: 0.28,
-    roughness: 0.58,
-    metalness: 0.24,
-  });
-  teamMaterial.userData.ragdollBaseOpacity = 1;
-  teamMaterial.userData.ragdollBaseTransparent = false;
-  teamMaterial.userData.ragdollBaseDepthWrite = true;
-
-  return { materialByKind, teamMaterial };
+  return materialByKind;
 }
 
 function applyRagdollOpacity(materials: THREE.Material[], opacity: number): void {
@@ -459,11 +439,11 @@ function RagdollPartMeshes({
 
 function RagdollTeamAccentMeshes({
   parts,
-  material,
+  materialByKind,
   castShadow,
 }: {
   parts: RiggedVoxelPart<TeamAccentPart>[];
-  material: THREE.MeshStandardMaterial;
+  materialByKind: Map<MaterialKind, THREE.MeshStandardMaterial>;
   castShadow: boolean;
 }) {
   return (
@@ -477,7 +457,7 @@ function RagdollTeamAccentMeshes({
           castShadow={castShadow}
           geometry={getPartGeometry(riggedPart.part)}
         >
-          <primitive object={material} attach="material" />
+          <primitive object={materialByKind.get(riggedPart.part.material)!} attach="material" />
         </mesh>
       ))}
     </>
@@ -504,13 +484,13 @@ const RagdollBody = memo(function RagdollBody({
     () => groupRiggedParts(manifest.teamAccentParts ?? EMPTY_TEAM_ACCENT_PARTS),
     [manifest.teamAccentParts]
   );
-  const { materialByKind, teamMaterial } = useMemo(
-    () => createRagdollMaterials(resolvedHero, snapshot.team, snapshot.isBot),
-    [resolvedHero, snapshot.isBot, snapshot.team]
+  const materialByKind = useMemo(
+    () => createRagdollMaterials(resolvedHero),
+    [resolvedHero]
   );
   const materialList = useMemo(
-    () => [...materialByKind.values(), teamMaterial],
-    [materialByKind, teamMaterial]
+    () => [...materialByKind.values()],
+    [materialByKind]
   );
   const shouldCastShadow = highQuality && castShadows;
 
@@ -521,9 +501,8 @@ const RagdollBody = memo(function RagdollBody({
   useEffect(() => {
     return () => {
       materialByKind.forEach((material) => material.dispose());
-      teamMaterial.dispose();
     };
-  }, [materialByKind, teamMaterial]);
+  }, [materialByKind]);
 
   useFrame((_, delta) => {
     const runtime = runtimeRef.current;
@@ -566,7 +545,7 @@ const RagdollBody = memo(function RagdollBody({
       />
       <RagdollTeamAccentMeshes
         parts={riggedTeamAccentPartsByBone[bone] ?? EMPTY_RIGGED_PARTS}
-        material={teamMaterial}
+        materialByKind={materialByKind}
         castShadow={shouldCastShadow}
       />
     </>

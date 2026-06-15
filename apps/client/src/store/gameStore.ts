@@ -135,6 +135,7 @@ interface CoreState {
   // Timing
   roundTimeRemaining: number;
   phaseEndTime: number | null;
+  gameClockFrozen: boolean;
 
   // Ultimate effect state
   ultimateEffectActive: boolean;
@@ -272,6 +273,7 @@ const coreInitialState: CoreState = {
   observerFlySpeedPreset: DEFAULT_OBSERVER_FLY_SPEED_PRESET,
   roundTimeRemaining: 0,
   phaseEndTime: null,
+  gameClockFrozen: false,
   ultimateEffectActive: false,
   ultimateEffectType: null,
   ultimateEffectEndTime: 0,
