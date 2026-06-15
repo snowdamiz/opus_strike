@@ -443,6 +443,10 @@ export function ChronosPulsesManager() {
         return;
       }
 
+      slot.position.x += slot.velocity.x * delta;
+      slot.position.y += slot.velocity.y * delta;
+      slot.position.z += slot.velocity.z * delta;
+
       const pulse = 1 + Math.sin(clock.nowMs * 0.02 + slotIndex * 0.8) * 0.055;
       const radius = CHRONOS_PULSE_RADIUS * slot.radiusScale;
       setSphereInstance(
@@ -479,10 +483,6 @@ export function ChronosPulsesManager() {
       lightY += slot.position.y;
       lightZ += slot.position.z;
       instanceIndex++;
-
-      slot.position.x += slot.velocity.x * delta;
-      slot.position.y += slot.velocity.y * delta;
-      slot.position.z += slot.velocity.z * delta;
     });
 
     setInstancedMeshCount(glowMeshRef.current, instanceIndex);
