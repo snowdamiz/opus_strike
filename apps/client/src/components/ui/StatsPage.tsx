@@ -1,3 +1,4 @@
+import * as SelectPrimitive from '@radix-ui/react-select';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useGameStore, type UserStats } from '../../store/gameStore';
 import { config } from '../../config/environment';
@@ -16,7 +17,18 @@ interface PersonalLeaderboardPlayer extends Omit<LeaderboardPlayer, 'rank'> {
   rank: number | null;
 }
 
+interface LeaderboardSeasonOption {
+  identity: string;
+  mode: 'preseason' | 'season';
+  seasonNumber: number;
+  label: string;
+  endsAt: string | null;
+  current: boolean;
+}
+
 interface LeaderboardResponse {
+  seasons: LeaderboardSeasonOption[];
+  selectedSeason: LeaderboardSeasonOption;
   leaderboard: LeaderboardPlayer[];
   currentUser: PersonalLeaderboardPlayer | null;
 }
@@ -79,12 +91,21 @@ export function StatsPage() {
 
   const [data, setData] = useState<LeaderboardResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedSeasonIdentity, setSelectedSeasonIdentity] = useState('current');
 
   const loadLeaderboard = useCallback(async (signal?: AbortSignal) => {
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${getHttpUrl()}/auth/leaderboard?limit=25&mode=ranked`, {
+      const params = new URLSearchParams({
+        limit: '25',
+        mode: 'ranked',
+      });
+      if (selectedSeasonIdentity !== 'current') {
+        params.set('season', selectedSeasonIdentity);
+      }
+
+      const response = await fetch(`${getHttpUrl()}/auth/leaderboard?${params.toString()}`, {
         credentials: 'include',
         signal,
       });
@@ -103,7 +124,7 @@ export function StatsPage() {
         setIsLoading(false);
       }
     }
-  }, []);
+  }, [selectedSeasonIdentity]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -111,9 +132,15 @@ export function StatsPage() {
     return () => controller.abort();
   }, [loadLeaderboard]);
 
-  const personalStats = useMemo(
-    () => data?.currentUser ?? getLocalPersonalStats(playerName, userStats),
-    [data?.currentUser, playerName, userStats]
+  const personalStats = useMemo(() => {
+    if (data?.currentUser) return data.currentUser;
+    if (data && !data.selectedSeason.current) return null;
+    return getLocalPersonalStats(playerName, userStats);
+  }, [data, playerName, userStats]);
+  const activeSeasonIdentity = data?.selectedSeason.identity ?? selectedSeasonIdentity;
+  const seasons = useMemo(
+    () => (data?.seasons ?? []).filter((season) => season.mode === 'season'),
+    [data?.seasons]
   );
 
   return (
@@ -125,6 +152,11 @@ export function StatsPage() {
           <div className="stats-floating-heading">
             <h2 id="stats-leaderboard-title">LEADERBOARD</h2>
             <div className="stats-toolbar">
+              <SeasonSelect
+                seasons={seasons}
+                activeSeasonIdentity={activeSeasonIdentity}
+                onSelect={setSelectedSeasonIdentity}
+              />
               {data?.leaderboard.length ? (
                 <p className="stats-player-count">
                   {data.leaderboard.length} players
@@ -149,6 +181,55 @@ export function StatsPage() {
           </StatsPanel>
         </section>
       </div>
+    </div>
+  );
+}
+
+function SeasonSelect({
+  seasons,
+  activeSeasonIdentity,
+  onSelect,
+}: {
+  seasons: LeaderboardSeasonOption[];
+  activeSeasonIdentity: string;
+  onSelect: (identity: string) => void;
+}) {
+  const selectedSeason = seasons.find((season) => season.identity === activeSeasonIdentity) ?? seasons[0];
+
+  if (!selectedSeason) return null;
+
+  return (
+    <div className="stats-season-select-field">
+      <span className="stats-season-select-label">Season</span>
+      <SelectPrimitive.Root value={selectedSeason.identity} onValueChange={onSelect}>
+        <SelectPrimitive.Trigger className="stats-season-select-trigger" aria-label="Leaderboard season">
+          <SelectPrimitive.Value />
+          <span className="stats-season-select-icon" aria-hidden="true" />
+        </SelectPrimitive.Trigger>
+        <SelectPrimitive.Portal>
+          <SelectPrimitive.Content
+            align="end"
+            className="stats-season-select-content"
+            position="popper"
+            sideOffset={6}
+          >
+            <SelectPrimitive.Viewport className="stats-season-select-viewport">
+              {seasons.map((season) => (
+                <SelectPrimitive.Item
+                  key={season.identity}
+                  className="stats-season-select-item"
+                  value={season.identity}
+                >
+                  <SelectPrimitive.ItemIndicator className="stats-season-select-item-indicator">
+                    <span className="stats-season-select-check-mark" />
+                  </SelectPrimitive.ItemIndicator>
+                  <SelectPrimitive.ItemText>{season.label}</SelectPrimitive.ItemText>
+                </SelectPrimitive.Item>
+              ))}
+            </SelectPrimitive.Viewport>
+          </SelectPrimitive.Content>
+        </SelectPrimitive.Portal>
+      </SelectPrimitive.Root>
     </div>
   );
 }

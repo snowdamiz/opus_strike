@@ -22,7 +22,6 @@ const expectedAbilityIds = [
   'chronos_verdant_pulse',
   'hookshot_basic_attack',
   'hookshot_grapple',
-  'hookshot_grapple_trap',
   'hookshot_heavy_attack',
   'phantom_dire_ball',
   'phantom_personal_shield',

@@ -1,5 +1,7 @@
 import {
   ALL_HERO_IDS,
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   type HeroId,
   type Player,
   type Team,
@@ -140,7 +142,7 @@ export function runLocalCombatStressScenario(
     chronosPulses: state.chronosPulses,
     hookProjectiles: state.hookProjectiles,
     dragHooks: state.dragHooks,
-    grappleTraps: state.grappleTraps,
+    hookshotGroundHooks: state.hookshotGroundHooks,
     flamethrowerActive: state.flamethrowerActive,
   };
   const previousFlamethrowerVisualPose = {
@@ -256,17 +258,20 @@ export function runLocalCombatStressScenario(
         });
         break;
       default:
-        store.addGrappleTrap({
+        store.addHookshotGroundHooks({
           id,
-          position: target,
-          startPosition: origin,
-          velocity: vectorToward(origin, target, 16),
+          position: origin,
           startTime: now,
-          duration: 5,
+          duration: HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
           ownerId,
           ownerTeam: team,
-          radius: 5,
-          hookedPlayers: [],
+          radius: HOOKSHOT_GROUND_HOOKS_RADIUS,
+          rootUntil: now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000,
+          targets: [{
+            targetId: `${id}:target`,
+            position: target,
+            rootUntil: now + HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS * 1000,
+          }],
         });
         break;
     }

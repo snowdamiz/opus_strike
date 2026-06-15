@@ -245,6 +245,11 @@ body,
   --slide-haze-side-opacity: 0;
   --slide-line-opacity: 0;
   --slide-line-duration: 820ms;
+  --slide-flow-start-x: 0vmax;
+  --slide-flow-start-y: -28vmax;
+  --slide-flow-end-x: 0vmax;
+  --slide-flow-end-y: 128vmax;
+  --slide-flow-rotate: 0deg;
   contain: layout paint style;
   opacity: 0;
   visibility: hidden;
@@ -310,7 +315,7 @@ body,
 
 .slide-speed-line-layer {
   position: absolute;
-  inset: -18vh 0;
+  inset: 0;
   overflow: hidden;
   mix-blend-mode: screen;
   opacity: var(--slide-line-opacity);
@@ -319,7 +324,7 @@ body,
 .slide-speed-line {
   position: absolute;
   left: var(--line-left);
-  top: -28vh;
+  top: var(--line-top);
   width: var(--line-width);
   height: clamp(8rem, 22vh, 17rem);
   border-radius: 999px;
@@ -341,11 +346,11 @@ body,
 
 @keyframes slide-speed-line-flow {
   0% {
-    transform: translate3d(0, -18vh, 0) rotate(var(--line-rotate)) scaleY(var(--line-scale));
+    transform: translate3d(var(--slide-flow-start-x), var(--slide-flow-start-y), 0) rotate(calc(var(--slide-flow-rotate) + var(--line-rotate))) scaleY(var(--line-scale));
   }
 
   100% {
-    transform: translate3d(var(--line-drift), 136vh, 0) rotate(var(--line-rotate)) scaleY(var(--line-scale));
+    transform: translate3d(var(--slide-flow-end-x), var(--slide-flow-end-y), 0) rotate(calc(var(--slide-flow-rotate) + var(--line-rotate))) scaleY(var(--line-scale));
   }
 }
 
@@ -2062,6 +2067,134 @@ body,
   line-height: 0.92;
   text-transform: uppercase;
   text-shadow: 0 0.8rem 1.8rem rgb(0 0 0 / 0.48);
+}
+
+.stats-season-select-field {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.stats-season-select-label {
+  color: rgb(255 255 255 / 0.36);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.stats-season-select-trigger {
+  display: inline-flex;
+  min-width: 7.35rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  border: 1px solid rgb(255 255 255 / 0.13);
+  border-radius: 0.4rem;
+  background: rgb(var(--color-strike-surface) / 0.72);
+  padding: 0 0.7rem;
+  box-shadow:
+    0 0.55rem 1.25rem rgb(0 0 0 / 0.2),
+    inset 0 1px 0 rgb(255 255 255 / 0.07);
+  color: white;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 1.08rem;
+  letter-spacing: 0;
+  line-height: 1;
+  outline: none;
+}
+
+.stats-season-select-trigger:hover {
+  border-color: rgb(255 255 255 / 0.2);
+  background: rgb(var(--color-strike-surface) / 0.88);
+}
+
+.stats-season-select-trigger[data-state="open"],
+.stats-season-select-trigger:focus-visible {
+  border-color: rgb(255 255 255 / 0.24);
+  box-shadow:
+    0 0.6rem 1.3rem rgb(0 0 0 / 0.24),
+    0 0 0 2px rgb(255 255 255 / 0.08),
+    inset 0 1px 0 rgb(255 255 255 / 0.1);
+}
+
+.stats-season-select-icon {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: 0 0 auto;
+  border-right: 2px solid rgb(255 255 255 / 0.52);
+  border-bottom: 2px solid rgb(255 255 255 / 0.52);
+  transform: translateY(-0.1rem) rotate(45deg);
+  transition: transform 140ms ease, border-color 140ms ease;
+}
+
+.stats-season-select-trigger[data-state="open"] .stats-season-select-icon {
+  border-color: rgb(255 255 255 / 0.78);
+  transform: translateY(0.08rem) rotate(225deg);
+}
+
+.stats-season-select-content {
+  z-index: 80;
+  min-width: var(--radix-select-trigger-width);
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 0.13);
+  border-radius: 0.46rem;
+  background: rgb(var(--color-strike-surface) / 0.98);
+  box-shadow:
+    0 1rem 2rem rgb(0 0 0 / 0.42),
+    inset 0 1px 0 rgb(255 255 255 / 0.08);
+  color: white;
+}
+
+.stats-season-select-viewport {
+  padding: 0.25rem;
+}
+
+.stats-season-select-item {
+  position: relative;
+  display: flex;
+  min-height: 2.12rem;
+  align-items: center;
+  border-radius: 0.32rem;
+  padding: 0 0.7rem 0 1.75rem;
+  color: rgb(255 255 255 / 0.72);
+  cursor: default;
+  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
+  font-size: 1.08rem;
+  letter-spacing: 0;
+  line-height: 1;
+  outline: none;
+}
+
+.stats-season-select-item-indicator {
+  position: absolute;
+  left: 0.65rem;
+  display: inline-flex;
+  width: 0.72rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.stats-season-select-check-mark {
+  width: 0.32rem;
+  height: 0.54rem;
+  border-right: 2px solid rgb(255 255 255 / 0.76);
+  border-bottom: 2px solid rgb(255 255 255 / 0.76);
+  transform: rotate(40deg) translateY(-0.05rem);
+}
+
+.stats-season-select-item[data-highlighted] {
+  background: rgb(255 255 255 / 0.075);
+  color: white;
+}
+
+.stats-season-select-item[data-state="checked"] {
+  color: white;
 }
 
 .stats-table {

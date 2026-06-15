@@ -12,7 +12,7 @@ import type {
   ChronosPulseData,
   HookProjectileData,
   DragHookData,
-  GrappleTrapData,
+  HookshotGroundHooksData,
   GrappleLineData,
   EarthWallData,
 } from '../types';
@@ -47,11 +47,9 @@ export interface ProjectileState {
   // Hookshot projectiles
   hookProjectiles: HookProjectileData[];
   dragHooks: DragHookData[];
-  grappleTraps: GrappleTrapData[];
+  hookshotGroundHooks: HookshotGroundHooksData[];
   grappleLines: GrappleLineData[];
   earthWalls: EarthWallData[];
-  grappleTrapTargeting: boolean;
-  grappleTrapTargetValid: boolean;
 }
 
 export interface ProjectileActions {
@@ -109,12 +107,11 @@ export interface ProjectileActions {
   removeDragHook: (id: string) => void;
   clearExpiredDragHooks: () => void;
 
-  // Grapple trap actions
-  addGrappleTrap: (trap: GrappleTrapData) => void;
-  updateGrappleTrap: (id: string, updates: Partial<GrappleTrapData>) => void;
-  removeGrappleTrap: (id: string) => void;
-  clearExpiredGrappleTraps: () => void;
-  setGrappleTrapTargeting: (targeting: boolean, valid?: boolean) => void;
+  // Ground hook root actions
+  addHookshotGroundHooks: (effect: HookshotGroundHooksData) => void;
+  updateHookshotGroundHooks: (id: string, updates: Partial<HookshotGroundHooksData>) => void;
+  removeHookshotGroundHooks: (id: string) => void;
+  clearExpiredHookshotGroundHooks: () => void;
 
   // Grapple line actions
   addGrappleLine: (line: GrappleLineData) => void;
@@ -157,11 +154,9 @@ export const projectileInitialState: ProjectileState = {
   chronosPulses: [],
   hookProjectiles: [],
   dragHooks: [],
-  grappleTraps: [],
+  hookshotGroundHooks: [],
   grappleLines: [],
   earthWalls: [],
-  grappleTrapTargeting: false,
-  grappleTrapTargetValid: false,
 };
 
 // ============================================================================
@@ -177,7 +172,7 @@ const PROJECTILE_LIMITS = {
   chronosPulses: 96,
   hookProjectiles: 64,
   dragHooks: 32,
-  grappleTraps: 32,
+  hookshotGroundHooks: 24,
   grappleLines: 48,
   earthWalls: 48,
 } as const;
@@ -224,8 +219,8 @@ function getDragHookExpiresAt(hook: DragHookData): number {
   return hook.startTime + DRAG_HOOK_VISUAL_LIFETIME_MS;
 }
 
-function getGrappleTrapExpiresAt(trap: GrappleTrapData): number {
-  return trap.startTime + trap.duration * 1000;
+function getHookshotGroundHooksExpiresAt(effect: HookshotGroundHooksData): number {
+  return effect.startTime + effect.duration * 1000 + 500;
 }
 
 function getGrappleLineExpiresAt(line: GrappleLineData): number {
@@ -553,33 +548,25 @@ export const createProjectileSlice: StateCreator<
     return dragHooks === state.dragHooks ? state : { dragHooks };
   }),
 
-  // ==================== GRAPPLE TRAPS ====================
-  addGrappleTrap: (trap) => set((state) => {
-    const grappleTraps = appendUnique(state.grappleTraps, trap, PROJECTILE_LIMITS.grappleTraps);
-    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
+  // ==================== GROUND HOOK ROOTS ====================
+  addHookshotGroundHooks: (effect) => set((state) => {
+    const hookshotGroundHooks = appendUnique(state.hookshotGroundHooks, effect, PROJECTILE_LIMITS.hookshotGroundHooks);
+    return hookshotGroundHooks === state.hookshotGroundHooks ? state : { hookshotGroundHooks };
   }),
 
-  updateGrappleTrap: (id, updates) => set((state) => {
-    const grappleTraps = updateById(state.grappleTraps, id, updates);
-    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
+  updateHookshotGroundHooks: (id, updates) => set((state) => {
+    const hookshotGroundHooks = updateById(state.hookshotGroundHooks, id, updates);
+    return hookshotGroundHooks === state.hookshotGroundHooks ? state : { hookshotGroundHooks };
   }),
 
-  removeGrappleTrap: (id) => set((state) => {
-    const grappleTraps = removeById(state.grappleTraps, id);
-    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
+  removeHookshotGroundHooks: (id) => set((state) => {
+    const hookshotGroundHooks = removeById(state.hookshotGroundHooks, id);
+    return hookshotGroundHooks === state.hookshotGroundHooks ? state : { hookshotGroundHooks };
   }),
 
-  clearExpiredGrappleTraps: () => set((state) => {
-    const grappleTraps = filterExpiredByExpiry(state.grappleTraps, getGrappleTrapExpiresAt);
-    return grappleTraps === state.grappleTraps ? state : { grappleTraps };
-  }),
-
-  setGrappleTrapTargeting: (targeting, valid = false) => set((state) => {
-    if (state.grappleTrapTargeting === targeting && state.grappleTrapTargetValid === valid) return state;
-    return {
-      grappleTrapTargeting: targeting,
-      grappleTrapTargetValid: valid,
-    };
+  clearExpiredHookshotGroundHooks: () => set((state) => {
+    const hookshotGroundHooks = filterExpiredByExpiry(state.hookshotGroundHooks, getHookshotGroundHooksExpiresAt);
+    return hookshotGroundHooks === state.hookshotGroundHooks ? state : { hookshotGroundHooks };
   }),
 
   // ==================== GRAPPLE LINES ====================
@@ -676,10 +663,10 @@ export const createProjectileSlice: StateCreator<
       next.dragHooks = dragHooks;
     }
 
-    const grappleTraps = filterExpiredByExpiryAt(state.grappleTraps, now, getGrappleTrapExpiresAt);
-    if (grappleTraps !== state.grappleTraps) {
+    const hookshotGroundHooks = filterExpiredByExpiryAt(state.hookshotGroundHooks, now, getHookshotGroundHooksExpiresAt);
+    if (hookshotGroundHooks !== state.hookshotGroundHooks) {
       next ??= {};
-      next.grappleTraps = grappleTraps;
+      next.hookshotGroundHooks = hookshotGroundHooks;
     }
 
     const grappleLines = filterExpiredByExpiryAt(state.grappleLines, now, getGrappleLineExpiresAt);

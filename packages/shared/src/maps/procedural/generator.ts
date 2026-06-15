@@ -190,9 +190,16 @@ const BOUNDARY_FLOATING_DETAIL_MAX_BLOCKS = 32;
 const BOUNDARY_FLOATING_DETAIL_ANCHOR_DISTANCE =
   BOUNDARY_WALL_MAX_THICKNESS + BOUNDARY_INNER_GRADE_MAX_WIDTH + 1.25;
 const HEADROOM_ROWS = Math.ceil((PLAYER_HEIGHT + 0.45) / PROCEDURAL_VOXEL_SIZE.y);
-const RANDOM_OBJECT_ATTEMPTS = 180;
-const DECORATIVE_OBJECT_MIN_COUNT = 8;
-const DECORATIVE_OBJECT_VARIANCE = 4;
+const RANDOM_OBJECT_ATTEMPTS = 260;
+const DECORATIVE_OBJECT_MIN_COUNT = 14;
+const DECORATIVE_OBJECT_VARIANCE = 5;
+const DECORATIVE_OBJECT_AREA_PER_COUNT = 135;
+const DECORATIVE_OBJECT_MAX_COUNT = 30;
+const DECORATIVE_RANDOM_FILL_RATIO = 0.62;
+const DECORATIVE_GAP_GRID_STEP = 5.4;
+const DECORATIVE_GAP_JITTER = 1.2;
+const DECORATIVE_GAP_EXTRA_COUNT = 6;
+const DECORATIVE_LARGE_EMPTY_RADIUS = 8.5;
 const STRUCTURAL_PAD_MINIMUMS: Partial<Record<TacticalSlotRole, number>> = {
   base_shell: 7.4,
   spawn_shelter: 5.25,
@@ -466,6 +473,18 @@ function boundaryBounds(boundary: BoundaryPoint[]): { minX: number; maxX: number
     }),
     { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity }
   );
+}
+
+function polygonArea(points: BoundaryPoint[]): number {
+  let doubledArea = 0;
+
+  for (let index = 0; index < points.length; index++) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    doubledArea += current.x * next.z - next.x * current.z;
+  }
+
+  return Math.abs(doubledArea) / 2;
 }
 
 function hashString(value: string): number {
@@ -874,6 +893,20 @@ function chooseDecorativeStructureKind(theme: VoxelMapTheme, random: () => numbe
   return candidates[Math.floor(random() * candidates.length) % candidates.length];
 }
 
+function chooseGapFillerDecorativeStructureKind(theme: VoxelMapTheme, random: () => number): StructureKind {
+  const palette = getDecorativeStructurePalette(theme);
+  const naturalCandidates = palette.support.filter(
+    (kind) =>
+      kind !== 'watch_post' &&
+      kind !== 'terrace_platform' &&
+      kind !== 'desert_outpost' &&
+      kind !== 'shrine_gate' &&
+      kind !== 'gold_cache'
+  );
+  const candidates = naturalCandidates.length > 0 ? naturalCandidates : palette.support;
+  return candidates[Math.floor(random() * candidates.length) % candidates.length];
+}
+
 function getDecorativeStructureMetadata(kind: StructureKind): Pick<PlacedStructure, 'role' | 'moduleId' | 'roleTags'> {
   switch (kind) {
     case 'ruin_cover':
@@ -916,6 +949,118 @@ function getDecorativeStructureMetadata(kind: StructureKind): Pick<PlacedStructu
   }
 }
 
+function getDecorativeTargetCount(layout: ProceduralCTFLayout, random: () => number): number {
+  const areaTarget = Math.round(polygonArea(layout.boundary) / DECORATIVE_OBJECT_AREA_PER_COUNT);
+  return clamp(
+    areaTarget + Math.floor(random() * DECORATIVE_OBJECT_VARIANCE),
+    DECORATIVE_OBJECT_MIN_COUNT,
+    DECORATIVE_OBJECT_MAX_COUNT
+  );
+}
+
+function canPlaceDecorativeStructure(
+  point: { x: number; z: number },
+  radius: number,
+  layout: ProceduralCTFLayout,
+  existing: readonly PlacedStructure[],
+  accepted: readonly PlacedStructure[],
+  spacing: number
+): boolean {
+  if (!isInsideBoundaryPolygon(point.x, point.z, layout.boundary)) return false;
+  if (distanceToBoundary(point.x, point.z, layout.boundary) < radius + 1.8) return false;
+  if (isProtectedObjectivePoint(point, layout, radius)) return false;
+  if (placementOverlaps(point, radius, existing, spacing)) return false;
+  if (placementOverlaps(point, radius, accepted, spacing)) return false;
+  return true;
+}
+
+function distanceToNearestPlacementEdge(point: { x: number; z: number }, placements: readonly PlacedStructure[]): number {
+  let closestDistance = Infinity;
+
+  for (const placement of placements) {
+    closestDistance = Math.min(closestDistance, distance2D(point, placement.position) - placement.radius);
+  }
+
+  return closestDistance;
+}
+
+function createDecorativePlacement(
+  index: number,
+  kind: StructureKind,
+  point: { x: number; z: number },
+  radius: number,
+  random: () => number,
+  layout: ProceduralCTFLayout,
+  heightMap: Uint16Array
+): PlacedStructure {
+  const metadata = getDecorativeStructureMetadata(kind);
+  const surfaceRow = sampleMedianHeight(heightMap, layout.origin, layout.size, layout.voxelSize, point, radius + 1);
+
+  return {
+    id: `dressing_${index + 1}_${kind}`,
+    slotId: `dressing_${index + 1}`,
+    kind,
+    role: metadata.role,
+    moduleId: metadata.moduleId,
+    roleTags: metadata.roleTags,
+    position: { x: point.x, y: gridRowsToWorldY(surfaceRow, layout.origin.y, layout.voxelSize.y), z: point.z },
+    facing: normalize2D({ x: random() - 0.5, z: random() - 0.5 }),
+    footprint: { shape: 'circle', radius },
+    radius,
+    padRadius: radius + 0.85,
+    surfaceRow,
+    variant: Math.floor(random() * 0xffffffff) >>> 0,
+  };
+}
+
+function fillDecorativeGaps(
+  seed: number,
+  layout: ProceduralCTFLayout,
+  theme: VoxelMapTheme,
+  heightMap: Uint16Array,
+  placements: readonly PlacedStructure[],
+  accepted: PlacedStructure[],
+  targetCount: number
+): void {
+  const random = mulberry32(seed ^ 0x6f70656e);
+  const bounds = boundaryBounds(layout.boundary);
+  const maxCount = Math.min(DECORATIVE_OBJECT_MAX_COUNT + DECORATIVE_GAP_EXTRA_COUNT, targetCount + DECORATIVE_GAP_EXTRA_COUNT);
+  const candidates: Array<{ point: { x: number; z: number }; radius: number; openDistance: number; tieBreak: number }> = [];
+
+  for (let z = bounds.minZ + 3; z <= bounds.maxZ - 3; z += DECORATIVE_GAP_GRID_STEP) {
+    for (let x = bounds.minX + 3; x <= bounds.maxX - 3; x += DECORATIVE_GAP_GRID_STEP) {
+      const point = {
+        x: x + lerp(-DECORATIVE_GAP_JITTER, DECORATIVE_GAP_JITTER, random()),
+        z: z + lerp(-DECORATIVE_GAP_JITTER, DECORATIVE_GAP_JITTER, random()),
+      };
+      const radius = lerp(1.05, 2.25, random());
+      const existing = [...placements, ...accepted];
+
+      if (!canPlaceDecorativeStructure(point, radius, layout, placements, accepted, 0.55)) continue;
+
+      candidates.push({
+        point,
+        radius,
+        openDistance: distanceToNearestPlacementEdge(point, existing),
+        tieBreak: random(),
+      });
+    }
+  }
+
+  candidates.sort((candidateA, candidateB) => candidateB.openDistance - candidateA.openDistance || candidateA.tieBreak - candidateB.tieBreak);
+
+  for (const candidate of candidates) {
+    if (accepted.length >= maxCount) break;
+
+    const openDistance = distanceToNearestPlacementEdge(candidate.point, [...placements, ...accepted]);
+    if (accepted.length >= targetCount && openDistance < DECORATIVE_LARGE_EMPTY_RADIUS) continue;
+    if (!canPlaceDecorativeStructure(candidate.point, candidate.radius, layout, placements, accepted, 0.55)) continue;
+
+    const kind = chooseGapFillerDecorativeStructureKind(theme, random);
+    accepted.push(createDecorativePlacement(accepted.length, kind, candidate.point, candidate.radius, random, layout, heightMap));
+  }
+}
+
 function createDecorativePlacements(
   seed: number,
   layout: ProceduralCTFLayout,
@@ -925,42 +1070,24 @@ function createDecorativePlacements(
 ): PlacedStructure[] {
   const random = mulberry32(seed ^ 0xa17c9e3b);
   const bounds = boundaryBounds(layout.boundary);
-  const targetCount = DECORATIVE_OBJECT_MIN_COUNT + Math.floor(random() * DECORATIVE_OBJECT_VARIANCE);
+  const targetCount = getDecorativeTargetCount(layout, random);
+  const randomTargetCount = Math.max(DECORATIVE_OBJECT_MIN_COUNT, Math.ceil(targetCount * DECORATIVE_RANDOM_FILL_RATIO));
   const accepted: PlacedStructure[] = [];
 
-  for (let attempt = 0; attempt < RANDOM_OBJECT_ATTEMPTS && accepted.length < targetCount; attempt++) {
+  for (let attempt = 0; attempt < RANDOM_OBJECT_ATTEMPTS && accepted.length < randomTargetCount; attempt++) {
     const isFillerPass = attempt > RANDOM_OBJECT_ATTEMPTS * 0.62;
     const x = lerp(bounds.minX + 3, bounds.maxX - 3, random());
     const z = lerp(bounds.minZ + 3, bounds.maxZ - 3, random());
     const radius = isFillerPass ? lerp(1.1, 2.4, random()) : lerp(1.35, 3.45, Math.pow(random(), 0.85));
     const point = { x, z };
-
-    if (!isInsideBoundaryPolygon(x, z, layout.boundary)) continue;
-    if (distanceToBoundary(x, z, layout.boundary) < radius + 1.8) continue;
-    if (isProtectedObjectivePoint(point, layout, radius)) continue;
     const spacing = isFillerPass ? 0.7 : 1.15;
-    if (placementOverlaps(point, radius, placements, spacing)) continue;
-    if (placementOverlaps(point, radius, accepted, spacing)) continue;
+    if (!canPlaceDecorativeStructure(point, radius, layout, placements, accepted, spacing)) continue;
 
     const kind = chooseDecorativeStructureKind(theme, random, accepted.length);
-    const metadata = getDecorativeStructureMetadata(kind);
-    const surfaceRow = sampleMedianHeight(heightMap, layout.origin, layout.size, layout.voxelSize, point, radius + 1);
-    accepted.push({
-      id: `dressing_${accepted.length + 1}_${kind}`,
-      slotId: `dressing_${accepted.length + 1}`,
-      kind,
-      role: metadata.role,
-      moduleId: metadata.moduleId,
-      roleTags: metadata.roleTags,
-      position: { x, y: gridRowsToWorldY(surfaceRow, layout.origin.y, layout.voxelSize.y), z },
-      facing: normalize2D({ x: random() - 0.5, z: random() - 0.5 }),
-      footprint: { shape: 'circle', radius },
-      radius,
-      padRadius: radius + 0.85,
-      surfaceRow,
-      variant: Math.floor(random() * 0xffffffff) >>> 0,
-    });
+    accepted.push(createDecorativePlacement(accepted.length, kind, point, radius, random, layout, heightMap));
   }
+
+  fillDecorativeGaps(seed, layout, theme, heightMap, placements, accepted, targetCount);
 
   return accepted;
 }

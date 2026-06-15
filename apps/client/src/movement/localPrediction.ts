@@ -48,6 +48,7 @@ let cachedCollisionWorld: { mapId: string | null; revision: number; world: Movem
 let latestServerCollisionRevision = 0;
 const pendingSelfMovementAuthorities: SelfMovementAuthority[] = [];
 let pendingSelfMovementAuthoritiesOutOfOrder = false;
+let localRootedUntil = 0;
 
 export interface AppliedSelfMovementAuthority {
   authority: SelfMovementAuthority;
@@ -59,6 +60,35 @@ const fallbackTerrain: MovementTerrainAdapter = {
   getGroundY: () => 0,
   clampPosition: (position) => ({ ...position }),
 };
+
+export function setLocalMovementRootedUntil(rootedUntil: number, nowMs = Date.now()): void {
+  localRootedUntil = Math.max(localRootedUntil, rootedUntil);
+  if (localRootedUntil <= nowMs) {
+    localRootedUntil = 0;
+  }
+}
+
+function isLocalMovementRooted(nowMs: number): boolean {
+  if (localRootedUntil <= nowMs) {
+    localRootedUntil = 0;
+    return false;
+  }
+  return true;
+}
+
+function suppressRootedMovementInput(input: InputState, nowMs: number): InputState {
+  if (!isLocalMovementRooted(nowMs)) return input;
+  return {
+    ...input,
+    moveForward: false,
+    moveBackward: false,
+    moveLeft: false,
+    moveRight: false,
+    jump: false,
+    crouch: false,
+    sprint: false,
+  };
+}
 
 export function resetLocalMovementPrediction(
   state?: MovementSimulationState,
@@ -78,6 +108,7 @@ export function resetLocalMovementPrediction(
   latestServerCollisionRevision = Math.max(0, Math.trunc(options.collisionRevision ?? 0));
   pendingSelfMovementAuthorities.length = 0;
   pendingSelfMovementAuthoritiesOutOfOrder = false;
+  localRootedUntil = 0;
   if (state) {
     localMovementPrediction.initialize(state, movementEpoch, lastAckSeq);
     advanceNextCommandSeqPastAck(lastAckSeq);
@@ -183,9 +214,10 @@ export function createLocalMovementCommand(input: InputState, options: {
   crouchPressed?: boolean;
   abilityCastHints?: AbilityCastOriginHint[];
 }): MovementCommand {
+  const commandInput = suppressRootedMovementInput(input, options.clientTimeMs);
   const command = sanitizeMovementCommand({
     seq: nextCommandSeq,
-    buttons: inputStateToMovementButtons(input, {
+    buttons: inputStateToMovementButtons(commandInput, {
       crouchPressed: options.crouchPressed,
     }),
     lookYaw: options.lookYaw,
@@ -454,6 +486,9 @@ export function drainSelfMovementAuthorities(player: Player, nowMs: number): App
 
 export function applySelfMovementAuthority(player: Player, authority: SelfMovementAuthority, nowMs = Date.now()) {
   ensureLocalPredictionInitialized(player);
+  if (authority.rootedUntil !== undefined) {
+    setLocalMovementRootedUntil(authority.rootedUntil, nowMs);
+  }
   const nextCollisionRevision = authority.collisionRevision ?? latestServerCollisionRevision;
   if (nextCollisionRevision !== latestServerCollisionRevision) {
     cachedCollisionWorld = null;

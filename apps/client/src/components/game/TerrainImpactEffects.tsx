@@ -20,7 +20,7 @@ export type TerrainImpactKind =
   | 'hookshot_hook'
   | 'hookshot_drag_hook'
   | 'hookshot_grapple'
-  | 'hookshot_trap'
+  | 'hookshot_ground_hooks'
   | 'earth_wall';
 
 interface TerrainImpactOptions {
@@ -218,7 +218,7 @@ function getImpactStyle(kind: TerrainImpactKind): ImpactStyle {
         additive: true,
         debrisShape: 'cone',
       };
-    case 'hookshot_trap':
+    case 'hookshot_ground_hooks':
       return {
         duration: 720,
         scale: 1.2,

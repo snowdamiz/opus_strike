@@ -100,6 +100,8 @@ import {
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_SUBSTEP_SECONDS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
+  PHANTOM_VOID_ZONE_DURATION_SECONDS,
+  PHANTOM_VOID_ZONE_RADIUS,
   TICK_RATE,
   createEmptyInputState,
   getHeroStats,
@@ -143,7 +145,6 @@ import {
 
 // Component imports for targeting indicators
 import { BombTargetingIndicator, triggerAirStrike, triggerRocketJumpExplosion } from './BlazeEffects';
-import { GrappleTrapTargetingIndicator } from './HookshotEffects';
 import { triggerBlinkEffect } from './PhantomEffects';
 import { triggerPhantomShieldCastEffect } from './phantom';
 import { addChronosLifelineEffects, addChronosSelfHealPulseEffect } from './chronos/lifeline';
@@ -152,8 +153,6 @@ import { triggerTeleportEffect } from '../ui/TeleportEffects';
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
-const PRACTICE_VOID_ZONE_RADIUS = 3;
-const PRACTICE_VOID_ZONE_DURATION_SECONDS = 4;
 const TERRAIN_STEP_VISUAL_SNAP_THRESHOLD = 1.35;
 const TERRAIN_STEP_VISUAL_UP_RATE = 16;
 const TERRAIN_STEP_VISUAL_DOWN_RATE = 28;
@@ -577,7 +576,7 @@ export function movementClassForTrace(input: {
   if (input.heroId === 'blaze' && input.inputState.ability2) return 'rocket_jump';
   if (input.heroId === 'phantom' && input.inputState.ability1) return 'blink';
   if (input.heroId === 'hookshot' && (input.inputState.ability1 || input.movement.isGrappling)) return 'grapple';
-  if (input.heroId === 'hookshot' && input.inputState.ultimate) return 'grapple_trap';
+  if (input.heroId === 'hookshot' && input.inputState.ultimate) return 'ground_hooks';
   if (input.heroId === 'chronos' && input.inputState.ability1) {
     return input.inputState.secondaryFire ? 'chronos_lifeline_self' : 'chronos_lifeline_allies';
   }
@@ -640,13 +639,11 @@ export interface LocalPlayerFrameContext {
   isControlPressed: boolean;
   isTouchInputActive: boolean;
   bombTargeting: boolean;
-  grappleTrapTargeting: boolean;
   isPracticeMode: boolean;
   updateLocalPlayer: GameStoreSnapshot['updateLocalPlayer'];
   setBombTargeting: GameStoreSnapshot['setBombTargeting'];
   setFlamethrowerActive: GameStoreSnapshot['setFlamethrowerActive'];
   setFlamethrowerFuel: GameStoreSnapshot['setFlamethrowerFuel'];
-  setGrappleTrapTargeting: GameStoreSnapshot['setGrappleTrapTargeting'];
   sendMovementCommands: NetworkContextValue['sendMovementCommands'];
   cameraControl: UseCameraReturn;
   movement: UseMovementReturn;
@@ -857,7 +854,7 @@ function runPresentationPhase(input: {
     x: velocity.x,
     y: velocity.y,
     z: velocity.z,
-  });
+  }, cameraControl.refs.yaw.current);
 
   return {
     localMovementForTrace,
@@ -894,7 +891,7 @@ function runTracePhase(input: {
     now,
     dt,
   } = input;
-  const { bombTargeting, grappleTrapTargeting, cameraControl, movement, refs } = ctx;
+  const { bombTargeting, cameraControl, movement, refs } = ctx;
   const position = refs.positionRef.current;
   const velocity = movement.refs.velocity.current;
 
@@ -907,7 +904,6 @@ function runTracePhase(input: {
   if (frameInput.ability2) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ability2.abilityId);
   if (frameInput.ultimate) pushUniqueTraceAbilityId(traceAbilityIds, heroDef?.ultimate.abilityId);
   if (bombTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'blaze_bomb_targeting');
-  if (grappleTrapTargeting) pushUniqueTraceAbilityId(traceAbilityIds, 'hookshot_grapple_trap_targeting');
   traceAbilityIds.sort();
   const traceGroundY = localMovementForTrace.isGrounded
     ? position.y - PLAYER_HEIGHT / 2
@@ -1425,7 +1421,6 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
     resetPredictedAbilitySounds,
     clearHeroActionLock,
     setBombTargeting,
-    setGrappleTrapTargeting,
     setFlamethrowerActive,
     resetViewmodelPoseState,
     resetBlazeFlamethrower,
@@ -1448,7 +1443,6 @@ function runHeroSwapPhase(ctx: LocalPlayerFrameContext, localPlayer: Player, now
   hookshotAbilities.secondaryFirePressedRef.current = false;
   setChronosAegisVisualState(localPlayer.id, false, now);
   setBombTargeting(false, false);
-  setGrappleTrapTargeting(false, false);
   setFlamethrowerActive(false);
   phantomAbilities.resetPhantomPrimaryMagazine();
   resetViewmodelPoseState('hero-swap', localPlayer.heroId as HeroId, now);
@@ -1594,8 +1588,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
   const setFlamethrowerActive = useGameStore(state => state.setFlamethrowerActive);
   const setFlamethrowerFuel = useGameStore(state => state.setFlamethrowerFuel);
   const gamePhase = useGameStore(state => state.gamePhase);
-  const grappleTrapTargeting = useGameStore(state => state.grappleTrapTargeting);
-  const setGrappleTrapTargeting = useGameStore(state => state.setGrappleTrapTargeting);
   const localPlayerForInit = useGameStore(state => state.localPlayer);
   const isPracticeMode = useGameStore(state => state.isPracticeMode);
 
@@ -1923,13 +1915,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         });
       }
       blazeAbilities.executeBombDrop(playerSounds);
-    } else if (grappleTrapTargeting && hookshotAbilities.grappleTrapValidRef.current && hookshotAbilities.grappleTrapTargetRef.current) {
-      setGrappleTrapTargeting(false);
     }
   }, [
-    enabled, isPointerLocked, requestPointerLock, bombTargeting, grappleTrapTargeting,
+    enabled, isPointerLocked, requestPointerLock, bombTargeting,
     phantomAbilities, blazeAbilities, hookshotAbilities, playerSounds, abilitySystem, movement,
-    cameraControl, requestBlazeBombDrop, updateLocalPlayer, camera, inputState, setGrappleTrapTargeting,
+    cameraControl, requestBlazeBombDrop, updateLocalPlayer, camera, inputState,
     isPracticeMode,
   ]);
 
@@ -1947,9 +1937,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
     const handleCancel = (e: MouseEvent | KeyboardEvent) => {
       const store = useGameStore.getState();
       const isBombTargeting = store.bombTargeting;
-      const isGrappleTrapTargeting = store.grappleTrapTargeting;
 
-      if (!isBombTargeting && !isGrappleTrapTargeting) return;
+      if (!isBombTargeting) return;
 
       const isRightClick = e instanceof MouseEvent && e.button === 2;
       const isEscape = e instanceof KeyboardEvent && e.code === 'Escape';
@@ -1962,17 +1951,12 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           blazeAbilities.bombValidRef.current = false;
           setBlazeBombTargetHeld(false);
         }
-        if (isGrappleTrapTargeting && (isRightClick || isEscape)) {
-          store.setGrappleTrapTargeting(false, false);
-          hookshotAbilities.grappleTrapTargetRef.current = null;
-          hookshotAbilities.grappleTrapValidRef.current = false;
-        }
       }
     };
 
     const handleContextMenu = (e: MouseEvent) => {
       const store = useGameStore.getState();
-      if (store.bombTargeting || store.grappleTrapTargeting) {
+      if (store.bombTargeting) {
         e.preventDefault();
       }
     };
@@ -2002,13 +1986,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       isControlPressed,
       isTouchInputActive,
       bombTargeting,
-      grappleTrapTargeting,
       isPracticeMode,
       updateLocalPlayer,
       setBombTargeting,
       setFlamethrowerActive,
       setFlamethrowerFuel,
-      setGrappleTrapTargeting,
       sendMovementCommands,
       cameraControl,
       movement,
@@ -2076,13 +2058,11 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       frameCtx.isControlPressed = isControlPressed;
       frameCtx.isTouchInputActive = isTouchInputActive;
       frameCtx.bombTargeting = bombTargeting;
-      frameCtx.grappleTrapTargeting = grappleTrapTargeting;
       frameCtx.isPracticeMode = isPracticeMode;
       frameCtx.updateLocalPlayer = updateLocalPlayer;
       frameCtx.setBombTargeting = setBombTargeting;
       frameCtx.setFlamethrowerActive = setFlamethrowerActive;
       frameCtx.setFlamethrowerFuel = setFlamethrowerFuel;
-      frameCtx.setGrappleTrapTargeting = setGrappleTrapTargeting;
       frameCtx.sendMovementCommands = sendMovementCommands;
       frameCtx.cameraControl = cameraControl;
       frameCtx.movement = movement;
@@ -2291,7 +2271,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         inputState: frameInput,
         ultimateCharge: localPlayer.ultimateCharge ?? 0,
         bombTargeting: bombTargetingForFrame,
-        grappleTrapTargeting,
         phantomPrimaryAmmo: phantomAbilities.phantomPrimaryAmmoRef.current,
         phantomPrimaryReloading,
         canUseAbility: abilitySystem.canUseAbility,
@@ -2311,7 +2290,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
           if (chronosQueuePressed) {
             if (chronosLifelineQueuedRef.current) {
               setChronosLifelineQueuedState(false, now);
-            } else if (!grappleTrapTargeting && abilitySystem.canUseAbility(ability1Id, false)) {
+            } else if (abilitySystem.canUseAbility(ability1Id, false)) {
               setChronosLifelineQueuedState(true, now, rawFrameInput);
             }
           }
@@ -2389,7 +2368,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
             }
           }
         } else if (frameInput.ability1 && !abilitySystem.abilityPressedRef.current.ability1) {
-          if (!grappleTrapTargeting && abilitySystem.canUseAbility(ability1Id, false)) {
+          if (abilitySystem.canUseAbility(ability1Id, false)) {
             if (heroId === 'phantom') {
               if (isPracticeMode) {
                 const startPosition = { x: position.x, y: position.y, z: position.z };
@@ -2405,8 +2384,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                       y: nextState.position.y - 0.9,
                       z: nextState.position.z,
                     },
-                    radius: PRACTICE_VOID_ZONE_RADIUS,
-                    duration: PRACTICE_VOID_ZONE_DURATION_SECONDS,
+                    radius: PHANTOM_VOID_ZONE_RADIUS,
+                    duration: PHANTOM_VOID_ZONE_DURATION_SECONDS,
                     startTime: now,
                     ownerId: localPlayer.id,
                     ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
@@ -2540,7 +2519,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
               updateLocalPlayer({ ultimateCharge: 0 });
             }
           } else if (heroId === 'hookshot') {
-            if (hookshotAbilities.executeGrappleTrap(abilityCtx, updateLocalPlayer)) {
+            if (hookshotAbilities.executeGroundHooks(abilityCtx, updateLocalPlayer)) {
               lockHeroActions(heroId, HOOKSHOT_SECONDARY_POSE_DURATION_MS, now);
             }
           } else if (heroId === 'chronos') {
@@ -2571,7 +2550,7 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
         );
       }
 
-      if (heroId === 'hookshot' && !grappleTrapTargeting) {
+      if (heroId === 'hookshot') {
         const secondaryPressed = frameInput.secondaryFire && !hookshotAbilities.secondaryFirePressedRef.current;
         if (frameInput.primaryFire) {
           if (hookshotAbilities.fireChainHook(abilityCtx)) {
@@ -2683,10 +2662,6 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
       <BombTargetingIndicator
         isActive={bombTargeting}
         onTargetUpdate={blazeAbilities.handleBombTargetUpdate}
-      />
-      <GrappleTrapTargetingIndicator
-        isActive={grappleTrapTargeting}
-        onTargetUpdate={hookshotAbilities.handleGrappleTrapTargetUpdate}
       />
     </>
   );

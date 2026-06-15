@@ -22,8 +22,11 @@ export interface VisibilityInterestPlayer {
   state: string;
   position: Vec3;
   heroId?: string | null;
-  abilities?: Iterable<{ abilityId?: string; isActive?: boolean }>;
+  abilities?: AbilityCollection;
 }
+
+type AbilityInterestState = { abilityId?: string; isActive?: boolean };
+type AbilityCollection = Iterable<AbilityInterestState> | { values(): Iterable<AbilityInterestState> };
 
 export interface RecipientInterestDecision {
   recipientId: string;
@@ -102,9 +105,16 @@ function isActiveStealthAbility(ability: { abilityId?: string; isActive?: boolea
   return ability.isActive === true && ability.abilityId === 'phantom_veil';
 }
 
+function hasAbilityValues(collection: AbilityCollection): collection is { values(): Iterable<AbilityInterestState> } {
+  return typeof (collection as { values?: unknown }).values === 'function';
+}
+
 function hasStealthActive(player: VisibilityInterestPlayer): boolean {
   if (!player.abilities) return false;
-  for (const ability of player.abilities) {
+  const abilities = hasAbilityValues(player.abilities)
+    ? player.abilities.values()
+    : player.abilities;
+  for (const ability of abilities) {
     if (isActiveStealthAbility(ability)) return true;
   }
   return false;

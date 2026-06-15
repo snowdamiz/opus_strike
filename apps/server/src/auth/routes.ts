@@ -1,6 +1,15 @@
 import { Router, Request, Response } from 'express';
 import type { Router as RouterType } from 'express';
 import { Prisma } from '@prisma/client';
+import {
+  DEFAULT_COMPETITIVE_RATING,
+  RANK_PLACEMENT_MATCHES,
+  getRankedSeasonIdentity,
+  getRankedSeasonLabel,
+  normalizeRankedSeasonNumber,
+  type RankedSeasonMode,
+  type RankedSeasonSnapshot,
+} from '@voxel-strike/shared';
 import prisma from '../db';
 import { verifySignature, generateNonce, createSignMessage } from './verify';
 import {
@@ -82,6 +91,37 @@ interface LeaderboardUserSummary {
   rankedLastMatchAt: Date | null;
 }
 
+interface RankedSeasonStatsSummary {
+  userId: string;
+  userName: string;
+  createdAt: Date;
+  updatedAt: Date;
+  totalGames: number;
+  totalWins: number;
+  totalLosses: number;
+  totalDraws: number;
+  totalKills: number;
+  totalDeaths: number;
+  totalAssists: number;
+  totalCaptures: number;
+  totalFlagReturns: number;
+  totalScore: number;
+  totalExperience: number;
+  competitiveRating: number;
+  rankedGames: number;
+  rankedWins: number;
+  rankedLosses: number;
+  rankedDraws: number;
+  rankedPlacementsRemaining: number;
+  rankedPeakRating: number;
+  rankedLastMatchAt: Date | null;
+}
+
+interface LeaderboardSeasonOption extends Pick<RankedSeasonSnapshot, 'mode' | 'seasonNumber' | 'label' | 'endsAt'> {
+  identity: string;
+  current: boolean;
+}
+
 const leaderboardUserSelect = {
   id: true,
   name: true,
@@ -114,6 +154,32 @@ const leaderboardUserSelect = {
   rankedLastMatchAt: true,
 } satisfies Prisma.UserSelect;
 
+const rankedSeasonStatsSelect = {
+  userId: true,
+  userName: true,
+  createdAt: true,
+  updatedAt: true,
+  totalGames: true,
+  totalWins: true,
+  totalLosses: true,
+  totalDraws: true,
+  totalKills: true,
+  totalDeaths: true,
+  totalAssists: true,
+  totalCaptures: true,
+  totalFlagReturns: true,
+  totalScore: true,
+  totalExperience: true,
+  competitiveRating: true,
+  rankedGames: true,
+  rankedWins: true,
+  rankedLosses: true,
+  rankedDraws: true,
+  rankedPlacementsRemaining: true,
+  rankedPeakRating: true,
+  rankedLastMatchAt: true,
+} satisfies Prisma.RankedSeasonUserStatsSelect;
+
 const leaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
   { totalScore: 'desc' },
   { totalWins: 'desc' },
@@ -127,6 +193,13 @@ const rankedLeaderboardOrderBy: Prisma.UserOrderByWithRelationInput[] = [
   { rankedWins: 'desc' },
   { rankedGames: 'asc' },
   { createdAt: 'asc' },
+];
+
+const rankedSeasonLeaderboardOrderBy: Prisma.RankedSeasonUserStatsOrderByWithRelationInput[] = [
+  { competitiveRating: 'desc' },
+  { rankedWins: 'desc' },
+  { rankedGames: 'asc' },
+  { updatedAt: 'asc' },
 ];
 
 type LeaderboardMode = 'ranked' | 'score';
@@ -280,6 +353,97 @@ function getLeaderboardMode(value: unknown): LeaderboardMode {
   return rawValue === 'score' ? 'score' : 'ranked';
 }
 
+function getSeasonIdentity(mode: RankedSeasonMode, seasonNumber: number): string {
+  return getRankedSeasonIdentity({
+    mode,
+    seasonNumber,
+  });
+}
+
+function toLeaderboardSeasonOption(
+  season: Pick<RankedSeasonSnapshot, 'mode' | 'seasonNumber' | 'endsAt'>,
+  currentIdentity: string
+): LeaderboardSeasonOption {
+  const mode = season.mode === 'preseason' ? 'preseason' : 'season';
+  const seasonNumber = normalizeRankedSeasonNumber(season.seasonNumber);
+  const identity = getSeasonIdentity(mode, seasonNumber);
+
+  return {
+    identity,
+    mode,
+    seasonNumber,
+    label: getRankedSeasonLabel({ mode, seasonNumber }),
+    endsAt: season.endsAt ?? null,
+    current: identity === currentIdentity,
+  };
+}
+
+function getLeaderboardSeasonIdentity(value: unknown, currentIdentity: string): string {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  if (typeof rawValue !== 'string' || rawValue.trim() === '' || rawValue === 'current') {
+    return currentIdentity;
+  }
+
+  const valueText = rawValue.trim().toLowerCase();
+  const explicitSeason = /^season:(\d+)$/.exec(valueText);
+  if (explicitSeason) {
+    return getSeasonIdentity('season', Number.parseInt(explicitSeason[1], 10));
+  }
+
+  const numericSeason = Number.parseInt(valueText, 10);
+  return Number.isFinite(numericSeason)
+    ? getSeasonIdentity('season', numericSeason)
+    : currentIdentity;
+}
+
+async function getLeaderboardSeasonOptions(currentSeason: RankedSeasonSnapshot): Promise<LeaderboardSeasonOption[]> {
+  const currentIdentity = getRankedSeasonIdentity(currentSeason);
+  const options = new Map<string, LeaderboardSeasonOption>();
+  if (currentSeason.mode === 'season') {
+    options.set(currentIdentity, toLeaderboardSeasonOption(currentSeason, currentIdentity));
+  }
+
+  const seasonRows = await prisma.rankedSeasonUserStats.findMany({
+    where: { mode: 'season' },
+    distinct: ['mode', 'seasonNumber'],
+    select: {
+      mode: true,
+      seasonNumber: true,
+    },
+    orderBy: [
+      { seasonNumber: 'desc' },
+      { mode: 'asc' },
+    ],
+  });
+
+  for (const row of seasonRows) {
+    const option = toLeaderboardSeasonOption({
+      mode: row.mode,
+      seasonNumber: row.seasonNumber,
+      endsAt: null,
+    }, currentIdentity);
+    options.set(option.identity, option);
+  }
+
+  return Array.from(options.values()).sort((a, b) => {
+    if (a.current) return -1;
+    if (b.current) return 1;
+    return b.seasonNumber - a.seasonNumber;
+  });
+}
+
+function getSelectedLeaderboardSeason(
+  seasons: LeaderboardSeasonOption[],
+  requestedIdentity: string,
+  currentSeason: RankedSeasonSnapshot
+): LeaderboardSeasonOption {
+  const currentIdentity = getRankedSeasonIdentity(currentSeason);
+  return seasons.find((season) => season.identity === requestedIdentity)
+    ?? seasons.find((season) => season.current)
+    ?? seasons[0]
+    ?? toLeaderboardSeasonOption(currentSeason, currentIdentity);
+}
+
 function serializeLeaderboardStats(user: LeaderboardUserSummary) {
   return {
     totalGames: user.totalGames,
@@ -311,12 +475,83 @@ function serializeLeaderboardStats(user: LeaderboardUserSummary) {
   };
 }
 
+function serializeRankedSeasonStats(stats: RankedSeasonStatsSummary) {
+  return {
+    totalGames: stats.totalGames,
+    totalWins: stats.totalWins,
+    totalLosses: stats.totalLosses,
+    totalDraws: stats.totalDraws,
+    totalKills: stats.totalKills,
+    totalDeaths: stats.totalDeaths,
+    totalAssists: stats.totalAssists,
+    totalCaptures: stats.totalCaptures,
+    totalFlagReturns: stats.totalFlagReturns,
+    totalScore: stats.totalScore,
+    totalExperience: stats.totalExperience,
+    totalWagerGames: 0,
+    totalWagerWins: 0,
+    totalWagerLosses: 0,
+    totalWagerDraws: 0,
+    totalWageredLamports: '0',
+    totalWagerWonLamports: '0',
+    totalWagerLostLamports: '0',
+    competitiveRating: stats.competitiveRating,
+    rankedGames: stats.rankedGames,
+    rankedWins: stats.rankedWins,
+    rankedLosses: stats.rankedLosses,
+    rankedDraws: stats.rankedDraws,
+    rankedPlacementsRemaining: stats.rankedPlacementsRemaining,
+    rankedPeakRating: stats.rankedPeakRating,
+    rankedLastMatchAt: stats.rankedLastMatchAt?.toISOString() ?? null,
+  };
+}
+
+function serializeEmptyRankedSeasonStats() {
+  return {
+    totalGames: 0,
+    totalWins: 0,
+    totalLosses: 0,
+    totalDraws: 0,
+    totalKills: 0,
+    totalDeaths: 0,
+    totalAssists: 0,
+    totalCaptures: 0,
+    totalFlagReturns: 0,
+    totalScore: 0,
+    totalExperience: 0,
+    totalWagerGames: 0,
+    totalWagerWins: 0,
+    totalWagerLosses: 0,
+    totalWagerDraws: 0,
+    totalWageredLamports: '0',
+    totalWagerWonLamports: '0',
+    totalWagerLostLamports: '0',
+    competitiveRating: DEFAULT_COMPETITIVE_RATING,
+    rankedGames: 0,
+    rankedWins: 0,
+    rankedLosses: 0,
+    rankedDraws: 0,
+    rankedPlacementsRemaining: RANK_PLACEMENT_MATCHES,
+    rankedPeakRating: DEFAULT_COMPETITIVE_RATING,
+    rankedLastMatchAt: null,
+  };
+}
+
 function serializeLeaderboardEntry(user: LeaderboardUserSummary, rank: number) {
   return {
     rank,
     userId: user.id,
     name: user.name,
     stats: serializeLeaderboardStats(user),
+  };
+}
+
+function serializeRankedSeasonLeaderboardEntry(user: RankedSeasonStatsSummary, rank: number) {
+  return {
+    rank,
+    userId: user.userId,
+    name: user.userName,
+    stats: serializeRankedSeasonStats(user),
   };
 }
 
@@ -397,6 +632,41 @@ async function getRankedLeaderboardRank(user: LeaderboardUserSummary): Promise<n
           rankedWins: user.rankedWins,
           rankedGames: user.rankedGames,
           createdAt: { lt: user.createdAt },
+        },
+      ],
+    },
+  });
+
+  return higherRankedUsers + 1;
+}
+
+async function getRankedSeasonLeaderboardRank(
+  user: RankedSeasonStatsSummary,
+  season: LeaderboardSeasonOption
+): Promise<number | null> {
+  if (user.rankedGames <= 0) return null;
+
+  const higherRankedUsers = await prisma.rankedSeasonUserStats.count({
+    where: {
+      mode: season.mode,
+      seasonNumber: season.seasonNumber,
+      rankedGames: { gt: 0 },
+      OR: [
+        { competitiveRating: { gt: user.competitiveRating } },
+        {
+          competitiveRating: user.competitiveRating,
+          rankedWins: { gt: user.rankedWins },
+        },
+        {
+          competitiveRating: user.competitiveRating,
+          rankedWins: user.rankedWins,
+          rankedGames: { lt: user.rankedGames },
+        },
+        {
+          competitiveRating: user.competitiveRating,
+          rankedWins: user.rankedWins,
+          rankedGames: user.rankedGames,
+          updatedAt: { lt: user.updatedAt },
         },
       ],
     },
@@ -1080,21 +1350,72 @@ router.get('/leaderboard', async (req: Request, res: Response) => {
   try {
     const limit = getLeaderboardLimit(req.query.limit);
     const mode = getLeaderboardMode(req.query.mode);
+    const currentSeason = await getRankedSeason();
+    const seasons = await getLeaderboardSeasonOptions(currentSeason);
+    const selectedSeason = getSelectedLeaderboardSeason(
+      seasons,
+      getLeaderboardSeasonIdentity(req.query.season, getRankedSeasonIdentity(currentSeason)),
+      currentSeason
+    );
+    const payload = await getAuthenticatedPayload(req);
+    const user = payload ? await findUserForPayload(payload) : null;
+
+    if (mode === 'ranked' && !selectedSeason.current) {
+      const leaderboardUsers = await prisma.rankedSeasonUserStats.findMany({
+        where: {
+          mode: selectedSeason.mode,
+          seasonNumber: selectedSeason.seasonNumber,
+          rankedGames: { gt: 0 },
+        },
+        orderBy: rankedSeasonLeaderboardOrderBy,
+        take: limit,
+        select: rankedSeasonStatsSelect,
+      });
+      const seasonUser = user ? await prisma.rankedSeasonUserStats.findUnique({
+        where: {
+          mode_seasonNumber_userId: {
+            mode: selectedSeason.mode,
+            seasonNumber: selectedSeason.seasonNumber,
+            userId: user.id,
+          },
+        },
+        select: rankedSeasonStatsSelect,
+      }) : null;
+      const personalRank = seasonUser
+        ? await getRankedSeasonLeaderboardRank(seasonUser, selectedSeason)
+        : null;
+
+      res.json({
+        mode,
+        seasons,
+        selectedSeason,
+        leaderboard: leaderboardUsers.map((leaderboardUser, index) => (
+          serializeRankedSeasonLeaderboardEntry(leaderboardUser, index + 1)
+        )),
+        currentUser: user ? {
+          rank: personalRank,
+          userId: user.id,
+          name: seasonUser?.userName ?? user.name,
+          stats: seasonUser ? serializeRankedSeasonStats(seasonUser) : serializeEmptyRankedSeasonStats(),
+        } : null,
+      });
+      return;
+    }
+
     const leaderboardUsers = await prisma.user.findMany({
       where: mode === 'ranked' ? { rankedGames: { gt: 0 } } : { totalGames: { gt: 0 } },
       orderBy: mode === 'ranked' ? rankedLeaderboardOrderBy : leaderboardOrderBy,
       take: limit,
       select: leaderboardUserSelect,
     });
-
-    const payload = await getAuthenticatedPayload(req);
-    const user = payload ? await findUserForPayload(payload) : null;
     const personalRank = user
       ? await (mode === 'ranked' ? getRankedLeaderboardRank(user) : getScoreLeaderboardRank(user))
       : null;
 
     res.json({
       mode,
+      seasons,
+      selectedSeason,
       leaderboard: leaderboardUsers.map((leaderboardUser, index) => (
         serializeLeaderboardEntry(leaderboardUser, index + 1)
       )),

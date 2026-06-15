@@ -4,7 +4,7 @@ export { HookProjectile } from './hookProjectile';
 
 export { DragHookEffect } from './dragHook';
 
-export { GrappleTrapEffect, GrappleTrapTargetingIndicator } from './grappleTrap';
+export { GroundHooksEffect } from './groundHooks';
 
 export { EarthWallEffect } from './earthWall';
 

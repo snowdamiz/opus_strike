@@ -285,8 +285,8 @@ export function executeAbility(
       break;
     }
 
-    case 'hookshot_grapple_trap': {
-      abilityState.isActive = true;
+    case 'hookshot_ground_hooks': {
+      abilityState.isActive = false;
       abilityState.activatedAt = now;
       break;
     }

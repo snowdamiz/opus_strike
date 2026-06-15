@@ -4,14 +4,11 @@ import { useFrame } from '@react-three/fiber';
 import { 
   HookProjectile,
   DragHookEffect,
-  GrappleTrapEffect,
+  GroundHooksEffect,
   EarthWallEffect,
   GrappleLineEffect,
 } from './hookshot';
 import { runHookshotFrameUpdaters } from './hookshot/hookshotFrameRegistry';
-
-// Re-export targeting indicator for external use
-export { GrappleTrapTargetingIndicator } from './hookshot';
 
 // ============================================================================
 // HOOKSHOT EFFECTS MANAGER
@@ -21,13 +18,13 @@ export function HookshotEffectsManager() {
   const {
     hookProjectiles,
     dragHooks,
-    grappleTraps,
+    hookshotGroundHooks,
     grappleLines,
     earthWalls,
   } = useGameStore(useShallow(state => ({
     hookProjectiles: state.hookProjectiles,
     dragHooks: state.dragHooks,
-    grappleTraps: state.grappleTraps,
+    hookshotGroundHooks: state.hookshotGroundHooks,
     grappleLines: state.grappleLines,
     earthWalls: state.earthWalls,
   })));
@@ -46,9 +43,9 @@ export function HookshotEffectsManager() {
         <DragHookEffect key={hook.id} hook={hook} />
       ))}
       
-      {/* Ultimate grapple traps */}
-      {grappleTraps.map(trap => (
-        <GrappleTrapEffect key={trap.id} trap={trap} />
+      {/* Ground Hooks ultimate roots */}
+      {hookshotGroundHooks.map(effect => (
+        <GroundHooksEffect key={effect.id} effect={effect} />
       ))}
       
       {/* Grapple lines (E ability) */}

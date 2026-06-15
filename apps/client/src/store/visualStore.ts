@@ -81,6 +81,9 @@ export interface VisualState {
   /** Latest local slide velocity for first-person directional motion effects. */
   localSlideVelocity: Vec3;
 
+  /** Latest local camera yaw used to orient first-person directional motion effects. */
+  localViewYaw: number;
+
   /** Server-authoritative local velocity impulses to consume in PlayerController. */
   localPlayerImpulses: LocalPlayerImpulse[];
 
@@ -254,6 +257,7 @@ const initialVisualState: VisualState = {
   localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
   slideIntensity: 0,
   localSlideVelocity: { x: 0, y: 0, z: 0 },
+  localViewYaw: 0,
   localPlayerImpulses: [],
   combatFrameCache: createCombatFrameCache(),
   activeBlazeFlamethrowerPlayerIds: [],
@@ -375,11 +379,15 @@ export const setLocalVisualMovement = (movement: PlayerMovementState): void => {
   current.chronosAscendantStartY = movement.chronosAscendantStartY;
 };
 
-export const setLocalSlideIntensity = (intensity: number, velocity?: Vec3): void => {
+export const setLocalSlideIntensity = (intensity: number, velocity?: Vec3, viewYaw?: number): void => {
   const state = visualStore.getState();
   const nextIntensity = Math.max(0, Math.min(1, intensity));
   if (state.slideIntensity !== nextIntensity) {
     state.slideIntensity = nextIntensity;
+  }
+
+  if (typeof viewYaw === 'number') {
+    state.localViewYaw = viewYaw;
   }
 
   if (velocity && nextIntensity > 0) {
@@ -1177,6 +1185,7 @@ export const clearVisualState = (): void => {
     localMovement: { ...DEFAULT_LOCAL_MOVEMENT },
     slideIntensity: 0,
     localSlideVelocity: { x: 0, y: 0, z: 0 },
+    localViewYaw: 0,
     localPlayerImpulses: [],
     combatFrameCache: createCombatFrameCache(),
     activeBlazeFlamethrowerPlayerIds: [],

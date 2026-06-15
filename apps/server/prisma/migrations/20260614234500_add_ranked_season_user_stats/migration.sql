@@ -1,0 +1,3 @@
+-- This migration was generated during local development after the ranked season stats
+-- table had already been introduced. Keep it as a no-op so databases that recorded
+-- the migration name can continue to replay the migration history cleanly.

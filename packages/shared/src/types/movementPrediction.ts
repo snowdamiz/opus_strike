@@ -75,7 +75,8 @@ export type MovementCorrectionReason =
   | 'blocked_path'
   | 'bounds'
   | 'queue_overflow'
-  | 'collision_revision';
+  | 'collision_revision'
+  | 'root';
 
 export interface MovementCommand {
   seq: number;
@@ -108,6 +109,7 @@ export interface SelfMovementAuthority {
   collisionRevision?: number;
   chronosAegisActive?: boolean;
   chronosAegisShieldRatio?: number;
+  rootedUntil?: number;
 }
 
 export interface MovementTelemetrySnapshot {

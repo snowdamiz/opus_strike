@@ -1,6 +1,7 @@
 import {
   BLAZE_ROCKET_FIRE_INTERVAL_MS,
   BLAZE_ROCKET_SPEED as SHARED_BLAZE_ROCKET_SPEED,
+  GRAPPLE_MAX_DISTANCE,
   PHANTOM_DIRE_BALL_SPEED as SHARED_PHANTOM_DIRE_BALL_SPEED,
 } from '@voxel-strike/shared';
 
@@ -75,10 +76,7 @@ export const HOOKSHOT_MAX_DISTANCE = 14;
 export const DRAG_HOOK_COOLDOWN = 3600;
 export const DRAG_HOOK_SPEED = 50;
 export const DRAG_HOOK_MAX_DISTANCE = 24;
-export const GRAPPLE_MAX_RANGE = 28;
-export const GRAPPLE_TRAP_MAX_RANGE = 30;
-export const GRAPPLE_TRAP_THROW_SPEED = 30;
-export const GRAPPLE_TRAP_GRAVITY = 25;
+export const GRAPPLE_MAX_RANGE = GRAPPLE_MAX_DISTANCE;
 
 // ============================================================================
 // FUEL UPDATE THROTTLING

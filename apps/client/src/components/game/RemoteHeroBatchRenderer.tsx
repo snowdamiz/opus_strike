@@ -97,7 +97,7 @@ interface RemotePartDescriptor {
   materialKey: string;
   playerFilter: PlayerFilter;
   paletteKind?: MaterialKind;
-  teamAccentEmissiveIntensity?: number;
+  trimEmissiveIntensity?: number;
   fixedEmissiveIntensity?: number;
 }
 
@@ -983,7 +983,7 @@ function descriptorBase(
   geometryKey: string,
   materialKeyValue: string,
   playerFilter: PlayerFilter
-): Omit<RemotePartDescriptor, 'paletteKind' | 'teamAccentEmissiveIntensity' | 'fixedEmissiveIntensity'> {
+): Omit<RemotePartDescriptor, 'paletteKind' | 'trimEmissiveIntensity' | 'fixedEmissiveIntensity'> {
   return {
     id,
     bone,
@@ -998,7 +998,7 @@ function descriptorBase(
   };
 }
 
-function getTeamAccentEmissiveIntensity(part: VoxelPart): number | undefined {
+function getTrimEmissiveIntensity(part: VoxelPart): number | undefined {
   if (!('emissiveIntensity' in part) || typeof part.emissiveIntensity !== 'number') return undefined;
   return getTeamBodyGlowEmissiveIntensity(part as TeamAccentPart);
 }
@@ -1011,7 +1011,7 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
     prefix: string;
     playerFilter?: PlayerFilter;
     palette?: boolean;
-    teamAccent?: boolean;
+    trim?: boolean;
   }
 ): void {
   for (const bone of Object.keys(riggedPartsByBone) as HeroBoneName[]) {
@@ -1033,7 +1033,7 @@ function appendRiggedPartDescriptors<TPart extends VoxelPart>(
       descriptors.push({
         ...base,
         paletteKind: options.palette ? part.material : undefined,
-        teamAccentEmissiveIntensity: options.teamAccent ? getTeamAccentEmissiveIntensity(part) : undefined,
+        trimEmissiveIntensity: options.trim ? getTrimEmissiveIntensity(part) : undefined,
       });
     }
   }
@@ -1050,10 +1050,8 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
     materialOptionsByKey.set(key, options);
     return key;
   };
-  const materialKeyForPalettePart = (part: VoxelPart, filter: PlayerFilter) => {
-    const color = part.material === 'accent' && filter === 'bot'
-      ? teamColor
-      : manifest.materialPalette[part.material];
+  const materialKeyForPalettePart = (part: VoxelPart, _filter: PlayerFilter) => {
+    const color = manifest.materialPalette[part.material];
     return getOrAddMaterialKey(getPaletteMaterialOptions(part.material, color));
   };
 
@@ -1068,7 +1066,7 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
     const accent = part as TeamAccentPart;
     const transparent = accent.transparent || accent.opacity !== undefined;
     return getOrAddMaterialKey({
-      color: teamColor,
+      color: manifest.materialPalette[part.material],
       roughness: accent.roughness,
       metalness: accent.metalness,
       transparent,
@@ -1079,7 +1077,7 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
   };
   appendRiggedPartDescriptors(descriptors, groupRiggedParts(teamAccentParts), teamAccentKeyFor, {
     prefix: `${heroId}-team`,
-    teamAccent: true,
+    trim: true,
   });
 
   const addPaletteDescriptor = (
@@ -1136,23 +1134,6 @@ function createRemotePartDescriptors(heroId: HeroId, team: Team): { descriptors:
     ),
     fixedEmissiveIntensity: 0.75,
   });
-
-  const botAccentMaterialKey = materialKeyForPalettePart(
-    { material: 'accent', position: [0, 0, 0], scale: [1, 1, 1] },
-    'bot'
-  );
-  const botAccentDescriptors: RemotePartDescriptor[] = [];
-  for (const descriptor of descriptors) {
-    if (descriptor.paletteKind !== 'accent' || descriptor.playerFilter !== 'all') continue;
-    descriptor.playerFilter = 'nonBot';
-    botAccentDescriptors.push({
-      ...descriptor,
-      id: `${descriptor.id}-bot`,
-      materialKey: botAccentMaterialKey,
-      playerFilter: 'bot',
-    });
-  }
-  descriptors.push(...botAccentDescriptors);
 
   return { descriptors, materialOptions: materialOptionsByKey };
 }
@@ -1235,8 +1216,8 @@ function getDescriptorEmissiveBoost(
   if (descriptor.paletteKind) {
     return getHeroBodyMaterialEmissiveIntensity(descriptor.paletteKind, player.hasFlag) * (1 + glowPulse);
   }
-  if (descriptor.teamAccentEmissiveIntensity !== undefined) {
-    return descriptor.teamAccentEmissiveIntensity;
+  if (descriptor.trimEmissiveIntensity !== undefined) {
+    return descriptor.trimEmissiveIntensity;
   }
   return descriptor.fixedEmissiveIntensity ?? 0;
 }

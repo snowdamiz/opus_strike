@@ -105,6 +105,7 @@ assert.equal(blue.score, calculateParticipantScore(blue));
 function createFakeUser(id: string) {
   return {
     id,
+    name: id,
     competitiveRating: 800,
     rankedGames: 5,
     rankedWins: 2,
@@ -147,6 +148,16 @@ function createFakePrisma() {
   ]);
   const matches = new Map<string, any>();
   const participants: any[] = [];
+  const rankedSeasonStats = new Map<string, any>();
+  const rankedSeasonSettings = {
+    id: 'default',
+    mode: 'season',
+    seasonNumber: 1,
+    endsAt: null,
+    lastResetAt: null,
+    updatedByUserId: null,
+    updatedAt: new Date('2026-06-10T10:00:00.000Z'),
+  };
 
   const tx = {
     gameMatch: {
@@ -183,12 +194,32 @@ function createFakePrisma() {
         return user;
       },
     },
+    rankedSeasonSettings: {
+      upsert: async () => rankedSeasonSettings,
+    },
+    rankedSeasonUserStats: {
+      upsert: async ({ where, create, update }: any) => {
+        const key = `${where.mode_seasonNumber_userId.mode}:${where.mode_seasonNumber_userId.seasonNumber}:${where.mode_seasonNumber_userId.userId}`;
+        const existing = rankedSeasonStats.get(key);
+        if (existing) {
+          applyUpdate(existing, update);
+          return existing;
+        }
+        const row = {
+          id: key,
+          ...create,
+        };
+        rankedSeasonStats.set(key, row);
+        return row;
+      },
+    },
   };
 
   return {
     users,
     matches,
     participants,
+    rankedSeasonStats,
     prisma: {
       $transaction: async (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
     },
@@ -220,6 +251,12 @@ async function runPersistenceWriteTests() {
   assert.equal(fake.matches.get('ranked_match').matchMode, 'ranked');
   assert.equal(fake.users.get('ranked_red').rankedGames, 6);
   assert.notEqual(fake.users.get('ranked_red').competitiveRating, 800);
+  const rankedRedSeason = fake.rankedSeasonStats.get('season:1:ranked_red');
+  assert.ok(rankedRedSeason);
+  assert.equal(rankedRedSeason.rankedGames, 6);
+  assert.equal(rankedRedSeason.totalGames, 6);
+  assert.equal(rankedRedSeason.totalKills, baseParticipant.kills);
+  assert.equal(rankedRedSeason.totalCaptures, baseParticipant.flagCaptures);
   const rankedParticipant = fake.participants.find((participant) => participant.userId === 'ranked_blue');
   assert.equal(rankedParticipant.rankedEligible, true);
   assert.equal(typeof rankedParticipant.ratingDelta, 'number');
@@ -268,6 +305,7 @@ async function runPersistenceWriteTests() {
   assert.equal(fake.users.get('unranked_red').competitiveRating, unrankedBefore);
   assert.equal(fake.users.get('unranked_red').rankedGames, 5);
   assert.equal(fake.users.get('unranked_red').totalGames, 1);
+  assert.equal(fake.rankedSeasonStats.has('season:1:unranked_red'), false);
 
   const customWagerBefore = fake.users.get('custom_wager_red').competitiveRating;
   await persistCompletedMatch(fake.prisma as any, {

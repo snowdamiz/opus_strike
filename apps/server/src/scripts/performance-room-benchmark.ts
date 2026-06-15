@@ -207,7 +207,7 @@ function botAbilities(heroId: HeroId): BotPlayerSnapshot['abilities'] {
     return {
       hookshot_grapple: botAbility('hookshot_grapple'),
       hookshot_anchor_wall: botAbility('hookshot_anchor_wall'),
-      hookshot_grapple_trap: botAbility('hookshot_grapple_trap'),
+      hookshot_ground_hooks: botAbility('hookshot_ground_hooks'),
     };
   }
   if (heroId === 'blaze') {
@@ -387,7 +387,7 @@ function runBotAiBenchmark(botCount = 8): Record<string, number | string> {
           grappleAnchorAvailable: true,
           anchorWallProtectsAlly: blackboard.alliedCarrier !== null,
           anchorWallBlocksFriendlyCarrier: false,
-          trapZoneValuable: blackboard.droppedFriendlyFlag !== null || blackboard.enemyCarrier !== null,
+          groundHooksValuable: blackboard.droppedFriendlyFlag !== null || blackboard.enemyCarrier !== null,
         },
       });
     }

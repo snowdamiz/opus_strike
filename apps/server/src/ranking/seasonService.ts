@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   DEFAULT_COMPETITIVE_RATING,
   DEFAULT_RANKED_SEASON_NUMBER,
@@ -11,7 +12,12 @@ import {
 } from '@voxel-strike/shared';
 import prisma from '../db';
 
-const RANKED_SEASON_SETTINGS_ID = 'default';
+export const RANKED_SEASON_SETTINGS_ID = 'default';
+
+type RankedSeasonTransaction = Pick<
+  Prisma.TransactionClient,
+  'rankedSeasonSettings' | 'rankedSeasonUserStats' | 'user'
+>;
 
 interface RankedSeasonRow {
   id: string;
@@ -91,16 +97,87 @@ function readSeasonMode(value: RankedSeasonMode): RankedSeasonMode {
   throw new Error('Invalid ranked season mode');
 }
 
-async function ensureRankedSeasonSettings(): Promise<RankedSeasonRow> {
-  return prisma.rankedSeasonSettings.upsert({
+export async function ensureRankedSeasonSettingsTx(tx: RankedSeasonTransaction): Promise<RankedSeasonRow> {
+  return tx.rankedSeasonSettings.upsert({
     where: { id: RANKED_SEASON_SETTINGS_ID },
     create: createDefaultSeasonData(),
     update: {},
   });
 }
 
+async function ensureRankedSeasonSettings(): Promise<RankedSeasonRow> {
+  return ensureRankedSeasonSettingsTx(prisma);
+}
+
 export async function getRankedSeason(): Promise<RankedSeasonAdminView> {
   return toRankedSeasonSnapshot(await ensureRankedSeasonSettings());
+}
+
+async function archiveCurrentRankedSeason(
+  tx: RankedSeasonTransaction,
+  season: RankedSeasonRow,
+  archivedAt: Date
+): Promise<void> {
+  const mode = season.mode === 'preseason' ? 'preseason' : 'season';
+  const seasonNumber = normalizeRankedSeasonNumber(season.seasonNumber);
+  const rankedUsers = await tx.user.findMany({
+    where: { rankedGames: { gt: 0 } },
+    select: {
+      id: true,
+      name: true,
+      competitiveRating: true,
+      rankedGames: true,
+      rankedWins: true,
+      rankedLosses: true,
+      rankedDraws: true,
+      rankedPlacementsRemaining: true,
+      rankedPeakRating: true,
+      rankedLastMatchAt: true,
+    },
+  });
+
+  for (const user of rankedUsers) {
+    await tx.rankedSeasonUserStats.upsert({
+      where: {
+        mode_seasonNumber_userId: {
+          mode,
+          seasonNumber,
+          userId: user.id,
+        },
+      },
+      create: {
+        mode,
+        seasonNumber,
+        userId: user.id,
+        userName: user.name,
+        totalGames: user.rankedGames,
+        totalWins: user.rankedWins,
+        totalLosses: user.rankedLosses,
+        totalDraws: user.rankedDraws,
+        competitiveRating: user.competitiveRating,
+        rankedGames: user.rankedGames,
+        rankedWins: user.rankedWins,
+        rankedLosses: user.rankedLosses,
+        rankedDraws: user.rankedDraws,
+        rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+        rankedPeakRating: user.rankedPeakRating,
+        rankedLastMatchAt: user.rankedLastMatchAt,
+        archivedAt,
+      },
+      update: {
+        userName: user.name,
+        competitiveRating: user.competitiveRating,
+        rankedGames: user.rankedGames,
+        rankedWins: user.rankedWins,
+        rankedLosses: user.rankedLosses,
+        rankedDraws: user.rankedDraws,
+        rankedPlacementsRemaining: user.rankedPlacementsRemaining,
+        rankedPeakRating: user.rankedPeakRating,
+        rankedLastMatchAt: user.rankedLastMatchAt,
+        archivedAt,
+      },
+    });
+  }
 }
 
 export async function setRankedSeason(
@@ -119,11 +196,7 @@ export async function setRankedSeason(
   const now = new Date();
 
   return prisma.$transaction(async (tx) => {
-    const current = await tx.rankedSeasonSettings.upsert({
-      where: { id: RANKED_SEASON_SETTINGS_ID },
-      create: createDefaultSeasonData(),
-      update: {},
-    });
+    const current = await ensureRankedSeasonSettingsTx(tx);
     const currentMode = current.mode === 'preseason' ? 'preseason' : 'season';
     const currentIdentity = getRankedSeasonIdentity({
       mode: currentMode,
@@ -133,6 +206,7 @@ export async function setRankedSeason(
     const resetRankedStats = currentIdentity !== nextIdentity;
 
     if (resetRankedStats) {
+      await archiveCurrentRankedSeason(tx, current, now);
       await tx.user.updateMany({
         data: {
           competitiveRating: DEFAULT_COMPETITIVE_RATING,

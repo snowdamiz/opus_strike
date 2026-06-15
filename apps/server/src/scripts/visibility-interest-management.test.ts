@@ -237,6 +237,16 @@ const enemy = makePlayer('blue-a', 'blue', 12, 0);
 }
 
 {
+  const manager = new VisibilityInterestManager({ proximityRevealMeters: 1 });
+  const stealthed = makePlayer('blue-stealth-map', 'blue', 12, 0, {
+    abilities: new Map([['phantom_veil', { abilityId: 'phantom_veil', isActive: true }]]),
+  });
+  const hidden = manager.getRecipientInterest(self, stealthed, makeContext({ hasLineOfSight: () => true }));
+  assert.equal(hidden.state, 'hidden');
+  assert.equal(hidden.reason, 'stealth');
+}
+
+{
   let losChecks = 0;
   const manager = new VisibilityInterestManager({
     proximityRevealMeters: 1,

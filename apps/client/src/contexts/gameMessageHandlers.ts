@@ -5,6 +5,8 @@ import {
   CHRONOS_ASCENDANT_PARADOX_DURATION_MS,
   CHRONOS_LIFELINE_RELEASE_DELAY_MS,
   CHRONOS_TIMEBREAK_RELEASE_DELAY_MS,
+  HOOKSHOT_GROUND_HOOKS_RADIUS,
+  HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS,
   CHRONOS_VERDANT_PULSE_SPEED,
   VOID_RAY_CHARGE_TIME,
   type PublicRankSnapshot,
@@ -31,7 +33,7 @@ import {
   triggerRemotePlayerAttack,
   visualStore,
 } from '../store/visualStore';
-import { confirmLocalMovementTransform, enqueueSelfMovementAuthority } from '../movement/localPrediction';
+import { confirmLocalMovementTransform, enqueueSelfMovementAuthority, setLocalMovementRootedUntil } from '../movement/localPrediction';
 import {
   measureFrameWork,
   recordAuthorityAckReceived,
@@ -42,7 +44,7 @@ import { recordMovementTraceAuthorityAck } from '../anticheat/movementTraceRecor
 import { addEffect } from '../components/game/Effects';
 import { triggerAirStrike, triggerRocketJumpExplosion } from '../components/game/BlazeEffects';
 import { triggerBlinkEffect, triggerPhantomVeilClapEffect } from '../components/game/PhantomEffects';
-import { triggerPhantomShieldCastEffect } from '../components/game/phantom';
+import { triggerPhantomShieldBreakEffect, triggerPhantomShieldCastEffect } from '../components/game/phantom';
 import {
   startObservedAbilityCastEffect,
   stopObservedAbilityCastEffects,
@@ -89,6 +91,7 @@ import type {
   BotDifficulty,
   ChronosAegisDamagedEvent,
   ChronosAegisBrokenEvent,
+  PhantomShieldBrokenEvent,
   HeroId,
   MatchSnapshotMessage,
   PlayerDeathEvent,
@@ -453,6 +456,21 @@ function addDeathVisualFromKillEvent(data: PlayerDeathEvent): void {
     expiresAtMs,
     local: victim.id === localPlayerId,
   });
+}
+
+function syncDeathVisualForVitals(
+  playerId: string,
+  nextState: Player['state'],
+  previousHeroId: HeroId | null,
+  nextHeroId: HeroId | null,
+  respawnTime: number | null
+): void {
+  if (nextState !== 'dead' || previousHeroId !== nextHeroId) {
+    clearDeathVisualsForPlayer(playerId);
+    return;
+  }
+
+  updateDeathVisualExpirationForPlayer(playerId, respawnTime);
 }
 
 type MovementBitsTransform = Pick<UnpackedPlayerTransform, 'movementBits' | 'wallRunSide'>;
@@ -1043,7 +1061,6 @@ export function setupPlayerVitalsHandler(
 
         const existing = nextLocalPlayer || nextPlayers.get(vitals.id);
         const existingPlayer = existing || undefined;
-        const previousState = existingPlayer?.state;
         const previousHeroId = existingPlayer?.heroId ?? null;
         if (shouldPreservePredictionOwnedLocalSimulation(existingPlayer, vitals.state, vitals.heroId)) {
           applyLocalVitalsPatchInPlace(existingPlayer, vitals, data.serverTime);
@@ -1051,15 +1068,7 @@ export function setupPlayerVitalsHandler(
           if (indexedPlayer && indexedPlayer !== existingPlayer) {
             applyLocalVitalsPatchInPlace(indexedPlayer, vitals, data.serverTime);
           }
-          if (
-            vitals.state !== 'dead' ||
-            (previousState === 'dead' && vitals.respawnTime === null) ||
-            previousHeroId !== vitals.heroId
-          ) {
-            clearDeathVisualsForPlayer(vitals.id);
-          } else {
-            updateDeathVisualExpirationForPlayer(vitals.id, vitals.respawnTime);
-          }
+          syncDeathVisualForVitals(vitals.id, vitals.state, previousHeroId, vitals.heroId, vitals.respawnTime);
           if (nextLocalPlayer?.id === vitals.id) {
             nextLocalPlayer = existingPlayer;
           }
@@ -1068,15 +1077,7 @@ export function setupPlayerVitalsHandler(
         }
 
         const next = createLocalPlayerFromVitals(vitals, data.serverTime, existing || undefined);
-        if (
-          next.state !== 'dead' ||
-          (previousState === 'dead' && next.respawnTime === null) ||
-          previousHeroId !== next.heroId
-        ) {
-          clearDeathVisualsForPlayer(next.id);
-        } else {
-          updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
-        }
+        syncDeathVisualForVitals(next.id, next.state, previousHeroId, next.heroId, next.respawnTime);
         writablePlayers().set(next.id, next);
         nextLocalPlayer = next;
         recordLocalReactiveUpdate('vitals');
@@ -1090,15 +1091,7 @@ export function setupPlayerVitalsHandler(
 
       const existing = nextPlayers.get(vitals.id);
       const next = createPlayerFromVitals(vitals, data.serverTime, existing);
-      if (
-        next.state !== 'dead' ||
-        (existing?.state === 'dead' && next.respawnTime === null) ||
-        (existing && existing.heroId !== next.heroId)
-      ) {
-        clearDeathVisualsForPlayer(next.id);
-      } else {
-        updateDeathVisualExpirationForPlayer(next.id, next.respawnTime);
-      }
+      syncDeathVisualForVitals(next.id, next.state, existing?.heroId ?? null, next.heroId, next.respawnTime);
       writablePlayers().set(vitals.id, next);
       if (shouldHideLiveVisuals(next.visibility)) {
         hiddenVisualUpdates.push(next.id);
@@ -1152,6 +1145,7 @@ export function setupMatchSnapshotHandler(room: Room) {
       blueFlag: data.blueFlag ?? store.blueFlag,
       roundTimeRemaining: data.roundTimeRemaining,
       phaseEndTime: data.phaseEndTime,
+      gameClockFrozen: data.gameClockFrozen === true,
     });
   }));
 }
@@ -1189,6 +1183,12 @@ interface AbilityUsedMessage {
   impactPosition?: { x: number; y: number; z: number };
   interceptedByChronosAegis?: boolean;
   targetIds?: string[];
+  targets?: Array<{
+    targetId: string;
+    position: { x: number; y: number; z: number };
+    rootUntil: number;
+  }>;
+  rootUntil?: number;
   mode?: 'allies' | 'self';
   aimDirection?: { x: number; y: number; z: number };
   velocity?: { x: number; y: number; z: number };
@@ -1888,37 +1888,42 @@ function handleHookshotAbilityUsed(data: AbilityUsedMessage, localPlayerId: stri
       return true;
     }
 
-    case 'hookshot_grapple_trap': {
-      const startPosition = resolveObservedStartPosition(
-        data,
-        localPlayerId,
-        fallbackStartPosition
-      );
-      if (!startPosition || !targetPosition) return true;
+    case 'hookshot_ground_hooks': {
+      const effectPosition = data.position ?? fallbackStartPosition;
+      if (!effectPosition) return true;
       triggerObservedRemoteAttack(data, localPlayerId, data.launchSide);
       const predictedVisualId = isLocalPlayer
-        ? consumePredictedLocalAbilityVisual('hookshot_grapple_trap', data.playerId)
+        ? consumePredictedLocalAbilityVisual('hookshot_ground_hooks', data.playerId)
         : null;
-      if (!predictedVisualId) {
-        store.addGrappleTrap({
-          id: castId,
-          position: targetPosition,
-          startPosition,
-          velocity: data.velocity,
-          startTime: now,
-          duration: data.duration ?? 8,
-          ownerId: data.playerId,
-          ownerTeam,
-          radius: data.radius ?? 8,
-          hookedPlayers: [],
-        });
+      const duration = data.duration ?? HOOKSHOT_GROUND_HOOKS_ROOT_DURATION_SECONDS;
+      const rootUntil = data.rootUntil ?? now + duration * 1000;
+      const targets = data.targets ?? [];
+      const effect = {
+        id: castId,
+        position: effectPosition,
+        startTime: now,
+        duration,
+        ownerId: data.playerId,
+        ownerTeam,
+        radius: data.radius ?? HOOKSHOT_GROUND_HOOKS_RADIUS,
+        rootUntil,
+        targets,
+      };
+
+      if (predictedVisualId) {
+        store.updateHookshotGroundHooks(predictedVisualId, effect);
+      } else {
+        store.addHookshotGroundHooks(effect);
       }
       if (isLocalPlayer) {
         store.updateLocalPlayer({ ultimateCharge: 0 });
       }
-      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_grapple_trap')) {
-        playHookshotShotSound(startPosition);
-        playHookshotWorldSound('hookshotTrap', startPosition, { volume: 1.15 });
+      if (localPlayerId && targets.some((target) => target.targetId === localPlayerId)) {
+        setLocalMovementRootedUntil(rootUntil);
+      }
+      if (!isLocalPlayer || !shouldSuppressPredictedLocalAbilitySound('hookshot_ground_hooks')) {
+        playHookshotShotSound(effectPosition);
+        playHookshotWorldSound('hookshotGroundHooks', effectPosition, { volume: 1.12 });
       }
       return true;
     }
@@ -2421,6 +2426,17 @@ export function setupCombatHandlers(room: Room) {
     playChronosWorldSound('chronosSuperchargedImpact', data.position, {
       volume: 0.86,
       pitch: 1.12,
+    });
+  }));
+
+  room.onMessage('phantomShieldBroken', measureNetworkMessage('phantomShieldBroken', (data: PhantomShieldBrokenEvent) => {
+    const store = useGameStore.getState();
+    const localPlayerId = store.localPlayer?.id ?? store.playerId;
+    triggerPhantomShieldBreakEffect({
+      playerId: data.playerId,
+      isLocalPlayer: data.playerId === localPlayerId,
+      position: data.position,
+      direction: data.direction,
     });
   }));
 

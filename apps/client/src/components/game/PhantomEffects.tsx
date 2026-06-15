@@ -523,6 +523,7 @@ function getPhantomVeilPlayerPosition(playerId: string): { x: number; y: number;
 
 export function PhantomEffectsManager() {
   const localPlayerId = useGameStore((state) => state.localPlayer?.id ?? null);
+  const isObserverMode = useGameStore((state) => state.isObserverMode);
 
   // Use refs for effect arrays to avoid setState in useFrame (prevents 60fps re-renders)
   const activeBlinkEffectsRef = useRef<BlinkEffectData[]>([]);
@@ -610,7 +611,7 @@ export function PhantomEffectsManager() {
           isActive={true}
           playerId={playerId}
           playerPosition={getPhantomVeilPlayerPosition(playerId)}
-          renderParticles={playerId !== localPlayerId}
+          renderParticles={!isObserverMode && playerId !== localPlayerId}
         />
       ))}
     </group>

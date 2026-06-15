@@ -100,12 +100,18 @@ interface HeroVoxelBodyProps {
   socketOwnerId?: string;
 }
 
-function TeamAccentMaterial({ part, teamColor }: { part: TeamAccentPart; teamColor: string }) {
+function BodyTrimMaterial({
+  part,
+  color,
+}: {
+  part: TeamAccentPart;
+  color: string;
+}) {
   const transparent = part.transparent || part.opacity !== undefined;
   return (
     <meshStandardMaterial
-      color={teamColor}
-      emissive={teamColor}
+      color={color}
+      emissive={color}
       emissiveIntensity={getTeamBodyGlowEmissiveIntensity(part)}
       roughness={part.roughness}
       metalness={part.metalness}
@@ -243,7 +249,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
   const materials = useMemo(() => {
     const materialByKind = new Map<MaterialKind, THREE.MeshStandardMaterial>();
     (Object.keys(colors) as MaterialKind[]).forEach((kind) => {
-      const baseColor = kind === 'accent' && isBot ? teamColor : colors[kind];
+      const baseColor = colors[kind];
       const emissiveIntensity = getHeroBodyMaterialEmissiveIntensity(kind, hasFlag);
       const isTranslucent = kind === 'glass' || kind === 'mist';
       materialByKind.set(kind, new THREE.MeshStandardMaterial({
@@ -259,7 +265,7 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
       }));
     });
     return materialByKind;
-  }, [colors, hasFlag, isBot, teamColor]);
+  }, [colors, hasFlag]);
   const outlineMaterial = useMemo(() => new THREE.MeshBasicMaterial({
     color: teamColor,
     transparent: true,
@@ -687,7 +693,10 @@ export const HeroVoxelBody = memo(function HeroVoxelBody({
             castShadow={castShadow}
             geometry={getPartGeometry(riggedPart.part)}
           >
-            <TeamAccentMaterial part={riggedPart.part as TeamAccentPart} teamColor={teamColor} />
+            <BodyTrimMaterial
+              part={riggedPart.part as TeamAccentPart}
+              color={colors[riggedPart.part.material]}
+            />
           </mesh>
           {renderOutlineMesh(
             `${resolvedHero}-team-${bone}-${index}-outline`,

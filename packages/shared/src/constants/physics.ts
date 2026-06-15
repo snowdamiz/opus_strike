@@ -91,7 +91,7 @@ export const MANTLE_DURATION = 0.4;
 export const MANTLE_HEIGHT_BOOST = 0.5;
 
 // Grapple
-export const GRAPPLE_MAX_DISTANCE = 28;
+export const GRAPPLE_MAX_DISTANCE = 22;
 export const GRAPPLE_SPEED = 80;
 export const GRAPPLE_PULL_FORCE = 35;
 export const GRAPPLE_SWING_FORCE = 20;
@@ -122,7 +122,7 @@ export const BLAZE_FLAMETHROWER_SOCKET = {
 export const BLAZE_GEARSTORM_RADIUS = 13.9;
 
 // Rocket Jump
-export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 11;
+export const BLAZE_ROCKET_JUMP_VERTICAL_FORCE = 13.5;
 export const BLAZE_ROCKET_JUMP_HORIZONTAL_FORCE = 1.5;
 
 // Glide

@@ -355,7 +355,7 @@ export type BotAbilityPlanMode =
   | 'phantom_veil'
   | 'hookshot_grapple'
   | 'hookshot_anchor_wall'
-  | 'hookshot_trap'
+  | 'hookshot_ground_hooks'
   | 'blaze_flamethrower'
   | 'blaze_rocketjump'
   | 'blaze_bomb'
@@ -430,7 +430,7 @@ export interface BotAbilityGeometry {
   grappleAnchorAvailable: boolean;
   anchorWallProtectsAlly: boolean;
   anchorWallBlocksFriendlyCarrier: boolean;
-  trapZoneValuable: boolean;
+  groundHooksValuable: boolean;
 }
 
 export interface BotTeamTacticsInput {
@@ -2263,19 +2263,19 @@ function scoreHookshotAbility(input: BotAbilityPlanInput, current: BotAbilityPla
   }
 
   if (
-    canUseBotAbility(input.bot, 'hookshot_grapple_trap', 'ultimate') &&
+    canUseBotAbility(input.bot, 'hookshot_ground_hooks', 'ultimate') &&
     (
-      input.geometry.trapZoneValuable ||
+      input.geometry.groundHooksValuable ||
       input.intent.type === 'return_dropped_friendly_flag' ||
       input.blackboard.nearbyEnemyCount >= 2 ||
       hasVisibleObjectiveContest(input, input.intent.targetPosition, 14)
     )
   ) {
     best = abilityCandidate(best, {
-      mode: 'hookshot_trap',
+      mode: 'hookshot_ground_hooks',
       slot: 'ultimate',
-      score: 130 + input.blackboard.nearbyEnemyCount * 34 + (input.geometry.trapZoneValuable ? 58 : 0),
-      reason: 'trap controls objective zone',
+      score: 130 + input.blackboard.nearbyEnemyCount * 34 + (input.geometry.groundHooksValuable ? 58 : 0),
+      reason: 'ground hooks control objective zone',
       targetPosition: input.intent.targetPosition,
     });
   }

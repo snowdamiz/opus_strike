@@ -153,7 +153,6 @@ export type AbilityIconType =
   | 'draghook'
   | 'grapple'
   | 'anchorwall'
-  | 'grappletrap'
   | 'zipline'
   | 'flamethrower'
   | 'fireball'
@@ -190,8 +189,6 @@ export function AbilityIcon({ type, size = 24, color = 'currentColor', className
       return <GrappleIcon size={size} color={color} className={className} />;
     case 'anchorwall':
       return <BarrierIcon size={size} color={color} className={className} />;
-    case 'grappletrap':
-      return <GrappleTrapIcon size={size} color={color} className={className} />;
     case 'flamethrower':
       return <FlamethrowerIcon size={size} color={color} className={className} />;
     case 'fireball':
@@ -235,7 +232,7 @@ export function getAbilityIconType(abilityId: string): AbilityIconType {
     phantom_veil: 'veil',
     hookshot_grapple: 'grapple',
     hookshot_anchor_wall: 'anchorwall',
-    hookshot_grapple_trap: 'grappletrap',
+    hookshot_ground_hooks: 'anchorwall',
     blaze_flamethrower: 'flamethrower',
     blaze_bomb: 'meteorstrike',
     blaze_rocketjump: 'rocketjump',
@@ -334,17 +331,6 @@ function GrappleIcon({ size, color, className }: IconProps) {
       <path d="M8.2 8.2L18 18" stroke={color} strokeWidth="2" strokeLinecap="round" />
       <path d="M15.2 17.8C17.4 20 20.5 18.5 20.5 15.3" stroke={color} strokeWidth="1.9" strokeLinecap="round" />
       <path d="M17.8 13.8L20.5 15.3L19 18" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function GrappleTrapIcon({ size, color, className }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className}>
-      <circle cx="12" cy="12" r="4" fill={color} opacity="0.28" />
-      <circle cx="12" cy="12" r="2.2" fill={color} />
-      <path d="M12 3V8M12 16V21M3 12H8M16 12H21" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="1.8 2.2" />
-      <path d="M7.2 4.8L9 7M16.8 4.8L15 7M7.2 19.2L9 17M16.8 19.2L15 17" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }

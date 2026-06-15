@@ -273,16 +273,6 @@ export function buildAbilityCastOriginHints(
       );
     }
 
-    if (input.ultimate) {
-      pushHint(
-        hints,
-        seen,
-        hintFromOrigin(
-          'hookshot_grapple_trap',
-          resolveLiveLocalOrigin('hookshot_grapple_trap')
-        )
-      );
-    }
   }
 
   if (ctx.heroId === 'blaze') {

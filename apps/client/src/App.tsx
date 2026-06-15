@@ -4,9 +4,7 @@ import { useSettingsStore } from './store/settingsStore';
 import { MainLobby } from './components/ui/MainLobby';
 import { Lobby } from './components/ui/Lobby';
 import { MatchmakingScreen } from './components/ui/MatchmakingScreen';
-import { MapVoteScreen } from './components/ui/MapVoteScreen';
 import { HUD } from './components/ui/HUD';
-import { HeroSelect } from './components/ui/HeroSelect';
 import { LoadingScreen } from './components/ui/LoadingScreen';
 import { PracticeLoadingScreen } from './components/ui/PracticeLoadingScreen';
 import { MatchLoadingScreen } from './components/ui/MatchLoadingScreen';
@@ -22,6 +20,8 @@ import { getMapPrepCacheKey } from './utils/mapWarmup/mapPrepCache';
 import type { MapWarmupSnapshot } from './utils/mapWarmup/mapWarmupCoordinator';
 
 const GameCanvas = lazy(() => import('./components/game/GameCanvas').then((module) => ({ default: module.GameCanvas })));
+const MapVoteScreen = lazy(() => import('./components/ui/MapVoteScreen').then((module) => ({ default: module.MapVoteScreen })));
+const HeroSelect = lazy(() => import('./components/ui/HeroSelect').then((module) => ({ default: module.HeroSelect })));
 const Scoreboard = lazy(() => import('./components/ui/Scoreboard').then((module) => ({ default: module.Scoreboard })));
 const InGameMenu = lazy(() => import('./components/ui/InGameMenu').then((module) => ({ default: module.InGameMenu })));
 const GameConsole = lazy(() => import('./components/ui/GameConsole').then((module) => ({ default: module.GameConsole })));
@@ -394,7 +394,11 @@ export function App() {
   }
 
   if (appPhase === 'map_vote') {
-    return <MapVoteScreen />;
+    return (
+      <Suspense fallback={null}>
+        <MapVoteScreen />
+      </Suspense>
+    );
   }
 
   // In game
@@ -420,7 +424,11 @@ export function App() {
         </Suspense>
 
         {/* Show hero select during pre-game phases */}
-        {isPreGame && !isObserverMode && <HeroSelect />}
+        {isPreGame && !isObserverMode && (
+          <Suspense fallback={null}>
+            <HeroSelect />
+          </Suspense>
+        )}
 
         {!isObserverMode && !isPreGame && isMatchLoadingVisible && (
           <MatchLoadingScreen

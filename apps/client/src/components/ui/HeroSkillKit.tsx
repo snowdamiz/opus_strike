@@ -176,7 +176,7 @@ export const HERO_ABILITY_SKILLS: Record<HeroId, HeroSkillItem[]> = {
   hookshot: [
     fromAbility('E', 'hookshot_grapple'),
     fromAbility('Q', 'hookshot_anchor_wall'),
-    fromAbility('F', 'hookshot_grapple_trap', 'ultimate'),
+    fromAbility('F', 'hookshot_ground_hooks', 'ultimate'),
   ],
   blaze: [
     fromAbility('E', 'blaze_flamethrower'),

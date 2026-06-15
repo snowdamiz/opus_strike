@@ -71,9 +71,32 @@ export type GoldenBiomeRewardDistributionMode = 'manual' | 'auto';
 const WAGER_BACKGROUND_LOCK_TTL_MS = 45_000;
 const WAGER_BACKGROUND_LOCK_HEARTBEAT_MS = 15_000;
 const WAGER_TRANSFER_RETRY_GRACE_MS = 60_000;
+const WAGER_DEPOSIT_CONFIRM_CONCURRENCY = 6;
+const WAGER_REFUND_RETRY_CONCURRENCY = 3;
+const WAGER_SETTLEMENT_RETRY_CONCURRENCY = 2;
+const WAGER_TREASURY_RECONCILE_CONCURRENCY = 6;
+const WAGER_STATUS_EMIT_CONCURRENCY = 10;
 const MICRO_USD_PER_USD = 1_000_000n;
 const MICRO_USD_PER_CENT = 10_000n;
 const LAMPORTS_PER_SOL = 1_000_000_000n;
+
+async function runWithConcurrency<T>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+
+  const workerCount = Math.min(items.length, Math.max(1, Math.floor(concurrency)));
+  let nextIndex = 0;
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      await worker(items[index], index);
+    }
+  }));
+}
 
 interface CachedGoldenBiomeSolPrice {
   source: WagerRuntimeConfig['goldenBiomeSolUsdPriceSource'];
@@ -2545,9 +2568,9 @@ export class WagerService extends EventEmitter {
       data: { status: 'expired', lastError: 'intent_expired' },
     });
 
-    for (const payment of expired) {
+    await runWithConcurrency(expired, WAGER_STATUS_EMIT_CONCURRENCY, async (payment) => {
       await this.emitPaymentStatusChanged(payment.wageredLobby.lobbyId, payment.id);
-    }
+    });
   }
 
   private async confirmSubmittedDeposits(): Promise<void> {
@@ -2556,11 +2579,11 @@ export class WagerService extends EventEmitter {
       select: { id: true },
       take: 50,
     });
-    for (const payment of submitted) {
+    await runWithConcurrency(submitted, WAGER_DEPOSIT_CONFIRM_CONCURRENCY, async (payment) => {
       await this.verifySubmittedPayment(payment.id, { keepSubmittedWhenNotFound: true }).catch((error) => {
         loggers.room.warn('Failed to confirm wager deposit', payment.id, error);
       });
-    }
+    });
   }
 
   private async retryFailedRefunds(): Promise<void> {
@@ -2569,11 +2592,11 @@ export class WagerService extends EventEmitter {
       select: { id: true },
       take: 25,
     });
-    for (const payment of refunding) {
+    await runWithConcurrency(refunding, WAGER_REFUND_RETRY_CONCURRENCY, async (payment) => {
       await this.refundSinglePayment(payment.id, 'retry').catch((error) => {
         loggers.room.warn('Failed to retry wager refund', payment.id, error);
       });
-    }
+    });
   }
 
   private async retrySettlements(): Promise<void> {
@@ -2587,11 +2610,11 @@ export class WagerService extends EventEmitter {
       select: { id: true },
       take: 10,
     });
-    for (const settlement of settlements) {
+    await runWithConcurrency(settlements, WAGER_SETTLEMENT_RETRY_CONCURRENCY, async (settlement) => {
       await this.processSettlement(settlement.id).catch((error) => {
         loggers.room.warn('Failed to retry wager settlement', settlement.id, error);
       });
-    }
+    });
   }
 
   private async retryGoldenBiomeRewards(): Promise<void> {
@@ -2609,11 +2632,11 @@ export class WagerService extends EventEmitter {
       select: { id: true },
       take: 10,
     });
-    for (const reward of rewards) {
+    await runWithConcurrency(rewards, WAGER_SETTLEMENT_RETRY_CONCURRENCY, async (reward) => {
       await this.processGoldenBiomeReward(reward.id).catch((error) => {
         loggers.room.warn('Failed to retry golden biome reward', reward.id, error);
       });
-    }
+    });
   }
 
   private async reconcileRecentTreasuryDeposits(): Promise<void> {
@@ -2622,39 +2645,49 @@ export class WagerService extends EventEmitter {
 
     const connection = this.getConnection();
     const signatures = await connection.getSignaturesForAddress(new PublicKey(config.treasuryWallet), { limit: 50 });
-    for (const signatureInfo of signatures) {
-      const existing = await prisma.wagerPayment.findUnique({
-        where: { depositSignature: signatureInfo.signature },
-        select: { id: true },
+    const signatureValues = signatures.map((signatureInfo) => signatureInfo.signature);
+    const existingRows = signatureValues.length === 0
+      ? []
+      : await prisma.wagerPayment.findMany({
+        where: { depositSignature: { in: signatureValues } },
+        select: { depositSignature: true },
       });
-      if (existing) continue;
+    const existingSignatures = new Set(
+      existingRows.flatMap((row) => row.depositSignature ? [row.depositSignature] : [])
+    );
+    const unknownSignatures = signatures.filter((signatureInfo) => !existingSignatures.has(signatureInfo.signature));
 
-      const transaction = await connection.getParsedTransaction(signatureInfo.signature, {
-        commitment: 'confirmed',
-        maxSupportedTransactionVersion: 0,
-      });
-      const memo = findWagerMemoInParsedTransaction(transaction);
-      if (!memo) continue;
-
-      const intentId = memo.slice(createWagerMemo('').length);
-      const payment = await prisma.wagerPayment.findUnique({ where: { id: intentId } });
-      if (!payment) {
-        loggers.room.warn('Found unmatched wager deposit memo', {
-          signature: signatureInfo.signature,
-          memo,
+    await runWithConcurrency(unknownSignatures, WAGER_TREASURY_RECONCILE_CONCURRENCY, async (signatureInfo) => {
+      try {
+        const transaction = await connection.getParsedTransaction(signatureInfo.signature, {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0,
         });
-        continue;
-      }
+        const memo = findWagerMemoInParsedTransaction(transaction);
+        if (!memo) return;
 
-      await prisma.wagerPayment.update({
-        where: { id: payment.id },
-        data: {
-          depositSignature: signatureInfo.signature,
-          status: 'submitted',
-        },
-      });
-      await this.verifySubmittedPayment(payment.id, { keepSubmittedWhenNotFound: true });
-    }
+        const intentId = memo.slice(createWagerMemo('').length);
+        const payment = await prisma.wagerPayment.findUnique({ where: { id: intentId } });
+        if (!payment) {
+          loggers.room.warn('Found unmatched wager deposit memo', {
+            signature: signatureInfo.signature,
+            memo,
+          });
+          return;
+        }
+
+        await prisma.wagerPayment.update({
+          where: { id: payment.id },
+          data: {
+            depositSignature: signatureInfo.signature,
+            status: 'submitted',
+          },
+        });
+        await this.verifySubmittedPayment(payment.id, { keepSubmittedWhenNotFound: true });
+      } catch (error) {
+        loggers.room.warn('Failed to reconcile wager treasury deposit', signatureInfo.signature, error);
+      }
+    });
   }
 
   private async checkTreasuryBalance(): Promise<void> {

@@ -1,4 +1,4 @@
-import { type CSSProperties, useState, useEffect, useRef, useId } from 'react';
+import { type CSSProperties, useCallback, useState, useEffect, useRef, useId } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { useGameStore } from '../../store/gameStore';
 import { useNetwork, type RankedTokenHoldStatus } from '../../contexts/NetworkContext';
@@ -25,6 +25,11 @@ import { HERO_COLORS, WALLET_AUTH_COLORS } from '../../styles/colorTokens';
 import { PwaInstallToast } from './PwaInstallToast';
 import { MAP_SEED_PLACEHOLDER, isAllowedMapSeedInput, parseOptionalMapSeedInput } from '../../utils/mapSeedInput';
 import { solInputToLamports } from '../../utils/wagerPayments';
+import {
+  RUNNING_GAME_SESSION_EVENT,
+  RUNNING_GAME_SESSION_STORAGE_KEY,
+  type RunningGameSession,
+} from '../../utils/runningGameSession';
 import { RankIcon, getRankForStats } from './RankBadge';
 
 // Phantom wallet icon component
@@ -97,7 +102,7 @@ const DEFAULT_RANKED_SEASON: RankedSeasonSnapshot = {
   label: getRankedSeasonLabel({ mode: 'season', seasonNumber: DEFAULT_RANKED_SEASON_NUMBER }),
   endsAt: null,
 };
-const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treasury wallet at season end; golden biome wins pay $10 in SOL per player with a 2% spawn rate; ranks reset at the end of every season.';
+const SEASON_RULES_ARIA = 'Season rewards: top 10 players split 10% of the treasury wallet at season end; golden biome wins pay $10 in SOL per player with a 2% spawn rate; ranked history is saved by season.';
 const SEASON_REWARD_RULES = [
   {
     label: 'Rank in Top 10',
@@ -108,8 +113,8 @@ const SEASON_REWARD_RULES = [
     text: '$10 SOL each, 2% spawn rate',
   },
   {
-    label: 'Ranks Resets',
-    text: 'reset each season end',
+    label: 'Season Archive',
+    text: 'saved each season end',
   },
 ] as const;
 
@@ -178,7 +183,15 @@ export function MainLobby() {
       setWalletAddress: state.setWalletAddress,
     }))
   );
-  const { createLobby, quickPlay, rankedPlay, getRankedTokenHoldStatus, startPracticeGame } = useNetwork();
+  const {
+    createLobby,
+    quickPlay,
+    rankedPlay,
+    getRankedTokenHoldStatus,
+    startPracticeGame,
+    getRunningGameReconnect,
+    reconnectRunningGame,
+  } = useNetwork();
   const { playButtonClick } = useUISounds();
   const {
     isPhantomInstalled,
@@ -217,6 +230,8 @@ export function MainLobby() {
   const [isRankedTokenHoldLoading, setIsRankedTokenHoldLoading] = useState(false);
   const [rankedTokenHoldError, setRankedTokenHoldError] = useState<string | null>(null);
   const [rankedSeason, setRankedSeason] = useState<RankedSeasonSnapshot>(DEFAULT_RANKED_SEASON);
+  const [runningGameSession, setRunningGameSession] = useState<RunningGameSession | null>(null);
+  const [isReconnectChecking, setIsReconnectChecking] = useState(false);
   const heroAnimationMode = HERO_SHOWCASE_ANIMATION_MODE;
 
   // Authentication states
@@ -318,6 +333,56 @@ export function MainLobby() {
       isCurrent = false;
     };
   }, [getRankedTokenHoldStatus, hasFullFunctionality, isAuthenticated, isRankedPreseason, showPlayDialog, user?.walletAddress, walletAddress]);
+
+  const refreshRunningGameReconnect = useCallback(() => {
+    if (!isAuthenticated) {
+      setRunningGameSession(null);
+      setIsReconnectChecking(false);
+      return;
+    }
+
+    let isCurrent = true;
+    setIsReconnectChecking(true);
+
+    getRunningGameReconnect()
+      .then((status) => {
+        if (!isCurrent) return;
+        setRunningGameSession(status.available ? status.session : null);
+      })
+      .catch(() => {
+        if (!isCurrent) return;
+        setRunningGameSession(null);
+      })
+      .finally(() => {
+        if (!isCurrent) return;
+        setIsReconnectChecking(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [getRunningGameReconnect, isAuthenticated]);
+
+  useEffect(() => {
+    const cancelRefresh = refreshRunningGameReconnect();
+    const handleSessionChanged = () => {
+      refreshRunningGameReconnect();
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === RUNNING_GAME_SESSION_STORAGE_KEY) {
+        refreshRunningGameReconnect();
+      }
+    };
+
+    window.addEventListener(RUNNING_GAME_SESSION_EVENT, handleSessionChanged);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      cancelRefresh?.();
+      window.removeEventListener(RUNNING_GAME_SESSION_EVENT, handleSessionChanged);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [refreshRunningGameReconnect]);
 
   const handleDiscordSignIn = () => {
     clearError();
@@ -482,6 +547,18 @@ export function MainLobby() {
     }
   };
 
+  const handleReconnectGame = async () => {
+    setError(null);
+    try {
+      await reconnectRunningGame();
+    } catch (err) {
+      await getRunningGameReconnect();
+      setRunningGameSession(null);
+      setError(err instanceof Error ? err.message : 'Failed to reconnect');
+      setShowPlayDialog(true);
+    }
+  };
+
   const handlePracticeGame = (mapSeed?: number) => {
     setError(null);
     startPracticeGame(playerName, { mapSeed });
@@ -638,7 +715,10 @@ export function MainLobby() {
             heroAnimationMode={heroAnimationMode}
             rankedSeason={rankedSeason}
             isAuthenticated={isAuthenticated}
+            runningGameSession={runningGameSession}
+            isReconnectChecking={isReconnectChecking}
             onOpenPlayDialog={() => setShowPlayDialog(true)}
+            onReconnect={handleReconnectGame}
             onSignIn={handleSignInClick}
             onPrevHero={handlePrevHero}
             onNextHero={handleNextHero}
@@ -763,7 +843,10 @@ interface PlayTabProps {
   heroAnimationMode: HeroPreviewAnimationMode;
   rankedSeason: RankedSeasonSnapshot;
   isAuthenticated: boolean;
+  runningGameSession: RunningGameSession | null;
+  isReconnectChecking: boolean;
   onOpenPlayDialog: () => void;
+  onReconnect: () => void;
   onSignIn: () => void;
   onPrevHero: () => void;
   onNextHero: () => void;
@@ -778,13 +861,17 @@ function PlayTab({
   heroAnimationMode,
   rankedSeason,
   isAuthenticated,
+  runningGameSession,
+  isReconnectChecking,
   onOpenPlayDialog,
+  onReconnect,
   onSignIn,
   onPrevHero,
   onNextHero,
   onSelectHero,
 }: PlayTabProps) {
   const { playButtonClick } = useUISounds();
+  const canReconnect = isAuthenticated && Boolean(runningGameSession);
 
   return (
     <div className="play-tab-shell h-full menu-content">
@@ -867,13 +954,15 @@ function PlayTab({
             type="button"
             onClick={() => {
               playButtonClick();
-              if (isAuthenticated) {
+              if (canReconnect) {
+                onReconnect();
+              } else if (isAuthenticated) {
                 onOpenPlayDialog();
               } else {
                 onSignIn();
               }
             }}
-            disabled={isAuthenticated && isLoading}
+            disabled={isAuthenticated && (isLoading || isReconnectChecking)}
             className="play-main-cta group"
             style={{
               background: isAuthenticated
@@ -891,10 +980,16 @@ function PlayTab({
             <span className="relative flex items-center justify-center gap-2">
               {isAuthenticated ? (
                 <>
-                  <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                  PLAY
+                  {canReconnect ? (
+                    <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v6h6M20 20v-6h-6M5.5 14a7 7 0 0012.1 2.4M18.5 10A7 7 0 006.4 7.6" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  )}
+                  {isReconnectChecking ? 'CHECKING...' : canReconnect ? 'RECONNECT' : 'PLAY'}
                 </>
               ) : (
                 <>

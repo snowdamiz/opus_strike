@@ -36,8 +36,8 @@ export const TEAM_COLORS: Record<Team, string> = {
   blue: '#06b6d4',
 };
 
-export const TEAM_BODY_GLOW_OUTLINE_SCALE = 1.09;
-export const TEAM_BODY_GLOW_OUTLINE_OPACITY = 0.52;
+export const TEAM_BODY_GLOW_OUTLINE_SCALE = 1.11;
+export const TEAM_BODY_GLOW_OUTLINE_OPACITY = 0.64;
 export const TEAM_BODY_GLOW_EMISSIVE_MULTIPLIER = 1.55;
 export const TEAM_BODY_GLOW_TRANSPARENT_OPACITY_MULTIPLIER = 1.45;
 

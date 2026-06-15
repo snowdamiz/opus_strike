@@ -169,9 +169,10 @@ setPlayerVisualTransform('remote-a', { x: 3, y: 4, z: 5 }, 1.25);
 assert.deepEqual(visualStore.getState().playerPositions.get('remote-a'), { x: 3, y: 4, z: 5 });
 assert.equal(visualStore.getState().playerRotations.get('remote-a'), 1.25);
 
-setLocalSlideIntensity(1.5, { x: 3, y: 0, z: -4 });
+setLocalSlideIntensity(1.5, { x: 3, y: 0, z: -4 }, 0.75);
 assert.equal(visualStore.getState().slideIntensity, 1);
 assert.deepEqual(visualStore.getState().localSlideVelocity, { x: 3, y: 0, z: -4 });
+assert.equal(visualStore.getState().localViewYaw, 0.75);
 setLocalSlideIntensity(0);
 assert.equal(visualStore.getState().slideIntensity, 0);
 assert.deepEqual(visualStore.getState().localSlideVelocity, { x: 0, y: 0, z: 0 });

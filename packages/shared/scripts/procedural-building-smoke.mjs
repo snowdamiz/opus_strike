@@ -9,6 +9,8 @@ const DEFAULT_RANDOM_SEEDS = 8;
 const DEFAULT_MAX_COLLIDERS = 48_000;
 const MIN_AUTHORED_OBJECTS = 24;
 const MIN_OBJECT_VARIANTS = 7;
+const MAX_OPEN_DECORATED_RADIUS = 10.5;
+const OPEN_AREA_SAMPLE_STEP = 3;
 const SPAWN_EGRESS_MAX_DISTANCE = 3.4;
 const SPAWN_EGRESS_FLAG_BUFFER = 1.55;
 const KNOWN_REGRESSION_SEEDS = [0, 1, 2, 42, 1337, 0x57564f58, 0xdecafbad, 0xc0ffee];
@@ -233,6 +235,91 @@ function distance2D(a, b) {
   return Math.hypot(a.x - b.x, a.z - b.z);
 }
 
+function distanceToSegment2D(point, start, end) {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const lengthSq = dx * dx + dz * dz;
+
+  if (lengthSq <= 0.0001) return distance2D(point, start);
+
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.z - start.z) * dz) / lengthSq));
+  return Math.hypot(point.x - (start.x + dx * t), point.z - (start.z + dz * t));
+}
+
+function distanceToBoundary(point, boundary) {
+  let closest = Infinity;
+
+  for (let index = 0; index < boundary.length; index++) {
+    closest = Math.min(closest, distanceToSegment2D(point, boundary[index], boundary[(index + 1) % boundary.length]));
+  }
+
+  return closest;
+}
+
+function getBoundaryBounds(boundary) {
+  return boundary.reduce(
+    (bounds, point) => ({
+      minX: Math.min(bounds.minX, point.x),
+      maxX: Math.max(bounds.maxX, point.x),
+      minZ: Math.min(bounds.minZ, point.z),
+      maxZ: Math.max(bounds.maxZ, point.z),
+    }),
+    { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity }
+  );
+}
+
+function isWorldPointInsideBoundary(point, boundary) {
+  let inside = false;
+
+  for (let i = 0, j = boundary.length - 1; i < boundary.length; j = i++) {
+    const a = boundary[i];
+    const b = boundary[j];
+
+    if (((a.z > point.z) !== (b.z > point.z)) && point.x < ((b.x - a.x) * (point.z - a.z)) / (b.z - a.z) + a.x) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+function getModuleFootprintRadius(instance) {
+  if (instance.footprint?.radius) return instance.footprint.radius;
+  if (instance.footprint?.halfExtents) {
+    return Math.hypot(instance.footprint.halfExtents.x ?? 0, instance.footprint.halfExtents.z ?? 0);
+  }
+
+  return 1.5;
+}
+
+function auditOpenDecoratedAreas(manifest, moduleInstances) {
+  const bounds = getBoundaryBounds(manifest.boundary);
+  const anchors = moduleInstances.map((instance) => ({
+    x: instance.position.x,
+    z: instance.position.z,
+    radius: getModuleFootprintRadius(instance),
+  }));
+  let maxOpenRadius = 0;
+  let sampleCount = 0;
+
+  for (let z = bounds.minZ + 3; z <= bounds.maxZ - 3; z += OPEN_AREA_SAMPLE_STEP) {
+    for (let x = bounds.minX + 3; x <= bounds.maxX - 3; x += OPEN_AREA_SAMPLE_STEP) {
+      const point = { x, z };
+      if (!isWorldPointInsideBoundary(point, manifest.boundary)) continue;
+      if (distanceToBoundary(point, manifest.boundary) < 3) continue;
+
+      const nearestAnchorDistance = anchors.reduce(
+        (closest, anchor) => Math.min(closest, Math.max(0, distance2D(point, anchor) - anchor.radius)),
+        Infinity
+      );
+      maxOpenRadius = Math.max(maxOpenRadius, nearestAnchorDistance);
+      sampleCount++;
+    }
+  }
+
+  return { maxOpenRadius, sampleCount };
+}
+
 function normalize2D(vector) {
   const length = Math.hypot(vector.x, vector.z);
   if (length < 0.0001) return { x: 0, z: 1 };
@@ -359,6 +446,7 @@ function auditSeed(seed, options) {
   const goldenOnlyBlockCount = sumSummary(goldenOnlyBlocks);
   const floating = countFloatingSolidComponents(manifest, solid);
   const heightRows = summarizeHeightRows(manifest);
+  const openArea = auditOpenDecoratedAreas(manifest, moduleInstances);
 
   assertCondition(manifest.size.x > 0 && manifest.size.y > 0 && manifest.size.z > 0, failures, `seed ${seed}: invalid map size`);
   assertCondition(manifest.chunks.length > 0, failures, `seed ${seed}: no chunks generated`);
@@ -387,6 +475,11 @@ function auditSeed(seed, options) {
   assertCondition(objectRoles.has('route_cover'), failures, `seed ${seed}: missing route cover`);
   assertCondition(Object.keys(manifest.construction?.diagnostics?.repairActions ?? {}).length === 0, failures, `seed ${seed}: legacy repair actions are still present`);
   assertCondition(floating.floating === 0, failures, `seed ${seed}: ${floating.floating} floating solid components, largest=${floating.largestFloating}`);
+  assertCondition(
+    openArea.maxOpenRadius <= MAX_OPEN_DECORATED_RADIUS,
+    failures,
+    `seed ${seed}: largest sampled open area radius ${openArea.maxOpenRadius.toFixed(2)} > ${MAX_OPEN_DECORATED_RADIUS}`
+  );
 
   for (const spawn of [...manifest.spawnPoints.red, ...manifest.spawnPoints.blue]) {
     const groundY = getGroundYBelow(manifest, spawn, solid);
@@ -412,6 +505,7 @@ function auditSeed(seed, options) {
     moduleCount: moduleInstances.length,
     heightRows,
     floating,
+    openArea,
   };
 }
 
@@ -443,6 +537,7 @@ function main() {
             objectSummary: result.objectSummary,
             heightRows: result.heightRows,
             floating: result.floating,
+            openArea: result.openArea,
           })),
         },
         null,
@@ -453,7 +548,7 @@ function main() {
     console.log(`Fresh procedural map smoke: seeds=${seeds.length}`);
     for (const result of results) {
       console.log(
-        `seed=${result.seed} theme=${result.themeId} topology=${result.topologyId} chunks=${result.stats.chunkCount} colliders=${result.stats.colliderCount} modules=${result.moduleCount} heightRows=${result.heightRows.min}-${result.heightRows.max} objects=[${formatObjectSummary(result.objectSummary)}]`
+        `seed=${result.seed} theme=${result.themeId} topology=${result.topologyId} chunks=${result.stats.chunkCount} colliders=${result.stats.colliderCount} modules=${result.moduleCount} openRadius=${result.openArea.maxOpenRadius.toFixed(2)} heightRows=${result.heightRows.min}-${result.heightRows.max} objects=[${formatObjectSummary(result.objectSummary)}]`
       );
     }
   }

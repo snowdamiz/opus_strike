@@ -21,6 +21,12 @@ import {
 import type { VoiceScope, VoiceTokenResponse } from '../voice/types';
 import { disconnectVoice } from '../voice/voiceControls';
 import { prepareVoxelMapCpu } from '../utils/mapWarmup/mapPrepCache';
+import {
+  clearRunningGameSession,
+  loadRunningGameSession,
+  saveRunningGameSession,
+  type RunningGameSession,
+} from '../utils/runningGameSession';
 
 // Import extracted handlers
 import {
@@ -46,6 +52,7 @@ import {
 import { measureFrameWork } from '../movement/networkDiagnostics';
 import { projectileInitialState } from '../store/slices/projectiles';
 import { resetGameTiming } from '../store/gameTimingStore';
+import { createPracticeAbilityStates } from './practiceAbilities';
 
 type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
 type CreateLobbyOptions = {
@@ -58,6 +65,11 @@ type CreateLobbyOptions = {
   observersEnabled?: boolean;
 };
 type StartPracticeGameOptions = { mapSeed?: number };
+export interface RunningGameReconnectStatus {
+  available: boolean;
+  session: RunningGameSession | null;
+  reason?: string;
+}
 
 // ============================================================================
 // CONTEXT TYPE
@@ -96,7 +108,16 @@ interface NetworkContextType {
   submitWagerPaymentSignature: (intentId: string, signature: string) => Promise<WagerPaymentIntent>;
 
   // Game operations
-  joinGameRoom: (gameRoomId: string, playerName: string, team?: string, entryTicket?: string, observer?: boolean) => Promise<void>;
+  joinGameRoom: (
+    gameRoomId: string,
+    playerName: string,
+    team?: string,
+    entryTicket?: string,
+    observer?: boolean,
+    reconnectToRunningGame?: boolean
+  ) => Promise<void>;
+  getRunningGameReconnect: () => Promise<RunningGameReconnectStatus>;
+  reconnectRunningGame: () => Promise<void>;
   leaveGame: () => void;
   disconnect: () => void;
   sendMovementCommands: (packet: MovementCommandPacket) => void;
@@ -262,6 +283,23 @@ async function requestRankedTokenHoldStatus(): Promise<RankedTokenHoldStatus> {
 
   const payload = await response.json() as { tokenHold: RankedTokenHoldStatus };
   return payload.tokenHold;
+}
+
+async function requestRunningGameStatus(roomId: string, clientId: string): Promise<{
+  available: boolean;
+  reason?: string;
+}> {
+  const response = await fetch(`${getHttpUrl()}/matchmaking/running-game/${encodeURIComponent(roomId)}`, {
+    credentials: 'include',
+    headers: { 'X-Client-Id': clientId },
+  });
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ error: 'Failed to check running game' }));
+    throw new Error(payload.error || 'Failed to check running game');
+  }
+
+  return response.json();
 }
 
 async function wagerApiRequest<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -453,6 +491,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     const name = resolvePracticePlayerName(playerName);
 
     cleanupExistingConnections();
+    clearRunningGameSession();
     resetLobby();
     rejectPendingVoiceTokenRequests('practice mode started');
     setPlayerName(name);
@@ -910,6 +949,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     try {
       await preflightWageredLobby(options?.wager);
       cleanupExistingConnections();
+      clearRunningGameSession();
       setPracticeMode(false);
 
       const client = getClient();
@@ -955,6 +995,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     try {
       cleanupExistingConnections();
+      clearRunningGameSession();
       setPracticeMode(false);
 
       const client = getClient();
@@ -1001,6 +1042,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       const clientId = getClientId();
 
       cleanupExistingConnections();
+      clearRunningGameSession();
       setPracticeMode(false);
 
       loggers.network.debug('ranked matchmaking with client id', clientId, rankedTicket.targetRankLabel, rankedTicket.tokenHold.requiredTokenBaseUnits);
@@ -1061,6 +1103,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     try {
       cleanupExistingConnections();
+      clearRunningGameSession();
       setPracticeMode(false);
 
       const client = getClient();
@@ -1336,6 +1379,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
 
     room.onMessage('gameEnd', measureNetworkMessage('gameEnd', (data: GameEndEvent) => {
       loggers.network.info('game ended', data.finalScore);
+      clearRunningGameSession(room.id);
       setMatchSummary(data);
       setGamePhase('game_end' as any);
       setPhaseEndTime(null);
@@ -1354,6 +1398,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         networkQuality: data.networkQuality,
       });
       disconnectVoice('match_cancelled');
+      clearRunningGameSession(room.id);
       rejectPendingVoiceTokenRequests(data.message || 'match cancelled before start');
       rejectPendingPlayerReportRequests(data.message || 'match cancelled before start');
       setMatchStartGateKey(null);
@@ -1481,7 +1526,32 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     setConnected(true);
   }, [setConnected, setLoading, setGamePhase, setPhaseEndTime, setMapSeed, setMapThemeId, setLocalPlayer, updatePlayer, removePlayer, setAppPhase, setRoomId, setPracticeMode, resetLobby, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests, setMatchSummary, clearMatchSummary, setPlayerPings, setMatchStartGateKey, setObserverMode, enterObserverMode]);
 
-  const joinGameRoom = useCallback(async (gameRoomId: string, playerName: string, team?: string, entryTicket?: string, observer = false) => {
+  const getRunningGameReconnect = useCallback(async (): Promise<RunningGameReconnectStatus> => {
+    const session = loadRunningGameSession();
+    if (!session) return { available: false, session: null, reason: 'no_saved_game' };
+
+    try {
+      const status = await requestRunningGameStatus(session.roomId, getClientId());
+      if (!status.available) {
+        clearRunningGameSession(session.roomId);
+        return { available: false, session: null, reason: status.reason ?? 'unavailable' };
+      }
+
+      return { available: true, session };
+    } catch (error) {
+      loggers.network.warn('running game reconnect check failed', error);
+      return { available: false, session: null, reason: 'check_failed' };
+    }
+  }, []);
+
+  const joinGameRoom = useCallback(async (
+    gameRoomId: string,
+    playerName: string,
+    team?: string,
+    entryTicket?: string,
+    observer = false,
+    reconnectToRunningGame = false
+  ) => {
     if (isJoiningGameRef.current) {
       loggers.network.debug('already joining a game room, ignoring duplicate call');
       return;
@@ -1519,6 +1589,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         preferredTeam: team,
         clientId,
         entryTicket,
+        reconnectToRunningGame,
         clientBuildId: config.buildId,
         movementProtocolVersion: MOVEMENT_PROTOCOL_VERSION,
       });
@@ -1529,6 +1600,12 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       setPlayerId(gameRoomRef.current.sessionId);
       setAppPhase('in_game');
       setLoading(false);
+      saveRunningGameSession({
+        roomId: gameRoomRef.current.id,
+        playerName,
+        team: team === 'red' || team === 'blue' ? team : undefined,
+        observer,
+      });
 
       loggers.network.info('joined game room', gameRoomRef.current.id);
     } catch (error) {
@@ -1540,7 +1617,25 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     }
   }, [getClient, setupGameListeners, setLoading, setRoomId, setPlayerId, setAppPhase, clearMatchSummary, setPracticeMode, setMatchStartGateKey, setObserverMode, setGamePhase, setPhaseEndTime]);
 
+  const reconnectRunningGame = useCallback(async () => {
+    const status = await getRunningGameReconnect();
+    if (!status.available || !status.session) {
+      throw new Error('No running game is available to reconnect');
+    }
+
+    const fallbackName = useGameStore.getState().playerName;
+    await joinGameRoom(
+      status.session.roomId,
+      status.session.playerName || fallbackName,
+      status.session.team,
+      undefined,
+      status.session.observer,
+      true
+    );
+  }, [getRunningGameReconnect, joinGameRoom]);
+
   const leaveGame = useCallback(() => {
+    clearRunningGameSession(useGameStore.getState().roomId);
     disconnectVoice('leave_game');
     rejectPendingVoiceTokenRequests('left game before voice token response');
     rejectPendingPlayerReportRequests('left game before report response');
@@ -1582,6 +1677,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   }, [setRoomId, setPlayerId, setConnected, setPracticeMode, setMatchStartGateKey, resetLobby, clearMatchSummary, setGamePhase, setAppPhase, rejectPendingVoiceTokenRequests, rejectPendingPlayerReportRequests]);
 
   const disconnect = useCallback(() => {
+    clearRunningGameSession();
     disconnectVoice('network_disconnect');
     rejectPendingVoiceTokenRequests('network disconnected before voice token response');
     rejectPendingPlayerReportRequests('network disconnected before report response');
@@ -1675,6 +1771,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         health: heroStats.maxHealth,
         maxHealth: heroStats.maxHealth,
         ultimateCharge: 100,
+        abilities: createPracticeAbilityStates(heroId),
         isReady: false,
       });
       return;
@@ -1763,6 +1860,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         health: heroStats.maxHealth,
         maxHealth: heroStats.maxHealth,
         ultimateCharge: 100,
+        abilities: createPracticeAbilityStates(heroId),
       };
 
       store.setLocalPlayer(nextPlayer);
@@ -1837,6 +1935,8 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       submitWagerSignedPaymentTransaction,
       submitWagerPaymentSignature,
       joinGameRoom,
+      getRunningGameReconnect,
+      reconnectRunningGame,
       leaveGame,
       disconnect,
       sendMovementCommands,
