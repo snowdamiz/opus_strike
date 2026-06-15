@@ -561,7 +561,9 @@ export const VoidRay = React.memo(({
       sizes[i] = 0.06 + Math.random() * 0.1;
     }
     
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const positionAttribute = new THREE.BufferAttribute(positions, 3);
+    positionAttribute.setUsage(THREE.StreamDrawUsage);
+    geometry.setAttribute('position', positionAttribute);
     geometry.setAttribute('random', new THREE.BufferAttribute(randoms, 1));
     geometry.setAttribute('speed', new THREE.BufferAttribute(speeds, 1));
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
@@ -583,7 +585,9 @@ export const VoidRay = React.memo(({
       randoms[i] = Math.random();
     }
     
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const positionAttribute = new THREE.BufferAttribute(positions, 3);
+    positionAttribute.setUsage(THREE.StreamDrawUsage);
+    geometry.setAttribute('position', positionAttribute);
     geometry.setAttribute('random', new THREE.BufferAttribute(randoms, 1));
     
     return geometry;
@@ -788,25 +792,29 @@ export const VoidRay = React.memo(({
     
     // Animate particles - spiral motion
     if (particlesRef.current) {
-      const positions = particlesRef.current.geometry.attributes.position;
-      const randoms = particlesRef.current.geometry.attributes.random;
-      const speeds = particlesRef.current.geometry.attributes.speed;
+      const positions = particlesRef.current.geometry.attributes.position as THREE.BufferAttribute;
+      const randoms = particlesRef.current.geometry.attributes.random as THREE.BufferAttribute;
+      const speeds = particlesRef.current.geometry.attributes.speed as THREE.BufferAttribute;
+      const positionArray = positions.array as Float32Array;
+      const randomArray = randoms.array as Float32Array;
+      const speedArray = speeds.array as Float32Array;
       
       for (let i = 0; i < positions.count; i++) {
-        const r = (randoms as THREE.BufferAttribute).getX(i);
-        const speed = (speeds as THREE.BufferAttribute).getX(i);
+        const index = i * 3;
+        const r = randomArray[i];
+        const speed = speedArray[i];
         
         const angle = r * Math.PI * 2 + time * 10 * speed;
         const baseRadius = RAY_RADIUS * (0.5 + r * 0.8);
         const wobble = Math.sin(time * 20 + r * 30) * 0.08;
         const radius = baseRadius + wobble;
         
-        let t = positions.getY(i) / safeTargetLength;
+        let t = positionArray[index + 1] / safeTargetLength;
         t = (t + delta * speed * 2.5) % 1;
         
-        positions.setX(i, Math.cos(angle) * radius);
-        positions.setY(i, t * targetLength);
-        positions.setZ(i, Math.sin(angle) * radius);
+        positionArray[index] = Math.cos(angle) * radius;
+        positionArray[index + 1] = t * targetLength;
+        positionArray[index + 2] = Math.sin(angle) * radius;
       }
       positions.needsUpdate = true;
       
@@ -819,20 +827,23 @@ export const VoidRay = React.memo(({
     
     // Animate spark particles - random flashes
     if (sparkParticlesRef.current) {
-      const positions = sparkParticlesRef.current.geometry.attributes.position;
-      const randoms = sparkParticlesRef.current.geometry.attributes.random;
+      const positions = sparkParticlesRef.current.geometry.attributes.position as THREE.BufferAttribute;
+      const randoms = sparkParticlesRef.current.geometry.attributes.random as THREE.BufferAttribute;
+      const positionArray = positions.array as Float32Array;
+      const randomArray = randoms.array as Float32Array;
       
       for (let i = 0; i < positions.count; i++) {
-        const r = (randoms as THREE.BufferAttribute).getX(i);
+        const index = i * 3;
+        const r = randomArray[i];
         
         // Random position along beam with spiral
         const t = (r + time * 3) % 1;
         const angle = t * Math.PI * 8 + r * Math.PI * 2;
         const radius = RAY_RADIUS * (1.0 + Math.sin(time * 30 + r * 50) * 0.5);
         
-        positions.setX(i, Math.cos(angle) * radius);
-        positions.setY(i, t * targetLength);
-        positions.setZ(i, Math.sin(angle) * radius);
+        positionArray[index] = Math.cos(angle) * radius;
+        positionArray[index + 1] = t * targetLength;
+        positionArray[index + 2] = Math.sin(angle) * radius;
       }
       positions.needsUpdate = true;
       

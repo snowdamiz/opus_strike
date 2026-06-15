@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
+import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   HERO_DEFINITIONS,
@@ -71,18 +72,21 @@ import type {
 } from '../../model-system/heroBodyTypes';
 import {
   sampleRemoteTransformHistoryInto,
+  setRenderedPlayerVisualTransform,
   type SampledRemoteTransform,
   type VisualState,
   visualStore,
 } from '../../store/visualStore';
 import { registerRemoteModelSocket } from '../../viewmodel/remoteModelSocketRegistry';
 import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
+import type { RemotePlayerQualityConfig } from './visualQuality';
 
 type BoneOrRoot = HeroBoneName | 'root';
 type PlayerFilter = 'all' | 'bot' | 'nonBot';
 
 interface RemoteHeroBatchRendererProps {
   players: readonly Player[];
+  config: RemotePlayerQualityConfig;
 }
 
 interface RemotePartDescriptor {
@@ -159,6 +163,7 @@ interface RemoteHeroRuntime {
   currentPosition: THREE.Vector3;
   targetPosition: THREE.Vector3;
   previousFramePosition: THREE.Vector3;
+  visualPosition: { x: number; y: number; z: number };
   sampledTransform: SampledRemoteTransform;
   remoteEpoch: number | null;
   initialized: boolean;
@@ -175,7 +180,6 @@ interface RemoteHeroRuntime {
   bodyWorldMatrix: THREE.Matrix4;
   finalMatrix: THREE.Matrix4;
   glowPulse: number;
-  visible: boolean;
 }
 
 const PLAYER_CENTER_TO_FEET = PLAYER_HEIGHT / 2;
@@ -293,6 +297,54 @@ function getActivePhantomShieldStartedAt(player: Player): number | null {
   return shield.activatedAt ?? null;
 }
 
+function hasRecentRemoteAttack(player: Player, visualState: VisualState, frameNowMs: number): boolean {
+  const attackState = visualState.remotePlayerAttackStates.get(player.id);
+  if (!attackState) return false;
+  const attackAgeMs = frameNowMs - attackState.startedAtMs;
+  if (attackAgeMs > REMOTE_ATTACK_STATE_CLEANUP_MS) {
+    visualState.remotePlayerAttackStates.delete(player.id);
+    return false;
+  }
+  return attackAgeMs <= REMOTE_ATTACK_STATE_RETENTION_MS;
+}
+
+function includesPlayerId(playerIds: readonly string[], playerId: string): boolean {
+  for (let index = 0; index < playerIds.length; index++) {
+    if (playerIds[index] === playerId) return true;
+  }
+  return false;
+}
+
+function hasActiveRemoteBodyEffect(player: Player, visualState: VisualState, frameNowMs: number): boolean {
+  return (
+    includesPlayerId(visualState.activeBlazeFlamethrowerPlayerIds, player.id) ||
+    includesPlayerId(visualState.activeBlazeBurningPlayerIds, player.id) ||
+    includesPlayerId(visualState.activeChronosAegisPlayerIds, player.id) ||
+    includesPlayerId(visualState.activeChronosAscendantPlayerIds, player.id) ||
+    (player.onFireUntil ?? 0) > frameNowMs
+  );
+}
+
+function isHighPriorityRemoteBody(player: Player, visualState: VisualState, frameNowMs: number): boolean {
+  return (
+    player.hasFlag ||
+    hasActivePhantomVeil(player) ||
+    getActivePhantomShieldStartedAt(player) !== null ||
+    hasRecentRemoteAttack(player, visualState, frameNowMs) ||
+    hasActiveRemoteBodyEffect(player, visualState, frameNowMs)
+  );
+}
+
+function isWithinDistance(camera: THREE.Camera, position: THREE.Vector3, maxDistance: number): boolean {
+  if (!Number.isFinite(maxDistance)) return true;
+  if (maxDistance <= 0) return false;
+
+  const dx = camera.position.x - position.x;
+  const dy = camera.position.y - position.y;
+  const dz = camera.position.z - position.z;
+  return dx * dx + dy * dy + dz * dz <= maxDistance * maxDistance;
+}
+
 function getPlayerHeight(player: Player): number {
   const heroStats = player.heroId ? HERO_DEFINITIONS[player.heroId]?.stats : null;
   return heroStats?.size.height ?? 1.8;
@@ -402,6 +454,11 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
   const heroId = resolveHeroId(player);
   const { bodyRoot, bones } = createBoneRefs();
   const initialPosition = setPlayerRenderOrigin(new THREE.Vector3(), player.position);
+  const visualPosition = {
+    x: player.position.x,
+    y: player.position.y,
+    z: player.position.z,
+  };
   const rootPosition = new THREE.Vector3();
   const rootQuaternion = new THREE.Quaternion();
   const rootScale = new THREE.Vector3(1, 1, 1);
@@ -436,6 +493,7 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     currentPosition: initialPosition.clone(),
     targetPosition: initialPosition.clone(),
     previousFramePosition: initialPosition.clone(),
+    visualPosition,
     sampledTransform: {
       position: { x: 0, y: 0, z: 0 },
       velocity: { x: 0, y: 0, z: 0 },
@@ -466,7 +524,6 @@ function createRemoteRuntime(player: Player): RemoteHeroRuntime {
     bodyWorldMatrix: new THREE.Matrix4(),
     finalMatrix: new THREE.Matrix4(),
     glowPulse: 0,
-    visible: true,
   };
 
   resetRemoteAnimationState(runtime, player);
@@ -557,6 +614,11 @@ function updateRemoteTransform(
       delta
     );
   }
+
+  runtime.visualPosition.x = runtime.currentPosition.x;
+  runtime.visualPosition.y = runtime.currentPosition.y + PLAYER_CENTER_TO_FEET;
+  runtime.visualPosition.z = runtime.currentPosition.z;
+  setRenderedPlayerVisualTransform(player.id, runtime.visualPosition, runtime.renderYaw);
 
   const visualHorizontalSpeed = delta > 0
     ? Math.sqrt(
@@ -1222,20 +1284,34 @@ function getDescriptorEmissiveBoost(
   return descriptor.fixedEmissiveIntensity ?? 0;
 }
 
+function assignDynamicInstancedMesh(
+  mesh: THREE.InstancedMesh | null,
+  onMesh: (mesh: THREE.InstancedMesh | null) => void
+): void {
+  if (mesh) {
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }
+  onMesh(mesh);
+}
+
 function RemoteHeroInstancedBatch({
   batch,
   capacity,
+  castShadow,
   onMesh,
 }: {
   batch: RemotePartBatch;
   capacity: number;
+  castShadow: boolean;
   onMesh: (mesh: THREE.InstancedMesh | null) => void;
 }) {
   const geometry = useMemo(() => {
     const nextGeometry = batch.geometry.clone();
+    const emissiveAttribute = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    emissiveAttribute.setUsage(THREE.DynamicDrawUsage);
     nextGeometry.setAttribute(
       INSTANCE_EMISSIVE_ATTRIBUTE,
-      new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1)
+      emissiveAttribute
     );
     return nextGeometry;
   }, [batch.geometry, capacity]);
@@ -1244,10 +1320,10 @@ function RemoteHeroInstancedBatch({
 
   return (
     <instancedMesh
-      ref={onMesh}
+      ref={(mesh) => assignDynamicInstancedMesh(mesh, onMesh)}
       args={[geometry, batch.material, capacity]}
       count={0}
-      castShadow
+      castShadow={castShadow}
       receiveShadow={false}
       frustumCulled={false}
     />
@@ -1265,7 +1341,7 @@ function RemoteHeroOutlineBatch({
 }) {
   return (
     <instancedMesh
-      ref={onMesh}
+      ref={(mesh) => assignDynamicInstancedMesh(mesh, onMesh)}
       args={[batch.geometry, batch.material, capacity]}
       count={0}
       frustumCulled={false}
@@ -1277,10 +1353,13 @@ function RemoteHeroOutlineBatch({
 function RemoteHeroBatchGroup({
   players,
   resources,
+  config,
 }: {
   players: readonly Player[];
   resources: RemoteBatchResources;
+  config: RemotePlayerQualityConfig;
 }) {
+  const camera = useThree((state) => state.camera);
   const runtimeByPlayerIdRef = useRef<Map<string, RemoteHeroRuntime>>(new Map());
   const meshesRef = useRef<Array<THREE.InstancedMesh | null>>([]);
   const emissiveAttributesRef = useRef<Array<THREE.InstancedBufferAttribute | null>>([]);
@@ -1340,6 +1419,13 @@ function RemoteHeroBatchGroup({
         if (runtime.heroId !== resources.heroId) continue;
 
         const visualHorizontalSpeed = updateRemoteTransform(runtime, player, deltaSeconds, visualState, nowMs);
+        const isHighPriority = isHighPriorityRemoteBody(player, visualState, nowMs);
+        const renderBody = !hasActivePhantomVeil(player) && (
+          isHighPriority ||
+          isWithinDistance(camera, runtime.currentPosition, config.fullBodyDistance)
+        );
+        if (!renderBody) continue;
+
         updateRemotePose(
           runtime,
           player,
@@ -1350,8 +1436,6 @@ function RemoteHeroBatchGroup({
           nowMs
         );
         updateBodyWorldMatrix(runtime);
-
-        if (hasActivePhantomVeil(player)) continue;
 
         for (let batchIndex = 0; batchIndex < resources.batches.length; batchIndex++) {
           const batch = resources.batches[batchIndex];
@@ -1367,6 +1451,12 @@ function RemoteHeroBatchGroup({
           }
           counts[batchIndex] = writeIndex;
         }
+
+        const renderOutline = config.outlineDistance > 0 && (
+          isHighPriority ||
+          isWithinDistance(camera, runtime.currentPosition, config.outlineDistance)
+        );
+        if (!renderOutline) continue;
 
         for (let batchIndex = 0; batchIndex < resources.outlineBatches.length; batchIndex++) {
           const batch = resources.outlineBatches[batchIndex];
@@ -1404,7 +1494,7 @@ function RemoteHeroBatchGroup({
         }
       }
     },
-  }), [players, resources]);
+  }), [camera, config, players, resources]);
 
   return (
     <>
@@ -1413,6 +1503,7 @@ function RemoteHeroBatchGroup({
           key={batch.key}
           batch={batch}
           capacity={Math.max(1, capacity * batch.capacityPerPlayer)}
+          castShadow={config.castShadows}
           onMesh={(mesh) => {
             meshesRef.current[batchIndex] = mesh;
             emissiveAttributesRef.current[batchIndex] = mesh
@@ -1437,6 +1528,7 @@ function RemoteHeroBatchGroup({
 
 export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
   players,
+  config,
 }: RemoteHeroBatchRendererProps) {
   const resources = useMemo(() => {
     const nextResources = new Map<string, RemoteBatchResources>();
@@ -1481,6 +1573,7 @@ export const RemoteHeroBatchRenderer = memo(function RemoteHeroBatchRenderer({
             key={key}
             players={groupPlayers}
             resources={resource}
+            config={config}
           />
         );
       })}

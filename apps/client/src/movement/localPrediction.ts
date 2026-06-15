@@ -27,6 +27,7 @@ import {
   createVoxelCollisionWorld,
   resolveCapsuleTeleportDestination,
   type MovementCollisionWorld,
+  type MovementAabb,
   type MovementPredictionContext,
   type PredictionCorrectionMetrics,
   type MovementSimulationState,
@@ -44,11 +45,18 @@ let nextCommandSeq = 1;
 let predictedPlayerId: string | null = null;
 let cachedMapId: string | null = null;
 let cachedTerrainLookup: ReturnType<typeof createProceduralTerrainLookup> | null = null;
+let cachedTerrainAdapter: {
+  mapId: string | null;
+  revision: number;
+  lookup: ReturnType<typeof createProceduralTerrainLookup>;
+  adapter: MovementTerrainAdapter;
+} | null = null;
 let cachedCollisionWorld: { mapId: string | null; revision: number; world: MovementCollisionWorld } | null = null;
 let latestServerCollisionRevision = 0;
 const pendingSelfMovementAuthorities: SelfMovementAuthority[] = [];
 let pendingSelfMovementAuthoritiesOutOfOrder = false;
 let localRootedUntil = 0;
+const EMPTY_MOVEMENT_AABBS: readonly MovementAabb[] = [];
 
 export interface AppliedSelfMovementAuthority {
   authority: SelfMovementAuthority;
@@ -104,6 +112,7 @@ export function resetLocalMovementPrediction(
   predictedPlayerId = playerId;
   cachedMapId = null;
   cachedTerrainLookup = null;
+  cachedTerrainAdapter = null;
   cachedCollisionWorld = null;
   latestServerCollisionRevision = Math.max(0, Math.trunc(options.collisionRevision ?? 0));
   pendingSelfMovementAuthorities.length = 0;
@@ -150,26 +159,37 @@ function getClientProceduralTerrainLookup(): ReturnType<typeof createProceduralT
 function getClientTerrainAdapter(): MovementTerrainAdapter {
   const lookup = getClientProceduralTerrainLookup();
   if (!lookup) return fallbackTerrain;
+  const mapId = cachedMapId;
+  const revision = latestServerCollisionRevision;
+  if (
+    cachedTerrainAdapter &&
+    cachedTerrainAdapter.mapId === mapId &&
+    cachedTerrainAdapter.revision === revision &&
+    cachedTerrainAdapter.lookup === lookup
+  ) {
+    return cachedTerrainAdapter.adapter;
+  }
 
-  return {
+  const adapter: MovementTerrainAdapter = {
     getGroundY: (position) => lookup.getGroundY(position),
     clampPosition: (position) => lookup.clampToPlayableMap(position),
     getBlockAtWorld: (position) => lookup.getBlockAtWorld(position),
     getMaxPlayableY: () => lookup.getMaxPlayableY(),
     origin: lookup.origin,
     voxelSize: lookup.voxelSize,
-    collisionRevision: latestServerCollisionRevision,
+    collisionRevision: revision,
     cacheStaticAabbs: true,
-    getCollisionAabbs: (bounds) => computeAnchorWallAabbs(
-      useGameStore.getState().earthWalls,
-      Date.now(),
-      bounds
-    ),
+    getCollisionAabbs: (bounds) => {
+      const earthWalls = useGameStore.getState().earthWalls;
+      if (earthWalls.length === 0) return EMPTY_MOVEMENT_AABBS;
+      return computeAnchorWallAabbs(earthWalls, Date.now(), bounds);
+    },
   };
+  cachedTerrainAdapter = { mapId, revision, lookup, adapter };
+  return adapter;
 }
 
-function getClientCollisionWorld(): MovementCollisionWorld {
-  const terrain = getClientTerrainAdapter();
+function getClientCollisionWorld(terrain = getClientTerrainAdapter()): MovementCollisionWorld {
   const mapId = cachedMapId;
   const revision = latestServerCollisionRevision;
   if (cachedCollisionWorld && cachedCollisionWorld.mapId === mapId && cachedCollisionWorld.revision === revision) {
@@ -197,10 +217,11 @@ export function getLocalPredictionContext(player: Player): MovementPredictionCon
     activeSpeedMultiplier *= CHRONOS_ASCENDANT_PARADOX_SPEED_MULTIPLIER;
   }
 
+  const terrain = getClientTerrainAdapter();
   return {
     heroStats: getHeroStats(player.heroId ?? 'phantom'),
-    terrain: getClientTerrainAdapter(),
-    collisionWorld: getClientCollisionWorld(),
+    terrain,
+    collisionWorld: getClientCollisionWorld(terrain),
     flagCarrier: player.hasFlag,
     activeSpeedMultiplier,
     chronosAscendantActive,
@@ -492,6 +513,7 @@ export function applySelfMovementAuthority(player: Player, authority: SelfMoveme
   }
   const nextCollisionRevision = authority.collisionRevision ?? latestServerCollisionRevision;
   if (nextCollisionRevision !== latestServerCollisionRevision) {
+    cachedTerrainAdapter = null;
     cachedCollisionWorld = null;
   }
   latestServerCollisionRevision = nextCollisionRevision;

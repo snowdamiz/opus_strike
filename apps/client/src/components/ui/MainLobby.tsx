@@ -1057,7 +1057,7 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
       <div className="play-season-plate-title">{season.label}</div>
       <div className="play-season-plate-end">{formatSeasonBoundaryDate(season)}</div>
       <div className="play-season-plate-detail">{formatSeasonBoundaryDetail(season)}</div>
-      <div className="play-season-plate-rewards" aria-hidden="true">
+      {/* <div className="play-season-plate-rewards" aria-hidden="true">
         <div className="play-season-plate-rewards-heading">Season rewards</div>
         <ul className="play-season-plate-rewards-list">
           {SEASON_REWARD_RULES.map((rule) => (
@@ -1067,7 +1067,7 @@ function RankedSeasonPlate({ season }: { season: RankedSeasonSnapshot }) {
             </li>
           ))}
         </ul>
-      </div>
+      </div> */}
     </aside>
   );
 }

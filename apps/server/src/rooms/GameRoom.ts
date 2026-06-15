@@ -15,6 +15,7 @@ import {
 import {
   VisibilityInterestManager,
   type RecipientInterestDecision,
+  type VisibilityInterestContext,
   type VisibilityInterestPlayer,
   type VisibilityInterestMetrics,
 } from './visibilityInterest';
@@ -492,6 +493,14 @@ interface HookshotGrappleAuthorityState {
   swing: HookshotSwingState | null;
 }
 
+interface HookshotDragPullAuthorityState {
+  sourceId: string;
+  forward: PlainVec3;
+  frontDistance: number;
+  startedAt: number;
+  expiresAt: number;
+}
+
 interface PendingAreaDamageInstance {
   id: string;
   ownerId: string;
@@ -611,10 +620,14 @@ interface BotFrameContext {
 interface ReplicationFrameContext {
   now: number;
   currentIds: Set<string>;
+  visibilityContext: VisibilityInterestContext;
   visibilityPlayers: Map<string, VisibilityInterestPlayer>;
   packedTransforms: Map<string, PackedPlayerTransform>;
   packedTransformSignatures: Map<string, PackedPlayerTransform>;
   recipientInterests: Map<string, Map<string, RecipientInterestDecision>>;
+  fullVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
+  visibleEnemyVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
+  publicEnemyVitalsByPlayer: Map<string, PlayerVitalsSnapshot>;
 }
 
 interface RoomInterestMetricsSnapshot extends VisibilityInterestMetrics {
@@ -789,6 +802,12 @@ const SECONDARY_ATTACKS: Partial<Record<HeroId, AttackConfig>> = {
 };
 const HOOKSHOT_SPEED = 38;
 const DRAG_HOOK_SPEED = 50;
+const HOOKSHOT_DRAG_HOOK_PULL_SPEED = 22;
+const HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS = 1250;
+const HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE = 0.32;
+const HOOKSHOT_DRAG_HOOK_PULL_BUMP_ITERATIONS = 3;
+const HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN = 0.04;
+const HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS = 0.025;
 const HOOKSHOT_ANCHOR_WALL_DURATION = 6.25;
 const HOOKSHOT_ANCHOR_WALL_MAX_DISTANCE = 24.35;
 const ROOT_BLOCKED_MOVEMENT_ABILITIES = new Set([
@@ -848,7 +867,9 @@ export class GameRoom extends Room<GameState> {
   private phantomPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotPrimaryLaunchSide: Map<string, -1 | 1> = new Map();
   private hookshotAnchorWalls: HookshotAnchorWallInstance[] = [];
+  private readonly emptyMovementAabbs: MovementAabb[] = [];
   private hookshotGrapples: Map<string, HookshotGrappleAuthorityState> = new Map();
+  private hookshotDragPulls: Map<string, HookshotDragPullAuthorityState> = new Map();
   private playerRootedUntil: Map<string, number> = new Map();
   private pendingAreaDamage: PendingAreaDamageInstance[] = [];
   private blazeGearstorms: BlazeGearstormInstance[] = [];
@@ -904,13 +925,37 @@ export class GameRoom extends Room<GameState> {
   private playerTransformSignatures = new Map<string, PackedPlayerTransform>();
   private playerTransformHeartbeatAt = new Map<string, number>();
   private transformRecipientStates = new Map<string, TransformReplicationState>();
+  private readonly replicationVisibilityContext: VisibilityInterestContext = {
+    now: 0,
+    collisionRevision: 0,
+    getEyePosition: GameRoom.getVisibilityEyePosition,
+    getLineOfSightPoints: GameRoom.getVisibilityLineOfSightPoints,
+    hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
+    getRecentCombatRevealUntil: (recipient, target) => (
+      this.recentCombatInterestUntil.get(this.getRecentCombatInterestKey(recipient.id, target.id)) ?? 0
+    ),
+  };
+  private readonly standaloneVisibilityContext: VisibilityInterestContext = {
+    now: 0,
+    collisionRevision: 0,
+    getEyePosition: GameRoom.getVisibilityEyePosition,
+    getLineOfSightPoints: GameRoom.getVisibilityLineOfSightPoints,
+    hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
+    getRecentCombatRevealUntil: (recipient, target) => (
+      this.recentCombatInterestUntil.get(this.getRecentCombatInterestKey(recipient.id, target.id)) ?? 0
+    ),
+  };
   private readonly replicationFrameContext: ReplicationFrameContext = {
     now: 0,
     currentIds: new Set(),
+    visibilityContext: this.replicationVisibilityContext,
     visibilityPlayers: new Map(),
     packedTransforms: new Map(),
     packedTransformSignatures: new Map(),
     recipientInterests: new Map(),
+    fullVitalsByPlayer: new Map(),
+    visibleEnemyVitalsByPlayer: new Map(),
+    publicEnemyVitalsByPlayer: new Map(),
   };
   private recentCombatTransformUntil = new Map<string, number>();
   private recentCombatInterestUntil = new Map<string, number>();
@@ -937,6 +982,7 @@ export class GameRoom extends Room<GameState> {
   private alivePlayers: Player[] = [];
   private alivePlayersByTeam: Record<Team, Player[]> = { red: [], blue: [] };
   private losCache = new Map<string, { result: boolean; expiresAt: number }>();
+  private readonly lineOfSightSamplePoint: PlainVec3 = { x: 0, y: 0, z: 0 };
   private preferredBotHeroes: Map<string, HeroId> = new Map();
   private readonly rateLimiter = new MessageRateLimiter();
   private readonly playerAuthContexts = new Map<string, RoomAuthContext>();
@@ -1641,6 +1687,7 @@ export class GameRoom extends Room<GameState> {
     this.devBotSkillOverrides.delete(playerId);
     this.devBotLookOverrides.delete(playerId);
     this.hookshotGrapples.delete(playerId);
+    this.clearHookshotDragPullsInvolving(playerId);
     this.playerRootedUntil.delete(playerId);
     this.blazeBombDropConsumedForHold.delete(playerId);
     this.blazeFlamethrowerActivePlayers.delete(playerId);
@@ -2002,8 +2049,22 @@ export class GameRoom extends Room<GameState> {
     this.recentCombatInterestUntil.set(this.getRecentCombatInterestKey(targetId, sourceId), until);
   }
 
-  private getRecentCombatInterestUntil(recipient: Player, target: Player): number {
-    return this.recentCombatInterestUntil.get(this.getRecentCombatInterestKey(recipient.id, target.id)) ?? 0;
+  private static getVisibilityEyePosition(player: VisibilityInterestPlayer): PlainVec3 {
+    return getSharedPlayerEyePosition(player.position);
+  }
+
+  private static getVisibilityLineOfSightPoints(player: VisibilityInterestPlayer): readonly PlainVec3[] {
+    return getSharedPlayerLineOfSightSamplePoints(player);
+  }
+
+  private prepareVisibilityContext(
+    context: VisibilityInterestContext,
+    now: number,
+    collisionRevision = this.getMovementCollisionRevision(now)
+  ): VisibilityInterestContext {
+    context.now = now;
+    context.collisionRevision = collisionRevision;
+    return context;
   }
 
   private getVisibilityInterestPlayer(player: Player): VisibilityInterestPlayer {
@@ -2019,11 +2080,16 @@ export class GameRoom extends Room<GameState> {
 
   private buildReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
     const frameContext = this.replicationFrameContext;
+    const collisionRevision = this.getMovementCollisionRevision(now);
     frameContext.now = now;
+    this.prepareVisibilityContext(frameContext.visibilityContext, now, collisionRevision);
     frameContext.currentIds.clear();
     frameContext.visibilityPlayers.clear();
     frameContext.packedTransforms.clear();
     frameContext.packedTransformSignatures.clear();
+    frameContext.fullVitalsByPlayer.clear();
+    frameContext.visibleEnemyVitalsByPlayer.clear();
+    frameContext.publicEnemyVitalsByPlayer.clear();
     for (const targetInterests of frameContext.recipientInterests.values()) {
       targetInterests.clear();
     }
@@ -2081,22 +2147,13 @@ export class GameRoom extends Room<GameState> {
       ? frameContext?.visibilityPlayers.get(recipient.id) ?? this.getVisibilityInterestPlayer(recipient)
       : null;
     const targetInterestPlayer = frameContext?.visibilityPlayers.get(target.id) ?? this.getVisibilityInterestPlayer(target);
+    const visibilityContext = frameContext?.visibilityContext
+      ?? this.prepareVisibilityContext(this.standaloneVisibilityContext, now);
 
     return this.visibilityInterest.getRecipientInterest(
       recipientInterestPlayer,
       targetInterestPlayer,
-      {
-        now,
-        collisionRevision: this.getMovementCollisionRevision(now),
-        getEyePosition: (player) => getSharedPlayerEyePosition(player.position),
-        getLineOfSightPoints: (player) => getSharedPlayerLineOfSightSamplePoints(player),
-        hasLineOfSight: (from, to) => this.hasLineOfSight(from, to),
-        getRecentCombatRevealUntil: (interestRecipient, interestTarget) => (
-          recipient && interestRecipient.id === recipient.id && interestTarget.id === target.id
-            ? this.getRecentCombatInterestUntil(recipient, target)
-            : 0
-        ),
-      }
+      visibilityContext
     );
   }
 
@@ -2383,15 +2440,28 @@ export class GameRoom extends Room<GameState> {
     frameContext?: ReplicationFrameContext
   ): PlayerVitalsSnapshot {
     if (!recipient || recipient.id === id || recipient.team === player.team) {
-      return this.buildPlayerVitals(id, player, 'visible');
+      const cached = frameContext?.fullVitalsByPlayer.get(id);
+      if (cached) return cached;
+      const vitals = this.buildPlayerVitals(id, player, 'visible');
+      frameContext?.fullVitalsByPlayer.set(id, vitals);
+      return vitals;
     }
 
     const decision = interest ?? this.getRecipientInterest(recipient, player, now, frameContext);
     if (decision.state === 'visible') {
-      return this.buildVisibleEnemyVitals(id, player, decision.state);
+      const cached = frameContext?.visibleEnemyVitalsByPlayer.get(id);
+      if (cached) return cached;
+      const vitals = this.buildVisibleEnemyVitals(id, player, decision.state);
+      frameContext?.visibleEnemyVitalsByPlayer.set(id, vitals);
+      return vitals;
     }
 
-    return this.buildPublicEnemyVitals(id, player, decision.state);
+    const publicCacheKey = `${id}:${decision.state}`;
+    const cached = frameContext?.publicEnemyVitalsByPlayer.get(publicCacheKey);
+    if (cached) return cached;
+    const vitals = this.buildPublicEnemyVitals(id, player, decision.state);
+    frameContext?.publicEnemyVitalsByPlayer.set(publicCacheKey, vitals);
+    return vitals;
   }
 
   private haveVitalsChanged(previous: PlayerVitalsSnapshot | undefined, next: PlayerVitalsSnapshot): boolean {
@@ -3310,6 +3380,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.forEach((player, id) => {
       if (player.state !== 'alive' && player.state !== 'spawning') return;
+      if (!force && options.recipientId && id === options.recipientId) return;
       const interest = options.recipient
         ? this.getRecipientInterest(options.recipient, player, now, options.frameContext)
         : undefined;
@@ -3321,7 +3392,6 @@ export class GameRoom extends Room<GameState> {
         }
         return;
       }
-      if (!force && options.recipientId && id === options.recipientId) return;
       const transform = options.frameContext?.packedTransforms.get(id) ?? this.buildPackedPlayerTransform(id, player);
       const signature = options.frameContext?.packedTransformSignatures.get(id) ?? this.getPackedTransformSignature(transform);
       const previousSignature = signatures.get(id);
@@ -4541,6 +4611,19 @@ export class GameRoom extends Room<GameState> {
     }
   }
 
+  private clearHookshotDragPull(playerId: string): void {
+    this.hookshotDragPulls.delete(playerId);
+  }
+
+  private clearHookshotDragPullsInvolving(playerId: string): void {
+    this.hookshotDragPulls.delete(playerId);
+    for (const [targetId, pull] of this.hookshotDragPulls) {
+      if (pull.sourceId === playerId) {
+        this.hookshotDragPulls.delete(targetId);
+      }
+    }
+  }
+
   private cleanupExpiredPlayerRoots(now: number): void {
     for (const [playerId, rootedUntil] of this.playerRootedUntil) {
       if (rootedUntil <= now) {
@@ -4572,9 +4655,7 @@ export class GameRoom extends Room<GameState> {
     player.movement.isGliding = false;
   }
 
-  private getRootedMovementInput(player: Player, input: PlayerInput, now: number): PlayerInput {
-    if (!this.isPlayerRooted(player.id, now)) return input;
-    this.stopRootedMovement(player);
+  private suppressLocomotionInput(input: PlayerInput): PlayerInput {
     return {
       ...input,
       moveForward: false,
@@ -4585,6 +4666,12 @@ export class GameRoom extends Room<GameState> {
       crouch: false,
       sprint: false,
     };
+  }
+
+  private getRootedMovementInput(player: Player, input: PlayerInput, now: number): PlayerInput {
+    if (!this.isPlayerRooted(player.id, now)) return input;
+    this.stopRootedMovement(player);
+    return this.suppressLocomotionInput(input);
   }
 
   private isRootBlockedAbility(abilityId: string | undefined): boolean {
@@ -4635,6 +4722,7 @@ export class GameRoom extends Room<GameState> {
     });
     this.suppressObjectives(playerId, reason);
     this.clearHookshotGrapple(playerId);
+    this.clearHookshotDragPull(playerId);
   }
 
   private sanitizeIncomingMovementCommand(
@@ -6777,7 +6865,7 @@ export class GameRoom extends Room<GameState> {
     }
 
     if (heroId === 'hookshot' && mode === 'secondary') {
-      this.pullTargetInFrontOfSource(primaryTarget, player, HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE);
+      this.startHookshotDragPull(primaryTarget, player, HOOKSHOT_DRAG_HOOK_PULL_FRONT_DISTANCE, now);
     }
   }
 
@@ -7337,24 +7425,276 @@ export class GameRoom extends Room<GameState> {
     return multiplier;
   }
 
-  private pullTargetInFrontOfSource(target: Player, source: Player, distance: number): void {
-    const forward = this.getForwardVector(source.lookYaw, 0);
-    const nextPosition = this.clampToPlayableMap({
-      x: source.position.x + forward.x * distance,
-      y: target.position.y,
-      z: source.position.z + forward.z * distance,
-    });
+  private startHookshotDragPull(target: Player, source: Player, distance: number, now: number): void {
+    const forward = this.normalizeHorizontalPlain(this.getForwardVector(source.lookYaw, 0));
+    if (!forward) return;
 
-    target.position.x = nextPosition.x;
-    target.position.z = nextPosition.z;
-    target.velocity.x = 0;
-    target.velocity.z = 0;
+    const pull: HookshotDragPullAuthorityState = {
+      sourceId: source.id,
+      forward: { x: forward.x, y: 0, z: forward.z },
+      frontDistance: distance,
+      startedAt: now,
+      expiresAt: now + HOOKSHOT_DRAG_HOOK_PULL_MAX_DURATION_MS,
+    };
+    const destination = this.getHookshotDragPullDestination(target, source, pull);
+    if (!destination) return;
+
+    const dx = destination.x - target.position.x;
+    const dz = destination.z - target.position.z;
+    const distanceToDestination = Math.sqrt(dx * dx + dz * dz);
+    if (distanceToDestination <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE) return;
+
+    this.clearHookshotGrapple(target.id);
+    target.velocity.x = (dx / distanceToDestination) * HOOKSHOT_DRAG_HOOK_PULL_SPEED;
+    target.velocity.z = (dz / distanceToDestination) * HOOKSHOT_DRAG_HOOK_PULL_SPEED;
     target.movement.isSliding = false;
     target.movement.slideTimeRemaining = 0;
     target.movement.isWallRunning = false;
     target.movement.wallRunSide = '';
-    this.clearHookshotGrapple(target.id);
-    this.markMovementBarrier(target.id, 'teleport', { preserveQueuedCommands: true });
+
+    this.markMovementBarrier(target.id, 'knockback', { preserveQueuedCommands: true });
+    this.hookshotDragPulls.set(target.id, pull);
+  }
+
+  private getHookshotDragPullDestination(
+    target: Player,
+    source: Player,
+    pull: HookshotDragPullAuthorityState
+  ): PlainVec3 | null {
+    if (source.state !== 'alive' || target.state !== 'alive') return null;
+    return this.clampToPlayableMap({
+      x: source.position.x + pull.forward.x * pull.frontDistance,
+      y: target.position.y,
+      z: source.position.z + pull.forward.z * pull.frontDistance,
+    });
+  }
+
+  private stopHookshotDragPull(player: Player): void {
+    this.hookshotDragPulls.delete(player.id);
+    player.velocity.x = 0;
+    player.velocity.z = 0;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+  }
+
+  private resolveHookshotDragPullTerrainStep(
+    collisionWorld: MovementCollisionWorld,
+    startPosition: PlainVec3,
+    desiredDelta: PlainVec3,
+    destination: PlainVec3
+  ): { position: PlainVec3; blocked: boolean } {
+    let position = startPosition;
+    let remainingDelta = desiredDelta;
+
+    for (let bump = 0; bump < HOOKSHOT_DRAG_HOOK_PULL_BUMP_ITERATIONS; bump++) {
+      const remainingDistance = Math.sqrt(
+        remainingDelta.x * remainingDelta.x +
+        remainingDelta.y * remainingDelta.y +
+        remainingDelta.z * remainingDelta.z
+      );
+      if (remainingDistance <= HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS) {
+        return { position, blocked: false };
+      }
+
+      const hit = collisionWorld.sweepCapsule(position, remainingDelta, PLAYER_HEIGHT, PLAYER_RADIUS);
+      if (!hit) {
+        const nextPosition = this.clampToPlayableMap({
+          x: position.x + remainingDelta.x,
+          y: position.y + remainingDelta.y,
+          z: position.z + remainingDelta.z,
+        });
+        return canCapsuleOccupy(collisionWorld, nextPosition, PLAYER_HEIGHT, PLAYER_RADIUS)
+          ? { position: nextPosition, blocked: false }
+          : { position, blocked: true };
+      }
+
+      const safeTime = Math.max(
+        0,
+        hit.time - HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN / Math.max(remainingDistance, HOOKSHOT_DRAG_HOOK_PULL_BUMP_SKIN)
+      );
+      const contactPosition = this.clampToPlayableMap({
+        x: position.x + remainingDelta.x * safeTime,
+        y: position.y + remainingDelta.y * safeTime,
+        z: position.z + remainingDelta.z * safeTime,
+      });
+      if (!canCapsuleOccupy(collisionWorld, contactPosition, PLAYER_HEIGHT, PLAYER_RADIUS)) {
+        return { position, blocked: true };
+      }
+
+      const distanceBeforeContact = Math.sqrt(
+        (destination.x - position.x) * (destination.x - position.x) +
+        (destination.z - position.z) * (destination.z - position.z)
+      );
+      const distanceAfterContact = Math.sqrt(
+        (destination.x - contactPosition.x) * (destination.x - contactPosition.x) +
+        (destination.z - contactPosition.z) * (destination.z - contactPosition.z)
+      );
+      const contactProgress = distanceBeforeContact - distanceAfterContact;
+      position = contactPosition;
+
+      const remainingScale = 1 - safeTime;
+      const postHitDelta = {
+        x: remainingDelta.x * remainingScale,
+        y: remainingDelta.y * remainingScale,
+        z: remainingDelta.z * remainingScale,
+      };
+      const intoNormal = postHitDelta.x * hit.normal.x +
+        postHitDelta.y * hit.normal.y +
+        postHitDelta.z * hit.normal.z;
+      const slideDelta = {
+        x: postHitDelta.x - hit.normal.x * intoNormal,
+        y: 0,
+        z: postHitDelta.z - hit.normal.z * intoNormal,
+      };
+      const slideLength = Math.sqrt(slideDelta.x * slideDelta.x + slideDelta.z * slideDelta.z);
+      if (slideLength <= HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS) {
+        return {
+          position,
+          blocked: contactProgress < HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS,
+        };
+      }
+
+      const toDestinationLength = Math.sqrt(
+        (destination.x - position.x) * (destination.x - position.x) +
+        (destination.z - position.z) * (destination.z - position.z)
+      );
+      if (toDestinationLength <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE) {
+        return { position, blocked: false };
+      }
+
+      const slideProgress = (
+        slideDelta.x * ((destination.x - position.x) / toDestinationLength) +
+        slideDelta.z * ((destination.z - position.z) / toDestinationLength)
+      );
+      if (contactProgress + slideProgress < HOOKSHOT_DRAG_HOOK_PULL_MIN_PROGRESS) {
+        return { position, blocked: true };
+      }
+
+      remainingDelta = slideDelta;
+    }
+
+    return { position, blocked: true };
+  }
+
+  private stepHookshotDragPullAuthority(player: Player, dt: number, now: number): boolean {
+    const pull = this.hookshotDragPulls.get(player.id);
+    if (!pull) return false;
+
+    const source = this.state.players.get(pull.sourceId);
+    if (!source || source.state !== 'alive' || player.state !== 'alive' || now >= pull.expiresAt) {
+      this.stopHookshotDragPull(player);
+      return false;
+    }
+
+    const destination = this.getHookshotDragPullDestination(player, source, pull);
+    if (!destination) {
+      this.stopHookshotDragPull(player);
+      return false;
+    }
+
+    const currentPosition = this.vec3SchemaToPlain(player.position);
+    const dx = destination.x - currentPosition.x;
+    const dz = destination.z - currentPosition.z;
+    const distanceToDestination = Math.sqrt(dx * dx + dz * dz);
+    const collisionWorld = this.getMovementCollisionWorld(now);
+
+    if (distanceToDestination <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE) {
+      const finalDelta = {
+        x: destination.x - currentPosition.x,
+        y: destination.y - currentPosition.y,
+        z: destination.z - currentPosition.z,
+      };
+      if (
+        canCapsuleOccupy(collisionWorld, destination, PLAYER_HEIGHT, PLAYER_RADIUS) &&
+        !collisionWorld.sweepCapsule(currentPosition, finalDelta, PLAYER_HEIGHT, PLAYER_RADIUS)
+      ) {
+        player.position.x = destination.x;
+        player.position.z = destination.z;
+      }
+      this.stopHookshotDragPull(player);
+      return true;
+    }
+
+    const stepDistance = Math.min(distanceToDestination, HOOKSHOT_DRAG_HOOK_PULL_SPEED * dt);
+    const moveScale = stepDistance / distanceToDestination;
+    const proposedPosition = this.clampToPlayableMap({
+      x: currentPosition.x + dx * moveScale,
+      y: currentPosition.y,
+      z: currentPosition.z + dz * moveScale,
+    });
+    const moveDelta = {
+      x: proposedPosition.x - currentPosition.x,
+      y: proposedPosition.y - currentPosition.y,
+      z: proposedPosition.z - currentPosition.z,
+    };
+    const resolvedStep = this.resolveHookshotDragPullTerrainStep(
+      collisionWorld,
+      currentPosition,
+      moveDelta,
+      destination
+    );
+    const nextPosition = resolvedStep.position;
+
+    const nextPositionOccupiable = canCapsuleOccupy(collisionWorld, nextPosition, PLAYER_HEIGHT, PLAYER_RADIUS);
+    if (resolvedStep.blocked || !nextPositionOccupiable) {
+      const movedBeforeBlock = nextPositionOccupiable && (
+        Math.abs(nextPosition.x - currentPosition.x) > 0.001 ||
+        Math.abs(nextPosition.z - currentPosition.z) > 0.001
+      );
+      if (movedBeforeBlock) {
+        player.position.x = nextPosition.x;
+        player.position.z = nextPosition.z;
+      }
+      this.stopHookshotDragPull(player);
+      return movedBeforeBlock;
+    }
+
+    const movedX = nextPosition.x - currentPosition.x;
+    const movedZ = nextPosition.z - currentPosition.z;
+    player.position.x = nextPosition.x;
+    player.position.z = nextPosition.z;
+    player.velocity.x = movedX / dt;
+    player.velocity.z = movedZ / dt;
+    player.movement.isSprinting = false;
+    player.movement.isSliding = false;
+    player.movement.slideTimeRemaining = 0;
+    player.movement.isWallRunning = false;
+    player.movement.wallRunSide = '';
+    player.movement.isGrappling = false;
+
+    if (distanceToDestination - stepDistance <= HOOKSHOT_DRAG_HOOK_PULL_STOP_DISTANCE) {
+      this.stopHookshotDragPull(player);
+    }
+
+    return true;
+  }
+
+  private stepHookshotDragPullWithoutCommand(player: Player, tickTime: number): boolean {
+    if (!this.hookshotDragPulls.has(player.id)) return false;
+
+    let moved = false;
+    const authority = this.getMovementAuthority(player.id);
+    for (let step = 0; step < SERVER_MOVEMENT_SUBSTEPS_PER_TICK; step++) {
+      if (!this.hookshotDragPulls.has(player.id)) break;
+      const stepNow = tickTime + step * MOVEMENT_SUBSTEP_SECONDS * 1000;
+      const input = this.getRootedMovementInput(
+        player,
+        this.suppressLocomotionInput(player.lastInput ?? this.createEmptyPlayerInput(player, stepNow)),
+        stepNow
+      );
+
+      this.clearHookshotGrapple(player.id);
+      this.simulateAuthoritativeMovementStep(player, input, MOVEMENT_SUBSTEP_SECONDS, stepNow);
+      if (this.stepHookshotDragPullAuthority(player, MOVEMENT_SUBSTEP_SECONDS, stepNow)) {
+        moved = true;
+        this.updateLastSafeMovement(player, authority.lastProcessedSeq, stepNow);
+      }
+    }
+
+    return moved;
   }
 
   private scheduleChronosTimebreakShockwave(
@@ -8488,13 +8828,13 @@ export class GameRoom extends Room<GameState> {
     const steps = Math.max(1, Math.ceil(distance / BOT_LOS_SAMPLE_STEP));
 
     let result = true;
+    const samplePoint = this.lineOfSightSamplePoint;
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
-      if (isCollisionBlock(this.getBlockAtWorld({
-        x: start.x + dx * t,
-        y: start.y + dy * t,
-        z: start.z + dz * t,
-      }))) {
+      samplePoint.x = start.x + dx * t;
+      samplePoint.y = start.y + dy * t;
+      samplePoint.z = start.z + dz * t;
+      if (isCollisionBlock(this.getBlockAtWorld(samplePoint))) {
         result = false;
         break;
       }
@@ -8604,7 +8944,7 @@ export class GameRoom extends Room<GameState> {
     return Math.abs(hash);
   }
 
-  private createEmptyBotInput(bot: Player, now: number): PlayerInput {
+  private createEmptyPlayerInput(player: Player, now: number): PlayerInput {
     return {
       tick: this.state.tick,
       moveForward: false,
@@ -8621,10 +8961,14 @@ export class GameRoom extends Room<GameState> {
       ability2: false,
       ultimate: false,
       interact: false,
-      lookYaw: bot.lookYaw,
-      lookPitch: bot.lookPitch,
+      lookYaw: player.lookYaw,
+      lookPitch: player.lookPitch,
       timestamp: now,
     };
+  }
+
+  private createEmptyBotInput(bot: Player, now: number): PlayerInput {
+    return this.createEmptyPlayerInput(bot, now);
   }
 
   private stopBotMovement(bot: Player, options: { vertical: boolean }): void {
@@ -9347,8 +9691,8 @@ export class GameRoom extends Room<GameState> {
   }
 
   private getHookshotAnchorWallAabbs(bounds: MovementCollisionBounds): MovementAabb[] {
-    this.pruneExpiredHookshotAnchorWalls();
-    return computeAnchorWallAabbs(this.hookshotAnchorWalls, Date.now(), bounds);
+    if (this.hookshotAnchorWalls.length === 0) return this.emptyMovementAabbs;
+    return computeAnchorWallAabbs(this.hookshotAnchorWalls, this.state.serverTime || Date.now(), bounds);
   }
 
   private createHookshotAnchorWall(instance: HookshotAnchorWallInstance): void {
@@ -9478,6 +9822,7 @@ export class GameRoom extends Room<GameState> {
     this.phantomVoidRayChargeStartedAt.delete(player.id);
     this.phantomVoidRayResolvedForPress.delete(player.id);
     this.clearHookshotGrapple(player.id);
+    this.clearHookshotDragPull(player.id);
     player.movement.isGrappling = false;
     player.movement.isJetpacking = false;
     player.movement.isGliding = false;
@@ -10264,6 +10609,7 @@ export class GameRoom extends Room<GameState> {
     this.broadcastBlazeFlamethrowerState(player, false, deathAt);
     this.blazeBombDropConsumedForHold.delete(player.id);
     this.clearHookshotGrapple(player.id);
+    this.clearHookshotDragPullsInvolving(player.id);
     this.playerRootedUntil.delete(player.id);
     
     // Drop flag if carrying
@@ -10432,6 +10778,7 @@ export class GameRoom extends Room<GameState> {
 
       if (drainDecision.underflow) {
         authority.metrics.underflowTicks = (authority.metrics.underflowTicks ?? 0) + 1;
+        const dragPullMoved = this.stepHookshotDragPullWithoutCommand(player, tickTime);
         authority.metrics.queueLength = authority.pendingCommands.length;
         authority.metrics.queueLengthAfterTick = authority.pendingCommands.length;
         if (player.position.y < -10) {
@@ -10439,7 +10786,7 @@ export class GameRoom extends Room<GameState> {
         }
 
         const client = this.clientsBySessionId.get(player.id);
-        if (client && authority.correctionReason) {
+        if (client && (authority.correctionReason || dragPullMoved)) {
           this.sendSelfMovementAuthority(player, client, authority.correctionReason);
         }
         return;
@@ -10458,10 +10805,20 @@ export class GameRoom extends Room<GameState> {
         player.lastInput = movementInput;
         player.lookYaw = movementInput.lookYaw;
         player.lookPitch = movementInput.lookPitch;
-        this.prepareHookshotGrappleForMovement(player, stepNow);
-
-        this.simulateAuthoritativeMovementStep(player, movementInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
-        this.stepHookshotGrappleAuthority(player, movementInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
+        const dragPullActive = this.hookshotDragPulls.has(player.id);
+        if (dragPullActive) {
+          this.clearHookshotGrapple(player.id);
+        } else {
+          this.prepareHookshotGrappleForMovement(player, stepNow);
+        }
+        const simulationInput = dragPullActive
+          ? this.suppressLocomotionInput(movementInput)
+          : movementInput;
+        this.simulateAuthoritativeMovementStep(player, simulationInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
+        if (!dragPullActive) {
+          this.stepHookshotGrappleAuthority(player, simulationInput, MOVEMENT_SUBSTEP_SECONDS, stepNow);
+        }
+        this.stepHookshotDragPullAuthority(player, MOVEMENT_SUBSTEP_SECONDS, stepNow);
         this.processPlayerInput(player, movementInput);
         this.updateLastSafeMovement(player, movementInput.tick, stepNow);
         authority.metrics.commandsProcessed++;

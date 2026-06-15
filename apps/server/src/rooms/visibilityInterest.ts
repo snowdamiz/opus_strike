@@ -198,17 +198,17 @@ export class VisibilityInterestManager {
     target: VisibilityInterestPlayer,
     context: VisibilityInterestContext
   ): RecipientInterestDecision {
-    const start = performance.now();
     const previous = recipient ? this.getCachedInterest(recipient.id, target.id) : undefined;
     if (
       previous &&
       previous.expiresAt > context.now &&
       previous.collisionRevision === context.collisionRevision
     ) {
-      this.recordDecision(previous, performance.now() - start);
+      this.recordDecision(previous, 0);
       return previous;
     }
 
+    const start = performance.now();
     const decision = this.computeRecipientInterest(recipient, target, context, previous);
     if (recipient) {
       this.setCachedInterest(recipient.id, target.id, {
@@ -393,15 +393,7 @@ export class VisibilityInterestManager {
 
   private getLineOfSightCacheKey(from: Vec3, to: Vec3, collisionRevision: number): string {
     const step = this.losQuantizationMeters;
-    return [
-      collisionRevision,
-      quantize(from.x, step),
-      quantize(from.y, step),
-      quantize(from.z, step),
-      quantize(to.x, step),
-      quantize(to.y, step),
-      quantize(to.z, step),
-    ].join(':');
+    return `${collisionRevision}:${quantize(from.x, step)}:${quantize(from.y, step)}:${quantize(from.z, step)}:${quantize(to.x, step)}:${quantize(to.y, step)}:${quantize(to.z, step)}`;
   }
 
   private getCachedInterest(recipientId: string, targetId: string): CachedInterestDecision | undefined {

@@ -985,7 +985,11 @@ export function GameCanvas({
         )}
         
         {/* Other players - always rendered so players can see each other in lobby */}
-        <OtherPlayers config={qualityConfig.remotePlayers} />
+        <OtherPlayers
+          config={qualityConfig.remotePlayers}
+          effectConfig={effectiveEffectsConfig}
+          theme={mapTheme}
+        />
         <RagdollManager config={qualityConfig.ragdolls} />
         
         {/* Gameplay objects mount during warmup so first-use shaders and buffers are paid before input. */}

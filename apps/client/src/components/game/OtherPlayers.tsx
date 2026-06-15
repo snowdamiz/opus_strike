@@ -4,16 +4,16 @@ import * as THREE from 'three';
 import { useGameStore } from '../../store/gameStore';
 import {
   sampleRemoteTransformInto,
-  setPlayerVisualTransform,
   type SampledRemoteTransform,
   visualStore,
 } from '../../store/visualStore';
 import { useShallow } from 'zustand/shallow';
-import type { Player, Team } from '@voxel-strike/shared';
+import type { Player, Team, VoxelMapTheme } from '@voxel-strike/shared';
 import { HeroVoxelBody } from './HeroVoxelBody';
 import type { HeroMovementPose, HeroWalkDirection } from './HeroVoxelBody';
-import type { RemotePlayerQualityConfig } from './visualQuality';
+import type { EffectQualityConfig, RemotePlayerQualityConfig } from './visualQuality';
 import { RemoteHeroBatchRenderer } from './RemoteHeroBatchRenderer';
+import { RemoteMovementEffects } from './RemoteMovementEffects';
 import {
   getPlayerHeight,
   getVisiblePlayerHeight,
@@ -25,9 +25,11 @@ import { gameplayFrameScheduler } from './systems/gameplayFrameScheduler';
 
 interface OtherPlayersProps {
   config: RemotePlayerQualityConfig;
+  effectConfig: Pick<EffectQualityConfig, 'maxActiveParticles'>;
+  theme: VoxelMapTheme;
 }
 
-export function OtherPlayers({ config }: OtherPlayersProps) {
+export function OtherPlayers({ config, effectConfig, theme }: OtherPlayersProps) {
   // NOTE: This component subscribes to gameStore.players but does NOT re-render on
   // v2 transform position updates because remote player entries are mutated in-place.
   // The Map reference only changes when players are added/removed. Position interpolation
@@ -57,7 +59,8 @@ export function OtherPlayers({ config }: OtherPlayersProps) {
 
   return (
     <group>
-      <RemoteHeroBatchRenderer players={otherPlayers} />
+      <RemoteHeroBatchRenderer players={otherPlayers} config={config} />
+      <RemoteMovementEffects players={otherPlayers} theme={theme} config={effectConfig} />
       {otherPlayers.map((player) => shouldRenderRemotePlayerFallback(player, config) ? (
         <OtherPlayer
           key={player.id}
@@ -235,11 +238,23 @@ const OtherPlayer = memo(function OtherPlayer({ player, config }: OtherPlayerPro
 
       // Read from visualStore non-reactively (no re-renders)
       const visualState = visualStore.getState();
+      if (!frameIsVeiled || player.heroId !== 'phantom') {
+        const targetPos = visualState.renderedPlayerPositions.get(player.id) ??
+          visualState.playerPositions.get(player.id);
+        setPlayerRenderOrigin(currentPosition.current, targetPos ?? player.position);
+        groupRef.current.position.copy(currentPosition.current);
+        groupRef.current.rotation.y = visualState.renderedPlayerRotations.get(player.id) ??
+          visualState.playerRotations.get(player.id) ??
+          player.lookYaw;
+        lookPitchRef.current = player.lookPitch;
+        previousFramePosition.current.copy(currentPosition.current);
+        return;
+      }
+
       const sampledTransform = sampledTransformRef.current;
       const hasSampledTransform = sampleRemoteTransformInto(player.id, sampledTransform, frameNowMs);
       let snappedToSample = false;
       if (hasSampledTransform) {
-        setPlayerVisualTransform(player.id, sampledTransform.position, sampledTransform.lookYaw);
         setPlayerRenderOrigin(targetPosition.current, sampledTransform.position);
         const epochChanged = remoteEpochRef.current !== null && remoteEpochRef.current !== sampledTransform.movementEpoch;
         const tooFarForSmoothing = currentPosition.current.distanceToSquared(targetPosition.current) >

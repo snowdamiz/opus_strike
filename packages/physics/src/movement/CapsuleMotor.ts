@@ -254,15 +254,6 @@ function bodyHeightForMovement(movement: PlayerMovementState): number {
   return movement.isSliding || movement.isCrouching ? PLAYER_CROUCH_HEIGHT : PLAYER_HEIGHT;
 }
 
-function capsuleSegment(position: Vec3, height: number, radius: number): { minY: number; maxY: number } {
-  const bottom = feetY(position) + radius;
-  const top = feetY(position) + Math.max(radius, height - radius);
-  return {
-    minY: Math.min(bottom, top),
-    maxY: Math.max(bottom, top),
-  };
-}
-
 function capsuleBounds(position: Vec3, height: number, radius: number): MovementCollisionBounds {
   return {
     min: {
@@ -331,13 +322,14 @@ function normalKind(normal: Vec3): MovementContact['kind'] {
 }
 
 function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb: MovementAabb): MovementOverlap | null {
-  const segment = capsuleSegment(position, height, radius);
-  const vector = {
-    x: closestIntervalVector(position.x, aabb.min.x, aabb.max.x),
-    y: intervalGap(segment.minY, segment.maxY, aabb.min.y, aabb.max.y),
-    z: closestIntervalVector(position.z, aabb.min.z, aabb.max.z),
-  };
-  const distanceSq = dot(vector, vector);
+  const bottom = feetY(position) + radius;
+  const top = feetY(position) + Math.max(radius, height - radius);
+  const segmentMinY = Math.min(bottom, top);
+  const segmentMaxY = Math.max(bottom, top);
+  const vectorX = closestIntervalVector(position.x, aabb.min.x, aabb.max.x);
+  const vectorY = intervalGap(segmentMinY, segmentMaxY, aabb.min.y, aabb.max.y);
+  const vectorZ = closestIntervalVector(position.z, aabb.min.z, aabb.max.z);
+  const distanceSq = vectorX * vectorX + vectorY * vectorY + vectorZ * vectorZ;
   const radiusSq = radius * radius;
 
   if (distanceSq >= radiusSq) return null;
@@ -346,33 +338,63 @@ function overlapCapsuleAabb(position: Vec3, height: number, radius: number, aabb
     const distance = Math.sqrt(distanceSq);
     return {
       normal: {
-        x: vector.x / distance,
-        y: vector.y / distance,
-        z: vector.z / distance,
+        x: vectorX / distance,
+        y: vectorY / distance,
+        z: vectorZ / distance,
       },
       depth: radius - distance,
       aabb,
     };
   }
 
-  const centerY = (segment.minY + segment.maxY) * 0.5;
+  const centerY = (segmentMinY + segmentMaxY) * 0.5;
   let bestDepth = Infinity;
   let bestNormalX = 0;
   let bestNormalY = 1;
   let bestNormalZ = 0;
-  const consider = (depth: number, normalX: number, normalY: number, normalZ: number): void => {
-    if (!Number.isFinite(depth) || depth < 0 || depth >= bestDepth) return;
+
+  let depth = position.x - aabb.min.x + radius;
+  if (Number.isFinite(depth) && depth >= 0 && depth < bestDepth) {
     bestDepth = depth;
-    bestNormalX = normalX;
-    bestNormalY = normalY;
-    bestNormalZ = normalZ;
-  };
-  consider(position.x - aabb.min.x + radius, -1, 0, 0);
-  consider(aabb.max.x - position.x + radius, 1, 0, 0);
-  consider(position.z - aabb.min.z + radius, 0, 0, -1);
-  consider(aabb.max.z - position.z + radius, 0, 0, 1);
-  consider(centerY - aabb.min.y + radius, 0, -1, 0);
-  consider(aabb.max.y - centerY + radius, 0, 1, 0);
+    bestNormalX = -1;
+    bestNormalY = 0;
+    bestNormalZ = 0;
+  }
+  depth = aabb.max.x - position.x + radius;
+  if (Number.isFinite(depth) && depth >= 0 && depth < bestDepth) {
+    bestDepth = depth;
+    bestNormalX = 1;
+    bestNormalY = 0;
+    bestNormalZ = 0;
+  }
+  depth = position.z - aabb.min.z + radius;
+  if (Number.isFinite(depth) && depth >= 0 && depth < bestDepth) {
+    bestDepth = depth;
+    bestNormalX = 0;
+    bestNormalY = 0;
+    bestNormalZ = -1;
+  }
+  depth = aabb.max.z - position.z + radius;
+  if (Number.isFinite(depth) && depth >= 0 && depth < bestDepth) {
+    bestDepth = depth;
+    bestNormalX = 0;
+    bestNormalY = 0;
+    bestNormalZ = 1;
+  }
+  depth = centerY - aabb.min.y + radius;
+  if (Number.isFinite(depth) && depth >= 0 && depth < bestDepth) {
+    bestDepth = depth;
+    bestNormalX = 0;
+    bestNormalY = -1;
+    bestNormalZ = 0;
+  }
+  depth = aabb.max.y - centerY + radius;
+  if (Number.isFinite(depth) && depth >= 0 && depth < bestDepth) {
+    bestDepth = depth;
+    bestNormalX = 0;
+    bestNormalY = 1;
+    bestNormalZ = 0;
+  }
 
   return {
     normal: { x: bestNormalX, y: bestNormalY, z: bestNormalZ },

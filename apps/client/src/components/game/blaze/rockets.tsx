@@ -242,6 +242,12 @@ function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number):
   }
 }
 
+function markInstancedMeshesDynamic(meshes: readonly (THREE.InstancedMesh | null)[]): void {
+  for (const mesh of meshes) {
+    mesh?.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }
+}
+
 function getAuthoritativeRocketImpactHit(
   slot: RocketRuntimeSlot,
   collisionDistance: number
@@ -309,6 +315,18 @@ export function RocketsManager() {
   if (!poolRef.current) {
     poolRef.current = new RocketRuntimePool(MAX_ROCKETS);
   }
+
+  useEffect(() => {
+    markInstancedMeshesDynamic([
+      fireballOuterMeshRef.current,
+      fireballInnerMeshRef.current,
+      fireballCoreMeshRef.current,
+      trailOuterMeshRef.current,
+      trailInnerMeshRef.current,
+      trailCoreMeshRef.current,
+    ]);
+  }, []);
+
   useEffect(() => {
     const pool = poolRef.current;
     if (!pool) return;

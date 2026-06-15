@@ -459,6 +459,12 @@ function setInstancedMeshCount(mesh: THREE.InstancedMesh | null, count: number):
   }
 }
 
+function markInstancedMeshesDynamic(meshes: readonly (THREE.InstancedMesh | null)[]): void {
+  for (const mesh of meshes) {
+    mesh?.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  }
+}
+
 export function prewarmDireBallResources(): void {
   getSharedCoreMaterial();
   getSharedGlowMaterial();
@@ -479,6 +485,7 @@ export function appendDireBallGpuPrewarmObjects(target: THREE.Object3D): void {
     const mesh = new THREE.InstancedMesh(geometry, material, 1);
     mesh.name = name;
     mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.setMatrixAt(0, dummy.matrix);
     mesh.instanceMatrix.needsUpdate = true;
     target.add(mesh);
@@ -518,9 +525,14 @@ export function DireBallsManager() {
 
   const particleGeometry = useMemo(() => {
     const geometry = new THREE.BufferGeometry();
+    const positionAttribute = new THREE.BufferAttribute(
+      new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3),
+      3
+    );
+    positionAttribute.setUsage(THREE.StreamDrawUsage);
     geometry.setAttribute(
       'position',
-      new THREE.BufferAttribute(new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3), 3)
+      positionAttribute
     );
     const colors = new Float32Array(DIRE_BALL_CAPACITY * PARTICLES_PER_BALL * 3);
     const palette = [
@@ -540,6 +552,15 @@ export function DireBallsManager() {
   }, []);
 
   useEffect(() => () => particleGeometry.dispose(), [particleGeometry]);
+
+  useEffect(() => {
+    markInstancedMeshesDynamic([
+      coreMeshRef.current,
+      glowMeshRef.current,
+      innerMeshRef.current,
+      secondaryShellMeshRef.current,
+    ]);
+  }, []);
 
   useEffect(() => {
     const pool = poolRef.current;

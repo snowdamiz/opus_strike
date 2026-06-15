@@ -36,6 +36,12 @@ export interface VisualState {
   /** Player rotations for lookYaw interpolation (playerId -> rotation in radians) */
   playerRotations: Map<string, number>;
 
+  /** Last rendered remote player positions for non-reactive attachments like labels/beacons. */
+  renderedPlayerPositions: Map<string, { x: number; y: number; z: number }>;
+
+  /** Last rendered remote player rotations for non-reactive attachments like labels/beacons. */
+  renderedPlayerRotations: Map<string, number>;
+
   /** Camera shake effect: intensity (0-1) and remaining time (ms) */
   cameraShake: { intensity: number; time: number };
 
@@ -238,6 +244,8 @@ const createCombatFrameCache = (): CombatVisualFrameCache => ({
 const initialVisualState: VisualState = {
   playerPositions: new Map(),
   playerRotations: new Map(),
+  renderedPlayerPositions: new Map(),
+  renderedPlayerRotations: new Map(),
   cameraShake: { intensity: 0, time: 0 },
   slideFov: 0,
   interpolationTargets: new Map(),
@@ -350,6 +358,24 @@ export const setPlayerVisualTransform = (
   if (state.playerRotations.get(playerId) !== rotation) {
     state.playerRotations.set(playerId, rotation);
   }
+};
+
+export const setRenderedPlayerVisualTransform = (
+  playerId: string,
+  position: { x: number; y: number; z: number },
+  rotation: number
+): void => {
+  const state = visualStore.getState();
+  const current = state.renderedPlayerPositions.get(playerId);
+  if (current) {
+    current.x = position.x;
+    current.y = position.y;
+    current.z = position.z;
+  } else {
+    state.renderedPlayerPositions.set(playerId, { x: position.x, y: position.y, z: position.z });
+  }
+
+  state.renderedPlayerRotations.set(playerId, rotation);
 };
 
 export const setLocalViewmodelMovement = (
@@ -512,6 +538,8 @@ export const pruneRemoteTransformHistories = (activePlayerIds: ReadonlySet<strin
       state.interpolationTargets.delete(playerId);
       state.playerPositions.delete(playerId);
       state.playerRotations.delete(playerId);
+      state.renderedPlayerPositions.delete(playerId);
+      state.renderedPlayerRotations.delete(playerId);
     }
   }
 };
@@ -957,6 +985,8 @@ export const removePlayerLiveVisualState = (playerId: string): void => {
   const state = visualStore.getState();
   state.playerPositions.delete(playerId);
   state.playerRotations.delete(playerId);
+  state.renderedPlayerPositions.delete(playerId);
+  state.renderedPlayerRotations.delete(playerId);
   state.interpolationTargets.delete(playerId);
   state.remoteTransformHistories.delete(playerId);
   state.chronosAegisStates.delete(playerId);
@@ -1202,6 +1232,8 @@ export const clearVisualState = (): void => {
   visualStore.setState((state) => ({
     playerPositions: new Map(),
     playerRotations: new Map(),
+    renderedPlayerPositions: new Map(),
+    renderedPlayerRotations: new Map(),
     cameraShake: { intensity: 0, time: 0 },
     slideFov: 0,
     interpolationTargets: new Map(),

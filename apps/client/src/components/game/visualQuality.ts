@@ -68,6 +68,9 @@ export interface RemotePlayerQualityConfig {
   animateBeacons: boolean;
   showNameplates: boolean;
   showBeacons: boolean;
+  fullBodyDistance: number;
+  outlineDistance: number;
+  castShadows: boolean;
 }
 
 export interface RagdollQualityConfig {
@@ -401,21 +404,33 @@ const REMOTE_PLAYER_QUALITY_CONFIG: Record<GraphicsPreset, RemotePlayerQualityCo
     animateBeacons: false,
     showNameplates: false,
     showBeacons: false,
+    fullBodyDistance: 36,
+    outlineDistance: 0,
+    castShadows: false,
   },
   competitive: {
     animateBeacons: false,
     showNameplates: true,
     showBeacons: false,
+    fullBodyDistance: 52,
+    outlineDistance: 0,
+    castShadows: false,
   },
   balanced: {
     animateBeacons: true,
     showNameplates: true,
     showBeacons: true,
+    fullBodyDistance: 72,
+    outlineDistance: 48,
+    castShadows: true,
   },
   cinematic: {
     animateBeacons: true,
     showNameplates: true,
     showBeacons: true,
+    fullBodyDistance: Number.POSITIVE_INFINITY,
+    outlineDistance: 96,
+    castShadows: true,
   },
 };
 
