@@ -331,6 +331,9 @@ export function usePhantomAbilities(): UsePhantomAbilitiesReturn {
       ownerId: ctx.localPlayer.id,
       ownerTeam: (ctx.localPlayer.team || 'red') as 'red' | 'blue',
     });
+    if (store.isPracticeMode && store.localPlayer?.id === ctx.localPlayer.id) {
+      store.setClientCooldown('phantom_void_ray', now + cooldownMs);
+    }
     markPredictedLocalAbilityVisual('phantom_void_ray', ctx.localPlayer.id, visualId, { now });
   }, []);
 

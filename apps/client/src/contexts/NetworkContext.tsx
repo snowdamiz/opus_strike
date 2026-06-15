@@ -52,6 +52,7 @@ import {
 import { measureFrameWork } from '../movement/networkDiagnostics';
 import { projectileInitialState } from '../store/slices/projectiles';
 import { resetGameTiming } from '../store/gameTimingStore';
+import { createPracticeAbilityStates } from './practiceAbilities';
 
 type CreateLobbyWagerOptions = { enabled: boolean; coverChargeLamports?: string; token?: 'SOL' };
 type CreateLobbyOptions = {
@@ -1770,6 +1771,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         health: heroStats.maxHealth,
         maxHealth: heroStats.maxHealth,
         ultimateCharge: 100,
+        abilities: createPracticeAbilityStates(heroId),
         isReady: false,
       });
       return;
@@ -1858,6 +1860,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
         health: heroStats.maxHealth,
         maxHealth: heroStats.maxHealth,
         ultimateCharge: 100,
+        abilities: createPracticeAbilityStates(heroId),
       };
 
       store.setLocalPlayer(nextPlayer);

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
+  ABILITY_DEFINITIONS,
   createEmptyInputState,
+  HERO_DEFINITIONS,
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_SUBSTEP_SECONDS,
   movementButtonsToInputState,
@@ -18,6 +20,7 @@ import {
   movementStateFromPlayer,
   resetLocalMovementPrediction,
 } from '../../movement/localPrediction';
+import { createPracticeAbilityStates } from '../../contexts/practiceAbilities';
 import { useGameStore } from '../../store/gameStore';
 import {
   createLocalVisualInterpolationState,
@@ -268,6 +271,23 @@ useGameStore.setState({
   bombTargeting: false,
   grappleTrapTargeting: false,
 });
+
+for (const heroId of ['phantom', 'hookshot', 'blaze', 'chronos'] as const satisfies readonly HeroId[]) {
+  const practiceAbilities = createPracticeAbilityStates(heroId);
+  const expectedAbilityIds = [
+    HERO_DEFINITIONS[heroId].ability1.abilityId,
+    HERO_DEFINITIONS[heroId].ability2.abilityId,
+    HERO_DEFINITIONS[heroId].ultimate.abilityId,
+  ];
+
+  assert.deepEqual(Object.keys(practiceAbilities).sort(), [...expectedAbilityIds].sort());
+  for (const abilityId of expectedAbilityIds) {
+    assert.equal(practiceAbilities[abilityId].charges, ABILITY_DEFINITIONS[abilityId]?.charges ?? 1);
+    assert.equal(practiceAbilities[abilityId].cooldownRemaining, 0);
+    assert.equal(practiceAbilities[abilityId].cooldownUntil, 0);
+    assert.equal(practiceAbilities[abilityId].isActive, false);
+  }
+}
 
 const baseInput = input({ primaryFire: true, secondaryFire: true, ability1: true });
 const primaryOnly = getExclusiveHeroInput('phantom', baseInput, false, false);

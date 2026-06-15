@@ -100,6 +100,8 @@ import {
   MOVEMENT_MAX_PACKET_COMMANDS,
   MOVEMENT_SUBSTEP_SECONDS,
   PHANTOM_VEIL_SPEED_MULTIPLIER,
+  PHANTOM_VOID_ZONE_DURATION_SECONDS,
+  PHANTOM_VOID_ZONE_RADIUS,
   TICK_RATE,
   createEmptyInputState,
   getHeroStats,
@@ -152,8 +154,6 @@ import { triggerTeleportEffect } from '../ui/TeleportEffects';
 
 const INACTIVE_INPUT_STATE = createEmptyInputState();
 const DEFAULT_FLAMETHROWER_DIRECTION = { x: 0, y: 0, z: -1 };
-const PRACTICE_VOID_ZONE_RADIUS = 3;
-const PRACTICE_VOID_ZONE_DURATION_SECONDS = 4;
 const TERRAIN_STEP_VISUAL_SNAP_THRESHOLD = 1.35;
 const TERRAIN_STEP_VISUAL_UP_RATE = 16;
 const TERRAIN_STEP_VISUAL_DOWN_RATE = 28;
@@ -2405,8 +2405,8 @@ export function PlayerController({ enabled = true }: PlayerControllerProps) {
                       y: nextState.position.y - 0.9,
                       z: nextState.position.z,
                     },
-                    radius: PRACTICE_VOID_ZONE_RADIUS,
-                    duration: PRACTICE_VOID_ZONE_DURATION_SECONDS,
+                    radius: PHANTOM_VOID_ZONE_RADIUS,
+                    duration: PHANTOM_VOID_ZONE_DURATION_SECONDS,
                     startTime: now,
                     ownerId: localPlayer.id,
                     ownerTeam: (localPlayer.team || 'red') as 'red' | 'blue',
