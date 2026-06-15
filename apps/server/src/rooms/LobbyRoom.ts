@@ -204,6 +204,7 @@ export class LobbyRoom extends Room<LobbyState> {
   private customMapSeed: number | null = null;
   private forceGoldenMapOption = false;
   private capacityRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+  private gameStartDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchmakingCapacityBlocked = false;
   private matchmakingCapacityCheckInFlight = false;
   
@@ -677,6 +678,7 @@ export class LobbyRoom extends Room<LobbyState> {
     this.disposed = true;
     this.clearMapVoteTimer();
     this.clearCapacityRetry();
+    this.clearGameStartDisconnectTimer();
     this.stopWagerSafetyRefresh();
     if (this.unsubscribeWagerPaymentStatusChanged) {
       const unsubscribe = this.unsubscribeWagerPaymentStatusChanged;
@@ -1176,9 +1178,13 @@ export class LobbyRoom extends Room<LobbyState> {
       }
 
       // Dispose this lobby after a short delay
-      setTimeout(() => {
+      this.clearGameStartDisconnectTimer();
+      this.gameStartDisconnectTimeout = setTimeout(() => {
+        this.gameStartDisconnectTimeout = null;
+        if (this.disposed) return;
         this.disconnect();
       }, 5000);
+      this.gameStartDisconnectTimeout.unref?.();
     } catch (error) {
       if (lockedWagerContext) {
         await wagerService.refundLobbyBeforeGame(this.state.lobbyId, 'game_start_failed');
@@ -1954,6 +1960,12 @@ export class LobbyRoom extends Room<LobbyState> {
     if (!this.capacityRetryTimeout) return;
     clearTimeout(this.capacityRetryTimeout);
     this.capacityRetryTimeout = null;
+  }
+
+  private clearGameStartDisconnectTimer(): void {
+    if (!this.gameStartDisconnectTimeout) return;
+    clearTimeout(this.gameStartDisconnectTimeout);
+    this.gameStartDisconnectTimeout = null;
   }
 
   private scheduleCapacityRetry(): void {

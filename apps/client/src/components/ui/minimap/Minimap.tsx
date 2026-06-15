@@ -28,12 +28,11 @@ export function Minimap() {
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const size = useMeasuredSquareSize(containerRef, DEFAULT_MINIMAP_SIZE);
   const devicePixelRatio = useDevicePixelRatio();
-  const { localPlayer, mapSeed, mapThemeId, isPracticeMode } = useGameStore(
+  const { localPlayer, mapSeed, mapThemeId } = useGameStore(
     useShallow((state) => ({
       localPlayer: state.localPlayer,
       mapSeed: state.mapSeed,
       mapThemeId: state.mapThemeId,
-      isPracticeMode: state.isPracticeMode,
     }))
   );
 
@@ -42,10 +41,12 @@ export function Minimap() {
   ), [mapSeed, mapThemeId]);
   const manifest = preparedMap.manifest;
   const localPlayerId = localPlayer?.id ?? null;
-  const localPlayerTeam = localPlayer?.team ?? null;
   const projection = useMemo(() => (
     createMinimapProjection(getMinimapBounds(manifest), size, MINIMAP_PADDING)
   ), [manifest, size]);
+  const boundaryClipPath = useMemo(() => (
+    createBoundaryClipPath(manifest, projection)
+  ), [manifest, projection]);
 
   useEffect(() => {
     const canvas = staticCanvasRef.current;
@@ -79,7 +80,7 @@ export function Minimap() {
     const draw = (now: number) => {
       if (now - lastDrawAt >= LIVE_OVERLAY_FRAME_MS) {
         lastDrawAt = now;
-        drawLiveOverlay(ctx, manifest, projection, size, devicePixelRatio);
+        drawLiveOverlay(ctx, manifest, projection, boundaryClipPath, size, devicePixelRatio);
       }
       rafId = window.requestAnimationFrame(draw);
     };
@@ -89,7 +90,7 @@ export function Minimap() {
     return () => {
       window.cancelAnimationFrame(rafId);
     };
-  }, [devicePixelRatio, isPracticeMode, localPlayerId, localPlayerTeam, manifest, projection, size]);
+  }, [boundaryClipPath, devicePixelRatio, localPlayerId, manifest, projection, size]);
 
   if (!localPlayer) return null;
 
@@ -119,6 +120,7 @@ function drawLiveOverlay(
   ctx: CanvasRenderingContext2D,
   manifest: VoxelMapManifest,
   projection: MinimapProjection,
+  boundaryClipPath: Path2D | null,
   size: number,
   devicePixelRatio: number
 ): void {
@@ -132,7 +134,7 @@ function drawLiveOverlay(
   if (!localPlayer) return;
 
   ctx.save();
-  clipToBoundary(ctx, manifest, projection);
+  clipToBoundary(ctx, projection, boundaryClipPath);
 
   const visualState = visualStore.getState();
   const teammates = selectVisibleTeammates(localPlayer, store.players.values(), liveOverlayTeammatesScratch);
@@ -162,27 +164,36 @@ function drawLiveOverlay(
 
 function clipToBoundary(
   ctx: CanvasRenderingContext2D,
-  manifest: VoxelMapManifest,
-  projection: MinimapProjection
+  projection: MinimapProjection,
+  boundaryClipPath: Path2D | null
 ): void {
-  if (manifest.boundary.length < 3) {
+  if (!boundaryClipPath) {
     ctx.beginPath();
     ctx.rect(0, 0, projection.size, projection.size);
     ctx.clip();
     return;
   }
 
-  ctx.beginPath();
+  ctx.clip(boundaryClipPath);
+}
+
+function createBoundaryClipPath(
+  manifest: VoxelMapManifest,
+  projection: MinimapProjection
+): Path2D | null {
+  if (manifest.boundary.length < 3 || typeof Path2D === 'undefined') return null;
+
+  const path = new Path2D();
   manifest.boundary.forEach((point, index) => {
     const projected = worldToMinimap(projection, point);
     if (index === 0) {
-      ctx.moveTo(projected.x, projected.y);
+      path.moveTo(projected.x, projected.y);
     } else {
-      ctx.lineTo(projected.x, projected.y);
+      path.lineTo(projected.x, projected.y);
     }
   });
-  ctx.closePath();
-  ctx.clip();
+  path.closePath();
+  return path;
 }
 
 function drawTeammateMarker(

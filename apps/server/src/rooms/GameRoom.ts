@@ -739,6 +739,7 @@ export class GameRoom extends Room<GameState> {
   private tickInterval: ReturnType<typeof setInterval> | null = null;
   private matchStartCancelTimeout: ReturnType<typeof setTimeout> | null = null;
   private matchCancelDisconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private readonly scheduledTimeouts = new Set<ReturnType<typeof setTimeout>>();
   private readonly config = DEFAULT_GAME_CONFIG;
   private lobbyId: string | null = null;
   private lobbyName: string | null = null;
@@ -1578,6 +1579,7 @@ export class GameRoom extends Room<GameState> {
     loggers.room.info('Room disposing', this.roomId);
     this.clearMatchStartCancelTimer();
     this.clearMatchCancelDisconnectTimer();
+    this.clearScheduledTimeouts();
     this.antiCheat?.flushAggregates();
     void this.antiCheatEvidenceStore.flush();
     this.state.players.forEach((player, playerId) => {
@@ -1611,6 +1613,23 @@ export class GameRoom extends Room<GameState> {
     if (!this.matchCancelDisconnectTimeout) return;
     clearTimeout(this.matchCancelDisconnectTimeout);
     this.matchCancelDisconnectTimeout = null;
+  }
+
+  private scheduleRoomTimeout(callback: () => void, delayMs: number): void {
+    let timeout: ReturnType<typeof setTimeout>;
+    timeout = setTimeout(() => {
+      this.scheduledTimeouts.delete(timeout);
+      callback();
+    }, delayMs);
+    this.scheduledTimeouts.add(timeout);
+    timeout.unref?.();
+  }
+
+  private clearScheduledTimeouts(): void {
+    for (const timeout of this.scheduledTimeouts) {
+      clearTimeout(timeout);
+    }
+    this.scheduledTimeouts.clear();
   }
 
   private createStartTimeoutCancelNotice(): PreMatchCancelNotice {
@@ -1899,17 +1918,6 @@ export class GameRoom extends Room<GameState> {
     this.recentCombatInterestUntil.set(this.getRecentCombatInterestKey(targetId, sourceId), until);
   }
 
-  private getVisibilityInterestPlayer(player: Player): VisibilityInterestPlayer {
-    return {
-      id: player.id,
-      team: player.team,
-      state: player.state,
-      position: player.position,
-      heroId: player.heroId,
-      abilities: player.abilities.values(),
-    };
-  }
-
   private buildReplicationFrameContext(now = this.state.serverTime || Date.now()): ReplicationFrameContext {
     const frameContext = this.replicationFrameContext;
     frameContext.now = now;
@@ -1924,7 +1932,7 @@ export class GameRoom extends Room<GameState> {
 
     this.state.players.forEach((player, id) => {
       frameContext.currentIds.add(id);
-      frameContext.visibilityPlayers.set(id, this.getVisibilityInterestPlayer(player));
+      frameContext.visibilityPlayers.set(id, player);
       if (player.state !== 'alive' && player.state !== 'spawning') return;
 
       const transform = this.buildPackedPlayerTransform(id, player);
@@ -1944,9 +1952,9 @@ export class GameRoom extends Room<GameState> {
     frameContext?: ReplicationFrameContext
   ): RecipientInterestDecision {
     const recipientInterestPlayer = recipient
-      ? frameContext?.visibilityPlayers.get(recipient.id) ?? this.getVisibilityInterestPlayer(recipient)
+      ? frameContext?.visibilityPlayers.get(recipient.id) ?? recipient
       : null;
-    const targetInterestPlayer = frameContext?.visibilityPlayers.get(target.id) ?? this.getVisibilityInterestPlayer(target);
+    const targetInterestPlayer = frameContext?.visibilityPlayers.get(target.id) ?? target;
     const visibilityContext = this.visibilityInterestContext;
     visibilityContext.now = now;
     visibilityContext.collisionRevision = frameContext?.collisionRevision ?? this.getMovementCollisionRevision(now);
@@ -5112,7 +5120,7 @@ export class GameRoom extends Room<GameState> {
   ): void {
     const delayMs = Math.max(0, releaseAt - Date.now());
 
-    setTimeout(() => {
+    this.scheduleRoomTimeout(() => {
       const caster = this.state.players.get(casterId);
       if (!caster || caster.state !== 'alive') return;
 
@@ -7196,7 +7204,7 @@ export class GameRoom extends Room<GameState> {
     releaseAt: number
   ): void {
     const delayMs = Math.max(0, releaseAt - Date.now());
-    setTimeout(() => {
+    this.scheduleRoomTimeout(() => {
       this.applyChronosTimebreakShockwave(casterId, castDirection);
     }, delayMs);
   }
@@ -9761,7 +9769,7 @@ export class GameRoom extends Room<GameState> {
     this.settleWagerAfterGame(forcedByPlayerId ? null : winningTeam);
 
     // Reset room after delay
-    setTimeout(() => {
+    this.scheduleRoomTimeout(() => {
       this.state.phase = 'waiting';
       this.state.mapSeed = createRandomSeed();
       this.state.mapThemeId = getVoxelMapTheme(this.state.mapSeed).id;
