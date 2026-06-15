@@ -1406,7 +1406,7 @@ body,
 }
 
 .play-main-cta:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.65;
   transform: none;
 }
@@ -1556,8 +1556,7 @@ body,
   padding: clamp(1rem, 2vw, 1.35rem);
 }
 
-.play-pay-dialog-error,
-.play-pay-dialog-wallet {
+.play-pay-dialog-error {
   border: 1px solid rgba(248, 113, 113, 0.28);
   border-radius: 0.55rem;
   background: rgba(127, 29, 29, 0.18);
@@ -1568,27 +1567,6 @@ body,
   color: rgb(248 113 113);
   font-family: 'Exo 2', 'Rajdhani', sans-serif;
   font-size: 0.88rem;
-}
-
-.play-pay-dialog-wallet {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  border-color: rgba(251, 191, 36, 0.28);
-  background: rgba(120, 53, 15, 0.18);
-}
-
-.play-pay-dialog-wallet-button {
-  min-height: 2.25rem;
-  flex: 0 0 auto;
-  border: 1px solid rgba(251, 191, 36, 0.34);
-  border-radius: 0.5rem;
-  background: rgba(251, 191, 36, 0.16);
-  padding: 0 0.85rem;
-  color: rgb(254 243 199);
-  font-family: 'Bebas Neue', 'Orbitron', sans-serif;
-  font-size: 1rem;
 }
 
 .play-pay-dialog-grid {
@@ -1782,6 +1760,16 @@ body,
   font-size: 0.72rem;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.play-pay-option-phantom-badge {
+  display: inline-flex;
+  width: 2.25rem;
+  height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  justify-self: end;
+  color: rgb(255 255 255);
 }
 
 /* ===== STATS PAGE ===== */

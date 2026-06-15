@@ -247,6 +247,7 @@ export function Lobby() {
   } = useNetwork();
   const {
     walletAddress,
+    isAuthenticated,
     isConnected: isWalletConnected,
     connect: connectWallet,
     signTransaction,
@@ -460,12 +461,14 @@ export function Lobby() {
 
           {/* Right side - Player info */}
           <div className="flex shrink-0 items-center gap-3 xl:gap-4">
-            <SocialButton
-              onClick={() => {
-                playButtonClick();
-                setShowSocial(true);
-              }}
-            />
+            {isAuthenticated && (
+              <SocialButton
+                onClick={() => {
+                  playButtonClick();
+                  setShowSocial(true);
+                }}
+              />
+            )}
             {wagerEnabled && (
               <div className="hidden sm:flex items-center gap-3 rounded-xl border border-cyan-300/15 bg-cyan-500/[0.055] px-3 py-2">
                 <div>
@@ -745,7 +748,7 @@ export function Lobby() {
         </div>
       </div>
 
-      {showSocial && (
+      {showSocial && isAuthenticated && (
         <SocialBox onClose={() => setShowSocial(false)} />
       )}
     </div>

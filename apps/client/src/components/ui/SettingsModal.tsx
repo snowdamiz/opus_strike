@@ -11,6 +11,7 @@ import { useGameStore } from '../../store/gameStore';
 import { useWallet } from '../../contexts/WalletContext';
 import { formatKeybind, mouseButtonToKeybindCode } from '../../utils/keybindings';
 import { GameDialog } from './GameDialog';
+import { PhantomLogo } from './PhantomLogo';
 
 type SettingsTab = 'video' | 'audio' | 'controls' | 'gameplay' | 'account';
 
@@ -75,7 +76,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const setGameWalletAddress = useGameStore(state => state.setWalletAddress);
   const {
     isAuthenticated,
-    isDiscordAuthEnabled,
     isConnecting,
     isSessionLoading,
     logout,
@@ -85,7 +85,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     walletAddress,
     linkedAccounts,
     hasPhantomAccount,
-    hasFullFunctionality,
     error: authError,
     notice,
   } = useWallet();
@@ -145,7 +144,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   };
 
   const handleLinkDiscord = () => {
-    if (!hasAccount || discordAccount || !isDiscordAuthEnabled) return;
+    if (!hasAccount || discordAccount) return;
     linkDiscord();
   };
 
@@ -668,10 +667,10 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
             {activeTab === 'account' && (
               <div className="space-y-1">
-                {hasAccount && !hasFullFunctionality && (
+                {hasAccount && !hasPhantomAccount && (
                   <div className="mb-2 rounded-lg border border-amber-400/20 bg-amber-500/10 px-3 py-2">
                     <p className="text-amber-200 text-xs font-body">
-                      Phantom is required for full functionality. Link a wallet to complete this profile.
+                      Phantom is required for ranked and wager modes. Connect a wallet before entering those games.
                     </p>
                   </div>
                 )}
@@ -708,20 +707,20 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </SettingRow>
 
-                <SettingRow label="Access" description={hasFullFunctionality ? 'All account features available' : 'Phantom wallet required'}>
-                  <AccountValue value={hasFullFunctionality ? 'FULL' : hasAccount ? 'LIMITED' : 'SIGNED OUT'} />
+                <SettingRow label="Restricted Modes" description={hasPhantomAccount ? 'Ranked and wager access ready' : 'Phantom wallet required for ranked and wager'}>
+                  <AccountValue value={hasPhantomAccount ? 'READY' : hasAccount ? 'WALLET NEEDED' : 'SIGNED OUT'} />
                 </SettingRow>
 
-                <SettingRow label="Discord" description={discordAccount ? 'Connected login provider' : isDiscordAuthEnabled ? 'Link Discord to this profile' : 'Discord linking disabled'}>
+                <SettingRow label="Discord" description={discordAccount ? 'Connected login provider' : 'Link Discord to this profile'}>
                   {discordAccount ? (
                     <AccountValue value={discordAccount.displayName || 'CONNECTED'} />
                   ) : (
                     <button
                       type="button"
                       onClick={handleLinkDiscord}
-                      disabled={!hasAccount || !isDiscordAuthEnabled}
+                      disabled={!hasAccount}
                       className={`h-9 px-3.5 rounded-lg font-display text-xs flex shrink-0 items-center justify-center border focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-300/70 ${
-                        hasAccount && isDiscordAuthEnabled
+                        hasAccount
                           ? 'border-indigo-300/20 bg-indigo-500/15 text-indigo-100 hover:border-indigo-200/40 hover:bg-indigo-500/25'
                           : 'border-white/10 bg-white/5 text-white/25 cursor-not-allowed'
                       }`}
@@ -731,7 +730,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   )}
                 </SettingRow>
 
-                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for full functionality'}>
+                <SettingRow label="Phantom" description={hasPhantomAccount ? 'Connected wallet provider' : 'Required for ranked and wager modes'}>
                   {hasPhantomAccount ? (
                     <AccountValue value={formatAccountAddress(displayWalletAddress)} />
                   ) : (
@@ -751,6 +750,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                         </svg>
                       )}
+                      {!isLinkingPhantom && !isConnecting && <PhantomLogo className="h-4 w-4 text-white" />}
                       {isLinkingPhantom || isConnecting ? 'CONNECTING' : 'CONNECT'}
                     </button>
                   )}

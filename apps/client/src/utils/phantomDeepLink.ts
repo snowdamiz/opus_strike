@@ -19,6 +19,7 @@ const PHANTOM_CALLBACK_PARAMS = [
 ];
 
 type PhantomDeepLinkAction = 'connect' | 'signMessage';
+type PhantomDeepLinkPurpose = 'connect' | 'linkPhantom';
 
 interface StoredPhantomDeepLinkSession {
   version: 1;
@@ -37,6 +38,7 @@ interface StoredPhantomDeepLinkRequest {
   action: PhantomDeepLinkAction;
   requestId: string;
   createdAt: number;
+  purpose?: PhantomDeepLinkPurpose;
   dappEncryptionPublicKey?: string;
   dappEncryptionSecretKey?: string;
   authNonce?: string;
@@ -65,6 +67,7 @@ export type PhantomMobileDeepLinkCallbackResult =
     ok: true;
     action: 'connect';
     publicKey: string;
+    purpose: PhantomDeepLinkPurpose;
   }
   | {
     handled: true;
@@ -114,7 +117,7 @@ export function hasPhantomMobileDeepLinkCallback(): boolean {
   );
 }
 
-export function startPhantomMobileConnect(): void {
+export function startPhantomMobileConnect(purpose: PhantomDeepLinkPurpose = 'connect'): void {
   const keyPair = nacl.box.keyPair();
   const requestId = createRequestId();
   const dappEncryptionPublicKey = bs58.encode(keyPair.publicKey);
@@ -125,6 +128,7 @@ export function startPhantomMobileConnect(): void {
     action: 'connect',
     requestId,
     createdAt: Date.now(),
+    purpose,
     dappEncryptionPublicKey,
     dappEncryptionSecretKey,
   });
@@ -282,6 +286,7 @@ function handleConnectCallback(
     ok: true,
     action: 'connect',
     publicKey: connectData.public_key,
+    purpose: request.purpose ?? 'connect',
   };
 }
 
@@ -383,7 +388,7 @@ function getPhantomDeepLinkErrorMessage(
 ): string {
   if (errorCode === '4001') {
     return action === 'signMessage'
-      ? 'Signature rejected. Please sign the message to authenticate.'
+      ? 'Signature rejected. Please sign the message to connect Phantom.'
       : 'Connection rejected. Please approve the connection request.';
   }
 

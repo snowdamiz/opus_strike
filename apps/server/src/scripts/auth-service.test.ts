@@ -115,15 +115,7 @@ function testSessionTokens(session: SessionModule): void {
     process.env.JWT_SECRET!,
     { expiresIn: '1h' }
   );
-  assert.deepEqual(verifyPendingAuthToken(legacyPendingToken), {
-    pending: true,
-    provider: 'phantom',
-    providerAccountId: 'wallet_123',
-    walletAddress: 'wallet_123',
-    displayName: 'wallet_123',
-    avatarUrl: null,
-    emailHash: null,
-  });
+  assert.equal(verifyPendingAuthToken(legacyPendingToken), null);
 }
 
 function makeRateLimitRequest(ip: string, forwardedFor: string): Request {
