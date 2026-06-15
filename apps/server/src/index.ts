@@ -20,6 +20,7 @@ import {
   validateColyseusRuntimeConfig,
 } from './config/colyseus';
 import { closeSharedRedisClient, getSharedRedisClient, pingRedis } from './config/redis';
+import { getAllowedClientOrigins, isCorsOriginAllowed } from './config/clientOrigins';
 import { envFlag } from './config/security';
 import {
   installFlyReplayUpgradeRouter,
@@ -102,38 +103,22 @@ installFlyReplayUpgradeRouter({
   getLocalProcessId: () => matchMaker.processId,
 });
 
-function readOriginList(value: string | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-}
-
 // CORS configuration - MUST be before routes
-const ALLOWED_ORIGINS = Array.from(new Set([
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000',
-  ...readOriginList(process.env.CLIENT_ORIGIN),
-  ...readOriginList(process.env.CLIENT_URL),
-  ...readOriginList(process.env.PUBLIC_CLIENT_ORIGIN),
-  ...readOriginList(process.env.ALLOWED_ORIGINS),
-]));
+const ALLOWED_ORIGINS = getAllowedClientOrigins();
 
 app.use((_req, res, next) => {
-  const origin = _req.headers.origin;
-  
+  const origin = typeof _req.headers.origin === 'string' ? _req.headers.origin : undefined;
+  res.vary('Origin');
+
   // Allow configured origins or all in development
-  if (origin && (ALLOWED_ORIGINS.includes(origin) || process.env.NODE_ENV !== 'production')) {
+  if (isCorsOriginAllowed(origin, ALLOWED_ORIGINS)) {
     res.header('Access-Control-Allow-Origin', origin);
   }
-  
+
   res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Client-Id, X-CSRF-Token, X-Internal-Status-Token, X-Wager-Admin-Token');
   res.header('Access-Control-Allow-Credentials', 'true');
-  
+
   // Handle preflight requests
   if (_req.method === 'OPTIONS') {
     res.sendStatus(200);

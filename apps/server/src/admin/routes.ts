@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import prisma from '../db';
 import { verifyAuthToken } from '../auth/session';
+import { getAllowedClientOrigins } from '../config/clientOrigins';
 import { getAuthTokenSecret } from '../config/security';
 import {
   DEFAULT_COMPETITIVE_RATING,
@@ -183,31 +184,8 @@ function readHeaderString(req: Request, name: string): string {
   return typeof value === 'string' ? value : '';
 }
 
-function readOriginList(value: string | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-}
-
 function adminAllowedOrigins(): string[] {
-  const configuredOrigins = [
-    ...readOriginList(process.env.CLIENT_ORIGIN),
-    ...readOriginList(process.env.CLIENT_URL),
-    ...readOriginList(process.env.PUBLIC_CLIENT_ORIGIN),
-    ...readOriginList(process.env.ALLOWED_ORIGINS),
-  ];
-
-  if (process.env.NODE_ENV === 'production') return configuredOrigins;
-
-  return [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173',
-    ...configuredOrigins,
-  ];
+  return getAllowedClientOrigins();
 }
 
 function isAllowedConfiguredAdminOrigin(source: string): boolean {
