@@ -892,7 +892,7 @@ function PlayTab({
                 playButtonClick();
                 onDiscordSignIn();
               }}
-              className="play-main-cta group"
+              className="play-main-cta play-main-cta-discord group"
             />
           )}
         </div>
